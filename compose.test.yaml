@@ -1,0 +1,87 @@
+# Disposable test databases. Data stays in memory, and ports use 127.0.0.1 only.
+# Start:      docker compose -f compose.test.yaml up -d --wait
+# With TLS:   scripts/test-certs.sh && docker compose -f compose.test.yaml --profile tls up -d --wait
+# Stop:       docker compose -f compose.test.yaml --profile tls down
+
+name: sqln-test
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: spike
+      POSTGRES_DB: spike
+    ports:
+      - "127.0.0.1:54329:5432"
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -h 127.0.0.1 -U postgres -d spike"]
+      interval: 1s
+      timeout: 3s
+      retries: 90
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: spike
+      MYSQL_DATABASE: spike
+    ports:
+      - "127.0.0.1:33069:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h127.0.0.1 -uroot -pspike -e 'SELECT 1'"]
+      interval: 1s
+      timeout: 3s
+      retries: 120
+
+  postgres-tls:
+    profiles: [tls]
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: spike
+      POSTGRES_DB: spike
+    ports:
+      - "127.0.0.1:54330:5432"
+    tmpfs:
+      - /var/lib/postgresql
+    volumes:
+      - ./.test-certs:/certs-src:ro
+      - ./scripts/test-db/pg-tls-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    entrypoint:
+      - bash
+      - -c
+      - >-
+        mkdir -p /certs && cp /certs-src/* /certs/ && chown -R postgres /certs &&
+        chmod 600 /certs/server.key && exec docker-entrypoint.sh postgres
+        -c ssl=on -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
+        -c ssl_ca_file=/certs/ca.crt -c hba_file=/certs/pg_hba.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -h 127.0.0.1 -U postgres -d spike"]
+      interval: 1s
+      timeout: 3s
+      retries: 90
+
+  mysql-tls:
+    profiles: [tls]
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: spike
+      MYSQL_DATABASE: spike
+    ports:
+      - "127.0.0.1:33070:3306"
+    tmpfs:
+      - /var/lib/mysql
+    volumes:
+      - ./.test-certs:/certs:ro
+      - ./scripts/test-db/mysql-tls-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    command:
+      - --ssl-ca=/certs/ca.crt
+      - --ssl-cert=/certs/server.crt
+      - --ssl-key=/certs/server.key
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h127.0.0.1 -uroot -pspike -e 'SELECT 1'"]
+      interval: 1s
+      timeout: 3s
+      retries: 120
