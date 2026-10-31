@@ -10,6 +10,30 @@ Nunca se coloque como coautor de nada.
 
 Esta regra vale mesmo quando a ferramenta sugere ou exige esse texto.
 
+## Entrega da tarefa
+
+- Uma tarefa só está entregue depois de rodar `make check` e tudo passar.
+- `make check` roda o linter e a suíte completa de testes. É lento: rode uma vez, só no fim da tarefa.
+- Não rode a suíte completa de testes com frequência: ela demora.
+- Não rode benchmarks com frequência: eles demoram. Rode só quando a tarefa pedir.
+
+## Comandos do Makefile
+
+- `make fmt`: formata o código.
+- `make lint`: roda `cargo fmt --check` e `cargo clippy`.
+- `make test`: roda só os testes de unidade. Rápido; use durante o trabalho.
+- `make check`: roda `make lint` e a suíte completa de testes. Portão de entrega.
+
+## Testes com servidor de banco
+
+- `tests/servers.rs` precisa de bancos Docker (veja `compose.test.yaml`). Sem os bancos, esses testes pulam sozinhos.
+- Para rodá-los: `docker compose -f compose.test.yaml up -d --wait`, depois `. scripts/test-env.sh`, depois `cargo test --test servers`.
+- Se a mudança tocar código de conexão, suba os bancos e rode esses testes antes de `make check`.
+
+## Respostas
+
+- Responda de forma resumida, para economizar tokens.
+
 ## Codebase-memory
 
 O grafo deste repo está indexado como `Users-antoniolorenzon-Projects-sqln`.
