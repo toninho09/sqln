@@ -239,6 +239,7 @@ Na visão de tabela, a grade também oferece:
 | Foco em `ORDER BY` | `o` |
 | Ordenar pela coluna atual | `s` |
 | Carregar mais | `m` |
+| Página anterior e próxima | `[` e `]` |
 
 ## Barra de filtro
 
@@ -254,7 +255,7 @@ Na visão de tabela, a grade também oferece:
 `Ctrl+W k` vai ao campo `WHERE`, e `Ctrl+W j` volta à grade.
 Na visão de tabela, as ações de script e de transação não têm efeito, pois a tabela não tem script nem transação.
 Essas ações são `F5`, `Shift+F5`, `Ctrl+W e`, `Ctrl+W s`, `Ctrl+W m`, `Ctrl+W C`, `Ctrl+W R` e `Ctrl+W d`.
-Na grade da tabela, `x`, `Delete`, `[` e `]` também não têm efeito.
+Na grade da tabela, `x` e `Delete` também não têm efeito.
 `Ctrl+W c` fecha a aba da tabela e libera seus dados.
 
 ## Pergunta sobre scripts alterados
@@ -291,6 +292,7 @@ O foco inicial fica sempre na opção sem efeito no banco ou no disco.
 | Clique no cabeçalho da tabela | Aplicar a ordenação: crescente, decrescente e sem ordem |
 | Duplo clique em uma tabela | Abrir a visão de tabela, com dois cliques na mesma célula em 400 ms |
 | Clique em um campo ou botão da barra | Dar o foco ao campo, ou acionar o botão |
+| Clique em **Previous** ou **Next** | Mudar de página na grade da tabela |
 | Clique em uma linha da pergunta sobre scripts | Mudar a ação da linha, ou acionar o botão |
 | Roda | Percorrer listas, editor e grade |
 | Arrasto em um divisor | Ajustar os painéis |

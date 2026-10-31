@@ -129,6 +129,8 @@ impl App {
         let area = layout.grid;
         if layout.controls.contains(position) {
             self.on_table_control_press(mouse.column);
+        } else if layout.summary.contains(position) {
+            self.on_pager_press(mouse.column);
         } else if layout.filter.contains(position) {
             self.focus_table(TableFocus::Filter);
         } else if layout.order.contains(position) {
@@ -156,7 +158,19 @@ impl App {
             Some(TableControl::Clear) => self.clear_table(),
             Some(TableControl::LoadMore) => self.load_more(),
             Some(TableControl::Stop) => self.stop_table(),
-            None => {}
+            _ => {}
+        }
+    }
+
+    fn on_pager_press(&mut self, column: u16) {
+        let buttons = &self.layout.table.pager;
+        let control = buttons.iter().find(|button| column >= button.0 && column < button.1);
+        let Some(control) = control.map(|button| button.2) else { return };
+        self.focus_table(TableFocus::Grid);
+        match control {
+            TableControl::PreviousPage => self.previous_table_page(),
+            TableControl::NextPage => self.next_table_page(),
+            _ => {}
         }
     }
 

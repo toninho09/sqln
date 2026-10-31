@@ -323,7 +323,8 @@ impl App {
             .filter(|action| if in_table { !action.is_console_only() } else { !action.is_table_only() })
             .filter_map(|action| {
                 let keys = self.keymap.keys(action);
-                (!keys.is_empty()).then(|| text::keys_row(&keys.join(", "), action))
+                let row = if in_table { text::table_keys_row } else { text::keys_row };
+                (!keys.is_empty()).then(|| row(&keys.join(", "), action))
             })
             .collect()
     }
@@ -765,6 +766,7 @@ impl App {
                         (Action::GridFocusOrder, "order by"),
                         (Action::GridSortColumn, "sort"),
                         (Action::GridLoadMore, "more"),
+                        (Action::GridNextResult, "page"),
                         (Action::GridCopy, "copy"),
                         (Action::GridOpenValue, if tab.pending { "load" } else { "value" }),
                         (Action::Help, "keys"),

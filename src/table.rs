@@ -38,6 +38,8 @@ pub struct PageRequest {
     pub first: bool,
     /// The cap of the sink: a page and the row that proves a next page.
     pub row_cap: usize,
+    /// The page to show when this page ends.
+    pub show: Option<usize>,
 }
 
 /// The page in progress.
@@ -50,6 +52,8 @@ struct Load {
     extra: bool,
     /// True when the database finished the page.
     done: bool,
+    /// The page to show at the end of this load.
+    show: Option<usize>,
 }
 
 pub struct TableTab {
@@ -185,6 +189,30 @@ impl TableTab {
         }
     }
 
+    /// Returns the page of the cursor, from 0.
+    pub fn page(&self) -> usize {
+        self.result.view.row / self.page_size.max(1)
+    }
+
+    /// Returns the count of pages on the grid.
+    pub fn loaded_pages(&self) -> usize {
+        self.loaded().div_ceil(self.page_size.max(1))
+    }
+
+    /// Returns true when the grid has more than one page, or the table can have one.
+    pub fn has_pages(&self) -> bool {
+        self.loaded_pages() > 1 || self.has_more
+    }
+
+    /// Moves the cursor to the first row of a loaded page, at the top of the grid.
+    pub fn show_page(&mut self, page: usize) {
+        if page < self.loaded_pages() {
+            let ResultTab { view, table, .. } = &mut self.result;
+            view.move_to(page * self.page_size.max(1), view.col, table, false);
+            view.top = view.row;
+        }
+    }
+
     /// Marks a tab of the last session. The first use reads its rows, so the start of
     /// the application opens no connection and asks for no password.
     pub fn wait_for_use(&mut self, note: String) {
@@ -276,7 +304,7 @@ impl TableTab {
         self.list = None;
         let sql = page_sql(dialect, &self.relation, &self.applied_filter, &self.applied_order, self.page_size, 0);
         match sql {
-            Ok(sql) => Some(PageRequest { sql, first: true, row_cap: self.page_size.saturating_add(1) }),
+            Ok(sql) => Some(PageRequest { sql, first: true, row_cap: self.page_size.saturating_add(1), show: None }),
             Err(reason) => {
                 self.message = Some(Message { level: MessageLevel::Error, text: reason });
                 None
@@ -299,12 +327,12 @@ impl TableTab {
         let sql = page_sql(dialect, &self.relation, &self.applied_filter, &self.applied_order, self.page_size, offset)
             .map_err(|_| text::TABLE_TEXT_REFUSED)?;
         self.message = None;
-        Ok(PageRequest { sql, first: false, row_cap: self.page_size.saturating_add(1) })
+        Ok(PageRequest { sql, first: false, row_cap: self.page_size.saturating_add(1), show: None })
     }
 
     /// Records the execution that the manager accepted for a page.
-    pub fn started(&mut self, execution: ExecutionId, first: bool) {
-        self.load = Some(Load { execution, first, received: 0, extra: false, done: false });
+    pub fn started(&mut self, execution: ExecutionId, first: bool, show: Option<usize>) {
+        self.load = Some(Load { execution, first, received: 0, extra: false, done: false, show });
         self.limit = ReadLimit::None;
         self.phase = Phase::Waiting;
         self.run.start();
@@ -371,13 +399,17 @@ impl TableTab {
     }
 
     fn on_finished(&mut self, end: ExecutionEnd, message: Option<String>) {
-        let done = self.load.as_ref().is_some_and(|load| load.done);
+        let load = self.load.take();
+        let done = load.as_ref().is_some_and(|load| load.done);
         self.phase = Phase::Idle;
         self.run.finish(end);
-        self.load = None;
         // A page that ended early leaves rows that the next page continues.
         if !done && self.loaded() > 0 {
             self.has_more = true;
+        }
+        // A page that did not end leaves the cursor in its place.
+        if let Some(page) = load.and_then(|load| load.show).filter(|_| end == ExecutionEnd::Completed) {
+            self.show_page(page);
         }
         let info = |text: &str| Message { level: MessageLevel::Info, text: text.to_owned() };
         let error = |text: &str| Message { level: MessageLevel::Error, text: text.to_owned() };

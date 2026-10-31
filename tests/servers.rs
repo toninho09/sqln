@@ -1407,13 +1407,42 @@ fn a_table_view_pages_filters_and_orders_rows_of_each_server() {
         s.open_table("app_pages");
         assert_eq!(s.table_ids().len(), 100);
         assert!(s.app.table().unwrap().has_more);
-        for _ in 0..2 {
-            s.prefix('j');
-            s.code(KeyCode::Char('m'));
-            s.wait_table();
-        }
+        s.prefix('k');
+        s.code(KeyCode::Tab);
+        s.type_text("id ASC");
+        s.code(KeyCode::Enter);
+        s.wait_table();
+        s.prefix('j');
+        s.code(KeyCode::Char('m'));
+        s.wait_table();
+        assert_eq!(s.table_ids().len(), 200);
+        assert_eq!(s.app.table().unwrap().result.view.row, 0);
+        s.wait_for("Page 1 of 2+");
+
+        // The next loaded page needs no load. The last page loads before the move.
+        s.code(KeyCode::Char(']'));
+        assert_eq!(s.app.table().unwrap().result.view.row, 100);
+        s.wait_for("Page 2 of 2+");
+        s.code(KeyCode::Char(']'));
+        s.wait_table();
         assert_eq!(s.table_ids().len(), 250);
         assert!(!s.app.table().unwrap().has_more);
+        assert_eq!(s.app.table().unwrap().result.view.row, 200);
+        assert_eq!(s.table_ids()[200], "201");
+        s.wait_for("Page 3 of 3");
+        s.code(KeyCode::Char('['));
+        assert_eq!(s.app.table().unwrap().result.view.row, 100);
+        s.code(KeyCode::Char(']'));
+        s.code(KeyCode::Char(']'));
+        assert_eq!(s.app.table().unwrap().result.view.row, 200);
+        assert!(!s.app.table().unwrap().is_busy());
+
+        s.prefix('k');
+        s.code(KeyCode::Tab);
+        s.code(KeyCode::End);
+        for _ in 0.."id ASC".len() {
+            s.code(KeyCode::Backspace);
+        }
 
         // The filter and the order run in the database.
         s.prefix('k');
@@ -1543,7 +1572,7 @@ fn the_schema_choice_changes_where_a_name_resolves() {
         ));
         s.wait_until(|s| s.app.connections()[0].catalog.is_some());
         s.choose_schema(Some("app_choice"));
-        s.wait_for("[app_choice]");
+        s.wait_for("real › app_choice › console-1");
 
         let query = "SELECT a + 1 AS shown FROM only_there;";
         s.run_script(query);

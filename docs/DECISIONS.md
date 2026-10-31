@@ -21,6 +21,8 @@ Estas escolhas seguem as regras acima nos pontos que elas deixaram abertos.
 
 | Assunto | Escolha | Rejeitado | Motivo |
 |---|---|---|---|
+| Botões de página na tabela | **Previous** e **Next** movem o cursor nas linhas acumuladas; **Next** carrega a página que falta | Trocar as linhas a cada página, com nova consulta para voltar | Mantém a regra de manter as linhas anteriores, o orçamento e a consulta por página; voltar não repete a consulta |
+| Botões de página no console | Não oferecer | Nova consulta por página | Vale a decisão de mais linhas no console: repetir a consulta altera o SQL e pode mostrar outro resultado |
 | Tecla que aceita sugestão | Opção `suggestionKeys`: `tab` (padrão), `enter` ou `both`, no editor e no filtro da tabela | Somente `Tab`, como no plano original | Reaberta pelo usuário em 2026-10-31; o padrão mantém a regra antiga, e `Enter` só aceita por escolha explícita |
 | Precisão do tempo | Três casas decimais durante a execução e no último tempo, com atualização a cada 100 ms | Segundos inteiros; 250 ms | Pedido do usuário; a 250 ms os últimos dígitos ficam quase parados |
 | Estado da execução nas abas | Selo com fundo colorido no início da aba, com o tempo durante a execução | Símbolo no fim da aba, ao lado do nome | No fim, `✗` ficaria ao lado do `×` de fechar; um bloco de cor é difícil de perder |

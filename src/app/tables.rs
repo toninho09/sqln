@@ -182,12 +182,35 @@ impl App {
     }
 
     pub(super) fn load_more(&mut self) {
+        self.load_page(None);
+    }
+
+    /// Asks for the next page. `show` is the page to show at the end of the load.
+    fn load_page(&mut self, show: Option<usize>) {
         let Some(dialect) = self.ready_table() else { return };
         let budget = self.budget.clone();
         let Some(tab) = self.table_mut() else { return };
         match tab.next_page(dialect, &budget) {
-            Ok(request) => self.run_page(Some(request)),
+            Ok(request) => self.run_page(Some(PageRequest { show, ..request })),
             Err(reason) => self.status = Some(reason.to_owned()),
+        }
+    }
+
+    /// Shows the page before the cursor. Its rows are on the grid.
+    pub(super) fn previous_table_page(&mut self) {
+        if let Some(tab) = self.table_mut() {
+            tab.show_page(tab.page().saturating_sub(1));
+        }
+    }
+
+    /// Shows the page after the cursor. A page that is not on the grid loads first.
+    pub(super) fn next_table_page(&mut self) {
+        let Some(tab) = self.table_mut() else { return };
+        let page = tab.page() + 1;
+        if page < tab.loaded_pages() {
+            tab.show_page(page);
+        } else {
+            self.load_page(Some(page));
         }
     }
 
@@ -261,9 +284,9 @@ impl App {
             | Action::ChooseSchema
             | Action::RenameConsole
             | Action::ChangeConnection
-            | Action::GridCloseResult
-            | Action::GridPreviousResult
-            | Action::GridNextResult => {}
+            | Action::GridCloseResult => {}
+            Action::GridPreviousResult => self.previous_table_page(),
+            Action::GridNextResult => self.next_table_page(),
             Action::Stop => self.stop_table(),
             Action::CloseTab => {
                 if let Some(index) = self.table_active {

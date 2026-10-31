@@ -193,20 +193,21 @@ Duplo clique na tabela abre uma aba na mesma faixa dos consoles.
 Abrir novamente a mesma tabela seleciona essa aba, sem duplicar.
 
 ```text
-┌─ Conexões ─────────┬─ console-1 ─ [users: tabela] ────────────────┐
-│ app (local)       │ app_db.public.users                          │
-│   public          │ WHERE    [active = true                    ] │
-│     users         │ ORDER BY [                                 ] │
-│     orders        │ [Aplicar] [Limpar]                           │
-│ app (global)      ├────┬──────────┬──────────────────────────────┤
-│ warehouse         │ id │ name     │ active                       │
-│                   │  1 │ Ana      │ true                         │
-│                   │  2 │ Bruno    │ true                         │
-│                   │ ...                                         │
-│                   │ 100 linhas carregadas · [Carregar mais]      │
-├───────────────────┴─────────────────────────────────────────────┤
-│ App (local) · Dados das grades: 1/256 MiB                          │
-└─────────────────────────────────────────────────────────────────┘
+┌─ Conexões ────────┬─ console-1 ─ [users (table)] ──────────────────────────────────────┐
+│ app (local)       │ app_db.public.users                                                │
+│   public          │ WHERE    [active = true                                          ] │
+│     users         │ ORDER BY [                                                       ] │
+│     orders        │ [✓ Apply]  [✕ Clear]  [↓ Load more]  [■ Stop]                      │
+│ app (global)      ├─────┬──────────┬───────────────────────────────────────────────────│
+│ warehouse         │ id  │ name     │ active                                            │
+│                   │ 101 │ Ana      │ true                                              │
+│                   │ 102 │ Bruno    │ true                                              │
+│                   │ ...                                                                │
+│                   │ 200 rows loaded          [◀ Previous]  Page 2 of 2+  [▶ Next]      │
+│                   │ No ORDER BY: rows can repeat or be missing between pages.          │
+├───────────────────┴────────────────────────────────────────────────────────────────────┤
+│ App (local) · Dados das grades: 1/256 MiB                                              │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 O exemplo mostra um filtro que o usuário já aplicou.
@@ -243,8 +244,14 @@ O erro de uma primeira página ocupa a área da grade.
 O clique no cabeçalho ordena em ordem crescente, depois decrescente, e depois remove a ordem.
 
 Rolagem e navegação percorrem os dados já carregados.
-Mais linhas exigem a ação **Carregar mais**.
-Cada página faz uma nova consulta, sem manter uma leitura aberta entre páginas.
+Mais linhas exigem **Carregar mais** ou **Next**.
+Com mais de uma página, a linha sob a grade mostra **Previous**, `Page 2 of 3+` e **Next**. O `+` indica que a tabela pode ter mais linhas.
+Cada página é um trecho das linhas acumuladas, e o botão coloca a primeira linha da página no topo da grade.
+**Next** mostra uma página já carregada sem consulta. Se a página ainda não veio, **Next** carrega a página e depois a mostra.
+**Previous** nunca consulta o banco. O número da página acompanha o cursor.
+A linha prioriza o estado da carga. Sem espaço, os botões usam a forma curta `◀ 2/3+ ▶`, e a nota `more rows available` sai primeiro. Um estado longo tira os botões da linha, e `[` e `]` continuam a funcionar.
+Carregar uma página faz uma nova consulta, sem manter uma leitura aberta entre páginas.
+**Carregar mais** mantém o cursor e a rolagem atuais.
 **Carregar mais** pode aguardar uma conexão livre.
 Sem uma ordenação única, linhas podem repetir ou faltar entre as páginas.
 Mostrar esse aviso quando não existir uma ordenação aplicada.

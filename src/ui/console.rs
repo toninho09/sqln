@@ -20,7 +20,7 @@ use crate::grid::{COLUMN_GAP, GridView, ResultTable, RowSearch, Value, printable
 
 const MAX_PICKER_ROWS: u16 = 12;
 /// The text between two buttons of a toolbar.
-const BUTTON_GAP: u16 = 2;
+pub(super) const BUTTON_GAP: u16 = 2;
 /// The columns between a row number and the first column: a space, a rule, and a space.
 const NUMBER_END: u16 = 3;
 /// The columns between two columns of the grid.

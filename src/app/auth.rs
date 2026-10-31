@@ -831,8 +831,9 @@ impl App {
                     schema: None,
                     row_cap: Some(request.row_cap),
                 };
+                let (first, show) = (request.first, request.show);
                 let execution = manager.run(console, vec![request.sql], options);
-                tab.started(execution, request.first);
+                tab.started(execution, first, show);
             }
             Use::Test(test) => {
                 let Some(definition) = definition else { return };

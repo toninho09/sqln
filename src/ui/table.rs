@@ -5,8 +5,9 @@ use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
+use unicode_width::UnicodeWidthStr;
 
-use super::console::{draw_buttons, draw_grid, draw_panel_title, search_line};
+use super::console::{BUTTON_GAP, draw_buttons, draw_grid, draw_panel_title, search_line};
 use super::theme::Theme;
 use super::{draw_suggestions, input_spans, text};
 use crate::console::{Message, MessageLevel, Phase};
@@ -16,6 +17,10 @@ use crate::line_input::LineInput;
 use crate::table::{TableFocus, TableTab};
 
 const LABEL_WIDTH: u16 = 10;
+const SUMMARY_GAP: &str = " · ";
+
+/// The buttons of the pages, with the text and the state of each one.
+type Pager = Vec<(TableControl, String, bool)>;
 
 /// A button of the filter bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +29,10 @@ pub enum TableControl {
     Clear,
     LoadMore,
     Stop,
+    PreviousPage,
+    /// The place of the page, between the two buttons. A click on it does nothing.
+    PageLabel,
+    NextPage,
 }
 
 /// The screen areas of the last frame. The mouse uses them.
@@ -36,6 +45,9 @@ pub struct TableLayout {
     /// Each button, with its first column and the column after its end.
     pub buttons: Vec<(u16, u16, TableControl)>,
     pub grid: Rect,
+    /// The row under the grid, with the buttons of the pages.
+    pub summary: Rect,
+    pub pager: Vec<(u16, u16, TableControl)>,
 }
 
 pub struct TableBar<'a> {
@@ -95,9 +107,60 @@ fn message_style(message: &Message, theme: &Theme) -> Style {
     }
 }
 
-/// Writes the state of the loaded rows.
-fn summary_text(tab: &TableTab) -> String {
+/// Lists the buttons of the pages, with words or in the short form.
+fn pager_items(tab: &TableTab, blocked: bool, wide: bool, theme: &Theme) -> Pager {
+    let page = tab.page();
+    let pages = tab.loaded_pages();
+    let can_load = tab.has_more && !blocked && !tab.is_busy();
+    let icons = &theme.icons;
+    let short = |icon: &str, mark: &str| theme.button(if icon.is_empty() { mark } else { icon });
+    let (previous, label, next) = if wide {
+        (
+            theme.tool(icons.previous_page, text::BUTTON_PREVIOUS),
+            text::table_page(page + 1, pages, tab.has_more),
+            theme.tool(icons.next_page, text::BUTTON_NEXT),
+        )
+    } else {
+        (
+            short(icons.previous_page, "<"),
+            text::table_page_short(page + 1, pages, tab.has_more),
+            short(icons.next_page, ">"),
+        )
+    };
+    vec![
+        (TableControl::PreviousPage, previous, page > 0),
+        (TableControl::PageLabel, label, false),
+        (TableControl::NextPage, next, page + 1 < pages || can_load),
+    ]
+}
+
+fn pager_width(pager: &Pager) -> usize {
+    pager.iter().map(|(_, label, _)| label.width() + usize::from(BUTTON_GAP)).sum()
+}
+
+/// Chooses the parts of the row under the grid. The state of the load always stays, the
+/// buttons come next, and the note about more rows goes first. A long state leaves no
+/// place for the buttons, and the keys still work.
+fn summary_row(tab: &TableTab, blocked: bool, width: usize, theme: &Theme) -> (String, Pager) {
+    let (state, note) = summary_parts(tab);
+    let full = note.map_or_else(|| state.clone(), |note| format!("{state}{SUMMARY_GAP}{note}"));
+    if !tab.has_pages() {
+        return (full, Vec::new());
+    }
+    let wide = pager_items(tab, blocked, true, theme);
+    let short = pager_items(tab, blocked, false, theme);
+    for (text, pager) in [(&full, &wide), (&full, &short), (&state, &wide), (&state, &short)] {
+        if 1 + text.width() + 1 + pager_width(pager) <= width {
+            return (text.clone(), pager.clone());
+        }
+    }
+    (full, Vec::new())
+}
+
+/// Returns the state of the loaded rows, and a note that can leave the row.
+fn summary_parts(tab: &TableTab) -> (String, Option<&'static str>) {
     let mut parts = vec![text::rows_loaded(tab.loaded())];
+    let mut note = None;
     match tab.phase {
         Phase::Waiting => parts.push(text::TABLE_WAITING.to_owned()),
         Phase::Running => parts.push(text::TABLE_LOADING.to_owned()),
@@ -105,12 +168,12 @@ fn summary_text(tab: &TableTab) -> String {
         Phase::Idle => match tab.limit {
             ReadLimit::Budget => parts.push(text::TABLE_BUDGET.to_owned()),
             ReadLimit::ValueTooLarge => parts.push(text::TABLE_VALUE_TOO_LARGE.to_owned()),
-            _ if tab.has_more => parts.push(text::TABLE_MORE.to_owned()),
-            _ if tab.message.is_none() => parts.push(text::TABLE_NO_MORE_ROWS.to_owned()),
+            _ if tab.has_more => note = Some(text::TABLE_MORE),
+            _ if tab.message.is_none() => note = Some(text::TABLE_NO_MORE_ROWS),
             _ => {}
         },
     }
-    parts.join(" · ")
+    (parts.join(SUMMARY_GAP), note)
 }
 
 /// Draws the table view. It returns the areas for the mouse.
@@ -164,11 +227,20 @@ pub fn draw_table(
         draw_grid(frame.buffer_mut(), grid, &mut tab.result, grid_focused, theme);
     }
 
+    let (state_text, pager_items) = summary_row(tab, bar.blocked, usize::from(summary.width), theme);
+    let pager_columns = u16::try_from(pager_width(&pager_items)).unwrap_or(0);
+    let searching = tab.result.search.is_some();
+    let [state, buttons_area] = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(if searching { 0 } else { pager_columns }),
+    ])
+    .areas(summary);
     let line = match &tab.result.search {
         Some(search) => search_line(search, &tab.result.table, theme),
-        None => Line::styled(format!(" {}", summary_text(tab)), theme.hint),
+        None => Line::styled(format!(" {state_text}"), theme.hint),
     };
-    frame.render_widget(Paragraph::new(line), summary);
+    frame.render_widget(Paragraph::new(line), state);
+    let pager = draw_buttons(frame, buttons_area, pager_items, theme);
     let note = match &tab.message {
         Some(message) if !message_in_grid => {
             Some(Line::styled(format!(" {}", printable(&message.text)), message_style(message, theme)))
@@ -192,7 +264,7 @@ pub fn draw_table(
         let anchor = Position::new(field.x.saturating_add(offset).min(field.right()), field.y);
         draw_suggestions(frame, area, anchor, list, theme);
     }
-    TableLayout { filter, order, controls, buttons, grid }
+    TableLayout { filter, order, controls, buttons, grid, summary, pager }
 }
 
 /// Draws the area of a grid without columns: the reason, or the wait.

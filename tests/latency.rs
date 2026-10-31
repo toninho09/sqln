@@ -134,6 +134,54 @@ fn a_key_stays_under_the_target_with_the_full_budget_loaded() {
 
 #[test]
 #[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn table_page_keys_and_frames_stay_under_the_target() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use crossterm::event::Event;
+    use sqln::app::{App, Options};
+    use sqln::clipboard::MemoryClipboard;
+    use sqln::exec::Settings;
+
+    let path = common::temp_db("latency-table-pages");
+    rusqlite::Connection::open(&path).unwrap().execute_batch(
+        "CREATE TABLE pages(id INTEGER PRIMARY KEY, label TEXT); \
+         WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 50000) \
+         INSERT INTO pages SELECT x, 'row' || x FROM n;",
+    ).unwrap();
+    let settings = Settings { page_size: 10_000, ..Settings::default() };
+    let options = Options { database: Some(path), settings, ..Options::default() };
+    let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
+    let mut app = App::new(options, clipboard, Theme::ansi());
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    common::open_table(&mut app, 0, "pages");
+    for page in 0..5 {
+        if page > 0 {
+            app.on_event(Event::Key(key(KeyCode::Char('m'))));
+        }
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while app.table().unwrap().is_busy() {
+            app.drain_events();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    assert_eq!(app.table().unwrap().loaded(), 50_000);
+    let mut worst = Duration::ZERO;
+    for index in 0..200 {
+        let started = Instant::now();
+        let direction = if (index / 4) % 2 == 0 { ']' } else { '[' };
+        app.on_event(Event::Key(key(KeyCode::Char(direction))));
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        worst = worst.max(started.elapsed());
+        assert!(!app.table().unwrap().is_busy());
+    }
+    println!("50,000 table rows: worst page key plus frame {worst:?}");
+    assert!(worst < Duration::from_millis(50), "{worst:?}");
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
 fn a_key_in_a_large_navigator_stays_under_the_target() {
     use std::cell::RefCell;
     use std::rc::Rc;

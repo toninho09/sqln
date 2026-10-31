@@ -14,6 +14,8 @@ pub struct Icons {
     pub apply: &'static str,
     pub clear: &'static str,
     pub load_more: &'static str,
+    pub previous_page: &'static str,
+    pub next_page: &'static str,
     pub schema: &'static str,
     pub table: &'static str,
     pub view: &'static str,
@@ -50,6 +52,8 @@ impl Icons {
             apply: "",
             clear: "",
             load_more: "",
+            previous_page: "",
+            next_page: "",
             schema: "",
             table: "",
             view: "",
@@ -82,6 +86,8 @@ impl Icons {
             apply: "✓",
             clear: "✕",
             load_more: "↓",
+            previous_page: "◀",
+            next_page: "▶",
             schema: "◇",
             table: "▦",
             view: "◫",
@@ -114,6 +120,8 @@ impl Icons {
             apply: "\u{f00c}",
             clear: "\u{f00d}",
             load_more: "\u{f078}",
+            previous_page: "\u{f053}",
+            next_page: "\u{f054}",
             schema: "\u{f07b}",
             table: "\u{f0ce}",
             view: "\u{f06e}",
@@ -144,7 +152,7 @@ impl Icons {
     }
 
     /// Returns each symbol of the set, for the checks of the column width.
-    pub fn all(&self) -> [&'static str; 29] {
+    pub fn all(&self) -> [&'static str; 31] {
         [
             self.run,
             self.script,
@@ -155,6 +163,8 @@ impl Icons {
             self.apply,
             self.clear,
             self.load_more,
+            self.previous_page,
+            self.next_page,
             self.schema,
             self.table,
             self.view,

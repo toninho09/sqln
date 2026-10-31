@@ -401,6 +401,19 @@ pub const LABEL_ORDER_BY: &str = "ORDER BY";
 pub const BUTTON_APPLY: &str = "Apply";
 pub const BUTTON_CLEAR: &str = "Clear";
 pub const BUTTON_LOAD_MORE: &str = "Load more";
+pub const BUTTON_PREVIOUS: &str = "Previous";
+pub const BUTTON_NEXT: &str = "Next";
+/// Writes the place of a page. The total stays open while the table can have more rows.
+pub fn table_page(page: usize, pages: usize, more: bool) -> String {
+    let open = if more { "+" } else { "" };
+    format!("Page {page} of {pages}{open}")
+}
+
+/// Writes the place of a page for a narrow row.
+pub fn table_page_short(page: usize, pages: usize, more: bool) -> String {
+    let open = if more { "+" } else { "" };
+    format!("{page}/{pages}{open}")
+}
 pub const TABLE_TEXT_REFUSED: &str = "The WHERE and ORDER BY text must stay in one statement. Remove a semicolon, an open quote, or an open comment.";
 pub const TABLE_BUSY: &str = "The table has a load in progress. Ctrl+W x stops it.";
 pub const TABLE_NO_MORE: &str = "The table has no more rows to load.";
@@ -574,6 +587,16 @@ pub fn keys_title(mode: &str, region: &str) -> String {
 /// Writes one row of the help screen.
 pub fn keys_row(keys: &str, action: Action) -> String {
     format!("{keys:<24}{}", action_text(action))
+}
+
+/// Writes a row of the list of keys of a table. The result keys move between the
+/// pages of the table.
+pub fn table_keys_row(keys: &str, action: Action) -> String {
+    match action {
+        Action::GridPreviousResult => format!("{keys:<24}Previous page of rows"),
+        Action::GridNextResult => format!("{keys:<24}Next page of rows"),
+        _ => keys_row(keys, action),
+    }
 }
 
 pub fn count(number: usize) -> String {

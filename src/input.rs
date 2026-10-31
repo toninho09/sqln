@@ -198,7 +198,7 @@ impl Action {
     pub fn is_console_only(self) -> bool {
         matches!(
             self,
-            Action::GridCloseResult | Action::GridPreviousResult | Action::GridNextResult
+            Action::GridCloseResult
         )
     }
 

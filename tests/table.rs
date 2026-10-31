@@ -1378,7 +1378,7 @@ fn the_extra_row_of_a_page_leaves_the_budget_with_the_exact_cost() {
 
     let budget = Budget::new(1 << 20);
     let mut tab = TableTab::new(7, 1, relation(), false, 2);
-    tab.started(5, true);
+    tab.started(5, true, None);
     let key = StatementKey { console: 7, execution: 5, index: 0 };
     let row = |n: &str| -> Row { vec![Value::Text(n.into())].into_boxed_slice() };
     let rows = vec![row("a"), row("b"), row("c")];
@@ -1963,4 +1963,379 @@ fn the_enter_choice_keeps_tab_for_the_next_field_of_the_filter() {
     let tab = f.app.table().unwrap();
     assert_eq!(tab.focus, TableFocus::Order);
     assert_eq!(tab.filter.text(), "na");
+}
+
+// ---- the pages of a table ----
+
+fn paged(rows: usize) -> (Fixture, Arc<Recorder>) {
+    let (mut f, recorder) = Fixture::recorded(Recorder { rows, ..Recorder::default() });
+    f.open_table("users");
+    (f, recorder)
+}
+
+impl Fixture {
+    fn view(&self) -> (usize, usize) {
+        let view = self.app.table().unwrap().result.view;
+        (view.row, view.top)
+    }
+
+    fn next_page(&mut self) {
+        self.click_text("[Next]");
+        self.loaded();
+    }
+
+    fn previous_page(&mut self) {
+        self.click_text("[Previous]");
+    }
+}
+
+#[test]
+fn a_table_with_one_page_has_no_page_buttons() {
+    for rows in [0, 5, 100] {
+        let (mut f, _) = paged(rows);
+        let screen = f.screen();
+        assert!(!screen.contains("[Next]") && !screen.contains("[Previous]"), "{screen}");
+        assert!(!screen.contains("Page 1"), "{screen}");
+    }
+}
+
+#[test]
+fn a_full_page_with_more_rows_shows_the_buttons_and_the_next_button_loads_the_page() {
+    let (mut f, recorder) = paged(250);
+    f.assert_sees("Page 1 of 1+");
+    assert_eq!(recorder.count(), 1);
+    f.next_page();
+    assert_eq!(recorder.count(), 2);
+    assert_eq!(f.app.table().unwrap().loaded(), 200);
+    assert_eq!(f.view(), (100, 100), "the first row of the page stands at the top");
+    f.assert_sees("Page 2 of 2+");
+}
+
+#[test]
+fn the_buttons_move_over_loaded_pages_without_a_query() {
+    let (mut f, recorder) = paged(250);
+    f.next_page();
+    f.previous_page();
+    assert_eq!(f.view(), (0, 0));
+    f.assert_sees("Page 1 of 2+");
+    f.next_page();
+    assert_eq!(f.view(), (100, 100));
+    assert_eq!(recorder.count(), 2, "the rows of the page are on the grid");
+}
+
+#[test]
+fn the_last_page_says_that_it_is_the_last_and_the_next_button_asks_nothing() {
+    let (mut f, recorder) = paged(150);
+    f.next_page();
+    f.assert_sees("Page 2 of 2");
+    assert!(!f.screen().contains("Page 2 of 2+"), "{}", f.screen());
+    f.next_page();
+    assert_eq!(recorder.count(), 2);
+    assert_eq!(f.view(), (100, 100));
+}
+
+#[test]
+fn the_previous_button_of_the_first_page_does_nothing() {
+    let (mut f, _) = paged(250);
+    f.previous_page();
+    assert_eq!(f.view(), (0, 0));
+}
+
+#[test]
+fn the_keys_of_the_brackets_move_between_pages_in_a_table() {
+    let (mut f, recorder) = paged(250);
+    f.grid();
+    f.code(KeyCode::Char(']'));
+    f.loaded();
+    assert_eq!(f.view(), (100, 100));
+    assert_eq!(recorder.count(), 2);
+    f.code(KeyCode::Char('['));
+    assert_eq!(f.view(), (0, 0));
+}
+
+#[test]
+fn the_number_of_the_page_follows_the_cursor() {
+    let (mut f, _) = paged(250);
+    f.next_page();
+    f.previous_page();
+    f.grid();
+    for _ in 0..100 {
+        f.code(KeyCode::Down);
+    }
+    assert_eq!(f.view().0, 100);
+    f.assert_sees("Page 2 of 2+");
+}
+
+#[test]
+fn a_click_on_a_page_button_gives_the_focus_to_the_grid() {
+    let (mut f, _) = paged(250);
+    f.focus_filter();
+    f.next_page();
+    assert_eq!(f.app.table().unwrap().focus, TableFocus::Grid);
+}
+
+#[test]
+fn the_load_more_button_keeps_the_cursor_and_the_page() {
+    let (mut f, _) = paged(250);
+    f.click_text("[Load more]");
+    f.loaded();
+    assert_eq!(f.view(), (0, 0));
+    f.assert_sees("Page 1 of 2+");
+}
+
+#[test]
+fn a_page_that_fails_keeps_the_rows_and_the_cursor() {
+    let (mut f, recorder) = paged(250);
+    *recorder.fail_when.lock().unwrap() = Some("OFFSET 100".to_owned());
+    f.next_page();
+    assert_eq!(f.app.table().unwrap().loaded(), 100);
+    assert_eq!(f.view(), (0, 0));
+}
+
+#[test]
+fn a_page_that_stops_with_a_part_of_its_rows_keeps_the_cursor() {
+    // The rows arrive in batches of 200, so the page must hold more than one batch.
+    let settings = Settings { page_size: 300, ..Settings::default() };
+    let recorder = Recorder { rows: 1_000, mid_rows: 250, ..Recorder::default() };
+    let (mut f, recorder) = Fixture::recorded_with(recorder, settings);
+    f.open_table("users");
+    recorder.mid_hold.store(true, Ordering::SeqCst);
+    f.click_text("[Next]");
+    f.pump_until(|f| f.app.table().unwrap().loaded() > 300);
+    f.prefix('x');
+    f.loaded();
+    assert_eq!(f.view(), (0, 0));
+}
+
+#[test]
+fn load_more_after_a_stopped_move_stays_on_the_page() {
+    let (mut f, recorder) = paged(350);
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.click_text("[Next]");
+    f.pump_until(|f| f.app.table().unwrap().phase == Phase::Running);
+    f.prefix('x');
+    recorder.hold.store(false, Ordering::SeqCst);
+    f.loaded();
+    f.click_text("[Load more]");
+    f.loaded();
+    assert_eq!(f.view(), (0, 0), "the stopped move left nothing behind");
+}
+
+#[test]
+fn a_new_query_cancels_the_move_to_a_page() {
+    let (mut f, recorder) = paged(250);
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.click_text("[Next]");
+    f.pump_until(|f| f.app.table().unwrap().phase == Phase::Running);
+    f.prefix('x');
+    recorder.hold.store(false, Ordering::SeqCst);
+    f.loaded();
+    f.focus_filter();
+    f.apply();
+    f.loaded();
+    assert_eq!(f.view(), (0, 0));
+    f.assert_sees("Page 1 of 1+");
+}
+
+#[test]
+fn the_next_button_refuses_a_second_load() {
+    let (mut f, recorder) = paged(350);
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.click_text("[Next]");
+    f.pump_until(|f| f.app.table().unwrap().phase == Phase::Running);
+    f.click_text("[Next]");
+    f.assert_sees("a load in progress");
+    release(&recorder);
+    f.loaded();
+    assert_eq!(recorder.count(), 2);
+    assert_eq!(f.view(), (100, 100));
+}
+
+#[test]
+fn the_page_buttons_fit_the_minimum_terminal() {
+    let (mut f, _) = paged(250);
+    let screen = f.screen_at(80, 24);
+    for text in ["[<]", "1/1+", "[>]", "100 rows loaded"] {
+        assert!(screen.contains(text), "{text}\n{screen}");
+    }
+    let screen = f.screen_at(100, 30);
+    for text in ["[Previous]", "Page 1 of 1+", "[Next]", "100 rows loaded"] {
+        assert!(screen.contains(text), "{text}\n{screen}");
+    }
+}
+
+#[test]
+fn the_state_of_a_load_comes_before_the_page_buttons() {
+    let (mut f, recorder) = paged(250);
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.click_text("[Next]");
+    f.pump_until(|f| f.app.table().unwrap().phase == Phase::Running);
+    for (width, height) in [(80, 24), (100, 30), (140, 40)] {
+        let screen = f.screen_at(width, height);
+        assert!(screen.contains("100 rows loaded"), "{screen}");
+        assert!(screen.contains("loading"), "{screen}");
+    }
+    release(&recorder);
+    f.loaded();
+}
+
+#[test]
+fn a_narrow_row_keeps_short_page_buttons_with_a_long_state() {
+    let settings = Settings { max_connections: 1, ..Settings::default() };
+    let (mut f, recorder) = Fixture::recorded_with(Recorder { rows: 250, ..Recorder::default() }, settings);
+    f.open_table("users");
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.click_text("[Next]");
+    f.pump_until(|f| f.app.table().unwrap().phase == Phase::Running);
+    let screen = f.screen_at(100, 30);
+    assert!(screen.contains("1/1+") || screen.contains("Page 1 of 1+"), "{screen}");
+    release(&recorder);
+    f.loaded();
+}
+
+#[test]
+fn the_short_buttons_also_move_between_pages() {
+    let (mut f, recorder) = paged(350);
+    f.next_page();
+    assert_eq!(f.view(), (100, 100));
+    // A load in progress on the row of the minimum terminal leaves room for the short form.
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.click_text("[Load more]");
+    f.pump_until(|f| f.app.table().unwrap().phase == Phase::Running);
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|frame| f.app.draw(frame)).unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let (mut column, mut row) = (None, 0);
+    for y in 0..24 {
+        let text: String = (0..80).map(|x| buffer[(x, y)].symbol()).collect();
+        if let Some(byte) = text.find("[<]") {
+            assert!(text.contains("2/2+") && text.contains("loading"), "{text}");
+            column = Some(text[..byte].chars().count() as u16);
+            row = y;
+        }
+    }
+    let column = column.expect("the short form is on the screen");
+    f.app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), column, row));
+    assert_eq!(f.view(), (0, 0));
+    release(&recorder);
+    f.loaded();
+}
+
+#[test]
+fn the_row_search_takes_the_place_of_the_page_buttons() {
+    let (mut f, _) = paged(250);
+    f.grid();
+    f.press(ctrl('f'));
+    let screen = f.screen();
+    assert!(screen.contains("Find:"), "{screen}");
+    assert!(!screen.contains("[Next]"), "{screen}");
+}
+
+#[test]
+fn the_results_of_a_console_have_no_page_buttons() {
+    let (mut f, _) = Fixture::recorded(Recorder { rows: 250, ..Recorder::default() });
+    f.run_text(PAGE);
+    f.console_idle();
+    let screen = f.screen();
+    assert!(!screen.contains("[Next]") && !screen.contains("Page 1"), "{screen}");
+}
+
+#[test]
+fn the_page_buttons_show_which_directions_are_available() {
+    use ratatui::style::Modifier;
+
+    let (mut f, _) = paged(150);
+    assert!(f.modifier_of("[Previous]").contains(Modifier::DIM));
+    assert!(!f.modifier_of("[Next]").contains(Modifier::DIM));
+    f.next_page();
+    assert!(!f.modifier_of("[Previous]").contains(Modifier::DIM));
+    assert!(f.modifier_of("[Next]").contains(Modifier::DIM));
+    f.previous_page();
+    assert!(!f.modifier_of("[Next]").contains(Modifier::DIM));
+}
+
+#[test]
+fn a_click_on_the_page_label_does_not_move_or_load_rows() {
+    let (mut f, recorder) = paged(250);
+    f.click_text("Page 1 of 1+");
+    assert_eq!(f.view(), (0, 0));
+    assert_eq!(recorder.count(), 1);
+}
+
+#[test]
+fn a_failed_next_does_not_move_a_later_load_more() {
+    let (mut f, recorder) = paged(250);
+    *recorder.fail_when.lock().unwrap() = Some("OFFSET 100".to_owned());
+    f.next_page();
+    assert_eq!(f.view(), (0, 0));
+    *recorder.fail_when.lock().unwrap() = None;
+    f.load_more();
+    assert_eq!(f.view(), (0, 0));
+    assert_eq!(f.rows_loaded(), 200);
+    f.next_page();
+    assert_eq!(f.view(), (100, 100));
+    assert_eq!(recorder.count(), 3);
+}
+
+#[test]
+fn a_next_load_moves_only_its_table_after_the_user_changes_tabs() {
+    let (mut f, recorder) = paged(250);
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.click_text("[Next]");
+    f.pump_until(|f| f.app.table().unwrap().phase == Phase::Running);
+    f.click_text("console-1");
+    assert!(f.app.table().is_none());
+    release(&recorder);
+    f.pump_until(|f| !f.app.tables()[0].is_busy());
+    assert!(f.app.table().is_none());
+    assert_eq!(f.app.tables()[0].result.view.row, 100);
+    f.click_text("users (table)");
+    assert_eq!(f.view(), (100, 100));
+    assert_eq!(recorder.count(), 2);
+}
+
+#[test]
+fn loaded_pages_still_work_when_the_budget_refuses_a_new_page() {
+    let settings = Settings { page_size: 4, budget_bytes: 1_000, ..Settings::default() };
+    let recorder = Recorder { rows: 40, value_size: 50, ..Recorder::default() };
+    let (mut f, recorder) = Fixture::recorded_with(recorder, settings);
+    f.open_table("users");
+    f.load_more();
+    assert!(f.rows_loaded() > 4);
+    f.assert_sees("data budget reached");
+    let queries = recorder.count();
+    f.grid();
+    f.code(KeyCode::Char(']'));
+    assert_eq!(f.view(), (4, 4));
+    f.code(KeyCode::Char('['));
+    assert_eq!(f.view(), (0, 0));
+    assert_eq!(recorder.count(), queries);
+}
+
+#[test]
+fn a_search_removes_the_mouse_targets_of_the_page_buttons() {
+    let (mut f, recorder) = paged(250);
+    let screen = f.screen();
+    let (y, line) = screen.lines().enumerate().find(|(_, line)| line.contains("[Next]")).unwrap();
+    let x = line[..line.find("[Next]").unwrap()].chars().count() as u16;
+    f.grid();
+    f.press(ctrl('f'));
+    f.click(x, y as u16);
+    assert_eq!(recorder.count(), 1);
+    assert_eq!(f.view(), (0, 0));
+    assert!(f.app.table().unwrap().result.search.is_some());
+}
+
+#[test]
+fn the_list_of_keys_names_the_pages_in_a_table_and_the_results_in_a_console() {
+    let (mut f, _) = paged(250);
+    f.grid();
+    f.code(KeyCode::F(1));
+    f.assert_sees("Next page of rows");
+    f.code(KeyCode::Esc);
+    f.click_text("console-1");
+    f.prefix('j');
+    f.code(KeyCode::F(1));
+    f.assert_sees("Next result");
 }
