@@ -220,6 +220,7 @@ impl App {
             }
             DialogAction::DeleteScript(scope, id) => self.delete_script(scope, &id),
             DialogAction::Associate(console, connection) => self.associate(console, connection),
+            action @ (DialogAction::AuthCancel(_) | DialogAction::AuthConfirm(_) | DialogAction::AuthRetry(_) | DialogAction::AuthSession(_)) => self.auth_dialog(action),
         }
     }
 

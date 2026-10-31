@@ -1,5 +1,6 @@
 //! The application shell: the consoles, the connections, and the screen.
 
+mod auth;
 mod close;
 mod conflicts;
 mod connections;
@@ -82,6 +83,8 @@ pub struct Options {
     pub store: Option<Store>,
     /// The folder where a project can start. The application asks before it creates one.
     pub offer_project: Option<PathBuf>,
+    /// An explicit vault, such as an in-memory vault in tests. Native access stays lazy.
+    pub vault: Option<Arc<dyn crate::creds::Vault>>,
 }
 
 impl Default for Options {
@@ -98,6 +101,7 @@ impl Default for Options {
             settings: Settings::default(),
             store: None,
             offer_project: None,
+            vault: None,
         }
     }
 }
@@ -121,6 +125,10 @@ enum DialogAction {
     DiscardAndClose(ConsoleId),
     DeleteScript(Scope, String),
     Associate(ConsoleId, ConnectionId),
+    AuthCancel(u64),
+    AuthConfirm(u64),
+    AuthRetry(u64),
+    AuthSession(u64),
 }
 
 struct Dialog {
@@ -167,6 +175,7 @@ struct ScreenLayout {
     table: TableLayout,
     form: FormLayout,
     conflicts: ConflictLayout,
+    password: Vec<(usize, Rect)>,
     /// The options of the open dialog, with the row of those options.
     dialog: (Vec<(u16, u16, usize)>, u16),
     /// The area of the open list, with the index of its first row.
@@ -205,6 +214,7 @@ pub struct App {
     status: Option<String>,
     /// The files of the application. It is `None` when nothing loads or saves.
     persist: Option<persist::Persist>,
+    auth: auth::Auth,
     /// The scripts that another program changed, and that wait for a choice.
     conflicts: Option<conflicts::Conflicts>,
     /// The SQL rules of a console that has no connection.
@@ -264,6 +274,7 @@ impl App {
             overlay: None,
             status: None,
             persist,
+            auth: auth::Auth::new(options.vault.take()),
             conflicts: None,
             fallback_dialect: options.dialect,
             pending_key: None,
@@ -311,6 +322,7 @@ impl App {
 
     /// Ends the runtime without a wait for a statement that does not answer.
     pub fn shutdown(&mut self) {
+        self.auth.shutdown();
         self.save_session();
         if let Some(manager) = self.manager.take() {
             manager.shutdown();
@@ -380,11 +392,16 @@ impl App {
         let blocked = !self.dialogs.is_empty()
             || self.conflicts.is_some()
             || self.overlay.is_some()
-            || self.picker.is_some();
+            || self.picker.is_some()
+            || self.auth.prompt.is_some();
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
+            Event::Paste(text) if self.dialogs.is_empty() && self.auth.prompt.is_some() => {
+                if let Some(prompt) = &mut self.auth.prompt { prompt.paste(&text); }
+            }
             Event::Paste(text) if !blocked => self.on_paste(&text),
             Event::Mouse(mouse) if !self.dialogs.is_empty() => self.on_dialog_mouse(mouse),
+            Event::Mouse(mouse) if self.auth.prompt.is_some() => self.on_password_mouse(mouse),
             Event::Mouse(mouse) if self.conflicts.is_some() => self.on_conflicts_mouse(mouse),
             Event::Mouse(mouse) if self.picker.is_some() => self.on_picker_mouse(mouse),
             Event::Mouse(mouse) if !blocked => self.on_mouse(mouse),
@@ -427,7 +444,8 @@ impl App {
     /// It returns true when the screen changed.
     pub fn drain_events(&mut self) -> bool {
         let ticked = self.tick();
-        let changed = self.has_work() || ticked;
+        let authorized = self.poll_auth();
+        let changed = self.has_work() || ticked || authorized;
         if changed {
             let deadline = Instant::now() + SEARCH_SLICE;
             match self.table_active {
@@ -606,6 +624,9 @@ impl App {
         if let Some(overlay) = &mut self.overlay {
             let Overlay { title, contents, footer, scroll } = overlay;
             *scroll = draw_overlay(frame, title, contents, footer, *scroll, &self.theme);
+        }
+        if let Some(prompt) = &self.auth.prompt {
+            self.layout.password = crate::ui::auth::draw_password(frame, prompt, &self.theme);
         }
         if let Some(dialog) = self.dialogs.front() {
             let labels: Vec<&str> = dialog.options.iter().map(|(label, _)| *label).collect();

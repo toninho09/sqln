@@ -3,6 +3,7 @@
 use std::ops::Range;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use zeroize::Zeroizing;
 
 /// What a key did to the field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,11 +20,17 @@ pub enum Edit {
     Typed,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct LineInput {
-    text: String,
+    text: Zeroizing<String>,
     /// The position in characters, from 0 to the length.
     cursor: usize,
+}
+
+impl std::fmt::Debug for LineInput {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("LineInput").field("text", &"<redacted>").field("cursor", &self.cursor).finish()
+    }
 }
 
 impl LineInput {
@@ -123,12 +130,12 @@ impl LineInput {
 }
 
 /// A line break or a tab becomes a space, so pasted lines stay apart.
-fn single_line(text: &str) -> String {
-    text.chars()
+fn single_line(text: &str) -> Zeroizing<String> {
+    Zeroizing::new(text.chars()
         .filter_map(|c| match c {
             '\n' | '\t' => Some(' '),
             c if c.is_control() => None,
             c => Some(c),
         })
-        .collect()
+        .collect())
 }

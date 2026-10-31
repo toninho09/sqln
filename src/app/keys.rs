@@ -49,6 +49,10 @@ impl App {
             self.on_dialog_key(key);
             return;
         }
+        if self.auth.prompt.is_some() {
+            self.on_password_key(key);
+            return;
+        }
         if self.conflicts.is_some() {
             self.on_conflicts_key(key);
             return;
@@ -321,7 +325,6 @@ impl App {
 
     pub(super) fn start_run(&mut self, index: usize, scope: RunScope) {
         let console = &mut self.consoles[index];
-        let Some(manager) = &self.manager else { return };
         match console.editor.plan_run(scope) {
             Ok(plan) => {
                 let options = RunOptions {
@@ -329,8 +332,10 @@ impl App {
                     schema: console.schema.clone(),
                     row_cap: None,
                 };
-                let execution = manager.run(console.id, plan.statements.clone(), options);
-                console.begin_execution(execution, &plan, &self.budget);
+                let Some(connection) = console.connection else { return };
+                let revision = console.editor.revision();
+                let console = console.id;
+                self.authorize(connection, super::auth::Use::Run { console, connection, plan, options, revision });
             }
             Err(RunRefusal::CursorOutside) => {
                 self.status = Some(text::CURSOR_OUTSIDE.to_owned());
@@ -340,6 +345,11 @@ impl App {
     }
 
     pub(super) fn stop(&mut self, index: usize) {
+        let id = self.consoles[index].id;
+        if self.cancel_auth_console(id) {
+            if self.consoles[index].closing { self.close_step(id); }
+            return;
+        }
         let console = &mut self.consoles[index];
         if !console.is_busy() {
             return;
@@ -479,6 +489,8 @@ impl App {
         let console = self.console();
         if !self.dialogs.is_empty() {
             text::HINT_DIALOG
+        } else if self.auth.prompt.is_some() {
+            text::AUTH_PASSWORD_HINT
         } else if self.conflicts.is_some() {
             text::HINT_CONFLICTS
         } else if self.picker.is_some() {

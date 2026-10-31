@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::App;
 use crate::catalog::RelationRef;
-use crate::exec::{ConnectionId, RunOptions};
+use crate::exec::ConnectionId;
 use crate::input::Action;
 use crate::navigator::{Row, RowKind};
 use crate::sql::Dialect;
@@ -92,15 +92,10 @@ impl App {
         if request.is_some() && self.config_blocked() {
             return;
         }
-        let (Some(request), Some(index), Some(manager)) =
-            (request, self.table_active, self.manager.as_ref())
-        else {
-            return;
-        };
-        let tab = &mut self.tables[index];
-        let options = RunOptions { manual: false, schema: None, row_cap: Some(request.row_cap) };
-        let execution = manager.run(tab.id, vec![request.sql], options);
-        tab.started(execution, request.first);
+        let (Some(request), Some(index)) = (request, self.table_active) else { return };
+        let tab = &self.tables[index];
+        let (console, connection) = (tab.id, tab.connection);
+        self.authorize(connection, super::auth::Use::Page { console, connection, request });
     }
 
     /// Returns the tab on screen and its dialect, when it can start a query.
@@ -148,6 +143,7 @@ impl App {
 
     pub(super) fn stop_table(&mut self) {
         let Some(index) = self.table_active else { return };
+        if self.cancel_auth_console(self.tables[index].id) { return; }
         let tab = &mut self.tables[index];
         if !tab.is_busy() {
             return;
@@ -163,6 +159,7 @@ impl App {
         if index >= self.tables.len() {
             return;
         }
+        self.cancel_auth_console(self.tables[index].id);
         let tab = self.tables.remove(index);
         self.budget.release(tab.result.table.bytes);
         if let Some(manager) = &mut self.manager {

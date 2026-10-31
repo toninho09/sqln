@@ -5,8 +5,11 @@ use std::fmt;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-/// A password. Its debug text hides the value, so a log cannot show it.
-#[derive(Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
+
+/// A password. Debug hides its value, and drop clears its memory.
+#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct Secret(String);
 
 impl Secret {
@@ -25,7 +28,8 @@ impl fmt::Debug for Secret {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Engine {
     Postgres,
     MySql,
@@ -40,7 +44,8 @@ impl Engine {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Address {
     Tcp { host: String, port: u16 },
     Socket(PathBuf),
@@ -59,20 +64,23 @@ impl Address {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TlsFiles {
     /// Without a file, the system roots verify the server.
     pub ca: Option<PathBuf>,
     pub client: Option<ClientCertificate>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ClientCertificate {
     pub certificate: PathBuf,
     pub key: PathBuf,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Tls {
     Disabled,
     Verify(TlsFiles),

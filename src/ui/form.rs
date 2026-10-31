@@ -39,6 +39,7 @@ fn label(field: Field) -> &'static str {
         Field::Database => text::FIELD_DATABASE,
         Field::User => text::FIELD_USER,
         Field::Password => text::FIELD_PASSWORD,
+        Field::Credential => text::FIELD_CREDENTIAL,
         Field::Tls => text::FIELD_TLS,
         Field::CaFile => text::FIELD_CA,
         Field::ClientCertificate => text::FIELD_CLIENT_CERTIFICATE,
@@ -68,6 +69,8 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
         Field::Scope => text::VALUE_SCOPE_GLOBAL,
         Field::Entry if form.use_uri => text::VALUE_URI,
         Field::Entry => text::VALUE_FIELDS,
+        Field::Credential if form.credential == crate::store::config::CredentialName::Vault => text::VALUE_VAULT,
+        Field::Credential => text::VALUE_SESSION,
         Field::Tls if form.verify_tls => text::VALUE_TLS_VERIFY,
         Field::Tls => text::VALUE_TLS_OFF,
         _ => match form.foreign_keys {

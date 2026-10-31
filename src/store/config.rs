@@ -536,5 +536,5 @@ pub fn change_connections(root: &Root, scope: Scope, change: Change) -> Result<u
     let mut text = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
     text.push('\n');
     let expect = hash.map_or(Expect::Missing, Expect::Hash);
-    file::write_atomic(&path, text.as_bytes(), expect).map_err(|error| error.to_string())
+    file::write_private_atomic(&path, text.as_bytes(), expect).map_err(|error| error.to_string())
 }

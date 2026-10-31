@@ -152,6 +152,15 @@ impl Console {
 
     /// Accepts an execution. It clears the old results and frees their budget.
     pub fn begin_execution(&mut self, execution: ExecutionId, plan: &RunPlan, budget: &Budget) {
+        self.prepare_execution(Some(execution), plan, budget);
+    }
+
+    /// Accepts a request that waits for credentials, without assigning a database execution.
+    pub fn await_credentials(&mut self, plan: &RunPlan, budget: &Budget) {
+        self.prepare_execution(None, plan, budget);
+    }
+
+    fn prepare_execution(&mut self, execution: Option<ExecutionId>, plan: &RunPlan, budget: &Budget) {
         for result in self.results.drain(..) {
             budget.release(result.table.bytes);
         }
@@ -161,7 +170,7 @@ impl Console {
         self.results_made = 0;
         self.stop_reported = false;
         self.first_not_executed = None;
-        self.execution = Some(execution);
+        self.execution = execution;
         self.statements.clone_from(&plan.statements);
         self.phase = Phase::Waiting;
         self.editor.set_marks(plan);

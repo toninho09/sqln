@@ -14,7 +14,10 @@ O plano continua sendo a referência das regras funcionais.
 4. Manter as mesmas ações de execução nos modos convencional e Vim.
 
 O módulo `input` aplica o campo `keymap`, e a aplicação o lê de `config.json`.
-A barra de dicas mostra sempre as teclas padrão.
+O código atual ainda mostra teclas padrão na barra de dicas.
+**Definido:** a barra, a ajuda `F1` e as opções do prefixo mostram as teclas efetivas do `keymap`.
+Não mostrar atalhos removidos nem ações indisponíveis no painel atual.
+Essa mudança e os atalhos `Ctrl+W N`, `Ctrl+W a` e `Ctrl+W ,` ainda não estão implementados.
 O duplo clique em uma tabela e o clique no cabeçalho não foram testados em um terminal real.
 `Shift+F5` e `Ctrl+Enter` foram testados com sequências simuladas em um PTY, não no iTerm.
 As letras depois de `Ctrl+W` e `F1` também não foram testadas no iTerm.
@@ -56,6 +59,9 @@ A barra de dicas mostra as opções enquanto o prefixo estiver ativo.
 |---|---|
 | `h`, `j`, `k`, `l` ou setas | Mudar de painel |
 | `n` e `p` | Próxima aba e aba anterior |
+| `N` | Renomear o console atual (a implementar) |
+| `a` | Trocar ou associar a conexão do console (a implementar) |
+| `,` | Abrir Configurações (a implementar) |
 | `c` | Fechar a aba |
 | `q` | Sair da aplicação |
 | `b` | Recolher ou mostrar o navegador |
@@ -70,6 +76,11 @@ A barra de dicas mostra as opções enquanto o prefixo estiver ativo.
 | `?` | Abrir a ajuda |
 
 `Ctrl+W C` e `Ctrl+W R` não pedem confirmação, como os botões de commit e rollback.
+`Ctrl+W N` usa `N` maiúsculo e não substitui `Ctrl+W n`.
+A lista de consoles também oferece a ação de renomear, ainda não implementada.
+A troca de conexão exige confirmação e não executa SQL. As regras estão na seção 12 do plano.
+As abas principais seguem a ordem de abertura, sem grupos por tipo; o código ainda agrupa consoles antes de tabelas.
+Fechar o último console com uma tabela aberta não cria outro console; esse ajuste ainda não está implementado.
 
 No modo convencional, `Ctrl+W` não fecha a aba, ao contrário de muitas IDEs.
 O prefixo é o caminho comum aos dois modos, e o terminal entrega essa tecla.
@@ -163,6 +174,25 @@ Em uma tabela ou uma view, `Enter` abre a visão de tabela, ou seleciona a aba d
 
 Em um campo de texto, toda letra vira texto.
 No modo Vim, `j` e `k` mudam de campo somente fora dos campos de texto.
+
+## Solicitação de senha
+
+A senha fica mascarada, inclusive durante colagem. O salvamento começa desmarcado.
+
+| Ação | Tecla |
+|---|---|
+| Informar senha | Digitar ou colar no campo |
+| Próximo campo | `Tab` ou `Down` |
+| Campo anterior | `Shift+Tab` ou `Up` |
+| Marcar salvamento no cofre | `Space` ou `Enter` na opção |
+| Conectar | `Enter` no campo de senha ou no botão **Connect** |
+| Cancelar sem iniciar a operação | `Esc` ou botão **Cancel** |
+
+Fora do campo de senha, as setas horizontais mudam o foco.
+No modo Vim, `h/k` e `j/l` também mudam o foco fora do campo.
+Dentro do campo, essas letras sempre viram texto.
+O mouse seleciona o campo, marca a opção ou aciona um botão.
+Se o cofre falhar, a opção de sessão não oferece gravação global em texto simples.
 
 ## Grade
 

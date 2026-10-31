@@ -407,6 +407,11 @@ impl SqlEditor {
     }
 
     pub fn set_marks(&mut self, plan: &RunPlan) {
+        self.set_marks_at_revision(plan, self.revision);
+    }
+
+    /// Keeps marks tied to the text that starts a request, including credential waits.
+    pub fn set_marks_at_revision(&mut self, plan: &RunPlan, revision: u64) {
         self.marks = plan
             .statements
             .iter()
@@ -420,8 +425,8 @@ impl SqlEditor {
                 state: None,
             })
             .collect();
-        self.marks_revision = self.revision;
-        self.plan_revision = self.revision;
+        self.marks_revision = revision;
+        self.plan_revision = revision;
         self.error_spot = None;
     }
 

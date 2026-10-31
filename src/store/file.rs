@@ -81,20 +81,47 @@ fn check(path: &Path, expect: Expect) -> Result<(), WriteError> {
 /// the destination, and a rename. A failure removes the temporary file.
 /// It returns the hash of the new content.
 pub fn write_atomic(path: &Path, bytes: &[u8], expect: Expect) -> Result<u64, WriteError> {
+    write(path, bytes, expect, false)
+}
+
+/// Writes with owner-only permissions on Unix, including the temporary file.
+/// A unique temporary file prevents reuse of a file or symlink from another writer.
+pub fn write_private_atomic(path: &Path, bytes: &[u8], expect: Expect) -> Result<u64, WriteError> {
+    write(path, bytes, expect, true)
+}
+
+fn write(path: &Path, bytes: &[u8], expect: Expect, private: bool) -> Result<u64, WriteError> {
     let failed = |error: io::Error| WriteError::Failed(error.to_string());
     if let Some(folder) = path.parent() {
         fs::create_dir_all(folder).map_err(failed)?;
     }
-    let temporary = temporary(path);
+    let temporary = if private {
+        path.with_file_name(format!(".{}.tmp", uuid::Uuid::new_v4()))
+    } else {
+        temporary(path)
+    };
+    let mut opened = false;
     let result = (|| {
-        let mut file = File::create(&temporary).map_err(failed)?;
+        let mut file = if private {
+            let mut options = File::options();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            options.open(&temporary).map_err(failed)?
+        } else {
+            File::create(&temporary).map_err(failed)?
+        };
+        opened = true;
         file.write_all(bytes).map_err(failed)?;
         file.sync_all().map_err(failed)?;
         drop(file);
         check(path, expect)?;
         fs::rename(&temporary, path).map_err(failed)
     })();
-    if result.is_err() {
+    if result.is_err() && opened {
         let _ = fs::remove_file(&temporary);
     }
     result.map(|()| hash(bytes))

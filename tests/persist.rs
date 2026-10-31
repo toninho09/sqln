@@ -492,8 +492,8 @@ fn a_form_for_a_network_connection_saves_no_password_in_the_file() {
     session.write("me");
     session.code(KeyCode::Tab);
     session.write("hunter2");
-    // Then: Tls, CA, certificate, key, pool, read only, connect, SQL limit, Test, Save.
-    for _ in 0..10 {
+    // Then: credential, TLS, CA, certificate, key, pool, read only, connect, SQL limit, Test, Save.
+    for _ in 0..11 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);

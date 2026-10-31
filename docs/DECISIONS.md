@@ -4,6 +4,37 @@ Este documento registra as escolhas e as alternativas rejeitadas.
 As regras completas estão no [plano](../PLAN.md).
 Não reabrir uma decisão sem um fato novo.
 
+## Fechamento das decisões — 2026-10-31
+
+**Definido:** o usuário aceita todas as 12 recomendações abaixo.
+A aprovação fecha as decisões, mas não declara as mudanças como implementadas.
+A seção 1 do plano separa o código atual dos ajustes que faltam.
+
+| Ponto | Decisão aprovada | Referência |
+|---|---|---|
+| 1. Renomear consoles | `Ctrl+W N` e ação na lista; recusar nome vazio ou repetido na conexão; preservar identidade e arquivos | Plano, seção 12 |
+| 2. Trocar conexão | `Ctrl+W a`, confirmação, salvamento anterior, preservação do texto e limpeza dos resultados; não executar nem converter SQL | Plano, seção 12 |
+| 3. CTEs | Sugerir nomes e colunas identificáveis de `WITH`, com aliases e escopo; não consultar o banco para descobri-las | Plano, seção 6 |
+| 4. Desfazer | Até 100 entradas e 64 MiB por console; remover as mais antigas e avisar sobre entrada isolada acima do orçamento | Plano, seção 5 |
+| 5. Dicas e ajuda | Mostrar teclas efetivas do `keymap` e somente ações disponíveis, inclusive no prefixo | Plano, seção 5 |
+| 6. Configurações | `Ctrl+W ,`, escopos, valores herdados e os cinco campos do esboço; avisar antes de perder seleção ou histórico ao trocar teclado | Plano, seção 11 |
+| 7. Arquivos | Aprovar o salvamento e os conflitos existentes; usar **Fechar e descartar texto** para o arquivo removido | Plano, seção 12 |
+| 8. Listas | Aprovar listas de consoles e scripts sem conexão, confirmação de exclusão e associação sem execução | Plano, seção 12 |
+| 9. Configuração e estado | Aprovar recarga, bloqueio por erro e escopos; avisar sem bloquear quando `workspace.json` estiver ilegível | Plano, seções 11 e 12 |
+| 10. Tabelas | Aprovar abertura, rótulos, ordenação e páginas; misturar abas na ordem de abertura e não criar console ao fechar o último com tabela aberta | Plano, seção 10 |
+| 11. Credenciais | Uso inicial só na sessão, gravação explícita, recuperação e migração confirmadas; confiança com foco em Cancelar | Plano, seção 13 |
+| 12. Cofre | `keyring-core`, Keychain e Secret Service; falha desconhecida é erro, nunca ausência; validar em serviços reais | Plano, seção 13; arquitetura, seção 9 |
+
+Terminal real, mouse, disco de rede, certificados e falhas de rede continuam como validações pendentes.
+
+## Estado da entrega de credenciais
+
+O código implementa a base e o primeiro uso, mas não conclui a etapa de credenciais.
+As regras de texto simples autorizado, migração, senha recusada e exclusão separada continuam aprovadas e pendentes de implementação.
+A validação em cofres reais também continua pendente.
+A [matriz do plano](../PLAN.md#fechamento-da-etapa-de-credenciais) registra os critérios de conclusão.
+Os testes com cofre em memória e bancos reais não substituem essa validação nativa.
+
 ## Execução e resultados
 
 | Assunto | Escolha | Rejeitado | Motivo |
@@ -34,7 +65,8 @@ Não reabrir uma decisão sem um fato novo.
 
 ## Arquivos e salvamento
 
-Estas escolhas vieram da implementação e esperam confirmação, exceto onde o plano as fixou.
+Estas escolhas estão aprovadas em 2026-10-31, com os ajustes registrados no plano.
+O código já oferece sessão e cofre. A exceção global autorizada em texto simples ainda não existe.
 
 | Assunto | Escolha | Rejeitado | Motivo |
 |---|---|---|---|
@@ -47,24 +79,25 @@ Estas escolhas vieram da implementação e esperam confirmação, exceto onde o 
 | Erro de configuração | Bloqueia as conexões, e `Ctrl+W r` recarrega | Carregar só o escopo válido | O plano proíbe o escopo parcial |
 | Mudança externa da configuração | Pergunta, com **Ignore** como foco inicial | Recarga automática | O plano pede a pergunta, e o foco inicial não altera nada |
 | Conexão que sai do arquivo | Sai da aplicação só quando está ociosa | Fechar a sessão | O plano proíbe a recarga de alterar conexões ativas |
-| Senha | Nunca vai ao arquivo; `credential` fica `session` ou `none` | Gravar a senha | A etapa de credenciais decide o cofre |
+| Senha no código atual | Sessão ou cofre, com referência `session`, `none` ou `vault`; o segredo não vai para o arquivo | Gravar o segredo no projeto | A exceção global autorizada ainda aguarda implementação e validação do cofre real |
 | Ordem do fechamento | Grava o texto, depois fecha | Fechar e gravar | A gravação que falha mantém o console aberto |
 | Layout | `workspace.json` do projeto, ou do escopo global sem projeto | Um arquivo por escopo | O layout pertence à sessão, e não à conexão |
 | Associação entre escopos | Grava o texto pendente, copia, confere e remove os originais | Mover com `rename` | A pasta de destino pode estar em outro disco |
 
 ## Visão de tabela
 
-Estas escolhas vieram da implementação e esperam confirmação.
+Estas escolhas estão aprovadas em 2026-10-31.
+A nova ordem das abas e o fechamento sem console substituto ainda exigem mudanças no código.
 
 | Assunto | Escolha | Rejeitado | Motivo |
 |---|---|---|---|
 | Abrir uma tabela | `Enter` e duplo clique; `Direita` abre as colunas | `Enter` abre as colunas | `docs/KEYMAP.md` já previa a mudança do `Enter` |
-| Ordem das abas | Consoles, depois tabelas na ordem de abertura | Ordem de abertura misturada | Os dois grupos têm listas separadas, e os consoles mantêm seus índices |
+| Ordem das abas | Consoles e tabelas juntos na ordem de abertura | Separar por tipo, como no código atual | Mantém a sequência de abertura do usuário |
 | Rótulo da aba | `nome (table)` ou `nome (view)` | Só o nome | O plano pede um rótulo que identifique a view |
 | Clique no cabeçalho | Crescente, decrescente e sem ordem | Só crescente | Um clique a mais desfaz a ordem, sem usar o campo |
 | Aviso de ordem instável | Uma linha fixa enquanto não existir ordem | Só com mais de uma página | O plano pede o aviso sempre que não houver ordem aplicada |
 | Consulta em andamento | Recusar aplicar, limpar, ordenar e carregar mais | Parar e recomeçar | Menos estados; a resposta antiga não encontra a aba em outro estado |
-| Fechar o último console | Trocar por um console vazio quando existe uma aba de tabela | Recusar ou sair | A faixa de abas sempre tem um console |
+| Fechar o último console | Selecionar uma tabela aberta, sem criar um console | Criar um console vazio, como no código atual | Uma aba de tabela não precisa de um console visível |
 | Campos do filtro | Uma linha, com quebras convertidas em espaço | Editor de várias linhas | O filtro é uma condição curta |
 
 ## Sessão e conexão
@@ -124,8 +157,8 @@ Estas escolhas vieram da implementação e esperam confirmação.
 | Sair | `Ctrl+W q` | Somente fechar a última aba | A saída com vários consoles precisa de um comando; `q` segue o Vim |
 | Adicionar conexão | `a` no navegador | Item na árvore | O navegador vazio já oferece um caminho, e a tecla segue `n`, `e` e `r` |
 | Perguntas simultâneas | Fila, com uma pergunta aberta | Substituir a pergunta aberta | Dois consoles podem pedir uma resposta no mesmo instante |
-| Nome automático | `console-N` com um contador da aplicação | Um contador por conexão | Duas abas nunca têm o mesmo nome |
-| Senha no formulário | Campo mascarado, somente em memória | Esperar a etapa de credenciais | Sem o campo, uma conexão nova não conecta a um banco com senha |
+| Nome automático | Menor `console-N` disponível na conexão, entre consoles abertos e salvos | Contador único da aplicação | Os conjuntos de consoles pertencem às conexões |
+| Senha no formulário | Campo mascarado; sessão como opção inicial e cofre mediante escolha explícita | Salvar automaticamente | O usuário autoriza o armazenamento do segredo |
 | Senha na URI | Mascarar na tela, com o mesmo tamanho | Mostrar o texto digitado | O plano proíbe mostrar senhas; o cursor continua certo |
 | Commit por atalho | Sem confirmação | Pedir confirmação | Mesmo comportamento dos botões |
 | Metadados | Um `.json` ao lado de cada `.sql` | Índice único ou comentário no script | Reduz conflitos no Git e mantém o script limpo |

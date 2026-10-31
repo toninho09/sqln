@@ -6,9 +6,13 @@ Este documento apresenta uma proposta visual baseada no [plano funcional](../PLA
 O plano continua sendo a referência das decisões confirmadas.
 
 Os valores, nomes e dados abaixo são exemplos fictícios.
-Tamanhos, espaçamentos, cores e atalhos ainda não representam contratos finais.
+Tamanhos, espaçamentos e cores ainda são propostas visuais.
+Os atalhos aprovados estão em `docs/KEYMAP.md`.
+O usuário aprova os fluxos e ajustes registrados em `docs/DECISIONS.md` em 2026-10-31.
+Essa aprovação não significa que todos os fluxos já existem no código.
 A interface final usa inglês; os rótulos em português destes esboços são exemplos.
-A aplicação implementa as seções 1 a 3 e 6, a seção 4 sem campo de credencial, e parte das seções 5 e 8.
+A aplicação implementa as seções 1 a 4 e 6, e parte das seções 5 e 8.
+O cadastro já oferece **Session only** e **System vault**. Migração e texto simples autorizado ainda não existem.
 A tela de abertura da seção 1 é uma lista sobre a tela, e não um painel com busca.
 O diálogo **Configurações** da seção 8 ainda não existe. A [seção 1 do plano](../PLAN.md) lista o que falta.
 
@@ -49,6 +53,15 @@ A filtragem por conexão e a oferta de reutilização já estão definidas.
 
 Abrir um console já aberto seleciona sua aba existente.
 Criar outro console gera um nome automático, que pode ser alterado depois.
+**Definido, ainda não implementado:** `Ctrl+W N` renomeia o console atual; a lista também oferece a ação.
+Recusar nomes vazios ou repetidos na mesma conexão, sem mudar identidade, arquivos, conexão ou escopo.
+
+**Definido, ainda não implementado:** `Ctrl+W a` abre a troca ou associação de conexão do console.
+Bloquear durante execução ou transação aberta.
+Mostrar a conexão atual, a nova conexão e a pasta de destino antes da confirmação.
+Salvar antes da troca; uma falha cancela a troca.
+Preservar texto, nome, cursor e rolagem; limpar resultados, mensagens e seleção de banco ou schema.
+Não executar nem converter o SQL automaticamente.
 
 ## 2. Visão de console
 
@@ -171,7 +184,10 @@ Regras da barra:
 
 Implementação atual, de cima para baixo: título, campo `WHERE`, campo `ORDER BY`, botões
 `[Apply] [Clear] [Load more] [Stop]`, grade, resumo e uma linha de aviso.
-O rótulo da aba é `nome (table)` ou `nome (view)`, e a faixa mostra os consoles antes das tabelas.
+O rótulo da aba é `nome (table)` ou `nome (view)`.
+**Definido:** a faixa mistura consoles e tabelas na ordem de abertura.
+Fechar o último console com uma tabela aberta seleciona uma tabela, sem criar um console vazio.
+O código ainda agrupa consoles antes das tabelas e cria um console vazio ao fechar o último.
 O resumo mostra as linhas carregadas e o estado.
 A linha de aviso mostra o risco da ordem instável, ou a mensagem da última consulta.
 O erro de uma primeira página ocupa a área da grade.
@@ -205,7 +221,7 @@ O exemplo abaixo considera um projeto ativo.
 │ Porta:      [5432]                                     │
 │ Banco:      [app_db]                                   │
 │ Usuário:    [app_user]                                 │
-│ Credencial: [Cofre do sistema]                         │
+│ Credencial: [Somente nesta sessão]                    │
 │ TLS:        [Verificar certificado]                    │
 │ CA:         [Do sistema]                               │
 │ Certificado de cliente: [Nenhum]                       │
@@ -275,13 +291,17 @@ Durante a saída, resolver a falha atual antes de perguntar sobre outro console.
 - Alteração externa do script exige escolha entre recarregar e sobrescrever.
 - Uma configuração JSON inválida mostra arquivo e posição do erro, sem liberar operações com bancos até a correção.
 - O usuário corrige esse arquivo fora da aplicação e usa **Recarregar**.
+- **Definido, ainda não implementado:** `workspace.json` ilegível usa o estado inicial e mostra um aviso não bloqueante.
+- **Definido, ainda não implementado:** a ação para um script removido usa o rótulo **Fechar e descartar texto**.
 
 ### Credenciais
 
 Usar o cofre como armazenamento principal.
 Somente a ausência de cofre permite oferecer gravação global em texto simples, mediante autorização explícita.
 Cofre bloqueado ou com erro não ativa essa exceção.
-Com o cofre bloqueado, oferecer nova tentativa e senha de sessão.
+Com o cofre bloqueado ou com erro, oferecer **Tentar novamente**, **Usar senha nesta sessão** e **Cancelar**.
+Tratar uma falha desconhecida como erro, nunca como ausência.
+Confirmar a distinção em testes reais antes de liberar texto simples como alternativa.
 Senha de sessão permanece em memória, por conexão, até fechar a aplicação.
 Se a gravação falhar, manter a senha em memória, informar que ela não foi salva e oferecer nova tentativa explícita.
 Quando um cofre passar a existir, pedir confirmação para migrar e verificar a gravação antes de oferecer remover a senha global.
@@ -294,7 +314,27 @@ Mudar o destino não autoriza enviar a senha anterior automaticamente.
 Remover uma conexão não apaga sua senha do cofre; excluir essa senha exige confirmação separada.
 Avisar que outras cópias do projeto podem usar a mesma credencial.
 
-O desenho dos campos de autenticação precisa preservar essas diferenças.
+Solicitar a senha antes do primeiro uso que precisar dela, inclusive teste e leitura do catálogo.
+Iniciar com uso somente na sessão. Salvar exige uma escolha explícita.
+A solicitação de senha, a confiança e a recuperação de falhas do cofre já existem no código.
+A senha fica mascarada, e a opção de salvar começa desmarcada.
+O formulário permite sessão ou cofre; testar uma senha digitada não a grava nem substitui a senha da conexão salva.
+Um caminho novo de projeto exige confirmação também ao testar ou salvar uma definição existente.
+Faltam texto simples autorizado, migração, senha recusada e exclusão separada pela interface.
+
+#### Fluxos de credenciais ainda não implementados
+
+Estes fluxos seguem regras já aprovadas. Os detalhes abaixo não declaram as telas como implementadas.
+
+| Fluxo | Conteúdo necessário | Regra de segurança |
+|---|---|---|
+| Texto simples global | Aviso antes da autorização, opção desmarcada e identificação do armazenamento global | Oferecer somente com ausência confirmada de cofre; nunca gravar o segredo no projeto |
+| Migração | Confirmação para migrar e, após conferência, oferta de remoção da senha global | Preservar a fonte em caso de falha e informar migração incompleta |
+| Senha recusada | Solicitação de outra senha uma vez e indicação de suspensão após a segunda recusa | Não confundir recusa com falha de rede, TLS ou execução SQL |
+| Exclusão da credencial | Confirmação separada, com identificação da conexão e aviso sobre outras cópias do projeto | Remover a conexão não autoriza apagar o segredo |
+
+Os testes de tela atuais não validam os diálogos nativos do Keychain nem do Secret Service.
+A [matriz do plano](../PLAN.md#fechamento-da-etapa-de-credenciais) separa implementação e validação pendentes.
 
 ## 6. Navegação e foco
 
@@ -442,7 +482,10 @@ Dados de acesso, TLS e limite do pool exigem desconexão.
 
 ### Confirmação de destino
 
-Esta pergunta aparece antes da primeira conexão a um destino nesta máquina.
+Esta pergunta aparece antes da primeira conexão a um destino nesta máquina, conforme a seção 3 do plano.
+Mostrar destino, usuário e TLS; iniciar com foco em **Cancelar**.
+A confirmação já existe no código. Um caminho novo pode mostrar **Confirm project path**.
+Cancelar impede o envio da operação que espera essas credenciais.
 
 ```text
 ┌─ Confirmar destino ──────────────────────────────────────┐
@@ -457,8 +500,10 @@ Esta pergunta aparece antes da primeira conexão a um destino nesta máquina.
 
 ### Solicitação de senha
 
+Iniciar com uso somente na sessão, com a opção de salvar desmarcada.
 O texto da opção muda conforme o cofre.
-Sem cofre, a opção informa que a gravação global usa texto simples.
+Sem cofre, a opção informa que a gravação global usa **texto simples** e exige autorização.
+Cofre bloqueado ou com erro não permite essa alternativa.
 
 ```text
 ┌─ Senha: app (local) ─────────────────────────────────────┐
@@ -486,7 +531,14 @@ A execução fica bloqueada até a escolha e a confirmação de uma conexão.
 
 ### Configurações
 
+**Definido, ainda não implementado:** abrir com `Ctrl+W ,` na primeira versão.
 O projeto grava somente os valores que declara.
+Oferecer escopo global ou do projeto e os cinco campos abaixo.
+Mostrar os valores herdados do global e permitir remover uma definição do projeto para usar o global.
+**Salvar** grava as alterações. **Cancelar** não altera nada.
+Manter `config.json` para opções avançadas, como o `keymap`.
+Ao mudar o modo de teclado, preservar texto, cursor e rolagem.
+Se a mudança apagar seleção ou histórico, avisar antes, inclusive na recarga da configuração.
 
 ```text
 ┌─ Configurações ──────────────────────────────────────────┐

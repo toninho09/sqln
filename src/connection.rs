@@ -111,14 +111,20 @@ impl Definition {
         definition
     }
 
-    /// Takes the password of the session from `old`, when both point to the same user
-    /// and address. A password never goes to a file, so a load does not bring it back.
+    /// Keeps a session password only when the destination and transport context match.
     pub fn keep_password_of(&mut self, old: &Self) {
-        if let (Source::Network(new), Source::Network(old)) = (&mut self.source, &old.source)
+        let same = match (self.resolved_source(), old.resolved_source()) {
+            (Source::Network(new), Source::Network(old)) => {
+                new.engine == old.engine
+                    && new.user == old.user
+                    && new.address == old.address
+                    && new.tls == old.tls
+            }
+            _ => false,
+        };
+        if same
+            && let (Source::Network(new), Source::Network(old)) = (&mut self.source, &old.source)
             && new.password.is_none()
-            && new.engine == old.engine
-            && new.user == old.user
-            && new.address == old.address
         {
             new.password.clone_from(&old.password);
         }
@@ -178,6 +184,9 @@ pub struct Connection {
     pub name: String,
     /// The place in the files. A connection of a test or of a ready connector has none.
     pub key: Option<ConnectionKey>,
+    pub credential: crate::store::config::CredentialName,
+    /// Changes when a saved definition changes, so old credential replies cannot apply.
+    pub generation: u64,
     /// A test can give a ready connector, and that connection has no definition.
     pub definition: Option<Definition>,
     pub dialect: Dialect,
@@ -200,6 +209,8 @@ impl Connection {
             id,
             name,
             key: None,
+            credential: crate::store::config::CredentialName::None,
+            generation: 0,
             definition,
             dialect: connector.dialect(),
             capabilities: connector.capabilities(),

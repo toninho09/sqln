@@ -1,6 +1,7 @@
 //! Screen drawing.
 
 pub mod conflicts;
+pub mod auth;
 pub mod console;
 pub mod form;
 pub mod navigator;

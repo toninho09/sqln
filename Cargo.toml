@@ -13,6 +13,7 @@ async-trait = "0.1"
 crossterm = "0.29.0"
 edtui = { version = "0.11.7", default-features = false, features = ["mouse-support"] }
 futures-util = "0.3"
+keyring-core = "1.0.1"
 mysql_async = { version = "0.36.2", default-features = false, features = ["minimal-rust", "default-rustls-ring"] }
 ratatui = "0.30.2"
 rusqlite = { version = "0.38", features = ["bundled"] }
@@ -26,6 +27,13 @@ tokio-postgres-rustls = { version = "0.14", default-features = false, features =
 unicode-width = "0.2.3"
 uuid = { version = "1", features = ["v4"] }
 webpki-roots = "1"
+zeroize = { version = "1.9", features = ["derive"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-async-io-crypto-rust"] }
 
 [dev-dependencies]
 tokio = { version = "1.54", features = ["rt-multi-thread", "sync", "time", "macros"] }

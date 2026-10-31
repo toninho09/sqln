@@ -191,6 +191,7 @@ struct ConsoleEntry {
 
 pub struct Manager {
     runtime: Runtime,
+    blocking: Arc<tokio::sync::Semaphore>,
     budget: Arc<Budget>,
     events: Sender<ExecEvent>,
     connections: HashMap<ConnectionId, Binding>,
@@ -209,6 +210,7 @@ impl Manager {
         let (events, receiver) = mpsc::channel(EVENT_CAPACITY);
         let manager = Self {
             runtime,
+            blocking: Arc::new(tokio::sync::Semaphore::new(1)),
             budget,
             events,
             connections: HashMap::new(),
@@ -218,6 +220,18 @@ impl Manager {
             next_execution: AtomicU64::new(1),
         };
         Ok((manager, receiver))
+    }
+
+    /// Runs one blocking system operation at a time, without blocking the interface.
+    pub fn spawn_blocking(&self, operation: impl FnOnce() + Send + 'static) {
+        let blocking = self.blocking.clone();
+        self.runtime.spawn(async move {
+            let Ok(permit) = blocking.acquire_owned().await else { return };
+            let _ = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                operation();
+            }).await;
+        });
     }
 
     /// Adds a pool. This opens no session, because a connection starts at its first use.

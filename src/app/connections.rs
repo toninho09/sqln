@@ -2,11 +2,10 @@
 
 use std::sync::Arc;
 
-use super::persist::new_key;
 use super::{App, DialogAction, Picker, PickerKind};
 use crate::catalog::{Catalog, Columns, RelationRef};
 use crate::connection::{
-    CatalogState, Connection, Definition, Source, name_is_taken, refresh_labels,
+    CatalogState, Connection, ConnectionKey, Definition, Source, name_is_taken, refresh_labels,
 };
 use crate::connector::sqlite::{SqliteTarget, validate_path};
 use crate::connector::{Connector, Namespace};
@@ -16,13 +15,13 @@ use crate::form::{ConnectionForm, Field, FormNote, Kind};
 use crate::input::Action;
 use crate::navigator::{Navigator, Row, RowKind};
 use crate::store::Scope;
-use crate::store::config::Change;
+use crate::store::config::{Change, CredentialName};
 use crate::table::TableTab;
 use crate::ui::text;
 
 impl App {
     /// Starts the manager at its first use, so a start without a database has no runtime.
-    fn ensure_manager(&mut self) -> bool {
+    pub(super) fn ensure_manager(&mut self) -> bool {
         if self.manager.is_some() {
             return true;
         }
@@ -173,11 +172,10 @@ impl App {
         if self.config_blocked() {
             return;
         }
-        let Some(manager) = &self.manager else { return };
-        manager.load_catalog(id);
         if let Some(connection) = self.connection_mut(id) {
             connection.catalog_state = CatalogState::Loading;
         }
+        self.authorize(id, super::auth::Use::Catalog(id));
     }
 
     pub(super) fn on_catalog_loaded(&mut self, id: ConnectionId, catalog: Result<Catalog, String>) {
@@ -248,11 +246,10 @@ impl App {
         if self.persist.as_ref().is_some_and(|persist| persist.error.is_some()) {
             return;
         }
-        let Some(manager) = &self.manager else { return };
         let Some(connection) = self.connections.iter_mut().find(|item| item.id == id) else { return };
         if !connection.requested_columns.contains(&relation) {
-            manager.load_columns(id, relation.clone());
-            connection.requested_columns.push(relation);
+            connection.requested_columns.push(relation.clone());
+            self.authorize(id, super::auth::Use::Columns(id, relation));
         }
     }
 
@@ -397,11 +394,15 @@ impl App {
         }
         self.status = Some(text::DISCONNECTED.to_owned());
         let definition = self.connection(id).and_then(|item| item.definition.clone());
+        let credential = self.connection(id).map(|item| item.credential).unwrap_or_default();
+        let key = self.connection(id).and_then(|item| item.key.clone());
         if let (Some(form), Some(definition)) = (&mut self.form, definition)
             && form.editing == Some(id)
             && form.name_only
         {
             *form = ConnectionForm::editing(id, &definition, false);
+            form.credential = credential;
+            if let Some(key) = key { form.connection_id = key.id; }
         }
     }
 
@@ -412,6 +413,10 @@ impl App {
         };
         let connected = self.manager.as_ref().is_some_and(|manager| manager.is_connected(id));
         let mut form = ConnectionForm::editing(id, definition, connected);
+        if let Some(connection) = self.connection(id) {
+            form.credential = connection.credential;
+            if let Some(key) = &connection.key { form.connection_id.clone_from(&key.id); }
+        }
         if connected {
             form.note = Some(FormNote::Info(text::FORM_CONNECTED.to_owned()));
         }
@@ -600,13 +605,11 @@ impl App {
         }
         let test = self.next_test;
         self.next_test += 1;
-        if let Some(manager) = &self.manager {
-            manager.test_connection(test, definition.connector(), definition.connect_timeout);
-        }
         if let Some(form) = &mut self.form {
             form.test = Some(test);
             form.note = Some(FormNote::Info(text::FORM_TESTING.to_owned()));
         }
+        self.authorize_test(definition, test);
     }
 
     pub(super) fn on_connection_tested(&mut self, test: u64, result: Result<(), String>) {
@@ -671,7 +674,7 @@ impl App {
     }
 
     /// Returns the scope that the form saves to. A session without files has none.
-    fn form_scope(&self) -> Option<Scope> {
+    pub(super) fn form_scope(&self) -> Option<Scope> {
         self.persist.as_ref()?;
         let form = self.form.as_ref()?;
         match form.editing {
@@ -713,11 +716,12 @@ impl App {
         }
         let Some(connection) = self.connection(id) else { return };
         let key = connection.key.clone();
+        let credential = connection.credential;
         let mut renamed = connection.definition.clone();
         if let Some(definition) = &mut renamed {
             definition.name.clone_from(&name);
             if let Some(key) = &key
-                && let Err(message) = self.save_connection(key, definition)
+                && let Err(message) = self.save_connection(key, definition, credential)
             {
                 self.set_form_error(message);
                 return;
@@ -742,29 +746,43 @@ impl App {
         // The file of the scope comes first, so a failed write leaves the form open.
         let key = match editing {
             Some(id) => self.connection(id).and_then(|item| item.key.clone()),
-            None => self.form_scope().map(new_key),
+            None => self.form_scope().map(|scope| ConnectionKey {
+                scope, id: self.form.as_ref().unwrap().connection_id.clone(),
+            }),
         };
+        let mut credential = self.form.as_ref().map_or(CredentialName::Session, |form| form.credential);
+        if credential != CredentialName::Vault {
+            credential = match &definition.source {
+                Source::Network(target) if target.password.is_some() => CredentialName::Session,
+                _ => CredentialName::None,
+            };
+        }
         if let Some(key) = &key {
             definition.base = self.persist_root(key.scope).map(|root| root.base);
-            if let Err(message) = self.save_connection(key, &definition) {
+            if let Err(message) = self.save_connection(key, &definition, credential) {
                 self.set_form_error(message);
                 return;
             }
         }
-        match editing {
-            Some(id) => self.replace_definition(id, definition),
-            None => {
-                if let Some(id) = self.add_definition(definition) {
-                    if let Some(connection) = self.connection_mut(id) {
-                        connection.key = key;
-                    }
-                    refresh_labels(&mut self.connections);
-                    self.navigator.select_connection(id);
-                    self.navigator_focused = !self.navigator.collapsed;
-                }
+        let id = match editing {
+            Some(id) => { self.replace_definition(id, definition); Some(id) }
+            None => self.add_definition(definition),
+        };
+        if let Some(id) = id {
+            if let Some(connection) = self.connection_mut(id) {
+                connection.key = key;
+                connection.credential = credential;
             }
+            refresh_labels(&mut self.connections);
+            if editing.is_none() {
+                self.navigator.select_connection(id);
+                self.navigator_focused = !self.navigator.collapsed;
+            }
+            let generation = self.connection(id).unwrap().generation;
+            self.auth.local.insert(id, (generation, editing.is_none()));
         }
         self.form = None;
+        if let Some(id) = id { self.authorize(id, super::auth::Use::Save); }
     }
 
     /// Applies a changed definition. A session never survives a change of access.
@@ -783,8 +801,12 @@ impl App {
         let name = definition.name.clone();
         let dialect = connector.dialect();
         let key = self.connections[index].key.clone();
+        let credential = self.connections[index].credential;
+        let generation = self.connections[index].generation + 1;
         self.connections[index] = Connection::new(id, name, Some(definition), connector.as_ref());
         self.connections[index].key = key;
+        self.connections[index].credential = credential;
+        self.connections[index].generation = generation;
         refresh_labels(&mut self.connections);
         self.navigator.forget(id);
         for index in 0..self.consoles.len() {

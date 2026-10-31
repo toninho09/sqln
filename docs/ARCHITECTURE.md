@@ -58,8 +58,12 @@ Thread principal                    Runtime Tokio
 `ui` e `input` não dependem de `connector`.
 Somente `connector` conhece tipos dos drivers.
 
-`creds` e `trust` ainda não existem.
-`app` aplica a prioridade das teclas e o mouse. `app/keys.rs`, `app/close.rs`, `app/connections.rs`, `app/mouse.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs` e `app/conflicts.rs` dividem esse código.
+`app::auth` integra `creds` e `trust` ao primeiro uso, com os diálogos de senha e confiança.
+`creds` oferece identidades, senhas de sessão e os adaptadores do cofre.
+`trust` oferece a leitura e a gravação de confirmações globais.
+Texto simples autorizado, migração completa, senha recusada e exclusão separada pela interface ainda faltam.
+As chamadas do cofre são síncronas, mas `Manager::spawn_blocking` as executa fora da thread da interface.
+`app` aplica a prioridade das teclas e o mouse. `app/auth.rs`, `app/keys.rs`, `app/close.rs`, `app/connections.rs`, `app/mouse.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs` e `app/conflicts.rs` dividem esse código.
 `store` guarda as pastas e os arquivos. Ele não conhece `app`, `ui` nem `connector`.
 
 ### Arquivos e salvamento
@@ -68,7 +72,7 @@ Somente `connector` conhece tipos dos drivers.
 
 | Parte | Responsabilidade |
 |---|---|
-| `store::file` | `write_atomic` (temporário, sincronização, conferência do destino e renomeação), hash, bloqueios do sistema e limpeza dos `.tmp` antigos |
+| `store::file` | `write_atomic`, `write_private_atomic` (temporário exclusivo e permissão `0600` no Unix), hash, bloqueios e limpeza dos `.tmp` antigos |
 | `store::config` | Leitura com `serde`, validação, precedência, `Definition` de cada entrada e `change_connections` (releitura sob bloqueio, mudança e gravação) |
 | `store::scripts` | Arquivos `.sql` e `.json` de um console, lista, bloqueio por console, cópia entre escopos e fim de linha |
 | `store::workspace` | `workspace.json`, lido sem erro e gravado sob o bloqueio de `config.lock` |
@@ -89,6 +93,37 @@ Regras do código:
 8. O fim de linha do arquivo (`LF` ou `CRLF`) fica no `ScriptFile`. O editor usa `LF` sempre.
 9. `ScriptFile::poll` lê o arquivo só se o tamanho ou a data mudou, e depois compara o hash.
 10. Uma definição de conexão leva a pasta base. `Definition::connector` resolve os caminhos relativos com ela no momento de abrir.
+
+### Preparação de credenciais
+
+`app::auth` recebe cada operação antes de enviá-la ao gerente.
+A preparação cobre execuções, catálogo, colunas, páginas e testes de conexão das definições salvas.
+Conectores prontos e definições locais sem chave de arquivo não vêm de configuração importada.
+
+1. Conferir a confiança no destino e no caminho do projeto.
+2. Solicitar confirmação quando necessário, antes de ler o cofre ou enviar credenciais.
+3. Obter a senha conforme `credential`, ou usar autenticação sem senha para `none`.
+4. Atualizar o conector do pool sem apagar texto, schema ou estado do editor.
+5. Enviar somente a operação que ainda corresponde à solicitação atual.
+
+Um cadastro local autoriza seu destino. Ele não autoriza implicitamente a reutilização de credenciais em um caminho novo de projeto.
+Testar um formulário existente também não ignora essa confirmação.
+A opção de salvar começa desmarcada; teste com senha digitada não substitui a senha da definição salva.
+
+A fila guarda o SQL, as opções e a revisão do editor no momento da solicitação.
+Editar durante a espera não muda o SQL enviado nem atribui suas marcas ao texto novo.
+Cada resposta tem um token. A conexão tem uma geração, e o teste tem uma cópia do formulário.
+Cancelamento ou mudança invalida respostas antigas.
+Cancelar também remove os pedidos da mesma geração que aguardam a mesma preparação.
+
+`Manager::spawn_blocking` limita as operações de sistema a uma por vez, com um semáforo assíncrono.
+Trabalhos aguardam sem ocupar threads bloqueantes; um token impede que um trabalho cancelado inicie acesso ao cofre.
+As respostas usam um canal privado de preparação, separado dos eventos de execução SQL.
+Uma chamada nativa já iniciada pode continuar após cancelar, mas sua resposta não inicia SQL.
+
+A interface oferece nova tentativa explícita ou senha de sessão após falha do cofre.
+Falha ao gravar a referência depois de salvar no cofre mantém a credencial e informa o estado incompleto.
+`globalPlainText` ainda não lê segredos: a interface informa a limitação e oferece senha de sessão.
 
 ### Aba de tabela
 
@@ -112,6 +147,10 @@ A identidade da aba vem do contador de consoles do gerente, então os números n
 Cada entrada de desfazer do EdTUI guarda uma cópia inteira do texto.
 Por cálculo, um script de 50.000 linhas ocupa cerca de 15 MB por entrada e 1,5 GB nas 100 entradas.
 Scripts comuns ficam muito abaixo disso.
+
+**Definido, ainda não implementado:** limitar o histórico a 100 entradas e 64 MiB por console.
+Remover as entradas mais antigas ao atingir qualquer limite, sem limitar o tamanho do texto.
+Uma entrada isolada maior que o orçamento não entra no histórico, e a aplicação mostra um aviso.
 
 ## 3. Concorrência
 
@@ -361,7 +400,11 @@ Cada console tem `consoles/<id>.sql` e `consoles/<id>.json`:
 
 ### Estado local
 
-`workspace.json` nunca entra no Git:
+`workspace.json` nunca entra no Git.
+**Definido:** se o arquivo estiver ilegível, usar o estado inicial e mostrar um aviso não bloqueante.
+O código ainda usa o estado inicial sem aviso.
+
+Exemplo:
 
 ```json
 {
@@ -397,24 +440,44 @@ locks/
 ```
 
 `trust.json` guarda os destinos confirmados e os caminhos conhecidos dos projetos.
+O formato implementado tem `version: 1`, `destinations` e `projects`.
+Cada destino inclui motor, endereço TCP ou socket, usuário e configuração TLS, sem senha.
+Cada projeto registra `connectionId` e uma lista de `paths` canônicos.
+O caminho não participa da conta do cofre; um caminho novo exige confirmação separada.
+`Trust::required` não cria arquivos. Arquivo inválido ou ilegível retorna erro, sem autorizar o destino.
+`Trust::confirm` toma `locks/trust.lock`, relê o arquivo e grava com conferência do hash.
+O arquivo e seu temporário têm permissão `0600` no Unix.
+Nenhuma chamada grava confiança nos arquivos do projeto.
 
 ## 9. Referência de credencial
 
 No cofre, cada entrada usa o serviço `sqln` e uma conta com este formato:
 
 ```text
-<escopo>/<id-da-conexão>/<host>:<porta>/<usuário>/<tls>
+<escopo>/<id-da-conexão>/<motor>/<endereço-JSON-escapado>/<usuário-escapado>/<TLS-JSON-escapado>
 ```
 
-Exemplo: `project/0f3726f5-16d2-46af-82f9-54736aaa81f8/db.example.test:5432/app_user/verify`.
+`Identity::account` implementa esse formato com escape percentual por componente.
+O motor também participa da identidade, para separar PostgreSQL de MySQL.
+O endereço inclui host e porta, ou o caminho do socket.
+O TLS inclui modo e caminhos configurados de CA, certificado de cliente e chave.
+Usar os caminhos como configurados, sem incluir a raiz do projeto em caminhos relativos.
+A confirmação separada do caminho do projeto controla a reutilização após mover ou copiar a pasta.
+O escape impede colisões entre separadores, percentuais e componentes com texto arbitrário.
 
 Mudar o destino, o usuário ou o TLS muda a conta.
 Assim, a aplicação não encontra a senha anterior e precisa pedir outra.
 Renomear a conexão não muda a conta.
 O caminho da pasta não faz parte da conta.
 
-Para o projeto, usar `keyring-core` com um armazenamento específico por plataforma.
+**Definido:** usar `keyring-core` com um armazenamento específico por plataforma.
+Usar Keychain no macOS e Secret Service no Linux.
 A documentação do `keyring` 4 recomenda esse caminho para aplicações.
+`SystemVault` já oferece leitura, gravação e exclusão com um armazenamento próprio, sem alterar o padrão global do processo.
+`Credentials` guarda senhas de sessão por `Identity` e mantém a senha em memória após falha de gravação.
+`save_verified` grava e confere a leitura; ele não remove nenhuma fonte em texto simples.
+Erros do cofre usam mensagens fixas, sem o texto do provedor nem bytes de senha.
+`app::auth` já usa esses adaptadores. Os testes automáticos injetam `Options::vault`, sem acessar o cofre real.
 
 | Resposta do cofre | Significado | Ação |
 |---|---|---|
@@ -422,14 +485,44 @@ A documentação do `keyring` 4 recomenda esse caminho para aplicações.
 | `NoStorageAccess` | Cofre bloqueado ou sem acesso | Oferecer nova tentativa e senha de sessão |
 | `NoDefaultStore` | Cofre ausente | Aplicar as regras de cofre ausente |
 | `PlatformFailure` | Erro do cofre | Oferecer nova tentativa e senha de sessão |
+| Falha desconhecida | Erro do cofre, nunca ausência | Oferecer nova tentativa e senha de sessão |
 
+Com falta de acesso ou erro, oferecer **Tentar novamente**, **Usar senha nesta sessão** e **Cancelar**.
+Solicitar a senha antes do primeiro uso que precisar dela, inclusive teste e leitura do catálogo.
+Iniciar a solicitação com uso somente na sessão; salvar exige uma escolha explícita.
+A confirmação de confiança mostra destino, usuário e TLS, com **Cancelar** como foco inicial.
 O bloqueio do Keychain e o cofre do Linux ainda não foram testados.
+Confirmar os critérios em testes reais antes de liberar texto simples como alternativa.
+
+### Continuação da implementação de credenciais
+
+A etapa permanece parcial. A [matriz do plano](../PLAN.md#fechamento-da-etapa-de-credenciais) define seus critérios de conclusão.
+
+| Ponto | Código existente | Trabalho restante |
+|---|---|---|
+| Cofres reais | `SystemVault`, `vault_error` e o teste ignorado `native_vault_round_trip` | Validar o comportamento dos serviços nativos e registrar os cenários de bloqueio, ausência e erro |
+| Texto simples global | `CredentialName::GlobalPlainText`, `after_auth_trust` e `write_private_atomic` | Estender o esquema global, implementar leitura e gravação autorizadas e substituir o aviso de recurso indisponível |
+| Migração | `Credentials::save_verified` | Integrar detecção da fonte global, confirmação, conferência e remoção opcional da fonte, com recuperação de falhas |
+| Senha recusada | `ConnectError(pub String)`, eventos de execução e `app::auth` | Preservar a classificação de autenticação dos drivers até a interface; controlar a nova senha e a suspensão da definição |
+| Exclusão separada | `Vault::delete`, `Credentials::delete_from_vault` e `remove_connection` | Oferecer a confirmação separada e manter a remoção da definição independente da exclusão do segredo |
+
+A referência `globalPlainText` não significa que o arquivo já contém uma senha utilizável.
+O esquema ainda não tem um campo de segredo nem armazenamento global para credenciais de conexões do projeto.
+Essa implementação deve manter a associação por identidade e nunca escrever o segredo no projeto.
+
+A classificação de autenticação precisa distinguir conexão recusada, rede, TLS e falhas durante SQL.
+Uma mensagem textual de erro não comprova que uma senha foi recusada.
+A recuperação não pode repetir comandos que já chegaram ao banco.
+
+O mapeamento dos erros do cofre acima descreve o adaptador atual.
+Os testes com cofre em memória não comprovam como cada serviço nativo informa ausência ou bloqueio.
+Não habilitar a exceção de texto simples antes dessa validação.
 
 ## 10. Fluxos de recuperação
 
 ### Gravação de arquivo
 
-1. Gravar em `<arquivo>.tmp`, na mesma pasta.
+1. Gravar o temporário na mesma pasta. Para `config.json` e `trust.json`, usar nome exclusivo e permissão `0600` no Unix.
 2. Sincronizar o arquivo com o disco.
 3. Comparar o hash do arquivo de destino com o último hash conhecido.
 4. Renomear o arquivo temporário sobre o destino.
@@ -451,6 +544,8 @@ O salvamento pode perder até 500 ms de digitação.
 3. Oferecer nova tentativa explícita.
 
 ### Migração para o cofre
+
+**Definido, ainda não integrado:** `save_verified` cobre somente gravação e conferência, não o fluxo completo abaixo.
 
 1. Detectar uma senha global com um cofre disponível.
 2. Pedir confirmação.

@@ -10,7 +10,7 @@ use crate::connection::{Connection, ConnectionKey, Definition, refresh_labels};
 use crate::editor::{KeyboardMode, SqlEditor};
 use crate::exec::ConnectionId;
 use crate::script_file::Trouble;
-use crate::store::config::{self, Change, Config, ConfigError, Loaded, Stored};
+use crate::store::config::{self, Change, Config, ConfigError, CredentialName, Loaded, Stored};
 use crate::store::file;
 use crate::store::scripts::{self, ScriptMeta};
 use crate::store::workspace::{self, EditorState, Position};
@@ -157,6 +157,7 @@ impl App {
         let id = self.add_definition(item.definition)?;
         if let Some(connection) = self.connection_mut(id) {
             connection.key = Some(ConnectionKey { scope: item.scope, id: item.id });
+            connection.credential = item.credential;
         }
         refresh_labels(&mut self.connections);
         Some(id)
@@ -261,20 +262,21 @@ impl App {
     fn update_stored(&mut self, index: usize, item: Stored) {
         let id = self.connections[index].id;
         let mut definition = item.definition;
+        let same_credential = self.connections[index].credential == item.credential;
         if let Some(current) = &self.connections[index].definition {
-            definition.keep_password_of(current);
-            if *current == definition {
-                return;
-            }
+            if same_credential { definition.keep_password_of(current); }
+            if *current == definition && same_credential { return; }
         }
         if !self.is_in_use(id) {
             self.replace_definition(id, definition);
+            if let Some(connection) = self.connection_mut(id) { connection.credential = item.credential; }
         }
     }
 
     /// Writes the connection to the file of its scope. It returns the error text.
-    pub(super) fn save_connection(&mut self, key: &ConnectionKey, definition: &Definition) -> Result<(), String> {
-        let entry = config::to_entry(&key.id, definition);
+    pub(super) fn save_connection(&mut self, key: &ConnectionKey, definition: &Definition, credential: CredentialName) -> Result<(), String> {
+        let mut entry = config::to_entry(&key.id, definition);
+        if matches!(definition.source, crate::connection::Source::Network(_)) { entry.credential = credential; }
         self.change_config(key.scope, Change::Upsert(Box::new(entry)))
     }
 
@@ -589,9 +591,4 @@ impl App {
             .iter()
             .find(|c| c.key.as_ref().is_some_and(|key| key.scope == scope && key.id == id))
     }
-}
-
-/// Returns the entry for a new connection, with a new id.
-pub(super) fn new_key(scope: Scope) -> ConnectionKey {
-    ConnectionKey { scope, id: scripts::new_id() }
 }

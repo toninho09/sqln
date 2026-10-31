@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use zeroize::Zeroizing;
 
 use crate::connection::{
     DEFAULT_BUSY_SECONDS, DEFAULT_CONNECT_SECONDS, DEFAULT_POOL_LIMIT, DEFAULT_SQL_SECONDS,
@@ -16,6 +17,7 @@ use crate::connector::target::{
 };
 use crate::exec::ConnectionId;
 use crate::store::Scope;
+use crate::store::config::CredentialName;
 use crate::ui::text;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -30,6 +32,7 @@ pub enum Field {
     Database,
     User,
     Password,
+    Credential,
     Tls,
     CaFile,
     ClientCertificate,
@@ -59,7 +62,7 @@ pub enum FieldStyle {
 impl Field {
     pub fn style(self) -> FieldStyle {
         match self {
-            Field::Kind | Field::Scope | Field::Entry | Field::Tls | Field::ForeignKeys => {
+            Field::Kind | Field::Scope | Field::Entry | Field::Credential | Field::Tls | Field::ForeignKeys => {
                 FieldStyle::Choice
             }
             Field::ReadOnly => FieldStyle::Flag,
@@ -98,6 +101,9 @@ pub struct ConnectionForm {
     /// True while the connection is connected, so only its name can change.
     pub name_only: bool,
     pub kind: Kind,
+    pub credential: CredentialName,
+    /// The stable identity of a new definition, including tests before its first save.
+    pub connection_id: String,
     pub use_uri: bool,
     pub verify_tls: bool,
     /// `None` keeps the default of SQLite.
@@ -113,7 +119,7 @@ pub struct ConnectionForm {
     pub test: Option<u64>,
     /// The position of the cursor in the focused text, in characters.
     pub cursor: usize,
-    texts: HashMap<Field, String>,
+    texts: HashMap<Field, Zeroizing<String>>,
     /// True after the user chose the TLS field. The form then stops its suggestion.
     tls_chosen: bool,
 }
@@ -141,6 +147,8 @@ impl ConnectionForm {
             editing: None,
             name_only: false,
             kind: Kind::Postgres,
+            credential: CredentialName::Session,
+            connection_id: uuid::Uuid::new_v4().to_string(),
             use_uri: false,
             verify_tls: true,
             foreign_keys: None,
@@ -227,11 +235,11 @@ impl ConnectionForm {
     }
 
     fn set(&mut self, field: Field, value: String) {
-        self.texts.insert(field, value);
+        self.texts.insert(field, Zeroizing::new(value));
     }
 
     pub fn text(&self, field: Field) -> &str {
-        self.texts.get(&field).map_or("", String::as_str)
+        self.texts.get(&field).map_or("", |value| value.as_str())
     }
 
     fn trimmed(&self, field: Field) -> &str {
@@ -253,7 +261,7 @@ impl ConnectionForm {
         }
         match self.kind {
             Kind::Sqlite => fields.extend([Field::File, Field::ForeignKeys, Field::BusyTimeout]),
-            _ if self.use_uri => fields.extend([Field::Entry, Field::Uri]),
+            _ if self.use_uri => fields.extend([Field::Entry, Field::Uri, Field::Credential]),
             _ => fields.extend([
                 Field::Entry,
                 Field::Host,
@@ -261,6 +269,7 @@ impl ConnectionForm {
                 Field::Database,
                 Field::User,
                 Field::Password,
+                Field::Credential,
                 Field::Tls,
                 Field::CaFile,
                 Field::ClientCertificate,
@@ -302,6 +311,13 @@ impl ConnectionForm {
                 self.scope = if self.scope == Scope::Project { Scope::Global } else { Scope::Project };
             }
             Field::Entry => self.use_uri = !self.use_uri,
+            Field::Credential => {
+                self.credential = if self.credential == CredentialName::Vault {
+                    CredentialName::Session
+                } else {
+                    CredentialName::Vault
+                };
+            },
             Field::Tls => {
                 self.verify_tls = !self.verify_tls;
                 self.tls_chosen = true;
@@ -350,7 +366,9 @@ impl ConnectionForm {
     /// Writes pasted text in a text field. A form field holds one line.
     pub fn on_paste(&mut self, text: &str) {
         if matches!(self.focus.style(), FieldStyle::Text | FieldStyle::Secret) {
-            let line: String = text.lines().next().unwrap_or("").chars().filter(|c| !c.is_control()).collect();
+            let line = Zeroizing::new(
+                text.lines().next().unwrap_or("").chars().filter(|c| !c.is_control()).collect::<String>(),
+            );
             self.insert(&line);
         }
     }
