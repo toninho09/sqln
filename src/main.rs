@@ -56,6 +56,13 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
                 let rows = number("--row-cap", args.next())?;
                 options.settings.row_cap = usize::try_from(rows).unwrap_or(usize::MAX);
             }
+            "--page-size" => {
+                let rows = number("--page-size", args.next())?;
+                if rows == 0 {
+                    return Err("--page-size needs 1 or more rows.".to_owned());
+                }
+                options.settings.page_size = usize::try_from(rows).unwrap_or(usize::MAX);
+            }
             "--sql-timeout" => {
                 let seconds = number("--sql-timeout", args.next())?;
                 options.settings.sql_timeout =

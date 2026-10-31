@@ -3,6 +3,7 @@
 pub mod console;
 pub mod form;
 pub mod navigator;
+pub mod table;
 pub mod text;
 pub mod theme;
 pub mod wrap;
@@ -16,8 +17,9 @@ use ratatui::widgets::{Clear, Paragraph, Widget};
 
 pub use self::console::{
     ConsoleLayout, column_edge_at, draw_console, draw_dialog, draw_main_tabs, draw_overlay,
-    draw_picker, draw_small_terminal, grid_cell_at, tab_at,
+    draw_picker, draw_small_terminal, grid_cell_at, header_column_at, main_tab_label, tab_at,
 };
+pub use self::table::{TableBar, TableControl, TableLayout, draw_table};
 use self::theme::Theme;
 use crate::complete::SuggestionKind;
 use crate::editor::{MarkState, SearchBar, SearchField, SqlEditor, SuggestionList, TAB_WIDTH};
@@ -57,6 +59,27 @@ pub fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut SqlEditor, theme:
         let anchor = Position::new(cursor.x.saturating_sub(anchor_shift as u16), cursor.y);
         draw_suggestions(frame, area, anchor, list, theme);
     }
+}
+
+/// Writes the visible part of a text field. The cursor stays inside `width`.
+/// It returns the spans and the index of the first visible character.
+pub(crate) fn input_spans(
+    chars: &[char],
+    cursor: usize,
+    width: usize,
+    focused: bool,
+    theme: &Theme,
+) -> (Vec<Span<'static>>, usize) {
+    if !focused {
+        return (vec![Span::raw(chars.iter().take(width).collect::<String>())], 0);
+    }
+    let cursor = cursor.min(chars.len());
+    let first = (cursor + 1).saturating_sub(width);
+    let before: String = chars[first..cursor].iter().collect();
+    let at = chars.get(cursor).map_or_else(|| " ".to_owned(), char::to_string);
+    let after: String =
+        chars.iter().skip(cursor + 1).take(width.saturating_sub(cursor + 1 - first)).collect();
+    (vec![Span::raw(before), Span::styled(at, theme.cursor), Span::raw(after)], first)
 }
 
 fn mark_symbol(state: MarkState, theme: &Theme) -> (&'static str, Style) {
@@ -138,7 +161,7 @@ pub fn list_area(anchor: Position, bounds: Rect, width: u16, rows: u16) -> Rect 
     }
 }
 
-fn draw_suggestions(
+pub(crate) fn draw_suggestions(
     frame: &mut Frame,
     bounds: Rect,
     anchor: Position,

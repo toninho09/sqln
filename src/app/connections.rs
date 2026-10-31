@@ -12,6 +12,7 @@ use crate::exec::{ConnectionId, Manager};
 use crate::form::{ConnectionForm, Field, FormNote, Kind};
 use crate::input::Action;
 use crate::navigator::{Navigator, Row, RowKind};
+use crate::table::TableTab;
 use crate::ui::text;
 
 impl App {
@@ -202,6 +203,7 @@ impl App {
                 self.request_missing_columns(index);
             }
         }
+        self.refresh_tables(id);
     }
 
     pub(super) fn request_missing_columns(&mut self, index: usize) {
@@ -211,7 +213,7 @@ impl App {
         }
     }
 
-    fn request_columns(&mut self, id: ConnectionId, relation: RelationRef) {
+    pub(super) fn request_columns(&mut self, id: ConnectionId, relation: RelationRef) {
         let Some(manager) = &self.manager else { return };
         let Some(connection) = self.connections.iter_mut().find(|item| item.id == id) else { return };
         if !connection.requested_columns.contains(&relation) {
@@ -236,6 +238,7 @@ impl App {
             Action::NavigatorCollapse => self.collapse(&row),
             Action::NavigatorExpand => self.expand(&row),
             Action::NavigatorOpen if row.kind == RowKind::Connection => self.open_console(id),
+            Action::NavigatorOpen if is_relation(&row) => self.open_table(&row),
             Action::NavigatorOpen => self.toggle(&row),
             Action::NavigatorNewConsole => self.new_console(id),
             Action::NavigatorRefresh => self.reload_catalog(id),
@@ -319,18 +322,23 @@ impl App {
         self.leave_navigator();
     }
 
-    /// Returns the name of a console that must end its work first.
-    fn console_in_use(&self, id: ConnectionId) -> Option<&str> {
-        self.consoles
+    /// Returns the name of a console or a table that must end its work first.
+    fn console_in_use(&self, id: ConnectionId) -> Option<String> {
+        let console = self
+            .consoles
             .iter()
             .filter(|console| console.connection == Some(id))
             .find(|console| console.is_busy() || console.in_transaction())
-            .map(|console| console.name.as_str())
+            .map(|console| console.name.clone());
+        console.or_else(|| {
+            let table = self.tables.iter().find(|tab| tab.connection == id && tab.is_busy());
+            table.map(TableTab::label)
+        })
     }
 
     fn disconnect(&mut self, id: ConnectionId) {
         if let Some(console) = self.console_in_use(id) {
-            self.status = Some(text::connection_in_use(console));
+            self.status = Some(text::connection_in_use(&console));
             return;
         }
         let Some(manager) = &self.manager else { return };
@@ -372,7 +380,7 @@ impl App {
 
     fn confirm_removal(&mut self, id: ConnectionId) {
         if let Some(console) = self.console_in_use(id) {
-            self.status = Some(text::connection_in_use(console));
+            self.status = Some(text::connection_in_use(&console));
             return;
         }
         let Some(connection) = self.connection(id) else { return };
@@ -390,7 +398,7 @@ impl App {
     pub(super) fn remove_connection(&mut self, id: ConnectionId) {
         // Another console can start to work while the question stays open.
         if let Some(console) = self.console_in_use(id) {
-            self.status = Some(text::connection_in_use(console));
+            self.status = Some(text::connection_in_use(&console));
             return;
         }
         for index in 0..self.consoles.len() {
@@ -398,6 +406,7 @@ impl App {
                 self.unbind_console(index);
             }
         }
+        self.close_tables_of(id);
         if let Some(manager) = &mut self.manager {
             manager.remove_connection(id);
         }
@@ -523,7 +532,7 @@ impl App {
     pub(super) fn disconnect_form(&mut self) {
         let Some(id) = self.form.as_ref().and_then(|form| form.editing) else { return };
         if let Some(console) = self.console_in_use(id) {
-            let note = FormNote::Error(text::connection_in_use(console));
+            let note = FormNote::Error(text::connection_in_use(&console));
             if let Some(form) = &mut self.form {
                 form.note = Some(note);
             }
@@ -645,6 +654,10 @@ impl App {
             console.schema = None;
         }
     }
+}
+
+fn is_relation(row: &Row) -> bool {
+    matches!(row.kind, RowKind::Table | RowKind::View)
 }
 
 fn form_file_exists(definition: &Definition) -> bool {

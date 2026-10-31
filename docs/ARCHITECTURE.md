@@ -40,6 +40,9 @@ Thread principal                    Runtime Tokio
 | `complete` | Sugestões do autocomplete |
 | `catalog` | Cache em memória; schemas e tabelas primeiro, colunas sob demanda |
 | `console` | Editor, resultados, mensagens e estado de um console |
+| `result` | Grade de um resultado com cursor e busca, usada por consoles e tabelas |
+| `table` | Aba de tabela: páginas, campos, ordenação, sugestões e consulta |
+| `line_input` | Campo de texto de uma linha, usado pelos campos da barra de filtro |
 | `exec` | Execuções, scripts, teto e cancelamento |
 | `pool` | Limite, fila, reserva e limpeza |
 | `connector` | Contrato e conectores PostgreSQL, MySQL e SQLite |
@@ -57,6 +60,23 @@ Somente `connector` conhece tipos dos drivers.
 `store`, `creds` e `trust` ainda não existem.
 `app` aplica a prioridade das teclas e o mouse. `app/keys.rs`, `app/close.rs`, `app/connections.rs` e `app/mouse.rs` dividem esse código.
 As definições de conexão ficam em memória até a etapa de configuração.
+
+### Aba de tabela
+
+Cada aba de tabela tem uma tarefa de console do gerente de execução, mas sem editor e sem transação.
+A aba pede uma página com `Run`, e recebe os mesmos eventos de um console.
+Assim, o prazo, a parada, o cancelamento, a fila do pool e o orçamento valem sem código novo.
+A tarefa guarda a conexão somente durante a consulta, pois uma consulta de tabela nunca deixa uma transação aberta.
+
+1. `table::page_sql` monta a consulta: `SELECT *`, `WHERE`, `ORDER BY` e `LIMIT n+1 OFFSET k`, cada cláusula em uma linha.
+2. O tokenizador recusa o texto com um segundo comando ou com um token aberto, antes de enviar a consulta.
+3. `RunOptions::row_cap` limita o `ResultSink` a `n+1` linhas, e o `LIMIT` do SQL garante esse teto. O sink nunca pede o cancelamento.
+4. A aba guarda as `n` primeiras linhas e descarta a linha extra, com o custo dela devolvido ao orçamento. A linha extra prova que existe uma próxima página.
+5. O `OFFSET` de **Carregar mais** é o número de linhas já carregadas.
+6. A primeira página de uma consulta limpa as linhas, e o `ExecutionId` descarta as respostas antigas.
+
+Uma consulta de tabela e uma consulta de console compartilham o mesmo `ExecEvent`.
+A identidade da aba vem do contador de consoles do gerente, então os números não colidem.
 
 ### Limite conhecido do editor
 

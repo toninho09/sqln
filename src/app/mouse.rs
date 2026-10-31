@@ -1,19 +1,25 @@
 //! The mouse: clicks, the wheel, and the drag of dividers and columns.
 
+use std::time::{Duration, Instant};
+
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::Position;
+use ratatui::layout::{Position, Rect};
 
 use super::{App, MAX_EDITOR_RATIO, MIN_EDITOR_RATIO};
 use crate::console::Focus;
 use crate::form::FormRequest;
 use crate::input::Action;
-use crate::navigator::{MIN_WIDTH, Navigator};
+use crate::navigator::{MIN_WIDTH, Navigator, RowKind};
+use crate::result::ResultTab;
+use crate::table::TableFocus;
 use crate::ui::console::Control;
-use crate::ui::{column_edge_at, grid_cell_at, tab_at};
+use crate::ui::{TableControl, column_edge_at, grid_cell_at, header_column_at, tab_at};
 
 /// The console keeps this width when the user drags the divider of the navigator.
 pub(super) const MIN_MAIN_WIDTH: u16 = 40;
 const WHEEL_ROWS: isize = 3;
+/// Two clicks on the same cell in this time open a table.
+const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 #[derive(Clone, Copy)]
 pub(super) enum Drag {
@@ -34,9 +40,7 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => self.on_press(mouse, position),
             MouseEventKind::Drag(MouseButton::Left) if self.drag.is_some() => self.on_drag(mouse),
             MouseEventKind::Up(_) if self.drag.is_some() => self.drag = None,
-            MouseEventKind::Drag(MouseButton::Left)
-                if !self.navigator_focused && self.console().focus == Focus::Results =>
-            {
+            MouseEventKind::Drag(MouseButton::Left) if self.grid_has_focus() => {
                 self.point_at_cell(mouse, true);
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => self.on_wheel(mouse, position),
@@ -48,23 +52,42 @@ impl App {
     }
 
     fn editor_has_focus(&self) -> bool {
-        !self.navigator_focused && self.console().focus == Focus::Editor
+        !self.navigator_focused && self.table_active.is_none() && self.console().focus == Focus::Editor
+    }
+
+    /// Returns the result grid that the mouse acts on, with its area on the screen.
+    fn active_grid(&mut self) -> Option<(&mut ResultTab, Rect)> {
+        if let Some(index) = self.table_active {
+            return Some((&mut self.tables[index].result, self.layout.table.grid));
+        }
+        let area = self.layout.console.results;
+        let console = &mut self.consoles[self.active];
+        let active = console.active;
+        console.results.get_mut(active).map(|result| (result, area))
     }
 
     fn on_press(&mut self, mouse: MouseEvent, position: Position) {
+        let layout = &self.layout;
+        if layout.divider == Some(mouse.column) && layout.body.contains(position) {
+            self.drag = Some(Drag::Navigator);
+        } else if let Some(tab) = main_tab_at(&layout.main_tabs, position) {
+            self.select_tab(tab);
+        } else if layout.navigator.contains(position) {
+            self.on_navigator_press(mouse);
+        } else if self.table_active.is_some() {
+            self.on_table_press(mouse, position);
+        } else {
+            self.on_console_press(mouse, position);
+        }
+    }
+
+    fn on_console_press(&mut self, mouse: MouseEvent, position: Position) {
         let layout = &self.layout;
         let in_tabs = layout.console.tabs.contains(position);
         let in_results = layout.console.results.contains(position);
         let in_editor = layout.console.editor.contains(position);
         let in_controls = layout.console.controls.contains(position);
-        let in_navigator = layout.navigator.contains(position);
-        if layout.divider == Some(mouse.column) && layout.body.contains(position) {
-            self.drag = Some(Drag::Navigator);
-        } else if let Some(tab) = main_tab_at(&layout.main_tabs, position) {
-            self.select_console(tab);
-        } else if in_navigator {
-            self.on_navigator_press(mouse);
-        } else if in_controls {
+        if in_controls {
             self.on_control_press(mouse.column);
         } else if in_tabs {
             match tab_at(self.console(), self.layout.console.tabs, mouse.column) {
@@ -84,6 +107,52 @@ impl App {
         }
     }
 
+    /// Returns true when this click and the one before it hit the same cell.
+    fn is_double_click(&mut self, mouse: MouseEvent) -> bool {
+        let now = Instant::now();
+        let double = self.last_click.is_some_and(|(at, column, row)| {
+            column == mouse.column && row == mouse.row && now.duration_since(at) <= DOUBLE_CLICK
+        });
+        self.last_click = if double { None } else { Some((now, mouse.column, mouse.row)) };
+        double
+    }
+
+    fn on_table_press(&mut self, mouse: MouseEvent, position: Position) {
+        let layout = &self.layout.table;
+        let area = layout.grid;
+        if layout.controls.contains(position) {
+            self.on_table_control_press(mouse.column);
+        } else if layout.filter.contains(position) {
+            self.focus_table(TableFocus::Filter);
+        } else if layout.order.contains(position) {
+            self.focus_table(TableFocus::Order);
+        } else if area.contains(position) {
+            self.focus_table(TableFocus::Grid);
+            if self.start_column_drag(mouse) {
+                return;
+            }
+            let header = self
+                .table()
+                .and_then(|tab| header_column_at(&tab.result, area, mouse.column, mouse.row));
+            match header {
+                Some(column) => self.sort_table(column),
+                None => self.point_at_cell(mouse, false),
+            }
+        }
+    }
+
+    fn on_table_control_press(&mut self, column: u16) {
+        let buttons = &self.layout.table.buttons;
+        let control = buttons.iter().find(|button| column >= button.0 && column < button.1);
+        match control.map(|button| button.2) {
+            Some(TableControl::Apply) => self.apply_table(),
+            Some(TableControl::Clear) => self.clear_table(),
+            Some(TableControl::LoadMore) => self.load_more(),
+            Some(TableControl::Stop) => self.stop_table(),
+            None => {}
+        }
+    }
+
     fn on_navigator_press(&mut self, mouse: MouseEvent) {
         self.navigator_focused = true;
         let area = self.layout.navigator;
@@ -95,6 +164,8 @@ impl App {
         let mark = usize::from(area.x) + row.depth() * 2;
         if usize::from(mouse.column) == mark && Navigator::is_branch(&row) {
             self.toggle(&row);
+        } else if self.is_double_click(mouse) && matches!(row.kind, RowKind::Table | RowKind::View) {
+            self.open_table(&row);
         }
     }
 
@@ -119,12 +190,10 @@ impl App {
         let rows = if mouse.kind == MouseEventKind::ScrollUp { -WHEEL_ROWS } else { WHEEL_ROWS };
         if self.layout.navigator.contains(position) {
             self.navigator.move_by(rows, &self.connections);
-        } else if self.layout.console.results.contains(position) {
-            let console = self.console_mut();
-            let active = console.active;
-            if let Some(result) = console.results.get_mut(active) {
-                result.view.move_by(rows, 0, &result.table, false);
-            }
+        } else if let Some((result, area)) = self.active_grid()
+            && area.contains(position)
+        {
+            result.view.move_by(rows, 0, &result.table, false);
         } else if self.layout.console.editor.contains(position) && self.editor_has_focus() {
             self.console_mut().editor.on_mouse(mouse);
         }
@@ -153,29 +222,23 @@ impl App {
     }
 
     fn start_column_drag(&mut self, mouse: MouseEvent) -> bool {
-        let console = self.console();
-        let Some(result) = console.results.get(console.active) else { return false };
-        let area = self.layout.console.results;
-        self.drag = column_edge_at(result, area, mouse.column, mouse.row).map(|column| {
+        let Some((result, area)) = self.active_grid() else { return false };
+        let edge = column_edge_at(result, area, mouse.column, mouse.row).map(|column| {
             Drag::Column { column, start: mouse.column, width: result.table.width(column) }
         });
+        self.drag = edge;
         self.drag.is_some()
     }
 
     fn drag_column(&mut self, mouse: MouseEvent) {
         let Some(Drag::Column { column, start, width }) = self.drag else { return };
-        let console = self.console_mut();
-        let active = console.active;
-        let Some(result) = console.results.get_mut(active) else { return };
+        let Some((result, _)) = self.active_grid() else { return };
         let change = isize::from(mouse.column as i16 - start as i16);
         result.table.set_width(column, width.saturating_add_signed(change));
     }
 
     fn point_at_cell(&mut self, mouse: MouseEvent, extend: bool) {
-        let area = self.layout.console.results;
-        let console = self.console_mut();
-        let active = console.active;
-        let Some(result) = console.results.get_mut(active) else { return };
+        let Some((result, area)) = self.active_grid() else { return };
         if let Some((row, col)) = grid_cell_at(result, area, mouse.column, mouse.row) {
             result.view.move_to(row, col, &result.table, extend);
         }

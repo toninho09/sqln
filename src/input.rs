@@ -146,9 +146,32 @@ pub enum Action {
     GridCloseResult,
     GridPreviousResult,
     GridNextResult,
+    GridFocusFilter,
+    GridFocusOrder,
+    GridSortColumn,
+    GridLoadMore,
 }
 
 impl Action {
+    /// Returns true for an action that only the grid of a table has.
+    pub fn is_table_only(self) -> bool {
+        matches!(
+            self,
+            Action::GridFocusFilter
+                | Action::GridFocusOrder
+                | Action::GridSortColumn
+                | Action::GridLoadMore
+        )
+    }
+
+    /// Returns true for an action that only the results of a console have.
+    pub fn is_console_only(self) -> bool {
+        matches!(
+            self,
+            Action::GridCloseResult | Action::GridPreviousResult | Action::GridNextResult
+        )
+    }
+
     /// Returns true for a move that Shift changes into a selection.
     pub fn extends_selection(self) -> bool {
         matches!(
@@ -247,6 +270,10 @@ const DEFAULTS: &[Item] = &[
     both(Action::GridCloseResult, Region::Grid, "gridCloseResult", &["x", "delete"], &[]),
     both(Action::GridPreviousResult, Region::Grid, "gridPreviousResult", &["["], &[]),
     both(Action::GridNextResult, Region::Grid, "gridNextResult", &["]"], &[]),
+    both(Action::GridFocusFilter, Region::Grid, "focusFilter", &["f"], &[]),
+    both(Action::GridFocusOrder, Region::Grid, "focusOrder", &["o"], &[]),
+    both(Action::GridSortColumn, Region::Grid, "sortColumn", &["s"], &[]),
+    both(Action::GridLoadMore, Region::Grid, "loadMore", &["m"], &[]),
 ];
 
 /// The answer of the map to one key.

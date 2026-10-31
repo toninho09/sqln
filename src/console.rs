@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyEvent;
 
 use crate::connector::{StatementEnd, TransactionCommand, TransactionState};
 use crate::editor::{KeyboardMode, MarkState, RunPlan, SqlEditor};
@@ -10,8 +10,9 @@ use crate::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, StatementKey,
     StatementStatus,
 };
-use crate::grid::{Budget, GridView, ResultTable, Row, RowSearch, Value};
+use crate::grid::{Budget, Row};
 use crate::input::Action;
+pub use crate::result::{GridAction, ResultTab};
 use crate::ui::text;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -42,15 +43,6 @@ pub struct Message {
     pub text: String,
 }
 
-pub struct ResultTab {
-    /// The number of the tab. It stays the same when the user closes another tab.
-    pub number: usize,
-    pub table: ResultTable,
-    pub view: GridView,
-    pub summary: String,
-    pub search: Option<RowSearch>,
-}
-
 /// The next step after a commit or a rollback that a dialog asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AfterTransaction {
@@ -65,15 +57,6 @@ pub enum Signal {
     ConfirmClose,
     TransactionChanged,
     TransactionFailed(String),
-}
-
-/// The action of a key in the results panel.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum GridAction {
-    None,
-    Copy(String),
-    OpenValue { title: String, text: String, footer: String },
-    CloseResult,
 }
 
 pub struct Console {
@@ -200,13 +183,7 @@ impl Console {
             ExecEvent::Columns { key, columns } if self.is_current(key.execution) => {
                 self.results_made += 1;
                 self.reading = true;
-                self.results.push(ResultTab {
-                    number: self.results_made,
-                    table: ResultTable::new(columns),
-                    view: GridView::default(),
-                    summary: String::new(),
-                    search: None,
-                });
+                self.results.push(ResultTab::new(self.results_made, columns));
             }
             ExecEvent::Rows { key, rows, bytes } => self.on_rows(key, rows, bytes, budget),
             ExecEvent::ResultDone { key, rows, limit } if self.is_current(key.execution) => {
@@ -372,30 +349,20 @@ impl Console {
 
     /// Returns true when the search of the active result has rows to read.
     pub fn search_has_work(&self) -> bool {
-        self.results.get(self.active).is_some_and(|result| {
-            result.search.as_ref().is_some_and(|search| search.has_work(&result.table))
-        })
+        self.results.get(self.active).is_some_and(ResultTab::search_has_work)
     }
 
     /// Continues the search of the active result until the deadline.
     pub fn continue_search(&mut self, deadline: Instant) {
-        let Some(result) = self.results.get_mut(self.active) else { return };
-        let Some(search) = &mut result.search else { return };
-        if let Some((row, col)) = search.scan(&result.table, deadline) {
-            result.view.move_to(row, col, &result.table, false);
+        if let Some(result) = self.results.get_mut(self.active) {
+            result.continue_search(deadline);
         }
     }
 
     /// Writes pasted text in the search bar. It returns false without a bar.
     pub fn paste_in_search(&mut self, text: &str) -> bool {
-        let search = self.results.get_mut(self.active).and_then(|result| result.search.as_mut());
-        match search {
-            Some(search) if self.focus == Focus::Results => {
-                search.push_str(text);
-                true
-            }
-            _ => false,
-        }
+        let focused = self.focus == Focus::Results;
+        focused && self.results.get_mut(self.active).is_some_and(|result| result.paste_in_search(text))
     }
 
     pub fn search_is_open(&self) -> bool {
@@ -423,80 +390,16 @@ impl Console {
 
     /// Applies a key to the search bar of the active result.
     pub fn on_search_key(&mut self, key: KeyEvent) {
-        let Some(result) = self.results.get_mut(self.active) else { return };
-        let Some(search) = &mut result.search else { return };
-        let cell = match key.code {
-            KeyCode::Enter | KeyCode::Down => search.advance(true),
-            KeyCode::Up => search.advance(false),
-            KeyCode::Backspace => {
-                search.pop();
-                None
-            }
-            KeyCode::Esc => {
-                result.search = None;
-                None
-            }
-            KeyCode::Char(c) if (key.modifiers - KeyModifiers::SHIFT).is_empty() => {
-                search.push_str(c.encode_utf8(&mut [0; 4]));
-                None
-            }
-            _ => None,
-        };
-        if let Some((row, col)) = cell {
-            result.view.move_to(row, col, &result.table, false);
+        if let Some(result) = self.results.get_mut(self.active) {
+            result.on_search_key(key);
         }
     }
 
     fn on_grid_action(&mut self, action: Action, extend: bool) -> GridAction {
         let vim = self.editor.keyboard() == KeyboardMode::Vim;
-        let Some(result) = self.results.get_mut(self.active) else { return GridAction::None };
-        let table = &mut result.table;
-        let view = &mut result.view;
-        let extend = extend || (vim && view.anchor.is_some());
-        let last_row = table.rows.len().saturating_sub(1);
-        let last_col = table.columns.len().saturating_sub(1);
-        match action {
-            Action::GridFind => result.search = Some(RowSearch::new((view.row, view.col))),
-            Action::GridNarrow => table.resize(view.col, -1),
-            Action::GridWiden => table.resize(view.col, 1),
-            Action::GridAutoWidth => table.reset_width(view.col),
-            Action::GridCloseResult => return GridAction::CloseResult,
-            Action::GridFirstRow => view.move_to(0, view.col, table, extend),
-            Action::GridLastRow => view.move_to(last_row, view.col, table, extend),
-            Action::GridFirstColumn => view.move_to(view.row, 0, table, extend),
-            Action::GridLastColumn => view.move_to(view.row, last_col, table, extend),
-            Action::GridUp => view.move_by(-1, 0, table, extend),
-            Action::GridDown => view.move_by(1, 0, table, extend),
-            Action::GridLeft => view.move_by(0, -1, table, extend),
-            Action::GridRight => view.move_by(0, 1, table, extend),
-            Action::GridPageUp => view.move_by(-20, 0, table, extend),
-            Action::GridPageDown => view.move_by(20, 0, table, extend),
-            Action::GridSelectAll => view.select_all(table),
-            Action::GridCopy => return view.copy(table).map_or(GridAction::None, GridAction::Copy),
-            Action::GridOpenValue => return Self::open_value(table, view),
-            Action::GridClearSelection => view.anchor = None,
-            Action::GridToggleSelection => view.toggle_selection(),
-            _ => {}
-        }
-        GridAction::None
-    }
-
-    fn open_value(table: &ResultTable, view: &GridView) -> GridAction {
-        let Some(value) = table.rows.get(view.row).and_then(|row| row.get(view.col)) else {
-            return GridAction::None;
-        };
-        let column = table.columns.get(view.col).map_or("", String::as_str);
-        let contents = value.full_text();
-        let kind = match value {
-            Value::Null => text::VALUE_NULL,
-            Value::Text(_) => text::VALUE_TEXT,
-            Value::Number(_) => text::VALUE_NUMBER,
-            Value::Binary(_) => text::VALUE_BINARY,
-        };
-        GridAction::OpenValue {
-            title: text::value_title(&crate::grid::printable(column), view.row),
-            footer: text::value_footer(contents.chars().count(), kind),
-            text: contents,
+        match self.results.get_mut(self.active) {
+            Some(result) => result.on_action(action, extend, vim),
+            None => GridAction::None,
         }
     }
 }

@@ -15,6 +15,11 @@ Não reabrir uma decisão sem um fato novo.
 | Visão de tabela | Nova consulta por página | Leitura aberta entre páginas | Libera a conexão; aceita-se o risco de ordem instável |
 | Próxima página | Pedir uma linha a mais | `COUNT` | Evita custo no banco |
 | Aba em leitura | Bloquear o fechamento | Confirmar ou descartar | Menos estados |
+| Aba de tabela | Tarefa de console sem editor, com uma página por `Run` | Tarefa própria para as páginas | Reaproveita prazo, parada, cancelamento, fila do pool e orçamento |
+| Linha extra da página | Teto do sink em `n+1`, com `LIMIT n+1` no SQL | Teto `n`, com o sink pedindo o cancelamento na linha extra | O cancelamento abre uma conexão nova no PostgreSQL e no MySQL a cada página |
+| Cláusulas da consulta de tabela | Uma por linha | Texto em uma linha | Um comentário `--` no filtro removeria o `LIMIT` |
+| Carregar mais com o orçamento cheio | Recusar até algum dado sair do orçamento; um valor maior que o orçamento recusa sempre | Tentar a consulta e falhar de novo | Evita uma consulta que não pode terminar |
+| Aba de tabela fechada em leitura | Parar a consulta e fechar sem pergunta | Bloquear como o resultado de um console | A consulta não tem transação, então parar não perde dados |
 | Valores da grade | Texto do banco; tipo só na apresentação | Decodificar tipos em Rust | Preserva precisão e aceita tipos desconhecidos |
 | Fim da leitura no SQLite | Encerrar no cliente com `readonly`; consumir nos demais casos | Sempre consumir | Resultado infinito terminaria somente pelo prazo |
 | Aba depois da execução | Último resultado; **Mensagens** em qualquer outro fim | Sempre o último resultado | Uma parada ficaria invisível atrás de uma grade vazia |
@@ -26,6 +31,21 @@ Não reabrir uma decisão sem um fato novo.
 | Parar uma instrução | Cancelar e fechar como último recurso | Só fechar a conexão | Com a conexão fechada, um `INSERT` terminou nos dois bancos |
 | Prazo do cancelamento | 5 segundos | Sem prazo | DataGrip oferece escalonamento parecido |
 | Conexão de cancelamento | Temporária e fora do limite do pool | Respeitar o limite literalmente | O protocolo exige outra conexão |
+
+## Visão de tabela
+
+Estas escolhas vieram da implementação e esperam confirmação.
+
+| Assunto | Escolha | Rejeitado | Motivo |
+|---|---|---|---|
+| Abrir uma tabela | `Enter` e duplo clique; `Direita` abre as colunas | `Enter` abre as colunas | `docs/KEYMAP.md` já previa a mudança do `Enter` |
+| Ordem das abas | Consoles, depois tabelas na ordem de abertura | Ordem de abertura misturada | Os dois grupos têm listas separadas, e os consoles mantêm seus índices |
+| Rótulo da aba | `nome (table)` ou `nome (view)` | Só o nome | O plano pede um rótulo que identifique a view |
+| Clique no cabeçalho | Crescente, decrescente e sem ordem | Só crescente | Um clique a mais desfaz a ordem, sem usar o campo |
+| Aviso de ordem instável | Uma linha fixa enquanto não existir ordem | Só com mais de uma página | O plano pede o aviso sempre que não houver ordem aplicada |
+| Consulta em andamento | Recusar aplicar, limpar, ordenar e carregar mais | Parar e recomeçar | Menos estados; a resposta antiga não encontra a aba em outro estado |
+| Fechar o último console | Trocar por um console vazio quando existe uma aba de tabela | Recusar ou sair | A faixa de abas sempre tem um console |
+| Campos do filtro | Uma linha, com quebras convertidas em espaço | Editor de várias linhas | O filtro é uma condição curta |
 
 ## Sessão e conexão
 

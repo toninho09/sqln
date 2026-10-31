@@ -113,9 +113,15 @@ impl App {
 
     fn remove_console(&mut self, id: ConsoleId) {
         let Some(index) = self.console_index(id) else { return };
-        if self.consoles.len() == 1 {
-            self.quit = true;
-            return;
+        // The last console closes only when no table tab stays open. The tab row
+        // always keeps one console, so a new one takes its place.
+        let replaced = self.consoles.len() == 1;
+        if replaced {
+            if self.tables.is_empty() {
+                self.quit = true;
+                return;
+            }
+            self.replace_last_console();
         }
         let console = self.consoles.remove(index);
         for result in &console.results {
@@ -126,6 +132,20 @@ impl App {
         }
         if self.active > index || self.active == self.consoles.len() {
             self.active = self.active.saturating_sub(1);
+        }
+        if replaced && self.table_active.is_none() {
+            self.table_active = Some(0);
+        }
+    }
+
+    /// Adds an empty console with the connection of the only console.
+    fn replace_last_console(&mut self) {
+        let console = &self.consoles[0];
+        let (dialect, connection) = (console.editor.dialect(), console.connection);
+        let fresh = self.unbound_console(dialect);
+        self.consoles.push(fresh);
+        if let Some(connection) = connection {
+            self.bind_console(self.consoles.len() - 1, connection);
         }
     }
 

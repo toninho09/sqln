@@ -87,9 +87,10 @@ fn top_bar(console: &Console, bar: &BarData, width: usize) -> String {
     format!("{start}…{state}")
 }
 
-fn usage_bar(bar: &BarData) -> String {
-    let pool = bar.pool.map_or(String::new(), |(busy, limit)| format!("Pool {busy}/{limit} · "));
-    format!("{pool}Data {}/{} MiB", bar.data.0.div_ceil(MIB), bar.data.1 / MIB)
+/// Writes the pool and the data budget, for the right side of the top bar.
+pub fn usage_bar(pool: Option<(usize, usize)>, data: (usize, usize)) -> String {
+    let pool = pool.map_or(String::new(), |(busy, limit)| format!("Pool {busy}/{limit} · "));
+    format!("{pool}Data {}/{} MiB", data.0.div_ceil(MIB), data.1 / MIB)
 }
 
 /// Lists the buttons of the console bar. A button that has no effect now looks disabled.
@@ -121,17 +122,18 @@ fn control_items(console: &Console, bar: &BarData) -> Vec<(Control, String, bool
     items
 }
 
-fn draw_controls(
+/// Draws buttons in a row. A button that has no effect now looks disabled.
+/// It returns the first column and the column after the end of each button.
+pub fn draw_buttons<T: Copy>(
     frame: &mut Frame,
     area: Rect,
-    console: &Console,
-    bar: &BarData,
+    items: Vec<(T, String, bool)>,
     theme: &Theme,
-) -> Vec<(u16, u16, Control)> {
+) -> Vec<(u16, u16, T)> {
     let mut spans = Vec::new();
     let mut buttons = Vec::new();
     let mut x = area.x;
-    for (control, label, enabled) in control_items(console, bar) {
+    for (control, label, enabled) in items {
         let width = u16::try_from(label.width()).unwrap_or(u16::MAX);
         if x.saturating_add(width) > area.right() {
             break;
@@ -146,21 +148,21 @@ fn draw_controls(
     buttons
 }
 
-fn main_tab_label(console: &Console) -> String {
-    let name = printable(&console.name);
-    if console.is_busy() { format!("{name} ●") } else { name }
+/// Writes the label of a main tab. A tab with work in progress has a mark.
+pub fn main_tab_label(name: &str, busy: bool) -> String {
+    let name = printable(name);
+    if busy { format!("{name} ●") } else { name }
 }
 
-/// Draws the tabs of the consoles. It returns the columns of each tab, and it starts
+/// Draws the main tabs. It returns the columns of each tab, and it starts
 /// the row at a later tab when the active tab does not fit.
 pub fn draw_main_tabs(
     frame: &mut Frame,
     area: Rect,
-    consoles: &[Console],
+    labels: Vec<String>,
     active: usize,
     theme: &Theme,
 ) -> Vec<(u16, u16, usize)> {
-    let labels: Vec<String> = consoles.iter().map(main_tab_label).collect();
     let widths: Vec<u16> =
         labels.iter().map(|label| u16::try_from(label.width()).unwrap_or(u16::MAX)).collect();
     let mut first = 0;
@@ -211,14 +213,14 @@ pub fn draw_console(
     .areas(area);
 
     // The usage text keeps its place, because a long file name can fill the row.
-    let usage = usage_bar(bar);
+    let usage = usage_bar(bar.pool, bar.data);
     let usage_width = u16::try_from(usage.width()).unwrap_or(0).saturating_add(1);
     let [state, usage_area] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(usage_width)]).areas(top);
     let state_text = top_bar(console, bar, usize::from(state.width));
     frame.render_widget(Paragraph::new(state_text).style(theme.bar), state);
     frame.render_widget(Paragraph::new(usage).style(theme.bar).alignment(Alignment::Right), usage_area);
-    let control_buttons = draw_controls(frame, controls, console, bar, theme);
+    let control_buttons = draw_buttons(frame, controls, control_items(console, bar), theme);
     draw_editor(frame, editor, &mut console.editor, theme);
     draw_tabs(frame, tabs, console, theme);
 
@@ -237,7 +239,7 @@ pub fn draw_console(
     ConsoleLayout { controls, control_buttons, editor, tabs, results, split }
 }
 
-fn search_line(search: &RowSearch, table: &ResultTable, theme: &Theme) -> Line<'static> {
+pub fn search_line(search: &RowSearch, table: &ResultTable, theme: &Theme) -> Line<'static> {
     let count = if search.query().is_empty() {
         String::new()
     } else {
@@ -304,7 +306,7 @@ fn draw_messages(frame: &mut Frame, area: Rect, console: &Console, theme: &Theme
     frame.render_widget(paragraph, area);
 }
 
-fn fit(text: &str, width: usize) -> (String, usize) {
+pub fn fit(text: &str, width: usize) -> (String, usize) {
     let mut fitted = String::new();
     let mut used = 0;
     for c in text.chars() {
@@ -344,7 +346,7 @@ fn draw_cell(buffer: &mut Buffer, x: u16, y: u16, width: u16, value: &Value, sty
     buffer.set_stringn(x + offset, y, text, usize::from(width), style);
 }
 
-fn draw_grid(buffer: &mut Buffer, area: Rect, result: &mut ResultTab, focused: bool, theme: &Theme) {
+pub fn draw_grid(buffer: &mut Buffer, area: Rect, result: &mut ResultTab, focused: bool, theme: &Theme) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -398,6 +400,17 @@ pub fn column_edge_at(result: &ResultTab, area: Rect, column: u16, row: u16) -> 
     visible_columns(&result.table, &result.view, area)
         .into_iter()
         .find(|(_, x, width)| column == x + width)
+        .map(|(index, _, _)| index)
+}
+
+/// Returns the column of a header cell at a screen cell.
+pub fn header_column_at(result: &ResultTab, area: Rect, column: u16, row: u16) -> Option<usize> {
+    if row != area.y {
+        return None;
+    }
+    visible_columns(&result.table, &result.view, area)
+        .into_iter()
+        .find(|(_, x, width)| column >= *x && column < x + width)
         .map(|(index, _, _)| index)
 }
 

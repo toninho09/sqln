@@ -8,8 +8,8 @@ O plano continua sendo a referência das decisões confirmadas.
 Os valores, nomes e dados abaixo são exemplos fictícios.
 Tamanhos, espaçamentos, cores e atalhos ainda não representam contratos finais.
 A interface final usa inglês; os rótulos em português destes esboços são exemplos.
-A aplicação implementa as seções 2 e 6, a seção 4 sem escopo nem campo de credencial, e parte das seções 5 e 8.
-As seções 1 e 3 ainda não existem. A [seção 1 do plano](../PLAN.md) lista o que falta.
+A aplicação implementa as seções 2, 3 e 6, a seção 4 sem escopo nem campo de credencial, e parte das seções 5 e 8.
+A seção 1 ainda não existe. A [seção 1 do plano](../PLAN.md) lista o que falta.
 
 ## 1. Inicialização e abertura de console
 
@@ -162,6 +162,14 @@ Regras da barra:
 - Clique no cabeçalho aplica a ordenação imediatamente, mantendo o `WHERE` já aplicado.
 - Não aplicar um rascunho de `WHERE` como efeito do clique no cabeçalho.
 - Filtro ou ordenação inválidos deixam a grade vazia, com o erro e os campos disponíveis para correção.
+
+Implementação atual, de cima para baixo: título, campo `WHERE`, campo `ORDER BY`, botões
+`[Apply] [Clear] [Load more] [Stop]`, grade, resumo e uma linha de aviso.
+O rótulo da aba é `nome (table)` ou `nome (view)`, e a faixa mostra os consoles antes das tabelas.
+O resumo mostra as linhas carregadas e o estado.
+A linha de aviso mostra o risco da ordem instável, ou a mensagem da última consulta.
+O erro de uma primeira página ocupa a área da grade.
+O clique no cabeçalho ordena em ordem crescente, depois decrescente, e depois remove a ordem.
 
 Rolagem e navegação percorrem os dados já carregados.
 Mais linhas exigem a ação **Carregar mais**.

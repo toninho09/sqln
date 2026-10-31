@@ -9,6 +9,7 @@ use crate::editor::{KeyboardMode, RunRefusal, RunScope};
 use crate::exec::RunOptions;
 use crate::form::FormRequest;
 use crate::input::{Action, Chord, Lookup, Region};
+use crate::table::TableFocus;
 use crate::ui::text;
 use crate::ui::wrap::WrappedText;
 
@@ -22,8 +23,23 @@ impl App {
         if self.navigator_focused {
             return Some(Region::Navigator);
         }
+        if let Some(tab) = self.table() {
+            let in_grid = tab.focus == TableFocus::Grid && tab.result.search.is_none();
+            return in_grid.then_some(Region::Grid);
+        }
         let console = self.console();
         (console.focus == Focus::Results && !console.search_is_open()).then_some(Region::Grid)
+    }
+
+    /// Returns true when the grid of the tab on screen has the focus.
+    pub(super) fn grid_has_focus(&self) -> bool {
+        if self.navigator_focused {
+            return false;
+        }
+        match self.table() {
+            Some(tab) => tab.focus == TableFocus::Grid,
+            None => self.console().focus == Focus::Results,
+        }
     }
 
     /// Applies the key priority of `docs/KEYMAP.md`.
@@ -45,8 +61,10 @@ impl App {
             self.on_form_key(key);
             return;
         }
-        let in_editor = !self.navigator_focused && self.console().focus == Focus::Editor;
-        if in_editor && self.console_mut().editor.on_list_key(key) {
+        let in_editor = !self.navigator_focused
+            && self.table_active.is_none()
+            && self.console().focus == Focus::Editor;
+        if (in_editor && self.console_mut().editor.on_list_key(key)) || self.on_table_list_key(key) {
             return;
         }
         let chord = Chord::from_event(key);
@@ -66,6 +84,7 @@ impl App {
         match panel {
             Some(Region::Grid) => self.on_shifted_grid_key(chord),
             Some(_) => {}
+            None if self.table_active.is_some() => self.on_table_text_key(key),
             None if self.console().focus == Focus::Results => self.console_mut().on_search_key(key),
             None => self.on_editor_key(key),
         }
@@ -128,6 +147,9 @@ impl App {
     }
 
     pub(super) fn perform(&mut self, action: Action, extend: bool) {
+        if self.table_active.is_some() && self.perform_on_table(action) {
+            return;
+        }
         match action {
             Action::Run => self.run(RunScope::Default),
             Action::RunScript => self.run(RunScope::Script),
@@ -138,8 +160,8 @@ impl App {
             Action::Help => self.open_keys(),
             Action::CloseTab => self.close_step(self.console().id),
             Action::Quit => self.request_exit(),
-            Action::NextTab => self.switch_console(true),
-            Action::PreviousTab => self.switch_console(false),
+            Action::NextTab => self.switch_tab(true),
+            Action::PreviousTab => self.switch_tab(false),
             Action::ToggleNavigator => self.toggle_navigator(),
             Action::ChooseSchema => self.open_picker(),
             Action::FocusLeft => self.focus_navigator(),
@@ -163,7 +185,12 @@ impl App {
 
     fn on_grid_action(&mut self, action: Action, extend: bool) {
         let budget = self.budget.clone();
-        match self.console_mut().on_results_action(action, extend) {
+        let vim = self.vim();
+        let outcome = match self.table_mut() {
+            Some(tab) => tab.result.on_action(action, extend, vim),
+            None => self.console_mut().on_results_action(action, extend),
+        };
+        match outcome {
             GridAction::None => {}
             GridAction::Copy(tsv) => self.copy(&tsv),
             GridAction::OpenValue { title, text, footer } => {
@@ -201,28 +228,27 @@ impl App {
         }
     }
 
-    fn switch_console(&mut self, forward: bool) {
-        let count = self.consoles.len();
-        self.console_mut().editor.close_suggestions();
-        self.active = (self.active + if forward { 1 } else { count - 1 }) % count;
-    }
-
     pub(super) fn select_console(&mut self, index: usize) {
         if index < self.consoles.len() {
             self.console_mut().editor.close_suggestions();
             self.active = index;
+            self.table_active = None;
         }
     }
 
     fn open_keys(&mut self) {
+        let in_table = self.table_active.is_some();
         let (region, name) = match self.panel() {
             Some(Region::Navigator) => (Some(Region::Navigator), text::REGION_NAVIGATOR),
+            Some(_) if in_table => (Some(Region::Grid), text::REGION_TABLE),
             Some(_) => (Some(Region::Grid), text::REGION_GRID),
+            None if in_table => (None, text::REGION_FILTER),
             None => (None, text::REGION_EDITOR),
         };
         let mut rows: Vec<String> = Vec::new();
         match region {
             Some(region) => rows.extend(self.key_rows(region)),
+            None if in_table => rows.push(text::FILTER_KEYS.to_owned()),
             None => rows.push(text::EDITOR_KEYS.to_owned()),
         }
         rows.push(String::new());
@@ -237,8 +263,10 @@ impl App {
     }
 
     fn key_rows(&self, region: Region) -> Vec<String> {
+        let in_table = self.table_active.is_some();
         self.keymap
             .actions(region)
+            .filter(|action| if in_table { !action.is_console_only() } else { !action.is_table_only() })
             .filter_map(|action| {
                 let keys = self.keymap.keys(action);
                 (!keys.is_empty()).then(|| text::keys_row(&keys.join(", "), action))
@@ -276,7 +304,11 @@ impl App {
         let Some(manager) = &self.manager else { return };
         match console.editor.plan_run(scope) {
             Ok(plan) => {
-                let options = RunOptions { manual: console.manual, schema: console.schema.clone() };
+                let options = RunOptions {
+                    manual: console.manual,
+                    schema: console.schema.clone(),
+                    row_cap: None,
+                };
                 let execution = manager.run(console.id, plan.statements.clone(), options);
                 console.begin_execution(execution, &plan, &self.budget);
             }
@@ -435,6 +467,13 @@ impl App {
             text::HINT_PREFIX
         } else if self.navigator_focused {
             text::HINT_NAVIGATOR
+        } else if let Some(tab) = self.table() {
+            match tab.focus {
+                _ if tab.list.is_some() => text::HINT_LIST,
+                TableFocus::Grid if tab.result.search.is_some() => text::HINT_GRID_SEARCH,
+                TableFocus::Grid => text::HINT_TABLE,
+                _ => text::HINT_FILTER,
+            }
         } else if console.focus == Focus::Results && console.search_is_open() {
             text::HINT_GRID_SEARCH
         } else if console.focus == Focus::Results {

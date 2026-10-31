@@ -14,3 +14,13 @@ pub enum Dialect {
     MySql,
     Sqlite,
 }
+
+/// Wraps a name in `open` quotes and doubles the quotes inside the name.
+pub fn quote_with(name: &str, open: char) -> String {
+    format!("{open}{}{open}", name.replace(open, &format!("{open}{open}")))
+}
+
+/// Writes a name with the identifier quotes of the dialect. It always quotes.
+pub fn quote_identifier(name: &str, dialect: Dialect) -> String {
+    quote_with(name, if dialect == Dialect::MySql { '`' } else { '"' })
+}

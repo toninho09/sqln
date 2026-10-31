@@ -67,6 +67,38 @@ fn each_mode_has_its_own_panel_keys() {
 }
 
 #[test]
+fn the_grid_has_the_keys_of_the_table_view_in_both_modes() {
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let map = Keymap::new(mode);
+        let keys = [
+            ("f", Action::GridFocusFilter),
+            ("o", Action::GridFocusOrder),
+            ("s", Action::GridSortColumn),
+            ("m", Action::GridLoadMore),
+        ];
+        for (text, action) in keys {
+            assert_eq!(map.lookup(Region::Grid, chord(text)), Lookup::Action(action), "{text}");
+            assert!(action.is_table_only());
+            assert!(!action.is_console_only());
+        }
+    }
+    assert!(Action::GridCloseResult.is_console_only());
+    assert!(!Action::GridCopy.is_table_only() && !Action::GridCopy.is_console_only());
+}
+
+#[test]
+fn the_keys_of_the_table_view_can_change_by_name() {
+    let items = overrides(&[("loadMore", &["ctrl+l"]), ("sortColumn", &[])]);
+    let map = Keymap::with_overrides(KeyboardMode::Conventional, &items).unwrap();
+    assert_eq!(map.lookup(Region::Grid, chord("ctrl+l")), Lookup::Action(Action::GridLoadMore));
+    assert_eq!(map.lookup(Region::Grid, chord("m")), Lookup::None);
+    assert_eq!(map.lookup(Region::Grid, chord("s")), Lookup::None);
+    // The keys of the table view and the keys of the grid share one region.
+    let items = overrides(&[("loadMore", &["x"])]);
+    assert!(Keymap::with_overrides(KeyboardMode::Conventional, &items).is_err());
+}
+
+#[test]
 fn the_execution_keys_stay_the_same_in_both_modes() {
     for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
         let map = Keymap::new(mode);

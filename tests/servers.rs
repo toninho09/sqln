@@ -192,7 +192,7 @@ impl Harness {
 
     fn start(&mut self, statements: &[&str], manual: bool) -> u64 {
         let statements = statements.iter().map(|sql| (*sql).to_owned()).collect();
-        self.manager.run(self.console, statements, RunOptions { manual, schema: None })
+        self.manager.run(self.console, statements, RunOptions { manual, ..RunOptions::default() })
     }
 
     fn run(&mut self, statements: &[&str]) -> Run {
@@ -1348,6 +1348,145 @@ fn the_application_runs_a_script_and_completes_real_names() {
         s.wait_for("total");
 
         s.run_script("DROP TABLE app_orders;");
+        s.app.shutdown();
+    }
+}
+
+impl Screen {
+    /// Opens a table of the first connection and waits for its first page.
+    fn open_table(&mut self, name: &str) {
+        common::open_table(&mut self.app, 0, name);
+        self.wait_table();
+    }
+
+    fn wait_table(&mut self) {
+        self.wait_until(|s| s.app.table().is_some_and(|tab| !tab.is_busy()));
+    }
+
+    /// Replaces the text of the WHERE field.
+    fn set_filter(&mut self, text: &str) {
+        self.prefix('k');
+        let old = self.app.table().unwrap().filter.text().chars().count();
+        self.code(KeyCode::End);
+        for _ in 0..old {
+            self.code(KeyCode::Backspace);
+        }
+        self.type_text(text);
+    }
+
+    fn table_ids(&self) -> Vec<String> {
+        let table = &self.app.table().unwrap().result.table;
+        table.rows.iter().map(|row| row[0].display()).collect()
+    }
+}
+
+#[test]
+fn a_table_view_pages_filters_and_orders_rows_of_each_server() {
+    for server in servers() {
+        let mut s = Screen::open(&server);
+        s.wait_for("test server");
+        let fill = match server.kind {
+            Kind::Postgres => "INSERT INTO app_pages SELECT g, 'row' || g FROM generate_series(1, 250) g;",
+            Kind::MySql => {
+                "INSERT INTO app_pages WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 250) \
+                 SELECT x, CONCAT('row', x) FROM n;"
+            }
+        };
+        s.run_script(&format!(
+            "DROP TABLE IF EXISTS app_pages;\nCREATE TABLE app_pages (id int, label varchar(30));\n{fill}"
+        ));
+        s.wait_for("changed");
+
+        s.open_table("app_pages");
+        assert_eq!(s.table_ids().len(), 100);
+        assert!(s.app.table().unwrap().has_more);
+        for _ in 0..2 {
+            s.prefix('j');
+            s.code(KeyCode::Char('m'));
+            s.wait_table();
+        }
+        assert_eq!(s.table_ids().len(), 250);
+        assert!(!s.app.table().unwrap().has_more);
+
+        // The filter and the order run in the database.
+        s.prefix('k');
+        s.type_text("id % 50 = 0 -- a note");
+        s.code(KeyCode::Tab);
+        s.type_text("id DESC");
+        s.code(KeyCode::Enter);
+        s.wait_table();
+        assert_eq!(s.table_ids(), ["250", "200", "150", "100", "50"]);
+
+        // A text with a second statement never reaches the server.
+        s.set_filter("id = 1; DROP TABLE app_pages");
+        s.code(KeyCode::Enter);
+        s.wait_for("must stay in one statement");
+        assert!(s.table_ids().is_empty());
+
+        // A server error clears the grid and shows its text.
+        s.set_filter("no_such_column = 1");
+        s.code(KeyCode::Enter);
+        s.wait_table();
+        assert!(s.table_ids().is_empty());
+        s.wait_for("no_such_column");
+
+        // The sort key keeps the applied filter, and the order follows the column.
+        s.set_filter("");
+        s.code(KeyCode::Enter);
+        s.wait_table();
+        s.prefix('j');
+        s.code(KeyCode::Right);
+        s.code(KeyCode::Char('s'));
+        s.wait_table();
+        assert_eq!(s.app.table().unwrap().order.text(), "label ASC");
+        assert_eq!(&s.table_ids()[..3], ["1", "10", "100"]);
+        s.app.shutdown();
+
+        let mut s = Screen::open(&server);
+        s.run_script("DROP TABLE app_pages;");
+        s.app.shutdown();
+    }
+}
+
+#[test]
+fn a_table_view_quotes_the_names_of_each_server() {
+    for server in servers() {
+        let mut s = Screen::open(&server);
+        s.wait_for("test server");
+        let (create, insert, drop) = match server.kind {
+            Kind::Postgres => (
+                "CREATE TABLE \"App Items\" (\"select\" int, \"Mixed Case\" text)",
+                "INSERT INTO \"App Items\" VALUES (1, 'a'), (2, 'b')",
+                "DROP TABLE \"App Items\"",
+            ),
+            Kind::MySql => (
+                "CREATE TABLE `App Items` (`select` int, `Mixed Case` text)",
+                "INSERT INTO `App Items` VALUES (1, 'a'), (2, 'b')",
+                "DROP TABLE `App Items`",
+            ),
+        };
+        let drop_first = drop.replace("DROP TABLE", "DROP TABLE IF EXISTS");
+        s.run_script(&format!("{drop_first};\n{create};\n{insert};"));
+        s.wait_for("changed");
+        s.open_table("App Items");
+        assert_eq!(s.table_ids(), ["1", "2"]);
+        s.wait_for("Mixed Case");
+        s.prefix('k');
+        s.type_text("sel");
+        // The list shows the keywords at once, and the columns after their read.
+        s.wait_for("col select");
+        s.code(KeyCode::Tab);
+        // The list quotes a word that the database reserves.
+        let text = s.app.table().unwrap().filter.text().to_owned();
+        assert!(text.contains('"') || text.contains('`'), "{text}");
+        s.type_text(" = 2");
+        s.code(KeyCode::Enter);
+        s.wait_table();
+        assert_eq!(s.table_ids(), ["2"]);
+        s.app.shutdown();
+
+        let mut s = Screen::open(&server);
+        s.run_script(&format!("{drop};"));
         s.app.shutdown();
     }
 }

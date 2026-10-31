@@ -4,6 +4,7 @@ mod close;
 mod connections;
 mod keys;
 mod mouse;
+mod tables;
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -33,6 +34,7 @@ use crate::grid::Budget;
 use crate::input::{Chord, Keymap};
 use crate::navigator::Navigator;
 use crate::sql::Dialect;
+use crate::table::{TableFocus, TableTab};
 use crate::terminal::Session;
 use crate::ui::console::BarData;
 use crate::ui::form::{FormLayout, draw_form};
@@ -40,8 +42,8 @@ use crate::ui::navigator::draw_navigator;
 use crate::ui::theme::Theme;
 use crate::ui::wrap::WrappedText;
 use crate::ui::{
-    ConsoleLayout, draw_console, draw_dialog, draw_main_tabs, draw_overlay, draw_picker,
-    draw_small_terminal, text,
+    ConsoleLayout, TableBar, TableLayout, draw_console, draw_dialog, draw_main_tabs, draw_overlay,
+    draw_picker, draw_small_terminal, draw_table, text,
 };
 
 const MIN_WIDTH: u16 = 80;
@@ -135,6 +137,7 @@ struct ScreenLayout {
     main_tabs: Vec<(u16, u16, usize)>,
     body: Rect,
     console: ConsoleLayout,
+    table: TableLayout,
     form: FormLayout,
     /// The options of the open dialog, with the row of those options.
     dialog: (Vec<(u16, u16, usize)>, u16),
@@ -144,7 +147,12 @@ struct ScreenLayout {
 
 pub struct App {
     consoles: Vec<Console>,
+    /// The console that the console commands use. A table tab can be on screen.
     active: usize,
+    /// The table tabs. They follow the consoles in the tab row.
+    tables: Vec<TableTab>,
+    /// The table tab on screen, or `None` when the active console is on screen.
+    table_active: Option<usize>,
     connections: Vec<Connection>,
     navigator: Navigator,
     navigator_focused: bool,
@@ -170,6 +178,8 @@ pub struct App {
     /// The first key of a sequence such as `Ctrl+W e`.
     pending_key: Option<Chord>,
     drag: Option<Drag>,
+    /// The time and the place of the last click in the navigator.
+    last_click: Option<(Instant, u16, u16)>,
     next_console_number: usize,
     next_unbound_console: ConsoleId,
     next_test: u64,
@@ -190,6 +200,8 @@ impl App {
         let mut app = Self {
             consoles: Vec::new(),
             active: 0,
+            tables: Vec::new(),
+            table_active: None,
             connections: Vec::new(),
             navigator: Navigator::default(),
             navigator_focused: false,
@@ -212,6 +224,7 @@ impl App {
             status: None,
             pending_key: None,
             drag: None,
+            last_click: None,
             next_console_number: 1,
             next_unbound_console: FIRST_UNBOUND_CONSOLE,
             next_test: 1,
@@ -334,6 +347,14 @@ impl App {
         if self.navigator_focused {
             return;
         }
+        if let Some(tab) = self.table_mut() {
+            if tab.focus == TableFocus::Grid {
+                tab.result.paste_in_search(text);
+            } else {
+                tab.paste_in_field(text);
+            }
+            return;
+        }
         let console = self.console_mut();
         if !console.paste_in_search(text) {
             console.focus = Focus::Editor;
@@ -343,16 +364,24 @@ impl App {
 
     /// Returns true when the next step must not wait for a key.
     pub fn has_work(&self) -> bool {
-        self.console().search_has_work()
+        match self.table() {
+            Some(tab) => tab.result.search_has_work(),
+            None => self.console().search_has_work(),
+        }
     }
 
     /// Reads waiting execution events and continues the row search.
     /// It returns true when the screen changed.
     pub fn drain_events(&mut self) -> bool {
-        let mut changed = self.console().search_has_work();
+        let changed = self.has_work();
         if changed {
-            self.console_mut().continue_search(Instant::now() + SEARCH_SLICE);
+            let deadline = Instant::now() + SEARCH_SLICE;
+            match self.table_active {
+                Some(index) => self.tables[index].result.continue_search(deadline),
+                None => self.console_mut().continue_search(deadline),
+            }
         }
+        let mut changed = changed;
         for _ in 0..EVENTS_PER_FRAME {
             let Some(event) = self.events.as_mut().and_then(|events| events.try_recv().ok()) else {
                 break;
@@ -380,6 +409,10 @@ impl App {
     fn on_console_event(&mut self, event: ExecEvent) {
         let Some(id) = event.console() else { return };
         let budget = self.budget.clone();
+        if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
+            tab.on_event(event, &budget);
+            return;
+        }
         match self.console_by_id(id) {
             Some(console) => {
                 if let Some(signal) = console.on_event(event, &budget) {
@@ -407,8 +440,13 @@ impl App {
         let main = self.draw_side(frame, body);
         let [tabs, console] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(main);
-        self.layout.main_tabs = draw_main_tabs(frame, tabs, &self.consoles, self.active, &self.theme);
-        self.draw_active_console(frame, console);
+        let labels = self.tab_labels();
+        self.layout.main_tabs = draw_main_tabs(frame, tabs, labels, self.active_tab(), &self.theme);
+        if self.table_active.is_some() {
+            self.draw_active_table(frame, console);
+        } else {
+            self.draw_active_console(frame, console);
+        }
         self.draw_hint(frame, hints);
         self.draw_layers(frame);
     }
@@ -464,8 +502,24 @@ impl App {
         self.layout.console = draw_console(frame, area, console, &bar, ratio, focused, &self.theme);
     }
 
+    fn draw_active_table(&mut self, frame: &mut Frame, area: Rect) {
+        let Some(index) = self.table_active else { return };
+        let connection = self.tables[index].connection;
+        let name = self.connection(connection).map_or_else(String::new, |item| item.name.clone());
+        let pool = self.manager.as_ref().map(|manager| manager.usage(connection));
+        let bar = TableBar {
+            connection: &name,
+            pool,
+            data: (self.budget.used(), self.budget.limit()),
+            blocked: self.tables[index].is_blocked(&self.budget),
+        };
+        let focused = !self.navigator_focused;
+        self.layout.table = draw_table(frame, area, &mut self.tables[index], &bar, focused, &self.theme);
+    }
+
     fn draw_hint(&self, frame: &mut Frame, area: Rect) {
-        let status = self.status.as_deref().or(self.console().editor.status());
+        let editor_status = if self.table_active.is_some() { None } else { self.console().editor.status() };
+        let status = self.status.as_deref().or(editor_status);
         let line = match status {
             Some(status) => Span::styled(status, self.theme.status),
             None => Span::styled(self.hint(), self.theme.hint),

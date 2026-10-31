@@ -9,6 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::console::centered;
 use super::text;
+use super::input_spans;
 use super::theme::Theme;
 use crate::connector::target::hide_uri_password;
 use crate::form::{ConnectionForm, Field, FieldStyle, FormNote, Kind};
@@ -79,15 +80,7 @@ fn text_spans(form: &ConnectionForm, field: Field, width: usize, theme: &Theme) 
         Field::Uri => hide_uri_password(&printable(form.text(field)), MASK).chars().collect(),
         _ => printable(form.text(field)).chars().collect(),
     };
-    if form.focus != field {
-        return vec![Span::raw(chars.iter().take(width).collect::<String>())];
-    }
-    let cursor = form.cursor.min(chars.len());
-    let first = (cursor + 1).saturating_sub(width);
-    let before: String = chars[first..cursor].iter().collect();
-    let at = chars.get(cursor).map_or_else(|| " ".to_owned(), char::to_string);
-    let after: String = chars.iter().skip(cursor + 1).take(width.saturating_sub(cursor + 1 - first)).collect();
-    vec![Span::raw(before), Span::styled(at, theme.cursor), Span::raw(after)]
+    input_spans(&chars, form.cursor, width, form.focus == field, theme).0
 }
 
 fn value_spans(form: &ConnectionForm, field: Field, width: usize, theme: &Theme) -> Vec<Span<'static>> {

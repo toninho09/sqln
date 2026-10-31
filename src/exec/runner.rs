@@ -148,6 +148,7 @@ impl ConsoleTask {
 
         // A reserved session has this context, and a failed transaction refuses `SET`.
         let context = context(&self.binding.settings, options.schema);
+        let cap = options.row_cap.unwrap_or(self.binding.settings.row_cap);
         if !reserved && let Err(error) = lease.session().apply_context(&context).await {
             self.finish(execution, ExecutionEnd::Failed, Some(error.message)).await;
             self.keep_or_release(lease).await;
@@ -176,7 +177,7 @@ impl ConsoleTask {
             };
 
             self.emit(ExecEvent::StatementStarted { key }).await;
-            let (waited, reason) = self.run_statement(key, active, sql, commands).await;
+            let (waited, reason) = self.run_statement(key, active, sql, cap, commands).await;
             let closed = matches!(waited, Waited::Closed | Waited::Finished { reusable: false, .. });
             let error_offset = match &waited {
                 Waited::Finished { result: Err(error), .. } => error.offset,
@@ -258,14 +259,10 @@ impl ConsoleTask {
         key: StatementKey,
         lease: &mut Lease,
         sql: &str,
+        cap: usize,
         commands: &mut UnboundedReceiver<Command>,
     ) -> (Waited, Option<StopReason>) {
-        let sink = ResultSink::new(
-            key,
-            self.events.clone(),
-            self.budget.clone(),
-            self.binding.settings.row_cap,
-        );
+        let sink = ResultSink::new(key, self.events.clone(), self.budget.clone(), cap);
         let stopping = sink.stop_flag();
         let session = lease.session();
         let canceller = session.canceller();

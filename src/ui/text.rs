@@ -13,6 +13,8 @@ pub const NO_MATCHES: &str = "no matches";
 pub const HINT_EDITOR: &str = "F5 run · Shift+F5 script · Ctrl+Space suggestions · Ctrl+F find · Ctrl+W ? keys";
 pub const HINT_RUNNING: &str = "Ctrl+W x stop · The editor stays available";
 pub const HINT_GRID: &str = "Ctrl+W k editor · Ctrl+C copy · Enter value · Ctrl+F find · [ ] tabs · F1 keys";
+pub const HINT_TABLE: &str = "f where · o order by · s sort · m more · Ctrl+C copy · Enter value · F1 keys";
+pub const HINT_FILTER: &str = "Enter apply · Tab accept or next field · Esc grid · Ctrl+Space suggestions";
 pub const HINT_GRID_SEARCH: &str = "Enter next · Up/Down move · Esc close";
 pub const HINT_LIST: &str = "Tab accept · Up/Down move · Enter new line · Esc close list";
 pub const HINT_SEARCH: &str = "Tab next field · Enter next or replace · Ctrl+A replace all · Esc close";
@@ -116,6 +118,30 @@ pub const COPIED: &str = "Copied.";
 pub const NO_MESSAGES: &str = "No messages.";
 pub const MESSAGES_TAB: &str = "Messages";
 
+pub const LABEL_WHERE: &str = "WHERE";
+pub const LABEL_ORDER_BY: &str = "ORDER BY";
+pub const BUTTON_APPLY: &str = "Apply";
+pub const BUTTON_CLEAR: &str = "Clear";
+pub const BUTTON_LOAD_MORE: &str = "Load more";
+pub const TABLE_TEXT_REFUSED: &str = "The WHERE and ORDER BY text must stay in one statement. Remove a semicolon, an open quote, or an open comment.";
+pub const TABLE_BUSY: &str = "The table has a load in progress. Ctrl+W x stops it.";
+pub const TABLE_NO_MORE: &str = "The table has no more rows to load.";
+pub const TABLE_BLOCKED: &str = "The data budget is full. Close a tab to free space.";
+pub const TABLE_STOPPED: &str = "The load stopped. The rows already loaded stay.";
+pub const TABLE_TIMEOUT: &str = "The time limit ended. The database did not confirm the result.";
+pub const TABLE_CLOSED: &str = "The connection closed. The result is unknown.";
+pub const TABLE_CANCELED: &str = "The load stopped before it started. No SQL was sent.";
+pub const TABLE_MORE: &str = "more rows available";
+pub const TABLE_NO_MORE_ROWS: &str = "no more rows";
+pub const TABLE_WAITING: &str = "waiting for a connection";
+pub const TABLE_LOADING: &str = "loading";
+pub const TABLE_STOPPING: &str = "stopping";
+pub const TABLE_BUDGET: &str = "data budget reached; close a tab to free space";
+pub const TABLE_VALUE_TOO_LARGE: &str = "a value is larger than the data budget";
+pub const TABLE_NO_ORDER: &str = "No ORDER BY: pages can repeat or skip rows.";
+pub const REGION_TABLE: &str = "Table";
+pub const REGION_FILTER: &str = "Filter";
+
 pub const MODE_AUTO: &str = "Auto";
 pub const MODE_MANUAL: &str = "Manual";
 pub const TRANSACTION_NONE: &str = "No transaction";
@@ -159,6 +185,13 @@ pub const OPTION_CONTINUE: &str = "Run";
 pub const OPTION_RETRY: &str = "Try again";
 pub const OPTION_REMOVE: &str = "Remove";
 
+pub const FILTER_KEYS: &str = "\
+Enter                 Apply the fields
+Tab                   Accept the suggestion, or the next field
+Shift+Tab             Next field
+Ctrl+Space            Suggestions
+Esc                   Close the list, or go to the grid";
+
 pub const EDITOR_KEYS: &str = "\
 Ctrl+Space            Suggestions
 Ctrl+F                Find and replace
@@ -189,7 +222,7 @@ pub fn action_text(action: Action) -> &'static str {
         Action::NavigatorDown => "Next row",
         Action::NavigatorCollapse => "Close, or go to the parent",
         Action::NavigatorExpand => "Open",
-        Action::NavigatorOpen => "Open a console, or open the row",
+        Action::NavigatorOpen => "Open a console or a table, or open the row",
         Action::NavigatorNewConsole => "New console",
         Action::NavigatorRefresh => "Read the catalog again",
         Action::NavigatorDisconnect => "Disconnect",
@@ -218,6 +251,10 @@ pub fn action_text(action: Action) -> &'static str {
         Action::GridCloseResult => "Close the result",
         Action::GridPreviousResult => "Previous result",
         Action::GridNextResult => "Next result",
+        Action::GridFocusFilter => "Edit the WHERE filter",
+        Action::GridFocusOrder => "Edit the ORDER BY text",
+        Action::GridSortColumn => "Sort by the column",
+        Action::GridLoadMore => "Load more rows",
     }
 }
 
@@ -257,6 +294,19 @@ pub fn search_count(position: usize, total: usize, partial: bool) -> String {
 
 pub fn result_tab(number: usize) -> String {
     format!("Result {number}")
+}
+
+pub fn rows_loaded(rows: usize) -> String {
+    format!("{} loaded", plural(rows, "row"))
+}
+
+pub fn table_label(name: &str, view: bool) -> String {
+    format!("{name} ({})", if view { "view" } else { "table" })
+}
+
+pub fn table_title(connection: &str, schema: &str, relation: &str, view: bool) -> String {
+    let kind = if view { "view" } else { "table" };
+    format!("{connection} · {schema}.{relation} · {kind}")
 }
 
 pub fn rows_read(rows: usize) -> String {
@@ -364,6 +414,7 @@ Prototype options:
                          SQLN_PASSWORD gives the password.
   --read-only            Ask the database to refuse changes.
   --row-cap <rows>       Set the row cap of each result. The default is 1000.
+  --page-size <rows>     Set the rows of one page in a table. The default is 100.
   --sql-timeout <sec>    Set the time limit of each statement. 0 removes it.
   --vim                  Use the Vim keys.
   --dialect <name>       Use postgres, mysql, or sqlite, without a database.

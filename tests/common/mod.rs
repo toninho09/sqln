@@ -3,8 +3,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use sqln::app::sample_catalog;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use sqln::app::{App, sample_catalog};
 use sqln::catalog::Catalog;
 use sqln::clipboard::MemoryClipboard;
 use sqln::editor::{KeyboardMode, SqlEditor};
@@ -96,4 +96,52 @@ pub fn temp_db(name: &str) -> std::path::PathBuf {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
     }
     path
+}
+
+/// Opens a table with the keys of the navigator. `Enter` on its row does it.
+/// The call waits for the catalog, and it does not wait for the first page.
+pub fn open_table(app: &mut App, connection: usize, name: &str) {
+    use sqln::navigator::RowKind;
+
+    use sqln::connection::CatalogState;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    // A catalog in a new read has no new table yet.
+    while app.connections()[connection].catalog_state == CatalogState::Loading {
+        app.drain_events();
+        assert!(std::time::Instant::now() < deadline, "the catalog did not arrive");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let press = |app: &mut App, code| app.on_event(Event::Key(key(code)));
+    app.on_event(Event::Key(ctrl('w')));
+    press(app, KeyCode::Char('h'));
+    assert!(app.navigator_focused());
+    // The search goes down from the first row.
+    for _ in 0..50 {
+        press(app, KeyCode::Up);
+    }
+    for _ in 0..500 {
+        let row = app.navigator().current(app.connections()).unwrap();
+        let is_target = row.connection == connection
+            && matches!(row.kind, RowKind::Table | RowKind::View)
+            && row.name(app.connections()) == name;
+        if is_target {
+            press(app, KeyCode::Enter);
+            return;
+        }
+        let branch = matches!(row.kind, RowKind::Connection | RowKind::Schema);
+        let closed = !app.navigator().is_open(&row, app.connections());
+        if row.connection == connection && branch && closed {
+            press(app, KeyCode::Right);
+            // A connection waits for its catalog, and a schema opens at once.
+            while row.kind == RowKind::Connection && app.connections()[connection].catalog.is_none() {
+                app.drain_events();
+                assert!(std::time::Instant::now() < deadline, "the catalog did not arrive");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        } else {
+            press(app, KeyCode::Down);
+        }
+    }
+    panic!("{name} is not in the navigator");
 }

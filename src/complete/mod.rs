@@ -9,7 +9,7 @@ use std::ops::Range;
 use self::context::{Analysis, Position, Reference, analyze};
 use self::keywords::is_reserved;
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, RelationRef, Schema};
-use crate::sql::{Dialect, Statement, split};
+use crate::sql::{Dialect, Statement, quote_with, split};
 
 const MAX_ITEMS: usize = 50;
 
@@ -307,7 +307,7 @@ fn needs_quotes(name: &str, dialect: Dialect) -> bool {
 }
 
 /// Writes a name with quotes when the text or the dialect needs them.
-fn quote_name(name: &str, dialect: Dialect, typed_quote: Option<char>) -> String {
+pub fn quote_name(name: &str, dialect: Dialect, typed_quote: Option<char>) -> String {
     let open = match (typed_quote, dialect) {
         (Some(open), _) => open,
         (None, _) if !needs_quotes(name, dialect) => return name.to_owned(),
@@ -317,5 +317,5 @@ fn quote_name(name: &str, dialect: Dialect, typed_quote: Option<char>) -> String
     if open == '[' {
         return format!("[{name}]");
     }
-    format!("{open}{}{open}", name.replace(open, &format!("{open}{open}")))
+    quote_with(name, open)
 }

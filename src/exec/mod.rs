@@ -36,6 +36,8 @@ pub struct StatementKey {
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub row_cap: usize,
+    /// The rows of one page in a table tab.
+    pub page_size: usize,
     /// `None` runs without a time limit.
     pub sql_timeout: Option<Duration>,
     pub connect_timeout: Duration,
@@ -50,6 +52,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             row_cap: 1_000,
+            page_size: 100,
             sql_timeout: Some(Duration::from_secs(30)),
             connect_timeout: Duration::from_secs(30),
             stop_grace: Duration::from_secs(5),
@@ -153,6 +156,8 @@ pub struct RunOptions {
     pub manual: bool,
     /// The schema or database that the console selected.
     pub schema: Option<String>,
+    /// A row cap for this execution. Without a value, the setting of the connection applies.
+    pub row_cap: Option<usize>,
 }
 
 pub struct RunRequest {

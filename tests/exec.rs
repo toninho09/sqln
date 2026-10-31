@@ -99,7 +99,7 @@ impl Harness {
 
     fn run_on(&mut self, console: ConsoleId, statements: &[&str], manual: bool) -> Run {
         let statements = statements.iter().map(|sql| (*sql).to_owned()).collect();
-        let execution = self.manager.run(console, statements, RunOptions { manual, schema: None });
+        let execution = self.manager.run(console, statements, RunOptions { manual, ..RunOptions::default() });
         self.collect(execution)
     }
 
