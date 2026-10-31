@@ -21,7 +21,16 @@ Estas escolhas seguem as regras acima nos pontos que elas deixaram abertos.
 
 | Assunto | Escolha | Rejeitado | Motivo |
 |---|---|---|---|
+| Tecla que aceita sugestão | Opção `suggestionKeys`: `tab` (padrão), `enter` ou `both`, no editor e no filtro da tabela | Somente `Tab`, como no plano original | Reaberta pelo usuário em 2026-10-31; o padrão mantém a regra antiga, e `Enter` só aceita por escolha explícita |
+| Precisão do tempo | Três casas decimais durante a execução e no último tempo, com atualização a cada 100 ms | Segundos inteiros; 250 ms | Pedido do usuário; a 250 ms os últimos dígitos ficam quase parados |
+| Estado da execução nas abas | Selo com fundo colorido no início da aba, com o tempo durante a execução | Símbolo no fim da aba, ao lado do nome | No fim, `✗` ficaria ao lado do `×` de fechar; um bloco de cor é difícil de perder |
+| Fim do selo de resultado | O selo sai quando o usuário deixa a aba, ou com a próxima execução | Manter até a próxima execução; sair ao entrar na aba | Uma aba com selo significa um resultado que o usuário ainda não viu |
+| Início do tempo | Quando a execução começa, sem a espera por senha | Desde a tecla de executar | O tempo mede o banco, e não a digitação da senha |
+| Abas da última sessão | Reabrir ao iniciar, com a opção `reopenTabs` e padrão ligado | Lista manual somente, como no plano original; perguntar ao iniciar | Reaberta pelo usuário em 2026-10-31: o texto já fica salvo, e a reabertura não executa SQL |
+| Tabela da última sessão | Carregar na primeira seleção; uma aba que começa na tela espera `Enter` ou **Apply** | Carregar ao iniciar | A regra de conectar no primeiro uso continua: a abertura não conecta e não pede senha |
+| Lista de abas após uma falha | Configuração inválida ou console bloqueado mantém a lista do arquivo | Gravar a lista da sessão atual | Uma sessão que não conseguiu reabrir as abas não pode apagar essa lista |
 | Fechar aba com o mouse | `×` no fim de cada aba, com as perguntas de `Ctrl+W c` | Fechar sem perguntas; mostrar `×` só na aba ativa | Um clique não pode descartar uma transação ou um texto; o `×` em cada aba fecha outra aba sem trocar a tela |
+| Comandos da linha de dicas | Tecla com o estilo das teclas do menu, efeito com a cor de dica e dois espaços entre os comandos | Separar com ` · ` | A cor marca o início de cada comando; ` · ` passa de 80 colunas no explorador, e dois espaços fecham em 80 |
 | Duração das mensagens | 8 s; uma tecla, uma colagem ou um clique remove antes | Remover só com tecla; o ponteiro e a roda também removem | Uma mensagem sem prazo fica congelada para quem usa o mouse; mover o ponteiro não é uma resposta à mensagem |
 | Espera de credenciais | A mensagem vem do estado da tentativa | Usar o mesmo prazo das outras mensagens | Uma espera longa no cofre continua ativa depois de 8 s, e o fim da espera deve remover a mensagem |
 | Altura | Linha sob as abas e título do painel somente com 30 linhas ou mais | Sempre mostrar | Em 80 x 24, o editor e a grade mantêm as 18 linhas de antes |

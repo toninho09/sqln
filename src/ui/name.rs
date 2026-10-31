@@ -8,6 +8,7 @@ use ratatui::widgets::{Clear, Paragraph};
 
 use super::console::centered;
 use super::float_block;
+use super::statusline::{HintItem, hint_line};
 use super::theme::Theme;
 use super::{input_spans, text};
 use crate::exec::ConsoleId;
@@ -74,7 +75,7 @@ pub fn draw_name(frame: &mut Frame, prompt: &NamePrompt, theme: &Theme) {
         Rect::new(inner.x, inner.y + 1, inner.width, 1),
     );
     frame.render_widget(
-        Paragraph::new(text::HINT_NAME).style(theme.hint),
+        Paragraph::new(hint_line(&HintItem::of(text::HINT_NAME), theme)),
         Rect::new(inner.x, inner.y + 3, inner.width, 1),
     );
 }

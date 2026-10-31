@@ -17,6 +17,7 @@ use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
 use sqln::connection::Source;
 use sqln::form::{Field, FormNote};
+use sqln::input::SuggestionKeys;
 use sqln::script_file::Trouble;
 use sqln::store::scripts::{self, ScriptMeta};
 use sqln::store::{Root, Scope, Store, file};
@@ -868,7 +869,8 @@ fn quitting_writes_the_pending_text_and_the_cursor() {
 fn a_new_console_takes_the_lowest_free_name_after_a_restart() {
     let (store, base) = global_only("p-names");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    let preferences = r#"{"reopenTabs":false}"#;
+    write_config(&store.global, preferences, &[sqlite_entry("g1", "s", &db.display().to_string())]);
     let mut first = Session::start(&store);
     first.type_and_save("SELECT 1;");
     first.quit();
@@ -1808,9 +1810,9 @@ fn the_settings_write_only_the_scope_of_the_dialog() {
     session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
     session.write("77");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    for _ in 0..5 {
+        session.code(KeyCode::Tab);
+    }
     session.code(KeyCode::Enter);
     session.assert_sees("settings are saved");
     let text = fs::read_to_string(project.config_file()).unwrap();
@@ -1834,9 +1836,9 @@ fn an_empty_field_removes_the_project_value_and_shows_the_global_value() {
     session.code(KeyCode::Backspace);
     session.code(KeyCode::Backspace);
     session.assert_sees("from global: 10");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    for _ in 0..5 {
+        session.code(KeyCode::Tab);
+    }
     session.code(KeyCode::Enter);
     let text = fs::read_to_string(project.config_file()).unwrap();
     assert!(!text.contains("pageSize"), "{text}");
@@ -1851,9 +1853,9 @@ fn a_settings_value_of_zero_stays_in_the_dialog_with_a_note() {
     session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
     session.write("0");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    for _ in 0..5 {
+        session.code(KeyCode::Tab);
+    }
     session.code(KeyCode::Enter);
     session.assert_sees("needs a number of 1 or more");
 }
@@ -1868,7 +1870,7 @@ fn a_change_of_keyboard_in_the_settings_keeps_the_text_the_cursor_and_the_histor
     session.code(KeyCode::Tab);
     session.code(KeyCode::Right);
     session.code(KeyCode::Right);
-    for _ in 0..4 {
+    for _ in 0..6 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2020,4 +2022,435 @@ fn a_changed_path_in_an_edit_starts_at_the_current_folder() {
     session.press_form_button(Field::Save);
     assert!(session.app.form().is_none(), "{}", session.screen());
     assert_eq!(saved_file(&store), full);
+}
+
+// ---- the tabs of the last session ----
+
+const ITEMS: &str = "CREATE TABLE items(id INTEGER); INSERT INTO items VALUES (4242);";
+
+/// A global folder with one SQLite connection that has a table.
+fn reopening_store(name: &str, preferences: &str) -> (Store, String) {
+    let (store, base) = global_only(name);
+    let db = database(&base, "s", ITEMS).display().to_string();
+    write_config(&store.global, preferences, &[sqlite_entry("g1", "s", &db)]);
+    (store, db)
+}
+
+impl Session {
+    fn new_console(&mut self) {
+        self.go_to_connection("s");
+        self.code(KeyCode::Char('n'));
+        self.code(KeyCode::Enter);
+    }
+
+    fn top_row(&mut self) -> String {
+        self.screen().lines().next().unwrap().to_owned()
+    }
+}
+
+#[test]
+fn the_tabs_of_the_last_session_reopen_in_order_with_the_same_active_tab() {
+    let (store, _) = reopening_store("p-reopen", "{}");
+    let mut first = Session::start(&store);
+    first.type_and_save("SELECT 1;");
+    first.new_console();
+    first.type_and_save("SELECT 2;");
+    first.new_console();
+    first.type_and_save("SELECT 3;");
+    first.prefix('p');
+    assert_eq!(first.app.console().name, "console-2");
+    first.quit();
+    drop(first);
+
+    let mut second = Session::start(&store);
+    assert_eq!(second.names(), ["console-1", "console-2", "console-3"]);
+    assert_eq!(second.app.console().name, "console-2");
+    assert_eq!(second.text(), "SELECT 2;");
+    assert!(second.top_row().find("console-1").unwrap() < second.top_row().find("console-3").unwrap());
+}
+
+#[test]
+fn a_reopened_console_runs_no_sql_and_shows_no_result() {
+    let (store, _) = reopening_store("p-reopen-result", "{}");
+    let mut first = Session::start(&store);
+    first.type_and_save("SELECT 4242;");
+    first.press(key(KeyCode::F(5)));
+    first.pump_sees("1 row");
+    first.quit();
+    drop(first);
+
+    let mut second = Session::start(&store);
+    assert_eq!(second.text(), "SELECT 4242;");
+    assert!(second.app.console().results.is_empty());
+    second.assert_sees("No messages.");
+}
+
+#[test]
+fn an_empty_console_does_not_reopen() {
+    let (store, _) = reopening_store("p-reopen-empty", "{}");
+    let mut first = Session::start(&store);
+    first.type_and_save("SELECT 1;");
+    first.new_console();
+    assert_eq!(first.names(), ["console-1", "console-2"]);
+    first.quit();
+    drop(first);
+
+    let second = Session::start(&store);
+    assert_eq!(second.names(), ["console-1"]);
+    assert_eq!(second.text(), "SELECT 1;");
+}
+
+#[test]
+fn a_table_of_the_last_session_loads_at_its_selection() {
+    let (store, _) = reopening_store("p-reopen-table", "{}");
+    let mut first = Session::start(&store);
+    first.type_and_save("SELECT 1;");
+    common::open_table(&mut first.app, 0, "items");
+    first.pump_sees("4242");
+    first.prefix('p');
+    assert!(first.app.table().is_none());
+    first.quit();
+    drop(first);
+
+    let mut second = Session::start(&store);
+    assert!(second.top_row().contains("items (table)"), "{}", second.top_row());
+    assert!(second.app.table().is_none(), "the console stays on screen");
+    assert_eq!(second.app.tables()[0].loaded(), 0);
+    second.app.drain_events();
+    second.assert_not_sees("4242");
+    second.prefix('n');
+    assert!(second.app.table().is_some());
+    second.pump_sees("4242");
+}
+
+#[test]
+fn a_table_on_screen_at_the_start_waits_for_a_key_and_has_no_empty_console() {
+    let (store, _) = reopening_store("p-reopen-active", "{}");
+    let mut first = Session::start(&store);
+    common::open_table(&mut first.app, 0, "items");
+    first.pump_sees("4242");
+    first.quit();
+    drop(first);
+
+    let mut second = Session::start(&store);
+    assert_eq!(second.app.table().map(|tab| tab.label()).as_deref(), Some("items (table)"));
+    assert!(!second.top_row().contains("console-"), "{}", second.top_row());
+    second.assert_sees("Enter loads the rows.");
+    second.assert_sees("Enter load  F1 keys");
+    for _ in 0..20 {
+        second.app.drain_events();
+    }
+    assert_eq!(second.app.tables()[0].loaded(), 0);
+    second.code(KeyCode::Enter);
+    second.pump_sees("4242");
+    second.assert_not_sees("Enter loads the rows.");
+    second.assert_sees("Enter value");
+}
+
+#[test]
+fn the_apply_button_also_loads_a_table_of_the_last_session() {
+    let (store, _) = reopening_store("p-reopen-apply", "{}");
+    let mut first = Session::start(&store);
+    common::open_table(&mut first.app, 0, "items");
+    first.pump_sees("4242");
+    first.quit();
+    drop(first);
+
+    let mut second = Session::start(&store);
+    second.prefix('k');
+    second.code(KeyCode::Enter);
+    second.pump_sees("4242");
+}
+
+#[test]
+fn the_setting_off_leaves_the_tabs_closed_and_the_list_stays_for_later() {
+    let (store, db) = reopening_store("p-reopen-off", r#"{"reopenTabs":false}"#);
+    let mut first = Session::start(&store);
+    first.type_and_save("SELECT 1;");
+    first.quit();
+    drop(first);
+
+    let second = Session::start(&store);
+    assert_eq!(second.names(), ["console-2"]);
+    assert_eq!(second.text(), "");
+    drop(second);
+
+    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db)]);
+    let third = Session::start(&store);
+    assert_eq!(third.names(), ["console-1"]);
+    assert_eq!(third.text(), "SELECT 1;");
+}
+
+#[test]
+fn the_settings_choose_the_reopening_of_the_tabs() {
+    let (store, _) = reopening_store("p-reopen-settings", "{}");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.assert_sees("Reopen tabs");
+    session.assert_sees("Default: On");
+    for _ in 0..4 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Right);
+    session.assert_sees("[On]");
+    session.code(KeyCode::Right);
+    session.assert_sees("[Off]");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+    let text = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(text.contains("\"reopenTabs\": false"), "{text}");
+}
+
+#[test]
+fn the_project_value_of_the_reopening_comes_before_the_global_value() {
+    let (store, base) = store("p-reopen-scopes");
+    let db = database(&base, "s", "").display().to_string();
+    let project = store.project.clone().unwrap();
+    let reopen = |store: &Store| sqln::store::config::load(store).config.unwrap().reopen_tabs;
+    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db)]);
+    assert!(reopen(&store), "the default reopens the tabs");
+    write_config(&store.global, r#"{"reopenTabs":false}"#, &[sqlite_entry("g1", "s", &db)]);
+    assert!(!reopen(&store));
+    write_config(&project, r#"{"reopenTabs":true}"#, &[]);
+    assert!(reopen(&store));
+}
+
+#[test]
+fn a_console_in_use_by_another_instance_stays_closed_and_keeps_its_place_in_the_list() {
+    let (store, _) = reopening_store("p-reopen-lock", "{}");
+    let mut first = Session::start(&store);
+    first.type_and_save("SELECT 1;");
+    first.quit();
+    drop(first);
+
+    let holder = Session::start(&store);
+    assert_eq!(holder.text(), "SELECT 1;");
+    let mut other = Session::start(&store);
+    assert_eq!(other.text(), "");
+    other.assert_sees("console-1");
+    other.assert_sees("is open in another");
+    other.quit();
+    drop(other);
+    drop(holder);
+
+    let last = Session::start(&store);
+    assert_eq!(last.text(), "SELECT 1;");
+}
+
+#[test]
+fn the_tabs_of_a_removed_connection_do_not_reopen() {
+    let (store, base) = global_only("p-reopen-removed");
+    let db = database(&base, "s", ITEMS).display().to_string();
+    let other = database(&base, "t", "").display().to_string();
+    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db), sqlite_entry("g2", "t", &other)]);
+    let mut first = Session::start(&store);
+    first.type_and_save("SELECT 1;");
+    common::open_table(&mut first.app, 0, "items");
+    first.pump_sees("4242");
+    first.quit();
+    drop(first);
+
+    write_config(&store.global, "{}", &[sqlite_entry("g2", "t", &other)]);
+    let second = Session::start(&store);
+    assert_eq!(second.text(), "");
+    assert!(second.app.tables().is_empty());
+    assert_eq!(second.app.consoles().len(), 1);
+}
+
+#[test]
+fn an_invalid_configuration_keeps_the_list_of_tabs_for_the_next_start() {
+    let (store, db) = reopening_store("p-reopen-invalid", "{}");
+    let mut first = Session::start(&store);
+    first.type_and_save("SELECT 1;");
+    first.quit();
+    drop(first);
+
+    let good = fs::read_to_string(store.global.config_file()).unwrap();
+    fs::write(store.global.config_file(), "{ not json").unwrap();
+    let mut broken = Session::start(&store);
+    assert_eq!(broken.text(), "");
+    broken.app.shutdown();
+    drop(broken);
+
+    fs::write(store.global.config_file(), good).unwrap();
+    let last = Session::start(&store);
+    assert_eq!(last.text(), "SELECT 1;");
+    assert!(!db.is_empty());
+}
+
+#[test]
+fn a_signal_or_a_panic_also_keeps_the_list_of_tabs() {
+    let (store, _) = reopening_store("p-reopen-signal", "{}");
+    let mut first = Session::start(&store);
+    first.type_and_save("SELECT 1;");
+    first.app.save_without_questions();
+    drop(first);
+
+    let second = Session::start(&store);
+    assert_eq!(second.text(), "SELECT 1;");
+}
+
+#[test]
+fn the_last_tab_ends_the_application_and_comes_back_at_the_next_start() {
+    let (store, _) = reopening_store("p-reopen-last", "{}");
+    let mut first = Session::start(&store);
+    first.type_and_save("SELECT 1;");
+    first.prefix('c');
+    assert!(first.app.should_quit());
+    first.app.shutdown();
+    drop(first);
+
+    let second = Session::start(&store);
+    assert_eq!(second.names(), ["console-1"]);
+    assert_eq!(second.text(), "SELECT 1;");
+}
+
+#[test]
+fn a_workspace_file_without_a_list_of_tabs_starts_as_before() {
+    let (store, _) = reopening_store("p-reopen-old", "{}");
+    fs::write(
+        store.global.workspace_file(),
+        r#"{"version":1,"layout":{"navigatorCollapsed":true,"navigatorWidth":30,"editorRatio":0.5}}"#,
+    )
+    .unwrap();
+    let mut session = Session::start(&store);
+    session.assert_not_sees("cannot read workspace.json");
+    assert_eq!(session.app.consoles().len(), 1);
+    assert_eq!(session.text(), "");
+    assert!(session.app.navigator().collapsed);
+}
+
+// ---- the keys of the suggestion list ----
+
+const TYPED: &str = "SELECT * FROM it";
+const ACCEPTED: &str = "SELECT * FROM items";
+
+impl Session {
+    /// Replaces the text with the start of a name, and waits for the list.
+    fn open_suggestions(&mut self) {
+        self.press(ctrl('a'));
+        self.code(KeyCode::Delete);
+        self.write(TYPED);
+        self.press(ctrl(' '));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while self.app.console().editor.suggestions().is_none() {
+            self.app.drain_events();
+            assert!(Instant::now() < deadline, "the list did not open:\n{}", self.screen());
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
+#[test]
+fn by_default_tab_accepts_and_enter_breaks_the_line() {
+    let (store, _) = reopening_store("p-keys-default", "{}");
+    let mut session = Session::start(&store);
+    session.open_suggestions();
+    session.assert_sees("Tab accept");
+    session.assert_sees("Enter new line");
+    session.code(KeyCode::Tab);
+    assert_eq!(session.text(), ACCEPTED);
+
+    session.open_suggestions();
+    session.code(KeyCode::Enter);
+    assert_eq!(session.text(), format!("{TYPED}\n"));
+}
+
+#[test]
+fn the_enter_choice_accepts_with_enter_and_tab_keeps_its_own_effect() {
+    let (store, _) = reopening_store("p-keys-enter", r#"{"suggestionKeys":"enter"}"#);
+    let mut session = Session::start(&store);
+    session.open_suggestions();
+    session.assert_sees("Enter accept");
+    session.assert_not_sees("Enter new line");
+    session.code(KeyCode::Enter);
+    assert_eq!(session.text(), ACCEPTED);
+
+    session.open_suggestions();
+    session.code(KeyCode::Tab);
+    assert!(session.text().starts_with(TYPED), "{}", session.text());
+    assert_ne!(session.text(), ACCEPTED);
+    assert!(session.app.console().editor.suggestions().is_none());
+}
+
+#[test]
+fn the_choice_of_both_accepts_with_each_key() {
+    let (store, _) = reopening_store("p-keys-both", r#"{"suggestionKeys":"both"}"#);
+    let mut session = Session::start(&store);
+    session.open_suggestions();
+    session.assert_sees("Tab/Enter accept");
+    session.code(KeyCode::Tab);
+    assert_eq!(session.text(), ACCEPTED);
+    session.open_suggestions();
+    session.code(KeyCode::Enter);
+    assert_eq!(session.text(), ACCEPTED);
+}
+
+#[test]
+fn a_key_with_a_modifier_does_not_accept_a_suggestion() {
+    let (store, _) = reopening_store("p-keys-modifier", r#"{"suggestionKeys":"both"}"#);
+    let mut session = Session::start(&store);
+    session.open_suggestions();
+    session.press(crossterm::event::KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::SHIFT));
+    assert_ne!(session.text(), ACCEPTED);
+}
+
+#[test]
+fn the_vim_keyboard_uses_the_same_choice_of_keys() {
+    let preferences = r#"{"keyboardMode":"vim","suggestionKeys":"enter"}"#;
+    let (store, _) = reopening_store("p-keys-vim", preferences);
+    let mut session = Session::start(&store);
+    session.code(KeyCode::Char('i'));
+    session.open_suggestions();
+    session.code(KeyCode::Enter);
+    assert_eq!(session.text(), ACCEPTED);
+}
+
+#[test]
+fn the_settings_choose_the_keys_of_the_list_and_the_change_works_at_once() {
+    let (store, _) = reopening_store("p-keys-settings", "{}");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.assert_sees("Autocomplete");
+    session.assert_sees("Default: Tab");
+    for _ in 0..5 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Right);
+    session.assert_sees("[Tab]");
+    session.code(KeyCode::Right);
+    session.assert_sees("[Enter]");
+    session.code(KeyCode::Right);
+    session.assert_sees("[Tab or Enter]");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+    let text = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(text.contains("\"suggestionKeys\": \"both\""), "{text}");
+
+    session.open_suggestions();
+    session.code(KeyCode::Enter);
+    assert_eq!(session.text(), ACCEPTED);
+}
+
+#[test]
+fn the_project_choice_of_keys_comes_before_the_global_choice() {
+    let (store, base) = store("p-keys-scopes");
+    let db = database(&base, "s", "").display().to_string();
+    let project = store.project.clone().unwrap();
+    let keys = |store: &Store| sqln::store::config::load(store).config.unwrap().suggestion_keys;
+    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db)]);
+    assert_eq!(keys(&store), SuggestionKeys::Tab);
+    write_config(&store.global, r#"{"suggestionKeys":"enter"}"#, &[sqlite_entry("g1", "s", &db)]);
+    assert_eq!(keys(&store), SuggestionKeys::Enter);
+    write_config(&project, r#"{"suggestionKeys":"both"}"#, &[]);
+    assert_eq!(keys(&store), SuggestionKeys::Both);
+}
+
+#[test]
+fn an_unknown_choice_of_keys_is_a_configuration_error() {
+    let (store, _) = reopening_store("p-keys-unknown", r#"{"suggestionKeys":"space"}"#);
+    assert!(sqln::store::config::load(&store).config.is_err());
 }

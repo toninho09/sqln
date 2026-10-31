@@ -251,21 +251,38 @@ fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
 
 #[test]
 fn each_hint_fits_the_minimum_terminal_width() {
+    use sqln::input::SuggestionKeys;
+    use sqln::ui::statusline::{HintItem, hint_text};
     use sqln::ui::text;
-    for hint in [
+    for parts in [
+        text::HINT_FILTER,
         text::HINT_GRID_SEARCH,
-        text::RESULT_READING,
-        text::HINT_LIST,
         text::HINT_SEARCH,
         text::HINT_PICKER,
+        text::HINT_CHOOSE,
+        text::HINT_NAME,
+        text::HINT_SETTINGS,
         text::HINT_CONFLICTS,
         text::HINT_CONFIG_ERROR,
+        text::HINT_FORM,
         text::HINT_DIALOG,
         text::HINT_OVERLAY,
-        text::CLIPBOARD_UNAVAILABLE,
-        text::COPY_SENT_TO_TERMINAL,
+        text::HINT_PREFIX,
+        text::HINT_PALETTE,
+        text::AUTH_PASSWORD_HINT,
+        text::AUTH_REFUSED_HINT,
     ] {
-        assert!(hint.chars().count() <= 80, "{hint}");
+        let hint = hint_text(&HintItem::of(parts));
+        assert!(hint.chars().count() < 80, "{hint}");
+    }
+    for keys in [SuggestionKeys::Tab, SuggestionKeys::Enter, SuggestionKeys::Both] {
+        for others in [text::LIST_EDITOR_KEYS, text::LIST_FILTER_KEYS] {
+            let hint = hint_text(&HintItem::of(&text::hint_list(keys, others)));
+            assert!(hint.chars().count() < 80, "{hint}");
+        }
+    }
+    for message in [text::RESULT_READING, text::CLIPBOARD_UNAVAILABLE, text::COPY_SENT_TO_TERMINAL] {
+        assert!(message.chars().count() < 80, "{message}");
     }
 }
 

@@ -3,9 +3,10 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 
+use crate::input::SuggestionKeys;
 use crate::line_input::LineInput;
 use crate::store::Scope;
-use crate::store::config::{KeyboardName, Preferences};
+use crate::store::config::{DEFAULT_REOPEN_TABS, KeyboardName, Preferences};
 use crate::ui::text;
 
 const MEBIBYTE: usize = 1024 * 1024;
@@ -19,16 +20,20 @@ pub enum Field {
     PageSize,
     RowCap,
     Budget,
+    ReopenTabs,
+    SuggestionKeys,
     Save,
     Cancel,
 }
 
-const FIELDS: [Field; 7] = [
+const FIELDS: [Field; 9] = [
     Field::Scope,
     Field::Keyboard,
     Field::PageSize,
     Field::RowCap,
     Field::Budget,
+    Field::ReopenTabs,
+    Field::SuggestionKeys,
     Field::Save,
     Field::Cancel,
 ];
@@ -46,6 +51,8 @@ struct Draft {
     page_size: LineInput,
     row_cap: LineInput,
     budget: LineInput,
+    reopen_tabs: Option<bool>,
+    suggestion_keys: Option<SuggestionKeys>,
 }
 
 fn number_text(value: Option<usize>) -> LineInput {
@@ -62,6 +69,8 @@ impl Draft {
             page_size: number_text(preferences.page_size),
             row_cap: number_text(preferences.row_cap),
             budget: number_text(budget),
+            reopen_tabs: preferences.reopen_tabs,
+            suggestion_keys: preferences.suggestion_keys,
         }
     }
 }
@@ -74,6 +83,13 @@ pub struct SettingsForm {
     project: Option<Preferences>,
     global_draft: Draft,
     project_draft: Option<Draft>,
+}
+
+/// Returns the value after `value` in a list of choices.
+fn next_choice<T: Copy + PartialEq>(order: &[T], value: T, forward: bool) -> T {
+    let index = order.iter().position(|item| *item == value).unwrap_or(0);
+    let next = if forward { index + 1 } else { index + order.len() - 1 };
+    order[next % order.len()]
 }
 
 fn parse(input: &LineInput, name: &str) -> Result<Option<usize>, String> {
@@ -125,6 +141,14 @@ impl SettingsForm {
         self.draft().keyboard
     }
 
+    pub fn reopen_tabs(&self) -> Option<bool> {
+        self.draft().reopen_tabs
+    }
+
+    pub fn suggestion_keys(&self) -> Option<SuggestionKeys> {
+        self.draft().suggestion_keys
+    }
+
     /// Returns the field of a number, with the cursor position.
     pub fn input(&self, field: Field) -> Option<&LineInput> {
         let draft = self.draft();
@@ -156,10 +180,16 @@ impl SettingsForm {
             Field::PageSize => global.page_size.map(|value| value.to_string()),
             Field::RowCap => global.row_cap.map(|value| value.to_string()),
             Field::Budget => global.grid_budget_bytes.map(|bytes| bytes.div_ceil(MEBIBYTE).to_string()),
+            Field::ReopenTabs => global.reopen_tabs.map(|value| text::on_off(value).to_owned()),
+            Field::SuggestionKeys => global.suggestion_keys.map(|keys| text::suggestion_keys_name(keys).to_owned()),
             _ => None,
         };
         match (from_global, value) {
             (true, Some(value)) => text::from_global(&value),
+            _ if field == Field::ReopenTabs => text::default_value(text::on_off(DEFAULT_REOPEN_TABS)),
+            _ if field == Field::SuggestionKeys => {
+                text::default_value(text::suggestion_keys_name(SuggestionKeys::default()))
+            }
             _ => text::VALUE_DEFAULT.to_owned(),
         }
     }
@@ -177,7 +207,7 @@ impl SettingsForm {
         self.focus = FIELDS[index];
     }
 
-    /// The scope and the keyboard change with the side keys.
+    /// The scope and the choices change with the side keys.
     fn change(&mut self, forward: bool) {
         match self.focus {
             Field::Scope if self.has_project() => {
@@ -188,9 +218,20 @@ impl SettingsForm {
             }
             Field::Keyboard => {
                 let order = [None, Some(KeyboardName::Conventional), Some(KeyboardName::Vim)];
-                let index = order.iter().position(|item| *item == self.draft().keyboard).unwrap_or(0);
-                let next = if forward { index + 1 } else { index + order.len() - 1 };
-                self.draft_mut().keyboard = order[next % order.len()];
+                self.draft_mut().keyboard = next_choice(&order, self.draft().keyboard, forward);
+            }
+            Field::ReopenTabs => {
+                let order = [None, Some(true), Some(false)];
+                self.draft_mut().reopen_tabs = next_choice(&order, self.draft().reopen_tabs, forward);
+            }
+            Field::SuggestionKeys => {
+                let order = [
+                    None,
+                    Some(SuggestionKeys::Tab),
+                    Some(SuggestionKeys::Enter),
+                    Some(SuggestionKeys::Both),
+                ];
+                self.draft_mut().suggestion_keys = next_choice(&order, self.draft().suggestion_keys, forward);
             }
             _ => {}
         }
@@ -238,6 +279,8 @@ impl SettingsForm {
         };
         let mut preferences = base.clone();
         preferences.keyboard_mode = draft.keyboard;
+        preferences.reopen_tabs = draft.reopen_tabs;
+        preferences.suggestion_keys = draft.suggestion_keys;
         preferences.page_size = parse(&draft.page_size, text::FIELD_PAGE_SIZE)?;
         preferences.row_cap = parse(&draft.row_cap, text::FIELD_ROW_CAP)?;
         let budget = parse(&draft.budget, text::FIELD_BUDGET)?;

@@ -16,6 +16,7 @@ pub use self::search::{Match, SearchBar, SearchField};
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{CopyOutcome, EditorClipboard, SharedClipboard};
 use crate::complete::{Completion, keywords, suggest_in};
+use crate::input::SuggestionKeys;
 use crate::sql::{Dialect, TokenKind, split, split_tokens, statement_at};
 use crate::ui::text;
 use crate::ui::theme::Theme;
@@ -315,15 +316,15 @@ impl SqlEditor {
     }
 
     /// Handles a key for the open list. It returns false when other handlers must act.
-    pub fn on_list_key(&mut self, key: KeyEvent) -> bool {
+    pub fn on_list_key(&mut self, key: KeyEvent, keys: SuggestionKeys) -> bool {
         let Some(list) = &mut self.list else { return false };
+        if keys.accepts(key) {
+            self.accept_suggestion();
+            return true;
+        }
         let count = list.completion.items.len();
         let plain = key.modifiers.is_empty();
         match key.code {
-            KeyCode::Tab if plain => {
-                self.accept_suggestion();
-                true
-            }
             KeyCode::Esc => {
                 self.list = None;
                 self.list_request = None;

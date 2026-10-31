@@ -25,7 +25,9 @@ use sqln::connector::{
     Canceller, Capabilities, ConnectError, Connector, ExecError, Namespace, ResetOutcome, Session,
     SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
+use sqln::console::Phase;
 use sqln::editor::KeyboardMode;
+use sqln::input::SuggestionKeys;
 use sqln::exec::{Flow, ResultSink, Settings};
 use sqln::grid::{Row, Value};
 use sqln::sql::Dialect;
@@ -1176,7 +1178,7 @@ fn the_hint_follows_the_part_of_the_table_in_focus() {
     let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
     f.open_table("users");
     f.grid();
-    f.assert_sees("f where · o order by");
+    f.assert_sees("f where  o order by");
     f.focus_filter();
     f.assert_sees("Enter apply");
 }
@@ -1728,4 +1730,237 @@ fn the_close_mark_of_the_last_table_ends_the_application() {
     f.close_tab("console-1");
     f.close_tab("t (table)");
     assert!(f.app.should_quit());
+}
+
+// ---- the state of a run in the tab row ----
+
+/// The connector of these tests reads the page of a statement.
+const PAGE: &str = "SELECT 1 LIMIT 5 OFFSET 0;";
+
+impl Fixture {
+    fn top(&mut self) -> String {
+        self.screen().lines().next().unwrap().to_owned()
+    }
+
+    /// Replaces the text of the console and starts a run.
+    fn run_text(&mut self, sql: &str) {
+        self.press(ctrl('a'));
+        self.code(KeyCode::Delete);
+        self.app.on_event(Event::Paste(sql.to_owned()));
+        self.code(KeyCode::F(5));
+    }
+
+    /// Runs a statement and waits until the connector holds it.
+    fn run_held(&mut self, recorder: &Recorder, sql: &str) {
+        recorder.hold.store(true, Ordering::SeqCst);
+        self.run_text(sql);
+        self.pump_until(|f| f.app.console().phase == Phase::Running);
+    }
+
+    fn console_idle(&mut self) {
+        self.pump_until(|f| f.app.consoles().iter().all(|console| !console.is_busy()));
+    }
+}
+
+fn release(recorder: &Recorder) {
+    recorder.hold.store(false, Ordering::SeqCst);
+    recorder.release.notify_one();
+}
+
+/// Returns true when a text has a time such as `1m 05.123s`.
+fn has_three_decimals(text: &str) -> bool {
+    text.match_indices('.').any(|(at, _)| {
+        let rest = &text[at + 1..];
+        rest.len() >= 4 && rest[..3].chars().all(|c| c.is_ascii_digit()) && rest[3..].starts_with('s')
+    })
+}
+
+#[test]
+fn a_running_tab_shows_its_time_in_the_tab_row_and_in_the_status_line() {
+    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    f.run_held(&recorder, PAGE);
+    f.app.tick_at(Instant::now() + Duration::from_secs(65));
+    assert!(has_three_decimals(&f.top()), "{}", f.top());
+    let screen = f.screen();
+    let status = screen.lines().find(|line| line.contains("Running 1m 0")).unwrap();
+    assert!(has_three_decimals(status), "{status}");
+    release(&recorder);
+    f.console_idle();
+    assert!(!f.top().contains("1m 0"), "{}", f.top());
+}
+
+#[test]
+fn the_mark_of_a_run_moves_and_an_idle_screen_does_not_draw_again() {
+    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let start = Instant::now();
+    assert!(!f.app.tick_at(start + Duration::from_secs(1)));
+    assert!(!f.app.tick_at(start + Duration::from_secs(2)));
+
+    f.run_held(&recorder, PAGE);
+    let now = Instant::now();
+    f.app.tick_at(now);
+    let first = f.top();
+    assert!(f.app.tick_at(now + Duration::from_millis(100)), "the time needs a new frame");
+    assert_ne!(first, f.top());
+    assert!(!f.app.tick_at(now + Duration::from_millis(100)), "the same frame draws once");
+    let mark = |row: &str| row.trim_start().chars().next();
+    let mut picture = mark(&f.top());
+    let mut changes = 0;
+    for step in 2..=9 {
+        f.app.tick_at(now + Duration::from_millis(100) * step);
+        let next = mark(&f.top());
+        changes += u32::from(next != picture);
+        picture = next;
+    }
+    assert_eq!(changes, 4, "the picture of the mark changes every 200 ms");
+    release(&recorder);
+    f.console_idle();
+}
+
+#[test]
+fn a_tab_that_ends_out_of_sight_keeps_its_mark_until_the_user_leaves_it() {
+    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    f.run_held(&recorder, PAGE);
+    recorder.hold.store(false, Ordering::SeqCst);
+    f.open_table("users");
+    assert!(f.app.table().is_some());
+    release(&recorder);
+    f.console_idle();
+    assert!(f.top().contains(" ok  console-1"), "{}", f.top());
+
+    f.click_text("console-1");
+    assert!(f.app.table().is_none());
+    assert!(f.top().contains(" ok  console-1"), "the mark stays while the user looks");
+    f.prefix('n');
+    assert!(f.app.table().is_some());
+    assert!(!f.top().contains(" ok  console-1"), "{}", f.top());
+}
+
+#[test]
+fn the_mark_of_a_console_stays_during_a_visit_and_goes_after_it() {
+    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    f.run_held(&recorder, PAGE);
+    f.prefix('h');
+    f.code(KeyCode::Char('n'));
+    assert_eq!(f.app.console().name, "console-2");
+    release(&recorder);
+    f.console_idle();
+    assert!(f.top().contains(" ok  console-1"), "{}", f.top());
+
+    f.click_text("console-1");
+    assert_eq!(f.app.console().name, "console-1");
+    assert!(f.top().contains(" ok  console-1"), "the mark stays while the user looks");
+    f.prefix('n');
+    assert_eq!(f.app.console().name, "console-2");
+    assert!(!f.top().contains(" ok  console-1"), "{}", f.top());
+}
+
+#[test]
+fn a_failed_run_shows_an_error_mark_that_the_next_run_replaces() {
+    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    *recorder.fail_when.lock().unwrap() = Some("boom".to_owned());
+    f.run_text("SELECT boom;");
+    f.console_idle();
+    assert!(f.top().contains(" ERR  console-1"), "{}", f.top());
+    f.assert_sees("Idle (last ");
+
+    *recorder.fail_when.lock().unwrap() = None;
+    f.run_text(PAGE);
+    f.console_idle();
+    assert!(f.top().contains(" ok  console-1"), "{}", f.top());
+    assert!(!f.top().contains("ERR"), "{}", f.top());
+}
+
+#[test]
+fn a_stopped_run_shows_a_stop_mark() {
+    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    f.run_held(&recorder, PAGE);
+    f.prefix('x');
+    f.console_idle();
+    assert!(f.top().contains(" stop  console-1"), "{}", f.top());
+}
+
+#[test]
+fn a_table_tab_shows_the_same_time_and_marks() {
+    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    f.open_table("users");
+    assert!(f.top().contains(" ok  users (table)"), "{}", f.top());
+
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.type_filter("id > 1");
+    f.code(KeyCode::Enter);
+    f.pump_until(|f| f.app.table().is_some_and(|tab| tab.phase == Phase::Running));
+    f.app.tick_at(Instant::now() + Duration::from_secs(65));
+    assert!(f.top().contains("1m 0"), "{}", f.top());
+    f.assert_sees("Running 1m 0");
+    release(&recorder);
+    f.loaded();
+
+    *recorder.fail_when.lock().unwrap() = Some("bad".to_owned());
+    f.type_filter(" and bad");
+    f.code(KeyCode::Enter);
+    f.loaded();
+    assert!(f.top().contains(" ERR  users (table)"), "{}", f.top());
+}
+
+#[test]
+fn the_close_mark_still_closes_a_tab_with_a_run_mark() {
+    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    f.run_text(PAGE);
+    f.console_idle();
+    f.open_table("users");
+    assert!(f.top().contains(" ok  users (table)"), "{}", f.top());
+    f.close_tab("users (table)");
+    assert!(f.app.tables().is_empty());
+}
+
+// ---- the keys of the suggestion list in the filter ----
+
+fn filter_with_list(keys: SuggestionKeys) -> (Fixture, Arc<Recorder>) {
+    let recorder = Arc::new(Recorder { rows: 5, ..Recorder::default() });
+    let options = Options {
+        connector: Some(Arc::new(RecordingConnector(recorder.clone()))),
+        label: Some("server".to_owned()),
+        suggestion_keys: keys,
+        ..Options::default()
+    };
+    let mut f = Fixture::start(options);
+    f.open_table("users");
+    f.type_filter("na");
+    f.pump_until(|f| f.app.table().unwrap().list.is_some());
+    (f, recorder)
+}
+
+#[test]
+fn by_default_enter_applies_the_filter_without_the_suggestion() {
+    let (mut f, recorder) = filter_with_list(SuggestionKeys::Tab);
+    f.assert_sees("Enter apply");
+    assert!(!f.screen().contains("Enter new line"), "{}", f.screen());
+    let before = recorder.count();
+    f.code(KeyCode::Enter);
+    f.pump_until(|_| recorder.count() > before);
+    assert!(recorder.statements().last().unwrap().contains("WHERE na"));
+}
+
+#[test]
+fn the_enter_choice_accepts_in_the_filter_and_the_next_enter_applies_it() {
+    let (mut f, recorder) = filter_with_list(SuggestionKeys::Enter);
+    f.assert_sees("Enter accept");
+    let before = recorder.count();
+    f.code(KeyCode::Enter);
+    assert_eq!(f.app.table().unwrap().filter.text(), "name");
+    assert_eq!(recorder.count(), before, "the acceptance runs no query");
+    f.code(KeyCode::Enter);
+    f.pump_until(|_| recorder.count() > before);
+    assert!(recorder.statements().last().unwrap().contains("WHERE name"));
+}
+
+#[test]
+fn the_enter_choice_keeps_tab_for_the_next_field_of_the_filter() {
+    let (mut f, _) = filter_with_list(SuggestionKeys::Enter);
+    f.assert_sees("Tab next field");
+    f.code(KeyCode::Tab);
+    let tab = f.app.table().unwrap();
+    assert_eq!(tab.focus, TableFocus::Order);
+    assert_eq!(tab.filter.text(), "na");
 }

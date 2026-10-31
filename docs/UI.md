@@ -32,7 +32,12 @@ Aceitar cria o projeto no diretório atual. Recusar mantém somente o escopo glo
 └────────────────────────────────────────────────────┘
 ```
 
-A tela de abertura oferece os consoles da conexão selecionada, sem restaurá-los automaticamente.
+Ao iniciar, a aplicação reabre as abas da última sessão, na mesma ordem e com a mesma aba ativa.
+A opção **Reopen tabs** do diálogo Settings (`reopenTabs` em `config.json`) desliga isso. O padrão é ligado.
+O projeto usa a lista do seu `workspace.json`. Sem projeto, a aplicação usa a lista global.
+Nenhuma aba executa SQL ou abre uma conexão ao iniciar.
+Um console sem texto não volta, porque não tem arquivo. Uma aba cuja conexão saiu do cadastro também não volta.
+Um console que outra instância usa fica fechado, e a lista do arquivo não muda ao sair.
 
 Implementação atual: `n` no navegador abre uma lista sobre a tela, com o título `Consoles of <conexão> · <escopo>`.
 A primeira linha, **+ New console**, cria um console. As outras linhas mostram o nome, a idade da última alteração e a marca `(open)`.
@@ -71,7 +76,7 @@ Editor e resultados aparecem juntos.
 O usuário pode arrastar o divisor e recolher o navegador de conexões.
 
 ```text
-▎console-1 ● ×  orders ×  users (table) ×
+▎ ◐ 12.345s  console-1 ×   ✓  orders ×   ✗  users (table) ×
 ──────────────────────────────────────────────────────────────────────
  EXPLORER        │ app › public › console-1
  ▾ ● app  pg     │ ▶ Run  ▶▶ Script  ■ Stop  ◐ Auto  ✓ Commit  ↩ Rollback  ◇ public
@@ -84,16 +89,35 @@ O usuário pode arrastar o divisor e recolher o navegador de conexões.
                  │  2 │  2 │ Bruno  │ true                             │
                  │ 1,000 rows · row cap reached
  EDITOR  app  public  Auto · No transaction · Idle  Pool 0/5 · Data 1/256 MiB  3:14
- F5 run · Shift+F5 script · Ctrl+Space suggestions · Ctrl+F find · F1 keys
+ F5 run  Shift+F5 script  Ctrl+Space suggestions  Ctrl+F find  F1 keys
 ```
 
 A linha sob as abas e o título do painel aparecem somente com 30 linhas ou mais.
 Em 80 x 24, o editor e a grade dividem 18 linhas.
 
+**Estado da execução nas abas:** um selo colorido fica no início da aba.
+
+| Selo | Estado | Sem cor (`NO_COLOR`) |
+|---|---|---|
+| `◐ 12.345s` | Executando, com o tempo. A marca gira | `\| 12.345s` |
+| `✓` | Terminou | `ok` |
+| `✗` | Erro, tempo limite ou conexão perdida | `ERR` |
+| `■` | Parada pelo usuário | `stop` |
+
+O selo do resultado fica até o usuário sair da aba em que o viu. Uma aba que termina fora da tela mantém o selo até uma visita.
+A próxima execução troca o selo. Consoles e tabelas usam os mesmos selos.
+
+**Tempo:** a barra de status mostra `Running 12.345s` durante a execução e `Idle (last 2.440s)` depois.
+O tempo tem três casas decimais, e a tela atualiza a cada 100 ms somente durante uma execução. Tempos longos usam `1m 05.123s` e `1h 02m 05.123s`.
+O tempo começa com a execução, então a espera por senha não conta.
+
 **Abas:** cada aba tem `×` no fim. `NO_COLOR` mostra `X`, e Nerd Font mostra o seu símbolo.
 Um clique em `×` ou na coluna depois dele fecha a aba, com as perguntas de `Ctrl+W c`.
 Fechar outra aba não muda a aba na tela. Fechar a última aba encerra a aplicação.
 Uma aba que a linha corta não mostra `×`. Um clique nela abre a aba inteira.
+
+**Linha de dicas:** cada tecla usa o estilo das teclas do menu do `Ctrl+W`, e o efeito usa a cor de dica.
+Dois espaços separam os comandos. Sem cor, a tecla fica em negrito e o efeito fica fraco.
 
 **Mensagens:** uma mensagem ocupa a linha de dicas por 8 s.
 Uma tecla, uma colagem ou um clique remove a mensagem antes disso. O ponteiro e a roda não removem.
@@ -188,7 +212,8 @@ Abrir novamente a mesma tabela seleciona essa aba, sem duplicar.
 O exemplo mostra um filtro que o usuário já aplicou.
 Manter filtros e ordenação somente enquanto essa aba permanecer aberta.
 Fechar a aba descarta esses valores; reabrir começa sem filtros nem ordenação.
-Não restaurar abas de tabela automaticamente ao reiniciar a aplicação.
+Uma aba de tabela da última sessão volta sem linhas, sem filtro e sem ordenação.
+A primeira seleção da aba carrega as linhas. Uma aba que já começa na tela mostra `Enter loads the rows.` e espera `Enter` ou **Apply**, para a abertura não conectar nem pedir senha.
 Uma tabela nova não recebe ordenação automática, nem por chave primária.
 Não incluir uma aba de estrutura nesta versão.
 
@@ -197,7 +222,7 @@ Regras da barra:
 - Digitar não executa consultas.
 - Recusar um filtro com outra instrução.
 - `Ctrl+W x` para uma consulta da tabela em andamento.
-- `Tab` aceita uma sugestão de autocomplete.
+- `Tab` aceita uma sugestão de autocomplete. A opção **Autocomplete** troca essa tecla por `Enter` ou pelas duas.
 - `Enter` aplica o conteúdo dos campos, mesmo com autocomplete aberto.
 - `[Aplicar]` tem o mesmo efeito de `Enter`.
 - `[Limpar]` limpa os campos e aplica a consulta sem filtro nem ordenação.
@@ -387,7 +412,7 @@ Contextos que precisam de tratamento separado:
 |---|---|
 | Navegador | Selecionar conexão ou objeto; abrir tabela por duplo clique |
 | Abas principais | Alternar entre consoles e tabelas já abertos |
-| Editor | Editar SQL; `Tab` aceita sugestões; `Enter` quebra a linha; executar somente por uma ação explícita |
+| Editor | Editar SQL; `Tab` aceita sugestões e `Enter` quebra a linha, salvo outra escolha em **Autocomplete**; executar somente por uma ação explícita |
 | Filtros | `Tab` completa; `Enter` aplica |
 | Resultados | Selecionar e copiar dados; navegar somente nas linhas carregadas |
 | Diálogo | Resolver a pergunta sem acionar comandos de execução ao fundo |
@@ -573,7 +598,7 @@ A execução fica bloqueada até a escolha e a confirmação de uma conexão.
 
 Abrir com `Ctrl+W ,`.
 O projeto grava somente os valores que declara.
-Oferecer escopo global ou do projeto e os cinco campos abaixo.
+Oferecer escopo global ou do projeto e os sete campos abaixo.
 Mostrar os valores herdados do global e permitir remover uma definição do projeto para usar o global.
 **Salvar** grava as alterações. **Cancelar** não altera nada.
 Manter `config.json` para opções avançadas, como o `keymap`.
@@ -587,6 +612,8 @@ A troca acontece no próprio editor, então a seleção e o histórico continuam
 │ Tamanho da página:  [100]                                │
 │ Teto de linhas:     [1000]                               │
 │ Orçamento de dados: [256] MiB                            │
+│ Reabrir abas:       [Padrão: ligado]                     │
+│ Autocomplete:       [Padrão: Tab]                        │
 │                                                          │
 │ [Salvar]  [Cancelar]                                     │
 └──────────────────────────────────────────────────────────┘

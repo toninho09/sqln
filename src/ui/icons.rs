@@ -25,6 +25,11 @@ pub struct Icons {
     pub focus_mark: &'static str,
     /// The mark that closes a main tab.
     pub close: &'static str,
+    /// The frames of the mark of a tab with a run in progress.
+    pub running: [&'static str; 4],
+    pub done: &'static str,
+    pub failed: &'static str,
+    pub stopped: &'static str,
     pub connected: &'static str,
     pub disconnected: &'static str,
     pub postgres: &'static str,
@@ -53,6 +58,10 @@ impl Icons {
             tab_mark: " ",
             focus_mark: ">",
             close: "X",
+            running: ["|", "/", "-", "\\"],
+            done: "ok",
+            failed: "ERR",
+            stopped: "stop",
             connected: "●",
             disconnected: "",
             postgres: "pg",
@@ -81,6 +90,10 @@ impl Icons {
             tab_mark: "▎",
             focus_mark: "▌",
             close: "×",
+            running: ["◐", "◓", "◑", "◒"],
+            done: "✓",
+            failed: "✗",
+            stopped: "■",
             connected: "●",
             disconnected: "○",
             postgres: "pg",
@@ -109,6 +122,10 @@ impl Icons {
             tab_mark: "▎",
             focus_mark: "▌",
             close: "\u{f00d}",
+            running: ["◐", "◓", "◑", "◒"],
+            done: "\u{f00c}",
+            failed: "\u{f00d}",
+            stopped: "\u{f04d}",
             connected: "●",
             disconnected: "○",
             postgres: "\u{e76e}",
@@ -127,7 +144,7 @@ impl Icons {
     }
 
     /// Returns each symbol of the set, for the checks of the column width.
-    pub fn all(&self) -> [&'static str; 22] {
+    pub fn all(&self) -> [&'static str; 29] {
         [
             self.run,
             self.script,
@@ -146,6 +163,13 @@ impl Icons {
             self.tab_mark,
             self.focus_mark,
             self.close,
+            self.running[0],
+            self.running[1],
+            self.running[2],
+            self.running[3],
+            self.done,
+            self.failed,
+            self.stopped,
             self.connected,
             self.disconnected,
             self.postgres,

@@ -29,9 +29,9 @@ use ratatui::widgets::{
 };
 
 pub use self::console::{
-    ConsoleLayout, MainTab, column_edge_at, draw_console, draw_dialog, draw_main_tabs, draw_overlay,
+    ConsoleLayout, MainTab, TabView, column_edge_at, draw_console, draw_dialog, draw_main_tabs, draw_overlay,
     draw_panel_title, draw_picker, draw_rule, draw_small_terminal, grid_cell_at, header_column_at,
-    main_tab_label, tab_at,
+    main_tab_label, run_badge, tab_at,
 };
 pub use self::conflicts::{ConflictLayout, ConflictRowView, draw_conflicts};
 pub use self::table::{TableBar, TableControl, TableLayout, draw_table};

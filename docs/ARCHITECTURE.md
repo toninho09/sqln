@@ -65,7 +65,7 @@ Somente `connector` conhece tipos dos drivers.
 `creds` oferece identidades, senhas de sessão e os adaptadores do cofre.
 `trust` oferece a leitura e a gravação de confirmações globais.
 As chamadas do cofre são síncronas, mas `Manager::spawn_blocking` as executa fora da thread da interface.
-`app` aplica a prioridade das teclas e o mouse. `app/auth.rs`, `app/keys.rs`, `app/close.rs`, `app/connections.rs`, `app/mouse.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs` e `app/conflicts.rs` dividem esse código.
+`app` aplica a prioridade das teclas e o mouse. `app/auth.rs`, `app/keys.rs`, `app/close.rs`, `app/connections.rs`, `app/mouse.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs`, `app/session.rs` e `app/conflicts.rs` dividem esse código.
 `store` guarda as pastas e os arquivos. Ele não conhece `app`, `ui` nem `connector`.
 
 ### Arquivos e salvamento
@@ -340,7 +340,9 @@ Nenhum escopo recebe `password`. A senha autorizada em texto simples fica em `cr
     "gridBudgetBytes": 268435456,
     "keymap": {},
     "theme": "auto",
-    "icons": "unicode"
+    "icons": "unicode",
+    "reopenTabs": true,
+    "suggestionKeys": "tab"
   },
   "connections": [
     {
@@ -425,7 +427,14 @@ Exemplo:
       "scroll": { "row": 0, "col": 0 }
     }
   },
-  "layout": { "navigatorCollapsed": false, "navigatorWidth": 24, "editorRatio": 0.5 }
+  "layout": { "navigatorCollapsed": false, "navigatorWidth": 24, "editorRatio": 0.5 },
+  "openTabs": {
+    "tabs": [
+      { "kind": "console", "scope": "project", "id": "018f…" },
+      { "kind": "table", "scope": "global", "connection": "g1", "schema": "public", "relation": "users", "view": false }
+    ],
+    "active": 0
+  }
 }
 ```
 

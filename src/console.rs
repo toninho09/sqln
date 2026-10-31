@@ -1,6 +1,6 @@
 //! One console: the editor, its results, and its execution state.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEvent;
 
@@ -15,6 +15,64 @@ use crate::input::Action;
 pub use crate::result::{GridAction, ResultTab};
 use crate::script_file::ScriptFile;
 use crate::ui::text;
+
+/// How a run ended, for the mark of its tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunEnd {
+    Done,
+    Failed,
+    Stopped,
+}
+
+impl RunEnd {
+    /// Returns the end of a run. A refused execution did not start, so it has no end.
+    fn of(end: ExecutionEnd) -> Option<Self> {
+        match end {
+            ExecutionEnd::Completed => Some(Self::Done),
+            ExecutionEnd::Failed | ExecutionEnd::TimedOut | ExecutionEnd::ConnectionClosed => Some(Self::Failed),
+            ExecutionEnd::Stopped | ExecutionEnd::CanceledBeforeStart => Some(Self::Stopped),
+            ExecutionEnd::Refused => None,
+        }
+    }
+}
+
+/// The time and the end of the runs of one tab.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RunClock {
+    started: Option<Instant>,
+    /// The time of the last run.
+    pub last: Option<Duration>,
+    /// The end of the last run, until the user leaves the tab.
+    pub end: Option<RunEnd>,
+}
+
+impl RunClock {
+    /// Clears the last run. The time starts with the execution, so the wait for
+    /// credentials does not count.
+    pub fn wait(&mut self) {
+        *self = Self::default();
+    }
+
+    pub fn start(&mut self) {
+        *self = Self { started: Some(Instant::now()), ..Self::default() };
+    }
+
+    pub fn finish(&mut self, end: ExecutionEnd) {
+        let Some(end) = RunEnd::of(end) else { return };
+        self.end = Some(end);
+        self.last = self.started.take().map(|started| started.elapsed());
+    }
+
+    /// Returns the time of the run in progress.
+    pub fn elapsed(&self, now: Instant) -> Option<Duration> {
+        self.started.map(|started| now.saturating_duration_since(started))
+    }
+
+    /// The user saw the end of the run.
+    pub fn seen(&mut self) {
+        self.end = None;
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Phase {
@@ -83,6 +141,7 @@ pub struct Console {
     pub active: usize,
     pub focus: Focus,
     pub phase: Phase,
+    pub run: RunClock,
     pub transaction: TransactionState,
     pub manual: bool,
     pub messages_scroll: u16,
@@ -130,6 +189,7 @@ impl Console {
             active: 0,
             focus: Focus::Editor,
             phase: Phase::Idle,
+            run: RunClock::default(),
             transaction: TransactionState::None,
             manual: false,
             messages_scroll: 0,
@@ -160,11 +220,13 @@ impl Console {
     /// Accepts an execution. It clears the old results and frees their budget.
     pub fn begin_execution(&mut self, execution: ExecutionId, plan: &RunPlan, budget: &Budget) {
         self.prepare_execution(Some(execution), plan, budget);
+        self.run.start();
     }
 
     /// Accepts a request that waits for credentials, without assigning a database execution.
     pub fn await_credentials(&mut self, plan: &RunPlan, budget: &Budget) {
         self.prepare_execution(None, plan, budget);
+        self.run.wait();
     }
 
     fn prepare_execution(&mut self, execution: Option<ExecutionId>, plan: &RunPlan, budget: &Budget) {
@@ -331,6 +393,7 @@ impl Console {
         if end == ExecutionEnd::Refused {
             return Signal::ExecutionFinished { schema_changed: false };
         }
+        self.run.finish(end);
         if let Some(message) = message {
             self.push_message(MessageLevel::Error, message);
         }

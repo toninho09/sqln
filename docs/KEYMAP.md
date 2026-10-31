@@ -52,7 +52,7 @@ Uma tecla sem ação não produz efeito nem mensagem.
 O prefixo funciona nos dois modos, sem depender de recursos do terminal.
 Depois de `Ctrl+W`, pressione uma tecla. `Esc` cancela o prefixo.
 Uma janela mostra as opções, em grupos, enquanto o prefixo estiver ativo.
-A janela usa as teclas efetivas do `keymap`, e a barra de dicas mostra `Ctrl+W … · Esc cancel`.
+A janela usa as teclas efetivas do `keymap`, e a barra de dicas mostra `Ctrl+W …  Esc cancel`.
 
 | Tecla | Ação |
 |---|---|
@@ -127,6 +127,7 @@ Com seleção, ele copia. Sem seleção, ele não faz nada.
 A lista abre ao digitar um nome ou um ponto, e `Ctrl+Space` abre a lista sem prefixo.
 No modo Vim, a lista funciona somente na inserção.
 Com sugestões abertas, `Tab` aceita, `Enter` quebra a linha e `Esc` fecha a lista.
+A opção **Autocomplete** do diálogo Settings (`suggestionKeys`) troca a tecla que aceita: `tab` (padrão), `enter` ou `both`. A tecla que não aceita mantém o seu efeito.
 As setas percorrem a lista enquanto ela estiver aberta.
 
 Na barra de busca:
@@ -243,7 +244,7 @@ Na visão de tabela, a grade também oferece:
 
 | Ação | Tecla |
 |---|---|
-| Aceitar sugestão | `Tab` |
+| Aceitar sugestão | `Tab`, ou a tecla da opção **Autocomplete** |
 | Aplicar os campos | `Enter` |
 | Mudar de campo | `Shift+Tab`, ou `Tab` sem sugestões |
 | Abrir as sugestões | `Ctrl+Space`, ou ao digitar um nome |

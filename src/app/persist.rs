@@ -34,6 +34,10 @@ pub(super) struct Persist {
     config_prompt: bool,
     /// The folder where the user can start a project.
     project_offer: Option<PathBuf>,
+    /// True when the start opens the tabs of the last session.
+    pub reopen_tabs: bool,
+    /// False when the list of tabs in the file must stay as it is.
+    pub tabs_known: bool,
 }
 
 impl Persist {
@@ -44,8 +48,10 @@ impl Persist {
         let Loaded { hashes, config } = config::load(&store);
         let mut error = None;
         let mut stored = Vec::new();
+        let mut reopen_tabs = false;
         match config {
             Ok(config) => {
+                reopen_tabs = config.reopen_tabs;
                 stored = Self::apply_preferences(options, config);
             }
             Err(failure) => error = Some(failure),
@@ -58,6 +64,8 @@ impl Persist {
             next_poll: Instant::now() + POLL_EVERY,
             config_prompt: false,
             project_offer: options.offer_project.take(),
+            reopen_tabs,
+            tabs_known: true,
         };
         Some((persist, stored))
     }
@@ -70,6 +78,7 @@ impl Persist {
         options.keyboard = config.keyboard;
         options.keymap = Some(config.keymap);
         options.appearance = (config.theme, config.icons);
+        options.suggestion_keys = config.suggestion_keys;
         config.connections
     }
 }
@@ -112,6 +121,7 @@ impl App {
         let offer = persist.project_offer.clone();
         let error = persist.error.clone();
         self.restore_layout();
+        self.reopen_tabs();
         if let Some(folder) = offer {
             self.show_dialog(
                 text::TITLE_CREATE_PROJECT,
@@ -195,6 +205,7 @@ impl App {
             self.budget.set_limit(bytes);
         }
         self.keymap = config.keymap;
+        self.suggestion_keys = config.suggestion_keys;
         self.theme = self.terminal_theme.with_choices(config.theme, config.icons, self.color_env);
         if config.keyboard != self.keyboard {
             self.set_keyboard(config.keyboard);
@@ -415,7 +426,8 @@ impl App {
     /// in the edits, and it looks for changes made by other programs. It returns true
     /// when the screen changes.
     pub fn tick_at(&mut self, now: Instant) -> bool {
-        let mut changed = self.expire_status(now);
+        let mut changed = self.advance_clock(now);
+        changed |= self.expire_status(now);
         if self.persist.is_none() {
             return changed;
         }
@@ -558,6 +570,7 @@ impl App {
             }
         }
         self.save_editor_states(None);
+        self.save_open_tabs();
     }
 
     /// Writes the pending text of every console. It stops at the first question.
@@ -591,7 +604,7 @@ impl App {
         }
     }
 
-    fn layout_root(&self) -> Option<Root> {
+    pub(super) fn layout_root(&self) -> Option<Root> {
         self.persist_root(Scope::Project).or_else(|| self.persist_root(Scope::Global))
     }
 
@@ -618,6 +631,7 @@ impl App {
             return;
         }
         self.save_editor_states(None);
+        self.save_open_tabs();
         let Some(root) = self.layout_root() else { return };
         let layout = workspace::Layout {
             navigator_collapsed: self.navigator.collapsed,

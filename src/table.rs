@@ -9,12 +9,13 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::catalog::{Catalog, RelationRef};
 use crate::complete::{quote_name, suggest};
-use crate::console::{Message, MessageLevel, Phase};
+use crate::console::{Message, MessageLevel, Phase, RunClock};
 use crate::editor::SuggestionList;
 use crate::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, StatementStatus,
 };
 use crate::grid::{Budget, Row, row_cost};
+use crate::input::SuggestionKeys;
 use crate::line_input::{Edit, LineInput};
 use crate::result::ResultTab;
 use crate::sql::{Dialect, TokenKind, quote_identifier, split, tokenize};
@@ -65,6 +66,7 @@ pub struct TableTab {
     pub order: LineInput,
     pub list: Option<SuggestionList>,
     pub phase: Phase,
+    pub run: RunClock,
     pub message: Option<Message>,
     /// True when a next page can exist.
     pub has_more: bool,
@@ -79,6 +81,8 @@ pub struct TableTab {
     blocked_at: usize,
     /// True when the list waits for columns that the catalog does not hold yet.
     list_waits: bool,
+    /// True for a tab of the last session that read no rows yet.
+    pub pending: bool,
 }
 
 /// Returns the relation as the `FROM` clause writes it.
@@ -167,6 +171,7 @@ impl TableTab {
             order: LineInput::default(),
             list: None,
             phase: Phase::Idle,
+            run: RunClock::default(),
             message: None,
             has_more: false,
             applied_filter: String::new(),
@@ -176,7 +181,15 @@ impl TableTab {
             limit: ReadLimit::None,
             blocked_at: 0,
             list_waits: false,
+            pending: false,
         }
+    }
+
+    /// Marks a tab of the last session. The first use reads its rows, so the start of
+    /// the application opens no connection and asks for no password.
+    pub fn wait_for_use(&mut self, note: String) {
+        self.pending = true;
+        self.message = Some(Message { level: MessageLevel::Info, text: note });
     }
 
     pub fn is_busy(&self) -> bool {
@@ -253,6 +266,7 @@ impl TableTab {
         budget: &Budget,
     ) -> Option<PageRequest> {
         self.clear_rows(budget);
+        self.pending = false;
         self.applied_filter = filter;
         self.applied_order = order;
         self.message = None;
@@ -293,6 +307,7 @@ impl TableTab {
         self.load = Some(Load { execution, first, received: 0, extra: false, done: false });
         self.limit = ReadLimit::None;
         self.phase = Phase::Waiting;
+        self.run.start();
     }
 
     fn is_current(&self, execution: ExecutionId) -> bool {
@@ -358,6 +373,7 @@ impl TableTab {
     fn on_finished(&mut self, end: ExecutionEnd, message: Option<String>) {
         let done = self.load.as_ref().is_some_and(|load| load.done);
         self.phase = Phase::Idle;
+        self.run.finish(end);
         self.load = None;
         // A page that ended early leaves rows that the next page continues.
         if !done && self.loaded() > 0 {
@@ -395,12 +411,15 @@ impl TableTab {
     }
 
     /// Handles a key for the open list. It returns false when other handlers must act.
-    pub fn on_list_key(&mut self, key: KeyEvent) -> bool {
+    pub fn on_list_key(&mut self, key: KeyEvent, keys: SuggestionKeys) -> bool {
         let Some(list) = &mut self.list else { return false };
+        if keys.accepts(key) {
+            self.accept_suggestion();
+            return true;
+        }
         let count = list.completion.items.len();
         let plain = key.modifiers.is_empty();
         match key.code {
-            KeyCode::Tab if plain => self.accept_suggestion(),
             KeyCode::Esc => self.list = None,
             KeyCode::Up if plain => list.selected = (list.selected + count - 1) % count,
             KeyCode::Down if plain => list.selected = (list.selected + 1) % count,

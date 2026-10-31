@@ -22,7 +22,7 @@ fn row(frame: &mut Frame, inner: Rect, y: u16, label: &str, value: Vec<Span<'_>>
 }
 
 pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) {
-    let area = centered(frame.area(), 66, 12);
+    let area = centered(frame.area(), 66, 14);
     frame.render_widget(Clear, area);
     let block = float_block(text::TITLE_SETTINGS, theme);
     let inner = block.inner(area);
@@ -57,11 +57,20 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) {
         }
         row(frame, inner, y, label, spans);
     }
+    let reopen = form
+        .reopen_tabs()
+        .map_or_else(|| form.inherited(Field::ReopenTabs), |value| text::on_off(value).to_owned());
+    row(frame, inner, 5, text::FIELD_REOPEN_TABS, choice(Field::ReopenTabs, reopen));
+    let keys = form.suggestion_keys().map_or_else(
+        || form.inherited(Field::SuggestionKeys),
+        |keys| text::suggestion_keys_name(keys).to_owned(),
+    );
+    row(frame, inner, 6, text::FIELD_SUGGESTION_KEYS, choice(Field::SuggestionKeys, keys));
 
     let note = form.note.as_deref().map_or_else(String::new, printable);
     frame.render_widget(
         Paragraph::new(note).style(theme.status),
-        Rect::new(inner.x, inner.y + 6, inner.width, 1),
+        Rect::new(inner.x, inner.y + 8, inner.width, 1),
     );
     let style = |field| if form.focus == field { theme.dialog_focus } else { theme.dialog_option };
     let buttons = Line::from(vec![
@@ -69,5 +78,5 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) {
         Span::raw("  "),
         Span::styled(theme.button(text::OPTION_CANCEL), style(Field::Cancel)),
     ]);
-    frame.render_widget(Paragraph::new(buttons), Rect::new(inner.x, inner.y + 8, inner.width, 1));
+    frame.render_widget(Paragraph::new(buttons), Rect::new(inner.x, inner.y + 10, inner.width, 1));
 }

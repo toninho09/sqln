@@ -13,6 +13,7 @@ use crate::palette::{Command, Palette, PaletteRequest};
 use crate::settings::SettingsRequest;
 use crate::table::TableFocus;
 use crate::ui::name::NameAction;
+use crate::ui::statusline::{HintItem, hint_text};
 use crate::ui::text;
 use crate::ui::welcome::Welcome;
 use crate::ui::which_key::KeyGroup;
@@ -93,7 +94,8 @@ impl App {
         let in_editor = !self.navigator_focused
             && self.table_active.is_none()
             && self.console().focus == Focus::Editor;
-        if (in_editor && self.console_mut().editor.on_list_key(key)) || self.on_table_list_key(key) {
+        let keys = self.suggestion_keys;
+        if (in_editor && self.console_mut().editor.on_list_key(key, keys)) || self.on_table_list_key(key) {
             return;
         }
         let chord = Chord::from_event(key);
@@ -269,9 +271,20 @@ impl App {
         }
     }
 
+    /// The user saw the end of the run of the tab on screen, so its mark goes.
+    pub(super) fn leave_tab(&mut self) {
+        match self.table_mut() {
+            Some(tab) => tab.run.seen(),
+            None => self.console_mut().run.seen(),
+        }
+    }
+
     pub(super) fn select_console(&mut self, index: usize) {
         if index < self.consoles.len() {
             self.console_mut().editor.close_suggestions();
+            if self.table_active.is_some() || self.active != index {
+                self.leave_tab();
+            }
             self.active = index;
             self.table_active = None;
         }
@@ -533,18 +546,16 @@ impl App {
 
     /// Returns the key to show for an action. `Ctrl+Enter` and `Shift+Enter` depend on
     /// the terminal, so another key goes first. A removed key shows nothing.
-    fn shown_key(&self, action: Action) -> Option<String> {
+    pub(super) fn shown_key(&self, action: Action) -> Option<String> {
         let keys = self.keymap.keys(action);
         let steady = keys.iter().find(|key| !matches!(key.as_str(), "ctrl+enter" | "shift+enter"));
         steady.or(keys.first()).map(|key| text::key_label(key))
     }
 
-    fn hint_of(&self, items: &[(Action, &str)]) -> String {
-        self.hint_parts(items).join(" · ")
-    }
-
-    fn hint_parts(&self, items: &[(Action, &str)]) -> Vec<String> {
-        let shown = items.iter().filter_map(|(action, label)| Some(format!("{} {label}", self.shown_key(*action)?)));
+    fn hint_parts(&self, items: &[(Action, &'static str)]) -> Vec<HintItem> {
+        let shown = items.iter().filter_map(|(action, label)| {
+            Some(HintItem { key: self.shown_key(*action)?, label })
+        });
         shown.collect()
     }
 
@@ -682,24 +693,30 @@ impl App {
         Some(Welcome { note, rows })
     }
 
-    fn editor_hint(&self) -> String {
-        let start = self.hint_of(&[(Action::Run, "run"), (Action::RunScript, "script")]);
-        let help = self.hint_of(&[(Action::Help, "keys")]);
-        [start.as_str(), text::HINT_CTRL_SPACE, help.as_str()]
-            .iter()
-            .filter(|part| !part.is_empty())
-            .copied()
-            .collect::<Vec<_>>()
-            .join(" · ")
+    fn list_hint(&self, others: (text::HintPart, text::HintPart)) -> Vec<HintItem> {
+        HintItem::of(&text::hint_list(self.suggestion_keys, others))
     }
 
-    fn running_hint(&self) -> String {
-        let stop = self.hint_of(&[(Action::Stop, "stop")]);
-        if stop.is_empty() { text::HINT_EDITOR_STAYS.to_owned() } else { format!("{stop} · {}", text::HINT_EDITOR_STAYS) }
+    fn editor_hint(&self) -> Vec<HintItem> {
+        let mut items = self.hint_parts(&[(Action::Run, "run"), (Action::RunScript, "script")]);
+        items.extend(HintItem::of(text::HINT_CTRL_SPACE));
+        items.extend(self.hint_parts(&[(Action::Help, "keys")]));
+        items
     }
 
-    /// Returns the text of the hint bar, with the keys of the active key map.
+    fn running_hint(&self) -> Vec<HintItem> {
+        let mut items = self.hint_parts(&[(Action::Stop, "stop")]);
+        items.extend(HintItem::of(text::HINT_EDITOR_STAYS));
+        items
+    }
+
+    /// Returns the text of the hint bar.
     pub fn hint(&self) -> String {
+        hint_text(&self.hint_items())
+    }
+
+    /// Returns the commands of the hint bar, with the keys of the active key map.
+    pub(super) fn hint_items(&self) -> Vec<HintItem> {
         let console = self.console();
         let fixed = if !self.dialogs.is_empty() {
             text::HINT_DIALOG
@@ -727,31 +744,29 @@ impl App {
         } else if self.persist.as_ref().is_some_and(|persist| persist.error.is_some()) {
             text::HINT_CONFIG_ERROR
         } else if self.navigator_focused {
-            return self
-                .hint_parts(&[
-                    (Action::NavigatorOpen, "open"),
-                    (Action::NavigatorNewConsole, "new"),
-                    (Action::NavigatorScripts, "scripts"),
-                    (Action::NavigatorAdd, "add"),
-                    (Action::NavigatorEdit, "edit"),
-                    (Action::NavigatorRefresh, "refresh"),
-                    (Action::NavigatorDisconnect, "disc"),
-                    (Action::NavigatorDelete, "drop"),
-                    (Action::NavigatorDeletePassword, "pwd"),
-                ])
-                .join("·");
+            return self.hint_parts(&[
+                (Action::NavigatorOpen, "open"),
+                (Action::NavigatorNewConsole, "new"),
+                (Action::NavigatorScripts, "scripts"),
+                (Action::NavigatorAdd, "add"),
+                (Action::NavigatorEdit, "edit"),
+                (Action::NavigatorRefresh, "refresh"),
+                (Action::NavigatorDisconnect, "disc"),
+                (Action::NavigatorDelete, "drop"),
+                (Action::NavigatorDeletePassword, "pwd"),
+            ]);
         } else if let Some(tab) = self.table() {
             match tab.focus {
-                _ if tab.list.is_some() => text::HINT_LIST,
+                _ if tab.list.is_some() => return self.list_hint(text::LIST_FILTER_KEYS),
                 TableFocus::Grid if tab.result.search.is_some() => text::HINT_GRID_SEARCH,
                 TableFocus::Grid => {
-                    return self.hint_of(&[
+                    return self.hint_parts(&[
                         (Action::GridFocusFilter, "where"),
                         (Action::GridFocusOrder, "order by"),
                         (Action::GridSortColumn, "sort"),
                         (Action::GridLoadMore, "more"),
                         (Action::GridCopy, "copy"),
-                        (Action::GridOpenValue, "value"),
+                        (Action::GridOpenValue, if tab.pending { "load" } else { "value" }),
                         (Action::Help, "keys"),
                     ]);
                 }
@@ -760,7 +775,7 @@ impl App {
         } else if console.focus == Focus::Results && console.search_is_open() {
             text::HINT_GRID_SEARCH
         } else if console.focus == Focus::Results {
-            return self.hint_of(&[
+            return self.hint_parts(&[
                 (Action::FocusUp, "editor"),
                 (Action::GridCopy, "copy"),
                 (Action::GridOpenValue, "value"),
@@ -769,7 +784,7 @@ impl App {
                 (Action::Help, "keys"),
             ]);
         } else if console.editor.suggestions().is_some() {
-            text::HINT_LIST
+            return self.list_hint(text::LIST_EDITOR_KEYS);
         } else if console.editor.search().is_some() {
             text::HINT_SEARCH
         } else if console.is_busy() {
@@ -777,6 +792,6 @@ impl App {
         } else {
             return self.editor_hint();
         };
-        fixed.to_owned()
+        HintItem::of(fixed)
     }
 }

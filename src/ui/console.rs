@@ -1,5 +1,7 @@
 //! The console view: bars, editor, results, grid, dialogs, and overlays.
 
+use std::time::Instant;
+
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -13,7 +15,7 @@ use super::welcome::{Welcome, draw_welcome};
 use super::wrap::WrappedText;
 use super::{draw_editor, draw_scrollbar, float_block, text};
 use crate::connector::Namespace;
-use crate::console::{Console, Focus, MessageLevel, ResultTab};
+use crate::console::{Console, Focus, MessageLevel, Phase, ResultTab, RunClock, RunEnd};
 use crate::grid::{COLUMN_GAP, GridView, ResultTable, RowSearch, Value, printable};
 
 const MAX_PICKER_ROWS: u16 = 12;
@@ -128,18 +130,37 @@ pub fn draw_buttons<T: Copy>(
     buttons
 }
 
-/// Writes the label of a main tab. A tab with work in progress has a mark, and a
-/// tab with a text that no file holds has another.
-pub fn main_tab_label(icon: &str, name: &str, busy: bool, unsaved: bool) -> String {
+/// Writes the label of a main tab. A tab with a text that no file holds has a mark.
+pub fn main_tab_label(icon: &str, name: &str, unsaved: bool) -> String {
     let mut label = Theme::icon(icon);
     label.push_str(&printable(name));
-    if busy {
-        label.push_str(" ●");
-    }
     if unsaved {
         label.push_str(" !");
     }
     label
+}
+
+/// One main tab before the draw. The badge is a block of color at the start of the tab.
+pub struct TabView {
+    pub label: String,
+    pub badge: Option<(String, Style)>,
+}
+
+/// Returns the badge of a tab: the mark and the time of a run in progress, or the end
+/// of the last run. `frame` chooses the picture of the mark.
+pub fn run_badge(phase: Phase, run: &RunClock, now: Instant, frame: usize, theme: &Theme) -> Option<(String, Style)> {
+    let icons = &theme.icons;
+    if phase != Phase::Idle {
+        let mark = icons.running[frame % icons.running.len()];
+        let shown = run.elapsed(now).map_or_else(|| mark.to_owned(), |time| format!("{mark} {}", text::elapsed(time)));
+        return Some((format!(" {shown} "), theme.run_active));
+    }
+    let (mark, style) = match run.end? {
+        RunEnd::Done => (icons.done, theme.run_done),
+        RunEnd::Failed => (icons.failed, theme.run_failed),
+        RunEnd::Stopped => (icons.stopped, theme.run_stopped),
+    };
+    Some((format!(" {mark} "), style))
 }
 
 /// The columns of one main tab on the screen.
@@ -157,14 +178,18 @@ pub struct MainTab {
 pub fn draw_main_tabs(
     frame: &mut Frame,
     area: Rect,
-    labels: Vec<String>,
+    views: Vec<TabView>,
     active: usize,
     theme: &Theme,
 ) -> Vec<MainTab> {
     frame.buffer_mut().set_style(area, theme.tabline);
-    // A tab is one column, its label, one column, the close mark, and one column.
-    let widths: Vec<u16> =
-        labels.iter().map(|label| u16::try_from(label.width() + 4).unwrap_or(u16::MAX)).collect();
+    // A tab is one column, the badge with a column after it, its label, one column,
+    // the close mark, and one column.
+    let width_of = |view: &TabView| {
+        let badge = view.badge.as_ref().map_or(0, |(text, _)| text.width() + 1);
+        u16::try_from(badge + view.label.width() + 4).unwrap_or(u16::MAX)
+    };
+    let widths: Vec<u16> = views.iter().map(width_of).collect();
     let mut first = 0;
     while first < active
         && widths[first..=active].iter().map(|width| u32::from(*width)).sum::<u32>()
@@ -175,7 +200,7 @@ pub fn draw_main_tabs(
     let mut spans = Vec::new();
     let mut tabs = Vec::new();
     let mut x = area.x;
-    for (index, label) in labels.into_iter().enumerate().skip(first) {
+    for (index, view) in views.into_iter().enumerate().skip(first) {
         let end = x.saturating_add(widths[index]).min(area.right());
         // The close mark and the column after it close the tab, so a click has two columns.
         let close = x.saturating_add(widths[index].saturating_sub(2));
@@ -187,7 +212,11 @@ pub fn draw_main_tabs(
             Span::styled(" ", style)
         };
         spans.push(mark);
-        spans.push(Span::styled(format!("{label} "), style));
+        if let Some((text, badge)) = view.badge {
+            spans.push(Span::styled(text, badge));
+            spans.push(Span::styled(" ", style));
+        }
+        spans.push(Span::styled(format!("{} ", view.label), style));
         spans.push(Span::styled(theme.icons.close, style.patch(theme.tab_close)));
         spans.push(Span::styled(" ", style));
         x = end;

@@ -128,34 +128,35 @@ impl App {
         let open = self.consoles.iter().position(|c| {
             c.file.as_ref().is_some_and(|file| file.scope == entry.scope && file.meta.id == entry.meta.id)
         });
-        if let Some(index) = open {
-            self.select_console(index);
-            self.leave_navigator();
-            return;
-        }
-        let Some(root) = self.persist_root(entry.scope) else { return };
-        let id = &entry.meta.id;
-        let lock = match scripts::lock(&root, id) {
-            Ok(Some(lock)) => lock,
-            Ok(None) => {
-                self.status = Some(text::script_in_use(&entry.meta.name));
-                return;
-            }
-            Err(error) => {
-                self.status = Some(text::script_failed(&entry.meta.name, &error.to_string()));
+        let index = match open.map_or_else(|| self.load_script(entry), Ok) {
+            Ok(index) => index,
+            Err(message) => {
+                self.status = Some(message);
                 return;
             }
         };
+        self.select_console(index);
+        self.leave_navigator();
+    }
+
+    /// Opens a saved console in a new tab, without a change of the tab on screen. It
+    /// returns the index of the console, or the reason that the console did not open.
+    pub(super) fn load_script(&mut self, entry: &ScriptEntry) -> Result<usize, String> {
+        let failed = |error: std::io::Error| text::script_failed(&entry.meta.name, &error.to_string());
+        let Some(root) = self.persist_root(entry.scope) else {
+            return Err(text::NO_STORE.to_owned());
+        };
+        let id = &entry.meta.id;
+        let lock = scripts::lock(&root, id)
+            .map_err(failed)?
+            .ok_or_else(|| text::script_in_use(&entry.meta.name))?;
         let (text, loaded) = match scripts::read_text(&root, id) {
             Ok((raw, hash)) => {
                 let (text, ending) = scripts::decode(&raw);
                 (text, Some((hash, ending)))
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => (String::new(), None),
-            Err(error) => {
-                self.status = Some(text::script_failed(&entry.meta.name, &error.to_string()));
-                return;
-            }
+            Err(error) => return Err(failed(error)),
         };
         let connection = self
             .connection_by_key(entry.scope, &entry.meta.connection_id)
@@ -174,8 +175,7 @@ impl App {
         if let Some((connection, _)) = connection {
             self.bind_console(index, connection);
         }
-        self.select_console(index);
-        self.leave_navigator();
+        Ok(index)
     }
 
     /// The row of the list under the cursor, when it stands for a saved script.

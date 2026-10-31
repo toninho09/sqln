@@ -2,7 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::App;
+use super::{App, FRAMES_PER_PICTURE};
 use crate::catalog::RelationRef;
 use crate::exec::ConnectionId;
 use crate::input::Action;
@@ -10,11 +10,11 @@ use crate::navigator::{Row, RowKind};
 use crate::sql::Dialect;
 use crate::table::{PageRequest, TableFocus, TableTab};
 use crate::ui::text;
-use crate::ui::{main_tab_label, table};
+use crate::ui::{TabView, main_tab_label, run_badge, table};
 
 /// One tab of the tab row, with its index in the list of its kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Tab {
+pub(super) enum Tab {
     Console(usize),
     Table(usize),
 }
@@ -34,7 +34,7 @@ impl App {
     }
 
     /// Lists the tab row in the order of opening. Consoles and tables stay in one row.
-    fn tab_order(&self) -> Vec<Tab> {
+    pub(super) fn tab_order(&self) -> Vec<Tab> {
         let consoles = self.consoles.iter().enumerate().filter(|(_, console)| !console.hidden);
         let consoles = consoles.map(|(index, console)| (console.opened, Tab::Console(index)));
         let tables = self.tables.iter().enumerate().map(|(index, tab)| (tab.opened, Tab::Table(index)));
@@ -43,19 +43,25 @@ impl App {
         order.into_iter().map(|(_, tab)| tab).collect()
     }
 
-    /// Lists the labels of the tab row.
-    pub(super) fn tab_labels(&self) -> Vec<String> {
-        self.tab_order()
-            .into_iter()
-            .map(|tab| match tab {
+    /// Lists the tabs of the tab row, with the state of their runs.
+    pub(super) fn tab_views(&self) -> Vec<TabView> {
+        let view = |tab| {
+            let (label, phase, run) = match tab {
                 Tab::Console(index) => {
                     let console = &self.consoles[index];
                     let unsaved = console.file.as_ref().is_some_and(|file| file.trouble.is_some());
-                    main_tab_label(self.theme.icons.console, &console.name, console.is_busy(), unsaved)
+                    let label = main_tab_label(self.theme.icons.console, &console.name, unsaved);
+                    (label, console.phase, &console.run)
                 }
-                Tab::Table(index) => table::tab_label(&self.tables[index], &self.theme),
-            })
-            .collect()
+                Tab::Table(index) => {
+                    let tab = &self.tables[index];
+                    (table::tab_label(tab, &self.theme), tab.phase, &tab.run)
+                }
+            };
+            let picture = self.run_frame / FRAMES_PER_PICTURE;
+            TabView { label, badge: run_badge(phase, run, self.clock, picture, &self.theme) }
+        };
+        self.tab_order().into_iter().map(view).collect()
     }
 
     /// Returns the position of the tab on screen in the tab row.
@@ -86,7 +92,13 @@ impl App {
     pub(super) fn select_table(&mut self, index: usize) {
         if index < self.tables.len() {
             self.console_mut().editor.close_suggestions();
+            if self.table_active != Some(index) {
+                self.leave_tab();
+            }
             self.table_active = Some(index);
+            if self.tables[index].pending {
+                self.apply_table();
+            }
         }
     }
 
@@ -268,6 +280,7 @@ impl App {
                 }
             }
             Action::GridLoadMore => self.load_more(),
+            Action::GridOpenValue if self.table().is_some_and(|tab| tab.pending) => self.apply_table(),
             _ => return false,
         }
         true
@@ -284,7 +297,8 @@ impl App {
     /// Handles a key for the open list of the filter bar. It returns false when other
     /// handlers must act.
     pub(super) fn on_table_list_key(&mut self, key: KeyEvent) -> bool {
-        !self.navigator_focused && self.table_mut().is_some_and(|tab| tab.on_list_key(key))
+        let keys = self.suggestion_keys;
+        !self.navigator_focused && self.table_mut().is_some_and(|tab| tab.on_list_key(key, keys))
     }
 
     /// Applies a key to the text of the filter bar or to the search of the grid.

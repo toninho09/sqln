@@ -284,6 +284,7 @@ impl App {
             }
             if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Waiting;
+                tab.run.wait();
             }
         }
         let token = self.auth.next;

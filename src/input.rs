@@ -6,8 +6,31 @@
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use serde::{Deserialize, Serialize};
 
 use crate::editor::KeyboardMode;
+
+/// The keys that accept the item of a suggestion list.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SuggestionKeys {
+    #[default]
+    Tab,
+    Enter,
+    Both,
+}
+
+impl SuggestionKeys {
+    /// Returns true when the key accepts the item of the list.
+    pub fn accepts(self, key: KeyEvent) -> bool {
+        let chosen = match key.code {
+            KeyCode::Tab => self != Self::Enter,
+            KeyCode::Enter => self != Self::Tab,
+            _ => false,
+        };
+        chosen && key.modifiers.is_empty()
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Chord {

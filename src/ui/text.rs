@@ -1,6 +1,9 @@
 //! All interface text. This file keeps the text in one place for a later translation.
 
-use crate::input::Action;
+use crate::input::{Action, SuggestionKeys};
+
+/// One command of the hint bar: a key and its effect. A note has an empty key.
+pub type HintPart = (&'static str, &'static str);
 
 pub const CLIPBOARD_UNAVAILABLE: &str = "Clipboard unavailable. Paste with the terminal.";
 pub const COPY_SENT_TO_TERMINAL: &str = "Copy request sent to the terminal. No confirmation.";
@@ -11,21 +14,91 @@ pub const REPLACE_LABEL: &str = "Replace: ";
 pub const NO_MATCHES: &str = "no matches";
 pub const UNDO_TOO_LARGE: &str = "This edit is too large for the undo history. It has no undo step.";
 
-pub const HINT_FILTER: &str = "Enter apply · Tab accept or next field · Esc grid · Ctrl+Space suggestions";
-pub const HINT_GRID_SEARCH: &str = "Enter next · Up/Down move · Esc close";
-pub const HINT_LIST: &str = "Tab accept · Up/Down move · Enter new line · Esc close list";
-pub const HINT_SEARCH: &str = "Tab next field · Enter next or replace · Ctrl+A replace all · Esc close";
-pub const HINT_PICKER: &str = "Up/Down move · Enter choose · r rename · Del remove a script · Esc cancel";
-pub const HINT_CHOOSE: &str = "Up/Down move · Enter choose · Esc cancel";
-pub const HINT_NAME: &str = "Enter saves · Esc cancels";
-pub const HINT_SETTINGS: &str = "Tab next · Left/Right change · An empty field removes the value · Esc cancel";
-pub const HINT_CTRL_SPACE: &str = "Ctrl+Space suggestions · Ctrl+F find";
-pub const HINT_EDITOR_STAYS: &str = "The editor stays available";
-pub const HINT_CONFLICTS: &str = "Up/Down move · Left/Right choose · Enter next · Esc decide later";
-pub const HINT_CONFIG_ERROR: &str = "Configuration error · Fix the file, then Ctrl+W r loads it again";
-pub const HINT_FORM: &str = "Tab next · Left/Right change · Enter next or press · Esc cancel";
-pub const HINT_DIALOG: &str = "Tab next option · Enter confirm · Esc cancel";
-pub const HINT_OVERLAY: &str = "Up/Down scroll · Ctrl+C copy · Esc close";
+pub const HINT_FILTER: &[HintPart] = &[
+    ("Enter", "apply"),
+    ("Tab", "accept or next field"),
+    ("Esc", "grid"),
+    ("Ctrl+Space", "suggestions"),
+];
+pub const HINT_GRID_SEARCH: &[HintPart] = &[
+    ("Enter", "next"),
+    ("Up/Down", "move"),
+    ("Esc", "close"),
+];
+/// The effect of `Enter` and of `Tab` when the key does not accept a suggestion.
+pub const LIST_EDITOR_KEYS: (HintPart, HintPart) = (("Enter", "new line"), ("Tab", "indent"));
+pub const LIST_FILTER_KEYS: (HintPart, HintPart) = (("Enter", "apply"), ("Tab", "next field"));
+
+/// Lists the commands of an open suggestion list.
+pub fn hint_list(keys: SuggestionKeys, (enter, tab): (HintPart, HintPart)) -> Vec<HintPart> {
+    let (accept, other) = match keys {
+        SuggestionKeys::Tab => ("Tab", Some(enter)),
+        SuggestionKeys::Enter => ("Enter", Some(tab)),
+        SuggestionKeys::Both => ("Tab/Enter", None),
+    };
+    let mut parts = vec![(accept, "accept"), ("Up/Down", "move")];
+    parts.extend(other);
+    parts.push(("Esc", "close list"));
+    parts
+}
+
+pub fn suggestion_keys_name(keys: SuggestionKeys) -> &'static str {
+    match keys {
+        SuggestionKeys::Tab => "Tab",
+        SuggestionKeys::Enter => "Enter",
+        SuggestionKeys::Both => "Tab or Enter",
+    }
+}
+
+pub const HINT_SEARCH: &[HintPart] = &[
+    ("Tab", "next field"),
+    ("Enter", "next or replace"),
+    ("Ctrl+A", "replace all"),
+    ("Esc", "close"),
+];
+pub const HINT_PICKER: &[HintPart] = &[
+    ("Up/Down", "move"),
+    ("Enter", "choose"),
+    ("r", "rename"),
+    ("Del", "remove a script"),
+    ("Esc", "cancel"),
+];
+pub const HINT_CHOOSE: &[HintPart] = &[("Up/Down", "move"), ("Enter", "choose"), ("Esc", "cancel")];
+pub const HINT_NAME: &[HintPart] = &[("Enter", "saves"), ("Esc", "cancels")];
+pub const HINT_SETTINGS: &[HintPart] = &[
+    ("Tab", "next"),
+    ("Left/Right", "change"),
+    ("", "An empty field removes the value"),
+    ("Esc", "cancel"),
+];
+pub const HINT_CTRL_SPACE: &[HintPart] = &[("Ctrl+Space", "suggestions"), ("Ctrl+F", "find")];
+pub const HINT_EDITOR_STAYS: &[HintPart] = &[("", "The editor stays available")];
+pub const HINT_CONFLICTS: &[HintPart] = &[
+    ("Up/Down", "move"),
+    ("Left/Right", "choose"),
+    ("Enter", "next"),
+    ("Esc", "decide later"),
+];
+pub const HINT_CONFIG_ERROR: &[HintPart] = &[
+    ("", "Configuration error. Fix the file, then"),
+    ("Ctrl+W r", "loads it again"),
+];
+pub const HINT_FORM: &[HintPart] = &[
+    ("Tab", "next"),
+    ("Left/Right", "change"),
+    ("Enter", "next or press"),
+    ("Esc", "cancel"),
+];
+pub const HINT_DIALOG: &[HintPart] = &[
+    ("Tab", "next option"),
+    ("Enter", "confirm"),
+    ("Esc", "cancel"),
+];
+pub const HINT_OVERLAY: &[HintPart] = &[
+    ("Up/Down", "scroll"),
+    ("Ctrl+C", "copy"),
+    ("Esc", "close"),
+];
 
 /// Writes a key of the key map for the hint bar: `ctrl+w e` becomes `Ctrl+W e`.
 pub fn key_label(key: &str) -> String {
@@ -51,8 +124,13 @@ pub fn key_label(key: &str) -> String {
     key.split_whitespace().map(token).collect::<Vec<_>>().join(" ")
 }
 
-pub const HINT_PREFIX: &str = "Ctrl+W … · Esc cancel";
-pub const HINT_PALETTE: &str = "Write to filter · Up/Down move · Enter run · Esc cancel";
+pub const HINT_PREFIX: &[HintPart] = &[("Ctrl+W", "…"), ("Esc", "cancel")];
+pub const HINT_PALETTE: &[HintPart] = &[
+    ("", "Write to filter"),
+    ("Up/Down", "move"),
+    ("Enter", "run"),
+    ("Esc", "cancel"),
+];
 
 pub const TITLE_EXPLORER: &str = "EXPLORER";
 pub const FORM_GENERAL: &str = "GENERAL";
@@ -188,7 +266,11 @@ pub const AUTH_SAVE_FAILED: &str = "The password is not saved. It stays in memor
 pub const AUTH_REFERENCE_FAILED: &str = "The vault holds the password, but SQLN cannot save its reference. Retry, or use it for this session.";
 pub const AUTH_PLAIN_WARNING: &str = "Without a vault, SQLN can save the password in credentials.json, in the global folder. That file stores it in plain text.";
 pub const AUTH_PASSWORD_ACCEPTED: &str = "The database accepts the password. Start the operation again.";
-pub const AUTH_REFUSED_HINT: &str = "The database refused the last password · Enter connects · Esc cancels";
+pub const AUTH_REFUSED_HINT: &[HintPart] = &[
+    ("", "The database refused the last password"),
+    ("Enter", "connects"),
+    ("Esc", "cancels"),
+];
 pub const AUTH_SUSPENDED: &str = "The database refused the password again. SQLN stops new attempts on this connection.\nThe next action of yours asks for a password. A password that the database accepts, or a change to the connection, ends this state.";
 pub const TITLE_PASSWORD_REFUSED: &str = "Password refused";
 pub const TITLE_MIGRATION: &str = "Move the password to the vault";
@@ -206,7 +288,11 @@ pub const SAVE_IN_PLAIN_TEXT: &str = "Save in plain text in credentials.json";
 pub const PASSWORD_DELETED: &str = "The saved password is deleted.";
 pub const PASSWORD_NOT_FOUND: &str = "This connection has no saved password.";
 pub const AUTH_TRUST_BODY: &str = "Confirm this destination before SQLN sends credentials. A new project path also needs confirmation.";
-pub const AUTH_PASSWORD_HINT: &str = "Enter connects · Tab changes field · Esc cancels";
+pub const AUTH_PASSWORD_HINT: &[HintPart] = &[
+    ("Enter", "connects"),
+    ("Tab", "changes field"),
+    ("Esc", "cancels"),
+];
 pub const FIELD_TLS: &str = "TLS";
 pub const FIELD_CA: &str = "CA file";
 pub const FIELD_CLIENT_CERTIFICATE: &str = "Client certificate";
@@ -235,6 +321,12 @@ pub const VALUE_TLS_OFF: &str = "Off";
 pub const VALUE_DEFAULT: &str = "Default";
 pub const VALUE_ON: &str = "On";
 pub const VALUE_OFF: &str = "Off";
+pub fn on_off(value: bool) -> &'static str {
+    if value { VALUE_ON } else { VALUE_OFF }
+}
+pub fn default_value(value: &str) -> String {
+    format!("{VALUE_DEFAULT}: {value}")
+}
 pub const TITLE_NEW_CONNECTION: &str = "New connection";
 pub const TITLE_REMOVE_CONNECTION: &str = "Remove connection";
 pub const TITLE_RENAME: &str = "Rename console";
@@ -248,6 +340,8 @@ pub const CONNECTION_CHANGE_BUSY: &str = "End the execution and the transaction 
 pub const NO_OTHER_CONNECTION: &str = "No other connection is available.";
 pub const SETTINGS_SAVED: &str = "The settings are saved.";
 pub const FIELD_KEYBOARD: &str = "Keyboard";
+pub const FIELD_REOPEN_TABS: &str = "Reopen tabs";
+pub const FIELD_SUGGESTION_KEYS: &str = "Autocomplete";
 pub const FIELD_PAGE_SIZE: &str = "Page size";
 pub const FIELD_ROW_CAP: &str = "Row cap";
 pub const FIELD_BUDGET: &str = "Data (MiB)";
@@ -332,6 +426,22 @@ pub const TRANSACTION_NONE: &str = "No transaction";
 pub const TRANSACTION_OPEN: &str = "Transaction open";
 pub const TRANSACTION_FAILED: &str = "Transaction failed";
 pub const TRANSACTION_UNKNOWN: &str = "Transaction unknown";
+/// Writes the time of a run with three decimals: `12.345s`, `1m 05.123s`, or
+/// `1h 02m 05.123s`.
+pub fn elapsed(time: std::time::Duration) -> String {
+    let seconds = time.as_secs();
+    let millis = time.subsec_millis();
+    match seconds {
+        0..=59 => format!("{seconds}.{millis:03}s"),
+        60..=3599 => format!("{}m {:02}.{millis:03}s", seconds / 60, seconds % 60),
+        _ => format!("{}h {:02}m {:02}.{millis:03}s", seconds / 3600, seconds / 60 % 60, seconds % 60),
+    }
+}
+
+pub fn last_run(time: std::time::Duration) -> String {
+    format!("(last {})", elapsed(time))
+}
+
 pub const PHASE_IDLE: &str = "Idle";
 pub const PHASE_WAITING: &str = "Waiting";
 pub const PHASE_RUNNING: &str = "Running";
@@ -707,6 +817,12 @@ pub fn age_days(days: u64) -> String {
 
 pub fn consoles_title(connection: &str, scope: &str) -> String {
     format!("Consoles of {connection} · {scope}")
+}
+
+/// Tells how to load a table tab of the last session. A key that the user removed
+/// leaves the button.
+pub fn table_pending(key: Option<&str>) -> String {
+    format!("{} loads the rows.", key.unwrap_or(BUTTON_APPLY))
 }
 
 pub fn script_in_use(name: &str) -> String {

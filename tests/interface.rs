@@ -15,7 +15,7 @@ use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, Mo
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
 use sqln::console::Focus;
@@ -25,7 +25,7 @@ use sqln::input::Keymap;
 use sqln::store::config::{IconName, ThemeName};
 use sqln::store::{Root, Store};
 use sqln::ui::icons::Icons;
-use sqln::ui::{MainTab, draw_main_tabs};
+use sqln::ui::{MainTab, TabView, draw_main_tabs, text};
 use sqln::ui::theme::{ColorEnv, Theme};
 use sqln::ui::which_key::widest_row;
 use unicode_width::UnicodeWidthStr;
@@ -216,11 +216,15 @@ fn each_symbol_of_each_set_fills_one_column_per_character() {
 
 /// Draws the main tabs on one row, and returns the row with the places of the tabs.
 fn main_tabs(width: u16, labels: &[&str], active: usize, theme: &Theme) -> (String, Vec<MainTab>) {
+    let views = labels.iter().map(|label| TabView { label: (*label).to_owned(), badge: None }).collect();
+    draw_views(width, views, active, theme)
+}
+
+fn draw_views(width: u16, views: Vec<TabView>, active: usize, theme: &Theme) -> (String, Vec<MainTab>) {
     let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
     let mut tabs = Vec::new();
-    let labels: Vec<String> = labels.iter().map(|label| (*label).to_owned()).collect();
     terminal
-        .draw(|frame| tabs = draw_main_tabs(frame, frame.area(), labels, active, theme))
+        .draw(|frame| tabs = draw_main_tabs(frame, frame.area(), views, active, theme))
         .unwrap();
     let buffer = terminal.backend().buffer();
     (rows(buffer).remove(0), tabs)
@@ -249,6 +253,117 @@ fn a_tab_that_the_row_cuts_has_no_close_mark() {
     let (row, tabs) = main_tabs(16, &["one", "second"], 0, &theme);
     assert_eq!(tabs[1].close, Some(15));
     assert!(row.ends_with('X'), "{row}");
+}
+
+/// Returns the cell at the start of a text in the last row.
+fn hint_cell(buffer: &Buffer, text: &str) -> ratatui::buffer::Cell {
+    let last = buffer.area.height - 1;
+    let row = rows(buffer).pop().unwrap();
+    let byte = row.find(text).unwrap_or_else(|| panic!("{text:?} is not in {row:?}"));
+    buffer[(row[..byte].chars().count() as u16, last)].clone()
+}
+
+#[test]
+fn the_hint_bar_gives_the_keys_and_their_effects_two_styles() {
+    let theme = Theme::astrodark();
+    let mut screen = Screen::new("hint-styles", theme, KeyboardMode::Conventional);
+    screen.prefix('h');
+    let buffer = screen.buffer(100, 30);
+    for key in ["Enter", "n new", "Del", "p pwd"] {
+        assert_eq!(hint_cell(&buffer, key).fg, theme.key.fg.unwrap(), "{key}");
+    }
+    for effect in ["open", "new", "drop", "pwd"] {
+        assert_eq!(hint_cell(&buffer, effect).fg, theme.hint.fg.unwrap(), "{effect}");
+    }
+}
+
+#[test]
+fn the_hint_bar_separates_the_keys_without_color() {
+    let mut screen = Screen::new("hint-plain", Theme::plain(), KeyboardMode::Conventional);
+    screen.prefix('h');
+    let buffer = screen.buffer(100, 30);
+    assert!(hint_cell(&buffer, "Enter").modifier.contains(Modifier::BOLD));
+    assert!(hint_cell(&buffer, "open").modifier.contains(Modifier::DIM));
+}
+
+#[test]
+fn a_note_in_the_hint_bar_has_no_key_style() {
+    let theme = Theme::astrodark();
+    let mut screen = Screen::new("hint-note", theme, KeyboardMode::Conventional);
+    screen.palette();
+    let buffer = screen.buffer(100, 30);
+    let row = rows(&buffer).pop().unwrap();
+    assert!(row.starts_with(" Write to filter  Up/Down move"), "{row}");
+    assert_eq!(hint_cell(&buffer, "Write to filter").fg, theme.hint.fg.unwrap());
+    assert_eq!(hint_cell(&buffer, "Enter").fg, theme.key.fg.unwrap());
+}
+
+#[test]
+fn each_command_of_the_explorer_fits_the_minimum_width_with_its_own_space() {
+    for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let mut screen = Screen::new("hint-width", Theme::plain(), keyboard);
+        screen.prefix('h');
+        let row = rows(&screen.buffer(80, 24)).pop().unwrap();
+        assert_eq!(row.chars().count(), 80);
+        assert!(row.contains("Enter open  n new  s scripts  a add"), "{row}");
+        assert!(row.trim_end().ends_with(" drop  p pwd"), "{row}");
+    }
+}
+
+#[test]
+fn a_badge_stands_at_the_start_of_the_tab_and_the_close_mark_stays_at_the_end() {
+    let theme = Theme::plain();
+    let badge = Some((" ok ".to_owned(), theme.run_done));
+    let views = vec![
+        TabView { label: "one".to_owned(), badge },
+        TabView { label: "two".to_owned(), badge: None },
+    ];
+    let (row, tabs) = draw_views(40, views, 0, &theme);
+    assert!(row.starts_with("  ok  one X  two X "), "{row}");
+    assert_eq!(tabs[0], MainTab { start: 0, end: 12, close: Some(10), index: 0 });
+    assert_eq!(tabs[1].start, 12);
+}
+
+#[test]
+fn a_tab_with_a_badge_that_the_row_cuts_has_no_close_mark() {
+    let theme = Theme::plain();
+    let badge = Some((" | 1m 05s ".to_owned(), theme.run_active));
+    let views = vec![
+        TabView { label: "one".to_owned(), badge: None },
+        TabView { label: "two".to_owned(), badge },
+    ];
+    let (_, tabs) = draw_views(20, views, 0, &theme);
+    assert_eq!(tabs[1].close, None);
+}
+
+#[test]
+fn each_state_of_a_run_has_its_own_color() {
+    let theme = Theme::astrodark();
+    let styles = [theme.run_active, theme.run_done, theme.run_failed, theme.run_stopped];
+    for (index, style) in styles.iter().enumerate() {
+        assert!(is_rgb(style.bg.unwrap()), "{style:?}");
+        assert!(!styles[..index].iter().any(|other| other.bg == style.bg), "{style:?}");
+    }
+    assert_ne!(Icons::plain().failed, Icons::plain().close);
+}
+
+#[test]
+fn the_time_of_a_run_has_three_decimals_in_each_size() {
+    let millis = Duration::from_millis;
+    for (time, shown) in [
+        (0, "0.000s"),
+        (7, "0.007s"),
+        (2_440, "2.440s"),
+        (59_999, "59.999s"),
+        (60_000, "1m 00.000s"),
+        (65_123, "1m 05.123s"),
+        (3_599_500, "59m 59.500s"),
+        (3_600_000, "1h 00m 00.000s"),
+        (3_661_007, "1h 01m 01.007s"),
+    ] {
+        assert_eq!(text::elapsed(millis(time)), shown);
+    }
+    assert_eq!(text::last_run(millis(2_440)), "(last 2.440s)");
 }
 
 #[test]
@@ -467,7 +582,8 @@ fn the_palette_shows_only_commands_that_have_an_effect() {
 
     screen.write("BEGIN;");
     screen.code(KeyCode::F(5));
-    screen.pump_until("Transaction open");
+    // The state of the transaction arrives before the end of the run.
+    screen.pump_until("Transaction open · Idle");
     screen.palette();
     screen.write("rollback");
     assert!(!screen.screen(100, 30).contains("No command matches"));

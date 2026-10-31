@@ -9,6 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::console::centered;
 use super::float_block;
+use super::statusline::{HintItem, hint_line};
 use super::theme::Theme;
 use super::{input_spans, text};
 use crate::connector::target::Secret;
@@ -153,7 +154,7 @@ pub fn draw_password(
     }
     let hint = if prompt.refused { text::AUTH_REFUSED_HINT } else { text::AUTH_PASSWORD_HINT };
     frame.render_widget(
-        Paragraph::new(hint).style(theme.hint),
+        Paragraph::new(hint_line(&HintItem::of(hint), theme)),
         Rect::new(inner.x, inner.y + 4, inner.width, 1),
     );
     let connect = theme.button(text::BUTTON_CONNECT);

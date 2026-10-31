@@ -80,7 +80,7 @@ impl Fixture {
 
     /// Sends one key through the path that the application uses.
     pub fn press(&mut self, key: KeyEvent) {
-        if !self.editor.on_list_key(key) {
+        if !self.editor.on_list_key(key, sqln::input::SuggestionKeys::Tab) {
             self.editor.on_key(key, Some(&self.catalog));
         }
     }

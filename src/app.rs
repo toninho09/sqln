@@ -8,6 +8,7 @@ mod keys;
 mod mouse;
 mod persist;
 mod scripts;
+mod session;
 mod tables;
 
 use std::cell::RefCell;
@@ -24,7 +25,7 @@ use crossterm::event::{Event, KeyEventKind, MouseEventKind, poll, read};
 use edtui::EditorMode;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use ratatui::widgets::{Block, Paragraph};
 use tokio::sync::mpsc::Receiver;
 
@@ -39,7 +40,7 @@ use crate::editor::{KeyboardMode, RunScope, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, Settings};
 use crate::form::ConnectionForm;
 use crate::grid::Budget;
-use crate::input::{Chord, Keymap};
+use crate::input::{Chord, Keymap, SuggestionKeys};
 use crate::navigator::Navigator;
 use crate::palette::Palette;
 use crate::settings::SettingsForm;
@@ -55,7 +56,7 @@ use crate::ui::name::{NamePrompt, draw_name};
 use crate::ui::navigator::draw_navigator;
 use crate::ui::palette::draw_palette;
 use crate::ui::settings::draw_settings;
-use crate::ui::statusline::{StatusData, StatusPanel, draw_statusline};
+use crate::ui::statusline::{StatusData, StatusPanel, draw_statusline, hint_line, run_time};
 use crate::ui::theme::{ColorEnv, Theme};
 use crate::ui::which_key::draw_which_key;
 use crate::ui::wrap::WrappedText;
@@ -75,6 +76,10 @@ const FIRST_UNBOUND_CONSOLE: ConsoleId = u64::MAX;
 const EVENTS_PER_FRAME: usize = 64;
 /// The time of one step of the row search, so that a key waits less than a frame.
 const SEARCH_SLICE: Duration = Duration::from_millis(8);
+/// The time between two frames of a run. The time on screen needs this rate.
+const RUN_FRAME: Duration = Duration::from_millis(100);
+/// The frames that each picture of the mark of a run stays.
+const FRAMES_PER_PICTURE: usize = 2;
 /// A message of the hint bar stays this time, unless the user acts first.
 const STATUS_TIME: Duration = Duration::from_secs(8);
 const DEFAULT_EDITOR_RATIO: u16 = 50;
@@ -103,6 +108,8 @@ pub struct Options {
     pub vault: Option<Arc<dyn crate::creds::Vault>>,
     /// The `theme` and `icons` choices of the configuration.
     pub appearance: (Option<ThemeName>, Option<IconName>),
+    /// The keys that accept a suggestion.
+    pub suggestion_keys: SuggestionKeys,
 }
 
 impl Default for Options {
@@ -121,6 +128,7 @@ impl Default for Options {
             offer_project: None,
             vault: None,
             appearance: (None, None),
+            suggestion_keys: SuggestionKeys::default(),
         }
     }
 }
@@ -232,6 +240,7 @@ pub struct App {
     settings: Settings,
     keyboard: KeyboardMode,
     keymap: Keymap,
+    suggestion_keys: SuggestionKeys,
     database: Option<PathBuf>,
     clipboard: SharedClipboard,
     /// The theme of the terminal, before the choices of the configuration.
@@ -249,6 +258,11 @@ pub struct App {
     status: Option<String>,
     /// The message on the clock, with the time of its first frame.
     status_shown: Option<(String, Instant)>,
+    /// The start of the application, for the pictures of the mark of a run.
+    started: Instant,
+    /// The time of the last step of the main loop. The screen uses it for each run.
+    clock: Instant,
+    run_frame: usize,
     /// The request for a new name of a console.
     rename: Option<NamePrompt>,
     settings_form: Option<SettingsForm>,
@@ -308,6 +322,7 @@ impl App {
             settings: options.settings,
             keyboard: options.keyboard,
             keymap,
+            suggestion_keys: options.suggestion_keys,
             database: options.database,
             clipboard,
             terminal_theme: theme,
@@ -324,6 +339,9 @@ impl App {
             settings_form: None,
             status: None,
             status_shown: None,
+            started: Instant::now(),
+            clock: Instant::now(),
+            run_frame: 0,
             persist,
             auth: auth::Auth::new(options.vault.take(), plain),
             conflicts: None,
@@ -455,6 +473,17 @@ impl App {
         if let Some(message) = self.console_mut().editor.take_status() {
             self.status = Some(message.to_owned());
         }
+    }
+
+    /// Moves the clock of the screen. It returns true when a run needs a new frame.
+    fn advance_clock(&mut self, now: Instant) -> bool {
+        self.clock = now;
+        let time = now.saturating_duration_since(self.started);
+        let frame = usize::try_from(time.as_millis() / RUN_FRAME.as_millis()).unwrap_or(0);
+        let running = self.consoles.iter().any(Console::is_busy) || self.tables.iter().any(TableTab::is_busy);
+        let changed = running && frame != self.run_frame;
+        self.run_frame = frame;
+        changed
     }
 
     fn clear_status(&mut self) {
@@ -635,8 +664,8 @@ impl App {
         ])
         .areas(area);
         self.layout.body = body;
-        let labels = self.tab_labels();
-        self.layout.main_tabs = draw_main_tabs(frame, tabs, labels, self.active_tab(), &self.theme);
+        let views = self.tab_views();
+        self.layout.main_tabs = draw_main_tabs(frame, tabs, views, self.active_tab(), &self.theme);
         if tall {
             draw_rule(frame, rule, &self.theme);
         }
@@ -750,6 +779,7 @@ impl App {
                 schema: Some(&tab.relation.schema),
                 session: None,
                 phase: tab.phase,
+                run_time: run_time(tab.phase, &tab.run, self.clock),
                 pool: self.manager.as_ref().map(|manager| manager.usage(tab.connection)),
                 data,
                 position,
@@ -777,6 +807,7 @@ impl App {
             schema: (namespace != Namespace::None).then(|| console.schema.as_deref().or(default_schema)).flatten(),
             session: Some((console.manual, console.transaction)),
             phase: console.phase,
+            run_time: run_time(console.phase, &console.run, self.clock),
             pool: console.connection.zip(self.manager.as_ref()).map(|(id, manager)| manager.usage(id)),
             data,
             position,
@@ -786,10 +817,12 @@ impl App {
 
     fn draw_hint(&self, frame: &mut Frame, area: Rect) {
         let line = match self.status.as_deref().or_else(|| self.auth_wait()) {
-            Some(status) => Span::styled(format!(" {status}"), self.theme.status),
-            None => Span::styled(format!(" {}", self.hint()), self.theme.hint),
+            Some(status) => Line::styled(status.to_owned(), self.theme.status),
+            None => hint_line(&self.hint_items(), &self.theme),
         };
-        frame.render_widget(Paragraph::new(Line::from(line)), area);
+        // The row starts one column after the edge, as the status line does.
+        let area = Rect { x: area.x + 1, width: area.width.saturating_sub(1), ..area };
+        frame.render_widget(Paragraph::new(line), area);
     }
 
     /// Draws the windows above the panels. `bounds` holds the rows above the status line.

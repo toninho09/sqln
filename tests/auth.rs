@@ -19,6 +19,7 @@ use sqln::console::Phase;
 use sqln::creds::{Identity, PlainFile, Vault, VaultError};
 use sqln::form::Field;
 use sqln::store::config::{self, CredentialName};
+use sqln::store::workspace::{self, OpenTab, OpenTabs};
 use sqln::store::{Root, Scope, Store};
 use sqln::trust::Trust;
 use sqln::ui::theme::Theme;
@@ -1063,4 +1064,51 @@ fn the_credential_message_gives_way_to_the_hint_of_the_password_prompt() {
     f.run();
     f.sees("Enter connects");
     assert!(!f.screen().contains(WAIT_MESSAGE), "{}", f.screen());
+}
+
+#[test]
+fn a_table_of_the_last_session_reads_no_password_until_the_user_asks() {
+    let mut f = Fixture::new(CredentialName::Vault, true);
+    let identity = f.identity();
+    f.vault.state.lock().unwrap().values.insert(identity, Secret::new(PASSWORD));
+    let table = OpenTab::Table {
+        scope: Scope::Global,
+        connection: ID.to_owned(),
+        schema: "public".to_owned(),
+        relation: "users".to_owned(),
+        view: false,
+    };
+    let tabs = OpenTabs { tabs: vec![table], active: Some(0) };
+    workspace::update(&f.store.global, |file| file.open_tabs = Some(tabs)).unwrap();
+
+    f.app = App::new(
+        Options { store: Some(f.store.clone()), vault: Some(f.vault.clone()), ..Options::default() },
+        Rc::new(RefCell::new(MemoryClipboard::default())),
+        Theme::plain(),
+    );
+    for _ in 0..20 {
+        f.step();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(f.screen().contains("Enter loads the rows."), "{}", f.screen());
+    assert_eq!(f.vault.state.lock().unwrap().reads, 0, "the start reads no password");
+
+    f.code(KeyCode::Enter);
+    f.wait(|f| f.vault.state.lock().unwrap().reads == 1);
+}
+
+#[test]
+fn the_time_of_a_run_does_not_count_the_wait_for_credentials() {
+    let mut f = Fixture::new(CredentialName::Vault, true);
+    let identity = f.identity();
+    f.vault.state.lock().unwrap().values.insert(identity, Secret::new(PASSWORD));
+    *f.vault.blocked.lock().unwrap() = true;
+    f.run();
+    f.wait(|f| f.vault.state.lock().unwrap().reads == 1);
+    f.app.tick_at(Instant::now() + Duration::from_secs(65));
+    let screen = f.screen();
+    assert!(screen.contains("Waiting"), "{screen}");
+    assert!(!screen.contains("1m 0"), "{screen}");
+    f.prefix('x');
+    f.vault.release();
 }

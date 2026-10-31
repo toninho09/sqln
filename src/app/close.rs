@@ -116,7 +116,7 @@ impl App {
     }
 
 
-    fn remove_console(&mut self, id: ConsoleId) {
+    pub(super) fn remove_console(&mut self, id: ConsoleId) {
         let Some(index) = self.console_index(id) else { return };
         // The last tab ends the application. With a table open, a hidden console keeps
         // the rule that the application has one console, and no tab appears for it.

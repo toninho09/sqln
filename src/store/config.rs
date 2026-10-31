@@ -22,7 +22,7 @@ use crate::connector::target::{
     Address, ClientCertificate, Engine, NetworkTarget, Tls, TlsFiles,
 };
 use crate::editor::KeyboardMode;
-use crate::input::Keymap;
+use crate::input::{Keymap, SuggestionKeys};
 
 pub const VERSION: u32 = 1;
 
@@ -48,6 +48,9 @@ pub enum KeyboardName {
     Conventional,
     Vim,
 }
+
+/// The start opens the tabs of the last session unless a file says otherwise.
+pub const DEFAULT_REOPEN_TABS: bool = true;
 
 /// The theme of the interface. `Auto` follows the terminal.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +98,10 @@ pub struct Preferences {
     pub theme: Option<ThemeName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icons: Option<IconName>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reopen_tabs: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion_keys: Option<SuggestionKeys>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,6 +225,10 @@ pub struct Config {
     pub keymap: Keymap,
     pub theme: Option<ThemeName>,
     pub icons: Option<IconName>,
+    /// True when the start opens the tabs of the last session.
+    pub reopen_tabs: bool,
+    /// The keys that accept a suggestion.
+    pub suggestion_keys: SuggestionKeys,
     /// The global connections first, then the project connections.
     pub connections: Vec<Stored>,
 }
@@ -533,6 +544,14 @@ fn combine(files: Vec<(Scope, &Root, Result<ConfigFile, ConfigError>)>) -> Resul
         keymap,
         theme: project.and_then(|preferences| preferences.theme).or(global.theme),
         icons: project.and_then(|preferences| preferences.icons).or(global.icons),
+        reopen_tabs: project
+            .and_then(|preferences| preferences.reopen_tabs)
+            .or(global.reopen_tabs)
+            .unwrap_or(DEFAULT_REOPEN_TABS),
+        suggestion_keys: project
+            .and_then(|preferences| preferences.suggestion_keys)
+            .or(global.suggestion_keys)
+            .unwrap_or_default(),
         connections,
     })
 }

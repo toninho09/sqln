@@ -265,7 +265,7 @@ fn a_console_works_while_another_one_runs() {
     f.code(KeyCode::Char('n'));
     f.run("SELECT 'free' AS a;");
     f.assert_sees("free");
-    f.assert_sees("console-1 ●");
+    assert!(f.screen().contains("s  console-1"), "{}", f.screen());
     assert!(f.app.consoles()[0].is_busy(), "the first console still runs");
 
     f.prefix('p');
