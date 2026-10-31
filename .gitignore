@@ -1,3 +1,7 @@
 target/
 .DS_Store
 .test-certs/
+.pi/
+spikes/
+PLAN.md
+teste.db
