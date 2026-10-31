@@ -15,6 +15,7 @@ pub mod input;
 pub mod line_input;
 pub mod log;
 pub mod navigator;
+pub mod palette;
 pub mod pool;
 pub mod result;
 pub mod script_file;

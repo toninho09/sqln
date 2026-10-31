@@ -3,9 +3,10 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use super::console::centered;
+use super::float_block;
 use super::theme::Theme;
 use super::{input_spans, text};
 use crate::grid::printable;
@@ -23,12 +24,12 @@ fn row(frame: &mut Frame, inner: Rect, y: u16, label: &str, value: Vec<Span<'_>>
 pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) {
     let area = centered(frame.area(), 66, 12);
     frame.render_widget(Clear, area);
-    let block = Block::bordered().title(format!(" {} ", text::TITLE_SETTINGS)).style(theme.dialog);
+    let block = float_block(text::TITLE_SETTINGS, theme);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let choice = |field: Field, value: String| {
         let style = if form.focus == field { theme.dialog_focus } else { theme.dialog_option };
-        vec![Span::styled(format!("[{value}]"), style)]
+        vec![Span::styled(theme.button(&value), style)]
     };
 
     let scope = match form.scope {
@@ -64,9 +65,9 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) {
     );
     let style = |field| if form.focus == field { theme.dialog_focus } else { theme.dialog_option };
     let buttons = Line::from(vec![
-        Span::styled(format!("[{}]", text::BUTTON_SAVE), style(Field::Save)),
+        Span::styled(theme.button(text::BUTTON_SAVE), style(Field::Save)),
         Span::raw("  "),
-        Span::styled(format!("[{}]", text::OPTION_CANCEL), style(Field::Cancel)),
+        Span::styled(theme.button(text::OPTION_CANCEL), style(Field::Cancel)),
     ]);
     frame.render_widget(Paragraph::new(buttons), Rect::new(inner.x, inner.y + 8, inner.width, 1));
 }

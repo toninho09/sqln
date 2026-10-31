@@ -1609,7 +1609,7 @@ fn a_connected_definition_changes_only_its_name() {
     for server in servers() {
         let mut s = Screen::with_definition(&server);
         s.run_script("SELECT 1;");
-        s.wait_for("real ●");
+        s.wait_for("● real");
         s.prefix('h');
         s.code(KeyCode::Char('e'));
         assert!(s.app.form().unwrap().name_only);
@@ -1618,7 +1618,7 @@ fn a_connected_definition_changes_only_its_name() {
         s.focus_form(Field::Save);
         s.code(KeyCode::Enter);
         assert!(s.app.form().is_none());
-        s.wait_for("real-renamed ●");
+        s.wait_for("● real-renamed");
         assert_eq!(s.app.connections()[0].definition.as_ref().unwrap().name, "real-renamed");
         s.app.shutdown();
     }
@@ -1629,7 +1629,7 @@ fn the_form_of_a_connected_definition_disconnects_and_changes_the_pool() {
     for server in servers() {
         let mut s = Screen::with_definition(&server);
         s.run_script("SELECT 1;");
-        s.wait_for("real ●");
+        s.wait_for("● real");
         s.prefix('h');
         s.code(KeyCode::Char('e'));
         s.focus_form(Field::Disconnect);

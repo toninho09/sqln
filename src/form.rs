@@ -1,7 +1,7 @@
 //! The connection form. It holds text only, and it builds a definition on request.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -92,6 +92,8 @@ pub enum FormRequest {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FormNote {
     Info(String),
+    /// The result of an action that worked.
+    Success(String),
     Error(String),
 }
 
@@ -115,6 +117,8 @@ pub struct ConnectionForm {
     pub project_available: bool,
     pub focus: Field,
     pub note: Option<FormNote>,
+    /// The file of the saved definition, as its configuration writes it.
+    stored_file: Option<String>,
     /// The identity of the test in progress.
     pub test: Option<u64>,
     /// The position of the cursor in the focused text, in characters.
@@ -146,6 +150,7 @@ impl ConnectionForm {
         let mut form = Self {
             editing: None,
             name_only: false,
+            stored_file: None,
             kind: Kind::Postgres,
             credential: CredentialName::Session,
             connection_id: uuid::Uuid::new_v4().to_string(),
@@ -196,6 +201,7 @@ impl ConnectionForm {
             Source::Sqlite(target) => {
                 form.kind = Kind::Sqlite;
                 form.foreign_keys = target.foreign_keys;
+                form.stored_file = Some(path_text(&target.path));
                 form.set(Field::File, path_text(&target.path));
                 form.set(Field::BusyTimeout, target.busy_timeout.as_secs().to_string());
             }
@@ -508,12 +514,22 @@ impl ConnectionForm {
         if file.is_empty() {
             return Err(text::FORM_NEEDS_FILE.to_owned());
         }
-        let mut target = SqliteTarget::new(file);
-        validate_path(&target.path).map_err(|error| error.message)?;
+        validate_path(Path::new(file)).map_err(|error| error.message)?;
+        let mut target = SqliteTarget::new(self.file_path(file)?);
         target.foreign_keys = self.foreign_keys;
         let seconds = self.number(Field::BusyTimeout, text::FIELD_BUSY)?;
         target.busy_timeout = Duration::from_secs(seconds);
         Ok(target)
+    }
+
+    /// Returns the path of the SQLite file. A path that the user writes starts at the
+    /// current folder, and it becomes a full path, so the test and the saved connection
+    /// open the same file. A saved path keeps its meaning in the configuration.
+    fn file_path(&self, file: &str) -> Result<PathBuf, String> {
+        if self.stored_file.as_deref() == Some(file) {
+            return Ok(PathBuf::from(file));
+        }
+        std::path::absolute(file).map_err(|_| text::FORM_NO_CURRENT_FOLDER.to_owned())
     }
 
     /// Builds the definition. The error text names the field and holds no input,

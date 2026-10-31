@@ -12,7 +12,7 @@ use crate::connector::{ConnectError, Connector, Namespace};
 use crate::console::Focus;
 use crate::creds::Identity;
 use crate::exec::{ConnectionId, Manager};
-use crate::form::{ConnectionForm, Field, FormNote, Kind};
+use crate::form::{ConnectionForm, Field, FormNote};
 use crate::grid::printable;
 use crate::input::Action;
 use crate::navigator::{Navigator, Row, RowKind};
@@ -643,8 +643,7 @@ impl App {
         if self.config_blocked() {
             return;
         }
-        let Some(form) = &self.form else { return };
-        let definition = form.definition();
+        let Some(definition) = self.form_definition() else { return };
         let form_note = |app: &mut Self, note| {
             if let Some(form) = &mut app.form {
                 form.note = Some(note);
@@ -657,8 +656,8 @@ impl App {
                 return;
             }
         };
-        if form.kind == Kind::Sqlite && !form_file_exists(&definition) {
-            form_note(self, FormNote::Error(text::FORM_FILE_MISSING.to_owned()));
+        if let Some(path) = missing_file(&definition) {
+            form_note(self, FormNote::Error(text::form_file_missing(&path)));
             return;
         }
         if !self.ensure_manager() {
@@ -680,7 +679,7 @@ impl App {
         let Some(form) = self.form.as_mut().filter(|form| form.test == Some(test)) else { return };
         form.test = None;
         form.note = Some(match result {
-            Ok(()) => FormNote::Info(text::FORM_TEST_OK.to_owned()),
+            Ok(()) => FormNote::Success(text::FORM_TEST_OK.to_owned()),
             Err(error) => FormNote::Error(error.message),
         });
     }
@@ -707,23 +706,19 @@ impl App {
             self.rename_connection(name);
             return;
         }
-        let definition = match form.definition() {
-            Ok(definition) => definition,
-            Err(message) => {
+        let definition = match self.form_definition() {
+            Some(Ok(definition)) => definition,
+            Some(Err(message)) => {
                 self.set_form_error(message);
                 return;
             }
+            None => return,
         };
         if name_is_taken(&self.connections, &definition.name, self.form_scope(), editing) {
             self.set_form_error(text::FORM_NAME_TAKEN.to_owned());
             return;
         }
-        let missing = definition.resolved_source();
-        if let Source::Sqlite(target) = &missing
-            && !target.path.exists()
-            && !target.allow_create
-        {
-            let path = target.path.display().to_string();
+        if let Some(path) = missing_file(&definition) {
             self.show_dialog(
                 text::TITLE_CREATE,
                 text::create_database(&path),
@@ -735,6 +730,14 @@ impl App {
             return;
         }
         self.apply_definition(definition);
+    }
+
+    /// Builds the definition of the form with the folder of its scope, so that a saved
+    /// relative path opens here the same file that the connection opens.
+    pub(super) fn form_definition(&self) -> Option<Result<Definition, String>> {
+        let form = self.form.as_ref()?;
+        let base = self.form_scope().and_then(|scope| self.persist_root(scope)).map(|root| root.base);
+        Some(form.definition().map(|definition| Definition { base, ..definition }))
     }
 
     /// Returns the scope that the form saves to. A session without files has none.
@@ -749,8 +752,7 @@ impl App {
     }
 
     pub(super) fn create_form_file(&mut self) {
-        let definition = self.form.as_ref().map(ConnectionForm::definition);
-        match definition {
+        match self.form_definition() {
             Some(Ok(mut definition)) => {
                 if let Source::Sqlite(target) = &mut definition.source {
                     target.allow_create = true;
@@ -887,9 +889,12 @@ fn is_relation(row: &Row) -> bool {
     matches!(row.kind, RowKind::Table | RowKind::View)
 }
 
-fn form_file_exists(definition: &Definition) -> bool {
-    match &definition.source {
-        Source::Sqlite(target) => target.path.exists(),
-        Source::Network(_) => true,
+/// Returns the full path of a SQLite file that does not exist yet.
+fn missing_file(definition: &Definition) -> Option<String> {
+    match definition.resolved_source() {
+        Source::Sqlite(target) if !target.path.exists() && !target.allow_create => {
+            Some(target.path.display().to_string())
+        }
+        _ => None,
     }
 }

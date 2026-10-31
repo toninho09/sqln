@@ -69,6 +69,7 @@ impl Persist {
         settings.budget_bytes = config.budget_bytes.unwrap_or(settings.budget_bytes);
         options.keyboard = config.keyboard;
         options.keymap = Some(config.keymap);
+        options.appearance = (config.theme, config.icons);
         config.connections
     }
 }
@@ -194,6 +195,7 @@ impl App {
             self.budget.set_limit(bytes);
         }
         self.keymap = config.keymap;
+        self.theme = self.terminal_theme.with_choices(config.theme, config.icons, self.color_env);
         if config.keyboard != self.keyboard {
             self.set_keyboard(config.keyboard);
         }
@@ -377,6 +379,8 @@ impl App {
         let result = file.save(root, &text, revision, now);
         if let Err(Trouble::Failed(message)) = &result {
             self.status = Some(text::save_failed(&name, message));
+            // The failure is new, so the message starts its time again.
+            self.status_shown = None;
         }
         result
     }
@@ -407,14 +411,14 @@ impl App {
         }
     }
 
-    /// The step of the main loop. It writes the texts after a pause in the edits,
-    /// and it looks for changes made by other programs. It returns true when the
-    /// screen changes.
+    /// The step of the main loop. It ends old messages, it writes the texts after a pause
+    /// in the edits, and it looks for changes made by other programs. It returns true
+    /// when the screen changes.
     pub fn tick_at(&mut self, now: Instant) -> bool {
+        let mut changed = self.expire_status(now);
         if self.persist.is_none() {
-            return false;
+            return changed;
         }
-        let mut changed = false;
         for index in 0..self.consoles.len() {
             self.ensure_file(index);
             let console = &mut self.consoles[index];

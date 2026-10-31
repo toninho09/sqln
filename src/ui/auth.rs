@@ -4,9 +4,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use super::console::centered;
+use super::float_block;
 use super::theme::Theme;
 use super::{input_spans, text};
 use crate::connector::target::Secret;
@@ -113,9 +115,7 @@ pub fn draw_password(
 ) -> Vec<(usize, Rect)> {
     let area = centered(frame.area(), 70, 9);
     frame.render_widget(Clear, area);
-    let block = Block::bordered()
-        .title(format!(" {} ", prompt.title))
-        .style(theme.dialog);
+    let block = float_block(&prompt.title, theme);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     frame.render_widget(
@@ -156,8 +156,8 @@ pub fn draw_password(
         Paragraph::new(hint).style(theme.hint),
         Rect::new(inner.x, inner.y + 4, inner.width, 1),
     );
-    let connect = format!("[{}]", text::BUTTON_CONNECT);
-    let cancel = format!("[{}]", text::OPTION_CANCEL);
+    let connect = theme.button(text::BUTTON_CONNECT);
+    let cancel = theme.button(text::OPTION_CANCEL);
     let row = Rect::new(inner.x, inner.y + 6, inner.width, 1);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -167,15 +167,9 @@ pub fn draw_password(
         ])),
         row,
     );
-    layout.push((2, Rect::new(row.x, row.y, connect.len() as u16, 1)));
-    layout.push((
-        3,
-        Rect::new(
-            row.x + connect.len() as u16 + 2,
-            row.y,
-            cancel.len() as u16,
-            1,
-        ),
-    ));
+    let connect_width = u16::try_from(connect.width()).unwrap_or(0);
+    let cancel_width = u16::try_from(cancel.width()).unwrap_or(0);
+    layout.push((2, Rect::new(row.x, row.y, connect_width, 1)));
+    layout.push((3, Rect::new(row.x + connect_width + 2, row.y, cancel_width, 1)));
     layout
 }

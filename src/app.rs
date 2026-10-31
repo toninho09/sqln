@@ -20,11 +20,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{Event, KeyEventKind, poll, read};
+use crossterm::event::{Event, KeyEventKind, MouseEventKind, poll, read};
+use edtui::EditorMode;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Paragraph};
 use tokio::sync::mpsc::Receiver;
 
 use self::mouse::Drag;
@@ -40,8 +41,10 @@ use crate::form::ConnectionForm;
 use crate::grid::Budget;
 use crate::input::{Chord, Keymap};
 use crate::navigator::Navigator;
+use crate::palette::Palette;
 use crate::settings::SettingsForm;
 use crate::sql::Dialect;
+use crate::store::config::{IconName, ThemeName};
 use crate::store::scripts::ScriptEntry;
 use crate::store::{Scope, Store};
 use crate::table::{TableFocus, TableTab};
@@ -50,23 +53,30 @@ use crate::ui::console::BarData;
 use crate::ui::form::{FormLayout, draw_form};
 use crate::ui::name::{NamePrompt, draw_name};
 use crate::ui::navigator::draw_navigator;
+use crate::ui::palette::draw_palette;
 use crate::ui::settings::draw_settings;
-use crate::ui::theme::Theme;
+use crate::ui::statusline::{StatusData, StatusPanel, draw_statusline};
+use crate::ui::theme::{ColorEnv, Theme};
+use crate::ui::which_key::draw_which_key;
 use crate::ui::wrap::WrappedText;
 use crate::ui::{
-    ConflictLayout, ConflictRowView, ConsoleLayout, TableBar, TableLayout, draw_conflicts,
-    draw_console, draw_dialog, draw_main_tabs, draw_overlay, draw_picker, draw_small_terminal,
-    draw_table, text,
+    ConflictLayout, ConflictRowView, ConsoleLayout, MainTab, TableBar, TableLayout, draw_conflicts,
+    draw_console, draw_dialog, draw_main_tabs, draw_overlay, draw_panel_title, draw_picker,
+    draw_rule, draw_small_terminal, draw_table, text,
 };
 
 const MIN_WIDTH: u16 = 80;
 const MIN_HEIGHT: u16 = 24;
+/// A screen with this height has a rule under the tabs and a title in each panel.
+const TALL_HEIGHT: u16 = 30;
 /// A console without a connection takes its identity from the end of the range,
 /// and the manager gives identities from the start.
 const FIRST_UNBOUND_CONSOLE: ConsoleId = u64::MAX;
 const EVENTS_PER_FRAME: usize = 64;
 /// The time of one step of the row search, so that a key waits less than a frame.
 const SEARCH_SLICE: Duration = Duration::from_millis(8);
+/// A message of the hint bar stays this time, unless the user acts first.
+const STATUS_TIME: Duration = Duration::from_secs(8);
 const DEFAULT_EDITOR_RATIO: u16 = 50;
 const MIN_EDITOR_RATIO: u16 = 10;
 const MAX_EDITOR_RATIO: u16 = 90;
@@ -91,6 +101,8 @@ pub struct Options {
     pub offer_project: Option<PathBuf>,
     /// An explicit vault, such as an in-memory vault in tests. Native access stays lazy.
     pub vault: Option<Arc<dyn crate::creds::Vault>>,
+    /// The `theme` and `icons` choices of the configuration.
+    pub appearance: (Option<ThemeName>, Option<IconName>),
 }
 
 impl Default for Options {
@@ -108,6 +120,7 @@ impl Default for Options {
             store: None,
             offer_project: None,
             vault: None,
+            appearance: (None, None),
         }
     }
 }
@@ -177,9 +190,11 @@ struct Picker {
 /// The screen areas of the last frame. The mouse uses them.
 #[derive(Clone, Debug, Default)]
 struct ScreenLayout {
+    navigator_title: Rect,
+    /// The rows of the tree, without its title.
     navigator: Rect,
     divider: Option<u16>,
-    main_tabs: Vec<(u16, u16, usize)>,
+    main_tabs: Vec<MainTab>,
     body: Rect,
     console: ConsoleLayout,
     table: TableLayout,
@@ -190,6 +205,8 @@ struct ScreenLayout {
     dialog: (Vec<(u16, u16, usize)>, u16),
     /// The area of the open list, with the index of its first row.
     picker: (Rect, usize),
+    /// The list of the command palette, with the index of its first row.
+    palette: (Rect, usize),
 }
 
 pub struct App {
@@ -217,15 +234,21 @@ pub struct App {
     keymap: Keymap,
     database: Option<PathBuf>,
     clipboard: SharedClipboard,
+    /// The theme of the terminal, before the choices of the configuration.
+    terminal_theme: Theme,
+    color_env: ColorEnv,
     theme: Theme,
     layout: ScreenLayout,
     editor_ratio: u16,
     /// The first dialog is open. Another console can add a question at any time.
     dialogs: VecDeque<Dialog>,
     picker: Option<Picker>,
+    palette: Option<Palette>,
     form: Option<ConnectionForm>,
     overlay: Option<Overlay>,
     status: Option<String>,
+    /// The message on the clock, with the time of its first frame.
+    status_shown: Option<(String, Instant)>,
     /// The request for a new name of a console.
     rename: Option<NamePrompt>,
     settings_form: Option<SettingsForm>,
@@ -266,6 +289,8 @@ impl App {
         let budget = Arc::new(Budget::new(options.settings.budget_bytes));
         let keymap = options.keymap.unwrap_or_else(|| Keymap::new(options.keyboard));
         let plain = persist.as_ref().map(|persist| PlainFile::new(&persist.store.global));
+        let color_env = ColorEnv::read();
+        let (chosen_theme, chosen_icons) = options.appearance;
         let mut app = Self {
             consoles: Vec::new(),
             active: 0,
@@ -285,16 +310,20 @@ impl App {
             keymap,
             database: options.database,
             clipboard,
-            theme,
+            terminal_theme: theme,
+            color_env,
+            theme: theme.with_choices(chosen_theme, chosen_icons, color_env),
             layout: ScreenLayout::default(),
             editor_ratio: DEFAULT_EDITOR_RATIO,
             dialogs: VecDeque::new(),
             picker: None,
+            palette: None,
             form: None,
             overlay: None,
             rename: None,
             settings_form: None,
             status: None,
+            status_shown: None,
             persist,
             auth: auth::Auth::new(options.vault.take(), plain),
             conflicts: None,
@@ -418,10 +447,49 @@ impl App {
     }
 
     pub fn on_event(&mut self, event: Event) {
+        if ends_status(&event) {
+            self.clear_status();
+        }
+        self.route_event(event);
+        // The application keeps the message of the editor, so one clock serves both.
+        if let Some(message) = self.console_mut().editor.take_status() {
+            self.status = Some(message.to_owned());
+        }
+    }
+
+    fn clear_status(&mut self) {
+        self.status = None;
+        self.status_shown = None;
+    }
+
+    /// Starts the time of a new message, and removes a message at the end of its time.
+    /// It returns true when a message goes.
+    fn expire_status(&mut self, now: Instant) -> bool {
+        let Some(status) = &self.status else {
+            self.status_shown = None;
+            return false;
+        };
+        match &self.status_shown {
+            Some((shown, since)) if shown == status => {
+                let done = now.saturating_duration_since(*since) >= STATUS_TIME;
+                if done {
+                    self.clear_status();
+                }
+                done
+            }
+            _ => {
+                self.status_shown = Some((status.clone(), now));
+                false
+            }
+        }
+    }
+
+    fn route_event(&mut self, event: Event) {
         let blocked = !self.dialogs.is_empty()
             || self.conflicts.is_some()
             || self.overlay.is_some()
             || self.picker.is_some()
+            || self.palette.is_some()
             || self.rename.is_some()
             || self.settings_form.is_some()
             || self.auth.prompt.is_some();
@@ -436,11 +504,15 @@ impl App {
             Event::Paste(text) if self.dialogs.is_empty() && self.settings_form.is_some() => {
                 if let Some(form) = &mut self.settings_form { form.paste(&text); }
             }
+            Event::Paste(text) if self.dialogs.is_empty() && self.palette.is_some() => {
+                if let Some(palette) = &mut self.palette { palette.paste(&text); }
+            }
             Event::Paste(text) if !blocked => self.on_paste(&text),
             Event::Mouse(mouse) if !self.dialogs.is_empty() => self.on_dialog_mouse(mouse),
             Event::Mouse(mouse) if self.auth.prompt.is_some() => self.on_password_mouse(mouse),
             Event::Mouse(mouse) if self.conflicts.is_some() => self.on_conflicts_mouse(mouse),
             Event::Mouse(mouse) if self.picker.is_some() => self.on_picker_mouse(mouse),
+            Event::Mouse(mouse) if self.palette.is_some() => self.on_palette_mouse(mouse),
             Event::Mouse(mouse) if !blocked => self.on_mouse(mouse),
             _ => {}
         }
@@ -548,30 +620,41 @@ impl App {
 
     pub fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
+        frame.render_widget(Block::new().style(self.theme.base), area);
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-            draw_small_terminal(frame, area, (MIN_WIDTH, MIN_HEIGHT));
+            draw_small_terminal(frame, area, (MIN_WIDTH, MIN_HEIGHT), &self.theme);
             return;
         }
-        let [body, hints] =
-            Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
+        let tall = area.height >= TALL_HEIGHT;
+        let [tabs, rule, body, status, hints] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(u16::from(tall)),
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(area);
         self.layout.body = body;
-        let main = self.draw_side(frame, body);
-        let [tabs, console] =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(main);
         let labels = self.tab_labels();
         self.layout.main_tabs = draw_main_tabs(frame, tabs, labels, self.active_tab(), &self.theme);
-        if self.table_active.is_some() {
-            self.draw_active_table(frame, console);
-        } else {
-            self.draw_active_console(frame, console);
+        if tall {
+            draw_rule(frame, rule, &self.theme);
         }
+        let main = self.draw_side(frame, body);
+        if self.table_active.is_some() {
+            self.draw_active_table(frame, main, tall);
+        } else {
+            self.draw_active_console(frame, main, tall);
+        }
+        self.draw_status(frame, status);
         self.draw_hint(frame, hints);
-        self.draw_layers(frame);
+        self.draw_layers(frame, Rect { y: 0, height: status.y, ..area });
     }
 
     /// Draws the navigator and its divider. It returns the area for the console.
     fn draw_side(&mut self, frame: &mut Frame, body: Rect) -> Rect {
         if self.navigator.collapsed {
+            self.layout.navigator_title = Rect::default();
             self.layout.navigator = Rect::default();
             self.layout.divider = None;
             return body;
@@ -583,6 +666,7 @@ impl App {
             Constraint::Min(0),
         ])
         .areas(body);
+        let [title, tree] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(side);
         let focused = self.navigator_focused;
         let connected: Vec<bool> = self
             .connections
@@ -591,28 +675,30 @@ impl App {
                 self.manager.as_ref().is_some_and(|manager| manager.is_connected(connection.id))
             })
             .collect();
-        draw_navigator(frame, side, &mut self.navigator, &self.connections, &connected, focused, &self.theme);
+        frame.buffer_mut().set_style(side, self.theme.panel);
+        draw_panel_title(frame, title, text::TITLE_EXPLORER, focused, &self.theme);
+        draw_navigator(frame, tree, &mut self.navigator, &self.connections, &connected, focused, &self.theme);
         let line = vec![Line::raw("│"); usize::from(divider.height)];
         frame.render_widget(Paragraph::new(line).style(self.theme.divider), divider);
-        self.layout.navigator = side;
+        self.layout.navigator_title = title;
+        self.layout.navigator = tree;
         self.layout.divider = Some(divider.x);
         main
     }
 
-    fn draw_active_console(&mut self, frame: &mut Frame, area: Rect) {
+    fn draw_active_console(&mut self, frame: &mut Frame, area: Rect, tall: bool) {
         let connection = self.active_connection();
         let name = connection.map_or(text::NO_DATABASE_LABEL, |connection| &connection.name).to_owned();
         let namespace = connection.map_or(Namespace::None, |item| item.capabilities.namespace);
         let transactions = connection.is_none_or(|item| item.capabilities.transactions);
         let default_schema = connection.and_then(|item| item.default_schema.clone());
-        let pool = self.console().connection.zip(self.manager.as_ref()).map(|(id, manager)| manager.usage(id));
         let bar = BarData {
             connection: &name,
-            pool,
-            data: (self.budget.used(), self.budget.limit()),
             namespace,
             default_schema: default_schema.as_deref(),
             transactions,
+            title: tall,
+            welcome: self.welcome(),
         };
         let ratio = self.editor_ratio;
         let focused = !self.navigator_focused;
@@ -620,32 +706,97 @@ impl App {
         self.layout.console = draw_console(frame, area, console, &bar, ratio, focused, &self.theme);
     }
 
-    fn draw_active_table(&mut self, frame: &mut Frame, area: Rect) {
+    fn draw_active_table(&mut self, frame: &mut Frame, area: Rect, tall: bool) {
         let Some(index) = self.table_active else { return };
         let connection = self.tables[index].connection;
         let name = self.connection(connection).map_or_else(String::new, |item| item.name.clone());
-        let pool = self.manager.as_ref().map(|manager| manager.usage(connection));
-        let bar = TableBar {
-            connection: &name,
-            pool,
-            data: (self.budget.used(), self.budget.limit()),
-            blocked: self.tables[index].is_blocked(&self.budget),
-        };
+        let bar = TableBar { connection: &name, blocked: self.tables[index].is_blocked(&self.budget), title: tall };
         let focused = !self.navigator_focused;
         self.layout.table = draw_table(frame, area, &mut self.tables[index], &bar, focused, &self.theme);
     }
 
+    /// Returns the name of the place that receives keys, for the status line.
+    fn status_panel(&self) -> StatusPanel {
+        if self.navigator_focused {
+            return StatusPanel::Explorer;
+        }
+        if let Some(tab) = self.table() {
+            return if tab.focus == TableFocus::Grid { StatusPanel::Table } else { StatusPanel::Filter };
+        }
+        let console = self.console();
+        if console.focus == Focus::Results {
+            return StatusPanel::Results;
+        }
+        if !self.vim() {
+            return StatusPanel::Editor;
+        }
+        match console.editor.state.mode {
+            EditorMode::Insert => StatusPanel::Insert,
+            EditorMode::Visual => StatusPanel::Visual,
+            _ => StatusPanel::Normal,
+        }
+    }
+
+    fn draw_status(&self, frame: &mut Frame, area: Rect) {
+        let panel = self.status_panel();
+        let data = (self.budget.used(), self.budget.limit());
+        if let Some(tab) = self.table() {
+            let view = tab.result.view;
+            let position = (!tab.result.table.rows.is_empty()).then_some((view.row + 1, view.col + 1));
+            let connection = self.connection(tab.connection).map_or("", |item| item.name.as_str());
+            let status = StatusData {
+                panel,
+                connection,
+                schema: Some(&tab.relation.schema),
+                session: None,
+                phase: tab.phase,
+                pool: self.manager.as_ref().map(|manager| manager.usage(tab.connection)),
+                data,
+                position,
+            };
+            draw_statusline(frame, area, &status, &self.theme);
+            return;
+        }
+        let console = self.console();
+        let connection = self.active_connection();
+        let namespace = connection.map_or(Namespace::None, |item| item.capabilities.namespace);
+        let default_schema = connection.and_then(|item| item.default_schema.as_deref());
+        let result = console.results.get(console.active).filter(|_| console.focus == Focus::Results);
+        let position = match result {
+            Some(result) => {
+                (!result.table.rows.is_empty()).then_some((result.view.row + 1, result.view.col + 1))
+            }
+            None => {
+                let cursor = console.editor.cursor();
+                Some((cursor.row + 1, cursor.col + 1))
+            }
+        };
+        let status = StatusData {
+            panel,
+            connection: connection.map_or(text::NO_DATABASE_LABEL, |item| item.name.as_str()),
+            schema: (namespace != Namespace::None).then(|| console.schema.as_deref().or(default_schema)).flatten(),
+            session: Some((console.manual, console.transaction)),
+            phase: console.phase,
+            pool: console.connection.zip(self.manager.as_ref()).map(|(id, manager)| manager.usage(id)),
+            data,
+            position,
+        };
+        draw_statusline(frame, area, &status, &self.theme);
+    }
+
     fn draw_hint(&self, frame: &mut Frame, area: Rect) {
-        let editor_status = if self.table_active.is_some() { None } else { self.console().editor.status() };
-        let status = self.status.as_deref().or(editor_status);
-        let line = match status {
-            Some(status) => Span::styled(status, self.theme.status),
-            None => Span::styled(self.hint(), self.theme.hint),
+        let line = match self.status.as_deref().or_else(|| self.auth_wait()) {
+            Some(status) => Span::styled(format!(" {status}"), self.theme.status),
+            None => Span::styled(format!(" {}", self.hint()), self.theme.hint),
         };
         frame.render_widget(Paragraph::new(Line::from(line)), area);
     }
 
-    fn draw_layers(&mut self, frame: &mut Frame) {
+    /// Draws the windows above the panels. `bounds` holds the rows above the status line.
+    fn draw_layers(&mut self, frame: &mut Frame, bounds: Rect) {
+        if self.pending_key.is_some_and(Chord::is_prefix) {
+            draw_which_key(frame, bounds, &self.prefix_menu(), &self.theme);
+        }
         if let Some(form) = &self.form {
             self.layout.form = draw_form(frame, form, &self.theme);
         }
@@ -670,6 +821,9 @@ impl App {
         if let Some(overlay) = &mut self.overlay {
             let Overlay { title, contents, footer, scroll } = overlay;
             *scroll = draw_overlay(frame, title, contents, footer, *scroll, &self.theme);
+        }
+        if let Some(palette) = &self.palette {
+            self.layout.palette = draw_palette(frame, palette, &self.theme);
         }
         if let Some(form) = &self.settings_form {
             draw_settings(frame, form, &self.theme);
@@ -723,6 +877,17 @@ fn signal_flag() -> io::Result<Arc<AtomicBool>> {
         }
     }
     Ok(flag)
+}
+
+/// Returns true for an action of the user. A move of the pointer and the wheel are not
+/// actions, because they only let the user look at the screen.
+fn ends_status(event: &Event) -> bool {
+    match event {
+        Event::Key(key) => key.kind != KeyEventKind::Release,
+        Event::Mouse(mouse) => matches!(mouse.kind, MouseEventKind::Down(_)),
+        Event::Paste(_) => true,
+        _ => false,
+    }
 }
 
 fn event_loop(app: &mut App, session: &mut Session, signal: &AtomicBool) -> io::Result<()> {

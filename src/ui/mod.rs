@@ -4,24 +4,34 @@ pub mod conflicts;
 pub mod auth;
 pub mod console;
 pub mod form;
+pub mod icons;
 pub mod name;
 pub mod navigator;
+pub mod palette;
 pub mod settings;
+pub mod statusline;
 pub mod table;
 pub mod text;
 pub mod theme;
+pub mod welcome;
+pub mod which_key;
 pub mod wrap;
 
 use edtui::{EditorTheme, EditorView, LineNumbers};
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph, Widget};
+use ratatui::widgets::{
+    Block, BorderType, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    StatefulWidget, Widget,
+};
 
 pub use self::console::{
-    ConsoleLayout, column_edge_at, draw_console, draw_dialog, draw_main_tabs, draw_overlay,
-    draw_picker, draw_small_terminal, grid_cell_at, header_column_at, main_tab_label, tab_at,
+    ConsoleLayout, MainTab, column_edge_at, draw_console, draw_dialog, draw_main_tabs, draw_overlay,
+    draw_panel_title, draw_picker, draw_rule, draw_small_terminal, grid_cell_at, header_column_at,
+    main_tab_label, tab_at,
 };
 pub use self::conflicts::{ConflictLayout, ConflictRowView, draw_conflicts};
 pub use self::table::{TableBar, TableControl, TableLayout, draw_table};
@@ -29,10 +39,45 @@ use self::theme::Theme;
 use crate::complete::SuggestionKind;
 use crate::editor::{MarkState, SearchBar, SearchField, SqlEditor, SuggestionList, TAB_WIDTH};
 
+/// The columns of the gutter, without the digits: a space before the number, a space
+/// after it, the state mark, and a space before the text.
+const GUTTER_COLUMNS: u16 = 4;
 const MAX_LIST_ROWS: usize = 8;
 const MIN_LIST_WIDTH: u16 = 24;
 
-pub fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut SqlEditor, theme: &Theme) {
+/// Returns the block of a window above the panels.
+pub(crate) fn float_block<'a>(title: &str, theme: &Theme) -> Block<'a> {
+    Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(theme.float_border)
+        .title(Span::styled(format!(" {title} "), theme.float_title))
+        .style(theme.dialog)
+}
+
+/// Draws a scrollbar on the last column of an area, when the content needs one.
+pub(crate) fn draw_scrollbar(
+    buffer: &mut Buffer,
+    area: Rect,
+    total: usize,
+    visible: usize,
+    position: usize,
+    theme: &Theme,
+) {
+    if total <= visible || area.height == 0 || area.width == 0 {
+        return;
+    }
+    let mut state = ScrollbarState::new(total - visible).position(position).viewport_content_length(visible);
+    Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None)
+        .track_symbol(Some("│"))
+        .thumb_symbol("▐")
+        .track_style(theme.scrollbar_track)
+        .thumb_style(theme.scrollbar_thumb)
+        .render(area, buffer, &mut state);
+}
+
+pub fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut SqlEditor, focused: bool, theme: &Theme) {
     let bar_height = if editor.search().is_some() { 2 } else { 0 };
     let [bar, text] =
         Layout::vertical([Constraint::Length(bar_height), Constraint::Min(0)]).areas(area);
@@ -41,22 +86,31 @@ pub fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut SqlEditor, theme:
         draw_search_bar(frame, bar, search);
     }
 
+    // The last column holds the scrollbar, so the text keeps its width in a long script.
+    let [text, scroll] = Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]).areas(text);
     editor.set_text_area(gutterless(text, editor));
     editor.prepare_frame(usize::from(text.height), theme);
     let editor_theme = EditorTheme::default()
-        .base(Style::new())
+        .base(theme.base)
         .cursor_style(theme.cursor)
         .selection_style(theme.selection)
-        .line_numbers_style(theme.gutter)
         .hide_status_line();
+    // The application draws the line numbers, because EdTUI leaves no space around them.
+    let text_area = gutterless(text, editor);
     EditorView::new(&mut editor.state)
         .theme(editor_theme)
         .wrap(false)
         .tab_width(TAB_WIDTH)
-        .line_numbers(LineNumbers::Absolute)
-        .render(text, frame.buffer_mut());
+        .line_numbers(LineNumbers::None)
+        .render(text_area, frame.buffer_mut());
 
+    if focused {
+        draw_current_line(frame.buffer_mut(), text, editor, theme);
+    }
+    draw_gutter(frame.buffer_mut(), text, editor, focused, theme);
     draw_marks(frame, text, editor, theme);
+    let (_, top) = editor.state.viewport_offset();
+    draw_scrollbar(frame.buffer_mut(), scroll, editor.state.lines.len(), usize::from(text.height), top, theme);
 
     let anchor_shift = editor.list_anchor_chars();
     let cursor = editor.state.cursor_screen_position();
@@ -100,10 +154,42 @@ fn mark_symbol(state: MarkState, theme: &Theme) -> (&'static str, Style) {
     }
 }
 
+/// Marks the row of the cursor. A cell with its own background keeps it, so the marks
+/// of the selection and the search stay.
+fn draw_current_line(buffer: &mut Buffer, area: Rect, editor: &SqlEditor, theme: &Theme) {
+    let (_, top) = editor.state.viewport_offset();
+    let Some(offset) = editor.state.cursor.row.checked_sub(top).filter(|offset| *offset < usize::from(area.height))
+    else {
+        return;
+    };
+    let y = area.y + offset as u16;
+    let Some(line) = theme.cursor_line.bg else { return };
+    let base = theme.base.bg.unwrap_or(Color::Reset);
+    for x in area.x..area.right() {
+        if let Some(cell) = buffer.cell_mut((x, y))
+            && cell.bg == base
+        {
+            cell.set_bg(line);
+        }
+    }
+}
+
+/// Writes the line numbers.
+fn draw_gutter(buffer: &mut Buffer, area: Rect, editor: &SqlEditor, focused: bool, theme: &Theme) {
+    let digits = usize::from((gutterless(area, editor).x - area.x).saturating_sub(GUTTER_COLUMNS));
+    let (_, top) = editor.state.viewport_offset();
+    let rows = editor.state.lines.len().max(1);
+    for (y, row) in (area.y..area.bottom()).zip(top..rows) {
+        let current = focused && row == editor.state.cursor.row;
+        let style = if current { theme.gutter_current } else { theme.gutter };
+        buffer.set_stringn(area.x + 1, y, format!("{:>digits$}", row + 1), digits, style);
+    }
+}
+
 /// Writes the statement states in the free column of the line number gutter.
 fn draw_marks(frame: &mut Frame, area: Rect, editor: &mut SqlEditor, theme: &Theme) {
     let (_, top) = editor.state.viewport_offset();
-    let x = gutterless(area, editor).x.saturating_sub(1);
+    let x = gutterless(area, editor).x.saturating_sub(2);
     let buffer = frame.buffer_mut();
     for mark in editor.marks() {
         let Some(state) = mark.state else { continue };
@@ -120,7 +206,7 @@ fn draw_marks(frame: &mut Frame, area: Rect, editor: &mut SqlEditor, theme: &The
 /// Returns the text columns of the editor area, without the line numbers.
 fn gutterless(area: Rect, editor: &SqlEditor) -> Rect {
     let digits = editor.state.lines.len().max(1).to_string().len() as u16;
-    let gutter = (digits + 1).min(area.width);
+    let gutter = (digits + GUTTER_COLUMNS).min(area.width);
     Rect { x: area.x + gutter, width: area.width - gutter, ..area }
 }
 

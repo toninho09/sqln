@@ -13,7 +13,8 @@ use crate::navigator::{MIN_WIDTH, Navigator, RowKind};
 use crate::result::ResultTab;
 use crate::table::TableFocus;
 use crate::ui::console::Control;
-use crate::ui::{TableControl, column_edge_at, grid_cell_at, header_column_at, tab_at};
+use crate::ui::navigator::TREE_PAD;
+use crate::ui::{MainTab, TableControl, column_edge_at, grid_cell_at, header_column_at, tab_at};
 
 /// The console keeps this width when the user drags the divider of the navigator.
 pub(super) const MIN_MAIN_WIDTH: u16 = 40;
@@ -71,9 +72,15 @@ impl App {
         if layout.divider == Some(mouse.column) && layout.body.contains(position) {
             self.drag = Some(Drag::Navigator);
         } else if let Some(tab) = main_tab_at(&layout.main_tabs, position) {
-            self.select_tab(tab);
+            if tab.close.is_some_and(|close| mouse.column >= close) {
+                self.close_tab(tab.index);
+            } else {
+                self.select_tab(tab.index);
+            }
         } else if layout.navigator.contains(position) {
             self.on_navigator_press(mouse);
+        } else if layout.navigator_title.contains(position) {
+            self.focus_navigator();
         } else if self.table_active.is_some() {
             self.on_table_press(mouse, position);
         } else {
@@ -161,7 +168,7 @@ impl App {
         let Some(row) = rows.get(index).copied() else { return };
         self.navigator.select_index(index, &self.connections);
         // The mark of a branch stands after the indent of its row.
-        let mark = usize::from(area.x) + row.depth() * 2;
+        let mark = usize::from(area.x + TREE_PAD) + row.depth() * 2;
         if usize::from(mouse.column) == mark && Navigator::is_branch(&row) {
             self.toggle(&row);
         } else if self.is_double_click(mouse) && matches!(row.kind, RowKind::Table | RowKind::View) {
@@ -279,6 +286,21 @@ impl App {
         }
     }
 
+    pub(super) fn on_palette_mouse(&mut self, mouse: MouseEvent) {
+        let (area, first) = self.layout.palette;
+        let inside = area.contains(Position::new(mouse.column, mouse.row));
+        let Some(palette) = &mut self.palette else { return };
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) if inside => {
+                let request = palette.choose(first + usize::from(mouse.row - area.y));
+                self.on_palette_request(request);
+            }
+            MouseEventKind::ScrollUp => palette.move_by(-1),
+            MouseEventKind::ScrollDown => palette.move_by(1),
+            _ => {}
+        }
+    }
+
     fn on_form_mouse(&mut self, mouse: MouseEvent) {
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
             return;
@@ -300,8 +322,6 @@ impl App {
     }
 }
 
-fn main_tab_at(tabs: &[(u16, u16, usize)], position: Position) -> Option<usize> {
-    tabs.iter()
-        .find(|(start, end, _)| position.y == 0 && position.x >= *start && position.x < *end)
-        .map(|(_, _, index)| *index)
+fn main_tab_at(tabs: &[MainTab], position: Position) -> Option<MainTab> {
+    tabs.iter().copied().find(|tab| position.y == 0 && position.x >= tab.start && position.x < tab.end)
 }

@@ -2,19 +2,20 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::theme::Theme;
+use super::draw_scrollbar;
 use super::text;
+use super::theme::Theme;
 use crate::connection::Connection;
 use crate::grid::printable;
 use crate::navigator::{Navigator, RowKind, RowNote};
 
 const MARK_OPEN: &str = "▾";
 const MARK_CLOSED: &str = "▸";
-const MARK_CONNECTED: &str = "●";
+/// The empty column at the start of each row.
+pub const TREE_PAD: u16 = 1;
 
 pub fn draw_navigator(
     frame: &mut Frame,
@@ -28,8 +29,8 @@ pub fn draw_navigator(
     let rows = navigator.rows(connections);
     if rows.is_empty() {
         let lines = vec![
-            Line::styled(text::NO_CONNECTIONS_ROW, theme.tree_detail),
-            Line::styled(text::ADD_CONNECTION_ROW, theme.tree_detail),
+            Line::styled(format!(" {}", text::NO_CONNECTIONS_ROW), theme.tree_detail),
+            Line::styled(format!(" {}", text::ADD_CONNECTION_ROW), theme.tree_detail),
         ];
         frame.render_widget(Paragraph::new(lines), area);
         return;
@@ -43,6 +44,8 @@ pub fn draw_navigator(
     }
     navigator.top = navigator.top.min(rows.len().saturating_sub(height));
 
+    let icons = &theme.icons;
+    let detail = theme.tree_detail;
     let mut lines = Vec::with_capacity(height);
     for (offset, row) in rows.iter().enumerate().skip(navigator.top).take(height) {
         let indent = "  ".repeat(row.depth());
@@ -53,12 +56,23 @@ pub fn draw_navigator(
         } else {
             MARK_CLOSED
         };
-        let mut spans = vec![Span::raw(format!("{indent}{mark} {}", printable(row.name(connections))))];
-        let detail = theme.tree_detail;
-        if row.kind == RowKind::Connection && connected[row.connection] {
-            spans.push(Span::styled(format!(" {MARK_CONNECTED}"), theme.mark_good));
+        let mut spans = vec![Span::raw(format!(" {indent}{mark} "))];
+        match row.kind {
+            RowKind::Connection if connected[row.connection] => {
+                spans.push(Span::styled(Theme::icon(icons.connected), theme.mark_good));
+            }
+            RowKind::Connection => spans.push(Span::styled(Theme::icon(icons.disconnected), detail)),
+            RowKind::Schema => spans.push(Span::styled(Theme::icon(icons.schema), detail)),
+            RowKind::Table => spans.push(Span::styled(Theme::icon(icons.table), detail)),
+            RowKind::View => spans.push(Span::styled(Theme::icon(icons.view), detail)),
+            RowKind::Column => spans.push(Span::styled(Theme::icon(icons.column), detail)),
         }
-        if row.kind == RowKind::View {
+        spans.push(Span::raw(printable(row.name(connections))));
+        if row.kind == RowKind::Connection {
+            let engine = icons.engine(connections[row.connection].dialect);
+            spans.push(Span::styled(format!("  {engine}"), detail));
+        }
+        if row.kind == RowKind::View && icons.view.is_empty() {
             spans.push(Span::styled(format!(" {}", text::MARK_VIEW), detail));
         }
         match navigator.suffix(row, connections) {
@@ -66,8 +80,13 @@ pub fn draw_navigator(
             Some(RowNote::Failed) => spans.push(Span::styled(format!(" {}", text::NOTE_FAILED), theme.error)),
             None => {}
         }
-        let style = if offset == cursor && focused { theme.tree_selected } else { Style::new() };
-        lines.push(Line::from(spans).style(style));
+        if offset == cursor {
+            let y = area.y + u16::try_from(offset - navigator.top).unwrap_or(0);
+            let style = if focused { theme.tree_selected } else { theme.tree_cursor };
+            frame.buffer_mut().set_style(Rect { y, height: 1, ..area }, style);
+        }
+        lines.push(Line::from(spans));
     }
     frame.render_widget(Paragraph::new(lines), area);
+    draw_scrollbar(frame.buffer_mut(), area, rows.len(), height, navigator.top, theme);
 }

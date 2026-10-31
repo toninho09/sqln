@@ -19,7 +19,7 @@ use ratatui::buffer::Buffer;
 use sqln::app::{App, Options};
 use common::sample_catalog;
 use sqln::catalog::Catalog;
-use sqln::clipboard::MemoryClipboard;
+use sqln::clipboard::{Clipboard, CopyOutcome, MemoryClipboard};
 use sqln::connection::{CatalogState, Definition, Source};
 use sqln::connector::sqlite::SqliteTarget;
 use sqln::connector::target::{
@@ -945,7 +945,7 @@ fn a_collapsed_navigator_keeps_the_editor_and_the_results() {
     f.navigator();
     f.prefix('b');
     assert!(!f.app.navigator_focused(), "the focus leaves the hidden panel");
-    f.assert_not_sees("collapse.db ●\n");
+    f.assert_not_sees("● collapse.db");
     f.assert_sees("a value");
     f.assert_sees("SELECT 'a value'");
     f.prefix('h');
@@ -1018,7 +1018,7 @@ fn the_stop_button_ends_a_script() {
     let mut f = Fixture::new("button-stop", "");
     f.app.console_mut().editor.on_paste(LONG);
     f.click_text("[Script]");
-    f.pump_sees("1●");
+    f.pump_sees(" 1 ●");
     f.click_text("[Stop]");
     f.idle();
     f.assert_sees("■");
@@ -1224,7 +1224,7 @@ fn disconnect_closes_the_sessions_and_the_next_run_opens_one() {
     f.assert_sees("no open session");
     f.prefix('l');
     f.run("SELECT 1;");
-    f.pump_sees("server ●");
+    f.pump_sees("● server");
     // The editor also reads the catalog, so this start can open two sessions.
     f.pump_until(|f| f.app.connections()[0].catalog.is_some());
     let opened = sessions.opened.load(Ordering::SeqCst);
@@ -1232,12 +1232,12 @@ fn disconnect_closes_the_sessions_and_the_next_run_opens_one() {
     f.navigator();
     f.code(KeyCode::Char('D'));
     f.pump_sees("Disconnected.");
-    f.assert_not_sees("server ●");
+    f.assert_not_sees("● server");
     f.pump_until(|_| sessions.closed.load(Ordering::SeqCst) == opened);
 
     f.prefix('l');
     f.run("SELECT 2;");
-    f.pump_sees("server ●");
+    f.pump_sees("● server");
     assert!(sessions.opened.load(Ordering::SeqCst) > opened);
 }
 
@@ -1246,7 +1246,7 @@ fn hold_a_session_in_a_catalog_read(f: &mut Fixture, sessions: &Sessions) {
     f.prefix('l');
     sessions.hold_catalog.store(true, Ordering::SeqCst);
     f.run("SELECT 1;");
-    f.pump_sees("server ●");
+    f.pump_sees("● server");
     f.navigator();
     f.code(KeyCode::Right);
     f.pump_sees("Pool 1/5");
@@ -1301,7 +1301,7 @@ fn disconnect_waits_for_a_session_in_use() {
 
     sessions.catalog_release.notify_one();
     f.pump_sees("Disconnected.");
-    f.assert_not_sees("server ●");
+    f.assert_not_sees("● server");
 }
 
 #[test]
@@ -1314,7 +1314,7 @@ fn a_session_that_stays_in_use_keeps_the_message_true() {
     f.assert_not_sees("Disconnected.");
 
     sessions.catalog_release.notify_one();
-    f.pump_until(|f| !f.sees("server ●"));
+    f.pump_until(|f| !f.sees("● server"));
 }
 
 #[test]
@@ -1375,10 +1375,10 @@ fn only_the_prefix_shows_the_prefix_hint() {
     f.run("SELECT 1 AS a;");
     f.prefix('j');
     f.code(KeyCode::Char('g'));
-    f.assert_not_sees("q close");
+    f.assert_not_sees("Ctrl+W …");
     f.code(KeyCode::Esc);
     f.press(ctrl('w'));
-    f.assert_sees("q close");
+    f.assert_sees("Ctrl+W …");
 }
 
 #[test]
@@ -1522,4 +1522,183 @@ fn the_summary_of_a_definition_holds_no_password() {
     let definition = Definition::new("kept", Source::Network(local_target()));
     assert!(!definition.summary().contains("hunter2-secret"));
     assert!(!format!("{definition:?}").contains("hunter2-secret"));
+}
+
+const REFUSAL: &str = "The cursor is outside a statement.";
+const NO_CLIPBOARD: &str = "Clipboard unavailable.";
+const MESSAGE_TIME: Duration = Duration::from_secs(8);
+
+/// A clipboard that always fails, to get a message from the editor.
+struct BrokenClipboard;
+
+impl Clipboard for BrokenClipboard {
+    fn copy(&mut self, _text: &str) -> CopyOutcome {
+        CopyOutcome::Failed
+    }
+
+    fn paste(&mut self) -> Option<String> {
+        None
+    }
+}
+
+fn fixture_without_clipboard(name: &str) -> Fixture {
+    let path = database(name, "");
+    let options = Options { database: Some(path.clone()), ..Options::default() };
+    let clipboard = Rc::new(RefCell::new(BrokenClipboard));
+    Fixture { app: App::new(options, clipboard, Theme::plain()), paths: vec![path] }
+}
+
+#[test]
+fn a_message_leaves_the_hint_bar_after_its_time() {
+    let mut f = Fixture::new("message-time", "");
+    f.code(KeyCode::F(5));
+    f.assert_sees(REFUSAL);
+    let start = Instant::now();
+    f.app.tick_at(start);
+    assert!(!f.app.tick_at(start + MESSAGE_TIME - Duration::from_millis(100)));
+    f.assert_sees(REFUSAL);
+    assert!(f.app.tick_at(start + MESSAGE_TIME), "the screen must draw again");
+    f.assert_not_sees(REFUSAL);
+    f.assert_sees("F5 run");
+}
+
+#[test]
+fn a_repeated_message_gets_a_full_time() {
+    let mut f = Fixture::new("message-again", "");
+    let start = Instant::now();
+    f.code(KeyCode::F(5));
+    f.app.tick_at(start);
+    let later = start + Duration::from_secs(7);
+    f.app.tick_at(later);
+    f.code(KeyCode::F(5));
+    f.app.tick_at(later);
+    f.app.tick_at(later + Duration::from_secs(7));
+    f.assert_sees(REFUSAL);
+    f.app.tick_at(later + MESSAGE_TIME);
+    f.assert_not_sees(REFUSAL);
+}
+
+#[test]
+fn a_click_removes_a_message_and_the_pointer_and_the_wheel_do_not() {
+    let mut f = Fixture::new("message-click", "");
+    f.code(KeyCode::F(5));
+    f.buffer();
+    f.app.on_event(mouse(MouseEventKind::Moved, 60, 10));
+    f.app.on_event(mouse(MouseEventKind::ScrollDown, 60, 10));
+    f.assert_sees(REFUSAL);
+    f.click(60, 10);
+    f.assert_not_sees(REFUSAL);
+}
+
+#[test]
+fn a_click_keeps_the_message_of_its_own_action() {
+    let mut f = Fixture::new("message-own", "");
+    f.click_text("[Run]");
+    f.assert_sees(REFUSAL);
+}
+
+#[test]
+fn a_message_of_the_editor_leaves_with_a_key_of_another_panel() {
+    let mut f = fixture_without_clipboard("message-panel");
+    f.press(ctrl('v'));
+    f.assert_sees(NO_CLIPBOARD);
+    f.navigator();
+    f.assert_not_sees(NO_CLIPBOARD);
+}
+
+#[test]
+fn a_message_of_the_editor_leaves_after_its_time() {
+    let mut f = fixture_without_clipboard("message-editor");
+    f.press(ctrl('v'));
+    let start = Instant::now();
+    f.app.tick_at(start);
+    f.assert_sees(NO_CLIPBOARD);
+    f.app.tick_at(start + MESSAGE_TIME);
+    f.assert_not_sees(NO_CLIPBOARD);
+}
+
+impl Fixture {
+    /// Opens consoles until the row has `count` tabs. The last one stays on screen.
+    fn open_consoles(&mut self, count: usize) {
+        while self.app.consoles().len() < count {
+            self.navigator();
+            self.code(KeyCode::Char('n'));
+        }
+        self.prefix('l');
+    }
+
+    /// Clicks the close mark of a tab.
+    fn close_tab(&mut self, name: &str) {
+        let (start, row) = self.locate(name);
+        let column = start + name.chars().count() as u16 + 1;
+        let tabs = self.screen();
+        let mark = tabs.lines().next().unwrap().chars().nth(usize::from(column));
+        assert_eq!(mark, Some('X'), "{tabs}");
+        self.click(column, row);
+    }
+
+    fn console_names(&self) -> Vec<&str> {
+        self.app.consoles().iter().map(|console| console.name.as_str()).collect()
+    }
+}
+
+#[test]
+fn each_main_tab_has_a_close_mark() {
+    let mut f = Fixture::new("close-marks", "");
+    f.open_consoles(2);
+    let screen = f.screen();
+    let tabs = screen.lines().next().unwrap();
+    assert!(tabs.starts_with(" console-1 X  console-2 X "), "{tabs}");
+}
+
+#[test]
+fn the_close_mark_closes_a_tab_that_is_not_on_screen() {
+    let mut f = Fixture::new("close-other", "");
+    f.open_consoles(3);
+    assert_eq!(f.app.console().name, "console-3");
+    f.close_tab("console-1");
+    assert_eq!(f.console_names(), ["console-2", "console-3"]);
+    assert_eq!(f.app.console().name, "console-3");
+}
+
+#[test]
+fn the_close_mark_closes_the_tab_on_screen() {
+    let mut f = Fixture::new("close-active", "");
+    f.open_consoles(3);
+    f.close_tab("console-3");
+    assert_eq!(f.console_names(), ["console-1", "console-2"]);
+    assert_eq!(f.app.console().name, "console-2");
+}
+
+#[test]
+fn a_click_on_the_label_of_a_tab_does_not_close_it() {
+    let mut f = Fixture::new("close-label", "");
+    f.open_consoles(2);
+    let (start, row) = f.locate("console-1");
+    // The last column of the label, and the column before the close mark.
+    for column in [start + 8, start + 9] {
+        f.click(column, row);
+    }
+    assert_eq!(f.console_names(), ["console-1", "console-2"]);
+    assert_eq!(f.app.console().name, "console-1");
+}
+
+#[test]
+fn the_close_mark_asks_the_same_question_as_the_key() {
+    let mut f = Fixture::new("close-question", "CREATE TABLE t(a);");
+    f.run("BEGIN; INSERT INTO t VALUES (1);");
+    f.open_consoles(2);
+    f.close_tab("console-1");
+    f.assert_sees("console-1: This console has an open transaction");
+    assert_eq!(f.app.console().name, "console-2");
+    // `Esc` cancels the close, and the tab stays.
+    f.code(KeyCode::Esc);
+    assert_eq!(f.console_names(), ["console-1", "console-2"]);
+}
+
+#[test]
+fn the_close_mark_of_the_last_tab_ends_the_application() {
+    let mut f = Fixture::new("close-last", "");
+    f.close_tab("console-1");
+    assert!(f.app.should_quit());
 }

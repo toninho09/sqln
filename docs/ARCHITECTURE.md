@@ -30,7 +30,8 @@ Thread principal                    Runtime Tokio
 | Módulo | Responsabilidade |
 |---|---|
 | `app` | Estado da aplicação, ações e atualização do estado |
-| `ui` | Desenho das telas e dos widgets |
+| `ui` | Desenho das telas e dos widgets, temas (`theme`), símbolos (`icons`), barra de status (`statusline`) e menu do prefixo (`which_key`) |
+| `palette` | Estado e filtro da paleta de comandos; `app` monta a lista, e `ui` desenha |
 | `input` | Mapa de teclas: regiões, ações, sequências e regras de `keymap` |
 | `navigator` | Árvore de conexões, schemas, relações e colunas |
 | `form` | Campos e validação do cadastro de conexão |
@@ -337,7 +338,9 @@ Nenhum escopo recebe `password`. A senha autorizada em texto simples fica em `cr
     "pageSize": 100,
     "rowCap": 1000,
     "gridBudgetBytes": 268435456,
-    "keymap": {}
+    "keymap": {},
+    "theme": "auto",
+    "icons": "unicode"
   },
   "connections": [
     {
@@ -386,6 +389,7 @@ Regras da leitura, conforme o código:
 - `credential` ausente vale `none`. `pool` ausente vale 5 conexões.
 - Um `id` ou um `name` repetido no mesmo arquivo invalida o arquivo. O nome ignora maiúsculas e minúsculas.
 - Um caminho relativo (`file`, `caFile`, `clientCert`, `clientKey`) fica como o usuário o escreveu no arquivo. A resolução ocorre ao abrir a conexão.
+- O formulário grava o caminho completo de um arquivo SQLite digitado, a partir do diretório atual. Um `file` salvo e não alterado mantém o seu texto.
 - Uma conexão de rede sem `tls` usa TLS com verificação, exceto em `localhost`, loopback e socket Unix.
 `apply_context` reaplica `readOnly` a cada reserva, pois a limpeza da sessão o remove.
 

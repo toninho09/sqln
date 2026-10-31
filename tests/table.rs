@@ -1674,3 +1674,58 @@ fn a_catalog_that_changes_while_a_table_is_open_keeps_its_rows() {
     assert_eq!(f.app.tables().len(), 1);
     assert_eq!(f.rows_loaded(), 3);
 }
+
+impl Fixture {
+    /// Clicks the close mark of a tab.
+    fn close_tab(&mut self, name: &str) {
+        let screen = self.screen();
+        let tabs = screen.lines().next().unwrap();
+        let start = tabs[..tabs.find(name).unwrap()].chars().count();
+        let column = start + name.chars().count() + 1;
+        assert_eq!(tabs.chars().nth(column), Some('X'), "{tabs}");
+        self.click(column as u16, 0);
+    }
+}
+
+#[test]
+fn the_close_mark_closes_the_table_on_screen() {
+    let mut f = Fixture::sqlite("close-table", &numbered(3), Settings::default());
+    f.open_table("t");
+    f.close_tab("t (table)");
+    assert!(f.app.tables().is_empty());
+    assert!(f.app.table().is_none());
+    assert_eq!(f.app.console().name, "console-1");
+    assert!(!f.app.should_quit());
+}
+
+#[test]
+fn the_close_mark_closes_a_table_that_is_not_on_screen() {
+    let mut f = Fixture::sqlite("close-hidden-table", &numbered(3), Settings::default());
+    f.open_table("t");
+    f.click_text("console-1");
+    assert!(f.app.table().is_none());
+    f.close_tab("t (table)");
+    assert!(f.app.tables().is_empty());
+    assert_eq!(f.app.console().name, "console-1");
+}
+
+#[test]
+fn the_close_mark_of_a_console_keeps_the_table_on_screen() {
+    let mut f = Fixture::sqlite("close-console-of-table", &numbered(3), Settings::default());
+    f.open_table("t");
+    f.close_tab("console-1");
+    assert_eq!(f.app.tables().len(), 1);
+    assert!(f.app.table().is_some());
+    assert!(!f.app.should_quit());
+    let screen = f.screen();
+    assert!(!screen.lines().next().unwrap().contains("console-"), "{screen}");
+}
+
+#[test]
+fn the_close_mark_of_the_last_table_ends_the_application() {
+    let mut f = Fixture::sqlite("close-last-table", &numbered(3), Settings::default());
+    f.open_table("t");
+    f.close_tab("console-1");
+    f.close_tab("t (table)");
+    assert!(f.app.should_quit());
+}

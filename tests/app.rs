@@ -182,10 +182,10 @@ fn a_long_file_name_leaves_the_state_visible() {
     let name = "a-very-long-database-file-name-that-does-not-fit-on-the-top-row-of-the-screen-at-all";
     let mut f = Fixture::new(name);
     let screen = f.screen();
-    let top = screen.lines().nth(1).unwrap();
-    assert!(top.contains('…'), "{top}");
-    assert!(top.contains("Auto · No transaction · Idle"), "{top}");
-    assert!(top.contains("Pool 0/5"), "{top}");
+    let status = screen.lines().rev().nth(1).unwrap();
+    assert!(status.contains('…'), "{status}");
+    assert!(status.contains("Auto · No transaction · Idle"), "{status}");
+    assert!(status.contains("Pool 0/5"), "{status}");
 }
 
 #[test]
@@ -270,9 +270,9 @@ fn the_margin_shows_each_statement_state_and_the_error_message() {
     let mut f = Fixture::new("marks");
     f.run_script("SELECT 1;\nSELECT * FROM missing;\nSELECT 3;");
     let screen = f.screen();
-    assert!(screen.contains("1✓SELECT 1;"), "{screen}");
-    assert!(screen.contains("2✗SELECT * FROM missing;"), "{screen}");
-    assert!(screen.contains("3—SELECT 3;"), "{screen}");
+    assert!(screen.contains("1 ✓ SELECT 1;"), "{screen}");
+    assert!(screen.contains("2 ✗ SELECT * FROM missing;"), "{screen}");
+    assert!(screen.contains("3 — SELECT 3;"), "{screen}");
     f.assert_sees("Statement 2: no such table: missing");
     assert!(f.app.console_mut().showing_messages());
 }
@@ -284,9 +284,9 @@ fn an_edit_removes_the_mark_of_that_statement_only() {
     f.app.console_mut().editor.set_cursor(Index2::new(1, 7));
     f.type_text("9");
     let screen = f.screen();
-    assert!(screen.contains("1✓SELECT 1;"), "{screen}");
-    assert!(screen.contains("2 SELECT 92;") || screen.contains("2 SELECT 9"), "{screen}");
-    assert!(!screen.contains("2✓"), "{screen}");
+    assert!(screen.contains("1 ✓ SELECT 1;"), "{screen}");
+    assert!(screen.contains("2   SELECT 9"), "{screen}");
+    assert!(!screen.contains("2 ✓"), "{screen}");
 }
 
 #[test]
@@ -296,7 +296,7 @@ fn a_new_row_above_moves_the_mark_with_its_statement() {
     f.app.console_mut().editor.set_cursor(Index2::new(0, 0));
     f.press(key(KeyCode::Enter));
     let screen = f.screen();
-    assert!(screen.contains("2✓SELECT 1;"), "{screen}");
+    assert!(screen.contains("2 ✓ SELECT 1;"), "{screen}");
 }
 
 #[test]
@@ -326,7 +326,7 @@ fn the_row_cap_shows_its_message() {
     let mut f = Fixture::with("cap", KeyboardMode::Conventional, settings, "");
     f.run_script("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 100) SELECT x FROM c;");
     f.assert_sees("5 rows read. Row cap reached. The result can have more rows.");
-    assert!(f.screen().contains("1⋯"), "{}", f.screen());
+    assert!(f.screen().contains("1 ⋯"), "{}", f.screen());
 }
 
 #[test]
@@ -367,11 +367,11 @@ fn a_stop_interrupts_and_shows_the_state() {
     let mut f = Fixture::new("stop");
     f.write(LONG);
     f.press(key(KeyCode::F(5)));
-    f.pump_until(|f| f.sees("1●"));
+    f.pump_until(|f| f.sees(" 1 ●"));
     f.prefix('x');
     f.idle();
     f.assert_sees("Statement 1: stopped.");
-    assert!(f.screen().contains("1■"), "{}", f.screen());
+    assert!(f.screen().contains("1 ■"), "{}", f.screen());
 }
 
 #[test]
@@ -380,7 +380,7 @@ fn the_time_limit_shows_its_state() {
     let mut f = Fixture::with("timeout", KeyboardMode::Conventional, settings, "");
     f.run_script(LONG);
     f.assert_sees("the time limit ended");
-    assert!(f.screen().contains("1◷"), "{}", f.screen());
+    assert!(f.screen().contains("1 ◷"), "{}", f.screen());
 }
 
 #[test]
@@ -514,17 +514,17 @@ fn a_click_selects_a_cell_and_a_tab() {
     };
     let left = MouseEventKind::Down(MouseButton::Left);
 
-    // The tabs row sits below the editor. "Result 1" starts at the first column.
+    // The tabs row sits below the editor. "Result 1" starts after a rule and a space.
     let tabs_row = (0..30).find(|y| {
         let buffer = f.buffer();
-        (0..8).map(|x| buffer[(x, *y)].symbol().to_owned()).collect::<String>() == "Result 1"
+        (2..10).map(|x| buffer[(x, *y)].symbol().to_owned()).collect::<String>() == "Result 1"
     });
     let tabs_row = tabs_row.expect("the tab row is on the screen");
     f.app.on_event(press(1, tabs_row, left));
     assert_eq!(f.app.console_mut().active, 0);
 
     f.buffer();
-    f.app.on_event(press(6, tabs_row + 3, left));
+    f.app.on_event(press(12, tabs_row + 3, left));
     assert_eq!(f.app.console_mut().focus, Focus::Results);
     let view = f.app.console_mut().results[0].view;
     assert_eq!((view.row, view.col), (1, 1));
@@ -871,12 +871,12 @@ fn angle_keys_change_the_width_and_equals_resets_it() {
     f.press(key(KeyCode::Char('<')));
     f.press(key(KeyCode::Char('<')));
     assert_eq!(f.app.console_mut().results[0].table.width(0), 5);
-    f.assert_sees("a val b");
+    f.assert_sees("a val │ b");
     f.press(key(KeyCode::Char('>')));
     assert_eq!(f.app.console_mut().results[0].table.width(0), 6);
     f.press(key(KeyCode::Char('=')));
     assert_eq!(f.app.console_mut().results[0].table.width(0), 7);
-    f.assert_sees("a value b");
+    f.assert_sees("a value │ b");
 }
 
 #[test]
@@ -887,15 +887,16 @@ fn a_drag_on_the_edge_of_a_header_changes_the_width() {
     f.screen();
     let buffer = f.buffer();
     let header = (0..buffer.area.height)
-        .find(|y| (0..3).map(|x| buffer[(x, *y)].symbol()).collect::<String>() == "one")
+        .find(|y| (4..7).map(|x| buffer[(x, *y)].symbol()).collect::<String>() == "one")
         .unwrap();
-    f.app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), 7, header));
-    f.app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), 12, header));
-    f.app.on_event(mouse(MouseEventKind::Up(MouseButton::Left), 12, header));
+    // The first column starts after the row number. Its width is 7, so its edge is at 11.
+    f.app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), 11, header));
+    f.app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), 16, header));
+    f.app.on_event(mouse(MouseEventKind::Up(MouseButton::Left), 16, header));
     assert_eq!(f.app.console_mut().results[0].table.width(0), 12);
     assert_eq!(f.app.console_mut().results[0].view.anchor, None);
     f.screen();
-    f.app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), 20, header));
+    f.app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), 24, header));
     assert_eq!(f.app.console_mut().results[0].table.width(0), 12);
 }
 

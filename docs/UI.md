@@ -14,6 +14,9 @@ A interface final usa inglês; os rótulos em português destes esboços são ex
 A aplicação implementa as seções 1 a 4 e 6, e parte das seções 5 e 8.
 O cadastro oferece **Session only** e **System vault**. Sem cofre, a gravação oferece texto simples depois do aviso.
 A tela de abertura da seção 1 é uma lista sobre a tela, e não um painel com busca.
+A seção 2 descreve a tela atual, no estilo aprovado em 2026-10-31.
+Os outros esboços mostram o conteúdo de cada tela, e não o seu desenho exato.
+As janelas têm borda arredondada, e os botões perdem os colchetes nos temas com cor.
 
 ## 1. Inicialização e abertura de console
 
@@ -68,29 +71,50 @@ Editor e resultados aparecem juntos.
 O usuário pode arrastar o divisor e recolher o navegador de conexões.
 
 ```text
-┌─ Projeto: loja ───────────────────────────────────────────────────┐
-│ Conexões           │ console-1  │ users [tabela]                  │
-├────────────────────┼─────────────────────────────────────────────┤
-│ app (local)        │ app_db@db.example.test · TLS verificado      │
-│   public           │ Schema: [public]                             │
-│     users          │ [Executar] [Script inteiro] [Parar script]  │
-│     orders         │ Modo: [Auto] · Commit/rollback indisponíveis │
-│ app (global)       ├─────────────────────────────────────────────┤
-│ warehouse          │ 1 ✓ SELECT 1;                               │
-│                    │ 2                                           │
-│                    │ 3 ✓ SELECT id, name                         │
-│                    │ 4   FROM public.users;                      │
-│                    ├─ Resultado 1 ─ [Resultado 2] ─ Mensagens ───┤
-│                    │ id │ name                                   │
-│                    │  1 │ Ana                                    │
-│                    │  2 │ Bruno                                  │
-│                    │ ...                                         │
-│                    │ 1.000 linhas lidas · teto atingido          │
-│                    │ O resultado pode ter mais linhas.           │
-├────────────────────┴─────────────────────────────────────────────┤
-│ Convencional · Pool ocupado: 0/5 · Dados: 1/256 MiB              │
-└──────────────────────────────────────────────────────────────────┘
+▎console-1 ● ×  orders ×  users (table) ×
+──────────────────────────────────────────────────────────────────────
+ EXPLORER        │ app › public › console-1
+ ▾ ● app  pg     │ ▶ Run  ▶▶ Script  ■ Stop  ◐ Auto  ✓ Commit  ↩ Rollback  ◇ public
+   ▾ ◇ public    │  1 ✓ SELECT id, name                               ▐
+     ▸ ▦ users   │  2   FROM public.users;                            │
+     ▸ ◫ v_sales │  3                                                 │
+                 │─ Result 1 ─ Result 2 ─ Messages ─────────────────────
+                 │    │ id │ name   │ active
+                 │  1 │  1 │ Ana    │ true                             ▐
+                 │  2 │  2 │ Bruno  │ true                             │
+                 │ 1,000 rows · row cap reached
+ EDITOR  app  public  Auto · No transaction · Idle  Pool 0/5 · Data 1/256 MiB  3:14
+ F5 run · Shift+F5 script · Ctrl+Space suggestions · Ctrl+F find · F1 keys
 ```
+
+A linha sob as abas e o título do painel aparecem somente com 30 linhas ou mais.
+Em 80 x 24, o editor e a grade dividem 18 linhas.
+
+**Abas:** cada aba tem `×` no fim. `NO_COLOR` mostra `X`, e Nerd Font mostra o seu símbolo.
+Um clique em `×` ou na coluna depois dele fecha a aba, com as perguntas de `Ctrl+W c`.
+Fechar outra aba não muda a aba na tela. Fechar a última aba encerra a aplicação.
+Uma aba que a linha corta não mostra `×`. Um clique nela abre a aba inteira.
+
+**Mensagens:** uma mensagem ocupa a linha de dicas por 8 s.
+Uma tecla, uma colagem ou um clique remove a mensagem antes disso. O ponteiro e a roda não removem.
+A espera de credenciais fica na linha enquanto a espera durar, e termina com ela.
+Uma gravação que continua a falhar repete o alerta a cada nova tentativa.
+A dica de configuração inválida fica até `Ctrl+W r` carregar um arquivo válido.
+
+**Foco:** a etiqueta da barra de status nomeia o lugar das teclas: `EDITOR`, `RESULTS`, `EXPLORER`, `FILTER` ou `TABLE`.
+No modo Vim, o editor mostra `NORMAL`, `INSERT` ou `VISUAL`.
+O título do painel em foco usa a cor de destaque.
+A linha atual do editor e da grade aparece somente no painel em foco.
+
+**Barra de status:** a transação e a execução nunca saem da barra.
+Sem espaço, a barra remove nesta ordem: posição, dados, pool e schema. Depois, o nome da conexão encurta.
+Uma transação aberta usa a cor de aviso. Uma transação com falha ou desconhecida usa a cor de erro.
+
+**Grade:** o número da linha conta as linhas carregadas.
+A borda de um cabeçalho aceita o arrasto nas três colunas entre duas colunas da grade.
+
+**Barras de rolagem:** o editor e a grade reservam a última coluna.
+O explorador usa a sua última coluna somente com excesso de linhas.
 
 Os indicadores ficam na coluna livre, entre o número da linha e o texto:
 
@@ -182,7 +206,8 @@ Regras da barra:
 - Filtro ou ordenação inválidos deixam a grade vazia, com o erro e os campos disponíveis para correção.
 
 Implementação atual, de cima para baixo: título, campo `WHERE`, campo `ORDER BY`, botões
-`[Apply] [Clear] [Load more] [Stop]`, grade, resumo e uma linha de aviso.
+**Apply**, **Clear**, **Load more** e **Stop**, grade, resumo e uma linha de aviso.
+O título aparece somente com 30 linhas ou mais. O uso do pool e dos dados fica na barra de status.
 O rótulo da aba é `nome (table)` ou `nome (view)`.
 **Definido:** a faixa mistura consoles e tabelas na ordem de abertura.
 Fechar o último console com uma tabela aberta seleciona uma tabela, sem criar um console vazio.
@@ -233,7 +258,24 @@ O exemplo abaixo considera um projeto ativo.
 ```
 
 Os campos mudam conforme o tipo. SQLite usa arquivo, não banco em memória.
-Resolver caminhos relativos conforme o escopo: raiz do projeto ou pasta global de configuração.
+
+Implementação atual: o formulário agrupa os campos em **General**, **Address**, **Credentials**, **Security** e **Options**.
+O formulário escolhe o primeiro arranjo que cabe na tela, com 2 linhas e 2 colunas de folga:
+
+| Arranjo | Altura com PostgreSQL | Largura |
+|---|---|---|
+| Uma coluna, com títulos e espaço entre os grupos | 33 | 72 |
+| Duas colunas, com títulos e espaço entre os grupos | 22 | 116 |
+| Uma coluna, com espaço entre os grupos | 28 | 72 |
+| Uma coluna, sem espaço | 22 | 72 |
+
+O campo em foco tem uma marca no início da linha, rótulo em destaque e fundo próprio.
+Sem cor, a marca é `>`, e o rótulo fica em negrito.
+A nota do formulário termina na linha acima dos botões. Uma nota longa ocupa as duas linhas da área.
+O sucesso do teste usa a cor de sucesso. Uma nota de andamento usa a cor de aviso, e um erro usa a cor de erro.
+Resolver caminhos relativos do `config.json` conforme o escopo: raiz do projeto ou pasta global de configuração.
+No formulário, um arquivo SQLite digitado parte do diretório atual, e a conexão grava o caminho completo.
+Um caminho salvo e não alterado continua como está no arquivo, e o teste usa a pasta do escopo.
 
 O formulário sugere TLS desativado em `localhost`, `127.0.0.0/8`, `::1` e socket Unix, e verificação nos demais.
 O campo **Somente leitura** é aplicado pelo banco e evita acidentes.
@@ -594,6 +636,49 @@ A tela mostra os atalhos do modo ativo e do painel em foco.
 │ Esc  Fechar                                              │
 └──────────────────────────────────────────────────────────┘
 ```
+
+### Menu do prefixo
+
+`Ctrl+W` abre esta janela acima da barra de status. A janela mostra as teclas efetivas do `keymap`.
+
+```text
+╭─ Ctrl+W ─────────────────────────────────────────────────────────╮
+│ Panels                Run                    Connection          │
+│ hjkl Move the focus   e    Run the statement d    Schema or da…  │
+│ b    Toggle the expl… s    Run the script    a    Change conn…   │
+╰──────────────────────────────────────────────────────────────────╯
+```
+
+### Paleta de comandos
+
+`Ctrl+P` abre esta janela. Cada palavra do filtro precisa aparecer no nome ou na tecla.
+
+```text
+╭─ Commands ───────────────────────────────────────────╮
+│ > conn                                               │
+│ Change the connection of the console        Ctrl+W a │
+│ Add a connection                                     │
+│ Scripts without a connection                         │
+╰──────────────────────────────────────────────────────╯
+```
+
+### Tela inicial
+
+A tela aparece sobre um editor sem texto. Ela não guarda estado e não captura teclas.
+O primeiro caractere digitado remove a tela.
+
+```text
+           SQLN 0.1.0
+           Write SQL here
+
+                   F5  Run the statement
+             Shift+F5  Run the script
+           Ctrl+Space  Show suggestions
+               Ctrl+P  Show all commands
+                   F1  Show all keys
+```
+
+Sem conexão, a tela mostra **No connection yet** e o caminho `Ctrl+W h a`.
 
 ### Terminal pequeno
 

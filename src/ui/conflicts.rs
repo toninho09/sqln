@@ -3,9 +3,11 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use super::console::centered;
+use super::float_block;
 use super::text;
 use super::theme::Theme;
 use crate::grid::printable;
@@ -39,7 +41,7 @@ pub fn draw_conflicts(
     let height = u16::try_from(rows.len()).unwrap_or(10).min(12) + 6;
     let area = centered(frame.area(), WIDTH, height);
     frame.render_widget(Clear, area);
-    let block = Block::bordered().title(format!(" {} ", text::TITLE_CONFLICTS)).style(theme.dialog);
+    let block = float_block(text::TITLE_CONFLICTS, theme);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let mut layout = ConflictLayout::default();
@@ -64,8 +66,8 @@ pub fn draw_conflicts(
     let mut x = buttons.x;
     let mut spans = Vec::new();
     for (index, label) in [text::BUTTON_APPLY, text::BUTTON_LATER].into_iter().enumerate() {
-        let name = format!("[{label}]");
-        let width = u16::try_from(name.len()).unwrap_or(0);
+        let name = theme.button(label);
+        let width = u16::try_from(name.width()).unwrap_or(0);
         layout.buttons[index] = Rect::new(x, buttons.y, width, 1);
         let style = if cursor == rows.len() + index { theme.dialog_focus } else { theme.dialog_option };
         spans.push(Span::styled(name, style));

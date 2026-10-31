@@ -30,10 +30,13 @@ pub const HINT_OVERLAY: &str = "Up/Down scroll · Ctrl+C copy · Esc close";
 /// Writes a key of the key map for the hint bar: `ctrl+w e` becomes `Ctrl+W e`.
 pub fn key_label(key: &str) -> String {
     let token = |token: &str| {
+        let modified = token.len() > 1 && token.contains('+');
         let parts: Vec<String> = token
             .split('+')
             .map(|part| match part {
                 "delete" => "Del".to_owned(),
+                // A letter holds its case alone, because `n` and `N` are two keys.
+                _ if part.chars().count() == 1 && modified => part.to_uppercase(),
                 _ if part.chars().count() == 1 => part.to_owned(),
                 _ => {
                     let mut chars = part.chars();
@@ -45,9 +48,78 @@ pub fn key_label(key: &str) -> String {
             .collect();
         parts.join("+")
     };
-    let mut tokens = key.split_whitespace().map(token);
-    let first = tokens.next().unwrap_or_default().replace("Ctrl+w", "Ctrl+W");
-    std::iter::once(first).chain(tokens).collect::<Vec<_>>().join(" ")
+    key.split_whitespace().map(token).collect::<Vec<_>>().join(" ")
+}
+
+pub const HINT_PREFIX: &str = "Ctrl+W … · Esc cancel";
+pub const HINT_PALETTE: &str = "Write to filter · Up/Down move · Enter run · Esc cancel";
+
+pub const TITLE_EXPLORER: &str = "EXPLORER";
+pub const FORM_GENERAL: &str = "GENERAL";
+pub const FORM_ADDRESS: &str = "ADDRESS";
+pub const FORM_CREDENTIALS: &str = "CREDENTIALS";
+pub const FORM_SECURITY: &str = "SECURITY";
+pub const FORM_OPTIONS: &str = "OPTIONS";
+pub const TITLE_PALETTE: &str = "Commands";
+pub const TITLE_PREFIX: &str = "Ctrl+W";
+pub const NO_COMMANDS: &str = "No command matches";
+
+pub const STATUS_EDITOR: &str = "EDITOR";
+pub const STATUS_NORMAL: &str = "NORMAL";
+pub const STATUS_INSERT: &str = "INSERT";
+pub const STATUS_VISUAL: &str = "VISUAL";
+pub const STATUS_RESULTS: &str = "RESULTS";
+pub const STATUS_EXPLORER: &str = "EXPLORER";
+pub const STATUS_FILTER: &str = "FILTER";
+pub const STATUS_TABLE: &str = "TABLE";
+
+pub const GROUP_PANELS: &str = "Panels";
+pub const GROUP_TABS: &str = "Tabs";
+pub const GROUP_RUN: &str = "Run";
+pub const GROUP_TRANSACTION: &str = "Transaction";
+pub const GROUP_CONNECTION: &str = "Connection";
+pub const GROUP_APPLICATION: &str = "Application";
+pub const MENU_FOCUS: &str = "Move the focus";
+pub const MENU_NAVIGATOR: &str = "Toggle the explorer";
+pub const MENU_NEXT_TAB: &str = "Next tab";
+pub const MENU_PREVIOUS_TAB: &str = "Previous tab";
+pub const MENU_RENAME: &str = "Rename the tab";
+pub const MENU_CLOSE_TAB: &str = "Close the tab";
+pub const MENU_RUN: &str = "Run the statement";
+pub const MENU_SCRIPT: &str = "Run the script";
+pub const MENU_STOP: &str = "Stop";
+pub const MENU_MODE: &str = "Auto or manual";
+pub const MENU_COMMIT: &str = "Commit";
+pub const MENU_ROLLBACK: &str = "Rollback";
+pub const MENU_SCHEMA: &str = "Schema or database";
+pub const MENU_CHANGE: &str = "Change connection";
+pub const MENU_SETTINGS: &str = "Settings";
+pub const MENU_RELOAD: &str = "Reload the config";
+pub const MENU_COMMANDS: &str = "Commands";
+pub const MENU_KEYS: &str = "All keys";
+pub const MENU_QUIT: &str = "Quit";
+
+pub const WELCOME_NO_CONNECTION: &str = "No connection yet";
+pub const WELCOME_WRITE: &str = "Write SQL here";
+pub const WELCOME_ADD: &str = "Add a connection";
+pub const WELCOME_RUN: &str = "Run the statement";
+pub const WELCOME_SCRIPT: &str = "Run the script";
+pub const WELCOME_SUGGESTIONS: &str = "Show suggestions";
+pub const WELCOME_SUGGESTIONS_KEY: &str = "Ctrl+Space";
+pub const WELCOME_COMMANDS: &str = "Show all commands";
+pub const WELCOME_KEYS: &str = "Show all keys";
+
+/// Writes the name and the version for the first screen.
+pub fn welcome_title() -> String {
+    format!("SQLN {}", env!("CARGO_PKG_VERSION"))
+}
+
+pub fn pool_usage(busy: usize, limit: usize) -> String {
+    format!("Pool {busy}/{limit}")
+}
+
+pub fn data_usage(used_mib: usize, limit_mib: usize) -> String {
+    format!("Data {used_mib}/{limit_mib} MiB")
 }
 
 pub const SMALL_TERMINAL: &str = "Small terminal";
@@ -68,7 +140,10 @@ pub const SESSION_IN_USE: &str = "A session is still in use. It closes at its en
 pub const NOT_CONNECTED: &str = "This connection has no open session.";
 pub const FORM_TESTING: &str = "Testing the connection.";
 pub const FORM_TEST_OK: &str = "The connection works.";
-pub const FORM_FILE_MISSING: &str = "The file does not exist. Save asks before it creates the file.";
+pub fn form_file_missing(path: &str) -> String {
+    format!("The file does not exist. Save asks before it creates the file: {path}")
+}
+pub const FORM_NO_CURRENT_FOLDER: &str = "SQLN cannot read the current folder. Write the full path of the file.";
 pub const FORM_NAME_TAKEN: &str = "Another connection has this name.";
 pub const FORM_NEEDS_NAME: &str = "The connection needs a name.";
 pub const FORM_NEEDS_HOST: &str = "The connection needs a host.";
@@ -317,6 +392,7 @@ pub fn action_text(action: Action) -> &'static str {
         Action::Commit => "Commit",
         Action::Rollback => "Rollback",
         Action::Help => "Open this screen",
+        Action::OpenPalette => "Open the commands",
         Action::CloseTab => "Close the tab",
         Action::Quit => "Quit",
         Action::NextTab => "Next tab",
@@ -370,6 +446,14 @@ pub fn action_text(action: Action) -> &'static str {
         Action::GridFocusOrder => "Edit the ORDER BY text",
         Action::GridSortColumn => "Sort by the column",
         Action::GridLoadMore => "Load more rows",
+    }
+}
+
+/// Writes the name of an action in the command list.
+pub fn command_text(action: Action) -> &'static str {
+    match action {
+        Action::Help => "Show the keys",
+        action => action_text(action),
     }
 }
 

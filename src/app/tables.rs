@@ -51,9 +51,9 @@ impl App {
                 Tab::Console(index) => {
                     let console = &self.consoles[index];
                     let unsaved = console.file.as_ref().is_some_and(|file| file.trouble.is_some());
-                    main_tab_label(&console.name, console.is_busy(), unsaved)
+                    main_tab_label(self.theme.icons.console, &console.name, console.is_busy(), unsaved)
                 }
-                Tab::Table(index) => table::tab_label(&self.tables[index]),
+                Tab::Table(index) => table::tab_label(&self.tables[index], &self.theme),
             })
             .collect()
     }
@@ -68,6 +68,17 @@ impl App {
         match self.tab_order().get(index) {
             Some(Tab::Table(table)) => self.select_table(*table),
             Some(Tab::Console(console)) => self.select_console(*console),
+            None => {}
+        }
+    }
+
+    /// Closes a tab of the row, with the questions of the key. The tab on screen stays
+    /// when another tab closes.
+    pub(super) fn close_tab(&mut self, index: usize) {
+        self.console_mut().editor.close_suggestions();
+        match self.tab_order().get(index) {
+            Some(Tab::Table(table)) => self.close_table_tab(*table),
+            Some(Tab::Console(console)) => self.close_step(self.consoles[*console].id),
             None => {}
         }
     }
@@ -207,9 +218,8 @@ impl App {
         }
     }
 
-    /// Closes the tab on screen. The close of the last tab ends the application.
-    fn close_active_table(&mut self) {
-        let Some(index) = self.table_active else { return };
+    /// Closes a table tab. The close of the last tab ends the application.
+    fn close_table_tab(&mut self, index: usize) {
         if self.tables.len() == 1 && self.consoles.iter().all(|console| console.hidden) {
             self.request_exit();
             return;
@@ -243,7 +253,11 @@ impl App {
             | Action::GridPreviousResult
             | Action::GridNextResult => {}
             Action::Stop => self.stop_table(),
-            Action::CloseTab => self.close_active_table(),
+            Action::CloseTab => {
+                if let Some(index) = self.table_active {
+                    self.close_table_tab(index);
+                }
+            }
             Action::FocusUp | Action::GridFocusFilter => self.focus_table(TableFocus::Filter),
             Action::GridFocusOrder => self.focus_table(TableFocus::Order),
             Action::FocusDown => self.focus_table(TableFocus::Grid),

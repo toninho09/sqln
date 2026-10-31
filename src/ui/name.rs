@@ -4,9 +4,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use super::console::centered;
+use super::float_block;
 use super::theme::Theme;
 use super::{input_spans, text};
 use crate::exec::ConsoleId;
@@ -59,7 +60,7 @@ impl NamePrompt {
 pub fn draw_name(frame: &mut Frame, prompt: &NamePrompt, theme: &Theme) {
     let area = centered(frame.area(), 60, 6);
     frame.render_widget(Clear, area);
-    let block = Block::bordered().title(format!(" {} ", text::TITLE_RENAME)).style(theme.dialog);
+    let block = float_block(text::TITLE_RENAME, theme);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let chars: Vec<char> = prompt.input.text().chars().collect();

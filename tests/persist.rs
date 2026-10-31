@@ -15,6 +15,8 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
+use sqln::connection::Source;
+use sqln::form::{Field, FormNote};
 use sqln::script_file::Trouble;
 use sqln::store::scripts::{self, ScriptMeta};
 use sqln::store::{Root, Scope, Store, file};
@@ -45,6 +47,26 @@ fn store(name: &str) -> (Store, PathBuf) {
     let project = Root::project(&base.join("project"));
     fs::create_dir_all(&project.dir).unwrap();
     (Store { global: Root::global(base.join("global")), project: Some(project) }, base)
+}
+
+/// Writes a database below the current folder of the process. It returns the full path
+/// and the path from the current folder.
+fn local_database(name: &str, setup: &str) -> (PathBuf, String) {
+    let relative = format!("target/tmp/{name}.db");
+    let full = std::env::current_dir().unwrap().join(&relative);
+    fs::create_dir_all(full.parent().unwrap()).unwrap();
+    let _ = fs::remove_file(&full);
+    rusqlite::Connection::open(&full).unwrap().execute_batch(setup).unwrap();
+    (full, relative)
+}
+
+/// Returns the file of the first SQLite connection of the saved configuration.
+fn saved_file(store: &Store) -> PathBuf {
+    let config = sqln::store::config::load(store).config.unwrap();
+    match &config.connections[0].definition.source {
+        Source::Sqlite(target) => target.path.clone(),
+        Source::Network(_) => panic!("this connection is not SQLite"),
+    }
 }
 
 /// A store without a project.
@@ -124,6 +146,43 @@ impl Session {
 
     fn names(&self) -> Vec<String> {
         self.app.consoles().iter().map(|console| console.name.clone()).collect()
+    }
+
+    fn pump_sees(&mut self, text: &str) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !self.screen().contains(text) {
+            self.app.drain_events();
+            assert!(Instant::now() < deadline, "{text:?} did not appear:\n{}", self.screen());
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// Opens the form of a new connection and writes a SQLite name and file.
+    fn fill_sqlite_form(&mut self, name: &str, file: &str) {
+        self.prefix('h');
+        self.code(KeyCode::Char('a'));
+        self.code(KeyCode::Left);
+        self.focus_form(Field::Name);
+        for letter in name.chars() {
+            self.code(KeyCode::Char(letter));
+        }
+        self.focus_form(Field::File);
+        self.write(file);
+    }
+
+    fn focus_form(&mut self, field: Field) {
+        for _ in 0..32 {
+            if self.app.form().unwrap().focus == field {
+                return;
+            }
+            self.code(KeyCode::Tab);
+        }
+        panic!("{field:?} is not in the form");
+    }
+
+    fn press_form_button(&mut self, field: Field) {
+        self.focus_form(field);
+        self.code(KeyCode::Enter);
     }
 
     fn text(&self) -> String {
@@ -821,6 +880,26 @@ fn a_new_console_takes_the_lowest_free_name_after_a_restart() {
         consoles_in(&store.global, Scope::Global).into_iter().map(|entry| entry.meta.name).collect();
     names.sort();
     assert_eq!(names, ["console-1", "console-2"]);
+}
+
+#[test]
+fn the_alert_of_a_failed_write_stays_while_the_failure_lasts() {
+    let (store, base) = global_only("p-failure-stays");
+    let db = database(&base, "s", "");
+    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    fs::write(store.global.dir.join("consoles"), "x").unwrap();
+    let mut session = Session::start(&store);
+    session.type_and_save("SELECT 1;");
+    // Each new attempt fails again, so 30 s do not end the alert.
+    for _ in 0..15 {
+        session.wait(2_000);
+        session.assert_sees("Cannot save");
+    }
+    // The next attempt writes the text, and the alert has no new failure.
+    fs::remove_file(store.global.dir.join("consoles")).unwrap();
+    session.wait(5_000);
+    session.wait(8_000);
+    session.assert_not_sees("Cannot save");
 }
 
 #[test]
@@ -1845,4 +1924,100 @@ fn the_close_of_a_removed_script_names_the_loss_of_the_text() {
     session.prefix('c');
     session.assert_sees("Close and discard the text");
     session.assert_not_sees("Close without saving");
+}
+
+#[test]
+fn the_form_saves_the_full_path_that_its_test_used() {
+    let (store, _) = global_only("p-form-path");
+    let (full, relative) = local_database("form-full-path", "CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('from-current');");
+    let mut session = Session::start(&store);
+    session.fill_sqlite_form("checked", &relative);
+
+    session.press_form_button(Field::Test);
+    session.pump_sees("The connection works.");
+    session.press_form_button(Field::Save);
+    assert!(session.app.form().is_none(), "{}", session.screen());
+    assert_eq!(saved_file(&store), full);
+    assert!(!store.global.base.join(&relative).exists());
+
+    // The saved connection opens the file of the test, and not a file of the global folder.
+    session.code(KeyCode::Char('n'));
+    session.write("SELECT v FROM t;");
+    session.code(KeyCode::F(5));
+    session.pump_sees("from-current");
+}
+
+#[test]
+fn a_project_connection_also_saves_the_full_path() {
+    let (store, _) = store("p-form-project-path");
+    let (full, relative) = local_database("form-project-path", "CREATE TABLE t (v TEXT);");
+    let mut session = Session::start(&store);
+    session.fill_sqlite_form("checked", &relative);
+    session.press_form_button(Field::Save);
+    assert!(session.app.form().is_none(), "{}", session.screen());
+    assert_eq!(saved_file(&store), full);
+}
+
+#[test]
+fn a_new_file_goes_to_the_current_folder_with_its_full_path() {
+    let (store, _) = global_only("p-form-new-file");
+    let (full, relative) = local_database("form-new-file", "");
+    fs::remove_file(&full).unwrap();
+    let mut session = Session::start(&store);
+    session.fill_sqlite_form("created", &relative);
+
+    session.press_form_button(Field::Test);
+    let Some(FormNote::Error(note)) = &session.app.form().unwrap().note else {
+        panic!("the test must report the missing file");
+    };
+    assert!(note.contains(&full.display().to_string()), "{note}");
+
+    session.press_form_button(Field::Save);
+    session.assert_sees("Create it?");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    assert!(session.app.form().is_none(), "{}", session.screen());
+    assert_eq!(saved_file(&store), full);
+}
+
+#[test]
+fn an_edit_keeps_a_relative_path_of_the_configuration() {
+    let (store, _) = global_only("p-form-keep-relative");
+    write_config(&store.global, "{}", &[sqlite_entry("a", "kept", "kept.db")]);
+    database(&store.global.base, "kept", "CREATE TABLE t (v TEXT);");
+    let mut session = Session::start(&store);
+    session.go_to_connection("kept");
+    session.code(KeyCode::Char('e'));
+    assert_eq!(session.app.form().unwrap().text(Field::File), "kept.db");
+
+    // The file is in the folder of the scope, and the current folder has no such file.
+    session.press_form_button(Field::Test);
+    session.pump_sees("The connection works.");
+    session.focus_form(Field::Pool);
+    session.code(KeyCode::Backspace);
+    session.code(KeyCode::Char('2'));
+    session.press_form_button(Field::Save);
+    assert!(session.app.form().is_none(), "{}", session.screen());
+    assert_eq!(saved_file(&store), PathBuf::from("kept.db"));
+}
+
+#[test]
+fn a_changed_path_in_an_edit_starts_at_the_current_folder() {
+    let (store, _) = global_only("p-form-change-path");
+    write_config(&store.global, "{}", &[sqlite_entry("a", "moved", "old.db")]);
+    database(&store.global.base, "old", "CREATE TABLE t (v TEXT);");
+    let (full, relative) = local_database("form-changed-path", "CREATE TABLE t (v TEXT);");
+    let mut session = Session::start(&store);
+    session.go_to_connection("moved");
+    session.code(KeyCode::Char('e'));
+    session.focus_form(Field::File);
+    for _ in "old.db".chars() {
+        session.code(KeyCode::Backspace);
+    }
+    session.write(&relative);
+    session.press_form_button(Field::Test);
+    session.pump_sees("The connection works.");
+    session.press_form_button(Field::Save);
+    assert!(session.app.form().is_none(), "{}", session.screen());
+    assert_eq!(saved_file(&store), full);
 }

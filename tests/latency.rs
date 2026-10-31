@@ -23,7 +23,7 @@ fn worst_key_and_frame(lines: usize) -> Duration {
         let started = Instant::now();
         let code = if index % 6 == 5 { KeyCode::Backspace } else { KeyCode::Char('s') };
         f.press(key(code));
-        terminal.draw(|frame| draw_editor(frame, frame.area(), &mut f.editor, &theme)).unwrap();
+        terminal.draw(|frame| draw_editor(frame, frame.area(), &mut f.editor, true, &theme)).unwrap();
         worst = worst.max(started.elapsed());
     }
     worst

@@ -240,6 +240,11 @@ impl SqlEditor {
         buffer::text_of(&self.state.lines)
     }
 
+    /// Returns true when the editor holds no text.
+    pub fn is_blank(&self) -> bool {
+        self.state.lines.len() <= 1 && self.state.lines.iter_row().next().is_none_or(Vec::is_empty)
+    }
+
     pub fn cursor(&self) -> Index2 {
         self.state.cursor
     }
@@ -285,6 +290,11 @@ impl SqlEditor {
 
     pub fn status(&self) -> Option<&'static str> {
         self.status
+    }
+
+    /// Gives the message to the application, which ends it.
+    pub fn take_status(&mut self) -> Option<&'static str> {
+        self.status.take()
     }
 
     /// Returns the relations that need a catalog read, and it clears the list.

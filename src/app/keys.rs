@@ -3,17 +3,25 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{App, DialogAction, Overlay, PickerKind};
-use crate::connector::{TransactionCommand, TransactionState};
+use crate::connector::{Namespace, TransactionCommand, TransactionState};
 use crate::console::{AfterTransaction, Focus, GridAction, Phase};
 use crate::editor::{KeyboardMode, RunRefusal, RunScope};
 use crate::exec::RunOptions;
 use crate::form::FormRequest;
 use crate::input::{Action, Chord, Lookup, Region};
+use crate::palette::{Command, Palette, PaletteRequest};
 use crate::settings::SettingsRequest;
 use crate::table::TableFocus;
 use crate::ui::name::NameAction;
 use crate::ui::text;
+use crate::ui::welcome::Welcome;
+use crate::ui::which_key::KeyGroup;
 use crate::ui::wrap::WrappedText;
+
+/// The actions of one row of the `Ctrl+W` menu, with its label.
+type MenuRow = (&'static [Action], &'static str);
+/// The title of one group of the `Ctrl+W` menu, with its rows.
+type MenuGroup = (&'static str, &'static [MenuRow]);
 
 impl App {
     pub(super) fn vim(&self) -> bool {
@@ -46,7 +54,6 @@ impl App {
 
     /// Applies the key priority of `docs/KEYMAP.md`.
     pub(super) fn on_key(&mut self, key: KeyEvent) {
-        self.status = None;
         if !self.dialogs.is_empty() {
             self.on_dialog_key(key);
             return;
@@ -57,6 +64,10 @@ impl App {
         }
         if self.conflicts.is_some() {
             self.on_conflicts_key(key);
+            return;
+        }
+        if self.palette.is_some() {
+            self.on_palette_key(key);
             return;
         }
         if self.rename.is_some() {
@@ -181,6 +192,7 @@ impl App {
             Action::Commit => self.transaction(TransactionCommand::Commit),
             Action::Rollback => self.transaction(TransactionCommand::Rollback),
             Action::Help => self.open_keys(),
+            Action::OpenPalette => self.open_palette(),
             Action::CloseTab => self.close_step(self.console().id),
             Action::Quit => self.request_exit(),
             Action::NextTab => self.switch_tab(true),
@@ -234,7 +246,7 @@ impl App {
         }
     }
 
-    fn focus_navigator(&mut self) {
+    pub(super) fn focus_navigator(&mut self) {
         if !self.navigator.collapsed {
             self.console_mut().editor.close_suggestions();
             self.navigator_focused = true;
@@ -544,26 +556,130 @@ impl App {
         actions.iter().filter_map(second).collect()
     }
 
-    /// Returns the options of `Ctrl+W`. A removed key leaves its group.
-    fn prefix_hint(&self) -> String {
-        let groups: [(&[Action], &str); 11] = [
-            (&[Action::FocusLeft, Action::FocusDown, Action::FocusUp, Action::FocusRight], "panel"),
-            (&[Action::NextTab, Action::PreviousTab], "tab"),
-            (&[Action::ToggleNavigator], "nav"),
-            (&[Action::ChooseSchema], "db"),
-            (&[Action::Run, Action::RunScript, Action::Stop], "run"),
-            (&[Action::ToggleMode, Action::Commit, Action::Rollback], "tx"),
-            (&[Action::CloseTab, Action::Quit], "close"),
-            (&[Action::RenameConsole], "name"),
-            (&[Action::ChangeConnection], "conn"),
-            (&[Action::OpenSettings], "set"),
-            (&[Action::ReloadConfig], "cfg"),
+    /// Returns the groups of the `Ctrl+W` menu. A removed key leaves its group.
+    pub fn prefix_menu(&self) -> Vec<KeyGroup> {
+        use Action::*;
+        let groups: [MenuGroup; 6] = [
+            (text::GROUP_PANELS, &[
+                (&[FocusLeft, FocusDown, FocusUp, FocusRight], text::MENU_FOCUS),
+                (&[ToggleNavigator], text::MENU_NAVIGATOR),
+            ]),
+            (text::GROUP_TABS, &[
+                (&[NextTab], text::MENU_NEXT_TAB),
+                (&[PreviousTab], text::MENU_PREVIOUS_TAB),
+                (&[RenameConsole], text::MENU_RENAME),
+                (&[CloseTab], text::MENU_CLOSE_TAB),
+            ]),
+            (text::GROUP_RUN, &[
+                (&[Run], text::MENU_RUN),
+                (&[RunScript], text::MENU_SCRIPT),
+                (&[Stop], text::MENU_STOP),
+            ]),
+            (text::GROUP_TRANSACTION, &[
+                (&[ToggleMode], text::MENU_MODE),
+                (&[Commit], text::MENU_COMMIT),
+                (&[Rollback], text::MENU_ROLLBACK),
+            ]),
+            (text::GROUP_CONNECTION, &[
+                (&[ChooseSchema], text::MENU_SCHEMA),
+                (&[ChangeConnection], text::MENU_CHANGE),
+            ]),
+            (text::GROUP_APPLICATION, &[
+                (&[OpenPalette], text::MENU_COMMANDS),
+                (&[Help], text::MENU_KEYS),
+                (&[OpenSettings], text::MENU_SETTINGS),
+                (&[ReloadConfig], text::MENU_RELOAD),
+                (&[Quit], text::MENU_QUIT),
+            ]),
         ];
-        let shown = groups.iter().filter_map(|(actions, label)| {
-            let keys = self.prefix_keys(actions);
-            (!keys.is_empty()).then(|| format!("{keys} {label}"))
-        });
-        shown.collect::<Vec<_>>().join("·")
+        groups
+            .iter()
+            .map(|(title, rows)| {
+                let shown = rows.iter().filter_map(|(actions, label)| {
+                    let keys = self.prefix_keys(actions);
+                    (!keys.is_empty()).then_some((keys, *label))
+                });
+                KeyGroup { title, keys: shown.collect() }
+            })
+            .collect()
+    }
+
+    /// Returns true when an action has an effect in the current state.
+    fn command_available(&self, action: Action) -> bool {
+        let console = self.console();
+        let in_table = self.table_active.is_some();
+        let idle = !console.is_busy();
+        let connection = self.active_connection();
+        let transactions = connection.is_none_or(|item| item.capabilities.transactions);
+        let namespace = connection.is_some_and(|item| item.capabilities.namespace != Namespace::None);
+        match action {
+            Action::OpenPalette => false,
+            Action::Run | Action::RunScript => !in_table && idle,
+            Action::Stop => self.table().map_or(!idle, |tab| tab.is_busy()),
+            Action::ToggleMode => !in_table && idle && transactions,
+            Action::Commit | Action::Rollback => !in_table && idle && console.in_transaction(),
+            Action::ChooseSchema => !in_table && idle && namespace && !console.in_transaction(),
+            Action::RenameConsole | Action::ChangeConnection => !in_table,
+            Action::FocusLeft => !self.navigator.collapsed && !self.navigator_focused,
+            Action::FocusRight => self.navigator_focused,
+            _ => true,
+        }
+    }
+
+    fn open_palette(&mut self) {
+        self.console_mut().editor.close_suggestions();
+        let global = self.keymap.actions(Region::Global).map(|action| (action, true));
+        let explorer = [Action::NavigatorAdd, Action::NavigatorScripts].map(|action| (action, self.navigator_focused));
+        let commands = global
+            .chain(explorer)
+            .filter(|(action, _)| self.command_available(*action))
+            .map(|(action, key_works)| Command {
+                action,
+                label: text::command_text(action),
+                // A key of the explorer works only there, so another panel does not show it.
+                key: if key_works { self.shown_key(action) } else { None },
+            })
+            .collect();
+        self.palette = Some(Palette::new(commands));
+    }
+
+    fn on_palette_key(&mut self, key: KeyEvent) {
+        let Some(palette) = &mut self.palette else { return };
+        let request = palette.on_key(key);
+        self.on_palette_request(request);
+    }
+
+    pub(super) fn on_palette_request(&mut self, request: PaletteRequest) {
+        match request {
+            PaletteRequest::None => {}
+            PaletteRequest::Cancel => self.palette = None,
+            PaletteRequest::Run(action) => {
+                self.palette = None;
+                self.perform(action, false);
+            }
+        }
+    }
+
+    /// Returns the first screen of a console without text.
+    pub(super) fn welcome(&self) -> Option<Welcome> {
+        if !self.console().editor.is_blank() {
+            return None;
+        }
+        let keyed = |action, label| self.shown_key(action).map(|key| (key, label));
+        let mut rows = Vec::new();
+        let note = if self.connections.is_empty() {
+            let add = self.shown_key(Action::FocusLeft).zip(self.shown_key(Action::NavigatorAdd));
+            rows.extend(add.map(|(focus, add)| (format!("{focus} {add}"), text::WELCOME_ADD)));
+            text::WELCOME_NO_CONNECTION
+        } else {
+            rows.extend(keyed(Action::Run, text::WELCOME_RUN));
+            rows.extend(keyed(Action::RunScript, text::WELCOME_SCRIPT));
+            rows.push((text::WELCOME_SUGGESTIONS_KEY.to_owned(), text::WELCOME_SUGGESTIONS));
+            text::WELCOME_WRITE
+        };
+        rows.extend(keyed(Action::OpenPalette, text::WELCOME_COMMANDS));
+        rows.extend(keyed(Action::Help, text::WELCOME_KEYS));
+        Some(Welcome { note, rows })
     }
 
     fn editor_hint(&self) -> String {
@@ -604,8 +720,10 @@ impl App {
             text::HINT_OVERLAY
         } else if self.form.is_some() {
             text::HINT_FORM
+        } else if self.palette.is_some() {
+            text::HINT_PALETTE
         } else if self.pending_key.is_some_and(Chord::is_prefix) {
-            return self.prefix_hint();
+            text::HINT_PREFIX
         } else if self.persist.as_ref().is_some_and(|persist| persist.error.is_some()) {
             text::HINT_CONFIG_ERROR
         } else if self.navigator_focused {

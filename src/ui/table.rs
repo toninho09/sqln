@@ -1,13 +1,12 @@
 //! The table view: the title, the filter bar, the grid, and the status lines.
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Position, Rect};
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
-use unicode_width::UnicodeWidthStr;
 
-use super::console::{draw_buttons, draw_grid, search_line, usage_bar};
+use super::console::{draw_buttons, draw_grid, draw_panel_title, search_line};
 use super::theme::Theme;
 use super::{draw_suggestions, input_spans, text};
 use crate::console::{Message, MessageLevel, Phase};
@@ -16,7 +15,7 @@ use crate::grid::printable;
 use crate::line_input::LineInput;
 use crate::table::{TableFocus, TableTab};
 
-const LABEL_WIDTH: u16 = 9;
+const LABEL_WIDTH: u16 = 10;
 
 /// A button of the filter bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,25 +40,26 @@ pub struct TableLayout {
 
 pub struct TableBar<'a> {
     pub connection: &'a str,
-    pub pool: Option<(usize, usize)>,
-    pub data: (usize, usize),
     /// True when the data budget refuses a new page.
     pub blocked: bool,
+    /// True on a tall screen, which has a title row.
+    pub title: bool,
 }
 
 /// Writes the label of a table tab.
-pub fn tab_label(tab: &TableTab) -> String {
-    super::main_tab_label(&tab.label(), tab.is_busy(), false)
+pub fn tab_label(tab: &TableTab, theme: &Theme) -> String {
+    let icon = if tab.is_view { theme.icons.view } else { theme.icons.table };
+    super::main_tab_label(icon, &tab.label(), tab.is_busy(), false)
 }
 
-fn control_items(tab: &TableTab, blocked: bool) -> Vec<(TableControl, String, bool)> {
+fn control_items(tab: &TableTab, blocked: bool, theme: &Theme) -> Vec<(TableControl, String, bool)> {
     let idle = !tab.is_busy();
-    let button = |label: &str| format!("[{label}]");
+    let icons = &theme.icons;
     vec![
-        (TableControl::Apply, button(text::BUTTON_APPLY), idle),
-        (TableControl::Clear, button(text::BUTTON_CLEAR), idle),
-        (TableControl::LoadMore, button(text::BUTTON_LOAD_MORE), idle && tab.has_more && !blocked),
-        (TableControl::Stop, button(text::CONTROL_STOP), !idle),
+        (TableControl::Apply, theme.tool(icons.apply, text::BUTTON_APPLY), idle),
+        (TableControl::Clear, theme.tool(icons.clear, text::BUTTON_CLEAR), idle),
+        (TableControl::LoadMore, theme.tool(icons.load_more, text::BUTTON_LOAD_MORE), idle && tab.has_more && !blocked),
+        (TableControl::Stop, theme.tool(icons.stop, text::CONTROL_STOP), !idle),
     ]
 }
 
@@ -75,16 +75,16 @@ fn draw_field(
 ) -> (Rect, usize) {
     let [name, field] =
         Layout::horizontal([Constraint::Length(LABEL_WIDTH), Constraint::Min(0)]).areas(area);
-    frame.render_widget(Paragraph::new(label), name);
+    frame.render_widget(Paragraph::new(format!(" {label}")), name);
     let width = usize::from(field.width).saturating_sub(2).max(1);
     let chars: Vec<char> = printable(input.text()).chars().collect();
     let (spans, first) = input_spans(&chars, input.cursor(), width, focused, theme);
     let used: usize = spans.iter().map(Span::width).sum();
-    let mut line = vec![Span::raw("[")];
+    let mut line = vec![Span::raw(theme.button_marks.0)];
     line.extend(spans);
     line.push(Span::raw(" ".repeat(width.saturating_sub(used))));
-    line.push(Span::raw("]"));
-    frame.render_widget(Paragraph::new(Line::from(line)), field);
+    line.push(Span::raw(theme.button_marks.1));
+    frame.render_widget(Paragraph::new(Line::from(line)).style(theme.field), field);
     (Rect { x: field.x + 1, width: field.width.saturating_sub(2), ..field }, first)
 }
 
@@ -123,7 +123,7 @@ pub fn draw_table(
     theme: &Theme,
 ) -> TableLayout {
     let [title, filter, order, controls, grid, summary, notice] = Layout::vertical([
-        Constraint::Length(1),
+        Constraint::Length(u16::from(bar.title)),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -133,13 +133,10 @@ pub fn draw_table(
     ])
     .areas(area);
 
-    let usage = usage_bar(bar.pool, bar.data);
-    let usage_width = u16::try_from(usage.width()).unwrap_or(0).saturating_add(1);
-    let [name, usage_area] =
-        Layout::horizontal([Constraint::Min(0), Constraint::Length(usage_width)]).areas(title);
-    let heading = text::table_title(bar.connection, &tab.relation.schema, &tab.relation.relation, tab.is_view);
-    frame.render_widget(Paragraph::new(printable(&heading)).style(theme.bar), name);
-    frame.render_widget(Paragraph::new(usage).style(theme.bar).alignment(Alignment::Right), usage_area);
+    if bar.title {
+        let heading = text::table_title(bar.connection, &tab.relation.schema, &tab.relation.relation, tab.is_view);
+        draw_panel_title(frame, title, &printable(&heading), focused, theme);
+    }
 
     let (filter_text, filter_first) = draw_field(
         frame,
@@ -157,7 +154,7 @@ pub fn draw_table(
         focused && tab.focus == TableFocus::Order,
         theme,
     );
-    let buttons = draw_buttons(frame, controls, control_items(tab, bar.blocked), theme);
+    let buttons = draw_buttons(frame, controls, control_items(tab, bar.blocked, theme), theme);
 
     let message_in_grid = tab.result.table.columns.is_empty() && tab.message.is_some();
     if tab.result.table.columns.is_empty() {
@@ -169,14 +166,16 @@ pub fn draw_table(
 
     let line = match &tab.result.search {
         Some(search) => search_line(search, &tab.result.table, theme),
-        None => Line::styled(summary_text(tab), theme.hint),
+        None => Line::styled(format!(" {}", summary_text(tab)), theme.hint),
     };
     frame.render_widget(Paragraph::new(line), summary);
     let note = match &tab.message {
         Some(message) if !message_in_grid => {
-            Some(Line::styled(printable(&message.text), message_style(message, theme)))
+            Some(Line::styled(format!(" {}", printable(&message.text)), message_style(message, theme)))
         }
-        _ if tab.applied_order().is_empty() => Some(Line::styled(text::TABLE_NO_ORDER, theme.hint)),
+        _ if tab.applied_order().is_empty() => {
+            Some(Line::styled(format!(" {}", text::TABLE_NO_ORDER), theme.hint))
+        }
         _ => None,
     };
     if let Some(note) = note {

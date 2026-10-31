@@ -321,10 +321,7 @@ impl App {
                     && form.connection_id == attempt.target.key.id
                     && self.form_scope() == Some(attempt.target.key.scope)
                     && form.credential == attempt.target.credential
-                    && form
-                        .definition()
-                        .as_ref()
-                        .is_ok_and(|definition| definition == snapshot)
+                    && self.form_definition().is_some_and(|definition| definition.as_ref() == Ok(snapshot))
             }
             _ => false,
         }
@@ -345,6 +342,13 @@ impl App {
         }
     }
 
+    /// Returns the message of a credential step in the background. It has no time limit,
+    /// because the end of the step ends the message.
+    pub(super) fn auth_wait(&self) -> Option<&'static str> {
+        let asks = self.auth.prompt.is_some() || !self.dialogs.is_empty();
+        (self.auth.active.is_some() && !asks).then_some(text::AUTH_WAIT)
+    }
+
     fn auth_step(&mut self, step: Step) {
         let Some(attempt) = &mut self.auth.active else {
             return;
@@ -356,7 +360,6 @@ impl App {
         let sender = self.auth.sender.clone();
         let job = self.auth.job.clone();
         job.store(token, Ordering::Release);
-        self.status = Some(text::AUTH_WAIT.to_owned());
         let Some(manager) = &self.manager else {
             self.cancel_active_auth();
             return;
@@ -1092,7 +1095,6 @@ impl App {
         attempt.step = Step::Verify;
         attempt.verify = Some(test);
         let definition = attempt.target.definition.clone();
-        self.status = Some(text::AUTH_WAIT.to_owned());
         if let Some(manager) = &self.manager {
             manager.test_connection(test, definition.connector(), definition.connect_timeout);
         }

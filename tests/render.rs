@@ -25,7 +25,7 @@ use sqln::ui::{draw_editor, list_area};
 
 fn draw(editor: &mut SqlEditor, theme: &Theme, width: u16, height: u16) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal.draw(|frame| draw_editor(frame, frame.area(), editor, theme)).unwrap();
+    terminal.draw(|frame| draw_editor(frame, frame.area(), editor, true, theme)).unwrap();
     terminal.backend().buffer().clone()
 }
 
@@ -222,7 +222,9 @@ fn a_jump_to_a_far_row_highlights_on_the_first_frame() {
 }
 
 /// The first editor row of the application screen.
-const TOP: u16 = 3;
+const TOP: u16 = 2;
+/// The first text column of the application screen, with one digit in the line numbers.
+const LEFT: u16 = 5;
 
 fn app(keyboard: KeyboardMode) -> App {
     let options = Options { keyboard, catalog: Some(sample_catalog()), ..Options::default() };
@@ -271,7 +273,7 @@ fn each_hint_fits_the_minimum_terminal_width() {
 fn the_prefix_closes_the_tab_and_the_application() {
     let mut app = app(KeyboardMode::Conventional);
     send(&mut app, ctrl('w'));
-    assert!(screen(&draw_app(&mut app, 80, 24)).contains("q close"));
+    assert!(screen(&draw_app(&mut app, 80, 24)).contains("Close the tab"));
     send(&mut app, key(KeyCode::Char('c')));
     assert!(app.should_quit());
 }
@@ -329,7 +331,7 @@ fn a_click_moves_the_cursor_and_past_the_end_uses_the_line_end() {
     let mut app = app(KeyboardMode::Conventional);
     app.on_event(Event::Paste("abc\nde".to_owned()));
     draw_app(&mut app, 80, 24);
-    let gutter = 2;
+    let gutter = LEFT;
 
     app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), gutter + 1, TOP));
     assert_eq!(app.console_mut().editor.cursor(), Index2::new(0, 1));
@@ -344,7 +346,7 @@ fn a_click_on_wide_characters_keeps_the_column() {
     let mut app = app(KeyboardMode::Conventional);
     app.on_event(Event::Paste("日本語".to_owned()));
     draw_app(&mut app, 80, 24);
-    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), 2 + 2, TOP));
+    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), LEFT + 2, TOP));
     assert_eq!(app.console_mut().editor.cursor(), Index2::new(0, 1));
 }
 
@@ -353,7 +355,7 @@ fn a_tab_character_counts_as_its_display_width() {
     let mut app = app(KeyboardMode::Conventional);
     app.on_event(Event::Paste("\tab".to_owned()));
     draw_app(&mut app, 80, 24);
-    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), 2 + 5, TOP));
+    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), LEFT + 5, TOP));
     assert_eq!(app.console_mut().editor.cursor(), Index2::new(0, 2));
 }
 
@@ -371,10 +373,10 @@ fn vim_click_stops_on_the_last_character_and_a_drag_selects() {
     let mut app = app(KeyboardMode::Vim);
     app.on_event(Event::Paste("abcdef".to_owned()));
     draw_app(&mut app, 80, 24);
-    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), 2 + 40, TOP));
+    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), LEFT + 40, TOP));
     assert_eq!(app.console_mut().editor.cursor(), Index2::new(0, 5));
-    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), 2 + 1, TOP));
-    app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), 2 + 3, TOP));
+    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), LEFT + 1, TOP));
+    app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), LEFT + 3, TOP));
     assert_eq!(app.console_mut().editor.selected_text().as_deref(), Some("bcd"));
 }
 
@@ -383,8 +385,8 @@ fn a_drag_selects_with_the_exclusive_end() {
     let mut app = app(KeyboardMode::Conventional);
     app.on_event(Event::Paste("abcdef".to_owned()));
     draw_app(&mut app, 80, 24);
-    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), 2 + 1, TOP));
-    app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), 2 + 4, TOP));
+    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), LEFT + 1, TOP));
+    app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), LEFT + 4, TOP));
     assert_eq!(app.console_mut().editor.selected_text().as_deref(), Some("bcd"));
     send(&mut app, key(KeyCode::Char('x')));
     assert_eq!(app.console_mut().editor.text(), "axef");
@@ -438,13 +440,14 @@ fn the_hint_bar_shows_the_keys_of_the_key_map() {
         ("nextTab".to_owned(), vec!["ctrl+w u".to_owned()]),
     ]);
     let keymap = Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap();
-    let mut app = hint_app(KeyboardMode::Conventional, Some(keymap));
+    let app = hint_app(KeyboardMode::Conventional, Some(keymap));
     let hint = app.hint();
     assert!(hint.contains("F6 run"), "{hint}");
     assert!(!hint.starts_with("F5"), "{hint}");
     assert!(!hint.contains("keys"), "{hint}");
-    app.on_event(Event::Key(ctrl('w')));
-    let hint = app.hint();
-    assert!(hint.contains("up tab"), "{hint}");
-    assert!(hint.contains("N name"), "{hint}");
+    let keys: Vec<String> =
+        app.prefix_menu().into_iter().flat_map(|group| group.keys).map(|(key, _)| key).collect();
+    assert!(keys.contains(&"u".to_owned()), "{keys:?}");
+    assert!(keys.contains(&"N".to_owned()), "{keys:?}");
+    assert!(!keys.contains(&"?".to_owned()), "{keys:?}");
 }

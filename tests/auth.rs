@@ -1036,3 +1036,31 @@ fn removing_a_connection_offers_the_deletion_and_keeps_the_password_by_default()
     f.code(KeyCode::Enter);
     assert!(f.vault.state.lock().unwrap().values.contains_key(&identity));
 }
+
+const WAIT_MESSAGE: &str = "Preparing credentials";
+
+#[test]
+fn the_credential_message_lasts_as_long_as_the_wait_and_ends_with_it() {
+    let mut f = Fixture::new(CredentialName::Vault, true);
+    let identity = f.identity();
+    f.vault.state.lock().unwrap().values.insert(identity, Secret::new(PASSWORD));
+    *f.vault.blocked.lock().unwrap() = true;
+    f.run();
+    f.wait(|f| f.vault.state.lock().unwrap().reads == 1);
+    f.sees(WAIT_MESSAGE);
+    // A key and a long time do not end the wait, so the message stays.
+    f.code(KeyCode::Char(' '));
+    f.app.tick_at(Instant::now());
+    f.app.tick_at(Instant::now() + Duration::from_secs(60));
+    assert!(f.screen().contains(WAIT_MESSAGE), "{}", f.screen());
+    f.vault.release();
+    f.wait(|f| !f.screen().contains(WAIT_MESSAGE));
+}
+
+#[test]
+fn the_credential_message_gives_way_to_the_hint_of_the_password_prompt() {
+    let mut f = Fixture::new(CredentialName::Vault, true);
+    f.run();
+    f.sees("Enter connects");
+    assert!(!f.screen().contains(WAIT_MESSAGE), "{}", f.screen());
+}

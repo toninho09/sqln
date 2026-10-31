@@ -51,7 +51,8 @@ Uma tecla sem ação não produz efeito nem mensagem.
 
 O prefixo funciona nos dois modos, sem depender de recursos do terminal.
 Depois de `Ctrl+W`, pressione uma tecla. `Esc` cancela o prefixo.
-A barra de dicas mostra as opções enquanto o prefixo estiver ativo.
+Uma janela mostra as opções, em grupos, enquanto o prefixo estiver ativo.
+A janela usa as teclas efetivas do `keymap`, e a barra de dicas mostra `Ctrl+W … · Esc cancel`.
 
 | Tecla | Ação |
 |---|---|
@@ -72,6 +73,7 @@ A barra de dicas mostra as opções enquanto o prefixo estiver ativo.
 | `d` | Escolher banco ou schema |
 | `r` | Ler a configuração de novo |
 | `?` | Abrir a ajuda |
+| `:` | Abrir a paleta de comandos |
 
 `Ctrl+W C` e `Ctrl+W R` não pedem confirmação, como os botões de commit e rollback.
 `Ctrl+W N` usa `N` maiúsculo e não substitui `Ctrl+W n`.
@@ -91,10 +93,16 @@ O prefixo é o caminho comum aos dois modos, e o terminal entrega essa tecla.
 | Script inteiro | `Shift+Enter` | `Shift+F5` ou `Ctrl+W s` |
 | Parar script | `Ctrl+W x` | Botão **Parar script** |
 | Ajuda | `F1` | `Ctrl+W ?` |
+| Paleta de comandos | `Ctrl+P` | `Ctrl+W :` |
 | Sair | `Ctrl+W q` | Fechar a última aba |
 
 `Ctrl+Enter` e `Shift+Enter` exigem aprimoramento de teclado no terminal.
 Ao iniciar, a aplicação detecta esse recurso e mostra na barra de dicas o caminho disponível.
+
+A paleta lista as ações disponíveis no estado atual, com a tecla de cada uma.
+Digite para filtrar. `Up` e `Down` mudam a linha, `Enter` executa, `Esc` fecha, e um clique executa a linha.
+Uma ação sem tecla continua na lista. Uma tecla do explorador aparece somente com o explorador em foco.
+`Ctrl+P` tem prioridade sobre o `MoveUp` do EdTUI na inserção do modo Vim.
 
 `Ctrl+C` não encerra a aplicação nem para o script.
 Com seleção, ele copia. Sem seleção, ele não faz nada.
@@ -277,6 +285,8 @@ O foco inicial fica sempre na opção sem efeito no banco ou no disco.
 |---|---|
 | Clique | Selecionar um item e mudar o foco |
 | Clique em uma aba | Trocar de aba |
+| Clique no `×` de uma aba | Fechar a aba, com as perguntas de `Ctrl+W c` |
+| Clique no título `EXPLORER` | Dar o foco ao explorador |
 | Clique no cabeçalho da tabela | Aplicar a ordenação: crescente, decrescente e sem ordem |
 | Duplo clique em uma tabela | Abrir a visão de tabela, com dois cliques na mesma célula em 400 ms |
 | Clique em um campo ou botão da barra | Dar o foco ao campo, ou acionar o botão |
@@ -287,6 +297,7 @@ O foco inicial fica sempre na opção sem efeito no banco ou no disco.
 | Arrasto na grade | Selecionar células |
 
 Um clique também responde a um diálogo e aciona os botões da barra do console.
+Um clique em qualquer lugar também remove a mensagem da linha de dicas.
 A linha das abas de resultado serve de divisor entre o editor e os resultados.
 O teste `keytest` não registrou um arrasto.
 Com captura de mouse ativa, a seleção nativa do terminal exige `Option` no iTerm.

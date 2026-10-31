@@ -4,6 +4,38 @@ Este documento registra as escolhas e as alternativas rejeitadas.
 As regras completas estão no [plano](../PLAN.md).
 Não reabrir uma decisão sem um fato novo.
 
+## Interface no estilo nvim — 2026-10-31
+
+**Definido:** o usuário pede uma interface mais bonita, próxima do nvim e de uma IDE.
+O usuário aprova estes quatro pontos antes da implementação.
+O código já implementa os quatro pontos.
+
+| Ponto | Decisão aprovada | Rejeitado | Motivo |
+|---|---|---|---|
+| Cores | Tema `astrodark` em RGB com truecolor; tema ANSI nos demais casos; `NO_COLOR` sem cor | Somente ANSI | Fundos e tons próprios separam os painéis; a paleta vem do tema do nvim do usuário. Esta decisão substitui "usar as cores ANSI do terminal" |
+| Layout | Sem caixas: abas em toda a largura, explorador, título de painel, barra de status e linha de dicas | Caixa com borda em cada painel | Cada caixa gasta duas linhas e duas colunas, e 80 x 24 é o mínimo |
+| Ícones | Unicode por padrão; `icons: "nerd"` em `config.json` | Somente Nerd Font | A fonte Monaco do usuário não tem esses símbolos |
+| Recursos | Menu do `Ctrl+W`, paleta de comandos, tela inicial, barras de rolagem, linha atual e número de linha na grade | Somente mudanças visuais | O usuário também pede uma interface mais intuitiva |
+
+Estas escolhas seguem as regras acima nos pontos que elas deixaram abertos.
+
+| Assunto | Escolha | Rejeitado | Motivo |
+|---|---|---|---|
+| Fechar aba com o mouse | `×` no fim de cada aba, com as perguntas de `Ctrl+W c` | Fechar sem perguntas; mostrar `×` só na aba ativa | Um clique não pode descartar uma transação ou um texto; o `×` em cada aba fecha outra aba sem trocar a tela |
+| Duração das mensagens | 8 s; uma tecla, uma colagem ou um clique remove antes | Remover só com tecla; o ponteiro e a roda também removem | Uma mensagem sem prazo fica congelada para quem usa o mouse; mover o ponteiro não é uma resposta à mensagem |
+| Espera de credenciais | A mensagem vem do estado da tentativa | Usar o mesmo prazo das outras mensagens | Uma espera longa no cofre continua ativa depois de 8 s, e o fim da espera deve remover a mensagem |
+| Altura | Linha sob as abas e título do painel somente com 30 linhas ou mais | Sempre mostrar | Em 80 x 24, o editor e a grade mantêm as 18 linhas de antes |
+| Tema sem cor | Mantém `[Run]`, sem ícones e sem `○` | Mesmos símbolos dos outros temas | Sem cor, o colchete identifica um botão |
+| Tema ANSI | Sem fundo na base, no painel e na linha atual | Fundo preto | O perfil do terminal pode ser claro |
+| Números do editor | Desenho próprio, com `LineNumbers::None` no EdTUI | Mudar o fork | O fork deve ficar pequeno até o lançamento |
+| Segunda tecla da paleta | `Ctrl+W :` | Somente `Ctrl+P` | A regra 2 de `KEYMAP.md` pede outro caminho, e `Ctrl+P` não está no registro do `keytest` |
+| Teclas na paleta | Uma tecla do explorador aparece somente com o explorador em foco | Mostrar sempre | Fora do explorador, essa letra vira texto |
+| Rótulo da tecla | `Ctrl+P`, com a letra maiúscula | `Ctrl+p` | Uma letra sozinha mantém a caixa, pois `n` e `N` são teclas diferentes |
+| Formulário de conexão | Grupos com quatro arranjos, do mais espaçado ao compacto, conforme a tela | Rolagem dentro da janela | Todos os campos ficam visíveis, e o teste de 80 x 24 continua válido |
+| Foco no formulário | Marca, rótulo em destaque e fundo próprio | Somente o cursor | O usuário não via o campo selecionado |
+| Arquivo SQLite no formulário | O texto digitado parte do diretório atual, e a conexão grava o caminho completo; um caminho salvo e não alterado fica como está | Resolver o texto digitado pelo escopo; converter também um caminho salvo | O usuário pede o caminho do teste. O teste usava o diretório atual, e a conexão salva abria outro arquivo. Editar outro campo não muda um caminho relativo escrito à mão |
+| Arquivo SQLite em um projeto | Gravar também o caminho completo no `config.json` do projeto | Gravar relativo à raiz do projeto | É o pedido do usuário. Consequência: esse caminho vale somente nesta máquina; um caminho relativo escrito à mão continua válido |
+
 ## Fechamento das decisões — 2026-10-31
 
 **Definido:** o usuário aceita todas as 12 recomendações abaixo.

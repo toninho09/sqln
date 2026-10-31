@@ -49,6 +49,25 @@ pub enum KeyboardName {
     Vim,
 }
 
+/// The theme of the interface. `Auto` follows the terminal.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeName {
+    #[default]
+    Auto,
+    Astrodark,
+    Ansi,
+}
+
+/// The symbol set of the interface. `Nerd` needs a Nerd Font in the terminal.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IconName {
+    #[default]
+    Unicode,
+    Nerd,
+}
+
 /// The `keymap` of a file: the keys of each action, for each keyboard mode.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -72,6 +91,10 @@ pub struct Preferences {
     pub grid_budget_bytes: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keymap: Option<Keymaps>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<ThemeName>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icons: Option<IconName>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +216,8 @@ pub struct Config {
     pub row_cap: Option<usize>,
     pub budget_bytes: Option<usize>,
     pub keymap: Keymap,
+    pub theme: Option<ThemeName>,
+    pub icons: Option<IconName>,
     /// The global connections first, then the project connections.
     pub connections: Vec<Stored>,
 }
@@ -506,6 +531,8 @@ fn combine(files: Vec<(Scope, &Root, Result<ConfigFile, ConfigError>)>) -> Resul
         row_cap: pick(|preferences| preferences.row_cap),
         budget_bytes: pick(|preferences| preferences.grid_budget_bytes),
         keymap,
+        theme: project.and_then(|preferences| preferences.theme).or(global.theme),
+        icons: project.and_then(|preferences| preferences.icons).or(global.icons),
         connections,
     })
 }

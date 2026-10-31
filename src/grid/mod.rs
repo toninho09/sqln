@@ -14,6 +14,8 @@ use crate::find;
 /// The limit of a width that the application calculates.
 const MAX_COLUMN_WIDTH: usize = 40;
 const MIN_COLUMN_WIDTH: usize = 4;
+/// The columns between two columns of a grid: a space, a rule, and a space.
+pub const COLUMN_GAP: usize = 3;
 /// The limit of a width that the user sets.
 const MAX_MANUAL_WIDTH: usize = 200;
 
@@ -268,7 +270,7 @@ impl GridView {
             self.left = self.col;
         }
         while self.left < self.col {
-            let used: usize = (self.left..=self.col).map(|column| table.width(column) + 1).sum();
+            let used: usize = (self.left..=self.col).map(|column| table.width(column) + COLUMN_GAP).sum();
             if used <= width {
                 break;
             }
