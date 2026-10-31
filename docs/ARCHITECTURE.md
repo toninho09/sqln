@@ -11,7 +11,7 @@ Os fatos sobre os drivers vêm de [spikes/RESULTS.md](../spikes/RESULTS.md).
 
 O projeto é um único crate Rust.
 A interface roda na thread principal e nunca espera o banco.
-Cada conexão física pertence a um ator próprio.
+Cada console tem uma tarefa própria, dona da sessão reservada. Este documento chama essa tarefa de ator.
 
 ```text
 Thread principal                    Runtime Tokio
@@ -32,13 +32,17 @@ Thread principal                    Runtime Tokio
 | `ui` | Desenho das telas e dos widgets |
 | `input` | Mapa de teclas, foco, mouse e prioridade |
 | `editor` | EdTUI, camada convencional, busca e substituição |
-| `sql` | Tokenizador e separação de instruções |
+| `sql` | Tokenizador, separação e classes de instruções |
 | `complete` | Sugestões do autocomplete |
 | `catalog` | Cache em memória; schemas e tabelas primeiro, colunas sob demanda |
+| `console` | Editor, resultados, mensagens e estado de um console |
 | `exec` | Execuções, scripts, teto e cancelamento |
 | `pool` | Limite, fila, reserva e limpeza |
 | `connector` | Contrato e conectores PostgreSQL, MySQL e SQLite |
-| `grid` | Linhas, orçamento, TSV e área de transferência |
+| `grid` | Linhas, larguras, busca, orçamento e TSV |
+| `find` | Comparação de texto das duas buscas |
+| `clipboard` | Área de transferência do sistema e OSC 52 |
+| `terminal` | Preparação e restauração do terminal |
 | `store` | Configuração, consoles, salvamento e bloqueios |
 | `creds` | Cofre e senhas de sessão, com `zeroize` |
 | `trust` | Destinos confirmados e caminhos conhecidos |
@@ -46,16 +50,33 @@ Thread principal                    Runtime Tokio
 `ui` e `input` não dependem de `connector`.
 Somente `connector` conhece tipos dos drivers.
 
+`input`, `store`, `creds` e `trust` ainda não existem.
+Hoje, `app` e `console` tratam as teclas, e o mapa de teclas é fixo.
+
+### Limite conhecido do editor
+
+Cada entrada de desfazer do EdTUI guarda uma cópia inteira do texto.
+Por cálculo, um script de 50.000 linhas ocupa cerca de 15 MB por entrada e 1,5 GB nas 100 entradas.
+Scripts comuns ficam muito abaixo disso.
+
 ## 3. Concorrência
 
 ### Regras
 
 1. A thread principal recebe eventos do terminal e eventos do runtime.
 2. A atualização do estado não faz entrada ou saída.
-3. Cada conexão física fica em um ator com canal de comandos.
+3. Cada console tem um ator com canal de comandos, e esse ator guarda a sessão reservada.
 4. O cancelamento usa um objeto separado da conexão, pois o ator pode estar ocupado.
 5. O `rusqlite` roda em uma thread própria, porque é síncrono.
 6. Cada lote de linhas segue para a interface por um canal limitado.
+
+### Laço principal
+
+A thread principal espera uma tecla por até 20 ms e depois lê os eventos da execução.
+Ela lê no máximo 64 eventos por quadro, então uma carga grande não atrasa as teclas.
+A busca na grade avança 8 ms por volta do laço, sem espera enquanto houver linhas para ler.
+O canal de eventos é limitado, e isso controla a velocidade da leitura do banco.
+A aplicação desenha somente depois de uma mudança.
 
 ### Por que usar um ator por conexão
 
@@ -72,28 +93,42 @@ Isso impede que uma resposta antiga repovoe uma grade.
 ## 4. Contrato dos conectores
 
 ```rust
-trait Connector {
-    async fn connect(&self, target: &Target, secret: Secret) -> Result<Box<dyn Session>, ConnectError>;
+trait Connector: Send + Sync {
+    fn dialect(&self) -> Dialect;
+    async fn connect(&self) -> Result<Box<dyn Session>, ConnectError>;
 }
 
 trait Session: Send {
-    fn canceller(&self) -> Canceller;
+    fn canceller(&self) -> Arc<dyn Canceller>;
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError>;
-    async fn run(&mut self, sql: &str, cap: RowCap, sink: RowSink) -> Result<StatementEnd, ExecError>;
-    async fn transaction_state(&mut self) -> Result<TransactionState, ExecError>;
-    async fn reset(&mut self) -> Result<ResetOutcome, ExecError>;
-    async fn close(self: Box<Self>);
+    async fn run(&mut self, sql: &str, sink: ResultSink) -> Result<StatementEnd, ExecError>;
+    async fn transaction_state(&mut self) -> TransactionState;
+    async fn control(&mut self, command: TransactionCommand) -> Result<(), ExecError>;
+    async fn reset(&mut self) -> ResetOutcome;
+    async fn is_alive(&mut self) -> bool;
+    async fn read_catalog(&mut self) -> Result<Catalog, ExecError>;
+    async fn read_columns(&mut self, schema: &str, relation: &str) -> Result<Vec<String>, ExecError>;
 }
 ```
+
+O crate `async-trait` permite usar `Box<dyn Session>`.
+Cada console tem uma tarefa Tokio, que guarda a sessão entre execuções enquanto a transação continuar aberta.
+A tarefa mantém o future de `run` ativo depois de um cancelamento, para ler a resposta do banco.
+Fechar a conexão é o único caso que abandona esse future.
 
 | Banco | Cancelamento | Limpeza | Estado da transação |
 |---|---|---|---|
 | PostgreSQL | `CancelToken` | `DISCARD ALL` | Sonda por relógio, pelo protocolo simples |
-| MySQL | `KILL QUERY` em conexão temporária | `Conn::reset` | `SET TRANSACTION`, preservando o modo da sessão |
+| MySQL | `KILL QUERY` em conexão temporária | `Conn::reset` | `SERVER_STATUS_IN_TRANS` da última resposta; `DO 0` depois de um erro |
 | SQLite | `InterruptHandle` | Descartar a conexão | `is_autocommit` |
 
-`run` envia uma instrução, entrega as linhas em texto e obedece ao teto.
-Os valores chegam como `Option<Bytes>` e o tipo da coluna acompanha os metadados.
+`run` envia uma instrução, entrega as linhas a `ResultSink` e obedece ao retorno `Flow::Stop`.
+Uma instrução pode entregar vários resultados, como `CALL` no MySQL, e o teto vale para cada um.
+`ResultSink` envia `ResultDone` no fim de cada resultado.
+Ao descartar `ResultSink`, as linhas ainda no lote voltam ao orçamento.
+`ResultSink` aplica o teto e o orçamento, e reúne as linhas em lotes de 200.
+`Value` guarda `Null`, `Text`, `Number` ou `Binary`, sempre com o texto do banco.
+A variante serve somente à apresentação, como alinhar números.
 
 ## 5. Execução de um script
 
@@ -111,7 +146,7 @@ Os valores chegam como `Option<Bytes>` e o tipo da coluna acompanha os metadados
 ### Teto de linhas
 
 1. O ator entrega linhas até o teto, mais uma linha para saber se existe mais.
-2. Em uma consulta de leitura sem transação, o ator aciona o cancelamento.
+2. Em uma consulta de leitura sem transação, o ator aciona o cancelamento. `sql::is_plain_read` decide pelo texto.
 3. Nos demais casos, o ator consome o restante sem guardar as linhas.
 4. Nos dois casos, o ator lê até a resposta da instrução.
 5. Um cancelamento causado pelo teto não vira erro da instrução.
@@ -119,10 +154,16 @@ Os valores chegam como `Option<Bytes>` e o tipo da coluna acompanha os metadados
 ### Interrupção
 
 1. `exec` aciona `Canceller` e inicia o prazo de 5 segundos.
-2. O ator continua lendo e descartando as linhas.
-3. Com a resposta, a execução termina e a conexão segue o fluxo normal.
+2. O ator continua lendo e descartando as linhas. `Flow::Discard` indica esse estado.
+3. Com a resposta, o ator espera o pedido de cancelamento terminar, e a conexão segue o fluxo normal.
 4. Sem resposta e sem transação, `exec` fecha a conexão.
 5. Sem resposta e com transação, a interface pede confirmação.
+6. Se o pedido falhar, o prazo termina de imediato.
+7. Se o pedido não terminar depois da resposta, a sessão é descartada, pois ele poderia atingir a próxima instrução.
+
+`Canceller::cancel` retorna depois de o banco tratar o pedido.
+No PostgreSQL, isso exige ler até o servidor fechar a conexão do pedido.
+No MySQL, a resposta de `KILL QUERY` já confirma o pedido.
 
 ## 6. Pool próprio
 
@@ -146,6 +187,10 @@ A conexão temporária de cancelamento fica fora dessa soma.
 4. Ao liberar uma vaga, atender a primeira solicitação ainda ativa.
 5. Em erro de conexão, devolver o erro à solicitação, sem repetir a tentativa.
 6. Cancelar uma espera remove a solicitação da fila.
+7. Ao reutilizar uma conexão ociosa, chamar `is_alive`. Uma conexão perdida dá lugar a uma nova.
+
+Uma sessão reservada não recebe `apply_context` de novo, pois uma transação com erro recusa `SET`.
+Uma sessão com estado desconhecido é descartada.
 
 Uma conexão com a limpeza não confirmada é descartada.
 A reposição ocorre somente quando houver nova necessidade.

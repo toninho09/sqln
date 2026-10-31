@@ -13,7 +13,11 @@ O plano continua sendo a referência das regras funcionais.
 3. Não depender somente de `Ctrl`+setas, `Home`, `End`, `PageUp` ou `PageDown`.
 4. Manter as mesmas ações de execução nos modos convencional e Vim.
 
-`F1`, `Shift+F5` e as letras depois de `Ctrl+W` ainda não foram testados com a aplicação.
+`Ctrl+W h`, `l`, `n`, `p`, `b` e `d` ainda não têm ação, pois dependem do navegador e das abas.
+Estas partes também ainda não existem: navegador, barra de filtro, teclas da visão de tabela, `Ctrl+S` e mapa de teclas configurável.
+No mouse, ainda faltam o clique no cabeçalho da tabela, o duplo clique em uma tabela e o arrasto em um divisor.
+`Shift+F5` e `Ctrl+Enter` foram testados com sequências simuladas em um PTY, não no iTerm.
+As letras depois de `Ctrl+W` e `F1` também não foram testadas no iTerm.
 Terminal.app e terminais do Linux também não foram testados.
 
 ## Regiões de foco
@@ -101,8 +105,21 @@ Com seleção, ele copia. Sem seleção, ele não faz nada.
 | Sugestões | `Ctrl+Space` | `Ctrl+Space` |
 | Gravar agora | `Ctrl+S` | `Ctrl+S` |
 
+A lista abre ao digitar um nome ou um ponto, e `Ctrl+Space` abre a lista sem prefixo.
+No modo Vim, a lista funciona somente na inserção.
 Com sugestões abertas, `Tab` aceita, `Enter` quebra a linha e `Esc` fecha a lista.
 As setas percorrem a lista enquanto ela estiver aberta.
+
+Na barra de busca:
+
+| Ação | Tecla |
+|---|---|
+| Mudar de campo | `Tab` e `Shift+Tab` |
+| Próximo resultado | `Enter` no campo de busca, ou `Down` |
+| Resultado anterior | `Up` |
+| Substituir o resultado atual | `Enter` no campo de substituição |
+| Substituir todos | `Ctrl+A` no campo de substituição |
+| Fechar a barra | `Esc` |
 
 No macOS, o terminal trata `Cmd+C` e `Cmd+V`.
 `Cmd+V` chega à aplicação como uma colagem.
@@ -131,9 +148,25 @@ No macOS, o terminal trata `Cmd+C` e `Cmd+V`.
 | Selecionar | `Shift`+setas | `v` |
 | Selecionar tudo | `Ctrl+A` | `ggVG` |
 | Copiar em TSV | `Ctrl+C` | `y` |
+| Limpar a seleção | `Esc` | `Esc` |
 | Abrir valor | `Enter` | `Enter` |
 | Buscar nas linhas carregadas | `Ctrl+F` | `/` |
+| Diminuir e aumentar a coluna | `<` e `>` | `<` e `>` |
+| Largura automática da coluna | `=` | `=` |
+| Fechar o resultado | `x` ou `Delete` | `x` ou `Delete` |
 | Resultado anterior e próximo | `[` e `]` | `[` e `]` |
+
+Sem seleção, `Ctrl+C` copia a célula atual.
+O resultado que ainda recebe linhas não fecha, e a aba **Mensagens** também não.
+Na aba **Mensagens**, as setas percorrem o texto.
+
+Na busca da grade:
+
+| Ação | Tecla |
+|---|---|
+| Próximo resultado | `Enter` ou `Down` |
+| Resultado anterior | `Up` |
+| Fechar a barra | `Esc` |
 
 Na visão de tabela, a grade também oferece:
 
@@ -174,6 +207,7 @@ O foco inicial fica sempre na opção sem efeito no banco ou no disco.
 | Duplo clique em uma tabela | Abrir a visão de tabela |
 | Roda | Percorrer listas, editor e grade |
 | Arrasto em um divisor | Ajustar os painéis |
+| Arrasto na borda de um cabeçalho | Ajustar a largura da coluna |
 | Arrasto na grade | Selecionar células |
 
 O teste `keytest` não registrou um arrasto.

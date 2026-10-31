@@ -1,0 +1,28 @@
+[package]
+name = "sqln"
+version = "0.1.0"
+edition = "2024"
+description = "Terminal database client with several SQL consoles"
+license = "MIT OR Apache-2.0"
+publish = false
+exclude = ["spikes/", "scripts/", "compose.test.yaml"]
+
+[dependencies]
+arboard = { version = "3.7.0", default-features = false }
+async-trait = "0.1"
+crossterm = "0.29.0"
+edtui = { version = "0.11.7", default-features = false, features = ["mouse-support"] }
+futures-util = "0.3"
+mysql_async = { version = "0.36.2", default-features = false, features = ["minimal-rust", "default-rustls-ring"] }
+ratatui = "0.30.2"
+rusqlite = { version = "0.38", features = ["bundled"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
+tokio = { version = "1.54", features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
+tokio-postgres = "0.7.18"
+tokio-postgres-rustls = { version = "0.14", default-features = false, features = ["ring"] }
+unicode-width = "0.2.3"
+webpki-roots = "1"
+
+[dev-dependencies]
+tokio = { version = "1.54", features = ["rt-multi-thread", "sync", "time", "macros"] }

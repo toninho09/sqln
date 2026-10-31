@@ -16,6 +16,13 @@ Não reabrir uma decisão sem um fato novo.
 | Próxima página | Pedir uma linha a mais | `COUNT` | Evita custo no banco |
 | Aba em leitura | Bloquear o fechamento | Confirmar ou descartar | Menos estados |
 | Valores da grade | Texto do banco; tipo só na apresentação | Decodificar tipos em Rust | Preserva precisão e aceita tipos desconhecidos |
+| Fim da leitura no SQLite | Encerrar no cliente com `readonly`; consumir nos demais casos | Sempre consumir | Resultado infinito terminaria somente pelo prazo |
+| Aba depois da execução | Último resultado; **Mensagens** em qualquer outro fim | Sempre o último resultado | Uma parada ficaria invisível atrás de uma grade vazia |
+| Cursor da grade | Conta como seleção de uma célula para `Ctrl+C` | Exigir seleção | A grade sempre tem uma célula atual, como no DataGrip |
+| Função em consulta no teto | Consumir as linhas | Cancelar toda consulta com `SELECT` | O cancelamento desfaz `SELECT grava(id)` em silêncio; consumir custa somente tempo |
+| Busca na grade | Partes de 8 ms entre as teclas, com 1.000.000 de resultados na lista | Lista sem limite ou leitura em uma tecla | 2 milhões de linhas levam 0,6 s; um texto curto encheria a memória |
+| Largura manual | `<`, `>`, `=` e arrasto no cabeçalho | Só o mouse | Toda ação essencial tem um caminho pelo teclado |
+| Fechar resultado | `x` ou `Delete` na grade | `Ctrl+W c` | `Ctrl+W c` fecha o console, e essa diferença evita perda por engano |
 | Parar uma instrução | Cancelar e fechar como último recurso | Só fechar a conexão | Com a conexão fechada, um `INSERT` terminou nos dois bancos |
 | Prazo do cancelamento | 5 segundos | Sem prazo | DataGrip oferece escalonamento parecido |
 | Conexão de cancelamento | Temporária e fora do limite do pool | Respeitar o limite literalmente | O protocolo exige outra conexão |
@@ -28,7 +35,13 @@ Não reabrir uma decisão sem um fato novo.
 | Conectar | No primeiro uso | Ação explícita ou ao iniciar | Pede a senha somente quando necessário |
 | Queda de conexão | Substituir ociosas e falhar reservadas | Repetir o comando | Repetir pode duplicar alterações |
 | Limpeza falha | Descartar a conexão | Recuperar | Mais simples e seguro |
+| Nome da conexão na barra | Encurtar o nome | Encurtar o estado | O usuário precisa ver sempre a transação e a execução |
 | Fila do pool | Sem limite | Com limite | Cada console tem uma execução |
+| Cancelamento atrasado | Esperar o pedido antes de reutilizar a sessão | Reutilizar ao fim da instrução | Um pedido atrasado poderia atingir a instrução seguinte |
+| Fim do pedido no PostgreSQL | Ler até o servidor fechar a conexão do pedido | `cancel_query` do driver | Ele retorna ao escrever, e o `UPDATE` depois de um `SELECT` no teto foi cancelado em um teste com carga |
+| `sslmode=require` | Verificar o certificado | Criptografar sem verificar, como no `libpq` | O plano proíbe ignorar a verificação |
+| `sslmode=prefer` e `allow` | Recusar o texto | Aceitar | Esses modos podem usar conexão sem TLS em silêncio |
+| CA padrão | Sistema e `webpki-roots` | Somente uma das fontes | CAs de empresas ficam no sistema; `mysql_async` já traz a segunda |
 | Confiança | Confirmar por destino | Confirmar por projeto | Segue o modelo do SSH e não depende de detectar clones |
 | Somente leitura | Campo por conexão, aplicado pelo banco | Confirmar `DELETE` sem `WHERE` | O banco aplica a regra |
 | Filtro da tabela | Uma única instrução | Aceitar qualquer texto | Os drivers aceitam várias instruções |
@@ -39,10 +52,20 @@ Não reabrir uma decisão sem um fato novo.
 |---|---|---|---|
 | Drivers | `tokio-postgres`, `mysql_async` e `rusqlite` | SQLx | `timeout` falhou, faltam cancelamento e reset, e o pool escondeu conexão recusada |
 | Pool | Implementação própria | Pool de biblioteca | Regras próprias de fila, reserva e limpeza |
+| Laço principal | Espera de 20 ms na tecla, com canal limitado | Thread só para as teclas | O canal limitado controla a leitura do banco, sem outra thread |
+| Tarefa por console | Uma tarefa Tokio guarda a sessão | Mapa de sessões no gerente | A transação fica com seu dono, e o cancelamento fica junto da leitura |
+| Tokens por tecla | Reaproveitar os tokens do realce no autocomplete | Analisar o texto duas vezes | Com 50.000 linhas, reduziu de 55 ms para 33 ms |
 | Editor | EdTUI com camada convencional | `ratatui-textarea` | Falta realce de sintaxe e modo Vim |
 | Análise de SQL | Tokenizador próprio | `sqlparser-rs` ou tree-sitter | Precisa tolerar texto incompleto; protótipo aprovado |
+| Realce de sintaxe | Tokenizador próprio com `Highlight` | `syntect` pelo EdTUI | O EdTUI gera RGB e reinicia o estado a cada linha; o plano exige ANSI e `NO_COLOR` |
+| Edição no modo convencional | Função própria sobre `state.lines` | Ações do EdTUI | `insert_str` conta bytes, `Paste` trata um LF inicial como linha inteira |
+| Desfazer | Pilha do EdTUI, com grupos por palavra | Uma entrada por tecla | A pilha guarda 100 entradas; `DeleteChar(0)` cria o ponto de desfazer |
+| Refazer | Contador sobre a pilha do EdTUI | Pilha própria | O EdTUI não limpa `redo` depois de uma nova edição |
+| Clique no editor | Cálculo próprio da posição | Mapeamento do EdTUI | O EdTUI conta uma coluna por caractere e para no último caractere |
 | Sonda no PostgreSQL | Relógio pelo protocolo simples | `SAVEPOINT` | `SAVEPOINT` gera erros no log |
-| Sonda no MySQL | `SET TRANSACTION`, preservando o modo | `performance_schema` | Exige privilégios |
+| Estado no MySQL | `SERVER_STATUS_IN_TRANS` da resposta, e `DO 0` depois de um erro | `SET TRANSACTION`; `performance_schema` | A sonda apagava o `SET TRANSACTION` do usuário e limpava `SHOW WARNINGS`; `performance_schema` exige privilégios |
+| Tipos no PostgreSQL | `prepare` antes do protocolo simples | Heurística sobre o texto | `bytea` e números exigem o tipo; custa uma ida ao servidor |
+| Provedor do TLS | `ring` | `aws-lc-rs` | Evita um segundo provedor e a compilação de `aws-lc` |
 
 ## Produto
 
@@ -55,5 +78,12 @@ Não reabrir uma decisão sem um fato novo.
 | Commit por atalho | Sem confirmação | Pedir confirmação | Mesmo comportamento dos botões |
 | Metadados | Um `.json` ao lado de cada `.sql` | Índice único ou comentário no script | Reduz conflitos no Git e mantém o script limpo |
 | Telemetria | Nenhuma | Opcional | A aplicação só acessa a rede para falar com os bancos |
+| Abertura da lista | Ao digitar, além de `Ctrl+Space` | Somente `Ctrl+Space` | A JetBrains é a referência; `Enter` continua a quebrar a linha |
+| Caixa das palavras-chave | Segue o texto digitado | Sempre maiúsculas | Respeita o estilo do script |
+| Busca | Texto literal, sem distinguir caixa | Expressão regular | Padrão das IDEs; reduz o escopo |
+| `COPY` com `STDOUT` | Recusar, como `STDIN` | Tratar como erro do driver | O protocolo não cabe na grade, e o motivo fica claro |
+| Posição do erro | Sublinhar o token sem mover o cursor | Mover o cursor | O usuário pode continuar a editar durante a execução |
+| Janela de detalhe | Quebrar as linhas sob demanda | `Paragraph` do Ratatui ou texto cortado | Um valor de 40 MB custava 2,3 s por quadro; agora custa 0,4 ms, com o texto completo |
+| Substituir tudo | `Ctrl+A` no campo de substituição | `Alt+A` | No macOS, `Option`+letra depende do terminal |
 | Arquivo `.sql` externo | Depois da primeira versão | Na primeira versão | Reduz o escopo |
 | Licença | `MIT OR Apache-2.0` | GPL ou proprietária | Padrão do ecossistema Rust |

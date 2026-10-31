@@ -8,7 +8,8 @@ O plano continua sendo a referência das decisões confirmadas.
 Os valores, nomes e dados abaixo são exemplos fictícios.
 Tamanhos, espaçamentos, cores e atalhos ainda não representam contratos finais.
 A interface final usa inglês; os rótulos em português destes esboços são exemplos.
-Os esboços não representam uma aplicação já implementada.
+A aplicação implementa a seção 2, sem navegador nem abas de consoles, e parte das seções 5, 6 e 8.
+As seções 1, 3 e 4 ainda não existem. A [seção 1 do plano](../PLAN.md) lista o que falta.
 
 ## 1. Inicialização e abertura de console
 
@@ -72,6 +73,22 @@ O usuário pode arrastar o divisor e recolher o navegador de conexões.
 │ Convencional · Pool ocupado: 0/5 · Dados: 1/256 MiB              │
 └──────────────────────────────────────────────────────────────────┘
 ```
+
+Os indicadores ficam na coluna livre, entre o número da linha e o texto:
+
+| Símbolo | Estado |
+|---|---|
+| `●` | Executando |
+| `✓` | Sucesso |
+| `⋯` | Teto ou orçamento atingido |
+| `✗` | Erro |
+| `—` | Não executada |
+| `■` | Parada |
+| `◷` | Timeout |
+| `?` | Resultado desconhecido |
+
+Quando o banco informa a posição de um erro, o editor sublinha o token e mantém o cursor.
+A marca sai com a próxima edição, e uma edição durante a execução impede a marca.
 
 Esse exemplo mostra uma execução concluída, com duas instruções.
 A segunda instrução atingiu o teto de linhas e encerrou a leitura.
@@ -543,6 +560,7 @@ Cada linha exige uma escolha. O salvamento dos arquivos listados fica pausado.
 ### Busca e substituição no editor
 
 `Ctrl+F` abre a barra. `Tab` passa para o campo de substituição.
+As teclas da barra estão em [KEYMAP.md](KEYMAP.md).
 
 ```text
 ┌─ console-1 ──────────────────────────────────────────────┐
