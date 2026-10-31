@@ -11,6 +11,7 @@ use crate::form::FormRequest;
 use crate::input::Action;
 use crate::navigator::{MIN_WIDTH, Navigator, RowKind};
 use crate::result::ResultTab;
+use crate::settings::SettingsRequest;
 use crate::table::TableFocus;
 use crate::ui::console::Control;
 use crate::ui::navigator::TREE_PAD;
@@ -25,7 +26,11 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 #[derive(Clone, Copy)]
 pub(super) enum Drag {
     /// The edge of a column in the grid header.
-    Column { column: usize, start: u16, width: usize },
+    Column {
+        column: usize,
+        start: u16,
+        width: usize,
+    },
     Navigator,
     Editor,
 }
@@ -53,7 +58,9 @@ impl App {
     }
 
     fn editor_has_focus(&self) -> bool {
-        !self.navigator_focused && self.table_active.is_none() && self.console().focus == Focus::Editor
+        !self.navigator_focused
+            && self.table_active.is_none()
+            && self.console().focus == Focus::Editor
     }
 
     /// Returns the result grid that the mouse acts on, with its area on the screen.
@@ -120,7 +127,11 @@ impl App {
         let double = self.last_click.is_some_and(|(at, column, row)| {
             column == mouse.column && row == mouse.row && now.duration_since(at) <= DOUBLE_CLICK
         });
-        self.last_click = if double { None } else { Some((now, mouse.column, mouse.row)) };
+        self.last_click = if double {
+            None
+        } else {
+            Some((now, mouse.column, mouse.row))
+        };
         double
     }
 
@@ -152,7 +163,9 @@ impl App {
 
     fn on_table_control_press(&mut self, column: u16) {
         let buttons = &self.layout.table.buttons;
-        let control = buttons.iter().find(|button| column >= button.0 && column < button.1);
+        let control = buttons
+            .iter()
+            .find(|button| column >= button.0 && column < button.1);
         match control.map(|button| button.2) {
             Some(TableControl::Apply) => self.apply_table(),
             Some(TableControl::Clear) => self.clear_table(),
@@ -164,8 +177,12 @@ impl App {
 
     fn on_pager_press(&mut self, column: u16) {
         let buttons = &self.layout.table.pager;
-        let control = buttons.iter().find(|button| column >= button.0 && column < button.1);
-        let Some(control) = control.map(|button| button.2) else { return };
+        let control = buttons
+            .iter()
+            .find(|button| column >= button.0 && column < button.1);
+        let Some(control) = control.map(|button| button.2) else {
+            return;
+        };
         self.focus_table(TableFocus::Grid);
         match control {
             TableControl::PreviousPage => self.previous_table_page(),
@@ -179,22 +196,30 @@ impl App {
         let area = self.layout.navigator;
         let index = self.navigator.top + usize::from(mouse.row - area.y);
         let rows = self.navigator.rows(&self.connections);
-        let Some(row) = rows.get(index).copied() else { return };
+        let Some(row) = rows.get(index).copied() else {
+            return;
+        };
         self.navigator.select_index(index, &self.connections);
         // The mark of a branch stands after the indent of its row.
         let mark = usize::from(area.x + TREE_PAD) + row.depth() * 2;
         if usize::from(mouse.column) == mark && Navigator::is_branch(&row) {
             self.toggle(&row);
-        } else if self.is_double_click(mouse) && matches!(row.kind, RowKind::Table | RowKind::View) {
+        } else if self.is_double_click(mouse) && matches!(row.kind, RowKind::Table | RowKind::View)
+        {
             self.open_table(&row);
         }
     }
 
     fn on_control_press(&mut self, column: u16) {
-        let control = self.layout.console.control_buttons.iter().find(|button| {
-            column >= button.0 && column < button.1
-        });
-        let Some((_, _, control)) = control else { return };
+        let control = self
+            .layout
+            .console
+            .control_buttons
+            .iter()
+            .find(|button| column >= button.0 && column < button.1);
+        let Some((_, _, control)) = control else {
+            return;
+        };
         let action = match control {
             Control::Run => Action::Run,
             Control::Script => Action::RunScript,
@@ -208,7 +233,11 @@ impl App {
     }
 
     fn on_wheel(&mut self, mouse: MouseEvent, position: Position) {
-        let rows = if mouse.kind == MouseEventKind::ScrollUp { -WHEEL_ROWS } else { WHEEL_ROWS };
+        let rows = if mouse.kind == MouseEventKind::ScrollUp {
+            -WHEEL_ROWS
+        } else {
+            WHEEL_ROWS
+        };
         if self.layout.navigator.contains(position) {
             self.navigator.move_by(rows, &self.connections);
         } else if let Some((result, area)) = self.active_grid()
@@ -243,23 +272,41 @@ impl App {
     }
 
     fn start_column_drag(&mut self, mouse: MouseEvent) -> bool {
-        let Some((result, area)) = self.active_grid() else { return false };
-        let edge = column_edge_at(result, area, mouse.column, mouse.row).map(|column| {
-            Drag::Column { column, start: mouse.column, width: result.table.width(column) }
-        });
+        let Some((result, area)) = self.active_grid() else {
+            return false;
+        };
+        let edge =
+            column_edge_at(result, area, mouse.column, mouse.row).map(|column| Drag::Column {
+                column,
+                start: mouse.column,
+                width: result.table.width(column),
+            });
         self.drag = edge;
         self.drag.is_some()
     }
 
     fn drag_column(&mut self, mouse: MouseEvent) {
-        let Some(Drag::Column { column, start, width }) = self.drag else { return };
-        let Some((result, _)) = self.active_grid() else { return };
+        let Some(Drag::Column {
+            column,
+            start,
+            width,
+        }) = self.drag
+        else {
+            return;
+        };
+        let Some((result, _)) = self.active_grid() else {
+            return;
+        };
         let change = isize::from(mouse.column as i16 - start as i16);
-        result.table.set_width(column, width.saturating_add_signed(change));
+        result
+            .table
+            .set_width(column, width.saturating_add_signed(change));
     }
 
     fn point_at_cell(&mut self, mouse: MouseEvent, extend: bool) {
-        let Some((result, area)) = self.active_grid() else { return };
+        let Some((result, area)) = self.active_grid() else {
+            return;
+        };
         if let Some((row, col)) = grid_cell_at(result, area, mouse.column, mouse.row) {
             result.view.move_to(row, col, &result.table, extend);
         }
@@ -272,7 +319,9 @@ impl App {
         let (options, row) = &self.layout.dialog;
         let option = options
             .iter()
-            .find(|(start, end, _)| mouse.row == *row && mouse.column >= *start && mouse.column < *end)
+            .find(|(start, end, _)| {
+                mouse.row == *row && mouse.column >= *start && mouse.column < *end
+            })
             .map(|(_, _, index)| *index);
         let Some(index) = option else { return };
         if let Some(dialog) = self.dialogs.pop_front() {
@@ -283,7 +332,9 @@ impl App {
     pub(super) fn on_picker_mouse(&mut self, mouse: MouseEvent) {
         let (area, first) = self.layout.picker;
         let inside = area.contains(Position::new(mouse.column, mouse.row));
-        let Some(picker) = &mut self.picker else { return };
+        let Some(picker) = &mut self.picker else {
+            return;
+        };
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) if inside => {
                 let index = first + usize::from(mouse.row - area.y);
@@ -303,7 +354,9 @@ impl App {
     pub(super) fn on_palette_mouse(&mut self, mouse: MouseEvent) {
         let (area, first) = self.layout.palette;
         let inside = area.contains(Position::new(mouse.column, mouse.row));
-        let Some(palette) = &mut self.palette else { return };
+        let Some(palette) = &mut self.palette else {
+            return;
+        };
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) if inside => {
                 let request = palette.choose(first + usize::from(mouse.row - area.y));
@@ -320,7 +373,12 @@ impl App {
             return;
         }
         let position = Position::new(mouse.column, mouse.row);
-        let field = self.layout.form.fields.iter().find(|(_, area)| area.contains(position));
+        let field = self
+            .layout
+            .form
+            .fields
+            .iter()
+            .find(|(_, area)| area.contains(position));
         let Some((field, _)) = field else { return };
         let field = *field;
         let Some(form) = &mut self.form else { return };
@@ -334,8 +392,35 @@ impl App {
             FormRequest::None => {}
         }
     }
+
+    pub(super) fn on_settings_mouse(&mut self, mouse: MouseEvent) {
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+        let position = Position::new(mouse.column, mouse.row);
+        let field = self
+            .layout
+            .settings
+            .fields
+            .iter()
+            .find(|(_, area)| area.contains(position));
+        let Some((field, _)) = field else { return };
+        let field = *field;
+        let Some(form) = &mut self.settings_form else {
+            return;
+        };
+        form.focus_on(field);
+        let request = form.press();
+        match request {
+            SettingsRequest::Save => self.save_settings(),
+            SettingsRequest::Cancel => self.settings_form = None,
+            SettingsRequest::None => {}
+        }
+    }
 }
 
 fn main_tab_at(tabs: &[MainTab], position: Position) -> Option<MainTab> {
-    tabs.iter().copied().find(|tab| position.y == 0 && position.x >= tab.start && position.x < tab.end)
+    tabs.iter()
+        .copied()
+        .find(|tab| position.y == 0 && position.x >= tab.start && position.x < tab.end)
 }

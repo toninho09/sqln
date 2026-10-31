@@ -63,7 +63,9 @@ fn number_text(value: Option<usize>) -> LineInput {
 
 impl Draft {
     fn of(preferences: &Preferences) -> Self {
-        let budget = preferences.grid_budget_bytes.map(|bytes| bytes.div_ceil(MEBIBYTE));
+        let budget = preferences
+            .grid_budget_bytes
+            .map(|bytes| bytes.div_ceil(MEBIBYTE));
         Self {
             keyboard: preferences.keyboard_mode,
             page_size: number_text(preferences.page_size),
@@ -88,7 +90,11 @@ pub struct SettingsForm {
 /// Returns the value after `value` in a list of choices.
 fn next_choice<T: Copy + PartialEq>(order: &[T], value: T, forward: bool) -> T {
     let index = order.iter().position(|item| *item == value).unwrap_or(0);
-    let next = if forward { index + 1 } else { index + order.len() - 1 };
+    let next = if forward {
+        index + 1
+    } else {
+        index + order.len() - 1
+    };
     order[next % order.len()]
 }
 
@@ -106,8 +112,16 @@ fn parse(input: &LineInput, name: &str) -> Result<Option<usize>, String> {
 impl SettingsForm {
     /// Opens on the project when one exists, as the connection form does.
     pub fn new(global: Preferences, project: Option<Preferences>) -> Self {
-        let scope = if project.is_some() { Scope::Project } else { Scope::Global };
-        let focus = if project.is_some() { Field::Scope } else { Field::Keyboard };
+        let scope = if project.is_some() {
+            Scope::Project
+        } else {
+            Scope::Global
+        };
+        let focus = if project.is_some() {
+            Field::Scope
+        } else {
+            Field::Keyboard
+        };
         Self {
             focus,
             scope,
@@ -179,14 +193,22 @@ impl SettingsForm {
             Field::Keyboard => global.keyboard_mode.map(text::keyboard_name),
             Field::PageSize => global.page_size.map(|value| value.to_string()),
             Field::RowCap => global.row_cap.map(|value| value.to_string()),
-            Field::Budget => global.grid_budget_bytes.map(|bytes| bytes.div_ceil(MEBIBYTE).to_string()),
-            Field::ReopenTabs => global.reopen_tabs.map(|value| text::on_off(value).to_owned()),
-            Field::SuggestionKeys => global.suggestion_keys.map(|keys| text::suggestion_keys_name(keys).to_owned()),
+            Field::Budget => global
+                .grid_budget_bytes
+                .map(|bytes| bytes.div_ceil(MEBIBYTE).to_string()),
+            Field::ReopenTabs => global
+                .reopen_tabs
+                .map(|value| text::on_off(value).to_owned()),
+            Field::SuggestionKeys => global
+                .suggestion_keys
+                .map(|keys| text::suggestion_keys_name(keys).to_owned()),
             _ => None,
         };
         match (from_global, value) {
             (true, Some(value)) => text::from_global(&value),
-            _ if field == Field::ReopenTabs => text::default_value(text::on_off(DEFAULT_REOPEN_TABS)),
+            _ if field == Field::ReopenTabs => {
+                text::default_value(text::on_off(DEFAULT_REOPEN_TABS))
+            }
             _ if field == Field::SuggestionKeys => {
                 text::default_value(text::suggestion_keys_name(SuggestionKeys::default()))
             }
@@ -196,7 +218,10 @@ impl SettingsForm {
 
     fn move_focus(&mut self, step: isize) {
         let count = isize::try_from(FIELDS.len()).unwrap_or(1);
-        let mut index = FIELDS.iter().position(|field| *field == self.focus).unwrap_or(0);
+        let mut index = FIELDS
+            .iter()
+            .position(|field| *field == self.focus)
+            .unwrap_or(0);
         for _ in 0..FIELDS.len() {
             let current = isize::try_from(index).unwrap_or(0);
             index = usize::try_from((current + step).rem_euclid(count)).unwrap_or(0);
@@ -217,12 +242,17 @@ impl SettingsForm {
                 };
             }
             Field::Keyboard => {
-                let order = [None, Some(KeyboardName::Conventional), Some(KeyboardName::Vim)];
+                let order = [
+                    None,
+                    Some(KeyboardName::Conventional),
+                    Some(KeyboardName::Vim),
+                ];
                 self.draft_mut().keyboard = next_choice(&order, self.draft().keyboard, forward);
             }
             Field::ReopenTabs => {
                 let order = [None, Some(true), Some(false)];
-                self.draft_mut().reopen_tabs = next_choice(&order, self.draft().reopen_tabs, forward);
+                self.draft_mut().reopen_tabs =
+                    next_choice(&order, self.draft().reopen_tabs, forward);
             }
             Field::SuggestionKeys => {
                 let order = [
@@ -231,7 +261,8 @@ impl SettingsForm {
                     Some(SuggestionKeys::Enter),
                     Some(SuggestionKeys::Both),
                 ];
-                self.draft_mut().suggestion_keys = next_choice(&order, self.draft().suggestion_keys, forward);
+                self.draft_mut().suggestion_keys =
+                    next_choice(&order, self.draft().suggestion_keys, forward);
             }
             _ => {}
         }
@@ -241,6 +272,24 @@ impl SettingsForm {
         let digits: String = value.chars().filter(char::is_ascii_digit).collect();
         if let Some(input) = self.input_mut() {
             input.insert(&digits);
+        }
+    }
+
+    /// Puts the focus on one field. The mouse uses this.
+    pub fn focus_on(&mut self, field: Field) {
+        self.focus = field;
+    }
+
+    /// Acts on a click: a choice changes, a button runs.
+    pub fn press(&mut self) -> SettingsRequest {
+        match self.focus {
+            Field::Save => SettingsRequest::Save,
+            Field::Cancel => SettingsRequest::Cancel,
+            field if self.input(field).is_none() => {
+                self.change(true);
+                SettingsRequest::None
+            }
+            _ => SettingsRequest::None,
         }
     }
 

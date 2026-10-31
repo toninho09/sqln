@@ -14,8 +14,8 @@ mod tables;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
-use std::path::PathBuf;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -55,7 +55,7 @@ use crate::ui::form::{FormLayout, draw_form};
 use crate::ui::name::{NamePrompt, draw_name};
 use crate::ui::navigator::draw_navigator;
 use crate::ui::palette::draw_palette;
-use crate::ui::settings::draw_settings;
+use crate::ui::settings::{SettingsLayout, draw_settings};
 use crate::ui::statusline::{StatusData, StatusPanel, draw_statusline, hint_line, run_time};
 use crate::ui::theme::{ColorEnv, Theme};
 use crate::ui::which_key::draw_which_key;
@@ -179,11 +179,22 @@ struct Overlay {
 /// What a row of a list stands for.
 enum PickerKind {
     /// The first row is the default of the connection, and the others are schemas.
-    Schema { console: ConsoleId, connection: ConnectionId },
+    Schema {
+        console: ConsoleId,
+        connection: ConnectionId,
+    },
     /// The first row creates a console, and the others are the saved consoles.
-    Consoles { connection: ConnectionId, scripts: Vec<ScriptEntry> },
-    Orphans { scripts: Vec<ScriptEntry> },
-    Associate { console: ConsoleId, connections: Vec<ConnectionId> },
+    Consoles {
+        connection: ConnectionId,
+        scripts: Vec<ScriptEntry>,
+    },
+    Orphans {
+        scripts: Vec<ScriptEntry>,
+    },
+    Associate {
+        console: ConsoleId,
+        connections: Vec<ConnectionId>,
+    },
 }
 
 /// A list of rows, with one chosen by the cursor.
@@ -207,6 +218,7 @@ struct ScreenLayout {
     console: ConsoleLayout,
     table: TableLayout,
     form: FormLayout,
+    settings: SettingsLayout,
     conflicts: ConflictLayout,
     password: Vec<(usize, Rect)>,
     /// The options of the open dialog, with the row of those options.
@@ -292,17 +304,25 @@ impl App {
             Some((persist, stored)) => (Some(persist), stored),
             None => (None, Vec::new()),
         };
-        let dialect = match (&options.connector, options.connections.first(), &options.database) {
+        let dialect = match (
+            &options.connector,
+            options.connections.first(),
+            &options.database,
+        ) {
             (Some(connector), ..) => connector.dialect(),
             (None, _, Some(_)) => Dialect::Sqlite,
             (None, Some(definition), None) => definition.connector().dialect(),
-            (None, None, None) => {
-                stored.first().map_or(options.dialect, |item| item.definition.connector().dialect())
-            }
+            (None, None, None) => stored.first().map_or(options.dialect, |item| {
+                item.definition.connector().dialect()
+            }),
         };
         let budget = Arc::new(Budget::new(options.settings.budget_bytes));
-        let keymap = options.keymap.unwrap_or_else(|| Keymap::new(options.keyboard));
-        let plain = persist.as_ref().map(|persist| PlainFile::new(&persist.store.global));
+        let keymap = options
+            .keymap
+            .unwrap_or_else(|| Keymap::new(options.keyboard));
+        let plain = persist
+            .as_ref()
+            .map(|persist| PlainFile::new(&persist.store.global));
         let color_env = ColorEnv::read();
         let (chosen_theme, chosen_icons) = options.appearance;
         let mut app = Self {
@@ -358,7 +378,9 @@ impl App {
         let console = app.unbound_console(dialect);
         app.consoles.push(console);
         if let Some(connector) = options.connector {
-            let name = options.label.unwrap_or_else(|| text::DATABASE_LABEL.to_owned());
+            let name = options
+                .label
+                .unwrap_or_else(|| text::DATABASE_LABEL.to_owned());
             app.add_connection(name, None, connector);
         } else {
             app.prepare_database();
@@ -443,11 +465,15 @@ impl App {
     }
 
     fn connection(&self, id: ConnectionId) -> Option<&Connection> {
-        self.connections.iter().find(|connection| connection.id == id)
+        self.connections
+            .iter()
+            .find(|connection| connection.id == id)
     }
 
     fn connection_mut(&mut self, id: ConnectionId) -> Option<&mut Connection> {
-        self.connections.iter_mut().find(|connection| connection.id == id)
+        self.connections
+            .iter_mut()
+            .find(|connection| connection.id == id)
     }
 
     fn active_connection(&self) -> Option<&Connection> {
@@ -461,7 +487,12 @@ impl App {
         body: String,
         options: Vec<(&'static str, DialogAction)>,
     ) {
-        self.dialogs.push_back(Dialog { title: title.into(), body, options, focus: 0 });
+        self.dialogs.push_back(Dialog {
+            title: title.into(),
+            body,
+            options,
+            focus: 0,
+        });
     }
 
     pub fn on_event(&mut self, event: Event) {
@@ -480,7 +511,8 @@ impl App {
         self.clock = now;
         let time = now.saturating_duration_since(self.started);
         let frame = usize::try_from(time.as_millis() / RUN_FRAME.as_millis()).unwrap_or(0);
-        let running = self.consoles.iter().any(Console::is_busy) || self.tables.iter().any(TableTab::is_busy);
+        let running =
+            self.consoles.iter().any(Console::is_busy) || self.tables.iter().any(TableTab::is_busy);
         let changed = running && frame != self.run_frame;
         self.run_frame = frame;
         changed
@@ -525,16 +557,24 @@ impl App {
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
             Event::Paste(text) if self.dialogs.is_empty() && self.auth.prompt.is_some() => {
-                if let Some(prompt) = &mut self.auth.prompt { prompt.paste(&text); }
+                if let Some(prompt) = &mut self.auth.prompt {
+                    prompt.paste(&text);
+                }
             }
             Event::Paste(text) if self.dialogs.is_empty() && self.rename.is_some() => {
-                if let Some(prompt) = &mut self.rename { prompt.paste(&text); }
+                if let Some(prompt) = &mut self.rename {
+                    prompt.paste(&text);
+                }
             }
             Event::Paste(text) if self.dialogs.is_empty() && self.settings_form.is_some() => {
-                if let Some(form) = &mut self.settings_form { form.paste(&text); }
+                if let Some(form) = &mut self.settings_form {
+                    form.paste(&text);
+                }
             }
             Event::Paste(text) if self.dialogs.is_empty() && self.palette.is_some() => {
-                if let Some(palette) = &mut self.palette { palette.paste(&text); }
+                if let Some(palette) = &mut self.palette {
+                    palette.paste(&text);
+                }
             }
             Event::Paste(text) if !blocked => self.on_paste(&text),
             Event::Mouse(mouse) if !self.dialogs.is_empty() => self.on_dialog_mouse(mouse),
@@ -542,6 +582,7 @@ impl App {
             Event::Mouse(mouse) if self.conflicts.is_some() => self.on_conflicts_mouse(mouse),
             Event::Mouse(mouse) if self.picker.is_some() => self.on_picker_mouse(mouse),
             Event::Mouse(mouse) if self.palette.is_some() => self.on_palette_mouse(mouse),
+            Event::Mouse(mouse) if self.settings_form.is_some() => self.on_settings_mouse(mouse),
             Event::Mouse(mouse) if !blocked => self.on_mouse(mouse),
             _ => {}
         }
@@ -593,7 +634,11 @@ impl App {
         }
         let mut changed = changed;
         for _ in 0..EVENTS_PER_FRAME {
-            let Some(event) = self.events.as_mut().and_then(|events| events.try_recv().ok()) else {
+            let Some(event) = self
+                .events
+                .as_mut()
+                .and_then(|events| events.try_recv().ok())
+            else {
                 break;
             };
             self.on_exec_event(event);
@@ -604,10 +649,18 @@ impl App {
 
     fn on_exec_event(&mut self, event: ExecEvent) {
         match event {
-            ExecEvent::CatalogLoaded { connection, read, catalog } => {
+            ExecEvent::CatalogLoaded {
+                connection,
+                read,
+                catalog,
+            } => {
                 self.on_catalog_loaded(connection, read, catalog);
             }
-            ExecEvent::ColumnsLoaded { connection, relation, columns } => {
+            ExecEvent::ColumnsLoaded {
+                connection,
+                relation,
+                columns,
+            } => {
                 self.on_columns_loaded(connection, &relation, columns);
             }
             ExecEvent::ConnectionTested { test, result } => self.on_connection_tested(test, result),
@@ -677,7 +730,14 @@ impl App {
         }
         self.draw_status(frame, status);
         self.draw_hint(frame, hints);
-        self.draw_layers(frame, Rect { y: 0, height: status.y, ..area });
+        self.draw_layers(
+            frame,
+            Rect {
+                y: 0,
+                height: status.y,
+                ..area
+            },
+        );
     }
 
     /// Draws the navigator and its divider. It returns the area for the console.
@@ -688,25 +748,39 @@ impl App {
             self.layout.divider = None;
             return body;
         }
-        let width = self.navigator.width.min(body.width.saturating_sub(mouse::MIN_MAIN_WIDTH));
+        let width = self
+            .navigator
+            .width
+            .min(body.width.saturating_sub(mouse::MIN_MAIN_WIDTH));
         let [side, divider, main] = Layout::horizontal([
             Constraint::Length(width),
             Constraint::Length(1),
             Constraint::Min(0),
         ])
         .areas(body);
-        let [title, tree] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(side);
+        let [title, tree] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(side);
         let focused = self.navigator_focused;
         let connected: Vec<bool> = self
             .connections
             .iter()
             .map(|connection| {
-                self.manager.as_ref().is_some_and(|manager| manager.is_connected(connection.id))
+                self.manager
+                    .as_ref()
+                    .is_some_and(|manager| manager.is_connected(connection.id))
             })
             .collect();
         frame.buffer_mut().set_style(side, self.theme.panel);
         draw_panel_title(frame, title, text::TITLE_EXPLORER, focused, &self.theme);
-        draw_navigator(frame, tree, &mut self.navigator, &self.connections, &connected, focused, &self.theme);
+        draw_navigator(
+            frame,
+            tree,
+            &mut self.navigator,
+            &self.connections,
+            &connected,
+            focused,
+            &self.theme,
+        );
         let line = vec![Line::raw("│"); usize::from(divider.height)];
         frame.render_widget(Paragraph::new(line).style(self.theme.divider), divider);
         self.layout.navigator_title = title;
@@ -717,7 +791,9 @@ impl App {
 
     fn draw_active_console(&mut self, frame: &mut Frame, area: Rect, tall: bool) {
         let connection = self.active_connection();
-        let name = connection.map_or(text::NO_DATABASE_LABEL, |connection| &connection.name).to_owned();
+        let name = connection
+            .map_or(text::NO_DATABASE_LABEL, |connection| &connection.name)
+            .to_owned();
         let namespace = connection.map_or(Namespace::None, |item| item.capabilities.namespace);
         let transactions = connection.is_none_or(|item| item.capabilities.transactions);
         let default_schema = connection.and_then(|item| item.default_schema.clone());
@@ -736,12 +812,27 @@ impl App {
     }
 
     fn draw_active_table(&mut self, frame: &mut Frame, area: Rect, tall: bool) {
-        let Some(index) = self.table_active else { return };
+        let Some(index) = self.table_active else {
+            return;
+        };
         let connection = self.tables[index].connection;
-        let name = self.connection(connection).map_or_else(String::new, |item| item.name.clone());
-        let bar = TableBar { connection: &name, blocked: self.tables[index].is_blocked(&self.budget), title: tall };
+        let name = self
+            .connection(connection)
+            .map_or_else(String::new, |item| item.name.clone());
+        let bar = TableBar {
+            connection: &name,
+            blocked: self.tables[index].is_blocked(&self.budget),
+            title: tall,
+        };
         let focused = !self.navigator_focused;
-        self.layout.table = draw_table(frame, area, &mut self.tables[index], &bar, focused, &self.theme);
+        self.layout.table = draw_table(
+            frame,
+            area,
+            &mut self.tables[index],
+            &bar,
+            focused,
+            &self.theme,
+        );
     }
 
     /// Returns the name of the place that receives keys, for the status line.
@@ -750,7 +841,11 @@ impl App {
             return StatusPanel::Explorer;
         }
         if let Some(tab) = self.table() {
-            return if tab.focus == TableFocus::Grid { StatusPanel::Table } else { StatusPanel::Filter };
+            return if tab.focus == TableFocus::Grid {
+                StatusPanel::Table
+            } else {
+                StatusPanel::Filter
+            };
         }
         let console = self.console();
         if console.focus == Focus::Results {
@@ -771,8 +866,11 @@ impl App {
         let data = (self.budget.used(), self.budget.limit());
         if let Some(tab) = self.table() {
             let view = tab.result.view;
-            let position = (!tab.result.table.rows.is_empty()).then_some((view.row + 1, view.col + 1));
-            let connection = self.connection(tab.connection).map_or("", |item| item.name.as_str());
+            let position =
+                (!tab.result.table.rows.is_empty()).then_some((view.row + 1, view.col + 1));
+            let connection = self
+                .connection(tab.connection)
+                .map_or("", |item| item.name.as_str());
             let status = StatusData {
                 panel,
                 connection,
@@ -780,7 +878,10 @@ impl App {
                 session: None,
                 phase: tab.phase,
                 run_time: run_time(tab.phase, &tab.run, self.clock),
-                pool: self.manager.as_ref().map(|manager| manager.usage(tab.connection)),
+                pool: self
+                    .manager
+                    .as_ref()
+                    .map(|manager| manager.usage(tab.connection)),
                 data,
                 position,
             };
@@ -791,11 +892,13 @@ impl App {
         let connection = self.active_connection();
         let namespace = connection.map_or(Namespace::None, |item| item.capabilities.namespace);
         let default_schema = connection.and_then(|item| item.default_schema.as_deref());
-        let result = console.results.get(console.active).filter(|_| console.focus == Focus::Results);
+        let result = console
+            .results
+            .get(console.active)
+            .filter(|_| console.focus == Focus::Results);
         let position = match result {
-            Some(result) => {
-                (!result.table.rows.is_empty()).then_some((result.view.row + 1, result.view.col + 1))
-            }
+            Some(result) => (!result.table.rows.is_empty())
+                .then_some((result.view.row + 1, result.view.col + 1)),
             None => {
                 let cursor = console.editor.cursor();
                 Some((cursor.row + 1, cursor.col + 1))
@@ -804,11 +907,16 @@ impl App {
         let status = StatusData {
             panel,
             connection: connection.map_or(text::NO_DATABASE_LABEL, |item| item.name.as_str()),
-            schema: (namespace != Namespace::None).then(|| console.schema.as_deref().or(default_schema)).flatten(),
+            schema: (namespace != Namespace::None)
+                .then(|| console.schema.as_deref().or(default_schema))
+                .flatten(),
             session: Some((console.manual, console.transaction)),
             phase: console.phase,
             run_time: run_time(console.phase, &console.run, self.clock),
-            pool: console.connection.zip(self.manager.as_ref()).map(|(id, manager)| manager.usage(id)),
+            pool: console
+                .connection
+                .zip(self.manager.as_ref())
+                .map(|(id, manager)| manager.usage(id)),
             data,
             position,
         };
@@ -821,7 +929,11 @@ impl App {
             None => hint_line(&self.hint_items(), &self.theme),
         };
         // The row starts one column after the edge, as the status line does.
-        let area = Rect { x: area.x + 1, width: area.width.saturating_sub(1), ..area };
+        let area = Rect {
+            x: area.x + 1,
+            width: area.width.saturating_sub(1),
+            ..area
+        };
         frame.render_widget(Paragraph::new(line), area);
     }
 
@@ -835,8 +947,14 @@ impl App {
         }
         if let Some(picker) = &self.picker {
             let items: Vec<&str> = picker.items.iter().map(String::as_str).collect();
-            self.layout.picker =
-                draw_picker(frame, &picker.title, &items, picker.cursor, picker.loading, &self.theme);
+            self.layout.picker = draw_picker(
+                frame,
+                &picker.title,
+                &items,
+                picker.cursor,
+                picker.loading,
+                &self.theme,
+            );
         }
         if let Some(conflicts) = &self.conflicts {
             let rows: Vec<ConflictRowView> = conflicts
@@ -852,14 +970,19 @@ impl App {
                 draw_conflicts(frame, &rows, conflicts.cursor, conflicts.note, &self.theme);
         }
         if let Some(overlay) = &mut self.overlay {
-            let Overlay { title, contents, footer, scroll } = overlay;
+            let Overlay {
+                title,
+                contents,
+                footer,
+                scroll,
+            } = overlay;
             *scroll = draw_overlay(frame, title, contents, footer, *scroll, &self.theme);
         }
         if let Some(palette) = &self.palette {
             self.layout.palette = draw_palette(frame, palette, &self.theme);
         }
         if let Some(form) = &self.settings_form {
-            draw_settings(frame, form, &self.theme);
+            self.layout.settings = draw_settings(frame, form, &self.theme);
         }
         if let Some(prompt) = &self.rename {
             draw_name(frame, prompt, &self.theme);
@@ -869,8 +992,14 @@ impl App {
         }
         if let Some(dialog) = self.dialogs.front() {
             let labels: Vec<&str> = dialog.options.iter().map(|(label, _)| *label).collect();
-            self.layout.dialog =
-                draw_dialog(frame, &dialog.title, &dialog.body, &labels, dialog.focus, &self.theme);
+            self.layout.dialog = draw_dialog(
+                frame,
+                &dialog.title,
+                &dialog.body,
+                &labels,
+                dialog.focus,
+                &self.theme,
+            );
         }
     }
 }
@@ -882,7 +1011,9 @@ pub fn run(options: Options) -> io::Result<()> {
     let signal = signal_flag()?;
     let mut session = Session::start(report_folder)?;
     let mut app = App::new(options, clipboard, Theme::from_env());
-    let result = catch_unwind(AssertUnwindSafe(|| event_loop(&mut app, &mut session, &signal)));
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        event_loop(&mut app, &mut session, &signal)
+    }));
     match result {
         Ok(Ok(())) => Ok(()),
         // A closed terminal ends the loop with an error, and the text still needs a place.
@@ -942,7 +1073,11 @@ fn event_loop(app: &mut App, session: &mut Session, signal: &AtomicBool) -> io::
             app.shutdown();
             return Ok(());
         }
-        let wait = if app.has_work() { Duration::ZERO } else { Duration::from_millis(20) };
+        let wait = if app.has_work() {
+            Duration::ZERO
+        } else {
+            Duration::from_millis(20)
+        };
         if poll(wait)? {
             app.on_event(read()?);
             while poll(Duration::ZERO)? {
@@ -953,4 +1088,3 @@ fn event_loop(app: &mut App, session: &mut Session, signal: &AtomicBool) -> io::
         dirty |= app.drain_events();
     }
 }
-

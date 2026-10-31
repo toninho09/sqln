@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use common::{ctrl, key, temp_dir};
-use crossterm::event::{Event, KeyCode};
+use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use sqln::app::{App, Options};
@@ -47,7 +47,13 @@ fn store(name: &str) -> (Store, PathBuf) {
     let base = temp_dir(name);
     let project = Root::project(&base.join("project"));
     fs::create_dir_all(&project.dir).unwrap();
-    (Store { global: Root::global(base.join("global")), project: Some(project) }, base)
+    (
+        Store {
+            global: Root::global(base.join("global")),
+            project: Some(project),
+        },
+        base,
+    )
 }
 
 /// Writes a database below the current folder of the process. It returns the full path
@@ -57,7 +63,10 @@ fn local_database(name: &str, setup: &str) -> (PathBuf, String) {
     let full = std::env::current_dir().unwrap().join(&relative);
     fs::create_dir_all(full.parent().unwrap()).unwrap();
     let _ = fs::remove_file(&full);
-    rusqlite::Connection::open(&full).unwrap().execute_batch(setup).unwrap();
+    rusqlite::Connection::open(&full)
+        .unwrap()
+        .execute_batch(setup)
+        .unwrap();
     (full, relative)
 }
 
@@ -73,24 +82,39 @@ fn saved_file(store: &Store) -> PathBuf {
 /// A store without a project.
 fn global_only(name: &str) -> (Store, PathBuf) {
     let base = temp_dir(name);
-    (Store { global: Root::global(base.join("global")), project: None }, base)
+    (
+        Store {
+            global: Root::global(base.join("global")),
+            project: None,
+        },
+        base,
+    )
 }
 
 fn database(base: &Path, name: &str, setup: &str) -> PathBuf {
     let path = base.join(format!("{name}.db"));
-    rusqlite::Connection::open(&path).unwrap().execute_batch(setup).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(setup)
+        .unwrap();
     path
 }
 
 impl Session {
     fn start(store: &Store) -> Self {
-        Self::with(Options { store: Some(store.clone()), ..Options::default() })
+        Self::with(Options {
+            store: Some(store.clone()),
+            ..Options::default()
+        })
     }
 
     fn with(options: Options) -> Self {
         let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
         let app = App::new(options, clipboard, Theme::plain());
-        Self { app, now: Instant::now() }
+        Self {
+            app,
+            now: Instant::now(),
+        }
     }
 
     fn press(&mut self, event: crossterm::event::KeyEvent) {
@@ -129,7 +153,9 @@ impl Session {
         let buffer = terminal.backend().buffer().clone();
         (0..buffer.area.height)
             .map(|y| {
-                let row: String = (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect();
+                let row: String = (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect();
                 row.trim_end().to_owned() + "\n"
             })
             .collect()
@@ -137,23 +163,63 @@ impl Session {
 
     fn assert_sees(&mut self, text: &str) {
         let screen = self.screen();
-        assert!(screen.contains(text), "{text:?} is not on the screen:\n{screen}");
+        assert!(
+            screen.contains(text),
+            "{text:?} is not on the screen:\n{screen}"
+        );
     }
 
     fn assert_not_sees(&mut self, text: &str) {
         let screen = self.screen();
-        assert!(!screen.contains(text), "{text:?} is on the screen:\n{screen}");
+        assert!(
+            !screen.contains(text),
+            "{text:?} is on the screen:\n{screen}"
+        );
+    }
+
+    fn click(&mut self, column: u16, row: u16) {
+        let kind = MouseEventKind::Down(MouseButton::Left);
+        self.app.on_event(Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }));
+    }
+
+    /// Returns the column and the row of a text on the screen.
+    fn locate(&mut self, text: &str) -> (u16, u16) {
+        let screen = self.screen();
+        for (y, row) in screen.lines().enumerate() {
+            if let Some(byte) = row.find(text) {
+                return (row[..byte].chars().count() as u16, y as u16);
+            }
+        }
+        panic!("{text:?} is not on the screen:\n{screen}");
+    }
+
+    fn click_text(&mut self, text: &str) {
+        let (column, row) = self.locate(text);
+        self.click(column, row);
     }
 
     fn names(&self) -> Vec<String> {
-        self.app.consoles().iter().map(|console| console.name.clone()).collect()
+        self.app
+            .consoles()
+            .iter()
+            .map(|console| console.name.clone())
+            .collect()
     }
 
     fn pump_sees(&mut self, text: &str) {
         let deadline = Instant::now() + Duration::from_secs(20);
         while !self.screen().contains(text) {
             self.app.drain_events();
-            assert!(Instant::now() < deadline, "{text:?} did not appear:\n{}", self.screen());
+            assert!(
+                Instant::now() < deadline,
+                "{text:?} did not appear:\n{}",
+                self.screen()
+            );
             std::thread::sleep(Duration::from_millis(1));
         }
     }
@@ -200,7 +266,8 @@ impl Session {
         for _ in 0..20 {
             let rows = self.app.navigator().rows(self.app.connections());
             let current = self.app.navigator().current(self.app.connections());
-            let on = current.is_some_and(|row| rows.contains(&row) && row.name(self.app.connections()) == name);
+            let on = current
+                .is_some_and(|row| rows.contains(&row) && row.name(self.app.connections()) == name);
             if on {
                 return;
             }
@@ -229,7 +296,11 @@ fn text_of(root: &Root, id: &str) -> String {
 fn the_connections_of_both_scopes_show_and_the_first_console_uses_the_first() {
     let (store, base) = store("p-scopes");
     let db = database(&base, "a", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "app", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "app", &db.display().to_string())],
+    );
     write_config(
         store.project.as_ref().unwrap(),
         "{}",
@@ -239,7 +310,12 @@ fn the_connections_of_both_scopes_show_and_the_first_console_uses_the_first() {
         ],
     );
     let mut session = Session::start(&store);
-    let names: Vec<_> = session.app.connections().iter().map(|c| c.name.clone()).collect();
+    let names: Vec<_> = session
+        .app
+        .connections()
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
     // A name that two scopes use shows its scope. The other name stays plain.
     assert_eq!(names, ["app (global)", "app (local)", "other"]);
     assert!(session.app.console().connection.is_some());
@@ -252,8 +328,16 @@ fn a_connection_with_a_relative_path_uses_the_folder_of_its_scope() {
     let (store, base) = store("p-relative");
     let project_root = base.join("project");
     fs::create_dir_all(project_root.join("db")).unwrap();
-    database(&project_root, "db/app", "CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('from-project');");
-    write_config(store.project.as_ref().unwrap(), "{}", &[sqlite_entry("p1", "app", "db/app.db")]);
+    database(
+        &project_root,
+        "db/app",
+        "CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('from-project');",
+    );
+    write_config(
+        store.project.as_ref().unwrap(),
+        "{}",
+        &[sqlite_entry("p1", "app", "db/app.db")],
+    );
     let mut session = Session::start(&store);
     session.write("SELECT v FROM t;");
     session.press(common::shift(KeyCode::F(5)));
@@ -270,17 +354,36 @@ fn a_connection_with_a_relative_path_uses_the_folder_of_its_scope() {
 #[test]
 fn the_preferences_of_the_project_replace_only_the_values_that_it_declares() {
     let (store, _) = store("p-preferences");
-    write_config(&store.global, r#"{"keyboardMode":"conventional","rowCap":3}"#, &[]);
-    write_config(store.project.as_ref().unwrap(), r#"{"keyboardMode":"vim"}"#, &[]);
+    write_config(
+        &store.global,
+        r#"{"keyboardMode":"conventional","rowCap":3}"#,
+        &[],
+    );
+    write_config(
+        store.project.as_ref().unwrap(),
+        r#"{"keyboardMode":"vim"}"#,
+        &[],
+    );
     let session = Session::start(&store);
-    assert_eq!(session.app.console().editor.keyboard(), sqln::editor::KeyboardMode::Vim);
+    assert_eq!(
+        session.app.console().editor.keyboard(),
+        sqln::editor::KeyboardMode::Vim
+    );
 }
 
 #[test]
 fn a_row_cap_of_the_file_limits_the_result() {
     let (store, base) = global_only("p-rowcap");
-    let db = database(&base, "r", "CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (1),(2),(3),(4),(5);");
-    write_config(&store.global, r#"{"rowCap":2}"#, &[sqlite_entry("g1", "r", &db.display().to_string())]);
+    let db = database(
+        &base,
+        "r",
+        "CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (1),(2),(3),(4),(5);",
+    );
+    write_config(
+        &store.global,
+        r#"{"rowCap":2}"#,
+        &[sqlite_entry("g1", "r", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.write("SELECT v FROM t;");
     session.press(common::shift(KeyCode::F(5)));
@@ -321,7 +424,11 @@ fn an_invalid_file_blocks_the_databases_until_it_is_fixed_and_reloaded() {
     let (store, base) = global_only("p-invalid");
     let db = database(&base, "i", "");
     fs::create_dir_all(&store.global.dir).unwrap();
-    fs::write(store.global.config_file(), "{\n  \"version\": 1,\n  \"connections\": [,]\n}").unwrap();
+    fs::write(
+        store.global.config_file(),
+        "{\n  \"version\": 1,\n  \"connections\": [,]\n}",
+    )
+    .unwrap();
     let mut session = Session::start(&store);
     session.assert_sees("Invalid configuration");
     session.assert_sees("line 3, column 19");
@@ -341,10 +448,19 @@ fn an_invalid_file_blocks_the_databases_until_it_is_fixed_and_reloaded() {
     session.assert_sees("Invalid configuration");
     session.code(KeyCode::Esc);
     // The user fixes the file outside the application, then reloads.
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "fixed", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "fixed", &db.display().to_string())],
+    );
     session.prefix('r');
     session.assert_sees("loaded again");
-    let names: Vec<_> = session.app.connections().iter().map(|c| c.name.clone()).collect();
+    let names: Vec<_> = session
+        .app
+        .connections()
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
     assert_eq!(names, ["fixed"]);
     session.assert_not_sees("Ctrl+W r loads");
 }
@@ -391,7 +507,11 @@ fn after_a_failed_reload_the_open_connections_cannot_run_until_the_file_is_fixed
 #[test]
 fn the_error_of_a_keymap_conflict_names_the_file() {
     let (store, _) = global_only("p-keymap-error");
-    write_config(&store.global, r#"{"keymap":{"conventional":{"run":["f6"],"stop":["f6"]}}}"#, &[]);
+    write_config(
+        &store.global,
+        r#"{"keymap":{"conventional":{"run":["f6"],"stop":["f6"]}}}"#,
+        &[],
+    );
     let mut session = Session::start(&store);
     session.assert_sees("Invalid configuration");
     session.assert_sees("f6");
@@ -406,7 +526,14 @@ fn a_change_of_the_file_by_another_program_asks_before_it_reloads() {
     let mut session = Session::start(&store);
     session.wait(1_000);
     assert!(session.app.connections().len() == 1);
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "one", &path), sqlite_entry("g2", "two", &path)]);
+    write_config(
+        &store.global,
+        "{}",
+        &[
+            sqlite_entry("g1", "one", &path),
+            sqlite_entry("g2", "two", &path),
+        ],
+    );
     session.wait(1_000);
     session.assert_sees("Configuration changed");
     // The default answer changes nothing.
@@ -416,12 +543,24 @@ fn a_change_of_the_file_by_another_program_asks_before_it_reloads() {
     session.wait(1_000);
     session.assert_not_sees("Configuration changed");
     // A new change asks again, and Reload applies it.
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "one", &path), sqlite_entry("g3", "three", &path)]);
+    write_config(
+        &store.global,
+        "{}",
+        &[
+            sqlite_entry("g1", "one", &path),
+            sqlite_entry("g3", "three", &path),
+        ],
+    );
     session.wait(1_000);
     session.assert_sees("Configuration changed");
     session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
-    let names: Vec<_> = session.app.connections().iter().map(|c| c.name.clone()).collect();
+    let names: Vec<_> = session
+        .app
+        .connections()
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
     assert_eq!(names, ["one", "three"]);
 }
 
@@ -447,7 +586,11 @@ fn a_reload_does_not_change_a_connection_with_an_open_transaction() {
     // The file now has no connection, and the reload leaves the active one.
     write_config(&store.global, "{}", &[]);
     session.prefix('r');
-    assert_eq!(session.app.connections().len(), 1, "an active connection stays");
+    assert_eq!(
+        session.app.connections().len(),
+        1,
+        "an active connection stays"
+    );
     assert!(session.app.console().in_transaction());
 }
 
@@ -456,11 +599,23 @@ fn a_connection_that_leaves_the_file_leaves_the_application_when_it_is_idle() {
     let (store, base) = global_only("p-reload-remove");
     let db = database(&base, "a", "");
     let path = db.display().to_string();
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "one", &path), sqlite_entry("g2", "two", &path)]);
+    write_config(
+        &store.global,
+        "{}",
+        &[
+            sqlite_entry("g1", "one", &path),
+            sqlite_entry("g2", "two", &path),
+        ],
+    );
     let mut session = Session::start(&store);
     write_config(&store.global, "{}", &[sqlite_entry("g1", "one", &path)]);
     session.prefix('r');
-    let names: Vec<_> = session.app.connections().iter().map(|c| c.name.clone()).collect();
+    let names: Vec<_> = session
+        .app
+        .connections()
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
     assert_eq!(names, ["one"]);
 }
 
@@ -481,7 +636,10 @@ fn a_project_is_offered_and_created_on_request() {
     session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
     assert!(folder.join(".sqln").is_dir());
-    assert_eq!(fs::read_to_string(folder.join(".sqln/.gitignore")).unwrap(), "workspace.json\nlocks/\n*.tmp\n");
+    assert_eq!(
+        fs::read_to_string(folder.join(".sqln/.gitignore")).unwrap(),
+        "workspace.json\nlocks/\n*.tmp\n"
+    );
     assert!(!folder.join(".git").exists());
 }
 
@@ -490,7 +648,11 @@ fn declining_the_project_keeps_the_global_scope_only() {
     let (store, base) = global_only("p-decline");
     let folder = base.join("work");
     fs::create_dir_all(&folder).unwrap();
-    let options = Options { store: Some(store), offer_project: Some(folder.clone()), ..Options::default() };
+    let options = Options {
+        store: Some(store),
+        offer_project: Some(folder.clone()),
+        ..Options::default()
+    };
     let mut session = Session::with(options);
     session.code(KeyCode::Enter);
     assert!(!folder.join(".sqln").exists());
@@ -573,7 +735,11 @@ fn two_scopes_can_use_the_same_name_and_one_scope_cannot() {
     let (store, base) = store("p-form-names");
     let db = database(&base, "n", "");
     let path = db.display().to_string();
-    write_config(store.project.as_ref().unwrap(), "{}", &[sqlite_entry("p1", "same", &path)]);
+    write_config(
+        store.project.as_ref().unwrap(),
+        "{}",
+        &[sqlite_entry("p1", "same", &path)],
+    );
     let mut session = Session::start(&store);
     let save_sqlite = |session: &mut Session, scope_to_global: bool| {
         session.press(ctrl('w'));
@@ -601,7 +767,12 @@ fn two_scopes_can_use_the_same_name_and_one_scope_cannot() {
     // The global scope accepts it, and both names show their scope.
     save_sqlite(&mut session, true);
     assert!(session.app.form().is_none(), "{}", session.screen());
-    let names: Vec<_> = session.app.connections().iter().map(|c| c.name.clone()).collect();
+    let names: Vec<_> = session
+        .app
+        .connections()
+        .iter()
+        .map(|c| c.name.clone())
+        .collect();
     assert_eq!(names, ["same (local)", "SAME (global)"]);
 }
 
@@ -609,7 +780,11 @@ fn two_scopes_can_use_the_same_name_and_one_scope_cannot() {
 fn removing_a_connection_removes_its_entry_and_keeps_its_scripts() {
     let (store, base) = global_only("p-remove");
     let db = database(&base, "d", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "gone", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "gone", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.type_and_save("SELECT 1;");
     assert_eq!(consoles_in(&store.global, Scope::Global).len(), 1);
@@ -623,7 +798,11 @@ fn removing_a_connection_removes_its_entry_and_keeps_its_scripts() {
     assert!(session.app.connections().is_empty());
     let text = fs::read_to_string(store.global.config_file()).unwrap();
     assert!(!text.contains("gone"), "{text}");
-    assert_eq!(consoles_in(&store.global, Scope::Global).len(), 1, "the script stays");
+    assert_eq!(
+        consoles_in(&store.global, Scope::Global).len(),
+        1,
+        "the script stays"
+    );
 }
 
 fn erase_field(session: &mut Session, characters: usize) {
@@ -636,7 +815,11 @@ fn erase_field(session: &mut Session, characters: usize) {
 fn editing_a_connection_replaces_its_entry_and_keeps_its_identity_and_scripts() {
     let (store, base) = global_only("p-edit");
     let db = database(&base, "e", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "before", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "before", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.type_and_save("SELECT 1;");
     session.go_to_connection("before");
@@ -655,14 +838,23 @@ fn editing_a_connection_replaces_its_entry_and_keeps_its_identity_and_scripts() 
     assert!(!text.contains("before"), "{text}");
     assert_eq!(session.app.connections()[0].name, "after");
     // The script keeps pointing to the same identity.
-    assert_eq!(consoles_in(&store.global, Scope::Global)[0].meta.connection_id, "g1");
+    assert_eq!(
+        consoles_in(&store.global, Scope::Global)[0]
+            .meta
+            .connection_id,
+        "g1"
+    );
 }
 
 #[test]
 fn the_sql_limit_of_a_connection_saves_and_zero_means_no_limit() {
     let (store, base) = global_only("p-sql-limit");
     let db = database(&base, "e", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "one", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "one", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.go_to_connection("one");
     session.code(KeyCode::Char('e'));
@@ -686,7 +878,11 @@ fn the_sql_limit_of_a_connection_saves_and_zero_means_no_limit() {
 fn a_bad_sql_limit_keeps_the_form_open() {
     let (store, base) = global_only("p-sql-limit-bad");
     let db = database(&base, "e", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "one", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "one", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.go_to_connection("one");
     session.code(KeyCode::Char('e'));
@@ -701,14 +897,22 @@ fn a_bad_sql_limit_keeps_the_form_open() {
     assert!(session.app.form().is_some());
     session.assert_sees("SQL limit");
     // The file did not change.
-    assert!(!fs::read_to_string(store.global.config_file()).unwrap().contains("sqlTimeoutSeconds"));
+    assert!(
+        !fs::read_to_string(store.global.config_file())
+            .unwrap()
+            .contains("sqlTimeoutSeconds")
+    );
 }
 
 #[test]
 fn a_connected_connection_can_change_its_name_only_and_the_file_follows() {
     let (store, base) = global_only("p-rename");
     let db = database(&base, "e", "CREATE TABLE t (v INTEGER);");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "old", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "old", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.prefix('m');
     session.write("INSERT INTO t VALUES (1);");
@@ -732,7 +936,10 @@ fn a_connected_connection_can_change_its_name_only_and_the_file_follows() {
     assert_eq!(session.app.connections()[0].name, "new");
     assert!(session.app.console().in_transaction());
     let text = fs::read_to_string(store.global.config_file()).unwrap();
-    assert!(text.contains("\"name\": \"new\"") && !text.contains("\"old\""), "{text}");
+    assert!(
+        text.contains("\"name\": \"new\"") && !text.contains("\"old\""),
+        "{text}"
+    );
 }
 
 #[test]
@@ -766,15 +973,25 @@ fn a_failed_write_of_the_configuration_keeps_the_form_open_with_the_error() {
 fn an_edit_creates_the_files_after_500_ms_and_an_empty_console_creates_none() {
     let (store, base) = global_only("p-autosave");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.wait(0);
     session.wait(2_000);
-    assert!(consoles_in(&store.global, Scope::Global).is_empty(), "no edit, no file");
+    assert!(
+        consoles_in(&store.global, Scope::Global).is_empty(),
+        "no edit, no file"
+    );
     session.write("SELECT 1;");
     session.wait(0);
     session.wait(499);
-    assert!(consoles_in(&store.global, Scope::Global).is_empty(), "before 500 ms");
+    assert!(
+        consoles_in(&store.global, Scope::Global).is_empty(),
+        "before 500 ms"
+    );
     session.wait(1);
     let saved = consoles_in(&store.global, Scope::Global);
     assert_eq!(saved.len(), 1);
@@ -788,7 +1005,11 @@ fn an_edit_creates_the_files_after_500_ms_and_an_empty_console_creates_none() {
 fn each_edit_restarts_the_wait() {
     let (store, base) = global_only("p-restart");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.write("SELECT");
     session.wait(0);
@@ -806,10 +1027,17 @@ fn each_edit_restarts_the_wait() {
 fn a_console_of_a_project_connection_saves_in_the_project() {
     let (store, base) = store("p-project-console");
     let db = database(&base, "s", "");
-    write_config(store.project.as_ref().unwrap(), "{}", &[sqlite_entry("p1", "proj", &db.display().to_string())]);
+    write_config(
+        store.project.as_ref().unwrap(),
+        "{}",
+        &[sqlite_entry("p1", "proj", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.type_and_save("SELECT 1;");
-    assert_eq!(consoles_in(store.project.as_ref().unwrap(), Scope::Project).len(), 1);
+    assert_eq!(
+        consoles_in(store.project.as_ref().unwrap(), Scope::Project).len(),
+        1
+    );
     assert!(consoles_in(&store.global, Scope::Global).is_empty());
 }
 
@@ -817,7 +1045,11 @@ fn a_console_of_a_project_connection_saves_in_the_project() {
 fn ctrl_s_writes_at_once() {
     let (store, base) = global_only("p-ctrl-s");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.write("SELECT 1;");
     session.press(ctrl('s'));
@@ -829,7 +1061,11 @@ fn ctrl_s_writes_at_once() {
 fn ctrl_s_in_an_empty_console_has_nothing_to_save() {
     let (store, base) = global_only("p-ctrl-s-empty");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.press(ctrl('s'));
     session.assert_sees("no text to save");
@@ -840,7 +1076,11 @@ fn ctrl_s_in_an_empty_console_has_nothing_to_save() {
 fn closing_a_console_writes_the_pending_text() {
     let (store, base) = global_only("p-close-flush");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.write("SELECT 1;");
     session.prefix('c');
@@ -854,12 +1094,19 @@ fn closing_a_console_writes_the_pending_text() {
 fn quitting_writes_the_pending_text_and_the_cursor() {
     let (store, base) = global_only("p-quit");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.write("SELECT 1;\nSELECT 2;");
     session.quit();
     let saved = consoles_in(&store.global, Scope::Global);
-    assert_eq!(text_of(&store.global, &saved[0].meta.id), "SELECT 1;\nSELECT 2;");
+    assert_eq!(
+        text_of(&store.global, &saved[0].meta.id),
+        "SELECT 1;\nSELECT 2;"
+    );
     let state = sqln::store::workspace::load(&store.global);
     let cursor = state.consoles[&saved[0].meta.id].cursor;
     assert_eq!((cursor.row, cursor.col), (1, 9));
@@ -870,7 +1117,11 @@ fn a_new_console_takes_the_lowest_free_name_after_a_restart() {
     let (store, base) = global_only("p-names");
     let db = database(&base, "s", "");
     let preferences = r#"{"reopenTabs":false}"#;
-    write_config(&store.global, preferences, &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        preferences,
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut first = Session::start(&store);
     first.type_and_save("SELECT 1;");
     first.quit();
@@ -878,8 +1129,10 @@ fn a_new_console_takes_the_lowest_free_name_after_a_restart() {
     let mut second = Session::start(&store);
     assert_eq!(second.names(), ["console-2"], "console-1 is saved");
     second.type_and_save("SELECT 2;");
-    let mut names: Vec<_> =
-        consoles_in(&store.global, Scope::Global).into_iter().map(|entry| entry.meta.name).collect();
+    let mut names: Vec<_> = consoles_in(&store.global, Scope::Global)
+        .into_iter()
+        .map(|entry| entry.meta.name)
+        .collect();
     names.sort();
     assert_eq!(names, ["console-1", "console-2"]);
 }
@@ -888,7 +1141,11 @@ fn a_new_console_takes_the_lowest_free_name_after_a_restart() {
 fn the_alert_of_a_failed_write_stays_while_the_failure_lasts() {
     let (store, base) = global_only("p-failure-stays");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     fs::write(store.global.dir.join("consoles"), "x").unwrap();
     let mut session = Session::start(&store);
     session.type_and_save("SELECT 1;");
@@ -908,7 +1165,11 @@ fn the_alert_of_a_failed_write_stays_while_the_failure_lasts() {
 fn a_failed_write_keeps_the_text_shows_an_alert_and_blocks_the_close_until_confirmed() {
     let (store, base) = global_only("p-failure");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     // A file in the place of the folder makes the write fail.
     fs::write(store.global.dir.join("consoles"), "x").unwrap();
     let mut session = Session::start(&store);
@@ -933,7 +1194,11 @@ fn a_failed_write_keeps_the_text_shows_an_alert_and_blocks_the_close_until_confi
 fn closing_without_saving_after_a_failure_drops_only_the_unsaved_text() {
     let (store, base) = global_only("p-failure-discard");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     fs::write(store.global.dir.join("consoles"), "x").unwrap();
     let mut session = Session::start(&store);
     session.type_and_save("SELECT 1;");
@@ -948,7 +1213,11 @@ fn closing_without_saving_after_a_failure_drops_only_the_unsaved_text() {
 fn a_failed_write_never_blocks_a_run() {
     let (store, base) = global_only("p-failure-run");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     fs::write(store.global.dir.join("consoles"), "x").unwrap();
     let mut session = Session::start(&store);
     session.type_and_save("SELECT 41 + 1;");
@@ -987,7 +1256,11 @@ fn an_empty_unbound_console_closes_without_a_question() {
 fn a_crlf_file_keeps_its_line_ending_after_an_edit() {
     let (store, base) = global_only("p-crlf");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let root = &store.global;
     scripts::create(
         root,
@@ -1025,8 +1298,18 @@ fn the_list_offers_the_saved_consoles_of_the_connection_and_a_new_one() {
         ],
     );
     let root = &store.global;
-    scripts::create(root, &ScriptMeta::new("a".into(), "investigate".into(), "g1".into(), Scope::Global), "SELECT 1;").unwrap();
-    scripts::create(root, &ScriptMeta::new("b".into(), "other-db".into(), "g2".into(), Scope::Global), "SELECT 2;").unwrap();
+    scripts::create(
+        root,
+        &ScriptMeta::new("a".into(), "investigate".into(), "g1".into(), Scope::Global),
+        "SELECT 1;",
+    )
+    .unwrap();
+    scripts::create(
+        root,
+        &ScriptMeta::new("b".into(), "other-db".into(), "g2".into(), Scope::Global),
+        "SELECT 2;",
+    )
+    .unwrap();
     let mut session = Session::start(&store);
     session.go_to_connection("first");
     session.code(KeyCode::Char('n'));
@@ -1041,7 +1324,11 @@ fn the_list_offers_the_saved_consoles_of_the_connection_and_a_new_one() {
 fn choosing_a_saved_console_opens_it_without_running_it_and_restores_the_cursor() {
     let (store, base) = global_only("p-reopen");
     let db = database(&base, "s", "CREATE TABLE t (v INTEGER);");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut first = Session::start(&store);
     first.write("INSERT INTO t VALUES (1);\nSELECT 2;");
     first.code(KeyCode::Up);
@@ -1069,7 +1356,11 @@ fn choosing_a_saved_console_opens_it_without_running_it_and_restores_the_cursor(
 fn choosing_an_open_console_selects_its_tab() {
     let (store, base) = global_only("p-reopen-open");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.type_and_save("SELECT 1;");
     session.go_to_connection("s");
@@ -1084,7 +1375,11 @@ fn choosing_an_open_console_selects_its_tab() {
 fn the_new_console_row_creates_another_console() {
     let (store, base) = global_only("p-new-row");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.type_and_save("SELECT 1;");
     session.go_to_connection("s");
@@ -1097,7 +1392,11 @@ fn the_new_console_row_creates_another_console() {
 fn a_connection_without_saved_consoles_creates_a_console_without_the_list() {
     let (store, base) = global_only("p-no-list");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.write("x");
     session.go_to_connection("s");
@@ -1110,7 +1409,11 @@ fn a_connection_without_saved_consoles_creates_a_console_without_the_list() {
 fn a_second_instance_cannot_open_a_console_that_the_first_uses() {
     let (store, base) = global_only("p-lock");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut first = Session::start(&store);
     first.type_and_save("SELECT 1;");
     let mut second = Session::start(&store);
@@ -1137,10 +1440,19 @@ fn a_console_reopens_with_the_connection_of_its_scope_when_two_names_collide() {
     let db = database(&base, "c", "");
     let path = db.display().to_string();
     write_config(&store.global, "{}", &[sqlite_entry("g1", "app", &path)]);
-    write_config(store.project.as_ref().unwrap(), "{}", &[sqlite_entry("p1", "app", &path)]);
+    write_config(
+        store.project.as_ref().unwrap(),
+        "{}",
+        &[sqlite_entry("p1", "app", &path)],
+    );
     scripts::create(
         store.project.as_ref().unwrap(),
-        &ScriptMeta::new("pc".into(), "from-project".into(), "p1".into(), Scope::Project),
+        &ScriptMeta::new(
+            "pc".into(),
+            "from-project".into(),
+            "p1".into(),
+            Scope::Project,
+        ),
         "SELECT 'project';",
     )
     .unwrap();
@@ -1152,7 +1464,12 @@ fn a_console_reopens_with_the_connection_of_its_scope_when_two_names_collide() {
     session.code(KeyCode::Down);
     session.code(KeyCode::Enter);
     let console = session.app.console();
-    let connection = session.app.connections().iter().find(|c| Some(c.id) == console.connection).unwrap();
+    let connection = session
+        .app
+        .connections()
+        .iter()
+        .find(|c| Some(c.id) == console.connection)
+        .unwrap();
     assert_eq!(connection.name, "app (local)");
     // The global connection with the same name has no saved console.
     session.go_to_connection("app (global)");
@@ -1164,7 +1481,11 @@ fn a_console_reopens_with_the_connection_of_its_scope_when_two_names_collide() {
 fn the_question_about_a_removal_names_the_file_and_the_scripts_that_stay() {
     let (store, base) = global_only("p-remove-text");
     let db = database(&base, "d", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "gone", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "gone", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.go_to_connection("gone");
     session.code(KeyCode::Delete);
@@ -1173,7 +1494,11 @@ fn the_question_about_a_removal_names_the_file_and_the_scripts_that_stay() {
     // Cancel removes nothing.
     session.code(KeyCode::Enter);
     assert_eq!(session.app.connections().len(), 1);
-    assert!(fs::read_to_string(store.global.config_file()).unwrap().contains("gone"));
+    assert!(
+        fs::read_to_string(store.global.config_file())
+            .unwrap()
+            .contains("gone")
+    );
 }
 
 // ---- changes by other programs ----
@@ -1185,7 +1510,11 @@ fn script_path(root: &Root, id: &str) -> PathBuf {
 fn session_with_saved_console(name: &str) -> (Session, Store, String) {
     let (store, base) = global_only(name);
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.type_and_save("SELECT 1;");
     let id = consoles_in(&store.global, Scope::Global)[0].meta.id.clone();
@@ -1303,7 +1632,11 @@ fn close_after_a_removal_closes_the_console_without_writing() {
 fn several_changed_scripts_share_one_question_with_a_choice_for_each() {
     let (store, base) = global_only("p-conflict-batch");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.type_and_save("ONE;");
     session.go_to_connection("s");
@@ -1359,9 +1692,18 @@ fn ctrl_s_opens_the_question_again_for_a_script_in_conflict() {
 fn the_list_shows_how_long_ago_each_console_changed() {
     let (store, base) = global_only("p-ages");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let now = std::time::SystemTime::now();
-    for (id, seconds) in [("fresh", 5), ("minutes", 5 * 60), ("hours", 3 * 3_600), ("days", 4 * 86_400)] {
+    for (id, seconds) in [
+        ("fresh", 5),
+        ("minutes", 5 * 60),
+        ("hours", 3 * 3_600),
+        ("days", 4 * 86_400),
+    ] {
         scripts::create(
             &store.global,
             &ScriptMeta::new(id.into(), id.into(), "g1".into(), Scope::Global),
@@ -1369,7 +1711,12 @@ fn the_list_shows_how_long_ago_each_console_changed() {
         )
         .unwrap();
         let time = now - Duration::from_secs(seconds);
-        fs::File::options().write(true).open(script_path(&store.global, id)).unwrap().set_modified(time).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(script_path(&store.global, id))
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
     }
     let mut session = Session::start(&store);
     session.go_to_connection("s");
@@ -1382,9 +1729,16 @@ fn the_list_shows_how_long_ago_each_console_changed() {
     let screen = session.screen();
     let order: Vec<usize> = ["fresh", "minutes", "hours", "days"]
         .iter()
-        .map(|name| screen.find(&format!("{name} ")).unwrap_or_else(|| panic!("{name} is missing:\n{screen}")))
+        .map(|name| {
+            screen
+                .find(&format!("{name} "))
+                .unwrap_or_else(|| panic!("{name} is missing:\n{screen}"))
+        })
         .collect();
-    assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}\n{screen}");
+    assert!(
+        order.windows(2).all(|pair| pair[0] < pair[1]),
+        "{order:?}\n{screen}"
+    );
 }
 
 #[test]
@@ -1392,34 +1746,61 @@ fn a_reload_with_another_keyboard_mode_keeps_the_text_and_the_saved_state() {
     let (store, base) = global_only("p-reload-keyboard");
     let db = database(&base, "s", "");
     let entry = sqlite_entry("g1", "s", &db.display().to_string());
-    write_config(&store.global, r#"{"keyboardMode":"conventional"}"#, std::slice::from_ref(&entry));
+    write_config(
+        &store.global,
+        r#"{"keyboardMode":"conventional"}"#,
+        std::slice::from_ref(&entry),
+    );
     let mut session = Session::start(&store);
     session.type_and_save("SELECT 1;\nSELECT 2;");
     session.write("\nSELECT 3;");
     // The last text is not saved yet.
     write_config(&store.global, r#"{"keyboardMode":"vim"}"#, &[entry]);
     session.prefix('r');
-    assert_eq!(session.app.console().editor.keyboard(), sqln::editor::KeyboardMode::Vim);
+    assert_eq!(
+        session.app.console().editor.keyboard(),
+        sqln::editor::KeyboardMode::Vim
+    );
     assert_eq!(session.text(), "SELECT 1;\nSELECT 2;\nSELECT 3;");
     // The new editor is still newer than the file, so the autosave writes it.
     session.wait(0);
     session.wait(500);
     let id = consoles_in(&store.global, Scope::Global)[0].meta.id.clone();
-    assert_eq!(text_of(&store.global, &id), "SELECT 1;\nSELECT 2;\nSELECT 3;");
+    assert_eq!(
+        text_of(&store.global, &id),
+        "SELECT 1;\nSELECT 2;\nSELECT 3;"
+    );
 }
 
 // ---- scripts without a connection ----
 
 fn session_with_orphan(name: &str) -> (Session, Store, PathBuf) {
     let (store, base) = store(name);
-    let db = database(&base, "s", "CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('hello');");
+    let db = database(
+        &base,
+        "s",
+        "CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('hello');",
+    );
     let path = db.display().to_string();
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "global-db", &path)]);
-    write_config(store.project.as_ref().unwrap(), "{}", &[sqlite_entry("p1", "project-db", &path)]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "global-db", &path)],
+    );
+    write_config(
+        store.project.as_ref().unwrap(),
+        "{}",
+        &[sqlite_entry("p1", "project-db", &path)],
+    );
     // A script of a connection that does not exist anymore.
     scripts::create(
         &store.global,
-        &ScriptMeta::new("orphan".into(), "old-report".into(), "removed".into(), Scope::Global),
+        &ScriptMeta::new(
+            "orphan".into(),
+            "old-report".into(),
+            "removed".into(),
+            Scope::Global,
+        ),
         "SELECT v FROM t;",
     )
     .unwrap();
@@ -1431,7 +1812,12 @@ fn the_list_of_scripts_without_a_connection_shows_only_those_scripts() {
     let (mut session, store, _) = session_with_orphan("p-orphans");
     scripts::create(
         &store.global,
-        &ScriptMeta::new("fine".into(), "has-connection".into(), "g1".into(), Scope::Global),
+        &ScriptMeta::new(
+            "fine".into(),
+            "has-connection".into(),
+            "g1".into(),
+            Scope::Global,
+        ),
         "SELECT 1;",
     )
     .unwrap();
@@ -1447,7 +1833,11 @@ fn the_list_of_scripts_without_a_connection_shows_only_those_scripts() {
 fn the_list_is_empty_when_every_script_has_a_connection() {
     let (store, base) = global_only("p-no-orphans");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     let mut session = Session::start(&store);
     session.press(ctrl('w'));
     session.code(KeyCode::Char('h'));
@@ -1497,7 +1887,10 @@ fn associating_in_the_same_scope_confirms_links_and_does_not_run() {
     session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
     assert!(session.app.console().connection.is_some());
-    assert!(session.app.console().results.is_empty(), "the association runs no SQL");
+    assert!(
+        session.app.console().results.is_empty(),
+        "the association runs no SQL"
+    );
     let entry = &consoles_in(&store.global, Scope::Global)[0];
     assert_eq!(entry.meta.connection_id, "g1");
     assert_eq!(entry.meta.connection_scope, Scope::Global);
@@ -1546,10 +1939,23 @@ fn associating_with_a_connection_of_another_scope_moves_the_files() {
 fn a_script_of_a_removed_connection_does_not_attach_to_a_connection_with_the_same_name() {
     let (store, base) = global_only("p-no-name-match");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("new-id", "same-name", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry(
+            "new-id",
+            "same-name",
+            &db.display().to_string(),
+        )],
+    );
     scripts::create(
         &store.global,
-        &ScriptMeta::new("old".into(), "script".into(), "old-id".into(), Scope::Global),
+        &ScriptMeta::new(
+            "old".into(),
+            "script".into(),
+            "old-id".into(),
+            Scope::Global,
+        ),
         "SELECT 1;",
     )
     .unwrap();
@@ -1620,7 +2026,12 @@ fn old_temporary_files_go_at_the_start() {
     let old = store.global.consoles_dir().join("x.sql.tmp");
     fs::write(&old, "x").unwrap();
     let past = std::time::SystemTime::now() - Duration::from_secs(3_600);
-    fs::File::options().write(true).open(&old).unwrap().set_modified(past).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&old)
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
     let _session = Session::start(&store);
     assert!(!old.exists());
 }
@@ -1647,14 +2058,23 @@ fn erase_name(session: &mut Session) {
 
 fn two_connections(name: &str) -> (Store, PathBuf) {
     let (store, base) = store(name);
-    let db = database(&base, "s", "CREATE TABLE t (v INTEGER);").display().to_string();
+    let db = database(&base, "s", "CREATE TABLE t (v INTEGER);")
+        .display()
+        .to_string();
     let other = database(&base, "o", "").display().to_string();
     write_config(
         &store.global,
         "{}",
-        &[sqlite_entry("g1", "first", &db), sqlite_entry("g2", "second", &other)],
+        &[
+            sqlite_entry("g1", "first", &db),
+            sqlite_entry("g2", "second", &other),
+        ],
     );
-    write_config(store.project.as_ref().unwrap(), "{}", &[sqlite_entry("p1", "third", &other)]);
+    write_config(
+        store.project.as_ref().unwrap(),
+        "{}",
+        &[sqlite_entry("p1", "third", &other)],
+    );
     (store, base)
 }
 
@@ -1693,7 +2113,12 @@ fn a_new_name_keeps_the_identity_the_files_and_the_connection() {
 fn a_name_must_not_be_empty_or_repeated_in_the_connection() {
     let (store, _) = two_connections("p-rename-refused");
     let root = store.global.clone();
-    scripts::create(&root, &ScriptMeta::new("a".into(), "Taken".into(), "g1".into(), Scope::Global), "").unwrap();
+    scripts::create(
+        &root,
+        &ScriptMeta::new("a".into(), "Taken".into(), "g1".into(), Scope::Global),
+        "",
+    )
+    .unwrap();
     let mut session = Session::start(&store);
     let before = session.app.console().name.clone();
     session.press(ctrl('w'));
@@ -1713,7 +2138,12 @@ fn a_name_must_not_be_empty_or_repeated_in_the_connection() {
 fn the_list_renames_a_saved_console_that_no_tab_shows() {
     let (store, _) = two_connections("p-rename-list");
     let root = store.global.clone();
-    scripts::create(&root, &ScriptMeta::new("a".into(), "old-name".into(), "g1".into(), Scope::Global), "SELECT 2;").unwrap();
+    scripts::create(
+        &root,
+        &ScriptMeta::new("a".into(), "old-name".into(), "g1".into(), Scope::Global),
+        "SELECT 2;",
+    )
+    .unwrap();
     let mut session = Session::start(&store);
     session.go_to_connection("first");
     session.code(KeyCode::Char('n'));
@@ -1817,7 +2247,10 @@ fn the_settings_write_only_the_scope_of_the_dialog() {
     session.assert_sees("settings are saved");
     let text = fs::read_to_string(project.config_file()).unwrap();
     assert!(text.contains("\"pageSize\": 77"), "{text}");
-    assert_eq!(fs::read_to_string(store.global.config_file()).unwrap(), global);
+    assert_eq!(
+        fs::read_to_string(store.global.config_file()).unwrap(),
+        global
+    );
     // The connections and the other parts of the file stay.
     assert!(text.contains("third"), "{text}");
 }
@@ -1826,9 +2259,17 @@ fn the_settings_write_only_the_scope_of_the_dialog() {
 fn an_empty_field_removes_the_project_value_and_shows_the_global_value() {
     let (store, base) = store("p-settings-remove");
     let db = database(&base, "s", "").display().to_string();
-    write_config(&store.global, r#"{"pageSize":10}"#, &[sqlite_entry("g1", "s", &db)]);
+    write_config(
+        &store.global,
+        r#"{"pageSize":10}"#,
+        &[sqlite_entry("g1", "s", &db)],
+    );
     let project = store.project.clone().unwrap();
-    write_config(&project, r#"{"pageSize":20,"keymap":{"conventional":{"quit":["ctrl+w q"]}}}"#, &[]);
+    write_config(
+        &project,
+        r#"{"pageSize":20,"keymap":{"conventional":{"quit":["ctrl+w q"]}}}"#,
+        &[],
+    );
     let mut session = Session::start(&store);
     session.prefix(',');
     session.code(KeyCode::Tab);
@@ -1886,7 +2327,11 @@ fn a_change_of_keyboard_in_the_settings_keeps_the_text_the_cursor_and_the_histor
 fn a_damaged_workspace_file_warns_without_a_block() {
     let (store, base) = global_only("p-workspace");
     let db = database(&base, "s", "");
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
     fs::write(store.global.workspace_file(), "{ not json").unwrap();
     let mut session = Session::start(&store);
     session.assert_sees("cannot read workspace.json");
@@ -1914,7 +2359,10 @@ fn a_signal_leaves_a_file_that_another_program_changed() {
     session.code(KeyCode::Esc);
     session.write("more text");
     session.app.save_without_questions();
-    assert_eq!(fs::read_to_string(&path).unwrap(), "SELECT 'other program';");
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "SELECT 'other program';"
+    );
 }
 
 #[test]
@@ -1931,7 +2379,10 @@ fn the_close_of_a_removed_script_names_the_loss_of_the_text() {
 #[test]
 fn the_form_saves_the_full_path_that_its_test_used() {
     let (store, _) = global_only("p-form-path");
-    let (full, relative) = local_database("form-full-path", "CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('from-current');");
+    let (full, relative) = local_database(
+        "form-full-path",
+        "CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('from-current');",
+    );
     let mut session = Session::start(&store);
     session.fill_sqlite_form("checked", &relative);
 
@@ -2066,7 +2517,9 @@ fn the_tabs_of_the_last_session_reopen_in_order_with_the_same_active_tab() {
     assert_eq!(second.names(), ["console-1", "console-2", "console-3"]);
     assert_eq!(second.app.console().name, "console-2");
     assert_eq!(second.text(), "SELECT 2;");
-    assert!(second.top_row().find("console-1").unwrap() < second.top_row().find("console-3").unwrap());
+    assert!(
+        second.top_row().find("console-1").unwrap() < second.top_row().find("console-3").unwrap()
+    );
 }
 
 #[test]
@@ -2113,7 +2566,11 @@ fn a_table_of_the_last_session_loads_at_its_selection() {
     drop(first);
 
     let mut second = Session::start(&store);
-    assert!(second.top_row().contains("items (table)"), "{}", second.top_row());
+    assert!(
+        second.top_row().contains("items (table)"),
+        "{}",
+        second.top_row()
+    );
     assert!(second.app.table().is_none(), "the console stays on screen");
     assert_eq!(second.app.tables()[0].loaded(), 0);
     second.app.drain_events();
@@ -2133,8 +2590,15 @@ fn a_table_on_screen_at_the_start_waits_for_a_key_and_has_no_empty_console() {
     drop(first);
 
     let mut second = Session::start(&store);
-    assert_eq!(second.app.table().map(|tab| tab.label()).as_deref(), Some("items (table)"));
-    assert!(!second.top_row().contains("console-"), "{}", second.top_row());
+    assert_eq!(
+        second.app.table().map(|tab| tab.label()).as_deref(),
+        Some("items (table)")
+    );
+    assert!(
+        !second.top_row().contains("console-"),
+        "{}",
+        second.top_row()
+    );
     second.assert_sees("Enter loads the rows.");
     second.assert_sees("Enter load  F1 keys");
     for _ in 0..20 {
@@ -2192,15 +2656,33 @@ fn the_settings_choose_the_reopening_of_the_tabs() {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Right);
-    session.assert_sees("[On]");
+    session.assert_sees("< On >");
     session.code(KeyCode::Right);
-    session.assert_sees("[Off]");
+    session.assert_sees("< Off >");
     session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
     session.assert_sees("settings are saved");
     let text = fs::read_to_string(store.global.config_file()).unwrap();
     assert!(text.contains("\"reopenTabs\": false"), "{text}");
+}
+
+#[test]
+fn the_settings_work_with_the_mouse() {
+    let (store, _) = two_connections("p-settings-mouse");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.assert_sees("Settings");
+    // A click on a choice changes it.
+    session.click_text("< Default: On >");
+    session.assert_sees("< On >");
+    session.click_text("< On >");
+    session.assert_sees("< Off >");
+    // A click on Cancel closes the dialog without a write.
+    session.click_text("[Cancel]");
+    session.assert_not_sees("Settings");
+    let text = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(!text.contains("reopenTabs"), "{text}");
 }
 
 #[test]
@@ -2211,7 +2693,11 @@ fn the_project_value_of_the_reopening_comes_before_the_global_value() {
     let reopen = |store: &Store| sqln::store::config::load(store).config.unwrap().reopen_tabs;
     write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db)]);
     assert!(reopen(&store), "the default reopens the tabs");
-    write_config(&store.global, r#"{"reopenTabs":false}"#, &[sqlite_entry("g1", "s", &db)]);
+    write_config(
+        &store.global,
+        r#"{"reopenTabs":false}"#,
+        &[sqlite_entry("g1", "s", &db)],
+    );
     assert!(!reopen(&store));
     write_config(&project, r#"{"reopenTabs":true}"#, &[]);
     assert!(reopen(&store));
@@ -2244,7 +2730,14 @@ fn the_tabs_of_a_removed_connection_do_not_reopen() {
     let (store, base) = global_only("p-reopen-removed");
     let db = database(&base, "s", ITEMS).display().to_string();
     let other = database(&base, "t", "").display().to_string();
-    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db), sqlite_entry("g2", "t", &other)]);
+    write_config(
+        &store.global,
+        "{}",
+        &[
+            sqlite_entry("g1", "s", &db),
+            sqlite_entry("g2", "t", &other),
+        ],
+    );
     let mut first = Session::start(&store);
     first.type_and_save("SELECT 1;");
     common::open_table(&mut first.app, 0, "items");
@@ -2337,7 +2830,11 @@ impl Session {
         let deadline = Instant::now() + Duration::from_secs(20);
         while self.app.console().editor.suggestions().is_none() {
             self.app.drain_events();
-            assert!(Instant::now() < deadline, "the list did not open:\n{}", self.screen());
+            assert!(
+                Instant::now() < deadline,
+                "the list did not open:\n{}",
+                self.screen()
+            );
             std::thread::sleep(Duration::from_millis(1));
         }
     }
@@ -2393,7 +2890,10 @@ fn a_key_with_a_modifier_does_not_accept_a_suggestion() {
     let (store, _) = reopening_store("p-keys-modifier", r#"{"suggestionKeys":"both"}"#);
     let mut session = Session::start(&store);
     session.open_suggestions();
-    session.press(crossterm::event::KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::SHIFT));
+    session.press(crossterm::event::KeyEvent::new(
+        KeyCode::Enter,
+        crossterm::event::KeyModifiers::SHIFT,
+    ));
     assert_ne!(session.text(), ACCEPTED);
 }
 
@@ -2419,11 +2919,11 @@ fn the_settings_choose_the_keys_of_the_list_and_the_change_works_at_once() {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Right);
-    session.assert_sees("[Tab]");
+    session.assert_sees("< Tab >");
     session.code(KeyCode::Right);
-    session.assert_sees("[Enter]");
+    session.assert_sees("< Enter >");
     session.code(KeyCode::Right);
-    session.assert_sees("[Tab or Enter]");
+    session.assert_sees("< Tab or Enter >");
     session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
     session.assert_sees("settings are saved");
@@ -2440,10 +2940,19 @@ fn the_project_choice_of_keys_comes_before_the_global_choice() {
     let (store, base) = store("p-keys-scopes");
     let db = database(&base, "s", "").display().to_string();
     let project = store.project.clone().unwrap();
-    let keys = |store: &Store| sqln::store::config::load(store).config.unwrap().suggestion_keys;
+    let keys = |store: &Store| {
+        sqln::store::config::load(store)
+            .config
+            .unwrap()
+            .suggestion_keys
+    };
     write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db)]);
     assert_eq!(keys(&store), SuggestionKeys::Tab);
-    write_config(&store.global, r#"{"suggestionKeys":"enter"}"#, &[sqlite_entry("g1", "s", &db)]);
+    write_config(
+        &store.global,
+        r#"{"suggestionKeys":"enter"}"#,
+        &[sqlite_entry("g1", "s", &db)],
+    );
     assert_eq!(keys(&store), SuggestionKeys::Enter);
     write_config(&project, r#"{"suggestionKeys":"both"}"#, &[]);
     assert_eq!(keys(&store), SuggestionKeys::Both);
