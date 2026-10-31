@@ -22,15 +22,31 @@ pub fn sample_catalog() -> Catalog {
             Schema {
                 name: "public".to_owned(),
                 relations: vec![
-                    relation("users", RelationKind::Table, &["id", "name", "email", "created_at"]),
-                    relation("orders", RelationKind::Table, &["id", "user_id", "total", "status"]),
+                    relation(
+                        "users",
+                        RelationKind::Table,
+                        &["id", "name", "email", "created_at"],
+                    ),
+                    relation(
+                        "orders",
+                        RelationKind::Table,
+                        &["id", "user_id", "total", "status"],
+                    ),
                     relation("active_users", RelationKind::View, &["id", "name"]),
-                    relation("Order Items", RelationKind::Table, &["order_id", "sku", "quantity"]),
+                    relation(
+                        "Order Items",
+                        RelationKind::Table,
+                        &["order_id", "sku", "quantity"],
+                    ),
                 ],
             },
             Schema {
                 name: "sales".to_owned(),
-                relations: vec![relation("invoices", RelationKind::Table, &["number", "due_date"])],
+                relations: vec![relation(
+                    "invoices",
+                    RelationKind::Table,
+                    &["number", "due_date"],
+                )],
             },
         ],
         current_schema: Some("public".to_owned()),
@@ -67,7 +83,11 @@ impl Fixture {
     pub fn with_dialect(text: &str, keyboard: KeyboardMode, dialect: Dialect) -> Self {
         let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
         let editor = SqlEditor::new(text, keyboard, dialect, clipboard.clone());
-        Self { editor, clipboard, catalog: sample_catalog() }
+        Self {
+            editor,
+            clipboard,
+            catalog: sample_catalog(),
+        }
     }
 
     pub fn conventional(text: &str) -> Self {
@@ -80,7 +100,10 @@ impl Fixture {
 
     /// Sends one key through the path that the application uses.
     pub fn press(&mut self, key: KeyEvent) {
-        if !self.editor.on_list_key(key, sqln::input::SuggestionKeys::Tab) {
+        if !self
+            .editor
+            .on_list_key(key, sqln::input::SuggestionKeys::Tab)
+        {
             self.editor.on_key(key, Some(&self.catalog));
         }
     }
@@ -103,7 +126,11 @@ impl Fixture {
 
     pub fn labels(&self) -> Vec<String> {
         self.editor.suggestions().map_or_else(Vec::new, |list| {
-            list.completion.items.iter().map(|item| item.label.clone()).collect()
+            list.completion
+                .items
+                .iter()
+                .map(|item| item.label.clone())
+                .collect()
         })
     }
 
@@ -136,7 +163,10 @@ pub fn open_table(app: &mut App, connection: usize, name: &str) {
     // A catalog in a new read has no new table yet.
     while app.connections()[connection].catalog_state == CatalogState::Loading {
         app.drain_events();
-        assert!(std::time::Instant::now() < deadline, "the catalog did not arrive");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the catalog did not arrive"
+        );
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     let press = |app: &mut App, code| app.on_event(Event::Key(key(code)));
@@ -161,9 +191,13 @@ pub fn open_table(app: &mut App, connection: usize, name: &str) {
         if row.connection == connection && branch && closed {
             press(app, KeyCode::Right);
             // A connection waits for its catalog, and a schema opens at once.
-            while row.kind == RowKind::Connection && app.connections()[connection].catalog.is_none() {
+            while row.kind == RowKind::Connection && app.connections()[connection].catalog.is_none()
+            {
                 app.drain_events();
-                assert!(std::time::Instant::now() < deadline, "the catalog did not arrive");
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the catalog did not arrive"
+                );
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
         } else {

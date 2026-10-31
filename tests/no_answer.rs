@@ -79,7 +79,9 @@ impl Connector for Fake {
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
         self.opened.fetch_add(1, Ordering::SeqCst);
-        Ok(Box::new(FakeSession(Arc::clone(&SHARED.lock().unwrap().clone().unwrap()))))
+        Ok(Box::new(FakeSession(Arc::clone(
+            &SHARED.lock().unwrap().clone().unwrap(),
+        ))))
     }
 }
 
@@ -171,7 +173,11 @@ struct Harness {
 }
 
 fn settings() -> Settings {
-    Settings { stop_grace: GRACE, sql_timeout: None, ..Settings::default() }
+    Settings {
+        stop_grace: GRACE,
+        sql_timeout: None,
+        ..Settings::default()
+    }
 }
 
 fn harness(fake: &Arc<Fake>) -> Harness {
@@ -180,7 +186,13 @@ fn harness(fake: &Arc<Fake>) -> Harness {
     let (mut manager, events) = Manager::new(budget).unwrap();
     let connection = manager.add_connection(fake.clone(), settings());
     let console = manager.open_console(connection).unwrap();
-    Harness { manager, events, connection, console, fake: fake.clone() }
+    Harness {
+        manager,
+        events,
+        connection,
+        console,
+        fake: fake.clone(),
+    }
 }
 
 impl Harness {
@@ -197,7 +209,8 @@ impl Harness {
 
     fn start(&self, statements: &[&str]) -> u64 {
         let statements = statements.iter().map(|sql| (*sql).to_owned()).collect();
-        self.manager.run(self.console, statements, RunOptions::default())
+        self.manager
+            .run(self.console, statements, RunOptions::default())
     }
 
     /// Waits until the session receives the statement.
@@ -209,7 +222,14 @@ impl Harness {
         }
     }
 
-    fn finish(&mut self) -> (Vec<StatementStatus>, ExecutionEnd, Vec<TransactionState>, bool) {
+    fn finish(
+        &mut self,
+    ) -> (
+        Vec<StatementStatus>,
+        ExecutionEnd,
+        Vec<TransactionState>,
+        bool,
+    ) {
         let mut statuses = Vec::new();
         let mut states = Vec::new();
         let mut asked = false;
@@ -226,7 +246,9 @@ impl Harness {
 }
 
 fn serial() -> std::sync::MutexGuard<'static, ()> {
-    SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[test]
@@ -242,18 +264,36 @@ fn without_a_transaction_the_connection_closes_after_the_grace_time() {
     let (statuses, end, states, asked) = h.finish();
 
     assert!(started.elapsed() >= GRACE, "the session had time to answer");
-    assert_eq!(statuses, [StatementStatus::Unknown, StatementStatus::NotExecuted]);
+    assert_eq!(
+        statuses,
+        [StatementStatus::Unknown, StatementStatus::NotExecuted]
+    );
     assert_eq!(end, ExecutionEnd::ConnectionClosed);
     assert!(!asked, "no transaction, so no question");
-    assert!(states.is_empty(), "no transaction, so the state stays the same");
+    assert!(
+        states.is_empty(),
+        "no transaction, so the state stays the same"
+    );
     assert_eq!(fake.cancels.load(Ordering::SeqCst), 1);
-    assert_eq!(fake.statements.lock().unwrap().len(), 1, "the next statement was not sent");
-    assert_eq!(h.manager.usage(h.connection).0, 0, "the closed session frees its place");
+    assert_eq!(
+        fake.statements.lock().unwrap().len(),
+        1,
+        "the next statement was not sent"
+    );
+    assert_eq!(
+        h.manager.usage(h.connection).0,
+        0,
+        "the closed session frees its place"
+    );
 
     fake.hang.store(false, Ordering::SeqCst);
     h.start(&["SELECT 1"]);
     h.finish();
-    assert_eq!(fake.opened.load(Ordering::SeqCst), 2, "a new need opens a new session");
+    assert_eq!(
+        fake.opened.load(Ordering::SeqCst),
+        2,
+        "a new need opens a new session"
+    );
 }
 
 #[test]
@@ -272,7 +312,11 @@ fn an_answer_during_the_grace_time_keeps_the_session() {
     fake.hang.store(false, Ordering::SeqCst);
     h.start(&["SELECT 1"]);
     h.finish();
-    assert_eq!(fake.opened.load(Ordering::SeqCst), 1, "the session stays in use");
+    assert_eq!(
+        fake.opened.load(Ordering::SeqCst),
+        1,
+        "the session stays in use"
+    );
 }
 
 #[test]
@@ -286,7 +330,10 @@ fn a_statement_can_succeed_after_a_stop_and_the_script_still_ends() {
     h.wait_running(1);
     h.manager.stop(h.console);
     let (statuses, end, _, _) = h.finish();
-    assert_eq!(statuses, [StatementStatus::Success, StatementStatus::NotExecuted]);
+    assert_eq!(
+        statuses,
+        [StatementStatus::Success, StatementStatus::NotExecuted]
+    );
     assert_eq!(end, ExecutionEnd::Stopped);
 }
 
@@ -345,7 +392,11 @@ fn after_a_refusal_the_answer_of_the_database_ends_the_statement() {
     let (statuses, end, _, _) = h.finish();
     assert_eq!(statuses, [StatementStatus::Stopped]);
     assert_eq!(end, ExecutionEnd::Stopped);
-    assert_eq!(h.manager.usage(h.connection).0, 1, "the transaction keeps its session");
+    assert_eq!(
+        h.manager.usage(h.connection).0,
+        1,
+        "the transaction keeps its session"
+    );
 }
 
 #[test]
@@ -354,11 +405,20 @@ fn the_time_limit_uses_the_same_last_resort() {
     let fake = Fake::new();
     *SHARED.lock().unwrap() = Some(fake.clone());
     let budget = Arc::new(Budget::new(1 << 20));
-    let settings = Settings { sql_timeout: Some(Duration::from_millis(20)), ..settings() };
+    let settings = Settings {
+        sql_timeout: Some(Duration::from_millis(20)),
+        ..settings()
+    };
     let (mut manager, events) = Manager::new(budget).unwrap();
     let connection = manager.add_connection(fake.clone(), settings);
     let console = manager.open_console(connection).unwrap();
-    let mut h = Harness { manager, events, connection, console, fake: fake.clone() };
+    let mut h = Harness {
+        manager,
+        events,
+        connection,
+        console,
+        fake: fake.clone(),
+    };
     h.start(&["SELECT slow"]);
     let (statuses, end, _, _) = h.finish();
     assert_eq!(statuses, [StatementStatus::Unknown]);
@@ -382,7 +442,12 @@ fn screen(app: &mut App) -> String {
     terminal.draw(|frame| app.draw(frame)).unwrap();
     let buffer = terminal.backend().buffer().clone();
     (0..30)
-        .map(|y| (0..100).map(|x| buffer[(x, y)].symbol()).collect::<String>() + "\n")
+        .map(|y| {
+            (0..100)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                + "\n"
+        })
         .collect()
 }
 
@@ -394,7 +459,10 @@ fn pump_until(app: &mut App, wanted: &str) {
         if text.contains(wanted) {
             return;
         }
-        assert!(Instant::now() < deadline, "{wanted:?} did not appear:\n{text}");
+        assert!(
+            Instant::now() < deadline,
+            "{wanted:?} did not appear:\n{text}"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
 }
@@ -468,7 +536,11 @@ fn two_consoles_ask_in_turn_and_each_answer_reaches_its_own_console() {
     pump_until(&mut app, ": The statement did not answer");
     std::thread::sleep(GRACE * 3);
     app.drain_events();
-    let first = if screen(&mut app).contains("console-1: The") { 0 } else { 1 };
+    let first = if screen(&mut app).contains("console-1: The") {
+        0
+    } else {
+        1
+    };
     let second = 1 - first;
     let other = format!("console-{}: The statement", second + 1);
     assert!(!screen(&mut app).contains(&other), "{}", screen(&mut app));
@@ -481,7 +553,11 @@ fn two_consoles_ask_in_turn_and_each_answer_reaches_its_own_console() {
         app.drain_events();
         assert!(Instant::now() < deadline, "{}", screen(&mut app));
     }
-    assert_eq!(app.consoles()[first].transaction, TransactionState::Open, "the first answer keeps the wait");
+    assert_eq!(
+        app.consoles()[first].transaction,
+        TransactionState::Open,
+        "the first answer keeps the wait"
+    );
     assert!(app.consoles()[first].is_busy());
     fake.release.notify_one();
     while app.consoles()[first].is_busy() {
@@ -520,7 +596,11 @@ fn an_unknown_transaction_needs_a_confirmation_before_the_next_run() {
     pump_until(&mut app, "The connection closed with an open transaction");
     press(&mut app, key(KeyCode::Enter));
     std::thread::sleep(GRACE);
-    assert_eq!(fake.statements.lock().unwrap().len(), sent, "the default option sends no SQL");
+    assert_eq!(
+        fake.statements.lock().unwrap().len(),
+        sent,
+        "the default option sends no SQL"
+    );
 
     press(&mut app, key(KeyCode::F(5)));
     pump_until(&mut app, "[Run]");
@@ -538,18 +618,31 @@ fn a_cancel_request_that_cannot_leave_closes_the_connection_at_once() {
     fake.refuse_cancel.store(true, Ordering::SeqCst);
     *SHARED.lock().unwrap() = Some(fake.clone());
     let budget = Arc::new(Budget::new(1 << 20));
-    let settings = Settings { stop_grace: Duration::from_secs(30), ..settings() };
+    let settings = Settings {
+        stop_grace: Duration::from_secs(30),
+        ..settings()
+    };
     let (mut manager, events) = Manager::new(budget).unwrap();
     let connection = manager.add_connection(fake.clone(), settings);
     let console = manager.open_console(connection).unwrap();
-    let mut h = Harness { manager, events, connection, console, fake: fake.clone() };
+    let mut h = Harness {
+        manager,
+        events,
+        connection,
+        console,
+        fake: fake.clone(),
+    };
     h.start(&["SELECT slow"]);
     h.wait_running(1);
 
     let started = Instant::now();
     h.manager.stop(h.console);
     let (statuses, end, _, asked) = h.finish();
-    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
     assert_eq!(statuses, [StatementStatus::Unknown]);
     assert_eq!(end, ExecutionEnd::ConnectionClosed);
     assert!(!asked);
@@ -578,7 +671,11 @@ fn a_cancel_request_on_its_way_keeps_the_session_out_of_the_next_execution() {
     h.start(&["SELECT next"]);
     let (statuses, _, _, _) = h.finish();
     assert_eq!(statuses, [StatementStatus::Success]);
-    assert_eq!(fake.opened.load(Ordering::SeqCst), 2, "the old session must not run again");
+    assert_eq!(
+        fake.opened.load(Ordering::SeqCst),
+        2,
+        "the old session must not run again"
+    );
 }
 
 #[test]

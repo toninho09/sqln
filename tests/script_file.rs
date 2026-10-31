@@ -77,7 +77,14 @@ fn a_file_with_crlf_keeps_its_line_ending_on_save() {
     assert_eq!(ending, LineEnding::Crlf);
     assert_eq!(text, "a\nb");
     let lock = scripts::lock(&root, "s1").unwrap();
-    let mut file = ScriptFile::open(Scope::Global, meta("s1"), lock, 0, Some((hash, ending)), &root);
+    let mut file = ScriptFile::open(
+        Scope::Global,
+        meta("s1"),
+        lock,
+        0,
+        Some((hash, ending)),
+        &root,
+    );
     file.save(&root, "a\nb\nc", 1, Instant::now()).unwrap();
     assert_eq!(on_disk(&root, "s1"), "a\r\nb\r\nc");
 }
@@ -102,7 +109,10 @@ fn a_write_refuses_a_file_that_another_program_removed() {
     let mut file = new_file(&root, "s1");
     file.save(&root, "mine", 1, Instant::now()).unwrap();
     fs::remove_file(root.consoles_dir().join("s1.sql")).unwrap();
-    assert_eq!(file.save(&root, "again", 2, Instant::now()), Err(Trouble::Removed));
+    assert_eq!(
+        file.save(&root, "again", 2, Instant::now()),
+        Err(Trouble::Removed)
+    );
     assert!(!root.consoles_dir().join("s1.sql").exists());
 }
 
@@ -158,7 +168,8 @@ fn reload_reads_the_file_and_clears_the_problem() {
     assert_eq!(file.trouble, None);
     assert!(!file.is_dirty(0));
     // The next save uses the new hash and the line ending of the file.
-    file.save(&root, "line 1\nline 2\nline 3", 1, Instant::now()).unwrap();
+    file.save(&root, "line 1\nline 2\nline 3", 1, Instant::now())
+        .unwrap();
     assert_eq!(on_disk(&root, "s1"), "line 1\r\nline 2\r\nline 3");
 }
 
@@ -172,7 +183,12 @@ fn a_poll_sees_a_change_only_when_the_content_differs() {
     // A touch changes the time and keeps the content.
     let path = root.consoles_dir().join("s1.sql");
     let later = std::time::SystemTime::now() + Duration::from_secs(5);
-    fs::File::options().write(true).open(&path).unwrap().set_modified(later).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(later)
+        .unwrap();
     file.poll(&root);
     assert_eq!(file.trouble, None);
     fs::write(&path, "other").unwrap();
@@ -198,7 +214,8 @@ fn a_failed_write_keeps_the_text_and_tries_again_later() {
     assert!(file.due(1, t0 + SAVE_DELAY + RETRY_DELAY));
     // The folder comes back, and the next write works.
     fs::remove_file(root.dir.join("consoles")).unwrap();
-    file.save(&root, "mine", 1, t0 + SAVE_DELAY + RETRY_DELAY).unwrap();
+    file.save(&root, "mine", 1, t0 + SAVE_DELAY + RETRY_DELAY)
+        .unwrap();
     assert_eq!(file.trouble, None);
     assert_eq!(on_disk(&root, "s1"), "mine");
 }

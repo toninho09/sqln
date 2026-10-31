@@ -30,7 +30,11 @@ struct Fake {
 
 impl Fake {
     fn new(behavior: Behavior, reset: ResetOutcome) -> Arc<Self> {
-        Arc::new(Self { behavior: Mutex::new(behavior), opened: AtomicUsize::new(0), reset })
+        Arc::new(Self {
+            behavior: Mutex::new(behavior),
+            opened: AtomicUsize::new(0),
+            reset,
+        })
     }
 }
 
@@ -142,8 +146,15 @@ async fn the_limit_holds_and_the_next_request_waits() {
     });
     sleep(SHORT).await;
     first.release().await;
-    timeout(Duration::from_secs(5), waiting).await.unwrap().unwrap();
-    assert_eq!(fake.opened.load(Ordering::SeqCst), 2, "the waiter uses the free session");
+    timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fake.opened.load(Ordering::SeqCst),
+        2,
+        "the waiter uses the free session"
+    );
 }
 
 #[tokio::test]
@@ -166,7 +177,10 @@ async fn requests_receive_places_in_order_of_arrival() {
     }
     first.release().await;
     for task in tasks {
-        timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
+        timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
     }
     assert_eq!(*order.lock().unwrap(), [0, 1, 2, 3, 4]);
 }
@@ -191,7 +205,10 @@ async fn a_canceled_wait_leaves_the_queue_and_keeps_the_order() {
     sleep(SHORT).await;
 
     first.release().await;
-    timeout(Duration::from_secs(5), waiting).await.unwrap().unwrap();
+    timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(pool.usage(), (0, 1));
 }
 
@@ -211,15 +228,26 @@ async fn a_new_request_does_not_pass_the_queue() {
     sleep(SHORT).await;
     first.release().await;
     assert_eq!(pool.usage(), (1, 1), "the waiter holds the place at once");
-    assert!(timeout(Duration::from_millis(10), pool.acquire()).await.is_err());
-    timeout(Duration::from_secs(5), waiting).await.unwrap().unwrap();
+    assert!(
+        timeout(Duration::from_millis(10), pool.acquire())
+            .await
+            .is_err()
+    );
+    timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
 }
 
 #[tokio::test]
 async fn a_refused_connection_is_a_failure_and_frees_the_place() {
     let fake = Fake::new(Behavior::Refuses, ResetOutcome::Clean);
     let pool = pool(&fake, 1);
-    let error = timeout(Duration::from_secs(5), pool.acquire()).await.unwrap().err().unwrap();
+    let error = timeout(Duration::from_secs(5), pool.acquire())
+        .await
+        .unwrap()
+        .err()
+        .unwrap();
     assert_eq!(error.message, "refused");
     assert_eq!(pool.usage(), (0, 1));
 }
@@ -228,7 +256,11 @@ async fn a_refused_connection_is_a_failure_and_frees_the_place() {
 async fn a_silent_server_ends_at_the_connection_time_limit() {
     let fake = Fake::new(Behavior::Hangs, ResetOutcome::Clean);
     let pool = pool(&fake, 1);
-    let error = timeout(Duration::from_secs(5), pool.acquire()).await.unwrap().err().unwrap();
+    let error = timeout(Duration::from_secs(5), pool.acquire())
+        .await
+        .unwrap()
+        .err()
+        .unwrap();
     assert!(error.message.contains("time limit"), "{error:?}");
     assert_eq!(pool.usage(), (0, 1));
 }
@@ -237,7 +269,11 @@ async fn a_silent_server_ends_at_the_connection_time_limit() {
 async fn a_canceled_connection_frees_the_place() {
     let fake = Fake::new(Behavior::Hangs, ResetOutcome::Clean);
     let pool = pool(&fake, 1);
-    assert!(timeout(Duration::from_millis(10), pool.acquire()).await.is_err());
+    assert!(
+        timeout(Duration::from_millis(10), pool.acquire())
+            .await
+            .is_err()
+    );
     assert_eq!(pool.usage(), (0, 1));
 }
 
@@ -252,7 +288,10 @@ async fn a_dropped_lease_frees_the_place_and_wakes_the_queue() {
     });
     sleep(SHORT).await;
     drop(first);
-    timeout(Duration::from_secs(5), waiting).await.unwrap().unwrap();
+    timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
 }
 
@@ -268,8 +307,14 @@ async fn a_waiter_opens_a_new_session_after_a_failed_opening() {
     sleep(SHORT).await;
     *fake.behavior.lock().unwrap() = Behavior::Refuses;
     drop(first);
-    let result = timeout(Duration::from_secs(5), waiting).await.unwrap().unwrap();
-    assert!(result.is_err(), "the failure goes to the request, without a retry");
+    let result = timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        result.is_err(),
+        "the failure goes to the request, without a retry"
+    );
     assert_eq!(pool.usage(), (0, 1));
 }
 
@@ -291,7 +336,10 @@ async fn a_session_in_use_during_close_idle_closes_when_it_returns() {
     let pool = pool(&fake, 2);
     let lease = take(&pool).await;
     pool.close_idle();
-    assert!(pool.has_sessions(), "the session in use stays until its end");
+    assert!(
+        pool.has_sessions(),
+        "the session in use stays until its end"
+    );
     lease.release().await;
     assert!(!pool.has_sessions());
     assert_eq!(pool.usage().0, 0);

@@ -835,7 +835,10 @@ fn native_vault_round_trip() {
 fn plain_fixture(name: &str) -> (PathBuf, Root, Identity) {
     let base = temp_dir(&format!("{name}-{}", uuid::Uuid::new_v4()));
     let root = Root::global(base.clone());
-    let key = ConnectionKey { scope: Scope::Global, id: ID.into() };
+    let key = ConnectionKey {
+        scope: Scope::Global,
+        id: ID.into(),
+    };
     (base, root, Identity::of(&key, &definition()).unwrap())
 }
 
@@ -848,14 +851,23 @@ fn the_plain_file_holds_one_entry_for_each_identity_and_only_the_owner_reads_it(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = fs::metadata(root.credentials_file()).unwrap().permissions().mode();
+        let mode = fs::metadata(root.credentials_file())
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o600);
     }
     let mut other = definition();
     target(&mut other).user = "another_user".into();
-    let key = ConnectionKey { scope: Scope::Global, id: ID.into() };
+    let key = ConnectionKey {
+        scope: Scope::Global,
+        id: ID.into(),
+    };
     let changed = Identity::of(&key, &other).unwrap();
-    assert!(file.read(&changed).unwrap().is_none(), "a new destination finds no password");
+    assert!(
+        file.read(&changed).unwrap().is_none(),
+        "a new destination finds no password"
+    );
 }
 
 #[test]
@@ -880,8 +892,14 @@ fn a_damaged_plain_file_is_an_error_and_stays_as_it_is() {
     }
     let file = PlainFile::new(&root);
     assert_eq!(file.read(&identity), Err(VaultError::PlainFile));
-    assert_eq!(file.write(&identity, &Secret::new(PASSWORD)), Err(VaultError::PlainFile));
-    assert_eq!(fs::read_to_string(root.credentials_file()).unwrap(), "{ not json");
+    assert_eq!(
+        file.write(&identity, &Secret::new(PASSWORD)),
+        Err(VaultError::PlainFile)
+    );
+    assert_eq!(
+        fs::read_to_string(root.credentials_file()).unwrap(),
+        "{ not json"
+    );
 }
 
 #[cfg(unix)]

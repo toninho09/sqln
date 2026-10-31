@@ -180,7 +180,10 @@ impl Parameters {
             _ => return Err("A client certificate needs sslcert and sslkey.".to_owned()),
         };
         if wanted {
-            return Ok(Tls::Verify(TlsFiles { ca: self.ca, client }));
+            return Ok(Tls::Verify(TlsFiles {
+                ca: self.ca,
+                client,
+            }));
         }
         if self.ca.is_some() || client.is_some() {
             return Err("TLS files need a connection with TLS.".to_owned());
@@ -202,7 +205,10 @@ fn split_port(place: &str) -> Result<(&str, Option<u16>), String> {
     };
     let port = port
         .filter(|port| !port.is_empty())
-        .map(|port| port.parse().map_err(|_| "The port is not valid.".to_owned()))
+        .map(|port| {
+            port.parse()
+                .map_err(|_| "The port is not valid.".to_owned())
+        })
         .transpose()?;
     Ok((host, port))
 }
@@ -210,7 +216,9 @@ fn split_port(place: &str) -> Result<(&str, Option<u16>), String> {
 /// Replaces each character of the password of a connection text, so that a screen can
 /// show the text. The cursor of a field stays valid, because the length does not change.
 pub fn hide_uri_password(uri: &str, mask: char) -> String {
-    let Some((scheme, rest)) = uri.split_once("://") else { return uri.to_owned() };
+    let Some((scheme, rest)) = uri.split_once("://") else {
+        return uri.to_owned();
+    };
     let authority_end = rest.find(['/', '?']).unwrap_or(rest.len());
     let (authority, tail) = rest.split_at(authority_end);
     let Some((credentials, place)) = authority.rsplit_once('@') else {
@@ -223,7 +231,9 @@ pub fn hide_uri_password(uri: &str, mask: char) -> String {
             _ => uri.to_owned(),
         };
     };
-    let Some((user, password)) = credentials.split_once(':') else { return uri.to_owned() };
+    let Some((user, password)) = credentials.split_once(':') else {
+        return uri.to_owned();
+    };
     let hidden: String = password.chars().map(|_| mask).collect();
     format!("{scheme}://{user}:{hidden}@{place}{tail}")
 }
@@ -231,7 +241,9 @@ pub fn hide_uri_password(uri: &str, mask: char) -> String {
 /// Reads `postgres://user:password@host:port/database?sslmode=verify-full`.
 /// The error text never holds the text of the input, because it can hold a password.
 pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
-    let (scheme, rest) = uri.split_once("://").ok_or("The connection text needs a scheme.")?;
+    let (scheme, rest) = uri
+        .split_once("://")
+        .ok_or("The connection text needs a scheme.")?;
     let engine = match scheme.to_ascii_lowercase().as_str() {
         "postgres" | "postgresql" => Engine::Postgres,
         "mysql" | "mariadb" => Engine::MySql,
@@ -264,8 +276,18 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
         Some(path) if host.is_empty() => Address::Socket(path),
         Some(_) => return Err("Use a host or a socket, not both.".to_owned()),
         None if host.is_empty() => return Err("The connection text needs a host.".to_owned()),
-        None => Address::Tcp { host, port: port.unwrap_or(engine.default_port()) },
+        None => Address::Tcp {
+            host,
+            port: port.unwrap_or(engine.default_port()),
+        },
     };
     let tls = parameters.tls(&address)?;
-    Ok(NetworkTarget { engine, address, user, password, database, tls })
+    Ok(NetworkTarget {
+        engine,
+        address,
+        user,
+        password,
+        database,
+        tls,
+    })
 }

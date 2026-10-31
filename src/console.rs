@@ -29,7 +29,9 @@ impl RunEnd {
     fn of(end: ExecutionEnd) -> Option<Self> {
         match end {
             ExecutionEnd::Completed => Some(Self::Done),
-            ExecutionEnd::Failed | ExecutionEnd::TimedOut | ExecutionEnd::ConnectionClosed => Some(Self::Failed),
+            ExecutionEnd::Failed | ExecutionEnd::TimedOut | ExecutionEnd::ConnectionClosed => {
+                Some(Self::Failed)
+            }
             ExecutionEnd::Stopped | ExecutionEnd::CanceledBeforeStart => Some(Self::Stopped),
             ExecutionEnd::Refused => None,
         }
@@ -54,7 +56,10 @@ impl RunClock {
     }
 
     pub fn start(&mut self) {
-        *self = Self { started: Some(Instant::now()), ..Self::default() };
+        *self = Self {
+            started: Some(Instant::now()),
+            ..Self::default()
+        };
     }
 
     pub fn finish(&mut self, end: ExecutionEnd) {
@@ -65,7 +70,8 @@ impl RunClock {
 
     /// Returns the time of the run in progress.
     pub fn elapsed(&self, now: Instant) -> Option<Duration> {
-        self.started.map(|started| now.saturating_duration_since(started))
+        self.started
+            .map(|started| now.saturating_duration_since(started))
     }
 
     /// The user saw the end of the run.
@@ -169,7 +175,9 @@ fn read_summary(rows: usize, limit: ReadLimit) -> String {
 }
 
 fn first_word(sql: &str) -> &str {
-    sql.split(|c: char| !c.is_ascii_alphabetic()).find(|word| !word.is_empty()).unwrap_or("")
+    sql.split(|c: char| !c.is_ascii_alphabetic())
+        .find(|word| !word.is_empty())
+        .unwrap_or("")
 }
 
 impl Console {
@@ -210,7 +218,10 @@ impl Console {
     }
 
     pub fn in_transaction(&self) -> bool {
-        matches!(self.transaction, TransactionState::Open | TransactionState::Failed)
+        matches!(
+            self.transaction,
+            TransactionState::Open | TransactionState::Failed
+        )
     }
 
     pub fn showing_messages(&self) -> bool {
@@ -229,7 +240,12 @@ impl Console {
         self.run.wait();
     }
 
-    fn prepare_execution(&mut self, execution: Option<ExecutionId>, plan: &RunPlan, budget: &Budget) {
+    fn prepare_execution(
+        &mut self,
+        execution: Option<ExecutionId>,
+        plan: &RunPlan,
+        budget: &Budget,
+    ) {
         for result in self.results.drain(..) {
             budget.release(result.table.bytes);
         }
@@ -280,7 +296,8 @@ impl Console {
             ExecEvent::Columns { key, columns } if self.is_current(key.execution) => {
                 self.results_made += 1;
                 self.reading = true;
-                self.results.push(ResultTab::new(self.results_made, columns));
+                self.results
+                    .push(ResultTab::new(self.results_made, columns));
             }
             ExecEvent::Rows { key, rows, bytes } => self.on_rows(key, rows, bytes, budget),
             ExecEvent::ResultDone { key, rows, limit } if self.is_current(key.execution) => {
@@ -289,9 +306,12 @@ impl Console {
                     result.summary = read_summary(rows, limit);
                 }
             }
-            ExecEvent::StatementFinished { key, status, end, error_offset }
-                if self.is_current(key.execution) =>
-            {
+            ExecEvent::StatementFinished {
+                key,
+                status,
+                end,
+                error_offset,
+            } if self.is_current(key.execution) => {
                 self.on_statement_finished(key.index, status, end);
                 if let Some(offset) = error_offset {
                     self.editor.set_error_offset(key.index, offset);
@@ -300,9 +320,12 @@ impl Console {
             ExecEvent::ConfirmClose { execution, .. } if self.is_current(execution) => {
                 return Some(Signal::ConfirmClose);
             }
-            ExecEvent::ExecutionFinished { execution, end, message, .. }
-                if self.is_current(execution) =>
-            {
+            ExecEvent::ExecutionFinished {
+                execution,
+                end,
+                message,
+                ..
+            } if self.is_current(execution) => {
                 return Some(self.on_execution_finished(end, message));
             }
             ExecEvent::TransactionChanged { state, .. } => {
@@ -322,7 +345,9 @@ impl Console {
     fn on_rows(&mut self, key: StatementKey, rows: Vec<Row>, bytes: usize, budget: &Budget) {
         // An old execution has no grid, so its data leaves the budget.
         match self.results.last_mut() {
-            Some(result) if self.execution == Some(key.execution) => result.table.append(rows, bytes),
+            Some(result) if self.execution == Some(key.execution) => {
+                result.table.append(rows, bytes)
+            }
             _ => budget.release(bytes),
         }
     }
@@ -360,22 +385,34 @@ impl Console {
             }
         }
         let word = first_word(self.statements.get(index).map_or("", String::as_str)).to_owned();
-        let user_ended = ["COMMIT", "ROLLBACK", "END"].iter().any(|item| word.eq_ignore_ascii_case(item));
+        let user_ended = ["COMMIT", "ROLLBACK", "END"]
+            .iter()
+            .any(|item| word.eq_ignore_ascii_case(item));
         let database_ended = self.transaction == TransactionState::None
             && self.transaction_before == TransactionState::Open;
         if database_ended && !user_ended {
-            self.push_message(MessageLevel::Info, text::DATABASE_ENDED_TRANSACTION.to_owned());
+            self.push_message(
+                MessageLevel::Info,
+                text::DATABASE_ENDED_TRANSACTION.to_owned(),
+            );
         }
     }
 
     fn on_statement_success(&mut self, index: usize, end: StatementEnd) {
-        let state = if end.limit == ReadLimit::None { MarkState::Success } else { MarkState::Capped };
+        let state = if end.limit == ReadLimit::None {
+            MarkState::Success
+        } else {
+            MarkState::Capped
+        };
         self.editor.set_mark_state(index, state);
 
         if end.has_columns {
             if end.limit != ReadLimit::None {
                 let summary = read_summary(end.rows, end.limit);
-                self.push_message(MessageLevel::Info, format!("Statement {}: {summary}", index + 1));
+                self.push_message(
+                    MessageLevel::Info,
+                    format!("Statement {}: {summary}", index + 1),
+                );
             }
             return;
         }
@@ -391,7 +428,9 @@ impl Console {
 
     fn on_execution_finished(&mut self, end: ExecutionEnd, message: Option<String>) -> Signal {
         if end == ExecutionEnd::Refused {
-            return Signal::ExecutionFinished { schema_changed: false };
+            return Signal::ExecutionFinished {
+                schema_changed: false,
+            };
         }
         self.run.finish(end);
         if let Some(message) = message {
@@ -419,7 +458,9 @@ impl Console {
             self.results.len()
         };
         let schema_changed = self.statements.iter().any(|sql| {
-            ["CREATE", "ALTER", "DROP"].iter().any(|word| first_word(sql).eq_ignore_ascii_case(word))
+            ["CREATE", "ALTER", "DROP"]
+                .iter()
+                .any(|word| first_word(sql).eq_ignore_ascii_case(word))
         });
         Signal::ExecutionFinished { schema_changed }
     }
@@ -447,7 +488,9 @@ impl Console {
 
     /// Returns true when the search of the active result has rows to read.
     pub fn search_has_work(&self) -> bool {
-        self.results.get(self.active).is_some_and(ResultTab::search_has_work)
+        self.results
+            .get(self.active)
+            .is_some_and(ResultTab::search_has_work)
     }
 
     /// Continues the search of the active result until the deadline.
@@ -460,11 +503,17 @@ impl Console {
     /// Writes pasted text in the search bar. It returns false without a bar.
     pub fn paste_in_search(&mut self, text: &str) -> bool {
         let focused = self.focus == Focus::Results;
-        focused && self.results.get_mut(self.active).is_some_and(|result| result.paste_in_search(text))
+        focused
+            && self
+                .results
+                .get_mut(self.active)
+                .is_some_and(|result| result.paste_in_search(text))
     }
 
     pub fn search_is_open(&self) -> bool {
-        self.results.get(self.active).is_some_and(|result| result.search.is_some())
+        self.results
+            .get(self.active)
+            .is_some_and(|result| result.search.is_some())
     }
 
     /// Applies an action of the grid region. `extend` moves the end of the selection.

@@ -11,12 +11,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use common::sample_catalog;
 use common::{ctrl, key, temp_db};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use sqln::app::{App, Options};
-use common::sample_catalog;
 use sqln::catalog::{Catalog, RelationRef};
 use sqln::clipboard::MemoryClipboard;
 use sqln::connection::Definition;
@@ -27,9 +29,9 @@ use sqln::connector::{
 };
 use sqln::console::Phase;
 use sqln::editor::KeyboardMode;
-use sqln::input::SuggestionKeys;
 use sqln::exec::{Flow, ResultSink, Settings};
 use sqln::grid::{Row, Value};
+use sqln::input::SuggestionKeys;
 use sqln::sql::Dialect;
 use sqln::table::{TableFocus, clicked_order, page_sql};
 use sqln::ui::theme::Theme;
@@ -39,13 +41,19 @@ use tokio::sync::Notify;
 // The text of the queries.
 
 fn relation() -> RelationRef {
-    RelationRef { schema: "public".to_owned(), relation: "users".to_owned() }
+    RelationRef {
+        schema: "public".to_owned(),
+        relation: "users".to_owned(),
+    }
 }
 
 #[test]
 fn a_page_asks_one_row_more_without_a_count() {
     let sql = page_sql(Dialect::Postgres, &relation(), "", "", 100, 0).unwrap();
-    assert_eq!(sql, "SELECT * FROM \"public\".\"users\"\nLIMIT 101 OFFSET 0");
+    assert_eq!(
+        sql,
+        "SELECT * FROM \"public\".\"users\"\nLIMIT 101 OFFSET 0"
+    );
     let sql = page_sql(Dialect::Postgres, &relation(), "", "", 100, 200).unwrap();
     assert!(sql.ends_with("\nLIMIT 101 OFFSET 200"));
     assert!(!sql.to_uppercase().contains("COUNT"));
@@ -53,8 +61,15 @@ fn a_page_asks_one_row_more_without_a_count() {
 
 #[test]
 fn the_clauses_start_their_own_lines() {
-    let sql = page_sql(Dialect::Postgres, &relation(), "active = true", "created_at DESC, id ASC", 10, 0)
-        .unwrap();
+    let sql = page_sql(
+        Dialect::Postgres,
+        &relation(),
+        "active = true",
+        "created_at DESC, id ASC",
+        10,
+        0,
+    )
+    .unwrap();
     assert_eq!(
         sql,
         "SELECT * FROM \"public\".\"users\"\nWHERE active = true\nORDER BY created_at DESC, id ASC\nLIMIT 11 OFFSET 0"
@@ -65,25 +80,54 @@ fn the_clauses_start_their_own_lines() {
 fn a_line_comment_in_the_filter_cannot_remove_the_limit() {
     let sql = page_sql(Dialect::Postgres, &relation(), "a = 1 -- note", "", 10, 0).unwrap();
     assert!(sql.ends_with("\nLIMIT 11 OFFSET 0"), "{sql}");
-    let sql = page_sql(Dialect::MySql, &relation(), "a = 1 # note", "a -- note", 10, 0).unwrap();
+    let sql = page_sql(
+        Dialect::MySql,
+        &relation(),
+        "a = 1 # note",
+        "a -- note",
+        10,
+        0,
+    )
+    .unwrap();
     assert!(sql.ends_with("\nLIMIT 11 OFFSET 0"), "{sql}");
 }
 
 #[test]
 fn each_dialect_quotes_the_names_of_the_table() {
-    let odd = RelationRef { schema: "my\"schema".to_owned(), relation: "Order Items".to_owned() };
+    let odd = RelationRef {
+        schema: "my\"schema".to_owned(),
+        relation: "Order Items".to_owned(),
+    };
     let postgres = page_sql(Dialect::Postgres, &odd, "", "", 1, 0).unwrap();
-    assert!(postgres.starts_with("SELECT * FROM \"my\"\"schema\".\"Order Items\"\n"), "{postgres}");
+    assert!(
+        postgres.starts_with("SELECT * FROM \"my\"\"schema\".\"Order Items\"\n"),
+        "{postgres}"
+    );
     let sqlite = page_sql(Dialect::Sqlite, &odd, "", "", 1, 0).unwrap();
-    assert!(sqlite.starts_with("SELECT * FROM \"my\"\"schema\".\"Order Items\"\n"), "{sqlite}");
-    let mysql_name = RelationRef { schema: "shop".to_owned(), relation: "or`ders".to_owned() };
+    assert!(
+        sqlite.starts_with("SELECT * FROM \"my\"\"schema\".\"Order Items\"\n"),
+        "{sqlite}"
+    );
+    let mysql_name = RelationRef {
+        schema: "shop".to_owned(),
+        relation: "or`ders".to_owned(),
+    };
     let mysql = page_sql(Dialect::MySql, &mysql_name, "", "", 1, 0).unwrap();
-    assert!(mysql.starts_with("SELECT * FROM `shop`.`or``ders`\n"), "{mysql}");
+    assert!(
+        mysql.starts_with("SELECT * FROM `shop`.`or``ders`\n"),
+        "{mysql}"
+    );
 }
 
 #[test]
 fn a_text_that_is_not_one_statement_is_refused() {
-    for filter in ["1 = 1; DROP TABLE users", "1 = 1;", "name = 'open", "name = \"open", "a = 1 /* open"] {
+    for filter in [
+        "1 = 1; DROP TABLE users",
+        "1 = 1;",
+        "name = 'open",
+        "name = \"open",
+        "a = 1 /* open",
+    ] {
         let result = page_sql(Dialect::Postgres, &relation(), filter, "", 10, 0);
         assert!(result.is_err(), "{filter:?} must be refused");
         let result = page_sql(Dialect::MySql, &relation(), "", filter, 10, 0);
@@ -100,7 +144,17 @@ fn a_text_that_is_not_one_statement_is_refused() {
 fn a_semicolon_inside_a_string_or_a_comment_is_not_a_second_statement() {
     assert!(page_sql(Dialect::Postgres, &relation(), "name = 'a;b'", "", 10, 0).is_ok());
     assert!(page_sql(Dialect::Postgres, &relation(), "a = 1 -- x; y", "", 10, 0).is_ok());
-    assert!(page_sql(Dialect::Postgres, &relation(), "a = 1 /* x; y */", "", 10, 0).is_ok());
+    assert!(
+        page_sql(
+            Dialect::Postgres,
+            &relation(),
+            "a = 1 /* x; y */",
+            "",
+            10,
+            0
+        )
+        .is_ok()
+    );
     assert!(page_sql(Dialect::Postgres, &relation(), "a = $$x;y$$", "", 10, 0).is_ok());
 }
 
@@ -111,11 +165,20 @@ fn a_click_on_a_header_goes_up_then_down_then_off() {
     assert_eq!(clicked_order("name ASC", "name", dialect), "name DESC");
     assert_eq!(clicked_order("NAME  desc", "name", dialect), "");
     // Another order, such as two columns, starts again from ascending.
-    assert_eq!(clicked_order("created_at DESC, id ASC", "name", dialect), "name ASC");
+    assert_eq!(
+        clicked_order("created_at DESC, id ASC", "name", dialect),
+        "name ASC"
+    );
     assert_eq!(clicked_order("id ASC", "name", dialect), "name ASC");
     // A name that needs quotes keeps them in the field.
-    assert_eq!(clicked_order("", "Order Items", dialect), "\"Order Items\" ASC");
-    assert_eq!(clicked_order("", "Order Items", Dialect::MySql), "`Order Items` ASC");
+    assert_eq!(
+        clicked_order("", "Order Items", dialect),
+        "\"Order Items\" ASC"
+    );
+    assert_eq!(
+        clicked_order("", "Order Items", Dialect::MySql),
+        "`Order Items` ASC"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -176,12 +239,17 @@ impl Connector for RecordingConnector {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities { namespace: Namespace::Schema, transactions: true }
+        Capabilities {
+            namespace: Namespace::Schema,
+            transactions: true,
+        }
     }
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
         if self.0.refuse_connect.load(Ordering::SeqCst) {
-            return Err(ConnectError::new("connection refused by the test".to_owned()));
+            return Err(ConnectError::new(
+                "connection refused by the test".to_owned(),
+            ));
         }
         self.0.opened.fetch_add(1, Ordering::SeqCst);
         Ok(Box::new(RecordingSession(self.0.clone())))
@@ -221,7 +289,8 @@ impl Session for RecordingSession {
             return Err(ExecError::new("syntax error near the filter"));
         }
         let (limit, offset) = page_of(sql);
-        sink.set_columns(COLUMNS.iter().map(|name| (*name).to_owned()).collect()).await;
+        sink.set_columns(COLUMNS.iter().map(|name| (*name).to_owned()).collect())
+            .await;
         let mut sent = 0;
         for index in offset..self.0.rows.min(offset + limit) {
             let text = if self.0.value_size > 0 {
@@ -246,7 +315,12 @@ impl Session for RecordingSession {
             }
         }
         let (rows, limit) = sink.finish().await;
-        Ok(StatementEnd { rows, has_columns: true, changed: None, limit })
+        Ok(StatementEnd {
+            rows,
+            has_columns: true,
+            changed: None,
+            limit,
+        })
     }
 
     async fn transaction_state(&mut self) -> TransactionState {
@@ -279,13 +353,21 @@ struct Fixture {
 }
 
 fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
-    Event::Mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE })
+    Event::Mouse(MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    })
 }
 
 impl Fixture {
     fn start(options: Options) -> Self {
         let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
-        Self { app: App::new(options, clipboard.clone(), Theme::plain()), clipboard }
+        Self {
+            app: App::new(options, clipboard.clone(), Theme::plain()),
+            clipboard,
+        }
     }
 
     fn recorded(recorder: Recorder) -> (Self, Arc<Recorder>) {
@@ -314,7 +396,11 @@ impl Fixture {
 
     fn sqlite(name: &str, setup: &str, settings: Settings) -> Self {
         let path = database(name, setup);
-        Self::start(Options { database: Some(path), settings, ..Options::default() })
+        Self::start(Options {
+            database: Some(path),
+            settings,
+            ..Options::default()
+        })
     }
 
     /// Two databases, as two connections.
@@ -354,7 +440,11 @@ impl Fixture {
             if condition(self) {
                 return;
             }
-            assert!(Instant::now() < deadline, "the condition did not happen:\n{}", self.screen());
+            assert!(
+                Instant::now() < deadline,
+                "the condition did not happen:\n{}",
+                self.screen()
+            );
             std::thread::sleep(Duration::from_millis(1));
         }
     }
@@ -375,7 +465,9 @@ impl Fixture {
         let buffer = terminal.backend().buffer().clone();
         (0..buffer.area.height)
             .map(|y| {
-                let row: String = (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect();
+                let row: String = (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect();
                 row.trim_end().to_owned() + "\n"
             })
             .collect()
@@ -384,13 +476,19 @@ impl Fixture {
     #[track_caller]
     fn assert_sees(&mut self, text: &str) {
         let screen = self.screen();
-        assert!(screen.contains(text), "{text:?} is not on the screen:\n{screen}");
+        assert!(
+            screen.contains(text),
+            "{text:?} is not on the screen:\n{screen}"
+        );
     }
 
     #[track_caller]
     fn assert_not_sees(&mut self, text: &str) {
         let screen = self.screen();
-        assert!(!screen.contains(text), "{text:?} is on the screen:\n{screen}");
+        assert!(
+            !screen.contains(text),
+            "{text:?} is on the screen:\n{screen}"
+        );
     }
 
     /// Returns the modifiers of the first cell of a text on the screen.
@@ -399,7 +497,9 @@ impl Fixture {
         terminal.draw(|frame| self.app.draw(frame)).unwrap();
         let buffer = terminal.backend().buffer().clone();
         for y in 0..buffer.area.height {
-            let row: String = (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect();
+            let row: String = (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
             if let Some(byte) = row.find(text) {
                 return buffer[(row[..byte].chars().count() as u16, y)].modifier;
             }
@@ -411,9 +511,12 @@ impl Fixture {
     fn locate_below(&mut self, anchor: &str, text: &str) -> (u16, u16) {
         let screen = self.screen();
         let lines: Vec<&str> = screen.lines().collect();
-        let start = lines.iter().position(|line| line.contains(anchor)).unwrap_or_else(|| {
-            panic!("{anchor:?} is not on the screen:\n{screen}");
-        });
+        let start = lines
+            .iter()
+            .position(|line| line.contains(anchor))
+            .unwrap_or_else(|| {
+                panic!("{anchor:?} is not on the screen:\n{screen}");
+            });
         for (offset, line) in lines.iter().enumerate().skip(start + 1) {
             if let Some(byte) = line.find(text) {
                 return (line[..byte].chars().count() as u16, offset as u16);
@@ -424,7 +527,8 @@ impl Fixture {
 
     fn click(&mut self, column: u16, row: u16) {
         self.screen();
-        self.app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), column, row));
+        self.app
+            .on_event(mouse(MouseEventKind::Down(MouseButton::Left), column, row));
     }
 
     fn click_text(&mut self, text: &str) {
@@ -489,7 +593,10 @@ impl Fixture {
 
 fn database(name: &str, setup: &str) -> PathBuf {
     let path = temp_db(name);
-    rusqlite::Connection::open(&path).unwrap().execute_batch(setup).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(setup)
+        .unwrap();
     path
 }
 
@@ -512,12 +619,18 @@ fn first_cell(f: &Fixture) -> String {
 
 #[test]
 fn enter_on_a_table_opens_a_tab_and_loads_the_first_page() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 250, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 250,
+        ..Recorder::default()
+    });
     f.open_table("users");
     assert_eq!(f.app.tables().len(), 1);
     assert!(f.app.table().is_some());
     assert_eq!(f.rows_loaded(), 100);
-    assert_eq!(recorder.statements(), ["SELECT * FROM \"public\".\"users\"\nLIMIT 101 OFFSET 0"]);
+    assert_eq!(
+        recorder.statements(),
+        ["SELECT * FROM \"public\".\"users\"\nLIMIT 101 OFFSET 0"]
+    );
     f.assert_sees("users (table)");
     f.assert_sees("server · public.users · table");
     f.assert_sees("100 rows loaded · more rows available");
@@ -527,11 +640,17 @@ fn enter_on_a_table_opens_a_tab_and_loads_the_first_page() {
 
 #[test]
 fn the_tabs_of_consoles_and_tables_share_one_row() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     let screen = f.screen();
     let tabs = screen.lines().next().unwrap();
-    assert!(tabs.contains("console-1") && tabs.contains("users (table)"), "{tabs}");
+    assert!(
+        tabs.contains("console-1") && tabs.contains("users (table)"),
+        "{tabs}"
+    );
     // `Ctrl+W p` and `Ctrl+W n` cycle through both kinds.
     f.prefix('p');
     assert!(f.app.table().is_none());
@@ -543,7 +662,10 @@ fn the_tabs_of_consoles_and_tables_share_one_row() {
 
 #[test]
 fn a_click_on_a_tab_switches_between_a_console_and_a_table() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.click_text("console-1");
     assert!(f.app.table().is_none());
@@ -553,7 +675,10 @@ fn a_click_on_a_tab_switches_between_a_console_and_a_table() {
 
 #[test]
 fn a_view_opens_with_a_label_that_names_it() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 3, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 3,
+        ..Recorder::default()
+    });
     f.open_table("active_users");
     f.assert_sees("active_users (view)");
     f.assert_sees("server · public.active_users · view");
@@ -562,7 +687,10 @@ fn a_view_opens_with_a_label_that_names_it() {
 
 #[test]
 fn opening_an_open_table_selects_its_tab() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.prefix('p');
     assert!(f.app.table().is_none());
@@ -595,7 +723,11 @@ fn a_double_click_opens_a_table_and_one_click_does_not() {
     f.assert_sees("▸ t");
     // The mark of a row opens its columns, so the clicks hit the name.
     let screen = f.screen();
-    let (row, line) = screen.lines().enumerate().find(|(_, line)| line.contains("▸ t")).unwrap();
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("▸ t"))
+        .unwrap();
     let column = line.chars().position(|c| c == '▸').unwrap() as u16 + 3;
     f.click(column, row as u16);
     assert!(f.app.tables().is_empty(), "one click only selects");
@@ -625,7 +757,10 @@ impl Fixture {
 
 #[test]
 fn load_more_adds_the_next_page_to_the_rows() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 250, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 250,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.load_more();
     assert_eq!(f.rows_loaded(), 200);
@@ -635,8 +770,14 @@ fn load_more_adds_the_next_page_to_the_rows() {
     assert_eq!(f.rows_loaded(), 250);
     f.assert_sees("250 rows loaded · no more rows");
     let statements = recorder.statements();
-    assert!(statements[1].ends_with("LIMIT 101 OFFSET 100"), "{statements:?}");
-    assert!(statements[2].ends_with("LIMIT 101 OFFSET 200"), "{statements:?}");
+    assert!(
+        statements[1].ends_with("LIMIT 101 OFFSET 100"),
+        "{statements:?}"
+    );
+    assert!(
+        statements[2].ends_with("LIMIT 101 OFFSET 200"),
+        "{statements:?}"
+    );
     // Without more rows, the key asks nothing.
     f.code(KeyCode::Char('m'));
     f.assert_sees("no more rows to load");
@@ -646,7 +787,10 @@ fn load_more_adds_the_next_page_to_the_rows() {
 #[test]
 fn a_page_with_zero_fewer_exact_and_more_rows_than_the_page_size() {
     for (rows, more) in [(0, false), (99, false), (100, false), (101, true)] {
-        let (mut f, recorder) = Fixture::recorded(Recorder { rows, ..Recorder::default() });
+        let (mut f, recorder) = Fixture::recorded(Recorder {
+            rows,
+            ..Recorder::default()
+        });
         f.open_table("users");
         assert_eq!(f.rows_loaded(), rows.min(100), "{rows} rows");
         assert_eq!(f.app.table().unwrap().has_more, more, "{rows} rows");
@@ -661,8 +805,17 @@ fn a_page_with_zero_fewer_exact_and_more_rows_than_the_page_size() {
 
 #[test]
 fn the_page_size_comes_from_the_settings() {
-    let settings = Settings { page_size: 7, ..Settings::default() };
-    let (mut f, recorder) = Fixture::recorded_with(Recorder { rows: 30, ..Recorder::default() }, settings);
+    let settings = Settings {
+        page_size: 7,
+        ..Settings::default()
+    };
+    let (mut f, recorder) = Fixture::recorded_with(
+        Recorder {
+            rows: 30,
+            ..Recorder::default()
+        },
+        settings,
+    );
     f.open_table("users");
     assert_eq!(f.rows_loaded(), 7);
     assert!(recorder.statements()[0].ends_with("LIMIT 8 OFFSET 0"));
@@ -672,7 +825,10 @@ fn the_page_size_comes_from_the_settings() {
 
 #[test]
 fn the_load_more_button_and_its_key_do_the_same() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 150, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 150,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.click_text("[Load more]");
     f.loaded();
@@ -682,18 +838,28 @@ fn the_load_more_button_and_its_key_do_the_same() {
 
 #[test]
 fn each_page_uses_one_session_and_gives_it_back() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 250, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 250,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.assert_sees("Pool 0/5");
     f.load_more();
     f.load_more();
     f.assert_sees("Pool 0/5");
-    assert_eq!(recorder.opened.load(Ordering::SeqCst), 1, "no extra session");
+    assert_eq!(
+        recorder.opened.load(Ordering::SeqCst),
+        1,
+        "no extra session"
+    );
 }
 
 #[test]
 fn the_grid_of_a_table_copies_tsv_without_a_header() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 3, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 3,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.grid();
     f.press(ctrl('c'));
@@ -708,7 +874,10 @@ fn the_grid_of_a_table_copies_tsv_without_a_header() {
 
 #[test]
 fn typing_in_the_bar_sends_no_query_and_enter_applies_both_fields() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.type_filter("active = true");
     f.code(KeyCode::Tab);
@@ -726,26 +895,47 @@ fn typing_in_the_bar_sends_no_query_and_enter_applies_both_fields() {
 
 #[test]
 fn applying_starts_again_from_the_first_page() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 250, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 250,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.load_more();
     assert_eq!(f.rows_loaded(), 200);
     f.type_filter("x = 1");
     f.apply();
     assert_eq!(f.rows_loaded(), 100, "the old rows are gone");
-    assert!(recorder.statements().last().unwrap().ends_with("LIMIT 101 OFFSET 0"));
+    assert!(
+        recorder
+            .statements()
+            .last()
+            .unwrap()
+            .ends_with("LIMIT 101 OFFSET 0")
+    );
 }
 
 #[test]
 fn a_button_that_has_no_effect_looks_disabled() {
     use ratatui::style::Modifier;
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 150, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 150,
+        ..Recorder::default()
+    });
     f.open_table("users");
-    assert!(!f.modifier_of("[Load more]").contains(Modifier::DIM), "a next page exists");
+    assert!(
+        !f.modifier_of("[Load more]").contains(Modifier::DIM),
+        "a next page exists"
+    );
     assert!(!f.modifier_of("[Apply]").contains(Modifier::DIM));
-    assert!(f.modifier_of("[Stop]").contains(Modifier::DIM), "nothing runs");
+    assert!(
+        f.modifier_of("[Stop]").contains(Modifier::DIM),
+        "nothing runs"
+    );
     f.load_more();
-    assert!(f.modifier_of("[Load more]").contains(Modifier::DIM), "no more rows");
+    assert!(
+        f.modifier_of("[Load more]").contains(Modifier::DIM),
+        "no more rows"
+    );
     // While a load runs, only Stop works.
     recorder.hold.store(true, Ordering::SeqCst);
     f.focus_filter();
@@ -766,7 +956,11 @@ fn two_clicks_far_apart_in_time_do_not_open_a_table() {
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     let screen = f.screen();
-    let (row, line) = screen.lines().enumerate().find(|(_, line)| line.contains("▸ t")).unwrap();
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("▸ t"))
+        .unwrap();
     let column = line.chars().position(|c| c == '▸').unwrap() as u16 + 3;
     f.click(column, row as u16);
     std::thread::sleep(Duration::from_millis(500));
@@ -776,7 +970,10 @@ fn two_clicks_far_apart_in_time_do_not_open_a_table() {
 
 #[test]
 fn the_apply_and_clear_buttons_work_with_the_mouse() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.type_filter("a = 1");
     f.click_text("[Apply]");
@@ -784,7 +981,10 @@ fn the_apply_and_clear_buttons_work_with_the_mouse() {
     assert!(recorder.statements()[1].contains("WHERE a = 1"));
     f.click_text("[Clear]");
     f.loaded();
-    assert_eq!(recorder.statements()[2], "SELECT * FROM \"public\".\"users\"\nLIMIT 101 OFFSET 0");
+    assert_eq!(
+        recorder.statements()[2],
+        "SELECT * FROM \"public\".\"users\"\nLIMIT 101 OFFSET 0"
+    );
     let tab = f.app.table().unwrap();
     assert_eq!(tab.filter.text(), "");
     assert_eq!(tab.order.text(), "");
@@ -792,7 +992,10 @@ fn the_apply_and_clear_buttons_work_with_the_mouse() {
 
 #[test]
 fn a_click_on_a_field_gives_it_the_focus() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.click_text("WHERE");
     assert_eq!(f.app.table().unwrap().focus, TableFocus::Filter);
@@ -805,7 +1008,10 @@ fn a_click_on_a_field_gives_it_the_focus() {
 
 #[test]
 fn f_and_o_in_the_grid_focus_the_fields() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.grid();
     f.code(KeyCode::Char('f'));
@@ -821,7 +1027,10 @@ fn f_and_o_in_the_grid_focus_the_fields() {
 
 #[test]
 fn tab_moves_between_the_fields_when_the_list_is_closed() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.focus_filter();
     f.code(KeyCode::Tab);
@@ -832,7 +1041,10 @@ fn tab_moves_between_the_fields_when_the_list_is_closed() {
 
 #[test]
 fn a_paste_writes_one_line_in_the_focused_field() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.focus_filter();
     f.app.on_event(Event::Paste("a = 1\nAND b = 2".to_owned()));
@@ -842,7 +1054,10 @@ fn a_paste_writes_one_line_in_the_focused_field() {
 
 #[test]
 fn a_text_with_two_statements_leaves_an_empty_grid_and_the_reason() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.type_filter("1 = 1; DROP TABLE users");
     f.code(KeyCode::Enter);
@@ -862,7 +1077,10 @@ fn a_text_with_two_statements_leaves_an_empty_grid_and_the_reason() {
 
 #[test]
 fn a_failed_filter_clears_the_grid_and_shows_the_error() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     assert_eq!(f.rows_loaded(), 5);
     *recorder.fail_when.lock().unwrap() = Some("bad".to_owned());
@@ -881,7 +1099,10 @@ fn a_failed_filter_clears_the_grid_and_shows_the_error() {
 
 #[test]
 fn an_apply_waits_for_the_load_in_progress() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     recorder.hold.store(true, Ordering::SeqCst);
     f.open_table_of(0, "users");
     f.pump_until(|_| recorder.count() == 1);
@@ -897,44 +1118,68 @@ fn an_apply_waits_for_the_load_in_progress() {
 
 #[test]
 fn the_list_offers_the_columns_of_the_table_and_tab_accepts_without_a_query() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.type_filter("cre");
     f.assert_sees("created_at");
     f.code(KeyCode::Tab);
     assert_eq!(f.app.table().unwrap().filter.text(), "created_at");
-    assert_eq!(f.app.table().unwrap().focus, TableFocus::Filter, "Tab accepted the suggestion");
+    assert_eq!(
+        f.app.table().unwrap().focus,
+        TableFocus::Filter,
+        "Tab accepted the suggestion"
+    );
     assert_eq!(recorder.count(), 1, "accepting asks nothing");
 }
 
 #[test]
 fn enter_applies_the_typed_text_and_does_not_accept_the_highlighted_suggestion() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.type_filter("cre");
     assert!(f.app.table().unwrap().list.is_some());
     f.apply();
-    assert!(recorder.statements()[1].contains("\nWHERE cre\n"), "{:?}", recorder.statements());
+    assert!(
+        recorder.statements()[1].contains("\nWHERE cre\n"),
+        "{:?}",
+        recorder.statements()
+    );
     assert_eq!(f.app.table().unwrap().filter.text(), "cre");
 }
 
 #[test]
 fn the_order_field_has_its_own_list_and_escape_closes_the_list_first() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.type_order("em");
     assert!(f.app.table().unwrap().list.is_some());
     f.assert_sees("email");
     f.code(KeyCode::Esc);
     assert!(f.app.table().unwrap().list.is_none());
-    assert_eq!(f.app.table().unwrap().focus, TableFocus::Order, "the first Esc closed the list");
+    assert_eq!(
+        f.app.table().unwrap().focus,
+        TableFocus::Order,
+        "the first Esc closed the list"
+    );
     f.code(KeyCode::Esc);
     assert_eq!(f.app.table().unwrap().focus, TableFocus::Grid);
 }
 
 #[test]
 fn control_space_opens_the_list_without_a_prefix() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.focus_filter();
     f.press(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL));
@@ -947,7 +1192,10 @@ fn control_space_opens_the_list_without_a_prefix() {
 
 #[test]
 fn a_header_click_sorts_at_once_and_keeps_the_applied_filter_not_the_draft() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.type_filter("a = 1");
     f.apply();
@@ -965,19 +1213,30 @@ fn a_header_click_sorts_at_once_and_keeps_the_applied_filter_not_the_draft() {
     );
     let tab = f.app.table().unwrap();
     assert_eq!(tab.order.text(), "name ASC", "the field shows the order");
-    assert_eq!(tab.filter.text(), "a = 1 AND draft = 2", "the draft stays a draft");
+    assert_eq!(
+        tab.filter.text(),
+        "a = 1 AND draft = 2",
+        "the draft stays a draft"
+    );
     assert_eq!(tab.applied_filter(), "a = 1");
 }
 
 #[test]
 fn clicking_the_same_header_again_reverses_and_then_removes_the_order() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     for expected in ["ORDER BY name ASC", "ORDER BY name DESC"] {
         let (column, row) = f.locate_below("[Apply]", "name");
         f.click(column, row);
         f.loaded();
-        assert!(recorder.statements().last().unwrap().contains(expected), "{:?}", recorder.statements());
+        assert!(
+            recorder.statements().last().unwrap().contains(expected),
+            "{:?}",
+            recorder.statements()
+        );
     }
     let (column, row) = f.locate_below("[Apply]", "name");
     f.click(column, row);
@@ -988,18 +1247,30 @@ fn clicking_the_same_header_again_reverses_and_then_removes_the_order() {
 
 #[test]
 fn the_s_key_sorts_by_the_current_column() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.grid();
     f.code(KeyCode::Right);
     f.code(KeyCode::Char('s'));
     f.loaded();
-    assert!(recorder.statements().last().unwrap().contains("ORDER BY name ASC"));
+    assert!(
+        recorder
+            .statements()
+            .last()
+            .unwrap()
+            .contains("ORDER BY name ASC")
+    );
 }
 
 #[test]
 fn the_warning_about_the_order_shows_until_an_order_is_applied() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.assert_sees("No ORDER BY: pages can repeat or skip rows.");
     f.type_order("id");
@@ -1019,7 +1290,10 @@ fn the_warning_about_the_order_shows_until_an_order_is_applied() {
 
 #[test]
 fn stop_ends_a_page_and_keeps_the_rows_that_were_loaded() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 250, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 250,
+        ..Recorder::default()
+    });
     f.open_table("users");
     recorder.hold.store(true, Ordering::SeqCst);
     f.grid();
@@ -1036,14 +1310,27 @@ fn stop_ends_a_page_and_keeps_the_rows_that_were_loaded() {
     f.code(KeyCode::Char('m'));
     f.loaded();
     assert_eq!(f.rows_loaded(), 200);
-    assert!(recorder.statements().last().unwrap().ends_with("OFFSET 100"));
+    assert!(
+        recorder
+            .statements()
+            .last()
+            .unwrap()
+            .ends_with("OFFSET 100")
+    );
 }
 
 #[test]
 fn a_stop_in_the_middle_of_the_first_page_keeps_the_rows_and_the_next_page_continues() {
     // The sink sends a batch at 200 rows, so the page must be larger than that.
-    let settings = Settings { page_size: 300, ..Settings::default() };
-    let recorder = Recorder { rows: 1_000, mid_rows: 250, ..Recorder::default() };
+    let settings = Settings {
+        page_size: 300,
+        ..Settings::default()
+    };
+    let recorder = Recorder {
+        rows: 1_000,
+        mid_rows: 250,
+        ..Recorder::default()
+    };
     let (mut f, recorder) = Fixture::recorded_with(recorder, settings);
     recorder.mid_hold.store(true, Ordering::SeqCst);
     f.open_table_of(0, "users");
@@ -1051,19 +1338,38 @@ fn a_stop_in_the_middle_of_the_first_page_keeps_the_rows_and_the_next_page_conti
     f.prefix('x');
     f.loaded();
     assert_eq!(f.rows_loaded(), 200, "the sent batch stays");
-    assert!(f.app.table().unwrap().has_more, "the page ended early, so more rows can exist");
+    assert!(
+        f.app.table().unwrap().has_more,
+        "the page ended early, so more rows can exist"
+    );
     recorder.mid_hold.store(false, Ordering::SeqCst);
     f.grid();
     f.code(KeyCode::Char('m'));
     f.loaded();
-    assert!(recorder.statements().last().unwrap().ends_with("LIMIT 301 OFFSET 200"));
+    assert!(
+        recorder
+            .statements()
+            .last()
+            .unwrap()
+            .ends_with("LIMIT 301 OFFSET 200")
+    );
     assert_eq!(f.rows_loaded(), 500);
 }
 
 #[test]
 fn a_page_can_be_larger_than_the_row_cap_of_the_consoles() {
-    let settings = Settings { page_size: 1_500, row_cap: 1_000, ..Settings::default() };
-    let (mut f, _) = Fixture::recorded_with(Recorder { rows: 2_000, ..Recorder::default() }, settings);
+    let settings = Settings {
+        page_size: 1_500,
+        row_cap: 1_000,
+        ..Settings::default()
+    };
+    let (mut f, _) = Fixture::recorded_with(
+        Recorder {
+            rows: 2_000,
+            ..Recorder::default()
+        },
+        settings,
+    );
     f.open_table("users");
     assert_eq!(f.rows_loaded(), 1_500);
     assert!(f.app.table().unwrap().has_more);
@@ -1071,7 +1377,10 @@ fn a_page_can_be_larger_than_the_row_cap_of_the_consoles() {
 
 #[test]
 fn the_stop_button_works_too() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     recorder.hold.store(true, Ordering::SeqCst);
     f.open_table_of(0, "users");
     f.pump_until(|_| recorder.count() == 1);
@@ -1083,7 +1392,10 @@ fn the_stop_button_works_too() {
 
 #[test]
 fn a_stopped_first_page_leaves_the_table_ready_for_a_new_apply() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     recorder.hold.store(true, Ordering::SeqCst);
     f.open_table_of(0, "users");
     f.pump_until(|_| recorder.count() == 1);
@@ -1097,7 +1409,10 @@ fn a_stopped_first_page_leaves_the_table_ready_for_a_new_apply() {
 
 #[test]
 fn closing_a_table_tab_frees_its_rows_and_drops_its_filters() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 50, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 50,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.type_filter("a = 1");
     f.type_order("id");
@@ -1111,12 +1426,18 @@ fn closing_a_table_tab_frees_its_rows_and_drops_its_filters() {
     f.open_table("users");
     let tab = f.app.table().unwrap();
     assert_eq!((tab.filter.text(), tab.order.text()), ("", ""));
-    assert_eq!(recorder.statements().last().unwrap(), "SELECT * FROM \"public\".\"users\"\nLIMIT 101 OFFSET 0");
+    assert_eq!(
+        recorder.statements().last().unwrap(),
+        "SELECT * FROM \"public\".\"users\"\nLIMIT 101 OFFSET 0"
+    );
 }
 
 #[test]
 fn the_fields_stay_while_the_tab_stays_open() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.type_filter("a = 1");
     f.apply();
@@ -1129,7 +1450,10 @@ fn the_fields_stay_while_the_tab_stays_open() {
 
 #[test]
 fn the_keys_of_the_script_do_nothing_in_a_table() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.code(KeyCode::F(5));
     f.press(KeyEvent::new(KeyCode::F(5), KeyModifiers::SHIFT));
@@ -1143,12 +1467,18 @@ fn the_keys_of_the_script_do_nothing_in_a_table() {
     f.code(KeyCode::Char(']'));
     assert_eq!(recorder.count(), 1);
     assert_eq!(f.app.tables().len(), 1, "x does not close the tab");
-    assert!(!f.app.console().manual, "the mode of the console did not change");
+    assert!(
+        !f.app.console().manual,
+        "the mode of the console did not change"
+    );
 }
 
 #[test]
 fn the_help_of_a_table_lists_its_own_keys() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.grid();
     f.code(KeyCode::F(1));
@@ -1165,7 +1495,10 @@ fn the_help_of_a_table_lists_its_own_keys() {
 
 #[test]
 fn the_help_of_a_console_hides_the_keys_of_a_table() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.prefix('j');
     f.code(KeyCode::F(1));
     f.assert_sees("Keys · Conventional · Results");
@@ -1175,7 +1508,10 @@ fn the_help_of_a_console_hides_the_keys_of_a_table() {
 
 #[test]
 fn the_hint_follows_the_part_of_the_table_in_focus() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.grid();
     f.assert_sees("f where  o order by");
@@ -1185,11 +1521,23 @@ fn the_hint_follows_the_part_of_the_table_in_focus() {
 
 #[test]
 fn the_table_view_fits_the_minimum_terminal() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 300, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 300,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.type_filter("a very long filter that needs more room than the field has in a small terminal");
     let screen = f.screen_at(80, 24);
-    for text in ["WHERE", "ORDER BY", "[Apply]", "[Clear]", "[Load more]", "[Stop]", "rows loaded", "No ORDER BY"] {
+    for text in [
+        "WHERE",
+        "ORDER BY",
+        "[Apply]",
+        "[Clear]",
+        "[Load more]",
+        "[Stop]",
+        "rows loaded",
+        "No ORDER BY",
+    ] {
         assert!(screen.contains(text), "{text}\n{screen}");
     }
     assert_eq!(screen.lines().count(), 24);
@@ -1214,7 +1562,10 @@ fn a_database_name_cannot_send_terminal_sequences_through_a_table_tab() {
 
 #[test]
 fn a_failure_on_a_later_page_keeps_the_rows_and_lets_the_user_try_again() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 250, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 250,
+        ..Recorder::default()
+    });
     f.open_table("users");
     *recorder.fail_when.lock().unwrap() = Some("OFFSET 100".to_owned());
     f.grid();
@@ -1233,8 +1584,17 @@ fn a_failure_on_a_later_page_keeps_the_rows_and_lets_the_user_try_again() {
 
 #[test]
 fn the_time_limit_ends_a_page_and_says_so() {
-    let settings = Settings { sql_timeout: Some(Duration::from_millis(50)), ..Settings::default() };
-    let (mut f, recorder) = Fixture::recorded_with(Recorder { rows: 5, ..Recorder::default() }, settings);
+    let settings = Settings {
+        sql_timeout: Some(Duration::from_millis(50)),
+        ..Settings::default()
+    };
+    let (mut f, recorder) = Fixture::recorded_with(
+        Recorder {
+            rows: 5,
+            ..Recorder::default()
+        },
+        settings,
+    );
     recorder.hold.store(true, Ordering::SeqCst);
     f.open_table_of(0, "users");
     f.loaded();
@@ -1244,7 +1604,10 @@ fn the_time_limit_ends_a_page_and_says_so() {
 
 #[test]
 fn a_refused_connection_shows_its_error_in_the_table() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.prefix('h');
     f.code(KeyCode::Right);
     f.pump_until(|f| f.app.connections()[0].catalog.is_some());
@@ -1265,7 +1628,10 @@ fn a_refused_connection_shows_its_error_in_the_table() {
 
 #[test]
 fn closing_a_table_during_a_load_frees_the_rows_that_arrive_later() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 50, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 50,
+        ..Recorder::default()
+    });
     recorder.hold.store(true, Ordering::SeqCst);
     f.open_table_of(0, "users");
     f.pump_until(|_| recorder.count() == 1);
@@ -1282,7 +1648,10 @@ fn closing_a_table_during_a_load_frees_the_rows_that_arrive_later() {
 
 #[test]
 fn a_load_in_progress_blocks_disconnect_and_removal() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     recorder.hold.store(true, Ordering::SeqCst);
     f.open_table_of(0, "users");
     f.pump_until(|_| recorder.count() == 1);
@@ -1300,32 +1669,58 @@ fn a_load_in_progress_blocks_disconnect_and_removal() {
 
 #[test]
 fn the_mouse_scrolls_selects_and_resizes_in_the_grid_of_a_table() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 100, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 100,
+        ..Recorder::default()
+    });
     f.open_table("users");
     // The wheel moves the cursor by rows.
     let (column, row) = f.locate_below("[Apply]", "name0");
-    f.app.on_event(mouse(MouseEventKind::ScrollDown, column, row));
+    f.app
+        .on_event(mouse(MouseEventKind::ScrollDown, column, row));
     assert_eq!(f.app.table().unwrap().result.view.row, 3);
     // A drag selects a range of cells.
     f.click(column, row);
-    f.app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), column + 2, row + 2));
+    f.app.on_event(mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        column + 2,
+        row + 2,
+    ));
     let view = f.app.table().unwrap().result.view;
-    assert_eq!(view.selection().map(|range| (range.top, range.bottom)), Some((0, 2)));
+    assert_eq!(
+        view.selection().map(|range| (range.top, range.bottom)),
+        Some((0, 2))
+    );
     // A drag on the edge of a header changes the width of the column.
     let (edge, header) = f.locate_below("[Apply]", "id");
     let before = f.app.table().unwrap().result.table.width(0);
     let edge = edge + before as u16;
     f.click(edge, header);
-    f.app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), edge + 4, header));
-    f.app.on_event(mouse(MouseEventKind::Up(MouseButton::Left), edge + 4, header));
+    f.app.on_event(mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        edge + 4,
+        header,
+    ));
+    f.app.on_event(mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        edge + 4,
+        header,
+    ));
     assert_eq!(f.app.table().unwrap().result.table.width(0), before + 4);
     assert_eq!(f.app.tables().len(), 1);
-    assert_eq!(f.app.table().unwrap().applied_order(), "", "a drag on an edge does not sort");
+    assert_eq!(
+        f.app.table().unwrap().applied_order(),
+        "",
+        "a drag on an edge does not sort"
+    );
 }
 
 #[test]
 fn the_search_of_a_table_grid_finds_loaded_rows() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 30, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 30,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.grid();
     f.press(ctrl('f'));
@@ -1338,7 +1733,10 @@ fn the_search_of_a_table_grid_finds_loaded_rows() {
 
 #[test]
 fn a_paste_goes_to_the_field_in_focus_and_not_to_the_hidden_search() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     f.grid();
     f.press(ctrl('f'));
@@ -1346,13 +1744,26 @@ fn a_paste_goes_to_the_field_in_focus_and_not_to_the_hidden_search() {
     f.click_text("WHERE");
     f.app.on_event(Event::Paste("b = 1".to_owned()));
     assert_eq!(f.app.table().unwrap().filter.text(), "b = 1");
-    assert_eq!(f.app.table().unwrap().result.search.as_ref().unwrap().query(), "a");
+    assert_eq!(
+        f.app
+            .table()
+            .unwrap()
+            .result
+            .search
+            .as_ref()
+            .unwrap()
+            .query(),
+        "a"
+    );
 }
 
 #[test]
 fn vim_keys_move_in_the_grid_of_a_table_and_stay_text_in_a_field() {
     let (mut f, _) = Fixture::recorded_in(
-        Recorder { rows: 5, ..Recorder::default() },
+        Recorder {
+            rows: 5,
+            ..Recorder::default()
+        },
         Settings::default(),
         KeyboardMode::Vim,
     );
@@ -1379,32 +1790,79 @@ fn the_extra_row_of_a_page_leaves_the_budget_with_the_exact_cost() {
     let budget = Budget::new(1 << 20);
     let mut tab = TableTab::new(7, 1, relation(), false, 2);
     tab.started(5, true, None);
-    let key = StatementKey { console: 7, execution: 5, index: 0 };
+    let key = StatementKey {
+        console: 7,
+        execution: 5,
+        index: 0,
+    };
     let row = |n: &str| -> Row { vec![Value::Text(n.into())].into_boxed_slice() };
     let rows = vec![row("a"), row("b"), row("c")];
-    let cost: usize = rows.iter().map(|row| budget.reserve(row)).map(|r| match r {
-        sqln::grid::Reservation::Accepted(bytes) => bytes,
-        other => panic!("{other:?}"),
-    }).sum();
-    tab.on_event(ExecEvent::Columns { key, columns: vec!["v".to_owned()] }, &budget);
-    tab.on_event(ExecEvent::Rows { key, rows, bytes: cost }, &budget);
-    tab.on_event(ExecEvent::ResultDone { key, rows: 3, limit: ReadLimit::None }, &budget);
+    let cost: usize = rows
+        .iter()
+        .map(|row| budget.reserve(row))
+        .map(|r| match r {
+            sqln::grid::Reservation::Accepted(bytes) => bytes,
+            other => panic!("{other:?}"),
+        })
+        .sum();
+    tab.on_event(
+        ExecEvent::Columns {
+            key,
+            columns: vec!["v".to_owned()],
+        },
+        &budget,
+    );
+    tab.on_event(
+        ExecEvent::Rows {
+            key,
+            rows,
+            bytes: cost,
+        },
+        &budget,
+    );
+    tab.on_event(
+        ExecEvent::ResultDone {
+            key,
+            rows: 3,
+            limit: ReadLimit::None,
+        },
+        &budget,
+    );
     assert_eq!(tab.loaded(), 2, "the page keeps two rows");
     assert!(tab.has_more, "the third row proves a next page");
-    assert_eq!(budget.used(), tab.result.table.bytes, "the extra row left the budget");
+    assert_eq!(
+        budget.used(),
+        tab.result.table.bytes,
+        "the extra row left the budget"
+    );
     let one = sqln::grid::row_cost(&row("a"));
     assert_eq!(budget.used(), 2 * one);
     tab.on_event(
-        ExecEvent::ExecutionFinished { console: 7, execution: 5, end: ExecutionEnd::Completed, message: None },
+        ExecEvent::ExecutionFinished {
+            console: 7,
+            execution: 5,
+            end: ExecutionEnd::Completed,
+            message: None,
+        },
         &budget,
     );
     // Rows of an old execution never reach the grid.
-    let stale = StatementKey { execution: 4, ..key };
+    let stale = StatementKey {
+        execution: 4,
+        ..key
+    };
     let reserved = match budget.reserve(&row("z")) {
         sqln::grid::Reservation::Accepted(bytes) => bytes,
         other => panic!("{other:?}"),
     };
-    tab.on_event(ExecEvent::Rows { key: stale, rows: vec![row("z")], bytes: reserved }, &budget);
+    tab.on_event(
+        ExecEvent::Rows {
+            key: stale,
+            rows: vec![row("z")],
+            bytes: reserved,
+        },
+        &budget,
+    );
     assert_eq!(tab.loaded(), 2);
     assert_eq!(budget.used(), 2 * one, "the stale rows left the budget");
 }
@@ -1425,14 +1883,27 @@ fn the_list_of_a_sqlite_table_waits_for_its_columns_and_then_shows_them() {
 
 #[test]
 fn the_budget_stops_a_page_and_refuses_load_more_until_space_is_free() {
-    let settings = Settings { budget_bytes: 1_000, page_size: 8, ..Settings::default() };
-    let (mut f, recorder) = Fixture::recorded_with(Recorder { rows: 100, ..Recorder::default() }, settings);
+    let settings = Settings {
+        budget_bytes: 1_000,
+        page_size: 8,
+        ..Settings::default()
+    };
+    let (mut f, recorder) = Fixture::recorded_with(
+        Recorder {
+            rows: 100,
+            ..Recorder::default()
+        },
+        settings,
+    );
     f.open_table("orders");
     let first = f.rows_loaded();
     assert_eq!(first, 8, "the first table fits");
     f.open_table("users");
     let loaded = f.rows_loaded();
-    assert!(loaded > 0 && loaded < 8, "the budget stopped the page at {loaded} rows");
+    assert!(
+        loaded > 0 && loaded < 8,
+        "the budget stopped the page at {loaded} rows"
+    );
     f.assert_sees("data budget reached");
     let queries = recorder.count();
     f.grid();
@@ -1444,17 +1915,37 @@ fn the_budget_stops_a_page_and_refuses_load_more_until_space_is_free() {
     // Closing the other tab frees space, and then the key loads the next page.
     f.prefix('p');
     f.prefix('c');
-    assert_eq!(f.app.table().unwrap().relation.relation, "users", "the tab on the right is on screen");
+    assert_eq!(
+        f.app.table().unwrap().relation.relation,
+        "users",
+        "the tab on the right is on screen"
+    );
     f.code(KeyCode::Char('m'));
     f.loaded();
     assert!(f.rows_loaded() > loaded);
-    assert!(recorder.statements().last().unwrap().contains(&format!("OFFSET {loaded}")));
+    assert!(
+        recorder
+            .statements()
+            .last()
+            .unwrap()
+            .contains(&format!("OFFSET {loaded}"))
+    );
 }
 
 #[test]
 fn freed_space_loads_nothing_until_the_user_asks() {
-    let settings = Settings { budget_bytes: 1_000, page_size: 8, ..Settings::default() };
-    let (mut f, recorder) = Fixture::recorded_with(Recorder { rows: 100, ..Recorder::default() }, settings);
+    let settings = Settings {
+        budget_bytes: 1_000,
+        page_size: 8,
+        ..Settings::default()
+    };
+    let (mut f, recorder) = Fixture::recorded_with(
+        Recorder {
+            rows: 100,
+            ..Recorder::default()
+        },
+        settings,
+    );
     f.open_table("orders");
     f.open_table("users");
     let queries = recorder.count();
@@ -1467,8 +1958,15 @@ fn freed_space_loads_nothing_until_the_user_asks() {
 
 #[test]
 fn a_value_larger_than_the_budget_says_so_and_never_loads() {
-    let settings = Settings { budget_bytes: 100, ..Settings::default() };
-    let recorder = Recorder { rows: 5, value_size: 500, ..Recorder::default() };
+    let settings = Settings {
+        budget_bytes: 100,
+        ..Settings::default()
+    };
+    let recorder = Recorder {
+        rows: 5,
+        value_size: 500,
+        ..Recorder::default()
+    };
     let (mut f, recorder) = Fixture::recorded_with(recorder, settings);
     f.open_table("users");
     f.assert_sees("a value is larger than the data budget");
@@ -1483,7 +1981,15 @@ fn a_value_larger_than_the_budget_says_so_and_never_loads() {
 // Real SQLite data.
 
 fn ids(f: &Fixture) -> Vec<String> {
-    f.app.table().unwrap().result.table.rows.iter().map(|row| row[0].display()).collect()
+    f.app
+        .table()
+        .unwrap()
+        .result
+        .table
+        .rows
+        .iter()
+        .map(|row| row[0].display())
+        .collect()
 }
 
 #[test]
@@ -1555,7 +2061,10 @@ fn sqlite_sorts_by_a_click_on_the_header() {
 
 #[test]
 fn a_view_shows_its_rows() {
-    let setup = format!("{} CREATE VIEW big AS SELECT id FROM t WHERE id > 5;", numbered(8));
+    let setup = format!(
+        "{} CREATE VIEW big AS SELECT id FROM t WHERE id > 5;",
+        numbered(8)
+    );
     let mut f = Fixture::sqlite("real-view", &setup, Settings::default());
     f.open_table("big");
     assert_eq!(ids(&f), ["6", "7", "8"]);
@@ -1607,8 +2116,14 @@ fn a_new_console_takes_the_place_after_the_tables_that_opened_before_it() {
     f.code(KeyCode::Char('n'));
     assert!(f.app.table().is_none(), "the new console is on screen");
     let screen = f.screen();
-    let tabs = screen.lines().find(|line| line.contains("console-")).unwrap();
-    assert!(tabs.find("(table)").unwrap() < tabs.find("console-").unwrap(), "{tabs}");
+    let tabs = screen
+        .lines()
+        .find(|line| line.contains("console-"))
+        .unwrap();
+    assert!(
+        tabs.find("(table)").unwrap() < tabs.find("console-").unwrap(),
+        "{tabs}"
+    );
     f.prefix('c');
     assert!(!f.app.should_quit(), "the table stays open");
 }
@@ -1624,7 +2139,10 @@ fn the_tab_row_keeps_the_order_of_opening_with_consoles_and_tables_mixed() {
     f.code(KeyCode::Up);
     f.code(KeyCode::Char('n'));
     let screen = f.screen();
-    let tabs = screen.lines().find(|line| line.contains("console-1")).unwrap();
+    let tabs = screen
+        .lines()
+        .find(|line| line.contains("console-1"))
+        .unwrap();
     let (first, table, second) = (
         tabs.find("console-1").unwrap(),
         tabs.find(" t").unwrap(),
@@ -1640,7 +2158,10 @@ fn the_tab_row_keeps_the_order_of_opening_with_consoles_and_tables_mixed() {
 
 #[test]
 fn load_more_waits_for_a_free_connection_when_the_pool_is_full() {
-    let settings = Settings { max_connections: 1, ..Settings::default() };
+    let settings = Settings {
+        max_connections: 1,
+        ..Settings::default()
+    };
     let mut f = Fixture::sqlite("real-pool", &numbered(150), settings);
     f.open_table("t");
     f.assert_sees("Pool 0/1");
@@ -1655,7 +2176,11 @@ fn load_more_waits_for_a_free_connection_when_the_pool_is_full() {
     f.grid();
     f.code(KeyCode::Char('m'));
     f.pump_until(|f| f.sees_text("waiting for a connection"));
-    assert_eq!(f.rows_loaded(), 100, "the first page stays while the next one waits");
+    assert_eq!(
+        f.rows_loaded(),
+        100,
+        "the first page stays while the next one waits"
+    );
     f.assert_sees("Pool 1/1");
     // A rollback frees the session, and the page loads.
     f.prefix('p');
@@ -1720,7 +2245,10 @@ fn the_close_mark_of_a_console_keeps_the_table_on_screen() {
     assert!(f.app.table().is_some());
     assert!(!f.app.should_quit());
     let screen = f.screen();
-    assert!(!screen.lines().next().unwrap().contains("console-"), "{screen}");
+    assert!(
+        !screen.lines().next().unwrap().contains("console-"),
+        "{screen}"
+    );
 }
 
 #[test]
@@ -1771,18 +2299,26 @@ fn release(recorder: &Recorder) {
 fn has_three_decimals(text: &str) -> bool {
     text.match_indices('.').any(|(at, _)| {
         let rest = &text[at + 1..];
-        rest.len() >= 4 && rest[..3].chars().all(|c| c.is_ascii_digit()) && rest[3..].starts_with('s')
+        rest.len() >= 4
+            && rest[..3].chars().all(|c| c.is_ascii_digit())
+            && rest[3..].starts_with('s')
     })
 }
 
 #[test]
 fn a_running_tab_shows_its_time_in_the_tab_row_and_in_the_status_line() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.run_held(&recorder, PAGE);
     f.app.tick_at(Instant::now() + Duration::from_secs(65));
     assert!(has_three_decimals(&f.top()), "{}", f.top());
     let screen = f.screen();
-    let status = screen.lines().find(|line| line.contains("Running 1m 0")).unwrap();
+    let status = screen
+        .lines()
+        .find(|line| line.contains("Running 1m 0"))
+        .unwrap();
     assert!(has_three_decimals(status), "{status}");
     release(&recorder);
     f.console_idle();
@@ -1791,7 +2327,10 @@ fn a_running_tab_shows_its_time_in_the_tab_row_and_in_the_status_line() {
 
 #[test]
 fn the_mark_of_a_run_moves_and_an_idle_screen_does_not_draw_again() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     let start = Instant::now();
     assert!(!f.app.tick_at(start + Duration::from_secs(1)));
     assert!(!f.app.tick_at(start + Duration::from_secs(2)));
@@ -1800,9 +2339,15 @@ fn the_mark_of_a_run_moves_and_an_idle_screen_does_not_draw_again() {
     let now = Instant::now();
     f.app.tick_at(now);
     let first = f.top();
-    assert!(f.app.tick_at(now + Duration::from_millis(100)), "the time needs a new frame");
+    assert!(
+        f.app.tick_at(now + Duration::from_millis(100)),
+        "the time needs a new frame"
+    );
     assert_ne!(first, f.top());
-    assert!(!f.app.tick_at(now + Duration::from_millis(100)), "the same frame draws once");
+    assert!(
+        !f.app.tick_at(now + Duration::from_millis(100)),
+        "the same frame draws once"
+    );
     let mark = |row: &str| row.trim_start().chars().next();
     let mut picture = mark(&f.top());
     let mut changes = 0;
@@ -1819,7 +2364,10 @@ fn the_mark_of_a_run_moves_and_an_idle_screen_does_not_draw_again() {
 
 #[test]
 fn a_tab_that_ends_out_of_sight_keeps_its_mark_until_the_user_leaves_it() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.run_held(&recorder, PAGE);
     recorder.hold.store(false, Ordering::SeqCst);
     f.open_table("users");
@@ -1830,7 +2378,10 @@ fn a_tab_that_ends_out_of_sight_keeps_its_mark_until_the_user_leaves_it() {
 
     f.click_text("console-1");
     assert!(f.app.table().is_none());
-    assert!(f.top().contains(" ok  console-1"), "the mark stays while the user looks");
+    assert!(
+        f.top().contains(" ok  console-1"),
+        "the mark stays while the user looks"
+    );
     f.prefix('n');
     assert!(f.app.table().is_some());
     assert!(!f.top().contains(" ok  console-1"), "{}", f.top());
@@ -1838,7 +2389,10 @@ fn a_tab_that_ends_out_of_sight_keeps_its_mark_until_the_user_leaves_it() {
 
 #[test]
 fn the_mark_of_a_console_stays_during_a_visit_and_goes_after_it() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.run_held(&recorder, PAGE);
     f.prefix('h');
     f.code(KeyCode::Char('n'));
@@ -1849,7 +2403,10 @@ fn the_mark_of_a_console_stays_during_a_visit_and_goes_after_it() {
 
     f.click_text("console-1");
     assert_eq!(f.app.console().name, "console-1");
-    assert!(f.top().contains(" ok  console-1"), "the mark stays while the user looks");
+    assert!(
+        f.top().contains(" ok  console-1"),
+        "the mark stays while the user looks"
+    );
     f.prefix('n');
     assert_eq!(f.app.console().name, "console-2");
     assert!(!f.top().contains(" ok  console-1"), "{}", f.top());
@@ -1857,7 +2414,10 @@ fn the_mark_of_a_console_stays_during_a_visit_and_goes_after_it() {
 
 #[test]
 fn a_failed_run_shows_an_error_mark_that_the_next_run_replaces() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     *recorder.fail_when.lock().unwrap() = Some("boom".to_owned());
     f.run_text("SELECT boom;");
     f.console_idle();
@@ -1873,7 +2433,10 @@ fn a_failed_run_shows_an_error_mark_that_the_next_run_replaces() {
 
 #[test]
 fn a_stopped_run_shows_a_stop_mark() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.run_held(&recorder, PAGE);
     f.prefix('x');
     f.console_idle();
@@ -1882,7 +2445,10 @@ fn a_stopped_run_shows_a_stop_mark() {
 
 #[test]
 fn a_table_tab_shows_the_same_time_and_marks() {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.open_table("users");
     assert!(f.top().contains(" ok  users (table)"), "{}", f.top());
 
@@ -1905,7 +2471,10 @@ fn a_table_tab_shows_the_same_time_and_marks() {
 
 #[test]
 fn the_close_mark_still_closes_a_tab_with_a_run_mark() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 5, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     f.run_text(PAGE);
     f.console_idle();
     f.open_table("users");
@@ -1917,7 +2486,10 @@ fn the_close_mark_still_closes_a_tab_with_a_run_mark() {
 // ---- the keys of the suggestion list in the filter ----
 
 fn filter_with_list(keys: SuggestionKeys) -> (Fixture, Arc<Recorder>) {
-    let recorder = Arc::new(Recorder { rows: 5, ..Recorder::default() });
+    let recorder = Arc::new(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
     let options = Options {
         connector: Some(Arc::new(RecordingConnector(recorder.clone()))),
         label: Some("server".to_owned()),
@@ -1968,7 +2540,10 @@ fn the_enter_choice_keeps_tab_for_the_next_field_of_the_filter() {
 // ---- the pages of a table ----
 
 fn paged(rows: usize) -> (Fixture, Arc<Recorder>) {
-    let (mut f, recorder) = Fixture::recorded(Recorder { rows, ..Recorder::default() });
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows,
+        ..Recorder::default()
+    });
     f.open_table("users");
     (f, recorder)
 }
@@ -1994,7 +2569,10 @@ fn a_table_with_one_page_has_no_page_buttons() {
     for rows in [0, 5, 100] {
         let (mut f, _) = paged(rows);
         let screen = f.screen();
-        assert!(!screen.contains("[Next]") && !screen.contains("[Previous]"), "{screen}");
+        assert!(
+            !screen.contains("[Next]") && !screen.contains("[Previous]"),
+            "{screen}"
+        );
         assert!(!screen.contains("Page 1"), "{screen}");
     }
 }
@@ -2007,7 +2585,11 @@ fn a_full_page_with_more_rows_shows_the_buttons_and_the_next_button_loads_the_pa
     f.next_page();
     assert_eq!(recorder.count(), 2);
     assert_eq!(f.app.table().unwrap().loaded(), 200);
-    assert_eq!(f.view(), (100, 100), "the first row of the page stands at the top");
+    assert_eq!(
+        f.view(),
+        (100, 100),
+        "the first row of the page stands at the top"
+    );
     f.assert_sees("Page 2 of 2+");
 }
 
@@ -2095,8 +2677,15 @@ fn a_page_that_fails_keeps_the_rows_and_the_cursor() {
 #[test]
 fn a_page_that_stops_with_a_part_of_its_rows_keeps_the_cursor() {
     // The rows arrive in batches of 200, so the page must hold more than one batch.
-    let settings = Settings { page_size: 300, ..Settings::default() };
-    let recorder = Recorder { rows: 1_000, mid_rows: 250, ..Recorder::default() };
+    let settings = Settings {
+        page_size: 300,
+        ..Settings::default()
+    };
+    let recorder = Recorder {
+        rows: 1_000,
+        mid_rows: 250,
+        ..Recorder::default()
+    };
     let (mut f, recorder) = Fixture::recorded_with(recorder, settings);
     f.open_table("users");
     recorder.mid_hold.store(true, Ordering::SeqCst);
@@ -2181,14 +2770,26 @@ fn the_state_of_a_load_comes_before_the_page_buttons() {
 
 #[test]
 fn a_narrow_row_keeps_short_page_buttons_with_a_long_state() {
-    let settings = Settings { max_connections: 1, ..Settings::default() };
-    let (mut f, recorder) = Fixture::recorded_with(Recorder { rows: 250, ..Recorder::default() }, settings);
+    let settings = Settings {
+        max_connections: 1,
+        ..Settings::default()
+    };
+    let (mut f, recorder) = Fixture::recorded_with(
+        Recorder {
+            rows: 250,
+            ..Recorder::default()
+        },
+        settings,
+    );
     f.open_table("users");
     recorder.hold.store(true, Ordering::SeqCst);
     f.click_text("[Next]");
     f.pump_until(|f| f.app.table().unwrap().phase == Phase::Running);
     let screen = f.screen_at(100, 30);
-    assert!(screen.contains("1/1+") || screen.contains("Page 1 of 1+"), "{screen}");
+    assert!(
+        screen.contains("1/1+") || screen.contains("Page 1 of 1+"),
+        "{screen}"
+    );
     release(&recorder);
     f.loaded();
 }
@@ -2216,7 +2817,8 @@ fn the_short_buttons_also_move_between_pages() {
         }
     }
     let column = column.expect("the short form is on the screen");
-    f.app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), column, row));
+    f.app
+        .on_event(mouse(MouseEventKind::Down(MouseButton::Left), column, row));
     assert_eq!(f.view(), (0, 0));
     release(&recorder);
     f.loaded();
@@ -2234,11 +2836,17 @@ fn the_row_search_takes_the_place_of_the_page_buttons() {
 
 #[test]
 fn the_results_of_a_console_have_no_page_buttons() {
-    let (mut f, _) = Fixture::recorded(Recorder { rows: 250, ..Recorder::default() });
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 250,
+        ..Recorder::default()
+    });
     f.run_text(PAGE);
     f.console_idle();
     let screen = f.screen();
-    assert!(!screen.contains("[Next]") && !screen.contains("Page 1"), "{screen}");
+    assert!(
+        !screen.contains("[Next]") && !screen.contains("Page 1"),
+        "{screen}"
+    );
 }
 
 #[test]
@@ -2297,8 +2905,16 @@ fn a_next_load_moves_only_its_table_after_the_user_changes_tabs() {
 
 #[test]
 fn loaded_pages_still_work_when_the_budget_refuses_a_new_page() {
-    let settings = Settings { page_size: 4, budget_bytes: 1_000, ..Settings::default() };
-    let recorder = Recorder { rows: 40, value_size: 50, ..Recorder::default() };
+    let settings = Settings {
+        page_size: 4,
+        budget_bytes: 1_000,
+        ..Settings::default()
+    };
+    let recorder = Recorder {
+        rows: 40,
+        value_size: 50,
+        ..Recorder::default()
+    };
     let (mut f, recorder) = Fixture::recorded_with(recorder, settings);
     f.open_table("users");
     f.load_more();
@@ -2317,7 +2933,11 @@ fn loaded_pages_still_work_when_the_budget_refuses_a_new_page() {
 fn a_search_removes_the_mouse_targets_of_the_page_buttons() {
     let (mut f, recorder) = paged(250);
     let screen = f.screen();
-    let (y, line) = screen.lines().enumerate().find(|(_, line)| line.contains("[Next]")).unwrap();
+    let (y, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("[Next]"))
+        .unwrap();
     let x = line[..line.find("[Next]").unwrap()].chars().count() as u16;
     f.grid();
     f.press(ctrl('f'));

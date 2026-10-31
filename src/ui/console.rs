@@ -66,7 +66,11 @@ pub struct BarData<'a> {
 
 /// Draws the title of a panel. The title of the panel with the focus has its own style.
 pub fn draw_panel_title(frame: &mut Frame, area: Rect, title: &str, focused: bool, theme: &Theme) {
-    let style = if focused { theme.panel_title_focused } else { theme.panel_title };
+    let style = if focused {
+        theme.panel_title_focused
+    } else {
+        theme.panel_title
+    };
     frame.render_widget(Paragraph::new(format!(" {title}")).style(style), area);
 }
 
@@ -75,16 +79,36 @@ fn control_items(console: &Console, bar: &BarData, theme: &Theme) -> Vec<(Contro
     let idle = !console.is_busy();
     let open = idle && console.in_transaction();
     let icons = &theme.icons;
-    let mode = if console.manual { text::MODE_MANUAL } else { text::MODE_AUTO };
+    let mode = if console.manual {
+        text::MODE_MANUAL
+    } else {
+        text::MODE_AUTO
+    };
     let mut items = vec![
         (Control::Run, theme.tool(icons.run, text::CONTROL_RUN), idle),
-        (Control::Script, theme.tool(icons.script, text::CONTROL_SCRIPT), idle),
-        (Control::Stop, theme.tool(icons.stop, text::CONTROL_STOP), !idle),
+        (
+            Control::Script,
+            theme.tool(icons.script, text::CONTROL_SCRIPT),
+            idle,
+        ),
+        (
+            Control::Stop,
+            theme.tool(icons.stop, text::CONTROL_STOP),
+            !idle,
+        ),
     ];
     if bar.transactions {
         items.push((Control::Mode, theme.tool(icons.mode, mode), idle));
-        items.push((Control::Commit, theme.tool(icons.commit, text::CONTROL_COMMIT), open));
-        items.push((Control::Rollback, theme.tool(icons.rollback, text::CONTROL_ROLLBACK), open));
+        items.push((
+            Control::Commit,
+            theme.tool(icons.commit, text::CONTROL_COMMIT),
+            open,
+        ));
+        items.push((
+            Control::Rollback,
+            theme.tool(icons.rollback, text::CONTROL_ROLLBACK),
+            open,
+        ));
     }
     let label = match bar.namespace {
         Namespace::None => None,
@@ -92,7 +116,11 @@ fn control_items(console: &Console, bar: &BarData, theme: &Theme) -> Vec<(Contro
         Namespace::Database => Some(text::LABEL_DATABASE),
     };
     if let Some(label) = label {
-        let value = console.schema.as_deref().or(bar.default_schema).unwrap_or("-");
+        let value = console
+            .schema
+            .as_deref()
+            .or(bar.default_schema)
+            .unwrap_or("-");
         let value = printable(value);
         let shown = if icons.schema.is_empty() {
             format!("{label}: [{value}]")
@@ -121,7 +149,11 @@ pub fn draw_buttons<T: Copy>(
             break;
         }
         buttons.push((x, x + width, control));
-        let style = if enabled { theme.control } else { theme.control_off };
+        let style = if enabled {
+            theme.control
+        } else {
+            theme.control_off
+        };
         spans.push(Span::styled(label, style));
         spans.push(Span::raw("  "));
         x += width + BUTTON_GAP;
@@ -148,11 +180,20 @@ pub struct TabView {
 
 /// Returns the badge of a tab: the mark and the time of a run in progress, or the end
 /// of the last run. `frame` chooses the picture of the mark.
-pub fn run_badge(phase: Phase, run: &RunClock, now: Instant, frame: usize, theme: &Theme) -> Option<(String, Style)> {
+pub fn run_badge(
+    phase: Phase,
+    run: &RunClock,
+    now: Instant,
+    frame: usize,
+    theme: &Theme,
+) -> Option<(String, Style)> {
     let icons = &theme.icons;
     if phase != Phase::Idle {
         let mark = icons.running[frame % icons.running.len()];
-        let shown = run.elapsed(now).map_or_else(|| mark.to_owned(), |time| format!("{mark} {}", text::elapsed(time)));
+        let shown = run.elapsed(now).map_or_else(
+            || mark.to_owned(),
+            |time| format!("{mark} {}", text::elapsed(time)),
+        );
         return Some((format!(" {shown} "), theme.run_active));
     }
     let (mark, style) = match run.end? {
@@ -192,7 +233,10 @@ pub fn draw_main_tabs(
     let widths: Vec<u16> = views.iter().map(width_of).collect();
     let mut first = 0;
     while first < active
-        && widths[first..=active].iter().map(|width| u32::from(*width)).sum::<u32>()
+        && widths[first..=active]
+            .iter()
+            .map(|width| u32::from(*width))
+            .sum::<u32>()
             > u32::from(area.width)
     {
         first += 1;
@@ -204,8 +248,17 @@ pub fn draw_main_tabs(
         let end = x.saturating_add(widths[index]).min(area.right());
         // The close mark and the column after it close the tab, so a click has two columns.
         let close = x.saturating_add(widths[index].saturating_sub(2));
-        tabs.push(MainTab { start: x, end, close: (close < end).then_some(close), index });
-        let style = if index == active { theme.tab_active } else { theme.tab };
+        tabs.push(MainTab {
+            start: x,
+            end,
+            close: (close < end).then_some(close),
+            index,
+        });
+        let style = if index == active {
+            theme.tab_active
+        } else {
+            theme.tab
+        };
         let mark = if index == active {
             Span::styled(theme.icons.tab_mark, theme.tab_mark)
         } else {
@@ -217,7 +270,10 @@ pub fn draw_main_tabs(
             spans.push(Span::styled(" ", style));
         }
         spans.push(Span::styled(format!("{} ", view.label), style));
-        spans.push(Span::styled(theme.icons.close, style.patch(theme.tab_close)));
+        spans.push(Span::styled(
+            theme.icons.close,
+            style.patch(theme.tab_close),
+        ));
         spans.push(Span::styled(" ", style));
         x = end;
         if x >= area.right() {
@@ -230,7 +286,10 @@ pub fn draw_main_tabs(
 
 /// Draws the row under the main tabs.
 pub fn draw_rule(frame: &mut Frame, area: Rect, theme: &Theme) {
-    frame.render_widget(Paragraph::new(RULE.repeat(usize::from(area.width))).style(theme.divider), area);
+    frame.render_widget(
+        Paragraph::new(RULE.repeat(usize::from(area.width))).style(theme.divider),
+        area,
+    );
 }
 
 pub fn draw_console(
@@ -260,14 +319,20 @@ pub fn draw_console(
     if bar.title {
         let chosen = console.schema.as_deref().or(bar.default_schema);
         let schema = chosen.filter(|_| bar.namespace != Namespace::None);
-        let parts: Vec<&str> =
-            [Some(bar.connection), schema, Some(console.name.as_str())].into_iter().flatten().collect();
+        let parts: Vec<&str> = [Some(bar.connection), schema, Some(console.name.as_str())]
+            .into_iter()
+            .flatten()
+            .collect();
         let path = printable(&parts.join(" › "));
         draw_panel_title(frame, title, &path, editor_focused, theme);
     }
     let control_buttons = draw_buttons(frame, controls, control_items(console, bar, theme), theme);
     draw_editor(frame, editor, &mut console.editor, editor_focused, theme);
-    if let Some(welcome) = bar.welcome.as_ref().filter(|_| console.editor.search().is_none()) {
+    if let Some(welcome) = bar
+        .welcome
+        .as_ref()
+        .filter(|_| console.editor.search().is_none())
+    {
         draw_welcome(frame, editor, welcome, theme);
     }
     let focused = focused && console.focus == Focus::Results;
@@ -279,12 +344,26 @@ pub fn draw_console(
         draw_grid(frame.buffer_mut(), results, result, focused, theme);
         let line = match &result.search {
             Some(search) => search_line(search, &result.table, theme),
-            None => Line::from(Span::styled(format!(" {}", printable(&result.summary)), theme.hint)),
+            None => Line::from(Span::styled(
+                format!(" {}", printable(&result.summary)),
+                theme.hint,
+            )),
         };
         frame.render_widget(Paragraph::new(line), summary);
     }
-    let split = Rect { y: editor.y, height: shared, ..editor };
-    ConsoleLayout { controls, control_buttons, editor, tabs, results, split }
+    let split = Rect {
+        y: editor.y,
+        height: shared,
+        ..editor
+    };
+    ConsoleLayout {
+        controls,
+        control_buttons,
+        editor,
+        tabs,
+        results,
+        split,
+    }
 }
 
 pub fn search_line(search: &RowSearch, table: &ResultTable, theme: &Theme) -> Line<'static> {
@@ -294,15 +373,22 @@ pub fn search_line(search: &RowSearch, table: &ResultTable, theme: &Theme) -> Li
         text::search_count(search.position(), search.total(), search.is_partial(table))
     };
     Line::from(vec![
-        Span::raw(format!(" {}{}", text::FIND_LABEL, printable(search.query()))),
+        Span::raw(format!(
+            " {}{}",
+            text::FIND_LABEL,
+            printable(search.query())
+        )),
         Span::styled(" ", theme.cursor),
         Span::styled(format!(" {count}"), theme.hint),
     ])
 }
 
 fn tab_labels(console: &Console) -> Vec<String> {
-    let mut labels: Vec<String> =
-        console.results.iter().map(|result| text::result_tab(result.number)).collect();
+    let mut labels: Vec<String> = console
+        .results
+        .iter()
+        .map(|result| text::result_tab(result.number))
+        .collect();
     labels.push(text::MESSAGES_TAB.to_owned());
     labels
 }
@@ -334,7 +420,11 @@ fn draw_tabs(frame: &mut Frame, area: Rect, console: &Console, focused: bool, th
         if x >= area.right() {
             break;
         }
-        let style = if index == active { active_style } else { theme.result_tab };
+        let style = if index == active {
+            active_style
+        } else {
+            theme.result_tab
+        };
         buffer.set_stringn(x, area.y, label, usize::from(area.right() - x), style);
     }
 }
@@ -348,7 +438,11 @@ pub fn tab_at(console: &Console, area: Rect, column: u16) -> Option<usize> {
 }
 
 fn draw_messages(frame: &mut Frame, area: Rect, console: &Console, theme: &Theme) {
-    let area = Rect { x: area.x + 1, width: area.width.saturating_sub(1), ..area };
+    let area = Rect {
+        x: area.x + 1,
+        width: area.width.saturating_sub(1),
+        ..area
+    };
     if console.messages.is_empty() {
         let line = Span::styled(text::NO_MESSAGES, theme.hint);
         frame.render_widget(Paragraph::new(Line::from(line)), area);
@@ -393,7 +487,9 @@ fn visible_columns(table: &ResultTable, view: &GridView, area: Rect) -> Vec<(usi
         if x >= area.right() {
             break;
         }
-        let width = u16::try_from(table.width(index)).unwrap_or(u16::MAX).min(area.right() - x);
+        let width = u16::try_from(table.width(index))
+            .unwrap_or(u16::MAX)
+            .min(area.right() - x);
         columns.push((index, x, width));
         x = x.saturating_add(width).saturating_add(GAP);
     }
@@ -416,18 +512,37 @@ fn grid_body(area: Rect, table: &ResultTable) -> Rect {
     let digits = u16::try_from(table.rows.len().max(1).to_string().len()).unwrap_or(u16::MAX);
     let numbers = digits.saturating_add(NUMBER_END).min(area.width);
     let width = area.width.saturating_sub(numbers).saturating_sub(1);
-    Rect { x: area.x + numbers, width, ..area }
+    Rect {
+        x: area.x + numbers,
+        width,
+        ..area
+    }
 }
 
 /// Writes a row number in the columns before `body`.
-fn draw_row_number(buffer: &mut Buffer, area: Rect, body: Rect, y: u16, number: usize, style: Style) {
+fn draw_row_number(
+    buffer: &mut Buffer,
+    area: Rect,
+    body: Rect,
+    y: u16,
+    number: usize,
+    style: Style,
+) {
     let digits = usize::from((body.x - area.x).saturating_sub(NUMBER_END));
     buffer.set_stringn(area.x, y, format!("{number:>digits$}"), digits, style);
 }
 
 /// Writes the rule after the row numbers and the rule after each column.
-fn draw_rules(buffer: &mut Buffer, body: Rect, columns: &[(usize, u16, u16)], y: u16, theme: &Theme) {
-    let edges = columns.iter().map(|(_, x, width)| x.saturating_add(*width).saturating_add(1));
+fn draw_rules(
+    buffer: &mut Buffer,
+    body: Rect,
+    columns: &[(usize, u16, u16)],
+    y: u16,
+    theme: &Theme,
+) {
+    let edges = columns
+        .iter()
+        .map(|(_, x, width)| x.saturating_add(*width).saturating_add(1));
     for x in std::iter::once(body.x.saturating_sub(2)).chain(edges) {
         if x < body.right() {
             buffer.set_stringn(x, y, "│", 1, theme.grid_rule);
@@ -435,14 +550,22 @@ fn draw_rules(buffer: &mut Buffer, body: Rect, columns: &[(usize, u16, u16)], y:
     }
 }
 
-pub fn draw_grid(buffer: &mut Buffer, area: Rect, result: &mut ResultTab, focused: bool, theme: &Theme) {
+pub fn draw_grid(
+    buffer: &mut Buffer,
+    area: Rect,
+    result: &mut ResultTab,
+    focused: bool,
+    theme: &Theme,
+) {
     if area.height == 0 || area.width == 0 {
         return;
     }
     let rows = usize::from(area.height - 1);
     let table = &result.table;
     let body = grid_body(area, table);
-    result.view.keep_visible(rows, table, usize::from(body.width));
+    result
+        .view
+        .keep_visible(rows, table, usize::from(body.width));
     let view = result.view;
     let columns = visible_columns(table, &view, body);
 
@@ -462,17 +585,26 @@ pub fn draw_grid(buffer: &mut Buffer, area: Rect, result: &mut ResultTab, focuse
             let line = Rect::new(area.x, y, area.width.saturating_sub(1), 1);
             buffer.set_style(line, theme.grid_line);
         }
-        let number = if current { theme.gutter_current } else { theme.row_number };
+        let number = if current {
+            theme.gutter_current
+        } else {
+            theme.row_number
+        };
         draw_row_number(buffer, area, body, y, row_index + 1, number);
         draw_rules(buffer, body, &columns, y, theme);
         for (column, x, width) in &columns {
-            let Some(value) = row.get(*column) else { continue };
+            let Some(value) = row.get(*column) else {
+                continue;
+            };
             let selected = selection.is_some_and(|range| {
                 (range.top..=range.bottom).contains(&row_index)
                     && (range.left..=range.right).contains(column)
             });
             let found = |check: fn(&RowSearch, usize, usize) -> bool| {
-                result.search.as_ref().is_some_and(|search| check(search, row_index, *column))
+                result
+                    .search
+                    .as_ref()
+                    .is_some_and(|search| check(search, row_index, *column))
             };
             let style = if focused && row_index == view.row && *column == view.col {
                 theme.cell_cursor
@@ -490,7 +622,11 @@ pub fn draw_grid(buffer: &mut Buffer, area: Rect, result: &mut ResultTab, focuse
             draw_cell(buffer, *x, y, *width, value, style);
         }
     }
-    let track = Rect { y: area.y + 1, height: area.height - 1, ..area };
+    let track = Rect {
+        y: area.y + 1,
+        height: area.height - 1,
+        ..area
+    };
     draw_scrollbar(buffer, track, table.rows.len(), rows, view.top, theme);
 }
 
@@ -517,7 +653,12 @@ pub fn header_column_at(result: &ResultTab, area: Rect, column: u16, row: u16) -
 }
 
 /// Returns the row and the column at a screen cell.
-pub fn grid_cell_at(result: &ResultTab, area: Rect, column: u16, row: u16) -> Option<(usize, usize)> {
+pub fn grid_cell_at(
+    result: &ResultTab,
+    area: Rect,
+    column: u16,
+    row: u16,
+) -> Option<(usize, usize)> {
     if row <= area.y || row >= area.bottom() {
         return None;
     }
@@ -558,7 +699,11 @@ pub fn draw_dialog(
         .lines()
         .map(|line| line.width().div_ceil(inner_width).max(1))
         .sum();
-    let box_area = centered(area, width, u16::try_from(body_rows).unwrap_or(10).saturating_add(4));
+    let box_area = centered(
+        area,
+        width,
+        u16::try_from(body_rows).unwrap_or(10).saturating_add(4),
+    );
     frame.render_widget(Clear, box_area);
     let block = float_block(title, theme);
     let inner = block.inner(box_area);
@@ -566,13 +711,20 @@ pub fn draw_dialog(
 
     let [message, buttons] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(inner);
-    frame.render_widget(Paragraph::new(printable_lines(body)).wrap(Wrap { trim: false }), message);
+    frame.render_widget(
+        Paragraph::new(printable_lines(body)).wrap(Wrap { trim: false }),
+        message,
+    );
 
     let mut spans = Vec::new();
     let mut targets = Vec::new();
     let mut x = buttons.x;
     for (index, label) in options.iter().enumerate() {
-        let style = if index == focus { theme.dialog_focus } else { theme.dialog_option };
+        let style = if index == focus {
+            theme.dialog_focus
+        } else {
+            theme.dialog_option
+        };
         let text = theme.button(label);
         let label_width = u16::try_from(text.width()).unwrap_or(u16::MAX);
         targets.push((x, x.saturating_add(label_width), index));
@@ -594,7 +746,9 @@ pub fn draw_picker(
     loading: bool,
     theme: &Theme,
 ) -> (Rect, usize) {
-    let rows = u16::try_from(items.len()).unwrap_or(MAX_PICKER_ROWS).min(MAX_PICKER_ROWS);
+    let rows = u16::try_from(items.len())
+        .unwrap_or(MAX_PICKER_ROWS)
+        .min(MAX_PICKER_ROWS);
     let box_area = centered(frame.area(), 48, rows + 3);
     frame.render_widget(Clear, box_area);
     let block = float_block(title, theme);
@@ -608,7 +762,11 @@ pub fn draw_picker(
         .skip(first)
         .take(height)
         .map(|(index, item)| {
-            let style = if index == cursor { theme.dialog_focus } else { theme.dialog_option };
+            let style = if index == cursor {
+                theme.dialog_focus
+            } else {
+                theme.dialog_option
+            };
             Line::styled(printable(item), style)
         })
         .collect();
@@ -621,7 +779,11 @@ pub fn draw_picker(
 
 /// Keeps the line breaks of a text and replaces the other control characters.
 fn printable_lines(text: &str) -> Text<'static> {
-    Text::from(text.split('\n').map(|line| Line::raw(printable(line))).collect::<Vec<_>>())
+    Text::from(
+        text.split('\n')
+            .map(|line| Line::raw(printable(line)))
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// Draws a long text. It returns the first row, because the end of the text limits it.
@@ -634,7 +796,11 @@ pub fn draw_overlay(
     theme: &Theme,
 ) -> usize {
     let area = frame.area();
-    let box_area = centered(area, area.width.saturating_sub(8).min(90), area.height.saturating_sub(4));
+    let box_area = centered(
+        area,
+        area.width.saturating_sub(8).min(90),
+        area.height.saturating_sub(4),
+    );
     frame.render_widget(Clear, box_area);
     let block = float_block(printable(title).trim(), theme)
         .title_bottom(Line::from(printable(footer)).alignment(Alignment::Right));
@@ -650,8 +816,21 @@ pub fn draw_overlay(
 
 pub fn draw_small_terminal(frame: &mut Frame, area: Rect, minimum: (u16, u16), theme: &Theme) {
     let lines = vec![
-        Line::raw(format!("{}: {} x {}", text::SMALL_TERMINAL, area.width, area.height)),
-        Line::raw(format!("{}: {} x {}", text::MINIMUM_SIZE, minimum.0, minimum.1)),
+        Line::raw(format!(
+            "{}: {} x {}",
+            text::SMALL_TERMINAL,
+            area.width,
+            area.height
+        )),
+        Line::raw(format!(
+            "{}: {} x {}",
+            text::MINIMUM_SIZE,
+            minimum.0,
+            minimum.1
+        )),
     ];
-    frame.render_widget(Paragraph::new(lines).block(float_block("SQLN", theme)), area);
+    frame.render_widget(
+        Paragraph::new(lines).block(float_block("SQLN", theme)),
+        area,
+    );
 }

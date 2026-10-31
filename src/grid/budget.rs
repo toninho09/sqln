@@ -37,7 +37,10 @@ pub fn row_cost(row: &[Value]) -> usize {
 
 impl Budget {
     pub fn new(limit: usize) -> Self {
-        Self { limit: AtomicUsize::new(limit), used: AtomicUsize::new(0) }
+        Self {
+            limit: AtomicUsize::new(limit),
+            used: AtomicUsize::new(0),
+        }
     }
 
     pub fn used(&self) -> usize {
@@ -59,9 +62,11 @@ impl Budget {
             return Reservation::ValueTooLarge;
         }
         let cost = row_cost(row);
-        let reserved = self.used.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
-            used.checked_add(cost).filter(|total| *total <= limit)
-        });
+        let reserved = self
+            .used
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+                used.checked_add(cost).filter(|total| *total <= limit)
+            });
         match reserved {
             Ok(_) => Reservation::Accepted(cost),
             Err(_) => Reservation::BudgetReached,
@@ -69,8 +74,10 @@ impl Budget {
     }
 
     pub fn release(&self, bytes: usize) {
-        let _ = self.used.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
-            Some(used.saturating_sub(bytes))
-        });
+        let _ = self
+            .used
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+                Some(used.saturating_sub(bytes))
+            });
     }
 }

@@ -1,7 +1,7 @@
 //! Screen drawing.
 
-pub mod conflicts;
 pub mod auth;
+pub mod conflicts;
 pub mod console;
 pub mod form;
 pub mod icons;
@@ -28,12 +28,12 @@ use ratatui::widgets::{
     StatefulWidget, Widget,
 };
 
-pub use self::console::{
-    ConsoleLayout, MainTab, TabView, column_edge_at, draw_console, draw_dialog, draw_main_tabs, draw_overlay,
-    draw_panel_title, draw_picker, draw_rule, draw_small_terminal, grid_cell_at, header_column_at,
-    main_tab_label, run_badge, tab_at,
-};
 pub use self::conflicts::{ConflictLayout, ConflictRowView, draw_conflicts};
+pub use self::console::{
+    ConsoleLayout, MainTab, TabView, column_edge_at, draw_console, draw_dialog, draw_main_tabs,
+    draw_overlay, draw_panel_title, draw_picker, draw_rule, draw_small_terminal, grid_cell_at,
+    header_column_at, main_tab_label, run_badge, tab_at,
+};
 pub use self::table::{TableBar, TableControl, TableLayout, draw_table};
 use self::theme::Theme;
 use crate::complete::SuggestionKind;
@@ -66,7 +66,9 @@ pub(crate) fn draw_scrollbar(
     if total <= visible || area.height == 0 || area.width == 0 {
         return;
     }
-    let mut state = ScrollbarState::new(total - visible).position(position).viewport_content_length(visible);
+    let mut state = ScrollbarState::new(total - visible)
+        .position(position)
+        .viewport_content_length(visible);
     Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(None)
         .end_symbol(None)
@@ -77,7 +79,13 @@ pub(crate) fn draw_scrollbar(
         .render(area, buffer, &mut state);
 }
 
-pub fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut SqlEditor, focused: bool, theme: &Theme) {
+pub fn draw_editor(
+    frame: &mut Frame,
+    area: Rect,
+    editor: &mut SqlEditor,
+    focused: bool,
+    theme: &Theme,
+) {
     let bar_height = if editor.search().is_some() { 2 } else { 0 };
     let [bar, text] =
         Layout::vertical([Constraint::Length(bar_height), Constraint::Min(0)]).areas(area);
@@ -87,7 +95,8 @@ pub fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut SqlEditor, focuse
     }
 
     // The last column holds the scrollbar, so the text keeps its width in a long script.
-    let [text, scroll] = Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]).areas(text);
+    let [text, scroll] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]).areas(text);
     editor.set_text_area(gutterless(text, editor));
     editor.prepare_frame(usize::from(text.height), theme);
     let editor_theme = EditorTheme::default()
@@ -110,7 +119,14 @@ pub fn draw_editor(frame: &mut Frame, area: Rect, editor: &mut SqlEditor, focuse
     draw_gutter(frame.buffer_mut(), text, editor, focused, theme);
     draw_marks(frame, text, editor, theme);
     let (_, top) = editor.state.viewport_offset();
-    draw_scrollbar(frame.buffer_mut(), scroll, editor.state.lines.len(), usize::from(text.height), top, theme);
+    draw_scrollbar(
+        frame.buffer_mut(),
+        scroll,
+        editor.state.lines.len(),
+        usize::from(text.height),
+        top,
+        theme,
+    );
 
     let anchor_shift = editor.list_anchor_chars();
     let cursor = editor.state.cursor_screen_position();
@@ -130,15 +146,30 @@ pub(crate) fn input_spans(
     theme: &Theme,
 ) -> (Vec<Span<'static>>, usize) {
     if !focused {
-        return (vec![Span::raw(chars.iter().take(width).collect::<String>())], 0);
+        return (
+            vec![Span::raw(chars.iter().take(width).collect::<String>())],
+            0,
+        );
     }
     let cursor = cursor.min(chars.len());
     let first = (cursor + 1).saturating_sub(width);
     let before: String = chars[first..cursor].iter().collect();
-    let at = chars.get(cursor).map_or_else(|| " ".to_owned(), char::to_string);
-    let after: String =
-        chars.iter().skip(cursor + 1).take(width.saturating_sub(cursor + 1 - first)).collect();
-    (vec![Span::raw(before), Span::styled(at, theme.cursor), Span::raw(after)], first)
+    let at = chars
+        .get(cursor)
+        .map_or_else(|| " ".to_owned(), char::to_string);
+    let after: String = chars
+        .iter()
+        .skip(cursor + 1)
+        .take(width.saturating_sub(cursor + 1 - first))
+        .collect();
+    (
+        vec![
+            Span::raw(before),
+            Span::styled(at, theme.cursor),
+            Span::raw(after),
+        ],
+        first,
+    )
 }
 
 fn mark_symbol(state: MarkState, theme: &Theme) -> (&'static str, Style) {
@@ -158,12 +189,19 @@ fn mark_symbol(state: MarkState, theme: &Theme) -> (&'static str, Style) {
 /// of the selection and the search stay.
 fn draw_current_line(buffer: &mut Buffer, area: Rect, editor: &SqlEditor, theme: &Theme) {
     let (_, top) = editor.state.viewport_offset();
-    let Some(offset) = editor.state.cursor.row.checked_sub(top).filter(|offset| *offset < usize::from(area.height))
+    let Some(offset) = editor
+        .state
+        .cursor
+        .row
+        .checked_sub(top)
+        .filter(|offset| *offset < usize::from(area.height))
     else {
         return;
     };
     let y = area.y + offset as u16;
-    let Some(line) = theme.cursor_line.bg else { return };
+    let Some(line) = theme.cursor_line.bg else {
+        return;
+    };
     let base = theme.base.bg.unwrap_or(Color::Reset);
     for x in area.x..area.right() {
         if let Some(cell) = buffer.cell_mut((x, y))
@@ -181,8 +219,18 @@ fn draw_gutter(buffer: &mut Buffer, area: Rect, editor: &SqlEditor, focused: boo
     let rows = editor.state.lines.len().max(1);
     for (y, row) in (area.y..area.bottom()).zip(top..rows) {
         let current = focused && row == editor.state.cursor.row;
-        let style = if current { theme.gutter_current } else { theme.gutter };
-        buffer.set_stringn(area.x + 1, y, format!("{:>digits$}", row + 1), digits, style);
+        let style = if current {
+            theme.gutter_current
+        } else {
+            theme.gutter
+        };
+        buffer.set_stringn(
+            area.x + 1,
+            y,
+            format!("{:>digits$}", row + 1),
+            digits,
+            style,
+        );
     }
 }
 
@@ -193,7 +241,11 @@ fn draw_marks(frame: &mut Frame, area: Rect, editor: &mut SqlEditor, theme: &The
     let buffer = frame.buffer_mut();
     for mark in editor.marks() {
         let Some(state) = mark.state else { continue };
-        let Some(offset) = mark.row.checked_sub(top).filter(|offset| *offset < usize::from(area.height)) else {
+        let Some(offset) = mark
+            .row
+            .checked_sub(top)
+            .filter(|offset| *offset < usize::from(area.height))
+        else {
             continue;
         };
         let (symbol, style) = mark_symbol(state, theme);
@@ -207,7 +259,11 @@ fn draw_marks(frame: &mut Frame, area: Rect, editor: &mut SqlEditor, theme: &The
 fn gutterless(area: Rect, editor: &SqlEditor) -> Rect {
     let digits = editor.state.lines.len().max(1).to_string().len() as u16;
     let gutter = (digits + GUTTER_COLUMNS).min(area.width);
-    Rect { x: area.x + gutter, width: area.width - gutter, ..area }
+    Rect {
+        x: area.x + gutter,
+        width: area.width - gutter,
+        ..area
+    }
 }
 
 fn draw_search_bar(frame: &mut Frame, area: Rect, search: &SearchBar) {
@@ -219,10 +275,18 @@ fn draw_search_bar(frame: &mut Frame, area: Rect, search: &SearchBar) {
     } else {
         format!("{} of {}", search.current + 1, search.matches.len())
     };
-    let find_line =
-        format!("{}{}{}  {count}", marker(SearchField::Find), text::FIND_LABEL, search.find);
-    let replace_line =
-        format!("{}{}{}", marker(SearchField::Replace), text::REPLACE_LABEL, search.replace);
+    let find_line = format!(
+        "{}{}{}  {count}",
+        marker(SearchField::Find),
+        text::FIND_LABEL,
+        search.find
+    );
+    let replace_line = format!(
+        "{}{}{}",
+        marker(SearchField::Replace),
+        text::REPLACE_LABEL,
+        search.replace
+    );
     frame.render_widget(Paragraph::new(find_line), find);
     frame.render_widget(Paragraph::new(replace_line), replace);
 }
@@ -230,7 +294,8 @@ fn draw_search_bar(frame: &mut Frame, area: Rect, search: &SearchBar) {
 fn kind_tag(kind: SuggestionKind) -> &'static str {
     match kind {
         SuggestionKind::Column => "col",
-        SuggestionKind::Alias => "als",        SuggestionKind::Cte => "cte",
+        SuggestionKind::Alias => "als",
+        SuggestionKind::Cte => "cte",
         SuggestionKind::Table => "tbl",
         SuggestionKind::View => "vw ",
         SuggestionKind::Schema => "sch",
@@ -241,7 +306,10 @@ fn kind_tag(kind: SuggestionKind) -> &'static str {
 /// Places the list below the anchor. Without room, it uses the larger side.
 pub fn list_area(anchor: Position, bounds: Rect, width: u16, rows: u16) -> Rect {
     let width = width.min(bounds.width);
-    let x = anchor.x.min(bounds.right().saturating_sub(width)).max(bounds.x);
+    let x = anchor
+        .x
+        .min(bounds.right().saturating_sub(width))
+        .max(bounds.x);
     let below = bounds.bottom().saturating_sub(anchor.y.saturating_add(1));
     let above = anchor.y.saturating_sub(bounds.y);
     if rows <= below || below >= above {
@@ -263,20 +331,35 @@ pub(crate) fn draw_suggestions(
     let rows = items.len().min(MAX_LIST_ROWS);
     let row_width = |index: usize| {
         let item = &items[index];
-        let detail = item.detail.as_deref().map_or(0, |text| Span::raw(text).width() + 2);
+        let detail = item
+            .detail
+            .as_deref()
+            .map_or(0, |text| Span::raw(text).width() + 2);
         Span::raw(item.label.as_str()).width() + detail + 6
     };
     let content = (0..items.len()).map(row_width).max().unwrap_or_default();
-    let width = u16::try_from(content).unwrap_or(u16::MAX).max(MIN_LIST_WIDTH);
+    let width = u16::try_from(content)
+        .unwrap_or(u16::MAX)
+        .max(MIN_LIST_WIDTH);
     let area = list_area(anchor, bounds, width, rows as u16);
 
     let visible = usize::from(area.height);
-    let first = (list.selected + 1).saturating_sub(visible).min(items.len().saturating_sub(visible));
+    let first = (list.selected + 1)
+        .saturating_sub(visible)
+        .min(items.len().saturating_sub(visible));
     frame.render_widget(Clear, area);
     for (offset, item) in items.iter().enumerate().skip(first).take(visible) {
         let selected = offset == list.selected;
-        let style = if selected { theme.list_selected } else { theme.list };
-        let detail_style = if selected { theme.list_selected } else { theme.list_detail };
+        let style = if selected {
+            theme.list_selected
+        } else {
+            theme.list
+        };
+        let detail_style = if selected {
+            theme.list_selected
+        } else {
+            theme.list_detail
+        };
         let mut spans = vec![
             Span::styled(format!(" {} ", kind_tag(item.kind)), detail_style),
             Span::styled(item.label.as_str(), style),
@@ -284,7 +367,11 @@ pub(crate) fn draw_suggestions(
         if let Some(detail) = &item.detail {
             spans.push(Span::styled(format!("  {detail}"), detail_style));
         }
-        let row = Rect { y: area.y + (offset - first) as u16, height: 1, ..area };
+        let row = Rect {
+            y: area.y + (offset - first) as u16,
+            height: 1,
+            ..area
+        };
         frame.render_widget(Paragraph::new(Line::from(spans)).style(style), row);
     }
 }

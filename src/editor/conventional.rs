@@ -44,7 +44,10 @@ impl SqlEditor {
             KeyCode::Home => self.move_to(Index2::new(self.state.cursor.row, 0), shift),
             KeyCode::End => {
                 let cursor = self.state.cursor.row;
-                self.move_to(Index2::new(cursor, row(&self.state.lines, cursor).len()), shift);
+                self.move_to(
+                    Index2::new(cursor, row(&self.state.lines, cursor).len()),
+                    shift,
+                );
             }
             KeyCode::Backspace => self.delete_backward(alt || ctrl),
             KeyCode::Delete => self.delete_forward(alt || ctrl),
@@ -108,8 +111,10 @@ impl SqlEditor {
 
     fn move_vertical(&mut self, rows: isize, extend: bool) {
         let cursor = self.state.cursor;
-        let target_row =
-            cursor.row.saturating_add_signed(rows).min(last_row(&self.state.lines));
+        let target_row = cursor
+            .row
+            .saturating_add_signed(rows)
+            .min(last_row(&self.state.lines));
         let wanted = self.preferred_col.unwrap_or(cursor.col);
         let col = wanted.min(row(&self.state.lines, target_row).len());
         self.move_to(Index2::new(target_row, col), extend);
@@ -173,7 +178,11 @@ impl SqlEditor {
         }
         let cursor = self.state.cursor;
         let lines = &self.state.lines;
-        let start = if by_word { word_left(lines, cursor) } else { previous_position(lines, cursor) };
+        let start = if by_word {
+            word_left(lines, cursor)
+        } else {
+            previous_position(lines, cursor)
+        };
         self.edit(start, cursor, "", EditKind::Deleting);
     }
 
@@ -184,7 +193,11 @@ impl SqlEditor {
         }
         let cursor = self.state.cursor;
         let lines = &self.state.lines;
-        let end = if by_word { word_right(lines, cursor) } else { next_position(lines, cursor) };
+        let end = if by_word {
+            word_right(lines, cursor)
+        } else {
+            next_position(lines, cursor)
+        };
         self.edit(cursor, end, "", EditKind::Deleting);
     }
 
@@ -196,7 +209,11 @@ impl SqlEditor {
         if start == end && text.is_empty() {
             return;
         }
-        let continues = self.undo_group == Some(UndoGroup { kind, cursor: self.state.cursor })
+        let continues = self.undo_group
+            == Some(UndoGroup {
+                kind,
+                cursor: self.state.cursor,
+            })
             && kind != EditKind::Other;
         if !continues {
             // `DeleteChar(0)` is the public way to record an undo point. It changes no text.

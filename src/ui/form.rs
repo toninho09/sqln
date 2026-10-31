@@ -9,8 +9,8 @@ use unicode_width::UnicodeWidthStr;
 
 use super::console::centered;
 use super::float_block;
-use super::text;
 use super::input_spans;
+use super::text;
 use super::theme::Theme;
 use crate::connector::target::hide_uri_password;
 use crate::form::{ConnectionForm, Field, FieldStyle, FormNote, Kind};
@@ -40,11 +40,27 @@ struct Spacing {
     gaps: bool,
 }
 
-const COMPACT: Spacing = Spacing { two_columns: false, titles: false, gaps: false };
+const COMPACT: Spacing = Spacing {
+    two_columns: false,
+    titles: false,
+    gaps: false,
+};
 const SPACINGS: [Spacing; 4] = [
-    Spacing { two_columns: false, titles: true, gaps: true },
-    Spacing { two_columns: true, titles: true, gaps: true },
-    Spacing { two_columns: false, titles: false, gaps: true },
+    Spacing {
+        two_columns: false,
+        titles: true,
+        gaps: true,
+    },
+    Spacing {
+        two_columns: true,
+        titles: true,
+        gaps: true,
+    },
+    Spacing {
+        two_columns: false,
+        titles: false,
+        gaps: true,
+    },
     COMPACT,
 ];
 
@@ -54,7 +70,11 @@ impl Spacing {
         if !self.two_columns {
             return vec![groups.to_vec()];
         }
-        let half = groups.iter().map(|group| group.len()).sum::<usize>().div_ceil(2);
+        let half = groups
+            .iter()
+            .map(|group| group.len())
+            .sum::<usize>()
+            .div_ceil(2);
         let mut used = 0;
         let (mut first, mut second) = (Vec::new(), Vec::new());
         for group in groups {
@@ -71,13 +91,22 @@ impl Spacing {
     fn rows_of(self, column: &[&[Field]]) -> u16 {
         let fields: usize = column.iter().map(|group| group.len()).sum();
         let titles = if self.titles { column.len() } else { 0 };
-        let gaps = if self.gaps { column.len().saturating_sub(1) } else { 0 };
+        let gaps = if self.gaps {
+            column.len().saturating_sub(1)
+        } else {
+            0
+        };
         u16::try_from(fields + titles + gaps).unwrap_or(u16::MAX)
     }
 
     /// Returns the width and the height of the window.
     fn size(self, groups: &[&[Field]]) -> (u16, u16) {
-        let rows = self.columns(groups).iter().map(|column| self.rows_of(column)).max().unwrap_or(0);
+        let rows = self
+            .columns(groups)
+            .iter()
+            .map(|column| self.rows_of(column))
+            .max()
+            .unwrap_or(0);
         let width = if self.two_columns { WIDE_WIDTH } else { WIDTH };
         (width, rows + u16::from(self.gaps) * 2 + CHROME_ROWS)
     }
@@ -169,7 +198,9 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
         Field::Scope => text::VALUE_SCOPE_GLOBAL,
         Field::Entry if form.use_uri => text::VALUE_URI,
         Field::Entry => text::VALUE_FIELDS,
-        Field::Credential if form.credential == crate::store::config::CredentialName::Vault => text::VALUE_VAULT,
+        Field::Credential if form.credential == crate::store::config::CredentialName::Vault => {
+            text::VALUE_VAULT
+        }
         Field::Credential => text::VALUE_SESSION,
         Field::Tls if form.verify_tls => text::VALUE_TLS_VERIFY,
         Field::Tls => text::VALUE_TLS_OFF,
@@ -182,17 +213,33 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
 }
 
 /// Writes a text value, and it keeps the cursor inside the width.
-fn text_spans(form: &ConnectionForm, field: Field, width: usize, theme: &Theme) -> Vec<Span<'static>> {
+fn text_spans(
+    form: &ConnectionForm,
+    field: Field,
+    width: usize,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
     let chars: Vec<char> = match field {
         Field::Password => form.text(field).chars().map(|_| MASK).collect(),
-        Field::Uri => hide_uri_password(&printable(form.text(field)), MASK).chars().collect(),
+        Field::Uri => hide_uri_password(&printable(form.text(field)), MASK)
+            .chars()
+            .collect(),
         _ => printable(form.text(field)).chars().collect(),
     };
     input_spans(&chars, form.cursor, width, form.focus == field, theme).0
 }
 
-fn value_spans(form: &ConnectionForm, field: Field, width: usize, theme: &Theme) -> Vec<Span<'static>> {
-    let style = if form.focus == field { theme.dialog_focus } else { Style::new() };
+fn value_spans(
+    form: &ConnectionForm,
+    field: Field,
+    width: usize,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
+    let style = if form.focus == field {
+        theme.dialog_focus
+    } else {
+        Style::new()
+    };
     match field.style() {
         FieldStyle::Choice => vec![Span::styled(format!("< {} >", choice(form, field)), style)],
         FieldStyle::Flag => {
@@ -204,21 +251,57 @@ fn value_spans(form: &ConnectionForm, field: Field, width: usize, theme: &Theme)
 }
 
 /// Draws one row: the focus mark, the label, and the value.
-fn draw_field_row(frame: &mut Frame, area: Rect, form: &ConnectionForm, field: Field, theme: &Theme) {
+fn draw_field_row(
+    frame: &mut Frame,
+    area: Rect,
+    form: &ConnectionForm,
+    field: Field,
+    theme: &Theme,
+) {
     let focused = form.focus == field;
     if focused {
         let mark = Span::styled(theme.icons.focus_mark, theme.panel_title_focused);
-        frame.render_widget(Paragraph::new(mark), Rect { x: area.x + 1, width: 1, ..area });
+        frame.render_widget(
+            Paragraph::new(mark),
+            Rect {
+                x: area.x + 1,
+                width: 1,
+                ..area
+            },
+        );
     }
-    let label_style = if focused { theme.panel_title_focused } else { Style::new() };
-    let label_area = Rect { x: area.x + LEFT, width: LABEL_WIDTH, ..area };
+    let label_style = if focused {
+        theme.panel_title_focused
+    } else {
+        Style::new()
+    };
+    let label_area = Rect {
+        x: area.x + LEFT,
+        width: LABEL_WIDTH,
+        ..area
+    };
     frame.render_widget(Paragraph::new(label(field)).style(label_style), label_area);
 
     let start = area.x + LEFT + LABEL_WIDTH;
-    let value = Rect { x: start, width: area.right().saturating_sub(start + RIGHT), ..area };
+    let value = Rect {
+        x: start,
+        width: area.right().saturating_sub(start + RIGHT),
+        ..area
+    };
     // The background comes first, because the text and the cursor have their own styles.
-    frame.buffer_mut().set_style(value, if focused { theme.field_focus } else { theme.field });
-    let text = Rect { x: value.x + 1, width: value.width.saturating_sub(2), ..value };
+    frame.buffer_mut().set_style(
+        value,
+        if focused {
+            theme.field_focus
+        } else {
+            theme.field
+        },
+    );
+    let text = Rect {
+        x: value.x + 1,
+        width: value.width.saturating_sub(2),
+        ..value
+    };
     let spans = value_spans(form, field, usize::from(text.width).max(1), theme);
     frame.render_widget(Paragraph::new(Line::from(spans)), text);
 }
@@ -239,13 +322,24 @@ fn draw_column(
             y += 1;
         }
         if spacing.titles {
-            let title = fields.first().map_or("", |field| group_title(group(*field)));
-            let place = Rect { x: area.x + LEFT, y, width: area.width.saturating_sub(LEFT), height: 1 };
+            let title = fields
+                .first()
+                .map_or("", |field| group_title(group(*field)));
+            let place = Rect {
+                x: area.x + LEFT,
+                y,
+                width: area.width.saturating_sub(LEFT),
+                height: 1,
+            };
             frame.render_widget(Paragraph::new(title).style(theme.panel_title), place);
             y += 1;
         }
         for field in *fields {
-            let row = Rect { y, height: 1, ..area };
+            let row = Rect {
+                y,
+                height: 1,
+                ..area
+            };
             draw_field_row(frame, row, form, *field, theme);
             layout.fields.push((*field, row));
             y += 1;
@@ -262,9 +356,12 @@ fn button_label(form: &ConnectionForm, field: Field) -> &'static str {
 
 pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> FormLayout {
     let fields = form.fields();
-    let (buttons, rows): (Vec<Field>, Vec<Field>) =
-        fields.into_iter().partition(|field| field.style() == FieldStyle::Button);
-    let groups: Vec<&[Field]> = rows.chunk_by(|first, next| group(*first) == group(*next)).collect();
+    let (buttons, rows): (Vec<Field>, Vec<Field>) = fields
+        .into_iter()
+        .partition(|field| field.style() == FieldStyle::Button);
+    let groups: Vec<&[Field]> = rows
+        .chunk_by(|first, next| group(*first) == group(*next))
+        .collect();
     let spacing = Spacing::choose(frame.area(), &groups);
     let (width, height) = spacing.size(&groups);
     let area = centered(frame.area(), width, height);
@@ -278,12 +375,20 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
     frame.render_widget(block, area);
 
     let pad = u16::from(spacing.gaps);
-    let body = Rect { y: inner.y + pad, height: inner.height.saturating_sub(pad * 2), ..inner };
+    let body = Rect {
+        y: inner.y + pad,
+        height: inner.height.saturating_sub(pad * 2),
+        ..inner
+    };
     let mut layout = FormLayout::default();
     let columns = spacing.columns(&groups);
     let column_width = body.width / u16::try_from(columns.len()).unwrap_or(1);
     for (index, column) in (0u16..).zip(&columns) {
-        let place = Rect { x: body.x + index * column_width, width: column_width, ..body };
+        let place = Rect {
+            x: body.x + index * column_width,
+            width: column_width,
+            ..body
+        };
         draw_column(frame, place, column, spacing, form, theme, &mut layout);
     }
 
@@ -303,8 +408,14 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
         let message = printable(message);
         // The note ends on the row above the buttons, and a long note goes up to the next row.
         let width = usize::from(content.width).max(1);
-        let rows = u16::try_from(message.width().div_ceil(width)).unwrap_or(NOTE_ROWS).clamp(1, NOTE_ROWS);
-        let place = Rect { y: button_row.saturating_sub(rows), height: rows, ..content };
+        let rows = u16::try_from(message.width().div_ceil(width))
+            .unwrap_or(NOTE_ROWS)
+            .clamp(1, NOTE_ROWS);
+        let place = Rect {
+            y: button_row.saturating_sub(rows),
+            height: rows,
+            ..content
+        };
         let paragraph = Paragraph::new(Line::styled(message, style)).wrap(Wrap { trim: false });
         frame.render_widget(paragraph, place);
     }
@@ -314,12 +425,25 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
     for field in buttons {
         let name = theme.button(button_label(form, field));
         let width = u16::try_from(name.width()).unwrap_or(0);
-        layout.fields.push((field, Rect::new(x, button_row, width, 1)));
-        let style: Style = if form.focus == field { theme.dialog_focus } else { theme.dialog_option };
+        layout
+            .fields
+            .push((field, Rect::new(x, button_row, width, 1)));
+        let style: Style = if form.focus == field {
+            theme.dialog_focus
+        } else {
+            theme.dialog_option
+        };
         spans.push(Span::styled(name, style));
         spans.push(Span::raw("  "));
         x += width + 2;
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)), Rect { y: button_row, height: 1, ..content });
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)),
+        Rect {
+            y: button_row,
+            height: 1,
+            ..content
+        },
+    );
     layout
 }

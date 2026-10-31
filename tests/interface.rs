@@ -25,12 +25,13 @@ use sqln::input::Keymap;
 use sqln::store::config::{IconName, ThemeName};
 use sqln::store::{Root, Store};
 use sqln::ui::icons::Icons;
-use sqln::ui::{MainTab, TabView, draw_main_tabs, text};
 use sqln::ui::theme::{ColorEnv, Theme};
 use sqln::ui::which_key::widest_row;
+use sqln::ui::{MainTab, TabView, draw_main_tabs, text};
 use unicode_width::UnicodeWidthStr;
 
-const SETUP: &str = "CREATE TABLE users(id INTEGER, name TEXT); INSERT INTO users VALUES (1, 'Ana');";
+const SETUP: &str =
+    "CREATE TABLE users(id INTEGER, name TEXT); INSERT INTO users VALUES (1, 'Ana');";
 
 struct Screen {
     app: App,
@@ -39,13 +40,32 @@ struct Screen {
 impl Screen {
     fn new(name: &str, theme: Theme, keyboard: KeyboardMode) -> Self {
         let path = temp_db(&format!("interface-{name}"));
-        rusqlite::Connection::open(&path).unwrap().execute_batch(SETUP).unwrap();
-        let options = Options { database: Some(path), keyboard, ..Options::default() };
-        Self { app: App::new(options, Rc::new(RefCell::new(MemoryClipboard::default())), theme) }
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch(SETUP)
+            .unwrap();
+        let options = Options {
+            database: Some(path),
+            keyboard,
+            ..Options::default()
+        };
+        Self {
+            app: App::new(
+                options,
+                Rc::new(RefCell::new(MemoryClipboard::default())),
+                theme,
+            ),
+        }
     }
 
     fn empty(theme: Theme) -> Self {
-        Self { app: App::new(Options::default(), Rc::new(RefCell::new(MemoryClipboard::default())), theme) }
+        Self {
+            app: App::new(
+                Options::default(),
+                Rc::new(RefCell::new(MemoryClipboard::default())),
+                theme,
+            ),
+        }
     }
 
     fn buffer(&mut self, width: u16, height: u16) -> Buffer {
@@ -84,7 +104,12 @@ impl Screen {
 
     fn click(&mut self, column: u16, row: u16) {
         let kind = MouseEventKind::Down(MouseButton::Left);
-        self.app.on_event(Event::Mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE }));
+        self.app.on_event(Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }));
     }
 
     fn locate(&mut self, text: &str) -> (u16, u16) {
@@ -101,7 +126,11 @@ impl Screen {
         let deadline = Instant::now() + Duration::from_secs(20);
         while !self.screen(100, 30).contains(text) {
             self.app.drain_events();
-            assert!(Instant::now() < deadline, "{text:?} did not appear:\n{}", self.screen(100, 30));
+            assert!(
+                Instant::now() < deadline,
+                "{text:?} did not appear:\n{}",
+                self.screen(100, 30)
+            );
             std::thread::sleep(Duration::from_millis(1));
         }
     }
@@ -142,7 +171,11 @@ impl Screen {
 
 fn rows(buffer: &Buffer) -> Vec<String> {
     (0..buffer.area.height)
-        .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect())
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect()
+        })
         .collect()
 }
 
@@ -176,15 +209,24 @@ fn the_astrodark_theme_paints_each_cell_of_each_screen() {
     let mut screen = Screen::new("astrodark", Theme::astrodark(), KeyboardMode::Conventional);
     screen.visit_all(|buffer| {
         for cell in buffer.content() {
-            assert!(is_rgb(cell.bg), "this cell shows the terminal background: {cell:?}");
-            assert!(is_rgb(cell.fg), "this cell shows the terminal text color: {cell:?}");
+            assert!(
+                is_rgb(cell.bg),
+                "this cell shows the terminal background: {cell:?}"
+            );
+            assert!(
+                is_rgb(cell.fg),
+                "this cell shows the terminal text color: {cell:?}"
+            );
         }
     });
 }
 
 #[test]
 fn the_environment_chooses_the_theme() {
-    let env = |no_color, truecolor| ColorEnv { no_color, truecolor };
+    let env = |no_color, truecolor| ColorEnv {
+        no_color,
+        truecolor,
+    };
     assert_eq!(Theme::automatic(env(false, true)), Theme::astrodark());
     assert_eq!(Theme::automatic(env(false, false)), Theme::ansi());
     assert_eq!(Theme::automatic(env(true, true)), Theme::plain());
@@ -193,16 +235,42 @@ fn the_environment_chooses_the_theme() {
 
 #[test]
 fn the_configuration_chooses_the_theme_and_no_color_has_priority() {
-    let color = ColorEnv { no_color: false, truecolor: true };
-    let no_color = ColorEnv { no_color: true, truecolor: true };
+    let color = ColorEnv {
+        no_color: false,
+        truecolor: true,
+    };
+    let no_color = ColorEnv {
+        no_color: true,
+        truecolor: true,
+    };
     let start = Theme::ansi();
     assert_eq!(start.with_choices(None, None, color), start);
-    assert_eq!(start.with_choices(Some(ThemeName::Astrodark), None, color), Theme::astrodark());
-    assert_eq!(Theme::astrodark().with_choices(Some(ThemeName::Ansi), None, color), Theme::ansi());
-    assert_eq!(start.with_choices(Some(ThemeName::Auto), None, color), Theme::astrodark());
-    assert_eq!(start.with_choices(Some(ThemeName::Astrodark), None, no_color), Theme::plain());
-    assert_eq!(start.with_choices(None, Some(IconName::Nerd), color).icons, Icons::nerd());
-    assert_eq!(Theme::plain().with_choices(None, Some(IconName::Nerd), color).icons, Icons::plain());
+    assert_eq!(
+        start.with_choices(Some(ThemeName::Astrodark), None, color),
+        Theme::astrodark()
+    );
+    assert_eq!(
+        Theme::astrodark().with_choices(Some(ThemeName::Ansi), None, color),
+        Theme::ansi()
+    );
+    assert_eq!(
+        start.with_choices(Some(ThemeName::Auto), None, color),
+        Theme::astrodark()
+    );
+    assert_eq!(
+        start.with_choices(Some(ThemeName::Astrodark), None, no_color),
+        Theme::plain()
+    );
+    assert_eq!(
+        start.with_choices(None, Some(IconName::Nerd), color).icons,
+        Icons::nerd()
+    );
+    assert_eq!(
+        Theme::plain()
+            .with_choices(None, Some(IconName::Nerd), color)
+            .icons,
+        Icons::plain()
+    );
 }
 
 #[test]
@@ -216,11 +284,22 @@ fn each_symbol_of_each_set_fills_one_column_per_character() {
 
 /// Draws the main tabs on one row, and returns the row with the places of the tabs.
 fn main_tabs(width: u16, labels: &[&str], active: usize, theme: &Theme) -> (String, Vec<MainTab>) {
-    let views = labels.iter().map(|label| TabView { label: (*label).to_owned(), badge: None }).collect();
+    let views = labels
+        .iter()
+        .map(|label| TabView {
+            label: (*label).to_owned(),
+            badge: None,
+        })
+        .collect();
     draw_views(width, views, active, theme)
 }
 
-fn draw_views(width: u16, views: Vec<TabView>, active: usize, theme: &Theme) -> (String, Vec<MainTab>) {
+fn draw_views(
+    width: u16,
+    views: Vec<TabView>,
+    active: usize,
+    theme: &Theme,
+) -> (String, Vec<MainTab>) {
     let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
     let mut tabs = Vec::new();
     terminal
@@ -232,11 +311,31 @@ fn draw_views(width: u16, views: Vec<TabView>, active: usize, theme: &Theme) -> 
 
 #[test]
 fn the_close_mark_stands_at_the_end_of_each_tab_in_each_set() {
-    for (theme, mark) in [(Theme::plain(), "X"), (Theme::ansi(), "×"), (Theme::astrodark(), "×")] {
+    for (theme, mark) in [
+        (Theme::plain(), "X"),
+        (Theme::ansi(), "×"),
+        (Theme::astrodark(), "×"),
+    ] {
         let (row, tabs) = main_tabs(40, &["one", "second"], 1, &theme);
         let cell = |column: u16| row.chars().nth(usize::from(column)).unwrap().to_string();
-        assert_eq!(tabs[0], MainTab { start: 0, end: 7, close: Some(5), index: 0 });
-        assert_eq!(tabs[1], MainTab { start: 7, end: 17, close: Some(15), index: 1 });
+        assert_eq!(
+            tabs[0],
+            MainTab {
+                start: 0,
+                end: 7,
+                close: Some(5),
+                index: 0
+            }
+        );
+        assert_eq!(
+            tabs[1],
+            MainTab {
+                start: 7,
+                end: 17,
+                close: Some(15),
+                index: 1
+            }
+        );
         assert_eq!(cell(5), mark, "{row}");
         assert_eq!(cell(15), mark, "{row}");
     }
@@ -247,7 +346,15 @@ fn a_tab_that_the_row_cuts_has_no_close_mark() {
     let theme = Theme::plain();
     // The second tab needs ten columns, and the row keeps six of them.
     let (row, tabs) = main_tabs(13, &["one", "second"], 0, &theme);
-    assert_eq!(tabs[1], MainTab { start: 7, end: 13, close: None, index: 1 });
+    assert_eq!(
+        tabs[1],
+        MainTab {
+            start: 7,
+            end: 13,
+            close: None,
+            index: 1
+        }
+    );
     assert_eq!(row, " one X  secon");
     // With the column of the mark on the row, the tab keeps its mark.
     let (row, tabs) = main_tabs(16, &["one", "second"], 0, &theme);
@@ -259,7 +366,9 @@ fn a_tab_that_the_row_cuts_has_no_close_mark() {
 fn hint_cell(buffer: &Buffer, text: &str) -> ratatui::buffer::Cell {
     let last = buffer.area.height - 1;
     let row = rows(buffer).pop().unwrap();
-    let byte = row.find(text).unwrap_or_else(|| panic!("{text:?} is not in {row:?}"));
+    let byte = row
+        .find(text)
+        .unwrap_or_else(|| panic!("{text:?} is not in {row:?}"));
     buffer[(row[..byte].chars().count() as u16, last)].clone()
 }
 
@@ -273,7 +382,11 @@ fn the_hint_bar_gives_the_keys_and_their_effects_two_styles() {
         assert_eq!(hint_cell(&buffer, key).fg, theme.key.fg.unwrap(), "{key}");
     }
     for effect in ["open", "new", "drop", "pwd"] {
-        assert_eq!(hint_cell(&buffer, effect).fg, theme.hint.fg.unwrap(), "{effect}");
+        assert_eq!(
+            hint_cell(&buffer, effect).fg,
+            theme.hint.fg.unwrap(),
+            "{effect}"
+        );
     }
 }
 
@@ -282,7 +395,11 @@ fn the_hint_bar_separates_the_keys_without_color() {
     let mut screen = Screen::new("hint-plain", Theme::plain(), KeyboardMode::Conventional);
     screen.prefix('h');
     let buffer = screen.buffer(100, 30);
-    assert!(hint_cell(&buffer, "Enter").modifier.contains(Modifier::BOLD));
+    assert!(
+        hint_cell(&buffer, "Enter")
+            .modifier
+            .contains(Modifier::BOLD)
+    );
     assert!(hint_cell(&buffer, "open").modifier.contains(Modifier::DIM));
 }
 
@@ -294,7 +411,10 @@ fn a_note_in_the_hint_bar_has_no_key_style() {
     let buffer = screen.buffer(100, 30);
     let row = rows(&buffer).pop().unwrap();
     assert!(row.starts_with(" Write to filter  Up/Down move"), "{row}");
-    assert_eq!(hint_cell(&buffer, "Write to filter").fg, theme.hint.fg.unwrap());
+    assert_eq!(
+        hint_cell(&buffer, "Write to filter").fg,
+        theme.hint.fg.unwrap()
+    );
     assert_eq!(hint_cell(&buffer, "Enter").fg, theme.key.fg.unwrap());
 }
 
@@ -315,12 +435,26 @@ fn a_badge_stands_at_the_start_of_the_tab_and_the_close_mark_stays_at_the_end() 
     let theme = Theme::plain();
     let badge = Some((" ok ".to_owned(), theme.run_done));
     let views = vec![
-        TabView { label: "one".to_owned(), badge },
-        TabView { label: "two".to_owned(), badge: None },
+        TabView {
+            label: "one".to_owned(),
+            badge,
+        },
+        TabView {
+            label: "two".to_owned(),
+            badge: None,
+        },
     ];
     let (row, tabs) = draw_views(40, views, 0, &theme);
     assert!(row.starts_with("  ok  one X  two X "), "{row}");
-    assert_eq!(tabs[0], MainTab { start: 0, end: 12, close: Some(10), index: 0 });
+    assert_eq!(
+        tabs[0],
+        MainTab {
+            start: 0,
+            end: 12,
+            close: Some(10),
+            index: 0
+        }
+    );
     assert_eq!(tabs[1].start, 12);
 }
 
@@ -329,8 +463,14 @@ fn a_tab_with_a_badge_that_the_row_cuts_has_no_close_mark() {
     let theme = Theme::plain();
     let badge = Some((" | 1m 05s ".to_owned(), theme.run_active));
     let views = vec![
-        TabView { label: "one".to_owned(), badge: None },
-        TabView { label: "two".to_owned(), badge },
+        TabView {
+            label: "one".to_owned(),
+            badge: None,
+        },
+        TabView {
+            label: "two".to_owned(),
+            badge,
+        },
     ];
     let (_, tabs) = draw_views(20, views, 0, &theme);
     assert_eq!(tabs[1].close, None);
@@ -339,10 +479,18 @@ fn a_tab_with_a_badge_that_the_row_cuts_has_no_close_mark() {
 #[test]
 fn each_state_of_a_run_has_its_own_color() {
     let theme = Theme::astrodark();
-    let styles = [theme.run_active, theme.run_done, theme.run_failed, theme.run_stopped];
+    let styles = [
+        theme.run_active,
+        theme.run_done,
+        theme.run_failed,
+        theme.run_stopped,
+    ];
     for (index, style) in styles.iter().enumerate() {
         assert!(is_rgb(style.bg.unwrap()), "{style:?}");
-        assert!(!styles[..index].iter().any(|other| other.bg == style.bg), "{style:?}");
+        assert!(
+            !styles[..index].iter().any(|other| other.bg == style.bg),
+            "{style:?}"
+        );
     }
     assert_ne!(Icons::plain().failed, Icons::plain().close);
 }
@@ -379,11 +527,22 @@ fn a_button_has_the_same_width_in_each_theme() {
 fn external_names_send_no_sequence_through_the_new_rows() {
     let name = "bad\x1b[31mname\x07";
     let path = temp_db("interface-control-name");
-    rusqlite::Connection::open(&path).unwrap().execute_batch(SETUP).unwrap();
-    let connector = Arc::new(sqln::connector::sqlite::SqliteConnector::new(sqln::connector::sqlite::SqliteTarget::new(path)));
-    let options = Options { connector: Some(connector), label: Some(name.to_owned()), ..Options::default() };
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(SETUP)
+        .unwrap();
+    let connector = Arc::new(sqln::connector::sqlite::SqliteConnector::new(
+        sqln::connector::sqlite::SqliteTarget::new(path),
+    ));
+    let options = Options {
+        connector: Some(connector),
+        label: Some(name.to_owned()),
+        ..Options::default()
+    };
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
-    let mut screen = Screen { app: App::new(options, clipboard, Theme::astrodark()) };
+    let mut screen = Screen {
+        app: App::new(options, clipboard, Theme::astrodark()),
+    };
     for buffer in [screen.buffer(100, 30), screen.buffer(80, 24)] {
         for cell in buffer.content() {
             assert!(!cell.symbol().chars().any(char::is_control), "{cell:?}");
@@ -394,33 +553,71 @@ fn external_names_send_no_sequence_through_the_new_rows() {
 #[test]
 fn a_tall_screen_has_a_title_and_a_short_screen_keeps_the_rows_of_the_panels() {
     let mut screen = Screen::new("rows", Theme::plain(), KeyboardMode::Conventional);
-    assert!(screen.screen(100, 30).contains("›"), "the tall screen has the title");
-    assert!(!screen.screen(100, 29).contains("›"), "the short screen has no title");
+    assert!(
+        screen.screen(100, 30).contains("›"),
+        "the tall screen has the title"
+    );
+    assert!(
+        !screen.screen(100, 29).contains("›"),
+        "the short screen has no title"
+    );
     let short = screen.buffer(80, 24);
-    assert_eq!(rows(&short)[2].chars().nth(5 + 24 + 1), Some(' '), "the editor starts on row 2");
+    assert_eq!(
+        rows(&short)[2].chars().nth(5 + 24 + 1),
+        Some(' '),
+        "the editor starts on row 2"
+    );
     assert!(rows(&short)[2].contains('1'), "{}", rows(&short).join("\n"));
-    assert!(rows(&short)[1].contains("[Run]"), "{}", rows(&short).join("\n"));
+    assert!(
+        rows(&short)[1].contains("[Run]"),
+        "{}",
+        rows(&short).join("\n")
+    );
 }
 
 #[test]
 fn the_status_line_names_the_place_of_the_keys() {
     let mut screen = Screen::new("status", Theme::plain(), KeyboardMode::Vim);
     let status = |screen: &mut Screen| screen.screen(100, 30).lines().nth(28).unwrap().to_owned();
-    assert!(status(&mut screen).contains("NORMAL"), "{}", status(&mut screen));
+    assert!(
+        status(&mut screen).contains("NORMAL"),
+        "{}",
+        status(&mut screen)
+    );
     screen.code(KeyCode::Char('i'));
-    assert!(status(&mut screen).contains("INSERT"), "{}", status(&mut screen));
+    assert!(
+        status(&mut screen).contains("INSERT"),
+        "{}",
+        status(&mut screen)
+    );
     screen.code(KeyCode::Esc);
     screen.code(KeyCode::Char('v'));
-    assert!(status(&mut screen).contains("VISUAL"), "{}", status(&mut screen));
+    assert!(
+        status(&mut screen).contains("VISUAL"),
+        "{}",
+        status(&mut screen)
+    );
     screen.code(KeyCode::Esc);
     screen.prefix('h');
-    assert!(status(&mut screen).contains("EXPLORER"), "{}", status(&mut screen));
+    assert!(
+        status(&mut screen).contains("EXPLORER"),
+        "{}",
+        status(&mut screen)
+    );
     screen.prefix('l');
     screen.prefix('j');
-    assert!(status(&mut screen).contains("RESULTS"), "{}", status(&mut screen));
+    assert!(
+        status(&mut screen).contains("RESULTS"),
+        "{}",
+        status(&mut screen)
+    );
 
     let mut conventional = Screen::new("status-editor", Theme::plain(), KeyboardMode::Conventional);
-    assert!(status(&mut conventional).contains("EDITOR"), "{}", status(&mut conventional));
+    assert!(
+        status(&mut conventional).contains("EDITOR"),
+        "{}",
+        status(&mut conventional)
+    );
 }
 
 #[test]
@@ -441,7 +638,10 @@ fn an_open_transaction_uses_the_warning_style() {
     screen.pump_until("Transaction open");
     let theme = Theme::astrodark();
     let (x, y) = screen.locate("Transaction open");
-    assert_eq!(screen.buffer(100, 30)[(x, y)].fg, theme.status_warning.fg.unwrap());
+    assert_eq!(
+        screen.buffer(100, 30)[(x, y)].fg,
+        theme.status_warning.fg.unwrap()
+    );
 }
 
 #[test]
@@ -456,11 +656,19 @@ fn the_grid_has_row_numbers_and_rules() {
 fn a_scrollbar_appears_only_when_the_rows_do_not_fit() {
     let mut short = Screen::new("bar-short", Theme::plain(), KeyboardMode::Conventional);
     short.run("SELECT id FROM users;");
-    assert!(!short.screen(100, 30).contains('▐'), "{}", short.screen(100, 30));
+    assert!(
+        !short.screen(100, 30).contains('▐'),
+        "{}",
+        short.screen(100, 30)
+    );
 
     let mut long = Screen::new("bar-long", Theme::plain(), KeyboardMode::Conventional);
     long.run("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 90) SELECT x FROM c;");
-    assert!(long.screen(100, 30).contains('▐'), "{}", long.screen(100, 30));
+    assert!(
+        long.screen(100, 30).contains('▐'),
+        "{}",
+        long.screen(100, 30)
+    );
 }
 
 #[test]
@@ -487,10 +695,25 @@ fn the_edge_of_a_header_accepts_each_column_of_the_gap() {
         // The text "one" is also in the editor, so the search uses the rule before the header.
         let (rule, row) = screen.locate("│ one");
         let edge = rule + 2 + 7 + offset;
-        let event = |kind, column| Event::Mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE });
-        screen.app.on_event(event(MouseEventKind::Down(MouseButton::Left), edge));
-        screen.app.on_event(event(MouseEventKind::Drag(MouseButton::Left), edge + 2));
-        assert_eq!(screen.app.console().results[0].table.width(0), 9, "offset {offset}");
+        let event = |kind, column| {
+            Event::Mouse(MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+        screen
+            .app
+            .on_event(event(MouseEventKind::Down(MouseButton::Left), edge));
+        screen
+            .app
+            .on_event(event(MouseEventKind::Drag(MouseButton::Left), edge + 2));
+        assert_eq!(
+            screen.app.console().results[0].table.width(0),
+            9,
+            "offset {offset}"
+        );
     }
 }
 
@@ -510,10 +733,21 @@ fn the_menu_of_the_prefix_replaces_the_compressed_hint() {
 fn the_menu_omits_a_removed_key_and_fits_the_minimum_terminal() {
     let overrides = HashMap::from([("quit".to_owned(), Vec::new())]);
     let keymap = Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap();
-    let options = Options { keymap: Some(keymap), ..Options::default() };
-    let app = App::new(options, Rc::new(RefCell::new(MemoryClipboard::default())), Theme::plain());
+    let options = Options {
+        keymap: Some(keymap),
+        ..Options::default()
+    };
+    let app = App::new(
+        options,
+        Rc::new(RefCell::new(MemoryClipboard::default())),
+        Theme::plain(),
+    );
     let groups = app.prefix_menu();
-    let keys: Vec<&str> = groups.iter().flat_map(|group| &group.keys).map(|(key, _)| key.as_str()).collect();
+    let keys: Vec<&str> = groups
+        .iter()
+        .flat_map(|group| &group.keys)
+        .map(|(key, _)| key.as_str())
+        .collect();
     assert!(!keys.contains(&"q"), "{keys:?}");
     // The menu has three columns inside 76 columns, each with a space at its start.
     assert!(widest_row(&groups) <= 24, "{}", widest_row(&groups));
@@ -530,7 +764,10 @@ fn the_palette_filters_and_runs_a_command() {
     assert!(shown.contains("Run the script"), "{shown}");
     assert!(!shown.contains("Close the tab"), "{shown}");
     screen.code(KeyCode::Enter);
-    assert!(!screen.screen(100, 30).contains("Commands"), "Enter closes the window");
+    assert!(
+        !screen.screen(100, 30).contains("Commands"),
+        "Enter closes the window"
+    );
     screen.pump_until("seven");
 }
 
@@ -569,7 +806,10 @@ fn the_palette_works_with_the_mouse() {
     screen.click(column, row);
     let shown = screen.screen(100, 30);
     assert!(!shown.contains("Commands"), "{shown}");
-    assert!(shown.contains("no configuration files"), "the command ran:\n{shown}");
+    assert!(
+        shown.contains("no configuration files"),
+        "the command ran:\n{shown}"
+    );
 }
 
 #[test]
@@ -614,13 +854,20 @@ fn the_palette_shows_a_panel_key_only_in_its_panel() {
         let (column, row) = screen.locate("Add a connection");
         let buffer = screen.buffer(100, 30);
         let line = &rows(&buffer)[usize::from(row)];
-        let after: String = line.chars().skip(usize::from(column) + "Add a connection".len()).collect();
+        let after: String = line
+            .chars()
+            .skip(usize::from(column) + "Add a connection".len())
+            .collect();
         after.split_whitespace().next().unwrap_or("").to_owned()
     };
     let mut screen = Screen::new("palette-key", Theme::plain(), KeyboardMode::Conventional);
     screen.palette();
     screen.write("add a connection");
-    assert_eq!(key_of_row(&mut screen), "│", "the key of a panel means nothing in the editor");
+    assert_eq!(
+        key_of_row(&mut screen),
+        "│",
+        "the key of a panel means nothing in the editor"
+    );
     screen.code(KeyCode::Esc);
     screen.prefix('h');
     screen.palette();
@@ -654,7 +901,11 @@ fn the_first_screen_without_a_connection_gives_the_way_to_add_one() {
 fn the_first_screen_leaves_the_first_row_of_the_editor_free() {
     let mut screen = Screen::new("welcome-row", Theme::plain(), KeyboardMode::Conventional);
     let buffer = screen.buffer(80, 24);
-    assert!(!rows(&buffer)[2].contains("SQLN"), "{}", rows(&buffer).join("\n"));
+    assert!(
+        !rows(&buffer)[2].contains("SQLN"),
+        "{}",
+        rows(&buffer).join("\n")
+    );
     assert!(rows(&buffer).iter().any(|row| row.contains("SQLN")));
 }
 
@@ -688,13 +939,19 @@ const FORM_LABELS: [&str; 17] = [
 
 #[test]
 fn a_text_field_with_the_focus_shows_its_cursor_in_each_theme() {
-    for (index, theme) in [Theme::astrodark(), Theme::ansi(), Theme::plain()].into_iter().enumerate() {
+    for (index, theme) in [Theme::astrodark(), Theme::ansi(), Theme::plain()]
+        .into_iter()
+        .enumerate()
+    {
         let mut screen = form_screen(&format!("form-cursor-{index}"), theme);
         screen.code(KeyCode::Tab);
         screen.type_text("app");
         let (x, y) = {
             let buffer = screen.buffer(100, 30);
-            let row = rows(&buffer).iter().position(|row| row.contains("Name")).unwrap();
+            let row = rows(&buffer)
+                .iter()
+                .position(|row| row.contains("Name"))
+                .unwrap();
             let byte = rows(&buffer)[row].find("app").unwrap();
             let column = rows(&buffer)[row][..byte].chars().count();
             ((column + 3) as u16, row as u16)
@@ -703,7 +960,10 @@ fn a_text_field_with_the_focus_shows_its_cursor_in_each_theme() {
         let bg_matches = theme.cursor.bg.is_none_or(|bg| cell.bg == bg);
         let fg_matches = theme.cursor.fg.is_none_or(|fg| cell.fg == fg);
         assert!(bg_matches && fg_matches, "{cell:?}");
-        assert!(cell.modifier.contains(theme.cursor.add_modifier), "{cell:?}");
+        assert!(
+            cell.modifier.contains(theme.cursor.add_modifier),
+            "{cell:?}"
+        );
     }
 }
 
@@ -712,7 +972,11 @@ fn the_focus_mark_moves_with_the_focus() {
     let mut screen = form_screen("form-mark", Theme::plain());
     let row_of = |screen: &mut Screen, label: &str| {
         let shown = screen.screen(100, 30);
-        shown.lines().find(|line| line.contains(label)).unwrap().to_owned()
+        shown
+            .lines()
+            .find(|line| line.contains(label))
+            .unwrap()
+            .to_owned()
     };
     assert!(row_of(&mut screen, "Type").contains("> Type"));
     screen.code(KeyCode::Tab);
@@ -731,9 +995,15 @@ fn the_row_with_the_focus_has_its_own_colors() {
     screen.code(KeyCode::Tab);
     let (column, row) = screen.locate("Name");
     let buffer = screen.buffer(100, 30);
-    assert_eq!(buffer[(column, row)].fg, theme.panel_title_focused.fg.unwrap());
+    assert_eq!(
+        buffer[(column, row)].fg,
+        theme.panel_title_focused.fg.unwrap()
+    );
     let (other, other_row) = screen.locate("Port");
-    assert_ne!(buffer[(other, other_row)].fg, theme.panel_title_focused.fg.unwrap());
+    assert_ne!(
+        buffer[(other, other_row)].fg,
+        theme.panel_title_focused.fg.unwrap()
+    );
     let value = column + 24 + 12;
     assert_eq!(buffer[(value, row)].bg, theme.field_focus.bg.unwrap());
     assert_eq!(buffer[(value, other_row)].bg, theme.field.bg.unwrap());
@@ -743,29 +1013,53 @@ fn the_row_with_the_focus_has_its_own_colors() {
 fn the_form_uses_the_room_of_the_screen() {
     let mut screen = form_screen("form-room", Theme::plain());
     let tall = screen.screen(100, 40);
-    assert!(tall.contains("GENERAL") && tall.contains("SECURITY"), "{tall}");
+    assert!(
+        tall.contains("GENERAL") && tall.contains("SECURITY"),
+        "{tall}"
+    );
 
     let wide = screen.screen(130, 26);
     let row = wide.lines().find(|line| line.contains("GENERAL")).unwrap();
-    assert!(row.contains("SECURITY"), "the second column starts on the same row:\n{wide}");
-    assert!(wide.contains("< Verify the certificate >"), "the longest choice fits:\n{wide}");
+    assert!(
+        row.contains("SECURITY"),
+        "the second column starts on the same row:\n{wide}"
+    );
+    assert!(
+        wide.contains("< Verify the certificate >"),
+        "the longest choice fits:\n{wide}"
+    );
 
     let medium = screen.screen(100, 30);
     assert!(!medium.contains("GENERAL"), "{medium}");
-    let rows_of = |text: &str, label: &str| text.lines().position(|line| line.contains(label)).unwrap();
-    assert_eq!(rows_of(&medium, "Host or socket"), rows_of(&medium, "Entry") + 2, "{medium}");
+    let rows_of =
+        |text: &str, label: &str| text.lines().position(|line| line.contains(label)).unwrap();
+    assert_eq!(
+        rows_of(&medium, "Host or socket"),
+        rows_of(&medium, "Entry") + 2,
+        "{medium}"
+    );
 
     let small = screen.screen(80, 24);
     assert!(!small.contains("GENERAL"), "{small}");
-    assert_eq!(rows_of(&small, "Host or socket"), rows_of(&small, "Entry") + 1, "{small}");
+    assert_eq!(
+        rows_of(&small, "Host or socket"),
+        rows_of(&small, "Entry") + 1,
+        "{small}"
+    );
 
     for (width, height) in [(100, 40), (130, 26), (100, 30), (80, 24)] {
         let shown = screen.screen(width, height);
         for label in FORM_LABELS {
-            assert!(shown.contains(label), "{label} at {width} x {height}:\n{shown}");
+            assert!(
+                shown.contains(label),
+                "{label} at {width} x {height}:\n{shown}"
+            );
         }
         for button in ["[Test connection]", "[Save]", "[Cancel]"] {
-            assert!(shown.contains(button), "{button} at {width} x {height}:\n{shown}");
+            assert!(
+                shown.contains(button),
+                "{button} at {width} x {height}:\n{shown}"
+            );
         }
     }
 }
@@ -776,11 +1070,18 @@ fn a_click_selects_a_field_in_each_placement() {
         let mut screen = form_screen("form-click", Theme::plain());
         let buffer = screen.buffer(width, height);
         let lines = rows(&buffer);
-        let row = lines.iter().position(|line| line.contains("CA file")).unwrap();
+        let row = lines
+            .iter()
+            .position(|line| line.contains("CA file"))
+            .unwrap();
         let byte = lines[row].find("CA file").unwrap();
         let column = lines[row][..byte].chars().count() as u16;
         screen.click(column, row as u16);
-        assert_eq!(screen.app.form().unwrap().focus, Field::CaFile, "{width} x {height}");
+        assert_eq!(
+            screen.app.form().unwrap().focus,
+            Field::CaFile,
+            "{width} x {height}"
+        );
     }
 }
 
@@ -796,7 +1097,10 @@ fn the_form_keeps_a_note_visible_in_each_placement() {
         }
         screen.code(KeyCode::Enter);
         let shown = screen.screen(width, height);
-        assert!(shown.contains("name"), "the note of the missing name:\n{shown}");
+        assert!(
+            shown.contains("name"),
+            "the note of the missing name:\n{shown}"
+        );
     }
 }
 
@@ -805,10 +1109,17 @@ fn form_with_note(note: FormNote, theme: &Theme) -> (Buffer, Vec<String>, usize)
     let mut form = ConnectionForm::new_in(false);
     form.note = Some(note);
     let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
-    terminal.draw(|frame| { sqln::ui::form::draw_form(frame, &form, theme); }).unwrap();
+    terminal
+        .draw(|frame| {
+            sqln::ui::form::draw_form(frame, &form, theme);
+        })
+        .unwrap();
     let buffer = terminal.backend().buffer().clone();
     let lines = rows(&buffer);
-    let buttons = lines.iter().position(|line| line.contains("Test connection")).unwrap();
+    let buttons = lines
+        .iter()
+        .position(|line| line.contains("Test connection"))
+        .unwrap();
     (buffer, lines, buttons)
 }
 
@@ -816,8 +1127,16 @@ fn form_with_note(note: FormNote, theme: &Theme) -> (Buffer, Vec<String>, usize)
 fn a_short_note_stands_on_the_row_above_the_buttons() {
     let note = FormNote::Success("The connection works.".to_owned());
     let (_, lines, buttons) = form_with_note(note, &Theme::plain());
-    assert!(lines[buttons - 1].contains("The connection works."), "{}", lines.join("\n"));
-    assert!(lines[buttons - 2].chars().all(|c| c == ' ' || c == '│'), "{}", lines.join("\n"));
+    assert!(
+        lines[buttons - 1].contains("The connection works."),
+        "{}",
+        lines.join("\n")
+    );
+    assert!(
+        lines[buttons - 2].chars().all(|c| c == ' ' || c == '│'),
+        "{}",
+        lines.join("\n")
+    );
 }
 
 #[test]
@@ -837,16 +1156,28 @@ fn each_kind_of_note_has_its_own_color() {
         let column = lines[buttons - 1][..column].chars().count() as u16;
         buffer[(column, buttons as u16 - 1)].fg
     };
-    assert_eq!(color_of(FormNote::Success("message".to_owned())), theme.mark_good.fg.unwrap());
-    assert_eq!(color_of(FormNote::Info("message".to_owned())), theme.status.fg.unwrap());
-    assert_eq!(color_of(FormNote::Error("message".to_owned())), theme.error.fg.unwrap());
+    assert_eq!(
+        color_of(FormNote::Success("message".to_owned())),
+        theme.mark_good.fg.unwrap()
+    );
+    assert_eq!(
+        color_of(FormNote::Info("message".to_owned())),
+        theme.status.fg.unwrap()
+    );
+    assert_eq!(
+        color_of(FormNote::Error("message".to_owned())),
+        theme.error.fg.unwrap()
+    );
     assert_ne!(theme.mark_good.fg, theme.status.fg);
 }
 
 #[test]
 fn a_working_connection_gives_a_success_note_and_a_test_in_progress_does_not() {
     let path = temp_db("form-success");
-    rusqlite::Connection::open(&path).unwrap().execute_batch(SETUP).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(SETUP)
+        .unwrap();
     let theme = Theme::astrodark();
     let mut screen = form_screen("form-success-start", theme);
     screen.code(KeyCode::Left);
@@ -858,11 +1189,20 @@ fn a_working_connection_gives_a_success_note_and_a_test_in_progress_does_not() {
         screen.code(KeyCode::Tab);
     }
     screen.code(KeyCode::Enter);
-    assert!(matches!(screen.app.form().unwrap().note, Some(FormNote::Info(_))));
+    assert!(matches!(
+        screen.app.form().unwrap().note,
+        Some(FormNote::Info(_))
+    ));
     screen.pump_until("The connection works.");
-    assert!(matches!(screen.app.form().unwrap().note, Some(FormNote::Success(_))));
+    assert!(matches!(
+        screen.app.form().unwrap().note,
+        Some(FormNote::Success(_))
+    ));
     let (column, row) = screen.locate("The connection works.");
-    assert_eq!(screen.buffer(100, 30)[(column, row)].fg, theme.mark_good.fg.unwrap());
+    assert_eq!(
+        screen.buffer(100, 30)[(column, row)].fg,
+        theme.mark_good.fg.unwrap()
+    );
     let (_, buttons) = screen.locate("Test connection");
     assert_eq!(row + 1, buttons);
 }
@@ -873,18 +1213,30 @@ fn themed_store(name: &str, preferences: &str) -> (Store, Root) {
     fs::create_dir_all(&global.dir).unwrap();
     let text = format!(r#"{{"version":1,"preferences":{preferences},"connections":[]}}"#);
     fs::write(global.config_file(), text).unwrap();
-    (Store { global: global.clone(), project: None }, global)
+    (
+        Store {
+            global: global.clone(),
+            project: None,
+        },
+        global,
+    )
 }
 
 #[test]
 fn the_configuration_rejects_an_unknown_theme_and_an_unknown_icon_set() {
     for preferences in [r#"{"theme":"neon"}"#, r#"{"icons":"emoji"}"#] {
         let (store, _) = themed_store("theme-invalid", preferences);
-        assert!(sqln::store::config::load(&store).config.is_err(), "{preferences}");
+        assert!(
+            sqln::store::config::load(&store).config.is_err(),
+            "{preferences}"
+        );
     }
     let (store, _) = themed_store("theme-valid", r#"{"theme":"ansi","icons":"nerd"}"#);
     let config = sqln::store::config::load(&store).config.unwrap();
-    assert_eq!((config.theme, config.icons), (Some(ThemeName::Ansi), Some(IconName::Nerd)));
+    assert_eq!(
+        (config.theme, config.icons),
+        (Some(ThemeName::Ansi), Some(IconName::Nerd))
+    );
 }
 
 #[test]
@@ -893,20 +1245,43 @@ fn a_reload_changes_the_theme_at_once() {
         return;
     }
     let (store, global) = themed_store("theme-reload", "{}");
-    let options = Options { store: Some(store), ..Options::default() };
+    let options = Options {
+        store: Some(store),
+        ..Options::default()
+    };
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
-    let mut screen = Screen { app: App::new(options, clipboard, Theme::plain()) };
-    assert!(screen.buffer(100, 30).content().iter().all(|cell| cell.bg == Color::Reset));
+    let mut screen = Screen {
+        app: App::new(options, clipboard, Theme::plain()),
+    };
+    assert!(
+        screen
+            .buffer(100, 30)
+            .content()
+            .iter()
+            .all(|cell| cell.bg == Color::Reset)
+    );
 
     let text = r#"{"version":1,"preferences":{"theme":"astrodark"},"connections":[]}"#;
     fs::write(global.config_file(), text).unwrap();
     screen.prefix('r');
-    assert!(screen.buffer(100, 30).content().iter().all(|cell| is_rgb(cell.bg)));
+    assert!(
+        screen
+            .buffer(100, 30)
+            .content()
+            .iter()
+            .all(|cell| is_rgb(cell.bg))
+    );
 
     let text = r#"{"version":1,"preferences":{},"connections":[]}"#;
     fs::write(global.config_file(), text).unwrap();
     screen.prefix('r');
-    assert!(screen.buffer(100, 30).content().iter().all(|cell| cell.bg == Color::Reset));
+    assert!(
+        screen
+            .buffer(100, 30)
+            .content()
+            .iter()
+            .all(|cell| cell.bg == Color::Reset)
+    );
 }
 
 #[test]

@@ -13,7 +13,9 @@ use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedSender};
 
 pub use self::sink::{Flow, ReadLimit, ResultSink};
 use crate::catalog::{Catalog, RelationRef};
-use crate::connector::{ConnectError, Connector, SessionContext, StatementEnd, TransactionCommand, TransactionState};
+use crate::connector::{
+    ConnectError, Connector, SessionContext, StatementEnd, TransactionCommand, TransactionState,
+};
 use crate::grid::{Budget, DEFAULT_LIMIT, Row};
 use crate::pool::Pool;
 
@@ -90,13 +92,32 @@ pub enum ExecutionEnd {
 
 #[derive(Debug)]
 pub enum ExecEvent {
-    Queued { console: ConsoleId, execution: ExecutionId },
-    Started { console: ConsoleId, execution: ExecutionId },
-    StatementStarted { key: StatementKey },
-    Columns { key: StatementKey, columns: Vec<String> },
-    Rows { key: StatementKey, rows: Vec<Row>, bytes: usize },
+    Queued {
+        console: ConsoleId,
+        execution: ExecutionId,
+    },
+    Started {
+        console: ConsoleId,
+        execution: ExecutionId,
+    },
+    StatementStarted {
+        key: StatementKey,
+    },
+    Columns {
+        key: StatementKey,
+        columns: Vec<String>,
+    },
+    Rows {
+        key: StatementKey,
+        rows: Vec<Row>,
+        bytes: usize,
+    },
     /// One result ended. A statement can send more than one result.
-    ResultDone { key: StatementKey, rows: usize, limit: ReadLimit },
+    ResultDone {
+        key: StatementKey,
+        rows: usize,
+        limit: ReadLimit,
+    },
     StatementFinished {
         key: StatementKey,
         status: StatementStatus,
@@ -105,28 +126,49 @@ pub enum ExecEvent {
         error_offset: Option<usize>,
     },
     /// A statement did not answer, and closing the connection loses an open transaction.
-    ConfirmClose { console: ConsoleId, execution: ExecutionId },
+    ConfirmClose {
+        console: ConsoleId,
+        execution: ExecutionId,
+    },
     ExecutionFinished {
         console: ConsoleId,
         execution: ExecutionId,
         end: ExecutionEnd,
         message: Option<String>,
     },
-    TransactionChanged { console: ConsoleId, state: TransactionState },
-    TransactionFailed { console: ConsoleId, message: String },
+    TransactionChanged {
+        console: ConsoleId,
+        state: TransactionState,
+    },
+    TransactionFailed {
+        console: ConsoleId,
+        message: String,
+    },
     /// `read` is the number that the caller gave to `load_catalog`.
-    CatalogLoaded { connection: ConnectionId, read: u64, catalog: Result<Catalog, String> },
+    CatalogLoaded {
+        connection: ConnectionId,
+        read: u64,
+        catalog: Result<Catalog, String>,
+    },
     ColumnsLoaded {
         connection: ConnectionId,
         relation: RelationRef,
         columns: Result<Vec<String>, String>,
     },
     /// A test of a connection ended.
-    ConnectionTested { test: u64, result: Result<(), ConnectError> },
+    ConnectionTested {
+        test: u64,
+        result: Result<(), ConnectError>,
+    },
     /// The database refused the password of a new session of this pool.
-    PasswordRefused { connection: ConnectionId, pool: u64 },
+    PasswordRefused {
+        connection: ConnectionId,
+        pool: u64,
+    },
     /// The idle sessions of a connection closed.
-    Disconnected { connection: ConnectionId },
+    Disconnected {
+        connection: ConnectionId,
+    },
 }
 
 impl ExecEvent {
@@ -184,7 +226,10 @@ impl Binding {
     fn refusal(&self, error: &ConnectError) -> Option<ExecEvent> {
         error
             .password_refused
-            .then_some(ExecEvent::PasswordRefused { connection: self.connection, pool: self.serial })
+            .then_some(ExecEvent::PasswordRefused {
+                connection: self.connection,
+                pool: self.serial,
+            })
     }
 }
 
@@ -243,11 +288,14 @@ impl Manager {
     pub fn spawn_blocking(&self, operation: impl FnOnce() + Send + 'static) {
         let blocking = self.blocking.clone();
         self.runtime.spawn(async move {
-            let Ok(permit) = blocking.acquire_owned().await else { return };
+            let Ok(permit) = blocking.acquire_owned().await else {
+                return;
+            };
             let _ = tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 operation();
-            }).await;
+            })
+            .await;
         });
     }
 
@@ -272,13 +320,24 @@ impl Manager {
     ) -> Binding {
         let serial = self.next_pool;
         self.next_pool += 1;
-        let pool = Pool::new(connector, settings.max_connections, settings.connect_timeout);
-        Binding { connection, serial, pool, settings }
+        let pool = Pool::new(
+            connector,
+            settings.max_connections,
+            settings.connect_timeout,
+        );
+        Binding {
+            connection,
+            serial,
+            pool,
+            settings,
+        }
     }
 
     /// Returns the serial of the pool that a connection uses now.
     pub fn pool_serial(&self, connection: ConnectionId) -> Option<u64> {
-        self.connections.get(&connection).map(|binding| binding.serial)
+        self.connections
+            .get(&connection)
+            .map(|binding| binding.serial)
     }
 
     /// Gives a connection a new pool, and its consoles use that pool from now on.
@@ -290,7 +349,11 @@ impl Manager {
         settings: Settings,
     ) {
         let binding = self.binding(connection, connector, settings);
-        for entry in self.consoles.values().filter(|entry| entry.connection == connection) {
+        for entry in self
+            .consoles
+            .values()
+            .filter(|entry| entry.connection == connection)
+        {
             let _ = entry.commands.send(Command::Rebind(binding.clone()));
         }
         self.connections.insert(connection, binding);
@@ -305,12 +368,16 @@ impl Manager {
 
     /// Returns the places in use and the limit of a pool.
     pub fn usage(&self, connection: ConnectionId) -> (usize, usize) {
-        self.connections.get(&connection).map_or((0, 0), |binding| binding.pool.usage())
+        self.connections
+            .get(&connection)
+            .map_or((0, 0), |binding| binding.pool.usage())
     }
 
     /// Returns true while a pool holds a session.
     pub fn is_connected(&self, connection: ConnectionId) -> bool {
-        self.connections.get(&connection).is_some_and(|binding| binding.pool.has_sessions())
+        self.connections
+            .get(&connection)
+            .is_some_and(|binding| binding.pool.has_sessions())
     }
 
     pub fn open_console(&mut self, connection: ConnectionId) -> Option<ConsoleId> {
@@ -325,7 +392,13 @@ impl Manager {
             self.events.clone(),
         );
         self.runtime.spawn(task.serve(inbox));
-        self.consoles.insert(console, ConsoleEntry { connection, commands });
+        self.consoles.insert(
+            console,
+            ConsoleEntry {
+                connection,
+                commands,
+            },
+        );
         Some(console)
     }
 
@@ -343,7 +416,14 @@ impl Manager {
         options: RunOptions,
     ) -> ExecutionId {
         let execution = self.next_execution.fetch_add(1, Ordering::Relaxed);
-        self.send(console, Command::Run(RunRequest { execution, statements, options }));
+        self.send(
+            console,
+            Command::Run(RunRequest {
+                execution,
+                statements,
+                options,
+            }),
+        );
         execution
     }
 
@@ -367,7 +447,9 @@ impl Manager {
     /// Reads the catalog through the pool, so it respects the connection limit.
     /// Two reads can overlap and end in any order, so the answer carries `read`.
     pub fn load_catalog(&self, connection: ConnectionId, read: u64) {
-        let Some(binding) = self.connections.get(&connection).cloned() else { return };
+        let Some(binding) = self.connections.get(&connection).cloned() else {
+            return;
+        };
         let events = self.events.clone();
         self.runtime.spawn(async move {
             let catalog = match binding.pool.acquire().await {
@@ -383,18 +465,28 @@ impl Manager {
                     Err(error.message)
                 }
             };
-            let _ = events.send(ExecEvent::CatalogLoaded { connection, read, catalog }).await;
+            let _ = events
+                .send(ExecEvent::CatalogLoaded {
+                    connection,
+                    read,
+                    catalog,
+                })
+                .await;
         });
     }
 
     pub fn load_columns(&self, connection: ConnectionId, relation: RelationRef) {
-        let Some(binding) = self.connections.get(&connection).cloned() else { return };
+        let Some(binding) = self.connections.get(&connection).cloned() else {
+            return;
+        };
         let events = self.events.clone();
         self.runtime.spawn(async move {
             let columns = match binding.pool.acquire().await {
                 Ok(mut lease) => {
                     let session = lease.session();
-                    let result = session.read_columns(&relation.schema, &relation.relation).await;
+                    let result = session
+                        .read_columns(&relation.schema, &relation.relation)
+                        .await;
                     lease.release().await;
                     result.map_err(|error| error.message)
                 }
@@ -405,14 +497,22 @@ impl Manager {
                     Err(error.message)
                 }
             };
-            let _ = events.send(ExecEvent::ColumnsLoaded { connection, relation, columns }).await;
+            let _ = events
+                .send(ExecEvent::ColumnsLoaded {
+                    connection,
+                    relation,
+                    columns,
+                })
+                .await;
         });
     }
 
     /// Closes the idle sessions of a pool, and it waits for a session in use, such as
     /// the session of a catalog read. That session closes when it returns.
     pub fn disconnect(&self, connection: ConnectionId) {
-        let Some(binding) = self.connections.get(&connection) else { return };
+        let Some(binding) = self.connections.get(&connection) else {
+            return;
+        };
         let pool = binding.pool.clone();
         let limit = binding.settings.stop_grace;
         let events = self.events.clone();
@@ -435,7 +535,9 @@ impl Manager {
                 Ok(Err(error)) => Err(error),
                 Err(_) => Err(ConnectError::new(CONNECT_LIMIT_ENDED)),
             };
-            let _ = events.send(ExecEvent::ConnectionTested { test, result }).await;
+            let _ = events
+                .send(ExecEvent::ConnectionTested { test, result })
+                .await;
         });
     }
 
@@ -446,5 +548,8 @@ impl Manager {
 }
 
 fn context(settings: &Settings, schema: Option<String>) -> SessionContext {
-    SessionContext { read_only: settings.read_only, schema }
+    SessionContext {
+        read_only: settings.read_only,
+        schema,
+    }
 }

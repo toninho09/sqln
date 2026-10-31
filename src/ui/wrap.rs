@@ -40,7 +40,12 @@ fn row_end(text: &str, start: usize, width: usize) -> (usize, Option<usize>) {
 
 impl WrappedText {
     pub fn new(text: String) -> Self {
-        Self { text, width: 1, rows: Vec::new(), next: Some(0) }
+        Self {
+            text,
+            width: 1,
+            rows: Vec::new(),
+            next: Some(0),
+        }
     }
 
     pub fn text(&self) -> &str {
@@ -71,6 +76,10 @@ impl WrappedText {
 
     /// Returns the last row at or before `index`.
     pub fn last_row_at(&mut self, index: usize) -> usize {
-        if self.row(index).is_some() { index } else { self.rows.len().saturating_sub(1) }
+        if self.row(index).is_some() {
+            index
+        } else {
+            self.rows.len().saturating_sub(1)
+        }
     }
 }

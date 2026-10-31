@@ -35,9 +35,17 @@ impl App {
 
     /// Lists the tab row in the order of opening. Consoles and tables stay in one row.
     pub(super) fn tab_order(&self) -> Vec<Tab> {
-        let consoles = self.consoles.iter().enumerate().filter(|(_, console)| !console.hidden);
+        let consoles = self
+            .consoles
+            .iter()
+            .enumerate()
+            .filter(|(_, console)| !console.hidden);
         let consoles = consoles.map(|(index, console)| (console.opened, Tab::Console(index)));
-        let tables = self.tables.iter().enumerate().map(|(index, tab)| (tab.opened, Tab::Table(index)));
+        let tables = self
+            .tables
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| (tab.opened, Tab::Table(index)));
         let mut order: Vec<(u64, Tab)> = consoles.chain(tables).collect();
         order.sort_by_key(|(opened, _)| *opened);
         order.into_iter().map(|(_, tab)| tab).collect()
@@ -49,7 +57,10 @@ impl App {
             let (label, phase, run) = match tab {
                 Tab::Console(index) => {
                     let console = &self.consoles[index];
-                    let unsaved = console.file.as_ref().is_some_and(|file| file.trouble.is_some());
+                    let unsaved = console
+                        .file
+                        .as_ref()
+                        .is_some_and(|file| file.trouble.is_some());
                     let label = main_tab_label(self.theme.icons.console, &console.name, unsaved);
                     (label, console.phase, &console.run)
                 }
@@ -59,15 +70,23 @@ impl App {
                 }
             };
             let picture = self.run_frame / FRAMES_PER_PICTURE;
-            TabView { label, badge: run_badge(phase, run, self.clock, picture, &self.theme) }
+            TabView {
+                label,
+                badge: run_badge(phase, run, self.clock, picture, &self.theme),
+            }
         };
         self.tab_order().into_iter().map(view).collect()
     }
 
     /// Returns the position of the tab on screen in the tab row.
     pub(super) fn active_tab(&self) -> usize {
-        let active = self.table_active.map_or(Tab::Console(self.active), Tab::Table);
-        self.tab_order().iter().position(|tab| *tab == active).unwrap_or(0)
+        let active = self
+            .table_active
+            .map_or(Tab::Console(self.active), Tab::Table);
+        self.tab_order()
+            .iter()
+            .position(|tab| *tab == active)
+            .unwrap_or(0)
     }
 
     pub(super) fn select_tab(&mut self, index: usize) {
@@ -117,14 +136,24 @@ impl App {
         if self.config_blocked() {
             return;
         }
-        let Some(relation) = row.relation_ref(&self.connections) else { return };
+        let Some(relation) = row.relation_ref(&self.connections) else {
+            return;
+        };
         let connection = self.connections[row.connection].id;
-        if let Some(index) = self.tables.iter().position(|tab| tab.is(connection, &relation)) {
+        if let Some(index) = self
+            .tables
+            .iter()
+            .position(|tab| tab.is(connection, &relation))
+        {
             self.select_table(index);
             self.navigator_focused = false;
             return;
         }
-        let Some(id) = self.manager.as_mut().and_then(|manager| manager.open_console(connection)) else {
+        let Some(id) = self
+            .manager
+            .as_mut()
+            .and_then(|manager| manager.open_console(connection))
+        else {
             return;
         };
         let view = row.kind == RowKind::View;
@@ -142,10 +171,19 @@ impl App {
         if request.is_some() && self.config_blocked() {
             return;
         }
-        let (Some(request), Some(index)) = (request, self.table_active) else { return };
+        let (Some(request), Some(index)) = (request, self.table_active) else {
+            return;
+        };
         let tab = &self.tables[index];
         let (console, connection) = (tab.id, tab.connection);
-        self.authorize(connection, super::auth::Use::Page { console, connection, request });
+        self.authorize(
+            connection,
+            super::auth::Use::Page {
+                console,
+                connection,
+                request,
+            },
+        );
     }
 
     /// Returns the tab on screen and its dialect, when it can start a query.
@@ -160,14 +198,18 @@ impl App {
 
     /// Applies the fields: a new query from the first page.
     pub(super) fn apply_table(&mut self) {
-        let Some(dialect) = self.ready_table() else { return };
+        let Some(dialect) = self.ready_table() else {
+            return;
+        };
         let budget = self.budget.clone();
         let request = self.table_mut().and_then(|tab| tab.apply(dialect, &budget));
         self.run_page(request);
     }
 
     pub(super) fn clear_table(&mut self) {
-        let Some(dialect) = self.ready_table() else { return };
+        let Some(dialect) = self.ready_table() else {
+            return;
+        };
         let budget = self.budget.clone();
         let request = self.table_mut().and_then(|tab| tab.clear(dialect, &budget));
         self.run_page(request);
@@ -175,9 +217,13 @@ impl App {
 
     /// Sorts the table by a column. The click on a header and the `s` key do this.
     pub(super) fn sort_table(&mut self, column: usize) {
-        let Some(dialect) = self.ready_table() else { return };
+        let Some(dialect) = self.ready_table() else {
+            return;
+        };
         let budget = self.budget.clone();
-        let request = self.table_mut().and_then(|tab| tab.sort_by(column, dialect, &budget));
+        let request = self
+            .table_mut()
+            .and_then(|tab| tab.sort_by(column, dialect, &budget));
         self.run_page(request);
     }
 
@@ -187,7 +233,9 @@ impl App {
 
     /// Asks for the next page. `show` is the page to show at the end of the load.
     fn load_page(&mut self, show: Option<usize>) {
-        let Some(dialect) = self.ready_table() else { return };
+        let Some(dialect) = self.ready_table() else {
+            return;
+        };
         let budget = self.budget.clone();
         let Some(tab) = self.table_mut() else { return };
         match tab.next_page(dialect, &budget) {
@@ -215,8 +263,12 @@ impl App {
     }
 
     pub(super) fn stop_table(&mut self) {
-        let Some(index) = self.table_active else { return };
-        if self.cancel_auth_console(self.tables[index].id) { return; }
+        let Some(index) = self.table_active else {
+            return;
+        };
+        if self.cancel_auth_console(self.tables[index].id) {
+            return;
+        }
         let tab = &mut self.tables[index];
         if !tab.is_busy() {
             return;
@@ -241,9 +293,9 @@ impl App {
         // The tab on the right takes the place of a closed tab on screen. At the end of
         // the row, the tab on the left takes it, and then the console.
         self.table_active = match self.table_active {
-            Some(active) if active == index => {
-                (index < self.tables.len()).then_some(index).or(index.checked_sub(1))
-            }
+            Some(active) if active == index => (index < self.tables.len())
+                .then_some(index)
+                .or(index.checked_sub(1)),
             Some(active) if active > index => Some(active - 1),
             other => other,
         };
@@ -303,7 +355,9 @@ impl App {
                 }
             }
             Action::GridLoadMore => self.load_more(),
-            Action::GridOpenValue if self.table().is_some_and(|tab| tab.pending) => self.apply_table(),
+            Action::GridOpenValue if self.table().is_some_and(|tab| tab.pending) => {
+                self.apply_table()
+            }
             _ => return false,
         }
         true
@@ -321,7 +375,10 @@ impl App {
     /// handlers must act.
     pub(super) fn on_table_list_key(&mut self, key: KeyEvent) -> bool {
         let keys = self.suggestion_keys;
-        !self.navigator_focused && self.table_mut().is_some_and(|tab| tab.on_list_key(key, keys))
+        !self.navigator_focused
+            && self
+                .table_mut()
+                .is_some_and(|tab| tab.on_list_key(key, keys))
     }
 
     /// Applies a key to the text of the filter bar or to the search of the grid.
@@ -343,11 +400,22 @@ impl App {
 
     /// Edits the focused field, or it opens the list when there is no key.
     fn edit_table_field(&mut self, key: Option<KeyEvent>) {
-        let Some(index) = self.table_active else { return };
+        let Some(index) = self.table_active else {
+            return;
+        };
         let connection = self.tables[index].connection;
-        let Some(dialect) = self.dialect_of(connection) else { return };
-        let App { tables, connections, .. } = self;
-        let catalog = connections.iter().find(|item| item.id == connection).and_then(|item| item.catalog.as_ref());
+        let Some(dialect) = self.dialect_of(connection) else {
+            return;
+        };
+        let App {
+            tables,
+            connections,
+            ..
+        } = self;
+        let catalog = connections
+            .iter()
+            .find(|item| item.id == connection)
+            .and_then(|item| item.catalog.as_ref());
         let tab = &mut tables[index];
         let missing = match key {
             Some(key) => tab.on_field_key(key, dialect, catalog),
@@ -364,14 +432,22 @@ impl App {
 
     /// Gives the new catalog to the open lists of the table tabs of a connection.
     pub(super) fn refresh_tables(&mut self, connection: ConnectionId) {
-        let Some(dialect) = self.dialect_of(connection) else { return };
+        let Some(dialect) = self.dialect_of(connection) else {
+            return;
+        };
         for index in 0..self.tables.len() {
             if self.tables[index].connection != connection {
                 continue;
             }
-            let App { tables, connections, .. } = self;
-            let catalog =
-                connections.iter().find(|item| item.id == connection).and_then(|item| item.catalog.as_ref());
+            let App {
+                tables,
+                connections,
+                ..
+            } = self;
+            let catalog = connections
+                .iter()
+                .find(|item| item.id == connection)
+                .and_then(|item| item.catalog.as_ref());
             let missing = tables[index].refresh_list(dialect, catalog);
             self.request_relation_columns(connection, missing);
         }

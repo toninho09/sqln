@@ -87,7 +87,10 @@ fn editor_state(editor: &SqlEditor) -> EditorState {
     let cursor = editor.cursor();
     let (column, row) = editor.scroll();
     EditorState {
-        cursor: Position { row: cursor.row, col: cursor.col },
+        cursor: Position {
+            row: cursor.row,
+            col: cursor.col,
+        },
         scroll: Position { row, col: column },
     }
 }
@@ -99,12 +102,17 @@ impl App {
 
     /// Returns true when a project is open, so a connection can have its scope.
     pub(super) fn has_project(&self) -> bool {
-        self.persist.as_ref().is_some_and(|persist| persist.store.project.is_some())
+        self.persist
+            .as_ref()
+            .is_some_and(|persist| persist.store.project.is_some())
     }
 
     /// Returns true, with a message, while an invalid configuration blocks the databases.
     pub(super) fn config_blocked(&mut self) -> bool {
-        let blocked = self.persist.as_ref().is_some_and(|persist| persist.error.is_some());
+        let blocked = self
+            .persist
+            .as_ref()
+            .is_some_and(|persist| persist.error.is_some());
         if blocked {
             self.status = Some(text::CONFIG_BLOCKED.to_owned());
         }
@@ -113,7 +121,9 @@ impl App {
 
     /// The last steps of the start: old temporary files, the layout, and the questions.
     pub(super) fn finish_start(&mut self) {
-        let Some(persist) = &mut self.persist else { return };
+        let Some(persist) = &mut self.persist else {
+            return;
+        };
         for (_, root) in persist.store.scopes() {
             file::remove_old_temporary_files(&root.dir);
             file::remove_old_temporary_files(&root.consoles_dir());
@@ -150,8 +160,12 @@ impl App {
 
     /// Creates the project that the start offered.
     pub(super) fn create_project(&mut self) {
-        let Some(persist) = &mut self.persist else { return };
-        let Some(folder) = persist.project_offer.take() else { return };
+        let Some(persist) = &mut self.persist else {
+            return;
+        };
+        let Some(folder) = persist.project_offer.take() else {
+            return;
+        };
         match store::create_project(&folder) {
             Ok(root) => {
                 persist.store.project = Some(root);
@@ -168,7 +182,10 @@ impl App {
     pub(super) fn add_stored(&mut self, item: Stored) -> Option<ConnectionId> {
         let id = self.add_definition(item.definition)?;
         if let Some(connection) = self.connection_mut(id) {
-            connection.key = Some(ConnectionKey { scope: item.scope, id: item.id });
+            connection.key = Some(ConnectionKey {
+                scope: item.scope,
+                id: item.id,
+            });
             connection.credential = item.credential;
         }
         refresh_labels(&mut self.connections);
@@ -206,7 +223,9 @@ impl App {
         }
         self.keymap = config.keymap;
         self.suggestion_keys = config.suggestion_keys;
-        self.theme = self.terminal_theme.with_choices(config.theme, config.icons, self.color_env);
+        self.theme = self
+            .terminal_theme
+            .with_choices(config.theme, config.icons, self.color_env);
         if config.keyboard != self.keyboard {
             self.set_keyboard(config.keyboard);
         }
@@ -223,7 +242,10 @@ impl App {
     /// Gives a console a new editor with a text. The cursor stays when it fits.
     pub(super) fn replace_editor(&mut self, index: usize, text: &str) {
         let console = &mut self.consoles[index];
-        let was_dirty = console.file.as_ref().is_some_and(|file| file.is_dirty(console.editor.revision()));
+        let was_dirty = console
+            .file
+            .as_ref()
+            .is_some_and(|file| file.is_dirty(console.editor.revision()));
         let cursor = console.editor.cursor();
         let dialect = console.editor.dialect();
         console.editor = SqlEditor::new(text, self.keyboard, dialect, self.clipboard.clone());
@@ -244,9 +266,16 @@ impl App {
     fn apply_connections(&mut self, items: Vec<Stored>) {
         let mut keys = HashSet::new();
         for item in items {
-            let key = ConnectionKey { scope: item.scope, id: item.id.clone() };
+            let key = ConnectionKey {
+                scope: item.scope,
+                id: item.id.clone(),
+            };
             keys.insert(key.clone());
-            match self.connections.iter().position(|c| c.key.as_ref() == Some(&key)) {
+            match self
+                .connections
+                .iter()
+                .position(|c| c.key.as_ref() == Some(&key))
+            {
                 None => {
                     self.add_stored(item);
                 }
@@ -268,7 +297,10 @@ impl App {
     }
 
     fn is_in_use(&self, id: ConnectionId) -> bool {
-        let connected = self.manager.as_ref().is_some_and(|manager| manager.is_connected(id));
+        let connected = self
+            .manager
+            .as_ref()
+            .is_some_and(|manager| manager.is_connected(id));
         connected || self.console_in_use(id).is_some()
     }
 
@@ -277,24 +309,39 @@ impl App {
         let mut definition = item.definition;
         let same_credential = self.connections[index].credential == item.credential;
         if let Some(current) = &self.connections[index].definition {
-            if same_credential { definition.keep_password_of(current); }
-            if *current == definition && same_credential { return; }
+            if same_credential {
+                definition.keep_password_of(current);
+            }
+            if *current == definition && same_credential {
+                return;
+            }
         }
         if !self.is_in_use(id) {
             self.replace_definition(id, definition);
-            if let Some(connection) = self.connection_mut(id) { connection.credential = item.credential; }
+            if let Some(connection) = self.connection_mut(id) {
+                connection.credential = item.credential;
+            }
         }
     }
 
     /// Writes the connection to the file of its scope. It returns the error text.
-    pub(super) fn save_connection(&mut self, key: &ConnectionKey, definition: &Definition, credential: CredentialName) -> Result<(), String> {
+    pub(super) fn save_connection(
+        &mut self,
+        key: &ConnectionKey,
+        definition: &Definition,
+        credential: CredentialName,
+    ) -> Result<(), String> {
         let mut entry = config::to_entry(&key.id, definition);
-        if matches!(definition.source, crate::connection::Source::Network(_)) { entry.credential = credential; }
+        if matches!(definition.source, crate::connection::Source::Network(_)) {
+            entry.credential = credential;
+        }
         self.change_config(key.scope, Change::Upsert(Box::new(entry)))
     }
 
     pub(super) fn change_config(&mut self, scope: Scope, change: Change) -> Result<(), String> {
-        let Some(persist) = &mut self.persist else { return Ok(()) };
+        let Some(persist) = &mut self.persist else {
+            return Ok(());
+        };
         let Some(root) = persist.store.root(scope) else {
             return Err(text::NO_PROJECT.to_owned());
         };
@@ -318,17 +365,25 @@ impl App {
             return;
         }
         let global = config::preferences(&persist.store.global, Scope::Global);
-        let project = persist.store.project.as_ref().map(|root| config::preferences(root, Scope::Project));
+        let project = persist
+            .store
+            .project
+            .as_ref()
+            .map(|root| config::preferences(root, Scope::Project));
         let project = project.transpose();
         match (global, project) {
-            (Ok(global), Ok(project)) => self.settings_form = Some(SettingsForm::new(global, project)),
+            (Ok(global), Ok(project)) => {
+                self.settings_form = Some(SettingsForm::new(global, project))
+            }
             (Err(message), _) | (_, Err(message)) => self.status = Some(message),
         }
     }
 
     /// Writes the scope of the dialog, and it applies the files as a reload does.
     pub(super) fn save_settings(&mut self) {
-        let Some(form) = &mut self.settings_form else { return };
+        let Some(form) = &mut self.settings_form else {
+            return;
+        };
         let preferences = match form.preferences() {
             Ok(preferences) => preferences,
             Err(message) => {
@@ -337,16 +392,25 @@ impl App {
             }
         };
         let scope = form.scope;
-        let Some(persist) = &mut self.persist else { return };
-        let Some(root) = persist.store.root(scope) else { return };
+        let Some(persist) = &mut self.persist else {
+            return;
+        };
+        let Some(root) = persist.store.root(scope) else {
+            return;
+        };
         match config::change_preferences(root, scope, preferences) {
             Ok(hash) => {
-                if let Some((_, known)) = persist.hashes.iter_mut().find(|(item, _)| *item == scope) {
+                if let Some((_, known)) = persist.hashes.iter_mut().find(|(item, _)| *item == scope)
+                {
                     *known = Some(hash);
                 }
                 self.settings_form = None;
                 self.reload_config();
-                if self.persist.as_ref().is_some_and(|persist| persist.error.is_none()) {
+                if self
+                    .persist
+                    .as_ref()
+                    .is_some_and(|persist| persist.error.is_none())
+                {
                     self.status = Some(text::SETTINGS_SAVED.to_owned());
                 }
             }
@@ -363,12 +427,18 @@ impl App {
         }
         let console = &self.consoles[index];
         let revision = console.editor.revision();
-        let Some(connection) = console.connection.and_then(|id| self.connection(id)) else { return };
-        let Some(key) = connection.key.clone() else { return };
+        let Some(connection) = console.connection.and_then(|id| self.connection(id)) else {
+            return;
+        };
+        let Some(key) = connection.key.clone() else {
+            return;
+        };
         if revision == 0 {
             return;
         }
-        let Some(root) = self.persist_root(key.scope) else { return };
+        let Some(root) = self.persist_root(key.scope) else {
+            return;
+        };
         let id = scripts::new_id();
         let lock = scripts::lock(&root, &id).ok().flatten();
         let mut meta = ScriptMeta::new(id, console.name.clone(), key.id, key.scope);
@@ -380,8 +450,14 @@ impl App {
     /// Writes the text of a console at once.
     pub(super) fn save_console(&mut self, index: usize, now: Instant) -> Result<(), Trouble> {
         let console = &mut self.consoles[index];
-        let Some(file) = &mut console.file else { return Ok(()) };
-        let Some(root) = self.persist.as_ref().and_then(|persist| persist.store.root(file.scope)) else {
+        let Some(file) = &mut console.file else {
+            return Ok(());
+        };
+        let Some(root) = self
+            .persist
+            .as_ref()
+            .and_then(|persist| persist.store.root(file.scope))
+        else {
             return Ok(());
         };
         let text = console.editor.text();
@@ -435,15 +511,24 @@ impl App {
             self.ensure_file(index);
             let console = &mut self.consoles[index];
             let revision = console.editor.revision();
-            let Some(file) = &mut console.file else { continue };
+            let Some(file) = &mut console.file else {
+                continue;
+            };
             let before = file.trouble.clone();
             if file.due(revision, now) {
                 let _ = self.save_console(index, now);
             }
-            let after = self.consoles[index].file.as_ref().and_then(|file| file.trouble.clone());
+            let after = self.consoles[index]
+                .file
+                .as_ref()
+                .and_then(|file| file.trouble.clone());
             changed |= before != after;
         }
-        if self.persist.as_ref().is_some_and(|persist| now >= persist.next_poll) {
+        if self
+            .persist
+            .as_ref()
+            .is_some_and(|persist| now >= persist.next_poll)
+        {
             changed |= self.poll_files(now);
         }
         changed
@@ -459,8 +544,14 @@ impl App {
         }
         let mut changed = false;
         for index in 0..self.consoles.len() {
-            let Some(file) = &mut self.consoles[index].file else { continue };
-            let Some(root) = self.persist.as_ref().and_then(|persist| persist.store.root(file.scope)) else {
+            let Some(file) = &mut self.consoles[index].file else {
+                continue;
+            };
+            let Some(root) = self
+                .persist
+                .as_ref()
+                .and_then(|persist| persist.store.root(file.scope))
+            else {
                 continue;
             };
             let before = file.trouble.clone();
@@ -473,13 +564,17 @@ impl App {
     }
 
     fn poll_config(&mut self) -> bool {
-        let Some(persist) = &mut self.persist else { return false };
+        let Some(persist) = &mut self.persist else {
+            return false;
+        };
         if persist.config_prompt {
             return false;
         }
         let mut changed = false;
         for (scope, root) in persist.store.scopes() {
-            let hash = std::fs::read(root.config_file()).ok().map(|bytes| file::hash(&bytes));
+            let hash = std::fs::read(root.config_file())
+                .ok()
+                .map(|bytes| file::hash(&bytes));
             if let Some((_, known)) = persist.hashes.iter_mut().find(|(item, _)| *item == scope)
                 && *known != hash
             {
@@ -587,7 +682,9 @@ impl App {
     /// Writes the cursor and the scroll of the consoles that have a script.
     pub(super) fn save_editor_states(&mut self, only: Option<usize>) {
         for scope in [Scope::Global, Scope::Project] {
-            let Some(root) = self.persist_root(scope) else { continue };
+            let Some(root) = self.persist_root(scope) else {
+                continue;
+            };
             let states: Vec<(String, EditorState)> = self
                 .consoles
                 .iter()
@@ -605,16 +702,22 @@ impl App {
     }
 
     pub(super) fn layout_root(&self) -> Option<Root> {
-        self.persist_root(Scope::Project).or_else(|| self.persist_root(Scope::Global))
+        self.persist_root(Scope::Project)
+            .or_else(|| self.persist_root(Scope::Global))
     }
 
     fn restore_layout(&mut self) {
-        let roots = [self.persist_root(Scope::Project), self.persist_root(Scope::Global)];
+        let roots = [
+            self.persist_root(Scope::Project),
+            self.persist_root(Scope::Global),
+        ];
         if roots.iter().flatten().any(workspace::is_unreadable) {
             self.status = Some(text::WORKSPACE_UNREADABLE.to_owned());
         }
         let [project, global] = roots.map(|root| root.map(|root| workspace::load(&root)));
-        let layout = project.and_then(|item| item.layout).or_else(|| global.and_then(|item| item.layout));
+        let layout = project
+            .and_then(|item| item.layout)
+            .or_else(|| global.and_then(|item| item.layout));
         let Some(layout) = layout else { return };
         self.navigator.collapsed = layout.navigator_collapsed;
         self.navigator.width = layout.navigator_width.max(crate::navigator::MIN_WIDTH);
@@ -632,7 +735,9 @@ impl App {
         }
         self.save_editor_states(None);
         self.save_open_tabs();
-        let Some(root) = self.layout_root() else { return };
+        let Some(root) = self.layout_root() else {
+            return;
+        };
         let layout = workspace::Layout {
             navigator_collapsed: self.navigator.collapsed,
             navigator_width: self.navigator.width,
@@ -644,9 +749,15 @@ impl App {
     /// Writes the identity file again after a change of the schema of a console.
     pub(super) fn save_console_meta(&mut self, index: usize) {
         let console = &mut self.consoles[index];
-        let Some(file) = &mut console.file else { return };
+        let Some(file) = &mut console.file else {
+            return;
+        };
         file.meta.schema.clone_from(&console.schema);
-        let Some(root) = self.persist.as_ref().and_then(|persist| persist.store.root(file.scope)) else {
+        let Some(root) = self
+            .persist
+            .as_ref()
+            .and_then(|persist| persist.store.root(file.scope))
+        else {
             return;
         };
         if let Err(message) = file.write_meta(root) {
@@ -656,8 +767,14 @@ impl App {
 
     /// Replaces the text of a console with the text of its file. The user chose it.
     pub(super) fn reload_script(&mut self, index: usize) {
-        let Some(file) = &mut self.consoles[index].file else { return };
-        let Some(root) = self.persist.as_ref().and_then(|persist| persist.store.root(file.scope)) else {
+        let Some(file) = &mut self.consoles[index].file else {
+            return;
+        };
+        let Some(root) = self
+            .persist
+            .as_ref()
+            .and_then(|persist| persist.store.root(file.scope))
+        else {
             return;
         };
         match file.reload(root) {
@@ -672,19 +789,29 @@ impl App {
     /// Writes the text of a console over its file. The user chose it.
     pub(super) fn overwrite_script(&mut self, index: usize) {
         let console = &mut self.consoles[index];
-        let Some(file) = &mut console.file else { return };
-        let Some(root) = self.persist.as_ref().and_then(|persist| persist.store.root(file.scope)) else {
+        let Some(file) = &mut console.file else {
+            return;
+        };
+        let Some(root) = self
+            .persist
+            .as_ref()
+            .and_then(|persist| persist.store.root(file.scope))
+        else {
             return;
         };
         let text = console.editor.text();
-        if let Err(Trouble::Failed(message)) = file.overwrite(root, &text, console.editor.revision()) {
+        if let Err(Trouble::Failed(message)) =
+            file.overwrite(root, &text, console.editor.revision())
+        {
             self.status = Some(text::save_failed(&console.name, &message));
         }
     }
 
     pub(super) fn connection_by_key(&self, scope: Scope, id: &str) -> Option<&Connection> {
-        self.connections
-            .iter()
-            .find(|c| c.key.as_ref().is_some_and(|key| key.scope == scope && key.id == id))
+        self.connections.iter().find(|c| {
+            c.key
+                .as_ref()
+                .is_some_and(|key| key.scope == scope && key.id == id)
+        })
     }
 }

@@ -46,7 +46,10 @@ impl Chord {
         if matches!(key.code, KeyCode::Char(_)) {
             modifiers -= KeyModifiers::SHIFT;
         }
-        Self { code: key.code, modifiers }
+        Self {
+            code: key.code,
+            modifiers,
+        }
     }
 
     /// Returns true for `Ctrl+W`, the key before the commands of the application.
@@ -70,7 +73,10 @@ impl Chord {
             None => ("", text),
         };
         let mut modifiers = KeyModifiers::NONE;
-        for modifier in modifier_text.split('+').filter(|modifier| !modifier.is_empty()) {
+        for modifier in modifier_text
+            .split('+')
+            .filter(|modifier| !modifier.is_empty())
+        {
             modifiers |= match modifier.to_ascii_lowercase().as_str() {
                 "ctrl" => KeyModifiers::CONTROL,
                 "alt" => KeyModifiers::ALT,
@@ -196,10 +202,7 @@ impl Action {
 
     /// Returns true for an action that only the results of a console have.
     pub fn is_console_only(self) -> bool {
-        matches!(
-            self,
-            Action::GridCloseResult
-        )
+        matches!(self, Action::GridCloseResult)
     }
 
     /// Returns true for a move that Shift changes into a selection.
@@ -239,41 +242,216 @@ const fn both(
     keys: &'static [&'static str],
     vim_keys: &'static [&'static str],
 ) -> Item {
-    Item { action, region, name, keys, vim_keys, conventional_only: false }
+    Item {
+        action,
+        region,
+        name,
+        keys,
+        vim_keys,
+        conventional_only: false,
+    }
 }
 
 const DEFAULTS: &[Item] = &[
-    both(Action::Run, Region::Global, "run", &["ctrl+enter", "f5", "ctrl+w e"], &[]),
-    both(Action::RunScript, Region::Global, "runScript", &["shift+enter", "shift+f5", "ctrl+w s"], &[]),
+    both(
+        Action::Run,
+        Region::Global,
+        "run",
+        &["ctrl+enter", "f5", "ctrl+w e"],
+        &[],
+    ),
+    both(
+        Action::RunScript,
+        Region::Global,
+        "runScript",
+        &["shift+enter", "shift+f5", "ctrl+w s"],
+        &[],
+    ),
     both(Action::Stop, Region::Global, "stop", &["ctrl+w x"], &[]),
-    both(Action::ToggleMode, Region::Global, "toggleMode", &["ctrl+w m"], &[]),
+    both(
+        Action::ToggleMode,
+        Region::Global,
+        "toggleMode",
+        &["ctrl+w m"],
+        &[],
+    ),
     both(Action::Commit, Region::Global, "commit", &["ctrl+w C"], &[]),
-    both(Action::Rollback, Region::Global, "rollback", &["ctrl+w R"], &[]),
-    both(Action::Help, Region::Global, "help", &["f1", "ctrl+w ?"], &[]),
-    both(Action::OpenPalette, Region::Global, "openPalette", &["ctrl+p", "ctrl+w :"], &[]),
-    both(Action::CloseTab, Region::Global, "closeTab", &["ctrl+w c"], &[]),
+    both(
+        Action::Rollback,
+        Region::Global,
+        "rollback",
+        &["ctrl+w R"],
+        &[],
+    ),
+    both(
+        Action::Help,
+        Region::Global,
+        "help",
+        &["f1", "ctrl+w ?"],
+        &[],
+    ),
+    both(
+        Action::OpenPalette,
+        Region::Global,
+        "openPalette",
+        &["ctrl+p", "ctrl+w :"],
+        &[],
+    ),
+    both(
+        Action::CloseTab,
+        Region::Global,
+        "closeTab",
+        &["ctrl+w c"],
+        &[],
+    ),
     both(Action::Quit, Region::Global, "quit", &["ctrl+w q"], &[]),
-    both(Action::NextTab, Region::Global, "nextTab", &["ctrl+w n"], &[]),
-    both(Action::PreviousTab, Region::Global, "previousTab", &["ctrl+w p"], &[]),
-    both(Action::ToggleNavigator, Region::Global, "toggleNavigator", &["ctrl+w b"], &[]),
-    both(Action::ChooseSchema, Region::Global, "chooseSchema", &["ctrl+w d"], &[]),
-    both(Action::ReloadConfig, Region::Global, "reloadConfig", &["ctrl+w r"], &[]),
-    both(Action::RenameConsole, Region::Global, "renameConsole", &["ctrl+w N"], &[]),
-    both(Action::ChangeConnection, Region::Global, "changeConnection", &["ctrl+w a"], &[]),
-    both(Action::OpenSettings, Region::Global, "openSettings", &["ctrl+w ,"], &[]),
-    both(Action::FocusLeft, Region::Global, "focusLeft", &["ctrl+w h", "ctrl+w left"], &[]),
-    both(Action::FocusRight, Region::Global, "focusRight", &["ctrl+w l", "ctrl+w right"], &[]),
-    both(Action::FocusUp, Region::Global, "focusUp", &["ctrl+w k", "ctrl+w up"], &[]),
-    both(Action::FocusDown, Region::Global, "focusDown", &["ctrl+w j", "ctrl+w down"], &[]),
-    both(Action::NavigatorUp, Region::Navigator, "navigatorUp", &["up"], &["k"]),
-    both(Action::NavigatorDown, Region::Navigator, "navigatorDown", &["down"], &["j"]),
-    both(Action::NavigatorCollapse, Region::Navigator, "navigatorCollapse", &["left"], &["h"]),
-    both(Action::NavigatorExpand, Region::Navigator, "navigatorExpand", &["right"], &["l"]),
-    both(Action::NavigatorOpen, Region::Navigator, "navigatorOpen", &["enter"], &[]),
-    both(Action::NavigatorNewConsole, Region::Navigator, "newConsole", &["n"], &[]),
-    both(Action::NavigatorRefresh, Region::Navigator, "refreshCatalog", &["r"], &[]),
-    both(Action::NavigatorDisconnect, Region::Navigator, "disconnect", &["D"], &[]),
-    both(Action::NavigatorEdit, Region::Navigator, "editConnection", &["e"], &[]),
+    both(
+        Action::NextTab,
+        Region::Global,
+        "nextTab",
+        &["ctrl+w n"],
+        &[],
+    ),
+    both(
+        Action::PreviousTab,
+        Region::Global,
+        "previousTab",
+        &["ctrl+w p"],
+        &[],
+    ),
+    both(
+        Action::ToggleNavigator,
+        Region::Global,
+        "toggleNavigator",
+        &["ctrl+w b"],
+        &[],
+    ),
+    both(
+        Action::ChooseSchema,
+        Region::Global,
+        "chooseSchema",
+        &["ctrl+w d"],
+        &[],
+    ),
+    both(
+        Action::ReloadConfig,
+        Region::Global,
+        "reloadConfig",
+        &["ctrl+w r"],
+        &[],
+    ),
+    both(
+        Action::RenameConsole,
+        Region::Global,
+        "renameConsole",
+        &["ctrl+w N"],
+        &[],
+    ),
+    both(
+        Action::ChangeConnection,
+        Region::Global,
+        "changeConnection",
+        &["ctrl+w a"],
+        &[],
+    ),
+    both(
+        Action::OpenSettings,
+        Region::Global,
+        "openSettings",
+        &["ctrl+w ,"],
+        &[],
+    ),
+    both(
+        Action::FocusLeft,
+        Region::Global,
+        "focusLeft",
+        &["ctrl+w h", "ctrl+w left"],
+        &[],
+    ),
+    both(
+        Action::FocusRight,
+        Region::Global,
+        "focusRight",
+        &["ctrl+w l", "ctrl+w right"],
+        &[],
+    ),
+    both(
+        Action::FocusUp,
+        Region::Global,
+        "focusUp",
+        &["ctrl+w k", "ctrl+w up"],
+        &[],
+    ),
+    both(
+        Action::FocusDown,
+        Region::Global,
+        "focusDown",
+        &["ctrl+w j", "ctrl+w down"],
+        &[],
+    ),
+    both(
+        Action::NavigatorUp,
+        Region::Navigator,
+        "navigatorUp",
+        &["up"],
+        &["k"],
+    ),
+    both(
+        Action::NavigatorDown,
+        Region::Navigator,
+        "navigatorDown",
+        &["down"],
+        &["j"],
+    ),
+    both(
+        Action::NavigatorCollapse,
+        Region::Navigator,
+        "navigatorCollapse",
+        &["left"],
+        &["h"],
+    ),
+    both(
+        Action::NavigatorExpand,
+        Region::Navigator,
+        "navigatorExpand",
+        &["right"],
+        &["l"],
+    ),
+    both(
+        Action::NavigatorOpen,
+        Region::Navigator,
+        "navigatorOpen",
+        &["enter"],
+        &[],
+    ),
+    both(
+        Action::NavigatorNewConsole,
+        Region::Navigator,
+        "newConsole",
+        &["n"],
+        &[],
+    ),
+    both(
+        Action::NavigatorRefresh,
+        Region::Navigator,
+        "refreshCatalog",
+        &["r"],
+        &[],
+    ),
+    both(
+        Action::NavigatorDisconnect,
+        Region::Navigator,
+        "disconnect",
+        &["D"],
+        &[],
+    ),
+    both(
+        Action::NavigatorEdit,
+        Region::Navigator,
+        "editConnection",
+        &["e"],
+        &[],
+    ),
     Item {
         action: Action::NavigatorDelete,
         region: Region::Navigator,
@@ -282,34 +460,184 @@ const DEFAULTS: &[Item] = &[
         vim_keys: &["x"],
         conventional_only: true,
     },
-    both(Action::NavigatorAdd, Region::Navigator, "addConnection", &["a"], &[]),
-    both(Action::NavigatorScripts, Region::Navigator, "scriptsWithoutConnection", &["s"], &[]),
-    both(Action::NavigatorDeletePassword, Region::Navigator, "deletePassword", &["p"], &[]),
+    both(
+        Action::NavigatorAdd,
+        Region::Navigator,
+        "addConnection",
+        &["a"],
+        &[],
+    ),
+    both(
+        Action::NavigatorScripts,
+        Region::Navigator,
+        "scriptsWithoutConnection",
+        &["s"],
+        &[],
+    ),
+    both(
+        Action::NavigatorDeletePassword,
+        Region::Navigator,
+        "deletePassword",
+        &["p"],
+        &[],
+    ),
     both(Action::GridUp, Region::Grid, "gridUp", &["up"], &["k"]),
-    both(Action::GridDown, Region::Grid, "gridDown", &["down"], &["j"]),
-    both(Action::GridLeft, Region::Grid, "gridLeft", &["left"], &["h"]),
-    both(Action::GridRight, Region::Grid, "gridRight", &["right"], &["l"]),
-    both(Action::GridPageUp, Region::Grid, "gridPageUp", &["pageup"], &[]),
-    both(Action::GridPageDown, Region::Grid, "gridPageDown", &["pagedown"], &[]),
-    both(Action::GridFirstRow, Region::Grid, "gridFirstRow", &["alt+up"], &["g g"]),
-    both(Action::GridLastRow, Region::Grid, "gridLastRow", &["alt+down"], &["G"]),
-    both(Action::GridFirstColumn, Region::Grid, "gridFirstColumn", &["alt+left"], &["0"]),
-    both(Action::GridLastColumn, Region::Grid, "gridLastColumn", &["alt+right"], &["$"]),
-    both(Action::GridSelectAll, Region::Grid, "gridSelectAll", &["ctrl+a"], &[]),
-    both(Action::GridToggleSelection, Region::Grid, "gridToggleSelection", &[], &["v"]),
-    both(Action::GridClearSelection, Region::Grid, "gridClearSelection", &["esc"], &[]),
-    both(Action::GridCopy, Region::Grid, "gridCopy", &["ctrl+c"], &["y"]),
-    both(Action::GridOpenValue, Region::Grid, "gridOpenValue", &["enter"], &[]),
-    both(Action::GridFind, Region::Grid, "gridFind", &["ctrl+f"], &["/"]),
+    both(
+        Action::GridDown,
+        Region::Grid,
+        "gridDown",
+        &["down"],
+        &["j"],
+    ),
+    both(
+        Action::GridLeft,
+        Region::Grid,
+        "gridLeft",
+        &["left"],
+        &["h"],
+    ),
+    both(
+        Action::GridRight,
+        Region::Grid,
+        "gridRight",
+        &["right"],
+        &["l"],
+    ),
+    both(
+        Action::GridPageUp,
+        Region::Grid,
+        "gridPageUp",
+        &["pageup"],
+        &[],
+    ),
+    both(
+        Action::GridPageDown,
+        Region::Grid,
+        "gridPageDown",
+        &["pagedown"],
+        &[],
+    ),
+    both(
+        Action::GridFirstRow,
+        Region::Grid,
+        "gridFirstRow",
+        &["alt+up"],
+        &["g g"],
+    ),
+    both(
+        Action::GridLastRow,
+        Region::Grid,
+        "gridLastRow",
+        &["alt+down"],
+        &["G"],
+    ),
+    both(
+        Action::GridFirstColumn,
+        Region::Grid,
+        "gridFirstColumn",
+        &["alt+left"],
+        &["0"],
+    ),
+    both(
+        Action::GridLastColumn,
+        Region::Grid,
+        "gridLastColumn",
+        &["alt+right"],
+        &["$"],
+    ),
+    both(
+        Action::GridSelectAll,
+        Region::Grid,
+        "gridSelectAll",
+        &["ctrl+a"],
+        &[],
+    ),
+    both(
+        Action::GridToggleSelection,
+        Region::Grid,
+        "gridToggleSelection",
+        &[],
+        &["v"],
+    ),
+    both(
+        Action::GridClearSelection,
+        Region::Grid,
+        "gridClearSelection",
+        &["esc"],
+        &[],
+    ),
+    both(
+        Action::GridCopy,
+        Region::Grid,
+        "gridCopy",
+        &["ctrl+c"],
+        &["y"],
+    ),
+    both(
+        Action::GridOpenValue,
+        Region::Grid,
+        "gridOpenValue",
+        &["enter"],
+        &[],
+    ),
+    both(
+        Action::GridFind,
+        Region::Grid,
+        "gridFind",
+        &["ctrl+f"],
+        &["/"],
+    ),
     both(Action::GridNarrow, Region::Grid, "gridNarrow", &["<"], &[]),
     both(Action::GridWiden, Region::Grid, "gridWiden", &[">"], &[]),
-    both(Action::GridAutoWidth, Region::Grid, "gridAutoWidth", &["="], &[]),
-    both(Action::GridCloseResult, Region::Grid, "gridCloseResult", &["x", "delete"], &[]),
-    both(Action::GridPreviousResult, Region::Grid, "gridPreviousResult", &["["], &[]),
-    both(Action::GridNextResult, Region::Grid, "gridNextResult", &["]"], &[]),
-    both(Action::GridFocusFilter, Region::Grid, "focusFilter", &["f"], &[]),
-    both(Action::GridFocusOrder, Region::Grid, "focusOrder", &["o"], &[]),
-    both(Action::GridSortColumn, Region::Grid, "sortColumn", &["s"], &[]),
+    both(
+        Action::GridAutoWidth,
+        Region::Grid,
+        "gridAutoWidth",
+        &["="],
+        &[],
+    ),
+    both(
+        Action::GridCloseResult,
+        Region::Grid,
+        "gridCloseResult",
+        &["x", "delete"],
+        &[],
+    ),
+    both(
+        Action::GridPreviousResult,
+        Region::Grid,
+        "gridPreviousResult",
+        &["["],
+        &[],
+    ),
+    both(
+        Action::GridNextResult,
+        Region::Grid,
+        "gridNextResult",
+        &["]"],
+        &[],
+    ),
+    both(
+        Action::GridFocusFilter,
+        Region::Grid,
+        "focusFilter",
+        &["f"],
+        &[],
+    ),
+    both(
+        Action::GridFocusOrder,
+        Region::Grid,
+        "focusOrder",
+        &["o"],
+        &[],
+    ),
+    both(
+        Action::GridSortColumn,
+        Region::Grid,
+        "sortColumn",
+        &["s"],
+        &[],
+    ),
     both(Action::GridLoadMore, Region::Grid, "loadMore", &["m"], &[]),
 ];
 
@@ -341,7 +669,10 @@ impl Keymap {
         mode: KeyboardMode,
         overrides: &HashMap<String, Vec<String>>,
     ) -> Result<Self, String> {
-        if let Some(name) = overrides.keys().find(|name| !DEFAULTS.iter().any(|item| item.name == *name)) {
+        if let Some(name) = overrides
+            .keys()
+            .find(|name| !DEFAULTS.iter().any(|item| item.name == *name))
+        {
             return Err(format!("Unknown action: {name}"));
         }
         let mut map = Self {
@@ -363,7 +694,13 @@ impl Keymap {
         Ok(map)
     }
 
-    fn bind(&mut self, region: Region, action: Action, name: &str, text: &str) -> Result<(), String> {
+    fn bind(
+        &mut self,
+        region: Region,
+        action: Action,
+        name: &str,
+        text: &str,
+    ) -> Result<(), String> {
         let conflict = || format!("Two actions use the key {text}. One of them is {name}.");
         let chords = text
             .split_whitespace()
@@ -382,7 +719,11 @@ impl Keymap {
                 if self.single.contains_key(&(region, *first)) {
                     return Err(conflict());
                 }
-                if self.double.insert((region, *first, *second), action).is_some() {
+                if self
+                    .double
+                    .insert((region, *first, *second), action)
+                    .is_some()
+                {
                     return Err(conflict());
                 }
                 self.starts.insert((region, *first), action);
@@ -414,13 +755,23 @@ impl Keymap {
 
     /// Lists the actions of a region in the order of the help screen.
     pub fn actions(&self, region: Region) -> impl Iterator<Item = Action> + '_ {
-        DEFAULTS.iter().filter(move |item| item.region == region).map(|item| item.action)
+        DEFAULTS
+            .iter()
+            .filter(move |item| item.region == region)
+            .map(|item| item.action)
     }
 }
 
 fn default_keys(item: &Item, mode: KeyboardMode) -> Vec<String> {
     let vim = mode == KeyboardMode::Vim;
-    let base = if vim && item.conventional_only { &[][..] } else { item.keys };
+    let base = if vim && item.conventional_only {
+        &[][..]
+    } else {
+        item.keys
+    };
     let extra = if vim { item.vim_keys } else { &[] };
-    base.iter().chain(extra).map(|key| (*key).to_owned()).collect()
+    base.iter()
+        .chain(extra)
+        .map(|key| (*key).to_owned())
+        .collect()
 }

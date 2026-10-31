@@ -22,7 +22,13 @@ fn store_in(name: &str) -> (Store, PathBuf) {
     let global = Root::global(base.join("global"));
     let project = Root::project(&base.join("project"));
     fs::create_dir_all(&project.dir).unwrap();
-    (Store { global, project: Some(project) }, base)
+    (
+        Store {
+            global,
+            project: Some(project),
+        },
+        base,
+    )
 }
 
 fn write(path: &Path, text: &str) {
@@ -35,11 +41,20 @@ fn write(path: &Path, text: &str) {
 #[test]
 fn global_folder_follows_xdg_then_home() {
     let xdg = Some("/custom/config".into());
-    assert_eq!(global_dir(xdg, Some("/home/a".into())), Some("/custom/config/sqln".into()));
-    assert_eq!(global_dir(None, Some("/home/a".into())), Some("/home/a/.config/sqln".into()));
+    assert_eq!(
+        global_dir(xdg, Some("/home/a".into())),
+        Some("/custom/config/sqln".into())
+    );
+    assert_eq!(
+        global_dir(None, Some("/home/a".into())),
+        Some("/home/a/.config/sqln".into())
+    );
     // A relative `XDG_CONFIG_HOME` is not valid, and the home folder applies.
     let relative = Some("config".into());
-    assert_eq!(global_dir(relative, Some("/home/a".into())), Some("/home/a/.config/sqln".into()));
+    assert_eq!(
+        global_dir(relative, Some("/home/a".into())),
+        Some("/home/a/.config/sqln".into())
+    );
     assert_eq!(global_dir(None, None), None);
 }
 
@@ -49,12 +64,21 @@ fn project_search_uses_the_nearest_folder_and_ignores_git() {
     fs::create_dir_all(base.join("outer/.sqln")).unwrap();
     fs::create_dir_all(base.join("outer/inner/.sqln")).unwrap();
     fs::create_dir_all(base.join("outer/inner/deep/.git")).unwrap();
-    assert_eq!(find_project(&base.join("outer/inner/deep")), Some(base.join("outer/inner")));
-    assert_eq!(find_project(&base.join("outer/other")), Some(base.join("outer")));
+    assert_eq!(
+        find_project(&base.join("outer/inner/deep")),
+        Some(base.join("outer/inner"))
+    );
+    assert_eq!(
+        find_project(&base.join("outer/other")),
+        Some(base.join("outer"))
+    );
     // A file named `.sqln` is not a project.
     fs::create_dir_all(base.join("plain")).unwrap();
     fs::write(base.join("plain/.sqln"), "").unwrap();
-    assert_eq!(find_project(&base.join("plain")).filter(|path| path.starts_with(&base)), None);
+    assert_eq!(
+        find_project(&base.join("plain")).filter(|path| path.starts_with(&base)),
+        None
+    );
 }
 
 #[test]
@@ -68,7 +92,10 @@ fn creating_a_project_writes_the_gitignore_and_keeps_an_existing_one() {
     assert!(!base.join(".git").exists());
     fs::write(base.join(".sqln/.gitignore"), "mine\n").unwrap();
     create_project(&base).unwrap();
-    assert_eq!(fs::read_to_string(base.join(".sqln/.gitignore")).unwrap(), "mine\n");
+    assert_eq!(
+        fs::read_to_string(base.join(".sqln/.gitignore")).unwrap(),
+        "mine\n"
+    );
 }
 
 #[test]
@@ -78,7 +105,13 @@ fn the_start_uses_the_nearest_project_or_offers_the_working_folder() {
     fs::create_dir_all(base.join("a/b/c")).unwrap();
     fs::create_dir_all(base.join("free")).unwrap();
     let found = locate_project(&base.join("a/b/c"), None);
-    assert_eq!(found, Located { root: Some(base.join("a")), offer: None });
+    assert_eq!(
+        found,
+        Located {
+            root: Some(base.join("a")),
+            offer: None
+        }
+    );
     let none = locate_project(&base.join("free"), None);
     assert_eq!(none.root.filter(|root| root.starts_with(&base)), None);
     assert_eq!(none.offer, Some(base.join("free")));
@@ -93,11 +126,22 @@ fn a_project_folder_of_the_command_line_replaces_the_search() {
     let working = base.join("outer/inner");
     // A folder with a project wins, even when an upper folder has another project.
     let flag = locate_project(&working, Some(Path::new("../../other")));
-    assert_eq!(flag.root.as_deref().map(|root| root.canonicalize().unwrap()), Some(base.join("other").canonicalize().unwrap()));
+    assert_eq!(
+        flag.root
+            .as_deref()
+            .map(|root| root.canonicalize().unwrap()),
+        Some(base.join("other").canonicalize().unwrap())
+    );
     assert_eq!(flag.offer, None);
     // A folder without a project gets the offer. The search upward does not run.
     let missing = locate_project(&working, Some(Path::new("fresh")));
-    assert_eq!(missing, Located { root: None, offer: Some(working.join("fresh")) });
+    assert_eq!(
+        missing,
+        Located {
+            root: None,
+            offer: Some(working.join("fresh"))
+        }
+    );
     // An absolute folder stays as it is.
     let absolute = locate_project(&working, Some(&base.join("other")));
     assert_eq!(absolute.root, Some(base.join("other")));
@@ -111,17 +155,30 @@ fn a_write_checks_the_destination_before_it_replaces_the_file() {
     let path = dir.join("a.txt");
     let first = file::write_atomic(&path, b"one", Expect::Missing).unwrap();
     assert_eq!(first, file::hash(b"one"));
-    assert_eq!(file::write_atomic(&path, b"two", Expect::Missing), Err(WriteError::Changed));
+    assert_eq!(
+        file::write_atomic(&path, b"two", Expect::Missing),
+        Err(WriteError::Changed)
+    );
     fs::write(&path, "other").unwrap();
-    assert_eq!(file::write_atomic(&path, b"two", Expect::Hash(first)), Err(WriteError::Changed));
+    assert_eq!(
+        file::write_atomic(&path, b"two", Expect::Hash(first)),
+        Err(WriteError::Changed)
+    );
     assert_eq!(fs::read_to_string(&path).unwrap(), "other");
     fs::remove_file(&path).unwrap();
-    assert_eq!(file::write_atomic(&path, b"two", Expect::Hash(first)), Err(WriteError::Removed));
+    assert_eq!(
+        file::write_atomic(&path, b"two", Expect::Hash(first)),
+        Err(WriteError::Removed)
+    );
     assert!(!path.exists());
     assert!(file::write_atomic(&path, b"two", Expect::Any).is_ok());
     assert_eq!(fs::read_to_string(&path).unwrap(), "two");
     // No temporary file stays after a refusal or a success.
-    let names: Vec<_> = fs::read_dir(&dir).unwrap().flatten().map(|entry| entry.file_name()).collect();
+    let names: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name())
+        .collect();
     assert_eq!(names, ["a.txt"]);
 }
 
@@ -139,7 +196,12 @@ fn old_temporary_files_go_and_recent_ones_stay() {
     fs::write(dir.join("new.json.tmp"), "x").unwrap();
     fs::write(dir.join("keep.json"), "x").unwrap();
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3_600);
-    fs::File::options().write(true).open(dir.join("old.json.tmp")).unwrap().set_modified(old).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(dir.join("old.json.tmp"))
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
     file::remove_old_temporary_files(&dir);
     assert!(!dir.join("old.json.tmp").exists());
     assert!(dir.join("new.json.tmp").exists());
@@ -208,7 +270,10 @@ fn a_project_replaces_only_the_values_that_it_declares() {
 fn without_files_the_defaults_apply() {
     let (store, _) = store_in("no-files");
     let loaded = config::load(&store);
-    assert_eq!(loaded.hashes, [(Scope::Global, None), (Scope::Project, None)]);
+    assert_eq!(
+        loaded.hashes,
+        [(Scope::Global, None), (Scope::Project, None)]
+    );
     let config = loaded.config.unwrap();
     assert_eq!(config.keyboard, KeyboardMode::Conventional);
     assert!(config.connections.is_empty());
@@ -221,17 +286,30 @@ fn both_scopes_list_their_connections_and_keep_their_names() {
     write(&store.global.config_file(), GLOBAL);
     write(&store.project.as_ref().unwrap().config_file(), PROJECT);
     let config = loaded(&store);
-    let places: Vec<_> = config.connections.iter().map(|item| (item.scope, item.id.as_str())).collect();
+    let places: Vec<_> = config
+        .connections
+        .iter()
+        .map(|item| (item.scope, item.id.as_str()))
+        .collect();
     assert_eq!(
         places,
-        [(Scope::Global, "g1"), (Scope::Global, "g2"), (Scope::Project, "p1")]
+        [
+            (Scope::Global, "g1"),
+            (Scope::Global, "g2"),
+            (Scope::Project, "p1")
+        ]
     );
     // The same name in two scopes is valid.
-    assert_eq!(config.connections[0].definition.name, config.connections[2].definition.name);
+    assert_eq!(
+        config.connections[0].definition.name,
+        config.connections[2].definition.name
+    );
     let project = &config.connections[2].definition;
     assert!(project.read_only);
     // A relative path resolves from the root of the project, not from `.sqln`.
-    let Source::Sqlite(target) = project.resolved_source() else { panic!("sqlite") };
+    let Source::Sqlite(target) = project.resolved_source() else {
+        panic!("sqlite")
+    };
     assert_eq!(target.path, base.join("project").join("db/app.db"));
     // A global connection uses the global folder.
     let Source::Sqlite(target) = config.connections[0].definition.resolved_source() else {
@@ -251,14 +329,28 @@ fn a_network_entry_becomes_a_definition_without_a_password() {
     assert_eq!(definition.max_connections, 3);
     assert_eq!(definition.connect_timeout.as_secs(), 10);
     assert_eq!(definition.sql_timeout, None);
-    let Source::Network(target) = &definition.source else { panic!("network") };
-    assert_eq!(target.address, Address::Tcp { host: "db.example.test".into(), port: 5433 });
+    let Source::Network(target) = &definition.source else {
+        panic!("network")
+    };
+    assert_eq!(
+        target.address,
+        Address::Tcp {
+            host: "db.example.test".into(),
+            port: 5433
+        }
+    );
     assert_eq!(target.database.as_deref(), Some("app_db"));
     assert!(target.password.is_none());
-    let Tls::Verify(files) = &target.tls else { panic!("tls") };
+    let Tls::Verify(files) = &target.tls else {
+        panic!("tls")
+    };
     // The certificate file resolves from the folder of the scope.
-    let Source::Network(resolved) = definition.resolved_source() else { panic!("network") };
-    let Tls::Verify(resolved) = resolved.tls else { panic!("tls") };
+    let Source::Network(resolved) = definition.resolved_source() else {
+        panic!("network")
+    };
+    let Tls::Verify(resolved) = resolved.tls else {
+        panic!("tls")
+    };
     assert_eq!(files.ca.as_deref(), Some(Path::new("ca.pem")));
     assert_eq!(resolved.ca, Some(base.join("global").join("ca.pem")));
 }
@@ -274,8 +366,11 @@ fn a_missing_sql_timeout_is_the_default_and_null_is_no_limit() {
             {"id":"c","name":"c","kind":"sqlite","file":"c.db","sqlTimeoutSeconds":7}]}"#,
     );
     let config = loaded(&store);
-    let timeouts: Vec<_> =
-        config.connections.iter().map(|item| item.definition.sql_timeout.map(|t| t.as_secs())).collect();
+    let timeouts: Vec<_> = config
+        .connections
+        .iter()
+        .map(|item| item.definition.sql_timeout.map(|t| t.as_secs()))
+        .collect();
     assert_eq!(timeouts, [Some(30), None, Some(7)]);
 }
 
@@ -286,7 +381,10 @@ fn error_of(store: &Store) -> config::ConfigError {
 #[test]
 fn a_syntax_error_names_the_file_and_the_position() {
     let (store, _) = store_in("syntax");
-    write(&store.global.config_file(), "{\n  \"version\": 1,\n  \"connections\": [,]\n}");
+    write(
+        &store.global.config_file(),
+        "{\n  \"version\": 1,\n  \"connections\": [,]\n}",
+    );
     let error = error_of(&store);
     assert_eq!(error.file, store.global.config_file());
     assert!(error.message.contains("line 3"), "{}", error.message);
@@ -322,16 +420,34 @@ fn the_rules_of_the_content_make_a_file_invalid() {
     let cases = [
         (r#"{"version": 2}"#, "version"),
         (r#"{"version":1,"preferences":{"pageSize":0}}"#, "pageSize"),
-        (r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"sqlite","file":"a"},
-            {"id":"a","name":"y","kind":"sqlite","file":"b"}]}"#, "id"),
-        (r#"{"version":1,"connections":[{"id":"a","name":"X","kind":"sqlite","file":"a"},
-            {"id":"b","name":"x","kind":"sqlite","file":"b"}]}"#, "name"),
-        (r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"sqlite"}]}"#, "needs a file"),
-        (r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"mysql","host":"h"}]}"#, "username"),
-        (r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"sqlite","file":"a",
-            "sqlTimeoutSeconds":0}]}"#, "timeout"),
-        (r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"sqlite","file":"a",
-            "credential":"globalPlainText"}]}"#, "globalPlainText"),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"sqlite","file":"a"},
+            {"id":"a","name":"y","kind":"sqlite","file":"b"}]}"#,
+            "id",
+        ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"X","kind":"sqlite","file":"a"},
+            {"id":"b","name":"x","kind":"sqlite","file":"b"}]}"#,
+            "name",
+        ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"sqlite"}]}"#,
+            "needs a file",
+        ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"mysql","host":"h"}]}"#,
+            "username",
+        ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"sqlite","file":"a",
+            "sqlTimeoutSeconds":0}]}"#,
+            "timeout",
+        ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"sqlite","file":"a",
+            "credential":"globalPlainText"}]}"#,
+            "globalPlainText",
+        ),
     ];
     for (index, (text, word)) in cases.into_iter().enumerate() {
         let (store, _) = store_in(&format!("rules-{index}"));
@@ -395,14 +511,23 @@ fn a_change_reads_the_file_again_and_keeps_the_other_values() {
     let (store, _) = store_in("change");
     let root = &store.global;
     write(&root.config_file(), GLOBAL);
-    config::change_connections(root, Scope::Global, Change::Upsert(Box::new(entry("n1", "extra")))).unwrap();
+    config::change_connections(
+        root,
+        Scope::Global,
+        Change::Upsert(Box::new(entry("n1", "extra"))),
+    )
+    .unwrap();
     // Another instance adds a connection between two writes.
     let text = fs::read_to_string(root.config_file()).unwrap();
     let text = text.replace("\"pageSize\": 50", "\"pageSize\": 77");
     fs::write(root.config_file(), text).unwrap();
     config::change_connections(root, Scope::Global, Change::Remove("g1".into())).unwrap();
     let config = loaded(&store);
-    let ids: Vec<_> = config.connections.iter().map(|item| item.id.as_str()).collect();
+    let ids: Vec<_> = config
+        .connections
+        .iter()
+        .map(|item| item.id.as_str())
+        .collect();
     assert_eq!(ids, ["g2", "n1"]);
     assert_eq!(config.page_size, Some(77));
     assert_eq!(config.row_cap, Some(200));
@@ -412,15 +537,24 @@ fn a_change_reads_the_file_again_and_keeps_the_other_values() {
 fn a_change_replaces_an_entry_by_id_and_refuses_a_duplicate_name() {
     let (store, _) = store_in("change-replace");
     let root = &store.global;
-    config::change_connections(root, Scope::Global, Change::Upsert(Box::new(entry("a", "one")))).unwrap();
+    config::change_connections(
+        root,
+        Scope::Global,
+        Change::Upsert(Box::new(entry("a", "one"))),
+    )
+    .unwrap();
     let mut renamed = entry("a", "two");
     renamed.read_only = true;
     config::change_connections(root, Scope::Global, Change::Upsert(Box::new(renamed))).unwrap();
     let config = loaded(&store);
     assert_eq!(config.connections.len(), 1);
     assert_eq!(config.connections[0].definition.name, "two");
-    let error = config::change_connections(root, Scope::Global, Change::Upsert(Box::new(entry("b", "TWO"))))
-        .unwrap_err();
+    let error = config::change_connections(
+        root,
+        Scope::Global,
+        Change::Upsert(Box::new(entry("b", "TWO"))),
+    )
+    .unwrap_err();
     assert!(error.contains("name"), "{error}");
     assert_eq!(loaded(&store).connections.len(), 1);
 }
@@ -429,8 +563,12 @@ fn a_change_replaces_an_entry_by_id_and_refuses_a_duplicate_name() {
 fn a_change_does_not_overwrite_an_invalid_file() {
     let (store, _) = store_in("change-invalid");
     write(&store.global.config_file(), "{");
-    let error = config::change_connections(&store.global, Scope::Global, Change::Upsert(Box::new(entry("a", "one"))))
-        .unwrap_err();
+    let error = config::change_connections(
+        &store.global,
+        Scope::Global,
+        Change::Upsert(Box::new(entry("a", "one"))),
+    )
+    .unwrap_err();
     assert!(error.contains("config.json"), "{error}");
     assert_eq!(fs::read_to_string(store.global.config_file()).unwrap(), "{");
 }
@@ -440,7 +578,12 @@ fn a_change_creates_the_file_of_a_scope_without_one() {
     let (store, _) = store_in("change-create");
     let root = store.project.as_ref().unwrap();
     assert!(!root.config_file().exists());
-    config::change_connections(root, Scope::Project, Change::Upsert(Box::new(entry("a", "one")))).unwrap();
+    config::change_connections(
+        root,
+        Scope::Project,
+        Change::Upsert(Box::new(entry("a", "one"))),
+    )
+    .unwrap();
     let text = fs::read_to_string(root.config_file()).unwrap();
     assert!(text.contains("\"version\": 1"));
     // The file holds only the values that the project declares.
@@ -462,13 +605,18 @@ fn a_definition_round_trips_through_an_entry_without_the_password() {
     assert_eq!(entry.file.as_deref(), Some("data/app.db"));
     assert_eq!(entry.credential, CredentialName::None);
     let back = config::to_definition(&entry, PathBuf::from("/base"));
-    let Source::Sqlite(back_target) = &back.source else { panic!("sqlite") };
+    let Source::Sqlite(back_target) = &back.source else {
+        panic!("sqlite")
+    };
     assert_eq!(back_target.path, Path::new("data/app.db"));
     assert_eq!(back_target.foreign_keys, Some(true));
 
     let network = NetworkTarget {
         engine: Engine::MySql,
-        address: Address::Tcp { host: "h".into(), port: 3307 },
+        address: Address::Tcp {
+            host: "h".into(),
+            port: 3307,
+        },
         user: "u".into(),
         password: Some(Secret::new("hunter2")),
         database: Some("d".into()),
@@ -483,9 +631,17 @@ fn a_definition_round_trips_through_an_entry_without_the_password() {
     assert!(text.contains("\"sqlTimeoutSeconds\":null"), "{text}");
     let back = config::to_definition(&entry, PathBuf::from("/base"));
     assert_eq!(back.sql_timeout, None);
-    let Source::Network(target) = &back.source else { panic!("network") };
+    let Source::Network(target) = &back.source else {
+        panic!("network")
+    };
     assert_eq!(target.engine, Engine::MySql);
-    assert_eq!(target.address, Address::Tcp { host: "h".into(), port: 3307 });
+    assert_eq!(
+        target.address,
+        Address::Tcp {
+            host: "h".into(),
+            port: 3307
+        }
+    );
     assert!(target.password.is_none());
     assert_eq!(target.tls, Tls::Disabled);
 }
@@ -500,7 +656,12 @@ fn meta(id: &str, name: &str, connection: &str, scope: Scope) -> ScriptMeta {
 fn a_script_has_two_files_that_list_and_read_back() {
     let (store, _) = store_in("scripts");
     let root = &store.global;
-    let hash = scripts::create(root, &meta("s1", "console-1", "c1", Scope::Global), "SELECT 1;").unwrap();
+    let hash = scripts::create(
+        root,
+        &meta("s1", "console-1", "c1", Scope::Global),
+        "SELECT 1;",
+    )
+    .unwrap();
     assert_eq!(hash, file::hash(b"SELECT 1;"));
     let list = scripts::list(root, Scope::Global);
     assert_eq!(list.len(), 1);
@@ -508,7 +669,10 @@ fn a_script_has_two_files_that_list_and_read_back() {
     assert_eq!(list[0].meta.connection_id, "c1");
     assert_eq!(list[0].scope, Scope::Global);
     assert!(list[0].modified.is_some());
-    assert_eq!(scripts::read_text(root, "s1").unwrap(), ("SELECT 1;".to_owned(), hash));
+    assert_eq!(
+        scripts::read_text(root, "s1").unwrap(),
+        ("SELECT 1;".to_owned(), hash)
+    );
     // The metadata file has the documented fields.
     let json = fs::read_to_string(root.consoles_dir().join("s1.json")).unwrap();
     assert!(json.contains("\"connectionId\": \"c1\""), "{json}");
@@ -531,8 +695,14 @@ fn the_list_skips_damaged_files_and_names_that_do_not_match() {
     scripts::create(root, &meta("ok", "ok", "c1", Scope::Global), "x").unwrap();
     write(&root.consoles_dir().join("bad.json"), "{");
     // A file whose name differs from its id could point outside the folder.
-    write(&root.consoles_dir().join("other.json"), r#"{"version":1,"id":"../x","name":"n","connectionId":"c","connectionScope":"global"}"#);
-    let names: Vec<_> = scripts::list(root, Scope::Global).into_iter().map(|item| item.meta.id).collect();
+    write(
+        &root.consoles_dir().join("other.json"),
+        r#"{"version":1,"id":"../x","name":"n","connectionId":"c","connectionScope":"global"}"#,
+    );
+    let names: Vec<_> = scripts::list(root, Scope::Global)
+        .into_iter()
+        .map(|item| item.meta.id)
+        .collect();
     assert_eq!(names, ["ok"]);
 }
 
@@ -575,8 +745,14 @@ fn a_move_to_a_place_that_has_the_script_keeps_the_original() {
 
 #[test]
 fn the_line_ending_of_a_file_comes_back_on_write() {
-    assert_eq!(scripts::decode("a\r\nb\r\n"), ("a\nb\n".to_owned(), LineEnding::Crlf));
-    assert_eq!(scripts::decode("a\nb\n"), ("a\nb\n".to_owned(), LineEnding::Lf));
+    assert_eq!(
+        scripts::decode("a\r\nb\r\n"),
+        ("a\nb\n".to_owned(), LineEnding::Crlf)
+    );
+    assert_eq!(
+        scripts::decode("a\nb\n"),
+        ("a\nb\n".to_owned(), LineEnding::Lf)
+    );
     assert_eq!(scripts::encode("a\nb\n", LineEnding::Crlf), "a\r\nb\r\n");
     assert_eq!(scripts::encode("a\nb\n", LineEnding::Lf), "a\nb\n");
 }
@@ -588,7 +764,11 @@ fn a_script_lock_is_per_script_and_per_folder() {
     assert!(first.is_some());
     assert!(scripts::lock(&store.global, "s1").unwrap().is_none());
     assert!(scripts::lock(&store.global, "s2").unwrap().is_some());
-    assert!(scripts::lock(store.project.as_ref().unwrap(), "s1").unwrap().is_some());
+    assert!(
+        scripts::lock(store.project.as_ref().unwrap(), "s1")
+            .unwrap()
+            .is_some()
+    );
 }
 
 // ---- workspace ----
@@ -598,7 +778,10 @@ fn the_workspace_keeps_the_cursor_and_the_layout_between_updates() {
     let (store, _) = store_in("workspace");
     let root = &store.global;
     assert_eq!(workspace::load(root), workspace::Workspace::default());
-    let state = EditorState { cursor: Position { row: 3, col: 5 }, scroll: Position { row: 1, col: 0 } };
+    let state = EditorState {
+        cursor: Position { row: 3, col: 5 },
+        scroll: Position { row: 1, col: 0 },
+    };
     workspace::update(root, |workspace| {
         workspace.consoles.insert("s1".into(), state);
     })
@@ -620,6 +803,9 @@ fn the_workspace_keeps_the_cursor_and_the_layout_between_updates() {
 fn a_damaged_workspace_gives_an_empty_state() {
     let (store, _) = store_in("workspace-damaged");
     write(&store.global.workspace_file(), "not json");
-    assert_eq!(workspace::load(&store.global), workspace::Workspace::default());
+    assert_eq!(
+        workspace::load(&store.global),
+        workspace::Workspace::default()
+    );
     workspace::update(&store.global, |workspace| workspace.layout = None).unwrap();
 }

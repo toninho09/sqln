@@ -42,15 +42,23 @@ const COLUMNS_SQL: &str = "\
 const SESSION_LIMIT: Duration = Duration::from_secs(5);
 
 fn ssl_options(tls_mode: &Tls) -> Result<Option<SslOpts>, ConnectError> {
-    let Tls::Verify(files) = tls_mode else { return Ok(None) };
+    let Tls::Verify(files) = tls_mode else {
+        return Ok(None);
+    };
     let mut options = SslOpts::default();
     options = match &files.ca {
         Some(ca) => {
             tls::read_certificates(ca)?;
-            options.with_root_certs(vec![ca.clone().into()]).with_disable_built_in_roots(true)
+            options
+                .with_root_certs(vec![ca.clone().into()])
+                .with_disable_built_in_roots(true)
         }
-        None => options
-            .with_root_certs(tls::system_roots().iter().map(|root| root.to_vec().into()).collect()),
+        None => options.with_root_certs(
+            tls::system_roots()
+                .iter()
+                .map(|root| root.to_vec().into())
+                .collect(),
+        ),
     };
     if let Some(client) = &files.client {
         check_client_key(&client.key)?;
@@ -85,7 +93,12 @@ fn connect_error(error: &mysql_async::Error) -> ConnectError {
 fn driver_options(target: &NetworkTarget) -> Result<Opts, ConnectError> {
     let mut builder = OptsBuilder::default()
         .user(Some(target.user.clone()))
-        .pass(target.password.as_ref().map(|password| password.expose().to_owned()))
+        .pass(
+            target
+                .password
+                .as_ref()
+                .map(|password| password.expose().to_owned()),
+        )
         .db_name(target.database.clone())
         .tcp_keepalive(Some(TCP_KEEPALIVE_MS))
         // The driver can move to a local socket that the user did not ask for.
@@ -115,13 +128,21 @@ impl Connector for MySqlConnector {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities { namespace: Namespace::Database, transactions: true }
+        Capabilities {
+            namespace: Namespace::Database,
+            transactions: true,
+        }
     }
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
         let options = driver_options(&self.target)?;
-        let conn = Conn::new(options.clone()).await.map_err(|error| connect_error(&error))?;
-        let canceller = Arc::new(MySqlCanceller { options, connection: conn.id() });
+        let conn = Conn::new(options.clone())
+            .await
+            .map_err(|error| connect_error(&error))?;
+        let canceller = Arc::new(MySqlCanceller {
+            options,
+            connection: conn.id(),
+        });
         Ok(Box::new(MySqlSession {
             conn: Some(conn),
             canceller,
@@ -141,7 +162,8 @@ struct MySqlCanceller {
 impl MySqlCanceller {
     async fn kill_query(&self) -> Result<(), DriverError> {
         let mut conn = Conn::new(self.options.clone()).await?;
-        conn.query_drop(format!("KILL QUERY {}", self.connection)).await?;
+        conn.query_drop(format!("KILL QUERY {}", self.connection))
+            .await?;
         conn.disconnect().await
     }
 }
@@ -206,7 +228,9 @@ fn cell_value(cell: Option<&mysql_async::Value>, column: &Column) -> Value {
 
 fn row_values(row: &mysql_async::Row) -> Row {
     let columns = row.columns_ref();
-    (0..row.len()).map(|index| cell_value(row.as_ref(index), &columns[index])).collect()
+    (0..row.len())
+        .map(|index| cell_value(row.as_ref(index), &columns[index]))
+        .collect()
 }
 
 /// Finds the text after `near` in a syntax error of the database.
@@ -217,7 +241,11 @@ fn syntax_offset(message: &str, sql: &str) -> Option<usize> {
         return Some(sql.len());
     }
     let line: usize = line.trim().parse().ok()?;
-    let start: usize = sql.split_inclusive('\n').take(line.saturating_sub(1)).map(str::len).sum();
+    let start: usize = sql
+        .split_inclusive('\n')
+        .take(line.saturating_sub(1))
+        .map(str::len)
+        .sum();
     sql.get(start..)?.find(near).map(|found| start + found)
 }
 
@@ -268,15 +296,18 @@ impl MySqlSession {
         if !matches!(self.conn().reset().await, Ok(true)) {
             return false;
         }
-        let current: Option<Option<String>> = match self.conn().query_first("SELECT DATABASE()").await {
-            Ok(current) => current,
-            Err(_) => return false,
-        };
+        let current: Option<Option<String>> =
+            match self.conn().query_first("SELECT DATABASE()").await {
+                Ok(current) => current,
+                Err(_) => return false,
+            };
         let current = current.flatten();
         if current == self.database {
             return true;
         }
-        let Some(database) = &self.database else { return false };
+        let Some(database) = &self.database else {
+            return false;
+        };
         let sql = format!("USE {}", quoted(database));
         self.conn().query_drop(sql).await.is_ok()
     }
@@ -296,21 +327,29 @@ impl Drop for MySqlSession {
 
 impl MySqlSession {
     fn conn(&mut self) -> &mut Conn {
-        self.conn.as_mut().expect("only the drop of the session takes the connection")
+        self.conn
+            .as_mut()
+            .expect("only the drop of the session takes the connection")
     }
 
     async fn read(&mut self, sql: &str, sink: &mut ResultSink) -> Result<Outcome, ExecError> {
         let free = self.transaction == TransactionState::None;
         let canceller = self.canceller.clone();
-        let mut result =
-            self.conn().query_iter(sql).await.map_err(|error| exec_error(&error, sql))?;
+        let mut result = self
+            .conn()
+            .query_iter(sql)
+            .await
+            .map_err(|error| exec_error(&error, sql))?;
         let mut outcome = Outcome::default();
         let mut stopped_at_cap = false;
         loop {
             let columns = result.columns().unwrap_or_else(|| Vec::new().into());
             if !columns.is_empty() {
                 outcome.has_columns = true;
-                let names = columns.iter().map(|column| column.name_str().into_owned()).collect();
+                let names = columns
+                    .iter()
+                    .map(|column| column.name_str().into_owned())
+                    .collect();
                 sink.set_columns(names).await;
             }
             let mut storing = true;
@@ -356,9 +395,15 @@ impl MySqlSession {
             }
         }
         let open = self.conn().last_ok_packet().is_some_and(|answer| {
-            answer.status_flags().contains(StatusFlags::SERVER_STATUS_IN_TRANS)
+            answer
+                .status_flags()
+                .contains(StatusFlags::SERVER_STATUS_IN_TRANS)
         });
-        if open { TransactionState::Open } else { TransactionState::None }
+        if open {
+            TransactionState::Open
+        } else {
+            TransactionState::None
+        }
     }
 }
 
@@ -371,11 +416,17 @@ impl Session for MySqlSession {
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError> {
         if context.read_only {
             let sql = "SET SESSION TRANSACTION READ ONLY";
-            self.conn().query_drop(sql).await.map_err(|error| exec_error(&error, sql))?;
+            self.conn()
+                .query_drop(sql)
+                .await
+                .map_err(|error| exec_error(&error, sql))?;
         }
         if let Some(schema) = &context.schema {
             let sql = format!("USE {}", quoted(schema));
-            self.conn().query_drop(&sql).await.map_err(|error| exec_error(&error, &sql))?;
+            self.conn()
+                .query_drop(&sql)
+                .await
+                .map_err(|error| exec_error(&error, &sql))?;
         }
         Ok(())
     }
@@ -426,12 +477,18 @@ impl Session for MySqlSession {
     }
 
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError> {
-        let rows: Vec<(String, Option<String>, Option<String>)> =
-            self.conn().query(CATALOG_SQL).await.map_err(|error| exec_error(&error, CATALOG_SQL))?;
+        let rows: Vec<(String, Option<String>, Option<String>)> = self
+            .conn()
+            .query(CATALOG_SQL)
+            .await
+            .map_err(|error| exec_error(&error, CATALOG_SQL))?;
         let mut schemas: Vec<Schema> = Vec::new();
         for (name, relation, kind) in rows {
             if schemas.last().is_none_or(|schema| schema.name != name) {
-                schemas.push(Schema { name, relations: Vec::new() });
+                schemas.push(Schema {
+                    name,
+                    relations: Vec::new(),
+                });
             }
             if let (Some(schema), Some(relation)) = (schemas.last_mut(), relation) {
                 schema.relations.push(Relation {
@@ -445,12 +502,22 @@ impl Session for MySqlSession {
             }
         }
         let sql = "SELECT DATABASE()";
-        let current: Option<Option<String>> =
-            self.conn().query_first(sql).await.map_err(|error| exec_error(&error, sql))?;
-        Ok(Catalog { schemas, current_schema: current.flatten() })
+        let current: Option<Option<String>> = self
+            .conn()
+            .query_first(sql)
+            .await
+            .map_err(|error| exec_error(&error, sql))?;
+        Ok(Catalog {
+            schemas,
+            current_schema: current.flatten(),
+        })
     }
 
-    async fn read_columns(&mut self, schema: &str, relation: &str) -> Result<Vec<String>, ExecError> {
+    async fn read_columns(
+        &mut self,
+        schema: &str,
+        relation: &str,
+    ) -> Result<Vec<String>, ExecError> {
         self.conn()
             .exec(COLUMNS_SQL, (schema, relation))
             .await

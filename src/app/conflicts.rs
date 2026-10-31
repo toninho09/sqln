@@ -53,11 +53,17 @@ impl App {
         if self.conflicts.is_some() {
             return false;
         }
-        let Some(persist) = &mut self.persist else { return false };
+        let Some(persist) = &mut self.persist else {
+            return false;
+        };
         let mut rows = Vec::new();
         for console in &self.consoles {
             let Some(file) = &console.file else { continue };
-            let Some(trouble) = file.trouble.as_ref().filter(|trouble| trouble.needs_choice()) else {
+            let Some(trouble) = file
+                .trouble
+                .as_ref()
+                .filter(|trouble| trouble.needs_choice())
+            else {
                 continue;
             };
             if persist.presented.insert(file.meta.id.clone()) {
@@ -72,13 +78,19 @@ impl App {
         if rows.is_empty() {
             return false;
         }
-        self.conflicts = Some(Conflicts { rows, cursor: 0, note: None });
+        self.conflicts = Some(Conflicts {
+            rows,
+            cursor: 0,
+            note: None,
+        });
         true
     }
 
     pub(super) fn on_conflicts_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(conflicts) = &mut self.conflicts else { return };
+        let Some(conflicts) = &mut self.conflicts else {
+            return;
+        };
         let apply = conflicts.rows.len();
         let on_row = conflicts.cursor < apply;
         let positions = conflicts.positions();
@@ -101,7 +113,11 @@ impl App {
                 conflicts.cycle(row);
             }
             KeyCode::Left | KeyCode::Right if !on_row => {
-                conflicts.cursor = if conflicts.cursor == apply { apply + 1 } else { apply };
+                conflicts.cursor = if conflicts.cursor == apply {
+                    apply + 1
+                } else {
+                    apply
+                };
             }
             KeyCode::Enter if on_row => {
                 let row = conflicts.cursor;
@@ -123,7 +139,9 @@ impl App {
         let row = layout.rows.iter().position(|area| area.contains(position));
         let apply = layout.buttons[0].contains(position);
         let later = layout.buttons[1].contains(position);
-        let Some(conflicts) = &mut self.conflicts else { return };
+        let Some(conflicts) = &mut self.conflicts else {
+            return;
+        };
         if let Some(row) = row {
             conflicts.cursor = row;
             conflicts.cycle(row);
@@ -136,20 +154,25 @@ impl App {
 
     /// Carries out the choices. The question stays open until every row has a choice.
     fn apply_conflicts(&mut self) {
-        let Some(conflicts) = &mut self.conflicts else { return };
+        let Some(conflicts) = &mut self.conflicts else {
+            return;
+        };
         if conflicts.rows.iter().any(|row| row.choice.is_none()) {
             conflicts.note = Some(text::CONFLICT_CHOOSE);
             return;
         }
-        let Some(conflicts) = self.conflicts.take() else { return };
+        let Some(conflicts) = self.conflicts.take() else {
+            return;
+        };
         for row in conflicts.rows {
             if let Some(persist) = &mut self.persist {
                 persist.presented.remove(&row.script);
             }
-            let found = self
-                .consoles
-                .iter()
-                .position(|c| c.file.as_ref().is_some_and(|file| file.meta.id == row.script));
+            let found = self.consoles.iter().position(|c| {
+                c.file
+                    .as_ref()
+                    .is_some_and(|file| file.meta.id == row.script)
+            });
             let Some(index) = found else { continue };
             // The first choice reloads a changed script, and it recreates a removed one.
             match (row.removed, row.choice) {

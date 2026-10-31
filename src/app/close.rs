@@ -11,11 +11,15 @@ impl App {
         match signal {
             Signal::ExecutionFinished { schema_changed } => {
                 if schema_changed
-                    && let Some(connection) = self.console_by_id(id).and_then(|item| item.connection)
+                    && let Some(connection) =
+                        self.console_by_id(id).and_then(|item| item.connection)
                 {
                     self.reload_catalog(connection);
                 }
-                if self.console_by_id(id).is_some_and(|console| console.closing) {
+                if self
+                    .console_by_id(id)
+                    .is_some_and(|console| console.closing)
+                {
                     self.close_step(id);
                 }
             }
@@ -26,7 +30,10 @@ impl App {
                     text::console_question(&name, text::BODY_NO_ANSWER),
                     vec![
                         (text::OPTION_KEEP_WAITING, DialogAction::KeepWaiting(id)),
-                        (text::OPTION_CLOSE_CONNECTION, DialogAction::CloseConnection(id)),
+                        (
+                            text::OPTION_CLOSE_CONNECTION,
+                            DialogAction::CloseConnection(id),
+                        ),
                     ],
                 );
             }
@@ -36,15 +43,20 @@ impl App {
     }
 
     fn console_name(&mut self, id: ConsoleId) -> String {
-        self.console_by_id(id).map_or_else(String::new, |console| console.name.clone())
+        self.console_by_id(id)
+            .map_or_else(String::new, |console| console.name.clone())
     }
 
     fn on_transaction_changed(&mut self, id: ConsoleId) {
-        let Some(console) = self.console_by_id(id) else { return };
+        let Some(console) = self.console_by_id(id) else {
+            return;
+        };
         if console.transaction != TransactionState::None {
             return;
         }
-        let Some((_, after)) = console.pending_transaction.take() else { return };
+        let Some((_, after)) = console.pending_transaction.take() else {
+            return;
+        };
         match after {
             AfterTransaction::Close => self.close_step(id),
             AfterTransaction::UseAutocommit => console.manual = false,
@@ -53,7 +65,9 @@ impl App {
 
     /// The console stays open. A new attempt needs an explicit action on the same session.
     fn on_transaction_failed(&mut self, id: ConsoleId, message: &str) {
-        let Some(console) = self.console_by_id(id) else { return };
+        let Some(console) = self.console_by_id(id) else {
+            return;
+        };
         let Some((command, after)) = console.pending_transaction.take() else {
             self.status = Some(text::transaction_failed(message));
             return;
@@ -64,14 +78,19 @@ impl App {
             text::transaction_failed(message),
             vec![
                 (text::OPTION_CANCEL, DialogAction::CancelClose(id)),
-                (text::OPTION_RETRY, DialogAction::Transaction(id, command, after)),
+                (
+                    text::OPTION_RETRY,
+                    DialogAction::Transaction(id, command, after),
+                ),
             ],
         );
     }
 
     /// Asks the next question of a close. It runs again after each answer.
     pub(super) fn close_step(&mut self, id: ConsoleId) {
-        let Some(console) = self.console_by_id(id) else { return };
+        let Some(console) = self.console_by_id(id) else {
+            return;
+        };
         let name = console.name.clone();
         if console.is_busy() {
             if console.closing {
@@ -104,7 +123,9 @@ impl App {
             return;
         }
         console.closing = false;
-        let Some(index) = self.console_index(id) else { return };
+        let Some(index) = self.console_index(id) else {
+            return;
+        };
         if !self.flush_console(index) {
             return;
         }
@@ -115,12 +136,18 @@ impl App {
         }
     }
 
-
     pub(super) fn remove_console(&mut self, id: ConsoleId) {
-        let Some(index) = self.console_index(id) else { return };
+        let Some(index) = self.console_index(id) else {
+            return;
+        };
         // The last tab ends the application. With a table open, a hidden console keeps
         // the rule that the application has one console, and no tab appears for it.
-        let last = self.consoles.iter().filter(|console| !console.hidden).count() == 1;
+        let last = self
+            .consoles
+            .iter()
+            .filter(|console| !console.hidden)
+            .count()
+            == 1;
         let replaced = last && !self.consoles[index].hidden;
         if replaced {
             if self.tables.is_empty() {
@@ -163,7 +190,10 @@ impl App {
     }
 
     fn exit_step(&mut self) {
-        let next = self.consoles.iter().position(|console| console.is_busy() || console.in_transaction());
+        let next = self
+            .consoles
+            .iter()
+            .position(|console| console.is_busy() || console.in_transaction());
         let Some(index) = next else {
             if self.flush_all() {
                 self.quit = true;
@@ -192,7 +222,9 @@ impl App {
                 }
             }
             DialogAction::Transaction(id, command, after) => {
-                let Some(console) = self.console_by_id(id) else { return };
+                let Some(console) = self.console_by_id(id) else {
+                    return;
+                };
                 console.pending_transaction = Some((command, after));
                 if after == AfterTransaction::Close {
                     console.closing = true;

@@ -29,7 +29,11 @@ pub struct LineInput {
 
 impl std::fmt::Debug for LineInput {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("LineInput").field("text", &"<redacted>").field("cursor", &self.cursor).finish()
+        formatter
+            .debug_struct("LineInput")
+            .field("text", &"<redacted>")
+            .field("cursor", &self.cursor)
+            .finish()
     }
 }
 
@@ -48,7 +52,10 @@ impl LineInput {
     }
 
     fn byte_at(&self, chars: usize) -> usize {
-        self.text.char_indices().nth(chars).map_or(self.text.len(), |(byte, _)| byte)
+        self.text
+            .char_indices()
+            .nth(chars)
+            .map_or(self.text.len(), |(byte, _)| byte)
     }
 
     fn len(&self) -> usize {
@@ -131,11 +138,13 @@ impl LineInput {
 
 /// A line break or a tab becomes a space, so pasted lines stay apart.
 fn single_line(text: &str) -> Zeroizing<String> {
-    Zeroizing::new(text.chars()
-        .filter_map(|c| match c {
-            '\n' | '\t' => Some(' '),
-            c if c.is_control() => None,
-            c => Some(c),
-        })
-        .collect())
+    Zeroizing::new(
+        text.chars()
+            .filter_map(|c| match c {
+                '\n' | '\t' => Some(' '),
+                c if c.is_control() => None,
+                c => Some(c),
+            })
+            .collect(),
+    )
 }

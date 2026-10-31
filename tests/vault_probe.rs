@@ -30,12 +30,18 @@ fn native_store() -> keyring_core::Result<Arc<CredentialStore>> {
 }
 
 fn identity() -> Identity {
-    let key = ConnectionKey { scope: Scope::Global, id: ID.to_owned() };
+    let key = ConnectionKey {
+        scope: Scope::Global,
+        id: ID.to_owned(),
+    };
     let definition = Definition::new(
         "probe",
         Source::Network(NetworkTarget {
             engine: Engine::Postgres,
-            address: Address::Tcp { host: "db.example.test".into(), port: 5432 },
+            address: Address::Tcp {
+                host: "db.example.test".into(),
+                port: 5432,
+            },
             user: "probe".into(),
             password: None,
             database: None,
@@ -47,7 +53,9 @@ fn identity() -> Identity {
 
 /// Repeats a failed step on the native store, because `VaultError` hides the provider text.
 fn raw_error(identity: &Identity, step: &str) -> String {
-    let account = identity.account().expect("The probe identity has an account.");
+    let account = identity
+        .account()
+        .expect("The probe identity has an account.");
     let entry = match native_store().and_then(|store| store.build("sqln", &account, None)) {
         Ok(entry) => entry,
         Err(error) => return format!("{error:?}"),
@@ -75,9 +83,15 @@ fn native_vault_probe() {
     for step in steps.split(',') {
         let outcome = match step {
             "account" => identity.account().map(|account| account.to_string()),
-            "read" => vault.read(&identity).map(|value| format!("found={}", value.is_some())),
-            "write" => vault.write(&identity, &Secret::new(VALUE)).map(|()| "written".to_owned()),
-            "delete" => vault.delete(&identity).map(|found| format!("found={found}")),
+            "read" => vault
+                .read(&identity)
+                .map(|value| format!("found={}", value.is_some())),
+            "write" => vault
+                .write(&identity, &Secret::new(VALUE))
+                .map(|()| "written".to_owned()),
+            "delete" => vault
+                .delete(&identity)
+                .map(|found| format!("found={found}")),
             other => panic!("Unknown step: {other}"),
         };
         match outcome {

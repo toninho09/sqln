@@ -18,7 +18,12 @@ pub struct Welcome {
 
 /// Draws over the editor. The first row stays free, because the cursor starts there.
 pub fn draw_welcome(frame: &mut Frame, area: Rect, welcome: &Welcome, theme: &Theme) {
-    let key_width = welcome.rows.iter().map(|(key, _)| key.width()).max().unwrap_or(0);
+    let key_width = welcome
+        .rows
+        .iter()
+        .map(|(key, _)| key.width())
+        .max()
+        .unwrap_or(0);
     let mut lines = vec![
         Line::styled(text::welcome_title(), theme.welcome_title),
         Line::styled(welcome.note, theme.hint),

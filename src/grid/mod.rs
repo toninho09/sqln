@@ -115,10 +115,20 @@ impl ResultTable {
     pub fn new(columns: Vec<String>) -> Self {
         let natural: Vec<usize> = columns
             .iter()
-            .map(|name| printable(name).width().clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH))
+            .map(|name| {
+                printable(name)
+                    .width()
+                    .clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH)
+            })
             .collect();
         let manual = vec![None; columns.len()];
-        Self { columns, rows: Vec::new(), bytes: 0, natural, manual }
+        Self {
+            columns,
+            rows: Vec::new(),
+            bytes: 0,
+            natural,
+            manual,
+        }
     }
 
     pub fn append(&mut self, rows: Vec<Row>, bytes: usize) {
@@ -248,7 +258,11 @@ impl GridView {
     }
 
     pub fn toggle_selection(&mut self) {
-        self.anchor = if self.anchor.is_some() { None } else { Some((self.row, self.col)) };
+        self.anchor = if self.anchor.is_some() {
+            None
+        } else {
+            Some((self.row, self.col))
+        };
     }
 
     pub fn copy(&self, table: &ResultTable) -> Option<String> {
@@ -270,7 +284,9 @@ impl GridView {
             self.left = self.col;
         }
         while self.left < self.col {
-            let used: usize = (self.left..=self.col).map(|column| table.width(column) + COLUMN_GAP).sum();
+            let used: usize = (self.left..=self.col)
+                .map(|column| table.width(column) + COLUMN_GAP)
+                .sum();
             if used <= width {
                 break;
             }

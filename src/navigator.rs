@@ -43,7 +43,11 @@ impl Row {
     }
 
     fn catalog_schema<'a>(&self, connections: &'a [Connection]) -> Option<&'a Schema> {
-        connections[self.connection].catalog.as_ref()?.schemas.get(self.schema)
+        connections[self.connection]
+            .catalog
+            .as_ref()?
+            .schemas
+            .get(self.schema)
     }
 
     /// Returns the name of the row.
@@ -55,7 +59,9 @@ impl Row {
             RowKind::Schema => schema.map_or("", |schema| &schema.name),
             RowKind::Table | RowKind::View => relation.map_or("", |relation| &relation.name),
             RowKind::Column => match relation.map(|relation| &relation.columns) {
-                Some(Columns::Loaded(columns)) => columns.get(self.column).map_or("", String::as_str),
+                Some(Columns::Loaded(columns)) => {
+                    columns.get(self.column).map_or("", String::as_str)
+                }
                 _ => "",
             },
         }
@@ -64,7 +70,10 @@ impl Row {
     pub fn relation_ref(&self, connections: &[Connection]) -> Option<RelationRef> {
         let schema = self.catalog_schema(connections)?;
         let relation = schema.relations.get(self.relation)?;
-        Some(RelationRef { schema: schema.name.clone(), relation: relation.name.clone() })
+        Some(RelationRef {
+            schema: schema.name.clone(),
+            relation: relation.name.clone(),
+        })
     }
 
     fn key(&self, connections: &[Connection]) -> Key {
@@ -79,7 +88,11 @@ impl Row {
             relation: (self.depth() >= 2)
                 .then(|| relation.map(|relation| relation.name.clone()))
                 .flatten(),
-            column: if self.kind == RowKind::Column { name() } else { None },
+            column: if self.kind == RowKind::Column {
+                name()
+            } else {
+                None
+            },
         }
     }
 }
@@ -111,7 +124,11 @@ impl Key {
             relation.map(|relation| relation.name.as_str()),
             (row.kind == RowKind::Column).then(|| row.name(connections)),
         ];
-        let wanted = [self.schema.as_deref(), self.relation.as_deref(), self.column.as_deref()];
+        let wanted = [
+            self.schema.as_deref(),
+            self.relation.as_deref(),
+            self.column.as_deref(),
+        ];
         let matching = (0..row.depth()).take_while(|level| names[*level] == wanted[*level]);
         1 + matching.count()
     }
@@ -149,32 +166,62 @@ impl Default for Navigator {
 
 impl Navigator {
     pub fn select_connection(&mut self, connection: ConnectionId) {
-        self.cursor = Key { connection, ..Key::default() };
+        self.cursor = Key {
+            connection,
+            ..Key::default()
+        };
     }
 
     /// Lists the visible rows.
     pub fn rows(&self, connections: &[Connection]) -> Vec<Row> {
         let mut rows = Vec::with_capacity(connections.len());
         for (connection, item) in connections.iter().enumerate() {
-            let row = Row { kind: RowKind::Connection, connection, schema: 0, relation: 0, column: 0 };
+            let row = Row {
+                kind: RowKind::Connection,
+                connection,
+                schema: 0,
+                relation: 0,
+                column: 0,
+            };
             rows.push(row);
-            let Some(open) = self.expansion.get(&item.id).filter(|open| open.open) else { continue };
-            let Some(catalog) = &item.catalog else { continue };
+            let Some(open) = self.expansion.get(&item.id).filter(|open| open.open) else {
+                continue;
+            };
+            let Some(catalog) = &item.catalog else {
+                continue;
+            };
             for (schema, schema_item) in catalog.schemas.iter().enumerate() {
-                rows.push(Row { kind: RowKind::Schema, schema, ..row });
-                let Some(relations) = open.schemas.get(&schema_item.name) else { continue };
+                rows.push(Row {
+                    kind: RowKind::Schema,
+                    schema,
+                    ..row
+                });
+                let Some(relations) = open.schemas.get(&schema_item.name) else {
+                    continue;
+                };
                 for (relation, relation_item) in schema_item.relations.iter().enumerate() {
                     let kind = match relation_item.kind {
                         RelationKind::Table => RowKind::Table,
                         RelationKind::View => RowKind::View,
                     };
-                    rows.push(Row { kind, schema, relation, ..row });
+                    rows.push(Row {
+                        kind,
+                        schema,
+                        relation,
+                        ..row
+                    });
                     if !relations.contains(&relation_item.name) {
                         continue;
                     }
                     if let Columns::Loaded(columns) = &relation_item.columns {
                         for column in 0..columns.len() {
-                            rows.push(Row { kind: RowKind::Column, schema, relation, column, ..row });
+                            rows.push(Row {
+                                kind: RowKind::Column,
+                                schema,
+                                relation,
+                                column,
+                                ..row
+                            });
                         }
                     }
                 }
@@ -227,12 +274,16 @@ impl Navigator {
     }
 
     pub fn is_open(&self, row: &Row, connections: &[Connection]) -> bool {
-        let Some(open) = self.expansion.get(&connections[row.connection].id) else { return false };
+        let Some(open) = self.expansion.get(&connections[row.connection].id) else {
+            return false;
+        };
         match row.kind {
             RowKind::Connection => open.open,
             RowKind::Schema => open.schemas.contains_key(row.name(connections)),
             RowKind::Table | RowKind::View => {
-                let Some(relation) = row.relation_ref(connections) else { return false };
+                let Some(relation) = row.relation_ref(connections) else {
+                    return false;
+                };
                 open.schemas
                     .get(&relation.schema)
                     .is_some_and(|relations| relations.contains(&relation.relation))
@@ -243,15 +294,23 @@ impl Navigator {
 
     /// Opens a row. The caller reads what the row needs.
     pub fn expand(&mut self, row: &Row, connections: &[Connection]) {
-        let open = self.expansion.entry(connections[row.connection].id).or_default();
+        let open = self
+            .expansion
+            .entry(connections[row.connection].id)
+            .or_default();
         match row.kind {
             RowKind::Connection => open.open = true,
             RowKind::Schema => {
-                open.schemas.entry(row.name(connections).to_owned()).or_default();
+                open.schemas
+                    .entry(row.name(connections).to_owned())
+                    .or_default();
             }
             RowKind::Table | RowKind::View => {
                 if let Some(relation) = row.relation_ref(connections) {
-                    open.schemas.entry(relation.schema).or_default().insert(relation.relation);
+                    open.schemas
+                        .entry(relation.schema)
+                        .or_default()
+                        .insert(relation.relation);
                 }
             }
             RowKind::Column => {}
@@ -259,7 +318,9 @@ impl Navigator {
     }
 
     pub fn collapse(&mut self, row: &Row, connections: &[Connection]) {
-        let Some(open) = self.expansion.get_mut(&connections[row.connection].id) else { return };
+        let Some(open) = self.expansion.get_mut(&connections[row.connection].id) else {
+            return;
+        };
         match row.kind {
             RowKind::Connection => open.open = false,
             RowKind::Schema => {
@@ -290,7 +351,9 @@ impl Navigator {
 
     /// Lists the open relations of a connection. A new catalog needs their columns.
     pub fn open_relations(&self, connection: ConnectionId) -> Vec<RelationRef> {
-        let Some(open) = self.expansion.get(&connection) else { return Vec::new() };
+        let Some(open) = self.expansion.get(&connection) else {
+            return Vec::new();
+        };
         open.schemas
             .iter()
             .flat_map(|(schema, relations)| {

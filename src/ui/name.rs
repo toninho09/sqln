@@ -39,7 +39,11 @@ impl NamePrompt {
     pub fn new(target: NameTarget, name: &str) -> Self {
         let mut input = LineInput::default();
         input.set(name);
-        Self { target, note: None, input }
+        Self {
+            target,
+            note: None,
+            input,
+        }
     }
 
     pub fn paste(&mut self, value: &str) {
@@ -68,7 +72,10 @@ pub fn draw_name(frame: &mut Frame, prompt: &NamePrompt, theme: &Theme) {
     let width = usize::from(inner.width).saturating_sub(8);
     let mut spans = vec![Span::raw(format!("{}: ", text::FIELD_NAME))];
     spans.extend(input_spans(&chars, prompt.input.cursor(), width, true, theme).0);
-    frame.render_widget(Paragraph::new(Line::from(spans)), Rect::new(inner.x, inner.y, inner.width, 1));
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
     let note = prompt.note.as_deref().map_or_else(String::new, printable);
     frame.render_widget(
         Paragraph::new(note).style(theme.status),

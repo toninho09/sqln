@@ -34,13 +34,20 @@ pub struct Palette {
 fn matches(command: &Command, words: &[String]) -> bool {
     let label = command.label.to_lowercase();
     let key = command.key.as_deref().unwrap_or("").to_lowercase();
-    words.iter().all(|word| label.contains(word) || key.contains(word))
+    words
+        .iter()
+        .all(|word| label.contains(word) || key.contains(word))
 }
 
 impl Palette {
     pub fn new(commands: Vec<Command>) -> Self {
         let shown = (0..commands.len()).collect();
-        Self { commands, input: LineInput::default(), shown, cursor: 0 }
+        Self {
+            commands,
+            input: LineInput::default(),
+            shown,
+            cursor: 0,
+        }
     }
 
     pub fn input(&self) -> &LineInput {
@@ -57,8 +64,15 @@ impl Palette {
     }
 
     fn refilter(&mut self) {
-        let words: Vec<String> = self.input.text().split_whitespace().map(str::to_lowercase).collect();
-        self.shown = (0..self.commands.len()).filter(|index| matches(&self.commands[*index], &words)).collect();
+        let words: Vec<String> = self
+            .input
+            .text()
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
+        self.shown = (0..self.commands.len())
+            .filter(|index| matches(&self.commands[*index], &words))
+            .collect();
         self.cursor = 0;
     }
 

@@ -95,7 +95,9 @@ impl App {
             && self.table_active.is_none()
             && self.console().focus == Focus::Editor;
         let keys = self.suggestion_keys;
-        if (in_editor && self.console_mut().editor.on_list_key(key, keys)) || self.on_table_list_key(key) {
+        if (in_editor && self.console_mut().editor.on_list_key(key, keys))
+            || self.on_table_list_key(key)
+        {
             return;
         }
         let chord = Chord::from_event(key);
@@ -154,7 +156,9 @@ impl App {
 
     /// Shift changes a move of the grid into a selection.
     fn on_shifted_grid_key(&mut self, chord: Chord) {
-        let Some(plain) = chord.without_shift() else { return };
+        let Some(plain) = chord.without_shift() else {
+            return;
+        };
         if let Lookup::Action(action) = self.keymap.lookup(Region::Grid, plain)
             && action.extends_selection()
         {
@@ -172,9 +176,17 @@ impl App {
         let index = self.active;
         let connection = self.catalog_for(index);
         // The catalog and the console are separate fields of the application.
-        let App { consoles, connections, fallback_catalog, .. } = self;
+        let App {
+            consoles,
+            connections,
+            fallback_catalog,
+            ..
+        } = self;
         let catalog = match connection {
-            Some(id) => connections.iter().find(|item| item.id == id).and_then(|item| item.catalog.as_ref()),
+            Some(id) => connections
+                .iter()
+                .find(|item| item.id == id)
+                .and_then(|item| item.catalog.as_ref()),
             None if consoles[index].connection.is_none() => fallback_catalog.as_ref(),
             None => None,
         };
@@ -236,9 +248,18 @@ impl App {
         match outcome {
             GridAction::None => {}
             GridAction::Copy(tsv) => self.copy(&tsv),
-            GridAction::OpenValue { title, text, footer } => {
+            GridAction::OpenValue {
+                title,
+                text,
+                footer,
+            } => {
                 let contents = WrappedText::new(text);
-                self.overlay = Some(Overlay { title, contents, footer, scroll: 0 });
+                self.overlay = Some(Overlay {
+                    title,
+                    contents,
+                    footer,
+                    scroll: 0,
+                });
             }
             GridAction::CloseResult => {
                 if !self.console_mut().close_result(&budget) {
@@ -307,7 +328,11 @@ impl App {
         }
         rows.push(String::new());
         rows.extend(self.key_rows(Region::Global));
-        let mode = if self.vim() { text::MODE_VIM } else { text::MODE_CONVENTIONAL };
+        let mode = if self.vim() {
+            text::MODE_VIM
+        } else {
+            text::MODE_CONVENTIONAL
+        };
         self.overlay = Some(Overlay {
             title: text::keys_title(mode, name),
             contents: WrappedText::new(rows.join("\n")),
@@ -320,10 +345,20 @@ impl App {
         let in_table = self.table_active.is_some();
         self.keymap
             .actions(region)
-            .filter(|action| if in_table { !action.is_console_only() } else { !action.is_table_only() })
+            .filter(|action| {
+                if in_table {
+                    !action.is_console_only()
+                } else {
+                    !action.is_table_only()
+                }
+            })
             .filter_map(|action| {
                 let keys = self.keymap.keys(action);
-                let row = if in_table { text::table_keys_row } else { text::keys_row };
+                let row = if in_table {
+                    text::table_keys_row
+                } else {
+                    text::keys_row
+                };
                 (!keys.is_empty()).then(|| row(&keys.join(", "), action))
             })
             .collect()
@@ -372,10 +407,21 @@ impl App {
                     schema: console.schema.clone(),
                     row_cap: None,
                 };
-                let Some(connection) = console.connection else { return };
+                let Some(connection) = console.connection else {
+                    return;
+                };
                 let revision = console.editor.revision();
                 let console = console.id;
-                self.authorize(connection, super::auth::Use::Run { console, connection, plan, options, revision });
+                self.authorize(
+                    connection,
+                    super::auth::Use::Run {
+                        console,
+                        connection,
+                        plan,
+                        options,
+                        revision,
+                    },
+                );
             }
             Err(RunRefusal::CursorOutside) => {
                 self.status = Some(text::CURSOR_OUTSIDE.to_owned());
@@ -387,7 +433,9 @@ impl App {
     pub(super) fn stop(&mut self, index: usize) {
         let id = self.consoles[index].id;
         if self.cancel_auth_console(id) {
-            if self.consoles[index].closing { self.close_step(id); }
+            if self.consoles[index].closing {
+                self.close_step(id);
+            }
             return;
         }
         let console = &mut self.consoles[index];
@@ -446,7 +494,9 @@ impl App {
 
     fn on_dialog_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(dialog) = self.dialogs.front_mut() else { return };
+        let Some(dialog) = self.dialogs.front_mut() else {
+            return;
+        };
         let count = dialog.options.len();
         match key.code {
             KeyCode::Tab | KeyCode::Right => dialog.focus = (dialog.focus + 1) % count,
@@ -470,7 +520,9 @@ impl App {
 
     fn on_picker_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(picker) = &mut self.picker else { return };
+        let Some(picker) = &mut self.picker else {
+            return;
+        };
         let last = picker.items.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc => self.picker = None,
@@ -487,7 +539,9 @@ impl App {
     }
 
     fn on_name_key(&mut self, key: KeyEvent) {
-        let Some(prompt) = &mut self.rename else { return };
+        let Some(prompt) = &mut self.rename else {
+            return;
+        };
         match prompt.on_key(key) {
             NameAction::None => {}
             NameAction::Cancel => self.rename = None,
@@ -497,7 +551,9 @@ impl App {
 
     fn on_settings_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(form) = &mut self.settings_form else { return };
+        let Some(form) = &mut self.settings_form else {
+            return;
+        };
         match form.on_key(key, vim) {
             SettingsRequest::None => {}
             SettingsRequest::Cancel => self.settings_form = None,
@@ -519,7 +575,9 @@ impl App {
 
     fn on_overlay_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let Some(overlay) = &mut self.overlay else { return };
+        let Some(overlay) = &mut self.overlay else {
+            return;
+        };
         match key.code {
             KeyCode::Esc | KeyCode::Enter => self.overlay = None,
             KeyCode::Up | KeyCode::Char('k') => overlay.scroll = overlay.scroll.saturating_sub(1),
@@ -549,13 +607,18 @@ impl App {
     /// the terminal, so another key goes first. A removed key shows nothing.
     pub(super) fn shown_key(&self, action: Action) -> Option<String> {
         let keys = self.keymap.keys(action);
-        let steady = keys.iter().find(|key| !matches!(key.as_str(), "ctrl+enter" | "shift+enter"));
+        let steady = keys
+            .iter()
+            .find(|key| !matches!(key.as_str(), "ctrl+enter" | "shift+enter"));
         steady.or(keys.first()).map(|key| text::key_label(key))
     }
 
     fn hint_parts(&self, items: &[(Action, &'static str)]) -> Vec<HintItem> {
         let shown = items.iter().filter_map(|(action, label)| {
-            Some(HintItem { key: self.shown_key(*action)?, label })
+            Some(HintItem {
+                key: self.shown_key(*action)?,
+                label,
+            })
         });
         shown.collect()
     }
@@ -563,7 +626,12 @@ impl App {
     /// Joins the second keys of `Ctrl+W` for a group of actions.
     fn prefix_keys(&self, actions: &[Action]) -> String {
         let second = |action: &Action| {
-            self.keymap.keys(*action).iter().find_map(|key| key.strip_prefix("ctrl+w ")?.chars().next().map(String::from))
+            self.keymap.keys(*action).iter().find_map(|key| {
+                key.strip_prefix("ctrl+w ")?
+                    .chars()
+                    .next()
+                    .map(String::from)
+            })
         };
         actions.iter().filter_map(second).collect()
     }
@@ -572,37 +640,58 @@ impl App {
     pub fn prefix_menu(&self) -> Vec<KeyGroup> {
         use Action::*;
         let groups: [MenuGroup; 6] = [
-            (text::GROUP_PANELS, &[
-                (&[FocusLeft, FocusDown, FocusUp, FocusRight], text::MENU_FOCUS),
-                (&[ToggleNavigator], text::MENU_NAVIGATOR),
-            ]),
-            (text::GROUP_TABS, &[
-                (&[NextTab], text::MENU_NEXT_TAB),
-                (&[PreviousTab], text::MENU_PREVIOUS_TAB),
-                (&[RenameConsole], text::MENU_RENAME),
-                (&[CloseTab], text::MENU_CLOSE_TAB),
-            ]),
-            (text::GROUP_RUN, &[
-                (&[Run], text::MENU_RUN),
-                (&[RunScript], text::MENU_SCRIPT),
-                (&[Stop], text::MENU_STOP),
-            ]),
-            (text::GROUP_TRANSACTION, &[
-                (&[ToggleMode], text::MENU_MODE),
-                (&[Commit], text::MENU_COMMIT),
-                (&[Rollback], text::MENU_ROLLBACK),
-            ]),
-            (text::GROUP_CONNECTION, &[
-                (&[ChooseSchema], text::MENU_SCHEMA),
-                (&[ChangeConnection], text::MENU_CHANGE),
-            ]),
-            (text::GROUP_APPLICATION, &[
-                (&[OpenPalette], text::MENU_COMMANDS),
-                (&[Help], text::MENU_KEYS),
-                (&[OpenSettings], text::MENU_SETTINGS),
-                (&[ReloadConfig], text::MENU_RELOAD),
-                (&[Quit], text::MENU_QUIT),
-            ]),
+            (
+                text::GROUP_PANELS,
+                &[
+                    (
+                        &[FocusLeft, FocusDown, FocusUp, FocusRight],
+                        text::MENU_FOCUS,
+                    ),
+                    (&[ToggleNavigator], text::MENU_NAVIGATOR),
+                ],
+            ),
+            (
+                text::GROUP_TABS,
+                &[
+                    (&[NextTab], text::MENU_NEXT_TAB),
+                    (&[PreviousTab], text::MENU_PREVIOUS_TAB),
+                    (&[RenameConsole], text::MENU_RENAME),
+                    (&[CloseTab], text::MENU_CLOSE_TAB),
+                ],
+            ),
+            (
+                text::GROUP_RUN,
+                &[
+                    (&[Run], text::MENU_RUN),
+                    (&[RunScript], text::MENU_SCRIPT),
+                    (&[Stop], text::MENU_STOP),
+                ],
+            ),
+            (
+                text::GROUP_TRANSACTION,
+                &[
+                    (&[ToggleMode], text::MENU_MODE),
+                    (&[Commit], text::MENU_COMMIT),
+                    (&[Rollback], text::MENU_ROLLBACK),
+                ],
+            ),
+            (
+                text::GROUP_CONNECTION,
+                &[
+                    (&[ChooseSchema], text::MENU_SCHEMA),
+                    (&[ChangeConnection], text::MENU_CHANGE),
+                ],
+            ),
+            (
+                text::GROUP_APPLICATION,
+                &[
+                    (&[OpenPalette], text::MENU_COMMANDS),
+                    (&[Help], text::MENU_KEYS),
+                    (&[OpenSettings], text::MENU_SETTINGS),
+                    (&[ReloadConfig], text::MENU_RELOAD),
+                    (&[Quit], text::MENU_QUIT),
+                ],
+            ),
         ];
         groups
             .iter()
@@ -611,7 +700,10 @@ impl App {
                     let keys = self.prefix_keys(actions);
                     (!keys.is_empty()).then_some((keys, *label))
                 });
-                KeyGroup { title, keys: shown.collect() }
+                KeyGroup {
+                    title,
+                    keys: shown.collect(),
+                }
             })
             .collect()
     }
@@ -623,7 +715,8 @@ impl App {
         let idle = !console.is_busy();
         let connection = self.active_connection();
         let transactions = connection.is_none_or(|item| item.capabilities.transactions);
-        let namespace = connection.is_some_and(|item| item.capabilities.namespace != Namespace::None);
+        let namespace =
+            connection.is_some_and(|item| item.capabilities.namespace != Namespace::None);
         match action {
             Action::OpenPalette => false,
             Action::Run | Action::RunScript => !in_table && idle,
@@ -640,8 +733,12 @@ impl App {
 
     fn open_palette(&mut self) {
         self.console_mut().editor.close_suggestions();
-        let global = self.keymap.actions(Region::Global).map(|action| (action, true));
-        let explorer = [Action::NavigatorAdd, Action::NavigatorScripts].map(|action| (action, self.navigator_focused));
+        let global = self
+            .keymap
+            .actions(Region::Global)
+            .map(|action| (action, true));
+        let explorer = [Action::NavigatorAdd, Action::NavigatorScripts]
+            .map(|action| (action, self.navigator_focused));
         let commands = global
             .chain(explorer)
             .filter(|(action, _)| self.command_available(*action))
@@ -649,14 +746,20 @@ impl App {
                 action,
                 label: text::command_text(action),
                 // A key of the explorer works only there, so another panel does not show it.
-                key: if key_works { self.shown_key(action) } else { None },
+                key: if key_works {
+                    self.shown_key(action)
+                } else {
+                    None
+                },
             })
             .collect();
         self.palette = Some(Palette::new(commands));
     }
 
     fn on_palette_key(&mut self, key: KeyEvent) {
-        let Some(palette) = &mut self.palette else { return };
+        let Some(palette) = &mut self.palette else {
+            return;
+        };
         let request = palette.on_key(key);
         self.on_palette_request(request);
     }
@@ -680,13 +783,18 @@ impl App {
         let keyed = |action, label| self.shown_key(action).map(|key| (key, label));
         let mut rows = Vec::new();
         let note = if self.connections.is_empty() {
-            let add = self.shown_key(Action::FocusLeft).zip(self.shown_key(Action::NavigatorAdd));
+            let add = self
+                .shown_key(Action::FocusLeft)
+                .zip(self.shown_key(Action::NavigatorAdd));
             rows.extend(add.map(|(focus, add)| (format!("{focus} {add}"), text::WELCOME_ADD)));
             text::WELCOME_NO_CONNECTION
         } else {
             rows.extend(keyed(Action::Run, text::WELCOME_RUN));
             rows.extend(keyed(Action::RunScript, text::WELCOME_SCRIPT));
-            rows.push((text::WELCOME_SUGGESTIONS_KEY.to_owned(), text::WELCOME_SUGGESTIONS));
+            rows.push((
+                text::WELCOME_SUGGESTIONS_KEY.to_owned(),
+                text::WELCOME_SUGGESTIONS,
+            ));
             text::WELCOME_WRITE
         };
         rows.extend(keyed(Action::OpenPalette, text::WELCOME_COMMANDS));
@@ -742,7 +850,11 @@ impl App {
             text::HINT_PALETTE
         } else if self.pending_key.is_some_and(Chord::is_prefix) {
             text::HINT_PREFIX
-        } else if self.persist.as_ref().is_some_and(|persist| persist.error.is_some()) {
+        } else if self
+            .persist
+            .as_ref()
+            .is_some_and(|persist| persist.error.is_some())
+        {
             text::HINT_CONFIG_ERROR
         } else if self.navigator_focused {
             return self.hint_parts(&[
@@ -768,7 +880,10 @@ impl App {
                         (Action::GridLoadMore, "more"),
                         (Action::GridNextResult, "page"),
                         (Action::GridCopy, "copy"),
-                        (Action::GridOpenValue, if tab.pending { "load" } else { "value" }),
+                        (
+                            Action::GridOpenValue,
+                            if tab.pending { "load" } else { "value" },
+                        ),
                         (Action::Help, "keys"),
                     ]);
                 }

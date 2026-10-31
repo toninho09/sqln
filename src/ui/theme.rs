@@ -18,8 +18,13 @@ impl ColorEnv {
     pub fn read() -> Self {
         // The `NO_COLOR` convention ignores an empty value.
         let no_color = std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty());
-        let depth = std::env::var("COLORTERM").unwrap_or_default().to_ascii_lowercase();
-        Self { no_color, truecolor: matches!(depth.as_str(), "truecolor" | "24bit") }
+        let depth = std::env::var("COLORTERM")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        Self {
+            no_color,
+            truecolor: matches!(depth.as_str(), "truecolor" | "24bit"),
+        }
     }
 }
 
@@ -169,7 +174,12 @@ impl Theme {
 
     /// Applies the choices of the configuration to this theme. `NO_COLOR` has priority
     /// over the configuration, and a choice without a value keeps this theme.
-    pub fn with_choices(self, theme: Option<ThemeName>, icons: Option<IconName>, env: ColorEnv) -> Self {
+    pub fn with_choices(
+        self,
+        theme: Option<ThemeName>,
+        icons: Option<IconName>,
+        env: ColorEnv,
+    ) -> Self {
         if env.no_color {
             return Self::plain();
         }
@@ -182,8 +192,14 @@ impl Theme {
         // The plain set stays, because that theme identifies an item by its text.
         match icons {
             Some(_) if chosen.icons == Icons::plain() => chosen,
-            Some(IconName::Unicode) => Self { icons: Icons::unicode(), ..chosen },
-            Some(IconName::Nerd) => Self { icons: Icons::nerd(), ..chosen },
+            Some(IconName::Unicode) => Self {
+                icons: Icons::unicode(),
+                ..chosen
+            },
+            Some(IconName::Nerd) => Self {
+                icons: Icons::nerd(),
+                ..chosen
+            },
             None => chosen,
         }
     }
@@ -195,19 +211,32 @@ impl Theme {
 
     /// Writes a button of a toolbar: the icon and the label, or the plain button.
     pub fn tool(&self, icon: &str, label: &str) -> String {
-        if icon.is_empty() { self.button(label) } else { format!("{icon} {label}") }
+        if icon.is_empty() {
+            self.button(label)
+        } else {
+            format!("{icon} {label}")
+        }
     }
 
     /// Writes an icon and its space. A set without the icon writes nothing.
     pub fn icon(icon: &str) -> String {
-        if icon.is_empty() { String::new() } else { format!("{icon} ") }
+        if icon.is_empty() {
+            String::new()
+        } else {
+            format!("{icon} ")
+        }
     }
 
     pub fn astrodark() -> Self {
         use astro::*;
         let color = |color| Style::new().fg(color);
         let fill = |background| Style::new().bg(background);
-        let label = |background| Style::new().bg(background).fg(DARK).add_modifier(Modifier::BOLD);
+        let label = |background| {
+            Style::new()
+                .bg(background)
+                .fg(DARK)
+                .add_modifier(Modifier::BOLD)
+        };
         let bold = Modifier::BOLD;
         let cursor = Style::new().bg(TEXT).fg(BASE);
         Self {
@@ -291,7 +320,12 @@ impl Theme {
         let color = |color| Style::new().fg(color);
         let reversed = Style::new().add_modifier(Modifier::REVERSED);
         let bold = Modifier::BOLD;
-        let label = |background| Style::new().bg(background).fg(Color::Black).add_modifier(bold);
+        let label = |background| {
+            Style::new()
+                .bg(background)
+                .fg(Color::Black)
+                .add_modifier(bold)
+        };
         let bar = Style::new().bg(Color::DarkGray).fg(Color::White);
         Self {
             keyword: color(Color::Blue).add_modifier(Modifier::BOLD),
@@ -328,7 +362,10 @@ impl Theme {
             error_spot: color(Color::Red).add_modifier(Modifier::UNDERLINED),
             dialog: Style::new(),
             dialog_option: reversed,
-            dialog_focus: Style::new().bg(Color::Blue).fg(Color::White).add_modifier(bold),
+            dialog_focus: Style::new()
+                .bg(Color::Blue)
+                .fg(Color::White)
+                .add_modifier(bold),
             tree_selected: reversed,
             tree_detail: color(Color::DarkGray),
             divider: color(Color::DarkGray),
@@ -346,8 +383,14 @@ impl Theme {
             tree_cursor: Style::new().add_modifier(Modifier::UNDERLINED),
             statusline: bar,
             status_detail: Style::new().bg(Color::DarkGray).fg(Color::Gray),
-            status_warning: Style::new().bg(Color::DarkGray).fg(Color::Yellow).add_modifier(bold),
-            status_error: Style::new().bg(Color::DarkGray).fg(Color::LightRed).add_modifier(bold),
+            status_warning: Style::new()
+                .bg(Color::DarkGray)
+                .fg(Color::Yellow)
+                .add_modifier(bold),
+            status_error: Style::new()
+                .bg(Color::DarkGray)
+                .fg(Color::LightRed)
+                .add_modifier(bold),
             label_editor: label(Color::Blue),
             label_insert: label(Color::Green),
             label_visual: label(Color::Magenta),

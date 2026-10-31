@@ -40,7 +40,9 @@ fn columns_of<'a>(groups: &'a [KeyGroup], theme: &Theme) -> Vec<Vec<Line<'a>>> {
     let mut columns: Vec<Vec<Line>> = vec![Vec::new()];
     for group in groups.iter().filter(|group| !group.keys.is_empty()) {
         let lines = group_lines(group, theme);
-        let full = columns.last().is_some_and(|column| column.len() + lines.len() > target);
+        let full = columns
+            .last()
+            .is_some_and(|column| column.len() + lines.len() > target);
         if full && columns.len() < usize::from(COLUMNS) {
             columns.push(Vec::new());
         }
@@ -59,7 +61,10 @@ pub fn draw_which_key(frame: &mut Frame, bounds: Rect, groups: &[KeyGroup], them
     let columns = columns_of(groups, theme);
     let rows = columns.iter().map(Vec::len).max().unwrap_or(0);
     let width = MAX_WIDTH.min(bounds.width);
-    let height = u16::try_from(rows).unwrap_or(u16::MAX).saturating_add(2).min(bounds.height);
+    let height = u16::try_from(rows)
+        .unwrap_or(u16::MAX)
+        .saturating_add(2)
+        .min(bounds.height);
     let x = bounds.x + (bounds.width - width) / 2;
     let area = Rect::new(x, bounds.bottom() - height, width, height);
     frame.render_widget(Clear, area);
@@ -81,5 +86,9 @@ pub fn draw_which_key(frame: &mut Frame, bounds: Rect, groups: &[KeyGroup], them
 /// Returns the width of the widest row, for the checks of the minimum terminal.
 pub fn widest_row(groups: &[KeyGroup]) -> usize {
     let row = |(key, label): &(String, &str)| key.width().max(KEY_WIDTH) + 1 + label.width();
-    groups.iter().flat_map(|group| group.keys.iter().map(row)).max().unwrap_or(0)
+    groups
+        .iter()
+        .flat_map(|group| group.keys.iter().map(row))
+        .max()
+        .unwrap_or(0)
 }

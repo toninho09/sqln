@@ -43,7 +43,10 @@ pub struct Capabilities {
 
 impl Default for Capabilities {
     fn default() -> Self {
-        Self { namespace: Namespace::None, transactions: true }
+        Self {
+            namespace: Namespace::None,
+            transactions: true,
+        }
     }
 }
 
@@ -82,11 +85,17 @@ pub struct ConnectError {
 
 impl ConnectError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into(), password_refused: false }
+        Self {
+            message: message.into(),
+            password_refused: false,
+        }
     }
 
     pub fn refused_password(message: impl Into<String>) -> Self {
-        Self { message: message.into(), password_refused: true }
+        Self {
+            message: message.into(),
+            password_refused: true,
+        }
     }
 }
 
@@ -99,7 +108,10 @@ pub struct ExecError {
 
 impl ExecError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into(), offset: None }
+        Self {
+            message: message.into(),
+            offset: None,
+        }
     }
 }
 
@@ -171,5 +183,9 @@ pub trait Session: Send {
     }
     /// Reads schemas and relations, without their columns.
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError>;
-    async fn read_columns(&mut self, schema: &str, relation: &str) -> Result<Vec<String>, ExecError>;
+    async fn read_columns(
+        &mut self,
+        schema: &str,
+        relation: &str,
+    ) -> Result<Vec<String>, ExecError>;
 }

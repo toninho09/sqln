@@ -10,9 +10,9 @@ use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use super::{App, DialogAction};
 use crate::catalog::RelationRef;
 use crate::connection::{CatalogState, ConnectionKey, Definition, Source};
+use crate::connector::ConnectError;
 use crate::connector::target::Secret;
 use crate::console::Phase;
-use crate::connector::ConnectError;
 use crate::creds::{Credentials, Identity, Lookup, PlainFile, SystemVault, Vault, VaultError};
 use crate::editor::RunPlan;
 use crate::exec::{ConnectionId, ConsoleId, RunOptions};
@@ -322,7 +322,9 @@ impl App {
                     && form.connection_id == attempt.target.key.id
                     && self.form_scope() == Some(attempt.target.key.scope)
                     && form.credential == attempt.target.credential
-                    && self.form_definition().is_some_and(|definition| definition.as_ref() == Ok(snapshot))
+                    && self
+                        .form_definition()
+                        .is_some_and(|definition| definition.as_ref() == Ok(snapshot))
             }
             _ => false,
         }
@@ -412,12 +414,9 @@ impl App {
                 }
                 Step::Read => {
                     let reference = target.credential == CredentialName::Vault;
-                    Reply::Lookup(
-                        credentials
-                            .lock()
-                            .map_err(|_| VaultError::Failed)
-                            .and_then(|mut credentials| credentials.lookup(&target.identity(), reference)),
-                    )
+                    Reply::Lookup(credentials.lock().map_err(|_| VaultError::Failed).and_then(
+                        |mut credentials| credentials.lookup(&target.identity(), reference),
+                    ))
                 }
                 Step::Write => {
                     Reply::Saved(credentials.lock().map_err(|_| VaultError::Failed).and_then(
@@ -560,7 +559,9 @@ impl App {
                 Reply::Lookup(Ok(Lookup::Migrate(password))) => self.ask_migration(password),
                 Reply::Password(Ok(Some(password))) => self.finish_auth(Some(password)),
                 Reply::Password(Ok(None)) => self.show_auth_password(true),
-                Reply::Lookup(Err(error)) | Reply::Password(Err(error)) => self.auth_vault_error(error),
+                Reply::Lookup(Err(error)) | Reply::Password(Err(error)) => {
+                    self.auth_vault_error(error)
+                }
                 Reply::Saved(Ok(())) => self.persist_auth_reference(),
                 Reply::Saved(Err(error)) => self.auth_vault_error(error),
                 Reply::Migrated(Ok(())) => self.show_dialog(
@@ -568,7 +569,10 @@ impl App {
                     text::MIGRATION_VERIFIED.to_owned(),
                     vec![
                         (text::OPTION_KEEP_PLAIN, DialogAction::AuthSession(token)),
-                        (text::OPTION_REMOVE_PLAIN, DialogAction::AuthRemovePlain(token)),
+                        (
+                            text::OPTION_REMOVE_PLAIN,
+                            DialogAction::AuthRemovePlain(token),
+                        ),
                     ],
                 ),
                 Reply::Migrated(Err(error)) => self.show_dialog(
@@ -613,7 +617,9 @@ impl App {
         } else {
             match attempt.target.credential {
                 CredentialName::None => self.finish_auth(None),
-                CredentialName::Session | CredentialName::Vault | CredentialName::GlobalPlainText => {
+                CredentialName::Session
+                | CredentialName::Vault
+                | CredentialName::GlobalPlainText => {
                     self.auth_step(Step::Read);
                 }
             }
@@ -692,7 +698,11 @@ impl App {
         };
         let token = attempt.token;
         let plain = matches!(attempt.step, Step::WritePlain);
-        let wanted = if plain { CredentialName::GlobalPlainText } else { CredentialName::Vault };
+        let wanted = if plain {
+            CredentialName::GlobalPlainText
+        } else {
+            CredentialName::Vault
+        };
         // A project cannot name the plain text file, so its reference stays as it is.
         let keeps_reference = plain && attempt.target.key.scope == Scope::Project;
         if attempt.save_reference && attempt.target.credential != wanted && !keeps_reference {
@@ -700,10 +710,7 @@ impl App {
                 attempt.target.key.clone(),
                 attempt.target.definition.clone(),
             );
-            if self
-                .save_connection(&key, &definition, wanted)
-                .is_err()
-            {
+            if self.save_connection(&key, &definition, wanted).is_err() {
                 self.auth.active.as_mut().unwrap().step = Step::Reference;
                 self.show_dialog(
                     text::TITLE_VAULT,
@@ -788,7 +795,10 @@ impl App {
             Use::Catalog(id, read) => {
                 manager.load_catalog(id, read);
                 // The answer of an older read does not end the state, so it cannot start it.
-                if let Some(connection) = self.connection_mut(id).filter(|item| item.catalog_read == read) {
+                if let Some(connection) = self
+                    .connection_mut(id)
+                    .filter(|item| item.catalog_read == read)
+                {
                     connection.catalog_state = CatalogState::Loading;
                 }
             }
@@ -855,7 +865,10 @@ impl App {
         }
         match action {
             Use::Catalog(id, read) => {
-                if let Some(connection) = self.connection_mut(*id).filter(|item| item.catalog_read == *read) {
+                if let Some(connection) = self
+                    .connection_mut(*id)
+                    .filter(|item| item.catalog_read == *read)
+                {
                     connection.catalog_state = CatalogState::Failed;
                 }
             }
@@ -1044,12 +1057,19 @@ impl App {
 
     fn is_refused(&self, id: ConnectionId) -> bool {
         let generation = self.connection(id).map(|connection| connection.generation);
-        self.auth.refused.get(&id).is_some_and(|item| Some(item.generation) == generation)
+        self.auth
+            .refused
+            .get(&id)
+            .is_some_and(|item| Some(item.generation) == generation)
     }
 
     /// One wrong password can fail several sessions, so only the first event counts.
     pub(super) fn on_password_refused(&mut self, id: ConnectionId, pool: u64) {
-        let current = self.manager.as_ref().and_then(|manager| manager.pool_serial(id)) == Some(pool);
+        let current = self
+            .manager
+            .as_ref()
+            .and_then(|manager| manager.pool_serial(id))
+            == Some(pool);
         if !current || self.is_refused(id) {
             return;
         }
@@ -1066,7 +1086,13 @@ impl App {
             return;
         };
         self.auth.ready.remove(&id);
-        self.auth.refused.insert(id, Refusal { generation, count: 1 });
+        self.auth.refused.insert(
+            id,
+            Refusal {
+                generation,
+                count: 1,
+            },
+        );
         let credentials = self.auth.credentials.clone();
         if let Some(manager) = &self.manager {
             manager.spawn_blocking(move || {
@@ -1103,8 +1129,17 @@ impl App {
     }
 
     /// Takes the answer of `verify_password`. It returns false for a test of the form.
-    pub(super) fn on_password_verified(&mut self, test: u64, result: &Result<(), ConnectError>) -> bool {
-        let Some(attempt) = self.auth.active.as_mut().filter(|item| item.verify == Some(test)) else {
+    pub(super) fn on_password_verified(
+        &mut self,
+        test: u64,
+        result: &Result<(), ConnectError>,
+    ) -> bool {
+        let Some(attempt) = self
+            .auth
+            .active
+            .as_mut()
+            .filter(|item| item.verify == Some(test))
+        else {
             return false;
         };
         attempt.verify = None;

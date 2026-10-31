@@ -130,13 +130,24 @@ pub fn page_sql(
         sql.push_str("\nORDER BY ");
         sql.push_str(order);
     }
-    sql.push_str(&format!("\nLIMIT {} OFFSET {offset}", page_size.saturating_add(1)));
-    if is_one_statement(&sql, dialect) { Ok(sql) } else { Err(text::TABLE_TEXT_REFUSED.to_owned()) }
+    sql.push_str(&format!(
+        "\nLIMIT {} OFFSET {offset}",
+        page_size.saturating_add(1)
+    ));
+    if is_one_statement(&sql, dialect) {
+        Ok(sql)
+    } else {
+        Err(text::TABLE_TEXT_REFUSED.to_owned())
+    }
 }
 
 /// Compares two `ORDER BY` texts without case and without extra blanks.
 fn same_order(a: &str, b: &str) -> bool {
-    let words = |text: &str| text.split_whitespace().map(str::to_lowercase).collect::<Vec<_>>();
+    let words = |text: &str| {
+        text.split_whitespace()
+            .map(str::to_lowercase)
+            .collect::<Vec<_>>()
+    };
     words(a) == words(b)
 }
 
@@ -217,7 +228,10 @@ impl TableTab {
     /// the application opens no connection and asks for no password.
     pub fn wait_for_use(&mut self, note: String) {
         self.pending = true;
-        self.message = Some(Message { level: MessageLevel::Info, text: note });
+        self.message = Some(Message {
+            level: MessageLevel::Info,
+            text: note,
+        });
     }
 
     pub fn is_busy(&self) -> bool {
@@ -278,7 +292,12 @@ impl TableTab {
 
     /// Sorts by a column, as a click on its header does. The applied filter stays,
     /// and a draft in the filter field stays a draft.
-    pub fn sort_by(&mut self, column: usize, dialect: Dialect, budget: &Budget) -> Option<PageRequest> {
+    pub fn sort_by(
+        &mut self,
+        column: usize,
+        dialect: Dialect,
+        budget: &Budget,
+    ) -> Option<PageRequest> {
         let name = self.result.table.columns.get(column)?.clone();
         let order = clicked_order(&self.applied_order, &name, dialect);
         self.order.set(&order);
@@ -302,18 +321,37 @@ impl TableTab {
         self.limit = ReadLimit::None;
         self.load = None;
         self.list = None;
-        let sql = page_sql(dialect, &self.relation, &self.applied_filter, &self.applied_order, self.page_size, 0);
+        let sql = page_sql(
+            dialect,
+            &self.relation,
+            &self.applied_filter,
+            &self.applied_order,
+            self.page_size,
+            0,
+        );
         match sql {
-            Ok(sql) => Some(PageRequest { sql, first: true, row_cap: self.page_size.saturating_add(1), show: None }),
+            Ok(sql) => Some(PageRequest {
+                sql,
+                first: true,
+                row_cap: self.page_size.saturating_add(1),
+                show: None,
+            }),
             Err(reason) => {
-                self.message = Some(Message { level: MessageLevel::Error, text: reason });
+                self.message = Some(Message {
+                    level: MessageLevel::Error,
+                    text: reason,
+                });
                 None
             }
         }
     }
 
     /// Returns the next page. The error is the reason that the page cannot start.
-    pub fn next_page(&mut self, dialect: Dialect, budget: &Budget) -> Result<PageRequest, &'static str> {
+    pub fn next_page(
+        &mut self,
+        dialect: Dialect,
+        budget: &Budget,
+    ) -> Result<PageRequest, &'static str> {
         if self.is_busy() {
             return Err(text::TABLE_BUSY);
         }
@@ -324,22 +362,43 @@ impl TableTab {
             return Err(text::TABLE_BLOCKED);
         }
         let offset = self.loaded();
-        let sql = page_sql(dialect, &self.relation, &self.applied_filter, &self.applied_order, self.page_size, offset)
-            .map_err(|_| text::TABLE_TEXT_REFUSED)?;
+        let sql = page_sql(
+            dialect,
+            &self.relation,
+            &self.applied_filter,
+            &self.applied_order,
+            self.page_size,
+            offset,
+        )
+        .map_err(|_| text::TABLE_TEXT_REFUSED)?;
         self.message = None;
-        Ok(PageRequest { sql, first: false, row_cap: self.page_size.saturating_add(1), show: None })
+        Ok(PageRequest {
+            sql,
+            first: false,
+            row_cap: self.page_size.saturating_add(1),
+            show: None,
+        })
     }
 
     /// Records the execution that the manager accepted for a page.
     pub fn started(&mut self, execution: ExecutionId, first: bool, show: Option<usize>) {
-        self.load = Some(Load { execution, first, received: 0, extra: false, done: false, show });
+        self.load = Some(Load {
+            execution,
+            first,
+            received: 0,
+            extra: false,
+            done: false,
+            show,
+        });
         self.limit = ReadLimit::None;
         self.phase = Phase::Waiting;
         self.run.start();
     }
 
     fn is_current(&self, execution: ExecutionId) -> bool {
-        self.load.as_ref().is_some_and(|load| load.execution == execution)
+        self.load
+            .as_ref()
+            .is_some_and(|load| load.execution == execution)
     }
 
     pub fn on_event(&mut self, event: ExecEvent, budget: &Budget) {
@@ -354,27 +413,47 @@ impl TableTab {
                     self.result = ResultTab::new(0, columns);
                 }
             }
-            ExecEvent::Rows { key, rows, bytes } => self.on_rows(key.execution, rows, bytes, budget),
+            ExecEvent::Rows { key, rows, bytes } => {
+                self.on_rows(key.execution, rows, bytes, budget)
+            }
             ExecEvent::ResultDone { key, limit, .. } if self.is_current(key.execution) => {
                 self.on_page_done(limit, budget);
             }
-            ExecEvent::StatementFinished { key, status: StatementStatus::Error(message), .. }
-                if self.is_current(key.execution) =>
-            {
-                self.message = Some(Message { level: MessageLevel::Error, text: message });
+            ExecEvent::StatementFinished {
+                key,
+                status: StatementStatus::Error(message),
+                ..
+            } if self.is_current(key.execution) => {
+                self.message = Some(Message {
+                    level: MessageLevel::Error,
+                    text: message,
+                });
             }
-            ExecEvent::ExecutionFinished { execution, end, message, .. }
-                if self.is_current(execution) =>
-            {
+            ExecEvent::ExecutionFinished {
+                execution,
+                end,
+                message,
+                ..
+            } if self.is_current(execution) => {
                 self.on_finished(end, message);
             }
             _ => {}
         }
     }
 
-    fn on_rows(&mut self, execution: ExecutionId, mut rows: Vec<Row>, mut bytes: usize, budget: &Budget) {
+    fn on_rows(
+        &mut self,
+        execution: ExecutionId,
+        mut rows: Vec<Row>,
+        mut bytes: usize,
+        budget: &Budget,
+    ) {
         // An old execution has no grid, so its data leaves the budget.
-        let Some(load) = self.load.as_mut().filter(|load| load.execution == execution) else {
+        let Some(load) = self
+            .load
+            .as_mut()
+            .filter(|load| load.execution == execution)
+        else {
             budget.release(bytes);
             return;
         };
@@ -408,15 +487,27 @@ impl TableTab {
             self.has_more = true;
         }
         // A page that did not end leaves the cursor in its place.
-        if let Some(page) = load.and_then(|load| load.show).filter(|_| end == ExecutionEnd::Completed) {
+        if let Some(page) = load
+            .and_then(|load| load.show)
+            .filter(|_| end == ExecutionEnd::Completed)
+        {
             self.show_page(page);
         }
-        let info = |text: &str| Message { level: MessageLevel::Info, text: text.to_owned() };
-        let error = |text: &str| Message { level: MessageLevel::Error, text: text.to_owned() };
+        let info = |text: &str| Message {
+            level: MessageLevel::Info,
+            text: text.to_owned(),
+        };
+        let error = |text: &str| Message {
+            level: MessageLevel::Error,
+            text: text.to_owned(),
+        };
         let note = match end {
             // The error of a statement is already in `message`.
             ExecutionEnd::Completed | ExecutionEnd::Refused => None,
-            ExecutionEnd::Failed => message.map(|text| Message { level: MessageLevel::Error, text }),
+            ExecutionEnd::Failed => message.map(|text| Message {
+                level: MessageLevel::Error,
+                text,
+            }),
             ExecutionEnd::Stopped => Some(info(text::TABLE_STOPPED)),
             ExecutionEnd::TimedOut => Some(error(text::TABLE_TIMEOUT)),
             ExecutionEnd::CanceledBeforeStart => Some(info(text::TABLE_CANCELED)),
@@ -439,12 +530,18 @@ impl TableTab {
     /// Moves the focus to the other field.
     pub fn switch_field(&mut self) {
         self.list = None;
-        self.focus = if self.focus == TableFocus::Filter { TableFocus::Order } else { TableFocus::Filter };
+        self.focus = if self.focus == TableFocus::Filter {
+            TableFocus::Order
+        } else {
+            TableFocus::Filter
+        };
     }
 
     /// Handles a key for the open list. It returns false when other handlers must act.
     pub fn on_list_key(&mut self, key: KeyEvent, keys: SuggestionKeys) -> bool {
-        let Some(list) = &mut self.list else { return false };
+        let Some(list) = &mut self.list else {
+            return false;
+        };
         if keys.accepts(key) {
             self.accept_suggestion();
             return true;
@@ -462,7 +559,9 @@ impl TableTab {
 
     fn accept_suggestion(&mut self) {
         let Some(list) = self.list.take() else { return };
-        let Some(item) = list.completion.items.get(list.selected) else { return };
+        let Some(item) = list.completion.items.get(list.selected) else {
+            return;
+        };
         let range = list.completion.replace.clone();
         let insert = item.insert.clone();
         if let Some(field) = self.focused_field() {
@@ -478,7 +577,9 @@ impl TableTab {
         dialect: Dialect,
         catalog: Option<&Catalog>,
     ) -> Vec<RelationRef> {
-        let Some(field) = self.focused_field() else { return Vec::new() };
+        let Some(field) = self.focused_field() else {
+            return Vec::new();
+        };
         let edit = field.on_key(key);
         self.list_waits = false;
         match edit {
@@ -497,7 +598,11 @@ impl TableTab {
     }
 
     /// Builds the list again after the catalog received data.
-    pub fn refresh_list(&mut self, dialect: Dialect, catalog: Option<&Catalog>) -> Vec<RelationRef> {
+    pub fn refresh_list(
+        &mut self,
+        dialect: Dialect,
+        catalog: Option<&Catalog>,
+    ) -> Vec<RelationRef> {
         if self.list.is_some() || self.list_waits {
             return self.update_list(dialect, catalog);
         }
@@ -512,16 +617,25 @@ impl TableTab {
             TableFocus::Order => ("ORDER BY", &self.order),
             TableFocus::Grid => return Vec::new(),
         };
-        let head = format!("SELECT * FROM {}\n{clause} ", from_clause(&self.relation, dialect));
+        let head = format!(
+            "SELECT * FROM {}\n{clause} ",
+            from_clause(&self.relation, dialect)
+        );
         let sql = format!("{head}{}", field.text());
         let cursor = head.len() + field.byte_cursor();
         let mut completion = suggest(&sql, cursor, dialect, catalog);
         let shift = |at: usize| at.saturating_sub(head.len());
         let range = completion.replace.clone();
-        completion.replace = Range { start: shift(range.start), end: shift(range.end) };
+        completion.replace = Range {
+            start: shift(range.start),
+            end: shift(range.end),
+        };
         let missing = completion.missing_columns.clone();
         self.list_waits = !missing.is_empty();
-        self.list = (!completion.items.is_empty()).then_some(SuggestionList { completion, selected: 0 });
+        self.list = (!completion.items.is_empty()).then_some(SuggestionList {
+            completion,
+            selected: 0,
+        });
         missing
     }
 

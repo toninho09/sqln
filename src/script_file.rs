@@ -144,8 +144,7 @@ impl ScriptFile {
     ) -> Result<(), Trouble> {
         let bytes = scripts::encode(text, self.ending);
         let result = match (self.hash, self.meta_written) {
-            (None, false) => scripts::create(root, &self.meta, &bytes)
-                .map_err(WriteError::Failed),
+            (None, false) => scripts::create(root, &self.meta, &bytes).map_err(WriteError::Failed),
             (None, true) => scripts::write_text(root, &self.meta.id, &bytes, Expect::Missing),
             (Some(hash), _) => scripts::write_text(root, &self.meta.id, &bytes, Expect::Hash(hash)),
         };
@@ -162,7 +161,10 @@ impl ScriptFile {
     pub fn overwrite(&mut self, root: &Root, text: &str, revision: u64) -> Result<(), Trouble> {
         let now = Instant::now();
         if scripts::write_meta(root, &self.meta, Expect::Any).is_err() {
-            return Err(self.failed(WriteError::Failed("The files cannot be written.".into()), now));
+            return Err(self.failed(
+                WriteError::Failed("The files cannot be written.".into()),
+                now,
+            ));
         }
         let bytes = scripts::encode(text, self.ending);
         match scripts::write_text(root, &self.meta.id, &bytes, Expect::Any) {
@@ -196,7 +198,11 @@ impl ScriptFile {
     /// Follows a new editor that holds the same text. `dirty` says whether the text
     /// of the new editor is newer than the file.
     pub fn rebase(&mut self, revision: u64, dirty: bool) {
-        self.saved_revision = if dirty { revision.wrapping_add(1) } else { revision };
+        self.saved_revision = if dirty {
+            revision.wrapping_add(1)
+        } else {
+            revision
+        };
         self.seen_revision = None;
         self.due_at = None;
     }
@@ -216,13 +222,21 @@ impl ScriptFile {
     }
 
     /// Replaces the place of the script after a move to another scope.
-    pub fn relocate(&mut self, scope: Scope, meta: ScriptMeta, lock: Option<FileLock>, root: &Root) {
+    pub fn relocate(
+        &mut self,
+        scope: Scope,
+        meta: ScriptMeta,
+        lock: Option<FileLock>,
+        root: &Root,
+    ) {
         self.scope = scope;
         self.meta = meta;
         self._lock = lock;
         self.seen = scripts::stat(root, &self.meta.id);
         // A move copies the saved text, so the hash of the new file is the one read.
-        self.hash = scripts::read_text(root, &self.meta.id).ok().map(|(_, hash)| hash);
+        self.hash = scripts::read_text(root, &self.meta.id)
+            .ok()
+            .map(|(_, hash)| hash);
         self.meta_written = true;
     }
 

@@ -45,7 +45,9 @@ impl Catalog {
     }
 
     pub fn is_current(&self, schema: &Schema) -> bool {
-        self.current_schema.as_deref().is_none_or(|name| name.eq_ignore_ascii_case(&schema.name))
+        self.current_schema
+            .as_deref()
+            .is_none_or(|name| name.eq_ignore_ascii_case(&schema.name))
     }
 
     /// Finds a relation. Without a schema name, the current schema has priority.
@@ -68,9 +70,15 @@ impl Catalog {
 
 impl Catalog {
     pub fn set_columns(&mut self, target: &RelationRef, columns: Vec<String>) {
-        let schema = self.schemas.iter_mut().find(|schema| schema.name == target.schema);
+        let schema = self
+            .schemas
+            .iter_mut()
+            .find(|schema| schema.name == target.schema);
         let relation = schema.and_then(|schema| {
-            schema.relations.iter_mut().find(|relation| relation.name == target.relation)
+            schema
+                .relations
+                .iter_mut()
+                .find(|relation| relation.name == target.relation)
         });
         if let Some(relation) = relation {
             relation.columns = Columns::Loaded(columns);
@@ -80,8 +88,9 @@ impl Catalog {
 
 /// Prefers an exact match, then a match without case.
 fn find_by_name<'a, T>(items: &'a [T], name: &str, key: impl Fn(&T) -> &String) -> Option<&'a T> {
-    items
-        .iter()
-        .find(|item| key(item) == name)
-        .or_else(|| items.iter().find(|item| key(item).eq_ignore_ascii_case(name)))
+    items.iter().find(|item| key(item) == name).or_else(|| {
+        items
+            .iter()
+            .find(|item| key(item).eq_ignore_ascii_case(name))
+    })
 }

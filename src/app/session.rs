@@ -20,14 +20,22 @@ enum Reopened {
 impl App {
     /// Writes the list of tabs. A console without a script has nothing to reopen.
     pub(super) fn save_open_tabs(&mut self) {
-        if !self.persist.as_ref().is_some_and(|persist| persist.tabs_known) {
+        if !self
+            .persist
+            .as_ref()
+            .is_some_and(|persist| persist.tabs_known)
+        {
             return;
         }
-        let Some(root) = self.layout_root() else { return };
+        let Some(root) = self.layout_root() else {
+            return;
+        };
         let active = self.active_tab();
         let mut saved = OpenTabs::default();
         for (index, tab) in self.tab_order().into_iter().enumerate() {
-            let Some(item) = self.open_tab(tab) else { continue };
+            let Some(item) = self.open_tab(tab) else {
+                continue;
+            };
             if index == active {
                 saved.active = Some(saved.tabs.len());
             }
@@ -40,7 +48,10 @@ impl App {
         match tab {
             Tab::Console(index) => {
                 let file = self.consoles[index].file.as_ref()?;
-                Some(OpenTab::Console { scope: file.scope, id: file.meta.id.clone() })
+                Some(OpenTab::Console {
+                    scope: file.scope,
+                    id: file.meta.id.clone(),
+                })
             }
             Tab::Table(index) => {
                 let tab = &self.tables[index];
@@ -58,7 +69,9 @@ impl App {
 
     /// Opens the tabs of the last session. No tab runs SQL or opens a connection.
     pub(super) fn reopen_tabs(&mut self) {
-        let Some(persist) = &mut self.persist else { return };
+        let Some(persist) = &mut self.persist else {
+            return;
+        };
         // An invalid configuration has no connections, so the list waits for a later start.
         if persist.error.is_some() {
             persist.tabs_known = false;
@@ -67,7 +80,10 @@ impl App {
         if !persist.reopen_tabs {
             return;
         }
-        let Some(saved) = self.layout_root().and_then(|root| workspace::load(&root).open_tabs) else {
+        let Some(saved) = self
+            .layout_root()
+            .and_then(|root| workspace::load(&root).open_tabs)
+        else {
             return;
         };
         let scripts = self.saved_scripts();
@@ -75,7 +91,9 @@ impl App {
         let mut any = false;
         let mut on_screen = None;
         for (index, tab) in saved.tabs.into_iter().enumerate() {
-            let Some(tab) = self.reopen_tab(tab, &scripts) else { continue };
+            let Some(tab) = self.reopen_tab(tab, &scripts) else {
+                continue;
+            };
             any = true;
             if saved.active == Some(index) {
                 on_screen = Some(tab);
@@ -101,22 +119,37 @@ impl App {
     fn saved_scripts(&self) -> Vec<ScriptEntry> {
         let scopes = [Scope::Global, Scope::Project];
         let roots = scopes.map(|scope| self.persist_root(scope).map(|root| (scope, root)));
-        roots.into_iter().flatten().flat_map(|(scope, root)| scripts::list(&root, scope)).collect()
+        roots
+            .into_iter()
+            .flatten()
+            .flat_map(|(scope, root)| scripts::list(&root, scope))
+            .collect()
     }
 
     fn reopen_tab(&mut self, tab: OpenTab, scripts: &[ScriptEntry]) -> Option<Reopened> {
         match tab {
             OpenTab::Console { scope, id } => {
-                let entry = scripts.iter().find(|entry| entry.scope == scope && entry.meta.id == id)?;
+                let entry = scripts
+                    .iter()
+                    .find(|entry| entry.scope == scope && entry.meta.id == id)?;
                 self.reopen_console(entry)
             }
-            OpenTab::Table { scope, connection, schema, relation, view } => {
+            OpenTab::Table {
+                scope,
+                connection,
+                schema,
+                relation,
+                view,
+            } => {
                 let connection = self.connection_by_key(scope, &connection)?.id;
                 let id = self.manager.as_mut()?.open_console(connection)?;
                 let relation = RelationRef { schema, relation };
-                let mut tab = TableTab::new(id, connection, relation, view, self.settings.page_size);
+                let mut tab =
+                    TableTab::new(id, connection, relation, view, self.settings.page_size);
                 tab.opened = self.next_tab_place();
-                tab.wait_for_use(text::table_pending(self.shown_key(Action::GridOpenValue).as_deref()));
+                tab.wait_for_use(text::table_pending(
+                    self.shown_key(Action::GridOpenValue).as_deref(),
+                ));
                 self.tables.push(tab);
                 Some(Reopened::Table(self.tables.len() - 1))
             }

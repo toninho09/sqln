@@ -31,7 +31,12 @@ pub struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     pub fn new(sql: &'a str, dialect: Dialect) -> Self {
-        Self { sql, dialect, pos: 0, previous: None }
+        Self {
+            sql,
+            dialect,
+            pos: 0,
+            previous: None,
+        }
     }
 
     fn read_token(&self, start: usize) -> (TokenKind, usize, bool) {
@@ -122,7 +127,12 @@ impl Iterator for Lexer<'_> {
         }
         let start = self.pos;
         let (kind, end, closed) = self.read_token(start);
-        let token = Token { kind, start, end, closed };
+        let token = Token {
+            kind,
+            start,
+            end,
+            closed,
+        };
         self.pos = end;
         self.previous = Some(token);
         Some(token)
@@ -184,7 +194,10 @@ fn skip_block_comment(bytes: &[u8], open: usize, nested: bool) -> (usize, bool) 
 }
 
 fn skip_line(bytes: &[u8], open: usize) -> usize {
-    bytes[open..].iter().position(|byte| *byte == b'\n').map_or(bytes.len(), |offset| open + offset)
+    bytes[open..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map_or(bytes.len(), |offset| open + offset)
 }
 
 fn dollar_tag_end(bytes: &[u8], open: usize) -> Option<usize> {

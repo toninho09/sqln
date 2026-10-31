@@ -9,7 +9,9 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use common::{ctrl, key, shift, temp_db};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use edtui::Index2;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -39,13 +41,20 @@ impl Fixture {
             ..Options::default()
         };
         let app = App::new(options, clipboard.clone(), Theme::plain());
-        Self { app, clipboard, path: path.to_owned() }
+        Self {
+            app,
+            clipboard,
+            path: path.to_owned(),
+        }
     }
 
     /// Opens a database that exists and that holds the text of `setup`.
     fn with(name: &str, keyboard: KeyboardMode, settings: Settings, setup: &str) -> Self {
         let path = temp_db(name);
-        rusqlite::Connection::open(&path).unwrap().execute_batch(setup).unwrap();
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch(setup)
+            .unwrap();
         Self::at(&path, keyboard, settings)
     }
 
@@ -79,7 +88,11 @@ impl Fixture {
             if condition(self) {
                 return;
             }
-            assert!(Instant::now() < deadline, "the condition did not happen:\n{}", self.screen());
+            assert!(
+                Instant::now() < deadline,
+                "the condition did not happen:\n{}",
+                self.screen()
+            );
             std::thread::sleep(Duration::from_millis(1));
         }
     }
@@ -113,7 +126,9 @@ impl Fixture {
         let buffer = self.buffer();
         (0..buffer.area.height)
             .map(|y| {
-                let row: String = (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect();
+                let row: String = (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect();
                 row.trim_end().to_owned() + "\n"
             })
             .collect()
@@ -125,7 +140,10 @@ impl Fixture {
 
     fn assert_sees(&mut self, text: &str) {
         let screen = self.screen();
-        assert!(screen.contains(text), "{text:?} is not on the screen:\n{screen}");
+        assert!(
+            screen.contains(text),
+            "{text:?} is not on the screen:\n{screen}"
+        );
     }
 
     fn file_query(&self, sql: &str) -> i64 {
@@ -167,7 +185,11 @@ fn an_explicit_choice_creates_the_file() {
 
 #[test]
 fn a_memory_path_is_refused() {
-    let mut f = Fixture::at(Path::new(":memory:"), KeyboardMode::Conventional, Settings::default());
+    let mut f = Fixture::at(
+        Path::new(":memory:"),
+        KeyboardMode::Conventional,
+        Settings::default(),
+    );
     f.assert_sees("not valid");
 }
 
@@ -179,7 +201,8 @@ fn the_start_opens_no_connection() {
 
 #[test]
 fn a_long_file_name_leaves_the_state_visible() {
-    let name = "a-very-long-database-file-name-that-does-not-fit-on-the-top-row-of-the-screen-at-all";
+    let name =
+        "a-very-long-database-file-name-that-does-not-fit-on-the-top-row-of-the-screen-at-all";
     let mut f = Fixture::new(name);
     let screen = f.screen();
     let status = screen.lines().rev().nth(1).unwrap();
@@ -190,8 +213,12 @@ fn a_long_file_name_leaves_the_state_visible() {
 
 #[test]
 fn f5_runs_the_statement_at_the_cursor_and_the_grid_shows_it() {
-    let mut f = Fixture::with("run", KeyboardMode::Conventional, Settings::default(),
-        "CREATE TABLE users(id, name); INSERT INTO users VALUES (1, 'Ana'), (2, 'Bruno');");
+    let mut f = Fixture::with(
+        "run",
+        KeyboardMode::Conventional,
+        Settings::default(),
+        "CREATE TABLE users(id, name); INSERT INTO users VALUES (1, 'Ana'), (2, 'Bruno');",
+    );
     f.write("SELECT 1;\nSELECT id, name FROM users ORDER BY id;\nSELECT 3;");
     f.app.console_mut().editor.set_cursor(Index2::new(1, 4));
     f.press(key(KeyCode::F(5)));
@@ -202,7 +229,11 @@ fn f5_runs_the_statement_at_the_cursor_and_the_grid_shows_it() {
     f.assert_sees("Ana");
     f.assert_sees("Bruno");
     f.assert_sees("2 rows");
-    assert_eq!(f.app.console_mut().results.len(), 1, "only one statement ran");
+    assert_eq!(
+        f.app.console_mut().results.len(),
+        1,
+        "only one statement ran"
+    );
 }
 
 #[test]
@@ -254,7 +285,11 @@ fn a_cursor_outside_a_statement_runs_nothing_and_keeps_the_results() {
     f.app.console_mut().editor.set_cursor(Index2::new(1, 0));
     f.press(key(KeyCode::F(5)));
     f.assert_sees("outside a statement");
-    assert_eq!(f.app.console_mut().results.len(), 1, "the refusal keeps the results");
+    assert_eq!(
+        f.app.console_mut().results.len(),
+        1,
+        "the refusal keeps the results"
+    );
 }
 
 #[test]
@@ -322,7 +357,10 @@ fn a_result_without_rows_shows_columns_and_zero_rows() {
 
 #[test]
 fn the_row_cap_shows_its_message() {
-    let settings = Settings { row_cap: 5, ..Settings::default() };
+    let settings = Settings {
+        row_cap: 5,
+        ..Settings::default()
+    };
     let mut f = Fixture::with("cap", KeyboardMode::Conventional, settings, "");
     f.run_script("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 100) SELECT x FROM c;");
     f.assert_sees("5 rows read. Row cap reached. The result can have more rows.");
@@ -376,7 +414,10 @@ fn a_stop_interrupts_and_shows_the_state() {
 
 #[test]
 fn the_time_limit_shows_its_state() {
-    let settings = Settings { sql_timeout: Some(Duration::from_millis(50)), ..Settings::default() };
+    let settings = Settings {
+        sql_timeout: Some(Duration::from_millis(50)),
+        ..Settings::default()
+    };
     let mut f = Fixture::with("timeout", KeyboardMode::Conventional, settings, "");
     f.run_script(LONG);
     f.assert_sees("the time limit ended");
@@ -385,8 +426,16 @@ fn the_time_limit_shows_its_state() {
 
 #[test]
 fn read_only_refuses_a_change() {
-    let settings = Settings { read_only: true, ..Settings::default() };
-    let mut f = Fixture::with("read-only", KeyboardMode::Conventional, settings, "CREATE TABLE t(a);");
+    let settings = Settings {
+        read_only: true,
+        ..Settings::default()
+    };
+    let mut f = Fixture::with(
+        "read-only",
+        KeyboardMode::Conventional,
+        settings,
+        "CREATE TABLE t(a);",
+    );
     f.run_script("INSERT INTO t VALUES (1);");
     f.assert_sees("readonly");
     assert_eq!(f.file_query("SELECT count(*) FROM t"), 0);
@@ -395,13 +444,19 @@ fn read_only_refuses_a_change() {
 #[test]
 fn grid_keys_move_select_and_copy_tsv() {
     let mut f = Fixture::new("grid");
-    f.run_script("SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2, NULL UNION ALL SELECT 3, 'tab\there';");
+    f.run_script(
+        "SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2, NULL UNION ALL SELECT 3, 'tab\there';",
+    );
     f.prefix('j');
     assert_eq!(f.app.console_mut().focus, Focus::Results);
 
     f.press(key(KeyCode::Down));
     f.press(ctrl('c'));
-    assert_eq!(f.clipboard.borrow().text, "2\n", "the cursor cell counts as the target");
+    assert_eq!(
+        f.clipboard.borrow().text,
+        "2\n",
+        "the cursor cell counts as the target"
+    );
 
     f.press(shift(KeyCode::Right));
     f.press(shift(KeyCode::Down));
@@ -479,7 +534,9 @@ fn enter_opens_the_complete_value_and_esc_closes_it() {
 #[test]
 fn data_cannot_send_terminal_sequences() {
     let mut f = Fixture::new("escape");
-    f.run_script("SELECT char(27) || '[31mred' || char(10) || 'next' || char(7) AS \"na\u{1b}me\";");
+    f.run_script(
+        "SELECT char(27) || '[31mred' || char(10) || 'next' || char(7) AS \"na\u{1b}me\";",
+    );
     let buffer = f.buffer();
     for cell in buffer.content() {
         assert!(!cell.symbol().chars().any(char::is_control), "{cell:?}");
@@ -510,14 +567,22 @@ fn a_click_selects_a_cell_and_a_tab() {
     f.run_script("SELECT 1 AS a, 2 AS b UNION ALL SELECT 3, 4; SELECT 9 AS c;");
     f.buffer();
     let press = |column, row, kind| {
-        Event::Mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE })
+        Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
     };
     let left = MouseEventKind::Down(MouseButton::Left);
 
     // The tabs row sits below the editor. "Result 1" starts after a rule and a space.
     let tabs_row = (0..30).find(|y| {
         let buffer = f.buffer();
-        (2..10).map(|x| buffer[(x, *y)].symbol().to_owned()).collect::<String>() == "Result 1"
+        (2..10)
+            .map(|x| buffer[(x, *y)].symbol().to_owned())
+            .collect::<String>()
+            == "Result 1"
     });
     let tabs_row = tabs_row.expect("the tab row is on the screen");
     f.app.on_event(press(1, tabs_row, left));
@@ -549,7 +614,12 @@ fn the_wheel_moves_the_grid() {
 
 #[test]
 fn a_transaction_by_sql_shows_its_state_and_the_close_asks() {
-    let mut f = Fixture::with("tx-close", KeyboardMode::Conventional, Settings::default(), "CREATE TABLE t(a);");
+    let mut f = Fixture::with(
+        "tx-close",
+        KeyboardMode::Conventional,
+        Settings::default(),
+        "CREATE TABLE t(a);",
+    );
     f.run_script("BEGIN;\nINSERT INTO t VALUES (1);");
     f.assert_sees("Transaction open");
     f.assert_sees("The transaction is not committed.");
@@ -571,7 +641,12 @@ fn a_transaction_by_sql_shows_its_state_and_the_close_asks() {
 
 #[test]
 fn rollback_and_close_discards_the_change() {
-    let mut f = Fixture::with("tx-rollback", KeyboardMode::Conventional, Settings::default(), "CREATE TABLE t(a);");
+    let mut f = Fixture::with(
+        "tx-rollback",
+        KeyboardMode::Conventional,
+        Settings::default(),
+        "CREATE TABLE t(a);",
+    );
     f.run_script("BEGIN;\nINSERT INTO t VALUES (1);");
     f.prefix('c');
     f.press(key(KeyCode::Tab));
@@ -583,7 +658,12 @@ fn rollback_and_close_discards_the_change() {
 #[test]
 fn a_failed_commit_at_the_close_keeps_the_console_open_and_offers_a_retry() {
     let setup = "CREATE TABLE p(id PRIMARY KEY); CREATE TABLE c(p REFERENCES p(id) DEFERRABLE INITIALLY DEFERRED);";
-    let mut f = Fixture::with("tx-fail", KeyboardMode::Conventional, Settings::default(), setup);
+    let mut f = Fixture::with(
+        "tx-fail",
+        KeyboardMode::Conventional,
+        Settings::default(),
+        setup,
+    );
     f.run_script("PRAGMA foreign_keys = ON;\nBEGIN;\nINSERT INTO c VALUES (1);");
     f.prefix('c');
     f.press(key(KeyCode::Tab));
@@ -622,7 +702,12 @@ fn the_close_during_an_execution_asks_and_stops_first() {
 
 #[test]
 fn manual_mode_needs_a_commit() {
-    let mut f = Fixture::with("manual", KeyboardMode::Conventional, Settings::default(), "CREATE TABLE t(a);");
+    let mut f = Fixture::with(
+        "manual",
+        KeyboardMode::Conventional,
+        Settings::default(),
+        "CREATE TABLE t(a);",
+    );
     f.prefix('m');
     f.assert_sees("Manual");
     f.run_script("INSERT INTO t VALUES (1);");
@@ -641,7 +726,12 @@ fn manual_mode_needs_a_commit() {
 
 #[test]
 fn the_change_to_autocommit_asks_with_an_open_transaction() {
-    let mut f = Fixture::with("mode-change", KeyboardMode::Conventional, Settings::default(), "CREATE TABLE t(a);");
+    let mut f = Fixture::with(
+        "mode-change",
+        KeyboardMode::Conventional,
+        Settings::default(),
+        "CREATE TABLE t(a);",
+    );
     f.prefix('m');
     f.run_script("INSERT INTO t VALUES (1);");
 
@@ -684,8 +774,14 @@ fn commit_without_a_transaction_reports_it() {
 
 #[test]
 fn suggestions_use_the_real_catalog_and_load_columns_on_demand() {
-    let setup = "CREATE TABLE users(id, full_name); CREATE VIEW names AS SELECT full_name FROM users;";
-    let mut f = Fixture::with("catalog", KeyboardMode::Conventional, Settings::default(), setup);
+    let setup =
+        "CREATE TABLE users(id, full_name); CREATE VIEW names AS SELECT full_name FROM users;";
+    let mut f = Fixture::with(
+        "catalog",
+        KeyboardMode::Conventional,
+        Settings::default(),
+        setup,
+    );
     f.type_text("SELECT * FROM us");
     f.pump_until(|f| f.sees("tbl users"));
 
@@ -699,7 +795,12 @@ fn suggestions_use_the_real_catalog_and_load_columns_on_demand() {
 
 #[test]
 fn ddl_in_the_application_updates_the_catalog() {
-    let mut f = Fixture::with("catalog-ddl", KeyboardMode::Conventional, Settings::default(), "CREATE TABLE first_table(a);");
+    let mut f = Fixture::with(
+        "catalog-ddl",
+        KeyboardMode::Conventional,
+        Settings::default(),
+        "CREATE TABLE first_table(a);",
+    );
     f.type_text("SELECT * FROM fir");
     f.pump_until(|f| f.sees("tbl first_table"));
     f.run_script("CREATE TABLE second_table(a);");
@@ -730,7 +831,12 @@ fn the_plain_theme_has_no_color_on_the_full_screen() {
 }
 
 fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
-    Event::Mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE })
+    Event::Mouse(MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    })
 }
 
 fn grid_of(f: &mut Fixture, sql: &str) {
@@ -847,11 +953,25 @@ fn a_new_execution_starts_the_result_numbers_again() {
 
 #[test]
 fn a_result_that_receives_rows_stays_open() {
-    let settings = Settings { row_cap: usize::MAX, ..Settings::default() };
-    let mut f = Fixture::with("grid-close-reading", KeyboardMode::Conventional, settings, "");
+    let settings = Settings {
+        row_cap: usize::MAX,
+        ..Settings::default()
+    };
+    let mut f = Fixture::with(
+        "grid-close-reading",
+        KeyboardMode::Conventional,
+        settings,
+        "",
+    );
     f.write("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 1000000000) SELECT x FROM c;");
     f.press(key(KeyCode::F(5)));
-    f.pump_until(|f| f.app.console_mut().results.first().is_some_and(|r| !r.table.rows.is_empty()));
+    f.pump_until(|f| {
+        f.app
+            .console_mut()
+            .results
+            .first()
+            .is_some_and(|r| !r.table.rows.is_empty())
+    });
     f.prefix('j');
     f.press(key(KeyCode::Char('x')));
     assert_eq!(f.app.console_mut().results.len(), 1);
@@ -890,13 +1010,17 @@ fn a_drag_on_the_edge_of_a_header_changes_the_width() {
         .find(|y| (4..7).map(|x| buffer[(x, *y)].symbol()).collect::<String>() == "one")
         .unwrap();
     // The first column starts after the row number. Its width is 7, so its edge is at 11.
-    f.app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), 11, header));
-    f.app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), 16, header));
-    f.app.on_event(mouse(MouseEventKind::Up(MouseButton::Left), 16, header));
+    f.app
+        .on_event(mouse(MouseEventKind::Down(MouseButton::Left), 11, header));
+    f.app
+        .on_event(mouse(MouseEventKind::Drag(MouseButton::Left), 16, header));
+    f.app
+        .on_event(mouse(MouseEventKind::Up(MouseButton::Left), 16, header));
     assert_eq!(f.app.console_mut().results[0].table.width(0), 12);
     assert_eq!(f.app.console_mut().results[0].view.anchor, None);
     f.screen();
-    f.app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), 24, header));
+    f.app
+        .on_event(mouse(MouseEventKind::Drag(MouseButton::Left), 24, header));
     assert_eq!(f.app.console_mut().results[0].table.width(0), 12);
 }
 
@@ -964,15 +1088,26 @@ fn a_new_execution_removes_the_mark_of_a_database_error() {
     assert!(underlined(&mut f, "FROMM"));
     f.press(key(KeyCode::F(5)));
     f.idle();
-    assert!(underlined(&mut f, "FROMM"), "the same error marks the token again");
+    assert!(
+        underlined(&mut f, "FROMM"),
+        "the same error marks the token again"
+    );
     f.run_script("SELECT 2;");
     assert!(!underlined(&mut f, "SELECT"));
 }
 
 #[test]
 fn an_error_during_the_read_keeps_the_budget_exact() {
-    let settings = Settings { row_cap: usize::MAX, ..Settings::default() };
-    let mut f = Fixture::with("read-error-budget", KeyboardMode::Conventional, settings, "");
+    let settings = Settings {
+        row_cap: usize::MAX,
+        ..Settings::default()
+    };
+    let mut f = Fixture::with(
+        "read-error-budget",
+        KeyboardMode::Conventional,
+        settings,
+        "",
+    );
     f.run_script(
         "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 1000) \
          SELECT CASE WHEN x > 300 THEN abs(-9223372036854775807 - 1) ELSE x END FROM c;",
@@ -1030,13 +1165,27 @@ fn finish_with_stop(f: &mut Fixture, statuses: Vec<sqln::exec::StatementStatus>)
     use sqln::grid::Budget;
 
     let budget = Budget::new(1024);
-    let plan = f.app.console_mut().editor.plan_run(RunScope::Script).unwrap();
+    let plan = f
+        .app
+        .console_mut()
+        .editor
+        .plan_run(RunScope::Script)
+        .unwrap();
     let console = f.app.console_mut().id;
     f.app.console_mut().begin_execution(7, &plan, &budget);
     for (index, status) in statuses.into_iter().enumerate() {
-        let key = StatementKey { console, execution: 7, index };
+        let key = StatementKey {
+            console,
+            execution: 7,
+            index,
+        };
         let end = Some(Default::default());
-        let event = ExecEvent::StatementFinished { key, status, end, error_offset: None };
+        let event = ExecEvent::StatementFinished {
+            key,
+            status,
+            end,
+            error_offset: None,
+        };
         f.app.console_mut().on_event(event, &budget);
     }
     let event = ExecEvent::ExecutionFinished {
@@ -1053,8 +1202,11 @@ fn a_stop_between_statements_explains_the_end() {
     use sqln::exec::StatementStatus;
     let mut f = Fixture::new("stop-between");
     f.write("SELECT 1; SELECT 2; SELECT 3;");
-    let statuses =
-        vec![StatementStatus::Success, StatementStatus::NotExecuted, StatementStatus::NotExecuted];
+    let statuses = vec![
+        StatementStatus::Success,
+        StatementStatus::NotExecuted,
+        StatementStatus::NotExecuted,
+    ];
     finish_with_stop(&mut f, statuses);
     f.assert_sees("Stopped before statement 2. The database did not receive it.");
 }
@@ -1072,7 +1224,10 @@ fn a_stopped_statement_needs_no_second_message() {
     let mut f = Fixture::new("stop-once");
     f.write("SELECT 1; SELECT 2;");
     use sqln::exec::StatementStatus;
-    finish_with_stop(&mut f, vec![StatementStatus::Stopped, StatementStatus::NotExecuted]);
+    finish_with_stop(
+        &mut f,
+        vec![StatementStatus::Stopped, StatementStatus::NotExecuted],
+    );
     f.assert_sees("Statement 1: stopped.");
     assert!(!f.sees("Stopped before"));
 }

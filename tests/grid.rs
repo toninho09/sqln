@@ -15,7 +15,11 @@ fn row(values: &[&str]) -> Row {
 }
 
 fn table(rows: &[&[&str]]) -> ResultTable {
-    let columns = rows[0].iter().enumerate().map(|(index, _)| format!("c{index}")).collect();
+    let columns = rows[0]
+        .iter()
+        .enumerate()
+        .map(|(index, _)| format!("c{index}"))
+        .collect();
     let mut table = ResultTable::new(columns);
     table.append(rows.iter().map(|values| row(values)).collect(), 0);
     table
@@ -25,7 +29,11 @@ fn later() -> Instant {
     Instant::now() + Duration::from_secs(60)
 }
 
-fn search(table: &ResultTable, query: &str, origin: (usize, usize)) -> (RowSearch, Option<(usize, usize)>) {
+fn search(
+    table: &ResultTable,
+    query: &str,
+    origin: (usize, usize),
+) -> (RowSearch, Option<(usize, usize)>) {
     let mut search = RowSearch::new(origin);
     search.push_str(query);
     let first = search.scan(table, later());
@@ -217,14 +225,22 @@ fn a_preview_of_a_large_value_reads_only_its_start() {
     for _ in 0..1000 {
         assert_eq!(value.preview(40).len(), 40);
     }
-    assert!(started.elapsed() < Duration::from_millis(500), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 #[test]
 fn a_sink_that_nobody_finishes_returns_its_rows_to_the_budget() {
     let (events, _inbox) = tokio::sync::mpsc::channel::<ExecEvent>(8);
     let budget = std::sync::Arc::new(Budget::new(1 << 20));
-    let key = StatementKey { console: 1, execution: 1, index: 0 };
+    let key = StatementKey {
+        console: 1,
+        execution: 1,
+        index: 0,
+    };
     let mut sink = ResultSink::new(key, events, budget.clone(), 1000);
     sink.push_blocking(row(&["a value in the batch"]));
     assert!(budget.used() > 0);
@@ -263,13 +279,18 @@ fn line_breaks_start_new_rows_and_keep_empty_rows() {
 #[test]
 fn wide_characters_stay_inside_the_width() {
     assert_eq!(rows_of("日本語テ", 5), ["日本", "語テ"]);
-    assert_eq!(rows_of("日本", 1), ["日", "本"], "a wide character needs its own row");
+    assert_eq!(
+        rows_of("日本", 1),
+        ["日", "本"],
+        "a wide character needs its own row"
+    );
     assert_eq!(rows_of("ação", 2), ["aç", "ão"]);
 }
 
 #[test]
 fn every_row_joins_back_to_the_text() {
-    let text = "SELECT 'ação' FROM t;\n\tdois  espaços  日本語 and a_very_long_word_without_spaces\n";
+    let text =
+        "SELECT 'ação' FROM t;\n\tdois  espaços  日本語 and a_very_long_word_without_spaces\n";
     for width in 1..40 {
         let joined: String = rows_of(text, width).join("\n");
         let plain: String = joined.chars().filter(|c| *c != '\n').collect();
@@ -299,20 +320,29 @@ fn a_row_of_a_large_text_reads_only_that_row() {
     for index in 0..30 {
         assert_eq!(wrapped.row(index).unwrap().len(), 80);
     }
-    assert!(started.elapsed() < Duration::from_millis(100), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_millis(100),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 #[test]
 fn a_sink_drops_the_rows_after_the_stop_request() {
     let (events, _inbox) = tokio::sync::mpsc::channel::<ExecEvent>(8);
     let budget = std::sync::Arc::new(Budget::new(1 << 20));
-    let key = StatementKey { console: 1, execution: 1, index: 0 };
+    let key = StatementKey {
+        console: 1,
+        execution: 1,
+        index: 0,
+    };
     let mut sink = ResultSink::new(key, events, budget.clone(), 1000);
     sink.set_columns_blocking(vec!["a".to_owned()]);
     assert_eq!(sink.push_blocking(row(&["kept"])), Flow::Continue);
     let used = budget.used();
 
-    sink.stop_flag().store(true, std::sync::atomic::Ordering::SeqCst);
+    sink.stop_flag()
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     assert_eq!(sink.push_blocking(row(&["dropped"])), Flow::Discard);
     assert_eq!(budget.used(), used);
     assert_eq!(sink.finish_blocking().0, 1);

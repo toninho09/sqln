@@ -136,7 +136,9 @@ impl fmt::Display for VaultError {
             Self::NoAccess => "The system vault is locked or access is denied.",
             Self::Failed => "The system vault operation fails.",
             Self::Unsupported => "This platform has no supported system vault.",
-            Self::PlainFile => "SQLN cannot use credentials.json. Check its content and its permissions.",
+            Self::PlainFile => {
+                "SQLN cannot use credentials.json. Check its content and its permissions."
+            }
         })
     }
 }
@@ -301,7 +303,10 @@ pub struct PlainFile {
 
 impl PlainFile {
     pub fn new(global: &Root) -> Self {
-        Self { path: global.credentials_file(), lock: global.locks_dir().join("credentials.lock") }
+        Self {
+            path: global.credentials_file(),
+            lock: global.locks_dir().join("credentials.lock"),
+        }
     }
 
     /// Refuses a link or a file that others can read, as `ssh` does with a private key.
@@ -339,9 +344,10 @@ impl PlainFile {
 
     fn change<T>(&self, change: impl FnOnce(&mut PlainPasswords) -> T) -> Result<T, VaultError> {
         let _lock = file::lock(&self.lock).map_err(|_| VaultError::PlainFile)?;
-        let mut stored = self
-            .load()?
-            .unwrap_or_else(|| PlainPasswords { version: PLAIN_VERSION, passwords: BTreeMap::new() });
+        let mut stored = self.load()?.unwrap_or_else(|| PlainPasswords {
+            version: PLAIN_VERSION,
+            passwords: BTreeMap::new(),
+        });
         let result = change(&mut stored);
         if stored.passwords.is_empty() {
             return match fs::remove_file(&self.path) {
@@ -359,7 +365,10 @@ impl PlainFile {
     pub fn write(&self, identity: &Identity, password: &Secret) -> Result<(), VaultError> {
         let account = identity.account()?;
         self.change(|stored| {
-            if let Some(mut old) = stored.passwords.insert(account, password.expose().to_owned()) {
+            if let Some(mut old) = stored
+                .passwords
+                .insert(account, password.expose().to_owned())
+            {
                 old.zeroize();
             }
         })
@@ -371,7 +380,11 @@ impl PlainFile {
             return Ok(false);
         }
         self.change(|stored| {
-            stored.passwords.remove(&account).map(|mut old| old.zeroize()).is_some()
+            stored
+                .passwords
+                .remove(&account)
+                .map(|mut old| old.zeroize())
+                .is_some()
         })
     }
 }
@@ -446,7 +459,9 @@ impl<V: Vault> Credentials<V> {
 
     /// Removes the plain text source. A migration calls this only after its check.
     pub fn remove_plain(&mut self, identity: &Identity) -> Result<bool, VaultError> {
-        self.plain.as_ref().map_or(Ok(false), |file| file.delete(identity))
+        self.plain
+            .as_ref()
+            .map_or(Ok(false), |file| file.delete(identity))
     }
 
     /// Only an explicit, separately confirmed action must call this operation.
@@ -576,7 +591,10 @@ mod tests {
     #[test]
     fn only_confirmed_answers_mean_an_absent_vault() {
         let failure = |error| vault_error(keyring_core::Error::PlatformFailure(Box::new(error)));
-        assert_eq!(failure(secret_service::Error::Unavailable), VaultError::Absent);
+        assert_eq!(
+            failure(secret_service::Error::Unavailable),
+            VaultError::Absent
+        );
         assert_eq!(failure(secret_service::Error::Locked), VaultError::Failed);
         assert_eq!(failure(secret_service::Error::Prompt), VaultError::Failed);
     }

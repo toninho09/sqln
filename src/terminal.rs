@@ -46,7 +46,12 @@ impl Session {
         enable_raw_mode()?;
         let guard = Guard;
         let mut output = stdout();
-        execute!(output, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
+        execute!(
+            output,
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            EnableBracketedPaste
+        )?;
         // The request includes only the separation of keys, not a report of all keys.
         if supports_keyboard_enhancement().unwrap_or(false) {
             execute!(
@@ -56,7 +61,10 @@ impl Session {
             KEYBOARD_ENHANCED.store(true, Ordering::Relaxed);
         }
         let screen = Terminal::new(CrosstermBackend::new(output))?;
-        Ok(Self { screen, _guard: guard })
+        Ok(Self {
+            screen,
+            _guard: guard,
+        })
     }
 }
 
@@ -65,7 +73,13 @@ fn restore() {
     if KEYBOARD_ENHANCED.swap(false, Ordering::Relaxed) {
         let _ = execute!(output, PopKeyboardEnhancementFlags);
     }
-    let _ = execute!(output, DisableBracketedPaste, DisableMouseCapture, LeaveAlternateScreen, Show);
+    let _ = execute!(
+        output,
+        DisableBracketedPaste,
+        DisableMouseCapture,
+        LeaveAlternateScreen,
+        Show
+    );
     let _ = disable_raw_mode();
 }
 
@@ -84,7 +98,9 @@ fn install_panic_hook(reports: Option<PathBuf>) {
 /// Writes the place of a panic and its call stack. The message of a panic stays out,
 /// because it can quote SQL or a value.
 pub fn write_panic_report(folder: &Path, place: Option<&str>) -> Option<PathBuf> {
-    let seconds = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |time| time.as_secs());
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |time| time.as_secs());
     let path = folder.join(format!("panic-{seconds}.txt"));
     let report = format!(
         "sqln {}\n{} {}\n{}\n\n{}\n",

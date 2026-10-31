@@ -37,12 +37,18 @@ pub struct Root {
 
 impl Root {
     pub fn global(dir: PathBuf) -> Self {
-        Self { base: dir.clone(), dir }
+        Self {
+            base: dir.clone(),
+            dir,
+        }
     }
 
     /// Returns the scope of the project with this root folder.
     pub fn project(root: &Path) -> Self {
-        Self { dir: root.join(PROJECT_FOLDER), base: root.to_owned() }
+        Self {
+            dir: root.join(PROJECT_FOLDER),
+            base: root.to_owned(),
+        }
     }
 
     pub fn config_file(&self) -> PathBuf {
@@ -85,7 +91,9 @@ impl Store {
     /// Lists the scopes in the order of the configuration: global, then project.
     pub fn scopes(&self) -> Vec<(Scope, &Root)> {
         let project = self.project.as_ref().map(|root| (Scope::Project, root));
-        std::iter::once((Scope::Global, &self.global)).chain(project).collect()
+        std::iter::once((Scope::Global, &self.global))
+            .chain(project)
+            .collect()
     }
 }
 
@@ -106,7 +114,10 @@ pub fn default_global_dir() -> Option<PathBuf> {
 /// Returns the root of the nearest project, from `start` to the top.
 /// A `.git` folder does not replace the `.sqln` folder.
 pub fn find_project(start: &Path) -> Option<PathBuf> {
-    start.ancestors().find(|folder| folder.join(PROJECT_FOLDER).is_dir()).map(Path::to_owned)
+    start
+        .ancestors()
+        .find(|folder| folder.join(PROJECT_FOLDER).is_dir())
+        .map(Path::to_owned)
 }
 
 /// The project that a start uses.
@@ -125,7 +136,10 @@ pub fn locate_project(working: &Path, folder: Option<&Path>) -> Located {
         Some(folder) => {
             let folder = working.join(folder);
             let exists = folder.join(PROJECT_FOLDER).is_dir();
-            Located { root: exists.then(|| folder.clone()), offer: (!exists).then_some(folder) }
+            Located {
+                root: exists.then(|| folder.clone()),
+                offer: (!exists).then_some(folder),
+            }
         }
         None => {
             let root = find_project(working);

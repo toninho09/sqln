@@ -148,11 +148,22 @@ pub fn draw_password(
     if prompt.save_allowed {
         let row = Rect::new(inner.x, inner.y + 3, inner.width, 1);
         let mark = if prompt.save { "[x]" } else { "[ ]" };
-        let label = if prompt.plain { text::SAVE_IN_PLAIN_TEXT } else { text::SAVE_IN_VAULT };
-        frame.render_widget(Paragraph::new(format!("{mark} {label}")).style(style(1)), row);
+        let label = if prompt.plain {
+            text::SAVE_IN_PLAIN_TEXT
+        } else {
+            text::SAVE_IN_VAULT
+        };
+        frame.render_widget(
+            Paragraph::new(format!("{mark} {label}")).style(style(1)),
+            row,
+        );
         layout.push((1, row));
     }
-    let hint = if prompt.refused { text::AUTH_REFUSED_HINT } else { text::AUTH_PASSWORD_HINT };
+    let hint = if prompt.refused {
+        text::AUTH_REFUSED_HINT
+    } else {
+        text::AUTH_PASSWORD_HINT
+    };
     frame.render_widget(
         Paragraph::new(hint_line(&HintItem::of(hint), theme)),
         Rect::new(inner.x, inner.y + 4, inner.width, 1),
@@ -171,6 +182,9 @@ pub fn draw_password(
     let connect_width = u16::try_from(connect.width()).unwrap_or(0);
     let cancel_width = u16::try_from(cancel.width()).unwrap_or(0);
     layout.push((2, Rect::new(row.x, row.y, connect_width, 1)));
-    layout.push((3, Rect::new(row.x + connect_width + 2, row.y, cancel_width, 1)));
+    layout.push((
+        3,
+        Rect::new(row.x + connect_width + 2, row.y, cancel_width, 1),
+    ));
     layout
 }

@@ -126,7 +126,10 @@ impl ResultSink {
 
     fn start_result(&mut self, columns: Vec<String>) -> ExecEvent {
         self.open = true;
-        ExecEvent::Columns { key: self.key, columns }
+        ExecEvent::Columns {
+            key: self.key,
+            columns,
+        }
     }
 
     /// Ends the open result. A statement can send more than one result, and the
@@ -141,7 +144,11 @@ impl ResultSink {
         if self.first_limit == ReadLimit::None {
             self.first_limit = limit;
         }
-        Some(ExecEvent::ResultDone { key: self.key, rows, limit })
+        Some(ExecEvent::ResultDone {
+            key: self.key,
+            rows,
+            limit,
+        })
     }
 
     pub async fn set_columns(&mut self, columns: Vec<String>) {

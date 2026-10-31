@@ -61,7 +61,9 @@ pub fn draw_navigator(
             RowKind::Connection if connected[row.connection] => {
                 spans.push(Span::styled(Theme::icon(icons.connected), theme.mark_good));
             }
-            RowKind::Connection => spans.push(Span::styled(Theme::icon(icons.disconnected), detail)),
+            RowKind::Connection => {
+                spans.push(Span::styled(Theme::icon(icons.disconnected), detail))
+            }
             RowKind::Schema => spans.push(Span::styled(Theme::icon(icons.schema), detail)),
             RowKind::Table => spans.push(Span::styled(Theme::icon(icons.table), detail)),
             RowKind::View => spans.push(Span::styled(Theme::icon(icons.view), detail)),
@@ -76,17 +78,39 @@ pub fn draw_navigator(
             spans.push(Span::styled(format!(" {}", text::MARK_VIEW), detail));
         }
         match navigator.suffix(row, connections) {
-            Some(RowNote::Loading) => spans.push(Span::styled(format!(" {}", text::NOTE_LOADING), detail)),
-            Some(RowNote::Failed) => spans.push(Span::styled(format!(" {}", text::NOTE_FAILED), theme.error)),
+            Some(RowNote::Loading) => {
+                spans.push(Span::styled(format!(" {}", text::NOTE_LOADING), detail))
+            }
+            Some(RowNote::Failed) => {
+                spans.push(Span::styled(format!(" {}", text::NOTE_FAILED), theme.error))
+            }
             None => {}
         }
         if offset == cursor {
             let y = area.y + u16::try_from(offset - navigator.top).unwrap_or(0);
-            let style = if focused { theme.tree_selected } else { theme.tree_cursor };
-            frame.buffer_mut().set_style(Rect { y, height: 1, ..area }, style);
+            let style = if focused {
+                theme.tree_selected
+            } else {
+                theme.tree_cursor
+            };
+            frame.buffer_mut().set_style(
+                Rect {
+                    y,
+                    height: 1,
+                    ..area
+                },
+                style,
+            );
         }
         lines.push(Line::from(spans));
     }
     frame.render_widget(Paragraph::new(lines), area);
-    draw_scrollbar(frame.buffer_mut(), area, rows.len(), height, navigator.top, theme);
+    draw_scrollbar(
+        frame.buffer_mut(),
+        area,
+        rows.len(),
+        height,
+        navigator.top,
+        theme,
+    );
 }

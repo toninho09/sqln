@@ -21,9 +21,15 @@ fn worst_key_and_frame(lines: usize) -> Duration {
     let mut worst = Duration::ZERO;
     for index in 0..60 {
         let started = Instant::now();
-        let code = if index % 6 == 5 { KeyCode::Backspace } else { KeyCode::Char('s') };
+        let code = if index % 6 == 5 {
+            KeyCode::Backspace
+        } else {
+            KeyCode::Char('s')
+        };
         f.press(key(code));
-        terminal.draw(|frame| draw_editor(frame, frame.area(), &mut f.editor, true, &theme)).unwrap();
+        terminal
+            .draw(|frame| draw_editor(frame, frame.area(), &mut f.editor, true, &theme))
+            .unwrap();
         worst = worst.max(started.elapsed());
     }
     worst
@@ -35,7 +41,10 @@ fn key_with_suggestions_and_frame_stay_under_the_target() {
     for lines in [100, 1_000, 10_000, 50_000] {
         let worst = worst_key_and_frame(lines);
         println!("{lines} lines: worst key plus frame {worst:?}");
-        assert!(worst < Duration::from_millis(50), "{lines} lines: {worst:?}");
+        assert!(
+            worst < Duration::from_millis(50),
+            "{lines} lines: {worst:?}"
+        );
     }
 }
 
@@ -52,8 +61,16 @@ fn a_key_stays_under_the_target_with_the_full_budget_loaded() {
 
     let path = common::temp_db("latency-budget");
     rusqlite::Connection::open(&path).unwrap();
-    let settings = Settings { row_cap: usize::MAX, sql_timeout: None, ..Settings::default() };
-    let options = Options { database: Some(path), settings, ..Options::default() };
+    let settings = Settings {
+        row_cap: usize::MAX,
+        sql_timeout: None,
+        ..Settings::default()
+    };
+    let options = Options {
+        database: Some(path),
+        settings,
+        ..Options::default()
+    };
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
     let mut app = App::new(options, clipboard, Theme::ansi());
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -89,12 +106,19 @@ fn a_key_stays_under_the_target_with_the_full_budget_loaded() {
     );
     assert!(bytes > 250 * 1024 * 1024, "{bytes}");
 
-    app.on_event(Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)));
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('w'),
+        KeyModifiers::CONTROL,
+    )));
     app.on_event(Event::Key(key(KeyCode::Char('j'))));
     let mut worst = Duration::ZERO;
     for index in 0..200 {
         let started = Instant::now();
-        let code = if index % 2 == 0 { KeyCode::Down } else { KeyCode::Right };
+        let code = if index % 2 == 0 {
+            KeyCode::Down
+        } else {
+            KeyCode::Right
+        };
         app.on_event(Event::Key(key(code)));
         terminal.draw(|frame| app.draw(frame)).unwrap();
         worst = worst.max(started.elapsed());
@@ -102,12 +126,18 @@ fn a_key_stays_under_the_target_with_the_full_budget_loaded() {
     let started_copy = Instant::now();
     app.on_event(Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::ALT)));
     terminal.draw(|frame| app.draw(frame)).unwrap();
-    println!("worst key plus frame with the full budget {worst:?}; one more {:?}", started_copy.elapsed());
+    println!(
+        "worst key plus frame with the full budget {worst:?}; one more {:?}",
+        started_copy.elapsed()
+    );
     assert!(worst < Duration::from_millis(50), "{worst:?}");
     assert!(worst_frame < Duration::from_millis(50), "{worst_frame:?}");
 
     // The search reads each row, so it must leave the keys free during that work.
-    app.on_event(Event::Key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)));
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('f'),
+        KeyModifiers::CONTROL,
+    )));
     let mut worst_search = Duration::ZERO;
     let started_search = Instant::now();
     let mut slices = 0;
@@ -144,13 +174,23 @@ fn table_page_keys_and_frames_stay_under_the_target() {
     use sqln::exec::Settings;
 
     let path = common::temp_db("latency-table-pages");
-    rusqlite::Connection::open(&path).unwrap().execute_batch(
-        "CREATE TABLE pages(id INTEGER PRIMARY KEY, label TEXT); \
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE pages(id INTEGER PRIMARY KEY, label TEXT); \
          WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 50000) \
          INSERT INTO pages SELECT x, 'row' || x FROM n;",
-    ).unwrap();
-    let settings = Settings { page_size: 10_000, ..Settings::default() };
-    let options = Options { database: Some(path), settings, ..Options::default() };
+        )
+        .unwrap();
+    let settings = Settings {
+        page_size: 10_000,
+        ..Settings::default()
+    };
+    let options = Options {
+        database: Some(path),
+        settings,
+        ..Options::default()
+    };
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
     let mut app = App::new(options, clipboard, Theme::ansi());
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -196,14 +236,23 @@ fn a_key_in_a_large_navigator_stays_under_the_target() {
         setup.push_str(&format!("CREATE TABLE table_{index}(a, b, c);"));
     }
     setup.push_str("COMMIT;");
-    rusqlite::Connection::open(&path).unwrap().execute_batch(&setup).unwrap();
-    let options = Options { database: Some(path), ..Options::default() };
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(&setup)
+        .unwrap();
+    let options = Options {
+        database: Some(path),
+        ..Options::default()
+    };
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
     let mut app = App::new(options, clipboard, Theme::ansi());
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     let press = |app: &mut App, code| app.on_event(Event::Key(key(code)));
 
-    app.on_event(Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)));
+    app.on_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('w'),
+        KeyModifiers::CONTROL,
+    )));
     press(&mut app, KeyCode::Char('h'));
     press(&mut app, KeyCode::Right);
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -217,7 +266,14 @@ fn a_key_in_a_large_navigator_stays_under_the_target() {
     let mut worst = Duration::ZERO;
     for index in 0..200 {
         let started = Instant::now();
-        press(&mut app, if index < 100 { KeyCode::Down } else { KeyCode::Up });
+        press(
+            &mut app,
+            if index < 100 {
+                KeyCode::Down
+            } else {
+                KeyCode::Up
+            },
+        );
         terminal.draw(|frame| app.draw(frame)).unwrap();
         worst = worst.max(started.elapsed());
     }
@@ -249,9 +305,15 @@ fn the_autosave_of_a_large_script_stays_under_the_target() {
         ),
     )
     .unwrap();
-    let store = Store { global, project: None };
+    let store = Store {
+        global,
+        project: None,
+    };
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
-    let options = Options { store: Some(store), ..Options::default() };
+    let options = Options {
+        store: Some(store),
+        ..Options::default()
+    };
     let mut app = App::new(options, clipboard, Theme::ansi());
     let row = "INSERT INTO orders (id, name, total) VALUES (1, 'a text value', 10.50);\n";
     app.on_event(Event::Paste(row.repeat(50_000)));

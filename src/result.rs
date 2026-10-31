@@ -22,7 +22,11 @@ pub struct ResultTab {
 pub enum GridAction {
     None,
     Copy(String),
-    OpenValue { title: String, text: String, footer: String },
+    OpenValue {
+        title: String,
+        text: String,
+        footer: String,
+    },
     CloseResult,
 }
 
@@ -39,12 +43,16 @@ impl ResultTab {
 
     /// Returns true when the search has rows to read.
     pub fn search_has_work(&self) -> bool {
-        self.search.as_ref().is_some_and(|search| search.has_work(&self.table))
+        self.search
+            .as_ref()
+            .is_some_and(|search| search.has_work(&self.table))
     }
 
     /// Continues the search until the deadline.
     pub fn continue_search(&mut self, deadline: Instant) {
-        let Some(search) = &mut self.search else { return };
+        let Some(search) = &mut self.search else {
+            return;
+        };
         if let Some((row, col)) = search.scan(&self.table, deadline) {
             self.view.move_to(row, col, &self.table, false);
         }
@@ -63,7 +71,9 @@ impl ResultTab {
 
     /// Applies a key to the search bar.
     pub fn on_search_key(&mut self, key: KeyEvent) {
-        let Some(search) = &mut self.search else { return };
+        let Some(search) = &mut self.search else {
+            return;
+        };
         let cell = match key.code {
             KeyCode::Enter | KeyCode::Down => search.advance(true),
             KeyCode::Up => search.advance(false),

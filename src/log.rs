@@ -28,6 +28,8 @@ pub fn open(path: &Path) -> io::Result<()> {
 pub fn event(text: &str) {
     let Some(file) = FILE.get() else { return };
     let Ok(mut file) = file.lock() else { return };
-    let seconds = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |time| time.as_secs());
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |time| time.as_secs());
     let _ = writeln!(file, "{seconds} {text}");
 }

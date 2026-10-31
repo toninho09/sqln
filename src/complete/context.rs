@@ -7,13 +7,47 @@ use crate::sql::{Dialect, Statement, Token, TokenKind, tokenize};
 
 const RELATION_WORDS: &[&str] = &["FROM", "JOIN", "UPDATE", "INTO", "TABLE"];
 const EXPRESSION_WORDS: &[&str] = &[
-    "SELECT", "DISTINCT", "WHERE", "ON", "BY", "SET", "HAVING", "AND", "OR", "NOT", "WHEN", "THEN",
-    "ELSE", "CASE", "RETURNING", "VALUES", "BETWEEN", "LIKE", "IN", "USING", "COLUMN",
+    "SELECT",
+    "DISTINCT",
+    "WHERE",
+    "ON",
+    "BY",
+    "SET",
+    "HAVING",
+    "AND",
+    "OR",
+    "NOT",
+    "WHEN",
+    "THEN",
+    "ELSE",
+    "CASE",
+    "RETURNING",
+    "VALUES",
+    "BETWEEN",
+    "LIKE",
+    "IN",
+    "USING",
+    "COLUMN",
 ];
 const LEADING_WORDS: &[&str] = &["EXPLAIN", "ANALYZE", "VERBOSE"];
 const END_OF_FROM_WORDS: &[&str] = &[
-    "WHERE", "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET", "ON", "USING", "SET", "UNION",
-    "INTERSECT", "EXCEPT", "RETURNING", "VALUES", "WINDOW", "FETCH", "FOR",
+    "WHERE",
+    "GROUP",
+    "ORDER",
+    "HAVING",
+    "LIMIT",
+    "OFFSET",
+    "ON",
+    "USING",
+    "SET",
+    "UNION",
+    "INTERSECT",
+    "EXCEPT",
+    "RETURNING",
+    "VALUES",
+    "WINDOW",
+    "FETCH",
+    "FOR",
 ];
 const OPERAND_WORDS: &[&str] = &["NULL", "TRUE", "FALSE", "END"];
 
@@ -71,7 +105,9 @@ fn is_punctuation(text: &str, token: Token, value: u8) -> bool {
 fn is_word(text: &str, token: Option<&Token>, words: &[&str]) -> bool {
     token.is_some_and(|token| {
         token.kind == TokenKind::Word
-            && words.iter().any(|word| raw(text, *token).eq_ignore_ascii_case(word))
+            && words
+                .iter()
+                .any(|word| raw(text, *token).eq_ignore_ascii_case(word))
     })
 }
 
@@ -89,9 +125,17 @@ fn identifier(text: &str, token: Token) -> String {
     if token.kind != TokenKind::QuotedIdentifier {
         return value.to_owned();
     }
-    let close = if value.starts_with('[') { ']' } else { value.chars().next().unwrap_or('"') };
+    let close = if value.starts_with('[') {
+        ']'
+    } else {
+        value.chars().next().unwrap_or('"')
+    };
     let inner = &value[1..];
-    let inner = if token.closed { inner.strip_suffix(close).unwrap_or(inner) } else { inner };
+    let inner = if token.closed {
+        inner.strip_suffix(close).unwrap_or(inner)
+    } else {
+        inner
+    };
     if close == ']' {
         return inner.to_owned();
     }
@@ -154,7 +198,10 @@ pub fn analyze(
     let mut qualifiers = Vec::new();
     while head >= 2
         && is_punctuation(text, tokens[head - 1], b'.')
-        && matches!(tokens[head - 2].kind, TokenKind::Word | TokenKind::QuotedIdentifier)
+        && matches!(
+            tokens[head - 2].kind,
+            TokenKind::Word | TokenKind::QuotedIdentifier
+        )
     {
         qualifiers.push(identifier(text, tokens[head - 2]));
         head -= 2;
@@ -190,15 +237,20 @@ pub fn analyze(
 }
 
 fn ends_operand(tokens: &[Token], text: &str) -> bool {
-    let Some(&last) = tokens.last() else { return false };
+    let Some(&last) = tokens.last() else {
+        return false;
+    };
     match last.kind {
         TokenKind::Number | TokenKind::String | TokenKind::QuotedIdentifier => true,
-        TokenKind::Word => !is_reserved(raw(text, last)) || is_word(text, Some(&last), OPERAND_WORDS),
+        TokenKind::Word => {
+            !is_reserved(raw(text, last)) || is_word(text, Some(&last), OPERAND_WORDS)
+        }
         TokenKind::Punctuation if is_punctuation(text, last, b')') => true,
         TokenKind::Punctuation if is_punctuation(text, last, b'*') => {
             let before = tokens.len().checked_sub(2).map(|index| tokens[index]);
             before.is_none_or(|token| {
-                is_punctuation(text, token, b',') || is_word(text, Some(&token), &["SELECT", "DISTINCT"])
+                is_punctuation(text, token, b',')
+                    || is_word(text, Some(&token), &["SELECT", "DISTINCT"])
             })
         }
         _ => false,
@@ -206,13 +258,21 @@ fn ends_operand(tokens: &[Token], text: &str) -> bool {
 }
 
 fn position(tokens: &[Token], text: &str) -> Position {
-    let Some(last) = tokens.last() else { return Position::StatementStart };
+    let Some(last) = tokens.last() else {
+        return Position::StatementStart;
+    };
     if is_word(text, Some(last), &["AS"]) {
         return Position::NewName;
     }
 
     let operand = ends_operand(tokens, text);
-    let after_expression = || if operand { Position::AfterOperand } else { Position::Expression };
+    let after_expression = || {
+        if operand {
+            Position::AfterOperand
+        } else {
+            Position::Expression
+        }
+    };
     let mut depth = 0usize;
 
     for (index, token) in tokens.iter().enumerate().rev() {
@@ -251,7 +311,9 @@ fn relation_position(tokens: &[Token], index: usize, text: &str) -> Position {
     if index + 1 == tokens.len() {
         return Position::Relation;
     }
-    let after_comma = tokens.last().is_some_and(|last| is_punctuation(text, *last, b','));
+    let after_comma = tokens
+        .last()
+        .is_some_and(|last| is_punctuation(text, *last, b','));
     if after_comma && is_word(text, Some(&tokens[index]), &["FROM"]) {
         return Position::Relation;
     }
@@ -276,7 +338,11 @@ fn insert_target(tokens: &[Token], text: &str) -> Option<Reference> {
     }
     let mut parts = parts.into_iter();
     let name = parts.next()?;
-    Some(Reference { schema: parts.next(), name: Some(name), alias: None })
+    Some(Reference {
+        schema: parts.next(),
+        name: Some(name),
+        alias: None,
+    })
 }
 
 struct Group {
@@ -293,8 +359,16 @@ fn visible_references(
     boundary: usize,
     partial: Option<usize>,
 ) -> Vec<Reference> {
-    let reader = Reader { tokens, text, partial };
-    let mut groups = vec![Group { parent: None, in_from: false, derived: false }];
+    let reader = Reader {
+        tokens,
+        text,
+        partial,
+    };
+    let mut groups = vec![Group {
+        parent: None,
+        in_from: false,
+        derived: false,
+    }];
     let mut current = 0;
     let mut cursor_group = None;
     let mut found: Vec<(usize, Reference)> = Vec::new();
@@ -304,14 +378,20 @@ fn visible_references(
         if index >= boundary && cursor_group.is_none() {
             cursor_group = Some(current);
         }
-        let Some(token) = tokens.get(index) else { break };
+        let Some(token) = tokens.get(index) else {
+            break;
+        };
 
         if is_punctuation(text, *token, b'(') {
             let after_from_word = index > 0
                 && groups[current].in_from
                 && (is_punctuation(text, tokens[index - 1], b',')
                     || is_word(text, Some(&tokens[index - 1]), &["FROM", "JOIN"]));
-            groups.push(Group { parent: Some(current), in_from: false, derived: after_from_word });
+            groups.push(Group {
+                parent: Some(current),
+                in_from: false,
+                derived: after_from_word,
+            });
             current = groups.len() - 1;
         } else if is_punctuation(text, *token, b')') {
             if let Some(parent) = groups[current].parent {
@@ -320,7 +400,14 @@ fn visible_references(
                 if derived {
                     let (next, alias) = reader.alias(index + 1);
                     if alias.is_some() {
-                        found.push((current, Reference { schema: None, name: None, alias }));
+                        found.push((
+                            current,
+                            Reference {
+                                schema: None,
+                                name: None,
+                                alias,
+                            },
+                        ));
                     }
                     index = next;
                     continue;
@@ -349,7 +436,11 @@ fn visible_references(
         chain.push(id);
         group = groups[id].parent;
     }
-    found.into_iter().filter(|(id, _)| chain.contains(id)).map(|(_, found)| found).collect()
+    found
+        .into_iter()
+        .filter(|(id, _)| chain.contains(id))
+        .map(|(_, found)| found)
+        .collect()
 }
 
 struct Reader<'a> {
@@ -361,7 +452,10 @@ struct Reader<'a> {
 impl Reader<'_> {
     fn is_name(&self, index: usize) -> bool {
         Some(index) != self.partial
-            && self.tokens.get(index).is_some_and(|token| is_identifier(self.text, *token))
+            && self
+                .tokens
+                .get(index)
+                .is_some_and(|token| is_identifier(self.text, *token))
     }
 
     /// Reads `[schema.]name [[AS] alias]`.
@@ -379,7 +473,14 @@ impl Reader<'_> {
                 let (next, alias) = self.alias(index);
                 let name = parts.pop();
                 let schema = parts.pop();
-                return (next, Some(Reference { schema, name, alias }));
+                return (
+                    next,
+                    Some(Reference {
+                        schema,
+                        name,
+                        alias,
+                    }),
+                );
             }
             index += 1;
         }
@@ -457,10 +558,14 @@ fn item_name(tokens: &[Token], text: &str) -> Option<String> {
     let before = tokens.len().checked_sub(2).map(|index| tokens[index]);
     // `a`, `t.a`, `expression AS a`, and `expression a` all end with the name.
     let plain = tokens.len() == 1
-        || before.is_some_and(|token| is_punctuation(text, token, b'.') || is_word(text, Some(&token), &["AS"]));
+        || before.is_some_and(|token| {
+            is_punctuation(text, token, b'.') || is_word(text, Some(&token), &["AS"])
+        });
     let after_operand = before.is_some_and(|token| {
-        matches!(token.kind, TokenKind::Number | TokenKind::String | TokenKind::QuotedIdentifier)
-            || is_punctuation(text, token, b')')
+        matches!(
+            token.kind,
+            TokenKind::Number | TokenKind::String | TokenKind::QuotedIdentifier
+        ) || is_punctuation(text, token, b')')
             || (token.kind == TokenKind::Word && !is_reserved(raw(text, token)))
     });
     (plain || after_operand).then(|| identifier(text, last))
@@ -482,7 +587,13 @@ fn select_columns(tokens: &[Token], text: &str) -> Vec<String> {
             depth += 1;
         } else if is_punctuation(text, token, b')') {
             depth = depth.saturating_sub(1);
-        } else if depth == 0 && is_word(text, Some(&token), &["FROM", "UNION", "INTERSECT", "EXCEPT"]) {
+        } else if depth == 0
+            && is_word(
+                text,
+                Some(&token),
+                &["FROM", "UNION", "INTERSECT", "EXCEPT"],
+            )
+        {
             break;
         } else if depth == 0 && is_punctuation(text, token, b',') {
             columns.extend(item_name(&tokens[start..index], text));
@@ -510,7 +621,10 @@ fn with_item(reader: &Reader<'_>, start: usize) -> Option<(WithItem, usize)> {
     let name = identifier(text, tokens[start]);
     let mut index = start + 1;
     let mut listed = None;
-    if tokens.get(index).is_some_and(|token| is_punctuation(text, *token, b'(')) {
+    if tokens
+        .get(index)
+        .is_some_and(|token| is_punctuation(text, *token, b'('))
+    {
         let (columns, next) = column_list(reader, index)?;
         listed = Some(columns);
         index = next;
@@ -521,19 +635,32 @@ fn with_item(reader: &Reader<'_>, start: usize) -> Option<(WithItem, usize)> {
     index += 1;
     index += usize::from(is_word(text, tokens.get(index), &["NOT"]));
     index += usize::from(is_word(text, tokens.get(index), &["MATERIALIZED"]));
-    if !tokens.get(index).is_some_and(|token| is_punctuation(text, *token, b'(')) {
+    if !tokens
+        .get(index)
+        .is_some_and(|token| is_punctuation(text, *token, b'('))
+    {
         return None;
     }
     let end = closing(tokens, text, index);
     let body = index + 1..end;
     let columns = listed.unwrap_or_else(|| select_columns(&tokens[body.clone()], text));
-    Some((WithItem { cte: Cte { name, columns }, body }, end + 1))
+    Some((
+        WithItem {
+            cte: Cte { name, columns },
+            body,
+        },
+        end + 1,
+    ))
 }
 
 /// Returns the names of `WITH` at the cursor. A name is visible in the later items and
 /// in the query of its clause. With `RECURSIVE`, it is also visible in its own body.
 fn visible_ctes(tokens: &[Token], text: &str, boundary: usize, partial: Option<usize>) -> Vec<Cte> {
-    let reader = Reader { tokens, text, partial };
+    let reader = Reader {
+        tokens,
+        text,
+        partial,
+    };
     let mut found: Vec<Cte> = Vec::new();
     for start in 0..tokens.len() {
         if !is_word(text, tokens.get(start), &["WITH"]) {
@@ -553,7 +680,10 @@ fn visible_ctes(tokens: &[Token], text: &str, boundary: usize, partial: Option<u
                 found.retain(|cte| !cte.name.eq_ignore_ascii_case(&item.cte.name));
                 found.insert(0, item.cte);
             }
-            if !tokens.get(next).is_some_and(|token| is_punctuation(text, *token, b',')) {
+            if !tokens
+                .get(next)
+                .is_some_and(|token| is_punctuation(text, *token, b','))
+            {
                 break;
             }
             index = next + 1;

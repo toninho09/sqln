@@ -1,5 +1,5 @@
-use super::lexer::{Lexer, Token, TokenKind};
 use super::Dialect;
+use super::lexer::{Lexer, Token, TokenKind};
 
 /// A sequence of tokens that the splitter can move forward.
 trait TokenSource {
@@ -30,7 +30,11 @@ impl TokenSource for TokenSlice<'_> {
     }
 
     fn seek(&mut self, position: usize) {
-        while self.tokens.get(self.index).is_some_and(|token| token.start < position) {
+        while self
+            .tokens
+            .get(self.index)
+            .is_some_and(|token| token.start < position)
+        {
             self.index += 1;
         }
     }
@@ -151,7 +155,9 @@ fn split_source(sql: &str, dialect: Dialect, source: &mut impl TokenSource) -> V
             && token.kind == TokenKind::Word
             && word.eq_ignore_ascii_case("DELIMITER")
         {
-            let line_end = sql[token.start..].find('\n').map_or(sql.len(), |at| token.start + at);
+            let line_end = sql[token.start..]
+                .find('\n')
+                .map_or(sql.len(), |at| token.start + at);
             let value = sql[token.end..line_end].trim();
             if !value.is_empty() {
                 delimiter = value;

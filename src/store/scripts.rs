@@ -30,7 +30,14 @@ pub struct ScriptMeta {
 
 impl ScriptMeta {
     pub fn new(id: String, name: String, connection_id: String, scope: Scope) -> Self {
-        Self { version: VERSION, id, name, connection_id, connection_scope: scope, schema: None }
+        Self {
+            version: VERSION,
+            id,
+            name,
+            connection_id,
+            connection_scope: scope,
+            schema: None,
+        }
     }
 }
 
@@ -79,15 +86,25 @@ fn meta_file(root: &Root, id: &str) -> PathBuf {
 
 /// Returns true when the text can be the name of a file of a script.
 fn is_safe_id(id: &str) -> bool {
-    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// Lists the scripts of a folder, the newest first. A file that cannot be read stays out.
 pub fn list(root: &Root, scope: Scope) -> Vec<ScriptEntry> {
-    let Ok(entries) = fs::read_dir(root.consoles_dir()) else { return Vec::new() };
+    let Ok(entries) = fs::read_dir(root.consoles_dir()) else {
+        return Vec::new();
+    };
     let mut scripts: Vec<ScriptEntry> = entries
         .flatten()
-        .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "json"))
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "json")
+        })
         .filter_map(|entry| {
             let meta: ScriptMeta = serde_json::from_slice(&fs::read(entry.path()).ok()?).ok()?;
             let stem = entry.path().file_stem()?.to_str()?.to_owned();
@@ -97,10 +114,18 @@ pub fn list(root: &Root, scope: Scope) -> Vec<ScriptEntry> {
             let modified = [sql_file(root, &meta.id), entry.path()]
                 .iter()
                 .find_map(|path| fs::metadata(path).and_then(|meta| meta.modified()).ok());
-            Some(ScriptEntry { meta, scope, modified })
+            Some(ScriptEntry {
+                meta,
+                scope,
+                modified,
+            })
         })
         .collect();
-    scripts.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.meta.name.cmp(&b.meta.name)));
+    scripts.sort_by(|a, b| {
+        b.modified
+            .cmp(&a.modified)
+            .then_with(|| a.meta.name.cmp(&b.meta.name))
+    });
     scripts
 }
 

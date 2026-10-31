@@ -202,7 +202,11 @@ impl SqlEditor {
                 self.anchor = None;
                 self.vim_shadow = Some(self.state.lines.clone());
                 let selected = self.state.selection.is_some();
-                self.state.mode = if selected { EditorMode::Visual } else { EditorMode::Normal };
+                self.state.mode = if selected {
+                    EditorMode::Visual
+                } else {
+                    EditorMode::Normal
+                };
                 let last = self.state.lines.len_col(self.state.cursor.row).unwrap_or(0);
                 self.state.cursor.col = self.state.cursor.col.min(last.saturating_sub(1));
             }
@@ -210,7 +214,8 @@ impl SqlEditor {
                 self.vim_shadow = None;
                 self.state.mode = EditorMode::Insert;
                 if let Some(selection) = self.state.selection.take() {
-                    let forward = (selection.start.row, selection.start.col) <= (selection.end.row, selection.end.col);
+                    let forward = (selection.start.row, selection.start.col)
+                        <= (selection.end.row, selection.end.col);
                     let (first, last) = if forward {
                         (selection.start, selection.end)
                     } else {
@@ -310,14 +315,16 @@ impl SqlEditor {
     fn snapshot(&mut self) -> &Snapshot {
         let revision = self.revision;
         let current = self.snapshot.take_if(|(cached, _)| *cached == revision);
-        let cached = current
-            .unwrap_or_else(|| (revision, Snapshot::new(&self.state.lines, self.dialect)));
+        let cached =
+            current.unwrap_or_else(|| (revision, Snapshot::new(&self.state.lines, self.dialect)));
         &self.snapshot.insert(cached).1
     }
 
     /// Handles a key for the open list. It returns false when other handlers must act.
     pub fn on_list_key(&mut self, key: KeyEvent, keys: SuggestionKeys) -> bool {
-        let Some(list) = &mut self.list else { return false };
+        let Some(list) = &mut self.list else {
+            return false;
+        };
         if keys.accepts(key) {
             self.accept_suggestion();
             return true;
@@ -344,7 +351,9 @@ impl SqlEditor {
 
     fn accept_suggestion(&mut self) {
         let Some(list) = self.list.take() else { return };
-        let Some(item) = list.completion.items.get(list.selected) else { return };
+        let Some(item) = list.completion.items.get(list.selected) else {
+            return;
+        };
         let snapshot = self.snapshot();
         let start = snapshot.position(list.completion.replace.start);
         let end = snapshot.position(list.completion.replace.end);
@@ -420,8 +429,10 @@ impl SqlEditor {
                 self.missing_columns.push(relation.clone());
             }
         }
-        self.list = (!completion.items.is_empty())
-            .then_some(SuggestionList { completion, selected: 0 });
+        self.list = (!completion.items.is_empty()).then_some(SuggestionList {
+            completion,
+            selected: 0,
+        });
     }
 
     pub fn close_suggestions(&mut self) {
@@ -440,14 +451,20 @@ impl SqlEditor {
     fn selection_range(&self) -> Option<(Index2, Index2)> {
         match self.keyboard {
             KeyboardMode::Conventional => self.selected_range(),
-            KeyboardMode::Vim => self.state.selection.is_some().then(|| self.replace_target()),
+            KeyboardMode::Vim => self
+                .state
+                .selection
+                .is_some()
+                .then(|| self.replace_target()),
         }
     }
 
     /// Finds the statements of an execution, and it copies their text.
     pub fn plan_run(&mut self, scope: RunScope) -> Result<RunPlan, RunRefusal> {
         let dialect = self.dialect;
-        let selection = (scope == RunScope::Default).then(|| self.selection_range()).flatten();
+        let selection = (scope == RunScope::Default)
+            .then(|| self.selection_range())
+            .flatten();
         let cursor = self.state.cursor;
         let snapshot = self.snapshot();
         let text = snapshot.text.as_str();
@@ -466,8 +483,14 @@ impl SqlEditor {
         }
         let source = &text[base..];
         Ok(RunPlan {
-            statements: found.iter().map(|found| found.text(source).to_owned()).collect(),
-            rows: found.iter().map(|found| snapshot.position(base + found.start).row).collect(),
+            statements: found
+                .iter()
+                .map(|found| found.text(source).to_owned())
+                .collect(),
+            rows: found
+                .iter()
+                .map(|found| snapshot.position(base + found.start).row)
+                .collect(),
             starts: found.iter().map(|found| base + found.start).collect(),
         })
     }
@@ -508,7 +531,9 @@ impl SqlEditor {
         if self.revision != self.plan_revision {
             return;
         }
-        let Some(mark) = self.marks.iter().find(|mark| mark.index == index) else { return };
+        let Some(mark) = self.marks.iter().find(|mark| mark.index == index) else {
+            return;
+        };
         let (at, statement_end) = (mark.start + offset, mark.start + mark.text.len());
         let revision = self.revision;
         let tokens = &self.snapshot().tokens;
@@ -517,8 +542,11 @@ impl SqlEditor {
             .get(next)
             .filter(|token| token.start <= at && at < statement_end)
             .or_else(|| tokens[..next].last());
-        self.error_spot =
-            token.map(|token| ErrorSpot { start: token.start, end: token.end, revision });
+        self.error_spot = token.map(|token| ErrorSpot {
+            start: token.start,
+            end: token.end,
+            revision,
+        });
     }
 
     pub fn set_mark_state(&mut self, index: usize, state: MarkState) {
@@ -601,7 +629,9 @@ impl SqlEditor {
         self.leave_visual_mode();
         if self.keyboard == KeyboardMode::Vim && self.state.mode == EditorMode::Normal {
             let cursor = self.state.cursor;
-            let last_col = buffer::row(&self.state.lines, cursor.row).len().saturating_sub(1);
+            let last_col = buffer::row(&self.state.lines, cursor.row)
+                .len()
+                .saturating_sub(1);
             self.state.cursor.col = cursor.col.min(last_col);
         }
     }
@@ -613,7 +643,9 @@ impl SqlEditor {
         }
         let Some(selection) = &self.state.selection else {
             let cursor = self.state.cursor;
-            let col = cursor.col.min(buffer::row(&self.state.lines, cursor.row).len());
+            let col = cursor
+                .col
+                .min(buffer::row(&self.state.lines, cursor.row).len());
             return (Index2::new(cursor.row, col), Index2::new(cursor.row, col));
         };
         let end = selection.end();
@@ -657,7 +689,9 @@ impl SqlEditor {
     }
 
     fn copy_selection(&mut self) {
-        let Some(text) = self.selected_text() else { return };
+        let Some(text) = self.selected_text() else {
+            return;
+        };
         let outcome = self.clipboard.borrow_mut().copy(&text);
         self.status = match outcome {
             CopyOutcome::Copied => None,
@@ -667,7 +701,9 @@ impl SqlEditor {
     }
 
     fn cut_selection(&mut self) {
-        let Some((start, end)) = self.selected_range() else { return };
+        let Some((start, end)) = self.selected_range() else {
+            return;
+        };
         self.copy_selection();
         if self.status != Some(text::COPY_FAILED) {
             self.edit(start, end, "", EditKind::Other);
@@ -706,7 +742,9 @@ impl SqlEditor {
 
     fn point_vim(&mut self, mouse: MouseEvent, position: Index2) {
         self.handler.on_mouse_event(mouse, &mut self.state);
-        let last_col = buffer::row(&self.state.lines, position.row).len().saturating_sub(1);
+        let last_col = buffer::row(&self.state.lines, position.row)
+            .len()
+            .saturating_sub(1);
         self.state.cursor = Index2::new(position.row, position.col.min(last_col));
         if let Some(selection) = &mut self.state.selection {
             selection.end = self.state.cursor;
@@ -729,7 +767,11 @@ impl SqlEditor {
         let chars = buffer::row(&self.state.lines, row);
         let mut width = 0;
         for (col, c) in chars.iter().enumerate().skip(offset_x) {
-            width += if *c == '\t' { TAB_WIDTH } else { c.width().unwrap_or(0) };
+            width += if *c == '\t' {
+                TAB_WIDTH
+            } else {
+                c.width().unwrap_or(0)
+            };
             if width > wanted {
                 return Some(Index2::new(row, col));
             }
@@ -765,7 +807,9 @@ impl SqlEditor {
     }
 
     fn on_search_key(&mut self, key: KeyEvent) {
-        let Some(search) = &mut self.search else { return };
+        let Some(search) = &mut self.search else {
+            return;
+        };
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => {
@@ -805,7 +849,9 @@ impl SqlEditor {
 
     fn replace_current(&mut self) {
         let Some(search) = &self.search else { return };
-        let Some(found) = search.current_match() else { return };
+        let Some(found) = search.current_match() else {
+            return;
+        };
         let replacement = search.replace.clone();
         self.break_undo_group();
         self.edit(found.start, found.end, &replacement, EditKind::Other);
@@ -864,11 +910,17 @@ impl SqlEditor {
         let snapshot = self.snapshot();
         if let Some((start, end)) = spot {
             let start = snapshot.position(start);
-            highlights.push(Highlight::new(start, snapshot.position_before(end), theme.error_spot));
+            highlights.push(Highlight::new(
+                start,
+                snapshot.position_before(end),
+                theme.error_spot,
+            ));
         }
         let visible_start = snapshot.line_start(top);
         let visible_end = snapshot.line_start(top + height + 1);
-        let first = snapshot.tokens.partition_point(|token| token.end <= visible_start);
+        let first = snapshot
+            .tokens
+            .partition_point(|token| token.end <= visible_start);
         for token in &snapshot.tokens[first..] {
             if token.start >= visible_end {
                 break;
@@ -890,15 +942,22 @@ impl SqlEditor {
     }
 
     fn search_highlights(&self, top: usize, height: usize, theme: &Theme) -> Vec<Highlight> {
-        let Some(search) = &self.search else { return Vec::new() };
+        let Some(search) = &self.search else {
+            return Vec::new();
+        };
         let current = search.current_match();
-        let first = search.matches.partition_point(|found| found.start.row < top);
+        let first = search
+            .matches
+            .partition_point(|found| found.start.row < top);
         search.matches[first..]
             .iter()
             .take_while(|found| found.start.row <= top + height)
             .map(|found| {
-                let style =
-                    if Some(*found) == current { theme.search_current } else { theme.search_match };
+                let style = if Some(*found) == current {
+                    theme.search_current
+                } else {
+                    theme.search_match
+                };
                 let end = Index2::new(found.end.row, found.end.col - 1);
                 Highlight::new(found.start, end, style)
             })

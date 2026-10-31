@@ -850,12 +850,18 @@ fn without_a_vault_the_save_option_warns_and_writes_only_the_global_file() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(fs::metadata(&secrets).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(&secrets).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
     let config = fs::read_to_string(f.store.global.config_file()).unwrap();
     assert!(!config.contains(PASSWORD));
     assert!(config.contains("globalPlainText"));
-    assert_eq!(f.app.connections()[0].credential, CredentialName::GlobalPlainText);
+    assert_eq!(
+        f.app.connections()[0].credential,
+        CredentialName::GlobalPlainText
+    );
     assert_eq!(f.vault.state.lock().unwrap().writes, 0);
 }
 
@@ -875,7 +881,9 @@ fn an_unmarked_save_option_writes_nothing_without_a_vault() {
 fn a_plain_text_password_answers_without_a_prompt_when_no_vault_exists() {
     let mut f = Fixture::new(CredentialName::GlobalPlainText, true);
     f.vault.state.lock().unwrap().read_error = Some(VaultError::Absent);
-    plain_file(&f).write(&f.identity(), &Secret::new(PASSWORD)).unwrap();
+    plain_file(&f)
+        .write(&f.identity(), &Secret::new(PASSWORD))
+        .unwrap();
     f.run();
     f.idle();
     assert_eq!(f.password(), Some(PASSWORD));
@@ -894,7 +902,9 @@ fn a_locked_vault_never_uses_the_plain_text_password() {
     for error in [VaultError::NoAccess, VaultError::Failed] {
         let mut f = Fixture::new(CredentialName::Vault, true);
         f.vault.state.lock().unwrap().read_error = Some(error);
-        plain_file(&f).write(&f.identity(), &Secret::new(PASSWORD)).unwrap();
+        plain_file(&f)
+            .write(&f.identity(), &Secret::new(PASSWORD))
+            .unwrap();
         f.run();
         f.sees("System vault");
         assert!(!f.screen().contains("plain text"));
@@ -924,7 +934,10 @@ fn a_failed_write_offers_plain_text_only_when_no_vault_exists() {
     choose(&mut f, 3);
     f.idle();
     assert!(f.store.global.credentials_file().exists());
-    assert_eq!(f.app.connections()[0].credential, CredentialName::GlobalPlainText);
+    assert_eq!(
+        f.app.connections()[0].credential,
+        CredentialName::GlobalPlainText
+    );
 }
 
 #[test]
@@ -943,13 +956,19 @@ fn a_project_connection_stores_the_plain_password_only_in_the_global_folder() {
     assert!(!config.contains(PASSWORD));
     assert!(!config.contains("globalPlainText"));
     assert_eq!(f.app.connections()[0].credential, CredentialName::Vault);
-    assert!(fs::read_to_string(f.store.global.credentials_file()).unwrap().contains(PASSWORD));
+    assert!(
+        fs::read_to_string(f.store.global.credentials_file())
+            .unwrap()
+            .contains(PASSWORD)
+    );
 }
 
 #[test]
 fn a_migration_removes_the_source_only_after_the_vault_answers() {
     let mut f = Fixture::new(CredentialName::GlobalPlainText, true);
-    plain_file(&f).write(&f.identity(), &Secret::new(PASSWORD)).unwrap();
+    plain_file(&f)
+        .write(&f.identity(), &Secret::new(PASSWORD))
+        .unwrap();
     f.run();
     f.sees("Move the password to the vault");
     choose(&mut f, 1);
@@ -960,14 +979,23 @@ fn a_migration_removes_the_source_only_after_the_vault_answers() {
     f.idle();
     assert!(!f.store.global.credentials_file().exists());
     assert_eq!(f.app.connections()[0].credential, CredentialName::Vault);
-    assert!(f.vault.state.lock().unwrap().values.contains_key(&f.identity()));
+    assert!(
+        f.vault
+            .state
+            .lock()
+            .unwrap()
+            .values
+            .contains_key(&f.identity())
+    );
 }
 
 #[test]
 fn a_failed_migration_keeps_the_source_and_says_so() {
     let mut f = Fixture::new(CredentialName::GlobalPlainText, true);
     f.vault.state.lock().unwrap().write_error = Some(VaultError::Failed);
-    plain_file(&f).write(&f.identity(), &Secret::new(PASSWORD)).unwrap();
+    plain_file(&f)
+        .write(&f.identity(), &Secret::new(PASSWORD))
+        .unwrap();
     f.run();
     f.sees("Move the password to the vault");
     choose(&mut f, 1);
@@ -975,13 +1003,19 @@ fn a_failed_migration_keeps_the_source_and_says_so() {
     choose(&mut f, 0);
     f.idle();
     assert_eq!(f.password(), Some(PASSWORD));
-    assert!(fs::read_to_string(f.store.global.credentials_file()).unwrap().contains(PASSWORD));
+    assert!(
+        fs::read_to_string(f.store.global.credentials_file())
+            .unwrap()
+            .contains(PASSWORD)
+    );
 }
 
 #[test]
 fn a_migration_can_keep_the_plain_text_copy() {
     let mut f = Fixture::new(CredentialName::GlobalPlainText, true);
-    plain_file(&f).write(&f.identity(), &Secret::new(PASSWORD)).unwrap();
+    plain_file(&f)
+        .write(&f.identity(), &Secret::new(PASSWORD))
+        .unwrap();
     f.run();
     f.sees("Move the password to the vault");
     choose(&mut f, 1);
@@ -989,14 +1023,26 @@ fn a_migration_can_keep_the_plain_text_copy() {
     choose(&mut f, 0);
     f.idle();
     assert!(f.store.global.credentials_file().exists());
-    assert!(f.vault.state.lock().unwrap().values.contains_key(&f.identity()));
+    assert!(
+        f.vault
+            .state
+            .lock()
+            .unwrap()
+            .values
+            .contains_key(&f.identity())
+    );
 }
 
 #[test]
 fn the_separate_deletion_asks_and_removes_the_saved_password() {
     let mut f = Fixture::new(CredentialName::Vault, true);
     let identity = f.identity();
-    f.vault.state.lock().unwrap().values.insert(identity.clone(), Secret::new(PASSWORD));
+    f.vault
+        .state
+        .lock()
+        .unwrap()
+        .values
+        .insert(identity.clone(), Secret::new(PASSWORD));
     f.prefix('h');
     f.code(KeyCode::Char('p'));
     f.sees("Delete saved password");
@@ -1014,7 +1060,9 @@ fn the_separate_deletion_asks_and_removes_the_saved_password() {
 #[test]
 fn the_separate_deletion_also_removes_a_plain_text_password() {
     let mut f = Fixture::new(CredentialName::GlobalPlainText, true);
-    plain_file(&f).write(&f.identity(), &Secret::new(PASSWORD)).unwrap();
+    plain_file(&f)
+        .write(&f.identity(), &Secret::new(PASSWORD))
+        .unwrap();
     f.prefix('h');
     f.code(KeyCode::Char('p'));
     f.sees("Delete saved password");
@@ -1027,7 +1075,12 @@ fn the_separate_deletion_also_removes_a_plain_text_password() {
 fn removing_a_connection_offers_the_deletion_and_keeps_the_password_by_default() {
     let mut f = Fixture::new(CredentialName::Vault, true);
     let identity = f.identity();
-    f.vault.state.lock().unwrap().values.insert(identity.clone(), Secret::new(PASSWORD));
+    f.vault
+        .state
+        .lock()
+        .unwrap()
+        .values
+        .insert(identity.clone(), Secret::new(PASSWORD));
     f.prefix('h');
     f.code(KeyCode::Delete);
     f.sees("Remove connection");
@@ -1044,7 +1097,12 @@ const WAIT_MESSAGE: &str = "Preparing credentials";
 fn the_credential_message_lasts_as_long_as_the_wait_and_ends_with_it() {
     let mut f = Fixture::new(CredentialName::Vault, true);
     let identity = f.identity();
-    f.vault.state.lock().unwrap().values.insert(identity, Secret::new(PASSWORD));
+    f.vault
+        .state
+        .lock()
+        .unwrap()
+        .values
+        .insert(identity, Secret::new(PASSWORD));
     *f.vault.blocked.lock().unwrap() = true;
     f.run();
     f.wait(|f| f.vault.state.lock().unwrap().reads == 1);
@@ -1070,7 +1128,12 @@ fn the_credential_message_gives_way_to_the_hint_of_the_password_prompt() {
 fn a_table_of_the_last_session_reads_no_password_until_the_user_asks() {
     let mut f = Fixture::new(CredentialName::Vault, true);
     let identity = f.identity();
-    f.vault.state.lock().unwrap().values.insert(identity, Secret::new(PASSWORD));
+    f.vault
+        .state
+        .lock()
+        .unwrap()
+        .values
+        .insert(identity, Secret::new(PASSWORD));
     let table = OpenTab::Table {
         scope: Scope::Global,
         connection: ID.to_owned(),
@@ -1078,11 +1141,18 @@ fn a_table_of_the_last_session_reads_no_password_until_the_user_asks() {
         relation: "users".to_owned(),
         view: false,
     };
-    let tabs = OpenTabs { tabs: vec![table], active: Some(0) };
+    let tabs = OpenTabs {
+        tabs: vec![table],
+        active: Some(0),
+    };
     workspace::update(&f.store.global, |file| file.open_tabs = Some(tabs)).unwrap();
 
     f.app = App::new(
-        Options { store: Some(f.store.clone()), vault: Some(f.vault.clone()), ..Options::default() },
+        Options {
+            store: Some(f.store.clone()),
+            vault: Some(f.vault.clone()),
+            ..Options::default()
+        },
         Rc::new(RefCell::new(MemoryClipboard::default())),
         Theme::plain(),
     );
@@ -1090,8 +1160,16 @@ fn a_table_of_the_last_session_reads_no_password_until_the_user_asks() {
         f.step();
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(f.screen().contains("Enter loads the rows."), "{}", f.screen());
-    assert_eq!(f.vault.state.lock().unwrap().reads, 0, "the start reads no password");
+    assert!(
+        f.screen().contains("Enter loads the rows."),
+        "{}",
+        f.screen()
+    );
+    assert_eq!(
+        f.vault.state.lock().unwrap().reads,
+        0,
+        "the start reads no password"
+    );
 
     f.code(KeyCode::Enter);
     f.wait(|f| f.vault.state.lock().unwrap().reads == 1);
@@ -1101,7 +1179,12 @@ fn a_table_of_the_last_session_reads_no_password_until_the_user_asks() {
 fn the_time_of_a_run_does_not_count_the_wait_for_credentials() {
     let mut f = Fixture::new(CredentialName::Vault, true);
     let identity = f.identity();
-    f.vault.state.lock().unwrap().values.insert(identity, Secret::new(PASSWORD));
+    f.vault
+        .state
+        .lock()
+        .unwrap()
+        .values
+        .insert(identity, Secret::new(PASSWORD));
     *f.vault.blocked.lock().unwrap() = true;
     f.run();
     f.wait(|f| f.vault.state.lock().unwrap().reads == 1);

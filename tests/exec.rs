@@ -55,7 +55,13 @@ impl Harness {
         let (mut manager, events) = Manager::new(budget.clone()).unwrap();
         let connection = manager.add_connection(connector, settings);
         let console = manager.open_console(connection).unwrap();
-        Self { manager, events, budget, connection, console }
+        Self {
+            manager,
+            events,
+            budget,
+            connection,
+            console,
+        }
     }
 
     fn next(&mut self) -> ExecEvent {
@@ -80,14 +86,18 @@ impl Harness {
                 }
                 ExecEvent::StatementFinished { status, end, .. } => {
                     run.statuses.push(status);
-                    run.limits.push(end.map_or(ReadLimit::None, |end| end.limit));
+                    run.limits
+                        .push(end.map_or(ReadLimit::None, |end| end.limit));
                     run.changed.push(end.and_then(|end| end.changed));
                 }
                 ExecEvent::TransactionChanged { state, .. } => run.transaction = Some(state),
                 ExecEvent::ConfirmClose { .. } => run.confirm_close = true,
-                ExecEvent::ExecutionFinished { execution: finished, end, message, .. }
-                    if finished == execution =>
-                {
+                ExecEvent::ExecutionFinished {
+                    execution: finished,
+                    end,
+                    message,
+                    ..
+                } if finished == execution => {
                     run.end = Some(end);
                     run.message = message;
                     return run;
@@ -99,7 +109,14 @@ impl Harness {
 
     fn run_on(&mut self, console: ConsoleId, statements: &[&str], manual: bool) -> Run {
         let statements = statements.iter().map(|sql| (*sql).to_owned()).collect();
-        let execution = self.manager.run(console, statements, RunOptions { manual, ..RunOptions::default() });
+        let execution = self.manager.run(
+            console,
+            statements,
+            RunOptions {
+                manual,
+                ..RunOptions::default()
+            },
+        );
         self.collect(execution)
     }
 
@@ -148,14 +165,24 @@ fn a_result_without_rows_keeps_its_columns() {
 fn invalid_utf8_text_stays_as_bytes() {
     let mut h = Harness::open("bytes", Settings::default());
     let value = h.cell("SELECT CAST(x'FF00' AS TEXT)");
-    assert!(matches!(value, Value::Binary(_) | Value::Text(_)), "{value:?}");
-    assert_eq!(h.cell("SELECT CAST(x'FF41' AS TEXT)"), Value::Binary(Box::from([0xFF, 0x41])));
+    assert!(
+        matches!(value, Value::Binary(_) | Value::Text(_)),
+        "{value:?}"
+    );
+    assert_eq!(
+        h.cell("SELECT CAST(x'FF41' AS TEXT)"),
+        Value::Binary(Box::from([0xFF, 0x41]))
+    );
 }
 
 #[test]
 fn changes_report_their_row_count() {
     let mut h = Harness::open("changes", Settings::default());
-    let run = h.run(&["CREATE TABLE t(a)", "INSERT INTO t VALUES (1), (2), (3)", "DELETE FROM t WHERE a > 1"]);
+    let run = h.run(&[
+        "CREATE TABLE t(a)",
+        "INSERT INTO t VALUES (1), (2), (3)",
+        "DELETE FROM t WHERE a > 1",
+    ]);
     assert_eq!(run.statuses, success(3));
     assert_eq!(&run.changed[1..], [Some(3), Some(2)]);
 }
@@ -171,17 +198,33 @@ fn the_script_stops_at_the_first_error() {
     ]);
     assert_eq!(run.end, Some(ExecutionEnd::Failed));
     assert_eq!(run.statuses[..2], success(2));
-    assert!(matches!(&run.statuses[2], StatementStatus::Error(message) if message.contains("missing")));
+    assert!(
+        matches!(&run.statuses[2], StatementStatus::Error(message) if message.contains("missing"))
+    );
     assert_eq!(run.statuses[3], StatementStatus::NotExecuted);
-    assert_eq!(h.cell("SELECT count(*) FROM t"), number("1"), "the first insert stays");
+    assert_eq!(
+        h.cell("SELECT count(*) FROM t"),
+        number("1"),
+        "the first insert stays"
+    );
 }
 
 #[test]
 fn the_row_cap_ends_a_large_read_quickly() {
-    let mut h = Harness::open("cap", Settings { row_cap: 1_000, ..Settings::default() });
+    let mut h = Harness::open(
+        "cap",
+        Settings {
+            row_cap: 1_000,
+            ..Settings::default()
+        },
+    );
     let started = Instant::now();
     let run = h.run(&[HUGE_SELECT, "SELECT 2"]);
-    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
     assert_eq!(run.rows.len(), 1_001, "1,000 rows and the second statement");
     assert_eq!(run.limits, [ReadLimit::RowCap, ReadLimit::None]);
     assert_eq!(run.statuses, success(2));
@@ -189,7 +232,13 @@ fn the_row_cap_ends_a_large_read_quickly() {
 
 #[test]
 fn a_result_with_exactly_the_cap_has_no_limit_mark() {
-    let mut h = Harness::open("cap-exact", Settings { row_cap: 3, ..Settings::default() });
+    let mut h = Harness::open(
+        "cap-exact",
+        Settings {
+            row_cap: 3,
+            ..Settings::default()
+        },
+    );
     let run = h.run(&["SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3"]);
     assert_eq!(run.rows.len(), 3);
     assert_eq!(run.limits, [ReadLimit::None]);
@@ -197,8 +246,17 @@ fn a_result_with_exactly_the_cap_has_no_limit_mark() {
 
 #[test]
 fn the_cap_does_not_change_a_statement_with_returning() {
-    let mut h = Harness::open("returning", Settings { row_cap: 2, ..Settings::default() });
-    let run = h.run(&["CREATE TABLE t(a)", "INSERT INTO t VALUES (1), (2), (3), (4), (5) RETURNING a"]);
+    let mut h = Harness::open(
+        "returning",
+        Settings {
+            row_cap: 2,
+            ..Settings::default()
+        },
+    );
+    let run = h.run(&[
+        "CREATE TABLE t(a)",
+        "INSERT INTO t VALUES (1), (2), (3), (4), (5) RETURNING a",
+    ]);
     assert_eq!(run.rows.len(), 2);
     assert_eq!(run.limits[1], ReadLimit::RowCap);
     assert_eq!(h.cell("SELECT count(*) FROM t"), number("5"));
@@ -206,7 +264,11 @@ fn the_cap_does_not_change_a_statement_with_returning() {
 
 #[test]
 fn the_budget_ends_the_read_and_a_release_frees_it() {
-    let settings = Settings { budget_bytes: 4_096, row_cap: 1_000_000, ..Settings::default() };
+    let settings = Settings {
+        budget_bytes: 4_096,
+        row_cap: 1_000_000,
+        ..Settings::default()
+    };
     let mut h = Harness::open("budget", settings);
     let run = h.run(&[HUGE_SELECT]);
     assert_eq!(run.limits, [ReadLimit::Budget]);
@@ -219,7 +281,13 @@ fn the_budget_ends_the_read_and_a_release_frees_it() {
 
 #[test]
 fn a_value_larger_than_the_budget_is_reported() {
-    let mut h = Harness::open("oversize", Settings { budget_bytes: 16, ..Settings::default() });
+    let mut h = Harness::open(
+        "oversize",
+        Settings {
+            budget_bytes: 16,
+            ..Settings::default()
+        },
+    );
     let run = h.run(&["SELECT hex(zeroblob(1000))"]);
     assert_eq!(run.limits, [ReadLimit::ValueTooLarge]);
     assert!(run.rows.is_empty());
@@ -228,12 +296,22 @@ fn a_value_larger_than_the_budget_is_reported() {
 
 #[test]
 fn the_time_limit_applies_per_statement_and_stops_the_script() {
-    let settings = Settings { sql_timeout: Some(Duration::from_millis(100)), ..Settings::default() };
+    let settings = Settings {
+        sql_timeout: Some(Duration::from_millis(100)),
+        ..Settings::default()
+    };
     let mut h = Harness::open("timeout", settings);
     let started = Instant::now();
     let run = h.run(&[HUGE_COUNT, "SELECT 2"]);
-    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
-    assert_eq!(run.statuses, [StatementStatus::Timeout, StatementStatus::NotExecuted]);
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        run.statuses,
+        [StatementStatus::Timeout, StatementStatus::NotExecuted]
+    );
     assert_eq!(run.end, Some(ExecutionEnd::TimedOut));
     assert_eq!(h.cell("SELECT 1"), number("1"), "the next execution works");
 }
@@ -246,36 +324,55 @@ fn a_stop_interrupts_the_statement_and_the_following_ones() {
     std::thread::sleep(Duration::from_millis(100));
     h.manager.stop(h.console);
     let run = h.collect(execution);
-    assert_eq!(run.statuses, [StatementStatus::Stopped, StatementStatus::NotExecuted]);
+    assert_eq!(
+        run.statuses,
+        [StatementStatus::Stopped, StatementStatus::NotExecuted]
+    );
     assert_eq!(run.end, Some(ExecutionEnd::Stopped));
     assert_eq!(h.cell("SELECT 1"), number("1"));
 }
 
 #[test]
 fn a_stop_while_waiting_sends_no_sql() {
-    let settings = Settings { max_connections: 1, ..Settings::default() };
+    let settings = Settings {
+        max_connections: 1,
+        ..Settings::default()
+    };
     let mut h = Harness::open("queue", settings);
     h.run(&["CREATE TABLE t(a)", "BEGIN", "INSERT INTO t VALUES (1)"]);
     let other = h.manager.open_console(h.connection).unwrap();
 
-    let execution = h.manager.run(other, vec!["INSERT INTO t VALUES (2)".to_owned()], RunOptions::default());
+    let execution = h.manager.run(
+        other,
+        vec!["INSERT INTO t VALUES (2)".to_owned()],
+        RunOptions::default(),
+    );
     std::thread::sleep(Duration::from_millis(100));
     h.manager.stop(other);
     let run = h.collect(execution);
     assert_eq!(run.end, Some(ExecutionEnd::CanceledBeforeStart));
     assert!(run.statuses.is_empty());
 
-    assert_eq!(h.cell("SELECT count(*) FROM t"), number("1"), "the first console keeps its session");
+    assert_eq!(
+        h.cell("SELECT count(*) FROM t"),
+        number("1"),
+        "the first console keeps its session"
+    );
 }
 
 #[test]
 fn a_console_waits_and_runs_when_the_transaction_of_another_ends() {
-    let settings = Settings { max_connections: 1, ..Settings::default() };
+    let settings = Settings {
+        max_connections: 1,
+        ..Settings::default()
+    };
     let mut h = Harness::open("wait", settings);
     h.run(&["CREATE TABLE t(a)", "BEGIN"]);
     let other = h.manager.open_console(h.connection).unwrap();
 
-    let execution = h.manager.run(other, vec!["SELECT 7".to_owned()], RunOptions::default());
+    let execution = h
+        .manager
+        .run(other, vec!["SELECT 7".to_owned()], RunOptions::default());
     std::thread::sleep(Duration::from_millis(100));
     h.run(&["COMMIT"]);
     let run = h.collect(execution);
@@ -289,7 +386,11 @@ fn a_transaction_keeps_its_session_between_executions() {
     let run = h.run(&["BEGIN", "INSERT INTO t VALUES (1)"]);
     assert_eq!(run.transaction, Some(TransactionState::Open));
 
-    assert_eq!(h.cell("SELECT count(*) FROM t"), number("1"), "the same session sees the row");
+    assert_eq!(
+        h.cell("SELECT count(*) FROM t"),
+        number("1"),
+        "the same session sees the row"
+    );
     let other = h.manager.open_console(h.connection).unwrap();
     let run = h.run_on(other, &["SELECT count(*) FROM t"], false);
     assert_eq!(run.rows[0][0], number("0"), "another session does not");
@@ -312,10 +413,16 @@ fn an_error_inside_a_transaction_keeps_it_open() {
 #[test]
 fn the_session_stays_the_same_during_a_script_and_changes_after_it() {
     let mut h = Harness::open("session", Settings::default());
-    let run = h.run(&["CREATE TEMP TABLE t(a)", "INSERT INTO t VALUES (1)", "SELECT count(*) FROM t"]);
+    let run = h.run(&[
+        "CREATE TEMP TABLE t(a)",
+        "INSERT INTO t VALUES (1)",
+        "SELECT count(*) FROM t",
+    ]);
     assert_eq!(run.statuses, success(3));
     let run = h.run(&["SELECT count(*) FROM t"]);
-    assert!(matches!(&run.statuses[0], StatementStatus::Error(message) if message.contains("no such table")));
+    assert!(
+        matches!(&run.statuses[0], StatementStatus::Error(message) if message.contains("no such table"))
+    );
 }
 
 #[test]
@@ -328,12 +435,24 @@ fn manual_mode_opens_a_transaction_and_commit_confirms_it() {
     assert_eq!(run.transaction, Some(TransactionState::Open));
 
     h.manager.transaction(console, TransactionCommand::Rollback);
-    assert!(matches!(h.next(), ExecEvent::TransactionChanged { state: TransactionState::None, .. }));
+    assert!(matches!(
+        h.next(),
+        ExecEvent::TransactionChanged {
+            state: TransactionState::None,
+            ..
+        }
+    ));
     assert_eq!(h.cell("SELECT count(*) FROM t"), number("0"));
 
     h.run_on(console, &["INSERT INTO t VALUES (2)"], true);
     h.manager.transaction(console, TransactionCommand::Commit);
-    assert!(matches!(h.next(), ExecEvent::TransactionChanged { state: TransactionState::None, .. }));
+    assert!(matches!(
+        h.next(),
+        ExecEvent::TransactionChanged {
+            state: TransactionState::None,
+            ..
+        }
+    ));
     assert_eq!(h.cell("SELECT count(*) FROM t"), number("1"));
 }
 
@@ -347,9 +466,17 @@ fn commit_without_a_transaction_reports_a_failure() {
 #[test]
 fn a_second_execution_in_the_same_console_is_refused() {
     let mut h = Harness::open("refuse", Settings::default());
-    let first = h.manager.run(h.console, vec![HUGE_COUNT.to_owned()], RunOptions::default());
+    let first = h.manager.run(
+        h.console,
+        vec![HUGE_COUNT.to_owned()],
+        RunOptions::default(),
+    );
     std::thread::sleep(Duration::from_millis(100));
-    let second = h.manager.run(h.console, vec!["SELECT 1".to_owned()], RunOptions::default());
+    let second = h.manager.run(
+        h.console,
+        vec!["SELECT 1".to_owned()],
+        RunOptions::default(),
+    );
     let run = h.collect(second);
     assert_eq!(run.end, Some(ExecutionEnd::Refused));
     h.manager.stop(h.console);
@@ -359,7 +486,11 @@ fn a_second_execution_in_the_same_console_is_refused() {
 #[test]
 fn a_commit_during_an_execution_is_refused() {
     let mut h = Harness::open("refuse-commit", Settings::default());
-    let execution = h.manager.run(h.console, vec![HUGE_COUNT.to_owned()], RunOptions::default());
+    let execution = h.manager.run(
+        h.console,
+        vec![HUGE_COUNT.to_owned()],
+        RunOptions::default(),
+    );
     std::thread::sleep(Duration::from_millis(100));
     h.manager.transaction(h.console, TransactionCommand::Commit);
     loop {
@@ -376,13 +507,25 @@ fn an_interrupted_change_in_a_transaction_reports_the_rollback_of_the_database()
     let mut h = Harness::open("tx-interrupt", Settings::default());
     h.run(&["CREATE TABLE t(a)", "INSERT INTO t VALUES (1)"]);
     h.run(&["BEGIN", "DELETE FROM t"]);
-    let execution = h.manager.run(h.console, vec![HUGE_INSERT.to_owned()], RunOptions::default());
+    let execution = h.manager.run(
+        h.console,
+        vec![HUGE_INSERT.to_owned()],
+        RunOptions::default(),
+    );
     std::thread::sleep(Duration::from_millis(100));
     h.manager.stop(h.console);
     let run = h.collect(execution);
     assert_eq!(run.statuses, [StatementStatus::Stopped]);
-    assert_eq!(run.transaction, Some(TransactionState::None), "SQLite ends the transaction");
-    assert_eq!(h.cell("SELECT count(*) FROM t"), number("1"), "the delete did not stay");
+    assert_eq!(
+        run.transaction,
+        Some(TransactionState::None),
+        "SQLite ends the transaction"
+    );
+    assert_eq!(
+        h.cell("SELECT count(*) FROM t"),
+        number("1"),
+        "the delete did not stay"
+    );
 }
 
 #[test]
@@ -390,10 +533,19 @@ fn read_only_applies_at_each_reservation() {
     let path = temp_db("read-only");
     Harness::with_path(&path, Settings::default()).run(&["CREATE TABLE t(a)"]);
 
-    let mut h = Harness::with_path(&path, Settings { read_only: true, ..Settings::default() });
+    let mut h = Harness::with_path(
+        &path,
+        Settings {
+            read_only: true,
+            ..Settings::default()
+        },
+    );
     for _ in 0..2 {
         let run = h.run(&["INSERT INTO t VALUES (1)"]);
-        assert!(matches!(&run.statuses[0], StatementStatus::Error(message) if message.contains("readonly")), "{run:?}");
+        assert!(
+            matches!(&run.statuses[0], StatementStatus::Error(message) if message.contains("readonly")),
+            "{run:?}"
+        );
     }
     assert_eq!(h.cell("SELECT count(*) FROM t"), number("0"));
 }
@@ -401,12 +553,19 @@ fn read_only_applies_at_each_reservation() {
 #[test]
 fn a_locked_database_shows_an_error_after_the_lock_time_limit() {
     let mut h = Harness::open("locked", Settings::default());
-    h.run(&["CREATE TABLE t(a)", "BEGIN IMMEDIATE", "INSERT INTO t VALUES (1)"]);
+    h.run(&[
+        "CREATE TABLE t(a)",
+        "BEGIN IMMEDIATE",
+        "INSERT INTO t VALUES (1)",
+    ]);
     let other = h.manager.open_console(h.connection).unwrap();
     let started = Instant::now();
     let run = h.run_on(other, &["INSERT INTO t VALUES (2)"], false);
     assert!(started.elapsed() >= Duration::from_millis(100));
-    assert!(matches!(&run.statuses[0], StatementStatus::Error(message) if message.contains("locked")), "{run:?}");
+    assert!(
+        matches!(&run.statuses[0], StatementStatus::Error(message) if message.contains("locked")),
+        "{run:?}"
+    );
 }
 
 #[test]
@@ -421,7 +580,13 @@ fn a_missing_file_is_a_failure_without_permission_to_create_it() {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         assert!(Instant::now() < deadline);
-        if let Ok(ExecEvent::ExecutionFinished { execution: finished, end, message, .. }) = events.try_recv() {
+        if let Ok(ExecEvent::ExecutionFinished {
+            execution: finished,
+            end,
+            message,
+            ..
+        }) = events.try_recv()
+        {
             assert_eq!(finished, execution);
             assert_eq!(end, ExecutionEnd::Failed);
             assert!(message.is_some());
@@ -435,7 +600,14 @@ fn a_missing_file_is_a_failure_without_permission_to_create_it() {
 #[test]
 fn memory_databases_are_refused_in_the_text() {
     use sqln::connector::sqlite::validate_path;
-    for text in [":memory:", "", "  ", "file::memory:", "FILE:x.db?mode=memory", "x.db?mode=memory&cache=shared"] {
+    for text in [
+        ":memory:",
+        "",
+        "  ",
+        "file::memory:",
+        "FILE:x.db?mode=memory",
+        "x.db?mode=memory&cache=shared",
+    ] {
         assert!(validate_path(Path::new(text)).is_err(), "{text:?}");
     }
     assert!(validate_path(Path::new("data/app.db")).is_ok());
@@ -444,7 +616,10 @@ fn memory_databases_are_refused_in_the_text() {
 #[test]
 fn the_catalog_reads_relations_first_and_columns_on_demand() {
     let mut h = Harness::open("catalog", Settings::default());
-    h.run(&["CREATE TABLE users(id, \"Full Name\")", "CREATE VIEW names AS SELECT id FROM users"]);
+    h.run(&[
+        "CREATE TABLE users(id, \"Full Name\")",
+        "CREATE VIEW names AS SELECT id FROM users",
+    ]);
 
     h.manager.load_catalog(h.connection, 0);
     let catalog = loop {
@@ -459,10 +634,18 @@ fn the_catalog_reads_relations_first_and_columns_on_demand() {
     assert_eq!(main.relations[0].kind, RelationKind::View);
     assert_eq!(main.relations[1].columns, Columns::NotLoaded);
 
-    let relation = RelationRef { schema: "main".to_owned(), relation: "users".to_owned() };
+    let relation = RelationRef {
+        schema: "main".to_owned(),
+        relation: "users".to_owned(),
+    };
     h.manager.load_columns(h.connection, relation.clone());
     loop {
-        if let ExecEvent::ColumnsLoaded { relation: loaded, columns, .. } = h.next() {
+        if let ExecEvent::ColumnsLoaded {
+            relation: loaded,
+            columns,
+            ..
+        } = h.next()
+        {
             assert_eq!(loaded, relation);
             assert_eq!(columns.unwrap(), ["id", "Full Name"]);
             break;

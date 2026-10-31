@@ -22,7 +22,10 @@ fn overrides(items: &[(&str, &[&str])]) -> HashMap<String, Vec<String>> {
     items
         .iter()
         .map(|(name, keys)| {
-            ((*name).to_owned(), keys.iter().map(|key| (*key).to_owned()).collect())
+            (
+                (*name).to_owned(),
+                keys.iter().map(|key| (*key).to_owned()).collect(),
+            )
         })
         .collect()
 }
@@ -30,13 +33,22 @@ fn overrides(items: &[(&str, &[&str])]) -> HashMap<String, Vec<String>> {
 #[test]
 fn a_key_text_reads_modifiers_and_names() {
     let event = |code, modifiers| Chord::from_event(KeyEvent::new(code, modifiers));
-    assert_eq!(chord("ctrl+enter"), event(KeyCode::Enter, KeyModifiers::CONTROL));
+    assert_eq!(
+        chord("ctrl+enter"),
+        event(KeyCode::Enter, KeyModifiers::CONTROL)
+    );
     assert_eq!(chord("Shift+F5"), event(KeyCode::F(5), KeyModifiers::SHIFT));
     assert_eq!(chord("alt+up"), event(KeyCode::Up, KeyModifiers::ALT));
     assert_eq!(chord("<"), event(KeyCode::Char('<'), KeyModifiers::NONE));
     assert_eq!(chord("+"), event(KeyCode::Char('+'), KeyModifiers::NONE));
-    assert_eq!(chord("ctrl++"), event(KeyCode::Char('+'), KeyModifiers::CONTROL));
-    assert_eq!(chord("space"), event(KeyCode::Char(' '), KeyModifiers::NONE));
+    assert_eq!(
+        chord("ctrl++"),
+        event(KeyCode::Char('+'), KeyModifiers::CONTROL)
+    );
+    assert_eq!(
+        chord("space"),
+        event(KeyCode::Char(' '), KeyModifiers::NONE)
+    );
     assert!(Chord::parse("hyper+x").is_err());
     assert!(Chord::parse("nothing").is_err());
 }
@@ -57,13 +69,28 @@ fn the_default_keys_have_no_conflict_in_both_modes() {
 fn each_mode_has_its_own_panel_keys() {
     let conventional = Keymap::new(KeyboardMode::Conventional);
     let vim = Keymap::new(KeyboardMode::Vim);
-    assert_eq!(conventional.lookup(Region::Navigator, chord("j")), Lookup::None);
-    assert_eq!(vim.lookup(Region::Navigator, chord("j")), Lookup::Action(Action::NavigatorDown));
-    assert_eq!(conventional.lookup(Region::Navigator, chord("delete")), Lookup::Action(Action::NavigatorDelete));
+    assert_eq!(
+        conventional.lookup(Region::Navigator, chord("j")),
+        Lookup::None
+    );
+    assert_eq!(
+        vim.lookup(Region::Navigator, chord("j")),
+        Lookup::Action(Action::NavigatorDown)
+    );
+    assert_eq!(
+        conventional.lookup(Region::Navigator, chord("delete")),
+        Lookup::Action(Action::NavigatorDelete)
+    );
     assert_eq!(vim.lookup(Region::Navigator, chord("delete")), Lookup::None);
-    assert_eq!(vim.lookup(Region::Navigator, chord("x")), Lookup::Action(Action::NavigatorDelete));
+    assert_eq!(
+        vim.lookup(Region::Navigator, chord("x")),
+        Lookup::Action(Action::NavigatorDelete)
+    );
     assert_eq!(vim.lookup(Region::Grid, chord("g")), Lookup::Sequence);
-    assert_eq!(vim.after(Region::Grid, chord("g"), chord("g")), Some(Action::GridFirstRow));
+    assert_eq!(
+        vim.after(Region::Grid, chord("g"), chord("g")),
+        Some(Action::GridFirstRow)
+    );
 }
 
 #[test]
@@ -77,7 +104,11 @@ fn the_grid_has_the_keys_of_the_table_view_in_both_modes() {
             ("m", Action::GridLoadMore),
         ];
         for (text, action) in keys {
-            assert_eq!(map.lookup(Region::Grid, chord(text)), Lookup::Action(action), "{text}");
+            assert_eq!(
+                map.lookup(Region::Grid, chord(text)),
+                Lookup::Action(action),
+                "{text}"
+            );
             assert!(action.is_table_only());
             assert!(!action.is_console_only());
         }
@@ -90,7 +121,10 @@ fn the_grid_has_the_keys_of_the_table_view_in_both_modes() {
 fn the_keys_of_the_table_view_can_change_by_name() {
     let items = overrides(&[("loadMore", &["ctrl+l"]), ("sortColumn", &[])]);
     let map = Keymap::with_overrides(KeyboardMode::Conventional, &items).unwrap();
-    assert_eq!(map.lookup(Region::Grid, chord("ctrl+l")), Lookup::Action(Action::GridLoadMore));
+    assert_eq!(
+        map.lookup(Region::Grid, chord("ctrl+l")),
+        Lookup::Action(Action::GridLoadMore)
+    );
     assert_eq!(map.lookup(Region::Grid, chord("m")), Lookup::None);
     assert_eq!(map.lookup(Region::Grid, chord("s")), Lookup::None);
     // The keys of the table view and the keys of the grid share one region.
@@ -102,11 +136,26 @@ fn the_keys_of_the_table_view_can_change_by_name() {
 fn the_execution_keys_stay_the_same_in_both_modes() {
     for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
         let map = Keymap::new(mode);
-        assert_eq!(map.lookup(Region::Global, chord("f5")), Lookup::Action(Action::Run));
-        assert_eq!(map.lookup(Region::Global, chord("ctrl+enter")), Lookup::Action(Action::Run));
-        assert_eq!(map.lookup(Region::Global, chord("ctrl+w")), Lookup::Sequence);
-        assert_eq!(map.after(Region::Global, chord("ctrl+w"), chord("e")), Some(Action::Run));
-        assert_eq!(map.after(Region::Global, chord("ctrl+w"), chord("left")), Some(Action::FocusLeft));
+        assert_eq!(
+            map.lookup(Region::Global, chord("f5")),
+            Lookup::Action(Action::Run)
+        );
+        assert_eq!(
+            map.lookup(Region::Global, chord("ctrl+enter")),
+            Lookup::Action(Action::Run)
+        );
+        assert_eq!(
+            map.lookup(Region::Global, chord("ctrl+w")),
+            Lookup::Sequence
+        );
+        assert_eq!(
+            map.after(Region::Global, chord("ctrl+w"), chord("e")),
+            Some(Action::Run)
+        );
+        assert_eq!(
+            map.after(Region::Global, chord("ctrl+w"), chord("left")),
+            Some(Action::FocusLeft)
+        );
     }
 }
 
@@ -114,7 +163,10 @@ fn the_execution_keys_stay_the_same_in_both_modes() {
 fn a_list_replaces_the_keys_of_its_action() {
     let items = overrides(&[("run", &["f6"])]);
     let map = Keymap::with_overrides(KeyboardMode::Conventional, &items).unwrap();
-    assert_eq!(map.lookup(Region::Global, chord("f6")), Lookup::Action(Action::Run));
+    assert_eq!(
+        map.lookup(Region::Global, chord("f6")),
+        Lookup::Action(Action::Run)
+    );
     assert_eq!(map.lookup(Region::Global, chord("f5")), Lookup::None);
     assert_eq!(map.keys(Action::Run), ["f6"]);
 }
@@ -138,8 +190,14 @@ fn two_actions_with_one_key_in_a_region_are_refused() {
 fn two_regions_can_use_one_key() {
     let items = overrides(&[("newConsole", &["f5"])]);
     let map = Keymap::with_overrides(KeyboardMode::Conventional, &items).unwrap();
-    assert_eq!(map.lookup(Region::Navigator, chord("f5")), Lookup::Action(Action::NavigatorNewConsole));
-    assert_eq!(map.lookup(Region::Global, chord("f5")), Lookup::Action(Action::Run));
+    assert_eq!(
+        map.lookup(Region::Navigator, chord("f5")),
+        Lookup::Action(Action::NavigatorNewConsole)
+    );
+    assert_eq!(
+        map.lookup(Region::Global, chord("f5")),
+        Lookup::Action(Action::Run)
+    );
 }
 
 #[test]
@@ -162,7 +220,10 @@ fn an_unknown_action_or_key_is_refused() {
 fn the_application_uses_the_map() {
     let items = overrides(&[("closeTab", &["f9"])]);
     let map = Keymap::with_overrides(KeyboardMode::Conventional, &items).unwrap();
-    let options = Options { keymap: Some(map), ..Options::default() };
+    let options = Options {
+        keymap: Some(map),
+        ..Options::default()
+    };
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
     let mut app = App::new(options, clipboard, Theme::plain());
     app.on_event(Event::Key(ctrl('w')));
@@ -178,7 +239,11 @@ fn a_panel_key_has_priority_over_a_global_key() {
     rusqlite::Connection::open(&path).unwrap();
     let items = overrides(&[("newConsole", &["f5"])]);
     let map = Keymap::with_overrides(KeyboardMode::Conventional, &items).unwrap();
-    let options = Options { keymap: Some(map), database: Some(path), ..Options::default() };
+    let options = Options {
+        keymap: Some(map),
+        database: Some(path),
+        ..Options::default()
+    };
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
     let mut app = App::new(options, clipboard, Theme::plain());
     app.on_event(Event::Key(ctrl('w')));
@@ -186,14 +251,21 @@ fn a_panel_key_has_priority_over_a_global_key() {
     app.on_event(Event::Key(key(KeyCode::F(5))));
     assert_eq!(app.consoles().len(), 2, "the navigator uses the key");
     app.on_event(Event::Key(key(KeyCode::F(5))));
-    assert_eq!(app.consoles().len(), 2, "the editor leaves the key to the global action");
+    assert_eq!(
+        app.consoles().len(),
+        2,
+        "the editor leaves the key to the global action"
+    );
 }
 
 #[test]
 fn a_character_key_of_a_global_action_stays_text_in_the_editor() {
     let items = overrides(&[("closeTab", &["q"])]);
     let map = Keymap::with_overrides(KeyboardMode::Conventional, &items).unwrap();
-    let options = Options { keymap: Some(map), ..Options::default() };
+    let options = Options {
+        keymap: Some(map),
+        ..Options::default()
+    };
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
     let mut app = App::new(options, clipboard, Theme::plain());
     app.on_event(Event::Key(key(KeyCode::Char('q'))));

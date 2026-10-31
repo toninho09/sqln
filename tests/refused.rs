@@ -51,7 +51,10 @@ impl Vault for MemoryVault {
     }
 
     fn write(&self, identity: &Identity, password: &Secret) -> Result<(), VaultError> {
-        self.values.lock().unwrap().insert(identity.clone(), password.clone());
+        self.values
+            .lock()
+            .unwrap()
+            .insert(identity.clone(), password.clone());
         Ok(())
     }
 
@@ -74,7 +77,10 @@ impl Fixture {
         let password = target.password.take().unwrap().expose().to_owned();
         let definition = Definition::new("real", Source::Network(target));
         let base = temp_dir(&format!("refused-{}", uuid::Uuid::new_v4()));
-        let store = Store { global: Root::global(base.join("global")), project: None };
+        let store = Store {
+            global: Root::global(base.join("global")),
+            project: None,
+        };
         fs::create_dir_all(&store.global.dir).unwrap();
         let mut entry = config::to_entry(ID, &definition);
         entry.credential = credential;
@@ -83,7 +89,10 @@ impl Fixture {
             serde_json::to_vec(&serde_json::json!({"version":1,"connections":[entry]})).unwrap(),
         )
         .unwrap();
-        let key = ConnectionKey { scope: Scope::Global, id: ID.into() };
+        let key = ConnectionKey {
+            scope: Scope::Global,
+            id: ID.into(),
+        };
         let identity = Identity::of(&key, &definition).unwrap();
         Trust::new(&store).confirm(&identity, None).unwrap();
         let vault = Arc::new(MemoryVault::default());
@@ -97,7 +106,13 @@ impl Fixture {
         };
         let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
         let app = App::new(options, clipboard, Theme::plain());
-        Self { app, base, vault, identity, password }
+        Self {
+            app,
+            base,
+            vault,
+            identity,
+            password,
+        }
     }
 
     fn code(&mut self, code: KeyCode) {
@@ -113,7 +128,12 @@ impl Fixture {
         terminal.draw(|frame| self.app.draw(frame)).unwrap();
         let buffer = terminal.backend().buffer();
         (0..buffer.area.height)
-            .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>() + "\n")
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    + "\n"
+            })
             .collect()
     }
 
@@ -125,7 +145,10 @@ impl Fixture {
             if screen.contains(text) {
                 return;
             }
-            assert!(Instant::now() < deadline, "{text:?} is not on the screen:\n{screen}");
+            assert!(
+                Instant::now() < deadline,
+                "{text:?} is not on the screen:\n{screen}"
+            );
             std::thread::sleep(Duration::from_millis(2));
         }
     }
@@ -141,7 +164,12 @@ impl Fixture {
     }
 
     fn stored(&self) -> Option<String> {
-        self.vault.values.lock().unwrap().get(&self.identity).map(|value| value.expose().to_owned())
+        self.vault
+            .values
+            .lock()
+            .unwrap()
+            .get(&self.identity)
+            .map(|value| value.expose().to_owned())
     }
 }
 

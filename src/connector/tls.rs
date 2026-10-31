@@ -5,9 +5,9 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
+use rustls::client::WantsClientCert;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::client::WantsClientCert;
 use rustls::{ClientConfig, ConfigBuilder as RustlsBuilder, RootCertStore};
 
 use super::ConnectError;

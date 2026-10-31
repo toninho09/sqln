@@ -106,7 +106,8 @@ impl RowSearch {
     }
 
     pub fn is_current(&self, row: usize, col: usize) -> bool {
-        self.current.is_some_and(|index| self.matches[index] == (row, col))
+        self.current
+            .is_some_and(|index| self.matches[index] == (row, col))
     }
 
     /// Returns the position of the current result, from 1. The value 0 means no result yet.

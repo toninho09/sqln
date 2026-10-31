@@ -1,8 +1,8 @@
 //! SQLite connector. `rusqlite` is synchronous, so each session owns one thread.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::Duration;
 
@@ -51,7 +51,9 @@ pub fn validate_path(path: &Path) -> Result<(), ConnectError> {
         || lower.starts_with("file:")
         || lower.contains("mode=memory");
     if in_memory {
-        return Err(ConnectError::new(format!("SQLite needs a file. This path is not valid: {text}")));
+        return Err(ConnectError::new(format!(
+            "SQLite needs a file. This path is not valid: {text}"
+        )));
     }
     Ok(())
 }
@@ -65,7 +67,8 @@ fn open(target: &SqliteTarget) -> Result<Connection, ConnectError> {
     let conn = Connection::open_with_flags(&target.path, flags).map_err(failed)?;
     conn.busy_timeout(target.busy_timeout).map_err(failed)?;
     if let Some(enabled) = target.foreign_keys {
-        conn.pragma_update(None, "foreign_keys", enabled).map_err(failed)?;
+        conn.pragma_update(None, "foreign_keys", enabled)
+            .map_err(failed)?;
     }
     Ok(conn)
 }
@@ -106,7 +109,10 @@ impl Connector for SqliteConnector {
         let interrupt = wait_opened
             .await
             .map_err(|_| ConnectError::new("The SQLite thread stopped.".to_owned()))??;
-        Ok(Box::new(SqliteSession { requests, interrupt: Arc::new(Interrupt(interrupt)) }))
+        Ok(Box::new(SqliteSession {
+            requests,
+            interrupt: Arc::new(Interrupt(interrupt)),
+        }))
     }
 }
 
@@ -126,7 +132,10 @@ fn exec_error(error: rusqlite::Error) -> ExecError {
         rusqlite::Error::SqlInputError { offset, .. } => usize::try_from(*offset).ok(),
         _ => None,
     };
-    ExecError { message: error.to_string(), offset }
+    ExecError {
+        message: error.to_string(),
+        offset,
+    }
 }
 
 /// Runs in the session thread. It ends when the session drops its sender.
@@ -161,7 +170,8 @@ fn serve(conn: &Connection, inbox: &Receiver<Request>) {
 }
 
 fn apply_context(conn: &Connection, context: &SessionContext) -> Result<(), ExecError> {
-    conn.pragma_update(None, "query_only", context.read_only).map_err(exec_error)
+    conn.pragma_update(None, "query_only", context.read_only)
+        .map_err(exec_error)
 }
 
 fn value(cell: ValueRef<'_>) -> Value {
@@ -214,7 +224,11 @@ fn run(conn: &Connection, sql: &str, mut sink: ResultSink) -> Result<StatementEn
     let has_columns = statement.column_count() > 0;
     if has_columns {
         sink.set_columns_blocking(
-            statement.column_names().into_iter().map(str::to_owned).collect(),
+            statement
+                .column_names()
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
         );
     }
     let read = read_rows(&mut statement, read_only, &mut sink);
@@ -222,7 +236,12 @@ fn run(conn: &Connection, sql: &str, mut sink: ResultSink) -> Result<StatementEn
 
     let changed = (!read_only && !has_columns).then(|| conn.changes());
     let (rows, limit) = sink.finish_blocking();
-    read.map(|()| StatementEnd { rows, has_columns, changed, limit })
+    read.map(|()| StatementEnd {
+        rows,
+        has_columns,
+        changed,
+        limit,
+    })
 }
 
 fn quoted(name: &str) -> String {
@@ -231,7 +250,9 @@ fn quoted(name: &str) -> String {
 
 fn read_catalog(conn: &Connection) -> rusqlite::Result<Catalog> {
     let mut names = conn.prepare("SELECT name FROM pragma_database_list WHERE name <> 'temp'")?;
-    let names: Vec<String> = names.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
+    let names: Vec<String> = names
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
 
     let mut schemas = Vec::with_capacity(names.len());
     for name in names {
@@ -247,14 +268,21 @@ fn read_catalog(conn: &Connection) -> rusqlite::Result<Catalog> {
                 let kind: String = row.get(1)?;
                 Ok(Relation {
                     name: row.get(0)?,
-                    kind: if kind == "view" { RelationKind::View } else { RelationKind::Table },
+                    kind: if kind == "view" {
+                        RelationKind::View
+                    } else {
+                        RelationKind::Table
+                    },
                     columns: Columns::NotLoaded,
                 })
             })?
             .collect::<Result<_, _>>()?;
         schemas.push(Schema { name, relations });
     }
-    Ok(Catalog { schemas, current_schema: Some(MAIN_SCHEMA.to_owned()) })
+    Ok(Catalog {
+        schemas,
+        current_schema: Some(MAIN_SCHEMA.to_owned()),
+    })
 }
 
 fn read_columns(conn: &Connection, schema: &str, relation: &str) -> rusqlite::Result<Vec<String>> {
@@ -280,9 +308,17 @@ struct SqliteSession {
 }
 
 impl SqliteSession {
-    async fn ask<T>(&self, request: Request, answer: oneshot::Receiver<Result<T, ExecError>>) -> Result<T, ExecError> {
-        self.requests.send(request).map_err(|_| ExecError::new("The SQLite thread stopped."))?;
-        answer.await.map_err(|_| ExecError::new("The SQLite thread stopped."))?
+    async fn ask<T>(
+        &self,
+        request: Request,
+        answer: oneshot::Receiver<Result<T, ExecError>>,
+    ) -> Result<T, ExecError> {
+        self.requests
+            .send(request)
+            .map_err(|_| ExecError::new("The SQLite thread stopped."))?;
+        answer
+            .await
+            .map_err(|_| ExecError::new("The SQLite thread stopped."))?
     }
 }
 
@@ -294,12 +330,14 @@ impl Session for SqliteSession {
 
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError> {
         let (reply, answer) = oneshot::channel();
-        self.ask(Request::Context(context.clone(), reply), answer).await
+        self.ask(Request::Context(context.clone(), reply), answer)
+            .await
     }
 
     async fn run(&mut self, sql: &str, sink: ResultSink) -> Result<StatementEnd, ExecError> {
         let (reply, answer) = oneshot::channel();
-        self.ask(Request::Run(sql.to_owned(), sink, reply), answer).await
+        self.ask(Request::Run(sql.to_owned(), sink, reply), answer)
+            .await
     }
 
     async fn transaction_state(&mut self) -> TransactionState {
@@ -329,7 +367,11 @@ impl Session for SqliteSession {
         self.ask(Request::Catalog(reply), answer).await
     }
 
-    async fn read_columns(&mut self, schema: &str, relation: &str) -> Result<Vec<String>, ExecError> {
+    async fn read_columns(
+        &mut self,
+        schema: &str,
+        relation: &str,
+    ) -> Result<Vec<String>, ExecError> {
         let (reply, answer) = oneshot::channel();
         let request = Request::Columns(schema.to_owned(), relation.to_owned(), reply);
         self.ask(request, answer).await

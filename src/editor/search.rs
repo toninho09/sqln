@@ -44,8 +44,11 @@ impl SearchBar {
     /// Recalculates the matches, and it selects the first one at or after `from`.
     pub fn refresh(&mut self, lines: &Lines, from: Index2) {
         self.matches = find_matches(lines, &self.find);
-        self.current =
-            self.matches.iter().position(|found| found.start >= from).unwrap_or_default();
+        self.current = self
+            .matches
+            .iter()
+            .position(|found| found.start >= from)
+            .unwrap_or_default();
     }
 
     pub fn current_match(&self) -> Option<Match> {
@@ -69,7 +72,11 @@ fn find_matches(lines: &Lines, query: &str) -> Vec<Match> {
     for (row, chars) in lines.iter_row().enumerate() {
         let mut col = 0;
         while col + needle.len() <= chars.len() {
-            if chars[col..col + needle.len()].iter().zip(&needle).all(|(a, b)| fold(*a) == *b) {
+            if chars[col..col + needle.len()]
+                .iter()
+                .zip(&needle)
+                .all(|(a, b)| fold(*a) == *b)
+            {
                 matches.push(Match {
                     start: Index2::new(row, col),
                     end: Index2::new(row, col + needle.len()),

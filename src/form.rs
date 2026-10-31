@@ -62,9 +62,12 @@ pub enum FieldStyle {
 impl Field {
     pub fn style(self) -> FieldStyle {
         match self {
-            Field::Kind | Field::Scope | Field::Entry | Field::Credential | Field::Tls | Field::ForeignKeys => {
-                FieldStyle::Choice
-            }
+            Field::Kind
+            | Field::Scope
+            | Field::Entry
+            | Field::Credential
+            | Field::Tls
+            | Field::ForeignKeys => FieldStyle::Choice,
             Field::ReadOnly => FieldStyle::Flag,
             Field::Password => FieldStyle::Secret,
             Field::Test | Field::Save | Field::Disconnect | Field::Cancel => FieldStyle::Button,
@@ -132,7 +135,11 @@ fn is_local_host(host: &str) -> bool {
     if host.starts_with('/') {
         return true;
     }
-    Address::Tcp { host: host.to_owned(), port: 0 }.is_local()
+    Address::Tcp {
+        host: host.to_owned(),
+        port: 0,
+    }
+    .is_local()
 }
 
 fn path_text(path: &std::path::Path) -> String {
@@ -194,7 +201,10 @@ impl ConnectionForm {
         form.read_only = definition.read_only;
         form.set(Field::Name, definition.name.clone());
         form.set(Field::Pool, definition.max_connections.to_string());
-        form.set(Field::ConnectTimeout, definition.connect_timeout.as_secs().to_string());
+        form.set(
+            Field::ConnectTimeout,
+            definition.connect_timeout.as_secs().to_string(),
+        );
         let sql_seconds = definition.sql_timeout.map_or(0, |time| time.as_secs());
         form.set(Field::SqlTimeout, sql_seconds.to_string());
         match &definition.source {
@@ -203,7 +213,10 @@ impl ConnectionForm {
                 form.foreign_keys = target.foreign_keys;
                 form.stored_file = Some(path_text(&target.path));
                 form.set(Field::File, path_text(&target.path));
-                form.set(Field::BusyTimeout, target.busy_timeout.as_secs().to_string());
+                form.set(
+                    Field::BusyTimeout,
+                    target.busy_timeout.as_secs().to_string(),
+                );
             }
             Source::Network(target) => form.fill_network(target),
         }
@@ -299,7 +312,10 @@ impl ConnectionForm {
     fn move_focus(&mut self, forward: bool) {
         let fields = self.fields();
         let count = fields.len();
-        let index = fields.iter().position(|field| *field == self.focus).unwrap_or(0);
+        let index = fields
+            .iter()
+            .position(|field| *field == self.focus)
+            .unwrap_or(0);
         let next = (index + if forward { 1 } else { count - 1 }) % count;
         self.focus_on(fields[next]);
     }
@@ -309,12 +325,19 @@ impl ConnectionForm {
         match self.focus {
             Field::Kind => {
                 let order = [Kind::Postgres, Kind::MySql, Kind::Sqlite];
-                let index = order.iter().position(|kind| *kind == self.kind).unwrap_or(0);
+                let index = order
+                    .iter()
+                    .position(|kind| *kind == self.kind)
+                    .unwrap_or(0);
                 let step = if forward { 1 } else { order.len() - 1 };
                 self.kind = order[(index + step) % order.len()];
             }
             Field::Scope => {
-                self.scope = if self.scope == Scope::Project { Scope::Global } else { Scope::Project };
+                self.scope = if self.scope == Scope::Project {
+                    Scope::Global
+                } else {
+                    Scope::Project
+                };
             }
             Field::Entry => self.use_uri = !self.use_uri,
             Field::Credential => {
@@ -323,14 +346,17 @@ impl ConnectionForm {
                 } else {
                     CredentialName::Vault
                 };
-            },
+            }
             Field::Tls => {
                 self.verify_tls = !self.verify_tls;
                 self.tls_chosen = true;
             }
             Field::ForeignKeys => {
                 let order = [None, Some(true), Some(false)];
-                let index = order.iter().position(|value| *value == self.foreign_keys).unwrap_or(0);
+                let index = order
+                    .iter()
+                    .position(|value| *value == self.foreign_keys)
+                    .unwrap_or(0);
                 let step = if forward { 1 } else { order.len() - 1 };
                 self.foreign_keys = order[(index + step) % order.len()];
             }
@@ -341,7 +367,10 @@ impl ConnectionForm {
 
     fn insert(&mut self, text: &str) {
         let value = self.texts.entry(self.focus).or_default();
-        let byte = value.char_indices().nth(self.cursor).map_or(value.len(), |(byte, _)| byte);
+        let byte = value
+            .char_indices()
+            .nth(self.cursor)
+            .map_or(value.len(), |(byte, _)| byte);
         value.insert_str(byte, text);
         self.cursor += text.chars().count();
         self.after_edit();
@@ -373,7 +402,12 @@ impl ConnectionForm {
     pub fn on_paste(&mut self, text: &str) {
         if matches!(self.focus.style(), FieldStyle::Text | FieldStyle::Secret) {
             let line = Zeroizing::new(
-                text.lines().next().unwrap_or("").chars().filter(|c| !c.is_control()).collect::<String>(),
+                text.lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .collect::<String>(),
             );
             self.insert(&line);
         }
@@ -437,15 +471,21 @@ impl ConnectionForm {
     }
 
     fn number(&self, field: Field, label: &str) -> Result<u64, String> {
-        self.trimmed(field).parse().map_err(|_| text::form_needs_number(label))
+        self.trimmed(field)
+            .parse()
+            .map_err(|_| text::form_needs_number(label))
     }
 
     fn optional_path(&self, field: Field) -> Option<PathBuf> {
-        Some(self.trimmed(field)).filter(|text| !text.is_empty()).map(PathBuf::from)
+        Some(self.trimmed(field))
+            .filter(|text| !text.is_empty())
+            .map(PathBuf::from)
     }
 
     fn password(&self) -> Option<Secret> {
-        Some(self.text(Field::Password)).filter(|text| !text.is_empty()).map(Secret::new)
+        Some(self.text(Field::Password))
+            .filter(|text| !text.is_empty())
+            .map(Secret::new)
     }
 
     /// A remote address without TLS is the explicit choice of the TLS field.
@@ -482,9 +522,14 @@ impl ConnectionForm {
         } else {
             let port = match self.trimmed(Field::Port) {
                 "" => engine.default_port(),
-                port => port.parse().map_err(|_| text::form_needs_number(text::FIELD_PORT))?,
+                port => port
+                    .parse()
+                    .map_err(|_| text::form_needs_number(text::FIELD_PORT))?,
             };
-            Address::Tcp { host: host.to_owned(), port }
+            Address::Tcp {
+                host: host.to_owned(),
+                port,
+            }
         };
         let tls = self.tls()?;
         let database = Some(self.trimmed(Field::Database)).filter(|text| !text.is_empty());

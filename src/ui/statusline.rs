@@ -83,7 +83,11 @@ fn phase_part(phase: Phase, theme: &Theme) -> (&'static str, Style) {
 
 /// Returns the text of the time of a run, for the status line.
 pub fn run_time(phase: Phase, run: &RunClock, now: Instant) -> Option<String> {
-    if phase == Phase::Idle { run.last.map(text::last_run) } else { run.elapsed(now).map(text::elapsed) }
+    if phase == Phase::Idle {
+        run.last.map(text::last_run)
+    } else {
+        run.elapsed(now).map(text::elapsed)
+    }
 }
 
 /// Lists the state. This part always stays on the row, because the user must see
@@ -91,13 +95,20 @@ pub fn run_time(phase: Phase, run: &RunClock, now: Instant) -> Option<String> {
 fn state_parts(data: &StatusData, theme: &Theme) -> Vec<(String, Style)> {
     let mut parts = Vec::new();
     if let Some((manual, transaction)) = data.session {
-        let mode = if manual { text::MODE_MANUAL } else { text::MODE_AUTO };
+        let mode = if manual {
+            text::MODE_MANUAL
+        } else {
+            text::MODE_AUTO
+        };
         parts.push((mode.to_owned(), theme.statusline));
         let (state, style) = transaction_part(transaction, theme);
         parts.push((state.to_owned(), style));
     }
     let (phase, style) = phase_part(data.phase, theme);
-    let phase = data.run_time.as_ref().map_or_else(|| phase.to_owned(), |time| format!("{phase} {time}"));
+    let phase = data
+        .run_time
+        .as_ref()
+        .map_or_else(|| phase.to_owned(), |time| format!("{phase} {time}"));
     parts.push((phase, style));
     parts
 }
@@ -114,14 +125,21 @@ impl Optional {
     fn new(data: &StatusData) -> Self {
         Self {
             position: data.position.map(|(row, column)| format!("{row}:{column}")),
-            data: Some(text::data_usage(data.data.0.div_ceil(MIB), data.data.1 / MIB)),
+            data: Some(text::data_usage(
+                data.data.0.div_ceil(MIB),
+                data.data.1 / MIB,
+            )),
             pool: data.pool.map(|(busy, limit)| text::pool_usage(busy, limit)),
             schema: data.schema.map(printable),
         }
     }
 
     fn usage(&self) -> Option<String> {
-        let parts: Vec<&str> = [&self.pool, &self.data].into_iter().flatten().map(String::as_str).collect();
+        let parts: Vec<&str> = [&self.pool, &self.data]
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+            .collect();
         (!parts.is_empty()).then(|| parts.join(SEPARATOR))
     }
 
@@ -132,7 +150,12 @@ impl Optional {
 
     /// Removes the next part. It returns false when no part remains.
     fn remove_next(&mut self) -> bool {
-        for part in [&mut self.position, &mut self.data, &mut self.pool, &mut self.schema] {
+        for part in [
+            &mut self.position,
+            &mut self.data,
+            &mut self.pool,
+            &mut self.schema,
+        ] {
             if part.take().is_some() {
                 return true;
             }
@@ -159,11 +182,21 @@ pub struct HintItem {
 
 impl HintItem {
     pub fn of(parts: &[text::HintPart]) -> Vec<Self> {
-        parts.iter().map(|(key, label)| Self { key: (*key).to_owned(), label: *label }).collect()
+        parts
+            .iter()
+            .map(|(key, label)| Self {
+                key: (*key).to_owned(),
+                label: *label,
+            })
+            .collect()
     }
 
     fn text(&self) -> String {
-        if self.key.is_empty() { self.label.to_owned() } else { format!("{} {}", self.key, self.label) }
+        if self.key.is_empty() {
+            self.label.to_owned()
+        } else {
+            format!("{} {}", self.key, self.label)
+        }
     }
 }
 
@@ -234,6 +267,10 @@ pub fn draw_statusline(frame: &mut Frame, area: Rect, data: &StatusData, theme: 
     right.push(Span::raw(" "));
     let used = u16::try_from(right.iter().map(Span::width).sum::<usize>()).unwrap_or(area.width);
     let start = area.right().saturating_sub(used).max(area.x);
-    let place = Rect { x: start, width: area.right() - start, ..area };
+    let place = Rect {
+        x: start,
+        width: area.right() - start,
+        ..area
+    };
     frame.render_widget(Paragraph::new(Line::from(right)), place);
 }

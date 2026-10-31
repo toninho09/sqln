@@ -36,8 +36,17 @@ pub struct Layout {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum OpenTab {
-    Console { scope: Scope, id: String },
-    Table { scope: Scope, connection: String, schema: String, relation: String, view: bool },
+    Console {
+        scope: Scope,
+        id: String,
+    },
+    Table {
+        scope: Scope,
+        connection: String,
+        schema: String,
+        relation: String,
+        view: bool,
+    },
 }
 
 /// The tabs at the end of the last session, in the order of the tab row.
@@ -62,7 +71,12 @@ pub struct Workspace {
 
 impl Default for Workspace {
     fn default() -> Self {
-        Self { version: VERSION, consoles: BTreeMap::new(), layout: None, open_tabs: None }
+        Self {
+            version: VERSION,
+            consoles: BTreeMap::new(),
+            layout: None,
+            open_tabs: None,
+        }
     }
 }
 
@@ -84,7 +98,8 @@ pub fn is_unreadable(root: &Root) -> bool {
 
 /// Reads the file again, applies the change, and writes the file.
 pub fn update(root: &Root, change: impl FnOnce(&mut Workspace)) -> Result<(), String> {
-    let _lock = file::lock(&root.locks_dir().join("config.lock")).map_err(|error| error.to_string())?;
+    let _lock =
+        file::lock(&root.locks_dir().join("config.lock")).map_err(|error| error.to_string())?;
     let mut workspace = load(root);
     change(&mut workspace);
     let mut text = serde_json::to_string_pretty(&workspace).map_err(|error| error.to_string())?;

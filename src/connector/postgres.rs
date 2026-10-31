@@ -104,7 +104,9 @@ impl PostgresConnector {
 }
 
 fn connect_error(error: &tokio_postgres::Error) -> ConnectError {
-    let Some(database) = error.as_db_error() else { return ConnectError::new(describe(error)) };
+    let Some(database) = error.as_db_error() else {
+        return ConnectError::new(describe(error));
+    };
     let message = format!("{} ({})", database.message(), database.code().code());
     // `28000` also covers a rule of `pg_hba.conf`, which a new password does not change.
     if *database.code() == SqlState::INVALID_PASSWORD {
@@ -121,13 +123,19 @@ impl Connector for PostgresConnector {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities { namespace: Namespace::Schema, transactions: true }
+        Capabilities {
+            namespace: Namespace::Schema,
+            transactions: true,
+        }
     }
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
         let tls = self.tls()?;
-        let (client, connection) =
-            self.config().connect(tls.clone()).await.map_err(|error| connect_error(&error))?;
+        let (client, connection) = self
+            .config()
+            .connect(tls.clone())
+            .await
+            .map_err(|error| connect_error(&error))?;
         tokio::spawn(async move {
             let _ = connection.await;
         });
@@ -137,7 +145,11 @@ impl Connector for PostgresConnector {
             tls,
             requested: AtomicBool::new(false),
         });
-        Ok(Box::new(PostgresSession { client, canceller, transaction: TransactionState::None }))
+        Ok(Box::new(PostgresSession {
+            client,
+            canceller,
+            transaction: TransactionState::None,
+        }))
     }
 }
 
@@ -204,13 +216,18 @@ impl PostgresCanceller {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
-        let stream = UntilClosed { stream, shut_down: false };
+        let stream = UntilClosed {
+            stream,
+            shut_down: false,
+        };
         let mut tls = self.tls.clone();
-        let connect = <MakeRustlsConnect as MakeTlsConnect<UntilClosed<S>>>::make_tls_connect(
-            &mut tls, host,
-        )
-        .map_err(|error| error.to_string())?;
-        self.token.cancel_query_raw(stream, connect).await.map_err(|error| describe(&error))
+        let connect =
+            <MakeRustlsConnect as MakeTlsConnect<UntilClosed<S>>>::make_tls_connect(&mut tls, host)
+                .map_err(|error| error.to_string())?;
+        self.token
+            .cancel_query_raw(stream, connect)
+            .await
+            .map_err(|error| describe(&error))
     }
 
     async fn send(&self) -> Result<(), String> {
@@ -223,7 +240,9 @@ impl PostgresCanceller {
             }
             Address::Socket(folder) => {
                 let path = folder.join(format!(".s.PGSQL.{DEFAULT_PORT}"));
-                let stream = UnixStream::connect(path).await.map_err(|error| error.to_string())?;
+                let stream = UnixStream::connect(path)
+                    .await
+                    .map_err(|error| error.to_string())?;
                 self.send_on(stream, "").await
             }
         }
@@ -265,18 +284,23 @@ fn column_kind(column: &Type) -> ColumnKind {
 
 /// Reads the `\x00ff` form. The `escape` form of `bytea_output` stays as text.
 fn bytea_value(text: &str) -> Value {
-    let decoded = text.strip_prefix("\\x").filter(|hex| hex.len().is_multiple_of(2)).and_then(|hex| {
-        (0..hex.len() / 2)
-            .map(|index| u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok())
-            .collect::<Option<Box<[u8]>>>()
-    });
+    let decoded = text
+        .strip_prefix("\\x")
+        .filter(|hex| hex.len().is_multiple_of(2))
+        .and_then(|hex| {
+            (0..hex.len() / 2)
+                .map(|index| u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok())
+                .collect::<Option<Box<[u8]>>>()
+        });
     decoded.map_or_else(|| Value::Text(text.into()), Value::Binary)
 }
 
 fn row_values(row: &SimpleQueryRow, kinds: &[ColumnKind]) -> Result<Row, ExecError> {
     let mut cells = Vec::with_capacity(row.len());
     for index in 0..row.len() {
-        let text = row.try_get(index).map_err(|error| ExecError::new(describe(&error)))?;
+        let text = row
+            .try_get(index)
+            .map_err(|error| ExecError::new(describe(&error)))?;
         cells.push(match (text, kinds.get(index)) {
             (None, _) => Value::Null,
             (Some(text), Some(ColumnKind::Number)) => Value::Number(text.into()),
@@ -291,11 +315,16 @@ fn row_values(row: &SimpleQueryRow, kinds: &[ColumnKind]) -> Result<Row, ExecErr
 /// An error at the end of the text points past the last character.
 fn byte_offset(sql: &str, position: u32) -> Option<usize> {
     let index = usize::try_from(position).ok()?.checked_sub(1)?;
-    sql.char_indices().map(|(offset, _)| offset).chain([sql.len()]).nth(index)
+    sql.char_indices()
+        .map(|(offset, _)| offset)
+        .chain([sql.len()])
+        .nth(index)
 }
 
 fn exec_error(error: &tokio_postgres::Error, sql: &str) -> ExecError {
-    let Some(database) = error.as_db_error() else { return ExecError::new(describe(error)) };
+    let Some(database) = error.as_db_error() else {
+        return ExecError::new(describe(error));
+    };
     let mut message = format!("{} ({})", database.message(), database.code().code());
     if let Some(detail) = database.detail() {
         message = format!("{message}\n{detail}");
@@ -335,9 +364,11 @@ impl PostgresSession {
             return Ok(Vec::new());
         }
         match self.client.prepare(sql).await {
-            Ok(statement) => {
-                Ok(statement.columns().iter().map(|column| column_kind(column.type_())).collect())
-            }
+            Ok(statement) => Ok(statement
+                .columns()
+                .iter()
+                .map(|column| column_kind(column.type_()))
+                .collect()),
             Err(error) if error.as_db_error().is_some() => Err(exec_error(&error, sql)),
             Err(_) => Ok(Vec::new()),
         }
@@ -349,8 +380,11 @@ impl PostgresSession {
         kinds: &[ColumnKind],
         sink: &mut ResultSink,
     ) -> Result<Outcome, ExecError> {
-        let stream =
-            self.client.simple_query_raw(sql).await.map_err(|error| exec_error(&error, sql))?;
+        let stream = self
+            .client
+            .simple_query_raw(sql)
+            .await
+            .map_err(|error| exec_error(&error, sql))?;
         let mut stream = pin!(stream);
         let mut outcome = Outcome::default();
         let mut storing = true;
@@ -368,7 +402,10 @@ impl PostgresSession {
             match message {
                 SimpleQueryMessage::RowDescription(columns) => {
                     outcome.has_columns = true;
-                    let names = columns.iter().map(|column| column.name().to_owned()).collect();
+                    let names = columns
+                        .iter()
+                        .map(|column| column.name().to_owned())
+                        .collect();
                     sink.set_columns(names).await;
                 }
                 SimpleQueryMessage::Row(row) if storing => {
@@ -399,7 +436,11 @@ impl PostgresSession {
                     SimpleQueryMessage::Row(row) => matches!(row.try_get(0), Ok(Some("t"))),
                     _ => false,
                 });
-                if open { TransactionState::Open } else { TransactionState::None }
+                if open {
+                    TransactionState::Open
+                } else {
+                    TransactionState::None
+                }
             }
             Ok(Err(error)) if error.code() == Some(&SqlState::IN_FAILED_SQL_TRANSACTION) => {
                 TransactionState::Failed
@@ -409,13 +450,16 @@ impl PostgresSession {
     }
 
     async fn text_rows(&self, sql: &str) -> Result<Vec<Vec<Option<String>>>, ExecError> {
-        let messages = self.client.simple_query(sql).await.map_err(|error| exec_error(&error, sql))?;
+        let messages = self
+            .client
+            .simple_query(sql)
+            .await
+            .map_err(|error| exec_error(&error, sql))?;
         let mut rows = Vec::new();
         for message in messages {
             if let SimpleQueryMessage::Row(row) = message {
-                let cells = (0..row.len()).map(|index| {
-                    row.try_get(index).map(|text| text.map(str::to_owned))
-                });
+                let cells = (0..row.len())
+                    .map(|index| row.try_get(index).map(|text| text.map(str::to_owned)));
                 rows.push(
                     cells
                         .collect::<Result<_, _>>()
@@ -444,7 +488,10 @@ impl Session for PostgresSession {
         if sql.is_empty() {
             return Ok(());
         }
-        self.client.batch_execute(&sql).await.map_err(|error| exec_error(&error, &sql))
+        self.client
+            .batch_execute(&sql)
+            .await
+            .map_err(|error| exec_error(&error, &sql))
     }
 
     async fn run(&mut self, sql: &str, mut sink: ResultSink) -> Result<StatementEnd, ExecError> {
@@ -481,7 +528,10 @@ impl Session for PostgresSession {
             TransactionCommand::Commit => "COMMIT",
             TransactionCommand::Rollback => "ROLLBACK",
         };
-        self.client.batch_execute(sql).await.map_err(|error| exec_error(&error, sql))?;
+        self.client
+            .batch_execute(sql)
+            .await
+            .map_err(|error| exec_error(&error, sql))?;
         if command == TransactionCommand::Begin {
             self.transaction = TransactionState::Open;
         }
@@ -511,7 +561,10 @@ impl Session for PostgresSession {
             let relation = cells.next().flatten();
             let kind = cells.next().flatten();
             if schemas.last().is_none_or(|schema| schema.name != name) {
-                schemas.push(Schema { name, relations: Vec::new() });
+                schemas.push(Schema {
+                    name,
+                    relations: Vec::new(),
+                });
             }
             if let (Some(schema), Some(relation)) = (schemas.last_mut(), relation) {
                 schema.relations.push(Relation {
@@ -525,18 +578,32 @@ impl Session for PostgresSession {
             }
         }
         let current = self.text_rows("SELECT current_schema()").await?;
-        let current_schema = current.into_iter().next().and_then(|row| row.into_iter().next()).flatten();
-        Ok(Catalog { schemas, current_schema })
+        let current_schema = current
+            .into_iter()
+            .next()
+            .and_then(|row| row.into_iter().next())
+            .flatten();
+        Ok(Catalog {
+            schemas,
+            current_schema,
+        })
     }
 
-    async fn read_columns(&mut self, schema: &str, relation: &str) -> Result<Vec<String>, ExecError> {
+    async fn read_columns(
+        &mut self,
+        schema: &str,
+        relation: &str,
+    ) -> Result<Vec<String>, ExecError> {
         let rows = self
             .client
             .query(COLUMNS_SQL, &[&schema, &relation])
             .await
             .map_err(|error| exec_error(&error, COLUMNS_SQL))?;
         rows.iter()
-            .map(|row| row.try_get(0).map_err(|error| ExecError::new(describe(&error))))
+            .map(|row| {
+                row.try_get(0)
+                    .map_err(|error| ExecError::new(describe(&error)))
+            })
             .collect()
     }
 }

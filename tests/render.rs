@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use common::sample_catalog;
 use common::{Fixture, ctrl, key};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -15,7 +16,6 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier};
 use sqln::app::{App, Options};
-use common::sample_catalog;
 use sqln::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
 use sqln::clipboard::MemoryClipboard;
 use sqln::editor::{KeyboardMode, SqlEditor};
@@ -25,16 +25,22 @@ use sqln::ui::{draw_editor, list_area};
 
 fn draw(editor: &mut SqlEditor, theme: &Theme, width: u16, height: u16) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal.draw(|frame| draw_editor(frame, frame.area(), editor, true, theme)).unwrap();
+    terminal
+        .draw(|frame| draw_editor(frame, frame.area(), editor, true, theme))
+        .unwrap();
     terminal.backend().buffer().clone()
 }
 
 fn line(buffer: &Buffer, y: u16) -> String {
-    (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect()
+    (0..buffer.area.width)
+        .map(|x| buffer[(x, y)].symbol())
+        .collect()
 }
 
 fn screen(buffer: &Buffer) -> String {
-    (0..buffer.area.height).map(|y| line(buffer, y) + "\n").collect()
+    (0..buffer.area.height)
+        .map(|y| line(buffer, y) + "\n")
+        .collect()
 }
 
 fn find(buffer: &Buffer, text: &str) -> (u16, u16) {
@@ -61,7 +67,12 @@ fn the_list_opens_below_the_cursor_at_the_start_of_the_word() {
     let (word_x, word_y) = find(&buffer, "us");
     let (label_x, label_y) = find(&buffer, "users");
     assert_eq!(label_y, word_y + 1, "{}", screen(&buffer));
-    assert_eq!(label_x, word_x + 5, "the kind tag fills five columns\n{}", screen(&buffer));
+    assert_eq!(
+        label_x,
+        word_x + 5,
+        "the kind tag fills five columns\n{}",
+        screen(&buffer)
+    );
     assert!(line(&buffer, label_y).contains("tbl"));
     assert!(line(&buffer, label_y).contains("public"));
 }
@@ -80,9 +91,18 @@ fn the_list_opens_above_the_cursor_on_the_last_rows() {
 #[test]
 fn list_area_stays_in_the_bounds() {
     let bounds = Rect::new(10, 5, 40, 10);
-    assert_eq!(list_area(Position::new(12, 7), bounds, 20, 4), Rect::new(12, 8, 20, 4));
-    assert_eq!(list_area(Position::new(45, 7), bounds, 20, 4), Rect::new(30, 8, 20, 4));
-    assert_eq!(list_area(Position::new(12, 13), bounds, 20, 4), Rect::new(12, 9, 20, 4));
+    assert_eq!(
+        list_area(Position::new(12, 7), bounds, 20, 4),
+        Rect::new(12, 8, 20, 4)
+    );
+    assert_eq!(
+        list_area(Position::new(45, 7), bounds, 20, 4),
+        Rect::new(30, 8, 20, 4)
+    );
+    assert_eq!(
+        list_area(Position::new(12, 13), bounds, 20, 4),
+        Rect::new(12, 9, 20, 4)
+    );
     let wide = list_area(Position::new(12, 7), bounds, 100, 4);
     assert_eq!((wide.x, wide.width), (10, 40));
     let tall = list_area(Position::new(12, 9), bounds, 20, 20);
@@ -218,7 +238,12 @@ fn a_jump_to_a_far_row_highlights_on_the_first_frame() {
     draw(&mut f.editor, &Theme::ansi(), 40, 10);
     f.press(KeyEvent::new(KeyCode::End, KeyModifiers::CONTROL));
     let buffer = draw(&mut f.editor, &Theme::ansi(), 40, 10);
-    assert_eq!(buffer[find(&buffer, "SELECT")].fg, Color::Blue, "{}", screen(&buffer));
+    assert_eq!(
+        buffer[find(&buffer, "SELECT")].fg,
+        Color::Blue,
+        "{}",
+        screen(&buffer)
+    );
 }
 
 /// The first editor row of the application screen.
@@ -227,8 +252,16 @@ const TOP: u16 = 2;
 const LEFT: u16 = 5;
 
 fn app(keyboard: KeyboardMode) -> App {
-    let options = Options { keyboard, catalog: Some(sample_catalog()), ..Options::default() };
-    let mut app = App::new(options, Rc::new(RefCell::new(MemoryClipboard::default())), Theme::ansi());
+    let options = Options {
+        keyboard,
+        catalog: Some(sample_catalog()),
+        ..Options::default()
+    };
+    let mut app = App::new(
+        options,
+        Rc::new(RefCell::new(MemoryClipboard::default())),
+        Theme::ansi(),
+    );
     // These tests count screen columns from the first column of the editor.
     send(&mut app, ctrl('w'));
     send(&mut app, key(KeyCode::Char('b')));
@@ -246,7 +279,12 @@ fn send(app: &mut App, event: KeyEvent) {
 }
 
 fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
-    Event::Mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE })
+    Event::Mouse(MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    })
 }
 
 #[test]
@@ -275,13 +313,21 @@ fn each_hint_fits_the_minimum_terminal_width() {
         let hint = hint_text(&HintItem::of(parts));
         assert!(hint.chars().count() < 80, "{hint}");
     }
-    for keys in [SuggestionKeys::Tab, SuggestionKeys::Enter, SuggestionKeys::Both] {
+    for keys in [
+        SuggestionKeys::Tab,
+        SuggestionKeys::Enter,
+        SuggestionKeys::Both,
+    ] {
         for others in [text::LIST_EDITOR_KEYS, text::LIST_FILTER_KEYS] {
             let hint = hint_text(&HintItem::of(&text::hint_list(keys, others)));
             assert!(hint.chars().count() < 80, "{hint}");
         }
     }
-    for message in [text::RESULT_READING, text::CLIPBOARD_UNAVAILABLE, text::COPY_SENT_TO_TERMINAL] {
+    for message in [
+        text::RESULT_READING,
+        text::CLIPBOARD_UNAVAILABLE,
+        text::COPY_SENT_TO_TERMINAL,
+    ] {
         assert!(message.chars().count() < 80, "{message}");
     }
 }
@@ -329,7 +375,10 @@ fn a_small_terminal_shows_the_size_and_keeps_the_text() {
     let mut app = app(KeyboardMode::Conventional);
     send(&mut app, key(KeyCode::Char('x')));
     let small = screen(&draw_app(&mut app, 52, 14));
-    assert!(small.contains("52 x 14") && small.contains("80 x 24"), "{small}");
+    assert!(
+        small.contains("52 x 14") && small.contains("80 x 24"),
+        "{small}"
+    );
     assert!(screen(&draw_app(&mut app, 80, 24)).contains('x'));
     assert_eq!(app.console_mut().editor.text(), "x");
 }
@@ -350,12 +399,24 @@ fn a_click_moves_the_cursor_and_past_the_end_uses_the_line_end() {
     draw_app(&mut app, 80, 24);
     let gutter = LEFT;
 
-    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), gutter + 1, TOP));
+    app.on_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        gutter + 1,
+        TOP,
+    ));
     assert_eq!(app.console_mut().editor.cursor(), Index2::new(0, 1));
-    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), gutter + 30, TOP + 1));
+    app.on_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        gutter + 30,
+        TOP + 1,
+    ));
     assert_eq!(app.console_mut().editor.cursor(), Index2::new(1, 2));
     app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), gutter, 10));
-    assert_eq!(app.console_mut().editor.cursor(), Index2::new(1, 2), "a click below the text uses its end");
+    assert_eq!(
+        app.console_mut().editor.cursor(),
+        Index2::new(1, 2),
+        "a click below the text uses its end"
+    );
 }
 
 #[test]
@@ -363,7 +424,11 @@ fn a_click_on_wide_characters_keeps_the_column() {
     let mut app = app(KeyboardMode::Conventional);
     app.on_event(Event::Paste("日本語".to_owned()));
     draw_app(&mut app, 80, 24);
-    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), LEFT + 2, TOP));
+    app.on_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        LEFT + 2,
+        TOP,
+    ));
     assert_eq!(app.console_mut().editor.cursor(), Index2::new(0, 1));
 }
 
@@ -372,7 +437,11 @@ fn a_tab_character_counts_as_its_display_width() {
     let mut app = app(KeyboardMode::Conventional);
     app.on_event(Event::Paste("\tab".to_owned()));
     draw_app(&mut app, 80, 24);
-    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), LEFT + 5, TOP));
+    app.on_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        LEFT + 5,
+        TOP,
+    ));
     assert_eq!(app.console_mut().editor.cursor(), Index2::new(0, 2));
 }
 
@@ -390,11 +459,26 @@ fn vim_click_stops_on_the_last_character_and_a_drag_selects() {
     let mut app = app(KeyboardMode::Vim);
     app.on_event(Event::Paste("abcdef".to_owned()));
     draw_app(&mut app, 80, 24);
-    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), LEFT + 40, TOP));
+    app.on_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        LEFT + 40,
+        TOP,
+    ));
     assert_eq!(app.console_mut().editor.cursor(), Index2::new(0, 5));
-    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), LEFT + 1, TOP));
-    app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), LEFT + 3, TOP));
-    assert_eq!(app.console_mut().editor.selected_text().as_deref(), Some("bcd"));
+    app.on_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        LEFT + 1,
+        TOP,
+    ));
+    app.on_event(mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        LEFT + 3,
+        TOP,
+    ));
+    assert_eq!(
+        app.console_mut().editor.selected_text().as_deref(),
+        Some("bcd")
+    );
 }
 
 #[test]
@@ -402,9 +486,20 @@ fn a_drag_selects_with_the_exclusive_end() {
     let mut app = app(KeyboardMode::Conventional);
     app.on_event(Event::Paste("abcdef".to_owned()));
     draw_app(&mut app, 80, 24);
-    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), LEFT + 1, TOP));
-    app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), LEFT + 4, TOP));
-    assert_eq!(app.console_mut().editor.selected_text().as_deref(), Some("bcd"));
+    app.on_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        LEFT + 1,
+        TOP,
+    ));
+    app.on_event(mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        LEFT + 4,
+        TOP,
+    ));
+    assert_eq!(
+        app.console_mut().editor.selected_text().as_deref(),
+        Some("bcd")
+    );
     send(&mut app, key(KeyCode::Char('x')));
     assert_eq!(app.console_mut().editor.text(), "axef");
 }
@@ -421,8 +516,16 @@ fn the_wheel_scrolls_the_text() {
 }
 
 fn hint_app(keyboard: KeyboardMode, keymap: Option<Keymap>) -> App {
-    let options = Options { keyboard, keymap, ..Options::default() };
-    App::new(options, Rc::new(RefCell::new(MemoryClipboard::default())), Theme::plain())
+    let options = Options {
+        keyboard,
+        keymap,
+        ..Options::default()
+    };
+    App::new(
+        options,
+        Rc::new(RefCell::new(MemoryClipboard::default())),
+        Theme::plain(),
+    )
 }
 
 fn press_prefix(app: &mut App, c: char) {
@@ -462,8 +565,12 @@ fn the_hint_bar_shows_the_keys_of_the_key_map() {
     assert!(hint.contains("F6 run"), "{hint}");
     assert!(!hint.starts_with("F5"), "{hint}");
     assert!(!hint.contains("keys"), "{hint}");
-    let keys: Vec<String> =
-        app.prefix_menu().into_iter().flat_map(|group| group.keys).map(|(key, _)| key).collect();
+    let keys: Vec<String> = app
+        .prefix_menu()
+        .into_iter()
+        .flat_map(|group| group.keys)
+        .map(|(key, _)| key)
+        .collect();
     assert!(keys.contains(&"u".to_owned()), "{keys:?}");
     assert!(keys.contains(&"N".to_owned()), "{keys:?}");
     assert!(!keys.contains(&"?".to_owned()), "{keys:?}");

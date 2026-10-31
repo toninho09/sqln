@@ -18,7 +18,8 @@ pub fn document_end(lines: &Lines) -> Index2 {
 }
 
 pub fn text_of(lines: &Lines) -> String {
-    let mut text = String::with_capacity(lines.iter_row().map(Vec::len).sum::<usize>() + lines.len());
+    let mut text =
+        String::with_capacity(lines.iter_row().map(Vec::len).sum::<usize>() + lines.len());
     for (index, row) in lines.iter_row().enumerate() {
         if index > 0 {
             text.push('\n');
@@ -136,23 +137,37 @@ impl Snapshot {
         let mut line_starts = vec![0];
         line_starts.extend(text.match_indices('\n').map(|(offset, _)| offset + 1));
         let tokens = tokenize(&text, dialect);
-        Self { text, tokens, line_starts }
+        Self {
+            text,
+            tokens,
+            line_starts,
+        }
     }
 
     pub fn line_start(&self, row: usize) -> usize {
-        self.line_starts.get(row).copied().unwrap_or(self.text.len())
+        self.line_starts
+            .get(row)
+            .copied()
+            .unwrap_or(self.text.len())
     }
 
     pub fn offset(&self, position: Index2) -> usize {
         let start = self.line_start(position.row);
         let line = &self.text[start..];
         let line = &line[..line.find('\n').unwrap_or(line.len())];
-        start + line.char_indices().nth(position.col).map_or(line.len(), |(offset, _)| offset)
+        start
+            + line
+                .char_indices()
+                .nth(position.col)
+                .map_or(line.len(), |(offset, _)| offset)
     }
 
     pub fn position(&self, offset: usize) -> Index2 {
         let row = self.line_starts.partition_point(|start| *start <= offset) - 1;
-        Index2::new(row, self.text[self.line_starts[row]..offset].chars().count())
+        Index2::new(
+            row,
+            self.text[self.line_starts[row]..offset].chars().count(),
+        )
     }
 
     /// Returns the position of the last character before `offset`.

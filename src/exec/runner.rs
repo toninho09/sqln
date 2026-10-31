@@ -84,7 +84,8 @@ impl ConsoleTask {
         if self.transaction != state {
             self.transaction = state;
             let console = self.console;
-            self.emit(ExecEvent::TransactionChanged { console, state }).await;
+            self.emit(ExecEvent::TransactionChanged { console, state })
+                .await;
         }
     }
 
@@ -97,7 +98,13 @@ impl ConsoleTask {
 
     async fn finish(&mut self, execution: ExecutionId, end: ExecutionEnd, message: Option<String>) {
         let console = self.console;
-        self.emit(ExecEvent::ExecutionFinished { console, execution, end, message }).await;
+        self.emit(ExecEvent::ExecutionFinished {
+            console,
+            execution,
+            end,
+            message,
+        })
+        .await;
     }
 
     async fn acquire(
@@ -133,12 +140,12 @@ impl ConsoleTask {
         }
     }
 
-    async fn run_script(
-        &mut self,
-        request: RunRequest,
-        commands: &mut UnboundedReceiver<Command>,
-    ) {
-        let RunRequest { execution, statements, options } = request;
+    async fn run_script(&mut self, request: RunRequest, commands: &mut UnboundedReceiver<Command>) {
+        let RunRequest {
+            execution,
+            statements,
+            options,
+        } = request;
         let console = self.console;
         self.emit(ExecEvent::Queued { console, execution }).await;
         // The state of a closed session does not apply to the next session.
@@ -146,20 +153,24 @@ impl ConsoleTask {
         if !reserved {
             self.transaction = TransactionState::None;
         }
-        let Some(mut lease) = self.acquire(execution, commands).await else { return };
+        let Some(mut lease) = self.acquire(execution, commands).await else {
+            return;
+        };
         self.emit(ExecEvent::Started { console, execution }).await;
 
         // A reserved session has this context, and a failed transaction refuses `SET`.
         let context = context(&self.binding.settings, options.schema);
         let cap = options.row_cap.unwrap_or(self.binding.settings.row_cap);
         if !reserved && let Err(error) = lease.session().apply_context(&context).await {
-            self.finish(execution, ExecutionEnd::Failed, Some(error.message)).await;
+            self.finish(execution, ExecutionEnd::Failed, Some(error.message))
+                .await;
             self.keep_or_release(lease).await;
             return;
         }
         if options.manual && self.transaction == TransactionState::None {
             if let Err(error) = lease.session().control(TransactionCommand::Begin).await {
-                self.finish(execution, ExecutionEnd::Failed, Some(error.message)).await;
+                self.finish(execution, ExecutionEnd::Failed, Some(error.message))
+                    .await;
                 self.keep_or_release(lease).await;
                 return;
             }
@@ -169,9 +180,16 @@ impl ConsoleTask {
         let mut end = ExecutionEnd::Completed;
         let mut lease = Some(lease);
         for (index, sql) in statements.iter().enumerate() {
-            let key = StatementKey { console, execution, index };
+            let key = StatementKey {
+                console,
+                execution,
+                index,
+            };
             let stop_requested = self.stop_is_pending(commands).await;
-            let Some(active) = lease.as_mut().filter(|_| end == ExecutionEnd::Completed && !stop_requested) else {
+            let Some(active) = lease
+                .as_mut()
+                .filter(|_| end == ExecutionEnd::Completed && !stop_requested)
+            else {
                 if stop_requested && end == ExecutionEnd::Completed {
                     end = ExecutionEnd::Stopped;
                 }
@@ -181,9 +199,18 @@ impl ConsoleTask {
 
             self.emit(ExecEvent::StatementStarted { key }).await;
             let (waited, reason) = self.run_statement(key, active, sql, cap, commands).await;
-            let closed = matches!(waited, Waited::Closed | Waited::Finished { reusable: false, .. });
+            let closed = matches!(
+                waited,
+                Waited::Closed
+                    | Waited::Finished {
+                        reusable: false,
+                        ..
+                    }
+            );
             let error_offset = match &waited {
-                Waited::Finished { result: Err(error), .. } => error.offset,
+                Waited::Finished {
+                    result: Err(error), ..
+                } => error.offset,
                 _ => None,
             };
             let (status, statement_end) = statement_status(waited, reason);
@@ -203,7 +230,9 @@ impl ConsoleTask {
                 (StatementStatus::Unknown, _) => ExecutionEnd::ConnectionClosed,
                 (StatementStatus::Error(_), _) => ExecutionEnd::Failed,
                 (StatementStatus::Timeout, _) => ExecutionEnd::TimedOut,
-                (StatementStatus::Stopped, _) | (_, Some(StopReason::User)) => ExecutionEnd::Stopped,
+                (StatementStatus::Stopped, _) | (_, Some(StopReason::User)) => {
+                    ExecutionEnd::Stopped
+                }
                 (_, Some(StopReason::Timeout)) => ExecutionEnd::TimedOut,
                 _ => end,
             };
@@ -240,11 +269,13 @@ impl ConsoleTask {
             Command::Run(request) => {
                 let message = "The console already has an execution.".to_owned();
                 let execution = request.execution;
-                self.finish(execution, ExecutionEnd::Refused, Some(message)).await;
+                self.finish(execution, ExecutionEnd::Refused, Some(message))
+                    .await;
             }
             Command::Transaction(_) => {
                 let message = "The console has an execution in progress.".to_owned();
-                self.emit(ExecEvent::TransactionFailed { console, message }).await;
+                self.emit(ExecEvent::TransactionFailed { console, message })
+                    .await;
             }
             Command::Stop | Command::ConfirmClose(_) | Command::Rebind(_) | Command::Close => {}
         }
@@ -252,7 +283,13 @@ impl ConsoleTask {
 
     async fn emit_not_executed(&mut self, key: StatementKey) {
         let status = StatementStatus::NotExecuted;
-        self.emit(ExecEvent::StatementFinished { key, status, end: None, error_offset: None }).await;
+        self.emit(ExecEvent::StatementFinished {
+            key,
+            status,
+            end: None,
+            error_offset: None,
+        })
+        .await;
     }
 
     /// Waits for one statement, with its time limit and the stop request.
@@ -344,13 +381,18 @@ impl ConsoleTask {
         let console = self.console;
         let Some(mut lease) = self.held.take() else {
             let message = "No transaction is open.".to_owned();
-            self.emit(ExecEvent::TransactionFailed { console, message }).await;
+            self.emit(ExecEvent::TransactionFailed { console, message })
+                .await;
             return;
         };
         let result = lease.session().control(command).await;
         self.keep_or_release(lease).await;
         if let Err(error) = result {
-            self.emit(ExecEvent::TransactionFailed { console, message: error.message }).await;
+            self.emit(ExecEvent::TransactionFailed {
+                console,
+                message: error.message,
+            })
+            .await;
         }
     }
 }
@@ -358,7 +400,9 @@ impl ConsoleTask {
 /// Waits for a cancel request that is on its way. A late request must not reach the
 /// next statement, so a session with an open request cannot run again.
 async fn settle(request: Option<JoinHandle<Result<(), String>>>, limit: Duration) -> bool {
-    let Some(mut request) = request else { return true };
+    let Some(mut request) = request else {
+        return true;
+    };
     let settled = timeout(limit, &mut request).await.is_ok();
     if !settled {
         request.abort();
@@ -372,16 +416,24 @@ fn statement_status(
 ) -> (StatementStatus, Option<StatementEnd>) {
     match (waited, reason) {
         (Waited::Closed, _) => (StatementStatus::Unknown, None),
-        (Waited::Finished { result: Ok(end), .. }, _) => (StatementStatus::Success, Some(end)),
+        (
+            Waited::Finished {
+                result: Ok(end), ..
+            },
+            _,
+        ) => (StatementStatus::Success, Some(end)),
         (Waited::Finished { result: Err(_), .. }, Some(StopReason::User)) => {
             (StatementStatus::Stopped, None)
         }
         (Waited::Finished { result: Err(_), .. }, Some(StopReason::Timeout)) => {
             (StatementStatus::Timeout, None)
         }
-        (Waited::Finished { result: Err(error), .. }, None) => {
-            (StatementStatus::Error(error.message), None)
-        }
+        (
+            Waited::Finished {
+                result: Err(error), ..
+            },
+            None,
+        ) => (StatementStatus::Error(error.message), None),
     }
 }
 

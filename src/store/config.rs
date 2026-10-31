@@ -18,9 +18,7 @@ use crate::connection::{
     DEFAULT_BUSY_SECONDS, DEFAULT_POOL_LIMIT, DEFAULT_SQL_SECONDS, Definition, Source,
 };
 use crate::connector::sqlite::SqliteTarget;
-use crate::connector::target::{
-    Address, ClientCertificate, Engine, NetworkTarget, Tls, TlsFiles,
-};
+use crate::connector::target::{Address, ClientCertificate, Engine, NetworkTarget, Tls, TlsFiles};
 use crate::editor::KeyboardMode;
 use crate::input::{Keymap, SuggestionKeys};
 
@@ -38,7 +36,11 @@ pub struct ConfigFile {
 
 impl ConfigFile {
     pub fn empty() -> Self {
-        Self { version: VERSION, preferences: Preferences::default(), connections: Vec::new() }
+        Self {
+            version: VERSION,
+            preferences: Preferences::default(),
+            connections: Vec::new(),
+        }
     }
 }
 
@@ -149,7 +151,9 @@ pub struct PoolEntry {
 
 impl Default for PoolEntry {
     fn default() -> Self {
-        Self { max_connections: DEFAULT_POOL_LIMIT }
+        Self {
+            max_connections: DEFAULT_POOL_LIMIT,
+        }
     }
 }
 
@@ -245,7 +249,9 @@ pub struct Loaded {
 fn describe(error: &serde_json::Error) -> String {
     let place = format!("line {}, column {}", error.line(), error.column());
     let text = error.to_string();
-    let text = text.rsplit_once(" at line ").map_or(text.as_str(), |(start, _)| start);
+    let text = text
+        .rsplit_once(" at line ")
+        .map_or(text.as_str(), |(start, _)| start);
     let wrong_value = text.starts_with("invalid type") || text.starts_with("invalid value");
     let what = match error.classify() {
         Category::Io => "The file cannot be read.",
@@ -283,7 +289,8 @@ fn validate(file: &ConfigFile, scope: Scope) -> Result<(), String> {
         if !names.insert(name) {
             return Err(format!("Two connections use the name {}.", entry.name));
         }
-        validate_entry(entry, scope).map_err(|reason| format!("Connection {}: {reason}", entry.name))?;
+        validate_entry(entry, scope)
+            .map_err(|reason| format!("Connection {}: {reason}", entry.name))?;
     }
     Ok(())
 }
@@ -318,7 +325,10 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
             {
                 return Err("TLS files need a connection with TLS.".to_owned());
             }
-            let client = entry.tls.as_ref().map(|tls| (&tls.client_cert, &tls.client_key));
+            let client = entry
+                .tls
+                .as_ref()
+                .map(|tls| (&tls.client_cert, &tls.client_key));
             if client.is_some_and(|(cert, key)| cert.is_some() != key.is_some()) {
                 return Err("A client certificate needs clientCert and clientKey.".to_owned());
             }
@@ -338,17 +348,26 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
             let mut target = SqliteTarget::new(entry.file.clone().unwrap_or_default());
             target.foreign_keys = entry.foreign_keys;
             target.busy_timeout = Duration::from_millis(
-                entry.busy_timeout_millis.unwrap_or(DEFAULT_BUSY_SECONDS * 1_000),
+                entry
+                    .busy_timeout_millis
+                    .unwrap_or(DEFAULT_BUSY_SECONDS * 1_000),
             );
             Source::Sqlite(target)
         }
         KindName::Postgres | KindName::Mysql => {
-            let engine = if entry.kind == KindName::Postgres { Engine::Postgres } else { Engine::MySql };
+            let engine = if entry.kind == KindName::Postgres {
+                Engine::Postgres
+            } else {
+                Engine::MySql
+            };
             let host = entry.host.clone().unwrap_or_default();
             let address = if host.starts_with('/') {
                 Address::Socket(PathBuf::from(host))
             } else {
-                Address::Tcp { host, port: entry.port.unwrap_or(engine.default_port()) }
+                Address::Tcp {
+                    host,
+                    port: entry.port.unwrap_or(engine.default_port()),
+                }
             };
             let tls = match &entry.tls {
                 Some(tls) if tls.mode == TlsMode::Disabled => Tls::Disabled,
@@ -405,7 +424,9 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
         busy_timeout_millis: None,
         read_only: definition.read_only,
         tls: None,
-        pool: PoolEntry { max_connections: definition.max_connections },
+        pool: PoolEntry {
+            max_connections: definition.max_connections,
+        },
         connect_timeout_seconds: None,
         sql_timeout_seconds: definition.sql_timeout.map(|time| time.as_secs()),
     };
@@ -413,9 +434,8 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
         Source::Sqlite(target) => {
             entry.file = Some(path_text(&target.path));
             entry.foreign_keys = target.foreign_keys;
-            entry.busy_timeout_millis = Some(
-                u64::try_from(target.busy_timeout.as_millis()).unwrap_or(u64::MAX),
-            );
+            entry.busy_timeout_millis =
+                Some(u64::try_from(target.busy_timeout.as_millis()).unwrap_or(u64::MAX));
         }
         Source::Network(target) => {
             entry.kind = match target.engine {
@@ -442,7 +462,10 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
                 Tls::Verify(files) => TlsEntry {
                     mode: TlsMode::Verify,
                     ca_file: files.ca.as_deref().map(path_text),
-                    client_cert: files.client.as_ref().map(|client| path_text(&client.certificate)),
+                    client_cert: files
+                        .client
+                        .as_ref()
+                        .map(|client| path_text(&client.certificate)),
                     client_key: files.client.as_ref().map(|client| path_text(&client.key)),
                 },
             });
@@ -457,7 +480,10 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
 /// Reads one file. A missing file is an empty configuration.
 fn read_scope(root: &Root, scope: Scope) -> (Option<u64>, Result<ConfigFile, ConfigError>) {
     let path = root.config_file();
-    let error = |message: String| ConfigError { file: path.clone(), message };
+    let error = |message: String| ConfigError {
+        file: path.clone(),
+        message,
+    };
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(read) if read.kind() == std::io::ErrorKind::NotFound => {
@@ -475,7 +501,11 @@ fn read_scope(root: &Root, scope: Scope) -> (Option<u64>, Result<ConfigFile, Con
 
 fn keymap_overrides(preferences: &Preferences, mode: KeyboardMode) -> HashMap<String, Vec<String>> {
     let keymaps = preferences.keymap.clone().unwrap_or_default();
-    let section = if mode == KeyboardMode::Vim { keymaps.vim } else { keymaps.conventional };
+    let section = if mode == KeyboardMode::Vim {
+        keymaps.vim
+    } else {
+        keymaps.conventional
+    };
     section.into_iter().collect()
 }
 
@@ -499,7 +529,9 @@ pub fn load(store: &Store) -> Loaded {
     Loaded { hashes, config }
 }
 
-fn combine(files: Vec<(Scope, &Root, Result<ConfigFile, ConfigError>)>) -> Result<Config, ConfigError> {
+fn combine(
+    files: Vec<(Scope, &Root, Result<ConfigFile, ConfigError>)>,
+) -> Result<Config, ConfigError> {
     let mut parsed = Vec::new();
     for (scope, root, result) in files {
         parsed.push((scope, root, result?));
@@ -515,16 +547,25 @@ fn combine(files: Vec<(Scope, &Root, Result<ConfigFile, ConfigError>)>) -> Resul
         .unwrap_or(KeyboardMode::Conventional);
     // Each file must hold a valid map alone, so that the error names its file.
     for (_, root, file) in &parsed {
-        Keymap::with_overrides(keyboard, &keymap_overrides(&file.preferences, keyboard))
-            .map_err(|message| ConfigError { file: root.config_file(), message })?;
+        Keymap::with_overrides(keyboard, &keymap_overrides(&file.preferences, keyboard)).map_err(
+            |message| ConfigError {
+                file: root.config_file(),
+                message,
+            },
+        )?;
     }
     let mut overrides = keymap_overrides(global, keyboard);
     if let Some(project) = project {
         overrides.extend(keymap_overrides(project, keyboard));
     }
-    let last_file = parsed.last().map(|(_, root, _)| root.config_file()).unwrap_or_default();
-    let keymap = Keymap::with_overrides(keyboard, &overrides)
-        .map_err(|message| ConfigError { file: last_file, message })?;
+    let last_file = parsed
+        .last()
+        .map(|(_, root, _)| root.config_file())
+        .unwrap_or_default();
+    let keymap = Keymap::with_overrides(keyboard, &overrides).map_err(|message| ConfigError {
+        file: last_file,
+        message,
+    })?;
     let connections = parsed
         .iter()
         .flat_map(|(scope, root, file)| {
@@ -542,8 +583,12 @@ fn combine(files: Vec<(Scope, &Root, Result<ConfigFile, ConfigError>)>) -> Resul
         row_cap: pick(|preferences| preferences.row_cap),
         budget_bytes: pick(|preferences| preferences.grid_budget_bytes),
         keymap,
-        theme: project.and_then(|preferences| preferences.theme).or(global.theme),
-        icons: project.and_then(|preferences| preferences.icons).or(global.icons),
+        theme: project
+            .and_then(|preferences| preferences.theme)
+            .or(global.theme),
+        icons: project
+            .and_then(|preferences| preferences.icons)
+            .or(global.icons),
         reopen_tabs: project
             .and_then(|preferences| preferences.reopen_tabs)
             .or(global.reopen_tabs)
@@ -567,7 +612,11 @@ pub enum Change {
 pub fn change_connections(root: &Root, scope: Scope, change: Change) -> Result<u64, String> {
     change_file(root, scope, |config| match change {
         Change::Upsert(entry) => {
-            match config.connections.iter_mut().find(|item| item.id == entry.id) {
+            match config
+                .connections
+                .iter_mut()
+                .find(|item| item.id == entry.id)
+            {
                 Some(item) => *item = *entry,
                 None => config.connections.push(*entry),
             }
@@ -579,16 +628,27 @@ pub fn change_connections(root: &Root, scope: Scope, change: Change) -> Result<u
 /// Reads the preferences that the file of a scope declares.
 pub fn preferences(root: &Root, scope: Scope) -> Result<Preferences, String> {
     let (_, result) = read_scope(root, scope);
-    result.map(|config| config.preferences).map_err(|error| error.to_string())
+    result
+        .map(|config| config.preferences)
+        .map_err(|error| error.to_string())
 }
 
 /// Replaces the preferences of a scope. It returns the hash of the new file.
-pub fn change_preferences(root: &Root, scope: Scope, preferences: Preferences) -> Result<u64, String> {
+pub fn change_preferences(
+    root: &Root,
+    scope: Scope,
+    preferences: Preferences,
+) -> Result<u64, String> {
     change_file(root, scope, |config| config.preferences = preferences)
 }
 
-fn change_file(root: &Root, scope: Scope, change: impl FnOnce(&mut ConfigFile)) -> Result<u64, String> {
-    let _lock = file::lock(&root.locks_dir().join("config.lock")).map_err(|error| error.to_string())?;
+fn change_file(
+    root: &Root,
+    scope: Scope,
+    change: impl FnOnce(&mut ConfigFile),
+) -> Result<u64, String> {
+    let _lock =
+        file::lock(&root.locks_dir().join("config.lock")).map_err(|error| error.to_string())?;
     let path = root.config_file();
     let (hash, result) = read_scope(root, scope);
     let mut config = result.map_err(|error| error.to_string())?;

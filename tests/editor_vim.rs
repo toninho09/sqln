@@ -114,7 +114,10 @@ fn escape_moves_the_list_first_and_the_mode_second() {
 fn suggestions_work_in_insert_mode_and_stay_closed_in_normal_mode() {
     let mut f = Fixture::vim("");
     write_keys(&mut f, "iSELECT u.na");
-    assert!(f.editor.suggestions().is_none(), "no relation is in scope yet");
+    assert!(
+        f.editor.suggestions().is_none(),
+        "no relation is in scope yet"
+    );
     f.press(key(Esc));
     write_keys(&mut f, "dd");
     write_keys(&mut f, "iSELECT * FROM us");

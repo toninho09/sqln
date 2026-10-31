@@ -61,12 +61,15 @@ impl App {
         };
         let manager = self.manager.as_mut()?;
         let id = manager.add_connection(connector.clone(), settings);
-        self.connections.push(Connection::new(id, name, definition, connector.as_ref()));
+        self.connections
+            .push(Connection::new(id, name, definition, connector.as_ref()));
         Some(id)
     }
 
     pub(super) fn prepare_database(&mut self) {
-        let Some(path) = self.database.clone() else { return };
+        let Some(path) = self.database.clone() else {
+            return;
+        };
         if let Err(error) = validate_path(&path) {
             self.status = Some(error.message);
             self.database = None;
@@ -96,7 +99,9 @@ impl App {
     }
 
     pub(super) fn create_database(&mut self) {
-        let Some(path) = self.database.clone() else { return };
+        let Some(path) = self.database.clone() else {
+            return;
+        };
         let mut target = SqliteTarget::new(&path);
         target.allow_create = true;
         if let Some(connection) = self.add_sqlite(target)
@@ -108,8 +113,12 @@ impl App {
 
     /// Gives a console a task of the connection. The console must have no connection.
     pub(super) fn bind_console(&mut self, index: usize, connection: ConnectionId) {
-        let Some(manager) = &mut self.manager else { return };
-        let Some(id) = manager.open_console(connection) else { return };
+        let Some(manager) = &mut self.manager else {
+            return;
+        };
+        let Some(id) = manager.open_console(connection) else {
+            return;
+        };
         // The name comes first, while the console has no connection to count.
         let fresh = (self.persist.is_some() && self.consoles[index].file.is_none())
             .then(|| self.fresh_console_name(connection));
@@ -130,7 +139,11 @@ impl App {
             .filter(|console| console.connection == Some(connection))
             .map(|console| console.name.clone())
             .collect();
-        used.extend(self.consoles_of(connection).into_iter().map(|entry| entry.meta.name));
+        used.extend(
+            self.consoles_of(connection)
+                .into_iter()
+                .map(|entry| entry.meta.name),
+        );
         (1..)
             .map(text::console_name)
             .find(|name| !used.contains(name))
@@ -138,7 +151,9 @@ impl App {
     }
 
     fn connection_index(&self, id: ConnectionId) -> Option<usize> {
-        self.connections.iter().position(|connection| connection.id == id)
+        self.connections
+            .iter()
+            .position(|connection| connection.id == id)
     }
 
     /// Returns the connection whose catalog the console reads, and it sets the schema
@@ -190,12 +205,19 @@ impl App {
         catalog: Result<Catalog, String>,
     ) {
         // Reads can overlap, and an older read can miss the result of a DDL statement.
-        if self.connection(id).is_none_or(|connection| connection.catalog_read != read) {
+        if self
+            .connection(id)
+            .is_none_or(|connection| connection.catalog_read != read)
+        {
             return;
         }
         let schemas = match catalog {
             Ok(catalog) => {
-                let schemas: Vec<String> = catalog.schemas.iter().map(|item| item.name.clone()).collect();
+                let schemas: Vec<String> = catalog
+                    .schemas
+                    .iter()
+                    .map(|item| item.name.clone())
+                    .collect();
                 if let Some(connection) = self.connection_mut(id) {
                     connection.set_catalog(catalog);
                 }
@@ -222,8 +244,12 @@ impl App {
         relation: &RelationRef,
         columns: Result<Vec<String>, String>,
     ) {
-        let Some(connection) = self.connection_mut(id) else { return };
-        connection.requested_columns.retain(|requested| requested != relation);
+        let Some(connection) = self.connection_mut(id) else {
+            return;
+        };
+        connection
+            .requested_columns
+            .retain(|requested| requested != relation);
         match columns {
             Ok(columns) => {
                 if let Some(catalog) = &mut connection.catalog {
@@ -250,17 +276,25 @@ impl App {
     }
 
     pub(super) fn request_missing_columns(&mut self, index: usize) {
-        let Some(id) = self.consoles[index].connection else { return };
+        let Some(id) = self.consoles[index].connection else {
+            return;
+        };
         for relation in self.consoles[index].editor.take_missing_columns() {
             self.request_columns(id, relation);
         }
     }
 
     pub(super) fn request_columns(&mut self, id: ConnectionId, relation: RelationRef) {
-        if self.persist.as_ref().is_some_and(|persist| persist.error.is_some()) {
+        if self
+            .persist
+            .as_ref()
+            .is_some_and(|persist| persist.error.is_some())
+        {
             return;
         }
-        let Some(connection) = self.connections.iter_mut().find(|item| item.id == id) else { return };
+        let Some(connection) = self.connections.iter_mut().find(|item| item.id == id) else {
+            return;
+        };
         if !connection.requested_columns.contains(&relation) {
             connection.requested_columns.push(relation.clone());
             self.authorize(id, super::auth::Use::Columns(id, relation));
@@ -331,9 +365,12 @@ impl App {
     }
 
     fn read_columns(&mut self, row: &Row, id: ConnectionId) {
-        let Some(relation) = row.relation_ref(&self.connections) else { return };
+        let Some(relation) = row.relation_ref(&self.connections) else {
+            return;
+        };
         let catalog = self.connections[row.connection].catalog.as_ref();
-        let found = catalog.and_then(|catalog| catalog.relation(Some(&relation.schema), &relation.relation));
+        let found = catalog
+            .and_then(|catalog| catalog.relation(Some(&relation.schema), &relation.relation));
         if found.is_some_and(|(_, item)| item.columns == Columns::NotLoaded) {
             self.request_columns(id, relation);
         }
@@ -349,7 +386,11 @@ impl App {
 
     /// Selects a console of the connection, or it asks for one.
     fn open_console(&mut self, id: ConnectionId) {
-        match self.consoles.iter().position(|console| console.connection == Some(id)) {
+        match self
+            .consoles
+            .iter()
+            .position(|console| console.connection == Some(id))
+        {
             Some(index) => {
                 self.select_console(index);
                 self.leave_navigator();
@@ -366,7 +407,9 @@ impl App {
     /// Opens a console. An empty console without a connection takes the connection,
     /// so that the first use does not leave an extra tab.
     pub(super) fn new_console(&mut self, id: ConnectionId) {
-        let Some(dialect) = self.connection(id).map(|connection| connection.dialect) else { return };
+        let Some(dialect) = self.connection(id).map(|connection| connection.dialect) else {
+            return;
+        };
         let active = self.console();
         if active.connection.is_some() || !active.editor.text().is_empty() {
             let console = self.unbound_console(dialect);
@@ -396,7 +439,10 @@ impl App {
             .find(|console| console.is_busy() || console.in_transaction())
             .map(|console| console.name.clone());
         console.or_else(|| {
-            let table = self.tables.iter().find(|tab| tab.connection == id && tab.is_busy());
+            let table = self
+                .tables
+                .iter()
+                .find(|tab| tab.connection == id && tab.is_busy());
             table.map(TableTab::label)
         })
     }
@@ -415,14 +461,20 @@ impl App {
     }
 
     pub(super) fn on_disconnected(&mut self, id: ConnectionId) {
-        let connected = self.manager.as_ref().is_some_and(|manager| manager.is_connected(id));
+        let connected = self
+            .manager
+            .as_ref()
+            .is_some_and(|manager| manager.is_connected(id));
         if connected {
             self.status = Some(text::SESSION_IN_USE.to_owned());
             return;
         }
         self.status = Some(text::DISCONNECTED.to_owned());
         let definition = self.connection(id).and_then(|item| item.definition.clone());
-        let credential = self.connection(id).map(|item| item.credential).unwrap_or_default();
+        let credential = self
+            .connection(id)
+            .map(|item| item.credential)
+            .unwrap_or_default();
         let key = self.connection(id).and_then(|item| item.key.clone());
         if let (Some(form), Some(definition)) = (&mut self.form, definition)
             && form.editing == Some(id)
@@ -430,20 +482,30 @@ impl App {
         {
             *form = ConnectionForm::editing(id, &definition, false);
             form.credential = credential;
-            if let Some(key) = key { form.connection_id = key.id; }
+            if let Some(key) = key {
+                form.connection_id = key.id;
+            }
         }
     }
 
     fn edit_connection(&mut self, id: ConnectionId) {
-        let Some(definition) = self.connection(id).and_then(|item| item.definition.as_ref()) else {
+        let Some(definition) = self
+            .connection(id)
+            .and_then(|item| item.definition.as_ref())
+        else {
             self.status = Some(text::NO_DEFINITION.to_owned());
             return;
         };
-        let connected = self.manager.as_ref().is_some_and(|manager| manager.is_connected(id));
+        let connected = self
+            .manager
+            .as_ref()
+            .is_some_and(|manager| manager.is_connected(id));
         let mut form = ConnectionForm::editing(id, definition, connected);
         if let Some(connection) = self.connection(id) {
             form.credential = connection.credential;
-            if let Some(key) = &connection.key { form.connection_id.clone_from(&key.id); }
+            if let Some(key) = &connection.key {
+                form.connection_id.clone_from(&key.id);
+            }
         }
         if connected {
             form.note = Some(FormNote::Info(text::FORM_CONNECTED.to_owned()));
@@ -456,7 +518,9 @@ impl App {
             self.status = Some(text::connection_in_use(&console));
             return;
         }
-        let Some(connection) = self.connection(id) else { return };
+        let Some(connection) = self.connection(id) else {
+            return;
+        };
         let file = connection
             .scope()
             .and_then(|scope| self.persist_root(scope))
@@ -481,8 +545,16 @@ impl App {
         // The removal does not delete a password, so the user keeps a separate choice.
         let saved = self
             .connection(id)
-            .filter(|item| matches!(item.credential, CredentialName::Vault | CredentialName::GlobalPlainText))
-            .and_then(|item| self.saved_identity(item).map(|identity| (item.plain_name().to_owned(), identity)));
+            .filter(|item| {
+                matches!(
+                    item.credential,
+                    CredentialName::Vault | CredentialName::GlobalPlainText
+                )
+            })
+            .and_then(|item| {
+                self.saved_identity(item)
+                    .map(|identity| (item.plain_name().to_owned(), identity))
+            });
         // The scripts of the connection stay on disk. Only its definition goes.
         if let Some(key) = self.connection(id).and_then(|item| item.key.clone())
             && let Err(message) = self.change_config(key.scope, Change::Remove(key.id))
@@ -502,7 +574,8 @@ impl App {
 
     fn confirm_password_deletion(&mut self, id: ConnectionId) {
         let found = self.connection(id).and_then(|item| {
-            self.saved_identity(item).map(|identity| (item.plain_name().to_owned(), identity))
+            self.saved_identity(item)
+                .map(|identity| (item.plain_name().to_owned(), identity))
         });
         match found {
             Some((name, identity)) => self.ask_password_deletion(&name, identity),
@@ -516,7 +589,10 @@ impl App {
             text::delete_password_question(&printable(name)),
             vec![
                 (text::OPTION_KEEP_PASSWORD, DialogAction::Dismiss),
-                (text::OPTION_DELETE_PASSWORD, DialogAction::DeletePassword(identity)),
+                (
+                    text::OPTION_DELETE_PASSWORD,
+                    DialogAction::DeletePassword(identity),
+                ),
             ],
         );
     }
@@ -565,7 +641,11 @@ impl App {
         };
         let id = connection.id;
         let names = connection.catalog.as_ref().map(|catalog| {
-            catalog.schemas.iter().map(|schema| schema.name.clone()).collect::<Vec<_>>()
+            catalog
+                .schemas
+                .iter()
+                .map(|schema| schema.name.clone())
+                .collect::<Vec<_>>()
         });
         let console = self.console();
         if console.is_busy() || console.in_transaction() {
@@ -578,12 +658,25 @@ impl App {
         let cursor = selected
             .and_then(|schema| names.iter().position(|item| *item == schema))
             .map_or(0, |index| index + 1);
-        let items = std::iter::once(text::SCHEMA_DEFAULT.to_owned()).chain(names).collect();
-        let kind = PickerKind::Schema { console: console.id, connection: id };
-        self.picker = Some(Picker { kind, title: title.to_owned(), items, cursor, loading });
+        let items = std::iter::once(text::SCHEMA_DEFAULT.to_owned())
+            .chain(names)
+            .collect();
+        let kind = PickerKind::Schema {
+            console: console.id,
+            connection: id,
+        };
+        self.picker = Some(Picker {
+            kind,
+            title: title.to_owned(),
+            items,
+            cursor,
+            loading,
+        });
         if loading {
             self.ensure_catalog(id);
-            let failed = self.connection(id).is_some_and(|item| item.catalog_state == CatalogState::Failed);
+            let failed = self
+                .connection(id)
+                .is_some_and(|item| item.catalog_state == CatalogState::Failed);
             if failed {
                 self.reload_catalog(id);
             }
@@ -598,7 +691,9 @@ impl App {
         };
         match schemas {
             Some(schemas) => {
-                picker.items = std::iter::once(text::SCHEMA_DEFAULT.to_owned()).chain(schemas).collect();
+                picker.items = std::iter::once(text::SCHEMA_DEFAULT.to_owned())
+                    .chain(schemas)
+                    .collect();
                 picker.cursor = picker.cursor.min(picker.items.len() - 1);
                 picker.loading = false;
             }
@@ -607,7 +702,9 @@ impl App {
     }
 
     pub(super) fn accept_picker(&mut self) {
-        let Some(picker) = self.picker.take() else { return };
+        let Some(picker) = self.picker.take() else {
+            return;
+        };
         let cursor = picker.cursor;
         match picker.kind {
             PickerKind::Schema { console, .. } => {
@@ -618,7 +715,10 @@ impl App {
                     self.save_console_meta(index);
                 }
             }
-            PickerKind::Consoles { connection, scripts } => match cursor.checked_sub(1) {
+            PickerKind::Consoles {
+                connection,
+                scripts,
+            } => match cursor.checked_sub(1) {
                 None => self.new_console(connection),
                 Some(index) => {
                     if let Some(entry) = scripts.get(index) {
@@ -631,7 +731,10 @@ impl App {
                     self.open_script(entry);
                 }
             }
-            PickerKind::Associate { console, connections } => {
+            PickerKind::Associate {
+                console,
+                connections,
+            } => {
                 if let Some(connection) = connections.get(cursor) {
                     self.confirm_association(console, *connection);
                 }
@@ -643,7 +746,9 @@ impl App {
         if self.config_blocked() {
             return;
         }
-        let Some(definition) = self.form_definition() else { return };
+        let Some(definition) = self.form_definition() else {
+            return;
+        };
         let form_note = |app: &mut Self, note| {
             if let Some(form) = &mut app.form {
                 form.note = Some(note);
@@ -676,7 +781,9 @@ impl App {
         if self.on_password_verified(test, &result) {
             return;
         }
-        let Some(form) = self.form.as_mut().filter(|form| form.test == Some(test)) else { return };
+        let Some(form) = self.form.as_mut().filter(|form| form.test == Some(test)) else {
+            return;
+        };
         form.test = None;
         form.note = Some(match result {
             Ok(()) => FormNote::Success(text::FORM_TEST_OK.to_owned()),
@@ -685,7 +792,9 @@ impl App {
     }
 
     pub(super) fn disconnect_form(&mut self) {
-        let Some(id) = self.form.as_ref().and_then(|form| form.editing) else { return };
+        let Some(id) = self.form.as_ref().and_then(|form| form.editing) else {
+            return;
+        };
         if let Some(console) = self.console_in_use(id) {
             let note = FormNote::Error(text::connection_in_use(&console));
             if let Some(form) = &mut self.form {
@@ -714,7 +823,12 @@ impl App {
             }
             None => return,
         };
-        if name_is_taken(&self.connections, &definition.name, self.form_scope(), editing) {
+        if name_is_taken(
+            &self.connections,
+            &definition.name,
+            self.form_scope(),
+            editing,
+        ) {
             self.set_form_error(text::FORM_NAME_TAKEN.to_owned());
             return;
         }
@@ -736,8 +850,14 @@ impl App {
     /// relative path opens here the same file that the connection opens.
     pub(super) fn form_definition(&self) -> Option<Result<Definition, String>> {
         let form = self.form.as_ref()?;
-        let base = self.form_scope().and_then(|scope| self.persist_root(scope)).map(|root| root.base);
-        Some(form.definition().map(|definition| Definition { base, ..definition }))
+        let base = self
+            .form_scope()
+            .and_then(|scope| self.persist_root(scope))
+            .map(|root| root.base);
+        Some(
+            form.definition()
+                .map(|definition| Definition { base, ..definition }),
+        )
     }
 
     /// Returns the scope that the form saves to. A session without files has none.
@@ -771,7 +891,9 @@ impl App {
     }
 
     fn rename_connection(&mut self, name: String) {
-        let Some(id) = self.form.as_ref().and_then(|form| form.editing) else { return };
+        let Some(id) = self.form.as_ref().and_then(|form| form.editing) else {
+            return;
+        };
         if name.is_empty() {
             self.set_form_error(text::FORM_NEEDS_NAME.to_owned());
             return;
@@ -780,7 +902,9 @@ impl App {
             self.set_form_error(text::FORM_NAME_TAKEN.to_owned());
             return;
         }
-        let Some(connection) = self.connection(id) else { return };
+        let Some(connection) = self.connection(id) else {
+            return;
+        };
         let key = connection.key.clone();
         let credential = connection.credential;
         let mut renamed = connection.definition.clone();
@@ -803,8 +927,11 @@ impl App {
 
     fn apply_definition(&mut self, mut definition: Definition) {
         let editing = self.form.as_ref().and_then(|form| form.editing);
-        let connected = editing
-            .is_some_and(|id| self.manager.as_ref().is_some_and(|manager| manager.is_connected(id)));
+        let connected = editing.is_some_and(|id| {
+            self.manager
+                .as_ref()
+                .is_some_and(|manager| manager.is_connected(id))
+        });
         if connected {
             self.set_form_error(text::FORM_CONNECTED.to_owned());
             return;
@@ -813,10 +940,14 @@ impl App {
         let key = match editing {
             Some(id) => self.connection(id).and_then(|item| item.key.clone()),
             None => self.form_scope().map(|scope| ConnectionKey {
-                scope, id: self.form.as_ref().unwrap().connection_id.clone(),
+                scope,
+                id: self.form.as_ref().unwrap().connection_id.clone(),
             }),
         };
-        let mut credential = self.form.as_ref().map_or(CredentialName::Session, |form| form.credential);
+        let mut credential = self
+            .form
+            .as_ref()
+            .map_or(CredentialName::Session, |form| form.credential);
         if credential != CredentialName::Vault {
             credential = match &definition.source {
                 Source::Network(target) if target.password.is_some() => CredentialName::Session,
@@ -831,7 +962,10 @@ impl App {
             }
         }
         let id = match editing {
-            Some(id) => { self.replace_definition(id, definition); Some(id) }
+            Some(id) => {
+                self.replace_definition(id, definition);
+                Some(id)
+            }
             None => self.add_definition(definition),
         };
         if let Some(id) = id {
@@ -848,12 +982,17 @@ impl App {
             self.auth.local.insert(id, (generation, editing.is_none()));
         }
         self.form = None;
-        if let Some(id) = id { self.authorize(id, super::auth::Use::Save); }
+        if let Some(id) = id {
+            self.authorize(id, super::auth::Use::Save);
+        }
     }
 
     /// Applies a changed definition. A session never survives a change of access.
     pub(super) fn replace_definition(&mut self, id: ConnectionId, definition: Definition) {
-        let connected = self.manager.as_ref().is_some_and(|manager| manager.is_connected(id));
+        let connected = self
+            .manager
+            .as_ref()
+            .is_some_and(|manager| manager.is_connected(id));
         if connected {
             self.set_form_error(text::FORM_CONNECTED.to_owned());
             return;
@@ -863,7 +1002,9 @@ impl App {
         if let Some(manager) = &mut self.manager {
             manager.replace_connection(id, connector.clone(), settings);
         }
-        let Some(index) = self.connection_index(id) else { return };
+        let Some(index) = self.connection_index(id) else {
+            return;
+        };
         let name = definition.name.clone();
         let dialect = connector.dialect();
         let key = self.connections[index].key.clone();

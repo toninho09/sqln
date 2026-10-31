@@ -47,13 +47,17 @@ struct Inner {
 
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Gives a free place to the first waiter that still waits.
     fn wake(&self, state: &mut State) {
         while state.total() < self.limit || !state.idle.is_empty() {
-            let Some(waiter) = state.waiters.pop_front() else { return };
+            let Some(waiter) = state.waiters.pop_front() else {
+                return;
+            };
             let grant = state.idle.pop().map_or(Grant::Open, Grant::Session);
             state.busy += 1;
             if let Err(grant) = waiter.grant.send(grant) {
@@ -92,8 +96,13 @@ struct WaitGuard {
 
 impl Drop for WaitGuard {
     fn drop(&mut self) {
-        let Some(mut grant) = self.grant.take() else { return };
-        self.inner.lock().waiters.retain(|waiter| waiter.id != self.id);
+        let Some(mut grant) = self.grant.take() else {
+            return;
+        };
+        self.inner
+            .lock()
+            .waiters
+            .retain(|waiter| waiter.id != self.id);
         grant.close();
         if let Ok(grant) = grant.try_recv() {
             self.inner.return_grant(grant);
@@ -117,13 +126,17 @@ pub struct Lease {
 
 impl Lease {
     pub fn session(&mut self) -> &mut dyn Session {
-        self.session.as_deref_mut().expect("a lease holds its session until its end")
+        self.session
+            .as_deref_mut()
+            .expect("a lease holds its session until its end")
     }
 
     /// Cleans the session and returns it to the pool. The session keeps its
     /// place during the cleanup. A session without a confirmed cleanup closes.
     pub async fn release(mut self) {
-        let Some(mut session) = self.session.take() else { return };
+        let Some(mut session) = self.session.take() else {
+            return;
+        };
         if session.reset().await == ResetOutcome::Clean {
             let mut state = self.inner.lock();
             if state.generation != self.generation {
@@ -152,7 +165,14 @@ impl Drop for Lease {
 impl Pool {
     pub fn new(connector: Arc<dyn Connector>, limit: usize, connect_timeout: Duration) -> Self {
         let state = Mutex::new(State::default());
-        Self { inner: Arc::new(Inner { connector, limit: limit.max(1), connect_timeout, state }) }
+        Self {
+            inner: Arc::new(Inner {
+                connector,
+                limit: limit.max(1),
+                connect_timeout,
+                state,
+            }),
+        }
     }
 
     /// Returns the places in use and the limit.
@@ -179,8 +199,12 @@ impl Pool {
     pub async fn acquire(&self) -> Result<Lease, ConnectError> {
         let grant = self.reserve().await;
         let generation = self.inner.lock().generation;
-        let mut lease =
-            Lease { session: None, inner: self.inner.clone(), generation, released: false };
+        let mut lease = Lease {
+            session: None,
+            inner: self.inner.clone(),
+            generation,
+            released: false,
+        };
         if let Grant::Session(mut session) = grant {
             // An idle session that stopped gets a replacement, and the user sees no error.
             if session.is_alive().await {
@@ -192,7 +216,11 @@ impl Pool {
         let connect = self.inner.connector.connect();
         match timeout(self.inner.connect_timeout, connect).await {
             Ok(session) => lease.session = Some(session?),
-            Err(_) => return Err(ConnectError::new("The connection time limit ended.".to_owned())),
+            Err(_) => {
+                return Err(ConnectError::new(
+                    "The connection time limit ended.".to_owned(),
+                ));
+            }
         }
         Ok(lease)
     }
@@ -214,10 +242,21 @@ impl Pool {
             state.next_waiter += 1;
             let (grant, answer) = oneshot::channel();
             state.waiters.push_back(Waiter { id, grant });
-            (WaitGuard { inner: self.inner.clone(), id, grant: None }, answer)
+            (
+                WaitGuard {
+                    inner: self.inner.clone(),
+                    id,
+                    grant: None,
+                },
+                answer,
+            )
         };
         guard.grant = Some(answer);
-        let received = guard.grant.as_mut().expect("the guard holds the receiver").await;
+        let received = guard
+            .grant
+            .as_mut()
+            .expect("the guard holds the receiver")
+            .await;
         guard.grant = None;
         received.expect("the pool holds each waiter until it sends a place")
     }

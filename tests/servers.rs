@@ -19,7 +19,9 @@ use sqln::catalog::{Columns, RelationKind, RelationRef};
 use sqln::clipboard::MemoryClipboard;
 use sqln::connection::{Definition, Source};
 use sqln::connector::target::parse_uri;
-use sqln::connector::{Connector, Session, TransactionCommand, TransactionState, network_connector};
+use sqln::connector::{
+    Connector, Session, TransactionCommand, TransactionState, network_connector,
+};
 use sqln::editor::KeyboardMode;
 use sqln::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, Manager, ReadLimit, ResultSink, RunOptions,
@@ -43,7 +45,10 @@ struct Server {
 
 fn servers() -> Vec<Server> {
     let mut found = Vec::new();
-    for (name, kind) in [("SQLN_TEST_POSTGRES", Kind::Postgres), ("SQLN_TEST_MYSQL", Kind::MySql)] {
+    for (name, kind) in [
+        ("SQLN_TEST_POSTGRES", Kind::Postgres),
+        ("SQLN_TEST_MYSQL", Kind::MySql),
+    ] {
         match std::env::var(name) {
             Ok(uri) => found.push(Server { kind, uri }),
             Err(_) => println!("skipped: {name} is not set"),
@@ -82,7 +87,10 @@ impl Server {
         if self.kind == Kind::MySql {
             h.run_ok(&["CREATE TABLE IF NOT EXISTS t_huge (x INT) ENGINE=InnoDB"]);
             if h.count("t_huge") == "0" {
-                let values = (0..1000).map(|x| format!("({x})")).collect::<Vec<_>>().join(",");
+                let values = (0..1000)
+                    .map(|x| format!("({x})"))
+                    .collect::<Vec<_>>()
+                    .join(",");
                 h.run_ok(&[&format!("INSERT INTO t_huge VALUES {values}")]);
             }
         }
@@ -149,7 +157,13 @@ impl Harness {
         let (mut manager, events) = Manager::new(budget.clone()).unwrap();
         let connection = manager.add_connection(connector(server), settings);
         let console = manager.open_console(connection).unwrap();
-        Self { manager, events, budget, connection, console }
+        Self {
+            manager,
+            events,
+            budget,
+            connection,
+            console,
+        }
     }
 
     fn next(&mut self) -> ExecEvent {
@@ -175,13 +189,16 @@ impl Harness {
                 ExecEvent::ResultDone { rows, limit, .. } => run.results.push((rows, limit)),
                 ExecEvent::StatementFinished { status, end, .. } => {
                     run.statuses.push(status);
-                    run.limits.push(end.map_or(ReadLimit::None, |end| end.limit));
+                    run.limits
+                        .push(end.map_or(ReadLimit::None, |end| end.limit));
                     run.changed.push(end.and_then(|end| end.changed));
                 }
                 ExecEvent::TransactionChanged { state, .. } => run.transaction = Some(state),
-                ExecEvent::ExecutionFinished { execution: finished, end, .. }
-                    if finished == execution =>
-                {
+                ExecEvent::ExecutionFinished {
+                    execution: finished,
+                    end,
+                    ..
+                } if finished == execution => {
                     run.end = Some(end);
                     return run;
                 }
@@ -192,7 +209,14 @@ impl Harness {
 
     fn start(&mut self, statements: &[&str], manual: bool) -> u64 {
         let statements = statements.iter().map(|sql| (*sql).to_owned()).collect();
-        self.manager.run(self.console, statements, RunOptions { manual, ..RunOptions::default() })
+        self.manager.run(
+            self.console,
+            statements,
+            RunOptions {
+                manual,
+                ..RunOptions::default()
+            },
+        )
     }
 
     /// Waits for the first statement. The connection can take any time before it.
@@ -207,12 +231,17 @@ impl Harness {
 
     fn run_ok(&mut self, statements: &[&str]) -> Run {
         let run = self.run(statements);
-        assert_eq!(run.end, Some(ExecutionEnd::Completed), "{statements:?}: {run:?}");
+        assert_eq!(
+            run.end,
+            Some(ExecutionEnd::Completed),
+            "{statements:?}: {run:?}"
+        );
         run
     }
 
     fn count(&mut self, table: &str) -> String {
-        self.run_ok(&[&format!("SELECT count(*) FROM {table}")]).text(0, 0)
+        self.run_ok(&[&format!("SELECT count(*) FROM {table}")])
+            .text(0, 0)
     }
 
     fn control(&mut self, command: TransactionCommand) -> TransactionState {
@@ -232,12 +261,17 @@ fn success(count: usize) -> Vec<StatementStatus> {
 }
 
 fn sessions(limit: usize) -> Settings {
-    Settings { max_connections: limit, ..Settings::default() }
+    Settings {
+        max_connections: limit,
+        ..Settings::default()
+    }
 }
 
 #[test]
 fn values_keep_the_text_of_the_database_in_postgres() {
-    let Some(server) = only(Kind::Postgres) else { return };
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
     let mut h = Harness::open(&server, Settings::default());
     let run = h.run_ok(&[
         "SELECT 12345678901234567890.123456789::numeric, NULL::text, ''::text, '\\x00ff'::bytea, \
@@ -245,7 +279,10 @@ fn values_keep_the_text_of_the_database_in_postgres() {
          '{1,2}'::int[], '{\"a\": 1}'::jsonb, 1.50::float8, 7::int8, '1 day'::interval, true",
     ]);
     let row = &run.rows[0];
-    assert_eq!(row[0], Value::Number("12345678901234567890.123456789".into()));
+    assert_eq!(
+        row[0],
+        Value::Number("12345678901234567890.123456789".into())
+    );
     assert_eq!(row[1], Value::Null);
     assert_eq!(row[2], Value::Text("".into()));
     assert_eq!(row[3], Value::Binary(Box::new([0x00, 0xFF])));
@@ -261,7 +298,9 @@ fn values_keep_the_text_of_the_database_in_postgres() {
 
 #[test]
 fn a_text_that_looks_like_binary_stays_text_in_postgres() {
-    let Some(server) = only(Kind::Postgres) else { return };
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
     let mut h = Harness::open(&server, Settings::default());
     let run = h.run_ok(&["SELECT '\\x00ff'::text"]);
     assert_eq!(run.rows[0][0], Value::Text("\\x00ff".into()));
@@ -269,15 +308,20 @@ fn a_text_that_looks_like_binary_stays_text_in_postgres() {
 
 #[test]
 fn values_keep_the_text_of_the_database_in_mysql() {
-    let Some(server) = only(Kind::MySql) else { return };
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
     let mut h = Harness::open(&server, Settings::default());
-    let run = h.run_ok(&[
-        "SELECT 12345678901234567890.123456789, NULL, '', x'00ff', \
+    let run = h.run_ok(
+        &["SELECT 12345678901234567890.123456789, NULL, '', x'00ff', \
          TIMESTAMP '2026-10-30 12:34:56', 'ação 日本', 1.50, 7, CAST('{\"a\": 1}' AS JSON), \
-         DATE '2026-10-30', CAST(x'41' AS BINARY)",
-    ]);
+         DATE '2026-10-30', CAST(x'41' AS BINARY)"],
+    );
     let row = &run.rows[0];
-    assert_eq!(row[0], Value::Number("12345678901234567890.123456789".into()));
+    assert_eq!(
+        row[0],
+        Value::Number("12345678901234567890.123456789".into())
+    );
     assert_eq!(row[1], Value::Null);
     assert_eq!(row[2], Value::Text("".into()));
     assert_eq!(row[3], Value::Binary(Box::new([0x00, 0xFF])));
@@ -295,7 +339,10 @@ fn an_error_stops_the_script_and_reports_the_position() {
     for server in servers() {
         let table = "t_error";
         let mut h = Harness::open(&server, Settings::default());
-        h.run_ok(&[&format!("DROP TABLE IF EXISTS {table}"), &format!("CREATE TABLE {table} (a int)")]);
+        h.run_ok(&[
+            &format!("DROP TABLE IF EXISTS {table}"),
+            &format!("CREATE TABLE {table} (a int)"),
+        ]);
         let insert = format!("INSERT INTO {table} VALUES (1)");
         let run = h.run(&[&insert, "SELECT * FROMM nowhere", &insert]);
         assert_eq!(run.end, Some(ExecutionEnd::Failed), "{:?}", server.kind);
@@ -337,7 +384,12 @@ fn changes_report_their_rows_and_ddl_reports_none() {
             "DELETE FROM t_changes WHERE a = 100",
             "DROP TABLE t_changes",
         ]);
-        assert_eq!(run.changed, [None, None, Some(3), Some(2), Some(0), None], "{:?}", server.kind);
+        assert_eq!(
+            run.changed,
+            [None, None, Some(3), Some(2), Some(0), None],
+            "{:?}",
+            server.kind
+        );
     }
 }
 
@@ -345,8 +397,15 @@ fn changes_report_their_rows_and_ddl_reports_none() {
 fn an_empty_result_keeps_its_columns() {
     for server in servers() {
         let mut h = Harness::open(&server, Settings::default());
-        let run = h.run_ok(&["SELECT 1 AS first_name, 2 AS second_name FROM (SELECT 1 AS x) s WHERE x = 2"]);
-        assert_eq!(run.columns, [["first_name", "second_name"]], "{:?}", server.kind);
+        let run = h.run_ok(&[
+            "SELECT 1 AS first_name, 2 AS second_name FROM (SELECT 1 AS x) s WHERE x = 2",
+        ]);
+        assert_eq!(
+            run.columns,
+            [["first_name", "second_name"]],
+            "{:?}",
+            server.kind
+        );
         assert!(run.rows.is_empty());
         assert_eq!(run.results, [(0, ReadLimit::None)]);
     }
@@ -355,18 +414,31 @@ fn an_empty_result_keeps_its_columns() {
 #[test]
 fn the_row_cap_ends_a_large_read_soon_and_the_session_stays_usable() {
     for server in servers() {
-        let settings = Settings { row_cap: 100, max_connections: 1, ..Settings::default() };
+        let settings = Settings {
+            row_cap: 100,
+            max_connections: 1,
+            ..Settings::default()
+        };
         let mut h = Harness::open(&server, settings);
         server.prepare_huge_read(&mut h);
         let started = Instant::now();
         let run = h.run(&[server.huge_read(), "SELECT 7"]);
         let elapsed = started.elapsed();
-        assert_eq!(run.end, Some(ExecutionEnd::Completed), "{:?}: {run:?}", server.kind);
+        assert_eq!(
+            run.end,
+            Some(ExecutionEnd::Completed),
+            "{:?}: {run:?}",
+            server.kind
+        );
         assert_eq!(run.statuses, success(2));
         assert_eq!(run.limits[0], ReadLimit::RowCap);
         assert_eq!(run.rows.len(), 101);
         assert_eq!(run.text(100, 0), "7");
-        assert!(elapsed < Duration::from_secs(5), "{:?} {elapsed:?}", server.kind);
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "{:?} {elapsed:?}",
+            server.kind
+        );
         println!("{:?}: row cap in {elapsed:?}", server.kind);
     }
 }
@@ -374,10 +446,15 @@ fn the_row_cap_ends_a_large_read_soon_and_the_session_stays_usable() {
 #[test]
 fn the_row_cap_counts_rows_at_each_edge() {
     for server in servers() {
-        let settings = Settings { row_cap: 3, ..Settings::default() };
+        let settings = Settings {
+            row_cap: 3,
+            ..Settings::default()
+        };
         let mut h = Harness::open(&server, settings);
         let rows = |count: usize| {
-            let values: Vec<String> = (0..count).map(|index| format!("SELECT {index} AS x")).collect();
+            let values: Vec<String> = (0..count)
+                .map(|index| format!("SELECT {index} AS x"))
+                .collect();
             values.join(" UNION ALL ")
         };
         assert_eq!(h.run_ok(&[&rows(2)]).limits, [ReadLimit::None]);
@@ -391,19 +468,33 @@ fn the_row_cap_counts_rows_at_each_edge() {
 #[test]
 fn an_open_transaction_consumes_the_rows_above_the_cap() {
     for server in servers() {
-        let settings = Settings { row_cap: 10, ..Settings::default() };
+        let settings = Settings {
+            row_cap: 10,
+            ..Settings::default()
+        };
         let mut h = Harness::open(&server, settings);
         server.prepare_huge_read(&mut h);
-        h.run_ok(&["DROP TABLE IF EXISTS t_cap_tx", "CREATE TABLE t_cap_tx (a int)"]);
+        h.run_ok(&[
+            "DROP TABLE IF EXISTS t_cap_tx",
+            "CREATE TABLE t_cap_tx (a int)",
+        ]);
         // The read must outlast a cancel request, so that a wrong request has an effect.
         let sql = match server.kind {
             Kind::Postgres => "SELECT generate_series(1, 2000000)",
             Kind::MySql => "SELECT a.x FROM t_huge a, t_huge b",
         };
-        let run = h.run_ok(&["BEGIN", "INSERT INTO t_cap_tx VALUES (1)", sql, "INSERT INTO t_cap_tx VALUES (2)"]);
+        let run = h.run_ok(&[
+            "BEGIN",
+            "INSERT INTO t_cap_tx VALUES (1)",
+            sql,
+            "INSERT INTO t_cap_tx VALUES (2)",
+        ]);
         assert_eq!(run.limits[2], ReadLimit::RowCap, "{:?}", server.kind);
         assert_eq!(run.transaction, Some(TransactionState::Open));
-        assert_eq!(h.control(TransactionCommand::Commit), TransactionState::None);
+        assert_eq!(
+            h.control(TransactionCommand::Commit),
+            TransactionState::None
+        );
         assert_eq!(h.count("t_cap_tx"), "2", "{:?}", server.kind);
         h.run_ok(&["DROP TABLE t_cap_tx"]);
     }
@@ -411,8 +502,13 @@ fn an_open_transaction_consumes_the_rows_above_the_cap() {
 
 #[test]
 fn the_row_cap_does_not_stop_a_change_that_returns_rows() {
-    let Some(server) = only(Kind::Postgres) else { return };
-    let settings = Settings { row_cap: 10, ..Settings::default() };
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let settings = Settings {
+        row_cap: 10,
+        ..Settings::default()
+    };
     let mut h = Harness::open(&server, settings);
     let run = h.run_ok(&[
         "DROP TABLE IF EXISTS t_returning",
@@ -426,8 +522,13 @@ fn the_row_cap_does_not_stop_a_change_that_returns_rows() {
 
 #[test]
 fn the_row_cap_does_not_stop_a_function_that_writes() {
-    let Some(server) = only(Kind::Postgres) else { return };
-    let settings = Settings { row_cap: 10, ..Settings::default() };
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let settings = Settings {
+        row_cap: 10,
+        ..Settings::default()
+    };
     let mut h = Harness::open(&server, settings);
     let run = h.run_ok(&[
         "DROP TABLE IF EXISTS t_function CASCADE",
@@ -452,8 +553,17 @@ fn stop_reaches_a_statement_in_progress_and_the_session_stays_usable() {
         let started = Instant::now();
         h.manager.stop(h.console);
         let run = h.collect(execution);
-        assert!(started.elapsed() < Duration::from_secs(4), "{:?}", server.kind);
-        assert_eq!(run.end, Some(ExecutionEnd::Stopped), "{:?}: {run:?}", server.kind);
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "{:?}",
+            server.kind
+        );
+        assert_eq!(
+            run.end,
+            Some(ExecutionEnd::Stopped),
+            "{:?}: {run:?}",
+            server.kind
+        );
         assert_eq!(run.statuses[1], StatementStatus::NotExecuted);
         assert_eq!(h.run_ok(&["SELECT 5"]).text(0, 0), "5", "{:?}", server.kind);
     }
@@ -482,8 +592,19 @@ fn stop_in_a_large_read_keeps_the_loaded_rows() {
         }
         h.manager.stop(h.console);
         let rest = h.collect(execution);
-        assert_eq!(rest.end, Some(ExecutionEnd::Stopped), "{:?}: {:?}", server.kind, rest.statuses);
-        assert_eq!(h.budget.used(), used_before + run.bytes + rest.bytes, "{:?}", server.kind);
+        assert_eq!(
+            rest.end,
+            Some(ExecutionEnd::Stopped),
+            "{:?}: {:?}",
+            server.kind,
+            rest.statuses
+        );
+        assert_eq!(
+            h.budget.used(),
+            used_before + run.bytes + rest.bytes,
+            "{:?}",
+            server.kind
+        );
         assert_eq!(h.run_ok(&["SELECT 5"]).text(0, 0), "5", "{:?}", server.kind);
     }
 }
@@ -491,12 +612,24 @@ fn stop_in_a_large_read_keeps_the_loaded_rows() {
 #[test]
 fn the_time_limit_stops_a_statement() {
     for server in servers() {
-        let settings = Settings { sql_timeout: Some(Duration::from_millis(200)), ..sessions(1) };
+        let settings = Settings {
+            sql_timeout: Some(Duration::from_millis(200)),
+            ..sessions(1)
+        };
         let mut h = Harness::open(&server, settings);
         let started = Instant::now();
         let run = h.run(&[&server.sleep(30)]);
-        assert!(started.elapsed() < Duration::from_secs(4), "{:?}", server.kind);
-        assert_eq!(run.end, Some(ExecutionEnd::TimedOut), "{:?}: {run:?}", server.kind);
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "{:?}",
+            server.kind
+        );
+        assert_eq!(
+            run.end,
+            Some(ExecutionEnd::TimedOut),
+            "{:?}: {run:?}",
+            server.kind
+        );
     }
 }
 
@@ -506,16 +639,27 @@ fn a_transaction_by_sql_keeps_the_session_until_commit() {
         let mut h = Harness::open(&server, sessions(2));
         h.run_ok(&["DROP TABLE IF EXISTS t_tx", "CREATE TABLE t_tx (a int)"]);
         let first = h.run_ok(&["BEGIN", server.backend_id(), "INSERT INTO t_tx VALUES (1)"]);
-        assert_eq!(first.transaction, Some(TransactionState::Open), "{:?}", server.kind);
+        assert_eq!(
+            first.transaction,
+            Some(TransactionState::Open),
+            "{:?}",
+            server.kind
+        );
         assert_eq!(h.manager.usage(h.connection).0, 1);
         let second = h.run_ok(&[server.backend_id()]);
         assert_eq!(first.text(0, 0), second.text(0, 0), "{:?}", server.kind);
 
-        assert_eq!(h.control(TransactionCommand::Commit), TransactionState::None);
+        assert_eq!(
+            h.control(TransactionCommand::Commit),
+            TransactionState::None
+        );
         assert_eq!(h.count("t_tx"), "1");
 
         h.run_ok(&["BEGIN", "INSERT INTO t_tx VALUES (2)"]);
-        assert_eq!(h.control(TransactionCommand::Rollback), TransactionState::None);
+        assert_eq!(
+            h.control(TransactionCommand::Rollback),
+            TransactionState::None
+        );
         assert_eq!(h.count("t_tx"), "1");
         h.run_ok(&["DROP TABLE t_tx"]);
     }
@@ -525,12 +669,23 @@ fn a_transaction_by_sql_keeps_the_session_until_commit() {
 fn manual_mode_opens_a_transaction_before_the_first_statement() {
     for server in servers() {
         let mut h = Harness::open(&server, Settings::default());
-        h.run_ok(&["DROP TABLE IF EXISTS t_manual", "CREATE TABLE t_manual (a int)"]);
+        h.run_ok(&[
+            "DROP TABLE IF EXISTS t_manual",
+            "CREATE TABLE t_manual (a int)",
+        ]);
         let execution = h.start(&["INSERT INTO t_manual VALUES (1)"], true);
         let run = h.collect(execution);
         assert_eq!(run.end, Some(ExecutionEnd::Completed));
-        assert_eq!(run.transaction, Some(TransactionState::Open), "{:?}", server.kind);
-        assert_eq!(h.control(TransactionCommand::Rollback), TransactionState::None);
+        assert_eq!(
+            run.transaction,
+            Some(TransactionState::Open),
+            "{:?}",
+            server.kind
+        );
+        assert_eq!(
+            h.control(TransactionCommand::Rollback),
+            TransactionState::None
+        );
         assert_eq!(h.count("t_manual"), "0");
         h.run_ok(&["DROP TABLE t_manual"]);
     }
@@ -541,16 +696,26 @@ fn a_commit_by_sql_ends_the_transaction_in_the_script() {
     for server in servers() {
         let mut h = Harness::open(&server, Settings::default());
         let run = h.run_ok(&["BEGIN", "COMMIT", "SELECT 1"]);
-        assert_eq!(run.transaction, Some(TransactionState::None), "{:?}", server.kind);
+        assert_eq!(
+            run.transaction,
+            Some(TransactionState::None),
+            "{:?}",
+            server.kind
+        );
         assert_eq!(h.manager.usage(h.connection).0, 0);
     }
 }
 
 #[test]
 fn mysql_ddl_ends_the_transaction_with_an_implicit_commit() {
-    let Some(server) = only(Kind::MySql) else { return };
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
     let mut h = Harness::open(&server, Settings::default());
-    h.run_ok(&["DROP TABLE IF EXISTS t_implicit", "CREATE TABLE t_implicit (a int)"]);
+    h.run_ok(&[
+        "DROP TABLE IF EXISTS t_implicit",
+        "CREATE TABLE t_implicit (a int)",
+    ]);
     let open = h.run_ok(&["BEGIN", "INSERT INTO t_implicit VALUES (1)"]);
     assert_eq!(open.transaction, Some(TransactionState::Open));
     let ddl = h.run_ok(&["CREATE TABLE IF NOT EXISTS t_implicit_2 (a int)"]);
@@ -562,9 +727,14 @@ fn mysql_ddl_ends_the_transaction_with_an_implicit_commit() {
 
 #[test]
 fn a_failed_transaction_in_postgres_accepts_only_a_rollback() {
-    let Some(server) = only(Kind::Postgres) else { return };
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
     let mut h = Harness::open(&server, Settings::default());
-    h.run_ok(&["DROP TABLE IF EXISTS t_failed", "CREATE TABLE t_failed (a int)"]);
+    h.run_ok(&[
+        "DROP TABLE IF EXISTS t_failed",
+        "CREATE TABLE t_failed (a int)",
+    ]);
     h.run_ok(&["BEGIN", "INSERT INTO t_failed VALUES (1)"]);
     let failed = h.run(&["SELECT * FROM nowhere"]);
     assert_eq!(failed.end, Some(ExecutionEnd::Failed));
@@ -597,30 +767,46 @@ fn a_failed_transaction_in_postgres_accepts_only_a_rollback() {
 
 #[test]
 fn a_failed_transaction_in_a_read_only_session_accepts_a_rollback() {
-    let Some(server) = only(Kind::Postgres) else { return };
-    let settings = Settings { read_only: true, ..Settings::default() };
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let settings = Settings {
+        read_only: true,
+        ..Settings::default()
+    };
     let mut h = Harness::open(&server, settings);
     h.run_ok(&["BEGIN"]);
-    assert_eq!(h.run(&["SELECT * FROM nowhere"]).transaction, Some(TransactionState::Failed));
+    assert_eq!(
+        h.run(&["SELECT * FROM nowhere"]).transaction,
+        Some(TransactionState::Failed)
+    );
     let rollback = h.run_ok(&["ROLLBACK"]);
     assert_eq!(rollback.transaction, Some(TransactionState::None));
 }
 
 #[test]
 fn an_error_in_a_transaction_keeps_its_own_message() {
-    let Some(server) = only(Kind::Postgres) else { return };
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
     let mut h = Harness::open(&server, Settings::default());
     h.run_ok(&["BEGIN"]);
     let run = h.run(&["SELEC 1"]);
     assert!(run.error().contains("42601"), "{run:?}");
-    assert_eq!(h.control(TransactionCommand::Rollback), TransactionState::None);
+    assert_eq!(
+        h.control(TransactionCommand::Rollback),
+        TransactionState::None
+    );
 
     // A syntax error reads the same in the two protocols. This error does not: a
     // second try in the failed transaction would report only the failed transaction.
     h.run_ok(&["BEGIN"]);
     let run = h.run(&["SELECT * FROM nowhere"]);
     assert!(run.error().contains("42P01"), "{run:?}");
-    assert_eq!(h.control(TransactionCommand::Rollback), TransactionState::None);
+    assert_eq!(
+        h.control(TransactionCommand::Rollback),
+        TransactionState::None
+    );
 }
 
 #[test]
@@ -631,11 +817,30 @@ fn the_cleanup_removes_session_state_between_executions() {
             Kind::Postgres => ("SET application_name = 'dirty'", "SHOW application_name"),
             Kind::MySql => ("SET @dirty = 'dirty'", "SELECT @dirty"),
         };
-        let first = h.run_ok(&[server.backend_id(), set, "CREATE TEMPORARY TABLE t_temp (a int)"]);
+        let first = h.run_ok(&[
+            server.backend_id(),
+            set,
+            "CREATE TEMPORARY TABLE t_temp (a int)",
+        ]);
         let second = h.run(&[server.backend_id(), read, "SELECT * FROM t_temp"]);
-        assert_eq!(first.text(0, 0), second.text(0, 0), "the same session: {:?}", server.kind);
-        assert_ne!(second.rows[1][0], Value::Text("dirty".into()), "{:?}", server.kind);
-        assert_eq!(second.end, Some(ExecutionEnd::Failed), "{:?}: {second:?}", server.kind);
+        assert_eq!(
+            first.text(0, 0),
+            second.text(0, 0),
+            "the same session: {:?}",
+            server.kind
+        );
+        assert_ne!(
+            second.rows[1][0],
+            Value::Text("dirty".into()),
+            "{:?}",
+            server.kind
+        );
+        assert_eq!(
+            second.end,
+            Some(ExecutionEnd::Failed),
+            "{:?}: {second:?}",
+            server.kind
+        );
     }
 }
 
@@ -656,12 +861,23 @@ fn a_script_keeps_one_session_for_its_statements() {
 fn read_only_is_applied_at_each_reservation() {
     for server in servers() {
         let mut writer = Harness::open(&server, Settings::default());
-        writer.run_ok(&["DROP TABLE IF EXISTS t_read_only", "CREATE TABLE t_read_only (a int)"]);
-        let settings = Settings { read_only: true, ..sessions(1) };
+        writer.run_ok(&[
+            "DROP TABLE IF EXISTS t_read_only",
+            "CREATE TABLE t_read_only (a int)",
+        ]);
+        let settings = Settings {
+            read_only: true,
+            ..sessions(1)
+        };
         let mut h = Harness::open(&server, settings);
         for _ in 0..2 {
             let run = h.run(&["INSERT INTO t_read_only VALUES (1)"]);
-            assert_eq!(run.end, Some(ExecutionEnd::Failed), "{:?}: {run:?}", server.kind);
+            assert_eq!(
+                run.end,
+                Some(ExecutionEnd::Failed),
+                "{:?}: {run:?}",
+                server.kind
+            );
         }
         assert_eq!(h.count("t_read_only"), "0");
         writer.run_ok(&["DROP TABLE t_read_only"]);
@@ -670,9 +886,14 @@ fn read_only_is_applied_at_each_reservation() {
 
 #[test]
 fn the_mysql_state_read_keeps_a_read_only_session() {
-    let Some(server) = only(Kind::MySql) else { return };
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
     let mut h = Harness::open(&server, Settings::default());
-    h.run_ok(&["DROP TABLE IF EXISTS t_probe", "CREATE TABLE t_probe (a int)"]);
+    h.run_ok(&[
+        "DROP TABLE IF EXISTS t_probe",
+        "CREATE TABLE t_probe (a int)",
+    ]);
     let run = h.run(&[
         "SET SESSION TRANSACTION READ ONLY",
         "SELECT 1",
@@ -686,10 +907,16 @@ fn the_mysql_state_read_keeps_a_read_only_session() {
 
 #[test]
 fn the_mysql_state_read_keeps_the_settings_of_the_next_transaction() {
-    let Some(server) = only(Kind::MySql) else { return };
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
     let mut h = Harness::open(&server, Settings::default());
     h.run_ok(&["DROP TABLE IF EXISTS t_next", "CREATE TABLE t_next (a int)"]);
-    let run = h.run(&["SET TRANSACTION READ ONLY", "BEGIN", "INSERT INTO t_next VALUES (1)"]);
+    let run = h.run(&[
+        "SET TRANSACTION READ ONLY",
+        "BEGIN",
+        "INSERT INTO t_next VALUES (1)",
+    ]);
     assert_eq!(run.end, Some(ExecutionEnd::Failed), "{run:?}");
     assert!(run.error().contains("1792"), "{run:?}");
     h.run(&["ROLLBACK"]);
@@ -698,7 +925,9 @@ fn the_mysql_state_read_keeps_the_settings_of_the_next_transaction() {
 
 #[test]
 fn the_mysql_state_read_keeps_the_answer_of_the_last_statement() {
-    let Some(server) = only(Kind::MySql) else { return };
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
     let mut h = Harness::open(&server, Settings::default());
     let run = h.run_ok(&[
         "DROP TABLE IF EXISTS t_answer",
@@ -715,10 +944,18 @@ fn the_mysql_state_read_keeps_the_answer_of_the_last_statement() {
 
 #[test]
 fn the_mysql_state_follows_each_kind_of_statement() {
-    let Some(server) = only(Kind::MySql) else { return };
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
     let mut h = Harness::open(&server, sessions(1));
-    h.run_ok(&["DROP TABLE IF EXISTS t_state", "CREATE TABLE t_state (a int) ENGINE=InnoDB"]);
-    assert_eq!(h.run_ok(&["BEGIN"]).transaction, Some(TransactionState::Open));
+    h.run_ok(&[
+        "DROP TABLE IF EXISTS t_state",
+        "CREATE TABLE t_state (a int) ENGINE=InnoDB",
+    ]);
+    assert_eq!(
+        h.run_ok(&["BEGIN"]).transaction,
+        Some(TransactionState::Open)
+    );
     let read = h.run_ok(&["SELECT * FROM t_state"]);
     assert_eq!(read.transaction, None, "a read keeps the open state");
     let commit = h.run_ok(&["COMMIT", "SELECT 1"]);
@@ -726,21 +963,32 @@ fn the_mysql_state_follows_each_kind_of_statement() {
 
     let set = h.run_ok(&["SET autocommit = 0", "INSERT INTO t_state VALUES (1)"]);
     assert_eq!(set.transaction, Some(TransactionState::Open), "{set:?}");
-    assert_eq!(h.control(TransactionCommand::Rollback), TransactionState::None);
+    assert_eq!(
+        h.control(TransactionCommand::Rollback),
+        TransactionState::None
+    );
 
     // An error packet has no state, so the connector asks the server.
     h.run_ok(&["BEGIN"]);
     let failed = h.run(&["SELECT * FROM nowhere"]);
     assert_eq!(failed.end, Some(ExecutionEnd::Failed));
-    assert_eq!(failed.transaction, None, "the transaction stays open: {failed:?}");
+    assert_eq!(
+        failed.transaction, None,
+        "the transaction stays open: {failed:?}"
+    );
     assert_eq!(h.manager.usage(h.connection).0, 1);
-    assert_eq!(h.control(TransactionCommand::Rollback), TransactionState::None);
+    assert_eq!(
+        h.control(TransactionCommand::Rollback),
+        TransactionState::None
+    );
     h.run_ok(&["DROP TABLE t_state"]);
 }
 
 #[test]
 fn a_deadlock_that_ends_the_transaction_reaches_the_state() {
-    let Some(server) = only(Kind::MySql) else { return };
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
     let mut first = Harness::open(&server, Settings::default());
     let mut second = Harness::open(&server, Settings::default());
     first.run_ok(&[
@@ -754,9 +1002,16 @@ fn a_deadlock_that_ends_the_transaction_reaches_the_state() {
     std::thread::sleep(Duration::from_millis(200));
     let victim = second.run(&["UPDATE t_deadlock SET a = 2 WHERE id = 1"]);
     assert!(victim.error().contains("1213"), "{victim:?}");
-    assert_eq!(victim.transaction, Some(TransactionState::None), "{victim:?}");
+    assert_eq!(
+        victim.transaction,
+        Some(TransactionState::None),
+        "{victim:?}"
+    );
     first.collect(waiting);
-    assert_eq!(first.control(TransactionCommand::Rollback), TransactionState::None);
+    assert_eq!(
+        first.control(TransactionCommand::Rollback),
+        TransactionState::None
+    );
     first.run_ok(&["DROP TABLE t_deadlock"]);
 }
 
@@ -789,7 +1044,10 @@ fn the_catalog_lists_relations_and_the_current_schema() {
                 || schema.name == "mysql"
         }));
 
-        let relation = RelationRef { schema: current, relation: "t_catalog".into() };
+        let relation = RelationRef {
+            schema: current,
+            relation: "t_catalog".into(),
+        };
         h.manager.load_columns(h.connection, relation);
         let columns = loop {
             if let ExecEvent::ColumnsLoaded { columns, .. } = h.next() {
@@ -803,8 +1061,13 @@ fn the_catalog_lists_relations_and_the_current_schema() {
 
 #[test]
 fn call_shows_a_result_for_each_set_in_mysql() {
-    let Some(server) = only(Kind::MySql) else { return };
-    let settings = Settings { row_cap: 2, ..Settings::default() };
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
+    let settings = Settings {
+        row_cap: 2,
+        ..Settings::default()
+    };
     let mut h = Harness::open(&server, settings);
     let run = h.run_ok(&[
         "DROP PROCEDURE IF EXISTS p_sets",
@@ -816,14 +1079,23 @@ fn call_shows_a_result_for_each_set_in_mysql() {
         "SELECT 9 AS after_call",
     ]);
     assert_eq!(run.columns, [["a"], ["b"], ["after_call"]]);
-    assert_eq!(run.results, [(2, ReadLimit::RowCap), (1, ReadLimit::None), (1, ReadLimit::None)]);
+    assert_eq!(
+        run.results,
+        [
+            (2, ReadLimit::RowCap),
+            (1, ReadLimit::None),
+            (1, ReadLimit::None)
+        ]
+    );
     assert_eq!(run.limits[2], ReadLimit::RowCap);
     h.run_ok(&["DROP PROCEDURE p_sets"]);
 }
 
 #[test]
 fn copy_with_a_client_stream_is_refused_and_the_session_stays_usable() {
-    let Some(server) = only(Kind::Postgres) else { return };
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
     let mut h = Harness::open(&server, sessions(1));
     h.run_ok(&["DROP TABLE IF EXISTS t_copy", "CREATE TABLE t_copy (a int)"]);
     for sql in ["COPY t_copy FROM STDIN", "COPY t_copy TO STDOUT"] {
@@ -847,8 +1119,16 @@ fn explain_uses_the_common_grid() {
 
 #[test]
 fn an_error_during_the_read_keeps_the_rows_and_their_budget_entry() {
-    let Some(server) = only(Kind::Postgres) else { return };
-    let mut h = Harness::open(&server, Settings { row_cap: usize::MAX, ..Settings::default() });
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let mut h = Harness::open(
+        &server,
+        Settings {
+            row_cap: usize::MAX,
+            ..Settings::default()
+        },
+    );
     let run = h.run(&["SELECT 1 / (450 - g) FROM generate_series(1, 1000) g"]);
     assert_eq!(run.end, Some(ExecutionEnd::Failed));
     assert!(run.error().contains("22012"), "{run:?}");
@@ -880,8 +1160,18 @@ fn a_lost_transaction_becomes_unknown_and_frees_the_session() {
         std::thread::sleep(Duration::from_millis(200));
 
         let lost = h.run(&["SELECT 1"]);
-        assert_eq!(lost.end, Some(ExecutionEnd::Failed), "{:?}: {lost:?}", server.kind);
-        assert_eq!(lost.transaction, Some(TransactionState::Unknown), "{:?}", server.kind);
+        assert_eq!(
+            lost.end,
+            Some(ExecutionEnd::Failed),
+            "{:?}: {lost:?}",
+            server.kind
+        );
+        assert_eq!(
+            lost.transaction,
+            Some(TransactionState::Unknown),
+            "{:?}",
+            server.kind
+        );
         assert_eq!(h.manager.usage(h.connection).0, 0, "{:?}", server.kind);
 
         // The application asks for a confirmation, and then the next run gets a session.
@@ -901,16 +1191,29 @@ fn a_statement_on_a_lost_connection_reports_an_error() {
         // The cleanup of the first run returned the same connection to this run.
         admin.run_ok(&[&server.kill(&id)]);
         let run = h.collect(execution);
-        assert_eq!(run.end, Some(ExecutionEnd::Failed), "{:?}: {run:?}", server.kind);
+        assert_eq!(
+            run.end,
+            Some(ExecutionEnd::Failed),
+            "{:?}: {run:?}",
+            server.kind
+        );
         assert_eq!(run.statuses[1], StatementStatus::NotExecuted);
-        assert_eq!(run.transaction, None, "no transaction was open: {:?}", server.kind);
+        assert_eq!(
+            run.transaction, None,
+            "no transaction was open: {:?}",
+            server.kind
+        );
         assert_eq!(h.manager.usage(h.connection).0, 0, "{:?}", server.kind);
         assert_eq!(h.run_ok(&["SELECT 5"]).text(0, 0), "5", "{:?}", server.kind);
     }
 }
 
 fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap()
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap()
 }
 
 /// Returns a sink for a test that reads only the result of `run`.
@@ -921,12 +1224,20 @@ fn sink() -> ResultSink {
 fn sink_with_cap(cap: usize) -> ResultSink {
     let (events, inbox) = tokio::sync::mpsc::channel(1024);
     std::mem::forget(inbox);
-    let key = StatementKey { console: 1, execution: 1, index: 0 };
+    let key = StatementKey {
+        console: 1,
+        execution: 1,
+        index: 0,
+    };
     ResultSink::new(key, events, Arc::new(Budget::new(1 << 30)), cap)
 }
 
 async fn one_value(session: &mut Box<dyn Session>, sql: &str) -> Result<(), String> {
-    session.run(sql, sink()).await.map(|_| ()).map_err(|error| error.message)
+    session
+        .run(sql, sink())
+        .await
+        .map(|_| ())
+        .map_err(|error| error.message)
 }
 
 #[test]
@@ -951,15 +1262,33 @@ fn a_late_cancel_does_not_reach_the_next_statement() {
 #[test]
 fn the_row_cap_of_a_short_read_does_not_reach_the_next_statement() {
     for server in servers() {
-        let settings = Settings { row_cap: 50, ..sessions(1) };
+        let settings = Settings {
+            row_cap: 50,
+            ..sessions(1)
+        };
         let mut h = Harness::open(&server, settings);
-        h.run_ok(&["DROP TABLE IF EXISTS t_cap_next", "CREATE TABLE t_cap_next (a int)"]);
-        let values = (0..80).map(|x| format!("({x})")).collect::<Vec<_>>().join(",");
+        h.run_ok(&[
+            "DROP TABLE IF EXISTS t_cap_next",
+            "CREATE TABLE t_cap_next (a int)",
+        ]);
+        let values = (0..80)
+            .map(|x| format!("({x})"))
+            .collect::<Vec<_>>()
+            .join(",");
         h.run_ok(&[&format!("INSERT INTO t_cap_next VALUES {values}")]);
         // A result a little above the cap ends near the moment of the cancel request.
         for _ in 0..100 {
-            let run = h.run(&["SELECT a FROM t_cap_next", "UPDATE t_cap_next SET a = a + 1"]);
-            assert_eq!(run.end, Some(ExecutionEnd::Completed), "{:?}: {:?}", server.kind, run.statuses);
+            let run = h.run(&[
+                "SELECT a FROM t_cap_next",
+                "UPDATE t_cap_next SET a = a + 1",
+            ]);
+            assert_eq!(
+                run.end,
+                Some(ExecutionEnd::Completed),
+                "{:?}: {:?}",
+                server.kind,
+                run.statuses
+            );
         }
         h.run_ok(&["DROP TABLE t_cap_next"]);
     }
@@ -967,28 +1296,40 @@ fn the_row_cap_of_a_short_read_does_not_reach_the_next_statement() {
 
 #[test]
 fn closing_a_mysql_session_closes_its_socket_during_a_read() {
-    let Some(server) = only(Kind::MySql) else { return };
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
     let connector = connector(&server);
     let mut h = Harness::open(&server, Settings::default());
     server.prepare_huge_read(&mut h);
     // The comment names this statement in the process list of the server.
     let sql = format!("{} /* closed read */", server.huge_read());
-    let processes = format!(
-        "SELECT count(*) FROM information_schema.PROCESSLIST WHERE INFO = '{sql}'"
-    );
+    let processes =
+        format!("SELECT count(*) FROM information_schema.PROCESSLIST WHERE INFO = '{sql}'");
     // The runtime stays alive during the check: the end of a runtime also closes the
     // sockets of its tasks, and that would hide a task that keeps this socket open.
     let runtime = runtime();
     runtime.block_on(async {
         let mut session = connector.connect().await.unwrap();
         let run = session.run(&sql, sink_with_cap(usize::MAX));
-        assert!(tokio::time::timeout(Duration::from_millis(500), run).await.is_err());
-        assert_eq!(h.run_ok(&[&processes]).text(0, 0), "1", "the statement must have started");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), run)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            h.run_ok(&[&processes]).text(0, 0),
+            "1",
+            "the statement must have started"
+        );
         drop(session);
     });
     let deadline = Instant::now() + Duration::from_secs(10);
     while h.run_ok(&[&processes]).text(0, 0) != "0" {
-        assert!(Instant::now() < deadline, "the statement of the closed session continues");
+        assert!(
+            Instant::now() < deadline,
+            "the statement of the closed session continues"
+        );
         std::thread::sleep(Duration::from_millis(100));
     }
 }
@@ -1020,11 +1361,19 @@ fn a_transaction_commit_failure_on_a_lost_connection_is_reported() {
 fn a_wrong_password_fails_at_once_and_shows_no_password() {
     for server in servers() {
         let uri = server.uri.replacen(":spike@", ":wrong-secret-value@", 1);
-        let bad = Server { kind: server.kind, uri };
+        let bad = Server {
+            kind: server.kind,
+            uri,
+        };
         let mut h = Harness::open(&bad, Settings::default());
         let execution = h.start(&["SELECT 1"], false);
         loop {
-            if let ExecEvent::ExecutionFinished { execution: finished, end, message, .. } = h.next()
+            if let ExecEvent::ExecutionFinished {
+                execution: finished,
+                end,
+                message,
+                ..
+            } = h.next()
                 && finished == execution
             {
                 assert_eq!(end, ExecutionEnd::Failed);
@@ -1043,7 +1392,10 @@ fn a_silent_server_ends_at_the_connection_time_limit() {
     let port = listener.local_addr().unwrap().port();
     for scheme in ["postgres", "mysql"] {
         let uri = format!("{scheme}://u:p@127.0.0.1:{port}/d");
-        let settings = Settings { connect_timeout: Duration::from_millis(300), ..Settings::default() };
+        let settings = Settings {
+            connect_timeout: Duration::from_millis(300),
+            ..Settings::default()
+        };
         let budget = Arc::new(Budget::new(settings.budget_bytes));
         let connector = network_connector(parse_uri(&uri).unwrap());
         let (mut manager, mut events) = Manager::new(budget).unwrap();
@@ -1070,19 +1422,33 @@ struct TlsServer {
 }
 
 fn tls_servers() -> Vec<TlsServer> {
-    let port = |name: &str| std::env::var(name).ok().and_then(|value| value.parse().ok());
+    let port = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse().ok())
+    };
     let mut found = Vec::new();
     if let Some(port) = port("SQLN_PG_TLS_PORT") {
-        found.push(TlsServer { scheme: "postgres", port, user_key: "client.pk8.key" });
+        found.push(TlsServer {
+            scheme: "postgres",
+            port,
+            user_key: "client.pk8.key",
+        });
     }
     if let Some(port) = port("SQLN_MYSQL_TLS_PORT") {
-        found.push(TlsServer { scheme: "mysql", port, user_key: "client.rsa.key" });
+        found.push(TlsServer {
+            scheme: "mysql",
+            port,
+            user_key: "client.rsa.key",
+        });
     }
     found
 }
 
 fn certs() -> Option<std::path::PathBuf> {
-    let folder = std::env::var("SQLN_CERTS").ok().map(std::path::PathBuf::from);
+    let folder = std::env::var("SQLN_CERTS")
+        .ok()
+        .map(std::path::PathBuf::from);
     folder.filter(|folder| folder.join("ca.crt").exists() && std::env::var("SQLN_TEST_TLS").is_ok())
 }
 
@@ -1095,7 +1461,11 @@ fn try_connect(uri: &str) -> Result<Box<dyn Session>, String> {
 }
 
 fn user_of(server: &TlsServer) -> &'static str {
-    if server.scheme == "postgres" { "postgres" } else { "root" }
+    if server.scheme == "postgres" {
+        "postgres"
+    } else {
+        "root"
+    }
 }
 
 #[test]
@@ -1165,7 +1535,11 @@ fn tls_refuses_a_server_without_tls() {
 fn tls_accepts_a_client_certificate() {
     let Some(folder) = certs() else { return };
     for server in tls_servers() {
-        let TlsServer { scheme, port, user_key } = server;
+        let TlsServer {
+            scheme,
+            port,
+            user_key,
+        } = server;
         let uri = format!(
             "{scheme}://certuser@localhost:{port}/spike?sslmode=verify-full&sslrootcert={}&sslcert={}&sslkey={}",
             folder.join("ca.crt").display(),
@@ -1184,7 +1558,9 @@ fn tls_accepts_a_client_certificate() {
 #[test]
 fn a_missing_certificate_file_is_a_clear_error() {
     for scheme in ["postgres", "mysql"] {
-        let uri = format!("{scheme}://u@db.example.test/d?sslmode=verify-full&sslrootcert=/missing/ca.crt");
+        let uri = format!(
+            "{scheme}://u@db.example.test/d?sslmode=verify-full&sslrootcert=/missing/ca.crt"
+        );
         let error = try_connect(&uri).err().unwrap();
         assert!(error.contains("/missing/ca.crt"), "{error}");
     }
@@ -1203,16 +1579,23 @@ impl Screen {
             ..Options::default()
         };
         let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
-        Self { app: App::new(options, clipboard, Theme::plain()) }
+        Self {
+            app: App::new(options, clipboard, Theme::plain()),
+        }
     }
 
     /// Opens the server as a connection with a definition, as the form saves it.
     fn with_definition(server: &Server) -> Self {
         let target = parse_uri(&server.uri).unwrap();
         let definition = Definition::new("real", Source::Network(target));
-        let options = Options { connections: vec![definition], ..Options::default() };
+        let options = Options {
+            connections: vec![definition],
+            ..Options::default()
+        };
         let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
-        Self { app: App::new(options, clipboard, Theme::plain()) }
+        Self {
+            app: App::new(options, clipboard, Theme::plain()),
+        }
     }
 
     fn press(&mut self, event: KeyEvent) {
@@ -1247,7 +1630,10 @@ impl Screen {
             catalog.is_some() && !s.screen().contains("Reading the catalog")
         });
         let catalog = self.app.connections()[0].catalog.as_ref().unwrap();
-        let index = catalog.schemas.iter().position(|schema| Some(schema.name.as_str()) == name);
+        let index = catalog
+            .schemas
+            .iter()
+            .position(|schema| Some(schema.name.as_str()) == name);
         for _ in 0..catalog.schemas.len() + 1 {
             self.code(KeyCode::Up);
         }
@@ -1265,7 +1651,10 @@ impl Screen {
                 return;
             }
             let screen = self.screen();
-            assert!(Instant::now() < deadline, "the condition did not happen:\n{screen}");
+            assert!(
+                Instant::now() < deadline,
+                "the condition did not happen:\n{screen}"
+            );
             std::thread::sleep(Duration::from_millis(2));
         }
     }
@@ -1287,7 +1676,9 @@ impl Screen {
         let buffer = terminal.backend().buffer();
         (0..buffer.area.height)
             .map(|y| {
-                let row: String = (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect();
+                let row: String = (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect();
                 row.trim_end().to_owned() + "\n"
             })
             .collect()
@@ -1301,7 +1692,10 @@ impl Screen {
             if screen.contains(text) {
                 return;
             }
-            assert!(Instant::now() < deadline, "{text:?} is not on the screen:\n{screen}");
+            assert!(
+                Instant::now() < deadline,
+                "{text:?} is not on the screen:\n{screen}"
+            );
             std::thread::sleep(Duration::from_millis(2));
         }
     }
@@ -1393,7 +1787,9 @@ fn a_table_view_pages_filters_and_orders_rows_of_each_server() {
         let mut s = Screen::open(&server);
         s.wait_for("test server");
         let fill = match server.kind {
-            Kind::Postgres => "INSERT INTO app_pages SELECT g, 'row' || g FROM generate_series(1, 250) g;",
+            Kind::Postgres => {
+                "INSERT INTO app_pages SELECT g, 'row' || g FROM generate_series(1, 250) g;"
+            }
             Kind::MySql => {
                 "INSERT INTO app_pages WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 250) \
                  SELECT x, CONCAT('row', x) FROM n;"
@@ -1529,7 +1925,9 @@ fn a_table_view_quotes_the_names_of_each_server() {
 
 #[test]
 fn the_mysql_delimiter_creates_a_routine_from_the_editor() {
-    let Some(server) = only(Kind::MySql) else { return };
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
     let mut s = Screen::open(&server);
     s.run_script(
         "DROP PROCEDURE IF EXISTS app_delimited;\n\
@@ -1620,7 +2018,11 @@ fn the_navigator_reads_a_real_catalog() {
         s.code(KeyCode::Right);
         s.wait_until(|s| s.app.connections()[0].catalog.is_some());
         let catalog = s.app.connections()[0].catalog.as_ref().unwrap();
-        let index = catalog.schemas.iter().position(|item| item.name == "app_choice").unwrap();
+        let index = catalog
+            .schemas
+            .iter()
+            .position(|item| item.name == "app_choice")
+            .unwrap();
         for _ in 0..=index {
             s.code(KeyCode::Down);
         }
@@ -1648,7 +2050,10 @@ fn a_connected_definition_changes_only_its_name() {
         s.code(KeyCode::Enter);
         assert!(s.app.form().is_none());
         s.wait_for("● real-renamed");
-        assert_eq!(s.app.connections()[0].definition.as_ref().unwrap().name, "real-renamed");
+        assert_eq!(
+            s.app.connections()[0].definition.as_ref().unwrap().name,
+            "real-renamed"
+        );
         s.app.shutdown();
     }
 }
@@ -1745,7 +2150,11 @@ fn the_exit_commits_the_answer_of_each_console_on_its_own_session() {
         s.app.shutdown();
 
         let mut h = Harness::open(&server, Settings::default());
-        assert_eq!(h.count("app_exit"), "1", "commit in the first console, rollback in the second");
+        assert_eq!(
+            h.count("app_exit"),
+            "1",
+            "commit in the first console, rollback in the second"
+        );
         h.run_ok(&["DROP TABLE app_exit"]);
     }
 }
@@ -1788,7 +2197,11 @@ fn the_form_tests_a_real_server_and_a_wrong_password_stays_hidden() {
 #[test]
 fn a_client_key_in_another_form_gets_a_clear_message() {
     let path = std::env::temp_dir().join(format!("sqln-key-{}.pem", std::process::id()));
-    std::fs::write(&path, "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n").unwrap();
+    std::fs::write(
+        &path,
+        "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
+    )
+    .unwrap();
     let uri = format!(
         "mysql://reader@127.0.0.1:1/app?sslmode=verify-full&sslcert={0}&sslkey={0}",
         path.display(),
@@ -1803,30 +2216,53 @@ fn a_client_key_in_another_form_gets_a_clear_message() {
 #[test]
 fn a_change_of_schema_by_sql_ends_with_its_execution() {
     for server in servers() {
-        let settings = Settings { max_connections: 1, ..Settings::default() };
+        let settings = Settings {
+            max_connections: 1,
+            ..Settings::default()
+        };
         let mut h = Harness::open(&server, settings);
         h.run_ok(&[create_namespace(&server)]);
         let (change, read, expected) = match server.kind {
-            Kind::Postgres => ("SET search_path TO app_choice", "SHOW search_path", "\"$user\", public"),
+            Kind::Postgres => (
+                "SET search_path TO app_choice",
+                "SHOW search_path",
+                "\"$user\", public",
+            ),
             Kind::MySql => ("USE app_choice", "SELECT DATABASE()", "spike"),
         };
         let run = h.run(&[change, read]);
         assert_eq!(run.text(0, 0), "app_choice");
         let backend = h.run(&[server.backend_id()]).text(0, 0);
         assert_eq!(h.run(&[read]).text(0, 0), expected, "{:?}", server.kind);
-        assert_eq!(h.run(&[server.backend_id()]).text(0, 0), backend, "the same session stays in use");
+        assert_eq!(
+            h.run(&[server.backend_id()]).text(0, 0),
+            backend,
+            "the same session stays in use"
+        );
     }
 }
 
 #[test]
 fn a_mysql_session_without_a_database_closes_after_a_use() {
-    let Some(server) = only(Kind::MySql) else { return };
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
     let uri = server.uri.replace("/spike", "");
-    let definition = Server { kind: Kind::MySql, uri };
-    let settings = Settings { max_connections: 1, ..Settings::default() };
+    let definition = Server {
+        kind: Kind::MySql,
+        uri,
+    };
+    let settings = Settings {
+        max_connections: 1,
+        ..Settings::default()
+    };
     let mut h = Harness::open(&definition, settings);
     let first = h.run(&["USE spike", server.backend_id()]).text(0, 0);
     let run = h.run(&["SELECT DATABASE()", server.backend_id()]);
     assert!(matches!(run.rows[0][0], Value::Null), "{run:?}");
-    assert_ne!(run.text(1, 0), first, "MySQL cannot leave a database, so the session closes");
+    assert_ne!(
+        run.text(1, 0),
+        first,
+        "MySQL cannot leave a database, so the session closes"
+    );
 }

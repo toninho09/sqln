@@ -11,13 +11,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use common::sample_catalog;
 use common::{ctrl, key, temp_db};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use sqln::app::{App, Options};
-use common::sample_catalog;
 use sqln::catalog::Catalog;
 use sqln::clipboard::{Clipboard, CopyOutcome, MemoryClipboard};
 use sqln::connection::{CatalogState, Definition, Source};
@@ -48,7 +50,10 @@ struct Fixture {
 
 fn database(name: &str, setup: &str) -> PathBuf {
     let path = temp_db(name);
-    rusqlite::Connection::open(&path).unwrap().execute_batch(setup).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(setup)
+        .unwrap();
     path
 }
 
@@ -65,7 +70,10 @@ impl Fixture {
             ..Options::default()
         };
         let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
-        Self { app: App::new(options, clipboard, Theme::plain()), paths }
+        Self {
+            app: App::new(options, clipboard, Theme::plain()),
+            paths,
+        }
     }
 
     fn new(name: &str, setup: &str) -> Self {
@@ -107,7 +115,11 @@ impl Fixture {
             if condition(self) {
                 return;
             }
-            assert!(Instant::now() < deadline, "the condition did not happen:\n{}", self.screen());
+            assert!(
+                Instant::now() < deadline,
+                "the condition did not happen:\n{}",
+                self.screen()
+            );
             std::thread::sleep(Duration::from_millis(1));
         }
     }
@@ -155,13 +167,19 @@ impl Fixture {
     #[track_caller]
     fn assert_sees(&mut self, text: &str) {
         let screen = self.screen();
-        assert!(screen.contains(text), "{text:?} is not on the screen:\n{screen}");
+        assert!(
+            screen.contains(text),
+            "{text:?} is not on the screen:\n{screen}"
+        );
     }
 
     #[track_caller]
     fn assert_not_sees(&mut self, text: &str) {
         let screen = self.screen();
-        assert!(!screen.contains(text), "{text:?} is on the screen:\n{screen}");
+        assert!(
+            !screen.contains(text),
+            "{text:?} is on the screen:\n{screen}"
+        );
     }
 
     fn query(&self, index: usize, sql: &str) -> i64 {
@@ -221,12 +239,21 @@ impl Fixture {
 
 fn rows(buffer: &Buffer) -> Vec<String> {
     (0..buffer.area.height)
-        .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect())
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect()
+        })
         .collect()
 }
 
 fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
-    Event::Mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE })
+    Event::Mouse(MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    })
 }
 
 #[test]
@@ -266,7 +293,10 @@ fn a_console_works_while_another_one_runs() {
     f.run("SELECT 'free' AS a;");
     f.assert_sees("free");
     assert!(f.screen().contains("s  console-1"), "{}", f.screen());
-    assert!(f.app.consoles()[0].is_busy(), "the first console still runs");
+    assert!(
+        f.app.consoles()[0].is_busy(),
+        "the first console still runs"
+    );
 
     f.prefix('p');
     f.prefix('x');
@@ -392,14 +422,25 @@ fn the_exit_asks_each_console_and_applies_each_answer_at_once() {
     f.code(KeyCode::Tab);
     f.code(KeyCode::Enter);
     f.pump_sees("console-3: This console has an open transaction");
-    assert_eq!(f.query(0, "SELECT count(*) FROM t"), 1, "the commit runs before the next question");
+    assert_eq!(
+        f.query(0, "SELECT count(*) FROM t"),
+        1,
+        "the commit runs before the next question"
+    );
     assert!(!f.app.should_quit());
 
     f.code(KeyCode::Esc);
-    assert!(!f.app.should_quit(), "the cancel keeps the application open");
+    assert!(
+        !f.app.should_quit(),
+        "the cancel keeps the application open"
+    );
     assert_eq!(f.app.consoles().len(), 3);
     f.assert_not_sees("This console has an open transaction");
-    assert_eq!(f.query(0, "SELECT count(*) FROM t"), 1, "the cancel does not undo the commit");
+    assert_eq!(
+        f.query(0, "SELECT count(*) FROM t"),
+        1,
+        "the cancel does not undo the commit"
+    );
 
     f.prefix('q');
     f.code(KeyCode::Tab);
@@ -416,7 +457,11 @@ fn the_exit_stops_a_running_console_first() {
     f.code(KeyCode::Char('n'));
     f.prefix('q');
     f.assert_sees("console-1: Stop the execution and close?");
-    assert_eq!(f.app.console().name, "console-1", "the question shows its console");
+    assert_eq!(
+        f.app.console().name,
+        "console-1",
+        "the question shows its console"
+    );
     f.code(KeyCode::Tab);
     f.code(KeyCode::Enter);
     f.pump_until(|f| f.app.should_quit());
@@ -506,7 +551,9 @@ fn a_click_in_the_navigator_selects_and_its_mark_opens() {
 
 #[test]
 fn the_wheel_moves_the_navigator() {
-    let setup: String = (0..60).map(|index| format!("CREATE TABLE t{index}(a);")).collect();
+    let setup: String = (0..60)
+        .map(|index| format!("CREATE TABLE t{index}(a);"))
+        .collect();
     let mut f = Fixture::new("tree-wheel", &setup);
     f.navigator();
     f.code(KeyCode::Right);
@@ -526,7 +573,10 @@ fn the_wheel_moves_the_navigator() {
 
 #[test]
 fn a_catalog_read_keeps_the_cursor_and_the_open_columns() {
-    let mut f = Fixture::new("tree-reload", "CREATE TABLE a_first(x); CREATE TABLE b_second(y);");
+    let mut f = Fixture::new(
+        "tree-reload",
+        "CREATE TABLE a_first(x); CREATE TABLE b_second(y);",
+    );
     f.navigator();
     f.code(KeyCode::Right);
     f.pump_sees("main");
@@ -583,27 +633,43 @@ fn r_reads_the_catalog_again() {
 #[test]
 fn a_catalog_failure_shows_in_the_tree_and_a_refresh_can_repair_it() {
     let path = temp_db("bad");
-    let mut f = Fixture::open(vec![database("first-file", ""), path.clone()], KeyboardMode::Conventional);
+    let mut f = Fixture::open(
+        vec![database("first-file", ""), path.clone()],
+        KeyboardMode::Conventional,
+    );
     f.navigator();
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.pump_sees("(failed)");
-    rusqlite::Connection::open(&path).unwrap().execute_batch("CREATE TABLE fixed(a);").unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch("CREATE TABLE fixed(a);")
+        .unwrap();
     f.code(KeyCode::Char('r'));
     f.pump_until(|f| !f.sees("(failed)"));
 }
 
 #[test]
 fn each_console_uses_the_database_of_its_connection() {
-    let first = database("connection-a", "CREATE TABLE only_a(x); INSERT INTO only_a VALUES (1);");
-    let second = database("connection-b", "CREATE TABLE only_b(x); INSERT INTO only_b VALUES (2);");
+    let first = database(
+        "connection-a",
+        "CREATE TABLE only_a(x); INSERT INTO only_a VALUES (1);",
+    );
+    let second = database(
+        "connection-b",
+        "CREATE TABLE only_b(x); INSERT INTO only_b VALUES (2);",
+    );
     let mut f = Fixture::open(vec![first, second], KeyboardMode::Conventional);
     f.assert_sees("connection-a");
     f.assert_sees("connection-b");
     f.run("SELECT x + 100 AS shown FROM only_b;");
     f.prefix('j');
     f.prefix('k');
-    assert!(f.sees("no such table") || f.sees("Messages"), "{}", f.screen());
+    assert!(
+        f.sees("no such table") || f.sees("Messages"),
+        "{}",
+        f.screen()
+    );
 
     f.navigator();
     f.code(KeyCode::Down);
@@ -623,7 +689,12 @@ fn each_console_uses_the_database_of_its_connection() {
 fn the_tree_keeps_the_order_of_the_command_line() {
     let paths = ["order-a", "order-b", "order-c"].map(|name| database(name, ""));
     let f = Fixture::open(paths.to_vec(), KeyboardMode::Conventional);
-    let names: Vec<&str> = f.app.connections().iter().map(|item| item.name.as_str()).collect();
+    let names: Vec<&str> = f
+        .app
+        .connections()
+        .iter()
+        .map(|item| item.name.as_str())
+        .collect();
     assert_eq!(names, ["order-a.db", "order-b.db", "order-c.db"]);
 }
 
@@ -702,7 +773,10 @@ fn removal_refuses_a_connection_with_open_work() {
 #[test]
 fn the_form_adds_a_connection_and_its_console_reads_the_file() {
     let mut f = Fixture::new("form-first", "");
-    let path = database("form-added", "CREATE TABLE t(a); INSERT INTO t VALUES (41);");
+    let path = database(
+        "form-added",
+        "CREATE TABLE t(a); INSERT INTO t VALUES (41);",
+    );
     f.fill_sqlite("added", &path);
     f.save();
     assert!(f.app.form().is_none());
@@ -717,7 +791,10 @@ fn the_form_adds_a_connection_and_its_console_reads_the_file() {
 fn the_first_connection_of_an_empty_start_uses_the_empty_console() {
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
     let app = App::new(Options::default(), clipboard, Theme::plain());
-    let mut f = Fixture { app, paths: Vec::new() };
+    let mut f = Fixture {
+        app,
+        paths: Vec::new(),
+    };
     f.assert_sees("No connections");
     f.code(KeyCode::F(5));
     f.assert_sees("No database.");
@@ -830,19 +907,28 @@ fn the_form_suggests_tls_from_the_address_until_the_user_chooses() {
     assert!(f.app.form().unwrap().verify_tls);
     f.focus_form(Field::Host);
     f.type_text("localhost");
-    assert!(!f.app.form().unwrap().verify_tls, "a local address needs no TLS");
+    assert!(
+        !f.app.form().unwrap().verify_tls,
+        "a local address needs no TLS"
+    );
     for _ in 0.."localhost".len() {
         f.code(KeyCode::Backspace);
     }
     f.type_text("db.example.test");
-    assert!(f.app.form().unwrap().verify_tls, "a remote address verifies");
+    assert!(
+        f.app.form().unwrap().verify_tls,
+        "a remote address verifies"
+    );
 
     f.focus_form(Field::Tls);
     f.code(KeyCode::Right);
     assert!(!f.app.form().unwrap().verify_tls);
     f.focus_form(Field::Host);
     f.code(KeyCode::Char('x'));
-    assert!(!f.app.form().unwrap().verify_tls, "the choice of the user stays");
+    assert!(
+        !f.app.form().unwrap().verify_tls,
+        "the choice of the user stays"
+    );
 }
 
 #[test]
@@ -893,7 +979,10 @@ fn a_password_stays_hidden_while_the_user_types_the_connection_text() {
 
 #[test]
 fn edit_changes_a_closed_connection_and_the_next_run_uses_it() {
-    let first = database("edit-before", "CREATE TABLE t(a); INSERT INTO t VALUES (1);");
+    let first = database(
+        "edit-before",
+        "CREATE TABLE t(a); INSERT INTO t VALUES (1);",
+    );
     let second = database("edit-after", "CREATE TABLE t(a); INSERT INTO t VALUES (2);");
     let mut f = Fixture::open(vec![first.clone()], KeyboardMode::Conventional);
     f.navigator();
@@ -931,7 +1020,11 @@ fn vim_keys_write_text_in_a_form_field_and_move_on_a_choice() {
     f.navigator();
     f.code(KeyCode::Char('a'));
     f.code(KeyCode::Char('l'));
-    assert_eq!(f.app.form().unwrap().kind, Kind::MySql, "l changes a choice");
+    assert_eq!(
+        f.app.form().unwrap().kind,
+        Kind::MySql,
+        "l changes a choice"
+    );
     f.code(KeyCode::Char('j'));
     assert_eq!(f.app.form().unwrap().focus, Field::Name);
     f.type_text("jkhl");
@@ -944,7 +1037,10 @@ fn a_collapsed_navigator_keeps_the_editor_and_the_results() {
     f.run("SELECT 'a value' AS shown;");
     f.navigator();
     f.prefix('b');
-    assert!(!f.app.navigator_focused(), "the focus leaves the hidden panel");
+    assert!(
+        !f.app.navigator_focused(),
+        "the focus leaves the hidden panel"
+    );
     f.assert_not_sees("● collapse.db");
     f.assert_sees("a value");
     f.assert_sees("SELECT 'a value'");
@@ -973,12 +1069,20 @@ fn a_drag_on_the_dividers_changes_the_panels() {
     f.app.on_event(mouse(left, 24, 5));
     f.app.on_event(mouse(drag, 99, 5));
     f.app.on_event(mouse(up, 99, 5));
-    assert_eq!(f.app.navigator().width, 40, "a press away from the divider moves nothing");
+    assert_eq!(
+        f.app.navigator().width,
+        40,
+        "a press away from the divider moves nothing"
+    );
 
     f.app.on_event(mouse(left, 40, 5));
     f.app.on_event(mouse(drag, 99, 5));
     f.app.on_event(mouse(up, 99, 5));
-    assert_eq!(f.app.navigator().width, 60, "the console keeps its minimum width");
+    assert_eq!(
+        f.app.navigator().width,
+        60,
+        "the console keeps its minimum width"
+    );
 
     let (column, row) = f.locate("Messages");
     let free = column + 20;
@@ -1075,7 +1179,13 @@ fn every_screen_fits_the_minimum_terminal() {
     f.navigator();
     f.code(KeyCode::Char('a'));
     let screen = rows(&f.buffer_at(80, 24)).join("\n");
-    for text in ["Type", "Connect limit", "[Test connection]", "[Save]", "[Cancel]"] {
+    for text in [
+        "Type",
+        "Connect limit",
+        "[Test connection]",
+        "[Save]",
+        "[Cancel]",
+    ] {
         assert!(screen.contains(text), "{text}\n{screen}");
     }
 }
@@ -1136,7 +1246,10 @@ impl Connector for KeepConnector {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities { namespace: Namespace::Schema, transactions: true }
+        Capabilities {
+            namespace: Namespace::Schema,
+            transactions: true,
+        }
     }
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
@@ -1213,7 +1326,13 @@ fn kept_sessions_with(keyboard: KeyboardMode, settings: Settings) -> (Fixture, A
     };
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
     let app = App::new(options, clipboard, Theme::plain());
-    (Fixture { app, paths: Vec::new() }, sessions)
+    (
+        Fixture {
+            app,
+            paths: Vec::new(),
+        },
+        sessions,
+    )
 }
 
 #[test]
@@ -1254,7 +1373,12 @@ fn hold_a_session_in_a_catalog_read(f: &mut Fixture, sessions: &Sessions) {
 
 fn has_new_table(f: &Fixture) -> bool {
     let catalog = f.app.connections()[0].catalog.as_ref();
-    catalog.is_some_and(|item| item.schemas[0].relations.iter().any(|table| table.name == NEW_TABLE))
+    catalog.is_some_and(|item| {
+        item.schemas[0]
+            .relations
+            .iter()
+            .any(|table| table.name == NEW_TABLE)
+    })
 }
 
 #[test]
@@ -1306,7 +1430,10 @@ fn disconnect_waits_for_a_session_in_use() {
 
 #[test]
 fn a_session_that_stays_in_use_keeps_the_message_true() {
-    let settings = Settings { stop_grace: Duration::from_millis(20), ..Settings::default() };
+    let settings = Settings {
+        stop_grace: Duration::from_millis(20),
+        ..Settings::default()
+    };
     let (mut f, sessions) = kept_sessions_with(KeyboardMode::Conventional, settings);
     hold_a_session_in_a_catalog_read(&mut f, &sessions);
     f.code(KeyCode::Char('D'));
@@ -1338,8 +1465,16 @@ fn the_schema_choice_applies_to_each_new_session() {
     f.run("SELECT 2;");
     let contexts = sessions.contexts.lock().unwrap().clone();
     assert!(contexts.len() >= 2, "each reservation applies the context");
-    assert!(contexts.iter().all(|context| context.schema.as_deref() == Some("sales")));
-    assert_eq!(f.app.console().editor.text(), "SELECT 2;", "the choice does not change the text");
+    assert!(
+        contexts
+            .iter()
+            .all(|context| context.schema.as_deref() == Some("sales"))
+    );
+    assert_eq!(
+        f.app.console().editor.text(),
+        "SELECT 2;",
+        "the choice does not change the text"
+    );
 
     f.prefix('d');
     f.code(KeyCode::Up);
@@ -1356,7 +1491,11 @@ fn the_bar_shows_the_default_schema_after_the_catalog_read() {
     f.prefix('h');
     f.code(KeyCode::Right);
     f.pump_sees("Schema: [public]");
-    assert_eq!(f.app.console().schema, None, "the default is not a choice of the console");
+    assert_eq!(
+        f.app.console().schema,
+        None,
+        "the default is not a choice of the console"
+    );
 }
 
 #[test]
@@ -1406,7 +1545,10 @@ fn the_schema_choice_gives_priority_to_its_relations_in_the_list() {
     f.type_text("SELECT * FROM inv");
     f.pump_sees("invoices");
     let screen = f.screen();
-    assert!(!screen.contains("sales.invoices"), "the selected schema needs no qualifier:\n{screen}");
+    assert!(
+        !screen.contains("sales.invoices"),
+        "the selected schema needs no qualifier:\n{screen}"
+    );
 }
 
 #[test]
@@ -1486,7 +1628,10 @@ fn a_form_for_a_network_definition_keeps_each_value() {
     let mut target = local_target();
     target.tls = Tls::Verify(TlsFiles {
         ca: Some("ca.pem".into()),
-        client: Some(ClientCertificate { certificate: "c.pem".into(), key: "k.pem".into() }),
+        client: Some(ClientCertificate {
+            certificate: "c.pem".into(),
+            key: "k.pem".into(),
+        }),
     });
     let mut definition = Definition::new("kept", Source::Network(target));
     definition.read_only = true;
@@ -1543,9 +1688,15 @@ impl Clipboard for BrokenClipboard {
 
 fn fixture_without_clipboard(name: &str) -> Fixture {
     let path = database(name, "");
-    let options = Options { database: Some(path.clone()), ..Options::default() };
+    let options = Options {
+        database: Some(path.clone()),
+        ..Options::default()
+    };
     let clipboard = Rc::new(RefCell::new(BrokenClipboard));
-    Fixture { app: App::new(options, clipboard, Theme::plain()), paths: vec![path] }
+    Fixture {
+        app: App::new(options, clipboard, Theme::plain()),
+        paths: vec![path],
+    }
 }
 
 #[test]
@@ -1555,9 +1706,15 @@ fn a_message_leaves_the_hint_bar_after_its_time() {
     f.assert_sees(REFUSAL);
     let start = Instant::now();
     f.app.tick_at(start);
-    assert!(!f.app.tick_at(start + MESSAGE_TIME - Duration::from_millis(100)));
+    assert!(
+        !f.app
+            .tick_at(start + MESSAGE_TIME - Duration::from_millis(100))
+    );
     f.assert_sees(REFUSAL);
-    assert!(f.app.tick_at(start + MESSAGE_TIME), "the screen must draw again");
+    assert!(
+        f.app.tick_at(start + MESSAGE_TIME),
+        "the screen must draw again"
+    );
     f.assert_not_sees(REFUSAL);
     f.assert_sees("F5 run");
 }
@@ -1632,13 +1789,22 @@ impl Fixture {
         let (start, row) = self.locate(name);
         let column = start + name.chars().count() as u16 + 1;
         let tabs = self.screen();
-        let mark = tabs.lines().next().unwrap().chars().nth(usize::from(column));
+        let mark = tabs
+            .lines()
+            .next()
+            .unwrap()
+            .chars()
+            .nth(usize::from(column));
         assert_eq!(mark, Some('X'), "{tabs}");
         self.click(column, row);
     }
 
     fn console_names(&self) -> Vec<&str> {
-        self.app.consoles().iter().map(|console| console.name.as_str()).collect()
+        self.app
+            .consoles()
+            .iter()
+            .map(|console| console.name.as_str())
+            .collect()
     }
 }
 

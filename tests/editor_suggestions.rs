@@ -78,7 +78,11 @@ fn arrows_move_in_the_list_and_wrap() {
     f.press(key(Up));
     f.press(key(Up));
     assert_eq!(f.editor.suggestions().unwrap().selected, count - 1);
-    assert_eq!(f.editor.cursor(), Index2::new(0, 16), "the arrows stay in the list");
+    assert_eq!(
+        f.editor.cursor(),
+        Index2::new(0, 16),
+        "the arrows stay in the list"
+    );
 }
 
 #[test]
@@ -201,10 +205,13 @@ fn missing_columns_reach_the_application_and_a_refresh_shows_them() {
     f.editor.set_cursor(Index2::new(0, 7));
     f.write("u.");
     assert!(f.editor.suggestions().is_none());
-    assert_eq!(f.editor.take_missing_columns(), [RelationRef {
-        schema: "public".to_owned(),
-        relation: "users".to_owned(),
-    }]);
+    assert_eq!(
+        f.editor.take_missing_columns(),
+        [RelationRef {
+            schema: "public".to_owned(),
+            relation: "users".to_owned(),
+        }]
+    );
 
     f.press(ctrl(' '));
     f.catalog.schemas[0].relations[0].columns = Columns::Loaded(vec!["id".to_owned()]);

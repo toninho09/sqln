@@ -117,7 +117,10 @@ fn drawn_selection_matches_the_selected_text() {
     f.press(shift(Down));
     f.press(shift(Home));
     let selection = f.editor.state.selection.as_ref().unwrap();
-    assert_eq!(selection.copy_from(&f.editor.state.lines).to_string(), "abc\n");
+    assert_eq!(
+        selection.copy_from(&f.editor.state.lines).to_string(),
+        "abc\n"
+    );
 }
 
 #[test]
@@ -185,7 +188,10 @@ fn alt_arrows_move_by_word() {
 #[test]
 fn alt_shift_arrow_selects_a_word() {
     let mut f = Fixture::conventional("select 1");
-    f.press(KeyEvent::new(Right, KeyModifiers::ALT | KeyModifiers::SHIFT));
+    f.press(KeyEvent::new(
+        Right,
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
     assert_eq!(f.selected().as_deref(), Some("select"));
 }
 
@@ -311,7 +317,10 @@ fn redo_restores_undone_text() {
     f.press(ctrl('y'));
     assert_eq!(f.text(), "select");
     f.press(ctrl('z'));
-    f.press(KeyEvent::new(KeyCode::Char('Z'), KeyModifiers::CONTROL | KeyModifiers::SHIFT));
+    f.press(KeyEvent::new(
+        KeyCode::Char('Z'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
     assert_eq!(f.text(), "select");
 }
 
@@ -434,7 +443,11 @@ fn an_edit_above_the_undo_limit_stays_out_of_the_history_with_a_warning() {
     let mut f = Fixture::conventional("text");
     f.editor.set_undo_limit(16);
     f.editor.on_paste(" and more text");
-    assert!(f.editor.status().is_some_and(|status| status.contains("too large")));
+    assert!(
+        f.editor
+            .status()
+            .is_some_and(|status| status.contains("too large"))
+    );
     assert_eq!(f.text(), " and more texttext");
     assert_eq!(undo_steps(&mut f), 0);
 }

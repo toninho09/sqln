@@ -12,7 +12,8 @@ pub const COPY_FAILED: &str = "Copy failed.";
 pub const FIND_LABEL: &str = "Find:    ";
 pub const REPLACE_LABEL: &str = "Replace: ";
 pub const NO_MATCHES: &str = "no matches";
-pub const UNDO_TOO_LARGE: &str = "This edit is too large for the undo history. It has no undo step.";
+pub const UNDO_TOO_LARGE: &str =
+    "This edit is too large for the undo history. It has no undo step.";
 
 pub const HINT_FILTER: &[HintPart] = &[
     ("Enter", "apply"),
@@ -20,11 +21,8 @@ pub const HINT_FILTER: &[HintPart] = &[
     ("Esc", "grid"),
     ("Ctrl+Space", "suggestions"),
 ];
-pub const HINT_GRID_SEARCH: &[HintPart] = &[
-    ("Enter", "next"),
-    ("Up/Down", "move"),
-    ("Esc", "close"),
-];
+pub const HINT_GRID_SEARCH: &[HintPart] =
+    &[("Enter", "next"), ("Up/Down", "move"), ("Esc", "close")];
 /// The effect of `Enter` and of `Tab` when the key does not accept a suggestion.
 pub const LIST_EDITOR_KEYS: (HintPart, HintPart) = (("Enter", "new line"), ("Tab", "indent"));
 pub const LIST_FILTER_KEYS: (HintPart, HintPart) = (("Enter", "apply"), ("Tab", "next field"));
@@ -94,11 +92,8 @@ pub const HINT_DIALOG: &[HintPart] = &[
     ("Enter", "confirm"),
     ("Esc", "cancel"),
 ];
-pub const HINT_OVERLAY: &[HintPart] = &[
-    ("Up/Down", "scroll"),
-    ("Ctrl+C", "copy"),
-    ("Esc", "close"),
-];
+pub const HINT_OVERLAY: &[HintPart] =
+    &[("Up/Down", "scroll"), ("Ctrl+C", "copy"), ("Esc", "close")];
 
 /// Writes a key of the key map for the hint bar: `ctrl+w e` becomes `Ctrl+W e`.
 pub fn key_label(key: &str) -> String {
@@ -121,7 +116,10 @@ pub fn key_label(key: &str) -> String {
             .collect();
         parts.join("+")
     };
-    key.split_whitespace().map(token).collect::<Vec<_>>().join(" ")
+    key.split_whitespace()
+        .map(token)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub const HINT_PREFIX: &[HintPart] = &[("Ctrl+W", "…"), ("Esc", "cancel")];
@@ -203,7 +201,8 @@ pub fn data_usage(used_mib: usize, limit_mib: usize) -> String {
 pub const SMALL_TERMINAL: &str = "Small terminal";
 pub const MINIMUM_SIZE: &str = "Minimum size";
 
-pub const NO_CONNECTION: &str = "No database. Use Ctrl+W h and n in the navigator, or a to add a connection.";
+pub const NO_CONNECTION: &str =
+    "No database. Use Ctrl+W h and n in the navigator, or a to add a connection.";
 pub const NO_CONNECTIONS_ROW: &str = "No connections";
 pub const ADD_CONNECTION_ROW: &str = "Press a to add one";
 pub const NOTE_LOADING: &str = "(loading)";
@@ -221,7 +220,8 @@ pub const FORM_TEST_OK: &str = "The connection works.";
 pub fn form_file_missing(path: &str) -> String {
     format!("The file does not exist. Save asks before it creates the file: {path}")
 }
-pub const FORM_NO_CURRENT_FOLDER: &str = "SQLN cannot read the current folder. Write the full path of the file.";
+pub const FORM_NO_CURRENT_FOLDER: &str =
+    "SQLN cannot read the current folder. Write the full path of the file.";
 pub const FORM_NAME_TAKEN: &str = "Another connection has this name.";
 pub const FORM_NEEDS_NAME: &str = "The connection needs a name.";
 pub const FORM_NEEDS_HOST: &str = "The connection needs a host.";
@@ -231,8 +231,10 @@ pub const FORM_URI_KIND: &str = "The connection text is for another database typ
 pub const FORM_POOL_ZERO: &str = "The pool limit must be 1 or more.";
 pub const FORM_CLIENT_PAIR: &str = "A client certificate needs its file and its key.";
 pub const FORM_TLS_FILES: &str = "TLS files need a connection with TLS.";
-pub const FORM_CONNECTED: &str = "This connection is connected. Disconnect it to change access, TLS, or the pool.";
-pub const MYSQL_CLIENT_KEY: &str = "MySQL needs an RSA client key in PKCS#1 form (BEGIN RSA PRIVATE KEY).";
+pub const FORM_CONNECTED: &str =
+    "This connection is connected. Disconnect it to change access, TLS, or the pool.";
+pub const MYSQL_CLIENT_KEY: &str =
+    "MySQL needs an RSA client key in PKCS#1 form (BEGIN RSA PRIVATE KEY).";
 pub const FIELD_KIND: &str = "Type";
 pub const FIELD_NAME: &str = "Name";
 pub const FIELD_SCOPE: &str = "Scope";
@@ -258,14 +260,18 @@ pub const AUTH_WAIT: &str = "Preparing credentials. The interface remains availa
 pub const AUTH_PROJECT_LABEL: &str = "Project";
 pub const AUTH_CANCELLED: &str = "Credential request canceled. No SQL starts from this request.";
 pub fn delete_password_question(name: &str) -> String {
-    format!("Delete the saved password of {name}?\n\nOther copies of the project can use the same password.")
+    format!(
+        "Delete the saved password of {name}?\n\nOther copies of the project can use the same password."
+    )
 }
 
 pub const AUTH_CHANGED: &str = "The connection or form changed. Start the operation again.";
-pub const AUTH_SAVE_FAILED: &str = "The password is not saved. It stays in memory. Retry explicitly, or use it for this session.";
+pub const AUTH_SAVE_FAILED: &str =
+    "The password is not saved. It stays in memory. Retry explicitly, or use it for this session.";
 pub const AUTH_REFERENCE_FAILED: &str = "The vault holds the password, but SQLN cannot save its reference. Retry, or use it for this session.";
 pub const AUTH_PLAIN_WARNING: &str = "Without a vault, SQLN can save the password in credentials.json, in the global folder. That file stores it in plain text.";
-pub const AUTH_PASSWORD_ACCEPTED: &str = "The database accepts the password. Start the operation again.";
+pub const AUTH_PASSWORD_ACCEPTED: &str =
+    "The database accepts the password. Start the operation again.";
 pub const AUTH_REFUSED_HINT: &[HintPart] = &[
     ("", "The database refused the last password"),
     ("Enter", "connects"),
@@ -277,7 +283,8 @@ pub const TITLE_MIGRATION: &str = "Move the password to the vault";
 pub const TITLE_DELETE_PASSWORD: &str = "Delete saved password";
 pub const MIGRATION_QUESTION: &str = "This computer has a system vault now, and credentials.json holds this password in plain text.\nMove it to the vault?";
 pub const MIGRATION_VERIFIED: &str = "The vault holds the password, and SQLN read it back.\nRemove the plain text copy from credentials.json?";
-pub const MIGRATION_INCOMPLETE: &str = "The migration is not complete. The plain text password stays in credentials.json.";
+pub const MIGRATION_INCOMPLETE: &str =
+    "The migration is not complete. The plain text password stays in credentials.json.";
 pub const OPTION_MIGRATE: &str = "Move to the vault";
 pub const OPTION_KEEP_PLAIN: &str = "Keep the plain text copy";
 pub const OPTION_REMOVE_PLAIN: &str = "Remove the plain text copy";
@@ -361,8 +368,18 @@ pub fn keyboard_name(name: crate::store::config::KeyboardName) -> String {
     }
 }
 
-pub fn change_connection(name: &str, current: &str, target: &str, folder: &str, moves: bool) -> String {
-    let files = if moves { "The files move to" } else { "The files stay in" };
+pub fn change_connection(
+    name: &str,
+    current: &str,
+    target: &str,
+    folder: &str,
+    moves: bool,
+) -> String {
+    let files = if moves {
+        "The files move to"
+    } else {
+        "The files stay in"
+    };
     format!(
         "Move {name} from {current} to {target}?\n\n{files} {folder}.\n\
          SQLN saves the text first, and it runs no SQL.\n\
@@ -447,7 +464,12 @@ pub fn elapsed(time: std::time::Duration) -> String {
     match seconds {
         0..=59 => format!("{seconds}.{millis:03}s"),
         60..=3599 => format!("{}m {:02}.{millis:03}s", seconds / 60, seconds % 60),
-        _ => format!("{}h {:02}m {:02}.{millis:03}s", seconds / 3600, seconds / 60 % 60, seconds % 60),
+        _ => format!(
+            "{}h {:02}m {:02}.{millis:03}s",
+            seconds / 3600,
+            seconds / 60 % 60,
+            seconds % 60
+        ),
     }
 }
 
@@ -460,10 +482,13 @@ pub const PHASE_WAITING: &str = "Waiting";
 pub const PHASE_RUNNING: &str = "Running";
 pub const PHASE_STOPPING: &str = "Stopping";
 
-pub const COPY_REFUSED: &str = "SQLN does not support COPY with STDIN or STDOUT. Use a file on the server.";
-pub const STOPPED_AFTER_LAST: &str = "The execution stopped. The last statement ended before the stop request.";
+pub const COPY_REFUSED: &str =
+    "SQLN does not support COPY with STDIN or STDOUT. Use a file on the server.";
+pub const STOPPED_AFTER_LAST: &str =
+    "The execution stopped. The last statement ended before the stop request.";
 pub const STOPPED_BEFORE_SEND: &str = "The statement stopped before it reached the database.";
-pub const COMMIT_OF_FAILED_TRANSACTION: &str = "The transaction has an error, and a commit cannot save it. Use rollback.";
+pub const COMMIT_OF_FAILED_TRANSACTION: &str =
+    "The transaction has an error, and a commit cannot save it. Use rollback.";
 pub const NOT_COMMITTED: &str = "The transaction is not committed.";
 pub const DATABASE_ENDED_TRANSACTION: &str = "The database ended the transaction.";
 pub const CANCELED_BEFORE_START: &str = "The execution stopped before it started. No SQL was sent.";
@@ -474,9 +499,12 @@ pub const TITLE_TRANSACTION: &str = "Open transaction";
 pub const TITLE_NO_ANSWER: &str = "No answer from the database";
 pub const TITLE_UNKNOWN: &str = "Transaction state unknown";
 pub const TITLE_KEYS: &str = "Keys";
-pub const BODY_RUNNING: &str = "Stop the execution and close? The statement in progress must end first.";
-pub const BODY_TRANSACTION_CLOSE: &str = "This console has an open transaction. Choose an action before the close.";
-pub const BODY_TRANSACTION_MODE: &str = "This console has an open transaction. Choose an action before the change to autocommit.";
+pub const BODY_RUNNING: &str =
+    "Stop the execution and close? The statement in progress must end first.";
+pub const BODY_TRANSACTION_CLOSE: &str =
+    "This console has an open transaction. Choose an action before the close.";
+pub const BODY_TRANSACTION_MODE: &str =
+    "This console has an open transaction. Choose an action before the change to autocommit.";
 pub const BODY_NO_ANSWER: &str = "The statement did not answer. If you close the connection, you lose the changes that are not committed.";
 pub const BODY_UNKNOWN: &str = "The connection closed with an open transaction. The next statement can run outside that transaction.";
 pub const OPTION_CANCEL: &str = "Cancel";
@@ -646,15 +674,24 @@ pub fn rows_read(rows: usize) -> String {
 }
 
 pub fn row_cap_reached(rows: usize) -> String {
-    format!("{} read. Row cap reached. The result can have more rows.", plural(rows, "row"))
+    format!(
+        "{} read. Row cap reached. The result can have more rows.",
+        plural(rows, "row")
+    )
 }
 
 pub fn budget_reached(rows: usize) -> String {
-    format!("{} read. Data budget reached. Increase the limit or run less data.", plural(rows, "row"))
+    format!(
+        "{} read. Data budget reached. Increase the limit or run less data.",
+        plural(rows, "row")
+    )
 }
 
 pub fn value_too_large(rows: usize) -> String {
-    format!("{} read. A value is larger than the data budget, so the read stopped.", plural(rows, "row"))
+    format!(
+        "{} read. A value is larger than the data budget, so the read stopped.",
+        plural(rows, "row")
+    )
 }
 
 pub fn statement_changed(index: usize, rows: u64) -> String {
@@ -675,15 +712,24 @@ pub fn statement_stopped(index: usize) -> String {
 }
 
 pub fn stopped_before(index: usize) -> String {
-    format!("Stopped before statement {}. The database did not receive it.", index + 1)
+    format!(
+        "Stopped before statement {}. The database did not receive it.",
+        index + 1
+    )
 }
 
 pub fn statement_timeout(index: usize) -> String {
-    format!("Statement {}: the time limit ended. The database did not confirm the result.", index + 1)
+    format!(
+        "Statement {}: the time limit ended. The database did not confirm the result.",
+        index + 1
+    )
 }
 
 pub fn statement_unknown(index: usize) -> String {
-    format!("Statement {}: the connection closed. The result is unknown.", index + 1)
+    format!(
+        "Statement {}: the connection closed. The result is unknown.",
+        index + 1
+    )
 }
 
 pub fn console_name(number: usize) -> String {
@@ -700,7 +746,9 @@ pub fn edit_connection_title(name: &str) -> String {
 
 pub fn remove_connection(name: &str, file: Option<&str>) -> String {
     let place = file.map_or_else(String::new, |file| format!(" from {file}"));
-    format!("Remove the definition of {name}{place}? Its open consoles stay, and they cannot run. The scripts of the connection stay on disk, in the list of scripts without a connection.")
+    format!(
+        "Remove the definition of {name}{place}? Its open consoles stay, and they cannot run. The scripts of the connection stay on disk, in the list of scripts without a connection."
+    )
 }
 
 pub fn connection_in_use(console: &str) -> String {
@@ -762,7 +810,8 @@ pub const BODY_CONFIG_CHANGED: &str = "Another program changed a configuration f
 pub const OPTION_CLOSE: &str = "Close";
 pub const OPTION_RELOAD: &str = "Reload";
 pub const OPTION_IGNORE: &str = "Ignore";
-pub const CONFIG_BLOCKED: &str = "The configuration has an error. Fix the file, then press Ctrl+W r.";
+pub const CONFIG_BLOCKED: &str =
+    "The configuration has an error. Fix the file, then press Ctrl+W r.";
 pub const CONFIG_RELOADED: &str = "Configuration loaded again.";
 pub const NO_STORE: &str = "This session has no configuration files.";
 pub const NO_PROJECT: &str = "This session has no project. Create a .sqln folder first.";
@@ -773,7 +822,8 @@ pub const NO_PLACE: &str = "The console has no connection, so it has no place to
 pub const TITLE_UNSAVED: &str = "Text not saved";
 pub const OPTION_CLOSE_UNSAVED: &str = "Close without saving";
 pub const OPTION_CLOSE_DISCARD: &str = "Close and discard the text";
-pub const WORKSPACE_UNREADABLE: &str = "SQLN cannot read workspace.json. The layout and the cursors start again.";
+pub const WORKSPACE_UNREADABLE: &str =
+    "SQLN cannot read workspace.json. The layout and the cursors start again.";
 pub const AGE_NOW: &str = "just now";
 pub const MARK_OPEN: &str = " (open)";
 pub const NEW_CONSOLE_ROW: &str = "+ New console";
@@ -807,7 +857,9 @@ pub fn project_failed(message: &str) -> String {
 }
 
 pub fn config_error(message: &str, file: &str) -> String {
-    format!("{message}\n\nFile: {file}\n\nSQLN does not connect to a database until the file is correct. Fix the file, then use Reload.")
+    format!(
+        "{message}\n\nFile: {file}\n\nSQLN does not connect to a database until the file is correct. Fix the file, then use Reload."
+    )
 }
 
 pub fn save_failed(name: &str, message: &str) -> String {
@@ -815,15 +867,21 @@ pub fn save_failed(name: &str, message: &str) -> String {
 }
 
 pub fn unsaved_failed(name: &str, message: &str) -> String {
-    format!("SQLN cannot save {name}: {message}\n\nClose the console and lose the text that no file holds?")
+    format!(
+        "SQLN cannot save {name}: {message}\n\nClose the console and lose the text that no file holds?"
+    )
 }
 
 pub fn unsaved_changed(name: &str) -> String {
-    format!("Another program changed the script of {name}. SQLN did not save the text.\n\nClose the console and lose the text that no file holds?")
+    format!(
+        "Another program changed the script of {name}. SQLN did not save the text.\n\nClose the console and lose the text that no file holds?"
+    )
 }
 
 pub fn unsaved_removed(name: &str) -> String {
-    format!("Another program removed the script of {name}. SQLN did not save the text.\n\nClose the console and lose the text that no file holds?")
+    format!(
+        "Another program removed the script of {name}. SQLN did not save the text.\n\nClose the console and lose the text that no file holds?"
+    )
 }
 
 pub fn age_minutes(minutes: u64) -> String {
@@ -857,15 +915,21 @@ pub fn script_failed(name: &str, message: &str) -> String {
 }
 
 pub fn remove_script(name: &str, folder: &str) -> String {
-    format!("Remove the script {name}? SQLN deletes its .sql file and its .json file in {folder}. This action cannot be undone.")
+    format!(
+        "Remove the script {name}? SQLN deletes its .sql file and its .json file in {folder}. This action cannot be undone."
+    )
 }
 
 pub fn associate_same(name: &str, connection: &str, folder: &str) -> String {
-    format!("Associate {name} with {connection}?\n\nThe files stay in {folder}.\nSQLN does not run any SQL.")
+    format!(
+        "Associate {name} with {connection}?\n\nThe files stay in {folder}.\nSQLN does not run any SQL."
+    )
 }
 
 pub fn associate_move(name: &str, connection: &str, scope: &str, folder: &str) -> String {
-    format!("Associate {name} with {connection}?\n\nThe connection has the {scope} scope. SQLN moves the files to {folder}.\nSQLN does not run any SQL.")
+    format!(
+        "Associate {name} with {connection}?\n\nThe connection has the {scope} scope. SQLN moves the files to {folder}.\nSQLN does not run any SQL."
+    )
 }
 
 pub fn associated(connection: &str) -> String {

@@ -10,7 +10,13 @@ use sqln::connector::target::{
 fn a_full_text_gives_each_part() {
     let target = parse_uri("postgres://app:s3cret@db.example.test:6543/sales").unwrap();
     assert_eq!(target.engine, Engine::Postgres);
-    assert_eq!(target.address, Address::Tcp { host: "db.example.test".into(), port: 6543 });
+    assert_eq!(
+        target.address,
+        Address::Tcp {
+            host: "db.example.test".into(),
+            port: 6543
+        }
+    );
     assert_eq!(target.user, "app");
     assert_eq!(target.password, Some(Secret::new("s3cret")));
     assert_eq!(target.database.as_deref(), Some("sales"));
@@ -26,7 +32,13 @@ fn each_engine_has_its_scheme_and_port() {
     ] {
         let target = parse_uri(uri).unwrap();
         assert_eq!(target.engine, engine);
-        assert_eq!(target.address, Address::Tcp { host: "h".into(), port });
+        assert_eq!(
+            target.address,
+            Address::Tcp {
+                host: "h".into(),
+                port
+            }
+        );
         assert_eq!(target.password, None);
         assert_eq!(target.database, None);
     }
@@ -43,14 +55,23 @@ fn percent_codes_keep_special_characters() {
 #[test]
 fn an_ipv6_address_uses_brackets() {
     let target = parse_uri("postgres://u@[::1]:7000/d").unwrap();
-    assert_eq!(target.address, Address::Tcp { host: "::1".into(), port: 7000 });
+    assert_eq!(
+        target.address,
+        Address::Tcp {
+            host: "::1".into(),
+            port: 7000
+        }
+    );
     assert_eq!(target.tls, Tls::Disabled);
 }
 
 #[test]
 fn a_socket_comes_from_a_parameter() {
     let target = parse_uri("postgres://u@/d?host=%2Fvar%2Frun%2Fpostgresql").unwrap();
-    assert_eq!(target.address, Address::Socket("/var/run/postgresql".into()));
+    assert_eq!(
+        target.address,
+        Address::Socket("/var/run/postgresql".into())
+    );
     let target = parse_uri("mysql://u@/d?socket=/tmp/mysql.sock").unwrap();
     assert_eq!(target.address, Address::Socket("/tmp/mysql.sock".into()));
     assert_eq!(target.tls, Tls::Disabled);
@@ -63,7 +84,13 @@ fn local_addresses_use_no_tls_and_remote_addresses_verify() {
         let target = parse_uri(&format!("postgres://u@{host}/d")).unwrap();
         assert_eq!(target.tls, Tls::Disabled, "{host}");
     }
-    for host in ["db.example.test", "10.0.0.5", "128.0.0.1", "[2001:db8::1]", "localhost.example.test"] {
+    for host in [
+        "db.example.test",
+        "10.0.0.5",
+        "128.0.0.1",
+        "[2001:db8::1]",
+        "localhost.example.test",
+    ] {
         let target = parse_uri(&format!("mysql://u@{host}/d")).unwrap();
         assert_eq!(target.tls, Tls::Verify(TlsFiles::default()), "{host}");
     }
@@ -158,8 +185,14 @@ fn the_label_names_the_place() {
 fn a_hidden_connection_text_keeps_its_length_and_its_other_parts() {
     use sqln::connector::target::hide_uri_password;
     let hide = |uri: &str| hide_uri_password(uri, '*');
-    assert_eq!(hide("postgres://u:pass@host/db"), "postgres://u:****@host/db");
-    assert_eq!(hide("postgres://u:p@ss@host/db"), "postgres://u:****@host/db");
+    assert_eq!(
+        hide("postgres://u:pass@host/db"),
+        "postgres://u:****@host/db"
+    );
+    assert_eq!(
+        hide("postgres://u:p@ss@host/db"),
+        "postgres://u:****@host/db"
+    );
     assert_eq!(hide("postgres://u@host/db"), "postgres://u@host/db");
     assert_eq!(hide("postgres://host:5432/db"), "postgres://host:5432/db");
     assert_eq!(hide("postgres://u:pa"), "postgres://u:**");

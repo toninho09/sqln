@@ -17,7 +17,10 @@ fn a_panic_report_holds_the_place_and_never_a_message() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }
 
@@ -29,10 +32,19 @@ fn the_log_writes_lines_with_the_time_and_only_the_owner_can_read_it() {
     sqln::log::event("execution finished: Completed");
     let text = fs::read_to_string(&path).unwrap();
     assert!(text.lines().next().unwrap().ends_with(" start"), "{text}");
-    assert!(text.lines().nth(1).unwrap().ends_with(" execution finished: Completed"), "{text}");
+    assert!(
+        text.lines()
+            .nth(1)
+            .unwrap()
+            .ends_with(" execution finished: Completed"),
+        "{text}"
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

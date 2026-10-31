@@ -10,9 +10,9 @@ use crate::connection::Connection;
 use crate::editor::SqlEditor;
 use crate::exec::{ConnectionId, ConsoleId};
 use crate::script_file::{ScriptFile, Trouble};
+use crate::store::file::Expect;
 use crate::store::scripts::{self, ScriptEntry};
 use crate::store::workspace;
-use crate::store::file::Expect;
 use crate::store::{Root, Scope};
 use crate::ui::name::{NamePrompt, NameTarget};
 use crate::ui::text;
@@ -42,9 +42,11 @@ fn scope_word(scope: Scope) -> &'static str {
 
 impl App {
     fn is_script_open(&self, scope: Scope, id: &str) -> bool {
-        self.consoles
-            .iter()
-            .any(|c| c.file.as_ref().is_some_and(|file| file.scope == scope && file.meta.id == id))
+        self.consoles.iter().any(|c| {
+            c.file
+                .as_ref()
+                .is_some_and(|file| file.scope == scope && file.meta.id == id)
+        })
     }
 
     fn script_row(&self, entry: &ScriptEntry, show_scope: bool) -> String {
@@ -60,10 +62,15 @@ impl App {
 
     /// Lists the saved consoles of a connection, the newest first.
     pub(super) fn consoles_of(&self, connection: ConnectionId) -> Vec<ScriptEntry> {
-        let Some(key) = self.connection(connection).and_then(|item| item.key.clone()) else {
+        let Some(key) = self
+            .connection(connection)
+            .and_then(|item| item.key.clone())
+        else {
             return Vec::new();
         };
-        let Some(root) = self.persist_root(key.scope) else { return Vec::new() };
+        let Some(root) = self.persist_root(key.scope) else {
+            return Vec::new();
+        };
         let mut entries = scripts::list(&root, key.scope);
         entries.retain(|entry| entry.meta.connection_id == key.id);
         entries
@@ -87,7 +94,10 @@ impl App {
             .chain(entries.iter().map(|entry| self.script_row(entry, false)))
             .collect();
         self.picker = Some(Picker {
-            kind: PickerKind::Consoles { connection, scripts: entries },
+            kind: PickerKind::Consoles {
+                connection,
+                scripts: entries,
+            },
             title: text::consoles_title(&name, scope),
             items,
             cursor: 0,
@@ -102,9 +112,14 @@ impl App {
         }
         let mut entries = Vec::new();
         for scope in [Scope::Global, Scope::Project] {
-            let Some(root) = self.persist_root(scope) else { continue };
+            let Some(root) = self.persist_root(scope) else {
+                continue;
+            };
             for entry in scripts::list(&root, scope) {
-                if self.connection_by_key(scope, &entry.meta.connection_id).is_none() {
+                if self
+                    .connection_by_key(scope, &entry.meta.connection_id)
+                    .is_none()
+                {
                     entries.push(entry);
                 }
             }
@@ -113,7 +128,10 @@ impl App {
             self.status = Some(text::NO_ORPHANS.to_owned());
             return;
         }
-        let items = entries.iter().map(|entry| self.script_row(entry, true)).collect();
+        let items = entries
+            .iter()
+            .map(|entry| self.script_row(entry, true))
+            .collect();
         self.picker = Some(Picker {
             kind: PickerKind::Orphans { scripts: entries },
             title: text::TITLE_ORPHANS.to_owned(),
@@ -126,7 +144,9 @@ impl App {
     /// Opens a saved console in a tab, or it selects the tab that already shows it.
     pub(super) fn open_script(&mut self, entry: &ScriptEntry) {
         let open = self.consoles.iter().position(|c| {
-            c.file.as_ref().is_some_and(|file| file.scope == entry.scope && file.meta.id == entry.meta.id)
+            c.file
+                .as_ref()
+                .is_some_and(|file| file.scope == entry.scope && file.meta.id == entry.meta.id)
         });
         let index = match open.map_or_else(|| self.load_script(entry), Ok) {
             Ok(index) => index,
@@ -142,7 +162,8 @@ impl App {
     /// Opens a saved console in a new tab, without a change of the tab on screen. It
     /// returns the index of the console, or the reason that the console did not open.
     pub(super) fn load_script(&mut self, entry: &ScriptEntry) -> Result<usize, String> {
-        let failed = |error: std::io::Error| text::script_failed(&entry.meta.name, &error.to_string());
+        let failed =
+            |error: std::io::Error| text::script_failed(&entry.meta.name, &error.to_string());
         let Some(root) = self.persist_root(entry.scope) else {
             return Err(text::NO_STORE.to_owned());
         };
@@ -167,8 +188,14 @@ impl App {
         console.name.clone_from(&entry.meta.name);
         console.schema.clone_from(&entry.meta.schema);
         let revision = console.editor.revision();
-        console.file =
-            Some(ScriptFile::open(entry.scope, entry.meta.clone(), Some(lock), revision, loaded, &root));
+        console.file = Some(ScriptFile::open(
+            entry.scope,
+            entry.meta.clone(),
+            Some(lock),
+            revision,
+            loaded,
+            &root,
+        ));
         restore_editor_state(&mut console.editor, &root, id, &text);
         self.consoles.push(console);
         let index = self.consoles.len() - 1;
@@ -191,26 +218,35 @@ impl App {
 
     /// The key that removes the script under the cursor of the list.
     pub(super) fn picker_delete(&mut self) {
-        let Some(entry) = self.picker_script() else { return };
+        let Some(entry) = self.picker_script() else {
+            return;
+        };
         if self.is_script_open(entry.scope, &entry.meta.id) {
             self.status = Some(text::SCRIPT_OPEN.to_owned());
             return;
         }
-        let path = self.persist_root(entry.scope).map(|root| root.consoles_dir().display().to_string());
+        let path = self
+            .persist_root(entry.scope)
+            .map(|root| root.consoles_dir().display().to_string());
         self.picker = None;
         self.show_dialog(
             text::TITLE_REMOVE_CONSOLE,
             text::remove_script(&entry.meta.name, &path.unwrap_or_default()),
             vec![
                 (text::OPTION_CANCEL, DialogAction::Dismiss),
-                (text::OPTION_REMOVE, DialogAction::DeleteScript(entry.scope, entry.meta.id)),
+                (
+                    text::OPTION_REMOVE,
+                    DialogAction::DeleteScript(entry.scope, entry.meta.id),
+                ),
             ],
         );
     }
 
     /// Removes the two files of a script. The files of the connection stay.
     pub(super) fn delete_script(&mut self, scope: Scope, id: &str) {
-        let Some(root) = self.persist_root(scope) else { return };
+        let Some(root) = self.persist_root(scope) else {
+            return;
+        };
         // The lock proves that no other instance has the script open.
         match scripts::lock(&root, id) {
             Ok(Some(_lock)) => {}
@@ -239,23 +275,41 @@ impl App {
     /// Opens the request for a new name of the active console.
     pub(super) fn start_rename(&mut self) {
         let console = self.console();
-        self.rename = Some(NamePrompt::new(NameTarget::Console(console.id), &console.name));
+        self.rename = Some(NamePrompt::new(
+            NameTarget::Console(console.id),
+            &console.name,
+        ));
     }
 
     /// The key of the list. A saved console that a tab shows renames that tab.
     pub(super) fn picker_rename(&mut self) {
-        let Some(entry) = self.picker_script() else { return };
+        let Some(entry) = self.picker_script() else {
+            return;
+        };
         let open = self.consoles.iter().find(|console| {
-            console.file.as_ref().is_some_and(|file| file.scope == entry.scope && file.meta.id == entry.meta.id)
+            console
+                .file
+                .as_ref()
+                .is_some_and(|file| file.scope == entry.scope && file.meta.id == entry.meta.id)
         });
-        let target = open.map_or_else(|| NameTarget::Script(entry.clone()), |console| NameTarget::Console(console.id));
+        let target = open.map_or_else(
+            || NameTarget::Script(entry.clone()),
+            |console| NameTarget::Console(console.id),
+        );
         self.picker = None;
         self.rename = Some(NamePrompt::new(target, &entry.meta.name));
     }
 
     /// Returns the names of the other consoles of a connection, open and saved.
-    fn names_in_use(&self, connection: Option<ConnectionId>, skip: Option<ConsoleId>, id: Option<&str>) -> Vec<String> {
-        let Some(connection) = connection else { return Vec::new() };
+    fn names_in_use(
+        &self,
+        connection: Option<ConnectionId>,
+        skip: Option<ConsoleId>,
+        id: Option<&str>,
+    ) -> Vec<String> {
+        let Some(connection) = connection else {
+            return Vec::new();
+        };
         let open = self
             .consoles
             .iter()
@@ -286,20 +340,33 @@ impl App {
             NameTarget::Console(console) => {
                 let index = self.console_index(*console);
                 let console_ref = index.map(|index| &self.consoles[index]);
-                let id = console_ref.and_then(|item| item.file.as_ref()).map(|file| file.meta.id.clone());
-                (console_ref.and_then(|item| item.connection), Some(*console), id)
+                let id = console_ref
+                    .and_then(|item| item.file.as_ref())
+                    .map(|file| file.meta.id.clone());
+                (
+                    console_ref.and_then(|item| item.connection),
+                    Some(*console),
+                    id,
+                )
             }
             NameTarget::Script(entry) => {
-                let connection = self.connection_by_key(entry.scope, &entry.meta.connection_id).map(|item| item.id);
+                let connection = self
+                    .connection_by_key(entry.scope, &entry.meta.connection_id)
+                    .map(|item| item.id);
                 (connection, None, Some(entry.meta.id.clone()))
             }
         };
         let taken = self.names_in_use(connection, skip, id.as_deref());
-        if taken.iter().any(|item| item.to_lowercase() == name.to_lowercase()) {
+        if taken
+            .iter()
+            .any(|item| item.to_lowercase() == name.to_lowercase())
+        {
             self.name_note(text::NAME_TAKEN);
             return;
         }
-        let Some(prompt) = self.rename.take() else { return };
+        let Some(prompt) = self.rename.take() else {
+            return;
+        };
         let result = match prompt.target {
             NameTarget::Console(console) => self.rename_console(console, &name),
             NameTarget::Script(entry) => self.rename_script(&entry, &name),
@@ -311,8 +378,13 @@ impl App {
     }
 
     fn rename_console(&mut self, id: ConsoleId, name: &str) -> Result<(), String> {
-        let Some(index) = self.console_index(id) else { return Ok(()) };
-        let root = self.consoles[index].file.as_ref().and_then(|file| self.persist_root(file.scope));
+        let Some(index) = self.console_index(id) else {
+            return Ok(());
+        };
+        let root = self.consoles[index]
+            .file
+            .as_ref()
+            .and_then(|file| self.persist_root(file.scope));
         let console = &mut self.consoles[index];
         if let (Some(file), Some(root)) = (&mut console.file, &root) {
             let old = std::mem::replace(&mut file.meta.name, name.to_owned());
@@ -382,7 +454,9 @@ impl App {
 
     /// Links a console without a file to a connection. Only memory changes.
     fn change_memory_console(&mut self, index: usize, connection: ConnectionId) {
-        let Some(target) = self.connection(connection) else { return };
+        let Some(target) = self.connection(connection) else {
+            return;
+        };
         let (dialect, name) = (target.dialect, target.name.clone());
         self.bind_keeping_name(index, connection, dialect);
         self.status = Some(text::associated(&name));
@@ -390,7 +464,12 @@ impl App {
 
     /// Moves a console to a connection. The name stays, and the results of the last
     /// connection end. It sends no SQL.
-    fn bind_keeping_name(&mut self, index: usize, connection: ConnectionId, dialect: crate::sql::Dialect) {
+    fn bind_keeping_name(
+        &mut self,
+        index: usize,
+        connection: ConnectionId,
+        dialect: crate::sql::Dialect,
+    ) {
         let budget = self.budget.clone();
         let name = self.consoles[index].name.clone();
         if self.consoles[index].connection.is_some() {
@@ -439,23 +518,37 @@ impl App {
 
     /// Asks for the confirmation. It tells where the files will be.
     pub(super) fn confirm_association(&mut self, console: ConsoleId, connection: ConnectionId) {
-        let Some(index) = self.console_index(console) else { return };
-        let Some(target) = self.connection(connection) else { return };
+        let Some(index) = self.console_index(console) else {
+            return;
+        };
+        let Some(target) = self.connection(connection) else {
+            return;
+        };
         let item = &self.consoles[index];
-        let root = target.key.as_ref().and_then(|key| self.persist_root(key.scope));
-        let place = root.map_or_else(|| text::NO_STORE.to_owned(), |root| root.consoles_dir().display().to_string());
+        let root = target
+            .key
+            .as_ref()
+            .and_then(|key| self.persist_root(key.scope));
+        let place = root.map_or_else(
+            || text::NO_STORE.to_owned(),
+            |root| root.consoles_dir().display().to_string(),
+        );
         let moves = match (&item.file, &target.key) {
             (Some(file), Some(key)) => file.scope != key.scope,
             _ => false,
         };
         if let Some(current) = item.connection.and_then(|id| self.connection(id)) {
-            let body = text::change_connection(&item.name, &current.name, &target.name, &place, moves);
+            let body =
+                text::change_connection(&item.name, &current.name, &target.name, &place, moves);
             self.show_dialog(
                 text::TITLE_CHANGE_CONNECTION,
                 body,
                 vec![
                     (text::OPTION_CANCEL, DialogAction::Dismiss),
-                    (text::OPTION_CHANGE, DialogAction::Associate(console, connection)),
+                    (
+                        text::OPTION_CHANGE,
+                        DialogAction::Associate(console, connection),
+                    ),
                 ],
             );
             return;
@@ -471,7 +564,10 @@ impl App {
             body,
             vec![
                 (text::OPTION_CANCEL, DialogAction::Dismiss),
-                (text::OPTION_ASSOCIATE, DialogAction::Associate(console, connection)),
+                (
+                    text::OPTION_ASSOCIATE,
+                    DialogAction::Associate(console, connection),
+                ),
             ],
         );
     }
@@ -479,7 +575,9 @@ impl App {
     /// Links the script to the connection. It moves the files when the scope changes.
     /// It sends no SQL.
     pub(super) fn associate(&mut self, console: ConsoleId, connection: ConnectionId) {
-        let Some(index) = self.console_index(console) else { return };
+        let Some(index) = self.console_index(console) else {
+            return;
+        };
         // The console can start to work while the question stays open.
         if self.consoles[index].is_busy() || self.consoles[index].in_transaction() {
             self.status = Some(text::CONNECTION_CHANGE_BUSY.to_owned());
@@ -489,8 +587,12 @@ impl App {
             self.change_memory_console(index, connection);
             return;
         }
-        let Some(target) = self.connection(connection) else { return };
-        let Some(key) = target.key.clone() else { return };
+        let Some(target) = self.connection(connection) else {
+            return;
+        };
+        let Some(key) = target.key.clone() else {
+            return;
+        };
         let dialect = target.dialect;
         let name = target.name.clone();
         let now = Instant::now();
@@ -499,9 +601,17 @@ impl App {
             self.status = Some(text::ASSOCIATE_SAVE_FIRST.to_owned());
             return;
         }
-        let Some(to_root) = self.persist_root(key.scope) else { return };
-        let Some(file) = &mut self.consoles[index].file else { return };
-        let Some(from_root) = self.persist.as_ref().and_then(|p| p.store.root(file.scope)).cloned()
+        let Some(to_root) = self.persist_root(key.scope) else {
+            return;
+        };
+        let Some(file) = &mut self.consoles[index].file else {
+            return;
+        };
+        let Some(from_root) = self
+            .persist
+            .as_ref()
+            .and_then(|p| p.store.root(file.scope))
+            .cloned()
         else {
             return;
         };
@@ -535,17 +645,26 @@ impl App {
 
     fn save_console_for_move(&mut self, index: usize, now: Instant) -> Result<(), Trouble> {
         let console = &self.consoles[index];
-        let dirty = console.file.as_ref().is_some_and(|file| file.is_dirty(console.editor.revision()));
+        let dirty = console
+            .file
+            .as_ref()
+            .is_some_and(|file| file.is_dirty(console.editor.revision()));
         if let Some(trouble) = console.file.as_ref().and_then(|file| file.trouble.clone()) {
             return Err(trouble);
         }
-        if dirty { self.save_console(index, now) } else { Ok(()) }
+        if dirty {
+            self.save_console(index, now)
+        } else {
+            Ok(())
+        }
     }
 }
 
 /// Puts the cursor and the scroll of the last session back, inside the text.
 fn restore_editor_state(editor: &mut SqlEditor, root: &Root, id: &str, text: &str) {
-    let Some(state) = workspace::load(root).consoles.get(id).copied() else { return };
+    let Some(state) = workspace::load(root).consoles.get(id).copied() else {
+        return;
+    };
     let lines: Vec<&str> = text.split('\n').collect();
     let row = state.cursor.row.min(lines.len() - 1);
     let col = state.cursor.col.min(lines[row].chars().count());

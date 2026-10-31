@@ -16,7 +16,11 @@ fn catalog() -> Catalog {
             Schema {
                 name: "public".to_owned(),
                 relations: vec![
-                    relation("users", RelationKind::Table, &["id", "name", "Email Address"]),
+                    relation(
+                        "users",
+                        RelationKind::Table,
+                        &["id", "name", "Email Address"],
+                    ),
                     relation("orders", RelationKind::Table, &["id", "user_id", "total"]),
                     relation("active_users", RelationKind::View, &["id", "name"]),
                     relation("Order Items", RelationKind::Table, &["sku", "order"]),
@@ -24,7 +28,11 @@ fn catalog() -> Catalog {
             },
             Schema {
                 name: "sales".to_owned(),
-                relations: vec![relation("invoices", RelationKind::Table, &["number", "due"])],
+                relations: vec![relation(
+                    "invoices",
+                    RelationKind::Table,
+                    &["number", "due"],
+                )],
             },
         ],
         current_schema: Some("public".to_owned()),
@@ -39,7 +47,11 @@ fn run_with(text: &str, dialect: Dialect, catalog: Option<&Catalog>) -> Completi
 }
 
 fn labels_with(text: &str, dialect: Dialect, catalog: Option<&Catalog>) -> Vec<String> {
-    run_with(text, dialect, catalog).items.into_iter().map(|item| item.label).collect()
+    run_with(text, dialect, catalog)
+        .items
+        .into_iter()
+        .map(|item| item.label)
+        .collect()
 }
 
 fn labels(text: &str) -> Vec<String> {
@@ -50,14 +62,21 @@ fn apply(text: &str, dialect: Dialect, catalog: Option<&Catalog>, label: &str) -
     let cursor = text.find('|').unwrap();
     let mut sql = text.replacen('|', "", 1);
     let completion = suggest(&sql, cursor, dialect, catalog);
-    let item = completion.items.iter().find(|item| item.label == label).expect(label);
+    let item = completion
+        .items
+        .iter()
+        .find(|item| item.label == label)
+        .expect(label);
     sql.replace_range(completion.replace.clone(), &item.insert);
     sql
 }
 
 #[test]
 fn the_plan_example_suggests_columns_after_an_alias() {
-    assert_eq!(labels("SELECT u.|\nFROM users AS u;"), ["Email Address", "id", "name"]);
+    assert_eq!(
+        labels("SELECT u.|\nFROM users AS u;"),
+        ["Email Address", "id", "name"]
+    );
 }
 
 #[test]
@@ -67,11 +86,22 @@ fn alias_without_as_and_partial_column() {
 
 #[test]
 fn expression_lists_columns_and_aliases_before_keywords() {
-    let found = run_with("SELECT | FROM users u JOIN orders o ON true", Dialect::Postgres, Some(&catalog()));
+    let found = run_with(
+        "SELECT | FROM users u JOIN orders o ON true",
+        Dialect::Postgres,
+        Some(&catalog()),
+    );
     let kinds: Vec<_> = found.items.iter().map(|item| item.kind).collect();
-    let first_keyword = kinds.iter().position(|kind| *kind == SuggestionKind::Keyword).unwrap();
+    let first_keyword = kinds
+        .iter()
+        .position(|kind| *kind == SuggestionKind::Keyword)
+        .unwrap();
     assert!(first_keyword > 0);
-    assert!(kinds[first_keyword..].iter().all(|kind| *kind == SuggestionKind::Keyword));
+    assert!(
+        kinds[first_keyword..]
+            .iter()
+            .all(|kind| *kind == SuggestionKind::Keyword)
+    );
     let names: Vec<_> = found.items.iter().map(|item| item.label.as_str()).collect();
     assert!(names.contains(&"user_id") && names.contains(&"name"));
     assert!(names.contains(&"u") && names.contains(&"o"));
@@ -80,8 +110,18 @@ fn expression_lists_columns_and_aliases_before_keywords() {
 #[test]
 fn relation_position_lists_tables_views_and_schemas() {
     let found = labels("SELECT * FROM |");
-    for name in ["users", "orders", "active_users", "public", "sales", "sales.invoices"] {
-        assert!(found.iter().any(|label| label == name), "{name} missing in {found:?}");
+    for name in [
+        "users",
+        "orders",
+        "active_users",
+        "public",
+        "sales",
+        "sales.invoices",
+    ] {
+        assert!(
+            found.iter().any(|label| label == name),
+            "{name} missing in {found:?}"
+        );
     }
     assert!(!found.iter().any(|label| label == "SELECT"));
 }
@@ -104,14 +144,27 @@ fn schema_qualifier_lists_its_relations_only() {
 #[test]
 fn table_and_schema_qualifiers_list_columns() {
     assert_eq!(labels("SELECT users.na| FROM users"), ["name"]);
-    assert_eq!(labels("SELECT public.users.na| FROM public.users"), ["name"]);
-    assert_eq!(labels("SELECT sales.invoices.| FROM sales.invoices"), ["due", "number"]);
-    assert_eq!(labels("SELECT orders.to|"), ["total"], "a relation out of FROM still resolves");
+    assert_eq!(
+        labels("SELECT public.users.na| FROM public.users"),
+        ["name"]
+    );
+    assert_eq!(
+        labels("SELECT sales.invoices.| FROM sales.invoices"),
+        ["due", "number"]
+    );
+    assert_eq!(
+        labels("SELECT orders.to|"),
+        ["total"],
+        "a relation out of FROM still resolves"
+    );
 }
 
 #[test]
 fn aliases_of_a_schema_relation_resolve_in_that_schema() {
-    assert_eq!(labels("SELECT i.| FROM sales.invoices AS i"), ["due", "number"]);
+    assert_eq!(
+        labels("SELECT i.| FROM sales.invoices AS i"),
+        ["due", "number"]
+    );
 }
 
 #[test]
@@ -120,8 +173,14 @@ fn keywords_follow_an_operand() {
     assert_eq!(labels("SELECT id fr| users"), ["from"]);
     assert_eq!(labels("SELECT * fr|"), ["from"]);
     let found = labels("SELECT * FROM users wh|");
-    assert!(found.contains(&"when".to_owned()) && found.contains(&"where".to_owned()), "{found:?}");
-    assert!(!found.contains(&"wh".to_owned()), "the partial word is not an alias");
+    assert!(
+        found.contains(&"when".to_owned()) && found.contains(&"where".to_owned()),
+        "{found:?}"
+    );
+    assert!(
+        !found.contains(&"wh".to_owned()),
+        "the partial word is not an alias"
+    );
 }
 
 #[test]
@@ -147,7 +206,10 @@ fn each_dialect_has_its_own_keywords() {
     assert!(with("prag|", Dialect::Postgres).is_empty());
     assert_eq!(with("SELECT 1 ILI|", Dialect::Postgres), ["ILIKE"]);
     assert!(with("SELECT 1 ILI|", Dialect::MySql).is_empty());
-    assert_eq!(with("SELECT 1 STRAIGHT|", Dialect::MySql), ["STRAIGHT_JOIN"]);
+    assert_eq!(
+        with("SELECT 1 STRAIGHT|", Dialect::MySql),
+        ["STRAIGHT_JOIN"]
+    );
 }
 
 #[test]
@@ -163,15 +225,30 @@ fn without_a_catalog_keywords_and_aliases_remain() {
 fn names_get_the_quotes_of_the_dialect() {
     let catalog = catalog();
     assert_eq!(
-        apply("SELECT * FROM Ord|", Dialect::Postgres, Some(&catalog), "Order Items"),
+        apply(
+            "SELECT * FROM Ord|",
+            Dialect::Postgres,
+            Some(&catalog),
+            "Order Items"
+        ),
         "SELECT * FROM \"Order Items\""
     );
     assert_eq!(
-        apply("SELECT * FROM Ord|", Dialect::MySql, Some(&catalog), "Order Items"),
+        apply(
+            "SELECT * FROM Ord|",
+            Dialect::MySql,
+            Some(&catalog),
+            "Order Items"
+        ),
         "SELECT * FROM `Order Items`"
     );
     assert_eq!(
-        apply("SELECT * FROM Ord|", Dialect::Sqlite, Some(&catalog), "Order Items"),
+        apply(
+            "SELECT * FROM Ord|",
+            Dialect::Sqlite,
+            Some(&catalog),
+            "Order Items"
+        ),
         "SELECT * FROM \"Order Items\""
     );
 }
@@ -180,7 +257,12 @@ fn names_get_the_quotes_of_the_dialect() {
 fn reserved_column_gets_quotes() {
     let catalog = catalog();
     assert_eq!(
-        apply("SELECT i.ord| FROM \"Order Items\" i", Dialect::Postgres, Some(&catalog), "order"),
+        apply(
+            "SELECT i.ord| FROM \"Order Items\" i",
+            Dialect::Postgres,
+            Some(&catalog),
+            "order"
+        ),
         "SELECT i.\"order\" FROM \"Order Items\" i"
     );
 }
@@ -189,15 +271,30 @@ fn reserved_column_gets_quotes() {
 fn opening_quote_stays_in_the_inserted_name() {
     let catalog = catalog();
     assert_eq!(
-        apply("SELECT * FROM \"us|", Dialect::Postgres, Some(&catalog), "users"),
+        apply(
+            "SELECT * FROM \"us|",
+            Dialect::Postgres,
+            Some(&catalog),
+            "users"
+        ),
         "SELECT * FROM \"users\""
     );
     assert_eq!(
-        apply("SELECT * FROM `us|", Dialect::MySql, Some(&catalog), "users"),
+        apply(
+            "SELECT * FROM `us|",
+            Dialect::MySql,
+            Some(&catalog),
+            "users"
+        ),
         "SELECT * FROM `users`"
     );
     assert_eq!(
-        apply("SELECT * FROM [us|", Dialect::Sqlite, Some(&catalog), "users"),
+        apply(
+            "SELECT * FROM [us|",
+            Dialect::Sqlite,
+            Some(&catalog),
+            "users"
+        ),
         "SELECT * FROM [users]"
     );
 }
@@ -205,7 +302,10 @@ fn opening_quote_stays_in_the_inserted_name() {
 #[test]
 fn quoted_alias_and_quoted_qualifier_resolve() {
     assert_eq!(labels("SELECT \"u\".na| FROM users \"u\""), ["name"]);
-    assert_eq!(labels("SELECT \"public\".\"users\".na| FROM public.users"), ["name"]);
+    assert_eq!(
+        labels("SELECT \"public\".\"users\".na| FROM public.users"),
+        ["name"]
+    );
     assert_eq!(labels("SELECT x.sk| FROM \"Order Items\" AS x"), ["sku"]);
 }
 
@@ -213,7 +313,12 @@ fn quoted_alias_and_quoted_qualifier_resolve() {
 fn accepted_name_replaces_the_whole_word_under_the_cursor() {
     let catalog = catalog();
     assert_eq!(
-        apply("SELECT * FROM us|ers_old", Dialect::Postgres, Some(&catalog), "users"),
+        apply(
+            "SELECT * FROM us|ers_old",
+            Dialect::Postgres,
+            Some(&catalog),
+            "users"
+        ),
         "SELECT * FROM users"
     );
 }
@@ -247,7 +352,10 @@ fn mysql_double_quote_is_a_string() {
 #[test]
 fn subquery_sees_outer_references_but_not_sibling_subqueries() {
     let found = labels("SELECT (SELECT | FROM orders o) FROM users u");
-    assert!(found.contains(&"o".to_owned()) && found.contains(&"u".to_owned()), "{found:?}");
+    assert!(
+        found.contains(&"o".to_owned()) && found.contains(&"u".to_owned()),
+        "{found:?}"
+    );
     let found = labels("SELECT (SELECT 1 FROM orders o), | FROM users u");
     assert!(found.contains(&"u".to_owned()), "{found:?}");
     assert!(!found.contains(&"o".to_owned()), "{found:?}");
@@ -281,16 +389,23 @@ fn new_names_have_no_suggestions() {
 
 #[test]
 fn only_the_statement_at_the_cursor_counts() {
-    let found = labels("SELECT * FROM users u;\nSELECT | FROM orders o;\nSELECT * FROM sales.invoices i;");
+    let found =
+        labels("SELECT * FROM users u;\nSELECT | FROM orders o;\nSELECT * FROM sales.invoices i;");
     assert!(found.contains(&"o".to_owned()), "{found:?}");
-    assert!(!found.contains(&"u".to_owned()) && !found.contains(&"i".to_owned()), "{found:?}");
+    assert!(
+        !found.contains(&"u".to_owned()) && !found.contains(&"i".to_owned()),
+        "{found:?}"
+    );
 }
 
 #[test]
 fn single_exact_match_closes_the_list() {
     assert!(labels("SELECT|").is_empty());
     assert!(labels("select|").is_empty());
-    assert_eq!(labels("SELECT id FROM orders WHERE id = 1 AND tot|"), ["total"]);
+    assert_eq!(
+        labels("SELECT id FROM orders WHERE id = 1 AND tot|"),
+        ["total"]
+    );
 }
 
 #[test]
@@ -302,7 +417,10 @@ fn name_in_the_middle_ranks_after_name_at_the_start() {
 fn missing_columns_are_reported_and_keep_the_other_suggestions() {
     let mut catalog = catalog();
     catalog.schemas[0].relations[0].columns = Columns::NotLoaded;
-    let wanted = RelationRef { schema: "public".to_owned(), relation: "users".to_owned() };
+    let wanted = RelationRef {
+        schema: "public".to_owned(),
+        relation: "users".to_owned(),
+    };
 
     let found = run_with("SELECT u.| FROM users u", Dialect::Postgres, Some(&catalog));
     assert!(found.items.is_empty());
@@ -313,14 +431,22 @@ fn missing_columns_are_reported_and_keep_the_other_suggestions() {
     assert!(found.items.iter().any(|item| item.label == "u"));
 
     let found = run_with("SELECT * FROM us|", Dialect::Postgres, Some(&catalog));
-    assert!(found.missing_columns.is_empty(), "a relation list does not need columns");
+    assert!(
+        found.missing_columns.is_empty(),
+        "a relation list does not need columns"
+    );
 }
 
 #[test]
 fn multibyte_text_keeps_the_replace_range() {
     let catalog = catalog();
     assert_eq!(
-        apply("SELECT 'ação', u.na| FROM users u", Dialect::Postgres, Some(&catalog), "name"),
+        apply(
+            "SELECT 'ação', u.na| FROM users u",
+            Dialect::Postgres,
+            Some(&catalog),
+            "name"
+        ),
         "SELECT 'ação', u.name FROM users u"
     );
 }
@@ -329,9 +455,26 @@ fn multibyte_text_keeps_the_replace_range() {
 fn any_cursor_in_any_text_does_not_fail() {
     let catalog = catalog();
     let samples = [
-        "SELECT (((", ")))", "...", "a.b.c.d.", "\"", "`", "[", "'", "$$", "--", "/*", "FROM", ",",
+        "SELECT (((",
+        ")))",
+        "...",
+        "a.b.c.d.",
+        "\"",
+        "`",
+        "[",
+        "'",
+        "$$",
+        "--",
+        "/*",
+        "FROM",
+        ",",
         "SELECT 'ação' , \"日本\".x FROM a.b.c AS d, (SELECT e) f JOIN",
-        "INSERT INTO", "INSERT INTO (", "INTO . (", "( ) . x", "FROM (", "FROM ) x",
+        "INSERT INTO",
+        "INSERT INTO (",
+        "INTO . (",
+        "( ) . x",
+        "FROM (",
+        "FROM ) x",
     ];
     for text in samples {
         for (cursor, _) in text.char_indices().chain([(text.len(), ' ')]) {
@@ -344,7 +487,11 @@ fn any_cursor_in_any_text_does_not_fail() {
 }
 
 fn cte_labels(text: &str) -> Vec<String> {
-    run_with(text, Dialect::Postgres, Some(&catalog())).items.into_iter().map(|item| item.label).collect()
+    run_with(text, Dialect::Postgres, Some(&catalog()))
+        .items
+        .into_iter()
+        .map(|item| item.label)
+        .collect()
 }
 
 #[test]
@@ -387,7 +534,11 @@ fn columns_of_a_with_name_join_the_columns_of_the_query() {
 fn a_with_name_hides_a_table_with_the_same_name_and_reads_nothing() {
     let text = "WITH users AS (SELECT 1 AS only_column) SELECT users.| FROM users";
     let completion = run_with(text, Dialect::Postgres, Some(&catalog()));
-    let labels: Vec<_> = completion.items.iter().map(|item| item.label.as_str()).collect();
+    let labels: Vec<_> = completion
+        .items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect();
     assert_eq!(labels, ["only_column"]);
     assert!(completion.missing_columns.is_empty());
 }

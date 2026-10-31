@@ -129,7 +129,9 @@ fn write(path: &Path, bytes: &[u8], expect: Expect, private: bool) -> Result<u64
 
 /// Removes the old temporary files of a folder.
 pub fn remove_old_temporary_files(folder: &Path) {
-    let Ok(entries) = fs::read_dir(folder) else { return };
+    let Ok(entries) = fs::read_dir(folder) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().is_none_or(|extension| extension != "tmp") {
@@ -157,7 +159,11 @@ fn open_lock(path: &Path) -> io::Result<File> {
     if let Some(folder) = path.parent() {
         fs::create_dir_all(folder)?;
     }
-    File::options().create(true).truncate(false).write(true).open(path)
+    File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
 }
 
 /// Takes the lock at once, or it returns `None` when another process holds it.

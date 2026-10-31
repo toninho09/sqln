@@ -60,18 +60,42 @@ pub struct TableBar<'a> {
 
 /// Writes the label of a table tab.
 pub fn tab_label(tab: &TableTab, theme: &Theme) -> String {
-    let icon = if tab.is_view { theme.icons.view } else { theme.icons.table };
+    let icon = if tab.is_view {
+        theme.icons.view
+    } else {
+        theme.icons.table
+    };
     super::main_tab_label(icon, &tab.label(), false)
 }
 
-fn control_items(tab: &TableTab, blocked: bool, theme: &Theme) -> Vec<(TableControl, String, bool)> {
+fn control_items(
+    tab: &TableTab,
+    blocked: bool,
+    theme: &Theme,
+) -> Vec<(TableControl, String, bool)> {
     let idle = !tab.is_busy();
     let icons = &theme.icons;
     vec![
-        (TableControl::Apply, theme.tool(icons.apply, text::BUTTON_APPLY), idle),
-        (TableControl::Clear, theme.tool(icons.clear, text::BUTTON_CLEAR), idle),
-        (TableControl::LoadMore, theme.tool(icons.load_more, text::BUTTON_LOAD_MORE), idle && tab.has_more && !blocked),
-        (TableControl::Stop, theme.tool(icons.stop, text::CONTROL_STOP), !idle),
+        (
+            TableControl::Apply,
+            theme.tool(icons.apply, text::BUTTON_APPLY),
+            idle,
+        ),
+        (
+            TableControl::Clear,
+            theme.tool(icons.clear, text::BUTTON_CLEAR),
+            idle,
+        ),
+        (
+            TableControl::LoadMore,
+            theme.tool(icons.load_more, text::BUTTON_LOAD_MORE),
+            idle && tab.has_more && !blocked,
+        ),
+        (
+            TableControl::Stop,
+            theme.tool(icons.stop, text::CONTROL_STOP),
+            !idle,
+        ),
     ]
 }
 
@@ -97,7 +121,14 @@ fn draw_field(
     line.push(Span::raw(" ".repeat(width.saturating_sub(used))));
     line.push(Span::raw(theme.button_marks.1));
     frame.render_widget(Paragraph::new(Line::from(line)).style(theme.field), field);
-    (Rect { x: field.x + 1, width: field.width.saturating_sub(2), ..field }, first)
+    (
+        Rect {
+            x: field.x + 1,
+            width: field.width.saturating_sub(2),
+            ..field
+        },
+        first,
+    )
 }
 
 fn message_style(message: &Message, theme: &Theme) -> Style {
@@ -135,7 +166,10 @@ fn pager_items(tab: &TableTab, blocked: bool, wide: bool, theme: &Theme) -> Page
 }
 
 fn pager_width(pager: &Pager) -> usize {
-    pager.iter().map(|(_, label, _)| label.width() + usize::from(BUTTON_GAP)).sum()
+    pager
+        .iter()
+        .map(|(_, label, _)| label.width() + usize::from(BUTTON_GAP))
+        .sum()
 }
 
 /// Chooses the parts of the row under the grid. The state of the load always stays, the
@@ -143,13 +177,21 @@ fn pager_width(pager: &Pager) -> usize {
 /// place for the buttons, and the keys still work.
 fn summary_row(tab: &TableTab, blocked: bool, width: usize, theme: &Theme) -> (String, Pager) {
     let (state, note) = summary_parts(tab);
-    let full = note.map_or_else(|| state.clone(), |note| format!("{state}{SUMMARY_GAP}{note}"));
+    let full = note.map_or_else(
+        || state.clone(),
+        |note| format!("{state}{SUMMARY_GAP}{note}"),
+    );
     if !tab.has_pages() {
         return (full, Vec::new());
     }
     let wide = pager_items(tab, blocked, true, theme);
     let short = pager_items(tab, blocked, false, theme);
-    for (text, pager) in [(&full, &wide), (&full, &short), (&state, &wide), (&state, &short)] {
+    for (text, pager) in [
+        (&full, &wide),
+        (&full, &short),
+        (&state, &wide),
+        (&state, &short),
+    ] {
         if 1 + text.width() + 1 + pager_width(pager) <= width {
             return (text.clone(), pager.clone());
         }
@@ -197,7 +239,12 @@ pub fn draw_table(
     .areas(area);
 
     if bar.title {
-        let heading = text::table_title(bar.connection, &tab.relation.schema, &tab.relation.relation, tab.is_view);
+        let heading = text::table_title(
+            bar.connection,
+            &tab.relation.schema,
+            &tab.relation.relation,
+            tab.is_view,
+        );
         draw_panel_title(frame, title, &printable(&heading), focused, theme);
     }
 
@@ -217,17 +264,29 @@ pub fn draw_table(
         focused && tab.focus == TableFocus::Order,
         theme,
     );
-    let buttons = draw_buttons(frame, controls, control_items(tab, bar.blocked, theme), theme);
+    let buttons = draw_buttons(
+        frame,
+        controls,
+        control_items(tab, bar.blocked, theme),
+        theme,
+    );
 
     let message_in_grid = tab.result.table.columns.is_empty() && tab.message.is_some();
     if tab.result.table.columns.is_empty() {
         draw_empty(frame, grid, tab, theme);
     } else {
         let grid_focused = focused && tab.focus == TableFocus::Grid;
-        draw_grid(frame.buffer_mut(), grid, &mut tab.result, grid_focused, theme);
+        draw_grid(
+            frame.buffer_mut(),
+            grid,
+            &mut tab.result,
+            grid_focused,
+            theme,
+        );
     }
 
-    let (state_text, pager_items) = summary_row(tab, bar.blocked, usize::from(summary.width), theme);
+    let (state_text, pager_items) =
+        summary_row(tab, bar.blocked, usize::from(summary.width), theme);
     let pager_columns = u16::try_from(pager_width(&pager_items)).unwrap_or(0);
     let searching = tab.result.search.is_some();
     let [state, buttons_area] = Layout::horizontal([
@@ -242,12 +301,14 @@ pub fn draw_table(
     frame.render_widget(Paragraph::new(line), state);
     let pager = draw_buttons(frame, buttons_area, pager_items, theme);
     let note = match &tab.message {
-        Some(message) if !message_in_grid => {
-            Some(Line::styled(format!(" {}", printable(&message.text)), message_style(message, theme)))
-        }
-        _ if tab.applied_order().is_empty() => {
-            Some(Line::styled(format!(" {}", text::TABLE_NO_ORDER), theme.hint))
-        }
+        Some(message) if !message_in_grid => Some(Line::styled(
+            format!(" {}", printable(&message.text)),
+            message_style(message, theme),
+        )),
+        _ if tab.applied_order().is_empty() => Some(Line::styled(
+            format!(" {}", text::TABLE_NO_ORDER),
+            theme.hint,
+        )),
         _ => None,
     };
     if let Some(note) = note {
@@ -259,12 +320,22 @@ pub fn draw_table(
             TableFocus::Filter => (filter_text, filter_first, &tab.filter),
             _ => (order_text, order_first, &tab.order),
         };
-        let start = input.text()[..list.completion.replace.start.min(input.text().len())].chars().count();
+        let start = input.text()[..list.completion.replace.start.min(input.text().len())]
+            .chars()
+            .count();
         let offset = u16::try_from(start.saturating_sub(first)).unwrap_or(0);
         let anchor = Position::new(field.x.saturating_add(offset).min(field.right()), field.y);
         draw_suggestions(frame, area, anchor, list, theme);
     }
-    TableLayout { filter, order, controls, buttons, grid, summary, pager }
+    TableLayout {
+        filter,
+        order,
+        controls,
+        buttons,
+        grid,
+        summary,
+        pager,
+    }
 }
 
 /// Draws the area of a grid without columns: the reason, or the wait.

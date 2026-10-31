@@ -6,7 +6,10 @@ use sqln::sql::{
 };
 
 fn texts(sql: &str, dialect: Dialect) -> Vec<&str> {
-    split(sql, dialect).into_iter().map(|statement| statement.text(sql)).collect()
+    split(sql, dialect)
+        .into_iter()
+        .map(|statement| statement.text(sql))
+        .collect()
 }
 
 #[test]
@@ -23,10 +26,10 @@ fn semicolons_in_strings_and_comments_do_not_split() {
 
 #[test]
 fn doubled_quotes_stay_in_the_string() {
-    assert_eq!(texts("SELECT 'it''s;'; SELECT 2", Dialect::Sqlite), [
-        "SELECT 'it''s;'",
-        "SELECT 2"
-    ]);
+    assert_eq!(
+        texts("SELECT 'it''s;'; SELECT 2", Dialect::Sqlite),
+        ["SELECT 'it''s;'", "SELECT 2"]
+    );
 }
 
 #[test]
@@ -47,21 +50,30 @@ fn postgres_dollar_quotes_keep_function_bodies() {
 
 #[test]
 fn postgres_positional_parameter_is_not_a_dollar_quote() {
-    assert_eq!(texts("SELECT $1; SELECT $2;", Dialect::Postgres), ["SELECT $1", "SELECT $2"]);
+    assert_eq!(
+        texts("SELECT $1; SELECT $2;", Dialect::Postgres),
+        ["SELECT $1", "SELECT $2"]
+    );
 }
 
 #[test]
 fn postgres_block_comments_nest() {
-    assert_eq!(texts("/* a /* b; */ c; */ SELECT 1;", Dialect::Postgres), ["SELECT 1"]);
+    assert_eq!(
+        texts("/* a /* b; */ c; */ SELECT 1;", Dialect::Postgres),
+        ["SELECT 1"]
+    );
 }
 
 #[test]
 fn postgres_escape_string_uses_backslash() {
-    assert_eq!(texts(r"SELECT E'a\';b'; SELECT 2;", Dialect::Postgres), [
-        r"SELECT E'a\';b'",
-        "SELECT 2"
-    ]);
-    assert_eq!(texts(r"SELECT 'a\'; SELECT 2;", Dialect::Postgres), [r"SELECT 'a\'", "SELECT 2"]);
+    assert_eq!(
+        texts(r"SELECT E'a\';b'; SELECT 2;", Dialect::Postgres),
+        [r"SELECT E'a\';b'", "SELECT 2"]
+    );
+    assert_eq!(
+        texts(r"SELECT 'a\'; SELECT 2;", Dialect::Postgres),
+        [r"SELECT 'a\'", "SELECT 2"]
+    );
 }
 
 #[test]
@@ -72,12 +84,18 @@ fn postgres_begin_atomic_is_one_statement() {
 
 #[test]
 fn mysql_backslash_and_hash_comment() {
-    assert_eq!(texts(r"SELECT 'a\';b'; # c;d", Dialect::MySql), [r"SELECT 'a\';b'"]);
+    assert_eq!(
+        texts(r"SELECT 'a\';b'; # c;d", Dialect::MySql),
+        [r"SELECT 'a\';b'"]
+    );
 }
 
 #[test]
 fn mysql_double_dash_needs_a_space() {
-    assert_eq!(texts("SELECT 5--1; SELECT 2;", Dialect::MySql), ["SELECT 5--1", "SELECT 2"]);
+    assert_eq!(
+        texts("SELECT 5--1; SELECT 2;", Dialect::MySql),
+        ["SELECT 5--1", "SELECT 2"]
+    );
 }
 
 #[test]
@@ -117,20 +135,29 @@ fn transaction_begin_is_not_a_compound_block() {
 
 #[test]
 fn sqlite_bracket_identifier_keeps_semicolon() {
-    assert_eq!(texts("SELECT [a;b] FROM t; SELECT 2;", Dialect::Sqlite), [
-        "SELECT [a;b] FROM t",
-        "SELECT 2"
-    ]);
+    assert_eq!(
+        texts("SELECT [a;b] FROM t; SELECT 2;", Dialect::Sqlite),
+        ["SELECT [a;b] FROM t", "SELECT 2"]
+    );
 }
 
 #[test]
 fn postgres_array_brackets_do_not_quote() {
-    assert_eq!(texts("SELECT a[1]; SELECT 2;", Dialect::Postgres), ["SELECT a[1]", "SELECT 2"]);
+    assert_eq!(
+        texts("SELECT a[1]; SELECT 2;", Dialect::Postgres),
+        ["SELECT a[1]", "SELECT 2"]
+    );
 }
 
 #[test]
 fn incomplete_text_does_not_fail() {
-    for sql in ["SELECT 'open", "SELECT /* open", "SELECT $$ open", "SELECT \"open", ""] {
+    for sql in [
+        "SELECT 'open",
+        "SELECT /* open",
+        "SELECT $$ open",
+        "SELECT \"open",
+        "",
+    ] {
         for dialect in [Dialect::Postgres, Dialect::MySql, Dialect::Sqlite] {
             let found = split(sql, dialect);
             assert!(found.iter().all(|s| !s.terminated), "{sql:?} {dialect:?}");
@@ -156,10 +183,20 @@ fn multibyte_text_keeps_byte_offsets() {
 fn cursor_rules_follow_the_plan() {
     let sql = "SELECT 1;\n\n-- comment\nSELECT 2;";
     let inside = sql.find("SELECT 2").unwrap() + 3;
-    assert_eq!(statement_at(sql, Dialect::Sqlite, inside).unwrap().text(sql), "SELECT 2");
+    assert_eq!(
+        statement_at(sql, Dialect::Sqlite, inside)
+            .unwrap()
+            .text(sql),
+        "SELECT 2"
+    );
 
     let after_semicolon = sql.find(';').unwrap() + 1;
-    assert_eq!(statement_at(sql, Dialect::Sqlite, after_semicolon).unwrap().text(sql), "SELECT 1");
+    assert_eq!(
+        statement_at(sql, Dialect::Sqlite, after_semicolon)
+            .unwrap()
+            .text(sql),
+        "SELECT 1"
+    );
 
     let blank_line = after_semicolon + 1;
     assert!(statement_at(sql, Dialect::Sqlite, blank_line).is_none());
@@ -171,22 +208,37 @@ fn cursor_rules_follow_the_plan() {
 #[test]
 fn tokens_show_the_kind_and_the_closing_mark() {
     let kinds = |sql: &str, dialect| {
-        tokenize(sql, dialect).into_iter().map(|t| (t.kind, t.closed)).collect::<Vec<_>>()
+        tokenize(sql, dialect)
+            .into_iter()
+            .map(|t| (t.kind, t.closed))
+            .collect::<Vec<_>>()
     };
-    assert_eq!(kinds("\"a\" 'b", Dialect::Postgres), [
-        (TokenKind::QuotedIdentifier, true),
-        (TokenKind::String, false)
-    ]);
-    assert_eq!(kinds("\"a\" `b`", Dialect::MySql), [
-        (TokenKind::String, true),
-        (TokenKind::QuotedIdentifier, true)
-    ]);
-    assert_eq!(kinds("[a 12 -- x", Dialect::Sqlite), [(TokenKind::QuotedIdentifier, false)]);
-    assert_eq!(kinds("a 12 -- x", Dialect::Sqlite), [
-        (TokenKind::Word, true),
-        (TokenKind::Number, true),
-        (TokenKind::Comment, false)
-    ]);
+    assert_eq!(
+        kinds("\"a\" 'b", Dialect::Postgres),
+        [
+            (TokenKind::QuotedIdentifier, true),
+            (TokenKind::String, false)
+        ]
+    );
+    assert_eq!(
+        kinds("\"a\" `b`", Dialect::MySql),
+        [
+            (TokenKind::String, true),
+            (TokenKind::QuotedIdentifier, true)
+        ]
+    );
+    assert_eq!(
+        kinds("[a 12 -- x", Dialect::Sqlite),
+        [(TokenKind::QuotedIdentifier, false)]
+    );
+    assert_eq!(
+        kinds("a 12 -- x", Dialect::Sqlite),
+        [
+            (TokenKind::Word, true),
+            (TokenKind::Number, true),
+            (TokenKind::Comment, false)
+        ]
+    );
 }
 
 #[test]
@@ -194,7 +246,10 @@ fn every_token_starts_and_ends_on_a_character_boundary() {
     let sql = "SELECT 'ação', \"日本\", açúcar /* ç */ -- é\n, 'x\\é";
     for dialect in [Dialect::Postgres, Dialect::MySql, Dialect::Sqlite] {
         for token in tokenize(sql, dialect) {
-            assert!(sql.get(token.start..token.end).is_some(), "{token:?} {dialect:?}");
+            assert!(
+                sql.get(token.start..token.end).is_some(),
+                "{token:?} {dialect:?}"
+            );
         }
     }
 }
@@ -216,7 +271,11 @@ fn reused_tokens_split_like_a_new_read() {
     for sql in samples {
         for dialect in [Dialect::Postgres, Dialect::MySql, Dialect::Sqlite] {
             let tokens = tokenize(sql, dialect);
-            assert_eq!(split_tokens(sql, dialect, &tokens), split(sql, dialect), "{sql:?} {dialect:?}");
+            assert_eq!(
+                split_tokens(sql, dialect, &tokens),
+                split(sql, dialect),
+                "{sql:?} {dialect:?}"
+            );
         }
     }
 }
@@ -280,20 +339,41 @@ fn a_statement_with_a_possible_effect_consumes_its_rows() {
 
 #[test]
 fn row_counts_belong_to_changes() {
-    for sql in ["INSERT INTO t VALUES (1)", "update t set a = 1", "/* c */ DELETE FROM t", "WITH c AS (SELECT 1) UPDATE t SET a = 1"] {
+    for sql in [
+        "INSERT INTO t VALUES (1)",
+        "update t set a = 1",
+        "/* c */ DELETE FROM t",
+        "WITH c AS (SELECT 1) UPDATE t SET a = 1",
+    ] {
         assert!(counts_rows(sql, Dialect::Postgres), "{sql}");
     }
-    for sql in ["CREATE TABLE t (a int)", "DROP TABLE t", "BEGIN", "CALL p()", ""] {
+    for sql in [
+        "CREATE TABLE t (a int)",
+        "DROP TABLE t",
+        "BEGIN",
+        "CALL p()",
+        "",
+    ] {
         assert!(!counts_rows(sql, Dialect::Postgres), "{sql}");
     }
 }
 
 #[test]
 fn copy_with_a_client_stream_is_found() {
-    for sql in ["COPY t FROM STDIN", "copy t (a) from stdin with csv", "COPY t TO STDOUT", "COPY (SELECT 1) TO stdout"] {
+    for sql in [
+        "COPY t FROM STDIN",
+        "copy t (a) from stdin with csv",
+        "COPY t TO STDOUT",
+        "COPY (SELECT 1) TO stdout",
+    ] {
         assert!(reads_or_writes_stdio(sql, Dialect::Postgres), "{sql}");
     }
-    for sql in ["COPY t FROM '/tmp/stdin'", "COPY t TO '/tmp/file'", "SELECT stdin FROM t", ""] {
+    for sql in [
+        "COPY t FROM '/tmp/stdin'",
+        "COPY t TO '/tmp/file'",
+        "SELECT stdin FROM t",
+        "",
+    ] {
         assert!(!reads_or_writes_stdio(sql, Dialect::Postgres), "{sql}");
     }
 }

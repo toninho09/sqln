@@ -60,9 +60,10 @@ impl Definition {
     /// Returns the source with the relative paths of the files in the base folder.
     pub fn resolved_source(&self) -> Source {
         match &self.source {
-            Source::Sqlite(target) => {
-                Source::Sqlite(SqliteTarget { path: self.resolve(&target.path), ..target.clone() })
-            }
+            Source::Sqlite(target) => Source::Sqlite(SqliteTarget {
+                path: self.resolve(&target.path),
+                ..target.clone()
+            }),
             Source::Network(target) => {
                 let mut target = target.clone();
                 if let Tls::Verify(files) = &mut target.tls {
@@ -226,7 +227,9 @@ impl Connection {
 
     /// Returns the name that the user chose, without the mark of the scope.
     pub fn plain_name(&self) -> &str {
-        self.definition.as_ref().map_or(&self.name, |definition| &definition.name)
+        self.definition
+            .as_ref()
+            .map_or(&self.name, |definition| &definition.name)
     }
 
     pub fn scope(&self) -> Option<Scope> {
@@ -258,12 +261,16 @@ pub fn name_is_taken(
 
 /// Writes the scope after the name of each connection whose name another scope uses.
 pub fn refresh_labels(connections: &mut [Connection]) {
-    let names: Vec<(String, Option<Scope>)> =
-        connections.iter().map(|item| (item.plain_name().to_lowercase(), item.scope())).collect();
+    let names: Vec<(String, Option<Scope>)> = connections
+        .iter()
+        .map(|item| (item.plain_name().to_lowercase(), item.scope()))
+        .collect();
     for connection in connections.iter_mut() {
         let own = connection.plain_name().to_lowercase();
         let scope = connection.scope();
-        let shared = names.iter().any(|(name, other)| *name == own && *other != scope);
+        let shared = names
+            .iter()
+            .any(|(name, other)| *name == own && *other != scope);
         connection.name = match (shared, scope) {
             (true, Some(Scope::Project)) => format!("{} (local)", connection.plain_name()),
             (true, Some(Scope::Global)) => format!("{} (global)", connection.plain_name()),
