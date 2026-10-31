@@ -28,6 +28,8 @@ struct State {
     busy: usize,
     waiters: VecDeque<Waiter>,
     next_waiter: u64,
+    /// A session that returns from an older generation closes.
+    generation: u64,
 }
 
 impl State {
@@ -109,6 +111,7 @@ pub struct Pool {
 pub struct Lease {
     session: Option<Box<dyn Session>>,
     inner: Arc<Inner>,
+    generation: u64,
     released: bool,
 }
 
@@ -123,6 +126,11 @@ impl Lease {
         let Some(mut session) = self.session.take() else { return };
         if session.reset().await == ResetOutcome::Clean {
             let mut state = self.inner.lock();
+            if state.generation != self.generation {
+                drop(state);
+                self.session = Some(session);
+                return;
+            }
             state.busy -= 1;
             state.idle.push(session);
             self.inner.wake(&mut state);
@@ -152,10 +160,27 @@ impl Pool {
         (self.inner.lock().busy, self.inner.limit)
     }
 
+    /// Returns true while the pool holds a session or a place in use.
+    pub fn has_sessions(&self) -> bool {
+        self.inner.lock().total() > 0
+    }
+
+    /// Closes the idle sessions. A session in use closes when it returns.
+    pub fn close_idle(&self) {
+        let mut state = self.inner.lock();
+        state.generation += 1;
+        let idle = std::mem::take(&mut state.idle);
+        self.inner.wake(&mut state);
+        drop(state);
+        drop(idle);
+    }
+
     /// Waits for a place without a time limit. A drop of this future cancels the wait.
     pub async fn acquire(&self) -> Result<Lease, ConnectError> {
         let grant = self.reserve().await;
-        let mut lease = Lease { session: None, inner: self.inner.clone(), released: false };
+        let generation = self.inner.lock().generation;
+        let mut lease =
+            Lease { session: None, inner: self.inner.clone(), generation, released: false };
         if let Grant::Session(mut session) = grant {
             // An idle session that stopped gets a replacement, and the user sees no error.
             if session.is_alive().await {

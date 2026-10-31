@@ -1,5 +1,7 @@
 //! All interface text. This file keeps the text in one place for a later translation.
 
+use crate::input::Action;
+
 pub const CLIPBOARD_UNAVAILABLE: &str = "Clipboard unavailable. Paste with the terminal.";
 pub const COPY_SENT_TO_TERMINAL: &str = "Copy request sent to the terminal. No confirmation.";
 pub const COPY_FAILED: &str = "Copy failed.";
@@ -14,14 +16,95 @@ pub const HINT_GRID: &str = "Ctrl+W k editor · Ctrl+C copy · Enter value · Ct
 pub const HINT_GRID_SEARCH: &str = "Enter next · Up/Down move · Esc close";
 pub const HINT_LIST: &str = "Tab accept · Up/Down move · Enter new line · Esc close list";
 pub const HINT_SEARCH: &str = "Tab next field · Enter next or replace · Ctrl+A replace all · Esc close";
-pub const HINT_PREFIX: &str = "e run · s script · x stop · m mode · C commit · R rollback · c close · ? keys";
+pub const HINT_NAVIGATOR: &str = "Enter open · n console · a add · e edit · r refresh · D disconnect · Del remove";
+pub const HINT_PREFIX: &str = "hjkl panel · n p tab · b nav · d schema · e s x run · m C R tx · c q close · ?";
+pub const HINT_PICKER: &str = "Up/Down move · Enter choose · Esc cancel";
+pub const HINT_FORM: &str = "Tab next · Left/Right change · Enter next or press · Esc cancel";
 pub const HINT_DIALOG: &str = "Tab next option · Enter confirm · Esc cancel";
 pub const HINT_OVERLAY: &str = "Up/Down scroll · Ctrl+C copy · Esc close";
 
 pub const SMALL_TERMINAL: &str = "Small terminal";
 pub const MINIMUM_SIZE: &str = "Minimum size";
 
-pub const NO_CONNECTION: &str = "No database. Start with --sqlite <file> or --url <text>.";
+pub const NO_CONNECTION: &str = "No database. Use Ctrl+W h and n in the navigator, or a to add a connection.";
+pub const NO_CONNECTIONS_ROW: &str = "No connections";
+pub const ADD_CONNECTION_ROW: &str = "Press a to add one";
+pub const NOTE_LOADING: &str = "(loading)";
+pub const NOTE_FAILED: &str = "(failed)";
+pub const MARK_VIEW: &str = "(view)";
+pub const NO_SCHEMA_CHOICE: &str = "This database has no schema or database choice.";
+pub const SCHEMA_BUSY: &str = "End the execution and the transaction before the change.";
+pub const NO_DEFINITION: &str = "This connection has no definition to edit.";
+pub const NO_SELECTED_CONNECTION: &str = "Select a connection.";
+pub const DISCONNECTED: &str = "Disconnected.";
+pub const SESSION_IN_USE: &str = "A session is still in use. It closes at its end.";
+pub const NOT_CONNECTED: &str = "This connection has no open session.";
+pub const FORM_TESTING: &str = "Testing the connection.";
+pub const FORM_TEST_OK: &str = "The connection works.";
+pub const FORM_FILE_MISSING: &str = "The file does not exist. Save asks before it creates the file.";
+pub const FORM_NAME_TAKEN: &str = "Another connection has this name.";
+pub const FORM_NEEDS_NAME: &str = "The connection needs a name.";
+pub const FORM_NEEDS_HOST: &str = "The connection needs a host.";
+pub const FORM_NEEDS_USER: &str = "The connection needs a user.";
+pub const FORM_NEEDS_FILE: &str = "SQLite needs a file.";
+pub const FORM_URI_KIND: &str = "The connection text is for another database type.";
+pub const FORM_POOL_ZERO: &str = "The pool limit must be 1 or more.";
+pub const FORM_CLIENT_PAIR: &str = "A client certificate needs its file and its key.";
+pub const FORM_TLS_FILES: &str = "TLS files need a connection with TLS.";
+pub const FORM_CONNECTED: &str = "This connection is connected. Disconnect it to change access, TLS, or the pool.";
+pub const MYSQL_CLIENT_KEY: &str = "MySQL needs an RSA client key in PKCS#1 form (BEGIN RSA PRIVATE KEY).";
+pub const FIELD_KIND: &str = "Type";
+pub const FIELD_NAME: &str = "Name";
+pub const FIELD_ENTRY: &str = "Entry";
+pub const FIELD_URI: &str = "URI";
+pub const FIELD_HOST: &str = "Host or socket";
+pub const FIELD_PORT: &str = "Port";
+pub const FIELD_DATABASE: &str = "Database";
+pub const FIELD_USER: &str = "User";
+pub const FIELD_PASSWORD: &str = "Password";
+pub const FIELD_TLS: &str = "TLS";
+pub const FIELD_CA: &str = "CA file";
+pub const FIELD_CLIENT_CERTIFICATE: &str = "Client certificate";
+pub const FIELD_CLIENT_KEY: &str = "Client key";
+pub const FIELD_FILE: &str = "File";
+pub const FIELD_FOREIGN_KEYS: &str = "foreign_keys";
+pub const FIELD_BUSY: &str = "Lock limit (seconds)";
+pub const FIELD_POOL: &str = "Pool limit";
+pub const FIELD_READ_ONLY: &str = "Read only";
+pub const FIELD_CONNECT: &str = "Connect limit (seconds)";
+pub const BUTTON_TEST: &str = "Test connection";
+pub const BUTTON_SAVE: &str = "Save";
+pub const BUTTON_SAVE_NAME: &str = "Save name";
+pub const BUTTON_DISCONNECT: &str = "Disconnect";
+pub const BUTTON_CANCEL: &str = "Cancel";
+pub const VALUE_POSTGRES: &str = "PostgreSQL";
+pub const VALUE_MYSQL: &str = "MySQL";
+pub const VALUE_SQLITE: &str = "SQLite";
+pub const VALUE_FIELDS: &str = "Fields";
+pub const VALUE_URI: &str = "URI";
+pub const VALUE_TLS_VERIFY: &str = "Verify the certificate";
+pub const VALUE_TLS_OFF: &str = "Off";
+pub const VALUE_DEFAULT: &str = "Default";
+pub const VALUE_ON: &str = "On";
+pub const VALUE_OFF: &str = "Off";
+pub const TITLE_NEW_CONNECTION: &str = "New connection";
+pub const TITLE_REMOVE_CONNECTION: &str = "Remove connection";
+pub const TITLE_SCHEMA: &str = "Schema";
+pub const TITLE_DATABASE: &str = "Database";
+pub const SCHEMA_DEFAULT: &str = "(default of the connection)";
+pub const SCHEMA_LOADING: &str = "Reading the catalog.";
+pub const CONTROL_RUN: &str = "Run";
+pub const CONTROL_SCRIPT: &str = "Script";
+pub const CONTROL_STOP: &str = "Stop";
+pub const CONTROL_COMMIT: &str = "Commit";
+pub const CONTROL_ROLLBACK: &str = "Rollback";
+pub const LABEL_SCHEMA: &str = "Schema";
+pub const LABEL_DATABASE: &str = "Database";
+pub const REGION_EDITOR: &str = "Editor";
+pub const REGION_NAVIGATOR: &str = "Navigator";
+pub const REGION_GRID: &str = "Results";
+pub const MODE_CONVENTIONAL: &str = "Conventional";
+pub const MODE_VIM: &str = "Vim";
 pub const DATABASE_LABEL: &str = "Database";
 pub const NO_DATABASE_LABEL: &str = "No database";
 pub const CURSOR_OUTSIDE: &str = "The cursor is outside a statement.";
@@ -74,26 +157,78 @@ pub const OPTION_KEEP_WAITING: &str = "Keep waiting";
 pub const OPTION_CLOSE_CONNECTION: &str = "Close the connection";
 pub const OPTION_CONTINUE: &str = "Run";
 pub const OPTION_RETRY: &str = "Try again";
+pub const OPTION_REMOVE: &str = "Remove";
 
-pub const KEYS_SCREEN: &str = "\
-F5 or Ctrl+Enter      Run the selection or the statement
-Shift+F5, Shift+Enter Run the script
-Ctrl+W e, Ctrl+W s    Run, run the script
-Ctrl+W x              Stop the script
-Ctrl+W m              Autocommit or manual
-Ctrl+W C, Ctrl+W R    Commit, rollback
-Ctrl+W j, Ctrl+W k    Results, editor
-Ctrl+W c              Close
+pub const EDITOR_KEYS: &str = "\
 Ctrl+Space            Suggestions
 Ctrl+F                Find and replace
 Ctrl+Z, Ctrl+Y        Undo, redo
-Enter in the grid     Open the value
-Ctrl+C in the grid    Copy as TSV
-Ctrl+F in the grid    Find in the loaded rows (Vim: /)
-< and > in the grid   Change the column width
-= in the grid         Use the automatic column width
-x in the grid         Close the result
-[ and ] in the grid   Previous and next result";
+Tab                   Accept the suggestion
+Esc                   Close the list";
+
+pub fn action_text(action: Action) -> &'static str {
+    match action {
+        Action::Run => "Run the selection or the statement",
+        Action::RunScript => "Run the script",
+        Action::Stop => "Stop the script",
+        Action::ToggleMode => "Autocommit or manual",
+        Action::Commit => "Commit",
+        Action::Rollback => "Rollback",
+        Action::Help => "Open this screen",
+        Action::CloseTab => "Close the tab",
+        Action::Quit => "Quit",
+        Action::NextTab => "Next tab",
+        Action::PreviousTab => "Previous tab",
+        Action::ToggleNavigator => "Hide or show the navigator",
+        Action::ChooseSchema => "Choose the schema or database",
+        Action::FocusLeft => "Go to the navigator",
+        Action::FocusRight => "Leave the navigator",
+        Action::FocusUp => "Go to the editor",
+        Action::FocusDown => "Go to the results",
+        Action::NavigatorUp => "Previous row",
+        Action::NavigatorDown => "Next row",
+        Action::NavigatorCollapse => "Close, or go to the parent",
+        Action::NavigatorExpand => "Open",
+        Action::NavigatorOpen => "Open a console, or open the row",
+        Action::NavigatorNewConsole => "New console",
+        Action::NavigatorRefresh => "Read the catalog again",
+        Action::NavigatorDisconnect => "Disconnect",
+        Action::NavigatorEdit => "Edit the connection",
+        Action::NavigatorDelete => "Remove the connection",
+        Action::NavigatorAdd => "Add a connection",
+        Action::GridUp => "Up",
+        Action::GridDown => "Down",
+        Action::GridLeft => "Left",
+        Action::GridRight => "Right",
+        Action::GridPageUp => "Previous page",
+        Action::GridPageDown => "Next page",
+        Action::GridFirstRow => "First row",
+        Action::GridLastRow => "Last row",
+        Action::GridFirstColumn => "First column",
+        Action::GridLastColumn => "Last column",
+        Action::GridSelectAll => "Select all",
+        Action::GridToggleSelection => "Start or end the selection",
+        Action::GridClearSelection => "Clear the selection",
+        Action::GridCopy => "Copy as TSV",
+        Action::GridOpenValue => "Open the value",
+        Action::GridFind => "Find in the loaded rows",
+        Action::GridNarrow => "Make the column narrow",
+        Action::GridWiden => "Make the column wide",
+        Action::GridAutoWidth => "Use the automatic column width",
+        Action::GridCloseResult => "Close the result",
+        Action::GridPreviousResult => "Previous result",
+        Action::GridNextResult => "Next result",
+    }
+}
+
+pub fn keys_title(mode: &str, region: &str) -> String {
+    format!(" {TITLE_KEYS} · {mode} · {region} ")
+}
+
+/// Writes one row of the help screen.
+pub fn keys_row(keys: &str, action: Action) -> String {
+    format!("{keys:<24}{}", action_text(action))
+}
 
 pub fn count(number: usize) -> String {
     let digits = number.to_string();
@@ -167,6 +302,30 @@ pub fn statement_timeout(index: usize) -> String {
 
 pub fn statement_unknown(index: usize) -> String {
     format!("Statement {}: the connection closed. The result is unknown.", index + 1)
+}
+
+pub fn console_name(number: usize) -> String {
+    format!("console-{number}")
+}
+
+pub fn form_needs_number(label: &str) -> String {
+    format!("{label} needs a number.")
+}
+
+pub fn edit_connection_title(name: &str) -> String {
+    format!("Edit connection: {name}")
+}
+
+pub fn remove_connection(name: &str) -> String {
+    format!("Remove the definition of {name}? Its open consoles stay, and they cannot run.")
+}
+
+pub fn connection_in_use(console: &str) -> String {
+    format!("{console} has an execution or a transaction. End it first.")
+}
+
+pub fn console_question(console: &str, question: &str) -> String {
+    format!("{console}: {question}")
 }
 
 pub fn create_database(path: &str) -> String {

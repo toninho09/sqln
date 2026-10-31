@@ -17,13 +17,15 @@ use ratatui::backend::TestBackend;
 use sqln::app::{App, Options};
 use sqln::catalog::{Columns, RelationKind, RelationRef};
 use sqln::clipboard::MemoryClipboard;
+use sqln::connection::{Definition, Source};
 use sqln::connector::target::parse_uri;
 use sqln::connector::{Connector, Session, TransactionCommand, TransactionState, network_connector};
 use sqln::editor::KeyboardMode;
 use sqln::exec::{
-    ConsoleId, ExecEvent, ExecutionEnd, Manager, ReadLimit, ResultSink, Settings, StatementKey,
-    StatementStatus,
+    ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, Manager, ReadLimit, ResultSink, RunOptions,
+    Settings, StatementKey, StatementStatus,
 };
+use sqln::form::Field;
 use sqln::grid::{Budget, Row, Value};
 use sqln::ui::theme::Theme;
 use tokio::sync::mpsc::Receiver;
@@ -105,6 +107,7 @@ struct Harness {
     manager: Manager,
     events: Receiver<ExecEvent>,
     budget: Arc<Budget>,
+    connection: ConnectionId,
     console: ConsoleId,
 }
 
@@ -143,9 +146,10 @@ impl Run {
 impl Harness {
     fn open(server: &Server, settings: Settings) -> Self {
         let budget = Arc::new(Budget::new(settings.budget_bytes));
-        let (mut manager, events) = Manager::new(connector(server), settings, budget.clone()).unwrap();
-        let console = manager.open_console();
-        Self { manager, events, budget, console }
+        let (mut manager, events) = Manager::new(budget.clone()).unwrap();
+        let connection = manager.add_connection(connector(server), settings);
+        let console = manager.open_console(connection).unwrap();
+        Self { manager, events, budget, connection, console }
     }
 
     fn next(&mut self) -> ExecEvent {
@@ -188,7 +192,7 @@ impl Harness {
 
     fn start(&mut self, statements: &[&str], manual: bool) -> u64 {
         let statements = statements.iter().map(|sql| (*sql).to_owned()).collect();
-        self.manager.run(self.console, statements, manual)
+        self.manager.run(self.console, statements, RunOptions { manual, schema: None })
     }
 
     fn run(&mut self, statements: &[&str]) -> Run {
@@ -496,7 +500,7 @@ fn a_transaction_by_sql_keeps_the_session_until_commit() {
         h.run_ok(&["DROP TABLE IF EXISTS t_tx", "CREATE TABLE t_tx (a int)"]);
         let first = h.run_ok(&["BEGIN", server.backend_id(), "INSERT INTO t_tx VALUES (1)"]);
         assert_eq!(first.transaction, Some(TransactionState::Open), "{:?}", server.kind);
-        assert_eq!(h.manager.pool().usage().0, 1);
+        assert_eq!(h.manager.usage(h.connection).0, 1);
         let second = h.run_ok(&[server.backend_id()]);
         assert_eq!(first.text(0, 0), second.text(0, 0), "{:?}", server.kind);
 
@@ -531,7 +535,7 @@ fn a_commit_by_sql_ends_the_transaction_in_the_script() {
         let mut h = Harness::open(&server, Settings::default());
         let run = h.run_ok(&["BEGIN", "COMMIT", "SELECT 1"]);
         assert_eq!(run.transaction, Some(TransactionState::None), "{:?}", server.kind);
-        assert_eq!(h.manager.pool().usage().0, 0);
+        assert_eq!(h.manager.usage(h.connection).0, 0);
     }
 }
 
@@ -722,7 +726,7 @@ fn the_mysql_state_follows_each_kind_of_statement() {
     let failed = h.run(&["SELECT * FROM nowhere"]);
     assert_eq!(failed.end, Some(ExecutionEnd::Failed));
     assert_eq!(failed.transaction, None, "the transaction stays open: {failed:?}");
-    assert_eq!(h.manager.pool().usage().0, 1);
+    assert_eq!(h.manager.usage(h.connection).0, 1);
     assert_eq!(h.control(TransactionCommand::Rollback), TransactionState::None);
     h.run_ok(&["DROP TABLE t_state"]);
 }
@@ -759,9 +763,9 @@ fn the_catalog_lists_relations_and_the_current_schema() {
             "CREATE TABLE t_catalog (id int, full_name text)",
             "CREATE VIEW v_catalog AS SELECT id FROM t_catalog",
         ]);
-        h.manager.load_catalog();
+        h.manager.load_catalog(h.connection);
         let catalog = loop {
-            if let ExecEvent::CatalogLoaded(catalog) = h.next() {
+            if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
                 break catalog.unwrap();
             }
         };
@@ -779,7 +783,7 @@ fn the_catalog_lists_relations_and_the_current_schema() {
         }));
 
         let relation = RelationRef { schema: current, relation: "t_catalog".into() };
-        h.manager.load_columns(relation);
+        h.manager.load_columns(h.connection, relation);
         let columns = loop {
             if let ExecEvent::ColumnsLoaded { columns, .. } = h.next() {
                 break columns.unwrap();
@@ -871,7 +875,7 @@ fn a_lost_transaction_becomes_unknown_and_frees_the_session() {
         let lost = h.run(&["SELECT 1"]);
         assert_eq!(lost.end, Some(ExecutionEnd::Failed), "{:?}: {lost:?}", server.kind);
         assert_eq!(lost.transaction, Some(TransactionState::Unknown), "{:?}", server.kind);
-        assert_eq!(h.manager.pool().usage().0, 0, "{:?}", server.kind);
+        assert_eq!(h.manager.usage(h.connection).0, 0, "{:?}", server.kind);
 
         // The application asks for a confirmation, and then the next run gets a session.
         let next = h.run_ok(&[server.backend_id()]);
@@ -893,7 +897,7 @@ fn a_statement_on_a_lost_connection_reports_an_error() {
         assert_eq!(run.end, Some(ExecutionEnd::Failed), "{:?}: {run:?}", server.kind);
         assert_eq!(run.statuses[1], StatementStatus::NotExecuted);
         assert_eq!(run.transaction, None, "no transaction was open: {:?}", server.kind);
-        assert_eq!(h.manager.pool().usage().0, 0, "{:?}", server.kind);
+        assert_eq!(h.manager.usage(h.connection).0, 0, "{:?}", server.kind);
         assert_eq!(h.run_ok(&["SELECT 5"]).text(0, 0), "5", "{:?}", server.kind);
     }
 }
@@ -1001,7 +1005,7 @@ fn a_transaction_commit_failure_on_a_lost_connection_is_reported() {
             }
         }
         assert_eq!(state, Some(TransactionState::Unknown), "{:?}", server.kind);
-        assert_eq!(h.manager.pool().usage().0, 0, "{:?}", server.kind);
+        assert_eq!(h.manager.usage(h.connection).0, 0, "{:?}", server.kind);
     }
 }
 
@@ -1035,10 +1039,11 @@ fn a_silent_server_ends_at_the_connection_time_limit() {
         let settings = Settings { connect_timeout: Duration::from_millis(300), ..Settings::default() };
         let budget = Arc::new(Budget::new(settings.budget_bytes));
         let connector = network_connector(parse_uri(&uri).unwrap());
-        let (mut manager, mut events) = Manager::new(connector, settings, budget).unwrap();
-        let console = manager.open_console();
+        let (mut manager, mut events) = Manager::new(budget).unwrap();
+        let connection = manager.add_connection(connector, settings);
+        let console = manager.open_console(connection).unwrap();
         let started = Instant::now();
-        manager.run(console, vec!["SELECT 1".to_owned()], false);
+        manager.run(console, vec!["SELECT 1".to_owned()], RunOptions::default());
         loop {
             if let Ok(ExecEvent::ExecutionFinished { end, message, .. }) = events.try_recv() {
                 assert_eq!(end, ExecutionEnd::Failed);
@@ -1194,12 +1199,72 @@ impl Screen {
         Self { app: App::new(options, clipboard, Theme::plain()) }
     }
 
+    /// Opens the server as a connection with a definition, as the form saves it.
+    fn with_definition(server: &Server) -> Self {
+        let target = parse_uri(&server.uri).unwrap();
+        let definition = Definition::new("real", Source::Network(target));
+        let options = Options { connections: vec![definition], ..Options::default() };
+        let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
+        Self { app: App::new(options, clipboard, Theme::plain()) }
+    }
+
     fn press(&mut self, event: KeyEvent) {
         self.app.on_event(Event::Key(event));
     }
 
+    fn code(&mut self, code: KeyCode) {
+        self.press(key(code));
+    }
+
+    fn type_text(&mut self, text: &str) {
+        for c in text.chars() {
+            self.code(KeyCode::Char(c));
+        }
+    }
+
+    fn focus_form(&mut self, field: Field) {
+        for _ in 0..32 {
+            if self.app.form().unwrap().focus == field {
+                return;
+            }
+            self.code(KeyCode::Tab);
+        }
+        panic!("{field:?} is not in the form");
+    }
+
+    fn choose_schema(&mut self, name: Option<&str>) {
+        self.prefix('d');
+        self.wait_for("default of the connection");
+        self.wait_until(|s| {
+            let catalog = s.app.connections()[0].catalog.as_ref();
+            catalog.is_some() && !s.screen().contains("Reading the catalog")
+        });
+        let catalog = self.app.connections()[0].catalog.as_ref().unwrap();
+        let index = catalog.schemas.iter().position(|schema| Some(schema.name.as_str()) == name);
+        for _ in 0..catalog.schemas.len() + 1 {
+            self.code(KeyCode::Up);
+        }
+        for _ in 0..index.map_or(0, |index| index + 1) {
+            self.code(KeyCode::Down);
+        }
+        self.code(KeyCode::Enter);
+    }
+
+    fn wait_until(&mut self, condition: impl Fn(&mut Self) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            self.app.drain_events();
+            if condition(self) {
+                return;
+            }
+            let screen = self.screen();
+            assert!(Instant::now() < deadline, "the condition did not happen:\n{screen}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
     fn text(&self) -> String {
-        self.app.console.editor.text()
+        self.app.console().editor.text()
     }
 
     fn replace_text(&mut self, sql: &str) {
@@ -1235,12 +1300,12 @@ impl Screen {
     }
 
     fn run_script(&mut self, sql: &str) {
-        self.app.console.focus = sqln::console::Focus::Editor;
+        self.app.console_mut().focus = sqln::console::Focus::Editor;
         self.replace_text(sql);
         self.press(KeyEvent::new(KeyCode::F(5), KeyModifiers::SHIFT));
         std::thread::sleep(Duration::from_millis(1));
         let deadline = Instant::now() + Duration::from_secs(20);
-        while self.app.console.is_busy() {
+        while self.app.console_mut().is_busy() {
             self.app.drain_events();
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
@@ -1270,7 +1335,7 @@ fn the_application_runs_a_script_and_completes_real_names() {
         s.wait_for("2 rows");
 
         s.replace_text("SELECT * FROM app_ord");
-        s.app.console.focus = sqln::console::Focus::Editor;
+        s.app.console_mut().focus = sqln::console::Focus::Editor;
         s.press(key(KeyCode::Char('e')));
         s.wait_for("tbl app_orders");
         s.press(key(KeyCode::Esc));
@@ -1310,4 +1375,283 @@ fn the_mysql_delimiter_creates_a_routine_from_the_editor() {
     s.wait_for("first_set");
     s.run_script("DROP PROCEDURE app_delimited;");
     s.app.shutdown();
+}
+
+fn create_namespace(server: &Server) -> &'static str {
+    match server.kind {
+        Kind::Postgres => "CREATE SCHEMA IF NOT EXISTS app_choice",
+        Kind::MySql => "CREATE DATABASE IF NOT EXISTS app_choice",
+    }
+}
+
+#[test]
+fn the_schema_choice_changes_where_a_name_resolves() {
+    for server in servers() {
+        let mut s = Screen::with_definition(&server);
+        s.run_script(&format!(
+            "{};\n\
+             DROP TABLE IF EXISTS app_choice.only_there;\n\
+             CREATE TABLE app_choice.only_there (a int);\n\
+             INSERT INTO app_choice.only_there VALUES (41);",
+            create_namespace(&server),
+        ));
+        s.wait_until(|s| s.app.connections()[0].catalog.is_some());
+        s.choose_schema(Some("app_choice"));
+        s.wait_for("[app_choice]");
+
+        let query = "SELECT a + 1 AS shown FROM only_there;";
+        s.run_script(query);
+        s.wait_for("42");
+
+        // A new physical connection receives the same choice.
+        s.prefix('h');
+        s.code(KeyCode::Char('D'));
+        s.wait_for("Disconnected.");
+        s.prefix('l');
+        s.run_script(query);
+        s.wait_for("42");
+
+        s.choose_schema(None);
+        s.run_script(query);
+        s.wait_for("only_there");
+        assert!(s.screen().contains('✗'), "{}", s.screen());
+        s.app.shutdown();
+    }
+}
+
+#[test]
+fn the_control_of_the_schema_uses_the_word_of_the_database() {
+    for server in servers() {
+        let mut s = Screen::with_definition(&server);
+        let word = match server.kind {
+            Kind::Postgres => "Schema: [-]",
+            Kind::MySql => "Database: [-]",
+        };
+        s.wait_for(word);
+    }
+}
+
+#[test]
+fn the_navigator_reads_a_real_catalog() {
+    for server in servers() {
+        let mut s = Screen::with_definition(&server);
+        s.run_script(&format!(
+            "{};\n\
+             DROP TABLE IF EXISTS app_choice.tree_table;\n\
+             CREATE TABLE app_choice.tree_table (first_column int);",
+            create_namespace(&server),
+        ));
+        s.prefix('h');
+        s.code(KeyCode::Right);
+        s.wait_until(|s| s.app.connections()[0].catalog.is_some());
+        let catalog = s.app.connections()[0].catalog.as_ref().unwrap();
+        let index = catalog.schemas.iter().position(|item| item.name == "app_choice").unwrap();
+        for _ in 0..=index {
+            s.code(KeyCode::Down);
+        }
+        s.code(KeyCode::Right);
+        s.wait_for("tree_table");
+        s.code(KeyCode::Down);
+        s.code(KeyCode::Right);
+        s.wait_for("first_column");
+        s.app.shutdown();
+    }
+}
+
+#[test]
+fn a_connected_definition_changes_only_its_name() {
+    for server in servers() {
+        let mut s = Screen::with_definition(&server);
+        s.run_script("SELECT 1;");
+        s.wait_for("real ●");
+        s.prefix('h');
+        s.code(KeyCode::Char('e'));
+        assert!(s.app.form().unwrap().name_only);
+        s.wait_for("This connection is connected.");
+        s.type_text("-renamed");
+        s.focus_form(Field::Save);
+        s.code(KeyCode::Enter);
+        assert!(s.app.form().is_none());
+        s.wait_for("real-renamed ●");
+        assert_eq!(s.app.connections()[0].definition.as_ref().unwrap().name, "real-renamed");
+        s.app.shutdown();
+    }
+}
+
+#[test]
+fn the_form_of_a_connected_definition_disconnects_and_changes_the_pool() {
+    for server in servers() {
+        let mut s = Screen::with_definition(&server);
+        s.run_script("SELECT 1;");
+        s.wait_for("real ●");
+        s.prefix('h');
+        s.code(KeyCode::Char('e'));
+        s.focus_form(Field::Disconnect);
+        s.code(KeyCode::Enter);
+        s.wait_until(|s| !s.app.form().unwrap().name_only);
+        s.focus_form(Field::Pool);
+        s.code(KeyCode::Backspace);
+        s.type_text("2");
+        s.focus_form(Field::Save);
+        s.code(KeyCode::Enter);
+        assert!(s.app.form().is_none(), "{}", s.screen());
+        s.prefix('l');
+        s.run_script("SELECT 7 AS seven;");
+        s.wait_for("seven");
+        s.wait_for("Pool 0/2");
+        s.app.shutdown();
+    }
+}
+
+#[test]
+fn the_disconnect_waits_for_a_transaction() {
+    for server in servers() {
+        let mut s = Screen::with_definition(&server);
+        s.run_script("BEGIN;");
+        s.wait_for("Transaction open");
+        s.prefix('h');
+        s.code(KeyCode::Char('D'));
+        s.wait_for("console-1 has an execution or a transaction");
+        s.wait_for("Transaction open");
+        s.prefix('l');
+        s.prefix('R');
+        s.wait_for("No transaction");
+        s.app.shutdown();
+    }
+}
+
+#[test]
+fn two_consoles_keep_separate_transactions() {
+    for server in servers() {
+        let mut s = Screen::with_definition(&server);
+        s.run_script(
+            "DROP TABLE IF EXISTS app_two;\n\
+             CREATE TABLE app_two (a int);",
+        );
+        s.run_script("BEGIN;\nINSERT INTO app_two VALUES (1);");
+        s.wait_for("Transaction open");
+        s.prefix('h');
+        s.code(KeyCode::Char('n'));
+        assert_eq!(s.app.consoles().len(), 2);
+        s.run_script("SELECT count(*) AS other_view FROM app_two;");
+        s.wait_for("other_view");
+        s.wait_for("No transaction");
+        s.prefix('p');
+        s.wait_for("Transaction open");
+        s.prefix('C');
+        s.wait_for("No transaction");
+        s.run_script("DROP TABLE app_two;");
+        s.app.shutdown();
+    }
+}
+
+#[test]
+fn the_exit_commits_the_answer_of_each_console_on_its_own_session() {
+    for server in servers() {
+        let mut s = Screen::with_definition(&server);
+        s.run_script(
+            "DROP TABLE IF EXISTS app_exit;\n\
+             CREATE TABLE app_exit (a int);",
+        );
+        s.run_script("BEGIN;\nINSERT INTO app_exit VALUES (1);");
+        s.prefix('h');
+        s.code(KeyCode::Char('n'));
+        s.run_script("BEGIN;\nINSERT INTO app_exit VALUES (2);");
+        s.wait_for("Transaction open");
+        s.prefix('q');
+        s.wait_for("console-1: This console has an open transaction");
+        s.code(KeyCode::Tab);
+        s.code(KeyCode::Tab);
+        s.code(KeyCode::Enter);
+        s.wait_for("console-2: This console has an open transaction");
+        s.code(KeyCode::Tab);
+        s.code(KeyCode::Enter);
+        s.wait_until(|s| s.app.should_quit());
+        s.app.shutdown();
+
+        let mut h = Harness::open(&server, Settings::default());
+        assert_eq!(h.count("app_exit"), "1", "commit in the first console, rollback in the second");
+        h.run_ok(&["DROP TABLE app_exit"]);
+    }
+}
+
+#[test]
+fn the_form_tests_a_real_server_and_a_wrong_password_stays_hidden() {
+    for server in servers() {
+        let mut s = Screen::open(&server);
+        s.prefix('h');
+        s.code(KeyCode::Char('a'));
+        if server.kind == Kind::MySql {
+            s.code(KeyCode::Right);
+        }
+        s.code(KeyCode::Tab);
+        s.type_text("tested");
+        s.focus_form(Field::Entry);
+        s.code(KeyCode::Right);
+        s.focus_form(Field::Uri);
+        s.app.on_event(Event::Paste(server.uri.clone()));
+        s.focus_form(Field::Test);
+        s.code(KeyCode::Enter);
+        s.wait_for("The connection works.");
+
+        s.focus_form(Field::Uri);
+        for _ in 0..server.uri.chars().count() {
+            s.code(KeyCode::Backspace);
+        }
+        let wrong = server.uri.replace(":spike@", ":hunter2-secret@");
+        s.app.on_event(Event::Paste(wrong));
+        s.focus_form(Field::Test);
+        s.code(KeyCode::Enter);
+        s.wait_until(|s| s.app.form().unwrap().test.is_none());
+        let screen = s.screen();
+        assert!(!screen.contains("hunter2-secret"), "{screen}");
+        assert!(!screen.contains("The connection works."), "{screen}");
+        s.app.shutdown();
+    }
+}
+
+#[test]
+fn a_client_key_in_another_form_gets_a_clear_message() {
+    let path = std::env::temp_dir().join(format!("sqln-key-{}.pem", std::process::id()));
+    std::fs::write(&path, "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n").unwrap();
+    let uri = format!(
+        "mysql://reader@127.0.0.1:1/app?sslmode=verify-full&sslcert={0}&sslkey={0}",
+        path.display(),
+    );
+    let connector = network_connector(parse_uri(&uri).unwrap());
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let error = runtime.block_on(connector.connect()).err().unwrap();
+    assert!(error.0.contains("PKCS#1"), "{error:?}");
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn a_change_of_schema_by_sql_ends_with_its_execution() {
+    for server in servers() {
+        let settings = Settings { max_connections: 1, ..Settings::default() };
+        let mut h = Harness::open(&server, settings);
+        h.run_ok(&[create_namespace(&server)]);
+        let (change, read, expected) = match server.kind {
+            Kind::Postgres => ("SET search_path TO app_choice", "SHOW search_path", "\"$user\", public"),
+            Kind::MySql => ("USE app_choice", "SELECT DATABASE()", "spike"),
+        };
+        let run = h.run(&[change, read]);
+        assert_eq!(run.text(0, 0), "app_choice");
+        let backend = h.run(&[server.backend_id()]).text(0, 0);
+        assert_eq!(h.run(&[read]).text(0, 0), expected, "{:?}", server.kind);
+        assert_eq!(h.run(&[server.backend_id()]).text(0, 0), backend, "the same session stays in use");
+    }
+}
+
+#[test]
+fn a_mysql_session_without_a_database_closes_after_a_use() {
+    let Some(server) = only(Kind::MySql) else { return };
+    let uri = server.uri.replace("/spike", "");
+    let definition = Server { kind: Kind::MySql, uri };
+    let settings = Settings { max_connections: 1, ..Settings::default() };
+    let mut h = Harness::open(&definition, settings);
+    let first = h.run(&["USE spike", server.backend_id()]).text(0, 0);
+    let run = h.run(&["SELECT DATABASE()", server.backend_id()]);
+    assert!(matches!(run.rows[0][0], Value::Null), "{run:?}");
+    assert_ne!(run.text(1, 0), first, "MySQL cannot leave a database, so the session closes");
 }

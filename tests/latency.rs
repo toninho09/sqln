@@ -75,13 +75,13 @@ fn a_key_stays_under_the_target_with_the_full_budget_loaded() {
         terminal.draw(|frame| app.draw(frame)).unwrap();
         worst_frame = worst_frame.max(frame.elapsed());
         frames += 1;
-        if !app.console.is_busy() {
+        if !app.console_mut().is_busy() {
             break;
         }
         assert!(started.elapsed() < Duration::from_secs(120));
     }
-    let rows = app.console.results[0].table.rows.len();
-    let bytes = app.console.results[0].table.bytes;
+    let rows = app.console_mut().results[0].table.rows.len();
+    let bytes = app.console_mut().results[0].table.bytes;
     println!(
         "loaded {rows} rows, {} MiB, in {:?}; worst frame during the load {worst_frame:?} of {frames}",
         bytes / (1024 * 1024),
@@ -130,4 +130,49 @@ fn a_key_stays_under_the_target_with_the_full_budget_loaded() {
         started_search.elapsed(),
     );
     assert!(worst_search < Duration::from_millis(50), "{worst_search:?}");
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn a_key_in_a_large_navigator_stays_under_the_target() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use crossterm::event::{Event, KeyEvent, KeyModifiers};
+    use sqln::app::{App, Options};
+    use sqln::clipboard::MemoryClipboard;
+
+    let path = common::temp_db("latency-tree");
+    let mut setup = String::from("BEGIN;");
+    for index in 0..20_000 {
+        setup.push_str(&format!("CREATE TABLE table_{index}(a, b, c);"));
+    }
+    setup.push_str("COMMIT;");
+    rusqlite::Connection::open(&path).unwrap().execute_batch(&setup).unwrap();
+    let options = Options { database: Some(path), ..Options::default() };
+    let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
+    let mut app = App::new(options, clipboard, Theme::ansi());
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let press = |app: &mut App, code| app.on_event(Event::Key(key(code)));
+
+    app.on_event(Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)));
+    press(&mut app, KeyCode::Char('h'));
+    press(&mut app, KeyCode::Right);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while app.connections()[0].catalog.is_none() {
+        app.drain_events();
+        assert!(Instant::now() < deadline);
+    }
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Right);
+
+    let mut worst = Duration::ZERO;
+    for index in 0..200 {
+        let started = Instant::now();
+        press(&mut app, if index < 100 { KeyCode::Down } else { KeyCode::Up });
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        worst = worst.max(started.elapsed());
+    }
+    println!("20,000 tables: worst key plus frame {worst:?}");
+    assert!(worst < Duration::from_millis(50), "{worst:?}");
 }

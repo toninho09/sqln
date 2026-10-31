@@ -22,8 +22,8 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
-    Canceller, ConnectError, Connector, ExecError, ResetOutcome, Session, SessionContext,
-    StatementEnd, TransactionCommand, TransactionState, describe, tls,
+    Canceller, Capabilities, ConnectError, Connector, ExecError, Namespace, ResetOutcome, Session,
+    SessionContext, StatementEnd, TransactionCommand, TransactionState, describe, tls,
 };
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
 use crate::exec::{Flow, ResultSink};
@@ -114,6 +114,10 @@ fn connect_error(error: &tokio_postgres::Error) -> ConnectError {
 impl Connector for PostgresConnector {
     fn dialect(&self) -> Dialect {
         Dialect::Postgres
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities { namespace: Namespace::Schema, transactions: true }
     }
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {

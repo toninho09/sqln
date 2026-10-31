@@ -172,6 +172,12 @@ impl SqlEditor {
         self.dialect
     }
 
+    /// Changes the SQL rules of the text. The next frame reads the text again.
+    pub fn set_dialect(&mut self, dialect: Dialect) {
+        self.dialect = dialect;
+        self.snapshot = None;
+    }
+
     pub fn keyboard(&self) -> KeyboardMode {
         self.keyboard
     }

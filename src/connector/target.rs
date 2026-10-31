@@ -32,7 +32,7 @@ pub enum Engine {
 }
 
 impl Engine {
-    fn default_port(self) -> u16 {
+    pub fn default_port(self) -> u16 {
         match self {
             Engine::Postgres => 5432,
             Engine::MySql => 3306,
@@ -197,6 +197,27 @@ fn split_port(place: &str) -> Result<(&str, Option<u16>), String> {
         .map(|port| port.parse().map_err(|_| "The port is not valid.".to_owned()))
         .transpose()?;
     Ok((host, port))
+}
+
+/// Replaces each character of the password of a connection text, so that a screen can
+/// show the text. The cursor of a field stays valid, because the length does not change.
+pub fn hide_uri_password(uri: &str, mask: char) -> String {
+    let Some((scheme, rest)) = uri.split_once("://") else { return uri.to_owned() };
+    let authority_end = rest.find(['/', '?']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(authority_end);
+    let Some((credentials, place)) = authority.rsplit_once('@') else {
+        return match authority.split_once(':') {
+            // The user can be in the middle of the password, before the `@`.
+            Some((user, typed)) if !typed.is_empty() && !tail.starts_with('/') => {
+                let hidden: String = typed.chars().map(|_| mask).collect();
+                format!("{scheme}://{user}:{hidden}{tail}")
+            }
+            _ => uri.to_owned(),
+        };
+    };
+    let Some((user, password)) = credentials.split_once(':') else { return uri.to_owned() };
+    let hidden: String = password.chars().map(|_| mask).collect();
+    format!("{scheme}://{user}:{hidden}@{place}{tail}")
 }
 
 /// Reads `postgres://user:password@host:port/database?sslmode=verify-full`.

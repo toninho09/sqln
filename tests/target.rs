@@ -153,3 +153,18 @@ fn the_label_names_the_place() {
     assert_eq!(parse_uri("mysql://u@h").unwrap().label(), "h:3306");
     assert_eq!(parse_uri("mysql://u@/d?socket=/s").unwrap().label(), "/s/d");
 }
+
+#[test]
+fn a_hidden_connection_text_keeps_its_length_and_its_other_parts() {
+    use sqln::connector::target::hide_uri_password;
+    let hide = |uri: &str| hide_uri_password(uri, '*');
+    assert_eq!(hide("postgres://u:pass@host/db"), "postgres://u:****@host/db");
+    assert_eq!(hide("postgres://u:p@ss@host/db"), "postgres://u:****@host/db");
+    assert_eq!(hide("postgres://u@host/db"), "postgres://u@host/db");
+    assert_eq!(hide("postgres://host:5432/db"), "postgres://host:5432/db");
+    assert_eq!(hide("postgres://u:pa"), "postgres://u:**");
+    assert_eq!(hide("not a uri"), "not a uri");
+    let uri = "mysql://ação:日本語@host/db?sslmode=disable";
+    assert_eq!(hide(uri).chars().count(), uri.chars().count());
+    assert!(!hide(uri).contains("日本語"));
+}

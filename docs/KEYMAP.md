@@ -13,9 +13,10 @@ O plano continua sendo a referência das regras funcionais.
 3. Não depender somente de `Ctrl`+setas, `Home`, `End`, `PageUp` ou `PageDown`.
 4. Manter as mesmas ações de execução nos modos convencional e Vim.
 
-`Ctrl+W h`, `l`, `n`, `p`, `b` e `d` ainda não têm ação, pois dependem do navegador e das abas.
-Estas partes também ainda não existem: navegador, barra de filtro, teclas da visão de tabela, `Ctrl+S` e mapa de teclas configurável.
-No mouse, ainda faltam o clique no cabeçalho da tabela, o duplo clique em uma tabela e o arrasto em um divisor.
+Estas partes ainda não existem: barra de filtro, teclas da visão de tabela e `Ctrl+S`.
+O módulo `input` aplica o campo `keymap`, e a leitura de `config.json` chega com a etapa de configuração.
+A barra de dicas mostra sempre as teclas padrão.
+No mouse, ainda faltam o clique no cabeçalho da tabela e o duplo clique em uma tabela.
 `Shift+F5` e `Ctrl+Enter` foram testados com sequências simuladas em um PTY, não no iTerm.
 As letras depois de `Ctrl+W` e `F1` também não foram testadas no iTerm.
 Terminal.app e terminais do Linux também não foram testados.
@@ -57,6 +58,7 @@ A barra de dicas mostra as opções enquanto o prefixo estiver ativo.
 | `h`, `j`, `k`, `l` ou setas | Mudar de painel |
 | `n` e `p` | Próxima aba e aba anterior |
 | `c` | Fechar a aba |
+| `q` | Sair da aplicação |
 | `b` | Recolher ou mostrar o navegador |
 | `e` | Executar |
 | `s` | Script inteiro |
@@ -80,7 +82,7 @@ O prefixo é o caminho comum aos dois modos, e o terminal entrega essa tecla.
 | Script inteiro | `Shift+Enter` | `Shift+F5` ou `Ctrl+W s` |
 | Parar script | `Ctrl+W x` | Botão **Parar script** |
 | Ajuda | `F1` | `Ctrl+W ?` |
-| Sair | Fechar a última aba | Comando de saída pela interface |
+| Sair | `Ctrl+W q` | Fechar a última aba |
 
 `Ctrl+Enter` e `Shift+Enter` exigem aprimoramento de teclado no terminal.
 Ao iniciar, a aplicação detecta esse recurso e mostra na barra de dicas o caminho disponível.
@@ -135,8 +137,28 @@ No macOS, o terminal trata `Cmd+C` e `Cmd+V`.
 | Novo console | `n` | `n` |
 | Atualizar catálogo | `r` | `r` |
 | Desconectar | `D` | `D` |
+| Adicionar conexão | `a` | `a` |
 | Editar conexão | `e` | `e` |
 | Excluir, com confirmação | `Delete` | `x` |
+
+`Enter` em uma conexão seleciona o primeiro console aberto dela ou cria um console.
+`n` sempre cria outro console.
+Em um schema, uma tabela ou uma view, `Enter` abre ou fecha a linha.
+A visão de tabela vai mudar o `Enter` nas tabelas.
+
+## Formulário de conexão
+
+| Ação | Tecla |
+|---|---|
+| Próximo campo | `Tab`, `Down` ou `Enter` em um campo |
+| Campo anterior | `Shift+Tab` ou `Up` |
+| Mudar uma opção | `Left` e `Right`; no modo Vim, também `h` e `l` |
+| Marcar **Somente leitura** | `Space`, `Left` ou `Right` |
+| Acionar um botão | `Enter` |
+| Cancelar | `Esc` |
+
+Em um campo de texto, toda letra vira texto.
+No modo Vim, `j` e `k` mudam de campo somente fora dos campos de texto.
 
 ## Grade
 
@@ -210,6 +232,8 @@ O foco inicial fica sempre na opção sem efeito no banco ou no disco.
 | Arrasto na borda de um cabeçalho | Ajustar a largura da coluna |
 | Arrasto na grade | Selecionar células |
 
+Um clique também responde a um diálogo e aciona os botões da barra do console.
+A linha das abas de resultado serve de divisor entre o editor e os resultados.
 O teste `keytest` não registrou um arrasto.
 Com captura de mouse ativa, a seleção nativa do terminal exige `Option` no iTerm.
 
@@ -227,12 +251,15 @@ O campo `keymap` de `config.json` associa uma ação a uma lista de teclas, por 
 ```json
 {
   "keymap": {
-    "conventional": { "run": ["ctrl+enter", "f5"], "stop": [] },
+    "conventional": { "run": ["ctrl+enter", "f5", "ctrl+w e"], "stop": [] },
     "vim": { "run": ["ctrl+enter", "f5"] }
   }
 }
 ```
 
-Uma lista vazia remove o atalho da ação.
+Uma lista substitui as teclas padrão da ação, e uma lista vazia remove o atalho.
+Uma tecla pode ter duas partes separadas por espaço, como `ctrl+w e` e `g g`.
 Duas ações com a mesma tecla, na mesma região, invalidam a configuração.
+Uma tecla e uma sequência que começa com ela também invalidam a configuração.
+Um nome de ação ou de tecla desconhecido também invalida a configuração.
 Nesse caso, valem as regras de configuração inválida do plano.

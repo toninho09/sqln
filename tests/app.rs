@@ -85,7 +85,7 @@ impl Fixture {
     }
 
     fn idle(&mut self) {
-        self.pump_until(|f| !f.app.console.is_busy());
+        self.pump_until(|f| !f.app.console_mut().is_busy());
         self.app.drain_events();
     }
 
@@ -97,7 +97,7 @@ impl Fixture {
     }
 
     fn select_all_and_write(&mut self, sql: &str) {
-        self.app.console.focus = Focus::Editor;
+        self.app.console_mut().focus = Focus::Editor;
         self.press(ctrl('a'));
         self.press(key(KeyCode::Delete));
         self.write(sql);
@@ -182,7 +182,7 @@ fn a_long_file_name_leaves_the_state_visible() {
     let name = "a-very-long-database-file-name-that-does-not-fit-on-the-top-row-of-the-screen-at-all";
     let mut f = Fixture::new(name);
     let screen = f.screen();
-    let top = screen.lines().next().unwrap();
+    let top = screen.lines().nth(1).unwrap();
     assert!(top.contains('…'), "{top}");
     assert!(top.contains("Auto · No transaction · Idle"), "{top}");
     assert!(top.contains("Pool 0/5"), "{top}");
@@ -193,7 +193,7 @@ fn f5_runs_the_statement_at_the_cursor_and_the_grid_shows_it() {
     let mut f = Fixture::with("run", KeyboardMode::Conventional, Settings::default(),
         "CREATE TABLE users(id, name); INSERT INTO users VALUES (1, 'Ana'), (2, 'Bruno');");
     f.write("SELECT 1;\nSELECT id, name FROM users ORDER BY id;\nSELECT 3;");
-    f.app.console.editor.set_cursor(Index2::new(1, 4));
+    f.app.console_mut().editor.set_cursor(Index2::new(1, 4));
     f.press(key(KeyCode::F(5)));
     f.idle();
 
@@ -202,7 +202,7 @@ fn f5_runs_the_statement_at_the_cursor_and_the_grid_shows_it() {
     f.assert_sees("Ana");
     f.assert_sees("Bruno");
     f.assert_sees("2 rows");
-    assert_eq!(f.app.console.results.len(), 1, "only one statement ran");
+    assert_eq!(f.app.console_mut().results.len(), 1, "only one statement ran");
 }
 
 #[test]
@@ -211,10 +211,10 @@ fn ctrl_enter_runs_and_shift_enter_runs_the_script() {
     f.write("SELECT 1;\nSELECT 2;");
     f.press(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     f.idle();
-    assert_eq!(f.app.console.results.len(), 1);
+    assert_eq!(f.app.console_mut().results.len(), 1);
     f.press(shift(KeyCode::Enter));
     f.idle();
-    assert_eq!(f.app.console.results.len(), 2);
+    assert_eq!(f.app.console_mut().results.len(), 2);
 }
 
 #[test]
@@ -223,38 +223,38 @@ fn the_prefix_runs_too() {
     f.write("SELECT 1;\nSELECT 2;");
     f.prefix('e');
     f.idle();
-    assert_eq!(f.app.console.results.len(), 1);
+    assert_eq!(f.app.console_mut().results.len(), 1);
     f.prefix('s');
     f.idle();
-    assert_eq!(f.app.console.results.len(), 2);
+    assert_eq!(f.app.console_mut().results.len(), 2);
 }
 
 #[test]
 fn a_selection_has_priority_over_the_statement() {
     let mut f = Fixture::new("run-selection");
     f.write("SELECT 1, 2;");
-    f.app.console.editor.set_cursor(Index2::new(0, 0));
+    f.app.console_mut().editor.set_cursor(Index2::new(0, 0));
     for _ in 0..8 {
         f.press(shift(KeyCode::Right));
     }
     f.press(key(KeyCode::F(5)));
     f.idle();
-    assert_eq!(f.app.console.results[0].table.columns, ["1"]);
+    assert_eq!(f.app.console_mut().results[0].table.columns, ["1"]);
 }
 
 #[test]
 fn a_cursor_outside_a_statement_runs_nothing_and_keeps_the_results() {
     let mut f = Fixture::new("outside");
     f.write("SELECT 1;\n\nSELECT 2;");
-    f.app.console.editor.set_cursor(Index2::new(0, 3));
+    f.app.console_mut().editor.set_cursor(Index2::new(0, 3));
     f.press(key(KeyCode::F(5)));
     f.idle();
-    assert_eq!(f.app.console.results.len(), 1);
+    assert_eq!(f.app.console_mut().results.len(), 1);
 
-    f.app.console.editor.set_cursor(Index2::new(1, 0));
+    f.app.console_mut().editor.set_cursor(Index2::new(1, 0));
     f.press(key(KeyCode::F(5)));
     f.assert_sees("outside a statement");
-    assert_eq!(f.app.console.results.len(), 1, "the refusal keeps the results");
+    assert_eq!(f.app.console_mut().results.len(), 1, "the refusal keeps the results");
 }
 
 #[test]
@@ -274,14 +274,14 @@ fn the_margin_shows_each_statement_state_and_the_error_message() {
     assert!(screen.contains("2✗SELECT * FROM missing;"), "{screen}");
     assert!(screen.contains("3—SELECT 3;"), "{screen}");
     f.assert_sees("Statement 2: no such table: missing");
-    assert!(f.app.console.showing_messages());
+    assert!(f.app.console_mut().showing_messages());
 }
 
 #[test]
 fn an_edit_removes_the_mark_of_that_statement_only() {
     let mut f = Fixture::new("mark-edit");
     f.run_script("SELECT 1;\nSELECT 2;");
-    f.app.console.editor.set_cursor(Index2::new(1, 7));
+    f.app.console_mut().editor.set_cursor(Index2::new(1, 7));
     f.type_text("9");
     let screen = f.screen();
     assert!(screen.contains("1✓SELECT 1;"), "{screen}");
@@ -293,7 +293,7 @@ fn an_edit_removes_the_mark_of_that_statement_only() {
 fn a_new_row_above_moves_the_mark_with_its_statement() {
     let mut f = Fixture::new("mark-move");
     f.run_script("SELECT 1;");
-    f.app.console.editor.set_cursor(Index2::new(0, 0));
+    f.app.console_mut().editor.set_cursor(Index2::new(0, 0));
     f.press(key(KeyCode::Enter));
     let screen = f.screen();
     assert!(screen.contains("2✓SELECT 1;"), "{screen}");
@@ -304,11 +304,11 @@ fn a_new_execution_clears_results_and_frees_the_budget() {
     let settings = Settings::default();
     let mut f = Fixture::with("clear", KeyboardMode::Conventional, settings, "");
     f.run_script("SELECT 'a'; SELECT 'b'; SELECT 'c';");
-    assert_eq!(f.app.console.results.len(), 3);
+    assert_eq!(f.app.console_mut().results.len(), 3);
     f.run_script("SELECT 'a';");
-    assert_eq!(f.app.console.results.len(), 1);
+    assert_eq!(f.app.console_mut().results.len(), 1);
     f.run_script("CREATE TABLE t(a);");
-    assert!(f.app.console.results.is_empty());
+    assert!(f.app.console_mut().results.is_empty());
     f.assert_sees("Data 0/256 MiB");
 }
 
@@ -326,7 +326,7 @@ fn the_row_cap_shows_its_message() {
     let mut f = Fixture::with("cap", KeyboardMode::Conventional, settings, "");
     f.run_script("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 100) SELECT x FROM c;");
     f.assert_sees("5 rows read. Row cap reached. The result can have more rows.");
-    assert!(f.screen().contains("1⋯WITH"), "{}", f.screen());
+    assert!(f.screen().contains("1⋯"), "{}", f.screen());
 }
 
 #[test]
@@ -357,7 +357,7 @@ fn the_editor_accepts_text_during_an_execution() {
     f.pump_until(|f| f.sees("Running"));
     f.press(ctrl('a'));
     f.type_text("x");
-    assert_eq!(f.app.console.editor.text(), "x");
+    assert_eq!(f.app.console_mut().editor.text(), "x");
     f.prefix('x');
     f.idle();
 }
@@ -397,7 +397,7 @@ fn grid_keys_move_select_and_copy_tsv() {
     let mut f = Fixture::new("grid");
     f.run_script("SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2, NULL UNION ALL SELECT 3, 'tab\there';");
     f.prefix('j');
-    assert_eq!(f.app.console.focus, Focus::Results);
+    assert_eq!(f.app.console_mut().focus, Focus::Results);
 
     f.press(key(KeyCode::Down));
     f.press(ctrl('c'));
@@ -421,11 +421,11 @@ fn alt_arrows_reach_the_limits_of_the_grid() {
     f.prefix('j');
     f.press(common::alt(KeyCode::Down));
     f.press(common::alt(KeyCode::Right));
-    let view = f.app.console.results[0].view;
+    let view = f.app.console_mut().results[0].view;
     assert_eq!((view.row, view.col), (1, 1));
     f.press(common::alt(KeyCode::Up));
     f.press(common::alt(KeyCode::Left));
-    let view = f.app.console.results[0].view;
+    let view = f.app.console_mut().results[0].view;
     assert_eq!((view.row, view.col), (0, 0));
 }
 
@@ -437,10 +437,10 @@ fn vim_keys_work_in_the_grid() {
     f.idle();
     f.prefix('j');
     f.type_text("Gl");
-    let view = f.app.console.results[0].view;
+    let view = f.app.console_mut().results[0].view;
     assert_eq!((view.row, view.col), (2, 1));
     f.type_text("gg0");
-    let view = f.app.console.results[0].view;
+    let view = f.app.console_mut().results[0].view;
     assert_eq!((view.row, view.col), (0, 0));
     f.type_text("vjy");
     assert_eq!(f.clipboard.borrow().text, "1\n3\n");
@@ -455,7 +455,7 @@ fn brackets_switch_between_results_and_messages() {
     f.press(key(KeyCode::Char('[')));
     f.assert_sees("one");
     f.press(key(KeyCode::Char('[')));
-    assert!(f.app.console.showing_messages());
+    assert!(f.app.console_mut().showing_messages());
     f.press(key(KeyCode::Char(']')));
     f.assert_sees("one");
 }
@@ -506,6 +506,7 @@ fn database_errors_cannot_send_terminal_sequences() {
 #[test]
 fn a_click_selects_a_cell_and_a_tab() {
     let mut f = Fixture::new("mouse-grid");
+    f.prefix('b');
     f.run_script("SELECT 1 AS a, 2 AS b UNION ALL SELECT 3, 4; SELECT 9 AS c;");
     f.buffer();
     let press = |column, row, kind| {
@@ -520,18 +521,19 @@ fn a_click_selects_a_cell_and_a_tab() {
     });
     let tabs_row = tabs_row.expect("the tab row is on the screen");
     f.app.on_event(press(1, tabs_row, left));
-    assert_eq!(f.app.console.active, 0);
+    assert_eq!(f.app.console_mut().active, 0);
 
     f.buffer();
     f.app.on_event(press(6, tabs_row + 3, left));
-    assert_eq!(f.app.console.focus, Focus::Results);
-    let view = f.app.console.results[0].view;
+    assert_eq!(f.app.console_mut().focus, Focus::Results);
+    let view = f.app.console_mut().results[0].view;
     assert_eq!((view.row, view.col), (1, 1));
 }
 
 #[test]
 fn the_wheel_moves_the_grid() {
     let mut f = Fixture::new("mouse-wheel");
+    f.prefix('b');
     f.run_script("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 50) SELECT x FROM c;");
     f.buffer();
     let results_row = 25;
@@ -542,7 +544,7 @@ fn the_wheel_moves_the_grid() {
         modifiers: KeyModifiers::NONE,
     });
     f.app.on_event(wheel);
-    assert_eq!(f.app.console.results[0].view.row, 3);
+    assert_eq!(f.app.console_mut().results[0].view.row, 3);
 }
 
 #[test]
@@ -688,7 +690,7 @@ fn suggestions_use_the_real_catalog_and_load_columns_on_demand() {
     f.pump_until(|f| f.sees("tbl users"));
 
     f.press(key(KeyCode::Tab));
-    assert_eq!(f.app.console.editor.text(), "SELECT * FROM users");
+    assert_eq!(f.app.console_mut().editor.text(), "SELECT * FROM users");
 
     f.type_text(" u WHERE u.");
     f.pump_until(|f| f.sees("col full_name"));
@@ -746,12 +748,12 @@ fn ctrl_f_finds_text_in_the_loaded_rows_and_moves_the_cursor() {
     f.assert_sees("Enter next");
     f.type_text("BETA");
     f.pump_until(|f| f.sees("1 of 2"));
-    let result = &f.app.console.results[0];
+    let result = &f.app.console_mut().results[0];
     assert_eq!((result.view.row, result.view.col), (1, 0));
 
     f.press(key(KeyCode::Enter));
     f.assert_sees("2 of 2");
-    let result = &f.app.console.results[0];
+    let result = &f.app.console_mut().results[0];
     assert_eq!((result.view.row, result.view.col), (2, 1));
     f.press(key(KeyCode::Up));
     f.assert_sees("1 of 2");
@@ -770,7 +772,7 @@ fn the_grid_search_reports_a_miss_and_escape_closes_the_bar() {
     f.press(key(KeyCode::Backspace));
     assert!(!f.sees("no matches"));
     f.press(key(KeyCode::Esc));
-    assert!(!f.app.console.search_is_open());
+    assert!(!f.app.console_mut().search_is_open());
     f.assert_sees("3 rows");
 }
 
@@ -790,34 +792,34 @@ fn slash_opens_the_grid_search_in_vim() {
 fn the_grid_search_bar_takes_each_character_as_text() {
     let mut f = Fixture::new("grid-find-text");
     grid_of(&mut f, "SELECT 'a]x[', 'b'; SELECT 2;");
-    f.app.console.active = 0;
+    f.app.console_mut().active = 0;
     f.press(ctrl('f'));
     f.type_text("]x[");
     f.pump_until(|f| f.sees("1 of 1"));
-    assert_eq!(f.app.console.active, 0);
+    assert_eq!(f.app.console_mut().active, 0);
 }
 
 #[test]
 fn a_paste_enters_the_grid_search_bar_and_keeps_the_editor() {
     let mut f = Fixture::new("grid-find-paste");
     grid_of(&mut f, WORDS);
-    let before = f.app.console.editor.text();
+    let before = f.app.console_mut().editor.text();
     f.press(ctrl('f'));
     f.app.on_event(Event::Paste("gam".to_owned()));
     f.pump_until(|f| f.sees("1 of 1"));
-    assert_eq!(f.app.console.editor.text(), before);
-    assert_eq!(f.app.console.focus, Focus::Results);
+    assert_eq!(f.app.console_mut().editor.text(), before);
+    assert_eq!(f.app.console_mut().focus, Focus::Results);
 }
 
 #[test]
 fn x_closes_a_result_and_frees_its_budget() {
     let mut f = Fixture::new("grid-close");
     grid_of(&mut f, "SELECT 'first'; SELECT 'second'; SELECT 'third';");
-    f.app.console.active = 0;
-    let before = f.app.console.results[0].table.bytes;
+    f.app.console_mut().active = 0;
+    let before = f.app.console_mut().results[0].table.bytes;
     assert!(before > 0);
     f.press(key(KeyCode::Char('x')));
-    assert_eq!(f.app.console.results.len(), 2);
+    assert_eq!(f.app.console_mut().results.len(), 2);
     f.assert_sees("Result 2");
     assert!(!f.sees("Result 1"));
     f.assert_sees("'second'");
@@ -826,8 +828,8 @@ fn x_closes_a_result_and_frees_its_budget() {
     f.assert_sees("Result 3");
     f.assert_sees("'third'");
     f.press(key(KeyCode::Char('x')));
-    assert!(f.app.console.results.is_empty());
-    assert!(f.app.console.showing_messages());
+    assert!(f.app.console_mut().results.is_empty());
+    assert!(f.app.console_mut().showing_messages());
     f.press(key(KeyCode::Char('x')));
     f.assert_sees("Messages");
     assert!(!f.app.should_quit());
@@ -837,7 +839,7 @@ fn x_closes_a_result_and_frees_its_budget() {
 fn a_new_execution_starts_the_result_numbers_again() {
     let mut f = Fixture::new("grid-numbers");
     grid_of(&mut f, "SELECT 1; SELECT 2;");
-    f.app.console.active = 0;
+    f.app.console_mut().active = 0;
     f.press(key(KeyCode::Char('x')));
     f.run_script("SELECT 3;");
     f.assert_sees("Result 1");
@@ -849,37 +851,38 @@ fn a_result_that_receives_rows_stays_open() {
     let mut f = Fixture::with("grid-close-reading", KeyboardMode::Conventional, settings, "");
     f.write("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 1000000000) SELECT x FROM c;");
     f.press(key(KeyCode::F(5)));
-    f.pump_until(|f| f.app.console.results.first().is_some_and(|r| !r.table.rows.is_empty()));
+    f.pump_until(|f| f.app.console_mut().results.first().is_some_and(|r| !r.table.rows.is_empty()));
     f.prefix('j');
     f.press(key(KeyCode::Char('x')));
-    assert_eq!(f.app.console.results.len(), 1);
+    assert_eq!(f.app.console_mut().results.len(), 1);
     f.assert_sees("Ctrl+W x stops the script");
     f.prefix('x');
     f.idle();
-    f.app.console.active = 0;
+    f.app.console_mut().active = 0;
     f.press(key(KeyCode::Char('x')));
-    assert!(f.app.console.results.is_empty());
+    assert!(f.app.console_mut().results.is_empty());
 }
 
 #[test]
 fn angle_keys_change_the_width_and_equals_resets_it() {
     let mut f = Fixture::new("grid-width");
     grid_of(&mut f, "SELECT 'a value' AS one, 'b' AS two;");
-    assert_eq!(f.app.console.results[0].table.width(0), 7);
+    assert_eq!(f.app.console_mut().results[0].table.width(0), 7);
     f.press(key(KeyCode::Char('<')));
     f.press(key(KeyCode::Char('<')));
-    assert_eq!(f.app.console.results[0].table.width(0), 5);
+    assert_eq!(f.app.console_mut().results[0].table.width(0), 5);
     f.assert_sees("a val b");
     f.press(key(KeyCode::Char('>')));
-    assert_eq!(f.app.console.results[0].table.width(0), 6);
+    assert_eq!(f.app.console_mut().results[0].table.width(0), 6);
     f.press(key(KeyCode::Char('=')));
-    assert_eq!(f.app.console.results[0].table.width(0), 7);
+    assert_eq!(f.app.console_mut().results[0].table.width(0), 7);
     f.assert_sees("a value b");
 }
 
 #[test]
 fn a_drag_on_the_edge_of_a_header_changes_the_width() {
     let mut f = Fixture::new("grid-drag");
+    f.prefix('b');
     grid_of(&mut f, "SELECT 'a value' AS one, 'b' AS two;");
     f.screen();
     let buffer = f.buffer();
@@ -889,11 +892,11 @@ fn a_drag_on_the_edge_of_a_header_changes_the_width() {
     f.app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), 7, header));
     f.app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), 12, header));
     f.app.on_event(mouse(MouseEventKind::Up(MouseButton::Left), 12, header));
-    assert_eq!(f.app.console.results[0].table.width(0), 12);
-    assert_eq!(f.app.console.results[0].view.anchor, None);
+    assert_eq!(f.app.console_mut().results[0].table.width(0), 12);
+    assert_eq!(f.app.console_mut().results[0].view.anchor, None);
     f.screen();
     f.app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), 20, header));
-    assert_eq!(f.app.console.results[0].table.width(0), 12);
+    assert_eq!(f.app.console_mut().results[0].table.width(0), 12);
 }
 
 #[test]
@@ -901,7 +904,7 @@ fn a_frame_with_a_large_value_stays_fast() {
     let mut f = Fixture::new("grid-large");
     f.run_script("SELECT replace(hex(zeroblob(20000000)), '0', 'x') AS big;");
     f.prefix('j');
-    assert!(f.app.console.results[0].table.bytes >= 40_000_000);
+    assert!(f.app.console_mut().results[0].table.bytes >= 40_000_000);
     let started = Instant::now();
     for _ in 0..10 {
         f.screen();
@@ -938,7 +941,7 @@ fn an_edit_removes_the_mark_of_a_database_error() {
     let mut f = Fixture::new("error-spot-edit");
     f.run_script("SELECT * FROMM t;");
     assert!(underlined(&mut f, "FROMM"));
-    f.app.console.focus = Focus::Editor;
+    f.app.console_mut().focus = Focus::Editor;
     f.press(key(KeyCode::Char('x')));
     assert!(!underlined(&mut f, "FROMM"));
 }
@@ -973,9 +976,9 @@ fn an_error_during_the_read_keeps_the_budget_exact() {
         "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 1000) \
          SELECT CASE WHEN x > 300 THEN abs(-9223372036854775807 - 1) ELSE x END FROM c;",
     );
-    assert_eq!(f.app.console.results[0].table.rows.len(), 300);
+    assert_eq!(f.app.console_mut().results[0].table.rows.len(), 300);
     f.prefix('j');
-    f.app.console.active = 0;
+    f.app.console_mut().active = 0;
     f.assert_sees("300 rows");
     f.press(key(KeyCode::Char('x')));
     f.assert_sees("Data 0/256 MiB");
@@ -1026,14 +1029,14 @@ fn finish_with_stop(f: &mut Fixture, statuses: Vec<sqln::exec::StatementStatus>)
     use sqln::grid::Budget;
 
     let budget = Budget::new(1024);
-    let plan = f.app.console.editor.plan_run(RunScope::Script).unwrap();
-    let console = f.app.console.id;
-    f.app.console.begin_execution(7, &plan, &budget);
+    let plan = f.app.console_mut().editor.plan_run(RunScope::Script).unwrap();
+    let console = f.app.console_mut().id;
+    f.app.console_mut().begin_execution(7, &plan, &budget);
     for (index, status) in statuses.into_iter().enumerate() {
         let key = StatementKey { console, execution: 7, index };
         let end = Some(Default::default());
         let event = ExecEvent::StatementFinished { key, status, end, error_offset: None };
-        f.app.console.on_event(event, &budget);
+        f.app.console_mut().on_event(event, &budget);
     }
     let event = ExecEvent::ExecutionFinished {
         console,
@@ -1041,7 +1044,7 @@ fn finish_with_stop(f: &mut Fixture, statuses: Vec<sqln::exec::StatementStatus>)
         end: ExecutionEnd::Stopped,
         message: None,
     };
-    f.app.console.on_event(event, &budget);
+    f.app.console_mut().on_event(event, &budget);
 }
 
 #[test]

@@ -272,3 +272,47 @@ async fn a_waiter_opens_a_new_session_after_a_failed_opening() {
     assert!(result.is_err(), "the failure goes to the request, without a retry");
     assert_eq!(pool.usage(), (0, 1));
 }
+
+#[tokio::test]
+async fn close_idle_ends_the_idle_sessions_and_a_later_use_opens_one() {
+    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let pool = pool(&fake, 2);
+    take(&pool).await.release().await;
+    assert!(pool.has_sessions());
+    pool.close_idle();
+    assert!(!pool.has_sessions());
+    take(&pool).await.release().await;
+    assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn a_session_in_use_during_close_idle_closes_when_it_returns() {
+    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let pool = pool(&fake, 2);
+    let lease = take(&pool).await;
+    pool.close_idle();
+    assert!(pool.has_sessions(), "the session in use stays until its end");
+    lease.release().await;
+    assert!(!pool.has_sessions());
+    assert_eq!(pool.usage().0, 0);
+}
+
+#[tokio::test]
+async fn a_session_that_starts_after_close_idle_returns_to_the_pool() {
+    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let pool = pool(&fake, 2);
+    pool.close_idle();
+    take(&pool).await.release().await;
+    assert!(pool.has_sessions());
+}
+
+#[tokio::test]
+async fn close_idle_gives_the_free_place_to_a_waiter() {
+    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let pool = pool(&fake, 1);
+    take(&pool).await.release().await;
+    pool.close_idle();
+    assert_eq!(pool.usage().0, 0);
+    take(&pool).await.release().await;
+    assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
+}

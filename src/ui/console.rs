@@ -11,24 +11,46 @@ use unicode_width::UnicodeWidthStr;
 use super::theme::Theme;
 use super::wrap::WrappedText;
 use super::{draw_editor, text};
-use crate::connector::TransactionState;
+use crate::connector::{Namespace, TransactionState};
 use crate::console::{Console, Focus, MessageLevel, Phase, ResultTab};
 use crate::grid::{GridView, ResultTable, RowSearch, Value, printable};
 
 const MIB: usize = 1024 * 1024;
+const MAX_PICKER_ROWS: u16 = 12;
+
+/// A button of the console bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Control {
+    Run,
+    Script,
+    Stop,
+    Mode,
+    Commit,
+    Rollback,
+    Schema,
+}
 
 /// The screen areas of the last frame. The mouse uses them.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ConsoleLayout {
+    pub controls: Rect,
+    /// Each button, with its first column and the column after its end.
+    pub control_buttons: Vec<(u16, u16, Control)>,
     pub editor: Rect,
     pub tabs: Rect,
     pub results: Rect,
+    /// The rows that the editor and the results share.
+    pub split: Rect,
 }
 
 pub struct BarData<'a> {
     pub connection: &'a str,
     pub pool: Option<(usize, usize)>,
     pub data: (usize, usize),
+    pub namespace: Namespace,
+    /// The schema that a session reads without a selection, when the catalog gives it.
+    pub default_schema: Option<&'a str>,
+    pub transactions: bool,
 }
 
 fn transaction_text(state: TransactionState) -> &'static str {
@@ -70,16 +92,118 @@ fn usage_bar(bar: &BarData) -> String {
     format!("{pool}Data {}/{} MiB", bar.data.0.div_ceil(MIB), bar.data.1 / MIB)
 }
 
+/// Lists the buttons of the console bar. A button that has no effect now looks disabled.
+fn control_items(console: &Console, bar: &BarData) -> Vec<(Control, String, bool)> {
+    let idle = !console.is_busy();
+    let open = idle && console.in_transaction();
+    let button = |label: &str| format!("[{label}]");
+    let mode = if console.manual { text::MODE_MANUAL } else { text::MODE_AUTO };
+    let mut items = vec![
+        (Control::Run, button(text::CONTROL_RUN), idle),
+        (Control::Script, button(text::CONTROL_SCRIPT), idle),
+        (Control::Stop, button(text::CONTROL_STOP), !idle),
+    ];
+    if bar.transactions {
+        items.push((Control::Mode, button(mode), idle));
+        items.push((Control::Commit, button(text::CONTROL_COMMIT), open));
+        items.push((Control::Rollback, button(text::CONTROL_ROLLBACK), open));
+    }
+    let label = match bar.namespace {
+        Namespace::None => None,
+        Namespace::Schema => Some(text::LABEL_SCHEMA),
+        Namespace::Database => Some(text::LABEL_DATABASE),
+    };
+    if let Some(label) = label {
+        let value = console.schema.as_deref().or(bar.default_schema).unwrap_or("-");
+        let value = printable(value);
+        items.push((Control::Schema, format!("{label}: [{value}]"), idle && !console.in_transaction()));
+    }
+    items
+}
+
+fn draw_controls(
+    frame: &mut Frame,
+    area: Rect,
+    console: &Console,
+    bar: &BarData,
+    theme: &Theme,
+) -> Vec<(u16, u16, Control)> {
+    let mut spans = Vec::new();
+    let mut buttons = Vec::new();
+    let mut x = area.x;
+    for (control, label, enabled) in control_items(console, bar) {
+        let width = u16::try_from(label.width()).unwrap_or(u16::MAX);
+        if x.saturating_add(width) > area.right() {
+            break;
+        }
+        buttons.push((x, x + width, control));
+        let style = if enabled { theme.control } else { theme.control_off };
+        spans.push(Span::styled(label, style));
+        spans.push(Span::raw(" "));
+        x += width + 1;
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    buttons
+}
+
+fn main_tab_label(console: &Console) -> String {
+    let name = printable(&console.name);
+    if console.is_busy() { format!("{name} ●") } else { name }
+}
+
+/// Draws the tabs of the consoles. It returns the columns of each tab, and it starts
+/// the row at a later tab when the active tab does not fit.
+pub fn draw_main_tabs(
+    frame: &mut Frame,
+    area: Rect,
+    consoles: &[Console],
+    active: usize,
+    theme: &Theme,
+) -> Vec<(u16, u16, usize)> {
+    let labels: Vec<String> = consoles.iter().map(main_tab_label).collect();
+    let widths: Vec<u16> =
+        labels.iter().map(|label| u16::try_from(label.width()).unwrap_or(u16::MAX)).collect();
+    let mut first = 0;
+    while first < active
+        && widths[first..=active].iter().map(|width| u32::from(*width) + 2).sum::<u32>()
+            > u32::from(area.width)
+    {
+        first += 1;
+    }
+    let mut spans = Vec::new();
+    let mut tabs = Vec::new();
+    let mut x = area.x;
+    for (index, label) in labels.into_iter().enumerate().skip(first) {
+        let end = x.saturating_add(widths[index]).min(area.right());
+        tabs.push((x, end, index));
+        let style = if index == active { theme.tab_active } else { theme.tab };
+        spans.push(Span::styled(label, style));
+        spans.push(Span::raw("  "));
+        x = end.saturating_add(2);
+        if x >= area.right() {
+            break;
+        }
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    tabs
+}
+
 pub fn draw_console(
     frame: &mut Frame,
     area: Rect,
     console: &mut Console,
     bar: &BarData,
+    editor_ratio: u16,
+    focused: bool,
     theme: &Theme,
 ) -> ConsoleLayout {
-    let [top, editor, tabs, results, summary] = Layout::vertical([
+    const BAR_ROWS: u16 = 4;
+    let shared = area.height.saturating_sub(BAR_ROWS);
+    let editor_rows = u16::try_from(u32::from(shared) * u32::from(editor_ratio) / 100).unwrap_or(0);
+    let [top, controls, editor, tabs, results, summary] = Layout::vertical([
         Constraint::Length(1),
-        Constraint::Percentage(50),
+        Constraint::Length(1),
+        Constraint::Length(editor_rows.max(1)),
         Constraint::Length(1),
         Constraint::Min(0),
         Constraint::Length(1),
@@ -94,10 +218,11 @@ pub fn draw_console(
     let state_text = top_bar(console, bar, usize::from(state.width));
     frame.render_widget(Paragraph::new(state_text).style(theme.bar), state);
     frame.render_widget(Paragraph::new(usage).style(theme.bar).alignment(Alignment::Right), usage_area);
+    let control_buttons = draw_controls(frame, controls, console, bar, theme);
     draw_editor(frame, editor, &mut console.editor, theme);
     draw_tabs(frame, tabs, console, theme);
 
-    let focused = console.focus == Focus::Results;
+    let focused = focused && console.focus == Focus::Results;
     if console.showing_messages() {
         draw_messages(frame, results, console, theme);
     } else if let Some(result) = console.results.get_mut(console.active) {
@@ -108,7 +233,8 @@ pub fn draw_console(
         };
         frame.render_widget(Paragraph::new(line), summary);
     }
-    ConsoleLayout { editor, tabs, results }
+    let split = Rect { y: editor.y, height: shared, ..editor };
+    ConsoleLayout { controls, control_buttons, editor, tabs, results, split }
 }
 
 fn search_line(search: &RowSearch, table: &ResultTable, theme: &Theme) -> Line<'static> {
@@ -290,7 +416,7 @@ pub fn grid_cell_at(result: &ResultTab, area: Rect, column: u16, row: u16) -> Op
         .map(|(index, _, _)| (row_index, index))
 }
 
-fn centered(area: Rect, width: u16, height: u16) -> Rect {
+pub fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
     Rect::new(
@@ -301,6 +427,7 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
     )
 }
 
+/// Draws a question. It returns the columns of each option and the row of the options.
 pub fn draw_dialog(
     frame: &mut Frame,
     title: &str,
@@ -308,7 +435,7 @@ pub fn draw_dialog(
     options: &[&str],
     focus: usize,
     theme: &Theme,
-) {
+) -> (Vec<(u16, u16, usize)>, u16) {
     let area = frame.area();
     let width = area.width.saturating_sub(8).clamp(20, 72);
     let inner_width = usize::from(width.saturating_sub(2)).max(1);
@@ -327,12 +454,54 @@ pub fn draw_dialog(
     frame.render_widget(Paragraph::new(printable_lines(body)).wrap(Wrap { trim: false }), message);
 
     let mut spans = Vec::new();
+    let mut targets = Vec::new();
+    let mut x = buttons.x;
     for (index, label) in options.iter().enumerate() {
         let style = if index == focus { theme.dialog_focus } else { theme.dialog_option };
-        spans.push(Span::styled(format!("[{label}]"), style));
+        let text = format!("[{label}]");
+        let label_width = u16::try_from(text.width()).unwrap_or(u16::MAX);
+        targets.push((x, x.saturating_add(label_width), index));
+        x = x.saturating_add(label_width).saturating_add(2);
+        spans.push(Span::styled(text, style));
         spans.push(Span::raw("  "));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), buttons);
+    (targets, buttons.y)
+}
+
+/// Draws the list that selects a schema or a database. It returns its area and the
+/// index of its first row.
+pub fn draw_picker(
+    frame: &mut Frame,
+    title: &str,
+    items: &[&str],
+    cursor: usize,
+    loading: bool,
+    theme: &Theme,
+) -> (Rect, usize) {
+    let rows = u16::try_from(items.len()).unwrap_or(MAX_PICKER_ROWS).min(MAX_PICKER_ROWS);
+    let box_area = centered(frame.area(), 48, rows + 3);
+    frame.render_widget(Clear, box_area);
+    let block = Block::bordered().title(format!(" {title} ")).style(theme.dialog);
+    let inner = block.inner(box_area);
+    frame.render_widget(block, box_area);
+    let height = usize::from(inner.height.saturating_sub(1)).max(1);
+    let first = (cursor + 1).saturating_sub(height);
+    let mut lines: Vec<Line> = items
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take(height)
+        .map(|(index, item)| {
+            let style = if index == cursor { theme.dialog_focus } else { theme.dialog_option };
+            Line::styled(printable(item), style)
+        })
+        .collect();
+    if loading {
+        lines.push(Line::styled(text::SCHEMA_LOADING, theme.hint));
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
+    (inner, first)
 }
 
 /// Keeps the line breaks of a text and replaces the other control characters.

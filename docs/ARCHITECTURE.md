@@ -12,6 +12,7 @@ Os fatos sobre os drivers vêm de [spikes/RESULTS.md](../spikes/RESULTS.md).
 O projeto é um único crate Rust.
 A interface roda na thread principal e nunca espera o banco.
 Cada console tem uma tarefa própria, dona da sessão reservada. Este documento chama essa tarefa de ator.
+O gerente de execução guarda um pool por conexão, e todas as conexões usam um único runtime e um único canal de eventos.
 
 ```text
 Thread principal                    Runtime Tokio
@@ -30,7 +31,10 @@ Thread principal                    Runtime Tokio
 |---|---|
 | `app` | Estado da aplicação, ações e atualização do estado |
 | `ui` | Desenho das telas e dos widgets |
-| `input` | Mapa de teclas, foco, mouse e prioridade |
+| `input` | Mapa de teclas: regiões, ações, sequências e regras de `keymap` |
+| `navigator` | Árvore de conexões, schemas, relações e colunas |
+| `form` | Campos e validação do cadastro de conexão |
+| `connection` | Definições de conexão e o estado de cada conexão na aplicação |
 | `editor` | EdTUI, camada convencional, busca e substituição |
 | `sql` | Tokenizador, separação e classes de instruções |
 | `complete` | Sugestões do autocomplete |
@@ -50,8 +54,9 @@ Thread principal                    Runtime Tokio
 `ui` e `input` não dependem de `connector`.
 Somente `connector` conhece tipos dos drivers.
 
-`input`, `store`, `creds` e `trust` ainda não existem.
-Hoje, `app` e `console` tratam as teclas, e o mapa de teclas é fixo.
+`store`, `creds` e `trust` ainda não existem.
+`app` aplica a prioridade das teclas e o mouse. `app/keys.rs`, `app/close.rs`, `app/connections.rs` e `app/mouse.rs` dividem esse código.
+As definições de conexão ficam em memória até a etapa de configuração.
 
 ### Limite conhecido do editor
 
@@ -95,6 +100,7 @@ Isso impede que uma resposta antiga repovoe uma grade.
 ```rust
 trait Connector: Send + Sync {
     fn dialect(&self) -> Dialect;
+    fn capabilities(&self) -> Capabilities;
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError>;
 }
 
@@ -112,6 +118,8 @@ trait Session: Send {
 ```
 
 O crate `async-trait` permite usar `Box<dyn Session>`.
+`Capabilities` declara se a fonte tem transações e se o console escolhe um schema ou um banco.
+Cancelamento e paginação entram nessa declaração quando uma fonte diferente chegar, pois os três conectores são iguais nesses pontos.
 Cada console tem uma tarefa Tokio, que guarda a sessão entre execuções enquanto a transação continuar aberta.
 A tarefa mantém o future de `run` ativo depois de um cancelamento, para ler a resposta do banco.
 Fechar a conexão é o único caso que abandona esse future.
@@ -119,7 +127,7 @@ Fechar a conexão é o único caso que abandona esse future.
 | Banco | Cancelamento | Limpeza | Estado da transação |
 |---|---|---|---|
 | PostgreSQL | `CancelToken` | `DISCARD ALL` | Sonda por relógio, pelo protocolo simples |
-| MySQL | `KILL QUERY` em conexão temporária | `Conn::reset` | `SERVER_STATUS_IN_TRANS` da última resposta; `DO 0` depois de um erro |
+| MySQL | `KILL QUERY` em conexão temporária | `Conn::reset` e volta ao banco da conexão | `SERVER_STATUS_IN_TRANS` da última resposta; `DO 0` depois de um erro |
 | SQLite | `InterruptHandle` | Descartar a conexão | `is_autocommit` |
 
 `run` envia uma instrução, entrega as linhas a `ResultSink` e obedece ao retorno `Flow::Stop`.
@@ -128,6 +136,8 @@ Uma instrução pode entregar vários resultados, como `CALL` no MySQL, e o teto
 Ao descartar `ResultSink`, as linhas ainda no lote voltam ao orçamento.
 `ResultSink` aplica o teto e o orçamento, e reúne as linhas em lotes de 200.
 `Value` guarda `Null`, `Text`, `Number` ou `Binary`, sempre com o texto do banco.
+`Conn::reset` mantém o banco atual, então um `USE` continuaria na sessão sem o passo seguinte.
+A limpeza lê `DATABASE()` e volta ao banco da conexão. Sem banco na conexão, a sessão fecha, pois o MySQL não sai de um banco.
 A variante serve somente à apresentação, como alinhar números.
 
 ## 5. Execução de um script
@@ -191,6 +201,9 @@ A conexão temporária de cancelamento fica fora dessa soma.
 
 Uma sessão reservada não recebe `apply_context` de novo, pois uma transação com erro recusa `SET`.
 Uma sessão com estado desconhecido é descartada.
+**Desconectar** fecha as sessões ociosas e aumenta a geração do pool.
+Uma sessão de uma geração anterior fecha ao voltar, como a de uma leitura do catálogo em andamento.
+O evento `Disconnected` espera essa sessão por até 5 segundos, e a interface informa quando ela continua em uso.
 
 Uma conexão com a limpeza não confirmada é descartada.
 A reposição ocorre somente quando houver nova necessidade.
@@ -204,13 +217,16 @@ A reposição ocorre somente quando houver nova necessidade.
 | Transação | Inexistente, aberta, com erro ou desconhecida |
 | Reserva | Sem conexão, aguardando, em uso ou em limpeza |
 
+A interface recusa **Desconectar** e a remoção antes de enviar o comando, enquanto um console da conexão tiver execução ou transação.
+
 | Comando | Evento de resposta |
 |---|---|
 | `Run` | `Queued`, `Started`, `Rows`, `StatementFinished`, `ExecutionFinished` |
 | `Stop` | `Stopping`, `ConfirmClose`, `ExecutionFinished` |
 | `Commit`, `Rollback` | `TransactionChanged` ou `TransactionFailed` |
 | `CancelWait` | `ExecutionFinished` |
-| `Disconnect` | `Disconnected` ou `DisconnectBlocked` |
+| `Disconnect` | `Disconnected` |
+| `TestConnection` | `ConnectionTested` |
 
 ## 8. Arquivos
 

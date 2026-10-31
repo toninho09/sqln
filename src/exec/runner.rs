@@ -11,12 +11,12 @@ use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 
 use super::{
-    Command, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, ResultSink, RunRequest,
-    Settings, StatementKey, StatementStatus, context,
+    Binding, Command, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, ResultSink,
+    RunRequest, StatementKey, StatementStatus, context,
 };
 use crate::connector::{ExecError, StatementEnd, TransactionCommand, TransactionState};
 use crate::grid::Budget;
-use crate::pool::{Lease, Pool};
+use crate::pool::Lease;
 
 /// A delay that stays longer than any statement. It stands for "no time limit".
 const NO_LIMIT: Duration = Duration::from_secs(60 * 60 * 24 * 365);
@@ -39,8 +39,7 @@ enum Waited {
 
 pub struct ConsoleTask {
     console: ConsoleId,
-    pool: Pool,
-    settings: Settings,
+    binding: Binding,
     budget: Arc<Budget>,
     events: Sender<ExecEvent>,
     held: Option<Lease>,
@@ -50,15 +49,13 @@ pub struct ConsoleTask {
 impl ConsoleTask {
     pub fn new(
         console: ConsoleId,
-        pool: Pool,
-        settings: Settings,
+        binding: Binding,
         budget: Arc<Budget>,
         events: Sender<ExecEvent>,
     ) -> Self {
         Self {
             console,
-            pool,
-            settings,
+            binding,
             budget,
             events,
             held: None,
@@ -71,6 +68,7 @@ impl ConsoleTask {
             match command {
                 Command::Run(request) => self.run_script(request, &mut commands).await,
                 Command::Transaction(command) => self.control(command).await,
+                Command::Rebind(binding) => self.binding = binding,
                 Command::Stop | Command::ConfirmClose(_) => {}
                 Command::Close => break,
             }
@@ -110,7 +108,7 @@ impl ConsoleTask {
         if let Some(lease) = self.held.take() {
             return Some(lease);
         }
-        let pool = self.pool.clone();
+        let pool = self.binding.pool.clone();
         let mut acquire = pin!(pool.acquire());
         loop {
             tokio::select! {
@@ -137,7 +135,7 @@ impl ConsoleTask {
         request: RunRequest,
         commands: &mut UnboundedReceiver<Command>,
     ) {
-        let RunRequest { execution, statements, manual } = request;
+        let RunRequest { execution, statements, options } = request;
         let console = self.console;
         self.emit(ExecEvent::Queued { console, execution }).await;
         // The state of a closed session does not apply to the next session.
@@ -149,13 +147,13 @@ impl ConsoleTask {
         self.emit(ExecEvent::Started { console, execution }).await;
 
         // A reserved session has this context, and a failed transaction refuses `SET`.
-        let context = context(&self.settings);
+        let context = context(&self.binding.settings, options.schema);
         if !reserved && let Err(error) = lease.session().apply_context(&context).await {
             self.finish(execution, ExecutionEnd::Failed, Some(error.message)).await;
             self.keep_or_release(lease).await;
             return;
         }
-        if manual && self.transaction == TransactionState::None {
+        if options.manual && self.transaction == TransactionState::None {
             if let Err(error) = lease.session().control(TransactionCommand::Begin).await {
                 self.finish(execution, ExecutionEnd::Failed, Some(error.message)).await;
                 self.keep_or_release(lease).await;
@@ -244,7 +242,7 @@ impl ConsoleTask {
                 let message = "The console has an execution in progress.".to_owned();
                 self.emit(ExecEvent::TransactionFailed { console, message }).await;
             }
-            Command::Stop | Command::ConfirmClose(_) | Command::Close => {}
+            Command::Stop | Command::ConfirmClose(_) | Command::Rebind(_) | Command::Close => {}
         }
     }
 
@@ -266,7 +264,7 @@ impl ConsoleTask {
             key,
             self.events.clone(),
             self.budget.clone(),
-            self.settings.row_cap,
+            self.binding.settings.row_cap,
         );
         let stopping = sink.stop_flag();
         let session = lease.session();
@@ -278,7 +276,8 @@ impl ConsoleTask {
         };
 
         let mut run = session.run(sql, sink);
-        let mut limit = pin!(sleep(self.settings.sql_timeout.unwrap_or(NO_LIMIT)));
+        let settings = self.binding.settings.clone();
+        let mut limit = pin!(sleep(settings.sql_timeout.unwrap_or(NO_LIMIT)));
         let mut grace = pin!(sleep(NO_LIMIT));
         let mut reason = None;
         let mut asked = false;
@@ -288,7 +287,7 @@ impl ConsoleTask {
         loop {
             tokio::select! {
                 result = &mut run => {
-                    let reusable = settle(request, self.settings.stop_grace).await;
+                    let reusable = settle(request, settings.stop_grace).await;
                     return (Waited::Finished { result, reusable }, reason);
                 }
                 sent = async { request.as_mut().expect("the guard checks the request").await },
@@ -300,10 +299,10 @@ impl ConsoleTask {
                         grace.as_mut().reset(tokio::time::Instant::now());
                     }
                 }
-                () = &mut limit, if reason.is_none() && self.settings.sql_timeout.is_some() => {
+                () = &mut limit, if reason.is_none() && settings.sql_timeout.is_some() => {
                     reason = Some(StopReason::Timeout);
                     request = Some(cancel());
-                    grace.as_mut().reset(tokio::time::Instant::now() + self.settings.stop_grace);
+                    grace.as_mut().reset(tokio::time::Instant::now() + settings.stop_grace);
                 }
                 () = &mut grace, if reason.is_some() && !asked => {
                     if self.transaction == TransactionState::None {
@@ -321,7 +320,7 @@ impl ConsoleTask {
                         if reason.is_none() {
                             reason = Some(StopReason::User);
                             request = Some(cancel());
-                            grace.as_mut().reset(tokio::time::Instant::now() + self.settings.stop_grace);
+                            grace.as_mut().reset(tokio::time::Instant::now() + settings.stop_grace);
                         }
                     }
                     Some(other) => self.refuse(other).await,

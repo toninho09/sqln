@@ -9,7 +9,8 @@ use sqln::catalog::{Columns, RelationKind, RelationRef};
 use sqln::connector::sqlite::{SqliteConnector, SqliteTarget};
 use sqln::connector::{TransactionCommand, TransactionState};
 use sqln::exec::{
-    ConsoleId, ExecEvent, ExecutionEnd, Manager, ReadLimit, Settings, StatementStatus,
+    ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, Manager, ReadLimit, RunOptions, Settings,
+    StatementStatus,
 };
 use sqln::grid::{Budget, Row, Value};
 use tokio::sync::mpsc::Receiver;
@@ -22,6 +23,7 @@ struct Harness {
     manager: Manager,
     events: Receiver<ExecEvent>,
     budget: Arc<Budget>,
+    connection: ConnectionId,
     console: ConsoleId,
 }
 
@@ -50,9 +52,10 @@ impl Harness {
         target.busy_timeout = Duration::from_millis(100);
         let budget = Arc::new(Budget::new(settings.budget_bytes));
         let connector = Arc::new(SqliteConnector::new(target));
-        let (mut manager, events) = Manager::new(connector, settings, budget.clone()).unwrap();
-        let console = manager.open_console();
-        Self { manager, events, budget, console }
+        let (mut manager, events) = Manager::new(budget.clone()).unwrap();
+        let connection = manager.add_connection(connector, settings);
+        let console = manager.open_console(connection).unwrap();
+        Self { manager, events, budget, connection, console }
     }
 
     fn next(&mut self) -> ExecEvent {
@@ -96,7 +99,7 @@ impl Harness {
 
     fn run_on(&mut self, console: ConsoleId, statements: &[&str], manual: bool) -> Run {
         let statements = statements.iter().map(|sql| (*sql).to_owned()).collect();
-        let execution = self.manager.run(console, statements, manual);
+        let execution = self.manager.run(console, statements, RunOptions { manual, schema: None });
         self.collect(execution)
     }
 
@@ -239,7 +242,7 @@ fn the_time_limit_applies_per_statement_and_stops_the_script() {
 fn a_stop_interrupts_the_statement_and_the_following_ones() {
     let mut h = Harness::open("stop", Settings::default());
     let statements = vec![HUGE_COUNT.to_owned(), "SELECT 2".to_owned()];
-    let execution = h.manager.run(h.console, statements, false);
+    let execution = h.manager.run(h.console, statements, RunOptions::default());
     std::thread::sleep(Duration::from_millis(100));
     h.manager.stop(h.console);
     let run = h.collect(execution);
@@ -253,9 +256,9 @@ fn a_stop_while_waiting_sends_no_sql() {
     let settings = Settings { max_connections: 1, ..Settings::default() };
     let mut h = Harness::open("queue", settings);
     h.run(&["CREATE TABLE t(a)", "BEGIN", "INSERT INTO t VALUES (1)"]);
-    let other = h.manager.open_console();
+    let other = h.manager.open_console(h.connection).unwrap();
 
-    let execution = h.manager.run(other, vec!["INSERT INTO t VALUES (2)".to_owned()], false);
+    let execution = h.manager.run(other, vec!["INSERT INTO t VALUES (2)".to_owned()], RunOptions::default());
     std::thread::sleep(Duration::from_millis(100));
     h.manager.stop(other);
     let run = h.collect(execution);
@@ -270,9 +273,9 @@ fn a_console_waits_and_runs_when_the_transaction_of_another_ends() {
     let settings = Settings { max_connections: 1, ..Settings::default() };
     let mut h = Harness::open("wait", settings);
     h.run(&["CREATE TABLE t(a)", "BEGIN"]);
-    let other = h.manager.open_console();
+    let other = h.manager.open_console(h.connection).unwrap();
 
-    let execution = h.manager.run(other, vec!["SELECT 7".to_owned()], false);
+    let execution = h.manager.run(other, vec!["SELECT 7".to_owned()], RunOptions::default());
     std::thread::sleep(Duration::from_millis(100));
     h.run(&["COMMIT"]);
     let run = h.collect(execution);
@@ -287,7 +290,7 @@ fn a_transaction_keeps_its_session_between_executions() {
     assert_eq!(run.transaction, Some(TransactionState::Open));
 
     assert_eq!(h.cell("SELECT count(*) FROM t"), number("1"), "the same session sees the row");
-    let other = h.manager.open_console();
+    let other = h.manager.open_console(h.connection).unwrap();
     let run = h.run_on(other, &["SELECT count(*) FROM t"], false);
     assert_eq!(run.rows[0][0], number("0"), "another session does not");
 
@@ -344,9 +347,9 @@ fn commit_without_a_transaction_reports_a_failure() {
 #[test]
 fn a_second_execution_in_the_same_console_is_refused() {
     let mut h = Harness::open("refuse", Settings::default());
-    let first = h.manager.run(h.console, vec![HUGE_COUNT.to_owned()], false);
+    let first = h.manager.run(h.console, vec![HUGE_COUNT.to_owned()], RunOptions::default());
     std::thread::sleep(Duration::from_millis(100));
-    let second = h.manager.run(h.console, vec!["SELECT 1".to_owned()], false);
+    let second = h.manager.run(h.console, vec!["SELECT 1".to_owned()], RunOptions::default());
     let run = h.collect(second);
     assert_eq!(run.end, Some(ExecutionEnd::Refused));
     h.manager.stop(h.console);
@@ -356,7 +359,7 @@ fn a_second_execution_in_the_same_console_is_refused() {
 #[test]
 fn a_commit_during_an_execution_is_refused() {
     let mut h = Harness::open("refuse-commit", Settings::default());
-    let execution = h.manager.run(h.console, vec![HUGE_COUNT.to_owned()], false);
+    let execution = h.manager.run(h.console, vec![HUGE_COUNT.to_owned()], RunOptions::default());
     std::thread::sleep(Duration::from_millis(100));
     h.manager.transaction(h.console, TransactionCommand::Commit);
     loop {
@@ -373,7 +376,7 @@ fn an_interrupted_change_in_a_transaction_reports_the_rollback_of_the_database()
     let mut h = Harness::open("tx-interrupt", Settings::default());
     h.run(&["CREATE TABLE t(a)", "INSERT INTO t VALUES (1)"]);
     h.run(&["BEGIN", "DELETE FROM t"]);
-    let execution = h.manager.run(h.console, vec![HUGE_INSERT.to_owned()], false);
+    let execution = h.manager.run(h.console, vec![HUGE_INSERT.to_owned()], RunOptions::default());
     std::thread::sleep(Duration::from_millis(100));
     h.manager.stop(h.console);
     let run = h.collect(execution);
@@ -399,7 +402,7 @@ fn read_only_applies_at_each_reservation() {
 fn a_locked_database_shows_an_error_after_the_lock_time_limit() {
     let mut h = Harness::open("locked", Settings::default());
     h.run(&["CREATE TABLE t(a)", "BEGIN IMMEDIATE", "INSERT INTO t VALUES (1)"]);
-    let other = h.manager.open_console();
+    let other = h.manager.open_console(h.connection).unwrap();
     let started = Instant::now();
     let run = h.run_on(other, &["INSERT INTO t VALUES (2)"], false);
     assert!(started.elapsed() >= Duration::from_millis(100));
@@ -411,9 +414,10 @@ fn a_missing_file_is_a_failure_without_permission_to_create_it() {
     let path = temp_db("missing");
     let budget = Arc::new(Budget::new(1_000));
     let connector = Arc::new(SqliteConnector::new(SqliteTarget::new(&path)));
-    let (mut manager, mut events) = Manager::new(connector, Settings::default(), budget).unwrap();
-    let console = manager.open_console();
-    let execution = manager.run(console, vec!["SELECT 1".to_owned()], false);
+    let (mut manager, mut events) = Manager::new(budget).unwrap();
+    let connection = manager.add_connection(connector, Settings::default());
+    let console = manager.open_console(connection).unwrap();
+    let execution = manager.run(console, vec!["SELECT 1".to_owned()], RunOptions::default());
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         assert!(Instant::now() < deadline);
@@ -442,9 +446,9 @@ fn the_catalog_reads_relations_first_and_columns_on_demand() {
     let mut h = Harness::open("catalog", Settings::default());
     h.run(&["CREATE TABLE users(id, \"Full Name\")", "CREATE VIEW names AS SELECT id FROM users"]);
 
-    h.manager.load_catalog();
+    h.manager.load_catalog(h.connection);
     let catalog = loop {
-        if let ExecEvent::CatalogLoaded(catalog) = h.next() {
+        if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
             break catalog.unwrap();
         }
     };
@@ -456,9 +460,9 @@ fn the_catalog_reads_relations_first_and_columns_on_demand() {
     assert_eq!(main.relations[1].columns, Columns::NotLoaded);
 
     let relation = RelationRef { schema: "main".to_owned(), relation: "users".to_owned() };
-    h.manager.load_columns(relation.clone());
+    h.manager.load_columns(h.connection, relation.clone());
     loop {
-        if let ExecEvent::ColumnsLoaded { relation: loaded, columns } = h.next() {
+        if let ExecEvent::ColumnsLoaded { relation: loaded, columns, .. } = h.next() {
             assert_eq!(loaded, relation);
             assert_eq!(columns.unwrap(), ["id", "Full Name"]);
             break;

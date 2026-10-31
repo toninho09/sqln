@@ -4,12 +4,14 @@ use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::connector::{StatementEnd, TransactionState};
+use crate::connector::{StatementEnd, TransactionCommand, TransactionState};
 use crate::editor::{KeyboardMode, MarkState, RunPlan, SqlEditor};
 use crate::exec::{
-    ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, StatementKey, StatementStatus,
+    ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, StatementKey,
+    StatementStatus,
 };
 use crate::grid::{Budget, GridView, ResultTable, Row, RowSearch, Value};
+use crate::input::Action;
 use crate::ui::text;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -49,6 +51,13 @@ pub struct ResultTab {
     pub search: Option<RowSearch>,
 }
 
+/// The next step after a commit or a rollback that a dialog asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AfterTransaction {
+    Close,
+    UseAutocommit,
+}
+
 /// What the application must do after an execution event.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Signal {
@@ -69,6 +78,11 @@ pub enum GridAction {
 
 pub struct Console {
     pub id: ConsoleId,
+    pub name: String,
+    /// A console without a connection keeps its text, and it cannot run.
+    pub connection: Option<ConnectionId>,
+    /// The schema or database that each execution of this console applies.
+    pub schema: Option<String>,
     pub editor: SqlEditor,
     pub results: Vec<ResultTab>,
     pub messages: Vec<Message>,
@@ -79,6 +93,9 @@ pub struct Console {
     pub transaction: TransactionState,
     pub manual: bool,
     pub messages_scroll: u16,
+    /// True while the close of this console waits for a step.
+    pub closing: bool,
+    pub pending_transaction: Option<(TransactionCommand, AfterTransaction)>,
     execution: Option<ExecutionId>,
     /// True while the last result receives rows.
     reading: bool,
@@ -88,7 +105,6 @@ pub struct Console {
     first_not_executed: Option<usize>,
     statements: Vec<String>,
     transaction_before: TransactionState,
-    pending_g: bool,
 }
 
 fn read_summary(rows: usize, limit: ReadLimit) -> String {
@@ -105,9 +121,12 @@ fn first_word(sql: &str) -> &str {
 }
 
 impl Console {
-    pub fn new(id: ConsoleId, editor: SqlEditor) -> Self {
+    pub fn new(id: ConsoleId, name: String, editor: SqlEditor) -> Self {
         Self {
             id,
+            name,
+            connection: None,
+            schema: None,
             editor,
             results: Vec::new(),
             messages: Vec::new(),
@@ -117,6 +136,8 @@ impl Console {
             transaction: TransactionState::None,
             manual: false,
             messages_scroll: 0,
+            closing: false,
+            pending_transaction: None,
             execution: None,
             reading: false,
             results_made: 0,
@@ -124,7 +145,6 @@ impl Console {
             first_not_executed: None,
             statements: Vec::new(),
             transaction_before: TransactionState::None,
-            pending_g: false,
         }
     }
 
@@ -382,41 +402,27 @@ impl Console {
         self.results.get(self.active).is_some_and(|result| result.search.is_some())
     }
 
-    pub fn on_results_key(&mut self, key: KeyEvent) -> GridAction {
-        let vim = self.editor.keyboard() == KeyboardMode::Vim;
-        if self.search_is_open() {
-            self.on_search_key(key);
-            return GridAction::None;
+    /// Applies an action of the grid region. `extend` moves the end of the selection.
+    pub fn on_results_action(&mut self, action: Action, extend: bool) -> GridAction {
+        match action {
+            Action::GridPreviousResult => self.switch_tab(false),
+            Action::GridNextResult => self.switch_tab(true),
+            _ if self.showing_messages() => self.on_messages_action(action),
+            _ => return self.on_grid_action(action, extend),
         }
-        match key.code {
-            KeyCode::Char('[') => {
-                self.switch_tab(false);
-                return GridAction::None;
-            }
-            KeyCode::Char(']') => {
-                self.switch_tab(true);
-                return GridAction::None;
-            }
-            _ => {}
-        }
-        if self.showing_messages() {
-            self.on_messages_key(key, vim);
-            return GridAction::None;
-        }
-        self.on_grid_key(key, vim)
+        GridAction::None
     }
 
-    fn on_messages_key(&mut self, key: KeyEvent, vim: bool) {
-        match key.code {
-            KeyCode::Up => self.messages_scroll = self.messages_scroll.saturating_sub(1),
-            KeyCode::Char('k') if vim => self.messages_scroll = self.messages_scroll.saturating_sub(1),
-            KeyCode::Down => self.messages_scroll = self.messages_scroll.saturating_add(1),
-            KeyCode::Char('j') if vim => self.messages_scroll = self.messages_scroll.saturating_add(1),
+    fn on_messages_action(&mut self, action: Action) {
+        match action {
+            Action::GridUp => self.messages_scroll = self.messages_scroll.saturating_sub(1),
+            Action::GridDown => self.messages_scroll = self.messages_scroll.saturating_add(1),
             _ => {}
         }
     }
 
-    fn on_search_key(&mut self, key: KeyEvent) {
+    /// Applies a key to the search bar of the active result.
+    pub fn on_search_key(&mut self, key: KeyEvent) {
         let Some(result) = self.results.get_mut(self.active) else { return };
         let Some(search) = &mut result.search else { return };
         let cell = match key.code {
@@ -441,63 +447,35 @@ impl Console {
         }
     }
 
-    fn on_grid_key(&mut self, key: KeyEvent, vim: bool) -> GridAction {
+    fn on_grid_action(&mut self, action: Action, extend: bool) -> GridAction {
+        let vim = self.editor.keyboard() == KeyboardMode::Vim;
         let Some(result) = self.results.get_mut(self.active) else { return GridAction::None };
-        match key.code {
-            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                result.search = Some(RowSearch::new((result.view.row, result.view.col)));
-                return GridAction::None;
-            }
-            KeyCode::Char('/') if vim => {
-                result.search = Some(RowSearch::new((result.view.row, result.view.col)));
-                return GridAction::None;
-            }
-            KeyCode::Char('<') => result.table.resize(result.view.col, -1),
-            KeyCode::Char('>') => result.table.resize(result.view.col, 1),
-            KeyCode::Char('=') => result.table.reset_width(result.view.col),
-            KeyCode::Char('x') | KeyCode::Delete => return GridAction::CloseResult,
-            _ => {}
-        }
-        let table = &result.table;
+        let table = &mut result.table;
         let view = &mut result.view;
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let extend = shift || (vim && view.anchor.is_some());
+        let extend = extend || (vim && view.anchor.is_some());
         let last_row = table.rows.len().saturating_sub(1);
         let last_col = table.columns.len().saturating_sub(1);
-        let pending_g = std::mem::take(&mut self.pending_g);
-
-        match key.code {
-            KeyCode::Up if alt => view.move_to(0, view.col, table, extend),
-            KeyCode::Down if alt => view.move_to(last_row, view.col, table, extend),
-            KeyCode::Left if alt => view.move_to(view.row, 0, table, extend),
-            KeyCode::Right if alt => view.move_to(view.row, last_col, table, extend),
-            KeyCode::Up => view.move_by(-1, 0, table, extend),
-            KeyCode::Down => view.move_by(1, 0, table, extend),
-            KeyCode::Left => view.move_by(0, -1, table, extend),
-            KeyCode::Right => view.move_by(0, 1, table, extend),
-            KeyCode::PageUp => view.move_by(-20, 0, table, extend),
-            KeyCode::PageDown => view.move_by(20, 0, table, extend),
-            KeyCode::Char('a') if ctrl => view.select_all(table),
-            KeyCode::Char('c') if ctrl => {
-                return view.copy(table).map_or(GridAction::None, GridAction::Copy);
-            }
-            KeyCode::Enter => return Self::open_value(table, view),
-            KeyCode::Esc => view.anchor = None,
-            KeyCode::Char('k') if vim => view.move_by(-1, 0, table, extend),
-            KeyCode::Char('j') if vim => view.move_by(1, 0, table, extend),
-            KeyCode::Char('h') if vim => view.move_by(0, -1, table, extend),
-            KeyCode::Char('l') if vim => view.move_by(0, 1, table, extend),
-            KeyCode::Char('0') if vim => view.move_to(view.row, 0, table, extend),
-            KeyCode::Char('$') if vim => view.move_to(view.row, last_col, table, extend),
-            KeyCode::Char('G') if vim => view.move_to(last_row, view.col, table, extend),
-            KeyCode::Char('g') if vim && pending_g => view.move_to(0, view.col, table, extend),
-            KeyCode::Char('g') if vim => self.pending_g = true,
-            KeyCode::Char('v') if vim => view.toggle_selection(),
-            KeyCode::Char('y') if vim => {
-                return view.copy(table).map_or(GridAction::None, GridAction::Copy);
-            }
+        match action {
+            Action::GridFind => result.search = Some(RowSearch::new((view.row, view.col))),
+            Action::GridNarrow => table.resize(view.col, -1),
+            Action::GridWiden => table.resize(view.col, 1),
+            Action::GridAutoWidth => table.reset_width(view.col),
+            Action::GridCloseResult => return GridAction::CloseResult,
+            Action::GridFirstRow => view.move_to(0, view.col, table, extend),
+            Action::GridLastRow => view.move_to(last_row, view.col, table, extend),
+            Action::GridFirstColumn => view.move_to(view.row, 0, table, extend),
+            Action::GridLastColumn => view.move_to(view.row, last_col, table, extend),
+            Action::GridUp => view.move_by(-1, 0, table, extend),
+            Action::GridDown => view.move_by(1, 0, table, extend),
+            Action::GridLeft => view.move_by(0, -1, table, extend),
+            Action::GridRight => view.move_by(0, 1, table, extend),
+            Action::GridPageUp => view.move_by(-20, 0, table, extend),
+            Action::GridPageDown => view.move_by(20, 0, table, extend),
+            Action::GridSelectAll => view.select_all(table),
+            Action::GridCopy => return view.copy(table).map_or(GridAction::None, GridAction::Copy),
+            Action::GridOpenValue => return Self::open_value(table, view),
+            Action::GridClearSelection => view.anchor = None,
+            Action::GridToggleSelection => view.toggle_selection(),
             _ => {}
         }
         GridAction::None

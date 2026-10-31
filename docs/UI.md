@@ -8,8 +8,8 @@ O plano continua sendo a referência das decisões confirmadas.
 Os valores, nomes e dados abaixo são exemplos fictícios.
 Tamanhos, espaçamentos, cores e atalhos ainda não representam contratos finais.
 A interface final usa inglês; os rótulos em português destes esboços são exemplos.
-A aplicação implementa a seção 2, sem navegador nem abas de consoles, e parte das seções 5, 6 e 8.
-As seções 1, 3 e 4 ainda não existem. A [seção 1 do plano](../PLAN.md) lista o que falta.
+A aplicação implementa as seções 2 e 6, a seção 4 sem escopo nem campo de credencial, e parte das seções 5 e 8.
+As seções 1 e 3 ainda não existem. A [seção 1 do plano](../PLAN.md) lista o que falta.
 
 ## 1. Inicialização e abertura de console
 

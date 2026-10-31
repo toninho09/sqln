@@ -21,7 +21,9 @@ use sqln::connector::{
     Canceller, ConnectError, Connector, ExecError, ResetOutcome, Session, SessionContext,
     StatementEnd, TransactionCommand, TransactionState,
 };
-use sqln::exec::{ExecEvent, ExecutionEnd, Flow, Manager, ResultSink, Settings, StatementStatus};
+use sqln::exec::{
+    ExecEvent, ExecutionEnd, Flow, Manager, ResultSink, RunOptions, Settings, StatementStatus,
+};
 use sqln::grid::Budget;
 use sqln::sql::Dialect;
 use sqln::ui::theme::Theme;
@@ -163,6 +165,7 @@ impl Session for FakeSession {
 struct Harness {
     manager: Manager,
     events: Receiver<ExecEvent>,
+    connection: u64,
     console: u64,
     fake: Arc<Fake>,
 }
@@ -174,9 +177,10 @@ fn settings() -> Settings {
 fn harness(fake: &Arc<Fake>) -> Harness {
     *SHARED.lock().unwrap() = Some(fake.clone());
     let budget = Arc::new(Budget::new(1 << 20));
-    let (mut manager, events) = Manager::new(fake.clone(), settings(), budget).unwrap();
-    let console = manager.open_console();
-    Harness { manager, events, console, fake: fake.clone() }
+    let (mut manager, events) = Manager::new(budget).unwrap();
+    let connection = manager.add_connection(fake.clone(), settings());
+    let console = manager.open_console(connection).unwrap();
+    Harness { manager, events, connection, console, fake: fake.clone() }
 }
 
 impl Harness {
@@ -193,7 +197,7 @@ impl Harness {
 
     fn start(&self, statements: &[&str]) -> u64 {
         let statements = statements.iter().map(|sql| (*sql).to_owned()).collect();
-        self.manager.run(self.console, statements, false)
+        self.manager.run(self.console, statements, RunOptions::default())
     }
 
     /// Waits until the session receives the statement.
@@ -244,7 +248,7 @@ fn without_a_transaction_the_connection_closes_after_the_grace_time() {
     assert!(states.is_empty(), "no transaction, so the state stays the same");
     assert_eq!(fake.cancels.load(Ordering::SeqCst), 1);
     assert_eq!(fake.statements.lock().unwrap().len(), 1, "the next statement was not sent");
-    assert_eq!(h.manager.pool().usage().0, 0, "the closed session frees its place");
+    assert_eq!(h.manager.usage(h.connection).0, 0, "the closed session frees its place");
 
     fake.hang.store(false, Ordering::SeqCst);
     h.start(&["SELECT 1"]);
@@ -341,7 +345,7 @@ fn after_a_refusal_the_answer_of_the_database_ends_the_statement() {
     let (statuses, end, _, _) = h.finish();
     assert_eq!(statuses, [StatementStatus::Stopped]);
     assert_eq!(end, ExecutionEnd::Stopped);
-    assert_eq!(h.manager.pool().usage().0, 1, "the transaction keeps its session");
+    assert_eq!(h.manager.usage(h.connection).0, 1, "the transaction keeps its session");
 }
 
 #[test]
@@ -351,9 +355,10 @@ fn the_time_limit_uses_the_same_last_resort() {
     *SHARED.lock().unwrap() = Some(fake.clone());
     let budget = Arc::new(Budget::new(1 << 20));
     let settings = Settings { sql_timeout: Some(Duration::from_millis(20)), ..settings() };
-    let (mut manager, events) = Manager::new(fake.clone(), settings, budget).unwrap();
-    let console = manager.open_console();
-    let mut h = Harness { manager, events, console, fake: fake.clone() };
+    let (mut manager, events) = Manager::new(budget).unwrap();
+    let connection = manager.add_connection(fake.clone(), settings);
+    let console = manager.open_console(connection).unwrap();
+    let mut h = Harness { manager, events, connection, console, fake: fake.clone() };
     h.start(&["SELECT slow"]);
     let (statuses, end, _, _) = h.finish();
     assert_eq!(statuses, [StatementStatus::Unknown]);
@@ -432,6 +437,60 @@ fn the_application_asks_before_it_closes_a_connection_with_a_transaction() {
 }
 
 #[test]
+fn two_consoles_ask_in_turn_and_each_answer_reaches_its_own_console() {
+    let _serial = serial();
+    let fake = Fake::new();
+    let mut app = app(&fake);
+    fake.hang.store(false, Ordering::SeqCst);
+    fake.set_transaction(TransactionState::Open);
+    app.on_event(Event::Paste("BEGIN;".to_owned()));
+    press(&mut app, key(KeyCode::F(5)));
+    pump_until(&mut app, "Transaction open");
+    pump_until(&mut app, "Idle");
+    prefix(&mut app, 'h');
+    press(&mut app, key(KeyCode::Char('n')));
+    app.on_event(Event::Paste("BEGIN;".to_owned()));
+    press(&mut app, key(KeyCode::F(5)));
+    pump_until(&mut app, "Transaction open");
+    pump_until(&mut app, "Idle");
+
+    fake.hang.store(true, Ordering::SeqCst);
+    press(&mut app, key(KeyCode::F(5)));
+    pump_until(&mut app, "Running");
+    prefix(&mut app, 'p');
+    press(&mut app, key(KeyCode::F(5)));
+    pump_until(&mut app, "Running");
+    prefix(&mut app, 'x');
+    prefix(&mut app, 'n');
+    prefix(&mut app, 'x');
+
+    // Both consoles ask. The second question waits for the answer to the first one.
+    pump_until(&mut app, ": The statement did not answer");
+    std::thread::sleep(GRACE * 3);
+    app.drain_events();
+    let first = if screen(&mut app).contains("console-1: The") { 0 } else { 1 };
+    let second = 1 - first;
+    let other = format!("console-{}: The statement", second + 1);
+    assert!(!screen(&mut app).contains(&other), "{}", screen(&mut app));
+    press(&mut app, key(KeyCode::Enter));
+    pump_until(&mut app, &other);
+    press(&mut app, key(KeyCode::Tab));
+    press(&mut app, key(KeyCode::Enter));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.consoles()[second].transaction != TransactionState::Unknown {
+        app.drain_events();
+        assert!(Instant::now() < deadline, "{}", screen(&mut app));
+    }
+    assert_eq!(app.consoles()[first].transaction, TransactionState::Open, "the first answer keeps the wait");
+    assert!(app.consoles()[first].is_busy());
+    fake.release.notify_one();
+    while app.consoles()[first].is_busy() {
+        app.drain_events();
+        assert!(Instant::now() < deadline, "{}", screen(&mut app));
+    }
+}
+
+#[test]
 fn an_unknown_transaction_needs_a_confirmation_before_the_next_run() {
     let _serial = serial();
     let fake = Fake::new();
@@ -480,9 +539,10 @@ fn a_cancel_request_that_cannot_leave_closes_the_connection_at_once() {
     *SHARED.lock().unwrap() = Some(fake.clone());
     let budget = Arc::new(Budget::new(1 << 20));
     let settings = Settings { stop_grace: Duration::from_secs(30), ..settings() };
-    let (mut manager, events) = Manager::new(fake.clone(), settings, budget).unwrap();
-    let console = manager.open_console();
-    let mut h = Harness { manager, events, console, fake: fake.clone() };
+    let (mut manager, events) = Manager::new(budget).unwrap();
+    let connection = manager.add_connection(fake.clone(), settings);
+    let console = manager.open_console(connection).unwrap();
+    let mut h = Harness { manager, events, connection, console, fake: fake.clone() };
     h.start(&["SELECT slow"]);
     h.wait_running(1);
 

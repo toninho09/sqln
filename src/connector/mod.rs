@@ -25,6 +25,28 @@ pub struct SessionContext {
     pub schema: Option<String>,
 }
 
+/// What the console can choose at each execution.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Namespace {
+    #[default]
+    None,
+    Schema,
+    Database,
+}
+
+/// The features of a source. Future sources do not have all of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Capabilities {
+    pub namespace: Namespace,
+    pub transactions: bool,
+}
+
+impl Default for Capabilities {
+    fn default() -> Self {
+        Self { namespace: Namespace::None, transactions: true }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TransactionState {
     #[default]
@@ -113,6 +135,9 @@ pub fn network_connector(target: NetworkTarget) -> Arc<dyn Connector> {
 #[async_trait]
 pub trait Connector: Send + Sync {
     fn dialect(&self) -> Dialect;
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::default()
+    }
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError>;
 }
 

@@ -45,6 +45,11 @@ Não reabrir uma decisão sem um fato novo.
 | Confiança | Confirmar por destino | Confirmar por projeto | Segue o modelo do SSH e não depende de detectar clones |
 | Somente leitura | Campo por conexão, aplicado pelo banco | Confirmar `DELETE` sem `WHERE` | O banco aplica a regra |
 | Filtro da tabela | Uma única instrução | Aceitar qualquer texto | Os drivers aceitam várias instruções |
+| Limpeza no MySQL | `Conn::reset` e volta ao banco da conexão; sem banco, fechar a sessão | Somente `Conn::reset` | `COM_RESET_CONNECTION` mantém o banco, e um `USE` passaria para o console seguinte |
+| Seletor com transação aberta | Recusar a troca | Trocar com `SET` ou `USE` | Uma sessão reservada não recebe o contexto, e uma transação com erro recusa `SET` |
+| Desconectar com trabalho aberto | Recusar e nomear o console | Perguntar e parar o console | Menos estados; o usuário resolve a transação com os controles existentes |
+| Desconectar com leitura do catálogo | Esperar a sessão por até 5 segundos | Informar o fim logo depois de fechar as ociosas | A mensagem seria falsa, e o formulário ficava preso no modo de renomear |
+| Conexão removida | O console fica aberto, sem conexão | Fechar os consoles | O texto não se perde, como nos scripts sem conexão |
 
 ## Bibliotecas
 
@@ -72,9 +77,16 @@ Não reabrir uma decisão sem um fato novo.
 | Assunto | Escolha | Rejeitado | Motivo |
 |---|---|---|---|
 | Entrega | Primeira versão completa, com versionamento local | Versões parciais públicas | Decisão do projeto |
+| Ordem das etapas | Interface completa antes da visão de tabela | Tabela primeiro, com abertura provisória | A tabela abre pelo navegador e usa as abas; a abertura provisória seria removida depois |
 | TSV | Formato do DataGrip, menos as perdas de dados | Cópia exata do DataGrip | A cópia não deve perder dados em silêncio |
 | Atalhos no Mac | Sem depender de `Ctrl`+setas, `Home`, `End`, `PageUp` e `PageDown` | Atalhos clássicos de IDE | Parte não funciona, e muitos teclados não têm essas teclas |
 | Prefixo | `Ctrl+W` nos dois modos | Fechar aba com `Ctrl+W` | Caminho comum, sem depender do terminal |
+| Sair | `Ctrl+W q` | Somente fechar a última aba | A saída com vários consoles precisa de um comando; `q` segue o Vim |
+| Adicionar conexão | `a` no navegador | Item na árvore | O navegador vazio já oferece um caminho, e a tecla segue `n`, `e` e `r` |
+| Perguntas simultâneas | Fila, com uma pergunta aberta | Substituir a pergunta aberta | Dois consoles podem pedir uma resposta no mesmo instante |
+| Nome automático | `console-N` com um contador da aplicação | Um contador por conexão | Duas abas nunca têm o mesmo nome |
+| Senha no formulário | Campo mascarado, somente em memória | Esperar a etapa de credenciais | Sem o campo, uma conexão nova não conecta a um banco com senha |
+| Senha na URI | Mascarar na tela, com o mesmo tamanho | Mostrar o texto digitado | O plano proíbe mostrar senhas; o cursor continua certo |
 | Commit por atalho | Sem confirmação | Pedir confirmação | Mesmo comportamento dos botões |
 | Metadados | Um `.json` ao lado de cada `.sql` | Índice único ou comentário no script | Reduz conflitos no Git e mantém o script limpo |
 | Telemetria | Nenhuma | Opcional | A aplicação só acessa a rede para falar com os bancos |

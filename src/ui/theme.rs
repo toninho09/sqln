@@ -34,6 +34,11 @@ pub struct Theme {
     pub dialog: Style,
     pub dialog_option: Style,
     pub dialog_focus: Style,
+    pub tree_selected: Style,
+    pub tree_detail: Style,
+    pub divider: Style,
+    pub control: Style,
+    pub control_off: Style,
 }
 
 impl Theme {
@@ -77,6 +82,11 @@ impl Theme {
             dialog: Style::new(),
             dialog_option: Style::new(),
             dialog_focus: reversed,
+            tree_selected: reversed,
+            tree_detail: color(Color::DarkGray),
+            divider: color(Color::DarkGray),
+            control: color(Color::Cyan),
+            control_off: color(Color::DarkGray),
         }
     }
 
@@ -114,6 +124,11 @@ impl Theme {
             dialog: none,
             dialog_option: none,
             dialog_focus: modifier(Modifier::REVERSED),
+            tree_selected: modifier(Modifier::REVERSED),
+            tree_detail: modifier(Modifier::DIM),
+            divider: modifier(Modifier::DIM),
+            control: none,
+            control_off: modifier(Modifier::DIM),
         }
     }
 }

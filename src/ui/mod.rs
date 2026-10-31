@@ -1,6 +1,8 @@
 //! Screen drawing.
 
 pub mod console;
+pub mod form;
+pub mod navigator;
 pub mod text;
 pub mod theme;
 pub mod wrap;
@@ -13,8 +15,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Widget};
 
 pub use self::console::{
-    ConsoleLayout, column_edge_at, draw_console, draw_dialog, draw_overlay, draw_small_terminal,
-    grid_cell_at, tab_at,
+    ConsoleLayout, column_edge_at, draw_console, draw_dialog, draw_main_tabs, draw_overlay,
+    draw_picker, draw_small_terminal, grid_cell_at, tab_at,
 };
 use self::theme::Theme;
 use crate::complete::SuggestionKind;

@@ -3,14 +3,15 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use sqln::app::{Options, run, sample_catalog};
-use sqln::connector::network_connector;
+use sqln::connection::{Definition, Source};
+use sqln::connector::sqlite::SqliteTarget;
 use sqln::connector::target::{Secret, parse_uri};
 use sqln::editor::KeyboardMode;
 use sqln::sql::Dialect;
 use sqln::ui::text::HELP;
 
 enum Command {
-    Run(Options),
+    Run(Box<Options>),
     Help,
     Version,
 }
@@ -33,8 +34,12 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
             "--no-catalog" => options.catalog = None,
             "--read-only" => options.settings.read_only = true,
             "--sqlite" => {
-                let path = args.next().ok_or("--sqlite needs a file.")?;
-                options.database = Some(PathBuf::from(path));
+                let path = PathBuf::from(args.next().ok_or("--sqlite needs a file.")?);
+                if options.database.is_some() {
+                    options.connections.push(Definition::sqlite(SqliteTarget::new(path)));
+                } else {
+                    options.database = Some(path);
+                }
                 options.catalog = None;
             }
             "--url" => {
@@ -43,8 +48,8 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
                 if target.password.is_none() {
                     target.password = std::env::var("SQLN_PASSWORD").ok().map(Secret::new);
                 }
-                options.label = Some(target.label());
-                options.connector = Some(network_connector(target));
+                let name = target.label();
+                options.connections.push(Definition::new(name, Source::Network(target)));
                 options.catalog = None;
             }
             "--row-cap" => {
@@ -67,7 +72,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
             other => return Err(format!("Unknown option: {other}")),
         }
     }
-    Ok(Command::Run(options))
+    Ok(Command::Run(Box::new(options)))
 }
 
 fn main() -> ExitCode {
@@ -75,7 +80,7 @@ fn main() -> ExitCode {
         Ok(Command::Help) => print!("{HELP}"),
         Ok(Command::Version) => println!("sqln {}", env!("CARGO_PKG_VERSION")),
         Ok(Command::Run(options)) => {
-            if let Err(error) = run(options) {
+            if let Err(error) = run(*options) {
                 eprintln!("sqln: {error}");
                 return ExitCode::FAILURE;
             }

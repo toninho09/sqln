@@ -1,5 +1,6 @@
 //! MySQL connector. The text protocol keeps the text of the database in each value.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -12,13 +13,14 @@ use tokio::time::timeout;
 
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
-    Canceller, ConnectError, Connector, ExecError, ResetOutcome, Session, SessionContext,
-    StatementEnd, TransactionCommand, TransactionState, describe, tls,
+    Canceller, Capabilities, ConnectError, Connector, ExecError, Namespace, ResetOutcome, Session,
+    SessionContext, StatementEnd, TransactionCommand, TransactionState, describe, tls,
 };
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
 use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, Value};
 use crate::sql::{Dialect, counts_rows, is_plain_read};
+use crate::ui::text;
 
 /// `ER_QUERY_INTERRUPTED`: `KILL QUERY` stopped the statement.
 const QUERY_INTERRUPTED: u16 = 1317;
@@ -51,11 +53,22 @@ fn ssl_options(tls_mode: &Tls) -> Result<Option<SslOpts>, ConnectError> {
             .with_root_certs(tls::system_roots().iter().map(|root| root.to_vec().into()).collect()),
     };
     if let Some(client) = &files.client {
+        check_client_key(&client.key)?;
         let identity =
             ClientIdentity::new(client.certificate.clone().into(), client.key.clone().into());
         options = options.with_client_identity(Some(identity));
     }
     Ok(Some(options))
+}
+
+/// The driver reads only RSA keys in PKCS#1 form, and its error does not say that.
+fn check_client_key(path: &Path) -> Result<(), ConnectError> {
+    let key = std::fs::read(path).map_err(|error| ConnectError(error.to_string()))?;
+    let contains = |part: &[u8]| key.windows(part.len()).any(|window| window == part);
+    if contains(b"-----BEGIN ") && !contains(b"-----BEGIN RSA PRIVATE KEY-----") {
+        return Err(ConnectError(text::MYSQL_CLIENT_KEY.to_owned()));
+    }
+    Ok(())
 }
 
 /// Do not write this value in a log: its debug text shows the password.
@@ -91,6 +104,10 @@ impl Connector for MySqlConnector {
         Dialect::MySql
     }
 
+    fn capabilities(&self) -> Capabilities {
+        Capabilities { namespace: Namespace::Database, transactions: true }
+    }
+
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
         let options = driver_options(&self.target)?;
         let conn = Conn::new(options.clone()).await.map_err(|error| ConnectError(describe(&error)))?;
@@ -98,6 +115,7 @@ impl Connector for MySqlConnector {
         Ok(Box::new(MySqlSession {
             conn: Some(conn),
             canceller,
+            database: self.target.database.clone(),
             transaction: TransactionState::None,
             running: false,
             status_is_current: true,
@@ -224,11 +242,34 @@ struct MySqlSession {
     /// `Drop` takes this value. All other code finds it here.
     conn: Option<Conn>,
     canceller: Arc<MySqlCanceller>,
+    /// The database of the connection. A cleanup returns to it.
+    database: Option<String>,
     transaction: TransactionState,
     /// True from the start of a statement to its end. A closed future leaves it set.
     running: bool,
     /// False after an error, because an error packet has no transaction state.
     status_is_current: bool,
+}
+
+impl MySqlSession {
+    /// The reset of the server keeps the current database, so a `USE` needs this step.
+    /// MySQL cannot leave a database, so a session without a database closes.
+    async fn clean(&mut self) -> bool {
+        if !matches!(self.conn().reset().await, Ok(true)) {
+            return false;
+        }
+        let current: Option<Option<String>> = match self.conn().query_first("SELECT DATABASE()").await {
+            Ok(current) => current,
+            Err(_) => return false,
+        };
+        let current = current.flatten();
+        if current == self.database {
+            return true;
+        }
+        let Some(database) = &self.database else { return false };
+        let sql = format!("USE {}", quoted(database));
+        self.conn().query_drop(sql).await.is_ok()
+    }
 }
 
 /// The drop of a `Conn` starts a task that reads the statement to its end, with the
@@ -364,8 +405,8 @@ impl Session for MySqlSession {
     }
 
     async fn reset(&mut self) -> ResetOutcome {
-        match timeout(SESSION_LIMIT, self.conn().reset()).await {
-            Ok(Ok(true)) => ResetOutcome::Clean,
+        match timeout(SESSION_LIMIT, self.clean()).await {
+            Ok(true) => ResetOutcome::Clean,
             _ => ResetOutcome::Discard,
         }
     }
