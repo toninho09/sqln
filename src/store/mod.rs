@@ -53,6 +53,11 @@ impl Root {
         self.dir.join("workspace.json")
     }
 
+    /// The authorized plain text passwords. Only the global folder uses this file.
+    pub fn credentials_file(&self) -> PathBuf {
+        self.dir.join("credentials.json")
+    }
+
     pub fn consoles_dir(&self) -> PathBuf {
         self.dir.join("consoles")
     }

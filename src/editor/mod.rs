@@ -94,6 +94,9 @@ enum ListAction {
     Close,
 }
 
+/// The memory limit of the undo history of one console.
+pub const UNDO_LIMIT_BYTES: usize = 64 * 1024 * 1024;
+
 pub struct SqlEditor {
     pub state: EditorState,
     keyboard: KeyboardMode,
@@ -132,6 +135,7 @@ impl SqlEditor {
     ) -> Self {
         let mut state = EditorState::new(Lines::from(text));
         state.set_clipboard(EditorClipboard(clipboard.clone()));
+        state.set_undo_limit(UNDO_LIMIT_BYTES);
         let mut lines = std::mem::take(&mut state.lines).into_vecs();
         if lines.is_empty() {
             lines.push(Vec::new());
@@ -180,6 +184,56 @@ impl SqlEditor {
 
     pub fn keyboard(&self) -> KeyboardMode {
         self.keyboard
+    }
+
+    /// Changes the keyboard mode in place. The text, the cursor, the scroll, the
+    /// history, and the selection stay.
+    pub fn set_keyboard(&mut self, keyboard: KeyboardMode) {
+        if self.keyboard == keyboard {
+            return;
+        }
+        self.keyboard = keyboard;
+        self.list = None;
+        self.list_request = None;
+        self.undo_group = None;
+        match keyboard {
+            KeyboardMode::Vim => {
+                self.anchor = None;
+                self.vim_shadow = Some(self.state.lines.clone());
+                let selected = self.state.selection.is_some();
+                self.state.mode = if selected { EditorMode::Visual } else { EditorMode::Normal };
+                let last = self.state.lines.len_col(self.state.cursor.row).unwrap_or(0);
+                self.state.cursor.col = self.state.cursor.col.min(last.saturating_sub(1));
+            }
+            KeyboardMode::Conventional => {
+                self.vim_shadow = None;
+                self.state.mode = EditorMode::Insert;
+                if let Some(selection) = self.state.selection.take() {
+                    let forward = (selection.start.row, selection.start.col) <= (selection.end.row, selection.end.col);
+                    let (first, last) = if forward {
+                        (selection.start, selection.end)
+                    } else {
+                        (selection.end, selection.start)
+                    };
+                    let width = self.state.lines.len_col(last.row).unwrap_or(0);
+                    self.anchor = Some(first);
+                    self.state.cursor = Index2::new(last.row, (last.col + 1).min(width));
+                    self.sync_selection();
+                }
+            }
+        }
+    }
+
+    /// Changes the memory limit of the history.
+    pub fn set_undo_limit(&mut self, bytes: usize) {
+        self.state.set_undo_limit(bytes);
+    }
+
+    /// Shows the warning for an edit that the history did not keep.
+    fn note_history(&mut self) {
+        if self.state.take_undo_skipped() {
+            self.status = Some(text::UNDO_TOO_LARGE);
+        }
     }
 
     pub fn text(&self) -> String {
@@ -318,6 +372,7 @@ impl SqlEditor {
             KeyboardMode::Conventional => self.on_conventional_key(key),
             KeyboardMode::Vim => self.on_vim_key(key),
         }
+        self.note_history();
         self.update_list(action, catalog);
     }
 
@@ -404,6 +459,12 @@ impl SqlEditor {
             rows: found.iter().map(|found| snapshot.position(base + found.start).row).collect(),
             starts: found.iter().map(|found| base + found.start).collect(),
         })
+    }
+
+    /// Removes the marks of the last execution.
+    pub fn clear_marks(&mut self) {
+        self.marks.clear();
+        self.error_spot = None;
     }
 
     pub fn set_marks(&mut self, plan: &RunPlan) {
@@ -573,6 +634,7 @@ impl SqlEditor {
             return;
         }
         self.insert_at_cursor(&text);
+        self.note_history();
     }
 
     fn paste_from_clipboard(&mut self) {

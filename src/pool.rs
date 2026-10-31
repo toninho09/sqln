@@ -192,7 +192,7 @@ impl Pool {
         let connect = self.inner.connector.connect();
         match timeout(self.inner.connect_timeout, connect).await {
             Ok(session) => lease.session = Some(session?),
-            Err(_) => return Err(ConnectError("The connection time limit ended.".to_owned())),
+            Err(_) => return Err(ConnectError::new("The connection time limit ended.".to_owned())),
         }
         Ok(lease)
     }

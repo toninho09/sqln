@@ -1,7 +1,10 @@
 //! Terminal setup and restoration.
 
+use std::backtrace::Backtrace;
 use std::io::{self, Stdout, stdout};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossterm::cursor::Show;
 use crossterm::event::{
@@ -15,6 +18,8 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+
+use crate::store::file::{self, Expect};
 
 pub type Screen = Terminal<CrosstermBackend<Stdout>>;
 
@@ -35,8 +40,9 @@ impl Drop for Guard {
 }
 
 impl Session {
-    pub fn start() -> io::Result<Self> {
-        install_panic_hook();
+    /// `reports` is the folder of the panic reports.
+    pub fn start(reports: Option<PathBuf>) -> io::Result<Self> {
+        install_panic_hook(reports);
         enable_raw_mode()?;
         let guard = Guard;
         let mut output = stdout();
@@ -63,10 +69,32 @@ fn restore() {
     let _ = disable_raw_mode();
 }
 
-fn install_panic_hook() {
+fn install_panic_hook(reports: Option<PathBuf>) {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore();
         previous(info);
+        if let Some(folder) = &reports {
+            let place = info.location().map(ToString::to_string);
+            write_panic_report(folder, place.as_deref());
+        }
     }));
+}
+
+/// Writes the place of a panic and its call stack. The message of a panic stays out,
+/// because it can quote SQL or a value.
+pub fn write_panic_report(folder: &Path, place: Option<&str>) -> Option<PathBuf> {
+    let seconds = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |time| time.as_secs());
+    let path = folder.join(format!("panic-{seconds}.txt"));
+    let report = format!(
+        "sqln {}\n{} {}\n{}\n\n{}\n",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        place.unwrap_or("unknown place"),
+        Backtrace::force_capture(),
+    );
+    file::write_private_atomic(&path, report.as_bytes(), Expect::Any).ok()?;
+    crate::log::event("panic");
+    Some(path)
 }

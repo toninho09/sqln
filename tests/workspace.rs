@@ -16,10 +16,11 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, Mous
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
-use sqln::app::{App, Options, sample_catalog};
+use sqln::app::{App, Options};
+use common::sample_catalog;
 use sqln::catalog::Catalog;
 use sqln::clipboard::MemoryClipboard;
-use sqln::connection::{Definition, Source};
+use sqln::connection::{CatalogState, Definition, Source};
 use sqln::connector::sqlite::SqliteTarget;
 use sqln::connector::target::{
     Address, ClientCertificate, NetworkTarget, Tls, TlsFiles, parse_uri,
@@ -1091,6 +1092,8 @@ fn a_name_from_the_database_cannot_send_terminal_sequences() {
     assert!(!f.screen().contains('\x1b'), "{}", f.screen());
 }
 
+const NEW_TABLE: &str = "new_table";
+
 /// A connection that keeps its sessions, as a network database does.
 #[derive(Default)]
 struct Sessions {
@@ -1102,6 +1105,9 @@ struct Sessions {
     /// True keeps a catalog read open until `catalog_release`.
     hold_catalog: AtomicBool,
     catalog_release: Notify,
+    /// True adds `NEW_TABLE` to a read that starts after this change.
+    newer_catalog: AtomicBool,
+    catalog_reads: AtomicUsize,
 }
 
 struct KeepConnector(Arc<Sessions>);
@@ -1173,10 +1179,18 @@ impl Session for KeepSession {
     }
 
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError> {
+        let newer = self.0.newer_catalog.load(Ordering::SeqCst);
+        self.0.catalog_reads.fetch_add(1, Ordering::SeqCst);
         if self.0.hold_catalog.load(Ordering::SeqCst) {
             self.0.catalog_release.notified().await;
         }
-        Ok(sample_catalog())
+        let mut catalog = sample_catalog();
+        if newer {
+            let mut relation = catalog.schemas[0].relations[0].clone();
+            relation.name = NEW_TABLE.to_owned();
+            catalog.schemas[0].relations.push(relation);
+        }
+        Ok(catalog)
     }
 
     async fn read_columns(&mut self, _: &str, _: &str) -> Result<Vec<String>, ExecError> {
@@ -1236,6 +1250,44 @@ fn hold_a_session_in_a_catalog_read(f: &mut Fixture, sessions: &Sessions) {
     f.navigator();
     f.code(KeyCode::Right);
     f.pump_sees("Pool 1/5");
+}
+
+fn has_new_table(f: &Fixture) -> bool {
+    let catalog = f.app.connections()[0].catalog.as_ref();
+    catalog.is_some_and(|item| item.schemas[0].relations.iter().any(|table| table.name == NEW_TABLE))
+}
+
+#[test]
+fn an_old_catalog_answer_does_not_end_a_newer_read() {
+    let (mut f, sessions) = kept_sessions(KeyboardMode::Conventional);
+    hold_a_session_in_a_catalog_read(&mut f, &sessions);
+    sessions.newer_catalog.store(true, Ordering::SeqCst);
+    f.code(KeyCode::Char('r'));
+    f.pump_until(|_| sessions.catalog_reads.load(Ordering::SeqCst) == 2);
+
+    sessions.catalog_release.notify_one();
+    std::thread::sleep(Duration::from_millis(100));
+    f.app.drain_events();
+    assert_eq!(f.app.connections()[0].catalog_state, CatalogState::Loading);
+
+    sessions.catalog_release.notify_one();
+    f.pump_until(|f| f.app.connections()[0].catalog_state == CatalogState::Loaded);
+    assert!(has_new_table(&f));
+}
+
+#[test]
+fn an_old_catalog_answer_does_not_replace_a_newer_read() {
+    let (mut f, sessions) = kept_sessions(KeyboardMode::Conventional);
+    hold_a_session_in_a_catalog_read(&mut f, &sessions);
+    sessions.newer_catalog.store(true, Ordering::SeqCst);
+    sessions.hold_catalog.store(false, Ordering::SeqCst);
+    f.code(KeyCode::Char('r'));
+    f.pump_until(|f| has_new_table(f));
+
+    sessions.catalog_release.notify_one();
+    std::thread::sleep(Duration::from_millis(100));
+    f.app.drain_events();
+    assert!(has_new_table(&f));
 }
 
 #[test]

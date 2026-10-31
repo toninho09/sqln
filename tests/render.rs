@@ -1,6 +1,7 @@
 mod common;
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use common::{Fixture, ctrl, key};
@@ -13,10 +14,12 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier};
-use sqln::app::{App, Options, sample_catalog};
+use sqln::app::{App, Options};
+use common::sample_catalog;
 use sqln::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
 use sqln::clipboard::MemoryClipboard;
 use sqln::editor::{KeyboardMode, SqlEditor};
+use sqln::input::Keymap;
 use sqln::ui::theme::Theme;
 use sqln::ui::{draw_editor, list_area};
 
@@ -248,15 +251,10 @@ fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
 fn each_hint_fits_the_minimum_terminal_width() {
     use sqln::ui::text;
     for hint in [
-        text::HINT_EDITOR,
-        text::HINT_RUNNING,
-        text::HINT_GRID,
         text::HINT_GRID_SEARCH,
         text::RESULT_READING,
         text::HINT_LIST,
         text::HINT_SEARCH,
-        text::HINT_PREFIX,
-        text::HINT_NAVIGATOR,
         text::HINT_PICKER,
         text::HINT_CONFLICTS,
         text::HINT_CONFIG_ERROR,
@@ -401,4 +399,52 @@ fn the_wheel_scrolls_the_text() {
     app.on_event(mouse(MouseEventKind::ScrollUp, 10, 5));
     let (_, after) = app.console_mut().editor.state.viewport_offset();
     assert_eq!(after, before - 1);
+}
+
+fn hint_app(keyboard: KeyboardMode, keymap: Option<Keymap>) -> App {
+    let options = Options { keyboard, keymap, ..Options::default() };
+    App::new(options, Rc::new(RefCell::new(MemoryClipboard::default())), Theme::plain())
+}
+
+fn press_prefix(app: &mut App, c: char) {
+    app.on_event(Event::Key(ctrl('w')));
+    app.on_event(Event::Key(key(KeyCode::Char(c))));
+}
+
+#[test]
+fn the_keys_of_the_hint_bar_fit_the_minimum_width() {
+    for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let mut app = hint_app(keyboard, None);
+        let mut hints = vec![app.hint()];
+        app.on_event(Event::Key(ctrl('w')));
+        hints.push(app.hint());
+        app.on_event(Event::Key(key(KeyCode::Esc)));
+        press_prefix(&mut app, 'j');
+        hints.push(app.hint());
+        press_prefix(&mut app, 'h');
+        hints.push(app.hint());
+        for hint in hints {
+            assert!(!hint.is_empty());
+            assert!(hint.chars().count() <= 80, "{hint}");
+        }
+    }
+}
+
+#[test]
+fn the_hint_bar_shows_the_keys_of_the_key_map() {
+    let overrides = HashMap::from([
+        ("run".to_owned(), vec!["f6".to_owned()]),
+        ("help".to_owned(), Vec::new()),
+        ("nextTab".to_owned(), vec!["ctrl+w u".to_owned()]),
+    ]);
+    let keymap = Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap();
+    let mut app = hint_app(KeyboardMode::Conventional, Some(keymap));
+    let hint = app.hint();
+    assert!(hint.contains("F6 run"), "{hint}");
+    assert!(!hint.starts_with("F5"), "{hint}");
+    assert!(!hint.contains("keys"), "{hint}");
+    app.on_event(Event::Key(ctrl('w')));
+    let hint = app.hint();
+    assert!(hint.contains("up tab"), "{hint}");
+    assert!(hint.contains("N name"), "{hint}");
 }

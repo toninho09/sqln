@@ -13,7 +13,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedSender};
 
 pub use self::sink::{Flow, ReadLimit, ResultSink};
 use crate::catalog::{Catalog, RelationRef};
-use crate::connector::{Connector, SessionContext, StatementEnd, TransactionCommand, TransactionState};
+use crate::connector::{ConnectError, Connector, SessionContext, StatementEnd, TransactionCommand, TransactionState};
 use crate::grid::{Budget, DEFAULT_LIMIT, Row};
 use crate::pool::Pool;
 
@@ -114,14 +114,17 @@ pub enum ExecEvent {
     },
     TransactionChanged { console: ConsoleId, state: TransactionState },
     TransactionFailed { console: ConsoleId, message: String },
-    CatalogLoaded { connection: ConnectionId, catalog: Result<Catalog, String> },
+    /// `read` is the number that the caller gave to `load_catalog`.
+    CatalogLoaded { connection: ConnectionId, read: u64, catalog: Result<Catalog, String> },
     ColumnsLoaded {
         connection: ConnectionId,
         relation: RelationRef,
         columns: Result<Vec<String>, String>,
     },
-    /// The test of a connection form ended.
-    ConnectionTested { test: u64, result: Result<(), String> },
+    /// A test of a connection ended.
+    ConnectionTested { test: u64, result: Result<(), ConnectError> },
+    /// The database refused the password of a new session of this pool.
+    PasswordRefused { connection: ConnectionId, pool: u64 },
     /// The idle sessions of a connection closed.
     Disconnected { connection: ConnectionId },
 }
@@ -142,6 +145,7 @@ impl ExecEvent {
             | ExecEvent::ResultDone { key, .. }
             | ExecEvent::StatementFinished { key, .. } => Some(key.console),
             ExecEvent::CatalogLoaded { .. }
+            | ExecEvent::PasswordRefused { .. }
             | ExecEvent::ColumnsLoaded { .. }
             | ExecEvent::ConnectionTested { .. }
             | ExecEvent::Disconnected { .. } => None,
@@ -169,8 +173,19 @@ pub struct RunRequest {
 /// The pool and the limits that a console uses.
 #[derive(Clone)]
 struct Binding {
+    connection: ConnectionId,
+    /// A refusal from an older pool says nothing about the password of this pool.
+    serial: u64,
     pool: Pool,
     settings: Settings,
+}
+
+impl Binding {
+    fn refusal(&self, error: &ConnectError) -> Option<ExecEvent> {
+        error
+            .password_refused
+            .then_some(ExecEvent::PasswordRefused { connection: self.connection, pool: self.serial })
+    }
 }
 
 enum Command {
@@ -199,6 +214,7 @@ pub struct Manager {
     next_connection: ConnectionId,
     next_console: ConsoleId,
     next_execution: AtomicU64,
+    next_pool: u64,
 }
 
 impl Manager {
@@ -218,6 +234,7 @@ impl Manager {
             next_connection: 1,
             next_console: 1,
             next_execution: AtomicU64::new(1),
+            next_pool: 1,
         };
         Ok((manager, receiver))
     }
@@ -242,8 +259,26 @@ impl Manager {
     ) -> ConnectionId {
         let connection = self.next_connection;
         self.next_connection += 1;
-        self.connections.insert(connection, binding(connector, settings));
+        let binding = self.binding(connection, connector, settings);
+        self.connections.insert(connection, binding);
         connection
+    }
+
+    fn binding(
+        &mut self,
+        connection: ConnectionId,
+        connector: Arc<dyn Connector>,
+        settings: Settings,
+    ) -> Binding {
+        let serial = self.next_pool;
+        self.next_pool += 1;
+        let pool = Pool::new(connector, settings.max_connections, settings.connect_timeout);
+        Binding { connection, serial, pool, settings }
+    }
+
+    /// Returns the serial of the pool that a connection uses now.
+    pub fn pool_serial(&self, connection: ConnectionId) -> Option<u64> {
+        self.connections.get(&connection).map(|binding| binding.serial)
     }
 
     /// Gives a connection a new pool, and its consoles use that pool from now on.
@@ -254,7 +289,7 @@ impl Manager {
         connector: Arc<dyn Connector>,
         settings: Settings,
     ) {
-        let binding = binding(connector, settings);
+        let binding = self.binding(connection, connector, settings);
         for entry in self.consoles.values().filter(|entry| entry.connection == connection) {
             let _ = entry.commands.send(Command::Rebind(binding.clone()));
         }
@@ -330,36 +365,45 @@ impl Manager {
     }
 
     /// Reads the catalog through the pool, so it respects the connection limit.
-    pub fn load_catalog(&self, connection: ConnectionId) {
-        let Some(binding) = self.connections.get(&connection) else { return };
-        let pool = binding.pool.clone();
+    /// Two reads can overlap and end in any order, so the answer carries `read`.
+    pub fn load_catalog(&self, connection: ConnectionId, read: u64) {
+        let Some(binding) = self.connections.get(&connection).cloned() else { return };
         let events = self.events.clone();
         self.runtime.spawn(async move {
-            let catalog = match pool.acquire().await {
+            let catalog = match binding.pool.acquire().await {
                 Ok(mut lease) => {
                     let result = lease.session().read_catalog().await;
                     lease.release().await;
                     result.map_err(|error| error.message)
                 }
-                Err(error) => Err(error.0),
+                Err(error) => {
+                    if let Some(refusal) = binding.refusal(&error) {
+                        let _ = events.send(refusal).await;
+                    }
+                    Err(error.message)
+                }
             };
-            let _ = events.send(ExecEvent::CatalogLoaded { connection, catalog }).await;
+            let _ = events.send(ExecEvent::CatalogLoaded { connection, read, catalog }).await;
         });
     }
 
     pub fn load_columns(&self, connection: ConnectionId, relation: RelationRef) {
-        let Some(binding) = self.connections.get(&connection) else { return };
-        let pool = binding.pool.clone();
+        let Some(binding) = self.connections.get(&connection).cloned() else { return };
         let events = self.events.clone();
         self.runtime.spawn(async move {
-            let columns = match pool.acquire().await {
+            let columns = match binding.pool.acquire().await {
                 Ok(mut lease) => {
                     let session = lease.session();
                     let result = session.read_columns(&relation.schema, &relation.relation).await;
                     lease.release().await;
                     result.map_err(|error| error.message)
                 }
-                Err(error) => Err(error.0),
+                Err(error) => {
+                    if let Some(refusal) = binding.refusal(&error) {
+                        let _ = events.send(refusal).await;
+                    }
+                    Err(error.message)
+                }
             };
             let _ = events.send(ExecEvent::ColumnsLoaded { connection, relation, columns }).await;
         });
@@ -388,8 +432,8 @@ impl Manager {
         self.runtime.spawn(async move {
             let result = match tokio::time::timeout(limit, connector.connect()).await {
                 Ok(Ok(_session)) => Ok(()),
-                Ok(Err(error)) => Err(error.0),
-                Err(_) => Err(CONNECT_LIMIT_ENDED.to_owned()),
+                Ok(Err(error)) => Err(error),
+                Err(_) => Err(ConnectError::new(CONNECT_LIMIT_ENDED)),
             };
             let _ = events.send(ExecEvent::ConnectionTested { test, result }).await;
         });
@@ -399,11 +443,6 @@ impl Manager {
     pub fn shutdown(self) {
         self.runtime.shutdown_background();
     }
-}
-
-fn binding(connector: Arc<dyn Connector>, settings: Settings) -> Binding {
-    let pool = Pool::new(connector, settings.max_connections, settings.connect_timeout);
-    Binding { pool, settings }
 }
 
 fn context(settings: &Settings, schema: Option<String>) -> SessionContext {

@@ -195,6 +195,11 @@ impl Harness {
         self.manager.run(self.console, statements, RunOptions { manual, ..RunOptions::default() })
     }
 
+    /// Waits for the first statement. The connection can take any time before it.
+    fn wait_started(&mut self) {
+        while !matches!(self.next(), ExecEvent::StatementStarted { .. }) {}
+    }
+
     fn run(&mut self, statements: &[&str]) -> Run {
         let execution = self.start(statements, false);
         self.collect(execution)
@@ -441,6 +446,8 @@ fn stop_reaches_a_statement_in_progress_and_the_session_stays_usable() {
     for server in servers() {
         let mut h = Harness::open(&server, sessions(1));
         let execution = h.start(&[&server.sleep(30), "SELECT 'not executed'"], false);
+        h.wait_started();
+        // The runner sends the event before the text reaches the server.
         std::thread::sleep(Duration::from_millis(300));
         let started = Instant::now();
         h.manager.stop(h.console);
@@ -763,7 +770,7 @@ fn the_catalog_lists_relations_and_the_current_schema() {
             "CREATE TABLE t_catalog (id int, full_name text)",
             "CREATE VIEW v_catalog AS SELECT id FROM t_catalog",
         ]);
-        h.manager.load_catalog(h.connection);
+        h.manager.load_catalog(h.connection, 0);
         let catalog = loop {
             if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
                 break catalog.unwrap();
@@ -1083,7 +1090,7 @@ fn try_connect(uri: &str) -> Result<Box<dyn Session>, String> {
     let connector = network_connector(parse_uri(uri).unwrap());
     runtime().block_on(async {
         let session = connector.connect().await;
-        session.map_err(|error| error.0)
+        session.map_err(|error| error.message)
     })
 }
 
@@ -1760,7 +1767,7 @@ fn a_client_key_in_another_form_gets_a_clear_message() {
     let connector = network_connector(parse_uri(&uri).unwrap());
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let error = runtime.block_on(connector.connect()).err().unwrap();
-    assert!(error.0.contains("PKCS#1"), "{error:?}");
+    assert!(error.message.contains("PKCS#1"), "{error:?}");
     std::fs::remove_file(path).unwrap();
 }
 

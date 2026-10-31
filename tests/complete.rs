@@ -342,3 +342,111 @@ fn any_cursor_in_any_text_does_not_fail() {
         }
     }
 }
+
+fn cte_labels(text: &str) -> Vec<String> {
+    run_with(text, Dialect::Postgres, Some(&catalog())).items.into_iter().map(|item| item.label).collect()
+}
+
+#[test]
+fn a_with_name_appears_after_from_with_and_without_a_catalog() {
+    let text = "WITH recent AS (SELECT id FROM users) SELECT * FROM rec|";
+    assert_eq!(cte_labels(text)[0], "recent");
+    let items = run_with(text, Dialect::Postgres, None).items;
+    assert_eq!(items[0].label, "recent");
+    assert_eq!(items[0].kind, SuggestionKind::Cte);
+}
+
+#[test]
+fn a_with_name_shows_the_columns_of_its_select_list() {
+    let text = "WITH recent AS (SELECT id, u.name, total + 1 AS amount, now() seen FROM users u)
+                SELECT r.| FROM recent r";
+    assert_eq!(cte_labels(text), ["amount", "id", "name", "seen"]);
+}
+
+#[test]
+fn a_column_list_replaces_the_names_of_the_select_list() {
+    let text = "WITH recent (a, b) AS (SELECT id, name FROM users) SELECT recent.| FROM recent";
+    assert_eq!(cte_labels(text), ["a", "b"]);
+}
+
+#[test]
+fn an_item_without_a_clear_name_adds_no_column() {
+    let text = "WITH recent AS (SELECT *, 1 + 2, count(*), id AS kept FROM users) SELECT recent.| FROM recent";
+    assert_eq!(cte_labels(text), ["kept"]);
+}
+
+#[test]
+fn columns_of_a_with_name_join_the_columns_of_the_query() {
+    let text = "WITH recent AS (SELECT total FROM orders) SELECT to| FROM recent, users";
+    let items = run_with(text, Dialect::Postgres, Some(&catalog())).items;
+    assert_eq!(items[0].label, "total");
+    assert_eq!(items[0].detail.as_deref(), Some("recent"));
+}
+
+#[test]
+fn a_with_name_hides_a_table_with_the_same_name_and_reads_nothing() {
+    let text = "WITH users AS (SELECT 1 AS only_column) SELECT users.| FROM users";
+    let completion = run_with(text, Dialect::Postgres, Some(&catalog()));
+    let labels: Vec<_> = completion.items.iter().map(|item| item.label.as_str()).collect();
+    assert_eq!(labels, ["only_column"]);
+    assert!(completion.missing_columns.is_empty());
+}
+
+#[test]
+fn a_later_item_sees_an_earlier_item_and_not_the_reverse() {
+    let later = "WITH a AS (SELECT 1 AS x), b AS (SELECT * FROM |) SELECT 1";
+    assert!(cte_labels(later).contains(&"a".to_owned()));
+    assert!(!cte_labels(later).contains(&"b".to_owned()));
+    let earlier = "WITH a AS (SELECT * FROM |), b AS (SELECT 1) SELECT 1";
+    assert!(!cte_labels(earlier).contains(&"b".to_owned()));
+}
+
+#[test]
+fn a_recursive_name_is_visible_in_its_own_body() {
+    let text = "WITH RECURSIVE tree AS (SELECT 1 AS id UNION ALL SELECT id + 1 FROM tr|) SELECT 1";
+    assert_eq!(cte_labels(text)[0], "tree");
+    let plain = "WITH tree AS (SELECT 1 AS id UNION ALL SELECT id + 1 FROM tr|) SELECT 1";
+    assert!(!cte_labels(plain).contains(&"tree".to_owned()));
+}
+
+#[test]
+fn a_with_clause_in_a_subquery_stays_in_its_subquery() {
+    let inside = "SELECT * FROM (WITH inner_one AS (SELECT 1 AS a) SELECT * FROM inn|) AS s";
+    assert_eq!(cte_labels(inside)[0], "inner_one");
+    let outside = "SELECT * FROM (WITH inner_one AS (SELECT 1 AS a) SELECT 1) AS s JOIN inn|";
+    assert!(!cte_labels(outside).contains(&"inner_one".to_owned()));
+}
+
+#[test]
+fn another_statement_does_not_see_a_with_name() {
+    let text = "WITH a_name AS (SELECT 1) SELECT 1; SELECT * FROM a_n|";
+    assert!(cte_labels(text).is_empty());
+}
+
+#[test]
+fn a_with_in_a_data_type_is_not_a_clause() {
+    let text = "SELECT CAST(x AS TIMESTAMP WITH TIME ZONE) FROM u|";
+    assert_eq!(cte_labels(text)[0], "users");
+}
+
+#[test]
+fn an_incomplete_with_body_keeps_the_names_before_it() {
+    let text = "WITH a AS (SELECT 1 AS x), b AS (SELECT a.| FROM a";
+    assert_eq!(cte_labels(text), ["x"]);
+}
+
+#[test]
+fn a_name_with_quotes_keeps_its_case_in_the_column_list() {
+    let text = "WITH \"Recent\" AS (SELECT \"Big Name\" FROM users) SELECT r.| FROM \"Recent\" r";
+    let items = run_with(text, Dialect::Postgres, None).items;
+    assert_eq!(items[0].label, "Big Name");
+    assert_eq!(items[0].insert, "\"Big Name\"");
+}
+
+#[test]
+fn a_name_with_a_schema_reads_the_catalog_and_not_a_with_name() {
+    let text = "WITH users AS (SELECT 1 AS only_column) SELECT u.| FROM public.users u";
+    let found = cte_labels(text);
+    assert!(found.contains(&"name".to_owned()), "{found:?}");
+    assert!(!found.contains(&"only_column".to_owned()), "{found:?}");
+}

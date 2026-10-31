@@ -509,7 +509,7 @@ impl ConnectionForm {
             return Err(text::FORM_NEEDS_FILE.to_owned());
         }
         let mut target = SqliteTarget::new(file);
-        validate_path(&target.path).map_err(|error| error.0)?;
+        validate_path(&target.path).map_err(|error| error.message)?;
         target.foreign_keys = self.foreign_keys;
         let seconds = self.number(Field::BusyTimeout, text::FIELD_BUSY)?;
         target.busy_timeout = Duration::from_secs(seconds);

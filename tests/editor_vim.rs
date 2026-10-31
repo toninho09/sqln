@@ -3,6 +3,7 @@ mod common;
 use common::{Fixture, ctrl, key};
 use crossterm::event::KeyCode::{self, Char, Esc, Tab};
 use edtui::{EditorMode, Index2};
+use sqln::editor::KeyboardMode;
 
 fn write_keys(f: &mut Fixture, keys: &str) {
     for c in keys.chars() {
@@ -163,4 +164,29 @@ fn replace_works_from_vim_and_undo_restores_it() {
     f.press(key(Esc));
     write_keys(&mut f, "u");
     assert_eq!(f.text(), "users users");
+}
+
+#[test]
+fn a_change_of_keyboard_keeps_the_text_the_cursor_and_the_history() {
+    let mut f = Fixture::vim("first\nsecond");
+    write_keys(&mut f, "jx");
+    let cursor = f.editor.cursor();
+    let revision = f.editor.revision();
+    f.editor.set_keyboard(KeyboardMode::Conventional);
+    assert_eq!(f.text(), "first\necond");
+    assert_eq!(f.editor.cursor(), cursor);
+    assert_eq!(f.editor.revision(), revision);
+    f.press(ctrl('z'));
+    assert_eq!(f.text(), "first\nsecond");
+}
+
+#[test]
+fn a_change_of_keyboard_keeps_the_selection() {
+    let mut f = Fixture::vim("select me");
+    write_keys(&mut f, "vll");
+    assert_eq!(f.editor.selected_text().as_deref(), Some("sel"));
+    f.editor.set_keyboard(KeyboardMode::Conventional);
+    assert_eq!(f.editor.selected_text().as_deref(), Some("sel"));
+    f.editor.set_keyboard(KeyboardMode::Vim);
+    assert_eq!(f.editor.selected_text().as_deref(), Some("sel"));
 }

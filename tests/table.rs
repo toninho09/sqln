@@ -15,7 +15,8 @@ use common::{ctrl, key, temp_db};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use sqln::app::{App, Options, sample_catalog};
+use sqln::app::{App, Options};
+use common::sample_catalog;
 use sqln::catalog::{Catalog, RelationRef};
 use sqln::clipboard::MemoryClipboard;
 use sqln::connection::Definition;
@@ -178,7 +179,7 @@ impl Connector for RecordingConnector {
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
         if self.0.refuse_connect.load(Ordering::SeqCst) {
-            return Err(ConnectError("connection refused by the test".to_owned()));
+            return Err(ConnectError::new("connection refused by the test".to_owned()));
         }
         self.0.opened.fetch_add(1, Ordering::SeqCst);
         Ok(Box::new(RecordingSession(self.0.clone())))
@@ -1583,12 +1584,56 @@ fn closing_the_last_console_while_a_table_is_open_keeps_the_table() {
     assert!(f.app.table().is_none());
     f.prefix('c');
     assert!(!f.app.should_quit());
-    assert_eq!(f.app.consoles().len(), 1, "the tab row keeps one console");
     assert!(f.app.table().is_some(), "the table is on screen");
-    // With no table, the last console quits.
-    f.prefix('c');
+    f.assert_not_sees("console-");
+    // The last tab ends the application.
     f.prefix('c');
     assert!(f.app.should_quit());
+}
+
+#[test]
+fn a_new_console_takes_the_place_after_the_tables_that_opened_before_it() {
+    let mut f = Fixture::sqlite("real-order", &numbered(3), Settings::default());
+    f.open_table("t");
+    f.prefix('p');
+    f.prefix('c');
+    f.assert_not_sees("console-");
+    f.prefix('h');
+    f.code(KeyCode::Up);
+    f.code(KeyCode::Up);
+    f.code(KeyCode::Up);
+    f.code(KeyCode::Char('n'));
+    assert!(f.app.table().is_none(), "the new console is on screen");
+    let screen = f.screen();
+    let tabs = screen.lines().find(|line| line.contains("console-")).unwrap();
+    assert!(tabs.find("(table)").unwrap() < tabs.find("console-").unwrap(), "{tabs}");
+    f.prefix('c');
+    assert!(!f.app.should_quit(), "the table stays open");
+}
+
+#[test]
+fn the_tab_row_keeps_the_order_of_opening_with_consoles_and_tables_mixed() {
+    let mut f = Fixture::sqlite("real-mix", &numbered(3), Settings::default());
+    f.open_table("t");
+    f.prefix('p');
+    f.prefix('h');
+    f.code(KeyCode::Up);
+    f.code(KeyCode::Up);
+    f.code(KeyCode::Up);
+    f.code(KeyCode::Char('n'));
+    let screen = f.screen();
+    let tabs = screen.lines().find(|line| line.contains("console-1")).unwrap();
+    let (first, table, second) = (
+        tabs.find("console-1").unwrap(),
+        tabs.find(" t").unwrap(),
+        tabs.find("console-2").unwrap(),
+    );
+    assert!(first < table && table < second, "{tabs}");
+    // The next tab follows the row, not the kind of the tab.
+    f.prefix('p');
+    assert!(f.app.table().is_some(), "the table is between the consoles");
+    f.prefix('p');
+    assert_eq!(f.app.console().name, "console-1");
 }
 
 #[test]

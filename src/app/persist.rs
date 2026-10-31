@@ -10,6 +10,7 @@ use crate::connection::{Connection, ConnectionKey, Definition, refresh_labels};
 use crate::editor::{KeyboardMode, SqlEditor};
 use crate::exec::ConnectionId;
 use crate::script_file::Trouble;
+use crate::settings::SettingsForm;
 use crate::store::config::{self, Change, Config, ConfigError, CredentialName, Loaded, Stored};
 use crate::store::file;
 use crate::store::scripts::{self, ScriptMeta};
@@ -201,9 +202,8 @@ impl App {
 
     fn set_keyboard(&mut self, keyboard: KeyboardMode) {
         self.keyboard = keyboard;
-        for index in 0..self.consoles.len() {
-            let text = self.consoles[index].editor.text();
-            self.replace_editor(index, &text);
+        for console in &mut self.consoles {
+            console.editor.set_keyboard(keyboard);
         }
     }
 
@@ -290,6 +290,55 @@ impl App {
             *known = Some(hash);
         }
         Ok(())
+    }
+
+    // ---- settings ----
+
+    /// Opens the dialog with the values of the files. It needs a valid configuration.
+    pub(super) fn open_settings(&mut self) {
+        let Some(persist) = &self.persist else {
+            self.status = Some(text::NO_STORE.to_owned());
+            return;
+        };
+        if persist.error.is_some() {
+            self.status = Some(text::CONFIG_BLOCKED.to_owned());
+            return;
+        }
+        let global = config::preferences(&persist.store.global, Scope::Global);
+        let project = persist.store.project.as_ref().map(|root| config::preferences(root, Scope::Project));
+        let project = project.transpose();
+        match (global, project) {
+            (Ok(global), Ok(project)) => self.settings_form = Some(SettingsForm::new(global, project)),
+            (Err(message), _) | (_, Err(message)) => self.status = Some(message),
+        }
+    }
+
+    /// Writes the scope of the dialog, and it applies the files as a reload does.
+    pub(super) fn save_settings(&mut self) {
+        let Some(form) = &mut self.settings_form else { return };
+        let preferences = match form.preferences() {
+            Ok(preferences) => preferences,
+            Err(message) => {
+                form.note = Some(message);
+                return;
+            }
+        };
+        let scope = form.scope;
+        let Some(persist) = &mut self.persist else { return };
+        let Some(root) = persist.store.root(scope) else { return };
+        match config::change_preferences(root, scope, preferences) {
+            Ok(hash) => {
+                if let Some((_, known)) = persist.hashes.iter_mut().find(|(item, _)| *item == scope) {
+                    *known = Some(hash);
+                }
+                self.settings_form = None;
+                self.reload_config();
+                if self.persist.as_ref().is_some_and(|persist| persist.error.is_none()) {
+                    self.status = Some(text::SETTINGS_SAVED.to_owned());
+                }
+            }
+            Err(message) => form.note = Some(message),
+        }
     }
 
     // ---- consoles ----
@@ -470,15 +519,41 @@ impl App {
             Trouble::Changed => text::unsaved_changed(&name),
             Trouble::Removed => text::unsaved_removed(&name),
         };
+        let discard = if problem == Trouble::Removed {
+            text::OPTION_CLOSE_DISCARD
+        } else {
+            text::OPTION_CLOSE_UNSAVED
+        };
         self.show_dialog(
             text::TITLE_UNSAVED,
             body,
             vec![
                 (text::OPTION_CANCEL, DialogAction::CancelClose(id)),
-                (text::OPTION_CLOSE_UNSAVED, DialogAction::DiscardAndClose(id)),
+                (discard, DialogAction::DiscardAndClose(id)),
             ],
         );
         false
+    }
+
+    /// Writes what it can for a signal or a panic. These cases allow no question, so a
+    /// console that waits for a choice keeps its file as it is.
+    pub fn save_without_questions(&mut self) {
+        if self.persist.is_none() {
+            return;
+        }
+        let now = Instant::now();
+        for index in 0..self.consoles.len() {
+            self.ensure_file(index);
+            let console = &self.consoles[index];
+            let revision = console.editor.revision();
+            let waits = |file: &crate::script_file::ScriptFile| {
+                file.trouble.as_ref().is_some_and(Trouble::needs_choice) || !file.is_dirty(revision)
+            };
+            if console.file.as_ref().is_some_and(|file| !waits(file)) {
+                let _ = self.save_console(index, now);
+            }
+        }
+        self.save_editor_states(None);
     }
 
     /// Writes the pending text of every console. It stops at the first question.
@@ -517,8 +592,11 @@ impl App {
     }
 
     fn restore_layout(&mut self) {
-        let project = self.persist_root(Scope::Project).map(|root| workspace::load(&root));
-        let global = self.persist_root(Scope::Global).map(|root| workspace::load(&root));
+        let roots = [self.persist_root(Scope::Project), self.persist_root(Scope::Global)];
+        if roots.iter().flatten().any(workspace::is_unreadable) {
+            self.status = Some(text::WORKSPACE_UNREADABLE.to_owned());
+        }
+        let [project, global] = roots.map(|root| root.map(|root| workspace::load(&root)));
         let layout = project.and_then(|item| item.layout).or_else(|| global.and_then(|item| item.layout));
         let Some(layout) = layout else { return };
         self.navigator.collapsed = layout.navigator_collapsed;

@@ -195,6 +195,8 @@ pub struct Connection {
     /// The schema that a session reads without a selection.
     pub default_schema: Option<String>,
     pub catalog_state: CatalogState,
+    /// The number of the newest read. The answer of an older read is out of date.
+    pub catalog_read: u64,
     pub requested_columns: Vec<RelationRef>,
 }
 
@@ -217,6 +219,7 @@ impl Connection {
             catalog: None,
             default_schema: None,
             catalog_state: CatalogState::NotLoaded,
+            catalog_read: 0,
             requested_columns: Vec::new(),
         }
     }

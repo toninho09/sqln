@@ -29,11 +29,24 @@ Terminal real, mouse, disco de rede, certificados e falhas de rede continuam com
 
 ## Estado da entrega de credenciais
 
-O código implementa a base e o primeiro uso, mas não conclui a etapa de credenciais.
-As regras de texto simples autorizado, migração, senha recusada e exclusão separada continuam aprovadas e pendentes de implementação.
-A validação em cofres reais também continua pendente.
+O código implementa a etapa de credenciais, com texto simples autorizado, migração, senha recusada e exclusão separada.
+O Keychain e o Secret Service em contêiner estão validados; falta repetir o Secret Service em um desktop Linux real.
 A [matriz do plano](../PLAN.md#fechamento-da-etapa-de-credenciais) registra os critérios de conclusão.
 Os testes com cofre em memória e bancos reais não substituem essa validação nativa.
+O critério de cofre ausente vem da validação: somente respostas confirmadas no Linux, nunca no macOS.
+
+## Credenciais e editor — 2026-10-31
+
+**Definido:** o usuário aprova estes pontos depois da leitura do código.
+A aprovação fecha as decisões, mas não declara as mudanças como implementadas.
+
+| Ponto | Decisão aprovada | Rejeitado | Motivo |
+|---|---|---|---|
+| Keychain | Validar nesta máquina, com o usuário presente | Adiar | O texto simples depende dessa validação |
+| Secret Service | Contêiner Linux agora e desktop real antes do lançamento | Somente desktop real | O contêiner cobre serviço ausente, bloqueio e operações comuns, mas não uma sessão de desktop |
+| Senha em texto simples | `credentials.json` na pasta global, com `0600`, por identidade, para os dois escopos | `password` no `config.json` global e seção para conexões de projeto | `config.json` fica sem segredos, e os dois escopos usam um só formato |
+| Fim da suspensão | Cada ação explícita abre a solicitação de senha; uma senha aceita ou a edição da conexão encerra a suspensão | Somente **Desconectar** ou edição | Execuções e catálogo param de insistir, sem um passo extra para o usuário |
+| Limite do desfazer | Fork pequeno do `edtui` por `[patch]`; no lançamento, enviar ao projeto original ou publicar com outro nome | Copiar o código para `src/`; histórico próprio | A mudança fica em `Stack`; a cópia traz 10.169 linhas de terceiros, e o histórico próprio é frágil |
 
 ## Execução e resultados
 
@@ -66,7 +79,7 @@ Os testes com cofre em memória e bancos reais não substituem essa validação 
 ## Arquivos e salvamento
 
 Estas escolhas estão aprovadas em 2026-10-31, com os ajustes registrados no plano.
-O código já oferece sessão e cofre. A exceção global autorizada em texto simples ainda não existe.
+O código oferece sessão, cofre e a exceção global autorizada em texto simples, em `credentials.json`.
 
 | Assunto | Escolha | Rejeitado | Motivo |
 |---|---|---|---|
@@ -172,3 +185,23 @@ A nova ordem das abas e o fechamento sem console substituto ainda exigem mudanç
 | Substituir tudo | `Ctrl+A` no campo de substituição | `Alt+A` | No macOS, `Option`+letra depende do terminal |
 | Arquivo `.sql` externo | Depois da primeira versão | Na primeira versão | Reduz o escopo |
 | Licença | `MIT OR Apache-2.0` | GPL ou proprietária | Padrão do ecossistema Rust |
+| Catálogo de exemplo | Somente nos testes, sem `--no-catalog` | Ativo por padrão no binário | Sem catálogo, a seção 6 pede palavras-chave; tabelas inventadas enganam o usuário |
+| Publicação | Remover `publish = false` no lançamento | Manter, com somente binários | `cargo install sqln` depende do crates.io |
+| Respostas de catálogo | Número em cada leitura; a resposta antiga sai | Aceitar qualquer resposta | Uma leitura antiga podia apagar do navegador uma tabela recém-criada |
+| Teste de parada | Esperar o início real da instrução | Esperar 300 ms fixos | Sob carga, a conexão levava mais que isso, e o produto agia certo |
+
+## Implementação — 2026-10-31
+
+Estas escolhas seguem as regras do plano nos pontos que as regras deixaram abertos.
+
+| Assunto | Escolha | Rejeitado | Motivo |
+|---|---|---|---|
+| Nova senha | Conferir com uma conexão de teste antes de gravar | Gravar e descobrir na próxima execução | Uma senha recusada nunca chega a um armazenamento |
+| Primeira recusa | Não repetir a execução | Repetir sozinha depois da nova senha | Mais simples de explicar; a ação pedida durante a suspensão continua, pois nenhum SQL saiu |
+| Último console | Console oculto, fora da fileira de abas | Permitir zero consoles | O código assume um console ativo; o usuário não vê diferença |
+| Fim da última tabela | Encerrar a aplicação | Mostrar o console oculto | "Fechar a última aba" já é um caminho de saída |
+| Troca de teclado | Mudar o modo no próprio editor | Recriar o editor e avisar | Nada se perde, então nenhum aviso é necessário |
+| Relatório de panic | Local e pilha de chamadas, sem a mensagem | Incluir a mensagem | A mensagem pode citar SQL ou um valor |
+| Log | Tipos de evento, sem texto de erro do banco | Registrar as mensagens | Um erro do banco pode citar um valor |
+| Sinais | `SIGHUP`, `SIGINT`, `SIGQUIT` e `SIGTERM` | Somente `SIGTERM` | Fechar o terminal envia `SIGHUP` |
+| Arquivo em texto simples | Recusar link e permissão aberta | Corrigir a permissão sozinho | O mesmo cuidado do `ssh` com uma chave privada |

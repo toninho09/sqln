@@ -49,11 +49,19 @@ impl Default for Workspace {
 }
 
 pub fn load(root: &Root) -> Workspace {
+    read(root).unwrap_or_default()
+}
+
+fn read(root: &Root) -> Option<Workspace> {
     std::fs::read(root.workspace_file())
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Workspace>(&bytes).ok())
         .filter(|workspace| workspace.version == VERSION)
-        .unwrap_or_default()
+}
+
+/// Returns true for a file that exists and that `load` must ignore.
+pub fn is_unreadable(root: &Root) -> bool {
+    root.workspace_file().exists() && read(root).is_none()
 }
 
 /// Reads the file again, applies the change, and writes the file.

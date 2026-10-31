@@ -118,15 +118,16 @@ impl App {
 
     fn remove_console(&mut self, id: ConsoleId) {
         let Some(index) = self.console_index(id) else { return };
-        // The last console closes only when no table tab stays open. The tab row
-        // always keeps one console, so a new one takes its place.
-        let replaced = self.consoles.len() == 1;
+        // The last tab ends the application. With a table open, a hidden console keeps
+        // the rule that the application has one console, and no tab appears for it.
+        let last = self.consoles.iter().filter(|console| !console.hidden).count() == 1;
+        let replaced = last && !self.consoles[index].hidden;
         if replaced {
             if self.tables.is_empty() {
                 self.quit = true;
                 return;
             }
-            self.replace_last_console();
+            self.keep_hidden_console();
         }
         self.save_editor_states(Some(index));
         let console = self.consoles.remove(index);
@@ -144,15 +145,15 @@ impl App {
         }
     }
 
-    /// Adds an empty console with the connection of the only console.
-    fn replace_last_console(&mut self) {
-        let console = &self.consoles[0];
-        let (dialect, connection) = (console.editor.dialect(), console.connection);
-        let fresh = self.unbound_console(dialect);
-        self.consoles.push(fresh);
-        if let Some(connection) = connection {
-            self.bind_console(self.consoles.len() - 1, connection);
+    /// Adds the empty console that stays out of the tab row, once.
+    fn keep_hidden_console(&mut self) {
+        if self.consoles.iter().any(|console| console.hidden) {
+            return;
         }
+        let dialect = self.fallback_dialect;
+        let mut console = self.unbound_console(dialect);
+        console.hidden = true;
+        self.consoles.push(console);
     }
 
     /// The exit asks about each console in order, and it applies each answer at once.
@@ -220,7 +221,14 @@ impl App {
             }
             DialogAction::DeleteScript(scope, id) => self.delete_script(scope, &id),
             DialogAction::Associate(console, connection) => self.associate(console, connection),
-            action @ (DialogAction::AuthCancel(_) | DialogAction::AuthConfirm(_) | DialogAction::AuthRetry(_) | DialogAction::AuthSession(_)) => self.auth_dialog(action),
+            DialogAction::DeletePassword(identity) => self.delete_password(identity),
+            action @ (DialogAction::AuthCancel(_)
+            | DialogAction::AuthConfirm(_)
+            | DialogAction::AuthRetry(_)
+            | DialogAction::AuthSession(_)
+            | DialogAction::AuthPlain(_)
+            | DialogAction::AuthMigrate(_)
+            | DialogAction::AuthRemovePlain(_)) => self.auth_dialog(action),
         }
     }
 

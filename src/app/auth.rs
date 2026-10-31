@@ -12,7 +12,8 @@ use crate::catalog::RelationRef;
 use crate::connection::{CatalogState, ConnectionKey, Definition, Source};
 use crate::connector::target::Secret;
 use crate::console::Phase;
-use crate::creds::{Credentials, Identity, SystemVault, Vault, VaultError};
+use crate::connector::ConnectError;
+use crate::creds::{Credentials, Identity, Lookup, PlainFile, SystemVault, Vault, VaultError};
 use crate::editor::RunPlan;
 use crate::exec::{ConnectionId, ConsoleId, RunOptions};
 use crate::grid::printable;
@@ -24,7 +25,8 @@ use crate::ui::auth::{PasswordAction, PasswordPrompt};
 use crate::ui::text;
 
 pub(super) enum Use {
-    Catalog(ConnectionId),
+    /// The connection and the number of the read.
+    Catalog(ConnectionId, u64),
     Columns(ConnectionId, RelationRef),
     Run {
         console: ConsoleId,
@@ -40,6 +42,8 @@ pub(super) enum Use {
     },
     Test(u64),
     Save,
+    /// Asks for a new password after a refusal. It runs nothing.
+    NewPassword,
 }
 
 impl Use {
@@ -63,6 +67,8 @@ struct Target {
     local: bool,
     new_identity: bool,
     form_snapshot: Option<Definition>,
+    /// The database refused the password. A new one needs a check before any other use.
+    refused: bool,
 }
 
 impl Target {
@@ -91,8 +97,12 @@ enum Step {
     Confirm,
     Read,
     Write,
+    WritePlain,
     Session,
     Reference,
+    Verify,
+    Migrate,
+    RemovePlain,
 }
 
 struct Attempt {
@@ -101,12 +111,30 @@ struct Attempt {
     action: Use,
     step: Step,
     save_reference: bool,
+    /// This computer has no vault, so a save goes to the plain text file.
+    no_vault: bool,
+    /// The identity of the connection test that checks a new password.
+    verify: Option<u64>,
 }
 
 enum Reply {
     Trust(Result<Required, TrustError>),
+    Lookup(Result<Lookup, VaultError>),
     Password(Result<Option<Secret>, VaultError>),
     Saved(Result<(), VaultError>),
+    Migrated(Result<(), VaultError>),
+    PlainRemoved(Result<bool, VaultError>),
+    /// A separate deletion. It has no attempt, so its token is `DELETION`.
+    Deleted(Result<bool, VaultError>),
+}
+
+const DELETION: u64 = 0;
+
+/// The refusals of one definition. A changed definition ends them.
+#[derive(Clone, Copy)]
+struct Refusal {
+    generation: u64,
+    count: u32,
 }
 
 pub(super) struct Auth {
@@ -119,16 +147,18 @@ pub(super) struct Auth {
     pub prompt: Option<PasswordPrompt>,
     ready: HashMap<ConnectionId, u64>,
     pub local: HashMap<ConnectionId, (u64, bool)>,
+    refused: HashMap<ConnectionId, Refusal>,
     next: u64,
 }
 
 impl Auth {
-    pub fn new(vault: Option<Arc<dyn Vault>>) -> Self {
+    pub fn new(vault: Option<Arc<dyn Vault>>, plain: Option<PlainFile>) -> Self {
         let (sender, receiver) = mpsc::channel();
         Self {
-            credentials: Arc::new(Mutex::new(Credentials::new(
-                vault.unwrap_or_else(|| Arc::new(SystemVault::new())),
-            ))),
+            credentials: Arc::new(Mutex::new(
+                Credentials::new(vault.unwrap_or_else(|| Arc::new(SystemVault::new())))
+                    .with_plain(plain),
+            )),
             job: Arc::new(AtomicU64::new(0)),
             sender,
             receiver,
@@ -137,6 +167,7 @@ impl Auth {
             prompt: None,
             ready: HashMap::new(),
             local: HashMap::new(),
+            refused: HashMap::new(),
             next: 1,
         }
     }
@@ -170,6 +201,12 @@ impl App {
             self.dispatch_authorized(action, Some(definition));
             return;
         };
+        let refused = self.is_refused(id) && !matches!(action, Use::Save);
+        // Only an action of the user can reach the database after a refusal.
+        if refused && matches!(action, Use::Catalog(..) | Use::Columns(..)) {
+            self.cancel_auth_use(&action);
+            return;
+        }
         if !matches!(action, Use::Save) && self.auth.ready.get(&id) == Some(&connection.generation)
         {
             self.dispatch_authorized(action, Some(definition));
@@ -198,6 +235,7 @@ impl App {
                 .get(&id)
                 .is_some_and(|(generation, new)| *generation == connection.generation && *new),
             form_snapshot: None,
+            refused,
         };
         self.enqueue_auth(target, action);
     }
@@ -228,6 +266,7 @@ impl App {
             local: form.editing.is_none(),
             new_identity: form.editing.is_none(),
             form_snapshot: Some(snapshot),
+            refused: false,
         };
         self.enqueue_auth(target, Use::Test(test));
     }
@@ -255,6 +294,8 @@ impl App {
             action,
             step: Step::Trust,
             save_reference: false,
+            no_vault: false,
+            verify: None,
         });
         self.next_auth();
     }
@@ -365,12 +406,15 @@ impl App {
                     };
                     Reply::Trust(result)
                 }
-                Step::Read => Reply::Password(
-                    credentials
-                        .lock()
-                        .map_err(|_| VaultError::Failed)
-                        .and_then(|mut credentials| credentials.resolve(&target.identity())),
-                ),
+                Step::Read => {
+                    let reference = target.credential == CredentialName::Vault;
+                    Reply::Lookup(
+                        credentials
+                            .lock()
+                            .map_err(|_| VaultError::Failed)
+                            .and_then(|mut credentials| credentials.lookup(&target.identity(), reference)),
+                    )
+                }
                 Step::Write => {
                     Reply::Saved(credentials.lock().map_err(|_| VaultError::Failed).and_then(
                         |mut credentials| {
@@ -381,6 +425,32 @@ impl App {
                         },
                     ))
                 }
+                Step::WritePlain => {
+                    Reply::Saved(credentials.lock().map_err(|_| VaultError::Failed).and_then(
+                        |mut credentials| {
+                            credentials.save_plain(
+                                &target.identity(),
+                                target.password().ok_or(VaultError::Failed)?,
+                            )
+                        },
+                    ))
+                }
+                Step::Migrate => {
+                    Reply::Migrated(credentials.lock().map_err(|_| VaultError::Failed).and_then(
+                        |mut credentials| {
+                            credentials.save_verified(
+                                &target.identity(),
+                                target.password().ok_or(VaultError::Failed)?,
+                            )
+                        },
+                    ))
+                }
+                Step::RemovePlain => Reply::PlainRemoved(
+                    credentials
+                        .lock()
+                        .map_err(|_| VaultError::Failed)
+                        .and_then(|mut credentials| credentials.remove_plain(&target.identity())),
+                ),
                 Step::Session => {
                     Reply::Password(credentials.lock().map_err(|_| VaultError::Failed).map(
                         |mut credentials| {
@@ -392,7 +462,7 @@ impl App {
                         },
                     ))
                 }
-                Step::Reference => return,
+                Step::Reference | Step::Verify => return,
             };
             let _ = sender.send((token, reply));
         });
@@ -414,6 +484,15 @@ impl App {
             let Ok((token, reply)) = self.auth.receiver.try_recv() else {
                 break;
             };
+            if let Reply::Deleted(result) = reply {
+                self.status = Some(match result {
+                    Ok(true) => text::PASSWORD_DELETED.to_owned(),
+                    Ok(false) => text::PASSWORD_NOT_FOUND.to_owned(),
+                    Err(error) => error.to_string(),
+                });
+                changed = true;
+                continue;
+            }
             if self
                 .auth
                 .active
@@ -466,11 +545,46 @@ impl App {
                         (text::OPTION_RETRY, DialogAction::AuthRetry(token)),
                     ],
                 ),
+                Reply::Lookup(Ok(Lookup::Found(password))) => self.finish_auth(Some(password)),
+                Reply::Lookup(Ok(Lookup::Missing)) => self.show_auth_password(true),
+                Reply::Lookup(Ok(Lookup::NoVault)) => {
+                    if let Some(attempt) = &mut self.auth.active {
+                        attempt.no_vault = true;
+                    }
+                    self.show_auth_password(true);
+                }
+                Reply::Lookup(Ok(Lookup::Migrate(password))) => self.ask_migration(password),
                 Reply::Password(Ok(Some(password))) => self.finish_auth(Some(password)),
                 Reply::Password(Ok(None)) => self.show_auth_password(true),
-                Reply::Password(Err(error)) => self.auth_vault_error(error),
+                Reply::Lookup(Err(error)) | Reply::Password(Err(error)) => self.auth_vault_error(error),
                 Reply::Saved(Ok(())) => self.persist_auth_reference(),
                 Reply::Saved(Err(error)) => self.auth_vault_error(error),
+                Reply::Migrated(Ok(())) => self.show_dialog(
+                    text::TITLE_MIGRATION,
+                    text::MIGRATION_VERIFIED.to_owned(),
+                    vec![
+                        (text::OPTION_KEEP_PLAIN, DialogAction::AuthSession(token)),
+                        (text::OPTION_REMOVE_PLAIN, DialogAction::AuthRemovePlain(token)),
+                    ],
+                ),
+                Reply::Migrated(Err(error)) => self.show_dialog(
+                    text::TITLE_MIGRATION,
+                    format!("{error}\n{}", text::MIGRATION_INCOMPLETE),
+                    vec![
+                        (text::OPTION_SESSION, DialogAction::AuthSession(token)),
+                        (text::OPTION_RETRY, DialogAction::AuthRetry(token)),
+                    ],
+                ),
+                Reply::PlainRemoved(Ok(_)) => self.persist_auth_reference(),
+                Reply::PlainRemoved(Err(error)) => self.show_dialog(
+                    text::TITLE_MIGRATION,
+                    format!("{error}\n{}", text::MIGRATION_INCOMPLETE),
+                    vec![
+                        (text::OPTION_SESSION, DialogAction::AuthSession(token)),
+                        (text::OPTION_RETRY, DialogAction::AuthRetry(token)),
+                    ],
+                ),
+                Reply::Deleted(_) => {}
             }
         }
         changed
@@ -481,7 +595,10 @@ impl App {
             return;
         };
         let password = attempt.target.password();
-        if matches!(attempt.action, Use::Save) {
+        if attempt.target.refused {
+            // The stored password is the refused one, so no store can answer.
+            self.show_auth_password(true);
+        } else if matches!(attempt.action, Use::Save) {
             if attempt.target.credential == CredentialName::Vault && password.is_some() {
                 self.auth_step(Step::Write);
             } else {
@@ -492,18 +609,8 @@ impl App {
         } else {
             match attempt.target.credential {
                 CredentialName::None => self.finish_auth(None),
-                CredentialName::Session => self.show_auth_password(true),
-                CredentialName::Vault => self.auth_step(Step::Read),
-                CredentialName::GlobalPlainText => {
-                    let token = attempt.token;
-                    self.show_dialog(
-                        text::TITLE_VAULT,
-                        text::AUTH_PLAINTEXT_PENDING.to_owned(),
-                        vec![
-                            (text::OPTION_CANCEL, DialogAction::AuthCancel(token)),
-                            (text::OPTION_SESSION, DialogAction::AuthSession(token)),
-                        ],
-                    );
+                CredentialName::Session | CredentialName::Vault | CredentialName::GlobalPlainText => {
+                    self.auth_step(Step::Read);
                 }
             }
         }
@@ -524,11 +631,31 @@ impl App {
         let Some(attempt) = &self.auth.active else {
             return;
         };
-        self.auth.prompt = Some(PasswordPrompt::new(
+        let mut prompt = PasswordPrompt::new(
             &attempt.target.definition.name,
             attempt.target.definition.summary(),
             save_allowed && attempt.target.connection.is_some(),
-        ));
+        );
+        prompt.plain = attempt.no_vault;
+        prompt.refused = attempt.target.refused;
+        self.auth.prompt = Some(prompt);
+    }
+
+    /// Asks before a password leaves the plain text file. "Not now" uses it once more.
+    fn ask_migration(&mut self, password: Secret) {
+        let Some(attempt) = &mut self.auth.active else {
+            return;
+        };
+        attempt.target.set_password(Some(password));
+        let token = attempt.token;
+        self.show_dialog(
+            text::TITLE_MIGRATION,
+            text::MIGRATION_QUESTION.to_owned(),
+            vec![
+                (text::OPTION_SESSION, DialogAction::AuthSession(token)),
+                (text::OPTION_MIGRATE, DialogAction::AuthMigrate(token)),
+            ],
+        );
     }
 
     fn auth_vault_error(&mut self, error: VaultError) {
@@ -536,20 +663,23 @@ impl App {
             return;
         };
         let token = attempt.token;
-        let note = if matches!(attempt.step, Step::Write) {
-            format!("\n{}", text::AUTH_SAVE_FAILED)
-        } else {
-            String::new()
+        let writing = matches!(attempt.step, Step::Write | Step::WritePlain);
+        let offer_plain = matches!(attempt.step, Step::Write) && error.no_vault();
+        let note = match (offer_plain, writing) {
+            (true, _) => format!("\n{}", text::AUTH_PLAIN_WARNING),
+            (false, true) => format!("\n{}", text::AUTH_SAVE_FAILED),
+            (false, false) => String::new(),
         };
-        self.show_dialog(
-            text::TITLE_VAULT,
-            format!("{error}{note}"),
-            vec![
-                (text::OPTION_CANCEL, DialogAction::AuthCancel(token)),
-                (text::OPTION_RETRY, DialogAction::AuthRetry(token)),
-                (text::OPTION_SESSION, DialogAction::AuthSession(token)),
-            ],
-        );
+        let mut options = vec![
+            (text::OPTION_CANCEL, DialogAction::AuthCancel(token)),
+            (text::OPTION_RETRY, DialogAction::AuthRetry(token)),
+            (text::OPTION_SESSION, DialogAction::AuthSession(token)),
+        ];
+        // The vault failed, so plain text needs its own choice after the warning.
+        if offer_plain {
+            options.push((text::OPTION_SAVE_PLAIN, DialogAction::AuthPlain(token)));
+        }
+        self.show_dialog(text::TITLE_VAULT, format!("{error}{note}"), options);
     }
 
     fn persist_auth_reference(&mut self) {
@@ -557,13 +687,17 @@ impl App {
             return;
         };
         let token = attempt.token;
-        if attempt.save_reference && attempt.target.credential != CredentialName::Vault {
+        let plain = matches!(attempt.step, Step::WritePlain);
+        let wanted = if plain { CredentialName::GlobalPlainText } else { CredentialName::Vault };
+        // A project cannot name the plain text file, so its reference stays as it is.
+        let keeps_reference = plain && attempt.target.key.scope == Scope::Project;
+        if attempt.save_reference && attempt.target.credential != wanted && !keeps_reference {
             let (key, definition) = (
                 attempt.target.key.clone(),
                 attempt.target.definition.clone(),
             );
             if self
-                .save_connection(&key, &definition, CredentialName::Vault)
+                .save_connection(&key, &definition, wanted)
                 .is_err()
             {
                 self.auth.active.as_mut().unwrap().step = Step::Reference;
@@ -580,9 +714,9 @@ impl App {
             }
             let id = self.auth.active.as_ref().unwrap().target.connection;
             if let Some(connection) = id.and_then(|id| self.connection_mut(id)) {
-                connection.credential = CredentialName::Vault;
+                connection.credential = wanted;
             }
-            self.auth.active.as_mut().unwrap().target.credential = CredentialName::Vault;
+            self.auth.active.as_mut().unwrap().target.credential = wanted;
         }
         let password = self
             .auth
@@ -647,9 +781,10 @@ impl App {
     fn dispatch_authorized(&mut self, action: Use, definition: Option<Definition>) {
         let Some(manager) = &self.manager else { return };
         match action {
-            Use::Catalog(id) => {
-                manager.load_catalog(id);
-                if let Some(connection) = self.connection_mut(id) {
+            Use::Catalog(id, read) => {
+                manager.load_catalog(id, read);
+                // The answer of an older read does not end the state, so it cannot start it.
+                if let Some(connection) = self.connection_mut(id).filter(|item| item.catalog_read == read) {
                     connection.catalog_state = CatalogState::Loading;
                 }
             }
@@ -700,6 +835,7 @@ impl App {
                 manager.test_connection(test, definition.connector(), definition.connect_timeout);
             }
             Use::Save => {}
+            Use::NewPassword => self.status = Some(text::AUTH_PASSWORD_ACCEPTED.to_owned()),
         }
     }
 
@@ -713,8 +849,8 @@ impl App {
             }
         }
         match action {
-            Use::Catalog(id) => {
-                if let Some(connection) = self.connection_mut(*id) {
+            Use::Catalog(id, read) => {
+                if let Some(connection) = self.connection_mut(*id).filter(|item| item.catalog_read == *read) {
                     connection.catalog_state = CatalogState::Failed;
                 }
             }
@@ -807,6 +943,12 @@ impl App {
         match action {
             DialogAction::AuthCancel(_) => self.cancel_active_auth(),
             DialogAction::AuthConfirm(_) => self.auth_step(Step::Confirm),
+            DialogAction::AuthPlain(_) => self.auth_step(Step::WritePlain),
+            DialogAction::AuthMigrate(_) => self.auth_step(Step::Migrate),
+            DialogAction::AuthRemovePlain(_) => {
+                self.auth.active.as_mut().unwrap().save_reference = true;
+                self.auth_step(Step::RemovePlain);
+            }
             DialogAction::AuthRetry(_) => match self.auth.active.as_ref().unwrap().step {
                 Step::Reference => self.persist_auth_reference(),
                 step => self.auth_step(step),
@@ -875,13 +1017,136 @@ impl App {
                 let attempt = self.auth.active.as_mut().unwrap();
                 attempt.target.set_password(Some(password));
                 attempt.save_reference = save;
-                if save {
-                    self.auth_step(Step::Write);
+                if attempt.target.refused {
+                    self.verify_password();
                 } else {
-                    self.cache_auth_session();
+                    self.keep_password();
                 }
             }
         }
+    }
+
+    fn keep_password(&mut self) {
+        let Some(attempt) = &self.auth.active else {
+            return;
+        };
+        match (attempt.save_reference, attempt.no_vault) {
+            (true, true) => self.auth_step(Step::WritePlain),
+            (true, false) => self.auth_step(Step::Write),
+            (false, _) => self.cache_auth_session(),
+        }
+    }
+
+    fn is_refused(&self, id: ConnectionId) -> bool {
+        let generation = self.connection(id).map(|connection| connection.generation);
+        self.auth.refused.get(&id).is_some_and(|item| Some(item.generation) == generation)
+    }
+
+    /// One wrong password can fail several sessions, so only the first event counts.
+    pub(super) fn on_password_refused(&mut self, id: ConnectionId, pool: u64) {
+        let current = self.manager.as_ref().and_then(|manager| manager.pool_serial(id)) == Some(pool);
+        if !current || self.is_refused(id) {
+            return;
+        }
+        let Some(connection) = self.connection(id) else {
+            return;
+        };
+        let generation = connection.generation;
+        let identity = connection
+            .key
+            .as_ref()
+            .zip(connection.definition.as_ref())
+            .and_then(|(key, definition)| Identity::of(key, definition));
+        let Some(identity) = identity else {
+            return;
+        };
+        self.auth.ready.remove(&id);
+        self.auth.refused.insert(id, Refusal { generation, count: 1 });
+        let credentials = self.auth.credentials.clone();
+        if let Some(manager) = &self.manager {
+            manager.spawn_blocking(move || {
+                if let Ok(mut credentials) = credentials.lock() {
+                    credentials.forget_session(&identity);
+                }
+            });
+        }
+        self.authorize(id, Use::NewPassword);
+    }
+
+    /// Opens the password request after a refusal. It returns false without a refusal.
+    pub(super) fn ask_new_password(&mut self, id: ConnectionId) -> bool {
+        let refused = self.is_refused(id);
+        if refused {
+            self.authorize(id, Use::NewPassword);
+        }
+        refused
+    }
+
+    /// A refused password never reaches a store, so the check comes before the save.
+    fn verify_password(&mut self) {
+        let test = self.next_test;
+        self.next_test += 1;
+        let Some(attempt) = &mut self.auth.active else {
+            return;
+        };
+        attempt.step = Step::Verify;
+        attempt.verify = Some(test);
+        let definition = attempt.target.definition.clone();
+        self.status = Some(text::AUTH_WAIT.to_owned());
+        if let Some(manager) = &self.manager {
+            manager.test_connection(test, definition.connector(), definition.connect_timeout);
+        }
+    }
+
+    /// Takes the answer of `verify_password`. It returns false for a test of the form.
+    pub(super) fn on_password_verified(&mut self, test: u64, result: &Result<(), ConnectError>) -> bool {
+        let Some(attempt) = self.auth.active.as_mut().filter(|item| item.verify == Some(test)) else {
+            return false;
+        };
+        attempt.verify = None;
+        let id = attempt.target.connection;
+        match result {
+            Ok(()) => {
+                attempt.target.refused = false;
+                if let Some(id) = id {
+                    self.auth.refused.remove(&id);
+                }
+                self.keep_password();
+            }
+            Err(error) if error.password_refused => {
+                if let Some(refusal) = id.and_then(|id| self.auth.refused.get_mut(&id)) {
+                    refusal.count += 1;
+                }
+                self.cancel_active_auth();
+                self.show_dialog(
+                    text::TITLE_PASSWORD_REFUSED,
+                    text::AUTH_SUSPENDED.to_owned(),
+                    vec![(text::OPTION_CLOSE, DialogAction::Dismiss)],
+                );
+            }
+            Err(error) => {
+                let message = error.message.clone();
+                self.cancel_active_auth();
+                self.status = Some(message);
+            }
+        }
+        true
+    }
+
+    /// Deletes the saved password of a connection after its own confirmation.
+    pub(super) fn delete_password(&mut self, identity: Identity) {
+        let credentials = self.auth.credentials.clone();
+        let sender = self.auth.sender.clone();
+        let Some(manager) = &self.manager else {
+            return;
+        };
+        manager.spawn_blocking(move || {
+            let result = credentials
+                .lock()
+                .map_err(|_| VaultError::Failed)
+                .and_then(|mut credentials| credentials.delete_saved(&identity));
+            let _ = sender.send((DELETION, Reply::Deleted(result)));
+        });
     }
 }
 
@@ -891,7 +1156,10 @@ impl DialogAction {
             Self::AuthCancel(token)
             | Self::AuthConfirm(token)
             | Self::AuthRetry(token)
-            | Self::AuthSession(token) => Some(*token),
+            | Self::AuthSession(token)
+            | Self::AuthPlain(token)
+            | Self::AuthMigrate(token)
+            | Self::AuthRemovePlain(token) => Some(*token),
             _ => None,
         }
     }

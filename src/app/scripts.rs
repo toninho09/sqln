@@ -12,7 +12,9 @@ use crate::exec::{ConnectionId, ConsoleId};
 use crate::script_file::{ScriptFile, Trouble};
 use crate::store::scripts::{self, ScriptEntry};
 use crate::store::workspace;
+use crate::store::file::Expect;
 use crate::store::{Root, Scope};
+use crate::ui::name::{NamePrompt, NameTarget};
 use crate::ui::text;
 
 /// Writes the age of a change, so the list needs no clock zone.
@@ -232,6 +234,176 @@ impl App {
         self.status = Some(text::SCRIPT_REMOVED.to_owned());
     }
 
+    // ---- rename ----
+
+    /// Opens the request for a new name of the active console.
+    pub(super) fn start_rename(&mut self) {
+        let console = self.console();
+        self.rename = Some(NamePrompt::new(NameTarget::Console(console.id), &console.name));
+    }
+
+    /// The key of the list. A saved console that a tab shows renames that tab.
+    pub(super) fn picker_rename(&mut self) {
+        let Some(entry) = self.picker_script() else { return };
+        let open = self.consoles.iter().find(|console| {
+            console.file.as_ref().is_some_and(|file| file.scope == entry.scope && file.meta.id == entry.meta.id)
+        });
+        let target = open.map_or_else(|| NameTarget::Script(entry.clone()), |console| NameTarget::Console(console.id));
+        self.picker = None;
+        self.rename = Some(NamePrompt::new(target, &entry.meta.name));
+    }
+
+    /// Returns the names of the other consoles of a connection, open and saved.
+    fn names_in_use(&self, connection: Option<ConnectionId>, skip: Option<ConsoleId>, id: Option<&str>) -> Vec<String> {
+        let Some(connection) = connection else { return Vec::new() };
+        let open = self
+            .consoles
+            .iter()
+            .filter(|console| console.connection == Some(connection) && Some(console.id) != skip)
+            .map(|console| console.name.clone());
+        let saved = self
+            .consoles_of(connection)
+            .into_iter()
+            .filter(|entry| Some(entry.meta.id.as_str()) != id)
+            .map(|entry| entry.meta.name);
+        open.chain(saved).collect()
+    }
+
+    fn name_note(&mut self, note: &str) {
+        if let Some(prompt) = &mut self.rename {
+            prompt.note = Some(note.to_owned());
+        }
+    }
+
+    /// Applies a new name. The identity, the files, and the connection stay.
+    pub(super) fn accept_name(&mut self, name: String) {
+        if name.is_empty() {
+            self.name_note(text::NAME_EMPTY);
+            return;
+        }
+        let Some(prompt) = &self.rename else { return };
+        let (connection, skip, id) = match &prompt.target {
+            NameTarget::Console(console) => {
+                let index = self.console_index(*console);
+                let console_ref = index.map(|index| &self.consoles[index]);
+                let id = console_ref.and_then(|item| item.file.as_ref()).map(|file| file.meta.id.clone());
+                (console_ref.and_then(|item| item.connection), Some(*console), id)
+            }
+            NameTarget::Script(entry) => {
+                let connection = self.connection_by_key(entry.scope, &entry.meta.connection_id).map(|item| item.id);
+                (connection, None, Some(entry.meta.id.clone()))
+            }
+        };
+        let taken = self.names_in_use(connection, skip, id.as_deref());
+        if taken.iter().any(|item| item.to_lowercase() == name.to_lowercase()) {
+            self.name_note(text::NAME_TAKEN);
+            return;
+        }
+        let Some(prompt) = self.rename.take() else { return };
+        let result = match prompt.target {
+            NameTarget::Console(console) => self.rename_console(console, &name),
+            NameTarget::Script(entry) => self.rename_script(&entry, &name),
+        };
+        self.status = Some(match result {
+            Ok(()) => text::CONSOLE_RENAMED.to_owned(),
+            Err(message) => text::script_failed(&name, &message),
+        });
+    }
+
+    fn rename_console(&mut self, id: ConsoleId, name: &str) -> Result<(), String> {
+        let Some(index) = self.console_index(id) else { return Ok(()) };
+        let root = self.consoles[index].file.as_ref().and_then(|file| self.persist_root(file.scope));
+        let console = &mut self.consoles[index];
+        if let (Some(file), Some(root)) = (&mut console.file, &root) {
+            let old = std::mem::replace(&mut file.meta.name, name.to_owned());
+            if let Err(message) = file.write_meta(root) {
+                file.meta.name = old;
+                return Err(message);
+            }
+        }
+        console.name = name.to_owned();
+        Ok(())
+    }
+
+    fn rename_script(&mut self, entry: &ScriptEntry, name: &str) -> Result<(), String> {
+        let root = self.persist_root(entry.scope).ok_or(text::NO_STORE)?;
+        // The lock proves that no other instance has the script open.
+        let _lock = match scripts::lock(&root, &entry.meta.id) {
+            Ok(Some(lock)) => lock,
+            Ok(None) => return Err(text::SCRIPT_BUSY.to_owned()),
+            Err(error) => return Err(error.to_string()),
+        };
+        let mut meta = entry.meta.clone();
+        meta.name = name.to_owned();
+        scripts::write_meta(&root, &meta, Expect::Any)
+    }
+
+    // ---- change of connection ----
+
+    /// `Ctrl+W a`. A console without a connection uses the same list.
+    pub(super) fn start_connection_change(&mut self) {
+        if self.config_blocked() {
+            return;
+        }
+        let console = self.console();
+        if console.is_busy() || console.in_transaction() {
+            self.status = Some(text::CONNECTION_CHANGE_BUSY.to_owned());
+            return;
+        }
+        let current = console.connection;
+        let list: Vec<(ConnectionId, String)> = self
+            .connections
+            .iter()
+            .filter(|item| Some(item.id) != current)
+            .map(|item| {
+                let row = item.scope().map_or_else(
+                    || item.name.clone(),
+                    |scope| format!("{} · {}", item.name, scope_word(scope)),
+                );
+                (item.id, row)
+            })
+            .collect();
+        if list.is_empty() {
+            self.status = Some(text::NO_OTHER_CONNECTION.to_owned());
+            return;
+        }
+        let console = console.id;
+        self.picker = Some(Picker {
+            kind: PickerKind::Associate {
+                console,
+                connections: list.iter().map(|(id, _)| *id).collect(),
+            },
+            title: text::TITLE_CHANGE_CONNECTION.to_owned(),
+            items: list.into_iter().map(|(_, row)| row).collect(),
+            cursor: 0,
+            loading: false,
+        });
+    }
+
+    /// Links a console without a file to a connection. Only memory changes.
+    fn change_memory_console(&mut self, index: usize, connection: ConnectionId) {
+        let Some(target) = self.connection(connection) else { return };
+        let (dialect, name) = (target.dialect, target.name.clone());
+        self.bind_keeping_name(index, connection, dialect);
+        self.status = Some(text::associated(&name));
+    }
+
+    /// Moves a console to a connection. The name stays, and the results of the last
+    /// connection end. It sends no SQL.
+    fn bind_keeping_name(&mut self, index: usize, connection: ConnectionId, dialect: crate::sql::Dialect) {
+        let budget = self.budget.clone();
+        let name = self.consoles[index].name.clone();
+        if self.consoles[index].connection.is_some() {
+            self.unbind_console(index);
+        }
+        let console = &mut self.consoles[index];
+        console.clear_results(&budget);
+        console.schema = None;
+        console.editor.set_dialect(dialect);
+        self.bind_console(index, connection);
+        self.consoles[index].name = name;
+    }
+
     // ---- association ----
 
     /// The run of a console that has a script and no connection. The user picks a
@@ -268,15 +440,31 @@ impl App {
     /// Asks for the confirmation. It tells where the files will be.
     pub(super) fn confirm_association(&mut self, console: ConsoleId, connection: ConnectionId) {
         let Some(index) = self.console_index(console) else { return };
-        let Some(file) = &self.consoles[index].file else { return };
         let Some(target) = self.connection(connection) else { return };
-        let Some(key) = &target.key else { return };
-        let Some(root) = self.persist_root(key.scope) else { return };
-        let place = root.consoles_dir().display().to_string();
-        let body = if key.scope == file.scope {
-            text::associate_same(&self.consoles[index].name, &target.name, &place)
-        } else {
-            text::associate_move(&self.consoles[index].name, &target.name, scope_word(key.scope), &place)
+        let item = &self.consoles[index];
+        let root = target.key.as_ref().and_then(|key| self.persist_root(key.scope));
+        let place = root.map_or_else(|| text::NO_STORE.to_owned(), |root| root.consoles_dir().display().to_string());
+        let moves = match (&item.file, &target.key) {
+            (Some(file), Some(key)) => file.scope != key.scope,
+            _ => false,
+        };
+        if let Some(current) = item.connection.and_then(|id| self.connection(id)) {
+            let body = text::change_connection(&item.name, &current.name, &target.name, &place, moves);
+            self.show_dialog(
+                text::TITLE_CHANGE_CONNECTION,
+                body,
+                vec![
+                    (text::OPTION_CANCEL, DialogAction::Dismiss),
+                    (text::OPTION_CHANGE, DialogAction::Associate(console, connection)),
+                ],
+            );
+            return;
+        }
+        let body = match (&item.file, &target.key) {
+            (Some(_), Some(key)) if moves => {
+                text::associate_move(&item.name, &target.name, scope_word(key.scope), &place)
+            }
+            _ => text::associate_same(&item.name, &target.name, &place),
         };
         self.show_dialog(
             text::TITLE_ASSOCIATE_CONFIRM,
@@ -292,6 +480,15 @@ impl App {
     /// It sends no SQL.
     pub(super) fn associate(&mut self, console: ConsoleId, connection: ConnectionId) {
         let Some(index) = self.console_index(console) else { return };
+        // The console can start to work while the question stays open.
+        if self.consoles[index].is_busy() || self.consoles[index].in_transaction() {
+            self.status = Some(text::CONNECTION_CHANGE_BUSY.to_owned());
+            return;
+        }
+        if self.consoles[index].file.is_none() {
+            self.change_memory_console(index, connection);
+            return;
+        }
         let Some(target) = self.connection(connection) else { return };
         let Some(key) = target.key.clone() else { return };
         let dialect = target.dialect;
@@ -332,10 +529,7 @@ impl App {
             }
             file.relocate(key.scope, meta, Some(lock), &to_root);
         }
-        let console = &mut self.consoles[index];
-        console.schema = None;
-        console.editor.set_dialect(dialect);
-        self.bind_console(index, connection);
+        self.bind_keeping_name(index, connection, dialect);
         self.status = Some(text::associated(&name));
     }
 

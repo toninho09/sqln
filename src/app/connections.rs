@@ -8,10 +8,12 @@ use crate::connection::{
     CatalogState, Connection, ConnectionKey, Definition, Source, name_is_taken, refresh_labels,
 };
 use crate::connector::sqlite::{SqliteTarget, validate_path};
-use crate::connector::{Connector, Namespace};
+use crate::connector::{ConnectError, Connector, Namespace};
 use crate::console::Focus;
+use crate::creds::Identity;
 use crate::exec::{ConnectionId, Manager};
 use crate::form::{ConnectionForm, Field, FormNote, Kind};
+use crate::grid::printable;
 use crate::input::Action;
 use crate::navigator::{Navigator, Row, RowKind};
 use crate::store::Scope;
@@ -66,7 +68,7 @@ impl App {
     pub(super) fn prepare_database(&mut self) {
         let Some(path) = self.database.clone() else { return };
         if let Err(error) = validate_path(&path) {
-            self.status = Some(error.0);
+            self.status = Some(error.message);
             self.database = None;
             return;
         }
@@ -172,13 +174,25 @@ impl App {
         if self.config_blocked() {
             return;
         }
+        self.catalog_reads += 1;
+        let read = self.catalog_reads;
         if let Some(connection) = self.connection_mut(id) {
+            connection.catalog_read = read;
             connection.catalog_state = CatalogState::Loading;
         }
-        self.authorize(id, super::auth::Use::Catalog(id));
+        self.authorize(id, super::auth::Use::Catalog(id, read));
     }
 
-    pub(super) fn on_catalog_loaded(&mut self, id: ConnectionId, catalog: Result<Catalog, String>) {
+    pub(super) fn on_catalog_loaded(
+        &mut self,
+        id: ConnectionId,
+        read: u64,
+        catalog: Result<Catalog, String>,
+    ) {
+        // Reads can overlap, and an older read can miss the result of a DDL statement.
+        if self.connection(id).is_none_or(|connection| connection.catalog_read != read) {
+            return;
+        }
         let schemas = match catalog {
             Ok(catalog) => {
                 let schemas: Vec<String> = catalog.schemas.iter().map(|item| item.name.clone()).collect();
@@ -278,7 +292,12 @@ impl App {
             Action::NavigatorOpen if is_relation(&row) => self.open_table(&row),
             Action::NavigatorOpen => self.toggle(&row),
             Action::NavigatorNewConsole => self.request_console(id),
-            Action::NavigatorRefresh => self.reload_catalog(id),
+            Action::NavigatorRefresh => {
+                if !self.ask_new_password(id) {
+                    self.reload_catalog(id);
+                }
+            }
+            Action::NavigatorDeletePassword => self.confirm_password_deletion(id),
             Action::NavigatorDisconnect => self.disconnect(id),
             Action::NavigatorEdit => self.edit_connection(id),
             Action::NavigatorDelete => self.confirm_removal(id),
@@ -353,6 +372,15 @@ impl App {
             let console = self.unbound_console(dialect);
             self.consoles.push(console);
             self.select_console(self.consoles.len() - 1);
+        } else {
+            // The hidden console takes a tab, in the order of this opening.
+            let place = self.next_tab_place();
+            let console = self.console_mut();
+            if console.hidden {
+                console.hidden = false;
+                console.opened = place;
+            }
+            self.select_console(self.active);
         }
         self.console_mut().editor.set_dialect(dialect);
         self.bind_console(self.active, id);
@@ -450,6 +478,11 @@ impl App {
             self.status = Some(text::connection_in_use(&console));
             return;
         }
+        // The removal does not delete a password, so the user keeps a separate choice.
+        let saved = self
+            .connection(id)
+            .filter(|item| matches!(item.credential, CredentialName::Vault | CredentialName::GlobalPlainText))
+            .and_then(|item| self.saved_identity(item).map(|identity| (item.plain_name().to_owned(), identity)));
         // The scripts of the connection stay on disk. Only its definition goes.
         if let Some(key) = self.connection(id).and_then(|item| item.key.clone())
             && let Err(message) = self.change_config(key.scope, Change::Remove(key.id))
@@ -458,6 +491,34 @@ impl App {
             return;
         }
         self.drop_connection(id);
+        if let Some((name, identity)) = saved {
+            self.ask_password_deletion(&name, identity);
+        }
+    }
+
+    fn saved_identity(&self, connection: &Connection) -> Option<Identity> {
+        Identity::of(connection.key.as_ref()?, connection.definition.as_ref()?)
+    }
+
+    fn confirm_password_deletion(&mut self, id: ConnectionId) {
+        let found = self.connection(id).and_then(|item| {
+            self.saved_identity(item).map(|identity| (item.plain_name().to_owned(), identity))
+        });
+        match found {
+            Some((name, identity)) => self.ask_password_deletion(&name, identity),
+            None => self.status = Some(text::PASSWORD_NOT_FOUND.to_owned()),
+        }
+    }
+
+    fn ask_password_deletion(&mut self, name: &str, identity: Identity) {
+        self.show_dialog(
+            text::TITLE_DELETE_PASSWORD,
+            text::delete_password_question(&printable(name)),
+            vec![
+                (text::OPTION_KEEP_PASSWORD, DialogAction::Dismiss),
+                (text::OPTION_DELETE_PASSWORD, DialogAction::DeletePassword(identity)),
+            ],
+        );
     }
 
     /// Removes a connection from the running application. Its consoles keep their text.
@@ -477,7 +538,7 @@ impl App {
     }
 
     /// The console keeps its text and its results, and it cannot run.
-    fn unbind_console(&mut self, index: usize) {
+    pub(super) fn unbind_console(&mut self, index: usize) {
         let id = self.next_unbound_console;
         self.next_unbound_console -= 1;
         let console = &mut self.consoles[index];
@@ -612,12 +673,15 @@ impl App {
         self.authorize_test(definition, test);
     }
 
-    pub(super) fn on_connection_tested(&mut self, test: u64, result: Result<(), String>) {
+    pub(super) fn on_connection_tested(&mut self, test: u64, result: Result<(), ConnectError>) {
+        if self.on_password_verified(test, &result) {
+            return;
+        }
         let Some(form) = self.form.as_mut().filter(|form| form.test == Some(test)) else { return };
         form.test = None;
         form.note = Some(match result {
             Ok(()) => FormNote::Info(text::FORM_TEST_OK.to_owned()),
-            Err(message) => FormNote::Error(message),
+            Err(error) => FormNote::Error(error.message),
         });
     }
 

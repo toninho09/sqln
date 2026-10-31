@@ -30,7 +30,7 @@ pub fn system_roots() -> &'static [CertificateDer<'static>] {
 }
 
 fn file_error(path: &Path, error: impl std::fmt::Display) -> ConnectError {
-    ConnectError(format!("Cannot read {}: {error}", path.display()))
+    ConnectError::new(format!("Cannot read {}: {error}", path.display()))
 }
 
 /// Reads all certificates of a PEM file.
@@ -64,7 +64,7 @@ fn builder(store: RootCertStore) -> Result<ConfigBuilder, ConnectError> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     Ok(ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .map_err(|error| ConnectError(error.to_string()))?
+        .map_err(|error| ConnectError::new(error.to_string()))?
         .with_root_certificates(store))
 }
 
@@ -85,7 +85,7 @@ pub fn client_config(files: &TlsFiles) -> Result<ClientConfig, ConnectError> {
                 .map_err(|error| file_error(&client.key, error))?;
             builder
                 .with_client_auth_cert(chain, key)
-                .map_err(|error| ConnectError(error.to_string()))
+                .map_err(|error| ConnectError::new(error.to_string()))
         }
     }
 }

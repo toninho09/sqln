@@ -12,7 +12,7 @@ use sqln::connector::sqlite::SqliteTarget;
 use sqln::connector::target::{
     Address, ClientCertificate, Engine, NetworkTarget, Secret, Tls, TlsFiles,
 };
-use sqln::creds::{Credentials, Identity, SystemVault, Vault, VaultError};
+use sqln::creds::{Credentials, Identity, PlainFile, SystemVault, Vault, VaultError};
 use sqln::store::config::{self, Change};
 use sqln::store::file::{self, Expect, WriteError};
 use sqln::store::{Root, Scope, Store};
@@ -830,4 +830,79 @@ fn native_vault_round_trip() {
     assert_eq!(vault.read(&id).unwrap().unwrap().expose(), PASSWORD);
     assert!(vault.delete(&id).unwrap());
     assert!(vault.read(&id).unwrap().is_none());
+}
+
+fn plain_fixture(name: &str) -> (PathBuf, Root, Identity) {
+    let base = temp_dir(&format!("{name}-{}", uuid::Uuid::new_v4()));
+    let root = Root::global(base.clone());
+    let key = ConnectionKey { scope: Scope::Global, id: ID.into() };
+    (base, root, Identity::of(&key, &definition()).unwrap())
+}
+
+#[test]
+fn the_plain_file_holds_one_entry_for_each_identity_and_only_the_owner_reads_it() {
+    let (_base, root, identity) = plain_fixture("plain-entry");
+    let file = PlainFile::new(&root);
+    file.write(&identity, &Secret::new(PASSWORD)).unwrap();
+    assert_eq!(file.read(&identity).unwrap().unwrap().expose(), PASSWORD);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(root.credentials_file()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    let mut other = definition();
+    target(&mut other).user = "another_user".into();
+    let key = ConnectionKey { scope: Scope::Global, id: ID.into() };
+    let changed = Identity::of(&key, &other).unwrap();
+    assert!(file.read(&changed).unwrap().is_none(), "a new destination finds no password");
+}
+
+#[test]
+fn the_last_deletion_removes_the_plain_file() {
+    let (_base, root, identity) = plain_fixture("plain-delete");
+    let file = PlainFile::new(&root);
+    assert_eq!(file.delete(&identity), Ok(false));
+    file.write(&identity, &Secret::new(PASSWORD)).unwrap();
+    assert_eq!(file.delete(&identity), Ok(true));
+    assert!(!root.credentials_file().exists());
+}
+
+#[test]
+fn a_damaged_plain_file_is_an_error_and_stays_as_it_is() {
+    let (_base, root, identity) = plain_fixture("plain-damaged");
+    fs::create_dir_all(&root.dir).unwrap();
+    fs::write(root.credentials_file(), "{ not json").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(root.credentials_file(), fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let file = PlainFile::new(&root);
+    assert_eq!(file.read(&identity), Err(VaultError::PlainFile));
+    assert_eq!(file.write(&identity, &Secret::new(PASSWORD)), Err(VaultError::PlainFile));
+    assert_eq!(fs::read_to_string(root.credentials_file()).unwrap(), "{ not json");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_plain_file_that_others_can_read_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_base, root, identity) = plain_fixture("plain-open");
+    let file = PlainFile::new(&root);
+    file.write(&identity, &Secret::new(PASSWORD)).unwrap();
+    fs::set_permissions(root.credentials_file(), fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(file.read(&identity), Err(VaultError::PlainFile));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_plain_file_that_is_a_link_is_refused() {
+    let (base, root, identity) = plain_fixture("plain-link");
+    let file = PlainFile::new(&root);
+    file.write(&identity, &Secret::new(PASSWORD)).unwrap();
+    let real = base.join("elsewhere.json");
+    fs::rename(root.credentials_file(), &real).unwrap();
+    std::os::unix::fs::symlink(&real, root.credentials_file()).unwrap();
+    assert_eq!(file.read(&identity), Err(VaultError::PlainFile));
 }

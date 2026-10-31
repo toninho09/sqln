@@ -16,7 +16,7 @@ use sqln::clipboard::MemoryClipboard;
 use sqln::connection::{ConnectionKey, Definition, Source};
 use sqln::connector::target::{Address, Engine, NetworkTarget, Secret, Tls, parse_uri};
 use sqln::console::Phase;
-use sqln::creds::{Identity, Vault, VaultError};
+use sqln::creds::{Identity, PlainFile, Vault, VaultError};
 use sqln::form::Field;
 use sqln::store::config::{self, CredentialName};
 use sqln::store::{Root, Scope, Store};
@@ -653,7 +653,7 @@ fn choosing_the_vault_in_a_local_form_requires_an_explicit_save() {
 fn global_plaintext_is_not_silently_treated_as_a_passwordless_connection() {
     let mut f = Fixture::new(CredentialName::GlobalPlainText, true);
     f.run();
-    f.sees("Global plaintext credentials are not available");
+    f.sees("Password · test-db");
     assert_eq!(f.app.console().phase, Phase::Waiting);
     f.code(KeyCode::Esc);
     f.idle();
@@ -822,4 +822,217 @@ fn a_vault_password_is_used_with_real_postgres_and_the_sql_snapshot_stays_fixed(
     assert!(f.app.console().editor.text().contains("SELECT 22"));
     assert!(f.app.console_mut().editor.marks().is_empty());
     assert_eq!(f.vault.state.lock().unwrap().reads, 1);
+}
+
+fn plain_file(f: &Fixture) -> PlainFile {
+    PlainFile::new(&f.store.global)
+}
+
+/// Moves the focus of an open dialog to one option, and presses it.
+fn choose(f: &mut Fixture, option: usize) {
+    for _ in 0..option {
+        f.code(KeyCode::Tab);
+    }
+    f.code(KeyCode::Enter);
+}
+
+#[test]
+fn without_a_vault_the_save_option_warns_and_writes_only_the_global_file() {
+    let mut f = Fixture::new(CredentialName::Vault, true);
+    f.vault.state.lock().unwrap().read_error = Some(VaultError::Absent);
+    f.run();
+    f.sees("Save in plain text in credentials.json");
+    f.enter_password(true);
+    f.idle();
+    let secrets = f.store.global.credentials_file();
+    assert!(fs::read_to_string(&secrets).unwrap().contains(PASSWORD));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&secrets).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    let config = fs::read_to_string(f.store.global.config_file()).unwrap();
+    assert!(!config.contains(PASSWORD));
+    assert!(config.contains("globalPlainText"));
+    assert_eq!(f.app.connections()[0].credential, CredentialName::GlobalPlainText);
+    assert_eq!(f.vault.state.lock().unwrap().writes, 0);
+}
+
+#[test]
+fn an_unmarked_save_option_writes_nothing_without_a_vault() {
+    let mut f = Fixture::new(CredentialName::Vault, true);
+    f.vault.state.lock().unwrap().read_error = Some(VaultError::Absent);
+    f.run();
+    f.sees("Save in plain text in credentials.json");
+    f.enter_password(false);
+    f.idle();
+    assert_eq!(f.password(), Some(PASSWORD));
+    assert!(!f.store.global.credentials_file().exists());
+}
+
+#[test]
+fn a_plain_text_password_answers_without_a_prompt_when_no_vault_exists() {
+    let mut f = Fixture::new(CredentialName::GlobalPlainText, true);
+    f.vault.state.lock().unwrap().read_error = Some(VaultError::Absent);
+    plain_file(&f).write(&f.identity(), &Secret::new(PASSWORD)).unwrap();
+    f.run();
+    f.idle();
+    assert_eq!(f.password(), Some(PASSWORD));
+}
+
+#[test]
+fn a_session_reference_does_not_touch_the_vault_without_a_plain_text_password() {
+    let mut f = Fixture::new(CredentialName::Session, true);
+    f.run();
+    f.sees("Password · test-db");
+    assert_eq!(f.vault.state.lock().unwrap().reads, 0);
+}
+
+#[test]
+fn a_locked_vault_never_uses_the_plain_text_password() {
+    for error in [VaultError::NoAccess, VaultError::Failed] {
+        let mut f = Fixture::new(CredentialName::Vault, true);
+        f.vault.state.lock().unwrap().read_error = Some(error);
+        plain_file(&f).write(&f.identity(), &Secret::new(PASSWORD)).unwrap();
+        f.run();
+        f.sees("System vault");
+        assert!(!f.screen().contains("plain text"));
+        assert!(f.password().is_none());
+    }
+}
+
+#[test]
+fn a_failed_write_offers_plain_text_only_when_no_vault_exists() {
+    let mut f = Fixture::new(CredentialName::Session, true);
+    f.vault.state.lock().unwrap().write_error = Some(VaultError::Failed);
+    f.run();
+    f.sees("Password · test-db");
+    f.enter_password(true);
+    f.sees("The password is not saved");
+    assert!(!f.screen().contains("Save in plain text"));
+    assert!(!f.store.global.credentials_file().exists());
+
+    let mut f = Fixture::new(CredentialName::Session, true);
+    f.vault.state.lock().unwrap().write_error = Some(VaultError::Absent);
+    f.run();
+    f.sees("Password · test-db");
+    f.enter_password(true);
+    f.sees("Save in plain text");
+    assert!(f.screen().contains("That file stores it in plain text"));
+    assert!(!f.store.global.credentials_file().exists());
+    choose(&mut f, 3);
+    f.idle();
+    assert!(f.store.global.credentials_file().exists());
+    assert_eq!(f.app.connections()[0].credential, CredentialName::GlobalPlainText);
+}
+
+#[test]
+fn a_project_connection_stores_the_plain_password_only_in_the_global_folder() {
+    let mut f = Fixture::new(CredentialName::Vault, true);
+    f.copied_project();
+    f.vault.state.lock().unwrap().read_error = Some(VaultError::Absent);
+    f.run();
+    f.sees("Confirm");
+    f.confirm();
+    f.sees("Save in plain text in credentials.json");
+    f.enter_password(true);
+    f.idle();
+    let project = f.store.project.clone().unwrap();
+    let config = fs::read_to_string(project.config_file()).unwrap();
+    assert!(!config.contains(PASSWORD));
+    assert!(!config.contains("globalPlainText"));
+    assert_eq!(f.app.connections()[0].credential, CredentialName::Vault);
+    assert!(fs::read_to_string(f.store.global.credentials_file()).unwrap().contains(PASSWORD));
+}
+
+#[test]
+fn a_migration_removes_the_source_only_after_the_vault_answers() {
+    let mut f = Fixture::new(CredentialName::GlobalPlainText, true);
+    plain_file(&f).write(&f.identity(), &Secret::new(PASSWORD)).unwrap();
+    f.run();
+    f.sees("Move the password to the vault");
+    choose(&mut f, 1);
+    f.sees("read it back");
+    assert!(f.store.global.credentials_file().exists());
+    assert_eq!(f.vault.state.lock().unwrap().writes, 1);
+    choose(&mut f, 1);
+    f.idle();
+    assert!(!f.store.global.credentials_file().exists());
+    assert_eq!(f.app.connections()[0].credential, CredentialName::Vault);
+    assert!(f.vault.state.lock().unwrap().values.contains_key(&f.identity()));
+}
+
+#[test]
+fn a_failed_migration_keeps_the_source_and_says_so() {
+    let mut f = Fixture::new(CredentialName::GlobalPlainText, true);
+    f.vault.state.lock().unwrap().write_error = Some(VaultError::Failed);
+    plain_file(&f).write(&f.identity(), &Secret::new(PASSWORD)).unwrap();
+    f.run();
+    f.sees("Move the password to the vault");
+    choose(&mut f, 1);
+    f.sees("The migration is not complete");
+    choose(&mut f, 0);
+    f.idle();
+    assert_eq!(f.password(), Some(PASSWORD));
+    assert!(fs::read_to_string(f.store.global.credentials_file()).unwrap().contains(PASSWORD));
+}
+
+#[test]
+fn a_migration_can_keep_the_plain_text_copy() {
+    let mut f = Fixture::new(CredentialName::GlobalPlainText, true);
+    plain_file(&f).write(&f.identity(), &Secret::new(PASSWORD)).unwrap();
+    f.run();
+    f.sees("Move the password to the vault");
+    choose(&mut f, 1);
+    f.sees("read it back");
+    choose(&mut f, 0);
+    f.idle();
+    assert!(f.store.global.credentials_file().exists());
+    assert!(f.vault.state.lock().unwrap().values.contains_key(&f.identity()));
+}
+
+#[test]
+fn the_separate_deletion_asks_and_removes_the_saved_password() {
+    let mut f = Fixture::new(CredentialName::Vault, true);
+    let identity = f.identity();
+    f.vault.state.lock().unwrap().values.insert(identity.clone(), Secret::new(PASSWORD));
+    f.prefix('h');
+    f.code(KeyCode::Char('p'));
+    f.sees("Delete saved password");
+    assert!(f.screen().contains("Other copies of the project"));
+    choose(&mut f, 0);
+    assert!(f.vault.state.lock().unwrap().values.contains_key(&identity));
+
+    f.code(KeyCode::Char('p'));
+    f.sees("Delete saved password");
+    choose(&mut f, 1);
+    f.wait(|f| !f.vault.state.lock().unwrap().values.contains_key(&identity));
+    f.sees("The saved password is deleted");
+}
+
+#[test]
+fn the_separate_deletion_also_removes_a_plain_text_password() {
+    let mut f = Fixture::new(CredentialName::GlobalPlainText, true);
+    plain_file(&f).write(&f.identity(), &Secret::new(PASSWORD)).unwrap();
+    f.prefix('h');
+    f.code(KeyCode::Char('p'));
+    f.sees("Delete saved password");
+    choose(&mut f, 1);
+    f.sees("The saved password is deleted");
+    assert!(!f.store.global.credentials_file().exists());
+}
+
+#[test]
+fn removing_a_connection_offers_the_deletion_and_keeps_the_password_by_default() {
+    let mut f = Fixture::new(CredentialName::Vault, true);
+    let identity = f.identity();
+    f.vault.state.lock().unwrap().values.insert(identity.clone(), Secret::new(PASSWORD));
+    f.prefix('h');
+    f.code(KeyCode::Delete);
+    f.sees("Remove connection");
+    choose(&mut f, 1);
+    f.sees("Delete saved password");
+    assert!(f.app.connections().is_empty());
+    f.code(KeyCode::Enter);
+    assert!(f.vault.state.lock().unwrap().values.contains_key(&identity));
 }

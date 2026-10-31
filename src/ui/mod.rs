@@ -4,7 +4,9 @@ pub mod conflicts;
 pub mod auth;
 pub mod console;
 pub mod form;
+pub mod name;
 pub mod navigator;
+pub mod settings;
 pub mod table;
 pub mod text;
 pub mod theme;
@@ -142,7 +144,7 @@ fn draw_search_bar(frame: &mut Frame, area: Rect, search: &SearchBar) {
 fn kind_tag(kind: SuggestionKind) -> &'static str {
     match kind {
         SuggestionKind::Column => "col",
-        SuggestionKind::Alias => "als",
+        SuggestionKind::Alias => "als",        SuggestionKind::Cte => "cte",
         SuggestionKind::Table => "tbl",
         SuggestionKind::View => "vw ",
         SuggestionKind::Schema => "sch",

@@ -6,7 +6,7 @@ pub mod keywords;
 
 use std::ops::Range;
 
-use self::context::{Analysis, Position, Reference, analyze};
+use self::context::{Analysis, Cte, Position, Reference, analyze};
 use self::keywords::is_reserved;
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, RelationRef, Schema};
 use crate::sql::{Dialect, Statement, quote_with, split};
@@ -17,6 +17,7 @@ const MAX_ITEMS: usize = 50;
 pub enum SuggestionKind {
     Column,
     Alias,
+    Cte,
     Table,
     View,
     Schema,
@@ -99,12 +100,15 @@ impl Builder {
                 keywords::starters(self.dialect).for_each(|word| self.add_keyword(word));
             }
             Position::Relation => {
+                for cte in &analysis.ctes {
+                    self.add_name(&cte.name, SuggestionKind::Cte, None);
+                }
                 if let Some(catalog) = catalog {
                     self.add_relations(catalog);
                 }
             }
             Position::Expression => {
-                self.add_scope(&analysis.scope, catalog);
+                self.add_scope(analysis, catalog);
                 keywords::all(self.dialect).for_each(|word| self.add_keyword(word));
             }
             Position::AfterOperand => {
@@ -186,18 +190,27 @@ impl Builder {
         });
     }
 
-    fn add_scope(&mut self, scope: &[Reference], catalog: Option<&Catalog>) {
-        for reference in scope {
+    fn add_scope(&mut self, analysis: &Analysis, catalog: Option<&Catalog>) {
+        for reference in &analysis.scope {
+            let cte = cte_of(reference, &analysis.ctes);
             if let Some(alias) = &reference.alias {
                 self.add_name(alias, SuggestionKind::Alias, reference.name.as_deref());
             } else if let Some(name) = &reference.name {
-                let kind = reference_kind(reference, catalog);
+                let kind = cte.map_or_else(|| reference_kind(reference, catalog), |_| SuggestionKind::Cte);
                 self.add_name(name, kind, reference.schema.as_deref());
             }
-            if let Some(catalog) = catalog {
-                let detail = reference.alias.as_deref().or(reference.name.as_deref());
+            let detail = reference.alias.as_deref().or(reference.name.as_deref());
+            if let Some(cte) = cte {
+                self.add_cte_columns(cte, detail);
+            } else if let Some(catalog) = catalog {
                 self.add_columns_of(reference, catalog, detail);
             }
+        }
+    }
+
+    fn add_cte_columns(&mut self, cte: &Cte, detail: Option<&str>) {
+        for column in &cte.columns {
+            self.add_name(column, SuggestionKind::Column, detail.or(Some(&cte.name)));
         }
     }
 
@@ -227,18 +240,23 @@ impl Builder {
     }
 
     fn add_qualified(&mut self, analysis: &Analysis, catalog: Option<&Catalog>) {
-        let Some(catalog) = catalog else { return };
         let qualifiers = &analysis.qualifiers;
         let last = &qualifiers[qualifiers.len() - 1];
         let outer = qualifiers.len().checked_sub(2).map(|index| qualifiers[index].as_str());
+        let in_scope = analysis.scope.iter().find(|reference| {
+            let matches = |name: &Option<String>| {
+                name.as_deref().is_some_and(|name| name.eq_ignore_ascii_case(last))
+            };
+            matches(&reference.alias) || (reference.alias.is_none() && matches(&reference.name))
+        });
+        let cte = in_scope.and_then(|reference| cte_of(reference, &analysis.ctes));
+        if let Some(cte) = cte.filter(|_| outer.is_none()) {
+            self.add_cte_columns(cte, None);
+            return;
+        }
+        let Some(catalog) = catalog else { return };
 
         if outer.is_none() {
-            let in_scope = analysis.scope.iter().find(|reference| {
-                let matches = |name: &Option<String>| {
-                    name.as_deref().is_some_and(|name| name.eq_ignore_ascii_case(last))
-                };
-                matches(&reference.alias) || (reference.alias.is_none() && matches(&reference.name))
-            });
             if let Some(reference) = in_scope {
                 self.add_columns_of(reference, catalog, None);
                 return;
@@ -281,6 +299,12 @@ impl Builder {
         }
         Completion { items, replace, missing_columns: self.missing_columns }
     }
+}
+
+/// Returns the name of `WITH` that a reference reads. A schema excludes it.
+fn cte_of<'a>(reference: &Reference, ctes: &'a [Cte]) -> Option<&'a Cte> {
+    let name = reference.name.as_deref().filter(|_| reference.schema.is_none())?;
+    ctes.iter().find(|cte| cte.name.eq_ignore_ascii_case(name))
 }
 
 fn relation_kind(relation: &Relation) -> SuggestionKind {

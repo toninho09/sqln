@@ -49,6 +49,15 @@ pub struct Analysis {
     pub qualifiers: Vec<String>,
     pub position: Position,
     pub scope: Vec<Reference>,
+    /// The names of `WITH` that the cursor can see, the innermost first.
+    pub ctes: Vec<Cte>,
+}
+
+/// A name of a `WITH` clause. The columns are only the ones that the text shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Cte {
+    pub name: String,
+    pub columns: Vec<String>,
 }
 
 fn raw(text: &str, token: Token) -> &str {
@@ -176,6 +185,7 @@ pub fn analyze(
         qualifiers,
         position: position(&tokens[..head], text),
         scope: visible_references(&tokens, text, head, partial),
+        ctes: visible_ctes(&tokens, text, head, partial),
     })
 }
 
@@ -384,4 +394,170 @@ impl Reader<'_> {
             (index, None)
         }
     }
+}
+
+/// Returns the index of the `)` of the `(` at `open`, or the end of an incomplete text.
+fn closing(tokens: &[Token], text: &str, open: usize) -> usize {
+    let mut depth = 0usize;
+    for (index, token) in tokens.iter().enumerate().skip(open) {
+        if is_punctuation(text, *token, b'(') {
+            depth += 1;
+        } else if is_punctuation(text, *token, b')') {
+            depth -= 1;
+            if depth == 0 {
+                return index;
+            }
+        }
+    }
+    tokens.len()
+}
+
+/// Returns the end of the text in the parentheses around `start`.
+fn group_end(tokens: &[Token], text: &str, start: usize) -> usize {
+    let mut depth = 0usize;
+    for (index, token) in tokens.iter().enumerate().skip(start) {
+        if is_punctuation(text, *token, b'(') {
+            depth += 1;
+        } else if is_punctuation(text, *token, b')') {
+            if depth == 0 {
+                return index;
+            }
+            depth -= 1;
+        }
+    }
+    tokens.len()
+}
+
+/// Reads the column list after a name. It returns the list and the next index.
+fn column_list(reader: &Reader<'_>, open: usize) -> Option<(Vec<String>, usize)> {
+    let mut columns = Vec::new();
+    let mut index = open + 1;
+    loop {
+        if !reader.is_name(index) {
+            return None;
+        }
+        columns.push(identifier(reader.text, reader.tokens[index]));
+        let next = reader.tokens.get(index + 1)?;
+        index += 2;
+        if is_punctuation(reader.text, *next, b')') {
+            return Some((columns, index));
+        }
+        if !is_punctuation(reader.text, *next, b',') {
+            return None;
+        }
+    }
+}
+
+/// Reads the name of one item of a select list, when the text shows it.
+fn item_name(tokens: &[Token], text: &str) -> Option<String> {
+    let last = *tokens.last()?;
+    if !is_identifier(text, last) {
+        return None;
+    }
+    let before = tokens.len().checked_sub(2).map(|index| tokens[index]);
+    // `a`, `t.a`, `expression AS a`, and `expression a` all end with the name.
+    let plain = tokens.len() == 1
+        || before.is_some_and(|token| is_punctuation(text, token, b'.') || is_word(text, Some(&token), &["AS"]));
+    let after_operand = before.is_some_and(|token| {
+        matches!(token.kind, TokenKind::Number | TokenKind::String | TokenKind::QuotedIdentifier)
+            || is_punctuation(text, token, b')')
+            || (token.kind == TokenKind::Word && !is_reserved(raw(text, token)))
+    });
+    (plain || after_operand).then(|| identifier(text, last))
+}
+
+/// Reads the names of the first select list of a `WITH` body. An item without a clear
+/// name, such as `*`, adds nothing.
+fn select_columns(tokens: &[Token], text: &str) -> Vec<String> {
+    if !is_word(text, tokens.first(), &["SELECT"]) {
+        return Vec::new();
+    }
+    let mut columns = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 1;
+    let mut index = 1;
+    while index < tokens.len() {
+        let token = tokens[index];
+        if is_punctuation(text, token, b'(') {
+            depth += 1;
+        } else if is_punctuation(text, token, b')') {
+            depth = depth.saturating_sub(1);
+        } else if depth == 0 && is_word(text, Some(&token), &["FROM", "UNION", "INTERSECT", "EXCEPT"]) {
+            break;
+        } else if depth == 0 && is_punctuation(text, token, b',') {
+            columns.extend(item_name(&tokens[start..index], text));
+            start = index + 1;
+        }
+        index += 1;
+    }
+    columns.extend(item_name(&tokens[start..index], text));
+    columns
+}
+
+struct WithItem {
+    cte: Cte,
+    /// The tokens between the parentheses of the body.
+    body: Range<usize>,
+}
+
+/// Reads `name [(columns)] AS [[NOT] MATERIALIZED] (body)`. A text with another shape,
+/// such as `TIMESTAMP WITH TIME ZONE`, is not a `WITH` clause.
+fn with_item(reader: &Reader<'_>, start: usize) -> Option<(WithItem, usize)> {
+    let Reader { tokens, text, .. } = *reader;
+    if !reader.is_name(start) {
+        return None;
+    }
+    let name = identifier(text, tokens[start]);
+    let mut index = start + 1;
+    let mut listed = None;
+    if tokens.get(index).is_some_and(|token| is_punctuation(text, *token, b'(')) {
+        let (columns, next) = column_list(reader, index)?;
+        listed = Some(columns);
+        index = next;
+    }
+    if !is_word(text, tokens.get(index), &["AS"]) {
+        return None;
+    }
+    index += 1;
+    index += usize::from(is_word(text, tokens.get(index), &["NOT"]));
+    index += usize::from(is_word(text, tokens.get(index), &["MATERIALIZED"]));
+    if !tokens.get(index).is_some_and(|token| is_punctuation(text, *token, b'(')) {
+        return None;
+    }
+    let end = closing(tokens, text, index);
+    let body = index + 1..end;
+    let columns = listed.unwrap_or_else(|| select_columns(&tokens[body.clone()], text));
+    Some((WithItem { cte: Cte { name, columns }, body }, end + 1))
+}
+
+/// Returns the names of `WITH` at the cursor. A name is visible in the later items and
+/// in the query of its clause. With `RECURSIVE`, it is also visible in its own body.
+fn visible_ctes(tokens: &[Token], text: &str, boundary: usize, partial: Option<usize>) -> Vec<Cte> {
+    let reader = Reader { tokens, text, partial };
+    let mut found: Vec<Cte> = Vec::new();
+    for start in 0..tokens.len() {
+        if !is_word(text, tokens.get(start), &["WITH"]) {
+            continue;
+        }
+        let end = group_end(tokens, text, start);
+        if boundary <= start || boundary > end {
+            continue;
+        }
+        let recursive = is_word(text, tokens.get(start + 1), &["RECURSIVE"]);
+        let mut index = start + 1 + usize::from(recursive);
+        while let Some((item, next)) = with_item(&reader, index) {
+            let after = boundary > item.body.end;
+            let inside = recursive && item.body.contains(&boundary);
+            if after || inside {
+                // An inner clause hides an outer name, as in the database.
+                found.retain(|cte| !cte.name.eq_ignore_ascii_case(&item.cte.name));
+                found.insert(0, item.cte);
+            }
+            if !tokens.get(next).is_some_and(|token| is_punctuation(text, *token, b',')) {
+                break;
+            }
+            index = next + 1;
+        }
+    }
+    found
 }

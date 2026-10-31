@@ -115,7 +115,10 @@ impl ConsoleTask {
                 result = &mut acquire => match result {
                     Ok(lease) => return Some(lease),
                     Err(error) => {
-                        self.finish(execution, ExecutionEnd::Failed, Some(error.0)).await;
+                        if let Some(refusal) = self.binding.refusal(&error) {
+                            self.emit(refusal).await;
+                        }
+                        self.finish(execution, ExecutionEnd::Failed, Some(error.message)).await;
                         return None;
                     }
                 },

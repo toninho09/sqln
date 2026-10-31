@@ -12,9 +12,8 @@ O usuário aprova os fluxos e ajustes registrados em `docs/DECISIONS.md` em 2026
 Essa aprovação não significa que todos os fluxos já existem no código.
 A interface final usa inglês; os rótulos em português destes esboços são exemplos.
 A aplicação implementa as seções 1 a 4 e 6, e parte das seções 5 e 8.
-O cadastro já oferece **Session only** e **System vault**. Migração e texto simples autorizado ainda não existem.
+O cadastro oferece **Session only** e **System vault**. Sem cofre, a gravação oferece texto simples depois do aviso.
 A tela de abertura da seção 1 é uma lista sobre a tela, e não um painel com busca.
-O diálogo **Configurações** da seção 8 ainda não existe. A [seção 1 do plano](../PLAN.md) lista o que falta.
 
 ## 1. Inicialização e abertura de console
 
@@ -53,10 +52,10 @@ A filtragem por conexão e a oferta de reutilização já estão definidas.
 
 Abrir um console já aberto seleciona sua aba existente.
 Criar outro console gera um nome automático, que pode ser alterado depois.
-**Definido, ainda não implementado:** `Ctrl+W N` renomeia o console atual; a lista também oferece a ação.
+`Ctrl+W N` renomeia o console atual; a lista também oferece a ação.
 Recusar nomes vazios ou repetidos na mesma conexão, sem mudar identidade, arquivos, conexão ou escopo.
 
-**Definido, ainda não implementado:** `Ctrl+W a` abre a troca ou associação de conexão do console.
+`Ctrl+W a` abre a troca ou associação de conexão do console.
 Bloquear durante execução ou transação aberta.
 Mostrar a conexão atual, a nova conexão e a pasta de destino antes da confirmação.
 Salvar antes da troca; uma falha cancela a troca.
@@ -291,8 +290,8 @@ Durante a saída, resolver a falha atual antes de perguntar sobre outro console.
 - Alteração externa do script exige escolha entre recarregar e sobrescrever.
 - Uma configuração JSON inválida mostra arquivo e posição do erro, sem liberar operações com bancos até a correção.
 - O usuário corrige esse arquivo fora da aplicação e usa **Recarregar**.
-- **Definido, ainda não implementado:** `workspace.json` ilegível usa o estado inicial e mostra um aviso não bloqueante.
-- **Definido, ainda não implementado:** a ação para um script removido usa o rótulo **Fechar e descartar texto**.
+- `workspace.json` ilegível usa o estado inicial e mostra um aviso não bloqueante.
+- A ação para um script removido usa o rótulo **Fechar e descartar texto**.
 
 ### Credenciais
 
@@ -320,17 +319,16 @@ A solicitação de senha, a confiança e a recuperação de falhas do cofre já 
 A senha fica mascarada, e a opção de salvar começa desmarcada.
 O formulário permite sessão ou cofre; testar uma senha digitada não a grava nem substitui a senha da conexão salva.
 Um caminho novo de projeto exige confirmação também ao testar ou salvar uma definição existente.
-Faltam texto simples autorizado, migração, senha recusada e exclusão separada pela interface.
 
-#### Fluxos de credenciais ainda não implementados
+#### Fluxos de credenciais
 
-Estes fluxos seguem regras já aprovadas. Os detalhes abaixo não declaram as telas como implementadas.
+Estes fluxos seguem regras aprovadas.
 
 | Fluxo | Conteúdo necessário | Regra de segurança |
 |---|---|---|
-| Texto simples global | Aviso antes da autorização, opção desmarcada e identificação do armazenamento global | Oferecer somente com ausência confirmada de cofre; nunca gravar o segredo no projeto |
+| Texto simples global | Aviso antes da autorização, opção desmarcada e identificação de `credentials.json` na pasta global | Oferecer somente com ausência confirmada de cofre; nunca gravar o segredo no projeto |
 | Migração | Confirmação para migrar e, após conferência, oferta de remoção da senha global | Preservar a fonte em caso de falha e informar migração incompleta |
-| Senha recusada | Solicitação de outra senha uma vez e indicação de suspensão após a segunda recusa | Não confundir recusa com falha de rede, TLS ou execução SQL |
+| Senha recusada | Solicitação de outra senha uma vez e indicação de suspensão após a segunda recusa; durante a suspensão, cada ação explícita abre a solicitação | Não confundir recusa com falha de rede, TLS ou execução SQL; não tentar conectar sozinha durante a suspensão |
 | Exclusão da credencial | Confirmação separada, com identificação da conexão e aviso sobre outras cópias do projeto | Remover a conexão não autoriza apagar o segredo |
 
 Os testes de tela atuais não validam os diálogos nativos do Keychain nem do Secret Service.
@@ -531,14 +529,14 @@ A execução fica bloqueada até a escolha e a confirmação de uma conexão.
 
 ### Configurações
 
-**Definido, ainda não implementado:** abrir com `Ctrl+W ,` na primeira versão.
+Abrir com `Ctrl+W ,`.
 O projeto grava somente os valores que declara.
 Oferecer escopo global ou do projeto e os cinco campos abaixo.
 Mostrar os valores herdados do global e permitir remover uma definição do projeto para usar o global.
 **Salvar** grava as alterações. **Cancelar** não altera nada.
 Manter `config.json` para opções avançadas, como o `keymap`.
 Ao mudar o modo de teclado, preservar texto, cursor e rolagem.
-Se a mudança apagar seleção ou histórico, avisar antes, inclusive na recarga da configuração.
+A troca acontece no próprio editor, então a seleção e o histórico continuam, inclusive na recarga.
 
 ```text
 ┌─ Configurações ──────────────────────────────────────────┐

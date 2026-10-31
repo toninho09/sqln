@@ -446,7 +446,7 @@ fn the_catalog_reads_relations_first_and_columns_on_demand() {
     let mut h = Harness::open("catalog", Settings::default());
     h.run(&["CREATE TABLE users(id, \"Full Name\")", "CREATE VIEW names AS SELECT id FROM users"]);
 
-    h.manager.load_catalog(h.connection);
+    h.manager.load_catalog(h.connection, 0);
     let catalog = loop {
         if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
             break catalog.unwrap();

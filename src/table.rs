@@ -52,6 +52,8 @@ struct Load {
 }
 
 pub struct TableTab {
+    /// The place of the tab in the order of opening.
+    pub opened: u64,
     /// The identity of the task of this tab. It shares the numbers of the consoles.
     pub id: ConsoleId,
     pub connection: ConnectionId,
@@ -154,6 +156,7 @@ impl TableTab {
         page_size: usize,
     ) -> Self {
         Self {
+            opened: 0,
             id,
             connection,
             relation,

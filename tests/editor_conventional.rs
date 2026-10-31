@@ -394,3 +394,47 @@ fn up_on_the_first_row_keeps_the_cursor_row() {
     f.press(key(Up));
     assert_eq!(f.editor.cursor(), at(0, 1));
 }
+
+fn undo_steps(f: &mut Fixture) -> usize {
+    let mut steps = 0;
+    loop {
+        let before = f.text();
+        f.press(ctrl('z'));
+        if f.text() == before {
+            return steps;
+        }
+        steps += 1;
+    }
+}
+
+/// Makes one undo entry for each line.
+fn separate_edits(f: &mut Fixture, count: usize) {
+    for _ in 0..count {
+        f.press(key(KeyCode::Char('a')));
+        f.press(key(Enter));
+    }
+}
+
+#[test]
+fn the_undo_memory_limit_removes_the_oldest_entries() {
+    let mut unlimited = Fixture::conventional("");
+    separate_edits(&mut unlimited, 10);
+    let all = undo_steps(&mut unlimited);
+    assert!(all >= 10, "{all}");
+
+    let mut limited = Fixture::conventional("");
+    limited.editor.set_undo_limit(400);
+    separate_edits(&mut limited, 10);
+    let kept = undo_steps(&mut limited);
+    assert!(kept > 0 && kept < all, "{kept} of {all}");
+}
+
+#[test]
+fn an_edit_above_the_undo_limit_stays_out_of_the_history_with_a_warning() {
+    let mut f = Fixture::conventional("text");
+    f.editor.set_undo_limit(16);
+    f.editor.on_paste(" and more text");
+    assert!(f.editor.status().is_some_and(|status| status.contains("too large")));
+    assert_eq!(f.text(), " and more texttext");
+    assert_eq!(undo_steps(&mut f), 0);
+}

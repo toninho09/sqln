@@ -1088,7 +1088,7 @@ fn the_question_about_a_removal_names_the_file_and_the_scripts_that_stay() {
     session.go_to_connection("gone");
     session.code(KeyCode::Delete);
     session.assert_sees("Remove the definition of gone from");
-    session.assert_sees("scripts of the connection stay on disk");
+    session.assert_sees("scripts of the connection stay");
     // Cancel removes nothing.
     session.code(KeyCode::Enter);
     assert_eq!(session.app.connections().len(), 1);
@@ -1556,4 +1556,293 @@ fn a_session_without_a_store_loads_and_saves_nothing() {
     assert!(session.app.console().file.is_none());
     let _ = file::hash(b"");
     let _ = Trouble::Changed;
+}
+
+fn erase_name(session: &mut Session) {
+    for _ in 0..40 {
+        session.code(KeyCode::Backspace);
+    }
+}
+
+fn two_connections(name: &str) -> (Store, PathBuf) {
+    let (store, base) = store(name);
+    let db = database(&base, "s", "CREATE TABLE t (v INTEGER);").display().to_string();
+    let other = database(&base, "o", "").display().to_string();
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "first", &db), sqlite_entry("g2", "second", &other)],
+    );
+    write_config(store.project.as_ref().unwrap(), "{}", &[sqlite_entry("p1", "third", &other)]);
+    (store, base)
+}
+
+fn run_and_wait(session: &mut Session) {
+    session.code(KeyCode::F(5));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session.app.console().is_busy() {
+        session.app.drain_events();
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn a_new_name_keeps_the_identity_the_files_and_the_connection() {
+    let (store, _) = two_connections("p-rename");
+    let mut session = Session::start(&store);
+    session.type_and_save("SELECT 1;");
+    let id = consoles_in(&store.global, Scope::Global)[0].meta.id.clone();
+    session.press(ctrl('w'));
+    session.code(KeyCode::Char('N'));
+    session.assert_sees("Rename console");
+    erase_name(&mut session);
+    session.write("report");
+    session.code(KeyCode::Enter);
+    assert_eq!(session.app.console().name, "report");
+    let saved = consoles_in(&store.global, Scope::Global);
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].meta.id, id);
+    assert_eq!(saved[0].meta.name, "report");
+    assert_eq!(saved[0].meta.connection_id, "g1");
+    assert_eq!(text_of(&store.global, &id), "SELECT 1;");
+}
+
+#[test]
+fn a_name_must_not_be_empty_or_repeated_in_the_connection() {
+    let (store, _) = two_connections("p-rename-refused");
+    let root = store.global.clone();
+    scripts::create(&root, &ScriptMeta::new("a".into(), "Taken".into(), "g1".into(), Scope::Global), "").unwrap();
+    let mut session = Session::start(&store);
+    let before = session.app.console().name.clone();
+    session.press(ctrl('w'));
+    session.code(KeyCode::Char('N'));
+    erase_name(&mut session);
+    session.code(KeyCode::Enter);
+    session.assert_sees("needs a name");
+    session.write("taken");
+    session.code(KeyCode::Enter);
+    session.assert_sees("has this name");
+    assert_eq!(session.app.console().name, before);
+    session.code(KeyCode::Esc);
+    assert_eq!(session.app.console().name, before);
+}
+
+#[test]
+fn the_list_renames_a_saved_console_that_no_tab_shows() {
+    let (store, _) = two_connections("p-rename-list");
+    let root = store.global.clone();
+    scripts::create(&root, &ScriptMeta::new("a".into(), "old-name".into(), "g1".into(), Scope::Global), "SELECT 2;").unwrap();
+    let mut session = Session::start(&store);
+    session.go_to_connection("first");
+    session.code(KeyCode::Char('n'));
+    session.assert_sees("old-name");
+    session.code(KeyCode::Down);
+    session.code(KeyCode::Char('r'));
+    erase_name(&mut session);
+    session.write("new-name");
+    session.code(KeyCode::Enter);
+    let saved = consoles_in(&root, Scope::Global);
+    assert_eq!(saved[0].meta.name, "new-name");
+    assert_eq!(text_of(&root, "a"), "SELECT 2;");
+}
+
+#[test]
+fn a_change_of_connection_keeps_the_text_and_the_name_and_ends_the_results() {
+    let (store, _) = two_connections("p-change");
+    let mut session = Session::start(&store);
+    session.type_and_save("SELECT 1;");
+    run_and_wait(&mut session);
+    assert!(!session.app.console().results.is_empty());
+    let name = session.app.console().name.clone();
+    let old = session.app.console().connection;
+    session.prefix('a');
+    session.assert_sees("Change connection");
+    session.code(KeyCode::Enter);
+    session.assert_sees("from first to second");
+    session.assert_sees("runs no SQL");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    let console = session.app.console();
+    assert_ne!(console.connection, old);
+    assert_eq!(console.name, name);
+    assert_eq!(console.editor.text(), "SELECT 1;");
+    assert!(console.results.is_empty());
+    assert!(console.messages.is_empty());
+    let saved = consoles_in(&store.global, Scope::Global);
+    assert_eq!(saved[0].meta.connection_id, "g2");
+}
+
+#[test]
+fn a_change_to_another_scope_moves_the_files_and_says_so() {
+    let (store, _) = two_connections("p-change-scope");
+    let mut session = Session::start(&store);
+    session.type_and_save("SELECT 1;");
+    session.prefix('a');
+    session.code(KeyCode::Down);
+    session.code(KeyCode::Enter);
+    session.assert_sees("The files move to");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    let project = store.project.as_ref().unwrap();
+    assert!(consoles_in(&store.global, Scope::Global).is_empty());
+    let moved = consoles_in(project, Scope::Project);
+    assert_eq!(moved.len(), 1);
+    assert_eq!(moved[0].meta.connection_id, "p1");
+    assert_eq!(text_of(project, &moved[0].meta.id), "SELECT 1;");
+}
+
+#[test]
+fn a_change_of_connection_waits_for_the_end_of_a_transaction() {
+    let (store, _) = two_connections("p-change-busy");
+    let mut session = Session::start(&store);
+    session.write("BEGIN;");
+    run_and_wait(&mut session);
+    let old = session.app.console().connection;
+    session.prefix('a');
+    session.assert_sees("End the execution and the transaction");
+    assert_eq!(session.app.console().connection, old);
+}
+
+#[test]
+fn the_settings_write_nothing_before_the_save() {
+    let (store, _) = two_connections("p-settings-cancel");
+    let project = store.project.clone().unwrap();
+    let before = fs::read_to_string(project.config_file()).unwrap();
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.assert_sees("Settings");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.write("77");
+    session.code(KeyCode::Esc);
+    assert_eq!(fs::read_to_string(project.config_file()).unwrap(), before);
+}
+
+#[test]
+fn the_settings_write_only_the_scope_of_the_dialog() {
+    let (store, _) = two_connections("p-settings-save");
+    let global = fs::read_to_string(store.global.config_file()).unwrap();
+    let project = store.project.clone().unwrap();
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.write("77");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+    let text = fs::read_to_string(project.config_file()).unwrap();
+    assert!(text.contains("\"pageSize\": 77"), "{text}");
+    assert_eq!(fs::read_to_string(store.global.config_file()).unwrap(), global);
+    // The connections and the other parts of the file stay.
+    assert!(text.contains("third"), "{text}");
+}
+
+#[test]
+fn an_empty_field_removes_the_project_value_and_shows_the_global_value() {
+    let (store, base) = store("p-settings-remove");
+    let db = database(&base, "s", "").display().to_string();
+    write_config(&store.global, r#"{"pageSize":10}"#, &[sqlite_entry("g1", "s", &db)]);
+    let project = store.project.clone().unwrap();
+    write_config(&project, r#"{"pageSize":20,"keymap":{"conventional":{"quit":["ctrl+w q"]}}}"#, &[]);
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Backspace);
+    session.code(KeyCode::Backspace);
+    session.assert_sees("from global: 10");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    let text = fs::read_to_string(project.config_file()).unwrap();
+    assert!(!text.contains("pageSize"), "{text}");
+    assert!(text.contains("keymap"), "{text}");
+}
+
+#[test]
+fn a_settings_value_of_zero_stays_in_the_dialog_with_a_note() {
+    let (store, _) = two_connections("p-settings-zero");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.write("0");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    session.assert_sees("needs a number of 1 or more");
+}
+
+#[test]
+fn a_change_of_keyboard_in_the_settings_keeps_the_text_the_cursor_and_the_history() {
+    let (store, _) = two_connections("p-settings-keyboard");
+    let mut session = Session::start(&store);
+    session.write("SELECT 1;");
+    let cursor = session.app.console().editor.cursor();
+    session.prefix(',');
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Right);
+    session.code(KeyCode::Right);
+    for _ in 0..4 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    let editor = &session.app.console().editor;
+    assert_eq!(editor.keyboard(), sqln::editor::KeyboardMode::Vim);
+    assert_eq!(editor.text(), "SELECT 1;");
+    assert_eq!(editor.cursor().row, cursor.row);
+    session.code(KeyCode::Char('u'));
+    assert_eq!(session.text(), "");
+}
+
+#[test]
+fn a_damaged_workspace_file_warns_without_a_block() {
+    let (store, base) = global_only("p-workspace");
+    let db = database(&base, "s", "");
+    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db.display().to_string())]);
+    fs::write(store.global.workspace_file(), "{ not json").unwrap();
+    let mut session = Session::start(&store);
+    session.assert_sees("cannot read workspace.json");
+    session.write("SELECT 1;");
+    assert_eq!(session.text(), "SELECT 1;");
+}
+
+#[test]
+fn a_signal_saves_the_pending_text_and_asks_nothing() {
+    let (store, _) = two_connections("p-signal");
+    let mut session = Session::start(&store);
+    session.write("SELECT 1;");
+    session.app.save_without_questions();
+    let saved = consoles_in(&store.global, Scope::Global);
+    assert_eq!(text_of(&store.global, &saved[0].meta.id), "SELECT 1;");
+    session.assert_not_sees("Close without saving");
+}
+
+#[test]
+fn a_signal_leaves_a_file_that_another_program_changed() {
+    let (mut session, store, id) = session_with_saved_console("p-signal-changed");
+    let path = store.global.consoles_dir().join(format!("{id}.sql"));
+    fs::write(&path, "SELECT 'other program';").unwrap();
+    session.wait(1_000);
+    session.code(KeyCode::Esc);
+    session.write("more text");
+    session.app.save_without_questions();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "SELECT 'other program';");
+}
+
+#[test]
+fn the_close_of_a_removed_script_names_the_loss_of_the_text() {
+    let (mut session, store, id) = session_with_saved_console("p-close-removed");
+    fs::remove_file(script_path(&store.global, &id)).unwrap();
+    session.wait(1_000);
+    session.code(KeyCode::Esc);
+    session.prefix('c');
+    session.assert_sees("Close and discard the text");
+    session.assert_not_sees("Close without saving");
 }

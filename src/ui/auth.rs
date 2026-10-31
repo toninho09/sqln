@@ -25,6 +25,10 @@ pub struct PasswordPrompt {
     pub save_allowed: bool,
     pub save: bool,
     pub focus: usize,
+    /// This computer has no vault, so the save option writes plain text.
+    pub plain: bool,
+    /// The database refused the last password.
+    pub refused: bool,
     input: LineInput,
 }
 
@@ -36,6 +40,8 @@ impl PasswordPrompt {
             save_allowed,
             save: false,
             focus: 0,
+            plain: false,
+            refused: false,
             input: LineInput::default(),
         }
     }
@@ -141,14 +147,13 @@ pub fn draw_password(
     if prompt.save_allowed {
         let row = Rect::new(inner.x, inner.y + 3, inner.width, 1);
         let mark = if prompt.save { "[x]" } else { "[ ]" };
-        frame.render_widget(
-            Paragraph::new(format!("{mark} {}", text::SAVE_IN_VAULT)).style(style(1)),
-            row,
-        );
+        let label = if prompt.plain { text::SAVE_IN_PLAIN_TEXT } else { text::SAVE_IN_VAULT };
+        frame.render_widget(Paragraph::new(format!("{mark} {label}")).style(style(1)), row);
         layout.push((1, row));
     }
+    let hint = if prompt.refused { text::AUTH_REFUSED_HINT } else { text::AUTH_PASSWORD_HINT };
     frame.render_widget(
-        Paragraph::new(text::AUTH_PASSWORD_HINT).style(theme.hint),
+        Paragraph::new(hint).style(theme.hint),
         Rect::new(inner.x, inner.y + 4, inner.width, 1),
     );
     let connect = format!("[{}]", text::BUTTON_CONNECT);

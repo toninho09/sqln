@@ -4,11 +4,38 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use sqln::app::{App, sample_catalog};
-use sqln::catalog::Catalog;
+use sqln::app::App;
+use sqln::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
 use sqln::clipboard::MemoryClipboard;
 use sqln::editor::{KeyboardMode, SqlEditor};
 use sqln::sql::Dialect;
+
+/// A fixed catalog for a test without a database.
+pub fn sample_catalog() -> Catalog {
+    let relation = |name: &str, kind, columns: &[&str]| Relation {
+        name: name.to_owned(),
+        kind,
+        columns: Columns::Loaded(columns.iter().map(|column| (*column).to_owned()).collect()),
+    };
+    Catalog {
+        schemas: vec![
+            Schema {
+                name: "public".to_owned(),
+                relations: vec![
+                    relation("users", RelationKind::Table, &["id", "name", "email", "created_at"]),
+                    relation("orders", RelationKind::Table, &["id", "user_id", "total", "status"]),
+                    relation("active_users", RelationKind::View, &["id", "name"]),
+                    relation("Order Items", RelationKind::Table, &["order_id", "sku", "quantity"]),
+                ],
+            },
+            Schema {
+                name: "sales".to_owned(),
+                relations: vec![relation("invoices", RelationKind::Table, &["number", "due_date"])],
+            },
+        ],
+        current_schema: Some("public".to_owned()),
+    }
+}
 
 pub fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)

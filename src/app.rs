@@ -14,8 +14,10 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
 use std::path::PathBuf;
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, KeyEventKind, poll, read};
@@ -26,17 +28,19 @@ use ratatui::widgets::Paragraph;
 use tokio::sync::mpsc::Receiver;
 
 use self::mouse::Drag;
-use crate::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
+use crate::catalog::Catalog;
 use crate::clipboard::{SharedClipboard, SystemClipboard};
 use crate::connection::{Connection, Definition};
 use crate::connector::{Connector, Namespace, TransactionCommand};
 use crate::console::{AfterTransaction, Console, Focus};
+use crate::creds::{Identity, PlainFile};
 use crate::editor::{KeyboardMode, RunScope, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, Settings};
 use crate::form::ConnectionForm;
 use crate::grid::Budget;
 use crate::input::{Chord, Keymap};
 use crate::navigator::Navigator;
+use crate::settings::SettingsForm;
 use crate::sql::Dialect;
 use crate::store::scripts::ScriptEntry;
 use crate::store::{Scope, Store};
@@ -44,7 +48,9 @@ use crate::table::{TableFocus, TableTab};
 use crate::terminal::Session;
 use crate::ui::console::BarData;
 use crate::ui::form::{FormLayout, draw_form};
+use crate::ui::name::{NamePrompt, draw_name};
 use crate::ui::navigator::draw_navigator;
+use crate::ui::settings::draw_settings;
 use crate::ui::theme::Theme;
 use crate::ui::wrap::WrappedText;
 use crate::ui::{
@@ -129,6 +135,10 @@ enum DialogAction {
     AuthConfirm(u64),
     AuthRetry(u64),
     AuthSession(u64),
+    AuthPlain(u64),
+    AuthMigrate(u64),
+    AuthRemovePlain(u64),
+    DeletePassword(Identity),
 }
 
 struct Dialog {
@@ -186,8 +196,10 @@ pub struct App {
     consoles: Vec<Console>,
     /// The console that the console commands use. A table tab can be on screen.
     active: usize,
-    /// The table tabs. They follow the consoles in the tab row.
+    /// The table tabs. The tab row mixes them with the consoles in the order of opening.
     tables: Vec<TableTab>,
+    /// The count of opened tabs.
+    tabs_opened: u64,
     /// The table tab on screen, or `None` when the active console is on screen.
     table_active: Option<usize>,
     connections: Vec<Connection>,
@@ -195,6 +207,8 @@ pub struct App {
     navigator_focused: bool,
     /// The catalog of a console without a connection.
     fallback_catalog: Option<Catalog>,
+    /// The count of catalog reads. A new `Connection` keeps its id, so one count serves all.
+    catalog_reads: u64,
     manager: Option<Manager>,
     events: Option<Receiver<ExecEvent>>,
     budget: Arc<Budget>,
@@ -212,6 +226,9 @@ pub struct App {
     form: Option<ConnectionForm>,
     overlay: Option<Overlay>,
     status: Option<String>,
+    /// The request for a new name of a console.
+    rename: Option<NamePrompt>,
+    settings_form: Option<SettingsForm>,
     /// The files of the application. It is `None` when nothing loads or saves.
     persist: Option<persist::Persist>,
     auth: auth::Auth,
@@ -248,15 +265,18 @@ impl App {
         };
         let budget = Arc::new(Budget::new(options.settings.budget_bytes));
         let keymap = options.keymap.unwrap_or_else(|| Keymap::new(options.keyboard));
+        let plain = persist.as_ref().map(|persist| PlainFile::new(&persist.store.global));
         let mut app = Self {
             consoles: Vec::new(),
             active: 0,
             tables: Vec::new(),
+            tabs_opened: 0,
             table_active: None,
             connections: Vec::new(),
             navigator: Navigator::default(),
             navigator_focused: false,
             fallback_catalog: options.catalog,
+            catalog_reads: 0,
             manager: None,
             events: None,
             budget,
@@ -272,9 +292,11 @@ impl App {
             picker: None,
             form: None,
             overlay: None,
+            rename: None,
+            settings_form: None,
             status: None,
             persist,
-            auth: auth::Auth::new(options.vault.take()),
+            auth: auth::Auth::new(options.vault.take(), plain),
             conflicts: None,
             fallback_dialect: options.dialect,
             pending_key: None,
@@ -313,7 +335,14 @@ impl App {
         self.next_console_number += 1;
         let id = self.next_unbound_console;
         self.next_unbound_console -= 1;
-        Console::new(id, name, editor)
+        let mut console = Console::new(id, name, editor);
+        console.opened = self.next_tab_place();
+        console
+    }
+
+    fn next_tab_place(&mut self) -> u64 {
+        self.tabs_opened += 1;
+        self.tabs_opened
     }
 
     pub fn should_quit(&self) -> bool {
@@ -393,11 +422,19 @@ impl App {
             || self.conflicts.is_some()
             || self.overlay.is_some()
             || self.picker.is_some()
+            || self.rename.is_some()
+            || self.settings_form.is_some()
             || self.auth.prompt.is_some();
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
             Event::Paste(text) if self.dialogs.is_empty() && self.auth.prompt.is_some() => {
                 if let Some(prompt) = &mut self.auth.prompt { prompt.paste(&text); }
+            }
+            Event::Paste(text) if self.dialogs.is_empty() && self.rename.is_some() => {
+                if let Some(prompt) = &mut self.rename { prompt.paste(&text); }
+            }
+            Event::Paste(text) if self.dialogs.is_empty() && self.settings_form.is_some() => {
+                if let Some(form) = &mut self.settings_form { form.paste(&text); }
             }
             Event::Paste(text) if !blocked => self.on_paste(&text),
             Event::Mouse(mouse) if !self.dialogs.is_empty() => self.on_dialog_mouse(mouse),
@@ -466,15 +503,24 @@ impl App {
 
     fn on_exec_event(&mut self, event: ExecEvent) {
         match event {
-            ExecEvent::CatalogLoaded { connection, catalog } => {
-                self.on_catalog_loaded(connection, catalog);
+            ExecEvent::CatalogLoaded { connection, read, catalog } => {
+                self.on_catalog_loaded(connection, read, catalog);
             }
             ExecEvent::ColumnsLoaded { connection, relation, columns } => {
                 self.on_columns_loaded(connection, &relation, columns);
             }
             ExecEvent::ConnectionTested { test, result } => self.on_connection_tested(test, result),
             ExecEvent::Disconnected { connection } => self.on_disconnected(connection),
-            event => self.on_console_event(event),
+            ExecEvent::PasswordRefused { connection, pool } => {
+                crate::log::event("password refused");
+                self.on_password_refused(connection, pool);
+            }
+            event => {
+                if let ExecEvent::ExecutionFinished { end, .. } = &event {
+                    crate::log::event(&format!("execution finished: {end:?}"));
+                }
+                self.on_console_event(event);
+            }
         }
     }
 
@@ -625,6 +671,12 @@ impl App {
             let Overlay { title, contents, footer, scroll } = overlay;
             *scroll = draw_overlay(frame, title, contents, footer, *scroll, &self.theme);
         }
+        if let Some(form) = &self.settings_form {
+            draw_settings(frame, form, &self.theme);
+        }
+        if let Some(prompt) = &self.rename {
+            draw_name(frame, prompt, &self.theme);
+        }
         if let Some(prompt) = &self.auth.prompt {
             self.layout.password = crate::ui::auth::draw_password(frame, prompt, &self.theme);
         }
@@ -638,15 +690,57 @@ impl App {
 
 pub fn run(options: Options) -> io::Result<()> {
     let clipboard: SharedClipboard = Rc::new(RefCell::new(SystemClipboard::new()));
-    let mut session = Session::start()?;
+    let report_folder = options.store.as_ref().map(|store| store.global.dir.clone());
+    // The start of the terminal can wait for an answer, and a signal can arrive meanwhile.
+    let signal = signal_flag()?;
+    let mut session = Session::start(report_folder)?;
     let mut app = App::new(options, clipboard, Theme::from_env());
+    let result = catch_unwind(AssertUnwindSafe(|| event_loop(&mut app, &mut session, &signal)));
+    match result {
+        Ok(Ok(())) => Ok(()),
+        // A closed terminal ends the loop with an error, and the text still needs a place.
+        Ok(Err(error)) => {
+            app.save_without_questions();
+            app.shutdown();
+            Err(error)
+        }
+        // The panic hook restored the terminal and wrote the report. The text comes next.
+        Err(panic) => {
+            let _ = catch_unwind(AssertUnwindSafe(|| app.save_without_questions()));
+            resume_unwind(panic);
+        }
+    }
+}
+
+/// Sets a flag for each signal that ends a process.
+fn signal_flag() -> io::Result<Arc<AtomicBool>> {
+    let flag = Arc::new(AtomicBool::new(false));
+    #[cfg(unix)]
+    {
+        use signal_hook::consts::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
+        for signal in [SIGHUP, SIGINT, SIGQUIT, SIGTERM] {
+            signal_hook::flag::register(signal, flag.clone())?;
+        }
+    }
+    Ok(flag)
+}
+
+fn event_loop(app: &mut App, session: &mut Session, signal: &AtomicBool) -> io::Result<()> {
     let mut dirty = true;
     loop {
+        // A signal comes first, because a closed terminal cannot draw.
+        if signal.load(Ordering::Relaxed) {
+            crate::log::event("signal");
+            app.save_without_questions();
+            app.shutdown();
+            return Ok(());
+        }
         if dirty {
             session.screen.draw(|frame| app.draw(frame))?;
             dirty = false;
         }
         if app.should_quit() {
+            crate::log::event("exit");
             app.shutdown();
             return Ok(());
         }
@@ -662,29 +756,3 @@ pub fn run(options: Options) -> io::Result<()> {
     }
 }
 
-/// A fixed catalog for a session without a database.
-pub fn sample_catalog() -> Catalog {
-    let relation = |name: &str, kind, columns: &[&str]| Relation {
-        name: name.to_owned(),
-        kind,
-        columns: Columns::Loaded(columns.iter().map(|column| (*column).to_owned()).collect()),
-    };
-    Catalog {
-        schemas: vec![
-            Schema {
-                name: "public".to_owned(),
-                relations: vec![
-                    relation("users", RelationKind::Table, &["id", "name", "email", "created_at"]),
-                    relation("orders", RelationKind::Table, &["id", "user_id", "total", "status"]),
-                    relation("active_users", RelationKind::View, &["id", "name"]),
-                    relation("Order Items", RelationKind::Table, &["order_id", "sku", "quantity"]),
-                ],
-            },
-            Schema {
-                name: "sales".to_owned(),
-                relations: vec![relation("invoices", RelationKind::Table, &["number", "due_date"])],
-            },
-        ],
-        current_schema: Some("public".to_owned()),
-    }
-}

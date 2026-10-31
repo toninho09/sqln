@@ -54,6 +54,8 @@ Thread principal                    Runtime Tokio
 | `script_file` | Estado salvo de um console: hash, fim de linha, espera do salvamento e problema de gravação |
 | `creds` | Cofre e senhas de sessão, com `zeroize` |
 | `trust` | Destinos confirmados e caminhos conhecidos |
+| `settings` | Formulário das preferências por escopo |
+| `log` | Registro opcional de eventos, sem SQL nem valores |
 
 `ui` e `input` não dependem de `connector`.
 Somente `connector` conhece tipos dos drivers.
@@ -61,7 +63,6 @@ Somente `connector` conhece tipos dos drivers.
 `app::auth` integra `creds` e `trust` ao primeiro uso, com os diálogos de senha e confiança.
 `creds` oferece identidades, senhas de sessão e os adaptadores do cofre.
 `trust` oferece a leitura e a gravação de confirmações globais.
-Texto simples autorizado, migração completa, senha recusada e exclusão separada pela interface ainda faltam.
 As chamadas do cofre são síncronas, mas `Manager::spawn_blocking` as executa fora da thread da interface.
 `app` aplica a prioridade das teclas e o mouse. `app/auth.rs`, `app/keys.rs`, `app/close.rs`, `app/connections.rs`, `app/mouse.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs` e `app/conflicts.rs` dividem esse código.
 `store` guarda as pastas e os arquivos. Ele não conhece `app`, `ui` nem `connector`.
@@ -123,7 +124,8 @@ Uma chamada nativa já iniciada pode continuar após cancelar, mas sua resposta 
 
 A interface oferece nova tentativa explícita ou senha de sessão após falha do cofre.
 Falha ao gravar a referência depois de salvar no cofre mantém a credencial e informa o estado incompleto.
-`globalPlainText` ainda não lê segredos: a interface informa a limitação e oferece senha de sessão.
+Sem cofre, a leitura usa `credentials.json`. Uma falha de gravação sem cofre oferece texto simples depois do aviso.
+Uma recusa de senha limpa a sessão e abre uma nova solicitação. A nova senha passa por `test_connection` antes de qualquer gravação.
 
 ### Aba de tabela
 
@@ -148,9 +150,13 @@ Cada entrada de desfazer do EdTUI guarda uma cópia inteira do texto.
 Por cálculo, um script de 50.000 linhas ocupa cerca de 15 MB por entrada e 1,5 GB nas 100 entradas.
 Scripts comuns ficam muito abaixo disso.
 
-**Definido, ainda não implementado:** limitar o histórico a 100 entradas e 64 MiB por console.
+**Definido:** limitar o histórico a 100 entradas e 64 MiB por console.
 Remover as entradas mais antigas ao atingir qualquer limite, sem limitar o tamanho do texto.
 Uma entrada isolada maior que o orçamento não entra no histórico, e a aplicação mostra um aviso.
+
+**Definido:** `Stack` e os campos `undo` e `redo` do EdTUI são privados, e a API pública não mede nem remove entradas.
+O limite fica em um fork pequeno de `Stack`, em `vendor/edtui`, por `[patch]`. `vendor/edtui/FORK.md` lista as mudanças.
+`cargo install sqln` ignora `[patch]`. No lançamento, a mudança precisa estar no projeto original ou em um fork publicado com outro nome.
 
 ## 3. Concorrência
 
@@ -321,7 +327,7 @@ A interface recusa **Desconectar** e a remoção antes de enviar o comando, enqu
 ### `config.json`
 
 Este esquema vale para os escopos global e de projeto.
-O projeto nunca recebe `password`.
+Nenhum escopo recebe `password`. A senha autorizada em texto simples fica em `credentials.json`.
 
 ```json
 {
@@ -430,6 +436,7 @@ Exemplo:
 | `locks/<id>.lock` | Global e projeto | Ignorado |
 | `.gitignore` | Projeto | Versionável |
 | `trust.json` | Somente global | Fora do projeto |
+| `credentials.json` | Somente global | Fora do projeto |
 
 Conteúdo de `.sqln/.gitignore`:
 
@@ -448,6 +455,13 @@ O caminho não participa da conta do cofre; um caminho novo exige confirmação 
 `Trust::confirm` toma `locks/trust.lock`, relê o arquivo e grava com conferência do hash.
 O arquivo e seu temporário têm permissão `0600` no Unix.
 Nenhuma chamada grava confiança nos arquivos do projeto.
+
+`credentials.json` guarda as senhas autorizadas em texto simples.
+O arquivo fica na pasta global e tem permissão `0600` no Unix, inclusive no temporário.
+`PlainFile` recusa um link, um arquivo com permissão aberta e um conteúdo inválido, sem sobrescrever.
+Cada entrada usa como chave a conta da seção 9, para conexões globais e de projeto.
+Sem cofre, a aplicação lê esse arquivo pela identidade antes de pedir a senha.
+Mudar o destino, o usuário ou o TLS muda a chave, então a senha anterior não é enviada.
 
 ## 9. Referência de credencial
 
@@ -479,50 +493,53 @@ A documentação do `keyring` 4 recomenda esse caminho para aplicações.
 Erros do cofre usam mensagens fixas, sem o texto do provedor nem bytes de senha.
 `app::auth` já usa esses adaptadores. Os testes automáticos injetam `Options::vault`, sem acessar o cofre real.
 
-| Resposta do cofre | Significado | Ação |
-|---|---|---|
-| `NoEntry` | Sem credencial | Pedir a senha |
-| `NoStorageAccess` | Cofre bloqueado ou sem acesso | Oferecer nova tentativa e senha de sessão |
-| `NoDefaultStore` | Cofre ausente | Aplicar as regras de cofre ausente |
-| `PlatformFailure` | Erro do cofre | Oferecer nova tentativa e senha de sessão |
-| Falha desconhecida | Erro do cofre, nunca ausência | Oferecer nova tentativa e senha de sessão |
+A tabela abaixo descreve as respostas reais, conforme a [validação do plano](../PLAN.md#validação-dos-cofres-reais).
+
+| Resposta real | Sistema | Resultado | Ação |
+|---|---|---|---|
+| `NoEntry` | macOS e Linux | Sem credencial | Pedir a senha |
+| Socket do barramento inexistente | Linux | `Absent` | Aplicar as regras de cofre ausente |
+| `ServiceUnknown` do D-Bus | Linux | `Absent` | Aplicar as regras de cofre ausente |
+| `secret_service::Error::Unavailable` | Linux | `Absent` | Aplicar as regras de cofre ausente |
+| `Locked`, `NoResult` e `Prompt` | Linux | `NoAccess` | Oferecer nova tentativa e senha de sessão |
+| `-25244` | macOS | `NoAccess` | Oferecer nova tentativa e senha de sessão |
+| `-128`, `-25293`, `-25299`, `-25307` e `-25308` | macOS | `Failed` | Oferecer nova tentativa e senha de sessão |
+| Falha desconhecida | macOS e Linux | `Failed`, nunca `Absent` | Oferecer nova tentativa e senha de sessão |
+
+`is_absent` aceita somente as três respostas `Absent`, pelo tipo do erro.
+No macOS, o Keychain faz parte do sistema, então nenhuma falha significa cofre ausente.
+`SystemVault` usa um armazenamento próprio, então `NoDefaultStore` não ocorre nesse caminho.
+O Keychain bloqueado retorna `-25293` ou `-128`, não `NoStorageAccess`, e a interface oferece as mesmas opções.
 
 Com falta de acesso ou erro, oferecer **Tentar novamente**, **Usar senha nesta sessão** e **Cancelar**.
 Solicitar a senha antes do primeiro uso que precisar dela, inclusive teste e leitura do catálogo.
 Iniciar a solicitação com uso somente na sessão; salvar exige uma escolha explícita.
 A confirmação de confiança mostra destino, usuário e TLS, com **Cancelar** como foco inicial.
-O bloqueio do Keychain e o cofre do Linux ainda não foram testados.
-Confirmar os critérios em testes reais antes de liberar texto simples como alternativa.
+Os testes reais confirmam esses critérios no Keychain e no Secret Service em contêiner.
+Repetir o Secret Service em um desktop Linux real antes do lançamento.
 
-### Continuação da implementação de credenciais
+### Senha recusada
 
-A etapa permanece parcial. A [matriz do plano](../PLAN.md#fechamento-da-etapa-de-credenciais) define seus critérios de conclusão.
+`ConnectError::password_refused` marca somente a recusa do banco: `28P01` no PostgreSQL, `1045` e `1698` no MySQL.
+Uma mensagem de erro não comprova a recusa, e `28000` também cobre uma regra de `pg_hba.conf`.
+`ExecEvent::PasswordRefused` traz o número do pool. Um pool antigo não fala sobre a senha atual.
+Várias sessões podem falhar com a mesma senha, então somente o primeiro evento conta.
 
-| Ponto | Código existente | Trabalho restante |
-|---|---|---|
-| Cofres reais | `SystemVault`, `vault_error` e o teste ignorado `native_vault_round_trip` | Validar o comportamento dos serviços nativos e registrar os cenários de bloqueio, ausência e erro |
-| Texto simples global | `CredentialName::GlobalPlainText`, `after_auth_trust` e `write_private_atomic` | Estender o esquema global, implementar leitura e gravação autorizadas e substituir o aviso de recurso indisponível |
-| Migração | `Credentials::save_verified` | Integrar detecção da fonte global, confirmação, conferência e remoção opcional da fonte, com recuperação de falhas |
-| Senha recusada | `ConnectError(pub String)`, eventos de execução e `app::auth` | Preservar a classificação de autenticação dos drivers até a interface; controlar a nova senha e a suspensão da definição |
-| Exclusão separada | `Vault::delete`, `Credentials::delete_from_vault` e `remove_connection` | Oferecer a confirmação separada e manter a remoção da definição independente da exclusão do segredo |
+| Estado | Comportamento |
+|---|---|
+| Primeira recusa | Abrir a solicitação. A nova senha passa por `test_connection` antes da gravação |
+| Segunda recusa | Suspender a definição e mostrar o aviso |
+| Durante a suspensão | Catálogo e colunas não abrem sessão; cada ação explícita abre a solicitação |
+| Senha aceita ou edição da conexão | Encerrar a suspensão. A ação pendente continua, pois nenhum SQL chegou ao banco |
 
-A referência `globalPlainText` não significa que o arquivo já contém uma senha utilizável.
-O esquema ainda não tem um campo de segredo nem armazenamento global para credenciais de conexões do projeto.
-Essa implementação deve manter a associação por identidade e nunca escrever o segredo no projeto.
-
-A classificação de autenticação precisa distinguir conexão recusada, rede, TLS e falhas durante SQL.
-Uma mensagem textual de erro não comprova que uma senha foi recusada.
-A recuperação não pode repetir comandos que já chegaram ao banco.
-
-O mapeamento dos erros do cofre acima descreve o adaptador atual.
-Os testes com cofre em memória não comprovam como cada serviço nativo informa ausência ou bloqueio.
-Não habilitar a exceção de texto simples antes dessa validação.
+Uma falha de rede ou TLS durante a verificação mostra o erro e não conta como recusa.
+Com sessões ainda abertas, a senha nova só entra depois de desconectar.
 
 ## 10. Fluxos de recuperação
 
 ### Gravação de arquivo
 
-1. Gravar o temporário na mesma pasta. Para `config.json` e `trust.json`, usar nome exclusivo e permissão `0600` no Unix.
+1. Gravar o temporário na mesma pasta. Para `config.json`, `trust.json` e `credentials.json`, usar nome exclusivo e permissão `0600` no Unix.
 2. Sincronizar o arquivo com o disco.
 3. Comparar o hash do arquivo de destino com o último hash conhecido.
 4. Renomear o arquivo temporário sobre o destino.
@@ -544,8 +561,6 @@ O salvamento pode perder até 500 ms de digitação.
 3. Oferecer nova tentativa explícita.
 
 ### Migração para o cofre
-
-**Definido, ainda não integrado:** `save_verified` cobre somente gravação e conferência, não o fluxo completo abaixo.
 
 1. Detectar uma senha global com um cofre disponível.
 2. Pedir confirmação.

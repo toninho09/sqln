@@ -47,7 +47,7 @@ impl Connector for Fake {
                 self.opened.fetch_add(1, Ordering::SeqCst);
                 Ok(Box::new(FakeSession { reset: self.reset }))
             }
-            Behavior::Refuses => Err(ConnectError("refused".to_owned())),
+            Behavior::Refuses => Err(ConnectError::new("refused".to_owned())),
             Behavior::Hangs => std::future::pending().await,
         }
     }
@@ -220,7 +220,7 @@ async fn a_refused_connection_is_a_failure_and_frees_the_place() {
     let fake = Fake::new(Behavior::Refuses, ResetOutcome::Clean);
     let pool = pool(&fake, 1);
     let error = timeout(Duration::from_secs(5), pool.acquire()).await.unwrap().err().unwrap();
-    assert_eq!(error.0, "refused");
+    assert_eq!(error.message, "refused");
     assert_eq!(pool.usage(), (0, 1));
 }
 
@@ -229,7 +229,7 @@ async fn a_silent_server_ends_at_the_connection_time_limit() {
     let fake = Fake::new(Behavior::Hangs, ResetOutcome::Clean);
     let pool = pool(&fake, 1);
     let error = timeout(Duration::from_secs(5), pool.acquire()).await.unwrap().err().unwrap();
-    assert!(error.0.contains("time limit"), "{error:?}");
+    assert!(error.message.contains("time limit"), "{error:?}");
     assert_eq!(pool.usage(), (0, 1));
 }
 

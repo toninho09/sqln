@@ -2,14 +2,16 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{App, DialogAction, Overlay};
+use super::{App, DialogAction, Overlay, PickerKind};
 use crate::connector::{TransactionCommand, TransactionState};
 use crate::console::{AfterTransaction, Focus, GridAction, Phase};
 use crate::editor::{KeyboardMode, RunRefusal, RunScope};
 use crate::exec::RunOptions;
 use crate::form::FormRequest;
 use crate::input::{Action, Chord, Lookup, Region};
+use crate::settings::SettingsRequest;
 use crate::table::TableFocus;
+use crate::ui::name::NameAction;
 use crate::ui::text;
 use crate::ui::wrap::WrappedText;
 
@@ -55,6 +57,14 @@ impl App {
         }
         if self.conflicts.is_some() {
             self.on_conflicts_key(key);
+            return;
+        }
+        if self.rename.is_some() {
+            self.on_name_key(key);
+            return;
+        }
+        if self.settings_form.is_some() {
+            self.on_settings_key(key);
             return;
         }
         if self.picker.is_some() {
@@ -178,6 +188,9 @@ impl App {
             Action::ToggleNavigator => self.toggle_navigator(),
             Action::ChooseSchema => self.open_picker(),
             Action::ReloadConfig => self.reload_config(),
+            Action::RenameConsole => self.start_rename(),
+            Action::ChangeConnection => self.start_connection_change(),
+            Action::OpenSettings => self.open_settings(),
             Action::FocusLeft => self.focus_navigator(),
             Action::FocusRight => self.navigator_focused = false,
             Action::FocusUp => self.focus_console(Focus::Editor),
@@ -193,7 +206,8 @@ impl App {
             | Action::NavigatorEdit
             | Action::NavigatorDelete
             | Action::NavigatorAdd
-            | Action::NavigatorScripts => self.on_navigator_action(action),
+            | Action::NavigatorScripts
+            | Action::NavigatorDeletePassword => self.on_navigator_action(action),
             _ => self.on_grid_action(action, extend),
         }
     }
@@ -441,7 +455,27 @@ impl App {
             KeyCode::Char('j') if vim => picker.cursor = (picker.cursor + 1).min(last),
             KeyCode::Delete => self.picker_delete(),
             KeyCode::Char('x') if vim => self.picker_delete(),
+            KeyCode::Char('r') => self.picker_rename(),
             _ => {}
+        }
+    }
+
+    fn on_name_key(&mut self, key: KeyEvent) {
+        let Some(prompt) = &mut self.rename else { return };
+        match prompt.on_key(key) {
+            NameAction::None => {}
+            NameAction::Cancel => self.rename = None,
+            NameAction::Accept(name) => self.accept_name(name),
+        }
+    }
+
+    fn on_settings_key(&mut self, key: KeyEvent) {
+        let vim = self.vim();
+        let Some(form) = &mut self.settings_form else { return };
+        match form.on_key(key, vim) {
+            SettingsRequest::None => {}
+            SettingsRequest::Cancel => self.settings_form = None,
+            SettingsRequest::Save => self.save_settings(),
         }
     }
 
@@ -485,45 +519,146 @@ impl App {
         );
     }
 
-    pub(super) fn hint(&self) -> &'static str {
+    /// Returns the key to show for an action. `Ctrl+Enter` and `Shift+Enter` depend on
+    /// the terminal, so another key goes first. A removed key shows nothing.
+    fn shown_key(&self, action: Action) -> Option<String> {
+        let keys = self.keymap.keys(action);
+        let steady = keys.iter().find(|key| !matches!(key.as_str(), "ctrl+enter" | "shift+enter"));
+        steady.or(keys.first()).map(|key| text::key_label(key))
+    }
+
+    fn hint_of(&self, items: &[(Action, &str)]) -> String {
+        self.hint_parts(items).join(" · ")
+    }
+
+    fn hint_parts(&self, items: &[(Action, &str)]) -> Vec<String> {
+        let shown = items.iter().filter_map(|(action, label)| Some(format!("{} {label}", self.shown_key(*action)?)));
+        shown.collect()
+    }
+
+    /// Joins the second keys of `Ctrl+W` for a group of actions.
+    fn prefix_keys(&self, actions: &[Action]) -> String {
+        let second = |action: &Action| {
+            self.keymap.keys(*action).iter().find_map(|key| key.strip_prefix("ctrl+w ")?.chars().next().map(String::from))
+        };
+        actions.iter().filter_map(second).collect()
+    }
+
+    /// Returns the options of `Ctrl+W`. A removed key leaves its group.
+    fn prefix_hint(&self) -> String {
+        let groups: [(&[Action], &str); 11] = [
+            (&[Action::FocusLeft, Action::FocusDown, Action::FocusUp, Action::FocusRight], "panel"),
+            (&[Action::NextTab, Action::PreviousTab], "tab"),
+            (&[Action::ToggleNavigator], "nav"),
+            (&[Action::ChooseSchema], "db"),
+            (&[Action::Run, Action::RunScript, Action::Stop], "run"),
+            (&[Action::ToggleMode, Action::Commit, Action::Rollback], "tx"),
+            (&[Action::CloseTab, Action::Quit], "close"),
+            (&[Action::RenameConsole], "name"),
+            (&[Action::ChangeConnection], "conn"),
+            (&[Action::OpenSettings], "set"),
+            (&[Action::ReloadConfig], "cfg"),
+        ];
+        let shown = groups.iter().filter_map(|(actions, label)| {
+            let keys = self.prefix_keys(actions);
+            (!keys.is_empty()).then(|| format!("{keys} {label}"))
+        });
+        shown.collect::<Vec<_>>().join("·")
+    }
+
+    fn editor_hint(&self) -> String {
+        let start = self.hint_of(&[(Action::Run, "run"), (Action::RunScript, "script")]);
+        let help = self.hint_of(&[(Action::Help, "keys")]);
+        [start.as_str(), text::HINT_CTRL_SPACE, help.as_str()]
+            .iter()
+            .filter(|part| !part.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
+
+    fn running_hint(&self) -> String {
+        let stop = self.hint_of(&[(Action::Stop, "stop")]);
+        if stop.is_empty() { text::HINT_EDITOR_STAYS.to_owned() } else { format!("{stop} · {}", text::HINT_EDITOR_STAYS) }
+    }
+
+    /// Returns the text of the hint bar, with the keys of the active key map.
+    pub fn hint(&self) -> String {
         let console = self.console();
-        if !self.dialogs.is_empty() {
+        let fixed = if !self.dialogs.is_empty() {
             text::HINT_DIALOG
         } else if self.auth.prompt.is_some() {
             text::AUTH_PASSWORD_HINT
+        } else if self.rename.is_some() {
+            text::HINT_NAME
+        } else if self.settings_form.is_some() {
+            text::HINT_SETTINGS
         } else if self.conflicts.is_some() {
             text::HINT_CONFLICTS
-        } else if self.picker.is_some() {
-            text::HINT_PICKER
+        } else if let Some(picker) = &self.picker {
+            match picker.kind {
+                PickerKind::Consoles { .. } | PickerKind::Orphans { .. } => text::HINT_PICKER,
+                _ => text::HINT_CHOOSE,
+            }
         } else if self.overlay.is_some() {
             text::HINT_OVERLAY
         } else if self.form.is_some() {
             text::HINT_FORM
         } else if self.pending_key.is_some_and(Chord::is_prefix) {
-            text::HINT_PREFIX
+            return self.prefix_hint();
         } else if self.persist.as_ref().is_some_and(|persist| persist.error.is_some()) {
             text::HINT_CONFIG_ERROR
         } else if self.navigator_focused {
-            text::HINT_NAVIGATOR
+            return self
+                .hint_parts(&[
+                    (Action::NavigatorOpen, "open"),
+                    (Action::NavigatorNewConsole, "new"),
+                    (Action::NavigatorScripts, "scripts"),
+                    (Action::NavigatorAdd, "add"),
+                    (Action::NavigatorEdit, "edit"),
+                    (Action::NavigatorRefresh, "refresh"),
+                    (Action::NavigatorDisconnect, "disc"),
+                    (Action::NavigatorDelete, "drop"),
+                    (Action::NavigatorDeletePassword, "pwd"),
+                ])
+                .join("·");
         } else if let Some(tab) = self.table() {
             match tab.focus {
                 _ if tab.list.is_some() => text::HINT_LIST,
                 TableFocus::Grid if tab.result.search.is_some() => text::HINT_GRID_SEARCH,
-                TableFocus::Grid => text::HINT_TABLE,
+                TableFocus::Grid => {
+                    return self.hint_of(&[
+                        (Action::GridFocusFilter, "where"),
+                        (Action::GridFocusOrder, "order by"),
+                        (Action::GridSortColumn, "sort"),
+                        (Action::GridLoadMore, "more"),
+                        (Action::GridCopy, "copy"),
+                        (Action::GridOpenValue, "value"),
+                        (Action::Help, "keys"),
+                    ]);
+                }
                 _ => text::HINT_FILTER,
             }
         } else if console.focus == Focus::Results && console.search_is_open() {
             text::HINT_GRID_SEARCH
         } else if console.focus == Focus::Results {
-            text::HINT_GRID
+            return self.hint_of(&[
+                (Action::FocusUp, "editor"),
+                (Action::GridCopy, "copy"),
+                (Action::GridOpenValue, "value"),
+                (Action::GridFind, "find"),
+                (Action::GridNextResult, "tabs"),
+                (Action::Help, "keys"),
+            ]);
         } else if console.editor.suggestions().is_some() {
             text::HINT_LIST
         } else if console.editor.search().is_some() {
             text::HINT_SEARCH
         } else if console.is_busy() {
-            text::HINT_RUNNING
+            return self.running_hint();
         } else {
-            text::HINT_EDITOR
-        }
+            return self.editor_hint();
+        };
+        fixed.to_owned()
     }
 }

@@ -72,6 +72,11 @@ pub struct Console {
     pub file: Option<ScriptFile>,
     /// True after the user chose to close without the text that no file holds.
     pub discard_text: bool,
+    /// The place of the tab in the order of opening.
+    pub opened: u64,
+    /// True for the empty console that stays after the last tab of a console closes.
+    /// The application needs one console, and the tab row does not show this one.
+    pub hidden: bool,
     pub results: Vec<ResultTab>,
     pub messages: Vec<Message>,
     /// The index of a result. The value `results.len()` selects **Messages**.
@@ -118,6 +123,8 @@ impl Console {
             editor,
             file: None,
             discard_text: false,
+            opened: 0,
+            hidden: false,
             results: Vec::new(),
             messages: Vec::new(),
             active: 0,
@@ -174,6 +181,18 @@ impl Console {
         self.statements.clone_from(&plan.statements);
         self.phase = Phase::Waiting;
         self.editor.set_marks(plan);
+    }
+
+    /// Ends the results of the last connection. The text stays.
+    pub fn clear_results(&mut self, budget: &Budget) {
+        for result in self.results.drain(..) {
+            budget.release(result.table.bytes);
+        }
+        self.messages.clear();
+        self.messages_scroll = 0;
+        self.active = 0;
+        self.results_made = 0;
+        self.editor.clear_marks();
     }
 
     fn push_message(&mut self, level: MessageLevel, text: String) {

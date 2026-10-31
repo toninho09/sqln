@@ -519,11 +519,7 @@ pub enum Change {
 /// Applies a change to the file of a scope. It reads the file again under a lock,
 /// so that a change of another instance stays. It returns the hash of the new file.
 pub fn change_connections(root: &Root, scope: Scope, change: Change) -> Result<u64, String> {
-    let _lock = file::lock(&root.locks_dir().join("config.lock")).map_err(|error| error.to_string())?;
-    let path = root.config_file();
-    let (hash, result) = read_scope(root, scope);
-    let mut config = result.map_err(|error| error.to_string())?;
-    match change {
+    change_file(root, scope, |config| match change {
         Change::Upsert(entry) => {
             match config.connections.iter_mut().find(|item| item.id == entry.id) {
                 Some(item) => *item = *entry,
@@ -531,7 +527,26 @@ pub fn change_connections(root: &Root, scope: Scope, change: Change) -> Result<u
             }
         }
         Change::Remove(id) => config.connections.retain(|item| item.id != id),
-    }
+    })
+}
+
+/// Reads the preferences that the file of a scope declares.
+pub fn preferences(root: &Root, scope: Scope) -> Result<Preferences, String> {
+    let (_, result) = read_scope(root, scope);
+    result.map(|config| config.preferences).map_err(|error| error.to_string())
+}
+
+/// Replaces the preferences of a scope. It returns the hash of the new file.
+pub fn change_preferences(root: &Root, scope: Scope, preferences: Preferences) -> Result<u64, String> {
+    change_file(root, scope, |config| config.preferences = preferences)
+}
+
+fn change_file(root: &Root, scope: Scope, change: impl FnOnce(&mut ConfigFile)) -> Result<u64, String> {
+    let _lock = file::lock(&root.locks_dir().join("config.lock")).map_err(|error| error.to_string())?;
+    let path = root.config_file();
+    let (hash, result) = read_scope(root, scope);
+    let mut config = result.map_err(|error| error.to_string())?;
+    change(&mut config);
     validate(&config, scope)?;
     let mut text = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
     text.push('\n');

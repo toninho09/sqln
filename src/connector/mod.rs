@@ -74,7 +74,21 @@ pub enum ResetOutcome {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConnectError(pub String);
+pub struct ConnectError {
+    pub message: String,
+    /// The database refused the password. A failure of the network or of TLS stays false.
+    pub password_refused: bool,
+}
+
+impl ConnectError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self { message: message.into(), password_refused: false }
+    }
+
+    pub fn refused_password(message: impl Into<String>) -> Self {
+        Self { message: message.into(), password_refused: true }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecError {

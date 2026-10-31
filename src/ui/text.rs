@@ -9,23 +9,46 @@ pub const COPY_FAILED: &str = "Copy failed.";
 pub const FIND_LABEL: &str = "Find:    ";
 pub const REPLACE_LABEL: &str = "Replace: ";
 pub const NO_MATCHES: &str = "no matches";
+pub const UNDO_TOO_LARGE: &str = "This edit is too large for the undo history. It has no undo step.";
 
-pub const HINT_EDITOR: &str = "F5 run · Shift+F5 script · Ctrl+Space suggestions · Ctrl+F find · Ctrl+W ? keys";
-pub const HINT_RUNNING: &str = "Ctrl+W x stop · The editor stays available";
-pub const HINT_GRID: &str = "Ctrl+W k editor · Ctrl+C copy · Enter value · Ctrl+F find · [ ] tabs · F1 keys";
-pub const HINT_TABLE: &str = "f where · o order by · s sort · m more · Ctrl+C copy · Enter value · F1 keys";
 pub const HINT_FILTER: &str = "Enter apply · Tab accept or next field · Esc grid · Ctrl+Space suggestions";
 pub const HINT_GRID_SEARCH: &str = "Enter next · Up/Down move · Esc close";
 pub const HINT_LIST: &str = "Tab accept · Up/Down move · Enter new line · Esc close list";
 pub const HINT_SEARCH: &str = "Tab next field · Enter next or replace · Ctrl+A replace all · Esc close";
-pub const HINT_NAVIGATOR: &str = "Enter open · n new · s scripts · a add · e edit · r refresh · D disc · Del drop";
-pub const HINT_PREFIX: &str = "hjkl panel · n p tab · b nav · d schema · r cfg · e s x run · mCR tx · c q close";
-pub const HINT_PICKER: &str = "Up/Down move · Enter choose · Del remove a script · Esc cancel";
+pub const HINT_PICKER: &str = "Up/Down move · Enter choose · r rename · Del remove a script · Esc cancel";
+pub const HINT_CHOOSE: &str = "Up/Down move · Enter choose · Esc cancel";
+pub const HINT_NAME: &str = "Enter saves · Esc cancels";
+pub const HINT_SETTINGS: &str = "Tab next · Left/Right change · An empty field removes the value · Esc cancel";
+pub const HINT_CTRL_SPACE: &str = "Ctrl+Space suggestions · Ctrl+F find";
+pub const HINT_EDITOR_STAYS: &str = "The editor stays available";
 pub const HINT_CONFLICTS: &str = "Up/Down move · Left/Right choose · Enter next · Esc decide later";
 pub const HINT_CONFIG_ERROR: &str = "Configuration error · Fix the file, then Ctrl+W r loads it again";
 pub const HINT_FORM: &str = "Tab next · Left/Right change · Enter next or press · Esc cancel";
 pub const HINT_DIALOG: &str = "Tab next option · Enter confirm · Esc cancel";
 pub const HINT_OVERLAY: &str = "Up/Down scroll · Ctrl+C copy · Esc close";
+
+/// Writes a key of the key map for the hint bar: `ctrl+w e` becomes `Ctrl+W e`.
+pub fn key_label(key: &str) -> String {
+    let token = |token: &str| {
+        let parts: Vec<String> = token
+            .split('+')
+            .map(|part| match part {
+                "delete" => "Del".to_owned(),
+                _ if part.chars().count() == 1 => part.to_owned(),
+                _ => {
+                    let mut chars = part.chars();
+                    chars.next().map_or_else(String::new, |first| {
+                        first.to_uppercase().chain(chars).collect::<String>()
+                    })
+                }
+            })
+            .collect();
+        parts.join("+")
+    };
+    let mut tokens = key.split_whitespace().map(token);
+    let first = tokens.next().unwrap_or_default().replace("Ctrl+w", "Ctrl+W");
+    std::iter::once(first).chain(tokens).collect::<Vec<_>>().join(" ")
+}
 
 pub const SMALL_TERMINAL: &str = "Small terminal";
 pub const MINIMUM_SIZE: &str = "Minimum size";
@@ -81,10 +104,32 @@ pub const BUTTON_CONNECT: &str = "Connect";
 pub const AUTH_WAIT: &str = "Preparing credentials. The interface remains available.";
 pub const AUTH_PROJECT_LABEL: &str = "Project";
 pub const AUTH_CANCELLED: &str = "Credential request canceled. No SQL starts from this request.";
+pub fn delete_password_question(name: &str) -> String {
+    format!("Delete the saved password of {name}?\n\nOther copies of the project can use the same password.")
+}
+
 pub const AUTH_CHANGED: &str = "The connection or form changed. Start the operation again.";
 pub const AUTH_SAVE_FAILED: &str = "The password is not saved. It stays in memory. Retry explicitly, or use it for this session.";
 pub const AUTH_REFERENCE_FAILED: &str = "The vault holds the password, but SQLN cannot save its reference. Retry, or use it for this session.";
-pub const AUTH_PLAINTEXT_PENDING: &str = "Global plaintext credentials are not available in this build. Enter a password for this session.";
+pub const AUTH_PLAIN_WARNING: &str = "Without a vault, SQLN can save the password in credentials.json, in the global folder. That file stores it in plain text.";
+pub const AUTH_PASSWORD_ACCEPTED: &str = "The database accepts the password. Start the operation again.";
+pub const AUTH_REFUSED_HINT: &str = "The database refused the last password · Enter connects · Esc cancels";
+pub const AUTH_SUSPENDED: &str = "The database refused the password again. SQLN stops new attempts on this connection.\nThe next action of yours asks for a password. A password that the database accepts, or a change to the connection, ends this state.";
+pub const TITLE_PASSWORD_REFUSED: &str = "Password refused";
+pub const TITLE_MIGRATION: &str = "Move the password to the vault";
+pub const TITLE_DELETE_PASSWORD: &str = "Delete saved password";
+pub const MIGRATION_QUESTION: &str = "This computer has a system vault now, and credentials.json holds this password in plain text.\nMove it to the vault?";
+pub const MIGRATION_VERIFIED: &str = "The vault holds the password, and SQLN read it back.\nRemove the plain text copy from credentials.json?";
+pub const MIGRATION_INCOMPLETE: &str = "The migration is not complete. The plain text password stays in credentials.json.";
+pub const OPTION_MIGRATE: &str = "Move to the vault";
+pub const OPTION_KEEP_PLAIN: &str = "Keep the plain text copy";
+pub const OPTION_REMOVE_PLAIN: &str = "Remove the plain text copy";
+pub const OPTION_SAVE_PLAIN: &str = "Save in plain text";
+pub const OPTION_DELETE_PASSWORD: &str = "Delete password";
+pub const OPTION_KEEP_PASSWORD: &str = "Keep password";
+pub const SAVE_IN_PLAIN_TEXT: &str = "Save in plain text in credentials.json";
+pub const PASSWORD_DELETED: &str = "The saved password is deleted.";
+pub const PASSWORD_NOT_FOUND: &str = "This connection has no saved password.";
 pub const AUTH_TRUST_BODY: &str = "Confirm this destination before SQLN sends credentials. A new project path also needs confirmation.";
 pub const AUTH_PASSWORD_HINT: &str = "Enter connects · Tab changes field · Esc cancels";
 pub const FIELD_TLS: &str = "TLS";
@@ -117,6 +162,44 @@ pub const VALUE_ON: &str = "On";
 pub const VALUE_OFF: &str = "Off";
 pub const TITLE_NEW_CONNECTION: &str = "New connection";
 pub const TITLE_REMOVE_CONNECTION: &str = "Remove connection";
+pub const TITLE_RENAME: &str = "Rename console";
+pub const TITLE_SETTINGS: &str = "Settings";
+pub const TITLE_CHANGE_CONNECTION: &str = "Change connection";
+pub const OPTION_CHANGE: &str = "Change connection";
+pub const NAME_EMPTY: &str = "The console needs a name.";
+pub const NAME_TAKEN: &str = "Another console of this connection has this name.";
+pub const CONSOLE_RENAMED: &str = "The console has a new name.";
+pub const CONNECTION_CHANGE_BUSY: &str = "End the execution and the transaction before the change.";
+pub const NO_OTHER_CONNECTION: &str = "No other connection is available.";
+pub const SETTINGS_SAVED: &str = "The settings are saved.";
+pub const FIELD_KEYBOARD: &str = "Keyboard";
+pub const FIELD_PAGE_SIZE: &str = "Page size";
+pub const FIELD_ROW_CAP: &str = "Row cap";
+pub const FIELD_BUDGET: &str = "Data (MiB)";
+
+pub fn settings_number(name: &str) -> String {
+    format!("{name} needs a number of 1 or more.")
+}
+
+pub fn from_global(value: &str) -> String {
+    format!("from global: {value}")
+}
+
+pub fn keyboard_name(name: crate::store::config::KeyboardName) -> String {
+    match name {
+        crate::store::config::KeyboardName::Conventional => MODE_CONVENTIONAL.to_owned(),
+        crate::store::config::KeyboardName::Vim => MODE_VIM.to_owned(),
+    }
+}
+
+pub fn change_connection(name: &str, current: &str, target: &str, folder: &str, moves: bool) -> String {
+    let files = if moves { "The files move to" } else { "The files stay in" };
+    format!(
+        "Move {name} from {current} to {target}?\n\n{files} {folder}.\n\
+         SQLN saves the text first, and it runs no SQL.\n\
+         The results, the messages, and the schema choice of the console end."
+    )
+}
 pub const TITLE_SCHEMA: &str = "Schema";
 pub const TITLE_DATABASE: &str = "Database";
 pub const SCHEMA_DEFAULT: &str = "(default of the connection)";
@@ -255,7 +338,11 @@ pub fn action_text(action: Action) -> &'static str {
         Action::NavigatorEdit => "Edit the connection",
         Action::NavigatorDelete => "Remove the connection",
         Action::NavigatorAdd => "Add a connection",
+        Action::RenameConsole => "Rename the console",
+        Action::ChangeConnection => "Change the connection of the console",
+        Action::OpenSettings => "Open the settings",
         Action::NavigatorScripts => "Scripts without a connection",
+        Action::NavigatorDeletePassword => "Delete the saved password",
         Action::ReloadConfig => "Load the configuration again",
         Action::GridUp => "Up",
         Action::GridDown => "Down",
@@ -436,13 +523,13 @@ Usage: sqln [options]
 Options:
   --project <folder>     Use the project in this folder. Without it, SQLN uses
                          the nearest .sqln folder above the working folder.
+  --log <file>           Write a log of events, without SQL or values.
   -h, --help             Show this text.
   -V, --version          Show the version.
 
 Development options:
   --dialect <name>       Use postgres, mysql, or sqlite in a console without
                          a connection.
-  --no-catalog           Start without the sample catalog.
 
 The settings and the connections are in config.json, in the global folder
 (~/.config/sqln, or $XDG_CONFIG_HOME/sqln) and in the .sqln folder of the project.
@@ -468,6 +555,8 @@ pub const NOTHING_TO_SAVE: &str = "This console has no text to save.";
 pub const NO_PLACE: &str = "The console has no connection, so it has no place to save.";
 pub const TITLE_UNSAVED: &str = "Text not saved";
 pub const OPTION_CLOSE_UNSAVED: &str = "Close without saving";
+pub const OPTION_CLOSE_DISCARD: &str = "Close and discard the text";
+pub const WORKSPACE_UNREADABLE: &str = "SQLN cannot read workspace.json. The layout and the cursors start again.";
 pub const AGE_NOW: &str = "just now";
 pub const MARK_OPEN: &str = " (open)";
 pub const NEW_CONSOLE_ROW: &str = "+ New console";

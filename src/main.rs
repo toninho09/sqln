@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use sqln::app::{Options, run, sample_catalog};
+use sqln::app::{Options, run};
 use sqln::sql::Dialect;
 use sqln::store::{self, Root, Store};
 use sqln::ui::text::HELP;
@@ -16,7 +16,7 @@ enum Command {
 struct Cli {
     project: Option<PathBuf>,
     dialect: Option<Dialect>,
-    no_catalog: bool,
+    log: Option<PathBuf>,
 }
 
 fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
@@ -30,7 +30,10 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
                 let folder = args.next().ok_or("--project needs a folder.")?;
                 cli.project = Some(PathBuf::from(folder));
             }
-            "--no-catalog" => cli.no_catalog = true,
+            "--log" => {
+                let file = args.next().ok_or("--log needs a file.")?;
+                cli.log = Some(PathBuf::from(file));
+            }
             "--dialect" => {
                 cli.dialect = Some(match args.next().as_deref() {
                     Some("postgres") => Dialect::Postgres,
@@ -58,7 +61,6 @@ fn options_of(cli: Cli) -> Result<Options, String> {
             project: located.root.as_deref().map(Root::project),
         }),
         offer_project: located.offer,
-        catalog: (!cli.no_catalog).then(sample_catalog),
         ..Options::default()
     };
     if let Some(dialect) = cli.dialect {
@@ -72,6 +74,7 @@ fn main() -> ExitCode {
         Ok(Command::Help) => print!("{HELP}"),
         Ok(Command::Version) => println!("sqln {}", env!("CARGO_PKG_VERSION")),
         Ok(Command::Run(cli)) => {
+            let log = cli.log.clone();
             let options = match options_of(cli) {
                 Ok(options) => options,
                 Err(message) => {
@@ -79,6 +82,12 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            if let Some(file) = &log
+                && let Err(error) = sqln::log::open(file)
+            {
+                eprintln!("sqln: {}: {error}", file.display());
+                return ExitCode::FAILURE;
+            }
             if let Err(error) = run(options) {
                 eprintln!("sqln: {error}");
                 return ExitCode::FAILURE;

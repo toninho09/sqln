@@ -51,7 +51,7 @@ pub fn validate_path(path: &Path) -> Result<(), ConnectError> {
         || lower.starts_with("file:")
         || lower.contains("mode=memory");
     if in_memory {
-        return Err(ConnectError(format!("SQLite needs a file. This path is not valid: {text}")));
+        return Err(ConnectError::new(format!("SQLite needs a file. This path is not valid: {text}")));
     }
     Ok(())
 }
@@ -61,7 +61,7 @@ fn open(target: &SqliteTarget) -> Result<Connection, ConnectError> {
     if target.allow_create {
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
-    let failed = |error: rusqlite::Error| ConnectError(error.to_string());
+    let failed = |error: rusqlite::Error| ConnectError::new(error.to_string());
     let conn = Connection::open_with_flags(&target.path, flags).map_err(failed)?;
     conn.busy_timeout(target.busy_timeout).map_err(failed)?;
     if let Some(enabled) = target.foreign_keys {
@@ -102,10 +102,10 @@ impl Connector for SqliteConnector {
                     let _ = opened.send(Err(error));
                 }
             })
-            .map_err(|error| ConnectError(error.to_string()))?;
+            .map_err(|error| ConnectError::new(error.to_string()))?;
         let interrupt = wait_opened
             .await
-            .map_err(|_| ConnectError("The SQLite thread stopped.".to_owned()))??;
+            .map_err(|_| ConnectError::new("The SQLite thread stopped.".to_owned()))??;
         Ok(Box::new(SqliteSession { requests, interrupt: Arc::new(Interrupt(interrupt)) }))
     }
 }

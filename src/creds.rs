@@ -1,8 +1,11 @@
 //! Credential identities, session passwords, and access to the system vault.
 //! Vault calls can wait for the system. Do not call them from the interface thread.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::fs;
+use std::io;
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use keyring_core::api::CredentialStore;
@@ -11,9 +14,11 @@ use zeroize::Zeroize;
 
 use crate::connection::{ConnectionKey, Definition, Source};
 use crate::connector::target::{Address, Engine, Secret, Tls};
-use crate::store::Scope;
+use crate::store::file::{self, Expect};
+use crate::store::{Root, Scope};
 
 const SERVICE: &str = "sqln";
+const PLAIN_VERSION: u32 = 1;
 
 /// The destination and transport context, without a password or a display name.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -113,6 +118,15 @@ pub enum VaultError {
     NoAccess,
     Failed,
     Unsupported,
+    /// `credentials.json` is not readable, is not valid, or has open permissions.
+    PlainFile,
+}
+
+impl VaultError {
+    /// Returns true when this computer has no vault, so plain text can be offered.
+    pub fn no_vault(self) -> bool {
+        matches!(self, Self::Absent | Self::Unsupported)
+    }
 }
 
 impl fmt::Display for VaultError {
@@ -122,16 +136,42 @@ impl fmt::Display for VaultError {
             Self::NoAccess => "The system vault is locked or access is denied.",
             Self::Failed => "The system vault operation fails.",
             Self::Unsupported => "This platform has no supported system vault.",
+            Self::PlainFile => "SQLN cannot use credentials.json. Check its content and its permissions.",
         })
     }
 }
 
 impl std::error::Error for VaultError {}
 
+/// Returns true only for the answers that a test with the real service confirms.
+/// Any other answer is an error, so it cannot permit the plaintext exception.
+#[cfg(target_os = "linux")]
+fn is_absent(cause: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
+    match cause.downcast_ref::<secret_service::Error>() {
+        Some(secret_service::Error::Unavailable) => true,
+        Some(secret_service::Error::Zbus(zbus::Error::Connection(error, _))) => {
+            error.kind() == std::io::ErrorKind::NotFound
+        }
+        Some(secret_service::Error::Zbus(zbus::Error::MethodError(name, ..))) => {
+            name.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown"
+        }
+        _ => false,
+    }
+}
+
+/// The Keychain is part of macOS, so a Keychain failure is never an absent vault.
+#[cfg(not(target_os = "linux"))]
+fn is_absent(_: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
+    false
+}
+
 fn vault_error(error: keyring_core::Error) -> VaultError {
     match error {
         keyring_core::Error::NoDefaultStore => VaultError::Absent,
         keyring_core::Error::NoStorageAccess(_) => VaultError::NoAccess,
+        keyring_core::Error::PlatformFailure(cause) if is_absent(cause.as_ref()) => {
+            VaultError::Absent
+        }
         keyring_core::Error::BadEncoding(mut bytes) => {
             bytes.zeroize();
             VaultError::Failed
@@ -238,9 +278,120 @@ impl Vault for SystemVault {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlainPasswords {
+    version: u32,
+    /// The account of `Identity::account`, and its password.
+    passwords: BTreeMap<String, String>,
+}
+
+impl Drop for PlainPasswords {
+    fn drop(&mut self) {
+        self.passwords.values_mut().for_each(Zeroize::zeroize);
+    }
+}
+
+/// The plain text passwords that the user authorized on a computer without a vault.
+/// The file is in the global folder, and `config.json` never receives a password.
+pub struct PlainFile {
+    path: PathBuf,
+    lock: PathBuf,
+}
+
+impl PlainFile {
+    pub fn new(global: &Root) -> Self {
+        Self { path: global.credentials_file(), lock: global.locks_dir().join("credentials.lock") }
+    }
+
+    /// Refuses a link or a file that others can read, as `ssh` does with a private key.
+    fn load(&self) -> Result<Option<PlainPasswords>, VaultError> {
+        let metadata = match fs::symlink_metadata(&self.path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(VaultError::PlainFile),
+        };
+        if !metadata.is_file() {
+            return Err(VaultError::PlainFile);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(VaultError::PlainFile);
+            }
+        }
+        let mut bytes = fs::read(&self.path).map_err(|_| VaultError::PlainFile)?;
+        let parsed = serde_json::from_slice::<PlainPasswords>(&bytes);
+        bytes.zeroize();
+        parsed
+            .ok()
+            .filter(|stored| stored.version == PLAIN_VERSION)
+            .map(Some)
+            .ok_or(VaultError::PlainFile)
+    }
+
+    pub fn read(&self, identity: &Identity) -> Result<Option<Secret>, VaultError> {
+        let account = identity.account()?;
+        let stored = self.load()?;
+        Ok(stored.and_then(|stored| stored.passwords.get(&account).map(Secret::new)))
+    }
+
+    fn change<T>(&self, change: impl FnOnce(&mut PlainPasswords) -> T) -> Result<T, VaultError> {
+        let _lock = file::lock(&self.lock).map_err(|_| VaultError::PlainFile)?;
+        let mut stored = self
+            .load()?
+            .unwrap_or_else(|| PlainPasswords { version: PLAIN_VERSION, passwords: BTreeMap::new() });
+        let result = change(&mut stored);
+        if stored.passwords.is_empty() {
+            return match fs::remove_file(&self.path) {
+                Ok(()) => Ok(result),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(result),
+                Err(_) => Err(VaultError::PlainFile),
+            };
+        }
+        let mut text = serde_json::to_vec_pretty(&stored).map_err(|_| VaultError::PlainFile)?;
+        let written = file::write_private_atomic(&self.path, &text, Expect::Any);
+        text.zeroize();
+        written.map(|_| result).map_err(|_| VaultError::PlainFile)
+    }
+
+    pub fn write(&self, identity: &Identity, password: &Secret) -> Result<(), VaultError> {
+        let account = identity.account()?;
+        self.change(|stored| {
+            if let Some(mut old) = stored.passwords.insert(account, password.expose().to_owned()) {
+                old.zeroize();
+            }
+        })
+    }
+
+    pub fn delete(&self, identity: &Identity) -> Result<bool, VaultError> {
+        let account = identity.account()?;
+        if self.read(identity)?.is_none() {
+            return Ok(false);
+        }
+        self.change(|stored| {
+            stored.passwords.remove(&account).map(|mut old| old.zeroize()).is_some()
+        })
+    }
+}
+
+/// What a request finds for one connection, in the order of the plan.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Lookup {
+    Found(Secret),
+    /// Nothing is stored. A save goes to the vault.
+    Missing,
+    /// This computer has no vault, and nothing is stored. A save needs plain text.
+    NoVault,
+    /// A vault exists, and only the plain text file holds this password.
+    Migrate(Secret),
+}
+
 /// Session passwords stay in memory. No error causes a write to a configuration file.
 pub struct Credentials<V: Vault> {
     vault: V,
+    plain: Option<PlainFile>,
     session: HashMap<Identity, Secret>,
 }
 
@@ -248,7 +399,64 @@ impl<V: Vault> Credentials<V> {
     pub fn new(vault: V) -> Self {
         Self {
             vault,
+            plain: None,
             session: HashMap::new(),
+        }
+    }
+
+    /// Adds the file of the authorized plain text passwords.
+    pub fn with_plain(mut self, plain: Option<PlainFile>) -> Self {
+        self.plain = plain;
+        self
+    }
+
+    /// Finds a password. A connection without a vault reference reads the vault only
+    /// when the plain text file holds a password, so that it does not touch the vault.
+    pub fn lookup(&mut self, identity: &Identity, reference: bool) -> Result<Lookup, VaultError> {
+        if let Some(password) = self.session.get(identity) {
+            return Ok(Lookup::Found(password.clone()));
+        }
+        let plain = match &self.plain {
+            Some(file) => file.read(identity)?,
+            None => None,
+        };
+        if !reference && plain.is_none() {
+            return Ok(Lookup::Missing);
+        }
+        let found = match (self.vault.read(identity), plain) {
+            (Ok(Some(password)), _) => Lookup::Found(password),
+            (Ok(None), Some(password)) => Lookup::Migrate(password),
+            (Ok(None), None) => Lookup::Missing,
+            (Err(error), Some(password)) if error.no_vault() => Lookup::Found(password),
+            (Err(error), None) if error.no_vault() => Lookup::NoVault,
+            (Err(error), _) => return Err(error),
+        };
+        if let Lookup::Found(password) = &found {
+            self.session.insert(identity.clone(), password.clone());
+        }
+        Ok(found)
+    }
+
+    /// Only an explicit authorization after the plain text warning must call this.
+    pub fn save_plain(&mut self, identity: &Identity, password: Secret) -> Result<(), VaultError> {
+        self.use_for_session(identity, password);
+        let file = self.plain.as_ref().ok_or(VaultError::PlainFile)?;
+        file.write(identity, &self.session[identity])
+    }
+
+    /// Removes the plain text source. A migration calls this only after its check.
+    pub fn remove_plain(&mut self, identity: &Identity) -> Result<bool, VaultError> {
+        self.plain.as_ref().map_or(Ok(false), |file| file.delete(identity))
+    }
+
+    /// Only an explicit, separately confirmed action must call this operation.
+    pub fn delete_saved(&mut self, identity: &Identity) -> Result<bool, VaultError> {
+        self.forget_session(identity);
+        let plain = self.remove_plain(identity)?;
+        match self.vault.delete(identity) {
+            Ok(found) => Ok(found || plain),
+            Err(error) if error.no_vault() => Ok(plain),
+            Err(error) => Err(error),
         }
     }
 
@@ -362,5 +570,14 @@ mod tests {
             assert_eq!(result, expected);
             assert!(!format!("{result:?}: {result}").contains(secret));
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_confirmed_answers_mean_an_absent_vault() {
+        let failure = |error| vault_error(keyring_core::Error::PlatformFailure(Box::new(error)));
+        assert_eq!(failure(secret_service::Error::Unavailable), VaultError::Absent);
+        assert_eq!(failure(secret_service::Error::Locked), VaultError::Failed);
+        assert_eq!(failure(secret_service::Error::Prompt), VaultError::Failed);
     }
 }

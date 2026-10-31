@@ -63,15 +63,25 @@ fn ssl_options(tls_mode: &Tls) -> Result<Option<SslOpts>, ConnectError> {
 
 /// The driver reads only RSA keys in PKCS#1 form, and its error does not say that.
 fn check_client_key(path: &Path) -> Result<(), ConnectError> {
-    let key = std::fs::read(path).map_err(|error| ConnectError(error.to_string()))?;
+    let key = std::fs::read(path).map_err(|error| ConnectError::new(error.to_string()))?;
     let contains = |part: &[u8]| key.windows(part.len()).any(|window| window == part);
     if contains(b"-----BEGIN ") && !contains(b"-----BEGIN RSA PRIVATE KEY-----") {
-        return Err(ConnectError(text::MYSQL_CLIENT_KEY.to_owned()));
+        return Err(ConnectError::new(text::MYSQL_CLIENT_KEY.to_owned()));
     }
     Ok(())
 }
 
 /// Do not write this value in a log: its debug text shows the password.
+fn connect_error(error: &mysql_async::Error) -> ConnectError {
+    match error {
+        // `1045` is a wrong password, and `1698` is an account that needs another one.
+        mysql_async::Error::Server(server) if matches!(server.code, 1045 | 1698) => {
+            ConnectError::refused_password(describe(error))
+        }
+        _ => ConnectError::new(describe(error)),
+    }
+}
+
 fn driver_options(target: &NetworkTarget) -> Result<Opts, ConnectError> {
     let mut builder = OptsBuilder::default()
         .user(Some(target.user.clone()))
@@ -110,7 +120,7 @@ impl Connector for MySqlConnector {
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
         let options = driver_options(&self.target)?;
-        let conn = Conn::new(options.clone()).await.map_err(|error| ConnectError(describe(&error)))?;
+        let conn = Conn::new(options.clone()).await.map_err(|error| connect_error(&error))?;
         let canceller = Arc::new(MySqlCanceller { options, connection: conn.id() });
         Ok(Box::new(MySqlSession {
             conn: Some(conn),

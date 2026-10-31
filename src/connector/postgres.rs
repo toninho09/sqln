@@ -104,10 +104,14 @@ impl PostgresConnector {
 }
 
 fn connect_error(error: &tokio_postgres::Error) -> ConnectError {
-    ConnectError(match error.as_db_error() {
-        Some(database) => format!("{} ({})", database.message(), database.code().code()),
-        None => describe(error),
-    })
+    let Some(database) = error.as_db_error() else { return ConnectError::new(describe(error)) };
+    let message = format!("{} ({})", database.message(), database.code().code());
+    // `28000` also covers a rule of `pg_hba.conf`, which a new password does not change.
+    if *database.code() == SqlState::INVALID_PASSWORD {
+        ConnectError::refused_password(message)
+    } else {
+        ConnectError::new(message)
+    }
 }
 
 #[async_trait]

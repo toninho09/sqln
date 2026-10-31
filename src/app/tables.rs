@@ -12,6 +12,13 @@ use crate::table::{PageRequest, TableFocus, TableTab};
 use crate::ui::text;
 use crate::ui::{main_tab_label, table};
 
+/// One tab of the tab row, with its index in the list of its kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tab {
+    Console(usize),
+    Table(usize),
+}
+
 impl App {
     pub fn tables(&self) -> &[TableTab] {
         &self.tables
@@ -26,24 +33,42 @@ impl App {
         self.table_active.map(|index| &mut self.tables[index])
     }
 
-    /// Lists the labels of the tab row: the consoles, then the tables.
+    /// Lists the tab row in the order of opening. Consoles and tables stay in one row.
+    fn tab_order(&self) -> Vec<Tab> {
+        let consoles = self.consoles.iter().enumerate().filter(|(_, console)| !console.hidden);
+        let consoles = consoles.map(|(index, console)| (console.opened, Tab::Console(index)));
+        let tables = self.tables.iter().enumerate().map(|(index, tab)| (tab.opened, Tab::Table(index)));
+        let mut order: Vec<(u64, Tab)> = consoles.chain(tables).collect();
+        order.sort_by_key(|(opened, _)| *opened);
+        order.into_iter().map(|(_, tab)| tab).collect()
+    }
+
+    /// Lists the labels of the tab row.
     pub(super) fn tab_labels(&self) -> Vec<String> {
-        let consoles = self.consoles.iter().map(|console| {
-            let unsaved = console.file.as_ref().is_some_and(|file| file.trouble.is_some());
-            main_tab_label(&console.name, console.is_busy(), unsaved)
-        });
-        consoles.chain(self.tables.iter().map(table::tab_label)).collect()
+        self.tab_order()
+            .into_iter()
+            .map(|tab| match tab {
+                Tab::Console(index) => {
+                    let console = &self.consoles[index];
+                    let unsaved = console.file.as_ref().is_some_and(|file| file.trouble.is_some());
+                    main_tab_label(&console.name, console.is_busy(), unsaved)
+                }
+                Tab::Table(index) => table::tab_label(&self.tables[index]),
+            })
+            .collect()
     }
 
     /// Returns the position of the tab on screen in the tab row.
     pub(super) fn active_tab(&self) -> usize {
-        self.table_active.map_or(self.active, |index| self.consoles.len() + index)
+        let active = self.table_active.map_or(Tab::Console(self.active), Tab::Table);
+        self.tab_order().iter().position(|tab| *tab == active).unwrap_or(0)
     }
 
     pub(super) fn select_tab(&mut self, index: usize) {
-        match index.checked_sub(self.consoles.len()) {
-            Some(table) => self.select_table(table),
-            None => self.select_console(index),
+        match self.tab_order().get(index) {
+            Some(Tab::Table(table)) => self.select_table(*table),
+            Some(Tab::Console(console)) => self.select_console(*console),
+            None => {}
         }
     }
 
@@ -55,7 +80,7 @@ impl App {
     }
 
     pub(super) fn switch_tab(&mut self, forward: bool) {
-        let count = self.consoles.len() + self.tables.len();
+        let count = self.tab_order().len();
         let next = (self.active_tab() + if forward { 1 } else { count - 1 }) % count;
         self.select_tab(next);
     }
@@ -80,7 +105,9 @@ impl App {
             return;
         };
         let view = row.kind == RowKind::View;
-        self.tables.push(TableTab::new(id, connection, relation, view, self.settings.page_size));
+        let mut tab = TableTab::new(id, connection, relation, view, self.settings.page_size);
+        tab.opened = self.next_tab_place();
+        self.tables.push(tab);
         let index = self.tables.len() - 1;
         self.select_table(index);
         self.navigator_focused = false;
@@ -174,6 +201,20 @@ impl App {
             Some(active) if active > index => Some(active - 1),
             other => other,
         };
+        // The hidden console comes back when a table closes for another reason.
+        if self.table_active.is_none() {
+            self.console_mut().hidden = false;
+        }
+    }
+
+    /// Closes the tab on screen. The close of the last tab ends the application.
+    fn close_active_table(&mut self) {
+        let Some(index) = self.table_active else { return };
+        if self.tables.len() == 1 && self.consoles.iter().all(|console| console.hidden) {
+            self.request_exit();
+            return;
+        }
+        self.close_table(index);
     }
 
     /// Closes the table tabs of a connection that the user removed.
@@ -196,15 +237,13 @@ impl App {
             | Action::Commit
             | Action::Rollback
             | Action::ChooseSchema
+            | Action::RenameConsole
+            | Action::ChangeConnection
             | Action::GridCloseResult
             | Action::GridPreviousResult
             | Action::GridNextResult => {}
             Action::Stop => self.stop_table(),
-            Action::CloseTab => {
-                if let Some(index) = self.table_active {
-                    self.close_table(index);
-                }
-            }
+            Action::CloseTab => self.close_active_table(),
             Action::FocusUp | Action::GridFocusFilter => self.focus_table(TableFocus::Filter),
             Action::GridFocusOrder => self.focus_table(TableFocus::Order),
             Action::FocusDown => self.focus_table(TableFocus::Grid),
