@@ -39,6 +39,7 @@ pub fn sample_catalog() -> Catalog {
                         &["order_id", "sku", "quantity"],
                     ),
                 ],
+                partial: false,
             },
             Schema {
                 name: "sales".to_owned(),
@@ -47,6 +48,7 @@ pub fn sample_catalog() -> Catalog {
                     RelationKind::Table,
                     &["number", "due_date"],
                 )],
+                partial: false,
             },
         ],
         current_schema: Some("public".to_owned()),

@@ -40,12 +40,15 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_token(&self, start: usize) -> (TokenKind, usize, bool) {
-        use TokenKind::{Comment, Number, Punctuation, QuotedIdentifier, String, Word};
+        use TokenKind::{Comment, Punctuation, QuotedIdentifier, String};
 
         let bytes = self.sql.as_bytes();
         let dialect = self.dialect;
         let byte = bytes[start];
 
+        if dialect == Dialect::Redis {
+            return self.read_redis_token(start);
+        }
         if bytes[start..].starts_with(b"--")
             && (dialect != Dialect::MySql
                 || bytes.get(start + 2).is_none_or(u8::is_ascii_whitespace))
@@ -89,15 +92,31 @@ impl<'a> Lexer<'a> {
                     None => (Punctuation, start + 1, true),
                 }
             }
-            _ if is_word_byte(byte) => {
-                let mut end = start;
-                while end < bytes.len() && is_word_byte(bytes[end]) {
-                    end += 1;
-                }
-                (if byte.is_ascii_digit() { Number } else { Word }, end, true)
-            }
-            _ => (Punctuation, start + 1, true),
+            _ => read_plain(bytes, start),
         }
+    }
+
+    /// Reads a token of a command line. A `#` starts a comment only at the start of a
+    /// line, because `#` is a valid part of a key. A quote ends with its line at most.
+    fn read_redis_token(&self, start: usize) -> (TokenKind, usize, bool) {
+        let bytes = self.sql.as_bytes();
+        let line_end = skip_line(bytes, start);
+        match bytes[start] {
+            b'#' if self.starts_line(start) => (TokenKind::Comment, line_end, false),
+            quote @ (b'"' | b'\'') => {
+                let (end, closed) = skip_quoted(&bytes[..line_end], start, quote, true);
+                (TokenKind::String, end, closed)
+            }
+            _ => read_plain(bytes, start),
+        }
+    }
+
+    fn starts_line(&self, start: usize) -> bool {
+        self.sql[..start]
+            .bytes()
+            .rev()
+            .find(|byte| !matches!(byte, b' ' | b'\t' | b'\r'))
+            .is_none_or(|byte| byte == b'\n')
     }
 
     fn after_word(&self, start: usize) -> bool {
@@ -145,6 +164,24 @@ pub fn tokenize(sql: &str, dialect: Dialect) -> Vec<Token> {
 
 fn is_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80
+}
+
+/// Reads a word, a number, or one character.
+fn read_plain(bytes: &[u8], start: usize) -> (TokenKind, usize, bool) {
+    let byte = bytes[start];
+    if !is_word_byte(byte) {
+        return (TokenKind::Punctuation, start + 1, true);
+    }
+    let mut end = start;
+    while end < bytes.len() && is_word_byte(bytes[end]) {
+        end += 1;
+    }
+    let kind = if byte.is_ascii_digit() {
+        TokenKind::Number
+    } else {
+        TokenKind::Word
+    };
+    (kind, end, true)
 }
 
 fn skip_quoted(bytes: &[u8], open: usize, quote: u8, backslash: bool) -> (usize, bool) {

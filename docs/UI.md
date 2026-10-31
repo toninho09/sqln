@@ -79,7 +79,7 @@ O usuário pode arrastar o divisor e recolher o navegador de conexões.
 ▎ ◐ 12.345s  console-1 ×   ✓  orders ×   ✗  users (table) ×
 ──────────────────────────────────────────────────────────────────────
  EXPLORER        │ app › public › console-1
- ▾ ● app  pg     │ ▶ Run  ▶▶ Script  ■ Stop  ◐ Auto  ✓ Commit  ↩ Rollback  ◇ public
+ ▾ ● ⛁ app  pg   │ ▶ Run  ▶▶ Script  ■ Stop  ◐ Auto  ✓ Commit  ↩ Rollback  ◇ public
    ▾ ◇ public    │  1 ✓ SELECT id, name                               ▐
      ▸ ▦ users   │  2   FROM public.users;                            │
      ▸ ◫ v_sales │  3                                                 │
@@ -91,6 +91,10 @@ O usuário pode arrastar o divisor e recolher o navegador de conexões.
  EDITOR  app  public  Auto · No transaction · Idle  Pool 0/5 · Data 1/256 MiB  3:14
  F5 run  Shift+F5 script  Ctrl+Space suggestions  Ctrl+F find  F1 keys
 ```
+
+Com `"preferences": { "icons": "nerd" }` em `config.json`, o logo do banco fica antes do nome, e `pg` sai da linha.
+Esse conjunto muda todos os símbolos da interface e exige uma Nerd Font.
+No iTerm, instale o Nerd Font Bundle em `Settings > Profiles > Text > Manage Special Exceptions`. O texto continua com a fonte do perfil.
 
 A linha sob as abas e o título do painel aparecem somente com 30 linhas ou mais.
 Em 80 x 24, o editor e a grade dividem 18 linhas.
@@ -259,6 +263,14 @@ O teto global de 256 MiB pode suspender novas cargas, sem apagar as linhas exist
 Se um valor ultrapassar o limite, indicar o motivo sem representá-lo como nulo, vazio ou conteúdo truncado sem aviso.
 A cópia segue o formato TSV confirmado na seção 10 do plano, sem cabeçalhos.
 
+### Chave Redis ou Valkey
+
+No navegador, cada banco numerado mostra até 1.000 chaves. `(partial list)` ao lado do banco indica uma lista incompleta.
+`Enter` em uma chave abre o valor em uma aba com o rótulo `<chave> (key)`.
+A aba usa a grade, as páginas e **Load more**, sem `WHERE`, `ORDER BY`, **Clear** e ordenação.
+**Reload** lê o valor de novo.
+No console, cada linha é um comando, como no `redis-cli`. Um `#` no início da linha faz um comentário.
+
 ## 4. Cadastro de conexão
 
 Oferecer formulário e entrada por URI, com a mesma política de credenciais.
@@ -284,6 +296,8 @@ O exemplo abaixo considera um projeto ativo.
 │ Pool:       [5]                                        │
 │ Somente leitura: [ ]                                   │
 │ Conectar:   prazo [30] segundos                        │
+│ Tema:       [Padrão]                                   │
+│ Ícone:      [Padrão]                                   │
 │                                                       │
 │ [Testar conexão]  [Salvar]  [Cancelar]                │
 └───────────────────────────────────────────────────────┘
@@ -607,24 +621,63 @@ Abrir com `Ctrl+W ,`.
 O projeto grava somente os valores que declara.
 Oferecer escopo global ou do projeto e os sete campos abaixo.
 Mostrar os valores herdados do global e permitir remover uma definição do projeto para usar o global.
-**Salvar** grava as alterações. **Cancelar** não altera nada.
+**Salvar** grava as alterações de todas as seções. **Cancelar** não altera nada.
+A barra lateral agrupa os campos nas seções **General**, **Editor** e **Results**. O painel mostra uma seção por vez.
+O escopo e os botões ficam fora das seções, e aparecem em todas elas.
+Uma nota de erro aparece acima dos botões, mesmo quando o campo está em outra seção.
+Uma seção nova precisa de uma linha na tabela `SECTIONS`, e a janela cresce com a maior seção.
 Manter `config.json` para opções avançadas, como o `keymap`.
 Ao mudar o modo de teclado, preservar texto, cursor e rolagem.
 A troca acontece no próprio editor, então a seleção e o histórico continuam, inclusive na recarga.
 
 ```text
-┌─ Configurações ──────────────────────────────────────────┐
-│ Escopo:             [Projeto]  (pode alterar para Global) │
-│ Teclado:            [Convencional]                       │
-│ Tamanho da página:  [100]                                │
-│ Teto de linhas:     [1000]                               │
-│ Orçamento de dados: [256] MiB                            │
-│ Reabrir abas:       [Padrão: ligado]                     │
-│ Autocomplete:       [Padrão: Tab]                        │
-│                                                          │
-│ [Salvar]  [Cancelar]                                     │
-└──────────────────────────────────────────────────────────┘
+╭─ Settings ─────┬─────────────────────────────────────────────────────╮
+│                │                                                     │
+│ ▌ General      │   Scope         < Project >                         │
+│   Editor       │                                                     │
+│   Results      │   GENERAL                                           │
+│   Appearance   │   Keyboard      < from global: Vim >                │
+│                │   Reopen tabs   < Default: On >                     │
+│                │                                                     │
+│                │                                                     │
+│                │                                                     │
+│                │                                                     │
+│                │   [Save]  [Cancel]                                  │
+│                │                                                     │
+╰────────────────┴─────────────────────────────────────────────────────╯
 ```
+
+A seção **Appearance** tem o campo **Default theme**.
+A escolha muda as cores na hora, antes de salvar. `Esc` e **Cancel** trazem de volta o tema salvo.
+No escopo global, um tema definido no projeto continua com prioridade.
+
+O formulário de conexão tem o campo **Theme**, que define um tema só para aquela conexão.
+O valor **Default** usa o tema padrão. A aba aberta decide as cores da tela inteira: a tela usa o tema da conexão da aba, e uma aba sem tema próprio usa o tema padrão.
+Esse campo também muda as cores antes de salvar. Ele funciona com a conexão ativa e não fecha a sessão nem a transação.
+Enquanto Settings está aberto, a tela mostra o tema padrão escolhido, mesmo em uma aba com tema próprio.
+
+O campo **Icon** troca o ícone da conexão no explorador. O valor **Default** usa o ícone do banco.
+Os ícones são `⚠ ☠ ☢ ⚑ ♛ ⚗ ★ ◆ ⚒ ⚙ ⌂ ♥ ❄ ✔`, e o nome no arquivo é o nome em inglês em minúsculas, como `skull`.
+O ícone escolhido fica antes do nome, e a marca do banco (`pg`, ou o logo com a Nerd Font) fica depois dele:
+
+```text
+ ▸ ● ☠ prod  pg
+```
+
+Esse campo também funciona com a conexão ativa e aparece em todos os conjuntos de ícones, inclusive com `NO_COLOR`.
+
+| Tema | Valor em `theme` | Uso |
+|---|---|---|
+| Auto | `auto` | Astrodark com truecolor; cores do terminal nos demais casos |
+| Astrodark | `astrodark` | Escuro neutro |
+| Terminal colors | `ansi` | Cores do perfil do terminal, sem truecolor |
+| Tokyo Night | `tokyo-night` | Escuro azulado |
+| Catppuccin Mocha | `catppuccin-mocha` | Escuro violeta |
+| Catppuccin Latte | `catppuccin-latte` | Claro |
+| Gruvbox | `gruvbox` | Escuro quente |
+| Nord | `nord` | Cinza azulado |
+
+`NO_COLOR` tem prioridade sobre qualquer tema.
 
 ### Fechamento com transação aberta
 

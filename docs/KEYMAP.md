@@ -182,6 +182,19 @@ Em uma tabela ou uma view, `Enter` abre a visão de tabela, ou seleciona a aba d
 Em um campo de texto, toda letra vira texto.
 No modo Vim, `j` e `k` mudam de campo somente fora dos campos de texto.
 
+## Configurações
+
+O foco começa na barra lateral. `Tab` percorre a barra, o escopo, os campos da seção aberta e os botões.
+
+| Ação | Tecla |
+|---|---|
+| Mudar de seção, na barra lateral | `Up` e `Down`; no modo Vim, também `j` e `k` |
+| Próximo campo | `Tab`, ou `Enter` em um campo; fora da barra lateral, também `Down` |
+| Campo anterior | `Shift+Tab`; fora da barra lateral, também `Up` |
+| Mudar uma opção | `Left` e `Right`; no modo Vim, também `h` e `l` |
+| Acionar um botão | `Enter` |
+| Cancelar | `Esc` |
+
 ## Solicitação de senha
 
 A senha fica mascarada, inclusive durante colagem. O salvamento começa desmarcado.

@@ -6,7 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::input::SuggestionKeys;
 use crate::line_input::LineInput;
 use crate::store::Scope;
-use crate::store::config::{DEFAULT_REOPEN_TABS, KeyboardName, Preferences};
+use crate::store::config::{DEFAULT_REOPEN_TABS, KeyboardName, Preferences, ThemeName};
 use crate::ui::text;
 
 const MEBIBYTE: usize = 1024 * 1024;
@@ -15,6 +15,8 @@ pub const DEFAULT_KEYBOARD: KeyboardName = KeyboardName::Conventional;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {
+    /// The sidebar. It is one place of the focus.
+    Sections,
     Scope,
     Keyboard,
     PageSize,
@@ -22,20 +24,35 @@ pub enum Field {
     Budget,
     ReopenTabs,
     SuggestionKeys,
+    Theme,
     Save,
     Cancel,
 }
 
-const FIELDS: [Field; 9] = [
-    Field::Scope,
-    Field::Keyboard,
-    Field::PageSize,
-    Field::RowCap,
-    Field::Budget,
-    Field::ReopenTabs,
-    Field::SuggestionKeys,
-    Field::Save,
-    Field::Cancel,
+/// One group of the sidebar.
+pub struct Section {
+    pub title: &'static str,
+    pub fields: &'static [Field],
+}
+
+/// The sidebar. To add a group, add a row here.
+pub const SECTIONS: [Section; 4] = [
+    Section {
+        title: text::SECTION_GENERAL,
+        fields: &[Field::Keyboard, Field::ReopenTabs],
+    },
+    Section {
+        title: text::SECTION_EDITOR,
+        fields: &[Field::SuggestionKeys],
+    },
+    Section {
+        title: text::SECTION_RESULTS,
+        fields: &[Field::PageSize, Field::RowCap, Field::Budget],
+    },
+    Section {
+        title: text::SECTION_APPEARANCE,
+        fields: &[Field::Theme],
+    },
 ];
 
 pub enum SettingsRequest {
@@ -53,6 +70,7 @@ struct Draft {
     budget: LineInput,
     reopen_tabs: Option<bool>,
     suggestion_keys: Option<SuggestionKeys>,
+    theme: Option<ThemeName>,
 }
 
 fn number_text(value: Option<usize>) -> LineInput {
@@ -73,12 +91,15 @@ impl Draft {
             budget: number_text(budget),
             reopen_tabs: preferences.reopen_tabs,
             suggestion_keys: preferences.suggestion_keys,
+            theme: preferences.theme,
         }
     }
 }
 
 pub struct SettingsForm {
     pub focus: Field,
+    /// The index of the open section in `SECTIONS`.
+    pub section: usize,
     pub scope: Scope,
     pub note: Option<String>,
     global: Preferences,
@@ -98,6 +119,17 @@ fn next_choice<T: Copy + PartialEq>(order: &[T], value: T, forward: bool) -> T {
     order[next % order.len()]
 }
 
+/// Returns the value after `value` in a list that starts with no value.
+pub fn next_optional<T: Copy + PartialEq>(
+    values: &[T],
+    value: Option<T>,
+    forward: bool,
+) -> Option<T> {
+    let mut order = vec![None];
+    order.extend(values.iter().copied().map(Some));
+    next_choice(&order, value, forward)
+}
+
 fn parse(input: &LineInput, name: &str) -> Result<Option<usize>, String> {
     let value = input.text().trim();
     if value.is_empty() {
@@ -110,20 +142,17 @@ fn parse(input: &LineInput, name: &str) -> Result<Option<usize>, String> {
 }
 
 impl SettingsForm {
-    /// Opens on the project when one exists, as the connection form does.
+    /// Opens on the project when one exists, as the connection form does. The focus
+    /// starts on the sidebar.
     pub fn new(global: Preferences, project: Option<Preferences>) -> Self {
         let scope = if project.is_some() {
             Scope::Project
         } else {
             Scope::Global
         };
-        let focus = if project.is_some() {
-            Field::Scope
-        } else {
-            Field::Keyboard
-        };
         Self {
-            focus,
+            focus: Field::Sections,
+            section: 0,
             scope,
             note: None,
             global_draft: Draft::of(&global),
@@ -161,6 +190,21 @@ impl SettingsForm {
 
     pub fn suggestion_keys(&self) -> Option<SuggestionKeys> {
         self.draft().suggestion_keys
+    }
+
+    pub fn theme(&self) -> Option<ThemeName> {
+        self.draft().theme
+    }
+
+    /// Returns the theme that a save of this scope gives. A project value has priority
+    /// over a global value.
+    pub fn saved_theme(&self) -> Option<ThemeName> {
+        let draft = self.draft().theme;
+        match (self.scope, &self.project) {
+            (Scope::Project, _) => draft.or(self.global.theme),
+            (Scope::Global, Some(project)) => project.theme.or(draft),
+            (Scope::Global, None) => draft,
+        }
     }
 
     /// Returns the field of a number, with the cursor position.
@@ -202,6 +246,7 @@ impl SettingsForm {
             Field::SuggestionKeys => global
                 .suggestion_keys
                 .map(|keys| text::suggestion_keys_name(keys).to_owned()),
+            Field::Theme => global.theme.map(|name| text::theme_name(name).to_owned()),
             _ => None,
         };
         match (from_global, value) {
@@ -212,24 +257,37 @@ impl SettingsForm {
             _ if field == Field::SuggestionKeys => {
                 text::default_value(text::suggestion_keys_name(SuggestionKeys::default()))
             }
+            _ if field == Field::Theme => {
+                text::default_value(text::theme_name(ThemeName::default()))
+            }
             _ => text::VALUE_DEFAULT.to_owned(),
         }
     }
 
-    fn move_focus(&mut self, step: isize) {
-        let count = isize::try_from(FIELDS.len()).unwrap_or(1);
-        let mut index = FIELDS
-            .iter()
-            .position(|field| *field == self.focus)
-            .unwrap_or(0);
-        for _ in 0..FIELDS.len() {
-            let current = isize::try_from(index).unwrap_or(0);
-            index = usize::try_from((current + step).rem_euclid(count)).unwrap_or(0);
-            if FIELDS[index] != Field::Scope || self.has_project() {
-                break;
-            }
+    /// Returns the places of the focus, in the order of `Tab`. The fields of the closed
+    /// sections are not in the list.
+    fn stops(&self) -> Vec<Field> {
+        let mut stops = vec![Field::Sections];
+        if self.has_project() {
+            stops.push(Field::Scope);
         }
-        self.focus = FIELDS[index];
+        stops.extend_from_slice(SECTIONS[self.section].fields);
+        stops.extend([Field::Save, Field::Cancel]);
+        stops
+    }
+
+    fn move_focus(&mut self, forward: bool) {
+        self.focus = next_choice(&self.stops(), self.focus, forward);
+    }
+
+    /// `Up` and `Down` open another section from the sidebar, and move the focus elsewhere.
+    fn step(&mut self, forward: bool) {
+        if self.focus == Field::Sections {
+            let order: Vec<usize> = (0..SECTIONS.len()).collect();
+            self.section = next_choice(&order, self.section, forward);
+        } else {
+            self.move_focus(forward);
+        }
     }
 
     /// The scope and the choices change with the side keys.
@@ -264,6 +322,10 @@ impl SettingsForm {
                 self.draft_mut().suggestion_keys =
                     next_choice(&order, self.draft().suggestion_keys, forward);
             }
+            Field::Theme => {
+                self.draft_mut().theme =
+                    next_optional(&ThemeName::ALL, self.draft().theme, forward);
+            }
             _ => {}
         }
     }
@@ -278,6 +340,12 @@ impl SettingsForm {
     /// Puts the focus on one field. The mouse uses this.
     pub fn focus_on(&mut self, field: Field) {
         self.focus = field;
+    }
+
+    /// Opens one section and puts the focus on the sidebar. The mouse uses this.
+    pub fn open_section(&mut self, section: usize) {
+        self.section = section;
+        self.focus = Field::Sections;
     }
 
     /// Acts on a click: a choice changes, a button runs.
@@ -297,13 +365,15 @@ impl SettingsForm {
         self.note = None;
         match key.code {
             KeyCode::Esc => return SettingsRequest::Cancel,
-            KeyCode::Tab | KeyCode::Down => self.move_focus(1),
-            KeyCode::BackTab | KeyCode::Up => self.move_focus(-1),
-            KeyCode::Char('j') if vim => self.move_focus(1),
-            KeyCode::Char('k') if vim => self.move_focus(-1),
+            KeyCode::Tab => self.move_focus(true),
+            KeyCode::BackTab => self.move_focus(false),
+            KeyCode::Down => self.step(true),
+            KeyCode::Up => self.step(false),
+            KeyCode::Char('j') if vim => self.step(true),
+            KeyCode::Char('k') if vim => self.step(false),
             KeyCode::Enter if self.focus == Field::Save => return SettingsRequest::Save,
             KeyCode::Enter if self.focus == Field::Cancel => return SettingsRequest::Cancel,
-            KeyCode::Enter => self.move_focus(1),
+            KeyCode::Enter => self.move_focus(true),
             KeyCode::Left if self.input(self.focus).is_none() => self.change(false),
             KeyCode::Right if self.input(self.focus).is_none() => self.change(true),
             KeyCode::Char('h') if vim && self.input(self.focus).is_none() => self.change(false),
@@ -330,6 +400,7 @@ impl SettingsForm {
         preferences.keyboard_mode = draft.keyboard;
         preferences.reopen_tabs = draft.reopen_tabs;
         preferences.suggestion_keys = draft.suggestion_keys;
+        preferences.theme = draft.theme;
         preferences.page_size = parse(&draft.page_size, text::FIELD_PAGE_SIZE)?;
         preferences.row_cap = parse(&draft.row_cap, text::FIELD_ROW_CAP)?;
         let budget = parse(&draft.budget, text::FIELD_BUDGET)?;

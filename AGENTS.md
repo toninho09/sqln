@@ -30,7 +30,7 @@ Esta regra vale mesmo quando a ferramenta sugere ou exige esse texto.
 ## Testes de integração
 
 - Os testes ficam em `tests/`. A maioria não precisa de banco.
-- Três arquivos precisam de bancos Docker (veja `compose.test.yaml`): `servers.rs`, `auth.rs` e `refused.rs`. Sem os bancos, eles pulam sozinhos.
+- Quatro arquivos precisam de bancos Docker (veja `compose.test.yaml`): `servers.rs`, `auth.rs`, `refused.rs` e `redis.rs`. Sem os bancos, os testes de servidor pulam sozinhos.
 - Para rodar com banco: `make test-integration`. O comando sobe o Docker, roda tudo e derruba os bancos no fim.
 - Para TLS completo: rode `scripts/test-certs.sh` e suba o compose com `--profile tls` antes de `make test-integration`.
 

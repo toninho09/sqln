@@ -54,14 +54,74 @@ pub enum KeyboardName {
 /// The start opens the tabs of the last session unless a file says otherwise.
 pub const DEFAULT_REOPEN_TABS: bool = true;
 
-/// The theme of the interface. `Auto` follows the terminal.
+/// The theme of the interface. `Auto` follows the terminal, and `Ansi` uses the colors
+/// of the terminal profile. The other themes need a truecolor terminal.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum ThemeName {
     #[default]
     Auto,
     Astrodark,
     Ansi,
+    TokyoNight,
+    CatppuccinMocha,
+    CatppuccinLatte,
+    Gruvbox,
+    Nord,
+}
+
+impl ThemeName {
+    /// The themes, in the order of the settings.
+    pub const ALL: [Self; 8] = [
+        Self::Auto,
+        Self::Astrodark,
+        Self::Ansi,
+        Self::TokyoNight,
+        Self::CatppuccinMocha,
+        Self::CatppuccinLatte,
+        Self::Gruvbox,
+        Self::Nord,
+    ];
+}
+
+/// An icon that a connection shows in place of the icon of its database.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConnectionIcon {
+    Warning,
+    Skull,
+    Radiation,
+    Flag,
+    Crown,
+    Flask,
+    Star,
+    Diamond,
+    Tools,
+    Gear,
+    Home,
+    Heart,
+    Snowflake,
+    Check,
+}
+
+impl ConnectionIcon {
+    /// The icons, in the order of the form.
+    pub const ALL: [Self; 14] = [
+        Self::Warning,
+        Self::Skull,
+        Self::Radiation,
+        Self::Flag,
+        Self::Crown,
+        Self::Flask,
+        Self::Star,
+        Self::Diamond,
+        Self::Tools,
+        Self::Gear,
+        Self::Home,
+        Self::Heart,
+        Self::Snowflake,
+        Self::Check,
+    ];
 }
 
 /// The symbol set of the interface. `Nerd` needs a Nerd Font in the terminal.
@@ -112,6 +172,19 @@ pub enum KindName {
     Postgres,
     Mysql,
     Sqlite,
+    Redis,
+}
+
+impl KindName {
+    /// Returns the engine of a network connection. SQLite has no engine.
+    fn engine(self) -> Option<Engine> {
+        match self {
+            KindName::Postgres => Some(Engine::Postgres),
+            KindName::Mysql => Some(Engine::MySql),
+            KindName::Redis => Some(Engine::Redis),
+            KindName::Sqlite => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,6 +267,10 @@ pub struct ConnectionEntry {
     /// A missing value means the default. A `null` value means no time limit.
     #[serde(default = "default_sql_timeout")]
     pub sql_timeout_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<ThemeName>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<ConnectionIcon>,
 }
 
 /// The configuration of a scope that cannot load. The text names the file, and the
@@ -309,15 +386,24 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
     if entry.sql_timeout_seconds == Some(0) || entry.connect_timeout_seconds == Some(0) {
         return Err("A timeout needs 1 or more seconds.".to_owned());
     }
-    match entry.kind {
-        KindName::Sqlite => {
+    match entry.kind.engine() {
+        None => {
             if !non_empty(entry.file.as_ref()) {
                 return Err("A SQLite connection needs a file.".to_owned());
             }
         }
-        KindName::Postgres | KindName::Mysql => {
-            if !non_empty(entry.host.as_ref()) || !non_empty(entry.username.as_ref()) {
+        Some(engine) => {
+            if !non_empty(entry.host.as_ref())
+                || (engine.needs_user() && !non_empty(entry.username.as_ref()))
+            {
                 return Err("A network connection needs host and username.".to_owned());
+            }
+            if entry
+                .database
+                .as_deref()
+                .is_some_and(|name| !name.is_empty() && !engine.accepts_database(name))
+            {
+                return Err("The Redis database must be a number.".to_owned());
             }
             if let Some(tls) = &entry.tls
                 && tls.mode == TlsMode::Disabled
@@ -343,8 +429,8 @@ fn seconds(value: Option<u64>) -> Option<Duration> {
 
 /// Builds the definition of a validated entry. `base` is the folder of the scope.
 pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
-    let source = match entry.kind {
-        KindName::Sqlite => {
+    let source = match entry.kind.engine() {
+        None => {
             let mut target = SqliteTarget::new(entry.file.clone().unwrap_or_default());
             target.foreign_keys = entry.foreign_keys;
             target.busy_timeout = Duration::from_millis(
@@ -354,12 +440,7 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
             );
             Source::Sqlite(target)
         }
-        KindName::Postgres | KindName::Mysql => {
-            let engine = if entry.kind == KindName::Postgres {
-                Engine::Postgres
-            } else {
-                Engine::MySql
-            };
+        Some(engine) => {
             let host = entry.host.clone().unwrap_or_default();
             let address = if host.starts_with('/') {
                 Address::Socket(PathBuf::from(host))
@@ -401,6 +482,8 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
     }
     definition.sql_timeout = seconds(entry.sql_timeout_seconds);
     definition.base = Some(base);
+    definition.theme = entry.theme;
+    definition.icon = entry.icon;
     definition
 }
 
@@ -429,6 +512,8 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
         },
         connect_timeout_seconds: None,
         sql_timeout_seconds: definition.sql_timeout.map(|time| time.as_secs()),
+        theme: definition.theme,
+        icon: definition.icon,
     };
     match &definition.source {
         Source::Sqlite(target) => {
@@ -441,6 +526,7 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
             entry.kind = match target.engine {
                 Engine::Postgres => KindName::Postgres,
                 Engine::MySql => KindName::Mysql,
+                Engine::Redis => KindName::Redis,
             };
             match &target.address {
                 Address::Tcp { host, port } => {
@@ -450,7 +536,7 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
                 Address::Socket(path) => entry.host = Some(path_text(path)),
             }
             entry.database.clone_from(&target.database);
-            entry.username = Some(target.user.clone());
+            entry.username = Some(target.user.clone()).filter(|user| !user.is_empty());
             entry.connect_timeout_seconds = Some(definition.connect_timeout.as_secs());
             entry.tls = Some(match &target.tls {
                 Tls::Disabled => TlsEntry {

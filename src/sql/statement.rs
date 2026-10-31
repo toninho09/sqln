@@ -137,7 +137,33 @@ pub fn split_tokens(sql: &str, dialect: Dialect, tokens: &[Token]) -> Vec<Statem
     split_source(sql, dialect, &mut TokenSlice { tokens, index: 0 })
 }
 
+/// Splits Redis text. Each line with a token is one command.
+fn split_lines(sql: &str, source: &mut impl TokenSource) -> Vec<Statement> {
+    let mut statements: Vec<Statement> = Vec::new();
+    while let Some(token) = source.next_token() {
+        if token.kind == TokenKind::Comment {
+            continue;
+        }
+        match statements.last_mut() {
+            Some(last) if !sql[last.end..token.start].contains('\n') => {
+                last.end = token.end;
+                last.end_with_delimiter = token.end;
+            }
+            _ => statements.push(Statement {
+                start: token.start,
+                end: token.end,
+                end_with_delimiter: token.end,
+                terminated: false,
+            }),
+        }
+    }
+    statements
+}
+
 fn split_source(sql: &str, dialect: Dialect, source: &mut impl TokenSource) -> Vec<Statement> {
+    if dialect == Dialect::Redis {
+        return split_lines(sql, source);
+    }
     let mut statements = Vec::new();
     let mut delimiter = ";";
     let mut start = None;

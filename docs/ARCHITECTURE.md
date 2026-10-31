@@ -30,7 +30,7 @@ Thread principal                    Runtime Tokio
 | Módulo | Responsabilidade |
 |---|---|
 | `app` | Estado da aplicação, ações e atualização do estado |
-| `ui` | Desenho das telas e dos widgets, temas (`theme`), símbolos (`icons`), barra de status (`statusline`) e menu do prefixo (`which_key`) |
+| `ui` | Desenho das telas e dos widgets, temas (`theme`), esquemas de cores (`schemes`), símbolos (`icons`), barra de status (`statusline`) e menu do prefixo (`which_key`) |
 | `palette` | Estado e filtro da paleta de comandos; `app` monta a lista, e `ui` desenha |
 | `input` | Mapa de teclas: regiões, ações, sequências e regras de `keymap` |
 | `navigator` | Árvore de conexões, schemas, relações e colunas |
@@ -46,7 +46,7 @@ Thread principal                    Runtime Tokio
 | `line_input` | Campo de texto de uma linha, usado pelos campos da barra de filtro |
 | `exec` | Execuções, scripts, teto e cancelamento |
 | `pool` | Limite, fila, reserva e limpeza |
-| `connector` | Contrato e conectores PostgreSQL, MySQL e SQLite |
+| `connector` | Contrato e conectores PostgreSQL, MySQL, SQLite e Redis/Valkey |
 | `grid` | Linhas, larguras, busca, orçamento e TSV |
 | `find` | Comparação de texto das duas buscas |
 | `clipboard` | Área de transferência do sistema e OSC 52 |
@@ -145,6 +145,13 @@ A tarefa guarda a conexão somente durante a consulta, pois uma consulta de tabe
 Uma consulta de tabela e uma consulta de console compartilham o mesmo `ExecEvent`.
 A identidade da aba vem do contador de consoles do gerente, então os números não colidem.
 
+Uma aba de chave Redis usa o mesmo caminho, sem SQL:
+
+1. `table::page_sql` monta `SQLN.VALUE <banco> <chave> <offset> <quantidade>` por `connector::redis::value_page`. Esse texto não é um comando do servidor.
+2. A sessão lê `TYPE` em cada página, porque a chave pode mudar entre duas páginas.
+3. A sessão usa o comando do tipo: `GET`, `LRANGE`, `HSCAN`, `SSCAN`, `ZRANGE` ou `XRANGE`.
+4. `Capabilities::table_filters` falso tira `WHERE`, `ORDER BY`, **Clear** e a ordenação da aba. **Apply** vira **Reload**.
+
 ### Limite conhecido do editor
 
 Cada entrada de desfazer do EdTUI guarda uma cópia inteira do texto.
@@ -213,8 +220,8 @@ trait Session: Send {
 ```
 
 O crate `async-trait` permite usar `Box<dyn Session>`.
-`Capabilities` declara se a fonte tem transações e se o console escolhe um schema ou um banco.
-Cancelamento e paginação entram nessa declaração quando uma fonte diferente chegar, pois os três conectores são iguais nesses pontos.
+`Capabilities` declara se a fonte tem transações, se o console escolhe um schema ou um banco e se a aba de tabela aceita filtro e ordem em SQL.
+Cancelamento e paginação entram nessa declaração quando uma fonte precisar, pois os conectores usam o mesmo contrato nesses pontos.
 Cada console tem uma tarefa Tokio, que guarda a sessão entre execuções enquanto a transação continuar aberta.
 A tarefa mantém o future de `run` ativo depois de um cancelamento, para ler a resposta do banco.
 Fechar a conexão é o único caso que abandona esse future.
@@ -224,6 +231,7 @@ Fechar a conexão é o único caso que abandona esse future.
 | PostgreSQL | `CancelToken` | `DISCARD ALL` | Sonda por relógio, pelo protocolo simples |
 | MySQL | `KILL QUERY` em conexão temporária | `Conn::reset` e volta ao banco da conexão | `SERVER_STATUS_IN_TRANS` da última resposta; `DO 0` depois de um erro |
 | SQLite | `InterruptHandle` | Descartar a conexão | `is_autocommit` |
+| Redis/Valkey | `CLIENT UNBLOCK` em conexão temporária; sem efeito, fecha a sessão | `DISCARD`, `UNWATCH` e volta ao banco da conexão | Sempre `None`: a fonte não tem transação manual |
 
 `run` envia uma instrução, entrega as linhas a `ResultSink` e obedece ao retorno `Flow::Stop`.
 Uma instrução pode entregar vários resultados, como `CALL` no MySQL, e o teto vale para cada um.
@@ -358,7 +366,8 @@ Nenhum escopo recebe `password`. A senha autorizada em texto simples fica em `cr
       "tls": { "mode": "verify", "caFile": null, "clientCert": null, "clientKey": null },
       "pool": { "maxConnections": 5 },
       "connectTimeoutSeconds": 30,
-      "sqlTimeoutSeconds": 30
+      "sqlTimeoutSeconds": 30,
+      "theme": "nord"
     },
     {
       "id": "6a1d4c12-7c0e-4f0b-9a55-0c2f4b6f7d10",
@@ -377,9 +386,11 @@ Nenhum escopo recebe `password`. A senha autorizada em texto simples fica em `cr
 
 | Campo | Valores |
 |---|---|
-| `kind` | `postgres`, `mysql` ou `sqlite` |
+| `kind` | `postgres`, `mysql`, `sqlite` ou `redis` |
 | `credential` | `vault`, `session`, `globalPlainText` ou `none` |
 | `tls.mode` | `verify` ou `disabled` |
+| `theme` | Opcional. Um valor de `theme` de `preferences`. Sem o campo, a conexão usa o tema padrão |
+| `icon` | Opcional. `warning`, `skull`, `radiation`, `flag`, `crown`, `flask`, `star`, `diamond`, `tools`, `gear`, `home`, `heart`, `snowflake` ou `check`. Sem o campo, a conexão usa o ícone do banco |
 
 O valor `globalPlainText` existe somente no escopo global.
 O valor `sqlTimeoutSeconds: null` executa sem prazo, e a ausência do campo vale 30 segundos.

@@ -83,6 +83,7 @@ impl Identity {
         let engine = match self.destination.engine {
             Engine::Postgres => "postgres",
             Engine::MySql => "mysql",
+            Engine::Redis => "redis",
         };
         let address =
             serde_json::to_string(&self.destination.address).map_err(|_| VaultError::Failed)?;

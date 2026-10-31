@@ -10,18 +10,23 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use common::{ctrl, key, temp_dir};
-use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::style::Color;
 use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
 use sqln::connection::Source;
 use sqln::form::{Field, FormNote};
 use sqln::input::SuggestionKeys;
 use sqln::script_file::Trouble;
+use sqln::store::config::{self, ConnectionIcon, Preferences, ThemeName};
 use sqln::store::scripts::{self, ScriptMeta};
 use sqln::store::{Root, Scope, Store, file};
-use sqln::ui::theme::Theme;
+use sqln::ui::icons::Icons;
+use sqln::ui::theme::{ColorEnv, Theme};
 
 struct Session {
     app: App,
@@ -203,6 +208,16 @@ impl Session {
         self.click(column, row);
     }
 
+    /// Opens the settings on the section of the results, with the focus on Page size.
+    /// The store needs a project, because the focus goes past the scope.
+    fn open_results_settings(&mut self) {
+        self.prefix(',');
+        self.code(KeyCode::Down);
+        self.code(KeyCode::Down);
+        self.code(KeyCode::Tab);
+        self.code(KeyCode::Tab);
+    }
+
     fn names(&self) -> Vec<String> {
         self.app
             .consoles()
@@ -228,6 +243,7 @@ impl Session {
     fn fill_sqlite_form(&mut self, name: &str, file: &str) {
         self.prefix('h');
         self.code(KeyCode::Char('a'));
+        self.code(KeyCode::Left);
         self.code(KeyCode::Left);
         self.focus_form(Field::Name);
         for letter in name.chars() {
@@ -682,11 +698,7 @@ fn a_new_connection_goes_to_the_project_file_by_default_without_a_password() {
     session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
     session.write(&db.display().to_string());
-    // File, foreign keys, lock limit, pool, read only, SQL limit, Test, then Save.
-    for _ in 0..7 {
-        session.code(KeyCode::Tab);
-    }
-    session.code(KeyCode::Enter);
+    session.press_form_button(Field::Save);
     assert!(session.app.form().is_none(), "{}", session.screen());
     let text = fs::read_to_string(store.project.as_ref().unwrap().config_file()).unwrap();
     assert!(text.contains("\"name\": \"saved\""), "{text}");
@@ -714,11 +726,7 @@ fn a_form_for_a_network_connection_saves_no_password_in_the_file() {
     session.write("me");
     session.code(KeyCode::Tab);
     session.write("hunter2");
-    // Then: credential, TLS, CA, certificate, key, pool, read only, connect, SQL limit, Test, Save.
-    for _ in 0..11 {
-        session.code(KeyCode::Tab);
-    }
-    session.code(KeyCode::Enter);
+    session.press_form_button(Field::Save);
     assert!(session.app.form().is_none(), "{}", session.screen());
     let text = fs::read_to_string(store.global.config_file()).unwrap();
     assert!(text.contains("\"host\": \"db.example.test\""), "{text}");
@@ -755,10 +763,7 @@ fn two_scopes_can_use_the_same_name_and_one_scope_cannot() {
         }
         session.code(KeyCode::Tab);
         session.write(&path);
-        for _ in 0..7 {
-            session.code(KeyCode::Tab);
-        }
-        session.code(KeyCode::Enter);
+        session.press_form_button(Field::Save);
     };
     // The name is the same in the project, ignoring the case. The scope refuses it.
     save_sqlite(&mut session, false);
@@ -826,11 +831,7 @@ fn editing_a_connection_replaces_its_entry_and_keeps_its_identity_and_scripts() 
     session.code(KeyCode::Char('e'));
     erase_field(&mut session, "before".len());
     session.write("after");
-    // File, foreign keys, lock limit, pool, read only, SQL limit, Test, then Save.
-    for _ in 0..8 {
-        session.code(KeyCode::Tab);
-    }
-    session.code(KeyCode::Enter);
+    session.press_form_button(Field::Save);
     assert!(session.app.form().is_none(), "{}", session.screen());
     let text = fs::read_to_string(store.global.config_file()).unwrap();
     assert!(text.contains("\"id\": \"g1\""), "{text}");
@@ -864,9 +865,7 @@ fn the_sql_limit_of_a_connection_saves_and_zero_means_no_limit() {
     session.assert_sees("SQL limit");
     erase_field(&mut session, 2);
     session.write("0");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Enter);
+    session.press_form_button(Field::Save);
     let text = fs::read_to_string(store.global.config_file()).unwrap();
     assert!(text.contains("\"sqlTimeoutSeconds\": null"), "{text}");
     session.prefix('r');
@@ -905,7 +904,7 @@ fn a_bad_sql_limit_keeps_the_form_open() {
 }
 
 #[test]
-fn a_connected_connection_can_change_its_name_only_and_the_file_follows() {
+fn a_connected_connection_can_change_its_name_and_the_file_follows() {
     let (store, base) = global_only("p-rename");
     let db = database(&base, "e", "CREATE TABLE t (v INTEGER);");
     write_config(
@@ -926,12 +925,9 @@ fn a_connected_connection_can_change_its_name_only_and_the_file_follows() {
     }
     session.go_to_connection("old");
     session.code(KeyCode::Char('e'));
-    session.assert_sees("Save name");
     erase_field(&mut session, "old".len());
     session.write("new");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Enter);
+    session.press_form_button(Field::Save);
     assert!(session.app.form().is_none());
     assert_eq!(session.app.connections()[0].name, "new");
     assert!(session.app.console().in_transaction());
@@ -2221,11 +2217,10 @@ fn the_settings_write_nothing_before_the_save() {
     let project = store.project.clone().unwrap();
     let before = fs::read_to_string(project.config_file()).unwrap();
     let mut session = Session::start(&store);
-    session.prefix(',');
+    session.open_results_settings();
     session.assert_sees("Settings");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
     session.write("77");
+    session.assert_sees("77");
     session.code(KeyCode::Esc);
     assert_eq!(fs::read_to_string(project.config_file()).unwrap(), before);
 }
@@ -2236,11 +2231,9 @@ fn the_settings_write_only_the_scope_of_the_dialog() {
     let global = fs::read_to_string(store.global.config_file()).unwrap();
     let project = store.project.clone().unwrap();
     let mut session = Session::start(&store);
-    session.prefix(',');
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    session.open_results_settings();
     session.write("77");
-    for _ in 0..5 {
+    for _ in 0..3 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2271,13 +2264,11 @@ fn an_empty_field_removes_the_project_value_and_shows_the_global_value() {
         &[],
     );
     let mut session = Session::start(&store);
-    session.prefix(',');
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    session.open_results_settings();
     session.code(KeyCode::Backspace);
     session.code(KeyCode::Backspace);
     session.assert_sees("from global: 10");
-    for _ in 0..5 {
+    for _ in 0..3 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2290,11 +2281,9 @@ fn an_empty_field_removes_the_project_value_and_shows_the_global_value() {
 fn a_settings_value_of_zero_stays_in_the_dialog_with_a_note() {
     let (store, _) = two_connections("p-settings-zero");
     let mut session = Session::start(&store);
-    session.prefix(',');
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    session.open_results_settings();
     session.write("0");
-    for _ in 0..5 {
+    for _ in 0..3 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2309,11 +2298,11 @@ fn a_change_of_keyboard_in_the_settings_keeps_the_text_the_cursor_and_the_histor
     let cursor = session.app.console().editor.cursor();
     session.prefix(',');
     session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
     session.code(KeyCode::Right);
     session.code(KeyCode::Right);
-    for _ in 0..6 {
-        session.code(KeyCode::Tab);
-    }
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
     let editor = &session.app.console().editor;
     assert_eq!(editor.keyboard(), sqln::editor::KeyboardMode::Vim);
@@ -2652,14 +2641,12 @@ fn the_settings_choose_the_reopening_of_the_tabs() {
     session.prefix(',');
     session.assert_sees("Reopen tabs");
     session.assert_sees("Default: On");
-    for _ in 0..4 {
-        session.code(KeyCode::Tab);
-    }
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
     session.code(KeyCode::Right);
     session.assert_sees("< On >");
     session.code(KeyCode::Right);
     session.assert_sees("< Off >");
-    session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
     session.assert_sees("settings are saved");
@@ -2683,6 +2670,492 @@ fn the_settings_work_with_the_mouse() {
     session.assert_not_sees("Settings");
     let text = fs::read_to_string(store.global.config_file()).unwrap();
     assert!(!text.contains("reopenTabs"), "{text}");
+}
+
+#[test]
+fn the_sidebar_shows_the_fields_of_one_section() {
+    let (store, _) = two_connections("p-settings-sections");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.assert_sees("Reopen tabs");
+    session.assert_not_sees("Autocomplete");
+    session.assert_not_sees("Page size");
+    session.code(KeyCode::Down);
+    session.assert_sees("Autocomplete");
+    session.assert_not_sees("Reopen tabs");
+    session.code(KeyCode::Down);
+    session.assert_sees("Page size");
+    session.assert_not_sees("Autocomplete");
+    session.code(KeyCode::Down);
+    session.assert_sees("Default theme");
+    session.assert_not_sees("Page size");
+    // The last section goes back to the first section.
+    session.code(KeyCode::Down);
+    session.assert_sees("Reopen tabs");
+    session.code(KeyCode::Up);
+    session.assert_sees("Default theme");
+    // The scope stays in all sections.
+    session.assert_sees("< Project >");
+}
+
+#[test]
+fn the_tab_key_stays_in_the_open_section_and_goes_back_to_the_sidebar() {
+    let (store, _) = two_connections("p-settings-tab");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    // Scope, Keyboard, Reopen tabs, Save, Cancel, and the sidebar.
+    for _ in 0..6 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Down);
+    session.assert_sees("Autocomplete");
+}
+
+#[test]
+fn the_vim_keys_change_the_section_in_the_sidebar() {
+    let (store, _) = reopening_store("p-settings-vim", r#"{"keyboardMode":"vim"}"#);
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.code(KeyCode::Char('j'));
+    session.assert_sees("Autocomplete");
+    session.code(KeyCode::Char('k'));
+    session.assert_sees("Reopen tabs");
+}
+
+impl Session {
+    /// Opens the settings on the section of the themes, with the focus on the theme.
+    /// The store has no project, so the scope is not a place of the focus.
+    fn open_theme_settings(&mut self) {
+        self.prefix(',');
+        self.code(KeyCode::Up);
+        self.code(KeyCode::Tab);
+    }
+
+    /// Returns the background of the explorer. The dialog does not cover this cell.
+    fn panel_color(&mut self) -> Color {
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| self.app.draw(frame)).unwrap();
+        terminal.backend().buffer()[(1, 20)].bg
+    }
+}
+
+fn theme_panel(name: ThemeName) -> Color {
+    Theme::named(name, ColorEnv::default()).panel.bg.unwrap()
+}
+
+#[test]
+fn the_settings_show_a_theme_at_once_and_a_cancel_brings_back_the_saved_theme() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let (store, _) = reopening_store("p-theme-preview", r#"{"theme":"gruvbox"}"#);
+    let mut session = Session::start(&store);
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
+    session.open_theme_settings();
+    session.assert_sees("< Gruvbox >");
+    session.code(KeyCode::Right);
+    session.assert_sees("< Nord >");
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Nord));
+    session.code(KeyCode::Esc);
+    session.assert_not_sees("Default theme");
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
+    let text = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(text.contains("gruvbox"), "{text}");
+}
+
+#[test]
+fn a_click_shows_a_theme_at_once_and_the_cancel_button_brings_back_the_saved_theme() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let (store, _) = reopening_store("p-theme-mouse", r#"{"theme":"gruvbox"}"#);
+    let mut session = Session::start(&store);
+    session.open_theme_settings();
+    session.click_text("< Gruvbox >");
+    session.assert_sees("< Nord >");
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Nord));
+    session.click_text(" Cancel ");
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
+}
+
+#[test]
+fn a_saved_theme_goes_to_the_file_and_comes_back_at_the_next_start() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let (store, _) = reopening_store("p-theme-save", "{}");
+    let mut session = Session::start(&store);
+    session.open_theme_settings();
+    session.assert_sees("Default: Auto");
+    // `Left` goes from the first choice to the end of the list.
+    session.code(KeyCode::Left);
+    session.code(KeyCode::Left);
+    session.code(KeyCode::Left);
+    session.assert_sees("< Catppuccin Latte >");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+    assert_eq!(
+        session.panel_color(),
+        theme_panel(ThemeName::CatppuccinLatte)
+    );
+    let text = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(text.contains("\"theme\": \"catppuccin-latte\""), "{text}");
+    drop(session);
+
+    let mut session = Session::start(&store);
+    assert_eq!(
+        session.panel_color(),
+        theme_panel(ThemeName::CatppuccinLatte)
+    );
+}
+
+/// A character without a color takes the color of the terminal, and that color can be
+/// invisible on the background of a theme.
+#[test]
+fn a_theme_gives_a_color_to_each_character_of_the_screen() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let (store, _) = reopening_store("p-theme-cells", r#"{"theme":"catppuccin-latte"}"#);
+    let mut session = Session::start(&store);
+    session.open_theme_settings();
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| session.app.draw(frame)).unwrap();
+    for cell in terminal.backend().buffer().content() {
+        if !cell.symbol().trim().is_empty() {
+            assert!(matches!(cell.fg, Color::Rgb(..)), "{cell:?}");
+            assert!(matches!(cell.bg, Color::Rgb(..)), "{cell:?}");
+        }
+    }
+}
+
+#[test]
+fn the_theme_of_a_project_has_priority_over_a_change_of_the_global_theme() {
+    use sqln::settings::{Field, SettingsForm};
+    let left = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
+    let right = KeyEvent::new(KeyCode::Right, KeyModifiers::NONE);
+    let global = Preferences::default();
+    let project = Preferences {
+        theme: Some(ThemeName::Gruvbox),
+        ..Preferences::default()
+    };
+    let mut form = SettingsForm::new(global, Some(project));
+    assert_eq!(form.saved_theme(), Some(ThemeName::Gruvbox));
+
+    form.focus_on(Field::Theme);
+    form.on_key(left, false);
+    assert_eq!(form.saved_theme(), Some(ThemeName::CatppuccinLatte));
+
+    // A change of the global scope does not change what a project shows.
+    form.focus_on(Field::Scope);
+    form.on_key(right, false);
+    form.focus_on(Field::Theme);
+    form.on_key(left, false);
+    assert_eq!(form.saved_theme(), Some(ThemeName::Gruvbox));
+}
+
+fn themed_entry(id: &str, name: &str, file: &str, theme: &str) -> String {
+    format!(r#"{{"id":"{id}","name":"{name}","kind":"sqlite","file":"{file}","theme":"{theme}"}}"#)
+}
+
+fn icon_entry(id: &str, name: &str, file: &str, icon: &str) -> String {
+    format!(r#"{{"id":"{id}","name":"{name}","kind":"sqlite","file":"{file}","icon":"{icon}"}}"#)
+}
+
+/// Starts with one connection `prod` that has the skull icon, and returns the screen.
+fn screen_with_icon(name: &str, preferences: &str) -> String {
+    let (store, base) = global_only(name);
+    let db = database(&base, "i", "").display().to_string();
+    write_config(
+        &store.global,
+        preferences,
+        &[icon_entry("g1", "prod", &db, "skull")],
+    );
+    Session::start(&store).screen()
+}
+
+#[test]
+fn the_icon_of_a_connection_stands_before_its_name_and_the_engine_stays_after_it() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let unicode = screen_with_icon("p-icon-unicode", r#"{"theme":"astrodark"}"#);
+    assert!(unicode.contains("☠ prod  sq"), "{unicode}");
+    assert!(!unicode.contains(Icons::unicode().database), "{unicode}");
+
+    let logos = Icons::nerd().sqlite;
+    let nerd = screen_with_icon("p-icon-nerd", r#"{"theme":"astrodark","icons":"nerd"}"#);
+    assert!(nerd.contains(&format!("☠ prod  {logos}")), "{nerd}");
+
+    let plain = screen_with_icon("p-icon-plain", "{}");
+    assert!(plain.contains("☠ prod  sq"), "{plain}");
+}
+
+#[test]
+fn a_connected_connection_changes_its_icon_and_keeps_its_transaction() {
+    let store = themed_connections("p-icon-connected");
+    let mut session = Session::start(&store);
+    session.console_of("prod");
+    session.open_transaction();
+
+    session.go_to_connection("prod");
+    session.code(KeyCode::Char('e'));
+    session.focus_form(Field::Icon);
+    session.assert_sees("< Default >");
+    session.code(KeyCode::Right);
+    session.assert_sees("< ⚠ Warning >");
+    session.press_form_button(Field::Save);
+
+    assert!(session.app.form().is_none(), "{}", session.screen());
+    assert!(session.app.console().in_transaction());
+    session.assert_sees("⚠ prod");
+    let saved = config::load(&store).config.unwrap();
+    assert_eq!(
+        saved.connections[1].definition.icon,
+        Some(ConnectionIcon::Warning)
+    );
+    assert_eq!(saved.connections[0].definition.icon, None);
+
+    // A change of the file also keeps the transaction.
+    let file = store.global.config_file();
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(&file, text.replace("\"warning\"", "\"flag\"")).unwrap();
+    session.prefix('r');
+    session.assert_sees("⚑ prod");
+    assert!(session.app.console().in_transaction());
+}
+
+/// A store with a default theme and two connections: `dev`, and `prod` with its own theme.
+fn themed_connections(name: &str) -> Store {
+    let (store, base) = global_only(name);
+    let db = database(&base, "t", "CREATE TABLE items (v INTEGER);")
+        .display()
+        .to_string();
+    write_config(
+        &store.global,
+        r#"{"theme":"gruvbox"}"#,
+        &[
+            sqlite_entry("g1", "dev", &db),
+            themed_entry("g2", "prod", &db, "nord"),
+        ],
+    );
+    store
+}
+
+impl Session {
+    fn console_of(&mut self, connection: &str) {
+        self.go_to_connection(connection);
+        self.code(KeyCode::Char('n'));
+        self.code(KeyCode::Enter);
+    }
+
+    /// Runs a statement that leaves a transaction open in the active console.
+    fn open_transaction(&mut self) {
+        self.prefix('m');
+        self.write("INSERT INTO items VALUES (1);");
+        self.press(common::shift(KeyCode::F(5)));
+        for _ in 0..2_000 {
+            self.app.drain_events();
+            if self.app.console().in_transaction() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("the transaction did not start");
+    }
+}
+
+#[test]
+fn the_theme_follows_the_connection_of_the_open_tab() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let store = themed_connections("p-theme-tabs");
+    let mut session = Session::start(&store);
+    session.console_of("dev");
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
+    session.console_of("prod");
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Nord));
+    session.prefix('p');
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
+    session.prefix('n');
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Nord));
+}
+
+#[test]
+fn a_table_tab_shows_the_theme_of_its_connection() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let store = themed_connections("p-theme-table");
+    let mut session = Session::start(&store);
+    session.console_of("dev");
+    session.go_to_connection("prod");
+    session.code(KeyCode::Enter);
+    common::open_table(&mut session.app, 1, "items");
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Nord));
+}
+
+#[test]
+fn the_form_shows_a_theme_at_once_and_the_file_keeps_the_saved_theme() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let store = themed_connections("p-theme-form");
+    let mut session = Session::start(&store);
+    let before = fs::read_to_string(store.global.config_file()).unwrap();
+    session.go_to_connection("dev");
+    session.code(KeyCode::Char('e'));
+    session.focus_form(Field::Theme);
+    session.assert_sees("< Default >");
+    session.code(KeyCode::Left);
+    session.assert_sees("< Nord >");
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Nord));
+    session.code(KeyCode::Esc);
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
+    let after = fs::read_to_string(store.global.config_file()).unwrap();
+    assert_eq!(before, after);
+
+    session.code(KeyCode::Char('e'));
+    session.focus_form(Field::Theme);
+    session.code(KeyCode::Left);
+    session.code(KeyCode::Left);
+    session.assert_sees("< Gruvbox >");
+    session.press_form_button(Field::Save);
+    assert!(session.app.form().is_none(), "{}", session.screen());
+    let saved = config::load(&store).config.unwrap();
+    assert_eq!(
+        saved.connections[0].definition.theme,
+        Some(ThemeName::Gruvbox)
+    );
+    assert_eq!(saved.connections[1].definition.theme, Some(ThemeName::Nord));
+}
+
+#[test]
+fn a_connected_connection_changes_its_theme_and_keeps_its_transaction() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let store = themed_connections("p-theme-connected");
+    let mut session = Session::start(&store);
+    session.console_of("prod");
+    session.open_transaction();
+
+    session.go_to_connection("prod");
+    session.code(KeyCode::Char('e'));
+    assert!(session.app.form().unwrap().display_only);
+    session.focus_form(Field::Theme);
+    session.assert_sees("< Nord >");
+    session.code(KeyCode::Left);
+    session.assert_sees("< Gruvbox >");
+    session.press_form_button(Field::Save);
+
+    assert!(session.app.form().is_none(), "{}", session.screen());
+    assert!(session.app.console().in_transaction());
+    let saved = config::load(&store).config.unwrap();
+    assert_eq!(
+        saved.connections[1].definition.theme,
+        Some(ThemeName::Gruvbox)
+    );
+}
+
+#[test]
+fn a_reload_changes_the_theme_of_a_connection_in_use_and_keeps_its_transaction() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let store = themed_connections("p-theme-reload");
+    let mut session = Session::start(&store);
+    session.console_of("prod");
+    session.open_transaction();
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Nord));
+
+    let file = store.global.config_file();
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(&file, text.replace("nord", "catppuccin-latte")).unwrap();
+    session.prefix('r');
+
+    assert_eq!(
+        session.panel_color(),
+        theme_panel(ThemeName::CatppuccinLatte)
+    );
+    assert!(session.app.console().in_transaction());
+}
+
+#[test]
+fn the_settings_show_the_default_theme_and_the_connection_keeps_its_own_theme() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let store = themed_connections("p-theme-default");
+    let mut session = Session::start(&store);
+    session.console_of("prod");
+    session.open_theme_settings();
+    session.code(KeyCode::Left);
+    session.assert_sees("< Catppuccin Latte >");
+    assert_eq!(
+        session.panel_color(),
+        theme_panel(ThemeName::CatppuccinLatte)
+    );
+    // The connection keeps its own theme after the dialog.
+    session.code(KeyCode::Esc);
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Nord));
+}
+
+#[test]
+fn a_save_writes_the_changes_of_all_sections() {
+    let (store, _) = two_connections("p-settings-all");
+    let project = store.project.clone().unwrap();
+    let mut session = Session::start(&store);
+    session.open_results_settings();
+    session.write("77");
+    // Back to the sidebar: Row cap, Data, Save, Cancel, and the sidebar.
+    for _ in 0..5 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Up);
+    // Autocomplete, after the scope.
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Right);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+    let text = fs::read_to_string(project.config_file()).unwrap();
+    assert!(text.contains("\"pageSize\": 77"), "{text}");
+    assert!(text.contains("\"suggestionKeys\": \"tab\""), "{text}");
+}
+
+#[test]
+fn a_bad_value_of_a_closed_section_shows_the_note() {
+    let (store, _) = two_connections("p-settings-closed");
+    let mut session = Session::start(&store);
+    session.open_results_settings();
+    session.write("0");
+    for _ in 0..5 {
+        session.code(KeyCode::Tab);
+    }
+    // The sidebar opens the first section. Then the focus goes to Save.
+    session.code(KeyCode::Down);
+    session.assert_not_sees("Page size");
+    session.code(KeyCode::BackTab);
+    session.code(KeyCode::BackTab);
+    session.code(KeyCode::Enter);
+    session.assert_sees("Page size needs a number of 1 or more");
+}
+
+#[test]
+fn a_click_on_the_sidebar_opens_the_section() {
+    let (store, _) = two_connections("p-settings-click");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.click_text("Editor ");
+    session.assert_sees("Autocomplete");
+    session.assert_not_sees("Reopen tabs");
+    // The focus is on the sidebar, so `Down` opens the next section.
+    session.code(KeyCode::Down);
+    session.assert_sees("Page size");
 }
 
 #[test]
@@ -2913,11 +3386,10 @@ fn the_settings_choose_the_keys_of_the_list_and_the_change_works_at_once() {
     let (store, _) = reopening_store("p-keys-settings", "{}");
     let mut session = Session::start(&store);
     session.prefix(',');
+    session.code(KeyCode::Down);
     session.assert_sees("Autocomplete");
     session.assert_sees("Default: Tab");
-    for _ in 0..5 {
-        session.code(KeyCode::Tab);
-    }
+    session.code(KeyCode::Tab);
     session.code(KeyCode::Right);
     session.assert_sees("< Tab >");
     session.code(KeyCode::Right);

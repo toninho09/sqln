@@ -2,6 +2,7 @@
 
 pub mod mysql;
 pub mod postgres;
+pub mod redis;
 pub mod sqlite;
 pub mod target;
 mod tls;
@@ -12,6 +13,7 @@ use async_trait::async_trait;
 
 use self::mysql::MySqlConnector;
 use self::postgres::PostgresConnector;
+use self::redis::RedisConnector;
 use self::target::{Engine, NetworkTarget};
 use crate::catalog::Catalog;
 use crate::exec::{ReadLimit, ResultSink};
@@ -39,6 +41,8 @@ pub enum Namespace {
 pub struct Capabilities {
     pub namespace: Namespace,
     pub transactions: bool,
+    /// True when a table tab can filter and sort with SQL text.
+    pub table_filters: bool,
 }
 
 impl Default for Capabilities {
@@ -46,6 +50,7 @@ impl Default for Capabilities {
         Self {
             namespace: Namespace::None,
             transactions: true,
+            table_filters: true,
         }
     }
 }
@@ -155,6 +160,7 @@ pub fn network_connector(target: NetworkTarget) -> Arc<dyn Connector> {
     match target.engine {
         Engine::Postgres => Arc::new(PostgresConnector::new(target)),
         Engine::MySql => Arc::new(MySqlConnector::new(target)),
+        Engine::Redis => Arc::new(RedisConnector::new(target)),
     }
 }
 

@@ -377,6 +377,10 @@ impl Navigator {
                 CatalogState::Failed => Some(RowNote::Failed),
                 _ => None,
             },
+            RowKind::Schema => row
+                .catalog_schema(connections)?
+                .partial
+                .then_some(RowNote::Partial),
             RowKind::Table | RowKind::View => {
                 let relation = row.relation_ref(connections)?;
                 connections[row.connection]
@@ -398,4 +402,6 @@ impl Navigator {
 pub enum RowNote {
     Loading,
     Failed,
+    /// The list of a schema holds only a part of its relations.
+    Partial,
 }

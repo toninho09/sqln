@@ -25,6 +25,7 @@ fn catalog() -> Catalog {
                     relation("active_users", RelationKind::View, &["id", "name"]),
                     relation("Order Items", RelationKind::Table, &["sku", "order"]),
                 ],
+                partial: false,
             },
             Schema {
                 name: "sales".to_owned(),
@@ -33,6 +34,7 @@ fn catalog() -> Catalog {
                     RelationKind::Table,
                     &["number", "due"],
                 )],
+                partial: false,
             },
         ],
         current_schema: Some("public".to_owned()),

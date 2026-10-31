@@ -13,6 +13,8 @@ pub enum Dialect {
     Postgres,
     MySql,
     Sqlite,
+    /// Redis and Valkey commands. This text is not SQL.
+    Redis,
 }
 
 /// Wraps a name in `open` quotes and doubles the quotes inside the name.

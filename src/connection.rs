@@ -35,6 +35,10 @@ pub struct Definition {
     pub sql_timeout: Option<Duration>,
     /// The folder of the relative paths. Without a folder, the working folder applies.
     pub base: Option<PathBuf>,
+    /// The theme of the tabs of this connection. `None` uses the default theme.
+    pub theme: Option<crate::store::config::ThemeName>,
+    /// The icon in the list of connections. `None` uses the icon of the database.
+    pub icon: Option<crate::store::config::ConnectionIcon>,
 }
 
 impl Definition {
@@ -47,6 +51,8 @@ impl Definition {
             connect_timeout: Duration::from_secs(DEFAULT_CONNECT_SECONDS),
             sql_timeout: Some(Duration::from_secs(DEFAULT_SQL_SECONDS)),
             base: None,
+            theme: None,
+            icon: None,
         }
     }
 
@@ -151,12 +157,16 @@ impl Definition {
                 let engine = match target.engine {
                     Engine::Postgres => "PostgreSQL",
                     Engine::MySql => "MySQL",
+                    Engine::Redis => "Redis/Valkey",
                 };
                 let place = match &target.address {
                     Address::Tcp { host, port } => format!("{host}:{port}"),
                     Address::Socket(path) => path.display().to_string(),
                 };
-                format!("{engine} {}@{place} · {tls}", target.user)
+                match target.user.as_str() {
+                    "" => format!("{engine} {place} · {tls}"),
+                    user => format!("{engine} {user}@{place} · {tls}"),
+                }
             }
         }
     }

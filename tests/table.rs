@@ -242,6 +242,7 @@ impl Connector for RecordingConnector {
         Capabilities {
             namespace: Namespace::Schema,
             transactions: true,
+            ..Capabilities::default()
         }
     }
 

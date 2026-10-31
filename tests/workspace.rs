@@ -214,6 +214,7 @@ impl Fixture {
         self.navigator();
         self.code(KeyCode::Char('a'));
         self.code(KeyCode::Left);
+        self.code(KeyCode::Left);
         assert_eq!(self.app.form().unwrap().kind, Kind::Sqlite);
         self.code(KeyCode::Tab);
         self.type_text(name);
@@ -1249,6 +1250,7 @@ impl Connector for KeepConnector {
         Capabilities {
             namespace: Namespace::Schema,
             transactions: true,
+            ..Capabilities::default()
         }
     }
 

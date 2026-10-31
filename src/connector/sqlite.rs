@@ -277,7 +277,11 @@ fn read_catalog(conn: &Connection) -> rusqlite::Result<Catalog> {
                 })
             })?
             .collect::<Result<_, _>>()?;
-        schemas.push(Schema { name, relations });
+        schemas.push(Schema {
+            name,
+            relations,
+            partial: false,
+        });
     }
     Ok(Catalog {
         schemas,

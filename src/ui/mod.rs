@@ -8,6 +8,7 @@ pub mod icons;
 pub mod name;
 pub mod navigator;
 pub mod palette;
+pub mod schemes;
 pub mod settings;
 pub mod statusline;
 pub mod table;

@@ -29,6 +29,8 @@ fn each_engine_has_its_scheme_and_port() {
         ("postgresql://u@h", Engine::Postgres, 5432),
         ("mysql://u@h", Engine::MySql, 3306),
         ("mariadb://u@h", Engine::MySql, 3306),
+        ("redis://u@h", Engine::Redis, 6379),
+        ("valkey://u@h", Engine::Redis, 6379),
     ] {
         let target = parse_uri(uri).unwrap();
         assert_eq!(target.engine, engine);
@@ -200,4 +202,43 @@ fn a_hidden_connection_text_keeps_its_length_and_its_other_parts() {
     let uri = "mysql://ação:日本語@host/db?sslmode=disable";
     assert_eq!(hide(uri).chars().count(), uri.chars().count());
     assert!(!hide(uri).contains("日本語"));
+}
+
+#[test]
+fn redis_works_without_a_user() {
+    let target = parse_uri("redis://:s3cret@127.0.0.1/3").unwrap();
+    assert_eq!(target.user, "");
+    assert_eq!(target.password, Some(Secret::new("s3cret")));
+    assert_eq!(target.database.as_deref(), Some("3"));
+    assert_eq!(target.tls, Tls::Disabled);
+
+    let target = parse_uri("redis://127.0.0.1").unwrap();
+    assert_eq!(target.password, None);
+    assert_eq!(target.database, None);
+}
+
+#[test]
+fn a_redis_database_is_a_number() {
+    let error = parse_uri("redis://h/sales").unwrap_err();
+    assert!(error.contains("must be a number"), "{error}");
+}
+
+#[test]
+fn a_remote_redis_address_verifies_tls() {
+    let target = parse_uri("redis://cache.example.test").unwrap();
+    assert_eq!(target.tls, Tls::Verify(TlsFiles::default()));
+
+    let target = parse_uri("redis://cache.example.test?sslmode=disable").unwrap();
+    assert_eq!(target.tls, Tls::Disabled);
+}
+
+#[test]
+fn the_tls_schemes_always_use_tls() {
+    for uri in ["rediss://127.0.0.1", "valkeys://127.0.0.1"] {
+        let target = parse_uri(uri).unwrap();
+        assert_eq!(target.engine, Engine::Redis);
+        assert_eq!(target.tls, Tls::Verify(TlsFiles::default()));
+    }
+    let error = parse_uri("rediss://h?sslmode=disable").unwrap_err();
+    assert!(error.contains("always uses TLS"), "{error}");
 }

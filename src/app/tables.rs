@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{App, FRAMES_PER_PICTURE};
 use crate::catalog::RelationRef;
-use crate::exec::ConnectionId;
+use crate::exec::{ConnectionId, ConsoleId};
 use crate::input::Action;
 use crate::navigator::{Row, RowKind};
 use crate::sql::Dialect;
@@ -157,13 +157,28 @@ impl App {
             return;
         };
         let view = row.kind == RowKind::View;
-        let mut tab = TableTab::new(id, connection, relation, view, self.settings.page_size);
-        tab.opened = self.next_tab_place();
+        let tab = self.new_table_tab(id, connection, relation, view);
         self.tables.push(tab);
         let index = self.tables.len() - 1;
         self.select_table(index);
         self.navigator_focused = false;
         self.apply_table();
+    }
+
+    /// Builds a tab with the features of its connection, at the end of the tab row.
+    pub(super) fn new_table_tab(
+        &mut self,
+        id: ConsoleId,
+        connection: ConnectionId,
+        relation: RelationRef,
+        view: bool,
+    ) -> TableTab {
+        let mut tab = TableTab::new(id, connection, relation, view, self.settings.page_size);
+        tab.opened = self.next_tab_place();
+        tab.filters = self
+            .connection(connection)
+            .is_none_or(|item| item.capabilities.table_filters);
+        tab
     }
 
     /// Sends a page to the task of the tab on screen.
@@ -367,7 +382,7 @@ impl App {
         self.navigator_focused = false;
         if let Some(tab) = self.table_mut() {
             tab.list = None;
-            tab.focus = focus;
+            tab.focus = if tab.filters { focus } else { TableFocus::Grid };
         }
     }
 

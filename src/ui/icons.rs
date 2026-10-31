@@ -1,6 +1,7 @@
 //! The symbols of the interface. Each character fills one terminal column.
 
 use crate::sql::Dialect;
+use crate::store::config::ConnectionIcon;
 
 /// One set of symbols. An empty symbol means that the set has no icon for the item.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,9 +35,37 @@ pub struct Icons {
     pub stopped: &'static str,
     pub connected: &'static str,
     pub disconnected: &'static str,
+    /// The symbol before the name of a connection in a set without logos.
+    pub database: &'static str,
+    /// True when the symbol of an engine is a logo. The logo stands before the name.
+    /// In a set without logos, that symbol is a short text after the name.
+    pub logos: bool,
     pub postgres: &'static str,
     pub mysql: &'static str,
     pub sqlite: &'static str,
+    pub redis: &'static str,
+}
+
+/// Returns the symbol of a connection icon. These symbols do not depend on the set of
+/// icons, because the usual fonts of a terminal have them and a Nerd Font is optional.
+/// Keep symbols with one column and with text presentation, not emoji presentation.
+pub fn connection_symbol(icon: ConnectionIcon) -> &'static str {
+    match icon {
+        ConnectionIcon::Warning => "⚠",
+        ConnectionIcon::Skull => "☠",
+        ConnectionIcon::Radiation => "☢",
+        ConnectionIcon::Flag => "⚑",
+        ConnectionIcon::Crown => "♛",
+        ConnectionIcon::Flask => "⚗",
+        ConnectionIcon::Star => "★",
+        ConnectionIcon::Diamond => "◆",
+        ConnectionIcon::Tools => "⚒",
+        ConnectionIcon::Gear => "⚙",
+        ConnectionIcon::Home => "⌂",
+        ConnectionIcon::Heart => "♥",
+        ConnectionIcon::Snowflake => "❄",
+        ConnectionIcon::Check => "✔",
+    }
 }
 
 impl Icons {
@@ -68,9 +97,12 @@ impl Icons {
             stopped: "stop",
             connected: "●",
             disconnected: "",
+            database: "",
+            logos: false,
             postgres: "pg",
             mysql: "my",
             sqlite: "sq",
+            redis: "rd",
         }
     }
 
@@ -102,9 +134,12 @@ impl Icons {
             stopped: "■",
             connected: "●",
             disconnected: "○",
+            database: "⛁",
+            logos: false,
             postgres: "pg",
             mysql: "my",
             sqlite: "sq",
+            redis: "rd",
         }
     }
 
@@ -136,9 +171,12 @@ impl Icons {
             stopped: "\u{f04d}",
             connected: "●",
             disconnected: "○",
+            database: "",
+            logos: true,
             postgres: "\u{e76e}",
             mysql: "\u{e704}",
             sqlite: "\u{e7c4}",
+            redis: "\u{e76d}",
         }
     }
 
@@ -148,11 +186,12 @@ impl Icons {
             Dialect::Postgres => self.postgres,
             Dialect::MySql => self.mysql,
             Dialect::Sqlite => self.sqlite,
+            Dialect::Redis => self.redis,
         }
     }
 
     /// Returns each symbol of the set, for the checks of the column width.
-    pub fn all(&self) -> [&'static str; 31] {
+    pub fn all(&self) -> [&'static str; 33] {
         [
             self.run,
             self.script,
@@ -182,9 +221,11 @@ impl Icons {
             self.stopped,
             self.connected,
             self.disconnected,
+            self.database,
             self.postgres,
             self.mysql,
             self.sqlite,
+            self.redis,
         ]
     }
 }

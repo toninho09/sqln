@@ -48,6 +48,40 @@ pub fn suggestion_keys_name(keys: SuggestionKeys) -> &'static str {
     }
 }
 
+pub fn theme_name(name: crate::store::config::ThemeName) -> &'static str {
+    use crate::store::config::ThemeName;
+    match name {
+        ThemeName::Auto => "Auto",
+        ThemeName::Astrodark => "Astrodark",
+        ThemeName::Ansi => "Terminal colors",
+        ThemeName::TokyoNight => "Tokyo Night",
+        ThemeName::CatppuccinMocha => "Catppuccin Mocha",
+        ThemeName::CatppuccinLatte => "Catppuccin Latte",
+        ThemeName::Gruvbox => "Gruvbox",
+        ThemeName::Nord => "Nord",
+    }
+}
+
+pub fn connection_icon_name(icon: crate::store::config::ConnectionIcon) -> &'static str {
+    use crate::store::config::ConnectionIcon;
+    match icon {
+        ConnectionIcon::Warning => "Warning",
+        ConnectionIcon::Skull => "Skull",
+        ConnectionIcon::Radiation => "Radiation",
+        ConnectionIcon::Flag => "Flag",
+        ConnectionIcon::Crown => "Crown",
+        ConnectionIcon::Flask => "Flask",
+        ConnectionIcon::Star => "Star",
+        ConnectionIcon::Diamond => "Diamond",
+        ConnectionIcon::Tools => "Tools",
+        ConnectionIcon::Gear => "Gear",
+        ConnectionIcon::Home => "Home",
+        ConnectionIcon::Heart => "Heart",
+        ConnectionIcon::Snowflake => "Snowflake",
+        ConnectionIcon::Check => "Check",
+    }
+}
+
 pub const HINT_SEARCH: &[HintPart] = &[
     ("Tab", "next field"),
     ("Enter", "next or replace"),
@@ -69,6 +103,8 @@ pub const HINT_SETTINGS: &[HintPart] = &[
     ("", "An empty field removes the value"),
     ("Esc", "cancel"),
 ];
+pub const HINT_SETTINGS_SECTIONS: &[HintPart] =
+    &[("Up/Down", "section"), ("Tab", "next"), ("Esc", "cancel")];
 pub const HINT_CTRL_SPACE: &[HintPart] = &[("Ctrl+Space", "suggestions"), ("Ctrl+F", "find")];
 pub const HINT_EDITOR_STAYS: &[HintPart] = &[("", "The editor stays available")];
 pub const HINT_CONFLICTS: &[HintPart] = &[
@@ -227,6 +263,28 @@ pub const FORM_NEEDS_NAME: &str = "The connection needs a name.";
 pub const FORM_NEEDS_HOST: &str = "The connection needs a host.";
 pub const FORM_NEEDS_USER: &str = "The connection needs a user.";
 pub const FORM_NEEDS_FILE: &str = "SQLite needs a file.";
+pub const FORM_REDIS_DATABASE: &str = "The Redis database must be a number.";
+pub const REDIS_SOCKET_TLS: &str = "A Unix socket does not use TLS. Turn off TLS.";
+pub const REDIS_NO_SOCKET: &str = "This system has no Unix sockets.";
+pub const REDIS_NO_STOP: &str = "The server cannot stop this command.";
+pub const REDIS_BAD_QUOTES: &str = "The command has a quote that does not close.";
+pub const REDIS_NO_COMMAND: &str = "The line has no command.";
+pub const REDIS_NO_KEY: &str = "The key does not exist.";
+pub const REDIS_BAD_PAGE: &str = "SQLN.VALUE needs a database, a key, an offset, and a count.";
+pub const REDIS_BAD_REPLY: &str = "The server sent a reply that SQLN cannot read.";
+pub const REDIS_NO_TRANSACTIONS: &str = "Redis has no manual transactions. Use MULTI in a script.";
+pub const REDIS_READ_ONLY: &str =
+    "This connection is read only, and the server does not mark this command as a read.";
+pub const REDIS_CONTINUOUS: &str =
+    "SQLN cannot show a continuous stream, so it refuses this command.";
+pub const REDIS_IDENTITY: &str =
+    "This command changes the login of a shared session, so SQLN refuses it.";
+pub const REDIS_COLUMN_VALUE: &str = "value";
+pub const REDIS_COLUMN_FIELD: &str = "field";
+pub const REDIS_COLUMN_MEMBER: &str = "member";
+pub const REDIS_COLUMN_SCORE: &str = "score";
+pub const REDIS_COLUMN_ID: &str = "id";
+pub const REDIS_COLUMN_FIELDS: &str = "fields";
 pub const FORM_URI_KIND: &str = "The connection text is for another database type.";
 pub const FORM_POOL_ZERO: &str = "The pool limit must be 1 or more.";
 pub const FORM_CLIENT_PAIR: &str = "A client certificate needs its file and its key.";
@@ -313,11 +371,11 @@ pub const FIELD_CONNECT: &str = "Connect limit (seconds)";
 pub const FIELD_SQL_TIMEOUT: &str = "SQL limit (s, 0 = none)";
 pub const BUTTON_TEST: &str = "Test connection";
 pub const BUTTON_SAVE: &str = "Save";
-pub const BUTTON_SAVE_NAME: &str = "Save name";
 pub const BUTTON_DISCONNECT: &str = "Disconnect";
 pub const BUTTON_CANCEL: &str = "Cancel";
 pub const VALUE_POSTGRES: &str = "PostgreSQL";
 pub const VALUE_MYSQL: &str = "MySQL";
+pub const VALUE_REDIS: &str = "Redis/Valkey";
 pub const VALUE_SQLITE: &str = "SQLite";
 pub const VALUE_SCOPE_PROJECT: &str = "Project";
 pub const VALUE_SCOPE_GLOBAL: &str = "Global";
@@ -346,12 +404,19 @@ pub const CONSOLE_RENAMED: &str = "The console has a new name.";
 pub const CONNECTION_CHANGE_BUSY: &str = "End the execution and the transaction before the change.";
 pub const NO_OTHER_CONNECTION: &str = "No other connection is available.";
 pub const SETTINGS_SAVED: &str = "The settings are saved.";
+pub const SECTION_GENERAL: &str = "General";
+pub const SECTION_EDITOR: &str = "Editor";
+pub const SECTION_RESULTS: &str = "Results";
+pub const SECTION_APPEARANCE: &str = "Appearance";
 pub const FIELD_KEYBOARD: &str = "Keyboard";
 pub const FIELD_REOPEN_TABS: &str = "Reopen tabs";
 pub const FIELD_SUGGESTION_KEYS: &str = "Autocomplete";
 pub const FIELD_PAGE_SIZE: &str = "Page size";
 pub const FIELD_ROW_CAP: &str = "Row cap";
 pub const FIELD_BUDGET: &str = "Data (MiB)";
+pub const FIELD_THEME: &str = "Default theme";
+pub const FIELD_CONNECTION_THEME: &str = "Theme";
+pub const FIELD_CONNECTION_ICON: &str = "Icon";
 
 pub fn settings_number(name: &str) -> String {
     format!("{name} needs a number of 1 or more.")
@@ -447,6 +512,8 @@ pub const TABLE_STOPPING: &str = "stopping";
 pub const TABLE_BUDGET: &str = "data budget reached; close a tab to free space";
 pub const TABLE_VALUE_TOO_LARGE: &str = "a value is larger than the data budget";
 pub const TABLE_NO_ORDER: &str = "No ORDER BY: pages can repeat or skip rows.";
+pub const BUTTON_RELOAD: &str = "Reload";
+pub const NOTE_PARTIAL_KEYS: &str = "(partial list)";
 pub const REGION_TABLE: &str = "Table";
 pub const REGION_FILTER: &str = "Filter";
 
@@ -660,13 +727,16 @@ pub fn rows_loaded(rows: usize) -> String {
     format!("{} loaded", plural(rows, "row"))
 }
 
-pub fn table_label(name: &str, view: bool) -> String {
-    format!("{name} ({})", if view { "view" } else { "table" })
+pub fn table_label(name: &str, kind: &str) -> String {
+    format!("{name} ({kind})")
 }
 
-pub fn table_title(connection: &str, schema: &str, relation: &str, view: bool) -> String {
-    let kind = if view { "view" } else { "table" };
+pub fn table_title(connection: &str, schema: &str, relation: &str, kind: &str) -> String {
     format!("{connection} · {schema}.{relation} · {kind}")
+}
+
+pub fn redis_unknown_type(kind: &str) -> String {
+    format!("SQLN cannot show a value of type {kind}. Use the console.")
 }
 
 pub fn rows_read(rows: usize) -> String {
@@ -793,7 +863,7 @@ Options:
   -V, --version          Show the version.
 
 Development options:
-  --dialect <name>       Use postgres, mysql, or sqlite in a console without
+  --dialect <name>       Use postgres, mysql, sqlite, or redis in a console without
                          a connection.
 
 The settings and the connections are in config.json, in the global folder

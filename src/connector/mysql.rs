@@ -131,6 +131,7 @@ impl Connector for MySqlConnector {
         Capabilities {
             namespace: Namespace::Database,
             transactions: true,
+            ..Capabilities::default()
         }
     }
 
@@ -488,6 +489,7 @@ impl Session for MySqlSession {
                 schemas.push(Schema {
                     name,
                     relations: Vec::new(),
+                    partial: false,
                 });
             }
             if let (Some(schema), Some(relation)) = (schemas.last_mut(), relation) {

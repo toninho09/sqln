@@ -6,6 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::draw_scrollbar;
+use super::icons::{Icons, connection_symbol};
 use super::text;
 use super::theme::Theme;
 use crate::connection::Connection;
@@ -16,6 +17,18 @@ const MARK_OPEN: &str = "▾";
 const MARK_CLOSED: &str = "▸";
 /// The empty column at the start of each row.
 pub const TREE_PAD: u16 = 1;
+
+/// Returns the marks before and after the name of a connection. An icon of the connection
+/// takes the first place, and the symbol of the engine stays after the name.
+fn connection_marks(icons: &Icons, connection: &Connection) -> (&'static str, &'static str) {
+    let engine = icons.engine(connection.dialect);
+    let icon = connection.definition.as_ref().and_then(|item| item.icon);
+    match icon {
+        Some(icon) => (connection_symbol(icon), engine),
+        None if icons.logos => (engine, ""),
+        None => (icons.database, engine),
+    }
+}
 
 pub fn draw_navigator(
     frame: &mut Frame,
@@ -69,10 +82,15 @@ pub fn draw_navigator(
             RowKind::View => spans.push(Span::styled(Theme::icon(icons.view), detail)),
             RowKind::Column => spans.push(Span::styled(Theme::icon(icons.column), detail)),
         }
+        let (before_name, after_name) = if row.kind == RowKind::Connection {
+            connection_marks(icons, &connections[row.connection])
+        } else {
+            ("", "")
+        };
+        spans.push(Span::styled(Theme::icon(before_name), detail));
         spans.push(Span::raw(printable(row.name(connections))));
-        if row.kind == RowKind::Connection {
-            let engine = icons.engine(connections[row.connection].dialect);
-            spans.push(Span::styled(format!("  {engine}"), detail));
+        if !after_name.is_empty() {
+            spans.push(Span::styled(format!("  {after_name}"), detail));
         }
         if row.kind == RowKind::View && icons.view.is_empty() {
             spans.push(Span::styled(format!(" {}", text::MARK_VIEW), detail));
@@ -84,6 +102,10 @@ pub fn draw_navigator(
             Some(RowNote::Failed) => {
                 spans.push(Span::styled(format!(" {}", text::NOTE_FAILED), theme.error))
             }
+            Some(RowNote::Partial) => spans.push(Span::styled(
+                format!(" {}", text::NOTE_PARTIAL_KEYS),
+                detail,
+            )),
             None => {}
         }
         if offset == cursor {

@@ -36,6 +36,39 @@ services:
       timeout: 3s
       retries: 120
 
+  redis:
+    image: redis:8
+    command: ["redis-server", "--requirepass", "spike", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:63799:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a spike --no-auth-warning ping | grep -q PONG"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  redis-open:
+    image: redis:8
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:63801:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  valkey:
+    image: valkey/valkey:9
+    command: ["valkey-server", "--requirepass", "spike", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:63800:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a spike --no-auth-warning ping | grep -q PONG"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
   postgres-tls:
     profiles: [tls]
     image: postgres:18
@@ -62,6 +95,39 @@ services:
       interval: 1s
       timeout: 3s
       retries: 90
+
+  redis-tls:
+    profiles: [tls]
+    image: redis:8
+    command:
+      - redis-server
+      - --requirepass
+      - spike
+      - --port
+      - "0"
+      - --tls-port
+      - "6379"
+      - --tls-cert-file
+      - /certs/server.crt
+      - --tls-key-file
+      - /certs/server.key
+      - --tls-ca-cert-file
+      - /certs/ca.crt
+      - --tls-auth-clients
+      - optional
+    ports:
+      - "127.0.0.1:63802:6379"
+    volumes:
+      - ./.test-certs:/certs:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          redis-cli --tls --cacert /certs/ca.crt -h localhost -a spike --no-auth-warning ping |
+          grep -q PONG
+      interval: 1s
+      timeout: 3s
+      retries: 30
 
   mysql-tls:
     profiles: [tls]

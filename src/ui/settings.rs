@@ -12,11 +12,12 @@ use super::float_block;
 use super::theme::Theme;
 use super::{input_spans, text};
 use crate::grid::printable;
-use crate::settings::{Field, SettingsForm};
+use crate::settings::{Field, SECTIONS, SettingsForm};
 use crate::store::Scope;
 
-const WIDTH: u16 = 66;
-const HEIGHT: u16 = 14;
+const WIDTH: u16 = 72;
+/// The columns of the sidebar, without the divider.
+const SIDEBAR_WIDTH: u16 = 16;
 const LABEL_WIDTH: u16 = 14;
 /// The value columns of a number field.
 const NUMBER_WIDTH: usize = 12;
@@ -26,23 +27,93 @@ const NOTE_ROWS: u16 = 2;
 const LEFT: u16 = 3;
 /// The empty columns after a value.
 const RIGHT: u16 = 2;
+/// The rows inside the window, from its top.
+const SCOPE_ROW: u16 = 1;
+const TITLE_ROW: u16 = 3;
+const FIRST_FIELD_ROW: u16 = 4;
+/// The rows after the last field: a gap, the note, the buttons, and a gap.
+const FOOTER_ROWS: u16 = NOTE_ROWS + 3;
+/// The rows of the top and bottom borders.
+const BORDER_ROWS: u16 = 2;
 
-/// The screen areas of the fields. The mouse uses them.
+/// The screen areas of the sidebar and the fields. The mouse uses them.
 #[derive(Clone, Debug, Default)]
 pub struct SettingsLayout {
+    /// One area for each row of `SECTIONS`, in the same order.
+    pub sections: Vec<Rect>,
     pub fields: Vec<(Field, Rect)>,
 }
 
+/// The window has the height of the largest section, and all sections keep the same size.
+fn window_height() -> u16 {
+    let fields = SECTIONS.iter().map(|section| section.fields.len()).max();
+    let fields = u16::try_from(fields.unwrap_or(0)).unwrap_or(u16::MAX);
+    BORDER_ROWS + FIRST_FIELD_ROW + fields + FOOTER_ROWS
+}
+
+fn label(field: Field) -> &'static str {
+    match field {
+        Field::Scope => text::FIELD_SCOPE,
+        Field::Keyboard => text::FIELD_KEYBOARD,
+        Field::PageSize => text::FIELD_PAGE_SIZE,
+        Field::RowCap => text::FIELD_ROW_CAP,
+        Field::Budget => text::FIELD_BUDGET,
+        Field::ReopenTabs => text::FIELD_REOPEN_TABS,
+        Field::SuggestionKeys => text::FIELD_SUGGESTION_KEYS,
+        Field::Theme => text::FIELD_THEME,
+        Field::Sections | Field::Save | Field::Cancel => "",
+    }
+}
+
+/// Returns the text of a choice.
+fn choice(form: &SettingsForm, field: Field) -> String {
+    match field {
+        Field::Scope if form.scope == Scope::Project => text::VALUE_SCOPE_PROJECT.to_owned(),
+        Field::Scope => text::VALUE_SCOPE_GLOBAL.to_owned(),
+        Field::Keyboard => form
+            .keyboard()
+            .map_or_else(|| form.inherited(field), text::keyboard_name),
+        Field::ReopenTabs => form.reopen_tabs().map_or_else(
+            || form.inherited(field),
+            |value| text::on_off(value).to_owned(),
+        ),
+        Field::SuggestionKeys => form.suggestion_keys().map_or_else(
+            || form.inherited(field),
+            |keys| text::suggestion_keys_name(keys).to_owned(),
+        ),
+        Field::Theme => form.theme().map_or_else(
+            || form.inherited(field),
+            |name| text::theme_name(name).to_owned(),
+        ),
+        _ => String::new(),
+    }
+}
+
+fn value<'a>(form: &SettingsForm, field: Field, theme: &Theme) -> Line<'a> {
+    let focused = form.focus == field;
+    if let Some(input) = form.input(field) {
+        let chars: Vec<char> = input.text().chars().collect();
+        let mut spans = input_spans(&chars, input.cursor(), NUMBER_WIDTH, focused, theme).0;
+        if input.text().is_empty() {
+            spans.push(Span::styled(form.inherited(field), theme.hint));
+        }
+        return Line::from(spans);
+    }
+    let name = choice(form, field);
+    // Without a project, the scope has one value, so it is not a choice.
+    if field == Field::Scope && !form.has_project() {
+        return Line::raw(name);
+    }
+    let style = if focused {
+        theme.dialog_focus
+    } else {
+        Style::new()
+    };
+    Line::from(Span::styled(format!("< {name} >"), style))
+}
+
 /// Draws one row: the focus mark, the label, and the value.
-fn draw_field_row(
-    frame: &mut Frame,
-    area: Rect,
-    form: &SettingsForm,
-    field: Field,
-    label: &str,
-    value: Line<'_>,
-    theme: &Theme,
-) {
+fn draw_field_row(frame: &mut Frame, area: Rect, form: &SettingsForm, field: Field, theme: &Theme) {
     let focused = form.focus == field;
     if focused {
         let mark = Span::styled(theme.icons.focus_mark, theme.panel_title_focused);
@@ -65,7 +136,7 @@ fn draw_field_row(
         width: LABEL_WIDTH,
         ..area
     };
-    frame.render_widget(Paragraph::new(label).style(label_style), label_area);
+    frame.render_widget(Paragraph::new(label(field)).style(label_style), label_area);
 
     let start = area.x + LEFT + LABEL_WIDTH;
     let value_area = Rect {
@@ -87,123 +158,125 @@ fn draw_field_row(
         width: value_area.width.saturating_sub(2),
         ..value_area
     };
-    frame.render_widget(Paragraph::new(value), text_area);
+    frame.render_widget(Paragraph::new(value(form, field, theme)), text_area);
+}
+
+/// Draws the sections and returns their rows. The open section stays marked when the
+/// focus goes to the fields, as the row of the explorer does.
+fn draw_sidebar(frame: &mut Frame, area: Rect, form: &SettingsForm, theme: &Theme) -> Vec<Rect> {
+    let focused = form.focus == Field::Sections;
+    let mut rows = Vec::new();
+    for (y, (index, section)) in (area.y..).zip(SECTIONS.iter().enumerate()) {
+        let row = Rect {
+            y,
+            height: 1,
+            ..area
+        };
+        rows.push(row);
+        let open = index == form.section;
+        if open {
+            let style = if focused {
+                theme.tree_selected
+            } else {
+                theme.tree_cursor
+            };
+            frame.buffer_mut().set_style(row, style);
+        }
+        if open && focused {
+            let mark = Span::styled(theme.icons.focus_mark, theme.panel_title_focused);
+            frame.render_widget(
+                Paragraph::new(mark),
+                Rect {
+                    x: row.x + 1,
+                    width: 1,
+                    ..row
+                },
+            );
+        }
+        frame.render_widget(
+            Paragraph::new(section.title),
+            Rect {
+                x: row.x + LEFT,
+                width: row.width.saturating_sub(LEFT),
+                ..row
+            },
+        );
+    }
+    rows
+}
+
+/// Draws the line between the sidebar and the fields. The line joins the window border.
+fn draw_divider(frame: &mut Frame, window: Rect, x: u16, theme: &Theme) {
+    for y in window.y..window.bottom() {
+        let symbol = if y == window.y {
+            "┬"
+        } else if y + 1 == window.bottom() {
+            "┴"
+        } else {
+            "│"
+        };
+        frame
+            .buffer_mut()
+            .set_string(x, y, symbol, theme.float_border);
+    }
 }
 
 pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> SettingsLayout {
-    let area = centered(frame.area(), WIDTH, HEIGHT);
+    let area = centered(frame.area(), WIDTH, window_height());
     frame.render_widget(Clear, area);
     let block = float_block(text::TITLE_SETTINGS, theme);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let mut layout = SettingsLayout::default();
-    let choice = |field: Field, value: String| {
-        let style = if form.focus == field {
-            theme.dialog_focus
-        } else {
-            Style::new()
-        };
-        Line::from(Span::styled(format!("< {value} >"), style))
+
+    let sidebar = Rect {
+        y: inner.y + 1,
+        width: SIDEBAR_WIDTH,
+        height: inner.height.saturating_sub(1),
+        ..inner
+    };
+    draw_divider(frame, area, sidebar.right(), theme);
+    let pane = Rect {
+        x: sidebar.right() + 1,
+        width: inner.width.saturating_sub(SIDEBAR_WIDTH + 1),
+        ..inner
+    };
+    let mut layout = SettingsLayout {
+        sections: draw_sidebar(frame, sidebar, form, theme),
+        fields: Vec::new(),
     };
 
-    let scope = match form.scope {
-        Scope::Global => text::VALUE_SCOPE_GLOBAL,
-        Scope::Project => text::VALUE_SCOPE_PROJECT,
+    let scope = Rect {
+        y: pane.y + SCOPE_ROW,
+        height: 1,
+        ..pane
     };
-    let scope = if form.has_project() {
-        choice(Field::Scope, scope.to_owned())
-    } else {
-        Line::raw(scope)
-    };
-    let rows = [
-        (Field::Scope, text::FIELD_SCOPE, scope),
-        (
-            Field::Keyboard,
-            text::FIELD_KEYBOARD,
-            choice(
-                Field::Keyboard,
-                form.keyboard()
-                    .map_or_else(|| form.inherited(Field::Keyboard), text::keyboard_name),
-            ),
-        ),
-    ];
-    for (offset, (field, label, value)) in rows.into_iter().enumerate() {
-        let row = Rect {
-            y: inner.y + offset as u16,
-            height: 1,
-            ..inner
-        };
-        draw_field_row(frame, row, form, field, label, value, theme);
-        layout.fields.push((field, row));
+    draw_field_row(frame, scope, form, Field::Scope, theme);
+    if form.has_project() {
+        layout.fields.push((Field::Scope, scope));
     }
 
-    let numbers = [
-        (Field::PageSize, text::FIELD_PAGE_SIZE),
-        (Field::RowCap, text::FIELD_ROW_CAP),
-        (Field::Budget, text::FIELD_BUDGET),
-    ];
-    for (offset, (field, label)) in (2u16..).zip(numbers) {
-        let Some(input) = form.input(field) else {
-            continue;
-        };
-        let chars: Vec<char> = input.text().chars().collect();
-        let mut spans = input_spans(
-            &chars,
-            input.cursor(),
-            NUMBER_WIDTH,
-            form.focus == field,
-            theme,
-        )
-        .0;
-        if input.text().is_empty() {
-            spans.push(Span::styled(form.inherited(field), theme.hint));
-        }
-        let row = Rect {
-            y: inner.y + offset,
-            height: 1,
-            ..inner
-        };
-        draw_field_row(frame, row, form, field, label, Line::from(spans), theme);
-        layout.fields.push((field, row));
-    }
-
-    let reopen = form.reopen_tabs().map_or_else(
-        || form.inherited(Field::ReopenTabs),
-        |value| text::on_off(value).to_owned(),
-    );
-    let keys = form.suggestion_keys().map_or_else(
-        || form.inherited(Field::SuggestionKeys),
-        |keys| text::suggestion_keys_name(keys).to_owned(),
-    );
-    let rows = [
-        (
-            Field::ReopenTabs,
-            text::FIELD_REOPEN_TABS,
-            choice(Field::ReopenTabs, reopen),
-        ),
-        (
-            Field::SuggestionKeys,
-            text::FIELD_SUGGESTION_KEYS,
-            choice(Field::SuggestionKeys, keys),
-        ),
-    ];
-    for (offset, (field, label, value)) in (5u16..).zip(rows) {
-        let row = Rect {
-            y: inner.y + offset,
-            height: 1,
-            ..inner
-        };
-        draw_field_row(frame, row, form, field, label, value, theme);
-        layout.fields.push((field, row));
-    }
-
-    let button_row = inner.bottom().saturating_sub(2);
+    let section = &SECTIONS[form.section];
     let content = Rect {
-        x: inner.x + LEFT,
-        y: button_row.saturating_sub(NOTE_ROWS),
-        width: inner.width.saturating_sub(LEFT + RIGHT),
-        height: NOTE_ROWS,
+        x: pane.x + LEFT,
+        y: pane.y + TITLE_ROW,
+        width: pane.width.saturating_sub(LEFT + RIGHT),
+        height: 1,
     };
+    frame.render_widget(
+        Paragraph::new(section.title.to_uppercase()).style(theme.panel_title),
+        content,
+    );
+    for (y, field) in (pane.y + FIRST_FIELD_ROW..).zip(section.fields) {
+        let row = Rect {
+            y,
+            height: 1,
+            ..pane
+        };
+        draw_field_row(frame, row, form, *field, theme);
+        layout.fields.push((*field, row));
+    }
+
+    let button_row = pane.bottom().saturating_sub(2);
     if let Some(note) = &form.note {
         // The note ends on the row above the buttons, and a long note goes up to the next row.
         let message = printable(note);

@@ -258,6 +258,10 @@ pub struct App {
     /// The theme of the terminal, before the choices of the configuration.
     terminal_theme: Theme,
     color_env: ColorEnv,
+    /// The `theme` and `icons` choices of the files.
+    appearance: (Option<ThemeName>, Option<IconName>),
+    /// The theme of the current frame. `choose_theme` writes it at the start of each
+    /// frame, so a change of tab or of a choice needs no other step.
     theme: Theme,
     layout: ScreenLayout,
     editor_ratio: u16,
@@ -347,6 +351,7 @@ impl App {
             clipboard,
             terminal_theme: theme,
             color_env,
+            appearance: options.appearance,
             theme: theme.with_choices(chosen_theme, chosen_icons, color_env),
             layout: ScreenLayout::default(),
             editor_ratio: DEFAULT_EDITOR_RATIO,
@@ -478,6 +483,32 @@ impl App {
 
     fn active_connection(&self) -> Option<&Connection> {
         self.console().connection.and_then(|id| self.connection(id))
+    }
+
+    /// Returns the connection of the open tab.
+    fn tab_connection(&self) -> Option<&Connection> {
+        match self.table() {
+            Some(tab) => self.connection(tab.connection),
+            None => self.active_connection(),
+        }
+    }
+
+    /// Returns the theme of the next frame. An open dialog shows its choice before the
+    /// save. After that, the connection of the open tab has priority over the default.
+    fn theme_choice(&self) -> Option<ThemeName> {
+        if let Some(form) = &self.settings_form {
+            return form.saved_theme();
+        }
+        let chosen = self.form.as_ref().and_then(|form| form.theme);
+        let connection = || self.tab_connection()?.definition.as_ref()?.theme;
+        chosen.or_else(connection).or(self.appearance.0)
+    }
+
+    fn choose_theme(&mut self) {
+        let (_, icons) = self.appearance;
+        self.theme = self
+            .terminal_theme
+            .with_choices(self.theme_choice(), icons, self.color_env);
     }
 
     /// Adds a question. It opens now, or after the questions before it.
@@ -701,6 +732,7 @@ impl App {
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
+        self.choose_theme();
         let area = frame.area();
         frame.render_widget(Block::new().style(self.theme.base), area);
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {

@@ -598,13 +598,25 @@ fn a_definition_round_trips_through_an_entry_without_the_password() {
 
     let mut target = SqliteTarget::new("data/app.db");
     target.foreign_keys = Some(true);
-    let sqlite = Definition::new("local", Source::Sqlite(target));
+    let mut sqlite = Definition::new("local", Source::Sqlite(target));
+    let plain = serde_json::to_string(&config::to_entry("id-1", &sqlite)).unwrap();
+    assert!(
+        !plain.contains("theme") && !plain.contains("icon"),
+        "{plain}"
+    );
+    sqlite.theme = Some(config::ThemeName::TokyoNight);
+    sqlite.icon = Some(config::ConnectionIcon::Snowflake);
     let entry = config::to_entry("id-1", &sqlite);
     assert_eq!(entry.kind, KindName::Sqlite);
+    let themed = serde_json::to_string(&entry).unwrap();
+    assert!(themed.contains("\"theme\":\"tokyo-night\""), "{themed}");
+    assert!(themed.contains("\"icon\":\"snowflake\""), "{themed}");
     // The file keeps the text of the user, so a project stays portable.
     assert_eq!(entry.file.as_deref(), Some("data/app.db"));
     assert_eq!(entry.credential, CredentialName::None);
     let back = config::to_definition(&entry, PathBuf::from("/base"));
+    assert_eq!(back.theme, Some(config::ThemeName::TokyoNight));
+    assert_eq!(back.icon, Some(config::ConnectionIcon::Snowflake));
     let Source::Sqlite(back_target) = &back.source else {
         panic!("sqlite")
     };

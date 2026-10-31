@@ -58,6 +58,9 @@ pub fn suggest_in(
     dialect: Dialect,
     catalog: Option<&Catalog>,
 ) -> Completion {
+    if dialect == Dialect::Redis {
+        return suggest_command(sql, cursor);
+    }
     let Some(analysis) = analyze(sql, statements, cursor, dialect) else {
         return Completion {
             replace: cursor..cursor,
@@ -65,9 +68,27 @@ pub fn suggest_in(
         };
     };
     let typed = sql[analysis.replace.clone()].to_owned();
-    let mut builder = Builder::new(&analysis, dialect);
+    let mut builder = Builder::new(&analysis.prefix, analysis.quote, dialect);
     builder.fill(&analysis, catalog);
     builder.finish(analysis.replace, &typed)
+}
+
+/// Suggests a command at the start of a line. The arguments have no suggestions.
+fn suggest_command(sql: &str, cursor: usize) -> Completion {
+    let line = sql[..cursor].rsplit('\n').next().unwrap_or("");
+    let typed = line.trim_start();
+    if !typed
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Completion {
+            replace: cursor..cursor,
+            ..Completion::default()
+        };
+    }
+    let mut builder = Builder::new(typed, None, Dialect::Redis);
+    keywords::starters(Dialect::Redis).for_each(|word| builder.add_keyword(word));
+    builder.finish(cursor - typed.len()..cursor, typed)
 }
 
 struct Ranked {
@@ -85,13 +106,13 @@ struct Builder {
 }
 
 impl Builder {
-    fn new(analysis: &Analysis, dialect: Dialect) -> Self {
-        let typed_lowercase = analysis.prefix.chars().any(char::is_lowercase)
-            && !analysis.prefix.chars().any(char::is_uppercase);
+    fn new(prefix: &str, quote: Option<char>, dialect: Dialect) -> Self {
+        let typed_lowercase =
+            prefix.chars().any(char::is_lowercase) && !prefix.chars().any(char::is_uppercase);
         Self {
-            needle: analysis.prefix.to_lowercase(),
+            needle: prefix.to_lowercase(),
             uppercase_keywords: !typed_lowercase,
-            quote: analysis.quote,
+            quote,
             dialect,
             items: Vec::new(),
             missing_columns: Vec::new(),

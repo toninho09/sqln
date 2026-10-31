@@ -16,8 +16,9 @@ use crate::connector::target::{
     Address, ClientCertificate, Engine, NetworkTarget, Secret, Tls, TlsFiles, parse_uri,
 };
 use crate::exec::ConnectionId;
+use crate::settings::next_optional;
 use crate::store::Scope;
-use crate::store::config::CredentialName;
+use crate::store::config::{ConnectionIcon, CredentialName, ThemeName};
 use crate::ui::text;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -44,6 +45,8 @@ pub enum Field {
     ReadOnly,
     ConnectTimeout,
     SqlTimeout,
+    Theme,
+    Icon,
     Test,
     Save,
     Disconnect,
@@ -67,7 +70,9 @@ impl Field {
             | Field::Entry
             | Field::Credential
             | Field::Tls
-            | Field::ForeignKeys => FieldStyle::Choice,
+            | Field::ForeignKeys
+            | Field::Theme
+            | Field::Icon => FieldStyle::Choice,
             Field::ReadOnly => FieldStyle::Flag,
             Field::Password => FieldStyle::Secret,
             Field::Test | Field::Save | Field::Disconnect | Field::Cancel => FieldStyle::Button,
@@ -81,6 +86,19 @@ pub enum Kind {
     Postgres,
     MySql,
     Sqlite,
+    Redis,
+}
+
+impl Kind {
+    /// Returns the engine of a network connection. SQLite has no engine.
+    fn engine(self) -> Option<Engine> {
+        match self {
+            Kind::Postgres => Some(Engine::Postgres),
+            Kind::MySql => Some(Engine::MySql),
+            Kind::Redis => Some(Engine::Redis),
+            Kind::Sqlite => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,8 +121,9 @@ pub enum FormNote {
 pub struct ConnectionForm {
     /// The connection that this form edits.
     pub editing: Option<ConnectionId>,
-    /// True while the connection is connected, so only its name can change.
-    pub name_only: bool,
+    /// True while the connection is connected. Only its name, its theme, and its icon
+    /// can change, because these values need no new session.
+    pub display_only: bool,
     pub kind: Kind,
     pub credential: CredentialName,
     /// The stable identity of a new definition, including tests before its first save.
@@ -114,6 +133,10 @@ pub struct ConnectionForm {
     /// `None` keeps the default of SQLite.
     pub foreign_keys: Option<bool>,
     pub read_only: bool,
+    /// `None` uses the default theme.
+    pub theme: Option<ThemeName>,
+    /// `None` uses the icon of the database.
+    pub icon: Option<ConnectionIcon>,
     /// The scope of a new connection. The scope of a saved connection does not change.
     pub scope: Scope,
     /// True when a project is open, so the form can offer its scope.
@@ -156,7 +179,7 @@ impl ConnectionForm {
     pub fn new() -> Self {
         let mut form = Self {
             editing: None,
-            name_only: false,
+            display_only: false,
             stored_file: None,
             kind: Kind::Postgres,
             credential: CredentialName::Session,
@@ -165,6 +188,8 @@ impl ConnectionForm {
             verify_tls: true,
             foreign_keys: None,
             read_only: false,
+            theme: None,
+            icon: None,
             scope: Scope::Global,
             project_available: false,
             focus: Field::Kind,
@@ -192,13 +217,15 @@ impl ConnectionForm {
     }
 
     /// Fills the form from a definition. The password stays in the form, in memory.
-    pub fn editing(id: ConnectionId, definition: &Definition, name_only: bool) -> Self {
+    pub fn editing(id: ConnectionId, definition: &Definition, display_only: bool) -> Self {
         let mut form = Self::new();
         form.editing = Some(id);
-        form.name_only = name_only;
+        form.display_only = display_only;
         form.focus = Field::Name;
         form.tls_chosen = true;
         form.read_only = definition.read_only;
+        form.theme = definition.theme;
+        form.icon = definition.icon;
         form.set(Field::Name, definition.name.clone());
         form.set(Field::Pool, definition.max_connections.to_string());
         form.set(
@@ -228,6 +255,7 @@ impl ConnectionForm {
         self.kind = match target.engine {
             Engine::Postgres => Kind::Postgres,
             Engine::MySql => Kind::MySql,
+            Engine::Redis => Kind::Redis,
         };
         match &target.address {
             Address::Tcp { host, port } => {
@@ -271,8 +299,15 @@ impl ConnectionForm {
 
     /// Lists the visible fields, in order.
     pub fn fields(&self) -> Vec<Field> {
-        if self.name_only {
-            return vec![Field::Name, Field::Disconnect, Field::Save, Field::Cancel];
+        if self.display_only {
+            return vec![
+                Field::Name,
+                Field::Theme,
+                Field::Icon,
+                Field::Disconnect,
+                Field::Save,
+                Field::Cancel,
+            ];
         }
         let mut fields = vec![Field::Kind, Field::Name];
         if self.project_available && self.editing.is_none() {
@@ -299,8 +334,14 @@ impl ConnectionForm {
         if self.kind != Kind::Sqlite {
             fields.push(Field::ConnectTimeout);
         }
-        fields.push(Field::SqlTimeout);
-        fields.extend([Field::Test, Field::Save, Field::Cancel]);
+        fields.extend([
+            Field::SqlTimeout,
+            Field::Theme,
+            Field::Icon,
+            Field::Test,
+            Field::Save,
+            Field::Cancel,
+        ]);
         fields
     }
 
@@ -324,7 +365,7 @@ impl ConnectionForm {
     fn change(&mut self, forward: bool) {
         match self.focus {
             Field::Kind => {
-                let order = [Kind::Postgres, Kind::MySql, Kind::Sqlite];
+                let order = [Kind::Postgres, Kind::MySql, Kind::Sqlite, Kind::Redis];
                 let index = order
                     .iter()
                     .position(|kind| *kind == self.kind)
@@ -361,6 +402,8 @@ impl ConnectionForm {
                 self.foreign_keys = order[(index + step) % order.len()];
             }
             Field::ReadOnly => self.read_only = !self.read_only,
+            Field::Theme => self.theme = next_optional(&ThemeName::ALL, self.theme, forward),
+            Field::Icon => self.icon = next_optional(&ConnectionIcon::ALL, self.icon, forward),
             _ => {}
         }
     }
@@ -514,7 +557,7 @@ impl ConnectionForm {
             return Err(text::FORM_NEEDS_HOST.to_owned());
         }
         let user = self.trimmed(Field::User);
-        if user.is_empty() {
+        if user.is_empty() && engine.needs_user() {
             return Err(text::FORM_NEEDS_USER.to_owned());
         }
         let address = if host.starts_with('/') {
@@ -533,6 +576,9 @@ impl ConnectionForm {
         };
         let tls = self.tls()?;
         let database = Some(self.trimmed(Field::Database)).filter(|text| !text.is_empty());
+        if database.is_some_and(|name| !engine.accepts_database(name)) {
+            return Err(text::FORM_REDIS_DATABASE.to_owned());
+        }
         Ok(NetworkTarget {
             engine,
             address,
@@ -584,12 +630,10 @@ impl ConnectionForm {
         if name.is_empty() {
             return Err(text::FORM_NEEDS_NAME.to_owned());
         }
-        let source = match (self.kind, self.use_uri) {
-            (Kind::Sqlite, _) => Source::Sqlite(self.sqlite_target()?),
-            (Kind::Postgres, true) => Source::Network(self.uri_target(Engine::Postgres)?),
-            (Kind::MySql, true) => Source::Network(self.uri_target(Engine::MySql)?),
-            (Kind::Postgres, false) => Source::Network(self.network_target(Engine::Postgres)?),
-            (Kind::MySql, false) => Source::Network(self.network_target(Engine::MySql)?),
+        let source = match self.kind.engine() {
+            None => Source::Sqlite(self.sqlite_target()?),
+            Some(engine) if self.use_uri => Source::Network(self.uri_target(engine)?),
+            Some(engine) => Source::Network(self.network_target(engine)?),
         };
         let limit = self.number(Field::Pool, text::FIELD_POOL)?;
         if limit == 0 {
@@ -597,6 +641,8 @@ impl ConnectionForm {
         }
         let mut definition = Definition::new(name, source);
         definition.read_only = self.read_only;
+        definition.theme = self.theme;
+        definition.icon = self.icon;
         definition.max_connections = usize::try_from(limit).unwrap_or(usize::MAX);
         if self.kind != Kind::Sqlite {
             let seconds = self.number(Field::ConnectTimeout, text::FIELD_CONNECT)?;

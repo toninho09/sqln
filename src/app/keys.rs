@@ -6,11 +6,11 @@ use super::{App, DialogAction, Overlay, PickerKind};
 use crate::connector::{Namespace, TransactionCommand, TransactionState};
 use crate::console::{AfterTransaction, Focus, GridAction, Phase};
 use crate::editor::{KeyboardMode, RunRefusal, RunScope};
-use crate::exec::RunOptions;
+use crate::exec::{ConnectionId, RunOptions};
 use crate::form::FormRequest;
 use crate::input::{Action, Chord, Lookup, Region};
 use crate::palette::{Command, Palette, PaletteRequest};
-use crate::settings::SettingsRequest;
+use crate::settings::{self, SettingsRequest};
 use crate::table::TableFocus;
 use crate::ui::name::NameAction;
 use crate::ui::statusline::{HintItem, hint_text};
@@ -402,14 +402,18 @@ impl App {
         let console = &mut self.consoles[index];
         match console.editor.plan_run(scope) {
             Ok(plan) => {
-                let options = RunOptions {
-                    manual: console.manual,
-                    schema: console.schema.clone(),
-                    row_cap: None,
-                };
                 let Some(connection) = console.connection else {
                     return;
                 };
+                let manual = console.manual;
+                let schema = console.schema.clone();
+                // A console can keep its manual mode when it moves to another source.
+                let options = RunOptions {
+                    manual: manual && self.has_transactions(connection),
+                    schema,
+                    row_cap: None,
+                };
+                let console = &self.consoles[index];
                 let revision = console.editor.revision();
                 let console = console.id;
                 self.authorize(
@@ -708,6 +712,11 @@ impl App {
             .collect()
     }
 
+    fn has_transactions(&self, connection: ConnectionId) -> bool {
+        self.connection(connection)
+            .is_none_or(|item| item.capabilities.transactions)
+    }
+
     /// Returns true when an action has an effect in the current state.
     fn command_available(&self, action: Action) -> bool {
         let console = self.console();
@@ -724,6 +733,9 @@ impl App {
             Action::ToggleMode => !in_table && idle && transactions,
             Action::Commit | Action::Rollback => !in_table && idle && console.in_transaction(),
             Action::ChooseSchema => !in_table && idle && namespace && !console.in_transaction(),
+            Action::GridFocusFilter | Action::GridFocusOrder | Action::GridSortColumn => {
+                self.table().is_none_or(|tab| tab.filters)
+            }
             Action::RenameConsole | Action::ChangeConnection => !in_table,
             Action::FocusLeft => !self.navigator.collapsed && !self.navigator_focused,
             Action::FocusRight => self.navigator_focused,
@@ -833,8 +845,12 @@ impl App {
             text::AUTH_PASSWORD_HINT
         } else if self.rename.is_some() {
             text::HINT_NAME
-        } else if self.settings_form.is_some() {
-            text::HINT_SETTINGS
+        } else if let Some(form) = &self.settings_form {
+            if form.focus == settings::Field::Sections {
+                text::HINT_SETTINGS_SECTIONS
+            } else {
+                text::HINT_SETTINGS
+            }
         } else if self.conflicts.is_some() {
             text::HINT_CONFLICTS
         } else if let Some(picker) = &self.picker {
@@ -873,7 +889,7 @@ impl App {
                 _ if tab.list.is_some() => return self.list_hint(text::LIST_FILTER_KEYS),
                 TableFocus::Grid if tab.result.search.is_some() => text::HINT_GRID_SEARCH,
                 TableFocus::Grid => {
-                    return self.hint_parts(&[
+                    let items = [
                         (Action::GridFocusFilter, "where"),
                         (Action::GridFocusOrder, "order by"),
                         (Action::GridSortColumn, "sort"),
@@ -885,7 +901,13 @@ impl App {
                             if tab.pending { "load" } else { "value" },
                         ),
                         (Action::Help, "keys"),
-                    ]);
+                    ];
+                    let items = items.map(|item| (self.command_available(item.0), item));
+                    let shown: Vec<_> = items
+                        .into_iter()
+                        .filter_map(|(available, item)| available.then_some(item))
+                        .collect();
+                    return self.hint_parts(&shown);
                 }
                 _ => text::HINT_FILTER,
             }

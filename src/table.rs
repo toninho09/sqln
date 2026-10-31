@@ -9,6 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::catalog::{Catalog, RelationRef};
 use crate::complete::{quote_name, suggest};
+use crate::connector::redis::value_page;
 use crate::console::{Message, MessageLevel, Phase, RunClock};
 use crate::editor::SuggestionList;
 use crate::exec::{
@@ -64,6 +65,8 @@ pub struct TableTab {
     pub connection: ConnectionId,
     pub relation: RelationRef,
     pub is_view: bool,
+    /// False for a source without SQL. The tab then shows a value, without its fields.
+    pub filters: bool,
     pub result: ResultTab,
     pub focus: TableFocus,
     pub filter: LineInput,
@@ -121,6 +124,9 @@ pub fn page_sql(
     page_size: usize,
     offset: usize,
 ) -> Result<String, String> {
+    if dialect == Dialect::Redis {
+        return Ok(value_page(relation, offset, page_size.saturating_add(1)));
+    }
     let mut sql = format!("SELECT * FROM {}", from_clause(relation, dialect));
     if !filter.is_empty() {
         sql.push_str("\nWHERE ");
@@ -180,6 +186,7 @@ impl TableTab {
             connection,
             relation,
             is_view,
+            filters: true,
             result: ResultTab::new(0, Vec::new()),
             focus: TableFocus::Grid,
             filter: LineInput::default(),
@@ -261,7 +268,16 @@ impl TableTab {
     }
 
     pub fn label(&self) -> String {
-        text::table_label(&self.relation.relation, self.is_view)
+        text::table_label(&self.relation.relation, self.kind())
+    }
+
+    /// Returns the word that names what this tab shows.
+    pub fn kind(&self) -> &'static str {
+        match (self.filters, self.is_view) {
+            (false, _) => "key",
+            (true, true) => "view",
+            (true, false) => "table",
+        }
     }
 
     /// Returns true for the same relation of the same connection.
@@ -298,6 +314,9 @@ impl TableTab {
         dialect: Dialect,
         budget: &Budget,
     ) -> Option<PageRequest> {
+        if !self.filters {
+            return None;
+        }
         let name = self.result.table.columns.get(column)?.clone();
         let order = clicked_order(&self.applied_order, &name, dialect);
         self.order.set(&order);

@@ -223,9 +223,7 @@ impl App {
         }
         self.keymap = config.keymap;
         self.suggestion_keys = config.suggestion_keys;
-        self.theme = self
-            .terminal_theme
-            .with_choices(config.theme, config.icons, self.color_env);
+        self.appearance = (config.theme, config.icons);
         if config.keyboard != self.keyboard {
             self.set_keyboard(config.keyboard);
         }
@@ -308,7 +306,10 @@ impl App {
         let id = self.connections[index].id;
         let mut definition = item.definition;
         let same_credential = self.connections[index].credential == item.credential;
-        if let Some(current) = &self.connections[index].definition {
+        if let Some(current) = &mut self.connections[index].definition {
+            // These values need no new session, so they apply to a connection in use too.
+            current.theme = definition.theme;
+            current.icon = definition.icon;
             if same_credential {
                 definition.keep_password_of(current);
             }

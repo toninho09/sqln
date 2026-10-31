@@ -33,6 +33,7 @@ impl fmt::Debug for Secret {
 pub enum Engine {
     Postgres,
     MySql,
+    Redis,
 }
 
 impl Engine {
@@ -40,7 +41,18 @@ impl Engine {
         match self {
             Engine::Postgres => 5432,
             Engine::MySql => 3306,
+            Engine::Redis => 6379,
         }
+    }
+
+    /// Returns false for a source that works without a user name.
+    pub fn needs_user(self) -> bool {
+        self != Engine::Redis
+    }
+
+    /// Returns true when the database name has a valid form for this source.
+    pub fn accepts_database(self, name: &str) -> bool {
+        self != Engine::Redis || name.parse::<u32>().is_ok()
     }
 }
 
@@ -244,10 +256,12 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
     let (scheme, rest) = uri
         .split_once("://")
         .ok_or("The connection text needs a scheme.")?;
-    let engine = match scheme.to_ascii_lowercase().as_str() {
+    let scheme = scheme.to_ascii_lowercase();
+    let engine = match scheme.as_str() {
         "postgres" | "postgresql" => Engine::Postgres,
         "mysql" | "mariadb" => Engine::MySql,
-        _ => return Err("The scheme must be postgres or mysql.".to_owned()),
+        "redis" | "rediss" | "valkey" | "valkeys" => Engine::Redis,
+        _ => return Err("The scheme must be postgres, mysql, or redis.".to_owned()),
     };
     let (location, query) = rest.split_once('?').unwrap_or((rest, ""));
     let (authority, path) = location.split_once('/').unwrap_or((location, ""));
@@ -258,7 +272,7 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
         None => (credentials, None),
     };
     let user = percent_decode(user, "user")?;
-    if user.is_empty() {
+    if user.is_empty() && engine.needs_user() {
         return Err("The connection text needs a user.".to_owned());
     }
     let password = password
@@ -268,8 +282,20 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
     let database = (!path.is_empty())
         .then(|| percent_decode(path, "database"))
         .transpose()?;
+    if database
+        .as_deref()
+        .is_some_and(|name| !engine.accepts_database(name))
+    {
+        return Err("The Redis database must be a number.".to_owned());
+    }
 
     let mut parameters = Parameters::parse(query)?;
+    if matches!(scheme.as_str(), "rediss" | "valkeys") {
+        if parameters.tls_mode.as_deref() == Some("disable") {
+            return Err("This scheme always uses TLS, so sslmode=disable is not valid.".to_owned());
+        }
+        parameters.tls_mode = Some("verify-full".to_owned());
+    }
     let (host, port) = split_port(place)?;
     let host = percent_decode(host, "host")?;
     let address = match parameters.socket.take() {

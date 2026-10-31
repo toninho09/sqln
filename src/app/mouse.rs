@@ -398,6 +398,13 @@ impl App {
             return;
         }
         let position = Position::new(mouse.column, mouse.row);
+        let sections = &self.layout.settings.sections;
+        if let Some(section) = sections.iter().position(|area| area.contains(position)) {
+            if let Some(form) = &mut self.settings_form {
+                form.open_section(section);
+            }
+            return;
+        }
         let field = self
             .layout
             .settings

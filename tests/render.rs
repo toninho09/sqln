@@ -121,6 +121,7 @@ fn the_selected_row_stays_visible_in_a_long_list() {
                 kind: RelationKind::Table,
                 columns: Columns::Loaded(columns),
             }],
+            partial: false,
         }],
         current_schema: None,
     };
@@ -209,6 +210,7 @@ fn external_names_cannot_send_terminal_sequences() {
                 kind: RelationKind::Table,
                 columns: Columns::NotLoaded,
             }],
+            partial: false,
         }],
         current_schema: None,
     };

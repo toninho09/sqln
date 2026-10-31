@@ -1,10 +1,11 @@
-//! Styles. The `astrodark` theme uses RGB colors, and it needs a truecolor terminal.
+//! Styles. The themes of `schemes` use RGB colors, and they need a truecolor terminal.
 //! The `ansi` theme uses the colors of the terminal profile. `NO_COLOR` gives the
 //! `plain` theme, which has no color.
 
 use ratatui::style::{Color, Modifier, Style};
 
 use super::icons::Icons;
+use super::schemes::{self, Scheme};
 use crate::store::config::{IconName, ThemeName};
 
 /// What the terminal environment says about colors.
@@ -116,46 +117,6 @@ pub struct Theme {
     pub button_marks: (&'static str, &'static str),
 }
 
-/// The colors of the `astrodark` palette of AstroTheme.
-mod astro {
-    use ratatui::style::Color;
-
-    const fn rgb(value: u32) -> Color {
-        Color::from_u32(value)
-    }
-
-    pub const RED: Color = rgb(0xFF838B);
-    pub const ORANGE: Color = rgb(0xF5983A);
-    pub const GREEN: Color = rgb(0x87C05F);
-    pub const CYAN: Color = rgb(0x4AC2B8);
-    pub const BLUE: Color = rgb(0x5EB7FF);
-    pub const PURPLE: Color = rgb(0xDD97F1);
-    pub const TEXT: Color = rgb(0xADB0BB);
-    pub const COMMENT: Color = rgb(0x696C76);
-    pub const UI_RED: Color = rgb(0xF8747E);
-    pub const UI_ORANGE: Color = rgb(0xEB8332);
-    pub const UI_YELLOW: Color = rgb(0xD09214);
-    pub const UI_GREEN: Color = rgb(0x75AD47);
-    pub const UI_CYAN: Color = rgb(0x00B298);
-    pub const UI_PURPLE: Color = rgb(0xCC83E3);
-    pub const ACCENT: Color = rgb(0x50A4E9);
-    pub const BASE: Color = rgb(0x1A1D23);
-    pub const PANEL: Color = rgb(0x16181D);
-    pub const FLOAT: Color = rgb(0x14161B);
-    pub const DARK: Color = rgb(0x111317);
-    pub const BORDER: Color = rgb(0x3A3E47);
-    pub const CURRENT_LINE: Color = rgb(0x1E222A);
-    pub const SELECTION: Color = rgb(0x26343F);
-    pub const HIGHLIGHT: Color = rgb(0x23272F);
-    pub const PROMPT: Color = rgb(0x21242A);
-    pub const UI_TEXT: Color = rgb(0x9B9FA9);
-    pub const INACTIVE: Color = rgb(0x494D56);
-    pub const WINBAR: Color = rgb(0x797D87);
-    pub const MATCH: Color = rgb(0xE0E0EE);
-    /// A dark tone of the palette yellow, for the background of a search match.
-    pub const SEARCH: Color = rgb(0x4A3A12);
-}
-
 impl Theme {
     pub fn from_env() -> Self {
         Self::automatic(ColorEnv::read())
@@ -172,6 +133,20 @@ impl Theme {
         }
     }
 
+    /// Returns the theme of a name.
+    pub fn named(name: ThemeName, env: ColorEnv) -> Self {
+        match name {
+            ThemeName::Auto => Self::automatic(env),
+            ThemeName::Astrodark => Self::astrodark(),
+            ThemeName::Ansi => Self::ansi(),
+            ThemeName::TokyoNight => Self::from_scheme(&schemes::TOKYO_NIGHT),
+            ThemeName::CatppuccinMocha => Self::from_scheme(&schemes::CATPPUCCIN_MOCHA),
+            ThemeName::CatppuccinLatte => Self::from_scheme(&schemes::CATPPUCCIN_LATTE),
+            ThemeName::Gruvbox => Self::from_scheme(&schemes::GRUVBOX),
+            ThemeName::Nord => Self::from_scheme(&schemes::NORD),
+        }
+    }
+
     /// Applies the choices of the configuration to this theme. `NO_COLOR` has priority
     /// over the configuration, and a choice without a value keeps this theme.
     pub fn with_choices(
@@ -183,12 +158,7 @@ impl Theme {
         if env.no_color {
             return Self::plain();
         }
-        let chosen = match theme {
-            None => self,
-            Some(ThemeName::Auto) => Self::automatic(env),
-            Some(ThemeName::Astrodark) => Self::astrodark(),
-            Some(ThemeName::Ansi) => Self::ansi(),
-        };
+        let chosen = theme.map_or(self, |name| Self::named(name, env));
         // The plain set stays, because that theme identifies an item by its text.
         match icons {
             Some(_) if chosen.icons == Icons::plain() => chosen,
@@ -228,89 +198,96 @@ impl Theme {
     }
 
     pub fn astrodark() -> Self {
-        use astro::*;
+        Self::from_scheme(&schemes::ASTRODARK)
+    }
+
+    /// Gives each color of a scheme its places in the interface.
+    pub fn from_scheme(s: &Scheme) -> Self {
         let color = |color| Style::new().fg(color);
         let fill = |background| Style::new().bg(background);
         let label = |background| {
             Style::new()
                 .bg(background)
-                .fg(DARK)
+                .fg(s.label_text)
                 .add_modifier(Modifier::BOLD)
         };
         let bold = Modifier::BOLD;
-        let cursor = Style::new().bg(TEXT).fg(BASE);
+        let cursor = Style::new().bg(s.text).fg(s.base);
         Self {
-            keyword: color(PURPLE),
-            string: color(GREEN),
-            number: color(ORANGE),
-            identifier: color(CYAN),
-            comment: color(COMMENT).add_modifier(Modifier::ITALIC),
-            gutter: color(INACTIVE),
+            keyword: color(s.purple),
+            string: color(s.green),
+            number: color(s.orange),
+            identifier: color(s.cyan),
+            comment: color(s.comment).add_modifier(Modifier::ITALIC),
+            gutter: color(s.inactive),
             cursor,
-            selection: fill(SELECTION),
-            search_match: Style::new().bg(SEARCH).fg(MATCH),
-            search_current: Style::new().bg(UI_YELLOW).fg(DARK),
-            list: Style::new().bg(FLOAT).fg(TEXT),
-            list_selected: Style::new().bg(SELECTION).fg(MATCH),
-            list_detail: Style::new().bg(FLOAT).fg(COMMENT),
-            hint: color(COMMENT),
-            status: color(UI_YELLOW),
-            bar: color(WINBAR),
-            header: Style::new().bg(PANEL).fg(BLUE).add_modifier(bold),
-            null: color(COMMENT).add_modifier(Modifier::ITALIC),
+            selection: fill(s.selection),
+            search_match: Style::new().bg(s.search).fg(s.strong),
+            search_current: Style::new().bg(s.ui_yellow).fg(s.label_text),
+            list: Style::new().bg(s.float).fg(s.text),
+            list_selected: Style::new().bg(s.selection).fg(s.strong),
+            list_detail: Style::new().bg(s.float).fg(s.comment),
+            hint: color(s.comment),
+            status: color(s.ui_yellow),
+            bar: color(s.winbar),
+            header: Style::new().bg(s.panel).fg(s.blue).add_modifier(bold),
+            null: color(s.comment).add_modifier(Modifier::ITALIC),
             cell_cursor: cursor,
-            cell_selected: fill(SELECTION),
-            tab: Style::new().bg(DARK).fg(WINBAR),
-            tab_active: Style::new().bg(BASE).fg(TEXT).add_modifier(bold),
-            tab_close: color(COMMENT).remove_modifier(bold),
-            run_active: label(UI_ORANGE),
-            run_done: label(UI_GREEN),
-            run_failed: label(UI_RED),
-            run_stopped: label(COMMENT),
-            mark_good: color(GREEN),
-            mark_bad: color(RED),
-            mark_neutral: color(UI_YELLOW),
-            error: color(RED),
-            error_spot: color(RED).add_modifier(Modifier::UNDERLINED),
-            dialog: Style::new().bg(FLOAT).fg(TEXT),
-            dialog_option: Style::new().bg(HIGHLIGHT).fg(TEXT),
-            dialog_focus: Style::new().bg(ACCENT).fg(DARK).add_modifier(bold),
-            tree_selected: Style::new().bg(SELECTION).fg(MATCH),
-            tree_detail: color(COMMENT),
-            divider: color(BORDER),
-            control: color(BLUE),
-            control_off: color(INACTIVE),
-            base: Style::new().bg(BASE).fg(TEXT),
-            panel: Style::new().bg(PANEL).fg(UI_TEXT),
-            panel_title: color(COMMENT).add_modifier(bold),
-            panel_title_focused: color(ACCENT).add_modifier(bold),
-            tabline: fill(DARK),
-            tab_mark: Style::new().bg(BASE).fg(ACCENT),
-            result_tab: color(COMMENT),
-            result_tab_active: color(TEXT).add_modifier(bold),
-            tree_cursor: fill(HIGHLIGHT),
-            statusline: Style::new().bg(DARK).fg(UI_TEXT),
-            status_detail: Style::new().bg(DARK).fg(COMMENT),
-            status_warning: Style::new().bg(DARK).fg(UI_ORANGE).add_modifier(bold),
-            status_error: Style::new().bg(DARK).fg(UI_RED).add_modifier(bold),
-            label_editor: label(ACCENT),
-            label_insert: label(UI_GREEN),
-            label_visual: label(UI_PURPLE),
-            label_results: label(UI_CYAN),
-            label_explorer: label(UI_ORANGE),
-            float_border: color(BORDER),
-            float_title: color(ACCENT).add_modifier(bold),
-            cursor_line: fill(CURRENT_LINE),
-            gutter_current: color(TEXT).add_modifier(bold),
-            scrollbar_thumb: color(ACCENT),
-            scrollbar_track: color(HIGHLIGHT),
-            row_number: color(INACTIVE),
-            grid_line: fill(CURRENT_LINE),
-            grid_rule: color(HIGHLIGHT),
-            field: fill(PROMPT),
-            field_focus: Style::new().bg(SELECTION).fg(MATCH),
-            key: color(BLUE).add_modifier(bold),
-            welcome_title: color(ACCENT).add_modifier(bold),
+            cell_selected: fill(s.selection),
+            tab: Style::new().bg(s.deep).fg(s.winbar),
+            tab_active: Style::new().bg(s.base).fg(s.text).add_modifier(bold),
+            tab_close: color(s.comment).remove_modifier(bold),
+            run_active: label(s.ui_orange),
+            run_done: label(s.ui_green),
+            run_failed: label(s.ui_red),
+            run_stopped: label(s.comment),
+            mark_good: color(s.green),
+            mark_bad: color(s.red),
+            mark_neutral: color(s.ui_yellow),
+            error: color(s.red),
+            error_spot: color(s.red).add_modifier(Modifier::UNDERLINED),
+            dialog: Style::new().bg(s.float).fg(s.text),
+            dialog_option: Style::new().bg(s.highlight).fg(s.text),
+            dialog_focus: Style::new()
+                .bg(s.accent)
+                .fg(s.label_text)
+                .add_modifier(bold),
+            tree_selected: Style::new().bg(s.selection).fg(s.strong),
+            tree_detail: color(s.comment),
+            divider: color(s.border),
+            control: color(s.blue),
+            control_off: color(s.inactive),
+            base: Style::new().bg(s.base).fg(s.text),
+            panel: Style::new().bg(s.panel).fg(s.ui_text),
+            panel_title: color(s.comment).add_modifier(bold),
+            panel_title_focused: color(s.accent).add_modifier(bold),
+            tabline: fill(s.deep),
+            tab_mark: Style::new().bg(s.base).fg(s.accent),
+            result_tab: color(s.comment),
+            result_tab_active: color(s.text).add_modifier(bold),
+            tree_cursor: fill(s.highlight),
+            statusline: Style::new().bg(s.deep).fg(s.ui_text),
+            status_detail: Style::new().bg(s.deep).fg(s.comment),
+            status_warning: Style::new().bg(s.deep).fg(s.ui_orange).add_modifier(bold),
+            status_error: Style::new().bg(s.deep).fg(s.ui_red).add_modifier(bold),
+            label_editor: label(s.accent),
+            label_insert: label(s.ui_green),
+            label_visual: label(s.ui_purple),
+            label_results: label(s.ui_cyan),
+            label_explorer: label(s.ui_orange),
+            float_border: color(s.border),
+            float_title: color(s.accent).add_modifier(bold),
+            cursor_line: fill(s.current_line),
+            gutter_current: color(s.text).add_modifier(bold),
+            scrollbar_thumb: color(s.accent),
+            scrollbar_track: color(s.highlight),
+            row_number: color(s.inactive),
+            grid_line: fill(s.current_line),
+            grid_rule: color(s.highlight),
+            field: fill(s.prompt),
+            field_focus: Style::new().bg(s.selection).fg(s.strong),
+            key: color(s.blue).add_modifier(bold),
+            welcome_title: color(s.accent).add_modifier(bold),
             icons: Icons::unicode(),
             button_marks: (" ", " "),
         }

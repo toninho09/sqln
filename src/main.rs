@@ -39,6 +39,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
                     Some("postgres") => Dialect::Postgres,
                     Some("mysql") => Dialect::MySql,
                     Some("sqlite") => Dialect::Sqlite,
+                    Some("redis") => Dialect::Redis,
                     other => return Err(format!("Unknown dialect: {}", other.unwrap_or(""))),
                 });
             }

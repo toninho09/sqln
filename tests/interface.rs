@@ -15,16 +15,17 @@ use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, Mo
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
-use ratatui::style::{Color, Modifier};
+use ratatui::style::{Color, Modifier, Style};
 use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
 use sqln::console::Focus;
 use sqln::editor::KeyboardMode;
 use sqln::form::{ConnectionForm, Field, FormNote};
 use sqln::input::Keymap;
-use sqln::store::config::{IconName, ThemeName};
+use sqln::store::config::{ConnectionIcon, IconName, ThemeName};
 use sqln::store::{Root, Store};
-use sqln::ui::icons::Icons;
+use sqln::ui::icons::{Icons, connection_symbol};
+use sqln::ui::schemes;
 use sqln::ui::theme::{ColorEnv, Theme};
 use sqln::ui::which_key::widest_row;
 use sqln::ui::{MainTab, TabView, draw_main_tabs, text};
@@ -280,6 +281,171 @@ fn each_symbol_of_each_set_fills_one_column_per_character() {
             assert_eq!(symbol.width(), symbol.chars().count(), "{symbol:?}");
         }
     }
+}
+
+#[test]
+fn each_connection_icon_has_its_own_symbol_of_one_column() {
+    let symbols: Vec<&str> = ConnectionIcon::ALL.map(connection_symbol).to_vec();
+    for (index, symbol) in symbols.iter().enumerate() {
+        assert_eq!(symbol.width(), 1, "{symbol:?}");
+        assert_eq!(symbol.chars().count(), 1, "{symbol:?}");
+        assert!(!symbols[index + 1..].contains(symbol), "{symbol:?}");
+    }
+}
+
+#[test]
+fn each_name_gives_its_own_theme_and_a_place_in_the_file() {
+    let env = ColorEnv {
+        no_color: false,
+        truecolor: true,
+    };
+    let themes: Vec<Theme> = ThemeName::ALL
+        .iter()
+        .filter(|name| **name != ThemeName::Auto)
+        .map(|name| Theme::named(*name, env))
+        .collect();
+    for (index, theme) in themes.iter().enumerate() {
+        assert!(!themes[index + 1..].contains(theme), "{index}");
+    }
+    for name in ThemeName::ALL {
+        let value = serde_json::to_string(&name).unwrap();
+        let (store, _) = themed_store("theme-name", &format!(r#"{{"theme":{value}}}"#));
+        let config = sqln::store::config::load(&store).config.unwrap();
+        assert_eq!(config.theme, Some(name));
+    }
+}
+
+/// Returns the contrast of two RGB colors, with the formula of WCAG.
+fn contrast(first: Color, second: Color) -> f64 {
+    let luminance = |color: Color| {
+        let Color::Rgb(red, green, blue) = color else {
+            panic!("{color:?}");
+        };
+        let channel = |value: u8| {
+            let value = f64::from(value) / 255.0;
+            if value <= 0.03928 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+    };
+    let (first, second) = (luminance(first), luminance(second));
+    (first.max(second) + 0.05) / (first.min(second) + 0.05)
+}
+
+#[test]
+fn each_scheme_keeps_its_text_readable() {
+    const BODY: f64 = 4.5;
+    const SHORT: f64 = 3.0;
+    let schemes = [
+        schemes::ASTRODARK,
+        schemes::TOKYO_NIGHT,
+        schemes::CATPPUCCIN_MOCHA,
+        schemes::CATPPUCCIN_LATTE,
+        schemes::GRUVBOX,
+        schemes::NORD,
+    ];
+    for scheme in schemes {
+        let theme = Theme::from_scheme(&scheme);
+        let filled = |style: Style| contrast(style.fg.unwrap(), style.bg.unwrap());
+        let on_base = |style: Style| contrast(style.fg.unwrap(), scheme.base);
+        for style in [
+            theme.base,
+            theme.panel,
+            theme.dialog,
+            theme.list,
+            theme.list_selected,
+            theme.tree_selected,
+            theme.field_focus,
+            theme.statusline,
+            theme.search_match,
+        ] {
+            assert!(filled(style) >= BODY, "{scheme:?} {style:?}");
+        }
+        for style in [
+            theme.list_detail,
+            theme.status_detail,
+            theme.status_warning,
+            theme.status_error,
+            theme.tab,
+            theme.tab_active,
+            theme.run_active,
+            theme.run_done,
+            theme.run_failed,
+            theme.run_stopped,
+            theme.label_editor,
+            theme.label_insert,
+            theme.label_visual,
+            theme.label_results,
+            theme.label_explorer,
+            theme.dialog_focus,
+            theme.search_current,
+            theme.header,
+        ] {
+            assert!(filled(style) >= SHORT, "{scheme:?} {style:?}");
+        }
+        for style in [
+            theme.keyword,
+            theme.string,
+            theme.number,
+            theme.identifier,
+            theme.comment,
+            theme.hint,
+            theme.status,
+            theme.error,
+            theme.mark_good,
+            theme.mark_bad,
+            theme.mark_neutral,
+            theme.control,
+            theme.key,
+            theme.panel_title_focused,
+        ] {
+            assert!(on_base(style) >= SHORT, "{scheme:?} {style:?}");
+        }
+    }
+}
+
+/// Draws one SQLite connection with a short name, and returns the screen.
+fn screen_with_connection(name: &str, theme: Theme) -> String {
+    let path = temp_db(&format!("interface-{name}"));
+    let connector = Arc::new(sqln::connector::sqlite::SqliteConnector::new(
+        sqln::connector::sqlite::SqliteTarget::new(path),
+    ));
+    let options = Options {
+        connector: Some(connector),
+        label: Some("orders".to_owned()),
+        ..Options::default()
+    };
+    let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
+    let mut screen = Screen {
+        app: App::new(options, clipboard, theme),
+    };
+    screen.screen(100, 30)
+}
+
+#[test]
+fn a_set_without_logos_keeps_the_engine_text_after_the_name() {
+    let shown = screen_with_connection("unicode-row", Theme::astrodark());
+    assert!(shown.contains("⛁ orders  sq"), "{shown}");
+
+    let shown = screen_with_connection("plain-row", Theme::plain());
+    assert!(shown.contains("orders  sq"), "{shown}");
+    assert!(!shown.contains("⛁"), "{shown}");
+}
+
+#[test]
+fn a_set_with_logos_shows_only_the_logo_before_the_name() {
+    let icons = Icons::nerd();
+    let theme = Theme {
+        icons,
+        ..Theme::astrodark()
+    };
+    let shown = screen_with_connection("nerd-row", theme);
+    let logo = icons.sqlite;
+    assert!(shown.contains(&format!("{logo} orders")), "{shown}");
+    assert!(!shown.contains(&format!("orders  {logo}")), "{shown}");
 }
 
 /// Draws the main tabs on one row, and returns the row with the places of the tabs.
@@ -917,9 +1083,11 @@ fn form_screen(name: &str, theme: Theme) -> Screen {
     screen
 }
 
-const FORM_LABELS: [&str; 17] = [
+const FORM_LABELS: [&str; 19] = [
     "Type",
     "Name",
+    "Theme",
+    "Icon",
     "Entry",
     "Host or socket",
     "Port",
@@ -1029,7 +1197,7 @@ fn the_form_uses_the_room_of_the_screen() {
         "the longest choice fits:\n{wide}"
     );
 
-    let medium = screen.screen(100, 30);
+    let medium = screen.screen(100, 32);
     assert!(!medium.contains("GENERAL"), "{medium}");
     let rows_of =
         |text: &str, label: &str| text.lines().position(|line| line.contains(label)).unwrap();
@@ -1061,6 +1229,22 @@ fn the_form_uses_the_room_of_the_screen() {
                 "{button} at {width} x {height}:\n{shown}"
             );
         }
+    }
+}
+
+/// The form with the most fields: a network connection with the choice of a scope.
+#[test]
+fn the_largest_form_keeps_its_fields_and_buttons_in_the_smallest_screen() {
+    let form = ConnectionForm::new_in(true);
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal
+        .draw(|frame| {
+            sqln::ui::form::draw_form(frame, &form, &Theme::plain());
+        })
+        .unwrap();
+    let shown = rows(terminal.backend().buffer()).join("\n");
+    for label in FORM_LABELS.iter().chain(&["Scope", "Save", "Cancel"]) {
+        assert!(shown.contains(label), "{label}:\n{shown}");
     }
 }
 
@@ -1180,6 +1364,7 @@ fn a_working_connection_gives_a_success_note_and_a_test_in_progress_does_not() {
         .unwrap();
     let theme = Theme::astrodark();
     let mut screen = form_screen("form-success-start", theme);
+    screen.code(KeyCode::Left);
     screen.code(KeyCode::Left);
     screen.code(KeyCode::Tab);
     screen.type_text("checked");

@@ -8,7 +8,6 @@ use crate::input::Action;
 use crate::store::Scope;
 use crate::store::scripts::{self, ScriptEntry};
 use crate::store::workspace::{self, OpenTab, OpenTabs};
-use crate::table::TableTab;
 use crate::ui::text;
 
 /// A tab that came back. The identity stays valid when the first console goes.
@@ -144,9 +143,7 @@ impl App {
                 let connection = self.connection_by_key(scope, &connection)?.id;
                 let id = self.manager.as_mut()?.open_console(connection)?;
                 let relation = RelationRef { schema, relation };
-                let mut tab =
-                    TableTab::new(id, connection, relation, view, self.settings.page_size);
-                tab.opened = self.next_tab_place();
+                let mut tab = self.new_table_tab(id, connection, relation, view);
                 tab.wait_for_use(text::table_pending(
                     self.shown_key(Action::GridOpenValue).as_deref(),
                 ));

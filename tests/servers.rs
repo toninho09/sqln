@@ -2043,7 +2043,7 @@ fn a_connected_definition_changes_only_its_name() {
         s.wait_for("● real");
         s.prefix('h');
         s.code(KeyCode::Char('e'));
-        assert!(s.app.form().unwrap().name_only);
+        assert!(s.app.form().unwrap().display_only);
         s.wait_for("This connection is connected.");
         s.type_text("-renamed");
         s.focus_form(Field::Save);
@@ -2068,7 +2068,7 @@ fn the_form_of_a_connected_definition_disconnects_and_changes_the_pool() {
         s.code(KeyCode::Char('e'));
         s.focus_form(Field::Disconnect);
         s.code(KeyCode::Enter);
-        s.wait_until(|s| !s.app.form().unwrap().name_only);
+        s.wait_until(|s| !s.app.form().unwrap().display_only);
         s.focus_form(Field::Pool);
         s.code(KeyCode::Backspace);
         s.type_text("2");

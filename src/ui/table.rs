@@ -75,17 +75,20 @@ fn control_items(
 ) -> Vec<(TableControl, String, bool)> {
     let idle = !tab.is_busy();
     let icons = &theme.icons;
-    vec![
-        (
-            TableControl::Apply,
-            theme.tool(icons.apply, text::BUTTON_APPLY),
-            idle,
-        ),
-        (
+    let apply = if tab.filters {
+        text::BUTTON_APPLY
+    } else {
+        text::BUTTON_RELOAD
+    };
+    let mut items = vec![(TableControl::Apply, theme.tool(icons.apply, apply), idle)];
+    if tab.filters {
+        items.push((
             TableControl::Clear,
             theme.tool(icons.clear, text::BUTTON_CLEAR),
             idle,
-        ),
+        ));
+    }
+    items.extend([
         (
             TableControl::LoadMore,
             theme.tool(icons.load_more, text::BUTTON_LOAD_MORE),
@@ -96,7 +99,8 @@ fn control_items(
             theme.tool(icons.stop, text::CONTROL_STOP),
             !idle,
         ),
-    ]
+    ]);
+    items
 }
 
 /// Draws a field between brackets. It returns the area of the text and the index
@@ -229,8 +233,8 @@ pub fn draw_table(
 ) -> TableLayout {
     let [title, filter, order, controls, grid, summary, notice] = Layout::vertical([
         Constraint::Length(u16::from(bar.title)),
-        Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(u16::from(tab.filters)),
+        Constraint::Length(u16::from(tab.filters)),
         Constraint::Length(1),
         Constraint::Min(0),
         Constraint::Length(1),
@@ -243,7 +247,7 @@ pub fn draw_table(
             bar.connection,
             &tab.relation.schema,
             &tab.relation.relation,
-            tab.is_view,
+            tab.kind(),
         );
         draw_panel_title(frame, title, &printable(&heading), focused, theme);
     }
@@ -305,7 +309,7 @@ pub fn draw_table(
             format!(" {}", printable(&message.text)),
             message_style(message, theme),
         )),
-        _ if tab.applied_order().is_empty() => Some(Line::styled(
+        _ if tab.filters && tab.applied_order().is_empty() => Some(Line::styled(
             format!(" {}", text::TABLE_NO_ORDER),
             theme.hint,
         )),

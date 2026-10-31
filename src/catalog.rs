@@ -23,6 +23,8 @@ pub struct Relation {
 pub struct Schema {
     pub name: String,
     pub relations: Vec<Relation>,
+    /// True when the list holds only a part of the relations.
+    pub partial: bool,
 }
 
 /// Identifies one relation of the catalog.

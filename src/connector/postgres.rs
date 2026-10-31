@@ -126,6 +126,7 @@ impl Connector for PostgresConnector {
         Capabilities {
             namespace: Namespace::Schema,
             transactions: true,
+            ..Capabilities::default()
         }
     }
 
@@ -564,6 +565,7 @@ impl Session for PostgresSession {
                 schemas.push(Schema {
                     name,
                     relations: Vec::new(),
+                    partial: false,
                 });
             }
             if let (Some(schema), Some(relation)) = (schemas.last_mut(), relation) {

@@ -17,7 +17,7 @@ use crate::grid::printable;
 use crate::input::Action;
 use crate::navigator::{Navigator, Row, RowKind};
 use crate::store::Scope;
-use crate::store::config::{Change, CredentialName};
+use crate::store::config::{Change, ConnectionIcon, CredentialName, ThemeName};
 use crate::table::TableTab;
 use crate::ui::text;
 
@@ -478,7 +478,7 @@ impl App {
         let key = self.connection(id).and_then(|item| item.key.clone());
         if let (Some(form), Some(definition)) = (&mut self.form, definition)
             && form.editing == Some(id)
-            && form.name_only
+            && form.display_only
         {
             *form = ConnectionForm::editing(id, &definition, false);
             form.credential = credential;
@@ -810,9 +810,10 @@ impl App {
     pub(super) fn save_form(&mut self) {
         let Some(form) = &self.form else { return };
         let editing = form.editing;
-        if form.name_only {
+        if form.display_only {
             let name = form.text(Field::Name).trim().to_owned();
-            self.rename_connection(name);
+            let (theme, icon) = (form.theme, form.icon);
+            self.save_display(name, theme, icon);
             return;
         }
         let definition = match self.form_definition() {
@@ -890,7 +891,13 @@ impl App {
         }
     }
 
-    fn rename_connection(&mut self, name: String) {
+    /// Saves the values that need no new session. The sessions stay open.
+    fn save_display(
+        &mut self,
+        name: String,
+        theme: Option<ThemeName>,
+        icon: Option<ConnectionIcon>,
+    ) {
         let Some(id) = self.form.as_ref().and_then(|form| form.editing) else {
             return;
         };
@@ -910,6 +917,8 @@ impl App {
         let mut renamed = connection.definition.clone();
         if let Some(definition) = &mut renamed {
             definition.name.clone_from(&name);
+            definition.theme = theme;
+            definition.icon = icon;
             if let Some(key) = &key
                 && let Err(message) = self.save_connection(key, definition, credential)
             {

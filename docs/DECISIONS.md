@@ -4,6 +4,62 @@ Este documento registra as escolhas e as alternativas rejeitadas.
 As regras completas estão no [plano](../PLAN.md).
 Não reabrir uma decisão sem um fato novo.
 
+## Redis e Valkey — 2026-10-31
+
+**Definido:** o usuário pede suporte a Redis e Valkey e aprova as 11 recomendações abaixo.
+Este pedido reabre a regra "MongoDB, Redis e Kafka ficam fora da primeira versão" somente para Redis e Valkey.
+
+| Ponto | Decisão aprovada | Rejeitado | Motivo |
+|---|---|---|---|
+| 1. Entrada no console | Um comando por linha, como no `redis-cli`; `#` no início da linha é comentário | `;` termina o comando | O texto do `redis-cli` funciona sem mudança |
+| 2. Explorador | Bancos e até 1.000 chaves por banco, com `SCAN`; `Enter` abre o valor em uma aba | Só bancos com lista paginada; só bancos | Permite navegar sem escrever comandos |
+| 3. Somente leitura | Consultar `COMMAND INFO` e recusar comandos sem a marca `readonly`; sem resposta do servidor, recusar | Lista fixa; retirar a opção | Cobre Valkey e módulos, e o servidor não tem sessão somente leitura |
+| 4. Transações | Sem modo manual; `MULTI` e `EXEC` funcionam em um script | Ligar o modo manual a `MULTI` e `EXEC` | Dentro de `MULTI`, uma leitura responde `QUEUED`, sem dados |
+| 5. Comandos contínuos | Recusar `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE` e `MONITOR` | Fluxo contínuo na grade | O console não tem fluxo contínuo |
+| 6. Comandos destrutivos | Sem confirmação | Pedir confirmação | `DROP` também não pede confirmação |
+| 7. TLS de `redis://` | Regra do SQLN: local sem TLS, remoto verifica; `?sslmode=disable` desliga; `rediss://` sempre usa TLS | `redis://` nunca usa TLS | A senha só viaja sem TLS por escolha explícita |
+| 8. Topologia | Somente servidor único | Cluster; Cluster e Sentinel | Cluster e Sentinel mudam o pool |
+| 9. Resultado na grade | Valor em uma célula, lista em linhas, mapa nas colunas `field` e `value`, valor aninhado como texto | Tudo como texto | Aproveita a grade; exige RESP3 |
+| 10. Autocomplete | Nomes de comandos, com lista fixa | Também nomes de chaves | A lista de chaves pode ser parcial |
+| 11. Tipo de conexão | Um tipo "Redis/Valkey", com `redis://`, `rediss://`, `valkey://` e `valkeys://` | Dois tipos | O protocolo é o mesmo |
+
+Estas escolhas seguem as regras acima nos pontos que elas deixaram abertos.
+
+| Assunto | Escolha | Rejeitado | Motivo |
+|---|---|---|---|
+| Driver | `redis` 1.8, com `MultiplexedConnection` em um stream próprio | TLS do driver | O TLS do driver não usa as raízes de `connector::tls`; o stream próprio mantém uma regra de TLS para todas as fontes |
+| Banco no formulário | Número, validado no formulário, na URI e no `config.json` | Texto livre | Redis não tem nomes de banco |
+| Usuário | Opcional somente para Redis | Exigir `default` | Um servidor sem ACL não tem usuário |
+| Comandos de identidade | Recusar `AUTH`, `HELLO` e `RESET` | Permitir | A sessão volta ao pool, e outro console receberia o novo login |
+| Replicação | Recusar `SYNC` e `PSYNC` com os comandos contínuos | Permitir | Esses comandos também não terminam |
+| Testes | `tests/redis.rs`, separado de `tests/servers.rs` | Somar ao `tests/servers.rs` | Esse arquivo repete SQL em cada servidor |
+
+### Limitações conhecidas de Redis e Valkey
+
+| Assunto | Limitação |
+|---|---|
+| Somente leitura | A proteção fica só no cliente. `PING`, `INFO`, `ECHO`, `TIME`, `SELECT`, `CONFIG`, `CLIENT`, `OBJECT`, `MEMORY` e `XINFO` ficam recusados, pois o servidor não marca esses nomes como `readonly`. O seletor de banco continua a funcionar |
+| Stop | Só para um comando que espera, como `BLPOP`. Em outro comando, o SQLN fecha a conexão, e o servidor termina o comando |
+| Comando lento | Um `KEYS *` longo prende o servidor, então o pedido de parada pode esperar 5 segundos sem resposta |
+| Teto e orçamento | O driver lê a resposta inteira antes do teto de linhas e do orçamento da grade. Um `LRANGE k 0 -1` enorme usa memória antes do corte |
+| Explorador | Mostra até 1.000 chaves na ordem de chegada do `SCAN`, ordenadas por nome. Bancos vazios não aparecem, exceto o banco atual. Uma chave que não é UTF-8 não aparece e marca a lista como parcial. Um comando não atualiza a árvore; use **Refresh** |
+| Páginas de valor | `HSCAN`, `SSCAN` e `XRANGE` não têm offset, então cada página repete a leitura anterior, com o custo de `OFFSET` em SQL. Um hash ou set que muda pode repetir ou pular itens |
+| Tipos de módulo | Um tipo de módulo, como JSON, não abre em aba. Use o console |
+| `MULTI` | Vale somente dentro da mesma execução. Executar `MULTI` sozinho descarta a fila no fim da execução |
+| `CLIENT REPLY OFF` | O SQLN não recusa esse comando. A sessão fica sem resposta até o prazo ou até o Stop |
+| Topologia | Sem Cluster e sem Sentinel. Uma resposta `MOVED` aparece como erro |
+| Versão | RESP3 exige Redis 6 ou mais novo. Um servidor mais antigo falha ao conectar |
+| Autocomplete | A lista de comandos é fixa, sem comandos de módulo e sem chaves |
+| Linha de comando | Um valor não ocupa duas linhas. Use `\n` entre aspas duplas |
+
+### Pendências de Redis e Valkey
+
+- Validar em um terminal real: cadastro, explorador, aba de valor e cofre.
+- Testar um socket Unix com servidor real. O Docker no macOS não compartilha esse socket, e o código só tem teste de compilação.
+- Testar o Stop de um comando que não espera. Um script Lua longo prenderia os outros testes no mesmo servidor.
+- Testar um servidor com ACL restrita, sem `CLIENT ID` ou sem `COMMAND INFO`.
+- Testar serviços gerenciados, que podem renomear comandos.
+
 ## Interface no estilo nvim — 2026-10-31
 
 **Definido:** o usuário pede uma interface mais bonita, próxima do nvim e de uma IDE.
@@ -15,6 +71,8 @@ O código já implementa os quatro pontos.
 | Cores | Tema `astrodark` em RGB com truecolor; tema ANSI nos demais casos; `NO_COLOR` sem cor | Somente ANSI | Fundos e tons próprios separam os painéis; a paleta vem do tema do nvim do usuário. Esta decisão substitui "usar as cores ANSI do terminal" |
 | Layout | Sem caixas: abas em toda a largura, explorador, título de painel, barra de status e linha de dicas | Caixa com borda em cada painel | Cada caixa gasta duas linhas e duas colunas, e 80 x 24 é o mínimo |
 | Ícones | Unicode por padrão; `icons: "nerd"` em `config.json` | Somente Nerd Font | A fonte Monaco do usuário não tem esses símbolos |
+| Ícone da conexão | Com `icons: "nerd"`, o logo do banco fica antes do nome, salvo com um ícone escolhido na conexão. No conjunto Unicode, `⛁` fica antes do nome e `pg`, `my`, `sq` ou `rd` depois. `NO_COLOR` não tem ícone | Emoji, que ocupa 2 colunas e não é logo; imagem no terminal, ilegível em 1 ou 2 células | O Unicode não tem esses logos. No iTerm, o Nerd Font Bundle mostra os logos e mantém a Monaco no texto |
+| Temas | Esquemas de cores como dados em `ui/schemes`, escolhidos em `Settings > Appearance`, com prévia antes de salvar. Detalhes em "Temas — 2026-10-31" | Uma função de estilos para cada tema | Cada tema novo vira uma tabela de cores, e os testes conferem o contraste |
 | Recursos | Menu do `Ctrl+W`, paleta de comandos, tela inicial, barras de rolagem, linha atual e número de linha na grade | Somente mudanças visuais | O usuário também pede uma interface mais intuitiva |
 
 Estas escolhas seguem as regras acima nos pontos que elas deixaram abertos.
@@ -248,3 +306,51 @@ Estas escolhas seguem as regras do plano nos pontos que as regras deixaram abert
 | Log | Tipos de evento, sem texto de erro do banco | Registrar as mensagens | Um erro do banco pode citar um valor |
 | Sinais | `SIGHUP`, `SIGINT`, `SIGQUIT` e `SIGTERM` | Somente `SIGTERM` | Fechar o terminal envia `SIGHUP` |
 | Arquivo em texto simples | Recusar link e permissão aberta | Corrigir a permissão sozinho | O mesmo cuidado do `ssh` com uma chave privada |
+
+## Temas — 2026-10-31
+
+O usuário pediu temas, troca em tempo de execução e a escolha do tema padrão em Settings.
+O tema por conexão, para identificar produção, fica para depois.
+
+| Ponto | Decisão | Rejeitado | Motivo |
+|---|---|---|---|
+| Lista | Tokyo Night, Catppuccin Mocha, Catppuccin Latte, Gruvbox e Nord, além de Astrodark e `ansi` | Mais temas | Os tons diferem à primeira vista, o que ajuda o tema por conexão. Latte cobre quem prefere fundo claro |
+| Definição | `Scheme` em `ui/schemes.rs`; `Theme::from_scheme` distribui as cores | Copiar os estilos para cada tema | Um tema novo não repete a lista de estilos |
+| Ajustes de cor | Latte, Nord e Tokyo Night mudam alguns tons da paleta original | Paleta original sem mudança | Alguns tons originais não passam no contraste mínimo: 4,5 no texto e 3 em marcas e rótulos |
+| Prévia | A escolha muda as cores antes de salvar, e cancelar restaura o tema salvo | Aplicar só ao salvar | O nome do tema não mostra as cores. A prévia também limita o dano em um terminal sem truecolor |
+| Seção | `Appearance`, por último na lista | Campo em `General` | O tema por conexão e os ícones têm lugar natural nessa seção |
+| Valores do arquivo | `kebab-case`, como `tokyo-night` | `lowercase` | `auto`, `astrodark` e `ansi` continuam válidos, e os nomes novos ficam legíveis |
+
+### Tema por conexão
+
+| Ponto | Decisão | Rejeitado | Motivo |
+|---|---|---|---|
+| Quem decide | A conexão da aba aberta, em console ou tabela, muda a tela inteira | Conexão selecionada no explorador; só a barra de status | O alerta de produção precisa acompanhar onde o comando roda. A seleção no explorador não executa nada |
+| Sem tema próprio | A aba usa o tema padrão | Herdar o tema da aba anterior | A cor de uma aba não depende do caminho até ela |
+| Ponto de escolha | `App::draw` calcula o tema a cada quadro, em `theme_choice` | Trocar o tema em cada mudança de aba | Há muitos caminhos de troca de aba. O cálculo em um só ponto não esquece nenhum, e a prévia não precisa de código próprio |
+| Conexão ativa | O formulário permite mudar nome e tema (`display_only`), e o botão passa de `Save name` para `Save` | Exigir desconexão | O usuário precisa marcar produção com a sessão aberta. Tema não muda o acesso, então nenhuma sessão fecha |
+| Recarga | `update_stored` aplica o tema mesmo com a conexão em uso | Adiar até desconectar | O arquivo e a tela ficam iguais, e a transação continua |
+| Settings com tema próprio | A tela mostra o tema padrão escolhido enquanto o diálogo está aberto | Manter o tema da conexão | Sem isso, a prévia pareceria não funcionar em uma aba com tema próprio |
+| Local no formulário | Último campo das opções | Junto do nome | Fica no fim do `Tab` e não muda a ordem dos campos de acesso |
+
+Com os campos **Theme** e **Icon**, o formulário usa o modo compacto até 31 linhas. O modo com espaços entre grupos agora pede 32 linhas.
+
+### Ícone por conexão
+
+| Ponto | Decisão | Rejeitado | Motivo |
+|---|---|---|---|
+| Escolha | Lista fixa de 14 ícones no formulário | Campo de texto para colar um símbolo | O SQLN não consegue consultar a fonte do terminal. A lista garante um símbolo existente, e um símbolo colado poderia virar caixa vazia |
+| Símbolos | Unicode de 1 coluna, conferidos com a Monaco no macOS, iguais em todos os conjuntos | Símbolos da Nerd Font | A Nerd Font é opcional, e sem ela esses símbolos viram caixa vazia. Estes símbolos existem com ou sem ela |
+| Fora da lista | `⚡`, que vira emoji de 2 colunas, e `⛨` e `⚿`, mais largos que a célula | Aceitar qualquer símbolo Unicode | Um símbolo largo desalinha a linha do explorador |
+| `NO_COLOR` | Mostra o ícone escolhido | Esconder, como os outros ícones | A escolha é do usuário, e o tema não identifica produção nesse modo |
+| Marca do banco | Fica depois do nome, em todos os conjuntos | Sumir, porque o logo saiu do lugar | O ícone escolhido não diz qual é o banco |
+
+### Limitações conhecidas
+
+- Um tema RGB em um terminal sem truecolor pode mostrar cores erradas. A escolha explícita vence, porque `COLORTERM` falta em alguns terminais com suporte, como em uma sessão SSH.
+- Com `NO_COLOR`, o campo muda o arquivo, mas não muda as cores. O tema por conexão não identifica produção nesse modo.
+- Ao desconectar com o formulário aberto, ele recarrega a definição salva. Um nome ou tema ainda sem salvar volta ao valor salvo.
+
+### Pendências
+
+- Validar os temas e os ícones em um terminal real. A checagem visual usou as telas desenhadas com a fonte Monaco, fora do terminal.

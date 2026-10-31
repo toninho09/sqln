@@ -9,6 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::console::centered;
 use super::float_block;
+use super::icons::connection_symbol;
 use super::input_spans;
 use super::text;
 use super::theme::Theme;
@@ -65,7 +66,8 @@ const SPACINGS: [Spacing; 4] = [
 ];
 
 impl Spacing {
-    /// Divides the groups into columns. The first column stops after half of the fields.
+    /// Divides the groups into columns. A group goes to the first column when most of its
+    /// fields stay in the first half of the fields.
     fn columns<'a>(self, groups: &[&'a [Field]]) -> Vec<Vec<&'a [Field]>> {
         if !self.two_columns {
             return vec![groups.to_vec()];
@@ -78,7 +80,7 @@ impl Spacing {
         let mut used = 0;
         let (mut first, mut second) = (Vec::new(), Vec::new());
         for group in groups {
-            if used < half {
+            if used + group.len() / 2 < half {
                 first.push(*group);
                 used += group.len();
             } else {
@@ -180,6 +182,8 @@ fn label(field: Field) -> &'static str {
         Field::ReadOnly => text::FIELD_READ_ONLY,
         Field::ConnectTimeout => text::FIELD_CONNECT,
         Field::SqlTimeout => text::FIELD_SQL_TIMEOUT,
+        Field::Theme => text::FIELD_CONNECTION_THEME,
+        Field::Icon => text::FIELD_CONNECTION_ICON,
         Field::Test => text::BUTTON_TEST,
         Field::Save => text::BUTTON_SAVE,
         Field::Disconnect => text::BUTTON_DISCONNECT,
@@ -192,6 +196,7 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
         Field::Kind => match form.kind {
             Kind::Postgres => text::VALUE_POSTGRES,
             Kind::MySql => text::VALUE_MYSQL,
+            Kind::Redis => text::VALUE_REDIS,
             Kind::Sqlite => text::VALUE_SQLITE,
         },
         Field::Scope if form.scope == Scope::Project => text::VALUE_SCOPE_PROJECT,
@@ -204,6 +209,10 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
         Field::Credential => text::VALUE_SESSION,
         Field::Tls if form.verify_tls => text::VALUE_TLS_VERIFY,
         Field::Tls => text::VALUE_TLS_OFF,
+        Field::Theme => form.theme.map_or(text::VALUE_DEFAULT, text::theme_name),
+        Field::Icon => form
+            .icon
+            .map_or(text::VALUE_DEFAULT, text::connection_icon_name),
         _ => match form.foreign_keys {
             None => text::VALUE_DEFAULT,
             Some(true) => text::VALUE_ON,
@@ -241,7 +250,14 @@ fn value_spans(
         Style::new()
     };
     match field.style() {
-        FieldStyle::Choice => vec![Span::styled(format!("< {} >", choice(form, field)), style)],
+        FieldStyle::Choice => {
+            let symbol = form
+                .icon
+                .filter(|_| field == Field::Icon)
+                .map_or(String::new(), |icon| Theme::icon(connection_symbol(icon)));
+            let name = choice(form, field);
+            vec![Span::styled(format!("< {symbol}{name} >"), style)]
+        }
         FieldStyle::Flag => {
             let mark = if form.read_only { "[x]" } else { "[ ]" };
             vec![Span::styled(mark, style)]
@@ -347,13 +363,6 @@ fn draw_column(
     }
 }
 
-fn button_label(form: &ConnectionForm, field: Field) -> &'static str {
-    if field == Field::Save && form.name_only {
-        return text::BUTTON_SAVE_NAME;
-    }
-    label(field)
-}
-
 pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> FormLayout {
     let fields = form.fields();
     let (buttons, rows): (Vec<Field>, Vec<Field>) = fields
@@ -366,9 +375,9 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
     let (width, height) = spacing.size(&groups);
     let area = centered(frame.area(), width, height);
     frame.render_widget(Clear, area);
-    let title = match (&form.editing, form.name_only) {
-        (None, _) => text::TITLE_NEW_CONNECTION.to_owned(),
-        _ => text::edit_connection_title(&printable(form.text(Field::Name))),
+    let title = match &form.editing {
+        None => text::TITLE_NEW_CONNECTION.to_owned(),
+        Some(_) => text::edit_connection_title(&printable(form.text(Field::Name))),
     };
     let block = float_block(&title, theme);
     let inner = block.inner(area);
@@ -423,7 +432,7 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
     let mut x = content.x;
     let mut spans = Vec::new();
     for field in buttons {
-        let name = theme.button(button_label(form, field));
+        let name = theme.button(label(field));
         let width = u16::try_from(name.width()).unwrap_or(0);
         layout
             .fields
