@@ -8,8 +8,9 @@ O plano continua sendo a referência das decisões confirmadas.
 Os valores, nomes e dados abaixo são exemplos fictícios.
 Tamanhos, espaçamentos, cores e atalhos ainda não representam contratos finais.
 A interface final usa inglês; os rótulos em português destes esboços são exemplos.
-A aplicação implementa as seções 2, 3 e 6, a seção 4 sem escopo nem campo de credencial, e parte das seções 5 e 8.
-A seção 1 ainda não existe. A [seção 1 do plano](../PLAN.md) lista o que falta.
+A aplicação implementa as seções 1 a 3 e 6, a seção 4 sem campo de credencial, e parte das seções 5 e 8.
+A tela de abertura da seção 1 é uma lista sobre a tela, e não um painel com busca.
+O diálogo **Configurações** da seção 8 ainda não existe. A [seção 1 do plano](../PLAN.md) lista o que falta.
 
 ## 1. Inicialização e abertura de console
 
@@ -26,6 +27,11 @@ Aceitar cria o projeto no diretório atual. Recusar mantém somente o escopo glo
 ```
 
 A tela de abertura oferece os consoles da conexão selecionada, sem restaurá-los automaticamente.
+
+Implementação atual: `n` no navegador abre uma lista sobre a tela, com o título `Consoles of <conexão> · <escopo>`.
+A primeira linha, **+ New console**, cria um console. As outras linhas mostram o nome, a idade da última alteração e a marca `(open)`.
+A lista não tem campo de busca nem botões. `Enter` escolhe, `Delete` remove, e `Esc` cancela.
+`s` no navegador abre a lista **Scripts without a connection**, que mostra também o escopo de cada script.
 
 ```text
 ┌─ Conexões ──────────┬─ Consoles de app (local) ──────────────┐

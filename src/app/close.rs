@@ -104,12 +104,17 @@ impl App {
             return;
         }
         console.closing = false;
+        let Some(index) = self.console_index(id) else { return };
+        if !self.flush_console(index) {
+            return;
+        }
         if self.exiting {
             self.exit_step();
         } else {
             self.remove_console(id);
         }
     }
+
 
     fn remove_console(&mut self, id: ConsoleId) {
         let Some(index) = self.console_index(id) else { return };
@@ -123,6 +128,7 @@ impl App {
             }
             self.replace_last_console();
         }
+        self.save_editor_states(Some(index));
         let console = self.consoles.remove(index);
         for result in &console.results {
             self.budget.release(result.table.bytes);
@@ -158,7 +164,9 @@ impl App {
     fn exit_step(&mut self) {
         let next = self.consoles.iter().position(|console| console.is_busy() || console.in_transaction());
         let Some(index) = next else {
-            self.quit = true;
+            if self.flush_all() {
+                self.quit = true;
+            }
             return;
         };
         self.select_console(index);
@@ -201,6 +209,17 @@ impl App {
                 }
             }
             DialogAction::RemoveConnection(connection) => self.remove_connection(connection),
+            DialogAction::CreateProject => self.create_project(),
+            DialogAction::ReloadConfig => self.reload_config(),
+            DialogAction::IgnoreConfigChange => self.ignore_config_change(),
+            DialogAction::DiscardAndClose(id) => {
+                if let Some(console) = self.console_by_id(id) {
+                    console.discard_text = true;
+                }
+                self.close_step(id);
+            }
+            DialogAction::DeleteScript(scope, id) => self.delete_script(scope, &id),
+            DialogAction::Associate(console, connection) => self.associate(console, connection),
         }
     }
 

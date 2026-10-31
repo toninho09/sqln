@@ -18,9 +18,11 @@ pub const HINT_FILTER: &str = "Enter apply · Tab accept or next field · Esc gr
 pub const HINT_GRID_SEARCH: &str = "Enter next · Up/Down move · Esc close";
 pub const HINT_LIST: &str = "Tab accept · Up/Down move · Enter new line · Esc close list";
 pub const HINT_SEARCH: &str = "Tab next field · Enter next or replace · Ctrl+A replace all · Esc close";
-pub const HINT_NAVIGATOR: &str = "Enter open · n console · a add · e edit · r refresh · D disconnect · Del remove";
-pub const HINT_PREFIX: &str = "hjkl panel · n p tab · b nav · d schema · e s x run · m C R tx · c q close · ?";
-pub const HINT_PICKER: &str = "Up/Down move · Enter choose · Esc cancel";
+pub const HINT_NAVIGATOR: &str = "Enter open · n new · s scripts · a add · e edit · r refresh · D disc · Del drop";
+pub const HINT_PREFIX: &str = "hjkl panel · n p tab · b nav · d schema · r cfg · e s x run · mCR tx · c q close";
+pub const HINT_PICKER: &str = "Up/Down move · Enter choose · Del remove a script · Esc cancel";
+pub const HINT_CONFLICTS: &str = "Up/Down move · Left/Right choose · Enter next · Esc decide later";
+pub const HINT_CONFIG_ERROR: &str = "Configuration error · Fix the file, then Ctrl+W r loads it again";
 pub const HINT_FORM: &str = "Tab next · Left/Right change · Enter next or press · Esc cancel";
 pub const HINT_DIALOG: &str = "Tab next option · Enter confirm · Esc cancel";
 pub const HINT_OVERLAY: &str = "Up/Down scroll · Ctrl+C copy · Esc close";
@@ -57,6 +59,7 @@ pub const FORM_CONNECTED: &str = "This connection is connected. Disconnect it to
 pub const MYSQL_CLIENT_KEY: &str = "MySQL needs an RSA client key in PKCS#1 form (BEGIN RSA PRIVATE KEY).";
 pub const FIELD_KIND: &str = "Type";
 pub const FIELD_NAME: &str = "Name";
+pub const FIELD_SCOPE: &str = "Scope";
 pub const FIELD_ENTRY: &str = "Entry";
 pub const FIELD_URI: &str = "URI";
 pub const FIELD_HOST: &str = "Host or socket";
@@ -74,6 +77,7 @@ pub const FIELD_BUSY: &str = "Lock limit (seconds)";
 pub const FIELD_POOL: &str = "Pool limit";
 pub const FIELD_READ_ONLY: &str = "Read only";
 pub const FIELD_CONNECT: &str = "Connect limit (seconds)";
+pub const FIELD_SQL_TIMEOUT: &str = "SQL limit (s, 0 = none)";
 pub const BUTTON_TEST: &str = "Test connection";
 pub const BUTTON_SAVE: &str = "Save";
 pub const BUTTON_SAVE_NAME: &str = "Save name";
@@ -82,6 +86,8 @@ pub const BUTTON_CANCEL: &str = "Cancel";
 pub const VALUE_POSTGRES: &str = "PostgreSQL";
 pub const VALUE_MYSQL: &str = "MySQL";
 pub const VALUE_SQLITE: &str = "SQLite";
+pub const VALUE_SCOPE_PROJECT: &str = "Project";
+pub const VALUE_SCOPE_GLOBAL: &str = "Global";
 pub const VALUE_FIELDS: &str = "Fields";
 pub const VALUE_URI: &str = "URI";
 pub const VALUE_TLS_VERIFY: &str = "Verify the certificate";
@@ -229,6 +235,8 @@ pub fn action_text(action: Action) -> &'static str {
         Action::NavigatorEdit => "Edit the connection",
         Action::NavigatorDelete => "Remove the connection",
         Action::NavigatorAdd => "Add a connection",
+        Action::NavigatorScripts => "Scripts without a connection",
+        Action::ReloadConfig => "Load the configuration again",
         Action::GridUp => "Up",
         Action::GridDown => "Down",
         Action::GridLeft => "Left",
@@ -366,8 +374,9 @@ pub fn edit_connection_title(name: &str) -> String {
     format!("Edit connection: {name}")
 }
 
-pub fn remove_connection(name: &str) -> String {
-    format!("Remove the definition of {name}? Its open consoles stay, and they cannot run.")
+pub fn remove_connection(name: &str, file: Option<&str>) -> String {
+    let place = file.map_or_else(String::new, |file| format!(" from {file}"));
+    format!("Remove the definition of {name}{place}? Its open consoles stay, and they cannot run. The scripts of the connection stay on disk, in the list of scripts without a connection.")
 }
 
 pub fn connection_in_use(console: &str) -> String {
@@ -405,18 +414,128 @@ sqln: terminal database client
 Usage: sqln [options]
 
 Options:
+  --project <folder>     Use the project in this folder. Without it, SQLN uses
+                         the nearest .sqln folder above the working folder.
   -h, --help             Show this text.
   -V, --version          Show the version.
 
-Prototype options:
-  --sqlite <file>        Open a SQLite database.
-  --url <text>           Open postgres://user@host/db or mysql://user@host/db.
-                         SQLN_PASSWORD gives the password.
-  --read-only            Ask the database to refuse changes.
-  --row-cap <rows>       Set the row cap of each result. The default is 1000.
-  --page-size <rows>     Set the rows of one page in a table. The default is 100.
-  --sql-timeout <sec>    Set the time limit of each statement. 0 removes it.
-  --vim                  Use the Vim keys.
-  --dialect <name>       Use postgres, mysql, or sqlite, without a database.
+Development options:
+  --dialect <name>       Use postgres, mysql, or sqlite in a console without
+                         a connection.
   --no-catalog           Start without the sample catalog.
+
+The settings and the connections are in config.json, in the global folder
+(~/.config/sqln, or $XDG_CONFIG_HOME/sqln) and in the .sqln folder of the project.
 ";
+
+// Files: the configuration, the project, and the saved consoles.
+pub const TITLE_CREATE_PROJECT: &str = "Create project";
+pub const OPTION_CREATE_PROJECT: &str = "Create project";
+pub const OPTION_GLOBAL_ONLY: &str = "Global settings only";
+pub const TITLE_CONFIG_ERROR: &str = "Invalid configuration";
+pub const TITLE_CONFIG_CHANGED: &str = "Configuration changed";
+pub const BODY_CONFIG_CHANGED: &str = "Another program changed a configuration file. Open sessions stay as they are. Load the configuration again?";
+pub const OPTION_CLOSE: &str = "Close";
+pub const OPTION_RELOAD: &str = "Reload";
+pub const OPTION_IGNORE: &str = "Ignore";
+pub const CONFIG_BLOCKED: &str = "The configuration has an error. Fix the file, then press Ctrl+W r.";
+pub const CONFIG_RELOADED: &str = "Configuration loaded again.";
+pub const NO_STORE: &str = "This session has no configuration files.";
+pub const NO_PROJECT: &str = "This session has no project. Create a .sqln folder first.";
+pub const PROJECT_CREATED: &str = "Project created.";
+pub const SAVED: &str = "Saved.";
+pub const NOTHING_TO_SAVE: &str = "This console has no text to save.";
+pub const NO_PLACE: &str = "The console has no connection, so it has no place to save.";
+pub const TITLE_UNSAVED: &str = "Text not saved";
+pub const OPTION_CLOSE_UNSAVED: &str = "Close without saving";
+pub const AGE_NOW: &str = "just now";
+pub const MARK_OPEN: &str = " (open)";
+pub const NEW_CONSOLE_ROW: &str = "+ New console";
+pub const NO_ORPHANS: &str = "No scripts without a connection.";
+pub const TITLE_ORPHANS: &str = "Scripts without a connection";
+pub const TITLE_ASSOCIATE: &str = "Choose a connection";
+pub const TITLE_ASSOCIATE_CONFIRM: &str = "Associate script";
+pub const OPTION_ASSOCIATE: &str = "Associate";
+pub const ASSOCIATE_SAVE_FIRST: &str = "The script has a save problem. Resolve it, then try again.";
+pub const TITLE_REMOVE_CONSOLE: &str = "Remove console";
+pub const SCRIPT_OPEN: &str = "Close the console before you remove its script.";
+pub const SCRIPT_BUSY: &str = "Another SQLN instance uses this script.";
+pub const SCRIPT_REMOVED: &str = "Script removed.";
+pub const TITLE_CONFLICTS: &str = "Scripts changed outside SQLN";
+pub const STATE_CHANGED: &str = "changed";
+pub const STATE_REMOVED: &str = "removed";
+pub const CHOICE_NONE: &str = "choose";
+pub const CHOICE_RELOAD: &str = "Reload";
+pub const CHOICE_OVERWRITE: &str = "Overwrite";
+pub const CHOICE_RECREATE: &str = "Recreate";
+pub const CHOICE_CLOSE: &str = "Close";
+pub const BUTTON_LATER: &str = "Decide later";
+pub const CONFLICT_CHOOSE: &str = "Choose an action for each script.";
+
+pub fn create_project(folder: &str) -> String {
+    format!("SQLN did not find a .sqln folder. Create a project in {folder}?")
+}
+
+pub fn project_failed(message: &str) -> String {
+    format!("Cannot create the project: {message}")
+}
+
+pub fn config_error(message: &str, file: &str) -> String {
+    format!("{message}\n\nFile: {file}\n\nSQLN does not connect to a database until the file is correct. Fix the file, then use Reload.")
+}
+
+pub fn save_failed(name: &str, message: &str) -> String {
+    format!("Cannot save {name}: {message} The text stays in the editor.")
+}
+
+pub fn unsaved_failed(name: &str, message: &str) -> String {
+    format!("SQLN cannot save {name}: {message}\n\nClose the console and lose the text that no file holds?")
+}
+
+pub fn unsaved_changed(name: &str) -> String {
+    format!("Another program changed the script of {name}. SQLN did not save the text.\n\nClose the console and lose the text that no file holds?")
+}
+
+pub fn unsaved_removed(name: &str) -> String {
+    format!("Another program removed the script of {name}. SQLN did not save the text.\n\nClose the console and lose the text that no file holds?")
+}
+
+pub fn age_minutes(minutes: u64) -> String {
+    format!("{minutes} min ago")
+}
+
+pub fn age_hours(hours: u64) -> String {
+    format!("{hours} h ago")
+}
+
+pub fn age_days(days: u64) -> String {
+    format!("{days} d ago")
+}
+
+pub fn consoles_title(connection: &str, scope: &str) -> String {
+    format!("Consoles of {connection} · {scope}")
+}
+
+pub fn script_in_use(name: &str) -> String {
+    format!("{name} is open in another SQLN instance.")
+}
+
+pub fn script_failed(name: &str, message: &str) -> String {
+    format!("Cannot use the script {name}: {message}")
+}
+
+pub fn remove_script(name: &str, folder: &str) -> String {
+    format!("Remove the script {name}? SQLN deletes its .sql file and its .json file in {folder}. This action cannot be undone.")
+}
+
+pub fn associate_same(name: &str, connection: &str, folder: &str) -> String {
+    format!("Associate {name} with {connection}?\n\nThe files stay in {folder}.\nSQLN does not run any SQL.")
+}
+
+pub fn associate_move(name: &str, connection: &str, scope: &str, folder: &str) -> String {
+    format!("Associate {name} with {connection}?\n\nThe connection has the {scope} scope. SQLN moves the files to {folder}.\nSQLN does not run any SQL.")
+}
+
+pub fn associated(connection: &str) -> String {
+    format!("The script now uses {connection}. Run it again to execute.")
+}

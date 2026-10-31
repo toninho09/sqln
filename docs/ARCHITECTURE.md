@@ -50,16 +50,45 @@ Thread principal                    Runtime Tokio
 | `find` | Comparação de texto das duas buscas |
 | `clipboard` | Área de transferência do sistema e OSC 52 |
 | `terminal` | Preparação e restauração do terminal |
-| `store` | Configuração, consoles, salvamento e bloqueios |
+| `store` | Pastas dos escopos, `config.json`, scripts dos consoles, `workspace.json`, gravação atômica e bloqueios |
+| `script_file` | Estado salvo de um console: hash, fim de linha, espera do salvamento e problema de gravação |
 | `creds` | Cofre e senhas de sessão, com `zeroize` |
 | `trust` | Destinos confirmados e caminhos conhecidos |
 
 `ui` e `input` não dependem de `connector`.
 Somente `connector` conhece tipos dos drivers.
 
-`store`, `creds` e `trust` ainda não existem.
-`app` aplica a prioridade das teclas e o mouse. `app/keys.rs`, `app/close.rs`, `app/connections.rs` e `app/mouse.rs` dividem esse código.
-As definições de conexão ficam em memória até a etapa de configuração.
+`creds` e `trust` ainda não existem.
+`app` aplica a prioridade das teclas e o mouse. `app/keys.rs`, `app/close.rs`, `app/connections.rs`, `app/mouse.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs` e `app/conflicts.rs` dividem esse código.
+`store` guarda as pastas e os arquivos. Ele não conhece `app`, `ui` nem `connector`.
+
+### Arquivos e salvamento
+
+`store::Store` tem a pasta global e, quando existe, a pasta do projeto. Cada pasta é um `Root`, com a pasta do `config.json` (`dir`) e a base dos caminhos relativos (`base`). A base do projeto é a raiz, e não `.sqln/`.
+
+| Parte | Responsabilidade |
+|---|---|
+| `store::file` | `write_atomic` (temporário, sincronização, conferência do destino e renomeação), hash, bloqueios do sistema e limpeza dos `.tmp` antigos |
+| `store::config` | Leitura com `serde`, validação, precedência, `Definition` de cada entrada e `change_connections` (releitura sob bloqueio, mudança e gravação) |
+| `store::scripts` | Arquivos `.sql` e `.json` de um console, lista, bloqueio por console, cópia entre escopos e fim de linha |
+| `store::workspace` | `workspace.json`, lido sem erro e gravado sob o bloqueio de `config.lock` |
+| `script_file::ScriptFile` | Hash do último conteúdo gravado, espera de 500 ms, nova tentativa de 5 s e problema (`Failed`, `Changed` ou `Removed`) |
+| `app::persist` | Carga no início, recarga, conferência a cada segundo, ordem de fechamento e estado da sessão |
+| `app::scripts` | Lista de consoles, scripts sem conexão, abertura, remoção e associação |
+| `app::conflicts` | Pergunta sobre scripts alterados fora do SQLN |
+
+Regras do código:
+
+1. A carga lê os dois arquivos. Um erro de um arquivo bloqueia a aplicação inteira, sem escopo parcial.
+2. Cada erro de leitura leva o arquivo e a posição (linha e coluna). A mensagem nunca leva um valor do arquivo.
+3. A gravação de `config.json` toma `locks/config.lock`, lê o arquivo de novo, aplica a mudança e grava com o hash lido. O arquivo de outro escopo não muda.
+4. O `config.json` guarda só o que o escopo declara. A leitura não reescreve os valores padrão.
+5. O `id` de um script é um UUID e é o nome dos dois arquivos. A lista ignora um `.json` ilegível ou cujo nome difere do `id`.
+6. O bloqueio de um console é o arquivo `locks/<id>.lock`, com `flock`. O sistema o libera ao fim do processo.
+7. `ScriptFile::due` compara a revisão do editor com a última gravada. O laço principal passa o relógio, e o teste controla o tempo.
+8. O fim de linha do arquivo (`LF` ou `CRLF`) fica no `ScriptFile`. O editor usa `LF` sempre.
+9. `ScriptFile::poll` lê o arquivo só se o tamanho ou a data mudou, e depois compara o hash.
+10. Uma definição de conexão leva a pasta base. `Definition::connector` resolve os caminhos relativos com ela no momento de abrir.
 
 ### Aba de tabela
 
@@ -303,7 +332,16 @@ O projeto nunca recebe `password`.
 | `tls.mode` | `verify` ou `disabled` |
 
 O valor `globalPlainText` existe somente no escopo global.
-O valor `sqlTimeoutSeconds: null` executa sem prazo.
+O valor `sqlTimeoutSeconds: null` executa sem prazo, e a ausência do campo vale 30 segundos.
+
+Regras da leitura, conforme o código:
+
+- `version` é obrigatório e vale 1. Um campo desconhecido invalida o arquivo.
+- Todos os campos de `preferences` são opcionais, e `keymap` tem as seções `conventional` e `vim`.
+- `credential` ausente vale `none`. `pool` ausente vale 5 conexões.
+- Um `id` ou um `name` repetido no mesmo arquivo invalida o arquivo. O nome ignora maiúsculas e minúsculas.
+- Um caminho relativo (`file`, `caFile`, `clientCert`, `clientKey`) fica como o usuário o escreveu no arquivo. A resolução ocorre ao abrir a conexão.
+- Uma conexão de rede sem `tls` usa TLS com verificação, exceto em `localhost`, loopback e socket Unix.
 `apply_context` reaplica `readOnly` a cada reserva, pois a limpeza da sessão o remove.
 
 ### Metadados do console

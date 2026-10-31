@@ -145,3 +145,11 @@ pub fn open_table(app: &mut App, connection: usize, name: &str) {
     }
     panic!("{name} is not in the navigator");
 }
+
+/// Returns an empty folder that belongs to one test.
+pub fn temp_dir(name: &str) -> std::path::PathBuf {
+    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("dir-{name}"));
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    path
+}

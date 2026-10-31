@@ -13,8 +13,7 @@ O plano continua sendo a referência das regras funcionais.
 3. Não depender somente de `Ctrl`+setas, `Home`, `End`, `PageUp` ou `PageDown`.
 4. Manter as mesmas ações de execução nos modos convencional e Vim.
 
-Esta parte ainda não existe: `Ctrl+S`.
-O módulo `input` aplica o campo `keymap`, e a leitura de `config.json` chega com a etapa de configuração.
+O módulo `input` aplica o campo `keymap`, e a aplicação o lê de `config.json`.
 A barra de dicas mostra sempre as teclas padrão.
 O duplo clique em uma tabela e o clique no cabeçalho não foram testados em um terminal real.
 `Shift+F5` e `Ctrl+Enter` foram testados com sequências simuladas em um PTY, não no iTerm.
@@ -67,6 +66,7 @@ A barra de dicas mostra as opções enquanto o prefixo estiver ativo.
 | `C` | Commit |
 | `R` | Rollback |
 | `d` | Escolher banco ou schema |
+| `r` | Ler a configuração de novo |
 | `?` | Abrir a ajuda |
 
 `Ctrl+W C` e `Ctrl+W R` não pedem confirmação, como os botões de commit e rollback.
@@ -140,9 +140,12 @@ No macOS, o terminal trata `Cmd+C` e `Cmd+V`.
 | Adicionar conexão | `a` | `a` |
 | Editar conexão | `e` | `e` |
 | Excluir, com confirmação | `Delete` | `x` |
+| Scripts sem conexão | `s` | `s` |
 
 `Enter` em uma conexão seleciona o primeiro console aberto dela ou cria um console.
-`n` sempre cria outro console.
+`n` abre a lista de consoles da conexão, com **+ New console** na primeira linha. Sem consoles salvos, `n` cria um console.
+Na lista, `Enter` escolhe a linha, `Delete` (ou `x` no modo Vim) remove o script da linha, e `Esc` cancela.
+`s` abre a lista de scripts sem conexão, com as mesmas teclas.
 Em um schema, `Enter` abre ou fecha a linha.
 Em uma tabela ou uma view, `Enter` abre a visão de tabela, ou seleciona a aba dela, quando já existe.
 `Direita` e `Esquerda` abrem e fecham as colunas de uma tabela.
@@ -217,6 +220,18 @@ Essas ações são `F5`, `Shift+F5`, `Ctrl+W e`, `Ctrl+W s`, `Ctrl+W m`, `Ctrl+W
 Na grade da tabela, `x`, `Delete`, `[` e `]` também não têm efeito.
 `Ctrl+W c` fecha a aba da tabela e libera seus dados.
 
+## Pergunta sobre scripts alterados
+
+| Ação | Tecla |
+|---|---|
+| Mudar de linha ou de botão | `Up`, `Down`, `Tab` e `Shift+Tab`; no modo Vim, também `j` e `k` |
+| Mudar a ação de uma linha | `Left`, `Right` e `Space`; no modo Vim, também `h` e `l` |
+| Escolher a ação e ir à linha seguinte | `Enter` |
+| Aplicar, com o foco em **Apply** | `Enter` |
+| Decidir depois | `Esc`, ou `Enter` em **Decide later** |
+
+**Aplicar** exige uma ação em cada linha.
+
 ## Diálogos
 
 | Ação | Tecla |
@@ -237,6 +252,7 @@ O foco inicial fica sempre na opção sem efeito no banco ou no disco.
 | Clique no cabeçalho da tabela | Aplicar a ordenação: crescente, decrescente e sem ordem |
 | Duplo clique em uma tabela | Abrir a visão de tabela, com dois cliques na mesma célula em 400 ms |
 | Clique em um campo ou botão da barra | Dar o foco ao campo, ou acionar o botão |
+| Clique em uma linha da pergunta sobre scripts | Mudar a ação da linha, ou acionar o botão |
 | Roda | Percorrer listas, editor e grade |
 | Arrasto em um divisor | Ajustar os painéis |
 | Arrasto na borda de um cabeçalho | Ajustar a largura da coluna |

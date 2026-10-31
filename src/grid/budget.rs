@@ -44,6 +44,11 @@ impl Budget {
         self.used.load(Ordering::Relaxed)
     }
 
+    /// Changes the limit. Rows that are already loaded stay.
+    pub fn set_limit(&self, limit: usize) {
+        self.limit.store(limit, Ordering::Relaxed);
+    }
+
     pub fn limit(&self) -> usize {
         self.limit.load(Ordering::Relaxed)
     }

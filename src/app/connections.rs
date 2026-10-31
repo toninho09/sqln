@@ -2,9 +2,12 @@
 
 use std::sync::Arc;
 
-use super::{App, DialogAction, Picker};
+use super::persist::new_key;
+use super::{App, DialogAction, Picker, PickerKind};
 use crate::catalog::{Catalog, Columns, RelationRef};
-use crate::connection::{CatalogState, Connection, Definition, Source, name_is_taken};
+use crate::connection::{
+    CatalogState, Connection, Definition, Source, name_is_taken, refresh_labels,
+};
 use crate::connector::sqlite::{SqliteTarget, validate_path};
 use crate::connector::{Connector, Namespace};
 use crate::console::Focus;
@@ -12,6 +15,8 @@ use crate::exec::{ConnectionId, Manager};
 use crate::form::{ConnectionForm, Field, FormNote, Kind};
 use crate::input::Action;
 use crate::navigator::{Navigator, Row, RowKind};
+use crate::store::Scope;
+use crate::store::config::Change;
 use crate::table::TableTab;
 use crate::ui::text;
 
@@ -85,6 +90,7 @@ impl App {
         let mut definition = Definition::sqlite(target);
         definition.max_connections = self.settings.max_connections;
         definition.connect_timeout = self.settings.connect_timeout;
+        definition.sql_timeout = self.settings.sql_timeout;
         self.add_definition(definition)
     }
 
@@ -103,9 +109,31 @@ impl App {
     pub(super) fn bind_console(&mut self, index: usize, connection: ConnectionId) {
         let Some(manager) = &mut self.manager else { return };
         let Some(id) = manager.open_console(connection) else { return };
+        // The name comes first, while the console has no connection to count.
+        let fresh = (self.persist.is_some() && self.consoles[index].file.is_none())
+            .then(|| self.fresh_console_name(connection));
         let console = &mut self.consoles[index];
         console.id = id;
         console.connection = Some(connection);
+        if let Some(name) = fresh {
+            console.name = name;
+        }
+    }
+
+    /// Returns `console-N` with the lowest number that no console of the connection uses,
+    /// open or saved.
+    fn fresh_console_name(&self, connection: ConnectionId) -> String {
+        let mut used: Vec<String> = self
+            .consoles
+            .iter()
+            .filter(|console| console.connection == Some(connection))
+            .map(|console| console.name.clone())
+            .collect();
+        used.extend(self.consoles_of(connection).into_iter().map(|entry| entry.meta.name));
+        (1..)
+            .map(text::console_name)
+            .find(|name| !used.contains(name))
+            .unwrap_or_default()
     }
 
     fn connection_index(&self, id: ConnectionId) -> Option<usize> {
@@ -142,6 +170,9 @@ impl App {
     }
 
     pub(super) fn reload_catalog(&mut self, id: ConnectionId) {
+        if self.config_blocked() {
+            return;
+        }
         let Some(manager) = &self.manager else { return };
         manager.load_catalog(id);
         if let Some(connection) = self.connection_mut(id) {
@@ -214,6 +245,9 @@ impl App {
     }
 
     pub(super) fn request_columns(&mut self, id: ConnectionId, relation: RelationRef) {
+        if self.persist.as_ref().is_some_and(|persist| persist.error.is_some()) {
+            return;
+        }
         let Some(manager) = &self.manager else { return };
         let Some(connection) = self.connections.iter_mut().find(|item| item.id == id) else { return };
         if !connection.requested_columns.contains(&relation) {
@@ -224,7 +258,13 @@ impl App {
 
     pub(super) fn on_navigator_action(&mut self, action: Action) {
         if action == Action::NavigatorAdd {
-            self.form = Some(ConnectionForm::new());
+            if !self.config_blocked() {
+                self.form = Some(ConnectionForm::new_in(self.has_project()));
+            }
+            return;
+        }
+        if action == Action::NavigatorScripts {
+            self.open_orphans();
             return;
         }
         let Some(row) = self.navigator.current(&self.connections) else {
@@ -240,7 +280,7 @@ impl App {
             Action::NavigatorOpen if row.kind == RowKind::Connection => self.open_console(id),
             Action::NavigatorOpen if is_relation(&row) => self.open_table(&row),
             Action::NavigatorOpen => self.toggle(&row),
-            Action::NavigatorNewConsole => self.new_console(id),
+            Action::NavigatorNewConsole => self.request_console(id),
             Action::NavigatorRefresh => self.reload_catalog(id),
             Action::NavigatorDisconnect => self.disconnect(id),
             Action::NavigatorEdit => self.edit_connection(id),
@@ -291,18 +331,18 @@ impl App {
         }
     }
 
-    /// Selects a console of the connection, or it opens the first one.
+    /// Selects a console of the connection, or it asks for one.
     fn open_console(&mut self, id: ConnectionId) {
         match self.consoles.iter().position(|console| console.connection == Some(id)) {
             Some(index) => {
                 self.select_console(index);
                 self.leave_navigator();
             }
-            None => self.new_console(id),
+            None => self.request_console(id),
         }
     }
 
-    fn leave_navigator(&mut self) {
+    pub(super) fn leave_navigator(&mut self) {
         self.navigator_focused = false;
         self.console_mut().focus = Focus::Editor;
     }
@@ -323,7 +363,7 @@ impl App {
     }
 
     /// Returns the name of a console or a table that must end its work first.
-    fn console_in_use(&self, id: ConnectionId) -> Option<String> {
+    pub(super) fn console_in_use(&self, id: ConnectionId) -> Option<String> {
         let console = self
             .consoles
             .iter()
@@ -384,7 +424,11 @@ impl App {
             return;
         }
         let Some(connection) = self.connection(id) else { return };
-        let body = text::remove_connection(&connection.name);
+        let file = connection
+            .scope()
+            .and_then(|scope| self.persist_root(scope))
+            .map(|root| root.config_file().display().to_string());
+        let body = text::remove_connection(&connection.name, file.as_deref());
         self.show_dialog(
             text::TITLE_REMOVE_CONNECTION,
             body,
@@ -401,6 +445,18 @@ impl App {
             self.status = Some(text::connection_in_use(&console));
             return;
         }
+        // The scripts of the connection stay on disk. Only its definition goes.
+        if let Some(key) = self.connection(id).and_then(|item| item.key.clone())
+            && let Err(message) = self.change_config(key.scope, Change::Remove(key.id))
+        {
+            self.status = Some(message);
+            return;
+        }
+        self.drop_connection(id);
+    }
+
+    /// Removes a connection from the running application. Its consoles keep their text.
+    pub(super) fn drop_connection(&mut self, id: ConnectionId) {
         for index in 0..self.consoles.len() {
             if self.consoles[index].connection == Some(id) {
                 self.unbind_console(index);
@@ -412,6 +468,7 @@ impl App {
         }
         self.connections.retain(|connection| connection.id != id);
         self.navigator.forget(id);
+        refresh_labels(&mut self.connections);
     }
 
     /// The console keeps its text and its results, and it cannot run.
@@ -441,7 +498,7 @@ impl App {
             Namespace::Database => text::TITLE_DATABASE,
         };
         let id = connection.id;
-        let items = connection.catalog.as_ref().map(|catalog| {
+        let names = connection.catalog.as_ref().map(|catalog| {
             catalog.schemas.iter().map(|schema| schema.name.clone()).collect::<Vec<_>>()
         });
         let console = self.console();
@@ -450,12 +507,14 @@ impl App {
             return;
         }
         let selected = console.schema.clone();
-        let loading = items.is_none();
-        let items = items.unwrap_or_default();
+        let loading = names.is_none();
+        let names = names.unwrap_or_default();
         let cursor = selected
-            .and_then(|schema| items.iter().position(|item| *item == schema))
+            .and_then(|schema| names.iter().position(|item| *item == schema))
             .map_or(0, |index| index + 1);
-        self.picker = Some(Picker { console: console.id, connection: id, title, items, cursor, loading });
+        let items = std::iter::once(text::SCHEMA_DEFAULT.to_owned()).chain(names).collect();
+        let kind = PickerKind::Schema { console: console.id, connection: id };
+        self.picker = Some(Picker { kind, title: title.to_owned(), items, cursor, loading });
         if loading {
             self.ensure_catalog(id);
             let failed = self.connection(id).is_some_and(|item| item.catalog_state == CatalogState::Failed);
@@ -466,13 +525,15 @@ impl App {
     }
 
     fn update_picker(&mut self, id: ConnectionId, schemas: Option<Vec<String>>) {
-        let Some(picker) = self.picker.as_mut().filter(|picker| picker.connection == id) else {
+        let Some(picker) = self.picker.as_mut().filter(|picker| {
+            matches!(picker.kind, PickerKind::Schema { connection, .. } if connection == id)
+        }) else {
             return;
         };
         match schemas {
             Some(schemas) => {
-                picker.items = schemas;
-                picker.cursor = picker.cursor.min(picker.items.len());
+                picker.items = std::iter::once(text::SCHEMA_DEFAULT.to_owned()).chain(schemas).collect();
+                picker.cursor = picker.cursor.min(picker.items.len() - 1);
                 picker.loading = false;
             }
             None => self.picker = None,
@@ -481,13 +542,41 @@ impl App {
 
     pub(super) fn accept_picker(&mut self) {
         let Some(picker) = self.picker.take() else { return };
-        let schema = picker.cursor.checked_sub(1).and_then(|index| picker.items.get(index)).cloned();
-        if let Some(console) = self.console_by_id(picker.console) {
-            console.schema = schema;
+        let cursor = picker.cursor;
+        match picker.kind {
+            PickerKind::Schema { console, .. } => {
+                // The first row is the default of the connection, and it has no schema.
+                let schema = picker.items.get(cursor).filter(|_| cursor > 0).cloned();
+                if let Some(index) = self.console_index(console) {
+                    self.consoles[index].schema = schema;
+                    self.save_console_meta(index);
+                }
+            }
+            PickerKind::Consoles { connection, scripts } => match cursor.checked_sub(1) {
+                None => self.new_console(connection),
+                Some(index) => {
+                    if let Some(entry) = scripts.get(index) {
+                        self.open_script(entry);
+                    }
+                }
+            },
+            PickerKind::Orphans { scripts } => {
+                if let Some(entry) = scripts.get(cursor) {
+                    self.open_script(entry);
+                }
+            }
+            PickerKind::Associate { console, connections } => {
+                if let Some(connection) = connections.get(cursor) {
+                    self.confirm_association(console, *connection);
+                }
+            }
         }
     }
 
     pub(super) fn test_form(&mut self) {
+        if self.config_blocked() {
+            return;
+        }
         let Some(form) = &self.form else { return };
         let definition = form.definition();
         let form_note = |app: &mut Self, note| {
@@ -558,11 +647,12 @@ impl App {
                 return;
             }
         };
-        if name_is_taken(&self.connections, &definition.name, editing) {
+        if name_is_taken(&self.connections, &definition.name, self.form_scope(), editing) {
             self.set_form_error(text::FORM_NAME_TAKEN.to_owned());
             return;
         }
-        if let Source::Sqlite(target) = &definition.source
+        let missing = definition.resolved_source();
+        if let Source::Sqlite(target) = &missing
             && !target.path.exists()
             && !target.allow_create
         {
@@ -578,6 +668,17 @@ impl App {
             return;
         }
         self.apply_definition(definition);
+    }
+
+    /// Returns the scope that the form saves to. A session without files has none.
+    fn form_scope(&self) -> Option<Scope> {
+        self.persist.as_ref()?;
+        let form = self.form.as_ref()?;
+        match form.editing {
+            Some(id) => self.connection(id).and_then(Connection::scope),
+            None if self.has_project() => Some(form.scope),
+            None => Some(Scope::Global),
+        }
     }
 
     pub(super) fn create_form_file(&mut self) {
@@ -606,24 +707,58 @@ impl App {
             self.set_form_error(text::FORM_NEEDS_NAME.to_owned());
             return;
         }
-        if name_is_taken(&self.connections, &name, Some(id)) {
+        if name_is_taken(&self.connections, &name, self.form_scope(), Some(id)) {
             self.set_form_error(text::FORM_NAME_TAKEN.to_owned());
             return;
         }
-        if let Some(connection) = self.connection_mut(id) {
-            connection.name.clone_from(&name);
-            if let Some(definition) = &mut connection.definition {
-                definition.name = name;
+        let Some(connection) = self.connection(id) else { return };
+        let key = connection.key.clone();
+        let mut renamed = connection.definition.clone();
+        if let Some(definition) = &mut renamed {
+            definition.name.clone_from(&name);
+            if let Some(key) = &key
+                && let Err(message) = self.save_connection(key, definition)
+            {
+                self.set_form_error(message);
+                return;
             }
         }
+        if let Some(connection) = self.connection_mut(id) {
+            connection.definition = renamed;
+            connection.name = name;
+        }
+        refresh_labels(&mut self.connections);
         self.form = None;
     }
 
-    fn apply_definition(&mut self, definition: Definition) {
-        match self.form.as_ref().and_then(|form| form.editing) {
+    fn apply_definition(&mut self, mut definition: Definition) {
+        let editing = self.form.as_ref().and_then(|form| form.editing);
+        let connected = editing
+            .is_some_and(|id| self.manager.as_ref().is_some_and(|manager| manager.is_connected(id)));
+        if connected {
+            self.set_form_error(text::FORM_CONNECTED.to_owned());
+            return;
+        }
+        // The file of the scope comes first, so a failed write leaves the form open.
+        let key = match editing {
+            Some(id) => self.connection(id).and_then(|item| item.key.clone()),
+            None => self.form_scope().map(new_key),
+        };
+        if let Some(key) = &key {
+            definition.base = self.persist_root(key.scope).map(|root| root.base);
+            if let Err(message) = self.save_connection(key, &definition) {
+                self.set_form_error(message);
+                return;
+            }
+        }
+        match editing {
             Some(id) => self.replace_definition(id, definition),
             None => {
                 if let Some(id) = self.add_definition(definition) {
+                    if let Some(connection) = self.connection_mut(id) {
+                        connection.key = key;
+                    }
+                    refresh_labels(&mut self.connections);
                     self.navigator.select_connection(id);
                     self.navigator_focused = !self.navigator.collapsed;
                 }
@@ -633,7 +768,7 @@ impl App {
     }
 
     /// Applies a changed definition. A session never survives a change of access.
-    fn replace_definition(&mut self, id: ConnectionId, definition: Definition) {
+    pub(super) fn replace_definition(&mut self, id: ConnectionId, definition: Definition) {
         let connected = self.manager.as_ref().is_some_and(|manager| manager.is_connected(id));
         if connected {
             self.set_form_error(text::FORM_CONNECTED.to_owned());
@@ -647,11 +782,17 @@ impl App {
         let Some(index) = self.connection_index(id) else { return };
         let name = definition.name.clone();
         let dialect = connector.dialect();
+        let key = self.connections[index].key.clone();
         self.connections[index] = Connection::new(id, name, Some(definition), connector.as_ref());
+        self.connections[index].key = key;
+        refresh_labels(&mut self.connections);
         self.navigator.forget(id);
-        for console in self.consoles.iter_mut().filter(|console| console.connection == Some(id)) {
-            console.editor.set_dialect(dialect);
-            console.schema = None;
+        for index in 0..self.consoles.len() {
+            if self.consoles[index].connection == Some(id) {
+                self.consoles[index].editor.set_dialect(dialect);
+                self.consoles[index].schema = None;
+                self.save_console_meta(index);
+            }
         }
     }
 }

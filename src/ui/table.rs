@@ -49,7 +49,7 @@ pub struct TableBar<'a> {
 
 /// Writes the label of a table tab.
 pub fn tab_label(tab: &TableTab) -> String {
-    super::main_tab_label(&tab.label(), tab.is_busy())
+    super::main_tab_label(&tab.label(), tab.is_busy(), false)
 }
 
 fn control_items(tab: &TableTab, blocked: bool) -> Vec<(TableControl, String, bool)> {

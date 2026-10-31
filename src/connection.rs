@@ -1,5 +1,6 @@
-//! Connection definitions. The list stays in memory until the configuration stage.
+//! Connection definitions and the connections of the running application.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,9 +10,11 @@ use crate::connector::target::{Address, Engine, NetworkTarget, Tls};
 use crate::connector::{Capabilities, Connector, network_connector};
 use crate::exec::{ConnectionId, Settings};
 use crate::sql::Dialect;
+use crate::store::Scope;
 
 pub const DEFAULT_POOL_LIMIT: usize = 5;
 pub const DEFAULT_CONNECT_SECONDS: u64 = 30;
+pub const DEFAULT_SQL_SECONDS: u64 = 30;
 pub const DEFAULT_BUSY_SECONDS: u64 = 5;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,6 +31,10 @@ pub struct Definition {
     pub read_only: bool,
     pub max_connections: usize,
     pub connect_timeout: Duration,
+    /// The time limit of one statement. `None` runs without a limit.
+    pub sql_timeout: Option<Duration>,
+    /// The folder of the relative paths. Without a folder, the working folder applies.
+    pub base: Option<PathBuf>,
 }
 
 impl Definition {
@@ -38,6 +45,35 @@ impl Definition {
             read_only: false,
             max_connections: DEFAULT_POOL_LIMIT,
             connect_timeout: Duration::from_secs(DEFAULT_CONNECT_SECONDS),
+            sql_timeout: Some(Duration::from_secs(DEFAULT_SQL_SECONDS)),
+            base: None,
+        }
+    }
+
+    fn resolve(&self, path: &std::path::Path) -> PathBuf {
+        match &self.base {
+            Some(base) => base.join(path),
+            None => path.to_owned(),
+        }
+    }
+
+    /// Returns the source with the relative paths of the files in the base folder.
+    pub fn resolved_source(&self) -> Source {
+        match &self.source {
+            Source::Sqlite(target) => {
+                Source::Sqlite(SqliteTarget { path: self.resolve(&target.path), ..target.clone() })
+            }
+            Source::Network(target) => {
+                let mut target = target.clone();
+                if let Tls::Verify(files) = &mut target.tls {
+                    files.ca = files.ca.as_deref().map(|path| self.resolve(path));
+                    if let Some(client) = &mut files.client {
+                        client.certificate = self.resolve(&client.certificate);
+                        client.key = self.resolve(&client.key);
+                    }
+                }
+                Source::Network(target)
+            }
         }
     }
 
@@ -49,9 +85,9 @@ impl Definition {
     }
 
     pub fn connector(&self) -> Arc<dyn Connector> {
-        match &self.source {
-            Source::Sqlite(target) => Arc::new(SqliteConnector::new(target.clone())),
-            Source::Network(target) => network_connector(target.clone()),
+        match self.resolved_source() {
+            Source::Sqlite(target) => Arc::new(SqliteConnector::new(target)),
+            Source::Network(target) => network_connector(target),
         }
     }
 
@@ -61,7 +97,30 @@ impl Definition {
             read_only: self.read_only || base.read_only,
             max_connections: self.max_connections,
             connect_timeout: self.connect_timeout,
+            sql_timeout: self.sql_timeout,
             ..base.clone()
+        }
+    }
+
+    /// Returns this definition without the password of the session.
+    pub fn without_password(&self) -> Self {
+        let mut definition = self.clone();
+        if let Source::Network(target) = &mut definition.source {
+            target.password = None;
+        }
+        definition
+    }
+
+    /// Takes the password of the session from `old`, when both point to the same user
+    /// and address. A password never goes to a file, so a load does not bring it back.
+    pub fn keep_password_of(&mut self, old: &Self) {
+        if let (Source::Network(new), Source::Network(old)) = (&mut self.source, &old.source)
+            && new.password.is_none()
+            && new.engine == old.engine
+            && new.user == old.user
+            && new.address == old.address
+        {
+            new.password.clone_from(&old.password);
         }
     }
 
@@ -105,10 +164,20 @@ pub enum CatalogState {
     Failed,
 }
 
+/// The identity of a saved connection. It does not change when the name changes.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ConnectionKey {
+    pub scope: Scope,
+    pub id: String,
+}
+
 /// One connection of the running application.
 pub struct Connection {
     pub id: ConnectionId,
+    /// The name of the screen. It holds the scope when two scopes use the same name.
     pub name: String,
+    /// The place in the files. A connection of a test or of a ready connector has none.
+    pub key: Option<ConnectionKey>,
     /// A test can give a ready connector, and that connection has no definition.
     pub definition: Option<Definition>,
     pub dialect: Dialect,
@@ -130,6 +199,7 @@ impl Connection {
         Self {
             id,
             name,
+            key: None,
             definition,
             dialect: connector.dialect(),
             capabilities: connector.capabilities(),
@@ -140,6 +210,15 @@ impl Connection {
         }
     }
 
+    /// Returns the name that the user chose, without the mark of the scope.
+    pub fn plain_name(&self) -> &str {
+        self.definition.as_ref().map_or(&self.name, |definition| &definition.name)
+    }
+
+    pub fn scope(&self) -> Option<Scope> {
+        self.key.as_ref().map(|key| key.scope)
+    }
+
     pub fn set_catalog(&mut self, catalog: Catalog) {
         self.default_schema.clone_from(&catalog.current_schema);
         self.catalog = Some(catalog);
@@ -148,16 +227,33 @@ impl Connection {
     }
 }
 
-/// Returns true when the name is in use, without a difference of case.
+/// Returns true when the name is in use in the scope, without a difference of case.
 /// `except` is the connection that the form edits.
 pub fn name_is_taken(
     connections: &[Connection],
     name: &str,
+    scope: Option<Scope>,
     except: Option<ConnectionId>,
 ) -> bool {
     let name = name.trim().to_lowercase();
     connections
         .iter()
-        .filter(|connection| Some(connection.id) != except)
-        .any(|connection| connection.name.to_lowercase() == name)
+        .filter(|connection| Some(connection.id) != except && connection.scope() == scope)
+        .any(|connection| connection.plain_name().to_lowercase() == name)
+}
+
+/// Writes the scope after the name of each connection whose name another scope uses.
+pub fn refresh_labels(connections: &mut [Connection]) {
+    let names: Vec<(String, Option<Scope>)> =
+        connections.iter().map(|item| (item.plain_name().to_lowercase(), item.scope())).collect();
+    for connection in connections.iter_mut() {
+        let own = connection.plain_name().to_lowercase();
+        let scope = connection.scope();
+        let shared = names.iter().any(|(name, other)| *name == own && *other != scope);
+        connection.name = match (shared, scope) {
+            (true, Some(Scope::Project)) => format!("{} (local)", connection.plain_name()),
+            (true, Some(Scope::Global)) => format!("{} (global)", connection.plain_name()),
+            _ => connection.plain_name().to_owned(),
+        };
+    }
 }

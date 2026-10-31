@@ -32,6 +32,26 @@ Não reabrir uma decisão sem um fato novo.
 | Prazo do cancelamento | 5 segundos | Sem prazo | DataGrip oferece escalonamento parecido |
 | Conexão de cancelamento | Temporária e fora do limite do pool | Respeitar o limite literalmente | O protocolo exige outra conexão |
 
+## Arquivos e salvamento
+
+Estas escolhas vieram da implementação e esperam confirmação, exceto onde o plano as fixou.
+
+| Assunto | Escolha | Rejeitado | Motivo |
+|---|---|---|---|
+| Biblioteca JSON | `serde` e `serde_json`, com `deny_unknown_fields` | Leitura manual | Um campo desconhecido invalida o arquivo, como o plano exige; a posição do erro vem do leitor |
+| Identidade de um console | UUID `v4` no nome dos arquivos | Contador | Vários computadores criam consoles de um projeto no Git sem colisão |
+| Bloqueio de arquivo | `File::try_lock` da biblioteca padrão, em `locks/<id>.lock` | `fs2`, `fd-lock` | O plano pede o bloqueio do sistema, e a biblioteca padrão o oferece sem dependência nova |
+| Hash dos arquivos | `DefaultHasher` | `sha2` | O hash só compara conteúdos dentro de um processo, e nunca vai para um arquivo |
+| Detecção de mudança | Conferência a cada segundo, por tamanho e data, e depois hash | `notify` | O plano permite observar a pasta ou comparar o hash; a conferência é portátil e não pede uma dependência |
+| Criação dos arquivos | Na primeira edição do console | Ao abrir o console | Um console vazio não deixa lixo em um repositório |
+| Erro de configuração | Bloqueia as conexões, e `Ctrl+W r` recarrega | Carregar só o escopo válido | O plano proíbe o escopo parcial |
+| Mudança externa da configuração | Pergunta, com **Ignore** como foco inicial | Recarga automática | O plano pede a pergunta, e o foco inicial não altera nada |
+| Conexão que sai do arquivo | Sai da aplicação só quando está ociosa | Fechar a sessão | O plano proíbe a recarga de alterar conexões ativas |
+| Senha | Nunca vai ao arquivo; `credential` fica `session` ou `none` | Gravar a senha | A etapa de credenciais decide o cofre |
+| Ordem do fechamento | Grava o texto, depois fecha | Fechar e gravar | A gravação que falha mantém o console aberto |
+| Layout | `workspace.json` do projeto, ou do escopo global sem projeto | Um arquivo por escopo | O layout pertence à sessão, e não à conexão |
+| Associação entre escopos | Grava o texto pendente, copia, confere e remove os originais | Mover com `rename` | A pasta de destino pode estar em outro disco |
+
 ## Visão de tabela
 
 Estas escolhas vieram da implementação e esperam confirmação.

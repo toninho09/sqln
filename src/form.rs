@@ -7,19 +7,22 @@ use std::time::Duration;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::connection::{
-    DEFAULT_BUSY_SECONDS, DEFAULT_CONNECT_SECONDS, DEFAULT_POOL_LIMIT, Definition, Source,
+    DEFAULT_BUSY_SECONDS, DEFAULT_CONNECT_SECONDS, DEFAULT_POOL_LIMIT, DEFAULT_SQL_SECONDS,
+    Definition, Source,
 };
 use crate::connector::sqlite::{SqliteTarget, validate_path};
 use crate::connector::target::{
     Address, ClientCertificate, Engine, NetworkTarget, Secret, Tls, TlsFiles, parse_uri,
 };
 use crate::exec::ConnectionId;
+use crate::store::Scope;
 use crate::ui::text;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Field {
     Kind,
     Name,
+    Scope,
     Entry,
     Uri,
     Host,
@@ -37,6 +40,7 @@ pub enum Field {
     Pool,
     ReadOnly,
     ConnectTimeout,
+    SqlTimeout,
     Test,
     Save,
     Disconnect,
@@ -55,7 +59,9 @@ pub enum FieldStyle {
 impl Field {
     pub fn style(self) -> FieldStyle {
         match self {
-            Field::Kind | Field::Entry | Field::Tls | Field::ForeignKeys => FieldStyle::Choice,
+            Field::Kind | Field::Scope | Field::Entry | Field::Tls | Field::ForeignKeys => {
+                FieldStyle::Choice
+            }
             Field::ReadOnly => FieldStyle::Flag,
             Field::Password => FieldStyle::Secret,
             Field::Test | Field::Save | Field::Disconnect | Field::Cancel => FieldStyle::Button,
@@ -97,6 +103,10 @@ pub struct ConnectionForm {
     /// `None` keeps the default of SQLite.
     pub foreign_keys: Option<bool>,
     pub read_only: bool,
+    /// The scope of a new connection. The scope of a saved connection does not change.
+    pub scope: Scope,
+    /// True when a project is open, so the form can offer its scope.
+    pub project_available: bool,
     pub focus: Field,
     pub note: Option<FormNote>,
     /// The identity of the test in progress.
@@ -135,6 +145,8 @@ impl ConnectionForm {
             verify_tls: true,
             foreign_keys: None,
             read_only: false,
+            scope: Scope::Global,
+            project_available: false,
             focus: Field::Kind,
             note: None,
             test: None,
@@ -145,6 +157,17 @@ impl ConnectionForm {
         form.set(Field::Pool, DEFAULT_POOL_LIMIT.to_string());
         form.set(Field::ConnectTimeout, DEFAULT_CONNECT_SECONDS.to_string());
         form.set(Field::BusyTimeout, DEFAULT_BUSY_SECONDS.to_string());
+        form.set(Field::SqlTimeout, DEFAULT_SQL_SECONDS.to_string());
+        form
+    }
+
+    /// A form for a new connection. With a project, the project scope is the default.
+    pub fn new_in(project_available: bool) -> Self {
+        let mut form = Self::new();
+        form.project_available = project_available;
+        if project_available {
+            form.scope = Scope::Project;
+        }
         form
     }
 
@@ -159,6 +182,8 @@ impl ConnectionForm {
         form.set(Field::Name, definition.name.clone());
         form.set(Field::Pool, definition.max_connections.to_string());
         form.set(Field::ConnectTimeout, definition.connect_timeout.as_secs().to_string());
+        let sql_seconds = definition.sql_timeout.map_or(0, |time| time.as_secs());
+        form.set(Field::SqlTimeout, sql_seconds.to_string());
         match &definition.source {
             Source::Sqlite(target) => {
                 form.kind = Kind::Sqlite;
@@ -223,6 +248,9 @@ impl ConnectionForm {
             return vec![Field::Name, Field::Disconnect, Field::Save, Field::Cancel];
         }
         let mut fields = vec![Field::Kind, Field::Name];
+        if self.project_available && self.editing.is_none() {
+            fields.push(Field::Scope);
+        }
         match self.kind {
             Kind::Sqlite => fields.extend([Field::File, Field::ForeignKeys, Field::BusyTimeout]),
             _ if self.use_uri => fields.extend([Field::Entry, Field::Uri]),
@@ -243,6 +271,7 @@ impl ConnectionForm {
         if self.kind != Kind::Sqlite {
             fields.push(Field::ConnectTimeout);
         }
+        fields.push(Field::SqlTimeout);
         fields.extend([Field::Test, Field::Save, Field::Cancel]);
         fields
     }
@@ -268,6 +297,9 @@ impl ConnectionForm {
                 let index = order.iter().position(|kind| *kind == self.kind).unwrap_or(0);
                 let step = if forward { 1 } else { order.len() - 1 };
                 self.kind = order[(index + step) % order.len()];
+            }
+            Field::Scope => {
+                self.scope = if self.scope == Scope::Project { Scope::Global } else { Scope::Project };
             }
             Field::Entry => self.use_uri = !self.use_uri,
             Field::Tls => {
@@ -494,6 +526,9 @@ impl ConnectionForm {
             }
             definition.connect_timeout = Duration::from_secs(seconds);
         }
+        // A limit of 0 seconds means that the statements have no time limit.
+        let seconds = self.number(Field::SqlTimeout, text::FIELD_SQL_TIMEOUT)?;
+        definition.sql_timeout = (seconds > 0).then(|| Duration::from_secs(seconds));
         Ok(definition)
     }
 }

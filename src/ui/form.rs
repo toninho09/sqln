@@ -14,6 +14,7 @@ use super::theme::Theme;
 use crate::connector::target::hide_uri_password;
 use crate::form::{ConnectionForm, Field, FieldStyle, FormNote, Kind};
 use crate::grid::printable;
+use crate::store::Scope;
 
 const WIDTH: u16 = 68;
 const LABEL_WIDTH: usize = 24;
@@ -30,6 +31,7 @@ fn label(field: Field) -> &'static str {
     match field {
         Field::Kind => text::FIELD_KIND,
         Field::Name => text::FIELD_NAME,
+        Field::Scope => text::FIELD_SCOPE,
         Field::Entry => text::FIELD_ENTRY,
         Field::Uri => text::FIELD_URI,
         Field::Host => text::FIELD_HOST,
@@ -47,6 +49,7 @@ fn label(field: Field) -> &'static str {
         Field::Pool => text::FIELD_POOL,
         Field::ReadOnly => text::FIELD_READ_ONLY,
         Field::ConnectTimeout => text::FIELD_CONNECT,
+        Field::SqlTimeout => text::FIELD_SQL_TIMEOUT,
         Field::Test => text::BUTTON_TEST,
         Field::Save => text::BUTTON_SAVE,
         Field::Disconnect => text::BUTTON_DISCONNECT,
@@ -61,6 +64,8 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
             Kind::MySql => text::VALUE_MYSQL,
             Kind::Sqlite => text::VALUE_SQLITE,
         },
+        Field::Scope if form.scope == Scope::Project => text::VALUE_SCOPE_PROJECT,
+        Field::Scope => text::VALUE_SCOPE_GLOBAL,
         Field::Entry if form.use_uri => text::VALUE_URI,
         Field::Entry => text::VALUE_FIELDS,
         Field::Tls if form.verify_tls => text::VALUE_TLS_VERIFY,

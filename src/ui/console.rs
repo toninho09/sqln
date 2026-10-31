@@ -148,10 +148,17 @@ pub fn draw_buttons<T: Copy>(
     buttons
 }
 
-/// Writes the label of a main tab. A tab with work in progress has a mark.
-pub fn main_tab_label(name: &str, busy: bool) -> String {
-    let name = printable(name);
-    if busy { format!("{name} ●") } else { name }
+/// Writes the label of a main tab. A tab with work in progress has a mark, and a
+/// tab with a text that no file holds has another.
+pub fn main_tab_label(name: &str, busy: bool, unsaved: bool) -> String {
+    let mut label = printable(name);
+    if busy {
+        label.push_str(" ●");
+    }
+    if unsaved {
+        label.push_str(" !");
+    }
+    label
 }
 
 /// Draws the main tabs. It returns the columns of each tab, and it starts

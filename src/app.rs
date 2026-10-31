@@ -1,9 +1,12 @@
 //! The application shell: the consoles, the connections, and the screen.
 
 mod close;
+mod conflicts;
 mod connections;
 mod keys;
 mod mouse;
+mod persist;
+mod scripts;
 mod tables;
 
 use std::cell::RefCell;
@@ -34,6 +37,8 @@ use crate::grid::Budget;
 use crate::input::{Chord, Keymap};
 use crate::navigator::Navigator;
 use crate::sql::Dialect;
+use crate::store::scripts::ScriptEntry;
+use crate::store::{Scope, Store};
 use crate::table::{TableFocus, TableTab};
 use crate::terminal::Session;
 use crate::ui::console::BarData;
@@ -42,8 +47,9 @@ use crate::ui::navigator::draw_navigator;
 use crate::ui::theme::Theme;
 use crate::ui::wrap::WrappedText;
 use crate::ui::{
-    ConsoleLayout, TableBar, TableLayout, draw_console, draw_dialog, draw_main_tabs, draw_overlay,
-    draw_picker, draw_small_terminal, draw_table, text,
+    ConflictLayout, ConflictRowView, ConsoleLayout, TableBar, TableLayout, draw_conflicts,
+    draw_console, draw_dialog, draw_main_tabs, draw_overlay, draw_picker, draw_small_terminal,
+    draw_table, text,
 };
 
 const MIN_WIDTH: u16 = 80;
@@ -72,6 +78,10 @@ pub struct Options {
     /// The name of `connector` in the interface.
     pub label: Option<String>,
     pub settings: Settings,
+    /// The folders of the files. Without a store, the application loads and saves nothing.
+    pub store: Option<Store>,
+    /// The folder where a project can start. The application asks before it creates one.
+    pub offer_project: Option<PathBuf>,
 }
 
 impl Default for Options {
@@ -86,11 +96,13 @@ impl Default for Options {
             connector: None,
             label: None,
             settings: Settings::default(),
+            store: None,
+            offer_project: None,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum DialogAction {
     Dismiss,
     CreateDatabase,
@@ -102,6 +114,13 @@ enum DialogAction {
     CloseConnection(ConsoleId),
     RunAnyway(ConsoleId, RunScope),
     RemoveConnection(ConnectionId),
+    CreateProject,
+    ReloadConfig,
+    IgnoreConfigChange,
+    /// Close the console, and drop the text that no file holds.
+    DiscardAndClose(ConsoleId),
+    DeleteScript(Scope, String),
+    Associate(ConsoleId, ConnectionId),
 }
 
 struct Dialog {
@@ -118,12 +137,20 @@ struct Overlay {
     scroll: usize,
 }
 
-/// The list that selects the schema or the database of a console.
+/// What a row of a list stands for.
+enum PickerKind {
+    /// The first row is the default of the connection, and the others are schemas.
+    Schema { console: ConsoleId, connection: ConnectionId },
+    /// The first row creates a console, and the others are the saved consoles.
+    Consoles { connection: ConnectionId, scripts: Vec<ScriptEntry> },
+    Orphans { scripts: Vec<ScriptEntry> },
+    Associate { console: ConsoleId, connections: Vec<ConnectionId> },
+}
+
+/// A list of rows, with one chosen by the cursor.
 struct Picker {
-    console: ConsoleId,
-    connection: ConnectionId,
-    title: &'static str,
-    /// The schema names. The first row of the list is the default of the connection.
+    kind: PickerKind,
+    title: String,
     items: Vec<String>,
     cursor: usize,
     loading: bool,
@@ -139,6 +166,7 @@ struct ScreenLayout {
     console: ConsoleLayout,
     table: TableLayout,
     form: FormLayout,
+    conflicts: ConflictLayout,
     /// The options of the open dialog, with the row of those options.
     dialog: (Vec<(u16, u16, usize)>, u16),
     /// The area of the open list, with the index of its first row.
@@ -175,6 +203,12 @@ pub struct App {
     form: Option<ConnectionForm>,
     overlay: Option<Overlay>,
     status: Option<String>,
+    /// The files of the application. It is `None` when nothing loads or saves.
+    persist: Option<persist::Persist>,
+    /// The scripts that another program changed, and that wait for a choice.
+    conflicts: Option<conflicts::Conflicts>,
+    /// The SQL rules of a console that has no connection.
+    fallback_dialect: Dialect,
     /// The first key of a sequence such as `Ctrl+W e`.
     pending_key: Option<Chord>,
     drag: Option<Drag>,
@@ -189,11 +223,18 @@ pub struct App {
 
 impl App {
     pub fn new(options: Options, clipboard: SharedClipboard, theme: Theme) -> Self {
+        let mut options = options;
+        let (persist, stored) = match persist::Persist::start(&mut options) {
+            Some((persist, stored)) => (Some(persist), stored),
+            None => (None, Vec::new()),
+        };
         let dialect = match (&options.connector, options.connections.first(), &options.database) {
             (Some(connector), ..) => connector.dialect(),
             (None, _, Some(_)) => Dialect::Sqlite,
             (None, Some(definition), None) => definition.connector().dialect(),
-            (None, None, None) => options.dialect,
+            (None, None, None) => {
+                stored.first().map_or(options.dialect, |item| item.definition.connector().dialect())
+            }
         };
         let budget = Arc::new(Budget::new(options.settings.budget_bytes));
         let keymap = options.keymap.unwrap_or_else(|| Keymap::new(options.keyboard));
@@ -222,6 +263,9 @@ impl App {
             form: None,
             overlay: None,
             status: None,
+            persist,
+            conflicts: None,
+            fallback_dialect: options.dialect,
             pending_key: None,
             drag: None,
             last_click: None,
@@ -242,9 +286,13 @@ impl App {
         for definition in options.connections {
             app.add_definition(definition);
         }
+        for item in stored {
+            app.add_stored(item);
+        }
         if let Some(connection) = app.connections.first().map(|connection| connection.id) {
             app.bind_console(0, connection);
         }
+        app.finish_start();
         app
     }
 
@@ -263,6 +311,7 @@ impl App {
 
     /// Ends the runtime without a wait for a statement that does not answer.
     pub fn shutdown(&mut self) {
+        self.save_session();
         if let Some(manager) = self.manager.take() {
             manager.shutdown();
         }
@@ -328,11 +377,15 @@ impl App {
     }
 
     pub fn on_event(&mut self, event: Event) {
-        let blocked = !self.dialogs.is_empty() || self.overlay.is_some() || self.picker.is_some();
+        let blocked = !self.dialogs.is_empty()
+            || self.conflicts.is_some()
+            || self.overlay.is_some()
+            || self.picker.is_some();
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
             Event::Paste(text) if !blocked => self.on_paste(&text),
             Event::Mouse(mouse) if !self.dialogs.is_empty() => self.on_dialog_mouse(mouse),
+            Event::Mouse(mouse) if self.conflicts.is_some() => self.on_conflicts_mouse(mouse),
             Event::Mouse(mouse) if self.picker.is_some() => self.on_picker_mouse(mouse),
             Event::Mouse(mouse) if !blocked => self.on_mouse(mouse),
             _ => {}
@@ -373,7 +426,8 @@ impl App {
     /// Reads waiting execution events and continues the row search.
     /// It returns true when the screen changed.
     pub fn drain_events(&mut self) -> bool {
-        let changed = self.has_work();
+        let ticked = self.tick();
+        let changed = self.has_work() || ticked;
         if changed {
             let deadline = Instant::now() + SEARCH_SLICE;
             match self.table_active {
@@ -532,11 +586,22 @@ impl App {
             self.layout.form = draw_form(frame, form, &self.theme);
         }
         if let Some(picker) = &self.picker {
-            let default = text::SCHEMA_DEFAULT;
-            let items: Vec<&str> =
-                std::iter::once(default).chain(picker.items.iter().map(String::as_str)).collect();
+            let items: Vec<&str> = picker.items.iter().map(String::as_str).collect();
             self.layout.picker =
-                draw_picker(frame, picker.title, &items, picker.cursor, picker.loading, &self.theme);
+                draw_picker(frame, &picker.title, &items, picker.cursor, picker.loading, &self.theme);
+        }
+        if let Some(conflicts) = &self.conflicts {
+            let rows: Vec<ConflictRowView> = conflicts
+                .rows
+                .iter()
+                .map(|row| ConflictRowView {
+                    name: &row.name,
+                    removed: row.removed,
+                    choice: row.choice.map(|choice| row.options()[choice]),
+                })
+                .collect();
+            self.layout.conflicts =
+                draw_conflicts(frame, &rows, conflicts.cursor, conflicts.note, &self.theme);
         }
         if let Some(overlay) = &mut self.overlay {
             let Overlay { title, contents, footer, scroll } = overlay;

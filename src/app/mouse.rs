@@ -255,7 +255,7 @@ impl App {
             .map(|(_, _, index)| *index);
         let Some(index) = option else { return };
         if let Some(dialog) = self.dialogs.pop_front() {
-            self.on_dialog_action(dialog.options[index].1);
+            self.on_dialog_action(dialog.options[index].1.clone());
         }
     }
 
@@ -266,13 +266,15 @@ impl App {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) if inside => {
                 let index = first + usize::from(mouse.row - area.y);
-                if index <= picker.items.len() {
+                if index < picker.items.len() {
                     picker.cursor = index;
                     self.accept_picker();
                 }
             }
             MouseEventKind::ScrollUp => picker.cursor = picker.cursor.saturating_sub(1),
-            MouseEventKind::ScrollDown => picker.cursor = (picker.cursor + 1).min(picker.items.len()),
+            MouseEventKind::ScrollDown => {
+                picker.cursor = (picker.cursor + 1).min(picker.items.len().saturating_sub(1));
+            }
             _ => {}
         }
     }

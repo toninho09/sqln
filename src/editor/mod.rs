@@ -190,6 +190,20 @@ impl SqlEditor {
         self.state.cursor
     }
 
+    /// Returns a number that changes with each change of the text.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Returns the first visible column and row.
+    pub fn scroll(&self) -> (usize, usize) {
+        self.state.viewport_offset()
+    }
+
+    pub fn set_scroll(&mut self, column: usize, row: usize) {
+        self.state.set_viewport_offset(column, row);
+    }
+
     pub fn set_cursor(&mut self, cursor: Index2) {
         self.state.cursor = cursor;
         self.anchor = None;

@@ -1,93 +1,85 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::Duration;
 
 use sqln::app::{Options, run, sample_catalog};
-use sqln::connection::{Definition, Source};
-use sqln::connector::sqlite::SqliteTarget;
-use sqln::connector::target::{Secret, parse_uri};
-use sqln::editor::KeyboardMode;
 use sqln::sql::Dialect;
+use sqln::store::{self, Root, Store};
 use sqln::ui::text::HELP;
 
 enum Command {
-    Run(Box<Options>),
+    Run(Cli),
     Help,
     Version,
 }
 
-fn number(option: &str, value: Option<String>) -> Result<u64, String> {
-    value
-        .as_deref()
-        .and_then(|value| value.parse().ok())
-        .ok_or_else(|| format!("{option} needs a number."))
+#[derive(Default)]
+struct Cli {
+    project: Option<PathBuf>,
+    dialect: Option<Dialect>,
+    no_catalog: bool,
 }
 
 fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
     let mut args = args;
-    let mut options = Options { catalog: Some(sample_catalog()), ..Options::default() };
+    let mut cli = Cli::default();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => return Ok(Command::Help),
             "-V" | "--version" => return Ok(Command::Version),
-            "--vim" => options.keyboard = KeyboardMode::Vim,
-            "--no-catalog" => options.catalog = None,
-            "--read-only" => options.settings.read_only = true,
-            "--sqlite" => {
-                let path = PathBuf::from(args.next().ok_or("--sqlite needs a file.")?);
-                if options.database.is_some() {
-                    options.connections.push(Definition::sqlite(SqliteTarget::new(path)));
-                } else {
-                    options.database = Some(path);
-                }
-                options.catalog = None;
+            "--project" => {
+                let folder = args.next().ok_or("--project needs a folder.")?;
+                cli.project = Some(PathBuf::from(folder));
             }
-            "--url" => {
-                let uri = args.next().ok_or("--url needs a connection text.")?;
-                let mut target = parse_uri(&uri)?;
-                if target.password.is_none() {
-                    target.password = std::env::var("SQLN_PASSWORD").ok().map(Secret::new);
-                }
-                let name = target.label();
-                options.connections.push(Definition::new(name, Source::Network(target)));
-                options.catalog = None;
-            }
-            "--row-cap" => {
-                let rows = number("--row-cap", args.next())?;
-                options.settings.row_cap = usize::try_from(rows).unwrap_or(usize::MAX);
-            }
-            "--page-size" => {
-                let rows = number("--page-size", args.next())?;
-                if rows == 0 {
-                    return Err("--page-size needs 1 or more rows.".to_owned());
-                }
-                options.settings.page_size = usize::try_from(rows).unwrap_or(usize::MAX);
-            }
-            "--sql-timeout" => {
-                let seconds = number("--sql-timeout", args.next())?;
-                options.settings.sql_timeout =
-                    (seconds > 0).then(|| Duration::from_secs(seconds));
-            }
+            "--no-catalog" => cli.no_catalog = true,
             "--dialect" => {
-                options.dialect = match args.next().as_deref() {
+                cli.dialect = Some(match args.next().as_deref() {
                     Some("postgres") => Dialect::Postgres,
                     Some("mysql") => Dialect::MySql,
                     Some("sqlite") => Dialect::Sqlite,
                     other => return Err(format!("Unknown dialect: {}", other.unwrap_or(""))),
-                };
+                });
             }
             other => return Err(format!("Unknown option: {other}")),
         }
     }
-    Ok(Command::Run(Box::new(options)))
+    Ok(Command::Run(cli))
+}
+
+/// Finds the folders of the two scopes. Without a project, the options carry the
+/// folder where the application can offer one.
+fn options_of(cli: Cli) -> Result<Options, String> {
+    let global = store::default_global_dir()
+        .ok_or("SQLN cannot find the home folder. Set HOME or XDG_CONFIG_HOME.")?;
+    let working = std::env::current_dir().map_err(|error| error.to_string())?;
+    let located = store::locate_project(&working, cli.project.as_deref());
+    let mut options = Options {
+        store: Some(Store {
+            global: Root::global(global),
+            project: located.root.as_deref().map(Root::project),
+        }),
+        offer_project: located.offer,
+        catalog: (!cli.no_catalog).then(sample_catalog),
+        ..Options::default()
+    };
+    if let Some(dialect) = cli.dialect {
+        options.dialect = dialect;
+    }
+    Ok(options)
 }
 
 fn main() -> ExitCode {
     match parse(std::env::args().skip(1)) {
         Ok(Command::Help) => print!("{HELP}"),
         Ok(Command::Version) => println!("sqln {}", env!("CARGO_PKG_VERSION")),
-        Ok(Command::Run(options)) => {
-            if let Err(error) = run(*options) {
+        Ok(Command::Run(cli)) => {
+            let options = match options_of(cli) {
+                Ok(options) => options,
+                Err(message) => {
+                    eprintln!("sqln: {message}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Err(error) = run(options) {
                 eprintln!("sqln: {error}");
                 return ExitCode::FAILURE;
             }

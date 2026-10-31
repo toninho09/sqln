@@ -1,5 +1,6 @@
 //! Screen drawing.
 
+pub mod conflicts;
 pub mod console;
 pub mod form;
 pub mod navigator;
@@ -19,6 +20,7 @@ pub use self::console::{
     ConsoleLayout, column_edge_at, draw_console, draw_dialog, draw_main_tabs, draw_overlay,
     draw_picker, draw_small_terminal, grid_cell_at, header_column_at, main_tab_label, tab_at,
 };
+pub use self::conflicts::{ConflictLayout, ConflictRowView, draw_conflicts};
 pub use self::table::{TableBar, TableControl, TableLayout, draw_table};
 use self::theme::Theme;
 use crate::complete::SuggestionKind;

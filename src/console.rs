@@ -13,6 +13,7 @@ use crate::exec::{
 use crate::grid::{Budget, Row};
 use crate::input::Action;
 pub use crate::result::{GridAction, ResultTab};
+use crate::script_file::ScriptFile;
 use crate::ui::text;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -67,6 +68,10 @@ pub struct Console {
     /// The schema or database that each execution of this console applies.
     pub schema: Option<String>,
     pub editor: SqlEditor,
+    /// The files of the console. A console without a file keeps its text in memory.
+    pub file: Option<ScriptFile>,
+    /// True after the user chose to close without the text that no file holds.
+    pub discard_text: bool,
     pub results: Vec<ResultTab>,
     pub messages: Vec<Message>,
     /// The index of a result. The value `results.len()` selects **Messages**.
@@ -111,6 +116,8 @@ impl Console {
             connection: None,
             schema: None,
             editor,
+            file: None,
+            discard_text: false,
             results: Vec::new(),
             messages: Vec::new(),
             active: 0,

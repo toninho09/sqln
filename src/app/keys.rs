@@ -14,7 +14,7 @@ use crate::ui::text;
 use crate::ui::wrap::WrappedText;
 
 impl App {
-    fn vim(&self) -> bool {
+    pub(super) fn vim(&self) -> bool {
         self.keyboard == KeyboardMode::Vim
     }
 
@@ -47,6 +47,10 @@ impl App {
         self.status = None;
         if !self.dialogs.is_empty() {
             self.on_dialog_key(key);
+            return;
+        }
+        if self.conflicts.is_some() {
+            self.on_conflicts_key(key);
             return;
         }
         if self.picker.is_some() {
@@ -132,6 +136,11 @@ impl App {
     }
 
     fn on_editor_key(&mut self, key: KeyEvent) {
+        // `Ctrl+S` writes the text at once, in both keyboard modes.
+        if key.code == KeyCode::Char('s') && key.modifiers == KeyModifiers::CONTROL {
+            self.save_now();
+            return;
+        }
         self.ensure_active_catalog();
         let index = self.active;
         let connection = self.catalog_for(index);
@@ -164,6 +173,7 @@ impl App {
             Action::PreviousTab => self.switch_tab(false),
             Action::ToggleNavigator => self.toggle_navigator(),
             Action::ChooseSchema => self.open_picker(),
+            Action::ReloadConfig => self.reload_config(),
             Action::FocusLeft => self.focus_navigator(),
             Action::FocusRight => self.navigator_focused = false,
             Action::FocusUp => self.focus_console(Focus::Editor),
@@ -178,7 +188,8 @@ impl App {
             | Action::NavigatorDisconnect
             | Action::NavigatorEdit
             | Action::NavigatorDelete
-            | Action::NavigatorAdd => self.on_navigator_action(action),
+            | Action::NavigatorAdd
+            | Action::NavigatorScripts => self.on_navigator_action(action),
             _ => self.on_grid_action(action, extend),
         }
     }
@@ -277,9 +288,18 @@ impl App {
     fn run(&mut self, scope: RunScope) {
         let console = self.console();
         if console.connection.is_none() {
-            self.status = Some(text::NO_CONNECTION.to_owned());
+            if console.file.is_some() {
+                // A script without a connection needs a choice before it runs.
+                self.start_association();
+            } else {
+                self.status = Some(text::NO_CONNECTION.to_owned());
+            }
             return;
         }
+        if self.config_blocked() {
+            return;
+        }
+        let console = self.console();
         if console.is_busy() {
             self.status = Some(text::EXECUTION_ACTIVE.to_owned());
             return;
@@ -384,13 +404,13 @@ impl App {
             KeyCode::Char('l') if vim => dialog.focus = (dialog.focus + 1) % count,
             KeyCode::Char('h') if vim => dialog.focus = (dialog.focus + count - 1) % count,
             KeyCode::Enter => {
-                let action = dialog.options[dialog.focus].1;
+                let action = dialog.options[dialog.focus].1.clone();
                 self.dialogs.pop_front();
                 self.on_dialog_action(action);
             }
             KeyCode::Esc => {
                 // The first option never changes the database or the disk.
-                let action = dialog.options[0].1;
+                let action = dialog.options[0].1.clone();
                 self.dialogs.pop_front();
                 self.on_dialog_action(action);
             }
@@ -401,7 +421,7 @@ impl App {
     fn on_picker_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
         let Some(picker) = &mut self.picker else { return };
-        let last = picker.items.len();
+        let last = picker.items.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc => self.picker = None,
             KeyCode::Enter => self.accept_picker(),
@@ -409,6 +429,8 @@ impl App {
             KeyCode::Down => picker.cursor = (picker.cursor + 1).min(last),
             KeyCode::Char('k') if vim => picker.cursor = picker.cursor.saturating_sub(1),
             KeyCode::Char('j') if vim => picker.cursor = (picker.cursor + 1).min(last),
+            KeyCode::Delete => self.picker_delete(),
+            KeyCode::Char('x') if vim => self.picker_delete(),
             _ => {}
         }
     }
@@ -457,6 +479,8 @@ impl App {
         let console = self.console();
         if !self.dialogs.is_empty() {
             text::HINT_DIALOG
+        } else if self.conflicts.is_some() {
+            text::HINT_CONFLICTS
         } else if self.picker.is_some() {
             text::HINT_PICKER
         } else if self.overlay.is_some() {
@@ -465,6 +489,8 @@ impl App {
             text::HINT_FORM
         } else if self.pending_key.is_some_and(Chord::is_prefix) {
             text::HINT_PREFIX
+        } else if self.persist.as_ref().is_some_and(|persist| persist.error.is_some()) {
+            text::HINT_CONFIG_ERROR
         } else if self.navigator_focused {
             text::HINT_NAVIGATOR
         } else if let Some(tab) = self.table() {

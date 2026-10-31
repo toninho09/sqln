@@ -176,3 +176,43 @@ fn a_key_in_a_large_navigator_stays_under_the_target() {
     println!("20,000 tables: worst key plus frame {worst:?}");
     assert!(worst < Duration::from_millis(50), "{worst:?}");
 }
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn the_autosave_of_a_large_script_stays_under_the_target() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use crossterm::event::Event;
+    use sqln::app::{App, Options};
+    use sqln::clipboard::MemoryClipboard;
+    use sqln::store::{Root, Store};
+
+    let base = common::temp_dir("latency-autosave");
+    let db = common::temp_db("latency-autosave");
+    rusqlite::Connection::open(&db).unwrap();
+    let global = Root::global(base.join("global"));
+    std::fs::create_dir_all(&global.dir).unwrap();
+    std::fs::write(
+        global.config_file(),
+        format!(
+            r#"{{"version":1,"connections":[{{"id":"g","name":"big","kind":"sqlite","file":"{}"}}]}}"#,
+            db.display()
+        ),
+    )
+    .unwrap();
+    let store = Store { global, project: None };
+    let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
+    let options = Options { store: Some(store), ..Options::default() };
+    let mut app = App::new(options, clipboard, Theme::ansi());
+    let row = "INSERT INTO orders (id, name, total) VALUES (1, 'a text value', 10.50);\n";
+    app.on_event(Event::Paste(row.repeat(50_000)));
+    // The first steps see the edit. The last one writes the 3.6 MiB text.
+    let start = Instant::now();
+    app.tick_at(start);
+    let write = Instant::now();
+    app.tick_at(start + Duration::from_millis(600));
+    let spent = write.elapsed();
+    println!("the autosave of 50,000 lines took {spent:?}");
+    assert!(spent < Duration::from_millis(50), "{spent:?}");
+}

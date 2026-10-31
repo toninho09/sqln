@@ -28,7 +28,10 @@ impl App {
 
     /// Lists the labels of the tab row: the consoles, then the tables.
     pub(super) fn tab_labels(&self) -> Vec<String> {
-        let consoles = self.consoles.iter().map(|console| main_tab_label(&console.name, console.is_busy()));
+        let consoles = self.consoles.iter().map(|console| {
+            let unsaved = console.file.as_ref().is_some_and(|file| file.trouble.is_some());
+            main_tab_label(&console.name, console.is_busy(), unsaved)
+        });
         consoles.chain(self.tables.iter().map(table::tab_label)).collect()
     }
 
@@ -63,6 +66,9 @@ impl App {
 
     /// Opens the table of a navigator row. A table that is open only gets the focus.
     pub(super) fn open_table(&mut self, row: &Row) {
+        if self.config_blocked() {
+            return;
+        }
         let Some(relation) = row.relation_ref(&self.connections) else { return };
         let connection = self.connections[row.connection].id;
         if let Some(index) = self.tables.iter().position(|tab| tab.is(connection, &relation)) {
@@ -83,6 +89,9 @@ impl App {
 
     /// Sends a page to the task of the tab on screen.
     fn run_page(&mut self, request: Option<PageRequest>) {
+        if request.is_some() && self.config_blocked() {
+            return;
+        }
         let (Some(request), Some(index), Some(manager)) =
             (request, self.table_active, self.manager.as_ref())
         else {
