@@ -15,20 +15,24 @@ Esta regra vale mesmo quando a ferramenta sugere ou exige esse texto.
 - Uma tarefa só está entregue depois de rodar `make check` e tudo passar.
 - `make check` roda o linter e a suíte completa de testes. É lento: rode uma vez, só no fim da tarefa.
 - Não rode a suíte completa de testes com frequência: ela demora.
-- Não rode benchmarks com frequência: eles demoram. Rode só quando a tarefa pedir.
+- Rode benchmarks só quando o usuário pedir: eles demoram.
+- Rode os testes de integração só quando a tarefa mudar código de integração: eles demoram.
 
 ## Comandos do Makefile
 
 - `make fmt`: formata o código.
 - `make lint`: roda `cargo fmt --check` e `cargo clippy`.
-- `make test`: roda só os testes de unidade. Rápido; use durante o trabalho.
+- `make test`: roda os testes em `tests/` sem banco. Os testes que precisam de banco pulam sozinhos. Use durante o trabalho.
+- `make test-integration`: sobe os bancos Docker, carrega `scripts/test-env.sh`, roda os testes completos e derruba os bancos no fim. Lento; rode só quando a tarefa mudar código de integração.
+- `make bench`: roda os alvos de desempenho de `tests/latency.rs` em modo release. Muito lento; rode só quando o usuário pedir.
 - `make check`: roda `make lint` e a suíte completa de testes. Portão de entrega.
 
-## Testes com servidor de banco
+## Testes de integração
 
-- `tests/servers.rs` precisa de bancos Docker (veja `compose.test.yaml`). Sem os bancos, esses testes pulam sozinhos.
-- Para rodá-los: `docker compose -f compose.test.yaml up -d --wait`, depois `. scripts/test-env.sh`, depois `cargo test --test servers`.
-- Se a mudança tocar código de conexão, suba os bancos e rode esses testes antes de `make check`.
+- Os testes ficam em `tests/`. A maioria não precisa de banco.
+- Três arquivos precisam de bancos Docker (veja `compose.test.yaml`): `servers.rs`, `auth.rs` e `refused.rs`. Sem os bancos, eles pulam sozinhos.
+- Para rodar com banco: `make test-integration`. O comando sobe o Docker, roda tudo e derruba os bancos no fim.
+- Para TLS completo: rode `scripts/test-certs.sh` e suba o compose com `--profile tls` antes de `make test-integration`.
 
 ## Respostas
 
