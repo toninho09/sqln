@@ -91,6 +91,25 @@ pub fn write_private_atomic(path: &Path, bytes: &[u8], expect: Expect) -> Result
     write(path, bytes, expect, true)
 }
 
+/// Returns the options of a new file that only its owner can read.
+fn private_options() -> fs::OpenOptions {
+    let mut options = File::options();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options
+}
+
+/// Opens a private file to add text at its end. It creates the file and its folders.
+pub fn open_private_append(path: &Path) -> io::Result<File> {
+    if let Some(folder) = path.parent() {
+        fs::create_dir_all(folder)?;
+    }
+    private_options().append(true).create(true).open(path)
+}
+
 fn write(path: &Path, bytes: &[u8], expect: Expect, private: bool) -> Result<u64, WriteError> {
     let failed = |error: io::Error| WriteError::Failed(error.to_string());
     if let Some(folder) = path.parent() {
@@ -104,14 +123,11 @@ fn write(path: &Path, bytes: &[u8], expect: Expect, private: bool) -> Result<u64
     let mut opened = false;
     let result = (|| {
         let mut file = if private {
-            let mut options = File::options();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            options.open(&temporary).map_err(failed)?
+            private_options()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+                .map_err(failed)?
         } else {
             File::create(&temporary).map_err(failed)?
         };

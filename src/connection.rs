@@ -29,6 +29,8 @@ pub struct Definition {
     pub name: String,
     pub source: Source,
     pub read_only: bool,
+    /// Shows a mark on screen, and a run that can change data asks first.
+    pub production: bool,
     pub max_connections: usize,
     pub connect_timeout: Duration,
     /// The time limit of one statement. `None` runs without a limit.
@@ -47,6 +49,7 @@ impl Definition {
             name: name.into(),
             source,
             read_only: false,
+            production: false,
             max_connections: DEFAULT_POOL_LIMIT,
             connect_timeout: Duration::from_secs(DEFAULT_CONNECT_SECONDS),
             sql_timeout: Some(Duration::from_secs(DEFAULT_SQL_SECONDS)),
@@ -244,6 +247,12 @@ impl Connection {
 
     pub fn scope(&self) -> Option<Scope> {
         self.key.as_ref().map(|key| key.scope)
+    }
+
+    pub fn is_production(&self) -> bool {
+        self.definition
+            .as_ref()
+            .is_some_and(|definition| definition.production)
     }
 
     pub fn set_catalog(&mut self, catalog: Catalog) {

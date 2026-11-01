@@ -346,6 +346,18 @@ impl App {
         self.load_page(None);
     }
 
+    /// Asks for the total of rows of the applied filter.
+    fn count_table(&mut self) {
+        if !self.command_available(Action::GridCountRows) {
+            return;
+        }
+        let Some(dialect) = self.ready_table() else {
+            return;
+        };
+        let request = self.table().and_then(|tab| tab.count_request(dialect));
+        self.run_page(request);
+    }
+
     /// Asks for the next page. `show` is the page to show at the end of the load.
     fn load_page(&mut self, show: Option<usize>) {
         let Some(dialect) = self.ready_table() else {
@@ -475,6 +487,7 @@ impl App {
                 }
             }
             Action::GridLoadMore => self.load_more(),
+            Action::GridCountRows => self.count_table(),
             Action::GridOpenValue if self.table().is_some_and(|tab| tab.pending) => {
                 self.apply_table()
             }

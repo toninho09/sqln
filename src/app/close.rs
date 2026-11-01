@@ -243,6 +243,11 @@ impl App {
                     self.start_run(index, scope);
                 }
             }
+            DialogAction::RunConfirmed(id, scope) => {
+                if let Some(index) = self.console_index(id) {
+                    self.run_confirmed(index, scope);
+                }
+            }
             DialogAction::RemoveConnection(connection) => self.remove_connection(connection),
             DialogAction::CreateProject => self.create_project(),
             DialogAction::ReloadConfig => self.reload_config(),

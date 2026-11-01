@@ -3,6 +3,8 @@ mod common;
 use common::{Fixture, alt, ctrl, key, shift};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use edtui::Index2;
+use sqln::editor::KeyboardMode;
+use sqln::sql::Dialect;
 
 use KeyCode::{Backspace, Delete, Down, End, Enter, Home, Left, Right, Tab, Up};
 
@@ -404,50 +406,80 @@ fn up_on_the_first_row_keeps_the_cursor_row() {
     assert_eq!(f.editor.cursor(), at(0, 1));
 }
 
-fn undo_steps(f: &mut Fixture) -> usize {
-    let mut steps = 0;
-    loop {
-        let before = f.text();
-        f.press(ctrl('z'));
-        if f.text() == before {
-            return steps;
-        }
-        steps += 1;
-    }
-}
-
-/// Makes one undo entry for each line.
-fn separate_edits(f: &mut Fixture, count: usize) {
-    for _ in 0..count {
-        f.press(key(KeyCode::Char('a')));
-        f.press(key(Enter));
-    }
+#[test]
+fn a_comment_goes_on_the_row_of_the_cursor_and_comes_off() {
+    let mut f = Fixture::conventional("select 1;\nselect 2;");
+    f.editor.set_cursor(at(1, 3));
+    f.editor.toggle_comment();
+    assert_eq!(f.text(), "select 1;\n-- select 2;");
+    assert_eq!(f.editor.cursor(), at(1, 6));
+    f.editor.toggle_comment();
+    assert_eq!(f.text(), "select 1;\nselect 2;");
+    assert_eq!(f.editor.cursor(), at(1, 3));
 }
 
 #[test]
-fn the_undo_memory_limit_removes_the_oldest_entries() {
-    let mut unlimited = Fixture::conventional("");
-    separate_edits(&mut unlimited, 10);
-    let all = undo_steps(&mut unlimited);
-    assert!(all >= 10, "{all}");
-
-    let mut limited = Fixture::conventional("");
-    limited.editor.set_undo_limit(400);
-    separate_edits(&mut limited, 10);
-    let kept = undo_steps(&mut limited);
-    assert!(kept > 0 && kept < all, "{kept} of {all}");
+fn a_selection_that_ends_at_a_row_start_leaves_that_row_out() {
+    let mut f = Fixture::conventional("a\nb\nc");
+    f.press(shift(Down));
+    f.press(shift(Down));
+    f.editor.toggle_comment();
+    assert_eq!(f.text(), "-- a\n-- b\nc");
+    assert!(f.selected().is_some(), "the selection stays");
+    f.editor.toggle_comment();
+    assert_eq!(f.text(), "a\nb\nc");
 }
 
 #[test]
-fn an_edit_above_the_undo_limit_stays_out_of_the_history_with_a_warning() {
-    let mut f = Fixture::conventional("text");
-    f.editor.set_undo_limit(16);
-    f.editor.on_paste(" and more text");
-    assert!(
-        f.editor
-            .status()
-            .is_some_and(|status| status.contains("too large"))
-    );
-    assert_eq!(f.text(), " and more texttext");
-    assert_eq!(undo_steps(&mut f), 0);
+fn rows_with_and_without_a_comment_all_receive_one_at_the_smallest_indent() {
+    let mut f = Fixture::conventional("    a\n\n  -- b\n  c");
+    f.press(ctrl('a'));
+    f.editor.toggle_comment();
+    assert_eq!(f.text(), "  --   a\n\n  -- -- b\n  -- c");
+}
+
+#[test]
+fn rows_that_all_hold_a_comment_lose_it() {
+    let mut f = Fixture::conventional("-- a\n--b\n\n    -- c");
+    f.press(ctrl('a'));
+    f.editor.toggle_comment();
+    assert_eq!(f.text(), "a\nb\n\n    c");
+}
+
+#[test]
+fn a_blank_row_receives_no_comment() {
+    let mut f = Fixture::conventional("a\n   \nb");
+    f.editor.set_cursor(at(1, 1));
+    let revision = f.editor.revision();
+    f.editor.toggle_comment();
+    assert_eq!(f.text(), "a\n   \nb");
+    assert_eq!(f.editor.revision(), revision);
+}
+
+#[test]
+fn a_comment_is_one_undo_step() {
+    let mut f = Fixture::conventional("a\nb");
+    f.press(ctrl('a'));
+    f.editor.toggle_comment();
+    assert_eq!(f.text(), "-- a\n-- b");
+    f.press(ctrl('z'));
+    assert_eq!(f.text(), "a\nb");
+}
+
+#[test]
+fn a_cursor_inside_a_removed_comment_stays_at_the_start_of_the_text() {
+    let mut f = Fixture::conventional("  -- a");
+    f.editor.set_cursor(at(0, 3));
+    f.editor.toggle_comment();
+    assert_eq!(f.text(), "  a");
+    assert_eq!(f.editor.cursor(), at(0, 2));
+}
+
+#[test]
+fn redis_uses_its_own_comment() {
+    let mut f = Fixture::with_dialect("GET a", KeyboardMode::Conventional, Dialect::Redis);
+    f.editor.toggle_comment();
+    assert_eq!(f.text(), "# GET a");
+    f.editor.toggle_comment();
+    assert_eq!(f.text(), "GET a");
 }

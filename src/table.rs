@@ -42,6 +42,8 @@ pub struct PageRequest {
     pub row_cap: usize,
     /// The page to show when this page ends.
     pub show: Option<usize>,
+    /// True for the query of the total, which reads one number and no page.
+    pub count: bool,
 }
 
 /// The page in progress.
@@ -56,6 +58,8 @@ struct Load {
     done: bool,
     /// The page to show at the end of this load.
     show: Option<usize>,
+    /// True for the query of the total. It changes no state of the pages.
+    count: bool,
 }
 
 pub struct TableTab {
@@ -80,6 +84,8 @@ pub struct TableTab {
     pub message: Option<Message>,
     /// True when a next page can exist.
     pub has_more: bool,
+    /// The rows of the applied filter when the user last asked for the count.
+    pub total: Option<usize>,
     applied_filter: String,
     applied_order: String,
     page_size: usize,
@@ -117,14 +123,27 @@ fn is_one_statement(sql: &str, dialect: Dialect) -> bool {
     !open && split(sql, dialect).len() == 1
 }
 
-/// Builds the query of all rows. Each clause starts a line, so a line comment in
-/// the filter cannot remove the next clause.
-pub fn select_sql(dialect: Dialect, relation: &RelationRef, filter: &str, order: &str) -> String {
-    let mut sql = format!("SELECT * FROM {}", from_clause(relation, dialect));
+/// Writes the `FROM` and `WHERE` clauses after a select list.
+fn from_where(dialect: Dialect, relation: &RelationRef, filter: &str) -> String {
+    let mut sql = format!(" FROM {}", from_clause(relation, dialect));
     if !filter.is_empty() {
         sql.push_str("\nWHERE ");
         sql.push_str(filter);
     }
+    sql
+}
+
+/// Builds the query of the rows of a filter. It returns `None` for a filter that does
+/// not make one statement.
+pub fn count_sql(dialect: Dialect, relation: &RelationRef, filter: &str) -> Option<String> {
+    let sql = format!("SELECT COUNT(*){}", from_where(dialect, relation, filter));
+    is_one_statement(&sql, dialect).then_some(sql)
+}
+
+/// Builds the query of all rows. Each clause starts a line, so a line comment in
+/// the filter cannot remove the next clause.
+pub fn select_sql(dialect: Dialect, relation: &RelationRef, filter: &str, order: &str) -> String {
+    let mut sql = format!("SELECT *{}", from_where(dialect, relation, filter));
     if !order.is_empty() {
         sql.push_str("\nORDER BY ");
         sql.push_str(order);
@@ -208,6 +227,7 @@ impl TableTab {
             run: RunClock::default(),
             message: None,
             has_more: false,
+            total: None,
             applied_filter: String::new(),
             applied_order: String::new(),
             page_size,
@@ -371,6 +391,7 @@ impl TableTab {
     pub fn apply(&mut self, dialect: Dialect, budget: &Budget) -> Option<PageRequest> {
         let filter = self.filter.text().trim().to_owned();
         let order = self.order.text().trim().to_owned();
+        self.total = None;
         self.restart(filter, order, dialect, budget)
     }
 
@@ -421,6 +442,7 @@ impl TableTab {
                 first: true,
                 row_cap: self.page_size.saturating_add(1),
                 show: None,
+                count: false,
             }),
             Err(reason) => {
                 self.message = Some(Message {
@@ -456,11 +478,38 @@ impl TableTab {
             first: false,
             row_cap: self.page_size.saturating_add(1),
             show: None,
+            count: false,
         })
+    }
+
+    /// Returns the query of the total of the applied filter.
+    pub fn count_request(&self, dialect: Dialect) -> Option<PageRequest> {
+        Some(PageRequest {
+            sql: count_sql(dialect, &self.relation, &self.applied_filter)?,
+            first: false,
+            row_cap: 1,
+            show: None,
+            count: true,
+        })
+    }
+
+    /// Returns true while the tab reads its total.
+    pub fn is_counting(&self) -> bool {
+        self.load.as_ref().is_some_and(|load| load.count)
     }
 
     /// Records the execution that the manager accepted for a page.
     pub fn started(&mut self, execution: ExecutionId, first: bool, show: Option<usize>) {
+        self.limit = ReadLimit::None;
+        self.begin(execution, first, show, false);
+    }
+
+    /// Records the execution that the manager accepted for the total.
+    pub fn started_count(&mut self, execution: ExecutionId) {
+        self.begin(execution, false, None, true);
+    }
+
+    fn begin(&mut self, execution: ExecutionId, first: bool, show: Option<usize>, count: bool) {
         self.load = Some(Load {
             execution,
             first,
@@ -468,8 +517,8 @@ impl TableTab {
             extra: false,
             done: false,
             show,
+            count,
         });
-        self.limit = ReadLimit::None;
         self.phase = Phase::Waiting;
         self.run.start();
     }
@@ -536,6 +585,12 @@ impl TableTab {
             budget.release(bytes);
             return;
         };
+        if load.count {
+            budget.release(bytes);
+            let number = rows.first().and_then(|row| row.first());
+            self.total = number.and_then(|value| value.full_text().parse().ok());
+            return;
+        }
         let room = self.page_size.saturating_sub(load.received);
         if rows.len() > room {
             let extra = rows.split_off(room);
@@ -551,6 +606,9 @@ impl TableTab {
     fn on_page_done(&mut self, limit: ReadLimit, budget: &Budget) {
         let Some(load) = &mut self.load else { return };
         load.done = true;
+        if load.count {
+            return;
+        }
         self.has_more = load.extra || limit != ReadLimit::None;
         self.limit = limit;
         self.blocked_at = budget.used();
@@ -559,11 +617,12 @@ impl TableTab {
     fn on_finished(&mut self, end: ExecutionEnd, message: Option<String>) {
         let load = self.load.take();
         let done = load.as_ref().is_some_and(|load| load.done);
+        let page = !load.as_ref().is_some_and(|load| load.count);
         self.phase = Phase::Idle;
         self.run.finish(end);
-        self.result.cut_short |= end != ExecutionEnd::Completed;
+        self.result.cut_short |= page && end != ExecutionEnd::Completed;
         // A page that ended early leaves rows that the next page continues.
-        if !done && self.loaded() > 0 {
+        if page && !done && self.loaded() > 0 {
             self.has_more = true;
         }
         // A page that did not end leaves the cursor in its place.

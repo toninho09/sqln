@@ -6,7 +6,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::input::SuggestionKeys;
 use crate::line_input::LineInput;
 use crate::store::Scope;
-use crate::store::config::{DEFAULT_REOPEN_TABS, KeyboardName, Preferences, ThemeName};
+use crate::store::config::{
+    DEFAULT_FORMAT_JSON, DEFAULT_QUERY_HISTORY, DEFAULT_REOPEN_TABS, KeyboardName, Preferences,
+    ThemeName,
+};
 use crate::ui::text;
 
 const MEBIBYTE: usize = 1024 * 1024;
@@ -23,6 +26,8 @@ pub enum Field {
     RowCap,
     Budget,
     ReopenTabs,
+    QueryHistory,
+    FormatJson,
     SuggestionKeys,
     Theme,
     Save,
@@ -39,7 +44,7 @@ pub struct Section {
 pub const SECTIONS: [Section; 4] = [
     Section {
         title: text::SECTION_GENERAL,
-        fields: &[Field::Keyboard, Field::ReopenTabs],
+        fields: &[Field::Keyboard, Field::ReopenTabs, Field::QueryHistory],
     },
     Section {
         title: text::SECTION_EDITOR,
@@ -47,7 +52,12 @@ pub const SECTIONS: [Section; 4] = [
     },
     Section {
         title: text::SECTION_RESULTS,
-        fields: &[Field::PageSize, Field::RowCap, Field::Budget],
+        fields: &[
+            Field::PageSize,
+            Field::RowCap,
+            Field::Budget,
+            Field::FormatJson,
+        ],
     },
     Section {
         title: text::SECTION_APPEARANCE,
@@ -69,6 +79,8 @@ struct Draft {
     row_cap: LineInput,
     budget: LineInput,
     reopen_tabs: Option<bool>,
+    query_history: Option<bool>,
+    format_json: Option<bool>,
     suggestion_keys: Option<SuggestionKeys>,
     theme: Option<ThemeName>,
 }
@@ -90,6 +102,8 @@ impl Draft {
             row_cap: number_text(preferences.row_cap),
             budget: number_text(budget),
             reopen_tabs: preferences.reopen_tabs,
+            query_history: preferences.query_history,
+            format_json: preferences.format_json,
             suggestion_keys: preferences.suggestion_keys,
             theme: preferences.theme,
         }
@@ -188,6 +202,14 @@ impl SettingsForm {
         self.draft().reopen_tabs
     }
 
+    pub fn query_history(&self) -> Option<bool> {
+        self.draft().query_history
+    }
+
+    pub fn format_json(&self) -> Option<bool> {
+        self.draft().format_json
+    }
+
     pub fn suggestion_keys(&self) -> Option<SuggestionKeys> {
         self.draft().suggestion_keys
     }
@@ -243,6 +265,12 @@ impl SettingsForm {
             Field::ReopenTabs => global
                 .reopen_tabs
                 .map(|value| text::on_off(value).to_owned()),
+            Field::QueryHistory => global
+                .query_history
+                .map(|value| text::on_off(value).to_owned()),
+            Field::FormatJson => global
+                .format_json
+                .map(|value| text::on_off(value).to_owned()),
             Field::SuggestionKeys => global
                 .suggestion_keys
                 .map(|keys| text::suggestion_keys_name(keys).to_owned()),
@@ -253,6 +281,12 @@ impl SettingsForm {
             (true, Some(value)) => text::from_global(&value),
             _ if field == Field::ReopenTabs => {
                 text::default_value(text::on_off(DEFAULT_REOPEN_TABS))
+            }
+            _ if field == Field::QueryHistory => {
+                text::default_value(text::on_off(DEFAULT_QUERY_HISTORY))
+            }
+            _ if field == Field::FormatJson => {
+                text::default_value(text::on_off(DEFAULT_FORMAT_JSON))
             }
             _ if field == Field::SuggestionKeys => {
                 text::default_value(text::suggestion_keys_name(SuggestionKeys::default()))
@@ -311,6 +345,16 @@ impl SettingsForm {
                 let order = [None, Some(true), Some(false)];
                 self.draft_mut().reopen_tabs =
                     next_choice(&order, self.draft().reopen_tabs, forward);
+            }
+            Field::QueryHistory => {
+                let order = [None, Some(true), Some(false)];
+                self.draft_mut().query_history =
+                    next_choice(&order, self.draft().query_history, forward);
+            }
+            Field::FormatJson => {
+                let order = [None, Some(true), Some(false)];
+                self.draft_mut().format_json =
+                    next_choice(&order, self.draft().format_json, forward);
             }
             Field::SuggestionKeys => {
                 let order = [
@@ -399,6 +443,8 @@ impl SettingsForm {
         let mut preferences = base.clone();
         preferences.keyboard_mode = draft.keyboard;
         preferences.reopen_tabs = draft.reopen_tabs;
+        preferences.query_history = draft.query_history;
+        preferences.format_json = draft.format_json;
         preferences.suggestion_keys = draft.suggestion_keys;
         preferences.theme = draft.theme;
         preferences.page_size = parse(&draft.page_size, text::FIELD_PAGE_SIZE)?;

@@ -4,6 +4,97 @@ Este documento registra as escolhas e as alternativas rejeitadas.
 As regras completas estão no [plano](../PLAN.md).
 Não reabrir uma decisão sem um fato novo.
 
+## Versão oficial do EdTUI — 2026-11-01
+
+O usuário removeu o fork `vendor/edtui`, e o projeto volta a usar o `edtui` 0.11.7 publicado.
+Esta decisão reabre o item "4. Desfazer" de "Fechamento das decisões" e a linha "Limite do desfazer" de "Credenciais e editor".
+
+| Ponto | Decisão | Rejeitado | Motivo |
+|---|---|---|---|
+| Limite do desfazer | Sem teto de memória. Cada pilha guarda até 100 entradas | Manter o fork; enviar o limite ao projeto original; publicar o fork com outro nome; histórico próprio | `cargo install` ignora `[patch]`, e o fork bloqueava a publicação. O envio ao projeto original faria o lançamento depender do mantenedor. O histórico próprio não limita a memória no modo Vim |
+| Aviso de entrada grande | Removido | Manter o aviso | Sem limite, toda entrada fica no histórico |
+| Risco de memória | Débito técnico, descrito em `ARCHITECTURE.md`, seção "Limite conhecido do editor" | Bloquear o lançamento | Escolha do usuário. Scripts comuns ficam muito abaixo do pior caso |
+
+## Linha na vertical, JSON, comentário e total de linhas — 2026-11-01
+
+O usuário aprovou quatro itens da análise do projeto.
+O total de linhas não reabre a regra da paginação: uma página continua a pedir uma linha a mais, sem contar o total. A contagem é uma ação separada.
+
+| Item | Ponto | Decisão | Rejeitado | Motivo |
+|---|---|---|---|---|
+| Linha | Local | Janela sobre a grade, com a tecla `r` | Modo vertical dentro da grade | A janela já tem rolagem, cópia e fechamento. O modo exigiria novo desenho, mouse, busca e seleção |
+| Linha | Navegação | `Left`, `Right`, `h` e `l`. Para na última linha carregada, e o cursor da grade acompanha | Ler a próxima página | A janela não faz consulta |
+| Linha | Valor longo | Até 4.096 colunas, com `…` | Valor inteiro | Um valor enorme atrasaria a tecla, e `Enter` mostra o valor inteiro |
+| JSON | Forma | Automática, com `f` para trocar. **Format JSON** em Settings define a forma inicial, ligada por padrão | Só automática | Pedido do usuário |
+| JSON | Cópia | `Ctrl+C` copia a forma visível | Sempre o original | O usuário escolhe a forma com `f`, e a grade copia o original |
+| JSON | Motor | Reescreve só os espaços e valida com `IgnoredAny` | `serde_json::Value` | `Value` reordena as chaves e perde dígitos, e a regra proíbe alterar valores |
+| JSON | Limites | Entrada até 1 MiB, saída até 8 MiB. Acima disso, o valor fica como texto | Sem limite | Cada linha de um JSON profundo repete o recuo, e 200 KB de `[` gerariam dezenas de GB |
+| Comentário | Teclas | `Ctrl+W /`, `Ctrl+/` e `Ctrl+7` | Só `Ctrl+W /` | Pedido do usuário. É uma exceção ao critério 1 de `KEYMAP.md`, e `Ctrl+W /` atende ao critério 2. Sem aprimoramento, o terminal envia `Ctrl+/` como `Ctrl+7` |
+| Comentário | Regra | Sem seleção, a linha do cursor. Linhas em branco ficam iguais. Todas comentadas perdem o comentário; nos outros casos, o comentário entra no menor recuo | Comentar cada linha no próprio recuo | É o costume das IDEs, e o texto mantém a forma |
+| Total | Forma | Tecla `c`, com `COUNT(*)` exato e o filtro aplicado | Estimativa automática; `COUNT(*)` automático | `COUNT(*)` em uma tabela grande segura uma conexão, e a estimativa erra com filtro e não existe no SQLite |
+| Total | Caminho | O mesmo de uma página | Método novo no gerente | Prazo, Stop, pool, senha e orçamento valem sem código novo |
+| Total | Validade | **Apply** e **Clear** limpam o total, e a ordenação mantém | Limpar sempre | A ordem não muda a contagem |
+| Total | Disponível | Só com mais linhas para carregar, em uma aba de tabela ou view | Toda aba | Sem mais linhas, a grade já tem o total. Chave Redis e estrutura não têm SQL de contagem |
+
+### Limitações conhecidas
+
+- O comentário lê linhas, não tokens. Uma linha dentro de uma string ou de um comentário de bloco recebe o prefixo.
+- `--x` no MySQL não é comentário, mas a remoção o trata como comentário.
+- O total fica velho quando outra sessão muda a tabela, até o próximo **Apply**.
+- Uma coluna JSON sem formato de objeto ou array, como um número ou uma string, não troca de forma.
+
+## Alvo, proteção da execução, formatador e histórico — 2026-11-01
+
+O usuário aprovou cinco itens da análise do projeto.
+O histórico reabre a seção 17 do plano, que o deixava fora da primeira versão.
+
+| Item | Ponto | Decisão | Rejeitado | Motivo |
+|---|---|---|---|---|
+| Alvo | Conexão | `sqln arquivo.db` e `sqln postgres://...` duram só a sessão | Salvar em `config.json` | Uma URI nova criaria um cadastro a cada uso |
+| Alvo | Texto do console | Fica em memória, e a saída avisa antes de perder o texto | Salvar em um script | O script precisa de uma conexão salva |
+| Alvo | URI sem senha | PostgreSQL e MySQL: o terminal pede a senha oculta antes da interface. `Enter` vazio segue sem senha. Redis não pergunta | Falhar com erro | A senha fora da URI não vai para o histórico do shell |
+| Alvo | Senha recusada | O erro aparece em Mensagens, e o usuário repete o comando | Pedir na interface | O pedido da interface exige um `ConnectionKey` |
+| Alvo | Quantidade | Um por comando | Vários | YAGNI |
+| Alvo | Início | Sem **Create project**. As abas salvas não abrem e ficam no arquivo | Manter os dois | O usuário já disse o que quer abrir |
+| Alvo | Arquivo inexistente | O console espera o diálogo de criação | Ligar à primeira conexão salva | O console mudaria de banco sem aviso |
+| `WHERE` | Instruções | `UPDATE` e `DELETE` sem `WHERE` no nível principal | Incluir `TRUNCATE` e `DROP` | Esses dois não têm `WHERE`; a marca de produção cobre os dois |
+| `WHERE` | Conexões | Todas, menos as somente leitura, sem opção para desligar | Só produção | Um `DELETE` sem `WHERE` custa caro em qualquer banco |
+| `WHERE` | Modo manual | Também avisa | Pular | Regra única |
+| Produção | Efeito | Selo `PROD` e confirmação antes de uma execução que não seja leitura simples | Só o selo | O selo sozinho não impede um engano |
+| Produção | Sem pergunta | Leitura simples, `BEGIN`, `START`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE` e `USE` | Perguntar em tudo | `SET` pergunta, pois `SET GLOBAL` muda o servidor |
+| Produção | Selo | Na barra de status, com texto e sem sair por falta de largura | Abas e navegador | O texto vale com `NO_COLOR` |
+| Produção | Conexão ativa | A marca muda sem reconectar | Exigir desconexão | A marca não muda a sessão |
+| Diálogo | Forma | Um por execução, com foco em **Cancel**, contagem e primeira instrução de risco | Um por instrução; digitar o nome | Um script longo não vira uma fila de perguntas |
+| Formatador | Motor | Próprio, sobre o lexer do projeto | `sqlformat` | O crate não tem dialeto MySQL, e o lexer já conhece os dialetos do projeto |
+| Formatador | Segurança | Fora de uma quebra de linha, o gap entre tokens só encolhe para um espaço. A conferência compara todos os tokens e recusa uma diferença | Refazer os espaços | O lexer guarda `>=` como dois tokens |
+| Formatador | Strings | Duas strings em duas linhas ficam em duas linhas | Juntar na mesma linha | Em SQL, juntar as duas na mesma linha é erro |
+| Formatador | Alcance | A seleção; sem seleção, a instrução sob o cursor | O script inteiro | É a regra do Run |
+| Formatador | Instruções | `SELECT`, `WITH`, `VALUES`, `INSERT`, `UPDATE` e `DELETE` | Todas | Rotinas têm corpo próprio, e o risco não compensa |
+| Formatador | Caixa | Mantém o texto digitado | Maiúsculas | Segue a decisão do autocomplete |
+| Formatador | Lista | O primeiro item fica na linha da cláusula | Quebrar depois da cláusula | Não exige olhar à frente, e uma lista de um item fica em uma linha |
+| Histórico | Arquivo | `history.jsonl` na pasta global, permissão `0600`, ligado por padrão | Por projeto; só em memória | Projetos antigos não têm essa linha no `.gitignore` |
+| Histórico | Conteúdo | Cada instrução de console que chegou ao banco, com hora, conexão e sucesso ou falha | Tempo e linhas | YAGNI |
+| Histórico | Fora | Tabelas, catálogo, exportação e conexões sem cadastro | Registrar tudo | Só o texto do usuário interessa |
+| Histórico | Segredos | Não grava `PASSWORD`, `PASSWD`, `IDENTIFIED`, `REQUIREPASS` e `MASTERAUTH`, nem Redis `AUTH`, `ACL` e `HELLO` | Gravar tudo | Segue a regra do cliente `mysql` |
+| Histórico | Limites | Arquivo até 8 MiB; na abertura, um arquivo maior guarda os 4 MiB mais novos. Uma instrução acima de 64 KiB e uma repetição seguida não entram | Sem limite | O arquivo cresce sem limite e a janela lê tudo |
+| Histórico | Escrita | Uma escrita por quadro, com o arquivo aberto de novo | Arquivo aberto o tempo todo | `trim` troca o arquivo, e outra instância continuaria a gravar no arquivo antigo |
+| Histórico | Janela | `Ctrl+W H` e paleta. Lista a conexão do console, com filtro por palavras | Todas as conexões | O SQL de outro banco raramente serve |
+| Histórico | `Enter` | Insere no cursor e não executa | Executar | O usuário revisa antes |
+
+### Limitações conhecidas
+
+- Uma senha na URI fica no histórico do shell e em `ps`. Omita a senha, e o terminal pede.
+- Uma conexão de linha de comando não reage a uma senha recusada. Repita o comando.
+- `DELETE t FROM t JOIN u ON ...` no MySQL pergunta, mesmo com o `JOIN` limitando as linhas.
+- Um `WHERE 1 = 1` satisfaz a proteção.
+- `SELECT minha_funcao()` pergunta em produção, pois o texto não prova que a função só lê.
+- Redis tem só o selo. A confirmação de produção não existe nessa fonte.
+- O filtro de segredos lê palavras. Um segredo dentro de um literal, como `WHERE token = 'abc'`, entra no arquivo.
+- Uma coluna chamada `password` deixa a consulta fora do histórico.
+- Uma instrução gravada por outra instância durante `trim` pode se perder.
+- Uma palavra sem reserva no MySQL, como uma coluna `offset`, pode começar uma linha. O SQL continua válido.
+- `CREATE`, `ALTER` e rotinas não têm formatação.
+
 ## Linha de dicas — 2026-10-31
 
 O usuário pediu que o rodapé sempre mostre os comandos mais relevantes para o momento.

@@ -1832,3 +1832,122 @@ fn enter_exports_only_from_the_button() {
     assert_eq!(read(&path), "a\n1\n");
     assert!(!f.sees("[Export]"));
 }
+
+const JSON_FORMATTED: &str = "{\n  \"b\": 1,\n  \"a\": [\n    2\n  ]\n}";
+
+#[test]
+fn a_json_value_opens_formatted_and_f_shows_the_original() {
+    let mut f = Fixture::new("json-form");
+    f.run_script(r#"SELECT '{"b":1,"a":[2]}' AS doc;"#);
+    f.prefix('j');
+    f.press(key(KeyCode::Enter));
+    f.assert_sees("\"b\": 1,");
+    f.assert_sees("15 characters · JSON ");
+    assert!(f.app.hint().contains("f switch form"), "{}", f.app.hint());
+    f.press(ctrl('c'));
+    assert_eq!(f.clipboard.borrow().text, JSON_FORMATTED);
+
+    f.press(key(KeyCode::Char('f')));
+    f.assert_sees(r#"{"b":1,"a":[2]}"#);
+    f.assert_sees("15 characters · JSON, original");
+    f.press(ctrl('c'));
+    assert_eq!(f.clipboard.borrow().text, r#"{"b":1,"a":[2]}"#);
+
+    f.press(key(KeyCode::Char('f')));
+    f.assert_sees("\"b\": 1,");
+}
+
+#[test]
+fn a_text_value_has_no_other_form() {
+    let mut f = Fixture::new("json-text");
+    f.run_script("SELECT '{not json' AS doc;");
+    f.prefix('j');
+    f.press(key(KeyCode::Enter));
+    f.assert_sees("9 characters · text");
+    assert!(!f.app.hint().contains("switch form"), "{}", f.app.hint());
+    f.press(key(KeyCode::Char('f')));
+    f.assert_sees("{not json");
+}
+
+#[test]
+fn the_row_window_moves_with_the_side_keys_and_takes_the_grid_cursor() {
+    let mut f = Fixture::new("row-window");
+    f.run_script("SELECT 1 AS id, 'a' AS name UNION ALL SELECT 2, 'b' UNION ALL SELECT 3, NULL;");
+    f.prefix('j');
+    f.press(key(KeyCode::Char('r')));
+    f.assert_sees("row 1 of 3 loaded");
+    f.assert_sees("id   : 1");
+    f.assert_sees("name : a");
+    f.assert_sees("2 columns");
+    assert!(f.app.hint().contains("Left/Right row"), "{}", f.app.hint());
+
+    f.press(key(KeyCode::Left));
+    f.assert_sees("row 1 of 3 loaded");
+    f.press(key(KeyCode::Right));
+    f.assert_sees("name : b");
+    f.press(key(KeyCode::Char('l')));
+    f.assert_sees("row 3 of 3 loaded");
+    f.assert_sees("name : NULL");
+    f.press(key(KeyCode::Right));
+    f.assert_sees("row 3 of 3 loaded");
+    f.press(key(KeyCode::Char('h')));
+    f.assert_sees("row 2 of 3 loaded");
+
+    f.press(ctrl('c'));
+    assert_eq!(f.clipboard.borrow().text, "id   : 2\nname : b");
+    f.press(key(KeyCode::Esc));
+    assert!(!f.sees("row 2 of 3 loaded"));
+    let console = f.app.console_mut();
+    assert_eq!(console.results[console.active].view.row, 1);
+}
+
+#[test]
+fn the_row_key_does_nothing_without_rows() {
+    let mut f = Fixture::new("row-empty");
+    f.run_script("SELECT 1 AS a WHERE 1 = 0;");
+    f.prefix('j');
+    f.press(key(KeyCode::Char('r')));
+    assert!(!f.sees("columns"));
+}
+
+#[test]
+fn the_comment_keys_reach_the_editor_and_stay_out_of_a_table() {
+    let mut f = Fixture::with(
+        "comment-keys",
+        KeyboardMode::Conventional,
+        Settings::default(),
+        "CREATE TABLE t (a INT);",
+    );
+    f.write("SELECT 1;");
+    let text = |f: &mut Fixture| f.app.console_mut().editor.text();
+    f.prefix('/');
+    assert_eq!(text(&mut f), "-- SELECT 1;");
+    f.press(ctrl('7'));
+    assert_eq!(text(&mut f), "SELECT 1;");
+    f.press(ctrl('/'));
+    assert_eq!(text(&mut f), "-- SELECT 1;");
+
+    f.run_script("SELECT 1;");
+    common::open_table(&mut f.app, 0, "t");
+    f.wait_for_table();
+    f.prefix('/');
+    assert_eq!(text(&mut f), "SELECT 1;");
+}
+
+#[test]
+fn a_real_table_counts_its_rows() {
+    let mut f = Fixture::with(
+        "count-sqlite",
+        KeyboardMode::Conventional,
+        Settings::default(),
+        "CREATE TABLE t (a INT);
+         WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 150)
+         INSERT INTO t SELECT x FROM n;",
+    );
+    common::open_table(&mut f.app, 0, "t");
+    f.wait_for_table();
+    f.press(key(KeyCode::Char('c')));
+    f.wait_for_table();
+    assert_eq!(f.app.table().unwrap().total, Some(150));
+    f.assert_sees("100 of 150 rows loaded");
+}

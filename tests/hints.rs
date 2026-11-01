@@ -457,3 +457,25 @@ fn a_row_can_end_exactly_at_its_width() {
     assert_eq!(fit_hints(&items, 15).len(), 2);
     assert_eq!(fit_hints(&items, 14).len(), 1);
 }
+
+#[test]
+fn the_comment_command_needs_text() {
+    let mut s = Screen::conventional("comment-text");
+    s.assert_hides(&["comment"]);
+    s.write("SELECT 1;");
+    let row = s.hints_at(200);
+    assert!(row.contains("Ctrl+W / comment"), "{row}");
+}
+
+#[test]
+fn the_row_command_needs_rows() {
+    let mut s = Screen::conventional("row-rows");
+    s.run("SELECT 1 AS a WHERE 1 = 0;");
+    s.prefix('j');
+    assert!(!s.hints_at(200).contains("r row"));
+    s.prefix('k');
+    s.run("SELECT 1 AS a;");
+    s.prefix('j');
+    let row = s.hints_at(200);
+    assert!(row.contains("r row"), "{row}");
+}

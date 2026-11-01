@@ -59,6 +59,8 @@ fn label(field: Field) -> &'static str {
         Field::RowCap => text::FIELD_ROW_CAP,
         Field::Budget => text::FIELD_BUDGET,
         Field::ReopenTabs => text::FIELD_REOPEN_TABS,
+        Field::QueryHistory => text::FIELD_QUERY_HISTORY,
+        Field::FormatJson => text::FIELD_FORMAT_JSON,
         Field::SuggestionKeys => text::FIELD_SUGGESTION_KEYS,
         Field::Theme => text::FIELD_THEME,
         Field::Sections | Field::Save | Field::Cancel => "",
@@ -74,6 +76,14 @@ fn choice(form: &SettingsForm, field: Field) -> String {
             .keyboard()
             .map_or_else(|| form.inherited(field), text::keyboard_name),
         Field::ReopenTabs => form.reopen_tabs().map_or_else(
+            || form.inherited(field),
+            |value| text::on_off(value).to_owned(),
+        ),
+        Field::QueryHistory => form.query_history().map_or_else(
+            || form.inherited(field),
+            |value| text::on_off(value).to_owned(),
+        ),
+        Field::FormatJson => form.format_json().map_or_else(
             || form.inherited(field),
             |value| text::on_off(value).to_owned(),
         ),

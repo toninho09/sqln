@@ -1,9 +1,10 @@
 //! The command palette: the actions of the application, with a filter.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyEvent;
 
+use crate::filter_list::{FilterList, ListRequest};
 use crate::input::Action;
-use crate::line_input::{Edit, LineInput};
+use crate::line_input::LineInput;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Command {
@@ -23,95 +24,59 @@ pub enum PaletteRequest {
 
 #[derive(Clone, Debug)]
 pub struct Palette {
-    commands: Vec<Command>,
-    input: LineInput,
-    /// The positions in `commands` that the filter keeps.
-    shown: Vec<usize>,
-    cursor: usize,
+    list: FilterList<Command>,
 }
 
-/// Returns true when each word of the filter is in the label or in the key.
-fn matches(command: &Command, words: &[String]) -> bool {
-    let label = command.label.to_lowercase();
-    let key = command.key.as_deref().unwrap_or("").to_lowercase();
-    words
-        .iter()
-        .all(|word| label.contains(word) || key.contains(word))
+/// A word of the filter can be in the label or in the key.
+fn filter_text(command: &Command) -> String {
+    format!("{} {}", command.label, command.key.as_deref().unwrap_or(""))
 }
 
 impl Palette {
     pub fn new(commands: Vec<Command>) -> Self {
-        let shown = (0..commands.len()).collect();
         Self {
-            commands,
-            input: LineInput::default(),
-            shown,
-            cursor: 0,
+            list: FilterList::new(commands, filter_text),
         }
     }
 
+    pub fn list(&self) -> &FilterList<Command> {
+        &self.list
+    }
+
     pub fn input(&self) -> &LineInput {
-        &self.input
+        self.list.input()
     }
 
     pub fn cursor(&self) -> usize {
-        self.cursor
+        self.list.cursor()
     }
 
     /// Lists the commands that the filter keeps.
     pub fn shown(&self) -> impl ExactSizeIterator<Item = &Command> {
-        self.shown.iter().map(|index| &self.commands[*index])
-    }
-
-    fn refilter(&mut self) {
-        let words: Vec<String> = self
-            .input
-            .text()
-            .split_whitespace()
-            .map(str::to_lowercase)
-            .collect();
-        self.shown = (0..self.commands.len())
-            .filter(|index| matches(&self.commands[*index], &words))
-            .collect();
-        self.cursor = 0;
+        self.list.shown()
     }
 
     pub fn paste(&mut self, text: &str) {
-        self.input.insert(text.lines().next().unwrap_or(""));
-        self.refilter();
+        self.list.paste(text);
     }
 
     pub fn move_by(&mut self, rows: isize) {
-        let last = self.shown.len().saturating_sub(1);
-        self.cursor = self.cursor.saturating_add_signed(rows).min(last);
+        self.list.move_by(rows);
     }
 
     /// Returns the request for a row of the list.
     pub fn choose(&mut self, index: usize) -> PaletteRequest {
-        match self.shown.get(index) {
-            Some(command) => PaletteRequest::Run(self.commands[*command].action),
+        match self.list.row(index) {
+            Some(command) => PaletteRequest::Run(command.action),
             None => PaletteRequest::None,
         }
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> PaletteRequest {
-        match key.code {
-            KeyCode::Esc => PaletteRequest::Cancel,
-            KeyCode::Enter => self.choose(self.cursor),
-            KeyCode::Up => {
-                self.move_by(-1);
-                PaletteRequest::None
-            }
-            KeyCode::Down => {
-                self.move_by(1);
-                PaletteRequest::None
-            }
-            _ => {
-                if !matches!(self.input.on_key(key), Edit::None | Edit::Moved) {
-                    self.refilter();
-                }
-                PaletteRequest::None
-            }
+        match self.list.on_key(key) {
+            ListRequest::None => PaletteRequest::None,
+            ListRequest::Cancel => PaletteRequest::Cancel,
+            ListRequest::Choose(index) => self.choose(index),
         }
     }
 }

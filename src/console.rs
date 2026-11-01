@@ -232,6 +232,14 @@ impl Console {
         self.statements.get(result.statement).map(String::as_str)
     }
 
+    /// Returns the text of a statement of the current execution.
+    pub fn statement_at(&self, key: &StatementKey) -> Option<&str> {
+        if !self.is_current(key.execution) {
+            return None;
+        }
+        self.statements.get(key.index).map(String::as_str)
+    }
+
     /// Returns true when the last execution held one statement.
     pub fn ran_alone(&self) -> bool {
         self.statements.len() == 1

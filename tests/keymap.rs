@@ -282,3 +282,36 @@ fn a_character_key_of_a_global_action_stays_text_in_the_editor() {
     assert!(!app.should_quit());
     assert_eq!(app.console().editor.text(), "q");
 }
+
+#[test]
+fn three_keys_reach_the_comment_action_in_each_mode() {
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let map = Keymap::new(mode);
+        for text in ["ctrl+/", "ctrl+7"] {
+            assert_eq!(
+                map.lookup(Region::Global, chord(text)),
+                Lookup::Action(Action::ToggleComment)
+            );
+        }
+        assert_eq!(
+            map.after(Region::Global, chord("ctrl+w"), chord("/")),
+            Some(Action::ToggleComment)
+        );
+    }
+}
+
+#[test]
+fn the_row_and_count_keys_work_on_the_grid_of_each_mode() {
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let map = Keymap::new(mode);
+        assert_eq!(
+            map.lookup(Region::Grid, chord("r")),
+            Lookup::Action(Action::GridOpenRow)
+        );
+        assert_eq!(
+            map.lookup(Region::Grid, chord("c")),
+            Lookup::Action(Action::GridCountRows)
+        );
+    }
+    assert!(Action::GridCountRows.is_table_only());
+}

@@ -100,7 +100,7 @@ impl App {
         self.table().map_or(self.console().id, |tab| tab.id)
     }
 
-    fn active_result(&self) -> Option<&ResultTab> {
+    pub(super) fn active_result(&self) -> Option<&ResultTab> {
         let result = match self.table() {
             Some(tab) => Some(&tab.result),
             None => {

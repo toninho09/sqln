@@ -859,7 +859,11 @@ pub fn draw_overlay(
     contents.set_width(usize::from(inner.width));
     let scroll = contents.last_row_at(scroll);
     let rows = (scroll..scroll + usize::from(inner.height))
-        .map_while(|index| contents.row(index).map(|row| Line::raw(printable(row))))
+        .map_while(|index| {
+            let row = printable(contents.row(index)?);
+            let indent = contents.row_indent(index);
+            Some(Line::raw(format!("{:indent$}{row}", "")))
+        })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(rows).block(block), box_area);
     scroll

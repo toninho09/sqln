@@ -18,7 +18,7 @@ use crate::ui::name::{NamePrompt, NameTarget};
 use crate::ui::text;
 
 /// Writes the age of a change, so the list needs no clock zone.
-fn age(modified: Option<SystemTime>) -> String {
+pub(super) fn age(modified: Option<SystemTime>) -> String {
     let Some(seconds) = modified
         .and_then(|time| SystemTime::now().duration_since(time).ok())
         .map(|elapsed| elapsed.as_secs())

@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use super::history::HistoryLog;
 use super::{App, DialogAction, Options};
 use crate::connection::{Connection, ConnectionKey, Definition, refresh_labels};
 use crate::editor::{KeyboardMode, SqlEditor};
@@ -13,10 +14,10 @@ use crate::export::ExportChoices;
 use crate::script_file::Trouble;
 use crate::settings::SettingsForm;
 use crate::store::config::{self, Change, Config, ConfigError, CredentialName, Loaded, Stored};
-use crate::store::file;
 use crate::store::scripts::{self, ScriptMeta};
 use crate::store::workspace::{self, EditorState, Position};
 use crate::store::{self, Root, Scope, Store};
+use crate::store::{file, history};
 use crate::ui::text;
 
 /// The time between two checks of the files for a change by another program.
@@ -39,6 +40,11 @@ pub(super) struct Persist {
     pub reopen_tabs: bool,
     /// False when the list of tabs in the file must stay as it is.
     pub tabs_known: bool,
+    /// True when each statement of a console goes to the history file.
+    pub query_history: bool,
+    /// True when the value window opens a JSON value in its formatted form.
+    pub format_json: bool,
+    pub history: HistoryLog,
 }
 
 impl Persist {
@@ -50,13 +56,18 @@ impl Persist {
         let mut error = None;
         let mut stored = Vec::new();
         let mut reopen_tabs = false;
+        let mut query_history = false;
+        let mut format_json = config::DEFAULT_FORMAT_JSON;
         match config {
             Ok(config) => {
                 reopen_tabs = config.reopen_tabs;
+                query_history = config.query_history;
+                format_json = config.format_json;
                 stored = Self::apply_preferences(options, config);
             }
             Err(failure) => error = Some(failure),
         }
+        let session_target = options.session_target;
         let persist = Self {
             store,
             hashes,
@@ -64,9 +75,12 @@ impl Persist {
             presented: HashSet::new(),
             next_poll: Instant::now() + POLL_EVERY,
             config_prompt: false,
-            project_offer: options.offer_project.take(),
-            reopen_tabs,
-            tabs_known: true,
+            project_offer: options.offer_project.take().filter(|_| !session_target),
+            reopen_tabs: reopen_tabs && !session_target,
+            tabs_known: !session_target,
+            query_history,
+            format_json,
+            history: HistoryLog::default(),
         };
         Some((persist, stored))
     }
@@ -132,6 +146,8 @@ impl App {
         }
         let offer = persist.project_offer.clone();
         let error = persist.error.clone();
+        // The trim only protects the disk, so a failure stays out of the way of the start.
+        let _ = history::trim(&persist.store.global);
         self.restore_layout();
         self.reopen_tabs();
         if let Some(folder) = offer {
@@ -225,6 +241,10 @@ impl App {
         }
         self.keymap = config.keymap;
         self.suggestion_keys = config.suggestion_keys;
+        if let Some(persist) = &mut self.persist {
+            persist.query_history = config.query_history;
+            persist.format_json = config.format_json;
+        }
         self.export_choices = config.export;
         self.appearance = (config.theme, config.icons);
         if config.keyboard != self.keyboard {

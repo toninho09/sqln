@@ -54,6 +54,8 @@ pub enum KeyboardName {
 
 /// The start opens the tabs of the last session unless a file says otherwise.
 pub const DEFAULT_REOPEN_TABS: bool = true;
+pub const DEFAULT_QUERY_HISTORY: bool = true;
+pub const DEFAULT_FORMAT_JSON: bool = true;
 
 /// The theme of the interface. `Auto` follows the terminal, and `Ansi` uses the colors
 /// of the terminal profile. The other themes need a truecolor terminal.
@@ -164,6 +166,10 @@ pub struct Preferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reopen_tabs: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_history: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_json: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggestion_keys: Option<SuggestionKeys>,
     /// The choices of the export dialog. Only the global file holds them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -262,6 +268,8 @@ pub struct ConnectionEntry {
     pub busy_timeout_millis: Option<u64>,
     #[serde(default)]
     pub read_only: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub production: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tls: Option<TlsEntry>,
     #[serde(default)]
@@ -312,6 +320,10 @@ pub struct Config {
     pub icons: Option<IconName>,
     /// True when the start opens the tabs of the last session.
     pub reopen_tabs: bool,
+    /// True when each statement of a console goes to the history file.
+    pub query_history: bool,
+    /// True when the value window opens a JSON value in its formatted form.
+    pub format_json: bool,
     /// The keys that accept a suggestion.
     pub suggestion_keys: SuggestionKeys,
     /// The last choices of the export dialog.
@@ -490,6 +502,7 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
     };
     let mut definition = Definition::new(entry.name.trim(), source);
     definition.read_only = entry.read_only;
+    definition.production = entry.production;
     definition.max_connections = entry.pool.max_connections;
     if let Some(connect) = seconds(entry.connect_timeout_seconds) {
         definition.connect_timeout = connect;
@@ -520,6 +533,7 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
         foreign_keys: None,
         busy_timeout_millis: None,
         read_only: definition.read_only,
+        production: definition.production,
         tls: None,
         pool: PoolEntry {
             max_connections: definition.max_connections,
@@ -693,6 +707,14 @@ fn combine(
             .and_then(|preferences| preferences.reopen_tabs)
             .or(global.reopen_tabs)
             .unwrap_or(DEFAULT_REOPEN_TABS),
+        query_history: project
+            .and_then(|preferences| preferences.query_history)
+            .or(global.query_history)
+            .unwrap_or(DEFAULT_QUERY_HISTORY),
+        format_json: project
+            .and_then(|preferences| preferences.format_json)
+            .or(global.format_json)
+            .unwrap_or(DEFAULT_FORMAT_JSON),
         suggestion_keys: project
             .and_then(|preferences| preferences.suggestion_keys)
             .or(global.suggestion_keys)

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Terminal database client with several SQL consoles"
 license = "MIT OR Apache-2.0"
-exclude = ["spikes/", "scripts/", "vendor/", "compose.test.yaml"]
+exclude = ["spikes/", "scripts/", "compose.test.yaml"]
 
 [dependencies]
 arboard = { version = "3.7.0", default-features = false }
@@ -33,6 +33,7 @@ zeroize = { version = "1.9", features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
+rustix = { version = "1", default-features = false, features = ["std", "event"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
@@ -44,7 +45,3 @@ zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-async-i
 
 [dev-dependencies]
 tokio = { version = "1.54", features = ["rt-multi-thread", "sync", "time", "macros"] }
-
-# The undo limit needs a change in EdTUI. `vendor/edtui/FORK.md` explains it.
-[patch.crates-io]
-edtui = { path = "vendor/edtui" }

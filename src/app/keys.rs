@@ -5,12 +5,13 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::{App, DialogAction, Overlay};
 use crate::connector::{Namespace, TransactionCommand, TransactionState};
 use crate::console::{AfterTransaction, Focus, GridAction, Phase};
-use crate::editor::{KeyboardMode, RunRefusal, RunScope};
+use crate::editor::{FormatOutcome, KeyboardMode, RunRefusal, RunScope};
 use crate::exec::{ConnectionId, RunOptions};
 use crate::form::FormRequest;
 use crate::input::{Action, Chord, Lookup, Region};
 use crate::palette::{Command, Palette, PaletteRequest};
 use crate::settings::SettingsRequest;
+use crate::sql::Dialect;
 use crate::table::TableFocus;
 use crate::ui::name::NameAction;
 use crate::ui::text;
@@ -68,6 +69,10 @@ impl App {
         }
         if self.palette.is_some() {
             self.on_palette_key(key);
+            return;
+        }
+        if self.history.is_some() {
+            self.on_history_key(key);
             return;
         }
         if self.rename.is_some() {
@@ -208,6 +213,9 @@ impl App {
         match action {
             Action::Run => self.run(RunScope::Default),
             Action::RunScript => self.run(RunScope::Script),
+            Action::FormatSql => self.format_console(),
+            Action::ToggleComment => self.comment_console(),
+            Action::OpenHistory => self.open_history(),
             Action::Stop => self.stop(self.active),
             Action::ToggleMode => self.toggle_mode(),
             Action::Commit => self.transaction(TransactionCommand::Commit),
@@ -261,15 +269,24 @@ impl App {
                 title,
                 text,
                 footer,
+                json,
             } => {
-                let contents = WrappedText::new(text);
+                let original = (text, footer);
+                let formatted = self.persist.as_ref().is_none_or(|item| item.format_json);
+                let ((shown, footer), other) = match json {
+                    Some(json) if formatted => (json, Some(original)),
+                    other => (original, other),
+                };
                 self.overlay = Some(Overlay {
                     title,
-                    contents,
+                    contents: WrappedText::new(shown),
                     footer,
                     scroll: 0,
+                    other,
+                    row: None,
                 });
             }
+            GridAction::OpenRow(row) => self.show_row(row, 0),
             GridAction::CloseResult => {
                 let held = self.has_export(self.console().id);
                 if held || !self.console_mut().close_result(&budget) {
@@ -277,6 +294,52 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Opens the window of a row of the grid on screen.
+    fn show_row(&mut self, row: usize, scroll: usize) {
+        let window = self.active_result().and_then(|item| item.row_window(row));
+        let Some(window) = window else { return };
+        self.overlay = Some(Overlay {
+            title: window.title,
+            contents: WrappedText::with_indent(window.text, window.indent),
+            footer: window.footer,
+            scroll,
+            other: None,
+            row: Some(row),
+        });
+    }
+
+    /// Shows the row before or after the row of the window. It stops at the loaded rows,
+    /// and the cursor of the grid goes with it. The window keeps its scroll, so that
+    /// the same columns stay in sight.
+    fn step_row_window(&mut self, forward: bool) {
+        let Some((row, scroll)) = self
+            .overlay
+            .as_ref()
+            .and_then(|overlay| Some((overlay.row?, overlay.scroll)))
+        else {
+            return;
+        };
+        let next = if forward {
+            row + 1
+        } else {
+            row.saturating_sub(1)
+        };
+        let result = match self.table_active {
+            Some(index) => Some(&mut self.tables[index].result),
+            None => {
+                let console = &mut self.consoles[self.active];
+                console.results.get_mut(console.active)
+            }
+        };
+        let Some(result) = result.filter(|item| next != row && next < item.table.rows.len()) else {
+            return;
+        };
+        result
+            .view
+            .move_to(next, result.view.col, &result.table, false);
+        self.show_row(next, scroll);
     }
 
     pub(super) fn focus_navigator(&mut self) {
@@ -348,6 +411,8 @@ impl App {
             contents: WrappedText::new(rows.join("\n")),
             footer: String::new(),
             scroll: 0,
+            other: None,
+            row: None,
         });
     }
 
@@ -411,12 +476,34 @@ impl App {
     }
 
     pub(super) fn start_run(&mut self, index: usize, scope: RunScope) {
+        self.plan_and_run(index, scope, true);
+    }
+
+    /// Runs after the answer to the question of `run_warning`.
+    pub(super) fn run_confirmed(&mut self, index: usize, scope: RunScope) {
+        self.plan_and_run(index, scope, false);
+    }
+
+    fn plan_and_run(&mut self, index: usize, scope: RunScope, ask: bool) {
         let console = &mut self.consoles[index];
         match console.editor.plan_run(scope) {
             Ok(plan) => {
                 let Some(connection) = console.connection else {
                     return;
                 };
+                if ask && let Some(body) = self.run_warning(connection, &plan) {
+                    let id = self.consoles[index].id;
+                    self.show_dialog(
+                        text::TITLE_CONFIRM_RUN,
+                        body,
+                        vec![
+                            (text::OPTION_CANCEL, DialogAction::Dismiss),
+                            (text::OPTION_RUN, DialogAction::RunConfirmed(id, scope)),
+                        ],
+                    );
+                    return;
+                }
+                let console = &self.consoles[index];
                 let manual = console.manual;
                 let schema = console.schema.clone();
                 // A console can keep its manual mode when it moves to another source.
@@ -444,6 +531,26 @@ impl App {
                 self.status = Some(text::CURSOR_OUTSIDE.to_owned());
             }
             Err(RunRefusal::NoStatement) => self.status = Some(text::NO_STATEMENT.to_owned()),
+        }
+    }
+
+    fn format_console(&mut self) {
+        if !self.command_available(Action::FormatSql) {
+            return;
+        }
+        let message = match self.console_mut().editor.format_sql() {
+            Ok(FormatOutcome::Changed) => return,
+            Ok(FormatOutcome::Unchanged) => text::FORMAT_UNCHANGED,
+            Ok(FormatOutcome::Refused) => text::FORMAT_REFUSED,
+            Err(RunRefusal::CursorOutside) => text::CURSOR_OUTSIDE,
+            Err(RunRefusal::NoStatement) => text::NO_STATEMENT,
+        };
+        self.status = Some(message.to_owned());
+    }
+
+    fn comment_console(&mut self) {
+        if self.command_available(Action::ToggleComment) {
+            self.console_mut().editor.toggle_comment();
         }
     }
 
@@ -611,6 +718,9 @@ impl App {
             KeyCode::Esc | KeyCode::Enter => self.overlay = None,
             KeyCode::Up | KeyCode::Char('k') => overlay.scroll = overlay.scroll.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => overlay.scroll = overlay.scroll.saturating_add(1),
+            KeyCode::Char('f') if !ctrl => overlay.switch_form(),
+            KeyCode::Left | KeyCode::Char('h') => self.step_row_window(false),
+            KeyCode::Right | KeyCode::Char('l') => self.step_row_window(true),
             KeyCode::Char('c') if ctrl => {
                 let contents = overlay.contents.text().to_owned();
                 self.copy(&contents);
@@ -684,6 +794,9 @@ impl App {
                     (&[Run], text::MENU_RUN),
                     (&[RunScript], text::MENU_SCRIPT),
                     (&[Stop], text::MENU_STOP),
+                    (&[FormatSql], text::MENU_FORMAT),
+                    (&[ToggleComment], text::MENU_COMMENT),
+                    (&[OpenHistory], text::MENU_HISTORY),
                 ],
             ),
             (
@@ -753,7 +866,16 @@ impl App {
             }
             Action::GridStructure => self.table().is_some_and(|tab| tab.filters),
             Action::GridExport => self.can_export(),
+            Action::GridCountRows => self
+                .table()
+                .is_some_and(|tab| tab.filters && tab.has_more && !tab.is_busy()),
+            Action::GridOpenRow => self
+                .active_result()
+                .is_some_and(|item| !item.table.rows.is_empty()),
             Action::RenameConsole | Action::ChangeConnection => !in_table,
+            Action::FormatSql => !in_table && console.editor.dialect() != Dialect::Redis,
+            Action::ToggleComment => !in_table,
+            Action::OpenHistory => !in_table && self.history_is_open_to(connection),
             Action::FocusLeft => !self.navigator.collapsed && !self.navigator_focused,
             Action::FocusRight => self.navigator_focused,
             _ => true,
@@ -772,7 +894,13 @@ impl App {
             Action::NavigatorStructure,
         ]
         .map(|action| (action, self.navigator_focused));
-        let results = [Action::GridExport, Action::GridStructure].map(|action| {
+        let results = [
+            Action::GridOpenRow,
+            Action::GridCountRows,
+            Action::GridExport,
+            Action::GridStructure,
+        ]
+        .map(|action| {
             let key_works = self.panel() == Some(Region::Grid);
             (action, key_works)
         });

@@ -813,8 +813,8 @@ impl App {
         let editing = form.editing;
         if form.display_only {
             let name = form.text(Field::Name).trim().to_owned();
-            let (theme, icon) = (form.theme, form.icon);
-            self.save_display(name, theme, icon);
+            let (theme, icon, production) = (form.theme, form.icon, form.production);
+            self.save_display(name, theme, icon, production);
             return;
         }
         let definition = match self.form_definition() {
@@ -898,6 +898,7 @@ impl App {
         name: String,
         theme: Option<ThemeName>,
         icon: Option<ConnectionIcon>,
+        production: bool,
     ) {
         let Some(id) = self.form.as_ref().and_then(|form| form.editing) else {
             return;
@@ -920,6 +921,7 @@ impl App {
             definition.name.clone_from(&name);
             definition.theme = theme;
             definition.icon = icon;
+            definition.production = production;
             if let Some(key) = &key
                 && let Err(message) = self.save_connection(key, definition, credential)
             {

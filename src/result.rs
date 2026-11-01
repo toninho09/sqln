@@ -5,9 +5,19 @@ use std::time::Instant;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::exec::ReadLimit;
+use crate::grid::json::pretty;
 use crate::grid::{GridView, ResultTable, RowSearch, Value, printable};
 use crate::input::Action;
+use crate::ui::console::fit;
 use crate::ui::text;
+
+/// The longest name of a column in the row window.
+const ROW_NAME_WIDTH: usize = 32;
+/// The longest value in the row window. `Enter` on the grid opens a whole value, and a
+/// limit here keeps a key fast with a very large value.
+const ROW_VALUE_WIDTH: usize = 4096;
+/// The text between a name and its value.
+const ROW_GAP: &str = " : ";
 
 pub struct ResultTab {
     /// The number of the tab. It stays the same when the user closes another tab.
@@ -33,8 +43,22 @@ pub enum GridAction {
         title: String,
         text: String,
         footer: String,
+        /// The formatted form of a JSON value, with its footer.
+        json: Option<(String, String)>,
     },
+    /// The window of one row of the grid.
+    OpenRow(usize),
     CloseResult,
+}
+
+/// The text of the window of one row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RowWindow {
+    pub title: String,
+    pub text: String,
+    pub footer: String,
+    /// The columns before the values, for a value that takes more than one row.
+    pub indent: usize,
 }
 
 impl ResultTab {
@@ -54,6 +78,32 @@ impl ResultTab {
     /// Returns true when the grid holds each row of the result.
     pub fn is_complete(&self) -> bool {
         self.limit == ReadLimit::None && !self.cut_short
+    }
+
+    /// Returns the text of the window of a row: one line for each column.
+    pub fn row_window(&self, row: usize) -> Option<RowWindow> {
+        let values = self.table.rows.get(row)?;
+        let names: Vec<(String, usize)> = self
+            .table
+            .columns
+            .iter()
+            .map(|name| fit(&printable(name), ROW_NAME_WIDTH))
+            .collect();
+        let width = names.iter().map(|(_, used)| *used).max().unwrap_or(0);
+        let lines: Vec<String> = names
+            .iter()
+            .zip(values)
+            .map(|((name, used), value)| {
+                let free = width - used;
+                format!("{name}{:free$}{ROW_GAP}{}", "", row_value(value))
+            })
+            .collect();
+        Some(RowWindow {
+            title: text::row_title(row, self.table.rows.len()),
+            footer: text::row_footer(lines.len()),
+            text: lines.join("\n"),
+            indent: width + ROW_GAP.len(),
+        })
     }
 
     /// Returns true when the search has rows to read.
@@ -137,11 +187,25 @@ impl ResultTab {
             Action::GridSelectAll => view.select_all(table),
             Action::GridCopy => return view.copy(table).map_or(GridAction::None, GridAction::Copy),
             Action::GridOpenValue => return open_value(table, view),
+            Action::GridOpenRow if view.row < table.rows.len() => {
+                return GridAction::OpenRow(view.row);
+            }
             Action::GridClearSelection => view.anchor = None,
             Action::GridToggleSelection => view.toggle_selection(),
             _ => {}
         }
         GridAction::None
+    }
+}
+
+/// Returns the start of a value, with a mark when the value goes on.
+fn row_value(value: &Value) -> String {
+    let shown = value.preview(ROW_VALUE_WIDTH + 1);
+    let (start, _) = fit(&shown, ROW_VALUE_WIDTH);
+    if start.len() < shown.len() {
+        start + "…"
+    } else {
+        shown
     }
 }
 
@@ -151,7 +215,13 @@ fn open_value(table: &ResultTable, view: &GridView) -> GridAction {
     };
     let column = table.columns.get(view.col).map_or("", String::as_str);
     let contents = value.full_text();
+    let chars = contents.chars().count();
+    let formatted = match value {
+        Value::Text(_) | Value::Binary(_) => pretty(&contents),
+        Value::Null | Value::Number(_) => None,
+    };
     let kind = match value {
+        _ if formatted.is_some() => text::VALUE_JSON_ORIGINAL,
         Value::Null => text::VALUE_NULL,
         Value::Text(_) => text::VALUE_TEXT,
         Value::Number(_) => text::VALUE_NUMBER,
@@ -159,7 +229,8 @@ fn open_value(table: &ResultTable, view: &GridView) -> GridAction {
     };
     GridAction::OpenValue {
         title: text::value_title(&printable(column), view.row),
-        footer: text::value_footer(contents.chars().count(), kind),
+        footer: text::value_footer(chars, kind),
         text: contents,
+        json: formatted.map(|json| (json, text::value_footer(chars, text::VALUE_JSON))),
     }
 }

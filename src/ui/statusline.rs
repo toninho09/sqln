@@ -38,6 +38,8 @@ pub enum StatusPanel {
 pub struct StatusData<'a> {
     pub panel: StatusPanel,
     pub connection: &'a str,
+    /// True for a connection with the production mark.
+    pub production: bool,
     pub schema: Option<&'a str>,
     /// The manual mode and the transaction. A table has neither.
     pub session: Option<(bool, TransactionState)>,
@@ -94,6 +96,9 @@ pub fn run_time(phase: Phase, run: &RunClock, now: Instant) -> Option<String> {
 /// the transaction and the execution.
 fn state_parts(data: &StatusData, theme: &Theme) -> Vec<(String, Style)> {
     let mut parts = Vec::new();
+    if data.production {
+        parts.push((text::MARK_PRODUCTION.to_owned(), theme.run_failed));
+    }
     if let Some((manual, transaction)) = data.session {
         let mode = if manual {
             text::MODE_MANUAL

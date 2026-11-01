@@ -49,7 +49,7 @@ Thread principal                    Runtime Tokio
 | `exec` | Execuções, scripts, teto e cancelamento |
 | `pool` | Limite, fila, reserva e limpeza |
 | `connector` | Contrato e conectores PostgreSQL, MySQL, SQLite e Redis/Valkey |
-| `grid` | Linhas, larguras, busca, orçamento e TSV |
+| `grid` | Linhas, larguras, busca, orçamento, TSV e forma legível de JSON (`json`) |
 | `export` | Formatos de exportação, arquivo temporário e formulário do modal |
 | `find` | Comparação de texto das duas buscas |
 | `clipboard` | Área de transferência do sistema e OSC 52 |
@@ -81,10 +81,13 @@ As chamadas do cofre são síncronas, mas `Manager::spawn_blocking` as executa f
 | `store::config` | Leitura com `serde`, validação, precedência, `Definition` de cada entrada e `change_connections` (releitura sob bloqueio, mudança e gravação) |
 | `store::scripts` | Arquivos `.sql` e `.json` de um console, lista, bloqueio por console, cópia entre escopos e fim de linha |
 | `store::workspace` | `workspace.json`, lido sem erro e gravado sob o bloqueio de `config.lock` |
+| `store::history` | `history.jsonl`: uma linha JSON por instrução, escrita no fim do arquivo, leitura por conexão e corte do arquivo no início |
 | `script_file::ScriptFile` | Hash do último conteúdo gravado, espera de 500 ms, nova tentativa de 5 s e problema (`Failed`, `Changed` ou `Removed`) |
 | `app::persist` | Carga no início, recarga, conferência a cada segundo, ordem de fechamento e estado da sessão |
 | `app::scripts` | Lista de consoles, scripts sem conexão, abertura, remoção e associação |
 | `app::conflicts` | Pergunta sobre scripts alterados fora do SQLN |
+| `app::guard` | Pergunta antes de uma execução: instrução sem `WHERE` e mudança em produção |
+| `app::history` | Notas de cada instrução e janela do histórico |
 
 Regras do código:
 
@@ -138,6 +141,8 @@ A aba pede uma página com `Run`, e recebe os mesmos eventos de um console.
 Assim, o prazo, a parada, o cancelamento, a fila do pool e o orçamento valem sem código novo.
 A tarefa guarda a conexão somente durante a consulta, pois uma consulta de tabela nunca deixa uma transação aberta.
 
+A contagem da tecla `c` usa o mesmo caminho, com `PageRequest::count`. `Load::count` impede que o número mude a grade, `has_more`, `limit` ou `cut_short`.
+
 1. `table::page_sql` monta a consulta: `SELECT *`, `WHERE`, `ORDER BY` e `LIMIT n+1 OFFSET k`, cada cláusula em uma linha.
 2. O tokenizador recusa o texto com um segundo comando ou com um token aberto, antes de enviar a consulta.
 3. `RunOptions::row_cap` limita o `ResultSink` a `n+1` linhas, e o `LIMIT` do SQL garante esse teto. O sink nunca pede o cancelamento.
@@ -157,17 +162,19 @@ Uma aba de chave Redis usa o mesmo caminho, sem SQL:
 
 ### Limite conhecido do editor
 
-Cada entrada de desfazer do EdTUI guarda uma cópia inteira do texto.
-Por cálculo, um script de 50.000 linhas ocupa cerca de 15 MB por entrada e 1,5 GB nas 100 entradas.
-Scripts comuns ficam muito abaixo disso.
+**Débito técnico:** o histórico de desfazer não tem teto de memória. Este item não bloqueia o lançamento.
 
-**Definido:** limitar o histórico a 100 entradas e 64 MiB por console.
-Remover as entradas mais antigas ao atingir qualquer limite, sem limitar o tamanho do texto.
-Uma entrada isolada maior que o orçamento não entra no histórico, e a aplicação mostra um aviso.
+Cada entrada de desfazer do EdTUI guarda uma cópia inteira do texto, e cada console tem suas próprias pilhas.
+`undo` e `redo` guardam até 100 entradas cada, e o EdTUI não limpa `redo` depois de uma nova edição.
+Por cálculo, um script de 50.000 linhas ocupa cerca de 15 MB por entrada, 1,5 GB nas 100 entradas de `undo` e 3 GB nas duas pilhas cheias.
+No modo convencional, 100 entradas equivalem a cerca de 100 palavras digitadas.
+Scripts comuns ficam muito abaixo disso, e fechar o console libera essa memória.
 
-**Definido:** `Stack` e os campos `undo` e `redo` do EdTUI são privados, e a API pública não mede nem remove entradas.
-O limite fica em um fork pequeno de `Stack`, em `vendor/edtui`, por `[patch]`. `vendor/edtui/FORK.md` lista as mudanças.
-`cargo install sqln` ignora `[patch]`. No lançamento, a mudança precisa estar no projeto original ou em um fork publicado com outro nome.
+`Stack` e os campos `undo` e `redo` do EdTUI são privados, e a API pública não mede nem remove entradas.
+Por isso, o SQLN não consegue limitar esse histórico sem uma mudança no EdTUI.
+
+**Saída:** quando o EdTUI publicar uma API para isso, limitar o histórico a 64 MiB por console.
+As entradas mais antigas saem primeiro, e uma entrada acima do limite gera um aviso.
 
 ## 3. Concorrência
 
@@ -353,6 +360,8 @@ Nenhum escopo recebe `password`. A senha autorizada em texto simples fica em `cr
     "theme": "auto",
     "icons": "unicode",
     "reopenTabs": true,
+    "queryHistory": true,
+    "formatJson": true,
     "suggestionKeys": "tab"
   },
   "connections": [
@@ -465,6 +474,7 @@ Exemplo:
 | `.gitignore` | Projeto | Versionável |
 | `trust.json` | Somente global | Fora do projeto |
 | `credentials.json` | Somente global | Fora do projeto |
+| `history.jsonl` | Somente global | Fora do projeto |
 
 Conteúdo de `.sqln/.gitignore`:
 
@@ -473,6 +483,9 @@ workspace.json
 locks/
 *.tmp
 ```
+
+`history.jsonl` guarda uma linha por instrução, com `at`, `connection`, `ok` e `sql`.
+Uma conexão recebe `"production": true` para mostrar o selo e confirmar as mudanças. O campo sai do arquivo quando vale `false`.
 
 `trust.json` guarda os destinos confirmados e os caminhos conhecidos dos projetos.
 O formato implementado tem `version: 1`, `destinations` e `projects`.

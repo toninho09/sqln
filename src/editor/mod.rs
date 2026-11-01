@@ -10,14 +10,14 @@ use edtui::{EditorEventHandler, EditorMode, EditorState, Highlight, Index2, Line
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthChar;
 
-use self::buffer::{Snapshot, normalize_newlines, replace_range};
+use self::buffer::{Snapshot, normalize_newlines, replace_range, toggle_comment};
 use self::conventional::{EditKind, INDENT, UndoGroup};
 pub use self::search::{Match, SearchBar, SearchField};
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{CopyOutcome, EditorClipboard, SharedClipboard};
 use crate::complete::{Completion, keywords, suggest_in};
 use crate::input::SuggestionKeys;
-use crate::sql::{Dialect, TokenKind, split, split_tokens, statement_at};
+use crate::sql::{Dialect, TokenKind, format_statement, split, split_tokens, statement_at};
 use crate::ui::text;
 use crate::ui::theme::Theme;
 
@@ -41,6 +41,15 @@ pub enum RunScope {
 pub enum RunRefusal {
     CursorOutside,
     NoStatement,
+}
+
+/// The result of a format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FormatOutcome {
+    Changed,
+    Unchanged,
+    /// The text has an open token, so the format has no sure result.
+    Refused,
 }
 
 /// The statements of one execution. It holds a copy of the text, so later edits
@@ -95,9 +104,6 @@ enum ListAction {
     Close,
 }
 
-/// The memory limit of the undo history of one console.
-pub const UNDO_LIMIT_BYTES: usize = 64 * 1024 * 1024;
-
 pub struct SqlEditor {
     pub state: EditorState,
     keyboard: KeyboardMode,
@@ -136,7 +142,6 @@ impl SqlEditor {
     ) -> Self {
         let mut state = EditorState::new(Lines::from(text));
         state.set_clipboard(EditorClipboard(clipboard.clone()));
-        state.set_undo_limit(UNDO_LIMIT_BYTES);
         let mut lines = std::mem::take(&mut state.lines).into_vecs();
         if lines.is_empty() {
             lines.push(Vec::new());
@@ -232,18 +237,6 @@ impl SqlEditor {
                     self.sync_selection();
                 }
             }
-        }
-    }
-
-    /// Changes the memory limit of the history.
-    pub fn set_undo_limit(&mut self, bytes: usize) {
-        self.state.set_undo_limit(bytes);
-    }
-
-    /// Shows the warning for an edit that the history did not keep.
-    fn note_history(&mut self) {
-        if self.state.take_undo_skipped() {
-            self.status = Some(text::UNDO_TOO_LARGE);
         }
     }
 
@@ -397,7 +390,6 @@ impl SqlEditor {
             KeyboardMode::Conventional => self.on_conventional_key(key),
             KeyboardMode::Vim => self.on_vim_key(key),
         }
-        self.note_history();
         self.update_list(action, catalog);
     }
 
@@ -498,6 +490,62 @@ impl SqlEditor {
                 .collect(),
             starts: found.iter().map(|found| base + found.start).collect(),
         })
+    }
+
+    /// Formats the statements of a run, as one undo step. Nothing changes after a refusal.
+    pub fn format_sql(&mut self) -> Result<FormatOutcome, RunRefusal> {
+        let plan = self.plan_run(RunScope::Default)?;
+        let mut changes = Vec::new();
+        for (statement, start) in plan.statements.iter().zip(&plan.starts) {
+            let Some(formatted) = format_statement(statement, self.dialect) else {
+                return Ok(FormatOutcome::Refused);
+            };
+            if formatted != *statement {
+                changes.push((*start, *start + statement.len(), formatted));
+            }
+        }
+        if changes.is_empty() {
+            return Ok(FormatOutcome::Unchanged);
+        }
+        let snapshot = self.snapshot();
+        let ranges: Vec<_> = changes
+            .iter()
+            .map(|(start, end, formatted)| {
+                let start = snapshot.position(*start);
+                (start, snapshot.position(*end), formatted.as_str())
+            })
+            .collect();
+        self.replace_ranges(&ranges);
+        self.leave_visual_mode();
+        Ok(FormatOutcome::Changed)
+    }
+
+    /// Adds or removes a line comment, as one undo step. It acts on the rows of the
+    /// selection, or on the row of the cursor. A selection that ends at the start of a
+    /// row leaves that row out.
+    pub fn toggle_comment(&mut self) {
+        let cursor = self.state.cursor;
+        let anchor = self.anchor;
+        let (first, last) = match self.selection_range() {
+            Some((start, end)) if end.col == 0 && end.row > start.row => (start.row, end.row - 1),
+            Some((start, end)) => (start.row, end.row),
+            None => (cursor.row, cursor.row),
+        };
+        let marker = if self.dialect == Dialect::Redis {
+            "#"
+        } else {
+            "--"
+        };
+        let lines = &self.state.lines;
+        let Some(comment) = toggle_comment(lines, first, last, marker) else {
+            return;
+        };
+        let end = Index2::new(last, buffer::row(lines, last).len());
+        self.replace_ranges(&[(Index2::new(first, 0), end, comment.text.as_str())]);
+        self.state.cursor = comment.moved(first, cursor);
+        self.anchor = anchor.map(|anchor| comment.moved(first, anchor));
+        self.sync_selection();
+        self.leave_visual_mode();
     }
 
     /// Removes the marks of the last execution.
@@ -682,7 +730,6 @@ impl SqlEditor {
             return;
         }
         self.insert_at_cursor(&text);
-        self.note_history();
     }
 
     fn paste_from_clipboard(&mut self) {
@@ -873,14 +920,24 @@ impl SqlEditor {
         if search.matches.is_empty() {
             return;
         }
-        let matches = search.matches.clone();
         let replacement = search.replace.clone();
+        let ranges: Vec<_> = search
+            .matches
+            .iter()
+            .map(|found| (found.start, found.end, replacement.as_str()))
+            .collect();
+        self.replace_ranges(&ranges);
+    }
+
+    /// Replaces ranges as one undo step. The ranges come in the order of the text, and
+    /// the cursor goes to the start of the first one.
+    fn replace_ranges(&mut self, ranges: &[(Index2, Index2, &str)]) {
         self.state.execute(DeleteChar(0));
         let lines = &mut self.state.lines;
-        for found in matches.iter().rev() {
-            replace_range(lines, found.start, found.end, &replacement);
+        for (start, end, text) in ranges.iter().rev() {
+            replace_range(lines, *start, *end, text);
         }
-        let first = matches[0].start;
+        let first = ranges[0].0;
         self.state.cursor = Index2::new(first.row, first.col);
         self.anchor = None;
         self.redo_depth = 0;

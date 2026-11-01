@@ -34,6 +34,9 @@ Aceitar cria o projeto no diretório atual. Recusar mantém somente o escopo glo
 
 Ao iniciar, a aplicação reabre as abas da última sessão, na mesma ordem e com a mesma aba ativa.
 A opção **Reopen tabs** do diálogo Settings (`reopenTabs` em `config.json`) desliga isso. O padrão é ligado.
+
+`sqln arquivo.db` e `sqln postgres://usuario@host/banco` abrem uma conexão só para esta sessão.
+Nesse caso, as abas salvas não abrem, a pergunta **Create project** não aparece e nada vai para os arquivos.
 O projeto usa a lista do seu `workspace.json`. Sem projeto, a aplicação usa a lista global.
 Nenhuma aba executa SQL ou abre uma conexão ao iniciar.
 Um console sem texto não volta, porque não tem arquivo. Uma aba cuja conexão saiu do cadastro também não volta.
@@ -157,7 +160,16 @@ No modo Vim, o editor mostra `NORMAL`, `INSERT` ou `VISUAL`.
 O título do painel em foco usa a cor de destaque.
 A linha atual do editor e da grade aparece somente no painel em foco.
 
-**Barra de status:** a transação e a execução nunca saem da barra.
+**Barra de status:** o selo `PROD`, a transação e a execução nunca saem da barra.
+
+**Confirmação da execução:** uma instrução `UPDATE` ou `DELETE` sem `WHERE` abre **Confirm the run**, com foco em **Cancel**.
+Uma conexão de produção abre o mesmo diálogo para qualquer mudança. A janela mostra a contagem e a primeira instrução de risco.
+Uma conexão somente leitura não pergunta, pois o banco recusa a escrita.
+
+**Formatação:** `Ctrl+W f` formata a seleção ou a instrução sob o cursor, em um passo de desfazer.
+
+**Comentário:** `Ctrl+W /` ou `Ctrl+/` comenta a seleção ou a linha do cursor, em um passo de desfazer. O cursor e a seleção continuam nos mesmos caracteres, então a mesma tecla desfaz a mudança.
+
 Sem espaço, a barra remove nesta ordem: posição, dados, pool e schema. Depois, o nome da conexão encurta.
 Uma transação aberta usa a cor de aviso. Uma transação com falha ou desconhecida usa a cor de erro.
 
@@ -265,6 +277,8 @@ O rótulo da aba é `nome (table)` ou `nome (view)`.
 Fechar o último console com uma tabela aberta seleciona uma tabela, sem criar um console vazio.
 O código ainda agrupa consoles antes das tabelas e cria um console vazio ao fechar o último.
 O resumo mostra as linhas carregadas e o estado.
+A tecla `c` conta as linhas do filtro aplicado, e o resumo passa a mostrar `100 of 12,345 rows loaded`. A tecla só age quando existem mais linhas para carregar.
+A contagem usa o prazo, o Stop, a fila do pool e a senha de uma página, e não muda a grade. **Apply** e **Clear** limpam o total, e a ordenação mantém o total.
 A linha de aviso mostra o risco da ordem instável, ou a mensagem da última consulta.
 O erro de uma primeira página ocupa a área da grade.
 O clique no cabeçalho ordena em ordem crescente, depois decrescente, e depois remove a ordem.
@@ -428,6 +442,7 @@ O exemplo abaixo considera um projeto ativo.
 │ Certificado de cliente: [Nenhum]                       │
 │ Pool:       [5]                                        │
 │ Somente leitura: [ ]                                   │
+│ Produção:   [ ]                                        │
 │ Conectar:   prazo [30] segundos                        │
 │ Tema:       [Padrão]                                   │
 │ Ícone:      [Padrão]                                   │
@@ -460,6 +475,10 @@ Um caminho salvo e não alterado continua como está no arquivo, e o teste usa a
 
 O formulário sugere TLS desativado em `localhost`, `127.0.0.0/8`, `::1` e socket Unix, e verificação nos demais.
 O campo **Somente leitura** é aplicado pelo banco e evita acidentes.
+
+O campo **Production** mostra `PROD` na barra de status, inclusive com `NO_COLOR`.
+Ele também pede confirmação antes de uma execução que não seja leitura simples.
+O campo muda com a conexão ativa, como o nome e o tema.
 
 Exigir nome obrigatório e único por escopo, sem distinguir maiúsculas e minúsculas, inclusive ao renomear.
 Permitir nomes iguais entre global e projeto, com indicação de origem quando houver colisão.
@@ -844,6 +863,30 @@ Não existe commit como resposta padrão.
 └──────────────────────────────────────────────────────────┘
 ```
 
+Um objeto ou array JSON válido de até 1 MiB abre formatado, e `f` troca entre o texto formatado e o original.
+A formatação só muda espaços: as chaves mantêm a ordem, e os números mantêm os dígitos.
+`Ctrl+C` copia a forma visível, e o `Ctrl+C` da grade copia o valor original.
+A opção **Format JSON** do diálogo Settings escolhe a forma inicial. O padrão é ligado.
+
+### Janela de linha
+
+`r` na grade abre a linha do cursor na vertical. A janela é somente leitura.
+
+```text
+╭─ row 3 of 100 loaded ───────────╮
+│ id         : 3                  │
+│ name       : Ana Souza          │
+│ bio        : texto longo que    │
+│              quebra alinhado    │
+│ deleted_at : NULL               │
+╰─────────────────── 12 columns ──╯
+```
+
+`Left` e `Right` mudam de linha, sem ler outra página, e o cursor da grade acompanha a linha.
+A janela mantém a rolagem, então as mesmas colunas ficam à vista ao comparar duas linhas.
+Cada valor mostra até 4.096 colunas e termina com `…` no corte. `Enter` na grade mostra o valor inteiro.
+O JSON fica compacto nesta janela.
+
 ### Tela de ajuda
 
 A tela mostra os atalhos do modo ativo e do painel em foco.
@@ -872,6 +915,12 @@ A tela mostra os atalhos do modo ativo e do painel em foco.
 │ b    Toggle the expl… s    Run the script    a    Change conn…   │
 ╰──────────────────────────────────────────────────────────────────╯
 ```
+
+### Histórico de consultas
+
+`Ctrl+W H` abre a janela **Query history**, com as instruções da conexão do console, a mais nova primeira.
+Cada linha mostra sucesso ou falha, a idade e o início do SQL. As palavras digitadas filtram a lista.
+`Enter` insere a instrução no cursor e não executa. A opção **Query history** do diálogo Settings desliga o histórico.
 
 ### Paleta de comandos
 

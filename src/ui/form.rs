@@ -183,6 +183,7 @@ fn label(field: Field) -> &'static str {
         Field::BusyTimeout => text::FIELD_BUSY,
         Field::Pool => text::FIELD_POOL,
         Field::ReadOnly => text::FIELD_READ_ONLY,
+        Field::Production => text::FIELD_PRODUCTION,
         Field::ConnectTimeout => text::FIELD_CONNECT,
         Field::SqlTimeout => text::FIELD_SQL_TIMEOUT,
         Field::Theme => text::FIELD_CONNECTION_THEME,
@@ -262,7 +263,7 @@ fn value_spans(
             vec![Span::styled(format!("< {symbol}{name} >"), style)]
         }
         FieldStyle::Flag => {
-            let mark = if form.read_only { "[x]" } else { "[ ]" };
+            let mark = if form.flag(field) { "[x]" } else { "[ ]" };
             vec![Span::styled(mark, style)]
         }
         _ => text_spans(form, field, width, theme),

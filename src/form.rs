@@ -43,6 +43,7 @@ pub enum Field {
     BusyTimeout,
     Pool,
     ReadOnly,
+    Production,
     ConnectTimeout,
     SqlTimeout,
     Theme,
@@ -73,7 +74,7 @@ impl Field {
             | Field::ForeignKeys
             | Field::Theme
             | Field::Icon => FieldStyle::Choice,
-            Field::ReadOnly => FieldStyle::Flag,
+            Field::ReadOnly | Field::Production => FieldStyle::Flag,
             Field::Password => FieldStyle::Secret,
             Field::Test | Field::Save | Field::Disconnect | Field::Cancel => FieldStyle::Button,
             _ => FieldStyle::Text,
@@ -131,8 +132,8 @@ pub enum FormNote {
 pub struct ConnectionForm {
     /// The connection that this form edits.
     pub editing: Option<ConnectionId>,
-    /// True while the connection is connected. Only its name, its theme, and its icon
-    /// can change, because these values need no new session.
+    /// True while the connection is connected. Only its name, its theme, its icon, and
+    /// its production mark can change, because these values need no new session.
     pub display_only: bool,
     pub kind: Kind,
     pub credential: CredentialName,
@@ -143,6 +144,7 @@ pub struct ConnectionForm {
     /// `None` keeps the default of SQLite.
     pub foreign_keys: Option<bool>,
     pub read_only: bool,
+    pub production: bool,
     /// `None` uses the default theme.
     pub theme: Option<ThemeName>,
     /// `None` uses the icon of the database.
@@ -198,6 +200,7 @@ impl ConnectionForm {
             verify_tls: true,
             foreign_keys: None,
             read_only: false,
+            production: false,
             theme: None,
             icon: None,
             scope: Scope::Global,
@@ -234,6 +237,7 @@ impl ConnectionForm {
         form.focus = Field::Name;
         form.tls_chosen = true;
         form.read_only = definition.read_only;
+        form.production = definition.production;
         form.theme = definition.theme;
         form.icon = definition.icon;
         form.set(Field::Name, definition.name.clone());
@@ -307,6 +311,14 @@ impl ConnectionForm {
         self.text(self.focus).chars().count()
     }
 
+    /// Returns the value of a field with the style `Flag`.
+    pub fn flag(&self, field: Field) -> bool {
+        match field {
+            Field::Production => self.production,
+            _ => self.read_only,
+        }
+    }
+
     /// Lists the visible fields, in order.
     pub fn fields(&self) -> Vec<Field> {
         if self.display_only {
@@ -314,6 +326,7 @@ impl ConnectionForm {
                 Field::Name,
                 Field::Theme,
                 Field::Icon,
+                Field::Production,
                 Field::Disconnect,
                 Field::Save,
                 Field::Cancel,
@@ -340,7 +353,7 @@ impl ConnectionForm {
                 Field::ClientKey,
             ]),
         }
-        fields.extend([Field::Pool, Field::ReadOnly]);
+        fields.extend([Field::Pool, Field::ReadOnly, Field::Production]);
         if self.kind != Kind::Sqlite {
             fields.push(Field::ConnectTimeout);
         }
@@ -412,6 +425,7 @@ impl ConnectionForm {
                 self.foreign_keys = order[(index + step) % order.len()];
             }
             Field::ReadOnly => self.read_only = !self.read_only,
+            Field::Production => self.production = !self.production,
             Field::Theme => self.theme = next_optional(&ThemeName::ALL, self.theme, forward),
             Field::Icon => self.icon = next_optional(&ConnectionIcon::ALL, self.icon, forward),
             _ => {}
@@ -662,6 +676,7 @@ impl ConnectionForm {
         }
         let mut definition = Definition::new(name, source);
         definition.read_only = self.read_only;
+        definition.production = self.production;
         definition.theme = self.theme;
         definition.icon = self.icon;
         definition.max_connections = usize::try_from(limit).unwrap_or(usize::MAX);

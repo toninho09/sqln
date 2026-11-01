@@ -29,7 +29,7 @@ use sqln::connector::{
 };
 use sqln::console::Phase;
 use sqln::editor::KeyboardMode;
-use sqln::exec::{Flow, ResultSink, Settings};
+use sqln::exec::{Flow, ReadLimit, ResultSink, Settings};
 use sqln::grid::{Row, Value};
 use sqln::input::SuggestionKeys;
 use sqln::navigator::RowKind;
@@ -300,6 +300,18 @@ impl Session for RecordingSession {
         // A page of a key is not SQL, and these tests read no value.
         if self.0.redis {
             return Ok(StatementEnd::default());
+        }
+        if sql.starts_with("SELECT COUNT(*)") {
+            sink.set_columns(vec!["count".to_owned()]).await;
+            let total = Value::Number(self.0.rows.to_string().into_boxed_str());
+            sink.push(vec![total].into_boxed_slice()).await;
+            let (rows, limit) = sink.finish().await;
+            return Ok(StatementEnd {
+                rows,
+                has_columns: true,
+                changed: None,
+                limit,
+            });
         }
         let (limit, offset) = page_of(sql);
         sink.set_columns(COLUMNS.iter().map(|name| (*name).to_owned()).collect())
@@ -1965,9 +1977,12 @@ fn the_help_of_a_table_lists_its_own_keys() {
     f.grid();
     f.code(KeyCode::F(1));
     f.assert_sees("Keys · Conventional · Table");
-    f.assert_sees("Load more rows");
     f.assert_sees("Sort by the column");
     f.assert_not_sees("Close the result");
+    for _ in 0..4 {
+        f.code(KeyCode::Down);
+    }
+    f.assert_sees("Load more rows");
     f.code(KeyCode::Esc);
     f.focus_filter();
     f.code(KeyCode::F(1));
@@ -2265,7 +2280,7 @@ fn vim_keys_move_in_the_grid_of_a_table_and_stay_text_in_a_field() {
 
 #[test]
 fn the_extra_row_of_a_page_leaves_the_budget_with_the_exact_cost() {
-    use sqln::exec::{ExecEvent, ExecutionEnd, ReadLimit, StatementKey};
+    use sqln::exec::{ExecEvent, ExecutionEnd, StatementKey};
     use sqln::grid::Budget;
     use sqln::table::TableTab;
 
@@ -3440,4 +3455,189 @@ fn the_list_of_keys_names_the_pages_in_a_table_and_the_results_in_a_console() {
     f.prefix('j');
     f.code(KeyCode::F(1));
     f.assert_sees("Next result");
+}
+
+fn counted_table(rows: usize) -> (Fixture, Arc<Recorder>) {
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows,
+        ..Recorder::default()
+    });
+    f.open_table("users");
+    f.grid();
+    (f, recorder)
+}
+
+#[test]
+fn the_count_key_shows_the_total_and_keeps_the_pages() {
+    let (mut f, recorder) = counted_table(1250);
+    assert!(f.hints_at(200).contains("c count"));
+    f.code(KeyCode::Char('c'));
+    f.loaded();
+    assert_eq!(
+        recorder.statements().last().unwrap(),
+        "SELECT COUNT(*) FROM \"public\".\"users\""
+    );
+    f.assert_sees("100 of 1,250 rows loaded");
+    assert!(!f.hints_at(200).contains("c count"));
+    let tab = f.app.table().unwrap();
+    assert_eq!(tab.total, Some(1250));
+    assert_eq!(tab.loaded(), 100);
+    assert!(tab.has_more);
+    assert_eq!(tab.limit, ReadLimit::None);
+    assert!(!tab.result.cut_short);
+    assert_eq!(tab.result.table.columns, COLUMNS);
+    // The next page continues after the rows of the first page.
+    f.code(KeyCode::Char('m'));
+    f.loaded();
+    assert_eq!(f.rows_loaded(), 200);
+    f.assert_sees("200 of 1,250 rows loaded");
+}
+
+#[test]
+fn the_count_returns_its_bytes_to_the_budget_and_keeps_a_limit_of_the_page() {
+    use sqln::exec::{ExecEvent, ExecutionEnd, StatementKey};
+    use sqln::grid::Budget;
+    use sqln::table::TableTab;
+
+    let budget = Budget::new(1 << 20);
+    let mut tab = TableTab::new(7, 1, relation(), false, 2);
+    tab.limit = ReadLimit::Budget;
+    tab.started_count(5);
+    assert!(tab.is_counting());
+    assert_eq!(tab.limit, ReadLimit::Budget);
+    let key = StatementKey {
+        console: 7,
+        execution: 5,
+        index: 0,
+    };
+    let row: Row = vec![Value::Number("42".into())].into_boxed_slice();
+    let sqln::grid::Reservation::Accepted(bytes) = budget.reserve(&row) else {
+        panic!("the budget refused the row");
+    };
+    tab.on_event(
+        ExecEvent::Rows {
+            key,
+            rows: vec![row],
+            bytes,
+        },
+        &budget,
+    );
+    assert_eq!(budget.used(), 0, "the number left the budget");
+    tab.on_event(
+        ExecEvent::ResultDone {
+            key,
+            rows: 1,
+            limit: ReadLimit::None,
+        },
+        &budget,
+    );
+    tab.on_event(
+        ExecEvent::ExecutionFinished {
+            console: 7,
+            execution: 5,
+            end: ExecutionEnd::Completed,
+            message: None,
+        },
+        &budget,
+    );
+    assert_eq!(tab.total, Some(42));
+    assert_eq!(tab.loaded(), 0);
+    assert_eq!(tab.limit, ReadLimit::Budget);
+    assert!(!tab.is_counting());
+}
+
+#[test]
+fn a_count_reads_the_applied_filter_and_a_new_filter_clears_it() {
+    let (mut f, recorder) = counted_table(250);
+    f.type_filter("id > 5");
+    f.code(KeyCode::Enter);
+    f.loaded();
+    f.grid();
+    f.code(KeyCode::Char('c'));
+    f.loaded();
+    assert_eq!(
+        recorder.statements().last().unwrap(),
+        "SELECT COUNT(*) FROM \"public\".\"users\"\nWHERE id > 5"
+    );
+    assert_eq!(f.app.table().unwrap().total, Some(250));
+
+    // A sort does not change the number of rows.
+    f.code(KeyCode::Char('s'));
+    f.loaded();
+    assert_eq!(f.app.table().unwrap().total, Some(250));
+
+    f.focus_filter();
+    f.code(KeyCode::Enter);
+    f.loaded();
+    assert_eq!(f.app.table().unwrap().total, None);
+}
+
+#[test]
+fn a_stopped_count_leaves_the_pages_as_they_were() {
+    let (mut f, recorder) = counted_table(250);
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.code(KeyCode::Char('c'));
+    f.pump_until(|f| f.app.table().unwrap().phase == Phase::Running);
+    f.assert_sees("counting");
+    f.prefix('x');
+    f.loaded();
+    recorder.hold.store(false, Ordering::SeqCst);
+    let tab = f.app.table().unwrap();
+    assert_eq!(tab.total, None);
+    assert_eq!(tab.loaded(), 100);
+    assert!(tab.has_more);
+    assert!(!tab.result.cut_short);
+}
+
+#[test]
+fn a_failed_count_shows_the_error_and_keeps_the_rows() {
+    let (mut f, recorder) = counted_table(250);
+    *recorder.fail_when.lock().unwrap() = Some("COUNT".to_owned());
+    f.code(KeyCode::Char('c'));
+    f.loaded();
+    f.assert_sees("syntax error near the filter");
+    let tab = f.app.table().unwrap();
+    assert_eq!(tab.total, None);
+    assert_eq!(tab.loaded(), 100);
+    assert!(tab.has_more);
+}
+
+#[test]
+fn the_help_lists_the_count_only_while_it_can_act() {
+    let (mut f, _) = counted_table(250);
+    f.code(KeyCode::F(1));
+    for _ in 0..6 {
+        f.code(KeyCode::Down);
+    }
+    f.assert_sees("Count the rows");
+    f.code(KeyCode::Esc);
+
+    let (mut f, _) = counted_table(5);
+    f.code(KeyCode::F(1));
+    for _ in 0..6 {
+        f.code(KeyCode::Down);
+    }
+    f.assert_not_sees("Count the rows");
+}
+
+#[test]
+fn the_count_key_does_nothing_when_each_row_is_on_the_grid() {
+    let (mut f, recorder) = counted_table(5);
+    let statements = recorder.count();
+    f.code(KeyCode::Char('c'));
+    f.loaded();
+    assert_eq!(recorder.count(), statements);
+    assert!(!f.hints_at(200).contains("c count"));
+}
+
+#[test]
+fn the_row_window_works_in_a_table_and_stops_at_the_loaded_rows() {
+    let (mut f, _) = counted_table(5);
+    f.code(KeyCode::Char('r'));
+    f.assert_sees("row 1 of 5 loaded");
+    f.assert_sees("name : name0");
+    f.code(KeyCode::Right);
+    f.assert_sees("name : name1");
+    f.code(KeyCode::Esc);
+    assert_eq!(f.app.table().unwrap().result.view.row, 1);
 }

@@ -228,10 +228,15 @@ fn summary_row(tab: &TableTab, blocked: bool, width: usize, theme: &Theme) -> (S
 
 /// Returns the state of the loaded rows, and a note that can leave the row.
 fn summary_parts(tab: &TableTab) -> (String, Option<&'static str>) {
-    let mut parts = vec![text::rows_loaded(tab.loaded())];
+    let rows = tab.total.map_or_else(
+        || text::rows_loaded(tab.loaded()),
+        |total| text::rows_of_total(tab.loaded(), total),
+    );
+    let mut parts = vec![rows];
     let mut note = None;
     match tab.phase {
         Phase::Waiting => parts.push(text::TABLE_WAITING.to_owned()),
+        Phase::Running if tab.is_counting() => parts.push(text::TABLE_COUNTING.to_owned()),
         Phase::Running => parts.push(text::TABLE_LOADING.to_owned()),
         Phase::Stopping => parts.push(text::TABLE_STOPPING.to_owned()),
         Phase::Idle => match tab.limit {

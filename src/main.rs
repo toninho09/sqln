@@ -1,10 +1,14 @@
+use std::io::{IsTerminal, Write, stderr, stdin};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use sqln::app::{Options, run};
+use sqln::connection::{Definition, Source};
+use sqln::connector::target::{OpenTarget, open_target};
 use sqln::sql::Dialect;
 use sqln::store::{self, Root, Store};
-use sqln::ui::text::HELP;
+use sqln::terminal::read_password;
+use sqln::ui::text::{self, HELP};
 
 enum Command {
     Run(Cli),
@@ -17,6 +21,8 @@ struct Cli {
     project: Option<PathBuf>,
     dialect: Option<Dialect>,
     log: Option<PathBuf>,
+    /// The file or the URI to open.
+    target: Option<String>,
 }
 
 fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
@@ -43,10 +49,31 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
                     other => return Err(format!("Unknown dialect: {}", other.unwrap_or(""))),
                 });
             }
-            other => return Err(format!("Unknown option: {other}")),
+            other if other.starts_with('-') => return Err(format!("Unknown option: {other}")),
+            _ if cli.target.is_some() => return Err(text::ONE_TARGET.to_owned()),
+            other => cli.target = Some(other.to_owned()),
         }
     }
     Ok(Command::Run(cli))
+}
+
+/// Adds the target of the command line. Its connection lasts for this session.
+fn open(options: &mut Options, target: &str) -> Result<(), String> {
+    match open_target(target)? {
+        OpenTarget::File(path) => options.database = Some(path),
+        OpenTarget::Network(mut target) => {
+            if target.password.is_none() && target.engine.needs_user() && stdin().is_terminal() {
+                target.password = read_password(&text::password_prompt(&target.user))
+                    .map_err(|error| error.to_string())?;
+            }
+            let name = target.label();
+            options
+                .connections
+                .push(Definition::new(name, Source::Network(target)));
+        }
+    }
+    options.session_target = true;
+    Ok(())
 }
 
 /// Finds the folders of the two scopes. Without a project, the options carry the
@@ -66,6 +93,9 @@ fn options_of(cli: Cli) -> Result<Options, String> {
     };
     if let Some(dialect) = cli.dialect {
         options.dialect = dialect;
+    }
+    if let Some(target) = &cli.target {
+        open(&mut options, target)?;
     }
     Ok(options)
 }
@@ -90,7 +120,9 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
             if let Err(error) = run(options) {
-                eprintln!("sqln: {error}");
+                // The write can fail when the terminal closed. A failed write must not
+                // stop the exit with an error of the print.
+                let _ = writeln!(stderr(), "sqln: {error}");
                 return ExitCode::FAILURE;
             }
         }

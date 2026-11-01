@@ -127,6 +127,9 @@ pub enum Region {
 pub enum Action {
     Run,
     RunScript,
+    FormatSql,
+    ToggleComment,
+    OpenHistory,
     Stop,
     ToggleMode,
     Commit,
@@ -176,6 +179,7 @@ pub enum Action {
     GridClearSelection,
     GridCopy,
     GridOpenValue,
+    GridOpenRow,
     GridFind,
     GridNarrow,
     GridWiden,
@@ -187,6 +191,7 @@ pub enum Action {
     GridFocusOrder,
     GridSortColumn,
     GridLoadMore,
+    GridCountRows,
     GridExport,
     GridStructure,
 }
@@ -200,6 +205,7 @@ impl Action {
                 | Action::GridFocusOrder
                 | Action::GridSortColumn
                 | Action::GridLoadMore
+                | Action::GridCountRows
                 | Action::GridStructure
         )
     }
@@ -269,6 +275,28 @@ const DEFAULTS: &[Item] = &[
         Region::Global,
         "runScript",
         &["shift+enter", "shift+f5", "ctrl+w s"],
+        &[],
+    ),
+    both(
+        Action::FormatSql,
+        Region::Global,
+        "formatSql",
+        &["ctrl+w f"],
+        &[],
+    ),
+    // A terminal without enhanced keys sends `Ctrl+/` as the byte of `Ctrl+7`.
+    both(
+        Action::ToggleComment,
+        Region::Global,
+        "toggleComment",
+        &["ctrl+w /", "ctrl+/", "ctrl+7"],
+        &[],
+    ),
+    both(
+        Action::OpenHistory,
+        Region::Global,
+        "openHistory",
+        &["ctrl+w H"],
         &[],
     ),
     both(Action::Stop, Region::Global, "stop", &["ctrl+w x"], &[]),
@@ -592,6 +620,13 @@ const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(
+        Action::GridOpenRow,
+        Region::Grid,
+        "gridOpenRow",
+        &["r"],
+        &[],
+    ),
+    both(
         Action::GridFind,
         Region::Grid,
         "gridFind",
@@ -650,6 +685,13 @@ const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(Action::GridLoadMore, Region::Grid, "loadMore", &["m"], &[]),
+    both(
+        Action::GridCountRows,
+        Region::Grid,
+        "gridCountRows",
+        &["c"],
+        &[],
+    ),
     both(Action::GridExport, Region::Grid, "gridExport", &["e"], &[]),
     both(
         Action::GridStructure,

@@ -108,6 +108,23 @@ pub struct NetworkTarget {
     pub tls: Tls,
 }
 
+/// What the command line opens.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenTarget {
+    File(PathBuf),
+    Network(NetworkTarget),
+}
+
+/// Reads the target of the command line. A text with a scheme is a URI, and any other
+/// text is the path of a SQLite file.
+pub fn open_target(text: &str) -> Result<OpenTarget, String> {
+    if text.contains("://") {
+        parse_uri(text).map(OpenTarget::Network)
+    } else {
+        Ok(OpenTarget::File(PathBuf::from(text)))
+    }
+}
+
 impl NetworkTarget {
     /// Returns a name for the interface. It never holds the password.
     pub fn label(&self) -> String {

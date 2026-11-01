@@ -849,9 +849,13 @@ impl App {
                     row_cap: Some(request.row_cap),
                     export: None,
                 };
-                let (first, show) = (request.first, request.show);
+                let (first, show, count) = (request.first, request.show, request.count);
                 let execution = manager.run(console, vec![request.sql], options);
-                tab.started(execution, first, show);
+                if count {
+                    tab.started_count(execution);
+                } else {
+                    tab.started(execution, first, show);
+                }
             }
             Use::Export { console, read } => self.start_read(console, read),
             Use::Test(test) => {

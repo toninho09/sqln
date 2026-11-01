@@ -13,8 +13,6 @@ pub const COPY_FAILED: &str = "Copy failed.";
 pub const FIND_LABEL: &str = "Find:    ";
 pub const REPLACE_LABEL: &str = "Replace: ";
 pub const NO_MATCHES: &str = "no matches";
-pub const UNDO_TOO_LARGE: &str =
-    "This edit is too large for the undo history. It has no undo step.";
 
 pub const HINT_FILTER: &[HintPart] = &[
     ("Enter", "apply"),
@@ -153,6 +151,18 @@ pub const HINT_DIALOG: &[HintPart] = &[
 ];
 pub const HINT_OVERLAY: &[HintPart] =
     &[("Up/Down", "scroll"), ("Ctrl+C", "copy"), ("Esc", "close")];
+pub const HINT_OVERLAY_ROW: &[HintPart] = &[
+    ("Left/Right", "row"),
+    ("Up/Down", "scroll"),
+    ("Ctrl+C", "copy"),
+    ("Esc", "close"),
+];
+pub const HINT_OVERLAY_JSON: &[HintPart] = &[
+    ("f", "switch form"),
+    ("Up/Down", "scroll"),
+    ("Ctrl+C", "copy"),
+    ("Esc", "close"),
+];
 
 /// Writes a key of the key map for the hint bar: `ctrl+w e` becomes `Ctrl+W e`.
 pub fn key_label(key: &str) -> String {
@@ -186,6 +196,13 @@ pub const HINT_PALETTE: &[HintPart] = &[
     ("", "Write to filter"),
     ("Up/Down", "move"),
     ("Enter", "run"),
+    ("Esc", "cancel"),
+];
+
+pub const HINT_HISTORY: &[HintPart] = &[
+    ("", "Write to filter"),
+    ("Up/Down", "move"),
+    ("Enter", "insert"),
     ("Esc", "cancel"),
 ];
 
@@ -226,6 +243,9 @@ pub const MENU_STOP: &str = "Stop";
 pub const MENU_MODE: &str = "Auto or manual";
 pub const MENU_COMMIT: &str = "Commit";
 pub const MENU_ROLLBACK: &str = "Rollback";
+pub const MENU_FORMAT: &str = "Format the SQL";
+pub const MENU_COMMENT: &str = "Comment the rows";
+pub const MENU_HISTORY: &str = "Query history";
 pub const MENU_SCHEMA: &str = "Schema or database";
 pub const MENU_CHANGE: &str = "Change connection";
 pub const MENU_SETTINGS: &str = "Settings";
@@ -390,6 +410,7 @@ pub const FIELD_FOREIGN_KEYS: &str = "foreign_keys";
 pub const FIELD_BUSY: &str = "Lock limit (seconds)";
 pub const FIELD_POOL: &str = "Pool limit";
 pub const FIELD_READ_ONLY: &str = "Read only";
+pub const FIELD_PRODUCTION: &str = "Production";
 pub const FIELD_CONNECT: &str = "Connect limit (seconds)";
 pub const FIELD_SQL_TIMEOUT: &str = "SQL limit (s, 0 = none)";
 pub const BUTTON_TEST: &str = "Test connection";
@@ -477,6 +498,8 @@ pub const SECTION_RESULTS: &str = "Results";
 pub const SECTION_APPEARANCE: &str = "Appearance";
 pub const FIELD_KEYBOARD: &str = "Keyboard";
 pub const FIELD_REOPEN_TABS: &str = "Reopen tabs";
+pub const FIELD_QUERY_HISTORY: &str = "Query history";
+pub const FIELD_FORMAT_JSON: &str = "Format JSON";
 pub const FIELD_SUGGESTION_KEYS: &str = "Autocomplete";
 pub const FIELD_PAGE_SIZE: &str = "Page size";
 pub const FIELD_ROW_CAP: &str = "Row cap";
@@ -640,6 +663,7 @@ pub const TABLE_MORE: &str = "more rows available";
 pub const TABLE_NO_MORE_ROWS: &str = "no more rows";
 pub const TABLE_WAITING: &str = "waiting for a connection";
 pub const TABLE_LOADING: &str = "loading";
+pub const TABLE_COUNTING: &str = "counting";
 pub const TABLE_STOPPING: &str = "stopping";
 pub const TABLE_BUDGET: &str = "data budget reached; close a tab to free space";
 pub const TABLE_VALUE_TOO_LARGE: &str = "a value is larger than the data budget";
@@ -649,6 +673,7 @@ pub const NOTE_PARTIAL_KEYS: &str = "(partial list)";
 pub const REGION_TABLE: &str = "Table";
 pub const REGION_FILTER: &str = "Filter";
 
+pub const MARK_PRODUCTION: &str = "PROD";
 pub const MODE_AUTO: &str = "Auto";
 pub const MODE_MANUAL: &str = "Manual";
 pub const TRANSACTION_NONE: &str = "No transaction";
@@ -741,6 +766,9 @@ pub fn action_text(action: Action) -> &'static str {
         Action::ToggleMode => "Autocommit or manual",
         Action::Commit => "Commit",
         Action::Rollback => "Rollback",
+        Action::FormatSql => "Format the SQL",
+        Action::ToggleComment => "Comment or uncomment the rows",
+        Action::OpenHistory => "Open the query history",
         Action::Help => "Open this screen",
         Action::OpenPalette => "Open the commands",
         Action::CloseTab => "Close the tab",
@@ -788,6 +816,8 @@ pub fn action_text(action: Action) -> &'static str {
         Action::GridClearSelection => "Clear the selection",
         Action::GridCopy => "Copy as TSV",
         Action::GridOpenValue => "Open the value",
+        Action::GridOpenRow => "Open the row",
+        Action::GridCountRows => "Count the rows",
         Action::GridFind => "Find in the loaded rows",
         Action::GridNarrow => "Make the column narrow",
         Action::GridWiden => "Make the column wide",
@@ -870,6 +900,10 @@ pub fn result_tab(number: usize) -> String {
 
 pub fn rows_loaded(rows: usize) -> String {
     format!("{} loaded", plural(rows, "row"))
+}
+
+pub fn rows_of_total(rows: usize, total: usize) -> String {
+    format!("{} of {} loaded", count(rows), plural(total, "row"))
 }
 
 pub fn table_label(name: &str, kind: &str) -> String {
@@ -994,7 +1028,17 @@ pub fn value_footer(chars: usize, kind: &str) -> String {
     format!(" {} · {kind} ", plural(chars, "character"))
 }
 
+pub fn row_title(row: usize, loaded: usize) -> String {
+    format!(" row {} of {} loaded ", count(row + 1), count(loaded))
+}
+
+pub fn row_footer(columns: usize) -> String {
+    format!(" {} ", plural(columns, "column"))
+}
+
 pub const VALUE_TEXT: &str = "text";
+pub const VALUE_JSON: &str = "JSON";
+pub const VALUE_JSON_ORIGINAL: &str = "JSON, original";
 pub const VALUE_NUMBER: &str = "number";
 pub const VALUE_BINARY: &str = "binary";
 pub const VALUE_NULL: &str = "NULL";
@@ -1002,7 +1046,12 @@ pub const VALUE_NULL: &str = "NULL";
 pub const HELP: &str = "\
 sqln: terminal database client
 
-Usage: sqln [options]
+Usage: sqln [options] [target]
+
+Target:
+  A SQLite file, or a URI such as postgres://user@host/name. Without a password
+  in the URI, SQLN asks for it. A password in a URI stays in the shell history.
+  The connection of a target lasts for this session, and SQLN saves nothing of it.
 
 Options:
   --project <folder>     Use the project in this folder. Without it, SQLN uses
@@ -1018,6 +1067,63 @@ Development options:
 The settings and the connections are in config.json, in the global folder
 (~/.config/sqln, or $XDG_CONFIG_HOME/sqln) and in the .sqln folder of the project.
 ";
+
+pub const ONE_TARGET: &str = "Give one file or one URI.";
+
+pub const TITLE_HISTORY: &str = "Query history";
+pub const NO_HISTORY: &str = "This connection has no history.";
+pub const NO_HISTORY_MATCH: &str = "No statement has this text.";
+
+pub fn history_failed(message: &str) -> String {
+    format!("The query history did not save: {message}")
+}
+
+pub const FORMAT_UNCHANGED: &str = "The SQL has this format already.";
+pub const FORMAT_REFUSED: &str = "SQLN cannot format this text. Close its string or comment.";
+
+pub const TITLE_CONFIRM_RUN: &str = "Confirm the run";
+pub const OPTION_RUN: &str = "Run";
+
+/// The risks of one run, for the question before it starts.
+pub struct RunRisk<'a> {
+    /// The name of a production connection.
+    pub production: Option<&'a str>,
+    pub changes: usize,
+    pub no_where: usize,
+    pub total: usize,
+    /// The start of the first statement with a risk.
+    pub first: &'a str,
+}
+
+pub fn run_risk(risk: &RunRisk) -> String {
+    let RunRisk {
+        production,
+        changes,
+        no_where,
+        total,
+        first,
+    } = risk;
+    let mut lines = Vec::new();
+    if let Some(name) = production {
+        lines.push(format!("{name} is a production connection."));
+        lines.push(format!(
+            "Statements that can change data: {changes} of {total}."
+        ));
+    }
+    if *no_where > 0 {
+        lines.push(format!(
+            "Statements without WHERE: {no_where} of {total}. They change all rows."
+        ));
+    }
+    lines.push(String::new());
+    lines.push((*first).to_owned());
+    lines.join("\n")
+}
+
+/// The question of the command line, before the interface starts.
+pub fn password_prompt(user: &str) -> String {
+    format!("Password for {user} (Enter for none): ")
+}
 
 // Files: the configuration, the project, and the saved consoles.
 pub const TITLE_CREATE_PROJECT: &str = "Create project";

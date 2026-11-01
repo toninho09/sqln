@@ -1,6 +1,7 @@
 //! Result data: values, widths, cursor, selection, budget, and TSV copy.
 
 mod budget;
+pub mod json;
 mod search;
 mod tsv;
 

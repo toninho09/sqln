@@ -3,7 +3,9 @@
 use std::time::{Duration, Instant};
 
 use sqln::exec::{ExecEvent, Flow, ResultSink, StatementKey};
+use sqln::grid::json::{FORMAT_LIMIT, pretty};
 use sqln::grid::{Budget, ResultTable, Row, RowSearch, Value};
+use sqln::result::ResultTab;
 use sqln::ui::wrap::WrappedText;
 
 fn text(value: &str) -> Value {
@@ -346,4 +348,148 @@ fn a_sink_drops_the_rows_after_the_stop_request() {
     assert_eq!(sink.push_blocking(row(&["dropped"])), Flow::Discard);
     assert_eq!(budget.used(), used);
     assert_eq!(sink.finish_blocking().0, 1);
+}
+
+#[test]
+fn json_keeps_the_order_of_the_keys_and_each_digit() {
+    assert_eq!(
+        pretty(r#"{"z":1,"a":12345678901234567890123.50,"z":2}"#).unwrap(),
+        "{\n  \"z\": 1,\n  \"a\": 12345678901234567890123.50,\n  \"z\": 2\n}"
+    );
+}
+
+#[test]
+fn json_nests_and_keeps_empty_parts_on_one_row() {
+    assert_eq!(
+        pretty(r#"[ {"a": [1, 2], "b": { }}, [ ] ]"#).unwrap(),
+        "[\n  {\n    \"a\": [\n      1,\n      2\n    ],\n    \"b\": {}\n  },\n  []\n]"
+    );
+}
+
+#[test]
+fn json_keeps_each_string_as_it_is() {
+    let text = r#"{"a":"x \" , : { } [ ] é 😀 \\","b":"  "}"#;
+    assert_eq!(
+        pretty(text).unwrap(),
+        "{\n  \"a\": \"x \\\" , : { } [ ] é 😀 \\\\\",\n  \"b\": \"  \"\n}"
+    );
+}
+
+#[test]
+fn json_ignores_the_space_around_the_value() {
+    assert_eq!(pretty(" \n[1]\t").unwrap(), "[\n  1\n]");
+}
+
+#[test]
+fn only_a_valid_object_or_array_is_json_for_the_window() {
+    for text in [
+        "", "1", "\"a\"", "null", "true", "{", "[1,]", "{\"a\":}", "{} x", "{a:1}",
+    ] {
+        assert_eq!(pretty(text), None, "{text}");
+    }
+}
+
+#[test]
+fn json_above_the_limit_keeps_its_text() {
+    let fits = format!("[\"{}\"]", "x".repeat(FORMAT_LIMIT - 4));
+    assert!(pretty(&fits).is_some());
+    let long = format!("[\"{}\"]", "x".repeat(FORMAT_LIMIT - 3));
+    assert_eq!(pretty(&long), None);
+}
+
+#[test]
+fn json_with_a_very_long_form_stays_as_text_and_ends_fast() {
+    let deep = format!("{}{}", "[".repeat(100_000), "]".repeat(100_000));
+    let wide = format!("{}{}{}", "[".repeat(2000), "1,".repeat(400_000), "1");
+    let wide = wide + &"]".repeat(2000);
+    let start = Instant::now();
+    assert_eq!(pretty(&deep), None);
+    assert_eq!(pretty(&wide), None);
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        start.elapsed()
+    );
+}
+
+#[test]
+fn json_of_a_normal_depth_opens_formatted() {
+    let text = format!("{}1{}", "[".repeat(64), "]".repeat(64));
+    let formatted = pretty(&text).unwrap();
+    assert!(formatted.contains(&format!("\n{}1\n", "  ".repeat(64))));
+}
+
+fn result_of(columns: &[&str], rows: Vec<Row>) -> ResultTab {
+    let names = columns.iter().map(|name| (*name).to_owned()).collect();
+    let mut tab = ResultTab::new(1, names);
+    tab.table.append(rows, 0);
+    tab
+}
+
+#[test]
+fn the_row_window_writes_one_aligned_line_for_each_column() {
+    let values: Row = vec![
+        Value::Number("1".into()),
+        Value::Null,
+        Value::Binary(vec![0, 255].into_boxed_slice()),
+        text("first\nsecond"),
+    ]
+    .into_boxed_slice();
+    let tab = result_of(&["id", "deleted_at", "hash", "note"], vec![values]);
+    let window = tab.row_window(0).unwrap();
+    assert_eq!(
+        window.text,
+        "id         : 1\ndeleted_at : NULL\nhash       : 0x00FF\nnote       : first↵second"
+    );
+    assert_eq!(window.title, " row 1 of 1 loaded ");
+    assert_eq!(window.footer, " 4 columns ");
+    assert_eq!(window.indent, 13);
+    assert_eq!(tab.row_window(1), None);
+}
+
+#[test]
+fn the_row_window_marks_a_cut_value_and_a_cut_name() {
+    let exact = "x".repeat(4096);
+    let long = "y".repeat(5000);
+    let tab = result_of(&["a", &"n".repeat(40)], vec![row(&[&exact, &long])]);
+    let window = tab.row_window(0).unwrap();
+    let lines: Vec<&str> = window.text.lines().collect();
+    assert!(lines[0].ends_with(&format!(" : {exact}")), "an exact value");
+    assert!(lines[1].starts_with(&format!("{} : y", "n".repeat(32))));
+    assert!(lines[1].ends_with(&format!("{}…", "y".repeat(4096))));
+    assert!(!lines[1].contains(&"y".repeat(4097)));
+}
+
+fn indented_rows(text: &str, indent: usize, width: usize) -> Vec<(usize, String)> {
+    let mut wrapped = WrappedText::with_indent(text.to_owned(), indent);
+    wrapped.set_width(width);
+    let mut rows = Vec::new();
+    while let Some(row) = wrapped.row(rows.len()) {
+        let row = row.to_owned();
+        rows.push((wrapped.row_indent(rows.len()), row));
+    }
+    rows
+}
+
+#[test]
+fn a_wrapped_row_keeps_the_columns_of_its_indent() {
+    assert_eq!(
+        indented_rows("name : one two three four\nid   : 1", 7, 16),
+        [
+            (0, "name : one two ".to_owned()),
+            (7, "three ".to_owned()),
+            (7, "four".to_owned()),
+            (0, "id   : 1".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn a_narrow_window_gives_the_indent_to_the_text() {
+    let rows = indented_rows("name : one two three", 7, 10);
+    assert!(rows.iter().all(|(indent, _)| *indent == 0), "{rows:?}");
+    assert_eq!(
+        rows.iter().map(|(_, row)| row.as_str()).collect::<String>(),
+        "name : one two three"
+    );
 }

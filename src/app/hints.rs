@@ -66,6 +66,9 @@ impl App {
         if self.palette.is_some() {
             return Some(text::HINT_PALETTE);
         }
+        if self.history.is_some() {
+            return Some(text::HINT_HISTORY);
+        }
         if self.rename.is_some() {
             return Some(text::HINT_NAME);
         }
@@ -97,8 +100,14 @@ impl App {
                 text::HINT_CHOOSE
             });
         }
-        if self.overlay.is_some() {
-            return Some(text::HINT_OVERLAY);
+        if let Some(overlay) = &self.overlay {
+            return Some(if overlay.other.is_some() {
+                text::HINT_OVERLAY_JSON
+            } else if overlay.row.is_some() {
+                text::HINT_OVERLAY_ROW
+            } else {
+                text::HINT_OVERLAY
+            });
         }
         self.form.as_ref().map(|form| match form.focus.style() {
             _ if form.focus.is_path() => text::HINT_FORM_PATH,
@@ -186,6 +195,16 @@ impl App {
             ),
             (Action::FocusLeft, "navigator", !can_run),
             (Action::FocusDown, "results", !console.results.is_empty()),
+            (
+                Action::FormatSql,
+                "format",
+                !console.editor.is_blank() && self.command_available(Action::FormatSql),
+            ),
+            (
+                Action::ToggleComment,
+                "comment",
+                !console.editor.is_blank() && self.command_available(Action::ToggleComment),
+            ),
         ]);
         let mut items = self.hints_when(&commands);
         if console.editor.is_inserting() {
@@ -212,6 +231,7 @@ impl App {
                 !console.showing_messages() && self.command_available(Action::GridExport),
             ),
             (Action::GridOpenValue, "value", rows),
+            (Action::GridOpenRow, "row", rows),
             (Action::GridFind, "find", rows),
             (Action::GridNextResult, "tab", !console.results.is_empty()),
             (Action::Help, "keys", true),
@@ -252,8 +272,14 @@ impl App {
                 !busy && (sections || tab.has_pages()),
             ),
             (Action::GridStructure, "struct", tab.filters),
+            (
+                Action::GridCountRows,
+                "count",
+                tab.total.is_none() && self.command_available(Action::GridCountRows),
+            ),
             (Action::GridCopy, "copy", rows),
             (Action::GridOpenValue, "value", rows),
+            (Action::GridOpenRow, "row", rows),
             (Action::GridFind, "find", rows),
             (
                 Action::GridExport,

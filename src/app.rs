@@ -6,7 +6,9 @@ mod close;
 mod conflicts;
 mod connections;
 mod export;
+mod guard;
 mod hints;
+mod history;
 mod keys;
 mod mouse;
 mod persist;
@@ -46,6 +48,7 @@ use crate::export::ExportChoices;
 use crate::export::form::ExportForm;
 use crate::form::ConnectionForm;
 use crate::grid::Budget;
+use crate::history::HistoryList;
 use crate::input::{Chord, Keymap, SuggestionKeys};
 use crate::navigator::Navigator;
 use crate::palette::Palette;
@@ -56,10 +59,12 @@ use crate::store::scripts::ScriptEntry;
 use crate::store::{Scope, Store};
 use crate::table::{TableFocus, TableTab};
 use crate::terminal::Session;
+use crate::terminal::watch_terminal;
 use crate::ui::browser::draw_browser;
 use crate::ui::console::BarData;
 use crate::ui::export::{ExportLayout, draw_export};
 use crate::ui::form::{FormLayout, draw_form};
+use crate::ui::history::draw_history;
 use crate::ui::name::{NamePrompt, draw_name};
 use crate::ui::navigator::draw_navigator;
 use crate::ui::palette::draw_palette;
@@ -105,6 +110,9 @@ pub struct Options {
     pub database: Option<PathBuf>,
     /// The connections of the command line. The first console uses the first one.
     pub connections: Vec<Definition>,
+    /// True when the command line names the database. The tabs of the last session
+    /// stay closed and stay in their file, and the start offers no project.
+    pub session_target: bool,
     /// A ready connector. It has priority over `database`.
     pub connector: Option<Arc<dyn Connector>>,
     /// The name of `connector` in the interface.
@@ -132,6 +140,7 @@ impl Default for Options {
             catalog: None,
             database: None,
             connections: Vec::new(),
+            session_target: false,
             connector: None,
             label: None,
             settings: Settings::default(),
@@ -156,6 +165,8 @@ enum DialogAction {
     KeepWaiting(ConsoleId),
     CloseConnection(ConsoleId),
     RunAnyway(ConsoleId, RunScope),
+    /// Run the statements that the question of `run_warning` showed.
+    RunConfirmed(ConsoleId, RunScope),
     RemoveConnection(ConnectionId),
     CreateProject,
     ReloadConfig,
@@ -191,6 +202,23 @@ struct Overlay {
     contents: WrappedText,
     footer: String,
     scroll: usize,
+    /// The other form of a JSON value, with its footer. `f` shows it.
+    other: Option<(String, String)>,
+    /// The row of the grid that a row window shows. The side keys change it.
+    row: Option<usize>,
+}
+
+impl Overlay {
+    /// Shows the other form of a JSON value from its first row.
+    fn switch_form(&mut self) {
+        if let Some((text, footer)) = self.other.take() {
+            let shown = self.contents.text().to_owned();
+            let old_footer = std::mem::replace(&mut self.footer, footer);
+            self.contents = WrappedText::new(text);
+            self.other = Some((shown, old_footer));
+            self.scroll = 0;
+        }
+    }
 }
 
 /// What a row of a list stands for.
@@ -245,6 +273,8 @@ struct ScreenLayout {
     picker: (Rect, usize),
     /// The list of the command palette, with the index of its first row.
     palette: (Rect, usize),
+    /// The list of the query history, with the index of its first row.
+    history: (Rect, usize),
     /// The list of the file browser, with the index of its first row.
     browser: (Rect, usize),
 }
@@ -289,6 +319,7 @@ pub struct App {
     dialogs: VecDeque<Dialog>,
     picker: Option<Picker>,
     palette: Option<Palette>,
+    history: Option<HistoryList>,
     form: Option<ConnectionForm>,
     overlay: Option<Overlay>,
     status: Option<String>,
@@ -385,6 +416,7 @@ impl App {
             dialogs: VecDeque::new(),
             picker: None,
             palette: None,
+            history: None,
             form: None,
             overlay: None,
             rename: None,
@@ -424,10 +456,14 @@ impl App {
         for definition in options.connections {
             app.add_definition(definition);
         }
+        // A file that does not exist binds the console after the answer of its dialog.
+        let waits_for_target = options.session_target && app.connections.is_empty();
         for item in stored {
             app.add_stored(item);
         }
-        if let Some(connection) = app.connections.first().map(|connection| connection.id) {
+        if let Some(connection) = app.connections.first().map(|connection| connection.id)
+            && !waits_for_target
+        {
             app.bind_console(0, connection);
         }
         app.finish_start();
@@ -613,6 +649,7 @@ impl App {
             || self.overlay.is_some()
             || self.picker.is_some()
             || self.palette.is_some()
+            || self.history.is_some()
             || self.rename.is_some()
             || self.settings_form.is_some()
             || self.export_form.is_some()
@@ -650,6 +687,11 @@ impl App {
                     palette.paste(&text);
                 }
             }
+            Event::Paste(text) if self.dialogs.is_empty() && self.history.is_some() => {
+                if let Some(list) = &mut self.history {
+                    list.paste(&text);
+                }
+            }
             Event::Paste(text) if !blocked => self.on_paste(&text),
             Event::Mouse(mouse) if !self.dialogs.is_empty() => self.on_dialog_mouse(mouse),
             Event::Mouse(mouse) if self.auth.prompt.is_some() => self.on_password_mouse(mouse),
@@ -657,6 +699,7 @@ impl App {
             Event::Mouse(mouse) if self.browser.is_some() => self.on_browser_mouse(mouse),
             Event::Mouse(mouse) if self.picker.is_some() => self.on_picker_mouse(mouse),
             Event::Mouse(mouse) if self.palette.is_some() => self.on_palette_mouse(mouse),
+            Event::Mouse(mouse) if self.history.is_some() => self.on_history_mouse(mouse),
             Event::Mouse(mouse) if self.settings_form.is_some() => self.on_settings_mouse(mouse),
             Event::Mouse(mouse) if self.export_form.is_some() => self.on_export_mouse(mouse),
             Event::Mouse(mouse) if !blocked => self.on_mouse(mouse),
@@ -722,6 +765,7 @@ impl App {
             self.on_exec_event(event);
             changed = true;
         }
+        self.flush_history();
         changed
     }
 
@@ -765,6 +809,9 @@ impl App {
         if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
             tab.on_event(event, &budget);
             return;
+        }
+        if let ExecEvent::StatementFinished { key, status, .. } = &event {
+            self.note_statement(key, status);
         }
         match self.console_by_id(id) {
             Some(console) => {
@@ -950,12 +997,11 @@ impl App {
             let view = tab.result.view;
             let position =
                 (!tab.result.table.rows.is_empty()).then_some((view.row + 1, view.col + 1));
-            let connection = self
-                .connection(tab.connection)
-                .map_or("", |item| item.name.as_str());
+            let item = self.connection(tab.connection);
             let status = StatusData {
                 panel,
-                connection,
+                connection: item.map_or("", |item| item.name.as_str()),
+                production: item.is_some_and(Connection::is_production),
                 schema: Some(&tab.relation.schema),
                 session: None,
                 phase: tab.phase,
@@ -989,6 +1035,7 @@ impl App {
         let status = StatusData {
             panel,
             connection: connection.map_or(text::NO_DATABASE_LABEL, |item| item.name.as_str()),
+            production: connection.is_some_and(Connection::is_production),
             schema: (namespace != Namespace::None)
                 .then(|| console.schema.as_deref().or(default_schema))
                 .flatten(),
@@ -1065,11 +1112,15 @@ impl App {
                 contents,
                 footer,
                 scroll,
+                ..
             } = overlay;
             *scroll = draw_overlay(frame, title, contents, footer, *scroll, &self.theme);
         }
         if let Some(palette) = &self.palette {
             self.layout.palette = draw_palette(frame, palette, &self.theme);
+        }
+        if let Some(list) = &self.history {
+            self.layout.history = draw_history(frame, list, &self.theme);
         }
         if let Some(form) = &self.settings_form {
             self.layout.settings = draw_settings(frame, form, &self.theme);
@@ -1105,6 +1156,9 @@ pub fn run(options: Options) -> io::Result<()> {
     let report_folder = options.store.as_ref().map(|store| store.global.dir.clone());
     // The start of the terminal can wait for an answer, and a signal can arrive meanwhile.
     let signal = signal_flag()?;
+    // The watchdog starts before the session, because a query of the terminal can
+    // also spin when the terminal closes during the start.
+    watch_terminal();
     let mut session = Session::start(report_folder)?;
     let mut app = App::new(options, clipboard, Theme::from_env());
     let result = catch_unwind(AssertUnwindSafe(|| {

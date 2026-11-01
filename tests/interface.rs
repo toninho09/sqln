@@ -1084,7 +1084,7 @@ fn form_screen(name: &str, theme: Theme) -> Screen {
     screen
 }
 
-const FORM_LABELS: [&str; 19] = [
+const FORM_LABELS: [&str; 20] = [
     "Type",
     "Name",
     "Theme",
@@ -1102,6 +1102,7 @@ const FORM_LABELS: [&str; 19] = [
     "Client key",
     "Pool limit",
     "Read only",
+    "Production",
     "Connect limit",
     "SQL limit",
 ];
@@ -1198,7 +1199,7 @@ fn the_form_uses_the_room_of_the_screen() {
         "the longest choice fits:\n{wide}"
     );
 
-    let medium = screen.screen(100, 32);
+    let medium = screen.screen(100, 33);
     assert!(!medium.contains("GENERAL"), "{medium}");
     let rows_of =
         |text: &str, label: &str| text.lines().position(|line| line.contains(label)).unwrap();

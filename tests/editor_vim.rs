@@ -193,3 +193,23 @@ fn a_change_of_keyboard_keeps_the_selection() {
     f.editor.set_keyboard(KeyboardMode::Vim);
     assert_eq!(f.editor.selected_text().as_deref(), Some("sel"));
 }
+
+#[test]
+fn a_comment_in_normal_mode_is_one_undo_step() {
+    let mut f = Fixture::vim("select 1;");
+    f.editor.toggle_comment();
+    assert_eq!(f.text(), "-- select 1;");
+    f.press(key(Char('u')));
+    assert_eq!(f.text(), "select 1;");
+}
+
+#[test]
+fn a_comment_ends_visual_mode() {
+    let mut f = Fixture::vim("a\nb\nc");
+    f.press(key(Char('v')));
+    f.press(key(Char('j')));
+    f.editor.toggle_comment();
+    assert_eq!(f.text(), "-- a\n-- b\nc");
+    assert_eq!(f.editor.state.mode, EditorMode::Normal);
+    assert_eq!(f.selected(), None);
+}

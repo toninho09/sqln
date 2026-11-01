@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod file;
+pub mod history;
 pub mod scripts;
 pub mod workspace;
 
@@ -66,6 +67,11 @@ impl Root {
 
     pub fn consoles_dir(&self) -> PathBuf {
         self.dir.join("consoles")
+    }
+
+    /// The query history. Only the global folder holds it, so no project file holds SQL.
+    pub fn history_file(&self) -> PathBuf {
+        self.dir.join("history.jsonl")
     }
 
     pub fn locks_dir(&self) -> PathBuf {

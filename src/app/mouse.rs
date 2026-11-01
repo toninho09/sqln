@@ -8,6 +8,7 @@ use ratatui::layout::{Position, Rect};
 use super::{App, MAX_EDITOR_RATIO, MIN_EDITOR_RATIO};
 use crate::console::Focus;
 use crate::export::form::Field;
+use crate::filter_list::ListRequest;
 use crate::form::FormRequest;
 use crate::input::Action;
 use crate::navigator::{MIN_WIDTH, Navigator, RowKind};
@@ -403,6 +404,25 @@ impl App {
             }
             MouseEventKind::ScrollUp => palette.move_by(-1),
             MouseEventKind::ScrollDown => palette.move_by(1),
+            _ => {}
+        }
+    }
+
+    pub(super) fn on_history_mouse(&mut self, mouse: MouseEvent) {
+        let (area, first) = self.layout.history;
+        let inside = area.contains(Position::new(mouse.column, mouse.row));
+        let Some(list) = &mut self.history else {
+            return;
+        };
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) if inside => {
+                let index = first + usize::from(mouse.row - area.y);
+                if index < list.shown().len() {
+                    self.on_history_request(ListRequest::Choose(index));
+                }
+            }
+            MouseEventKind::ScrollUp => list.move_by(-1),
+            MouseEventKind::ScrollDown => list.move_by(1),
             _ => {}
         }
     }

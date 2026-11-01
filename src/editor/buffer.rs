@@ -59,6 +59,67 @@ pub fn replace_range(lines: &mut Lines, start: Index2, end: Index2, text: &str) 
     position
 }
 
+/// The result of a comment toggle on a group of rows.
+pub struct Comment {
+    /// The new text of the rows.
+    pub text: String,
+    /// The column and the change of length of each row.
+    edits: Vec<(usize, isize)>,
+}
+
+impl Comment {
+    /// Returns the place of a position after the change. `first` is the first row of the
+    /// group, and a row after the group keeps its position.
+    pub fn moved(&self, first: usize, position: Index2) -> Index2 {
+        let edit = position.row.checked_sub(first);
+        match edit.and_then(|index| self.edits.get(index)) {
+            Some((at, change)) if position.col >= *at => Index2::new(
+                position.row,
+                position.col.saturating_add_signed(*change).max(*at),
+            ),
+            _ => position,
+        }
+    }
+}
+
+/// Adds or removes a line comment on a group of rows. A blank row stays as it is, and
+/// only blank rows return `None`. Rows that all hold the comment lose it. Other rows
+/// receive it at the smallest indent, so that the text keeps its form.
+pub fn toggle_comment(lines: &Lines, first: usize, last: usize, marker: &str) -> Option<Comment> {
+    let rows: Vec<&[char]> = (first..=last).map(|index| row(lines, index)).collect();
+    let marker: Vec<char> = marker.chars().collect();
+    let prefix: Vec<char> = marker.iter().copied().chain([' ']).collect();
+    let start = |row: &[char]| row.iter().position(|c| !c.is_whitespace());
+    let indent = rows.iter().filter_map(|row| start(row)).min()?;
+    let remove = rows
+        .iter()
+        .all(|row| start(row).is_none_or(|at| row[at..].starts_with(&marker)));
+    let mut text: Vec<String> = Vec::with_capacity(rows.len());
+    let mut edits = Vec::with_capacity(rows.len());
+    for row in rows {
+        let (at, gone, added): (usize, usize, &[char]) = match start(row) {
+            None => (0, 0, &[]),
+            Some(at) if remove => {
+                let spaced = row.get(at + marker.len()) == Some(&' ');
+                (at, marker.len() + usize::from(spaced), &[])
+            }
+            Some(_) => (indent, 0, &prefix),
+        };
+        text.push(
+            row[..at]
+                .iter()
+                .chain(added)
+                .chain(&row[at + gone..])
+                .collect(),
+        );
+        edits.push((at, added.len().cast_signed() - gone.cast_signed()));
+    }
+    Some(Comment {
+        text: text.join("\n"),
+        edits,
+    })
+}
+
 /// Keeps one line ending, because the editor stores rows.
 pub fn normalize_newlines(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")

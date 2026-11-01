@@ -862,7 +862,7 @@ fn the_sql_limit_of_a_connection_saves_and_zero_means_no_limit() {
     let mut session = Session::start(&store);
     session.go_to_connection("one");
     session.code(KeyCode::Char('e'));
-    for _ in 0..6 {
+    for _ in 0..7 {
         session.code(KeyCode::Tab);
     }
     session.assert_sees("SQL limit");
@@ -2236,7 +2236,7 @@ fn the_settings_write_only_the_scope_of_the_dialog() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("77");
-    for _ in 0..3 {
+    for _ in 0..4 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2271,7 +2271,7 @@ fn an_empty_field_removes_the_project_value_and_shows_the_global_value() {
     session.code(KeyCode::Backspace);
     session.code(KeyCode::Backspace);
     session.assert_sees("from global: 10");
-    for _ in 0..3 {
+    for _ in 0..4 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2286,7 +2286,7 @@ fn a_settings_value_of_zero_stays_in_the_dialog_with_a_note() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("0");
-    for _ in 0..3 {
+    for _ in 0..4 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2304,6 +2304,7 @@ fn a_change_of_keyboard_in_the_settings_keeps_the_text_the_cursor_and_the_histor
     session.code(KeyCode::Tab);
     session.code(KeyCode::Right);
     session.code(KeyCode::Right);
+    session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
@@ -2760,6 +2761,7 @@ fn the_settings_choose_the_reopening_of_the_tabs() {
     session.code(KeyCode::Right);
     session.assert_sees("< Off >");
     session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
     session.assert_sees("settings are saved");
     let text = fs::read_to_string(store.global.config_file()).unwrap();
@@ -2815,8 +2817,8 @@ fn the_tab_key_stays_in_the_open_section_and_goes_back_to_the_sidebar() {
     let (store, _) = two_connections("p-settings-tab");
     let mut session = Session::start(&store);
     session.prefix(',');
-    // Scope, Keyboard, Reopen tabs, Save, Cancel, and the sidebar.
-    for _ in 0..6 {
+    // Scope, Keyboard, Reopen tabs, Query history, Save, Cancel, and the sidebar.
+    for _ in 0..7 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Down);
@@ -3222,8 +3224,8 @@ fn a_save_writes_the_changes_of_all_sections() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("77");
-    // Back to the sidebar: Row cap, Data, Save, Cancel, and the sidebar.
-    for _ in 0..5 {
+    // Back to the sidebar: Row cap, Data, Format JSON, Save, Cancel, and the sidebar.
+    for _ in 0..6 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Up);
@@ -3245,7 +3247,7 @@ fn a_bad_value_of_a_closed_section_shows_the_note() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("0");
-    for _ in 0..5 {
+    for _ in 0..6 {
         session.code(KeyCode::Tab);
     }
     // The sidebar opens the first section. Then the focus goes to Save.

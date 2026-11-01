@@ -1744,7 +1744,12 @@ fn the_application_runs_a_script_and_completes_real_names() {
         s.wait_for("tbl app_orders");
         s.press(key(KeyCode::Esc));
 
+        // A DELETE without WHERE asks first, and the focus starts on Cancel.
         s.run_script("BEGIN;\nDELETE FROM app_orders;");
+        s.wait_for("Confirm the run");
+        s.press(key(KeyCode::Tab));
+        s.press(key(KeyCode::Enter));
+        s.wait_until(|s| !s.app.console().is_busy());
         s.wait_for("Transaction open");
         s.prefix('R');
         s.wait_for("No transaction");
@@ -1967,6 +1972,12 @@ fn a_table_view_pages_filters_and_orders_rows_of_each_server() {
         s.open_table("app_pages");
         assert_eq!(s.table_ids().len(), 100);
         assert!(s.app.table().unwrap().has_more);
+        s.prefix('j');
+        s.code(KeyCode::Char('c'));
+        s.wait_table();
+        assert_eq!(s.app.table().unwrap().total, Some(250));
+        assert_eq!(s.table_ids().len(), 100);
+        s.wait_for("100 of 250 rows loaded");
         s.prefix('k');
         s.code(KeyCode::Tab);
         s.type_text("id ASC");

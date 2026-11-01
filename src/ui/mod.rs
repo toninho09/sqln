@@ -6,6 +6,7 @@ pub mod conflicts;
 pub mod console;
 pub mod export;
 pub mod form;
+pub mod history;
 pub mod icons;
 pub mod name;
 pub mod navigator;

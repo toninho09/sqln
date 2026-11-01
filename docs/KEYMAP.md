@@ -67,6 +67,8 @@ A janela usa as teclas efetivas do `keymap`, e a barra de dicas mostra `Ctrl+W �
 | `e` | Executar |
 | `s` | Script inteiro |
 | `x` | Parar o script ou a consulta da tabela |
+| `f` | Formatar o SQL |
+| `/` | Comentar ou descomentar as linhas |
 | `m` | Trocar entre autocommit e manual |
 | `C` | Commit |
 | `R` | Rollback |
@@ -77,6 +79,7 @@ A janela usa as teclas efetivas do `keymap`, e a barra de dicas mostra `Ctrl+W �
 
 `Ctrl+W C` e `Ctrl+W R` não pedem confirmação, como os botões de commit e rollback.
 `Ctrl+W N` usa `N` maiúsculo e não substitui `Ctrl+W n`.
+`Ctrl+W H` usa `H` maiúsculo e não substitui `Ctrl+W h`.
 A lista de consoles oferece a ação de renomear com `r`.
 A troca de conexão exige confirmação e não executa SQL. As regras estão na seção 12 do plano.
 As abas principais seguem a ordem de abertura, sem grupos por tipo.
@@ -92,6 +95,9 @@ O prefixo é o caminho comum aos dois modos, e o terminal entrega essa tecla.
 | Executar | `Ctrl+Enter` | `F5` ou `Ctrl+W e` |
 | Script inteiro | `Shift+Enter` | `Shift+F5` ou `Ctrl+W s` |
 | Parar script | `Ctrl+W x` | Botão **Parar script** |
+| Formatar o SQL | `Ctrl+W f` | Paleta de comandos |
+| Comentar ou descomentar as linhas | `Ctrl+W /` | `Ctrl+/` ou paleta de comandos |
+| Histórico de consultas | `Ctrl+W H` | Paleta de comandos |
 | Ajuda | `F1` | `Ctrl+W ?` |
 | Paleta de comandos | `Ctrl+P` | `Ctrl+W :` |
 | Sair | `Ctrl+W q` | Fechar a última aba |
@@ -103,6 +109,11 @@ A paleta lista as ações disponíveis no estado atual, com a tecla de cada uma.
 Digite para filtrar. `Up` e `Down` mudam a linha, `Enter` executa, `Esc` fecha, e um clique executa a linha.
 Uma ação sem tecla continua na lista. Uma tecla do explorador aparece somente com o explorador em foco.
 `Ctrl+P` tem prioridade sobre o `MoveUp` do EdTUI na inserção do modo Vim.
+
+A ação de comentar age na seleção ou na linha do cursor, com `-- ` em SQL e `# ` em Redis.
+Uma seleção que termina na coluna 0 deixa essa linha de fora. Se todas as linhas tiverem o comentário, a ação remove o comentário.
+Um terminal sem aprimoramento de teclado envia `Ctrl+/` como o byte de `Ctrl+7`, então as duas teclas fazem a mesma ação.
+`Ctrl+/` não está no registro do `keytest`. Use `Ctrl+W /` se o terminal não entregar essa tecla.
 
 `Ctrl+C` não encerra a aplicação nem para o script.
 Com seleção, ele copia. Sem seleção, ele não faz nada.
@@ -232,6 +243,7 @@ Se o cofre falhar, a opção de sessão não oferece gravação global em texto 
 | Exportar para um arquivo | `e` | `e` |
 | Limpar a seleção | `Esc` | `Esc` |
 | Abrir valor | `Enter` | `Enter` |
+| Abrir a linha na vertical | `r` | `r` |
 | Buscar nas linhas carregadas | `Ctrl+F` | `/` |
 | Diminuir e aumentar a coluna | `<` e `>` | `<` e `>` |
 | Largura automática da coluna | `=` | `=` |
@@ -240,6 +252,17 @@ Se o cofre falhar, a opção de sessão não oferece gravação global em texto 
 
 Sem seleção, `Ctrl+C` copia a célula atual.
 O resultado que ainda recebe linhas não fecha, e a aba **Mensagens** também não.
+
+Na janela de valor e na janela de linha, as teclas são iguais nos dois mapas:
+
+| Ação | Tecla |
+|---|---|
+| Rolar | `Up` e `Down`, ou `j` e `k` |
+| Trocar a forma de um valor JSON | `f` |
+| Mudar de linha, na janela de linha | `Left` e `Right`, ou `h` e `l` |
+| Copiar o texto visível | `Ctrl+C` |
+| Fechar | `Esc` ou `Enter` |
+
 Na aba **Mensagens**, as setas percorrem o texto.
 
 `e` abre a exportação. A paleta oferece a mesma ação, também com o foco no editor.
@@ -291,6 +314,7 @@ Na visão de tabela, a grade também oferece:
 | Foco em `ORDER BY` | `o` |
 | Ordenar pela coluna atual | `s` |
 | Carregar mais | `m` |
+| Contar as linhas do filtro aplicado | `c` |
 | Página anterior e próxima | `[` e `]` |
 
 ## Barra de filtro

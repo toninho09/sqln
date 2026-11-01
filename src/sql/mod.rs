@@ -1,10 +1,14 @@
 //! SQL text analysis. This module accepts incomplete text and never fails.
 
 mod classify;
+mod format;
 mod lexer;
 mod statement;
 
-pub use classify::{counts_rows, is_plain_read, reads_or_writes_stdio};
+pub use classify::{
+    changes_state, counts_rows, is_plain_read, is_secret, lacks_where, reads_or_writes_stdio,
+};
+pub use format::format_statement;
 pub use lexer::{Lexer, Token, TokenKind, tokenize};
 pub use statement::{Statement, split, split_tokens, statement_at};
 

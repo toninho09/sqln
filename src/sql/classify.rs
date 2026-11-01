@@ -51,6 +51,35 @@ const SYNTAX_WORDS: &[&str] = &[
     "WITHIN",
 ];
 
+/// The main verbs of a statement. `WITH` comes before one of them.
+const VERBS: &[&str] = &[
+    "SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "REPLACE", "VALUES", "TABLE",
+];
+
+/// These statements control the session, and the question of a run skips them.
+const SESSION_WORDS: &[&str] = &[
+    "BEGIN",
+    "START",
+    "COMMIT",
+    "END",
+    "ROLLBACK",
+    "SAVEPOINT",
+    "RELEASE",
+    "USE",
+];
+
+/// A statement with one of these words stays out of the query history.
+const SECRET_WORDS: &[&str] = &[
+    "PASSWORD",
+    "PASSWD",
+    "IDENTIFIED",
+    "REQUIREPASS",
+    "MASTERAUTH",
+];
+
+/// A Redis command with one of these names can carry a password.
+const SECRET_COMMANDS: &[&str] = &["AUTH", "ACL", "HELLO"];
+
 /// Common functions of the two network databases that change no data.
 const PURE_FUNCTIONS: &[&str] = &[
     "ABS",
@@ -156,8 +185,58 @@ const PURE_FUNCTIONS: &[&str] = &[
     "YEAR",
 ];
 
-fn is_any(word: &str, list: &[&str]) -> bool {
+pub(super) fn is_any(word: &str, list: &[&str]) -> bool {
     list.iter().any(|item| word.eq_ignore_ascii_case(item))
+}
+
+/// Lists the words of the main level: outside parentheses and without comments.
+fn top_level_words(sql: &str, dialect: Dialect) -> Vec<&str> {
+    let mut depth = 0_usize;
+    let mut words = Vec::new();
+    for token in tokenize(sql, dialect) {
+        let text = &sql[token.start..token.end];
+        match token.kind {
+            TokenKind::Punctuation if text == "(" => depth += 1,
+            TokenKind::Punctuation if text == ")" => depth = depth.saturating_sub(1),
+            TokenKind::Word if depth == 0 => words.push(text),
+            _ => {}
+        }
+    }
+    words
+}
+
+/// Returns the verb of a statement. After `WITH`, it is the first verb of the main level.
+fn main_verb<'a>(words: &[&'a str]) -> Option<&'a str> {
+    let first = *words.first()?;
+    if first.eq_ignore_ascii_case("WITH") {
+        words.iter().copied().find(|word| is_any(word, VERBS))
+    } else {
+        Some(first)
+    }
+}
+
+/// Returns true for `UPDATE` or `DELETE` without `WHERE` in the main level.
+/// A `WHERE` in a subquery does not limit the rows of the statement.
+pub fn lacks_where(sql: &str, dialect: Dialect) -> bool {
+    if dialect == Dialect::Redis {
+        return false;
+    }
+    let words = top_level_words(sql, dialect);
+    main_verb(&words).is_some_and(|verb| is_any(verb, &["UPDATE", "DELETE"]))
+        && !words.iter().any(|word| word.eq_ignore_ascii_case("WHERE"))
+}
+
+/// Returns true for a statement that a production connection confirms: it is not a
+/// plain read and it does not control the session. Redis has no rule yet.
+pub fn changes_state(sql: &str, dialect: Dialect) -> bool {
+    if dialect == Dialect::Redis {
+        return false;
+    }
+    let words = top_level_words(sql, dialect);
+    !is_plain_read(sql, dialect)
+        && !words
+            .first()
+            .is_some_and(|word| is_any(word, SESSION_WORDS))
 }
 
 /// Returns true when the end of the statement at the row cap can use a cancellation.
@@ -196,6 +275,20 @@ pub fn is_plain_read(sql: &str, dialect: Dialect) -> bool {
         }
     }
     true
+}
+
+/// Returns true for a statement that can hold a secret. The check reads words, so a
+/// secret inside a string does not count.
+pub fn is_secret(sql: &str, dialect: Dialect) -> bool {
+    let tokens = tokenize(sql, dialect);
+    let mut words = tokens
+        .iter()
+        .filter(|token| token.kind == TokenKind::Word)
+        .map(|token| &sql[token.start..token.end]);
+    let command = words.next().unwrap_or("");
+    (dialect == Dialect::Redis && is_any(command, SECRET_COMMANDS))
+        || is_any(command, SECRET_WORDS)
+        || words.any(|word| is_any(word, SECRET_WORDS))
 }
 
 /// Returns true for a statement that reports the number of changed rows.
