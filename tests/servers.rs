@@ -2450,6 +2450,8 @@ fn an_export_reads_past_the_row_cap_and_stops_on_request() {
         let settings = Settings {
             row_cap: 10,
             max_connections: 1,
+            // A debug build needs time to drain the MySQL rows already in transit.
+            stop_grace: Duration::from_secs(50),
             ..Settings::default()
         };
         let mut h = Harness::open(&server, settings);

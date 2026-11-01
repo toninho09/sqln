@@ -122,7 +122,7 @@ The database file must already exist. SQLN does not create a missing SQLite data
 
 ### Workflow build artifacts
 
-The manual **Build binaries** workflow produces archives for:
+The **Build binaries** workflow produces archives for:
 
 | Platform | Target |
 |---|---|
@@ -130,7 +130,8 @@ The manual **Build binaries** workflow produces archives for:
 | macOS, Apple Silicon | `aarch64-apple-darwin` |
 | macOS, Intel | `x86_64-apple-darwin` |
 
-These are workflow artifacts, not public releases. See [manual binary builds](#manual-binary-builds) for download instructions.
+Manual runs provide workflow artifacts. Version-tag runs also attach the archives to a GitHub Release.
+See [manual binary builds](#manual-binary-builds) and [releases](#releases) for instructions.
 Linux artifacts use Ubuntu 24.04 and are not static binaries. Older Linux systems can require a source build.
 The macOS artifacts are not signed or notarized. They do not replace signed release binaries.
 
@@ -488,7 +489,7 @@ A `.sql` path is not a script-opening argument; file targets are SQLite database
 - Search in results covers loaded rows only. Exporting all rows can issue a new read.
 - Undo and redo have entry limits but no memory budget. Large scripts and repeated edits can use substantial memory.
 - Native terminals, clipboard behavior, network disks, real network failures, and desktop vault prompts need further manual validation.
-- Workflow builds do not provide signing, notarization, a dependency audit, or a public release.
+- Workflow builds do not provide signing, notarization, or a dependency audit.
 
 ## Development and automation
 
@@ -533,18 +534,23 @@ The TLS stack includes PostgreSQL, MySQL, and Redis endpoints.
 
 ### Continuous integration
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pushes, pull requests, and manual requests:
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pushes to any branch, including `main`:
 
 - Formatting, Clippy, and the default test suite on Linux and macOS.
 - Database integration on Linux, with PostgreSQL, MySQL, Redis, Valkey, and TLS endpoints.
 - Database logs on failure and stack cleanup after the integration job.
+
+Opening a pull request does not start another run. The pull request shows checks from its branch commit.
+CI tests that commit, not a temporary merge with `main`. A merge into `main` starts a new push run.
+Tag pushes do not start this workflow.
 
 CI does not run benchmarks or authorized native-vault probes.
 It does not replace real-terminal or desktop-vault checks.
 
 ### Manual binary builds
 
-[`.github/workflows/binaries.yml`](.github/workflows/binaries.yml) runs only through **workflow_dispatch**.
+[`.github/workflows/binaries.yml`](.github/workflows/binaries.yml) supports manual builds through **workflow_dispatch**.
+A manual build does not publish a release, even when you select a tag.
 GitHub shows **Run workflow** after the workflow exists on the default branch.
 
 1. Open the repository's **Actions** tab.
@@ -561,8 +567,29 @@ Artifacts remain available for 14 days, subject to repository retention settings
 Checksums detect changed archive bytes; they are not signatures or proof of publisher identity.
 
 The workflow builds and checks `--help` and `--version`. Run CI for the same commit before distributing an artifact.
-It does not create GitHub releases, publish to crates.io, sign binaries, or notarize macOS builds.
-No publishing or signing secrets are required.
+It does not publish to crates.io, sign binaries, or notarize macOS builds.
+No additional publishing or signing secrets are required.
+
+### Releases
+
+Pushing a tag that starts with `v` starts the three binary builds in the same workflow.
+After all three builds pass, a separate job verifies checksums and publishes a GitHub Release for that tag.
+The release includes the three `.tar.gz` archives, their checksum files, and generated release notes.
+
+**A version-tag push authorizes public release publication.** Do not push the tag until the version is ready.
+The workflow does not wait for branch CI. Confirm its success for the same commit before creating a release tag.
+
+1. Update the package version in `Cargo.toml` and `Cargo.lock`.
+2. Commit the version change.
+3. Push the commit.
+4. Confirm that its CI checks pass.
+5. Create the matching tag, such as `git tag v0.1.0`.
+6. Push the tag with `git push origin v0.1.0`.
+7. Download the archives from the repository's **Releases** page after the workflow completes.
+
+The release job alone has `contents: write` permission. It uses GitHub's built-in `GITHUB_TOKEN`.
+Build jobs have read-only repository access. Manual runs skip the release job.
+A failed build prevents publication. This process does not publish to crates.io or sign or notarize binaries.
 
 ### Contributing
 
