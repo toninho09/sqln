@@ -125,7 +125,7 @@ impl App {
         self.exports.iter().any(|run| run.console == id)
     }
 
-    fn tab_run(&mut self, id: ConsoleId) -> Option<(&mut Phase, &mut RunClock)> {
+    pub(super) fn tab_run(&mut self, id: ConsoleId) -> Option<(&mut Phase, &mut RunClock)> {
         if let Some(index) = self.tables.iter().position(|tab| tab.id == id) {
             let tab = &mut self.tables[index];
             return Some((&mut tab.phase, &mut tab.run));
@@ -484,6 +484,7 @@ impl App {
             *phase = Phase::Idle;
             clock.finish(end);
         }
+        self.note_long_run(id);
         run.writer.seal();
         let failure = run
             .failure

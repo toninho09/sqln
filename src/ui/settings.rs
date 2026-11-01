@@ -60,6 +60,7 @@ fn label(field: Field) -> &'static str {
         Field::Budget => text::FIELD_BUDGET,
         Field::ReopenTabs => text::FIELD_REOPEN_TABS,
         Field::QueryHistory => text::FIELD_QUERY_HISTORY,
+        Field::BellAfter => text::FIELD_BELL_AFTER,
         Field::FormatJson => text::FIELD_FORMAT_JSON,
         Field::SuggestionKeys => text::FIELD_SUGGESTION_KEYS,
         Field::Theme => text::FIELD_THEME,

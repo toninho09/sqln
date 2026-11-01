@@ -7,8 +7,8 @@ use crate::input::SuggestionKeys;
 use crate::line_input::LineInput;
 use crate::store::Scope;
 use crate::store::config::{
-    DEFAULT_FORMAT_JSON, DEFAULT_QUERY_HISTORY, DEFAULT_REOPEN_TABS, KeyboardName, Preferences,
-    ThemeName,
+    DEFAULT_BELL_AFTER_SECONDS, DEFAULT_FORMAT_JSON, DEFAULT_QUERY_HISTORY, DEFAULT_REOPEN_TABS,
+    KeyboardName, Preferences, ThemeName,
 };
 use crate::ui::text;
 
@@ -27,6 +27,7 @@ pub enum Field {
     Budget,
     ReopenTabs,
     QueryHistory,
+    BellAfter,
     FormatJson,
     SuggestionKeys,
     Theme,
@@ -44,7 +45,12 @@ pub struct Section {
 pub const SECTIONS: [Section; 4] = [
     Section {
         title: text::SECTION_GENERAL,
-        fields: &[Field::Keyboard, Field::ReopenTabs, Field::QueryHistory],
+        fields: &[
+            Field::Keyboard,
+            Field::ReopenTabs,
+            Field::QueryHistory,
+            Field::BellAfter,
+        ],
     },
     Section {
         title: text::SECTION_EDITOR,
@@ -78,6 +84,7 @@ struct Draft {
     page_size: LineInput,
     row_cap: LineInput,
     budget: LineInput,
+    bell_after: LineInput,
     reopen_tabs: Option<bool>,
     query_history: Option<bool>,
     format_json: Option<bool>,
@@ -85,7 +92,7 @@ struct Draft {
     theme: Option<ThemeName>,
 }
 
-fn number_text(value: Option<usize>) -> LineInput {
+fn number_text<T: ToString>(value: Option<T>) -> LineInput {
     let mut input = LineInput::default();
     input.set(&value.map_or_else(String::new, |value| value.to_string()));
     input
@@ -101,6 +108,7 @@ impl Draft {
             page_size: number_text(preferences.page_size),
             row_cap: number_text(preferences.row_cap),
             budget: number_text(budget),
+            bell_after: number_text(preferences.bell_after_seconds),
             reopen_tabs: preferences.reopen_tabs,
             query_history: preferences.query_history,
             format_json: preferences.format_json,
@@ -153,6 +161,18 @@ fn parse(input: &LineInput, name: &str) -> Result<Option<usize>, String> {
         Ok(number) if number > 0 => Ok(Some(number)),
         _ => Err(text::settings_number(name)),
     }
+}
+
+/// Reads a time in seconds. Here the value 0 has a meaning: it stops the bell.
+fn parse_seconds(input: &LineInput, name: &str) -> Result<Option<u64>, String> {
+    let value = input.text().trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    value
+        .parse()
+        .map(Some)
+        .map_err(|_| text::settings_seconds(name))
 }
 
 impl SettingsForm {
@@ -236,6 +256,7 @@ impl SettingsForm {
             Field::PageSize => Some(&draft.page_size),
             Field::RowCap => Some(&draft.row_cap),
             Field::Budget => Some(&draft.budget),
+            Field::BellAfter => Some(&draft.bell_after),
             _ => None,
         }
     }
@@ -247,6 +268,7 @@ impl SettingsForm {
             Field::PageSize => Some(&mut draft.page_size),
             Field::RowCap => Some(&mut draft.row_cap),
             Field::Budget => Some(&mut draft.budget),
+            Field::BellAfter => Some(&mut draft.bell_after),
             _ => None,
         }
     }
@@ -262,6 +284,7 @@ impl SettingsForm {
             Field::Budget => global
                 .grid_budget_bytes
                 .map(|bytes| bytes.div_ceil(MEBIBYTE).to_string()),
+            Field::BellAfter => global.bell_after_seconds.map(|value| value.to_string()),
             Field::ReopenTabs => global
                 .reopen_tabs
                 .map(|value| text::on_off(value).to_owned()),
@@ -287,6 +310,9 @@ impl SettingsForm {
             }
             _ if field == Field::FormatJson => {
                 text::default_value(text::on_off(DEFAULT_FORMAT_JSON))
+            }
+            _ if field == Field::BellAfter => {
+                text::default_value(&DEFAULT_BELL_AFTER_SECONDS.to_string())
             }
             _ if field == Field::SuggestionKeys => {
                 text::default_value(text::suggestion_keys_name(SuggestionKeys::default()))
@@ -449,6 +475,7 @@ impl SettingsForm {
         preferences.theme = draft.theme;
         preferences.page_size = parse(&draft.page_size, text::FIELD_PAGE_SIZE)?;
         preferences.row_cap = parse(&draft.row_cap, text::FIELD_ROW_CAP)?;
+        preferences.bell_after_seconds = parse_seconds(&draft.bell_after, text::FIELD_BELL_AFTER)?;
         let budget = parse(&draft.budget, text::FIELD_BUDGET)?;
         let same = budget == base.grid_budget_bytes.map(|bytes| bytes.div_ceil(MEBIBYTE));
         if !same {

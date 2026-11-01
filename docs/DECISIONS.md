@@ -4,6 +4,62 @@ Este documento registra as escolhas e as alternativas rejeitadas.
 As regras completas estão no [plano](../PLAN.md).
 Não reabrir uma decisão sem um fato novo.
 
+## Filtro da árvore, avisos do banco, sinal, idade da transação, geração de SQL e `JOIN` — 2026-11-01
+
+O usuário aprovou sete itens da análise do projeto.
+A confirmação de produção no Redis reabre a decisão 6 de "Redis e Valkey" só para uma conexão `PROD`. O fato novo é a marca `PROD`, que nasceu depois dessa decisão.
+
+| Item | Ponto | Decisão | Rejeitado | Motivo |
+|---|---|---|---|---|
+| Filtro | Forma | Dentro da árvore do navegador | Janela de busca | Escolha do usuário |
+| Filtro | Alcance | Compara o nome da relação e o nome do schema, só nos catálogos em memória. Nunca conecta | Comparar colunas | Regra "conectar no primeiro uso". Colunas vêm sob demanda |
+| Filtro | Teclas | `/` e `Ctrl+F` abrem. `Up` e `Down` movem nas relações. `Enter` abre a tabela. `Tab` vai à árvore filtrada. `Esc` no campo cancela e devolve o cursor. `Esc` na árvore limpa e mantém o cursor, com os pais abertos | `Enter` só sai do campo | `Enter` abre a primeira tabela com uma tecla |
+| Filtro | Depois de abrir | O filtro fica, e a árvore filtrada aceita `i`, `y` e `g`. `Left` e `Right` não agem nela | Limpar ao abrir | Permite abrir várias tabelas do mesmo filtro |
+| Avisos | Momento | No fim da instrução | Ao vivo | Menos código |
+| Avisos | MySQL | `SHOW WARNINGS LIMIT 100` automático quando a contagem passa de 0 | Mostrar só a contagem | A limpeza da sessão apaga os avisos entre execuções, então o usuário não consegue ler depois |
+| Avisos | Limite | 100 avisos por instrução, e uma linha com o resto | Sem limite | Um `RAISE NOTICE` em laço encheria a memória |
+| Avisos | Visibilidade | Nível novo `Warning`, aba `Messages (n)`, e a aba ativa não muda | Abrir **Mensagens** | Mantém a regra "último resultado" |
+| Redis | Classe | Lista fixa de leituras. Um nome fora da lista pergunta | `COMMAND INFO` antes de executar | A pergunta roda na thread da interface, sem rede. Um falso alerta só custa uma tecla |
+| Redis | Sem pergunta | Leituras, `SELECT`, `MULTI`, `EXEC`, `DISCARD`, `WATCH` e `UNWATCH` | Perguntar em tudo | Mesmo papel de `BEGIN` e `USE`. Cada comando de um `MULTI` conta sozinho |
+| Sinal | Forma | BEL, em qualquer situação | Só sem foco; OSC 9; desligado por padrão | Escolha do usuário. BEL funciona em todo terminal |
+| Sinal | Quando toca | Fim normal ou com falha, em console e exportação. Stop e página de tabela não tocam | Tocar sempre | Quem usou Stop está no teclado |
+| Sinal | Opção | `bellAfterSeconds` no `config.json` e em Settings > General. 0 desliga, padrão 10 | Liga e desliga separados | Um campo resolve os dois |
+| Transação | Forma | Minutos inteiros: `Transaction open 3m`, `Transaction open 1h 05m`. Abaixo de 1 min, sem idade | Segundos | Evita desenhar a tela sem necessidade |
+| Transação | Alerta | Cor de erro a partir de 5 min, sem opção | Opção em Settings | YAGNI |
+| Transação | Origem | Relógio do cliente, desde que o SQLN vê a transação aberta. Vale também em `Transaction failed` | Consultar o banco | Sem consulta nova |
+| Geração | Modelos | `SELECT *`, `SELECT` com colunas, `INSERT`, `UPDATE` e `DELETE` | Sem `UPDATE` e `DELETE`; só área de transferência | Escolha do usuário |
+| Geração | Teclas | `g` abre a lista. `y` e `Ctrl+C` copiam o nome sem aspas. Em uma coluna, `g` usa a tabela dela, e `y` copia a coluna | Uma tecla por modelo | Gasta só uma tecla |
+| Geração | Texto | `SELECT` com `LIMIT 100`. `INSERT` com `VALUES (<a>, <b>)`. `UPDATE` com `SET a = <a>, b = <b>` e `WHERE ;`. `DELETE` com `WHERE ;`. O schema sai quando é o atual do console | `?` nos valores; `NULL` nos valores | `<coluna>` e `WHERE` vazio são erro de sintaxe nos três bancos, então um texto incompleto não grava nada. O plano aprovava `?`, mas um teste mostrou que o SQLite grava `NULL` em um `?` sem valor, e o usuário escolheu `<coluna>` em todos os dialetos |
+| Geração | Views | A lista mostra só os dois `SELECT` | Todos os modelos | Uma view raramente aceita escrita |
+| Geração | Redis | `g` não age. `y` funciona | Gerar `GET` | O tipo da chave muda o comando |
+| Geração | Destino | Cursor do console ativo, se ele for da conexão. Senão, o primeiro console aberto dela. Senão, um console novo. Não executa | Sempre um console novo | É a regra do histórico |
+| `JOIN` | Alcance | Só logo depois de `ON` | Depois de `JOIN`; depois de `AND` | As duas tabelas já estão no texto. Uma leitura inversa custaria uma consulta por tabela |
+| `JOIN` | Leitura | As chaves vêm junto com as colunas, com uma consulta a mais. Uma falha nas chaves não falha as colunas | Método e evento próprios | Sem caminho novo de autorização |
+| `JOIN` | Chave composta | `a = b AND c = d` em uma sugestão | Uma sugestão por coluna | A condição fica completa |
+| `JOIN` | SQLite | Uma chave sem coluna de destino fica fora | Ler a chave primária da tabela de destino | Caso raro, e a lista só fica sem aquela sugestão |
+
+Decisões de implementação:
+
+| Ponto | Decisão | Rejeitado | Motivo |
+|---|---|---|---|
+| Módulo da geração | `src/generate.rs` | `src/sql/generate.rs`, como o plano dizia | O texto usa `quote_name` do autocomplete, e `sql` não depende de `complete` |
+| `unnest` | `unnest(k.conkey, k.confkey)` sem schema | `pg_catalog.unnest` | O PostgreSQL só lê dois arrays em paralelo na forma sem schema |
+| Avisos no MySQL | Um `SHOW` do usuário não dispara a leitura | Ler sempre | A contagem continua na resposta, e a leitura repetiria os avisos |
+
+### Limitações conhecidas
+
+- O filtro não acha uma tabela de uma conexão com o catálogo fora da memória. Abra a conexão antes.
+- Em Redis, o filtro lê só as até 1.000 chaves da árvore.
+- Um `RAISE NOTICE` de progresso aparece só no fim da instrução, e uma sessão fechada por falta de resposta perde os avisos.
+- Depois de um aviso no MySQL, `ROW_COUNT()` na instrução seguinte devolve -1.
+- Em `CALL` no MySQL, só os avisos do último resultado aparecem.
+- Abas de tabela e exportações ignoram os avisos do banco.
+- O sinal depende do terminal. Um perfil com o sinal desligado não toca.
+- A idade da transação conta desde que o SQLN vê a transação, não desde o `BEGIN` no servidor. Em um script longo, ela começa no fim da instrução que abriu a transação.
+- A idade aparece só na aba do console em tela.
+- Um modelo de `INSERT` ou `UPDATE` em uma tabela sem colunas conhecidas não abre e mostra uma nota.
+- Um comando de módulo que só lê pergunta em `PROD`, pois está fora da lista.
+
 ## Versão oficial do EdTUI — 2026-11-01
 
 O usuário removeu o fork `vendor/edtui`, e o projeto volta a usar o `edtui` 0.11.7 publicado.
@@ -88,7 +144,7 @@ O histórico reabre a seção 17 do plano, que o deixava fora da primeira versã
 - `DELETE t FROM t JOIN u ON ...` no MySQL pergunta, mesmo com o `JOIN` limitando as linhas.
 - Um `WHERE 1 = 1` satisfaz a proteção.
 - `SELECT minha_funcao()` pergunta em produção, pois o texto não prova que a função só lê.
-- Redis tem só o selo. A confirmação de produção não existe nessa fonte.
+- Em Redis, a pergunta de produção usa uma lista fixa de leituras, então um comando de módulo que só lê também pergunta. Veja a seção de 2026-11-01 sobre o filtro da árvore e os avisos do banco.
 - O filtro de segredos lê palavras. Um segredo dentro de um literal, como `WHERE token = 'abc'`, entra no arquivo.
 - Uma coluna chamada `password` deixa a consulta fora do histórico.
 - Uma instrução gravada por outra instância durante `trim` pode se perder.

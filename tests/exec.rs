@@ -654,6 +654,51 @@ fn the_catalog_reads_relations_first_and_columns_on_demand() {
     }
 }
 
+fn names(list: &[String]) -> Vec<&str> {
+    list.iter().map(String::as_str).collect()
+}
+
+#[test]
+fn the_columns_bring_the_foreign_keys_of_the_relation() {
+    let mut h = Harness::open("foreign-keys", Settings::default());
+    h.run(&[
+        "CREATE TABLE parent(a, b, c UNIQUE, PRIMARY KEY (a, b))",
+        "CREATE TABLE child(x, y, z, w,
+           FOREIGN KEY (y, x) REFERENCES parent (a, b),
+           FOREIGN KEY (z) REFERENCES parent (c),
+           FOREIGN KEY (w) REFERENCES parent)",
+    ]);
+    let relation = RelationRef {
+        schema: "main".to_owned(),
+        relation: "child".to_owned(),
+    };
+    h.manager.load_columns(h.connection, relation);
+    let keys = loop {
+        if let ExecEvent::ColumnsLoaded { foreign_keys, .. } = h.next() {
+            break foreign_keys;
+        }
+    };
+    let found: Vec<(Vec<&str>, &str, Vec<&str>)> = keys
+        .iter()
+        .map(|key| {
+            (
+                names(&key.columns),
+                key.target.relation.as_str(),
+                names(&key.target_columns),
+            )
+        })
+        .collect();
+    // SQLite lists the last key first. The key without target columns stays out.
+    assert_eq!(
+        found,
+        [
+            (vec!["z"], "parent", vec!["c"]),
+            (vec!["y", "x"], "parent", vec!["a", "b"]),
+        ]
+    );
+    assert!(keys.iter().all(|key| key.target.schema == "main"));
+}
+
 const PLAIN_ROWS: &str = "WITH RECURSIVE c AS (SELECT 1 AS x UNION ALL SELECT x + 1 FROM c WHERE x < 500000) SELECT x FROM c";
 
 fn export_file(name: &str) -> (std::path::PathBuf, ExportWriter) {

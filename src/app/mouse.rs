@@ -88,6 +88,9 @@ impl App {
             } else {
                 self.select_tab(tab.index);
             }
+        } else if layout.navigator_filter.contains(position) {
+            self.focus_navigator();
+            self.navigator.open_filter();
         } else if layout.navigator.contains(position) {
             self.on_navigator_press(mouse);
         } else if layout.navigator_title.contains(position) {

@@ -13,6 +13,7 @@ pub mod export;
 pub mod filter_list;
 pub mod find;
 pub mod form;
+pub mod generate;
 pub mod grid;
 pub mod history;
 pub mod input;

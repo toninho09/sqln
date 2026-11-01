@@ -1,6 +1,7 @@
 //! All interface text. This file keeps the text in one place for a later translation.
 
 use crate::export::ExportFormat;
+use crate::generate::Template;
 use crate::input::{Action, SuggestionKeys};
 
 /// One command of the hint bar: a key and its effect. A note has an empty key.
@@ -19,6 +20,12 @@ pub const HINT_FILTER: &[HintPart] = &[
     ("Tab", "accept or next field"),
     ("Esc", "grid"),
     ("Ctrl+Space", "suggestions"),
+];
+pub const HINT_TREE_FILTER: &[HintPart] = &[
+    ("Enter", "open table"),
+    ("Up/Down", "move"),
+    ("Tab", "tree"),
+    ("Esc", "cancel"),
 ];
 pub const HINT_GRID_SEARCH: &[HintPart] =
     &[("Enter", "next"), ("Up/Down", "move"), ("Esc", "close")];
@@ -283,6 +290,8 @@ pub const MINIMUM_SIZE: &str = "Minimum size";
 pub const NO_CONNECTION: &str =
     "No database. Use Ctrl+W h and n in the navigator, or a to add a connection.";
 pub const NO_CONNECTIONS_ROW: &str = "No connections";
+pub const NO_TREE_MATCH: &str = "No match";
+pub const LOADED_CATALOGS_ONLY: &str = "Loaded catalogs only";
 pub const ADD_CONNECTION_ROW: &str = "Press a to add one";
 pub const NOTE_LOADING: &str = "(loading)";
 pub const NOTE_FAILED: &str = "(failed)";
@@ -499,7 +508,20 @@ pub const SECTION_APPEARANCE: &str = "Appearance";
 pub const FIELD_KEYBOARD: &str = "Keyboard";
 pub const FIELD_REOPEN_TABS: &str = "Reopen tabs";
 pub const FIELD_QUERY_HISTORY: &str = "Query history";
+pub const TITLE_GENERATE: &str = "Generate SQL";
+pub const NO_COLUMNS_TO_LIST: &str = "This relation has no known columns.";
+/// Returns the row of a SQL template in its list.
+pub fn template_name(template: Template) -> &'static str {
+    match template {
+        Template::SelectAll => "SELECT *",
+        Template::SelectColumns => "SELECT with the columns",
+        Template::Insert => "INSERT",
+        Template::Update => "UPDATE",
+        Template::Delete => "DELETE",
+    }
+}
 pub const FIELD_FORMAT_JSON: &str = "Format JSON";
+pub const FIELD_BELL_AFTER: &str = "Bell seconds";
 pub const FIELD_SUGGESTION_KEYS: &str = "Autocomplete";
 pub const FIELD_PAGE_SIZE: &str = "Page size";
 pub const FIELD_ROW_CAP: &str = "Row cap";
@@ -571,6 +593,9 @@ pub fn export_part(rows: usize, failure: Option<&str>, replaces: bool) -> String
 pub fn settings_number(name: &str) -> String {
     format!("{name} needs a number of 1 or more.")
 }
+pub fn settings_seconds(name: &str) -> String {
+    format!("{name} needs a number of seconds. The value 0 stops the bell.")
+}
 
 pub fn from_global(value: &str) -> String {
     format!("from global: {value}")
@@ -627,6 +652,16 @@ pub const RESULT_READING: &str = "This result receives rows. Ctrl+W x stops the 
 pub const COPIED: &str = "Copied.";
 pub const NO_MESSAGES: &str = "No messages.";
 pub const MESSAGES_TAB: &str = "Messages";
+/// Returns the label of the tab. The number says that a warning waits on that tab.
+pub fn messages_tab(warnings: usize) -> String {
+    match warnings {
+        0 => MESSAGES_TAB.to_owned(),
+        warnings => format!("{MESSAGES_TAB} ({warnings})"),
+    }
+}
+pub fn more_notices(count: usize) -> String {
+    format!("{count} more notices.")
+}
 pub const SECTION_COLUMNS: &str = "Columns";
 pub const SECTION_INDEXES: &str = "Indexes";
 pub const SECTION_FOREIGN_KEYS: &str = "Foreign keys";
@@ -680,6 +715,17 @@ pub const TRANSACTION_NONE: &str = "No transaction";
 pub const TRANSACTION_OPEN: &str = "Transaction open";
 pub const TRANSACTION_FAILED: &str = "Transaction failed";
 pub const TRANSACTION_UNKNOWN: &str = "Transaction unknown";
+/// Writes the age of a transaction in whole minutes: `3m` or `1h 05m`. A transaction
+/// of less than one minute has no text.
+pub fn transaction_age(age: std::time::Duration) -> Option<String> {
+    let minutes = age.as_secs() / 60;
+    match (minutes / 60, minutes % 60) {
+        (0, 0) => None,
+        (0, minutes) => Some(format!("{minutes}m")),
+        (hours, minutes) => Some(format!("{hours}h {minutes:02}m")),
+    }
+}
+
 /// Writes the time of a run with three decimals: `12.345s`, `1m 05.123s`, or
 /// `1h 02m 05.123s`.
 pub fn elapsed(time: std::time::Duration) -> String {
@@ -799,6 +845,10 @@ pub fn action_text(action: Action) -> &'static str {
         Action::NavigatorScripts => "Scripts without a connection",
         Action::NavigatorDeletePassword => "Delete the saved password",
         Action::NavigatorStructure => "Show the structure of the row",
+        Action::NavigatorFilter => "Filter the tables of the explorer",
+        Action::NavigatorClearFilter => "Clear the filter of the explorer",
+        Action::NavigatorGenerate => "Generate SQL for the table",
+        Action::NavigatorCopyName => "Copy the name of the row",
         Action::GridStructure => "Show the structure of the table",
         Action::ReloadConfig => "Load the configuration again",
         Action::GridUp => "Up",

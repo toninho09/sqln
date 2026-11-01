@@ -140,6 +140,12 @@ impl Session {
     }
 }
 
+/// Asks the terminal for its bell. A failed write only loses the bell.
+pub fn ring_bell() {
+    let mut output = stdout();
+    let _ = output.write_all(b"\x07").and_then(|()| output.flush());
+}
+
 /// Reads a password before the interface starts, without an echo. An empty text means
 /// no password. `Esc` and `Ctrl+C` return an error, which stops the start.
 pub fn read_password(prompt: &str) -> io::Result<Option<Secret>> {

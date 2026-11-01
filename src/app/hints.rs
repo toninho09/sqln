@@ -42,6 +42,9 @@ impl App {
             items.extend(self.hint_parts(&[(Action::ReloadConfig, "loads it again")]));
             return items;
         }
+        if self.navigator_focused && self.navigator.filter_is_editing() {
+            return HintItem::of(text::HINT_TREE_FILTER);
+        }
         if self.navigator_focused {
             return self.navigator_hint();
         }
@@ -293,11 +296,14 @@ impl App {
     /// Lists the commands of the row under the cursor. The commands of a connection
     /// stay on its row, because their keys never act on a table or on a schema alone.
     fn navigator_hint(&self) -> Vec<HintItem> {
+        let filtered = self.navigator.is_filtered();
         let Some(row) = self.navigator.current(&self.connections) else {
-            return self.hint_parts(&[
-                (Action::NavigatorAdd, "add connection"),
-                (Action::NavigatorScripts, "scripts"),
-                (Action::Help, "keys"),
+            return self.hints_when(&[
+                (Action::NavigatorClearFilter, "clear filter", filtered),
+                (Action::NavigatorFilter, "edit filter", filtered),
+                (Action::NavigatorAdd, "add connection", !filtered),
+                (Action::NavigatorScripts, "scripts", !filtered),
+                (Action::Help, "keys", true),
             ]);
         };
         let item = &self.connections[row.connection];
@@ -315,6 +321,7 @@ impl App {
             _ => "open table",
         };
         self.hints_when(&[
+            (Action::NavigatorClearFilter, "clear filter", filtered),
             (Action::NavigatorOpen, enter, connection || relation),
             (Action::NavigatorNewConsole, "new console", true),
             (Action::NavigatorScripts, "scripts", connection),
@@ -335,18 +342,25 @@ impl App {
             (
                 Action::NavigatorExpand,
                 if relation { "columns" } else { "expand" },
-                branch && !open,
+                branch && !open && !filtered,
             ),
             (
                 Action::NavigatorCollapse,
                 if branch { "collapse" } else { "parent" },
-                open || !branch,
+                (open || !branch) && !filtered,
             ),
             (
                 Action::NavigatorStructure,
                 "struct",
                 item.dialect != Dialect::Redis,
             ),
+            (
+                Action::NavigatorGenerate,
+                "generate SQL",
+                self.can_generate(),
+            ),
+            (Action::NavigatorCopyName, "copy name", true),
+            (Action::NavigatorFilter, "filter", true),
             (Action::Help, "keys", true),
         ])
     }

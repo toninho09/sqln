@@ -12,7 +12,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedSender};
 
 pub use self::sink::{Flow, ReadLimit, ResultSink};
-use crate::catalog::{Catalog, RelationRef};
+use crate::catalog::{Catalog, ForeignKey, RelationRef};
 use crate::connector::{
     ConnectError, Connector, SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
@@ -119,6 +119,11 @@ pub enum ExecEvent {
         rows: usize,
         limit: ReadLimit,
     },
+    /// A notice or a warning of the database about a statement.
+    Notice {
+        key: StatementKey,
+        text: String,
+    },
     StatementFinished {
         key: StatementKey,
         status: StatementStatus,
@@ -155,6 +160,7 @@ pub enum ExecEvent {
         connection: ConnectionId,
         relation: RelationRef,
         columns: Result<Vec<String>, String>,
+        foreign_keys: Vec<ForeignKey>,
     },
     /// A test of a connection ended.
     ConnectionTested {
@@ -186,6 +192,7 @@ impl ExecEvent {
             | ExecEvent::Columns { key, .. }
             | ExecEvent::Rows { key, .. }
             | ExecEvent::ResultDone { key, .. }
+            | ExecEvent::Notice { key, .. }
             | ExecEvent::StatementFinished { key, .. } => Some(key.console),
             ExecEvent::CatalogLoaded { .. }
             | ExecEvent::PasswordRefused { .. }
@@ -208,6 +215,7 @@ impl ExecEvent {
             | ExecEvent::Columns { key, .. }
             | ExecEvent::Rows { key, .. }
             | ExecEvent::ResultDone { key, .. }
+            | ExecEvent::Notice { key, .. }
             | ExecEvent::StatementFinished { key, .. } => Some(key.execution),
             _ => None,
         }
@@ -502,20 +510,25 @@ impl Manager {
         };
         let events = self.events.clone();
         self.runtime.spawn(async move {
-            let columns = match binding.pool.acquire().await {
+            let (columns, foreign_keys) = match binding.pool.acquire().await {
                 Ok(mut lease) => {
                     let session = lease.session();
-                    let result = session
-                        .read_columns(&relation.schema, &relation.relation)
-                        .await;
+                    let (schema, name) = (&relation.schema, &relation.relation);
+                    let columns = session.read_columns(schema, name).await;
+                    // A failure here only costs the suggestions of `JOIN`.
+                    let keys = match &columns {
+                        Ok(_) => session.read_foreign_keys(schema, name).await,
+                        Err(_) => Ok(Vec::new()),
+                    };
                     lease.release().await;
-                    result.map_err(|error| error.message)
+                    let columns = columns.map_err(|error| error.message);
+                    (columns, keys.unwrap_or_default())
                 }
                 Err(error) => {
                     if let Some(refusal) = binding.refusal(&error) {
                         let _ = events.send(refusal).await;
                     }
-                    Err(error.message)
+                    (Err(error.message), Vec::new())
                 }
             };
             let _ = events
@@ -523,6 +536,7 @@ impl Manager {
                     connection,
                     relation,
                     columns,
+                    foreign_keys,
                 })
                 .await;
         });

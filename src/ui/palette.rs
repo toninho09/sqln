@@ -24,9 +24,20 @@ const PROMPT: &str = " > ";
 
 /// Draws a filter on the first row of `area`.
 pub(super) fn draw_prompt(frame: &mut Frame, input: &LineInput, area: Rect, theme: &Theme) {
+    draw_prompt_field(frame, input, area, true, theme);
+}
+
+/// Draws the prompt. Only a field in focus shows its cursor.
+pub(super) fn draw_prompt_field(
+    frame: &mut Frame,
+    input: &LineInput,
+    area: Rect,
+    focused: bool,
+    theme: &Theme,
+) {
     let chars: Vec<char> = printable(input.text()).chars().collect();
     let field = usize::from(area.width).saturating_sub(PROMPT.len()).max(1);
-    let (spans, _) = input_spans(&chars, input.cursor(), field, true, theme);
+    let (spans, _) = input_spans(&chars, input.cursor(), field, focused, theme);
     let mut prompt = vec![Span::styled(PROMPT, theme.key)];
     prompt.extend(spans);
     frame.render_widget(

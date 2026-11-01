@@ -44,6 +44,8 @@ pub(super) struct Persist {
     pub query_history: bool,
     /// True when the value window opens a JSON value in its formatted form.
     pub format_json: bool,
+    /// A run of this time or more rings the bell at its end. The value 0 stops the bell.
+    pub bell_after_seconds: u64,
     pub history: HistoryLog,
 }
 
@@ -58,11 +60,13 @@ impl Persist {
         let mut reopen_tabs = false;
         let mut query_history = false;
         let mut format_json = config::DEFAULT_FORMAT_JSON;
+        let mut bell_after_seconds = config::DEFAULT_BELL_AFTER_SECONDS;
         match config {
             Ok(config) => {
                 reopen_tabs = config.reopen_tabs;
                 query_history = config.query_history;
                 format_json = config.format_json;
+                bell_after_seconds = config.bell_after_seconds;
                 stored = Self::apply_preferences(options, config);
             }
             Err(failure) => error = Some(failure),
@@ -80,6 +84,7 @@ impl Persist {
             tabs_known: !session_target,
             query_history,
             format_json,
+            bell_after_seconds,
             history: HistoryLog::default(),
         };
         Some((persist, stored))
@@ -244,6 +249,7 @@ impl App {
         if let Some(persist) = &mut self.persist {
             persist.query_history = config.query_history;
             persist.format_json = config.format_json;
+            persist.bell_after_seconds = config.bell_after_seconds;
         }
         self.export_choices = config.export;
         self.appearance = (config.theme, config.icons);

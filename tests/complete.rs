@@ -7,6 +7,7 @@ fn relation(name: &str, kind: RelationKind, columns: &[&str]) -> Relation {
         name: name.to_owned(),
         kind,
         columns: Columns::Loaded(columns.iter().map(|column| (*column).to_owned()).collect()),
+        foreign_keys: Vec::new(),
     }
 }
 

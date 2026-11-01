@@ -2,17 +2,17 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
+use super::console::message_style;
 use super::console::{
     BUTTON_GAP, draw_buttons, draw_grid, draw_panel_title, draw_tabs, label_at, search_line,
 };
 use super::theme::Theme;
 use super::{draw_suggestions, input_spans, text};
-use crate::console::{Message, MessageLevel, Phase};
+use crate::console::Phase;
 use crate::exec::ReadLimit;
 use crate::grid::printable;
 use crate::line_input::LineInput;
@@ -156,13 +156,6 @@ fn draw_field(
         },
         first,
     )
-}
-
-fn message_style(message: &Message, theme: &Theme) -> Style {
-    match message.level {
-        MessageLevel::Info => Style::new(),
-        MessageLevel::Error => theme.error,
-    }
 }
 
 /// Lists the buttons of the pages, with words or in the short form.

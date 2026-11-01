@@ -15,7 +15,10 @@ use super::{
     Canceller, ConnectError, Connector, ExecError, ResetOutcome, Session, SessionContext,
     StatementEnd, TransactionCommand, TransactionState,
 };
-use crate::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
+use crate::catalog::{
+    Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
+    group_foreign_keys,
+};
 use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, Value};
 use crate::sql::Dialect;
@@ -125,6 +128,7 @@ enum Request {
     Control(TransactionCommand, Reply<()>),
     Catalog(Reply<Catalog>),
     Columns(String, String, Reply<Vec<String>>),
+    ForeignKeys(String, String, Reply<Vec<ForeignKey>>),
 }
 
 fn exec_error(error: rusqlite::Error) -> ExecError {
@@ -164,6 +168,10 @@ fn serve(conn: &Connection, inbox: &Receiver<Request>) {
             }
             Request::Columns(schema, relation, reply) => {
                 let _ = reply.send(read_columns(conn, &schema, &relation).map_err(exec_error));
+            }
+            Request::ForeignKeys(schema, relation, reply) => {
+                let keys = read_foreign_keys(conn, &schema, &relation);
+                let _ = reply.send(keys.map_err(exec_error));
             }
         }
     }
@@ -274,6 +282,7 @@ fn read_catalog(conn: &Connection) -> rusqlite::Result<Catalog> {
                         RelationKind::Table
                     },
                     columns: Columns::NotLoaded,
+                    foreign_keys: Vec::new(),
                 })
             })?
             .collect::<Result<_, _>>()?;
@@ -294,6 +303,31 @@ fn read_columns(conn: &Connection, schema: &str, relation: &str) -> rusqlite::Re
     let mut statement = conn.prepare(sql)?;
     let names = statement.query_map([relation, schema], |row| row.get(0))?;
     names.collect()
+}
+
+/// Reads the keys of a relation. A key without target columns points to the primary key
+/// of its table, and it stays out of the list.
+fn read_foreign_keys(
+    conn: &Connection,
+    schema: &str,
+    relation: &str,
+) -> rusqlite::Result<Vec<ForeignKey>> {
+    let sql = "SELECT id, \"table\", \"from\", \"to\" FROM pragma_foreign_key_list(?1, ?2) \
+               WHERE \"to\" IS NOT NULL ORDER BY id, seq";
+    let mut statement = conn.prepare(sql)?;
+    let pairs = statement.query_map([relation, schema], |row| {
+        Ok(KeyColumn {
+            key: row.get::<_, i64>(0)?.to_string(),
+            target: RelationRef {
+                schema: schema.to_owned(),
+                relation: row.get(1)?,
+            },
+            column: row.get(2)?,
+            target_column: row.get(3)?,
+        })
+    })?;
+    let pairs: rusqlite::Result<Vec<KeyColumn>> = pairs.collect();
+    pairs.map(group_foreign_keys)
 }
 
 struct Interrupt(InterruptHandle);
@@ -378,6 +412,16 @@ impl Session for SqliteSession {
     ) -> Result<Vec<String>, ExecError> {
         let (reply, answer) = oneshot::channel();
         let request = Request::Columns(schema.to_owned(), relation.to_owned(), reply);
+        self.ask(request, answer).await
+    }
+
+    async fn read_foreign_keys(
+        &mut self,
+        schema: &str,
+        relation: &str,
+    ) -> Result<Vec<ForeignKey>, ExecError> {
+        let (reply, answer) = oneshot::channel();
+        let request = Request::ForeignKeys(schema.to_owned(), relation.to_owned(), reply);
         self.ask(request, answer).await
     }
 }

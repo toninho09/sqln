@@ -15,7 +15,7 @@ use super::welcome::{Welcome, draw_welcome};
 use super::wrap::WrappedText;
 use super::{draw_editor, draw_scrollbar, float_block, text};
 use crate::connector::Namespace;
-use crate::console::{Console, Focus, MessageLevel, Phase, ResultTab, RunClock, RunEnd};
+use crate::console::{Console, Focus, Message, MessageLevel, Phase, ResultTab, RunClock, RunEnd};
 use crate::grid::{COLUMN_GAP, GridView, ResultTable, RowSearch, Value, printable};
 
 const PICKER_WIDTH: u16 = 48;
@@ -388,13 +388,21 @@ pub fn search_line(search: &RowSearch, table: &ResultTable, theme: &Theme) -> Li
     ])
 }
 
+pub(super) fn message_style(message: &Message, theme: &Theme) -> Style {
+    match message.level {
+        MessageLevel::Info => Style::new(),
+        MessageLevel::Warning => theme.mark_neutral,
+        MessageLevel::Error => theme.error,
+    }
+}
+
 fn tab_labels(console: &Console) -> Vec<String> {
     let mut labels: Vec<String> = console
         .results
         .iter()
         .map(|result| text::result_tab(result.number))
         .collect();
-    labels.push(text::MESSAGES_TAB.to_owned());
+    labels.push(text::messages_tab(console.warnings()));
     labels
 }
 
@@ -468,13 +476,7 @@ fn draw_messages(frame: &mut Frame, area: Rect, console: &Console, theme: &Theme
     let lines: Vec<Line> = console
         .messages
         .iter()
-        .map(|message| {
-            let style = match message.level {
-                MessageLevel::Info => Style::new(),
-                MessageLevel::Error => theme.error,
-            };
-            Line::styled(printable(&message.text), style)
-        })
+        .map(|message| Line::styled(printable(&message.text), message_style(message, theme)))
         .collect();
     let paragraph = Paragraph::new(lines)
         .wrap(Wrap { trim: false })

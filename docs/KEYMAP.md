@@ -171,6 +171,10 @@ No macOS, o terminal trata `Cmd+C` e `Cmd+V`.
 | Excluir, com confirmação | `Delete` | `x` |
 | Scripts sem conexão | `s` | `s` |
 | Mostrar a estrutura | `i` | `i` |
+| Gerar SQL | `g` | `g` |
+| Copiar o nome da linha | `y` ou `Ctrl+C` | `y` ou `Ctrl+C` |
+| Filtrar as tabelas | `/` ou `Ctrl+F` | `/` ou `Ctrl+F` |
+| Limpar o filtro | `Esc` | `Esc` |
 
 `Enter` em uma conexão seleciona o primeiro console aberto dela ou cria um console.
 `n` abre a lista de consoles da conexão, com **+ New console** na primeira linha. Sem consoles salvos, `n` cria um console.
@@ -185,6 +189,23 @@ Na aba de estrutura de uma tabela, `[` e `]` trocam a seção. Nas outras abas d
 A linha de dicas muda com a linha do cursor. Os comandos da conexão aparecem na linha da conexão, mas as teclas agem em qualquer linha dela.
 Os rótulos dizem o objeto do comando, como `n new console` e `a add connection`.
 Um comando que não cabe sai da linha, e a tecla continua a agir.
+
+`g` abre a lista de modelos de SQL de uma tabela, de uma view ou da tabela de uma coluna. O texto entra no cursor do console da conexão e não executa. Redis não tem modelos.
+`y` copia o nome da linha, sem aspas.
+
+### Filtro da árvore
+
+O filtro lista as tabelas e as views que combinam com cada palavra, pelo nome da relação ou do schema. Ele lê só os catálogos em memória e não abre conexões.
+
+| Ação | Tecla no campo |
+|---|---|
+| Abrir a tabela do cursor | `Enter` |
+| Mover entre as relações | `Up` e `Down` |
+| Ir à árvore filtrada | `Tab` |
+| Cancelar e devolver o cursor | `Esc` |
+
+O filtro continua depois de abrir uma tabela. Na árvore filtrada, as teclas do navegador agem, menos `Left` e `Right`. `/` volta ao campo, e `Esc` limpa o filtro com o cursor na mesma linha.
+`Enter` ou `Tab` com o campo vazio fecham o filtro.
 
 ## Formulário de conexão
 

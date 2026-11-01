@@ -13,6 +13,18 @@ pub enum ListRequest {
     Choose(usize),
 }
 
+/// Splits the text of a filter into lowercase words.
+pub fn words_of(text: &str) -> Vec<String> {
+    text.split_whitespace().map(str::to_lowercase).collect()
+}
+
+/// Returns true when each word is in one of the lowercase texts.
+pub fn holds_words(texts: &[&str], words: &[String]) -> bool {
+    words
+        .iter()
+        .all(|word| texts.iter().any(|text| text.contains(word.as_str())))
+}
+
 #[derive(Clone, Debug)]
 pub struct FilterList<T> {
     items: Vec<T>,
@@ -58,15 +70,10 @@ impl<T> FilterList<T> {
 
     /// Keeps the items that hold each word of the filter.
     fn refilter(&mut self) {
-        let words: Vec<String> = self
-            .input
-            .text()
-            .split_whitespace()
-            .map(str::to_lowercase)
-            .collect();
+        let words = words_of(self.input.text());
         let texts = &self.texts;
         self.shown = (0..self.items.len())
-            .filter(|index| words.iter().all(|word| texts[*index].contains(word)))
+            .filter(|index| holds_words(&[&texts[*index]], &words))
             .collect();
         self.cursor = 0;
     }

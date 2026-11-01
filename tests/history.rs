@@ -294,6 +294,8 @@ fn the_settings_stop_the_notes_at_once() {
     }
     session.press(KeyCode::Right);
     session.press(KeyCode::Right);
+    // Bell seconds, then Save.
+    session.press(KeyCode::Tab);
     session.press(KeyCode::Tab);
     session.press(KeyCode::Enter);
     let text = fs::read_to_string(session.global.config_file()).unwrap();

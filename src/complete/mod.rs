@@ -6,7 +6,7 @@ pub mod keywords;
 
 use std::ops::Range;
 
-use self::context::{Analysis, Cte, Position, Reference, analyze};
+use self::context::{Analysis, Cte, JoinOn, Position, Reference, analyze};
 use self::keywords::is_reserved;
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, RelationRef, Schema};
 use crate::sql::{Dialect, Statement, quote_with, split};
@@ -15,6 +15,8 @@ const MAX_ITEMS: usize = 50;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SuggestionKind {
+    /// The condition of a foreign key. It leads the list.
+    Join,
     Column,
     Alias,
     Cte,
@@ -137,6 +139,9 @@ impl Builder {
                 }
             }
             Position::Expression => {
+                if let Some((join, catalog)) = analysis.join_on.as_ref().zip(catalog) {
+                    self.add_join_conditions(join, &analysis.ctes, catalog);
+                }
                 self.add_scope(analysis, catalog);
                 keywords::all(self.dialect).for_each(|word| self.add_keyword(word));
             }
@@ -258,6 +263,66 @@ impl Builder {
                 self.add_columns_of(reference, catalog, detail);
             }
         }
+    }
+
+    /// Suggests the conditions of the foreign keys between the new relation and the
+    /// relations before it, in both directions.
+    fn add_join_conditions(&mut self, join: &JoinOn, ctes: &[Cte], catalog: &Catalog) {
+        if cte_of(&join.joined, ctes).is_some() {
+            return;
+        }
+        for other in &join.others {
+            if cte_of(other, ctes).is_none() {
+                self.add_keys_between(&join.joined, other, catalog);
+                self.add_keys_between(other, &join.joined, catalog);
+            }
+        }
+    }
+
+    /// Suggests the condition of each key that goes from `source` to `target`.
+    fn add_keys_between(&mut self, source: &Reference, target: &Reference, catalog: &Catalog) {
+        let found =
+            |item: &Reference| catalog.relation(item.schema.as_deref(), item.name.as_deref()?);
+        let (Some((_, relation)), Some((target_schema, target_relation))) =
+            (found(source), found(target))
+        else {
+            return;
+        };
+        let keys = relation.foreign_keys.iter().filter(|key| {
+            key.target.schema == target_schema.name && key.target.relation == target_relation.name
+        });
+        for key in keys {
+            let pairs = key.columns.iter().zip(&key.target_columns);
+            let parts: Vec<String> = pairs
+                .map(|(column, target_column)| {
+                    format!(
+                        "{} = {}",
+                        self.qualified_column(source, column),
+                        self.qualified_column(target, target_column),
+                    )
+                })
+                .collect();
+            let condition = parts.join(" AND ");
+            if let Some(rank) = self.rank(&condition, true) {
+                let suggestion = Suggestion {
+                    label: condition.clone(),
+                    insert: condition,
+                    kind: SuggestionKind::Join,
+                    detail: None,
+                };
+                self.push(rank, suggestion);
+            }
+        }
+    }
+
+    /// Writes a column with the alias of its relation, or with the name of the relation.
+    fn qualified_column(&self, reference: &Reference, column: &str) -> String {
+        let owner = reference.alias.as_deref().or(reference.name.as_deref());
+        format!(
+            "{}.{}",
+            quote_name(owner.unwrap_or(""), self.dialect, None),
+            quote_name(column, self.dialect, None),
+        )
     }
 
     fn add_cte_columns(&mut self, cte: &Cte, detail: Option<&str>) {

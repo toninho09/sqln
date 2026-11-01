@@ -302,6 +302,7 @@ fn draw_search_bar(frame: &mut Frame, area: Rect, search: &SearchBar) {
 
 fn kind_tag(kind: SuggestionKind) -> &'static str {
     match kind {
+        SuggestionKind::Join => "fk ",
         SuggestionKind::Column => "col",
         SuggestionKind::Alias => "als",
         SuggestionKind::Cte => "cte",

@@ -13,10 +13,14 @@ use tokio::time::timeout;
 
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
-    Canceller, Capabilities, ConnectError, Connector, ExecError, Namespace, ResetOutcome, Session,
-    SessionContext, StatementEnd, TransactionCommand, TransactionState, describe, tls,
+    Canceller, Capabilities, ConnectError, Connector, ExecError, MAX_NOTICES, Namespace,
+    ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
+    describe, tls,
 };
-use crate::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
+use crate::catalog::{
+    Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
+    group_foreign_keys,
+};
 use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, Value};
 use crate::sql::{Dialect, counts_rows, is_plain_read};
@@ -38,6 +42,11 @@ const CATALOG_SQL: &str = "\
 const COLUMNS_SQL: &str = "\
     SELECT COLUMN_NAME FROM information_schema.COLUMNS \
     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION";
+const FOREIGN_KEYS_SQL: &str = "\
+    SELECT CONSTRAINT_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, COLUMN_NAME, \
+    REFERENCED_COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE \
+    WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND REFERENCED_TABLE_NAME IS NOT NULL \
+    ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION";
 /// A session call that gets no answer in this time counts as lost.
 const SESSION_LIMIT: Duration = Duration::from_secs(5);
 
@@ -385,6 +394,33 @@ impl MySqlSession {
         }
     }
 
+    /// Reads the warnings of the last statement. The cleanup of the session removes them,
+    /// so a later run cannot read them. This call makes `ROW_COUNT()` return -1 in the
+    /// next statement. `SET TRANSACTION` has no warnings, so this call never follows it.
+    async fn send_warnings(&mut self, sql: &str, sink: &mut ResultSink) {
+        let count = usize::from(self.conn().get_warnings());
+        let shows = sql
+            .split_whitespace()
+            .next()
+            .is_some_and(|word| word.eq_ignore_ascii_case("SHOW"));
+        if count == 0 || shows {
+            return;
+        }
+        let request = format!("SHOW WARNINGS LIMIT {MAX_NOTICES}");
+        let rows = timeout(SESSION_LIMIT, self.conn().query(request)).await;
+        let Ok(Ok(rows)) = rows else { return };
+        let rows: Vec<(String, u32, String)> = rows;
+        if rows.is_empty() {
+            return;
+        }
+        let more = count.saturating_sub(rows.len());
+        let texts = rows
+            .into_iter()
+            .map(|(level, code, message)| format!("{level}: {message} ({code})"))
+            .collect();
+        sink.notices(texts, more).await;
+    }
+
     /// Reads the state of the last answer. A successful statement needs no call to
     /// the server, so `SHOW WARNINGS` and `ROW_COUNT()` work on the next statement,
     /// and `SET TRANSACTION` still applies to the next transaction.
@@ -435,6 +471,9 @@ impl Session for MySqlSession {
     async fn run(&mut self, sql: &str, mut sink: ResultSink) -> Result<StatementEnd, ExecError> {
         self.running = true;
         let read = self.read(sql, &mut sink).await;
+        if read.is_ok() {
+            self.send_warnings(sql, &mut sink).await;
+        }
         let (rows, limit) = sink.finish().await;
         self.running = false;
         self.status_is_current = read.is_ok();
@@ -500,6 +539,7 @@ impl Session for MySqlSession {
                         Some(_) => RelationKind::View,
                     },
                     columns: Columns::NotLoaded,
+                    foreign_keys: Vec::new(),
                 });
             }
         }
@@ -524,5 +564,27 @@ impl Session for MySqlSession {
             .exec(COLUMNS_SQL, (schema, relation))
             .await
             .map_err(|error| exec_error(&error, COLUMNS_SQL))
+    }
+
+    async fn read_foreign_keys(
+        &mut self,
+        schema: &str,
+        relation: &str,
+    ) -> Result<Vec<ForeignKey>, ExecError> {
+        let rows: Vec<(String, String, String, String, String)> = self
+            .conn()
+            .exec(FOREIGN_KEYS_SQL, (schema, relation))
+            .await
+            .map_err(|error| exec_error(&error, FOREIGN_KEYS_SQL))?;
+        let pairs = rows.into_iter().map(|row| KeyColumn {
+            key: row.0,
+            target: RelationRef {
+                schema: row.1,
+                relation: row.2,
+            },
+            column: row.3,
+            target_column: row.4,
+        });
+        Ok(group_foreign_keys(pairs))
     }
 }

@@ -12,11 +12,52 @@ pub enum Columns {
     Loaded(Vec<String>),
 }
 
+/// One foreign key of a relation. The two lists of columns have the same order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForeignKey {
+    pub columns: Vec<String>,
+    pub target: RelationRef,
+    pub target_columns: Vec<String>,
+}
+
+/// One pair of columns of a foreign key, as a catalog query returns it.
+pub struct KeyColumn {
+    /// The name of the key. It separates two keys to the same table.
+    pub key: String,
+    pub target: RelationRef,
+    pub column: String,
+    pub target_column: String,
+}
+
+/// Joins the pairs of each key. The query returns the pairs of a key in a sequence.
+pub fn group_foreign_keys(pairs: impl IntoIterator<Item = KeyColumn>) -> Vec<ForeignKey> {
+    let mut keys: Vec<ForeignKey> = Vec::new();
+    let mut last = None;
+    for pair in pairs {
+        let open = last.as_ref() == Some(&pair.key);
+        match keys.last_mut().filter(|_| open) {
+            Some(key) => {
+                key.columns.push(pair.column);
+                key.target_columns.push(pair.target_column);
+            }
+            None => keys.push(ForeignKey {
+                columns: vec![pair.column],
+                target: pair.target,
+                target_columns: vec![pair.target_column],
+            }),
+        }
+        last = Some(pair.key);
+    }
+    keys
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Relation {
     pub name: String,
     pub kind: RelationKind,
     pub columns: Columns,
+    /// The keys that leave this relation. They arrive with its columns.
+    pub foreign_keys: Vec<ForeignKey>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,7 +112,12 @@ impl Catalog {
 }
 
 impl Catalog {
-    pub fn set_columns(&mut self, target: &RelationRef, columns: Vec<String>) {
+    pub fn set_columns(
+        &mut self,
+        target: &RelationRef,
+        columns: Vec<String>,
+        foreign_keys: Vec<ForeignKey>,
+    ) {
         let schema = self
             .schemas
             .iter_mut()
@@ -84,6 +130,7 @@ impl Catalog {
         });
         if let Some(relation) = relation {
             relation.columns = Columns::Loaded(columns);
+            relation.foreign_keys = foreign_keys;
         }
     }
 }

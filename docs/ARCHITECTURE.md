@@ -40,7 +40,8 @@ Thread principal                    Runtime Tokio
 | `editor` | EdTUI, camada convencional, busca e substituição |
 | `sql` | Tokenizador, separação e classes de instruções |
 | `complete` | Sugestões do autocomplete |
-| `catalog` | Cache em memória; schemas e tabelas primeiro, colunas sob demanda |
+| `catalog` | Cache em memória; schemas e tabelas primeiro, colunas e chaves estrangeiras sob demanda |
+| `generate` | Modelos de SQL do navegador |
 | `console` | Editor, resultados, mensagens e estado de um console |
 | `result` | Grade de um resultado com cursor e busca, usada por consoles e tabelas |
 | `table` | Aba de tabela: páginas, campos, ordenação, sugestões e consulta |
@@ -226,10 +227,12 @@ trait Session: Send {
     async fn is_alive(&mut self) -> bool;
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError>;
     async fn read_columns(&mut self, schema: &str, relation: &str) -> Result<Vec<String>, ExecError>;
+    async fn read_foreign_keys(&mut self, schema: &str, relation: &str) -> Result<Vec<ForeignKey>, ExecError>;
 }
 ```
 
 O crate `async-trait` permite usar `Box<dyn Session>`.
+`read_foreign_keys` tem um padrão vazio, então uma fonte sem chaves não escreve o método. `Manager::load_columns` lê as chaves junto com as colunas, e uma falha nas chaves não falha as colunas.
 `Capabilities` declara se a fonte tem transações, se o console escolhe um schema ou um banco e se a aba de tabela aceita filtro e ordem em SQL.
 Cancelamento e paginação entram nessa declaração quando uma fonte precisar, pois os conectores usam o mesmo contrato nesses pontos.
 Cada console tem uma tarefa Tokio, que guarda a sessão entre execuções enquanto a transação continuar aberta.
@@ -248,6 +251,7 @@ Uma instrução pode entregar vários resultados, como `CALL` no MySQL, e o teto
 `ResultSink` envia `ResultDone` no fim de cada resultado.
 Ao descartar `ResultSink`, as linhas ainda no lote voltam ao orçamento.
 `ResultSink` aplica o teto e o orçamento, e reúne as linhas em lotes de 200.
+`ResultSink::notices` envia `ExecEvent::Notice` antes do fim da instrução. O PostgreSQL guarda os avisos na tarefa da conexão, com `poll_message`. O MySQL lê `SHOW WARNINGS` quando a contagem passa de 0. `MAX_NOTICES` limita os dois a 100 por instrução.
 `Value` guarda `Null`, `Text`, `Number` ou `Binary`, sempre com o texto do banco.
 `Conn::reset` mantém o banco atual, então um `USE` continuaria na sessão sem o passo seguinte.
 A limpeza lê `DATABASE()` e volta ao banco da conexão. Sem banco na conexão, a sessão fecha, pois o MySQL não sai de um banco.
@@ -362,6 +366,7 @@ Nenhum escopo recebe `password`. A senha autorizada em texto simples fica em `cr
     "reopenTabs": true,
     "queryHistory": true,
     "formatJson": true,
+    "bellAfterSeconds": 10,
     "suggestionKeys": "tab"
   },
   "connections": [

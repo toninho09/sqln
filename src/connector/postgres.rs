@@ -1,10 +1,11 @@
 //! PostgreSQL connector. It reads through the simple protocol, so each value keeps
 //! the text of the database.
 
+use std::future::poll_fn;
 use std::io;
 use std::pin::{Pin, pin};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
@@ -14,18 +15,24 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpStream, UnixStream};
 use tokio::time::timeout;
 use tokio_postgres::config::SslMode;
-use tokio_postgres::error::{ErrorPosition, SqlState};
+use tokio_postgres::error::{DbError, ErrorPosition, SqlState};
 use tokio_postgres::tls::MakeTlsConnect;
 use tokio_postgres::types::Type;
-use tokio_postgres::{CancelToken, Client, Config, SimpleQueryMessage, SimpleQueryRow};
+use tokio_postgres::{
+    AsyncMessage, CancelToken, Client, Config, SimpleQueryMessage, SimpleQueryRow,
+};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
-    Canceller, Capabilities, ConnectError, Connector, ExecError, Namespace, ResetOutcome, Session,
-    SessionContext, StatementEnd, TransactionCommand, TransactionState, describe, tls,
+    Canceller, Capabilities, ConnectError, Connector, ExecError, MAX_NOTICES, Namespace,
+    ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
+    describe, tls,
 };
-use crate::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
+use crate::catalog::{
+    Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
+    group_foreign_keys,
+};
 use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, Value};
 use crate::sql::{Dialect, counts_rows, is_plain_read, reads_or_writes_stdio};
@@ -48,6 +55,19 @@ const COLUMNS_SQL: &str = "\
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
     WHERE n.nspname = $1::text AND c.relname = $2::text AND a.attnum > 0 AND NOT a.attisdropped \
     ORDER BY a.attnum";
+/// `unnest` has no schema here: only that form reads two arrays in parallel.
+const FOREIGN_KEYS_SQL: &str = "\
+    SELECT k.conname::text, rn.nspname::text, r.relname::text, a.attname::text, t.attname::text \
+    FROM pg_catalog.pg_constraint k \
+    JOIN pg_catalog.pg_class c ON c.oid = k.conrelid \
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+    JOIN pg_catalog.pg_class r ON r.oid = k.confrelid \
+    JOIN pg_catalog.pg_namespace rn ON rn.oid = r.relnamespace \
+    CROSS JOIN LATERAL unnest(k.conkey, k.confkey) WITH ORDINALITY AS u(source, target, place) \
+    JOIN pg_catalog.pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = u.source \
+    JOIN pg_catalog.pg_attribute t ON t.attrelid = k.confrelid AND t.attnum = u.target \
+    WHERE k.contype = 'f' AND n.nspname = $1::text AND c.relname = $2::text \
+    ORDER BY k.conname, u.place";
 /// A session call that gets no answer in this time counts as lost.
 const SESSION_LIMIT: Duration = Duration::from_secs(5);
 /// The port in the name of a Unix socket file.
@@ -137,8 +157,24 @@ impl Connector for PostgresConnector {
             .connect(tls.clone())
             .await
             .map_err(|error| connect_error(&error))?;
+        let notices = Arc::new(Mutex::new(Notices::default()));
+        let written = notices.clone();
         tokio::spawn(async move {
-            let _ = connection.await;
+            let mut connection = connection;
+            while let Some(message) = poll_fn(|context| connection.poll_message(context)).await {
+                match message {
+                    Ok(AsyncMessage::Notice(notice)) => {
+                        if let Ok(mut notices) = written.lock() {
+                            notices.push(with_detail(
+                                format!("{}: {}", notice.severity(), notice.message()),
+                                &notice,
+                            ));
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+            }
         });
         let canceller = Arc::new(PostgresCanceller {
             token: client.cancel_token(),
@@ -150,6 +186,7 @@ impl Connector for PostgresConnector {
             client,
             canceller,
             transaction: TransactionState::None,
+            notices,
         }))
     }
 }
@@ -322,17 +359,23 @@ fn byte_offset(sql: &str, position: u32) -> Option<usize> {
         .nth(index)
 }
 
-fn exec_error(error: &tokio_postgres::Error, sql: &str) -> ExecError {
-    let Some(database) = error.as_db_error() else {
-        return ExecError::new(describe(error));
-    };
-    let mut message = format!("{} ({})", database.message(), database.code().code());
+/// Adds the detail and the hint of a message of the database.
+fn with_detail(mut message: String, database: &DbError) -> String {
     if let Some(detail) = database.detail() {
         message = format!("{message}\n{detail}");
     }
     if let Some(hint) = database.hint() {
         message = format!("{message}\n{hint}");
     }
+    message
+}
+
+fn exec_error(error: &tokio_postgres::Error, sql: &str) -> ExecError {
+    let Some(database) = error.as_db_error() else {
+        return ExecError::new(describe(error));
+    };
+    let message = format!("{} ({})", database.message(), database.code().code());
+    let message = with_detail(message, database);
     let offset = match database.position() {
         Some(ErrorPosition::Original(position)) => byte_offset(sql, *position),
         _ => None,
@@ -350,13 +393,43 @@ fn quoted(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
+/// The notices of the statement in progress. The task of the connection writes them.
+/// The server sends a notice before the end of its statement, and that task handles the
+/// messages in order, so `run` finds each notice when the statement ends.
+#[derive(Default)]
+struct Notices {
+    texts: Vec<String>,
+    /// The notices after `MAX_NOTICES`.
+    more: usize,
+}
+
+impl Notices {
+    fn push(&mut self, text: String) {
+        if self.texts.len() < MAX_NOTICES {
+            self.texts.push(text);
+        } else {
+            self.more += 1;
+        }
+    }
+}
+
 struct PostgresSession {
     client: Client,
     canceller: Arc<PostgresCanceller>,
     transaction: TransactionState,
+    notices: Arc<Mutex<Notices>>,
 }
 
 impl PostgresSession {
+    /// Removes the notices of the session. They stay out of **Messages** when the
+    /// statement starts empty, as after the cleanup of a session.
+    fn take_notices(&self) -> Notices {
+        self.notices
+            .lock()
+            .map(|mut notices| std::mem::take(&mut *notices))
+            .unwrap_or_default()
+    }
+
     /// Asks for the column types before the statement runs. A statement that fails
     /// here fails in the same way in the simple protocol, and it must not run twice:
     /// the second error would hide the first one in a transaction.
@@ -500,11 +573,14 @@ impl Session for PostgresSession {
             return Err(ExecError::new(text::COPY_REFUSED));
         }
         self.canceller.requested.store(false, Ordering::SeqCst);
+        self.take_notices();
         let kinds = self.column_kinds(sql).await?;
         if self.canceller.requested.load(Ordering::SeqCst) {
             return Err(ExecError::new(text::STOPPED_BEFORE_SEND));
         }
         let read = self.read(sql, &kinds, &mut sink).await;
+        let notices = self.take_notices();
+        sink.notices(notices.texts, notices.more).await;
         let (rows, limit) = sink.finish().await;
         read.map(|outcome| StatementEnd {
             rows,
@@ -576,6 +652,7 @@ impl Session for PostgresSession {
                         _ => RelationKind::Table,
                     },
                     columns: Columns::NotLoaded,
+                    foreign_keys: Vec::new(),
                 });
             }
         }
@@ -607,5 +684,32 @@ impl Session for PostgresSession {
                     .map_err(|error| ExecError::new(describe(&error)))
             })
             .collect()
+    }
+
+    async fn read_foreign_keys(
+        &mut self,
+        schema: &str,
+        relation: &str,
+    ) -> Result<Vec<ForeignKey>, ExecError> {
+        let rows = self
+            .client
+            .query(FOREIGN_KEYS_SQL, &[&schema, &relation])
+            .await
+            .map_err(|error| exec_error(&error, FOREIGN_KEYS_SQL))?;
+        let pairs = rows.iter().map(|row| {
+            Ok(KeyColumn {
+                key: row.try_get(0)?,
+                target: RelationRef {
+                    schema: row.try_get(1)?,
+                    relation: row.try_get(2)?,
+                },
+                column: row.try_get(3)?,
+                target_column: row.try_get(4)?,
+            })
+        });
+        let pairs: Result<Vec<KeyColumn>, tokio_postgres::Error> = pairs.collect();
+        pairs
+            .map(group_foreign_keys)
+            .map_err(|error| ExecError::new(describe(&error)))
     }
 }

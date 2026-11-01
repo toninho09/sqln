@@ -2,8 +2,10 @@
 
 use std::sync::Arc;
 
-use super::{App, DialogAction, Picker, PickerKind};
-use crate::catalog::{Catalog, Columns, RelationRef};
+use crossterm::event::{KeyCode, KeyEvent};
+
+use super::{App, DialogAction, Picker, PickerKind, SqlRequest};
+use crate::catalog::{Catalog, Columns, ForeignKey, RelationKind, RelationRef};
 use crate::connection::{
     CatalogState, Connection, ConnectionKey, Definition, Source, name_is_taken, refresh_labels,
 };
@@ -13,9 +15,11 @@ use crate::console::Focus;
 use crate::creds::Identity;
 use crate::exec::{ConnectionId, Manager};
 use crate::form::{ConnectionForm, Field, FormNote};
+use crate::generate::{Template, generate, qualified_name};
 use crate::grid::printable;
 use crate::input::Action;
-use crate::navigator::{Navigator, Row, RowKind};
+use crate::navigator::{Navigator, Row, RowKind, is_relation};
+use crate::sql::Dialect;
 use crate::store::Scope;
 use crate::store::config::{Change, ConnectionIcon, CredentialName, ThemeName};
 use crate::table::TableTab;
@@ -243,6 +247,7 @@ impl App {
         id: ConnectionId,
         relation: &RelationRef,
         columns: Result<Vec<String>, String>,
+        foreign_keys: Vec<ForeignKey>,
     ) {
         let Some(connection) = self.connection_mut(id) else {
             return;
@@ -253,11 +258,20 @@ impl App {
         match columns {
             Ok(columns) => {
                 if let Some(catalog) = &mut connection.catalog {
-                    catalog.set_columns(relation, columns);
+                    catalog.set_columns(relation, columns, foreign_keys);
                 }
                 self.refresh_consoles(id);
             }
-            Err(message) => self.status = Some(message),
+            Err(message) => {
+                self.status = Some(message);
+                self.pending_sql = None;
+            }
+        }
+        let same = |(request, _): &mut (SqlRequest, Template)| {
+            request.connection == id && request.relation == *relation
+        };
+        if let Some((request, template)) = self.pending_sql.take_if(same) {
+            self.write_sql(&request, template);
         }
     }
 
@@ -312,6 +326,17 @@ impl App {
             self.open_orphans();
             return;
         }
+        if action == Action::NavigatorFilter {
+            self.focus_navigator();
+            if self.navigator_focused {
+                self.navigator.open_filter();
+            }
+            return;
+        }
+        if action == Action::NavigatorClearFilter {
+            self.navigator.clear_filter(&self.connections);
+            return;
+        }
         let Some(row) = self.navigator.current(&self.connections) else {
             self.status = Some(text::NO_SELECTED_CONNECTION.to_owned());
             return;
@@ -327,6 +352,11 @@ impl App {
             Action::NavigatorOpen => self.toggle(&row),
             Action::NavigatorNewConsole => self.request_console(id),
             Action::NavigatorStructure => self.open_row_structure(&row),
+            Action::NavigatorGenerate => self.open_templates(&row),
+            Action::NavigatorCopyName => {
+                let name = row.name(&self.connections).to_owned();
+                self.copy(&name);
+            }
             Action::NavigatorRefresh => {
                 if !self.ask_new_password(id) {
                     self.reload_catalog(id);
@@ -340,7 +370,156 @@ impl App {
         }
     }
 
+    /// Returns true when the row of the navigator has a relation with SQL text.
+    pub(super) fn can_generate(&self) -> bool {
+        self.navigator
+            .current(&self.connections)
+            .is_some_and(|row| {
+                self.connections[row.connection].dialect != Dialect::Redis
+                    && row.relation_ref(&self.connections).is_some()
+                    && !matches!(row.kind, RowKind::Connection | RowKind::Schema)
+            })
+    }
+
+    /// Opens the list of SQL templates of a table, of a view, or of the table of a column.
+    fn open_templates(&mut self, row: &Row) {
+        if !self.can_generate() || self.config_blocked() {
+            return;
+        }
+        let Some(relation) = row.relation_ref(&self.connections) else {
+            return;
+        };
+        let item = &self.connections[row.connection];
+        let found = item
+            .catalog
+            .as_ref()
+            .and_then(|catalog| catalog.relation(Some(&relation.schema), &relation.relation));
+        let view = found.is_some_and(|(_, found)| found.kind == RelationKind::View);
+        let templates: &[Template] = if view {
+            &Template::READS
+        } else {
+            &Template::ALL
+        };
+        let request = SqlRequest {
+            connection: item.id,
+            relation,
+        };
+        self.picker = Some(Picker {
+            kind: PickerKind::Generate(request, templates.to_vec()),
+            title: text::TITLE_GENERATE.to_owned(),
+            items: templates
+                .iter()
+                .map(|template| text::template_name(*template).to_owned())
+                .collect(),
+            cursor: 0,
+            loading: false,
+        });
+    }
+
+    /// Writes a template. A template with columns first reads them.
+    fn start_template(&mut self, request: SqlRequest, template: Template) {
+        let found = self
+            .connection(request.connection)
+            .and_then(|item| item.catalog.as_ref())
+            .and_then(|catalog| {
+                catalog.relation(Some(&request.relation.schema), &request.relation.relation)
+            });
+        let missing = found.is_some_and(|(_, found)| found.columns == Columns::NotLoaded);
+        if template.needs_columns() && missing {
+            let (connection, relation) = (request.connection, request.relation.clone());
+            self.pending_sql = Some((request, template));
+            self.request_columns(connection, relation);
+        } else {
+            self.write_sql(&request, template);
+        }
+    }
+
+    /// Selects the console of the connection, and inserts the text at its cursor. It does
+    /// not run the text, as the query history does not.
+    fn write_sql(&mut self, request: &SqlRequest, template: Template) {
+        let SqlRequest {
+            connection,
+            relation,
+        } = request;
+        let index = if self.console().connection == Some(*connection) {
+            Some(self.active)
+        } else {
+            self.consoles
+                .iter()
+                .position(|console| console.connection == Some(*connection))
+        };
+        let columns = self
+            .connection(*connection)
+            .and_then(|item| item.catalog.as_ref())
+            .and_then(|catalog| catalog.relation(Some(&relation.schema), &relation.relation))
+            .and_then(|(_, found)| match &found.columns {
+                Columns::Loaded(columns) => Some(columns.clone()),
+                Columns::NotLoaded => None,
+            })
+            .unwrap_or_default();
+        if template.needs_columns() && columns.is_empty() {
+            self.status = Some(text::NO_COLUMNS_TO_LIST.to_owned());
+            return;
+        }
+        match index {
+            Some(index) => self.select_console(index),
+            None => self.new_console(*connection),
+        }
+        self.catalog_for(self.active);
+        let Some(item) = self.connection(*connection) else {
+            return;
+        };
+        let current = item.catalog.as_ref().is_some_and(|catalog| {
+            catalog
+                .schema(&relation.schema)
+                .is_some_and(|schema| catalog.is_current(schema))
+        });
+        let schema = (!current).then_some(relation.schema.as_str());
+        let name = qualified_name(schema, &relation.relation, item.dialect);
+        let sql = generate(template, item.dialect, &name, &columns);
+        self.leave_navigator();
+        self.on_paste(&sql);
+    }
+
+    /// Writes in the field of the filter of the tree. The tree under the field changes
+    /// with each key, and `Enter` opens the table of the cursor.
+    pub(super) fn on_tree_filter_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.navigator.cancel_filter(),
+            KeyCode::Tab => self.navigator.leave_filter_field(),
+            KeyCode::Up => self.step_filtered(false),
+            KeyCode::Down => self.step_filtered(true),
+            KeyCode::Enter => self.accept_tree_filter(),
+            _ => self.navigator.on_filter_key(key, &self.connections),
+        }
+    }
+
+    fn step_filtered(&mut self, forward: bool) {
+        if self.navigator.is_filtered() {
+            self.navigator.step_relation(forward, &self.connections);
+        } else {
+            let rows = if forward { 1 } else { -1 };
+            self.navigator.move_by(rows, &self.connections);
+        }
+    }
+
+    /// Opens the table of the cursor. The filter stays, so the next table is near.
+    fn accept_tree_filter(&mut self) {
+        let row = self.navigator.current(&self.connections);
+        match row.filter(is_relation) {
+            Some(row) if self.navigator.is_filtered() => {
+                self.navigator.leave_filter_field();
+                self.open_table(&row);
+            }
+            _ if !self.navigator.is_filtered() => self.navigator.leave_filter_field(),
+            _ => {}
+        }
+    }
+
     pub(super) fn toggle(&mut self, row: &Row) {
+        if self.navigator.is_filtered() {
+            return;
+        }
         if self.navigator.is_open(row, &self.connections) {
             self.navigator.collapse(row, &self.connections);
         } else {
@@ -349,7 +528,7 @@ impl App {
     }
 
     fn expand(&mut self, row: &Row) {
-        if !Navigator::is_branch(row) {
+        if !Navigator::is_branch(row) || self.navigator.is_filtered() {
             return;
         }
         if self.navigator.is_open(row, &self.connections) {
@@ -378,6 +557,9 @@ impl App {
     }
 
     fn collapse(&mut self, row: &Row) {
+        if self.navigator.is_filtered() {
+            return;
+        }
         if self.navigator.is_open(row, &self.connections) {
             self.navigator.collapse(row, &self.connections);
         } else {
@@ -740,6 +922,11 @@ impl App {
                     self.confirm_association(console, *connection);
                 }
             }
+            PickerKind::Generate(request, templates) => {
+                if let Some(template) = templates.get(cursor) {
+                    self.start_template(request, *template);
+                }
+            }
         }
     }
 
@@ -1036,10 +1223,6 @@ impl App {
             }
         }
     }
-}
-
-fn is_relation(row: &Row) -> bool {
-    matches!(row.kind, RowKind::Table | RowKind::View)
 }
 
 /// Returns the full path of a SQLite file that does not exist yet.

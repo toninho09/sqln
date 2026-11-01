@@ -1,6 +1,6 @@
 //! The status line: the focus, the connection, the state, and the use of resources.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -21,6 +21,8 @@ const SEPARATOR: &str = " · ";
 const GAP: &str = "  ";
 /// The name of the connection keeps this width before a part of the row goes.
 const MIN_NAME: usize = 8;
+/// A transaction of this age holds its locks for a long time, so its text shows an error.
+const LONG_TRANSACTION: Duration = Duration::from_secs(300);
 
 /// The place of the keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +45,8 @@ pub struct StatusData<'a> {
     pub schema: Option<&'a str>,
     /// The manual mode and the transaction. A table has neither.
     pub session: Option<(bool, TransactionState)>,
+    /// The time since the application first saw the open transaction.
+    pub transaction_age: Option<Duration>,
     pub phase: Phase,
     /// The time of the run in progress, or of the last run.
     pub run_time: Option<String>,
@@ -65,12 +69,25 @@ fn panel_label(panel: StatusPanel, theme: &Theme) -> (&'static str, Style) {
     }
 }
 
-fn transaction_part(state: TransactionState, theme: &Theme) -> (&'static str, Style) {
-    match state {
+fn transaction_part(
+    state: TransactionState,
+    age: Option<Duration>,
+    theme: &Theme,
+) -> (String, Style) {
+    let (label, style) = match state {
         TransactionState::None => (text::TRANSACTION_NONE, theme.status_detail),
         TransactionState::Open => (text::TRANSACTION_OPEN, theme.status_warning),
         TransactionState::Failed => (text::TRANSACTION_FAILED, theme.status_error),
         TransactionState::Unknown => (text::TRANSACTION_UNKNOWN, theme.status_error),
+    };
+    let style = if age.is_some_and(|age| age >= LONG_TRANSACTION) {
+        theme.status_error
+    } else {
+        style
+    };
+    match age.and_then(text::transaction_age) {
+        Some(age) => (format!("{label} {age}"), style),
+        None => (label.to_owned(), style),
     }
 }
 
@@ -106,8 +123,7 @@ fn state_parts(data: &StatusData, theme: &Theme) -> Vec<(String, Style)> {
             text::MODE_AUTO
         };
         parts.push((mode.to_owned(), theme.statusline));
-        let (state, style) = transaction_part(transaction, theme);
-        parts.push((state.to_owned(), style));
+        parts.push(transaction_part(transaction, data.transaction_age, theme));
     }
     let (phase, style) = phase_part(data.phase, theme);
     let phase = data

@@ -56,6 +56,8 @@ pub enum KeyboardName {
 pub const DEFAULT_REOPEN_TABS: bool = true;
 pub const DEFAULT_QUERY_HISTORY: bool = true;
 pub const DEFAULT_FORMAT_JSON: bool = true;
+/// A run of this time or more rings the bell at its end. The value 0 stops the bell.
+pub const DEFAULT_BELL_AFTER_SECONDS: u64 = 10;
 
 /// The theme of the interface. `Auto` follows the terminal, and `Ansi` uses the colors
 /// of the terminal profile. The other themes need a truecolor terminal.
@@ -169,6 +171,8 @@ pub struct Preferences {
     pub query_history: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format_json: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bell_after_seconds: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggestion_keys: Option<SuggestionKeys>,
     /// The choices of the export dialog. Only the global file holds them.
@@ -324,6 +328,8 @@ pub struct Config {
     pub query_history: bool,
     /// True when the value window opens a JSON value in its formatted form.
     pub format_json: bool,
+    /// A run of this time or more rings the bell at its end. The value 0 stops the bell.
+    pub bell_after_seconds: u64,
     /// The keys that accept a suggestion.
     pub suggestion_keys: SuggestionKeys,
     /// The last choices of the export dialog.
@@ -715,6 +721,10 @@ fn combine(
             .and_then(|preferences| preferences.format_json)
             .or(global.format_json)
             .unwrap_or(DEFAULT_FORMAT_JSON),
+        bell_after_seconds: project
+            .and_then(|preferences| preferences.bell_after_seconds)
+            .or(global.bell_after_seconds)
+            .unwrap_or(DEFAULT_BELL_AFTER_SECONDS),
         suggestion_keys: project
             .and_then(|preferences| preferences.suggestion_keys)
             .or(global.suggestion_keys)

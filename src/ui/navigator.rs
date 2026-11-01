@@ -1,12 +1,13 @@
 //! The navigator panel.
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::draw_scrollbar;
 use super::icons::{Icons, connection_symbol};
+use super::palette::draw_prompt_field;
 use super::text;
 use super::theme::Theme;
 use crate::connection::Connection;
@@ -30,6 +31,24 @@ fn connection_marks(icons: &Icons, connection: &Connection) -> (&'static str, &'
     }
 }
 
+/// Draws the field of the filter on the first row, and returns the row and the tree.
+fn draw_filter(
+    frame: &mut Frame,
+    area: Rect,
+    navigator: &Navigator,
+    focused: bool,
+    theme: &Theme,
+) -> (Rect, Rect) {
+    let Some(input) = navigator.filter_input() else {
+        return (Rect::default(), area);
+    };
+    let [field, tree] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    let editing = focused && navigator.filter_is_editing();
+    draw_prompt_field(frame, input, field, editing, theme);
+    (field, tree)
+}
+
+/// Draws the panel, and returns the row of the filter and the rows of the tree.
 pub fn draw_navigator(
     frame: &mut Frame,
     area: Rect,
@@ -38,15 +57,18 @@ pub fn draw_navigator(
     connected: &[bool],
     focused: bool,
     theme: &Theme,
-) {
+) -> (Rect, Rect) {
+    let (field, area) = draw_filter(frame, area, navigator, focused, theme);
     let rows = navigator.rows(connections);
     if rows.is_empty() {
-        let lines = vec![
-            Line::styled(format!(" {}", text::NO_CONNECTIONS_ROW), theme.tree_detail),
-            Line::styled(format!(" {}", text::ADD_CONNECTION_ROW), theme.tree_detail),
-        ];
-        frame.render_widget(Paragraph::new(lines), area);
-        return;
+        let notes = if navigator.is_filtered() {
+            [text::NO_TREE_MATCH, text::LOADED_CATALOGS_ONLY]
+        } else {
+            [text::NO_CONNECTIONS_ROW, text::ADD_CONNECTION_ROW]
+        };
+        let lines = notes.map(|note| Line::styled(format!(" {note}"), theme.tree_detail));
+        frame.render_widget(Paragraph::new(lines.to_vec()), area);
+        return (field, area);
     }
     let height = usize::from(area.height);
     let cursor = navigator.cursor_index(&rows, connections);
@@ -135,4 +157,5 @@ pub fn draw_navigator(
         navigator.top,
         theme,
     );
+    (field, area)
 }

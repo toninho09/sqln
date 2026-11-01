@@ -74,6 +74,13 @@ impl RunClock {
             .map(|started| now.saturating_duration_since(started))
     }
 
+    /// Returns true when a run of `limit` or more ended without a stop request. The user
+    /// who asked for the stop is at the keyboard, so that run needs no bell.
+    pub fn rings_after(&self, limit: Duration) -> bool {
+        matches!(self.end, Some(RunEnd::Done | RunEnd::Failed))
+            && self.last.is_some_and(|last| last >= limit)
+    }
+
     /// The user saw the end of the run.
     pub fn seen(&mut self) {
         self.end = None;
@@ -99,6 +106,8 @@ pub enum Focus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MessageLevel {
     Info,
+    /// A notice or a warning of the database.
+    Warning,
     Error,
 }
 
@@ -151,6 +160,8 @@ pub struct Console {
     pub phase: Phase,
     pub run: RunClock,
     pub transaction: TransactionState,
+    /// The moment that the application first saw the open transaction.
+    transaction_since: Option<Instant>,
     pub manual: bool,
     pub messages_scroll: u16,
     /// True while the close of this console waits for a step.
@@ -202,6 +213,7 @@ impl Console {
             phase: Phase::Idle,
             run: RunClock::default(),
             transaction: TransactionState::None,
+            transaction_since: None,
             manual: false,
             messages_scroll: 0,
             closing: false,
@@ -225,6 +237,22 @@ impl Console {
             self.transaction,
             TransactionState::Open | TransactionState::Failed
         )
+    }
+
+    /// Sets the state of the transaction. The clock of an open transaction keeps its
+    /// start when the transaction only changes from open to failed.
+    pub fn set_transaction(&mut self, state: TransactionState) {
+        self.transaction = state;
+        let since = self.transaction_since.take();
+        self.transaction_since = self
+            .in_transaction()
+            .then(|| since.unwrap_or_else(Instant::now));
+    }
+
+    /// Returns the time since the application first saw the open transaction.
+    pub fn transaction_age(&self, now: Instant) -> Option<Duration> {
+        self.transaction_since
+            .map(|since| now.saturating_duration_since(since))
     }
 
     /// Returns the statement of a result, for a new read of its rows.
@@ -299,6 +327,13 @@ impl Console {
         self.editor.clear_marks();
     }
 
+    /// Returns the number of warnings in **Messages**. Its tab shows the number, because
+    /// a run that ends well selects its last result.
+    pub fn warnings(&self) -> usize {
+        let warning = |message: &&Message| message.level == MessageLevel::Warning;
+        self.messages.iter().filter(warning).count()
+    }
+
     fn push_message(&mut self, level: MessageLevel, text: String) {
         self.messages.push(Message { level, text });
     }
@@ -334,6 +369,10 @@ impl Console {
                     result.limit = limit;
                 }
             }
+            ExecEvent::Notice { key, text } if self.is_current(key.execution) => {
+                let message = text::statement_error(key.index, &text);
+                self.push_message(MessageLevel::Warning, message);
+            }
             ExecEvent::StatementFinished {
                 key,
                 status,
@@ -357,7 +396,7 @@ impl Console {
                 return Some(self.on_execution_finished(end, message));
             }
             ExecEvent::TransactionChanged { state, .. } => {
-                self.transaction = state;
+                self.set_transaction(state);
                 return Some(Signal::TransactionChanged);
             }
             ExecEvent::TransactionFailed { message, .. } => {

@@ -133,6 +133,7 @@ struct Run {
     results: Vec<(usize, ReadLimit)>,
     end: Option<ExecutionEnd>,
     transaction: Option<TransactionState>,
+    notices: Vec<String>,
 }
 
 impl Run {
@@ -190,6 +191,7 @@ impl Harness {
                     run.bytes += bytes;
                 }
                 ExecEvent::ResultDone { rows, limit, .. } => run.results.push((rows, limit)),
+                ExecEvent::Notice { text, .. } => run.notices.push(text),
                 ExecEvent::StatementFinished { status, end, .. } => {
                     run.statuses.push(status);
                     run.limits
@@ -2500,4 +2502,177 @@ fn an_export_reads_past_the_row_cap_and_stops_on_request() {
         writer.discard();
         assert_eq!(h.run_ok(&["SELECT 7"]).text(0, 0), "7");
     }
+}
+
+#[test]
+fn a_notice_of_postgres_arrives_with_its_detail_and_its_hint() {
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let mut h = Harness::open(&server, Settings::default());
+    let run = h
+        .run_ok(&["DO $$ BEGIN RAISE NOTICE 'hello' USING DETAIL = 'more', HINT = 'look'; END $$"]);
+    assert_eq!(run.notices, ["NOTICE: hello\nmore\nlook"]);
+}
+
+#[test]
+fn a_notice_before_an_error_of_postgres_stays() {
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let mut h = Harness::open(&server, Settings::default());
+    let run = h.run(&["DO $$ BEGIN RAISE NOTICE 'before'; RAISE EXCEPTION 'boom'; END $$"]);
+    assert_eq!(run.end, Some(ExecutionEnd::Failed));
+    assert_eq!(run.notices, ["NOTICE: before"]);
+}
+
+#[test]
+fn a_loop_of_notices_stops_at_the_limit_and_counts_the_rest() {
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let mut h = Harness::open(&server, Settings::default());
+    let run =
+        h.run_ok(&["DO $$ BEGIN FOR i IN 1..250 LOOP RAISE NOTICE 'n%', i; END LOOP; END $$"]);
+    assert_eq!(run.notices.len(), 101);
+    assert_eq!(run.notices[99], "NOTICE: n100");
+    assert_eq!(run.notices[100], "150 more notices.");
+}
+
+#[test]
+fn a_statement_on_a_missing_table_reports_a_notice_on_each_server() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let run = h.run_ok(&["DROP TABLE IF EXISTS t_never_created"]);
+        assert_eq!(run.notices.len(), 1, "{:?}: {run:?}", server.kind);
+        assert!(
+            run.notices[0].contains("t_never_created"),
+            "{:?}: {run:?}",
+            server.kind
+        );
+    }
+}
+
+#[test]
+fn a_new_run_has_no_old_notice() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        h.run_ok(&["DROP TABLE IF EXISTS t_never_created"]);
+        let run = h.run_ok(&["SELECT 1"]);
+        assert_eq!(run.notices, Vec::<String>::new(), "{:?}", server.kind);
+    }
+}
+
+#[test]
+fn a_value_cut_by_mysql_reports_the_warning_of_the_server() {
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
+    let mut h = Harness::open(&server, sessions(1));
+    h.run_ok(&[
+        "DROP TABLE IF EXISTS t_notice",
+        "CREATE TABLE t_notice (a VARCHAR(2))",
+    ]);
+    let run = h.run_ok(&[
+        "SET SESSION sql_mode = ''",
+        "INSERT INTO t_notice VALUES ('abc')",
+    ]);
+    assert_eq!(
+        run.notices,
+        ["Warning: Data truncated for column 'a' at row 1 (1265)"]
+    );
+}
+
+#[test]
+fn a_read_with_a_warning_keeps_its_rows_in_mysql() {
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
+    let mut h = Harness::open(&server, Settings::default());
+    let run = h.run_ok(&["SELECT CAST('abc' AS SIGNED)"]);
+    assert_eq!(run.text(0, 0), "0");
+    assert_eq!(run.notices.len(), 1, "{run:?}");
+    assert!(run.notices[0].contains("1292"), "{run:?}");
+}
+
+#[test]
+fn show_warnings_of_the_user_still_works_and_adds_no_copy_in_mysql() {
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
+    let mut h = Harness::open(&server, sessions(1));
+    let run = h.run_ok(&["SELECT CAST('abc' AS SIGNED)", "SHOW WARNINGS"]);
+    assert_eq!(run.rows.len(), 2, "{run:?}");
+    assert_eq!(run.notices.len(), 1, "{run:?}");
+}
+
+#[test]
+fn the_columns_bring_the_foreign_keys_of_the_relation() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        h.run_ok(&[
+            "DROP TABLE IF EXISTS t_fk_child",
+            "DROP TABLE IF EXISTS t_fk_parent",
+            "CREATE TABLE t_fk_parent (a int, b int, c int UNIQUE, PRIMARY KEY (a, b))",
+            "CREATE TABLE t_fk_child (x int, y int, z int, \
+             CONSTRAINT fk_one FOREIGN KEY (y, x) REFERENCES t_fk_parent (a, b), \
+             CONSTRAINT fk_two FOREIGN KEY (z) REFERENCES t_fk_parent (c))",
+        ]);
+        h.manager.load_catalog(h.connection, 0);
+        let catalog = loop {
+            if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
+                break catalog.unwrap();
+            }
+        };
+        let schema = catalog.current_schema.clone().unwrap();
+        h.manager.load_columns(
+            h.connection,
+            RelationRef {
+                schema: schema.clone(),
+                relation: "t_fk_child".into(),
+            },
+        );
+        let keys = loop {
+            if let ExecEvent::ColumnsLoaded { foreign_keys, .. } = h.next() {
+                break foreign_keys;
+            }
+        };
+        assert_eq!(keys.len(), 2, "{:?}: {keys:?}", server.kind);
+        assert_eq!(keys[0].columns, ["y", "x"], "{:?}", server.kind);
+        assert_eq!(keys[0].target_columns, ["a", "b"], "{:?}", server.kind);
+        assert_eq!(keys[0].target.schema, schema, "{:?}", server.kind);
+        assert_eq!(keys[0].target.relation, "t_fk_parent");
+        assert_eq!(keys[1].columns, ["z"], "{:?}", server.kind);
+        assert_eq!(keys[1].target_columns, ["c"], "{:?}", server.kind);
+        h.run_ok(&["DROP TABLE t_fk_child", "DROP TABLE t_fk_parent"]);
+    }
+}
+
+#[test]
+fn a_foreign_key_to_another_schema_names_that_schema_in_postgres() {
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let mut h = Harness::open(&server, Settings::default());
+    h.run_ok(&[
+        "DROP SCHEMA IF EXISTS s_fk CASCADE",
+        "CREATE SCHEMA s_fk",
+        "CREATE TABLE s_fk.target (id int PRIMARY KEY)",
+        "CREATE TABLE s_fk.source (id int REFERENCES s_fk.target (id))",
+    ]);
+    h.manager.load_columns(
+        h.connection,
+        RelationRef {
+            schema: "s_fk".into(),
+            relation: "source".into(),
+        },
+    );
+    let keys = loop {
+        if let ExecEvent::ColumnsLoaded { foreign_keys, .. } = h.next() {
+            break foreign_keys;
+        }
+    };
+    assert_eq!(keys.len(), 1, "{keys:?}");
+    assert_eq!(keys[0].target.schema, "s_fk");
+    h.run_ok(&["DROP SCHEMA s_fk CASCADE"]);
 }

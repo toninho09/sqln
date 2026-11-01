@@ -36,7 +36,7 @@ use tokio::sync::mpsc::Receiver;
 
 use self::mouse::Drag;
 use crate::browser::FileBrowser;
-use crate::catalog::Catalog;
+use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{SharedClipboard, SystemClipboard};
 use crate::connection::{Connection, Definition};
 use crate::connector::{Connector, Namespace, TransactionCommand};
@@ -47,6 +47,7 @@ use crate::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, Settings};
 use crate::export::ExportChoices;
 use crate::export::form::ExportForm;
 use crate::form::ConnectionForm;
+use crate::generate::Template;
 use crate::grid::Budget;
 use crate::history::HistoryList;
 use crate::input::{Chord, Keymap, SuggestionKeys};
@@ -59,7 +60,7 @@ use crate::store::scripts::ScriptEntry;
 use crate::store::{Scope, Store};
 use crate::table::{TableFocus, TableTab};
 use crate::terminal::Session;
-use crate::terminal::watch_terminal;
+use crate::terminal::{ring_bell, watch_terminal};
 use crate::ui::browser::draw_browser;
 use crate::ui::console::BarData;
 use crate::ui::export::{ExportLayout, draw_export};
@@ -240,6 +241,15 @@ enum PickerKind {
         console: ConsoleId,
         connections: Vec<ConnectionId>,
     },
+    /// The rows are the SQL templates of a relation.
+    Generate(SqlRequest, Vec<Template>),
+}
+
+/// The relation of a SQL template.
+#[derive(Clone)]
+struct SqlRequest {
+    connection: ConnectionId,
+    relation: RelationRef,
 }
 
 /// A list of rows, with one chosen by the cursor.
@@ -255,7 +265,9 @@ struct Picker {
 #[derive(Clone, Debug, Default)]
 struct ScreenLayout {
     navigator_title: Rect,
-    /// The rows of the tree, without its title.
+    /// The field of the filter of the tree.
+    navigator_filter: Rect,
+    /// The rows of the tree, without its title and without the field of its filter.
     navigator: Rect,
     divider: Option<u16>,
     main_tabs: Vec<MainTab>,
@@ -330,6 +342,12 @@ pub struct App {
     /// The time of the last step of the main loop. The screen uses it for each run.
     clock: Instant,
     run_frame: usize,
+    /// The whole minutes of the open transaction on screen in the last frame.
+    transaction_minute: Option<u64>,
+    /// True when a long run ended and the main loop did not ring the bell yet.
+    bell: bool,
+    /// A SQL template that waits for the columns of its relation.
+    pending_sql: Option<(SqlRequest, Template)>,
     /// The request for a new name of a console.
     rename: Option<NamePrompt>,
     settings_form: Option<SettingsForm>,
@@ -430,6 +448,9 @@ impl App {
             started: Instant::now(),
             clock: Instant::now(),
             run_frame: 0,
+            transaction_minute: None,
+            bell: false,
+            pending_sql: None,
             persist,
             auth: auth::Auth::new(options.vault.take(), plain),
             conflicts: None,
@@ -604,7 +625,8 @@ impl App {
         }
     }
 
-    /// Moves the clock of the screen. It returns true when a run needs a new frame.
+    /// Moves the clock of the screen. It returns true when a run or the age of an open
+    /// transaction needs a new frame.
     fn advance_clock(&mut self, now: Instant) -> bool {
         self.clock = now;
         let time = now.saturating_duration_since(self.started);
@@ -613,7 +635,13 @@ impl App {
             self.consoles.iter().any(Console::is_busy) || self.tables.iter().any(TableTab::is_busy);
         let changed = running && frame != self.run_frame;
         self.run_frame = frame;
-        changed
+        let minute = self
+            .console()
+            .transaction_age(now)
+            .map(|age| age.as_secs() / 60);
+        let aged = minute != self.transaction_minute;
+        self.transaction_minute = minute;
+        changed || aged
     }
 
     fn clear_status(&mut self) {
@@ -713,6 +741,9 @@ impl App {
             return;
         }
         if self.navigator_focused {
+            if self.navigator.filter_is_editing() {
+                self.navigator.paste_in_filter(text, &self.connections);
+            }
             return;
         }
         if let Some(tab) = self.table_mut() {
@@ -731,6 +762,12 @@ impl App {
     }
 
     /// Returns true when the next step must not wait for a key.
+    /// Returns true once after a long run ends. The main loop rings the bell, so a
+    /// test reads the request and writes nothing to the terminal.
+    pub fn take_bell(&mut self) -> bool {
+        std::mem::take(&mut self.bell)
+    }
+
     pub fn has_work(&self) -> bool {
         let search = match self.table() {
             Some(tab) => tab.result.search_has_work(),
@@ -782,8 +819,9 @@ impl App {
                 connection,
                 relation,
                 columns,
+                foreign_keys,
             } => {
-                self.on_columns_loaded(connection, &relation, columns);
+                self.on_columns_loaded(connection, &relation, columns, foreign_keys);
             }
             ExecEvent::ConnectionTested { test, result } => self.on_connection_tested(test, result),
             ExecEvent::Disconnected { connection } => self.on_disconnected(connection),
@@ -873,6 +911,7 @@ impl App {
     fn draw_side(&mut self, frame: &mut Frame, body: Rect) -> Rect {
         if self.navigator.collapsed {
             self.layout.navigator_title = Rect::default();
+            self.layout.navigator_filter = Rect::default();
             self.layout.navigator = Rect::default();
             self.layout.divider = None;
             return body;
@@ -901,7 +940,7 @@ impl App {
             .collect();
         frame.buffer_mut().set_style(side, self.theme.panel);
         draw_panel_title(frame, title, text::TITLE_EXPLORER, focused, &self.theme);
-        draw_navigator(
+        let (filter, rows) = draw_navigator(
             frame,
             tree,
             &mut self.navigator,
@@ -913,7 +952,8 @@ impl App {
         let line = vec![Line::raw("│"); usize::from(divider.height)];
         frame.render_widget(Paragraph::new(line).style(self.theme.divider), divider);
         self.layout.navigator_title = title;
-        self.layout.navigator = tree;
+        self.layout.navigator_filter = filter;
+        self.layout.navigator = rows;
         self.layout.divider = Some(divider.x);
         main
     }
@@ -967,7 +1007,11 @@ impl App {
     /// Returns the name of the place that receives keys, for the status line.
     fn status_panel(&self) -> StatusPanel {
         if self.navigator_focused {
-            return StatusPanel::Explorer;
+            return if self.navigator.filter_is_editing() {
+                StatusPanel::Filter
+            } else {
+                StatusPanel::Explorer
+            };
         }
         if let Some(tab) = self.table() {
             return if tab.focus == TableFocus::Grid {
@@ -1004,6 +1048,7 @@ impl App {
                 production: item.is_some_and(Connection::is_production),
                 schema: Some(&tab.relation.schema),
                 session: None,
+                transaction_age: None,
                 phase: tab.phase,
                 run_time: run_time(tab.phase, &tab.run, self.clock),
                 pool: self
@@ -1040,6 +1085,7 @@ impl App {
                 .then(|| console.schema.as_deref().or(default_schema))
                 .flatten(),
             session: Some((console.manual, console.transaction)),
+            transaction_age: console.transaction_age(self.clock),
             phase: console.phase,
             run_time: run_time(console.phase, &console.run, self.clock),
             pool: console
@@ -1236,5 +1282,8 @@ fn event_loop(app: &mut App, session: &mut Session, signal: &AtomicBool) -> io::
             dirty = true;
         }
         dirty |= app.drain_events();
+        if app.take_bell() {
+            ring_bell();
+        }
     }
 }

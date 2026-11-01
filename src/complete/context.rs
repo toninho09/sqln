@@ -73,6 +73,15 @@ pub enum Position {
     NewName,
 }
 
+/// The relations of the `JOIN` that ends with the `ON` before the cursor.
+#[derive(Debug)]
+pub struct JoinOn {
+    /// The relation that this `JOIN` adds.
+    pub joined: Reference,
+    /// The relations before it.
+    pub others: Vec<Reference>,
+}
+
 #[derive(Debug)]
 pub struct Analysis {
     /// Byte range of the partial name.
@@ -85,6 +94,7 @@ pub struct Analysis {
     pub scope: Vec<Reference>,
     /// The names of `WITH` that the cursor can see, the innermost first.
     pub ctes: Vec<Cte>,
+    pub join_on: Option<JoinOn>,
 }
 
 /// A name of a `WITH` clause. The columns are only the ones that the text shows.
@@ -233,7 +243,18 @@ pub fn analyze(
         position: position(&tokens[..head], text),
         scope: visible_references(&tokens, text, head, partial),
         ctes: visible_ctes(&tokens, text, head, partial),
+        join_on: join_on(&tokens[..head], text),
     })
+}
+
+/// Reads the relations before a final `ON`. The last one is the relation of the `JOIN`.
+fn join_on(tokens: &[Token], text: &str) -> Option<JoinOn> {
+    if !is_word(text, tokens.last(), &["ON"]) {
+        return None;
+    }
+    let mut others = visible_references(tokens, text, tokens.len(), None);
+    let joined = others.pop()?;
+    (!others.is_empty()).then_some(JoinOn { joined, others })
 }
 
 fn ends_operand(tokens: &[Token], text: &str) -> bool {

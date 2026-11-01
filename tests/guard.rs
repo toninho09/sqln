@@ -13,8 +13,9 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
-use sqln::connection::Definition;
+use sqln::connection::{Definition, Source};
 use sqln::connector::sqlite::SqliteTarget;
+use sqln::connector::target::parse_uri;
 use sqln::form::{ConnectionForm, Field};
 use sqln::sql::{Dialect, changes_state, lacks_where};
 use sqln::store::config::{self, ConnectionEntry};
@@ -44,6 +45,24 @@ impl Run {
         let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
         let app = App::new(options, clipboard, Theme::plain());
         Self { app, path }
+    }
+
+    /// Opens a Redis connection to a port without a server. The question comes before
+    /// the first use of the connection.
+    fn redis(production: bool) -> Self {
+        let target = parse_uri("redis://127.0.0.1:1").unwrap();
+        let mut definition = Definition::new("cache".to_owned(), Source::Network(target));
+        definition.production = production;
+        let options = Options {
+            connections: vec![definition],
+            ..Options::default()
+        };
+        let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
+        let app = App::new(options, clipboard, Theme::plain());
+        Self {
+            app,
+            path: PathBuf::new(),
+        }
     }
 
     fn write(&mut self, sql: &str) {
@@ -125,9 +144,84 @@ fn a_statement_with_where_or_another_verb_is_not_found() {
 }
 
 #[test]
-fn redis_has_no_rule_for_these_questions() {
+fn redis_has_no_rule_for_a_statement_without_where() {
     assert!(!lacks_where("DEL key", Dialect::Redis));
-    assert!(!changes_state("FLUSHALL", Dialect::Redis));
+}
+
+#[test]
+fn a_redis_read_and_a_session_command_change_no_state() {
+    for command in [
+        "GET key",
+        "get key",
+        "HGETALL key",
+        "SCAN 0 MATCH a*",
+        "ZRANGE key 0 -1",
+        "PING",
+        "SELECT 1",
+        "MULTI",
+        "EXEC",
+        "DISCARD",
+        "WATCH key",
+        "UNWATCH",
+    ] {
+        assert!(!changes_state(command, Dialect::Redis), "{command}");
+    }
+}
+
+#[test]
+fn a_redis_write_and_an_unknown_name_change_state() {
+    for command in [
+        "FLUSHALL",
+        "flushdb",
+        "SET key value",
+        "DEL key",
+        "EXPIRE key 10",
+        "GETDEL key",
+        "GETEX key",
+        "SORT key STORE other",
+        "GEORADIUS key 0 0 1 km STORE other",
+        "XREADGROUP GROUP g c STREAMS key >",
+        "EVAL \"return 1\" 0",
+        "FCALL f 0",
+        "CONFIG SET a b",
+        "CLIENT KILL ID 1",
+        "MY.MODULE.COMMAND key",
+        "\"FLUSHALL\"",
+        "'GET' key",
+    ] {
+        assert!(changes_state(command, Dialect::Redis), "{command}");
+    }
+}
+
+#[test]
+fn production_asks_before_a_redis_write_and_names_the_command() {
+    let mut run = Run::redis(true);
+    run.write("GET a\nFLUSHALL");
+    run.app.on_event(Event::Key(shift(KeyCode::F(5))));
+    let screen = run.screen();
+    assert!(screen.contains(TITLE), "{screen}");
+    assert!(screen.contains("is a production connection."), "{screen}");
+    assert!(
+        screen.contains("Statements that can change data: 1 of 2."),
+        "{screen}"
+    );
+    assert!(screen.contains("FLUSHALL"), "{screen}");
+}
+
+#[test]
+fn production_lets_a_redis_read_run_without_a_question() {
+    let mut run = Run::redis(true);
+    run.write("GET a");
+    run.press(KeyCode::F(5));
+    assert!(!run.screen().contains(TITLE));
+}
+
+#[test]
+fn a_redis_write_out_of_production_has_no_question() {
+    let mut run = Run::redis(false);
+    run.write("FLUSHALL");
+    run.press(KeyCode::F(5));
+    assert!(!run.screen().contains(TITLE));
 }
 
 #[test]

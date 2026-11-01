@@ -68,6 +68,100 @@ const SESSION_WORDS: &[&str] = &[
     "USE",
 ];
 
+/// These Redis commands only read, and the question of a run skips them. A name out of
+/// this list asks: the question must answer without the network, and a command of a
+/// module then costs one key and no data.
+const REDIS_READS: &[&str] = &[
+    "BITCOUNT",
+    "BITFIELD_RO",
+    "BITPOS",
+    "COMMAND",
+    "DBSIZE",
+    "DUMP",
+    "ECHO",
+    "EXISTS",
+    "EXPIRETIME",
+    "GEODIST",
+    "GEOHASH",
+    "GEOPOS",
+    "GEORADIUSBYMEMBER_RO",
+    "GEORADIUS_RO",
+    "GEOSEARCH",
+    "GET",
+    "GETBIT",
+    "GETRANGE",
+    "HEXISTS",
+    "HGET",
+    "HGETALL",
+    "HKEYS",
+    "HLEN",
+    "HMGET",
+    "HRANDFIELD",
+    "HSCAN",
+    "HSTRLEN",
+    "HVALS",
+    "INFO",
+    "KEYS",
+    "LASTSAVE",
+    "LCS",
+    "LINDEX",
+    "LLEN",
+    "LPOS",
+    "LRANGE",
+    "MGET",
+    "PEXPIRETIME",
+    "PFCOUNT",
+    "PING",
+    "PTTL",
+    "RANDOMKEY",
+    "SCAN",
+    "SCARD",
+    "SDIFF",
+    "SINTER",
+    "SINTERCARD",
+    "SISMEMBER",
+    "SMEMBERS",
+    "SMISMEMBER",
+    "SORT_RO",
+    "SRANDMEMBER",
+    "SSCAN",
+    "STRLEN",
+    "SUBSTR",
+    "SUNION",
+    "TIME",
+    "TTL",
+    "TYPE",
+    "XINFO",
+    "XLEN",
+    "XPENDING",
+    "XRANGE",
+    "XREAD",
+    "XREVRANGE",
+    "ZCARD",
+    "ZCOUNT",
+    "ZDIFF",
+    "ZINTER",
+    "ZINTERCARD",
+    "ZLEXCOUNT",
+    "ZMSCORE",
+    "ZRANDMEMBER",
+    "ZRANGE",
+    "ZRANGEBYLEX",
+    "ZRANGEBYSCORE",
+    "ZRANK",
+    "ZREVRANGE",
+    "ZREVRANGEBYLEX",
+    "ZREVRANGEBYSCORE",
+    "ZREVRANK",
+    "ZSCAN",
+    "ZSCORE",
+    "ZUNION",
+];
+
+/// These Redis commands control the session, as `BEGIN` and `USE` do in SQL. Each command
+/// of a `MULTI` block has its own line, so it counts by itself.
+const REDIS_SESSION: &[&str] = &["SELECT", "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH"];
+
 /// A statement with one of these words stays out of the query history.
 const SECRET_WORDS: &[&str] = &[
     "PASSWORD",
@@ -226,11 +320,22 @@ pub fn lacks_where(sql: &str, dialect: Dialect) -> bool {
         && !words.iter().any(|word| word.eq_ignore_ascii_case("WHERE"))
 }
 
+/// Returns true for a Redis command out of the known reads. A name in quotes also asks,
+/// because the server reads that name as the command.
+fn redis_changes_state(sql: &str) -> bool {
+    let tokens = tokenize(sql, Dialect::Redis);
+    let first = tokens.iter().find(|token| token.kind != TokenKind::Comment);
+    !first.is_some_and(|token| {
+        let word = &sql[token.start..token.end];
+        token.kind == TokenKind::Word && (is_any(word, REDIS_READS) || is_any(word, REDIS_SESSION))
+    })
+}
+
 /// Returns true for a statement that a production connection confirms: it is not a
-/// plain read and it does not control the session. Redis has no rule yet.
+/// plain read and it does not control the session.
 pub fn changes_state(sql: &str, dialect: Dialect) -> bool {
     if dialect == Dialect::Redis {
-        return false;
+        return redis_changes_state(sql);
     }
     let words = top_level_words(sql, dialect);
     !is_plain_read(sql, dialect)

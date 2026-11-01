@@ -5,9 +5,13 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crossterm::event::KeyEvent;
+
 use crate::catalog::{Columns, RelationKind, RelationRef, Schema};
 use crate::connection::{CatalogState, Connection};
 use crate::exec::ConnectionId;
+use crate::filter_list::{holds_words, words_of};
+use crate::line_input::{Edit, LineInput};
 
 pub const DEFAULT_WIDTH: u16 = 24;
 pub const MIN_WIDTH: u16 = 12;
@@ -142,6 +146,17 @@ struct Expansion {
     schemas: HashMap<String, HashSet<String>>,
 }
 
+/// The filter of the tree. With text, the tree lists only the relations that match, from
+/// the catalogs in memory. The filter never opens a connection.
+#[derive(Debug)]
+struct TreeFilter {
+    input: LineInput,
+    /// True while the keys write in the field. False while they act on the filtered tree.
+    editing: bool,
+    /// The cursor before the filter. `Esc` in the field returns to it.
+    before: Key,
+}
+
 #[derive(Debug)]
 pub struct Navigator {
     pub width: u16,
@@ -150,6 +165,7 @@ pub struct Navigator {
     pub top: usize,
     cursor: Key,
     expansion: HashMap<ConnectionId, Expansion>,
+    filter: Option<TreeFilter>,
 }
 
 impl Default for Navigator {
@@ -160,8 +176,66 @@ impl Default for Navigator {
             top: 0,
             cursor: Key::default(),
             expansion: HashMap::new(),
+            filter: None,
         }
     }
+}
+
+pub fn is_relation(row: &Row) -> bool {
+    matches!(row.kind, RowKind::Table | RowKind::View)
+}
+
+/// Lists the relations that match, under their connections and schemas. It ignores the
+/// open items, because a match can stand under a closed schema.
+fn filtered_rows(connections: &[Connection], words: &[String]) -> Vec<Row> {
+    let mut rows = Vec::new();
+    for (connection, item) in connections.iter().enumerate() {
+        let Some(catalog) = &item.catalog else {
+            continue;
+        };
+        let parent = Row {
+            kind: RowKind::Connection,
+            connection,
+            schema: 0,
+            relation: 0,
+            column: 0,
+        };
+        let first = rows.len();
+        for (schema, schema_item) in catalog.schemas.iter().enumerate() {
+            let schema_name = schema_item.name.to_lowercase();
+            let matches = schema_item
+                .relations
+                .iter()
+                .enumerate()
+                .filter(|(_, relation)| {
+                    holds_words(&[&relation.name.to_lowercase(), &schema_name], words)
+                });
+            let start = rows.len();
+            for (relation, relation_item) in matches {
+                if rows.len() == start {
+                    rows.push(Row {
+                        kind: RowKind::Schema,
+                        schema,
+                        ..parent
+                    });
+                }
+                let kind = match relation_item.kind {
+                    RelationKind::Table => RowKind::Table,
+                    RelationKind::View => RowKind::View,
+                };
+                rows.push(Row {
+                    kind,
+                    schema,
+                    relation,
+                    ..parent
+                });
+            }
+        }
+        if rows.len() > first {
+            rows.insert(first, parent);
+        }
+    }
+    rows
 }
 
 impl Navigator {
@@ -174,6 +248,9 @@ impl Navigator {
 
     /// Lists the visible rows.
     pub fn rows(&self, connections: &[Connection]) -> Vec<Row> {
+        if let Some(words) = self.filter_words() {
+            return filtered_rows(connections, &words);
+        }
         let mut rows = Vec::with_capacity(connections.len());
         for (connection, item) in connections.iter().enumerate() {
             let row = Row {
@@ -273,7 +350,129 @@ impl Navigator {
         }
     }
 
+    /// Returns the words of the filter. An empty field filters nothing.
+    fn filter_words(&self) -> Option<Vec<String>> {
+        let words = words_of(self.filter.as_ref()?.input.text());
+        (!words.is_empty()).then_some(words)
+    }
+
+    /// Returns true when the tree lists only the relations that match.
+    pub fn is_filtered(&self) -> bool {
+        self.filter
+            .as_ref()
+            .is_some_and(|filter| !filter.input.text().trim().is_empty())
+    }
+
+    /// Returns true while the keys write in the field of the filter.
+    pub fn filter_is_editing(&self) -> bool {
+        self.filter.as_ref().is_some_and(|filter| filter.editing)
+    }
+
+    pub fn filter_input(&self) -> Option<&LineInput> {
+        self.filter.as_ref().map(|filter| &filter.input)
+    }
+
+    /// Puts the keys in the field of the filter.
+    pub fn open_filter(&mut self) {
+        match &mut self.filter {
+            Some(filter) => filter.editing = true,
+            None => {
+                self.filter = Some(TreeFilter {
+                    input: LineInput::default(),
+                    editing: true,
+                    before: self.cursor.clone(),
+                });
+            }
+        }
+    }
+
+    /// Moves the cursor to the first match. An empty field returns to the first cursor.
+    fn after_filter_change(&mut self, connections: &[Connection]) {
+        self.top = 0;
+        if self.is_filtered() {
+            let rows = self.rows(connections);
+            if let Some(row) = rows.iter().find(|row| is_relation(row)) {
+                self.cursor = row.key(connections);
+            }
+        } else if let Some(filter) = &self.filter {
+            self.cursor = filter.before.clone();
+        }
+    }
+
+    /// Applies an editing key to the field of the filter.
+    pub fn on_filter_key(&mut self, key: KeyEvent, connections: &[Connection]) {
+        let Some(filter) = &mut self.filter else {
+            return;
+        };
+        if !matches!(filter.input.on_key(key), Edit::None | Edit::Moved) {
+            self.after_filter_change(connections);
+        }
+    }
+
+    pub fn paste_in_filter(&mut self, text: &str, connections: &[Connection]) {
+        if let Some(filter) = &mut self.filter {
+            filter.input.insert(text.lines().next().unwrap_or(""));
+            self.after_filter_change(connections);
+        }
+    }
+
+    /// Moves the cursor between the relations of the filtered tree.
+    pub fn step_relation(&mut self, forward: bool, connections: &[Connection]) {
+        let rows = self.rows(connections);
+        if rows.is_empty() {
+            return;
+        }
+        let index = self.cursor_index(&rows, connections);
+        let next = if forward {
+            rows[index + 1..].iter().find(|row| is_relation(row))
+        } else {
+            rows[..index].iter().rev().find(|row| is_relation(row))
+        };
+        if let Some(row) = next {
+            self.cursor = row.key(connections);
+        }
+    }
+
+    /// Sends the keys to the tree. A field without text closes.
+    pub fn leave_filter_field(&mut self) {
+        if !self.is_filtered() {
+            self.cancel_filter();
+        } else if let Some(filter) = &mut self.filter {
+            filter.editing = false;
+        }
+    }
+
+    /// Closes the filter, and the cursor returns to its first row.
+    pub fn cancel_filter(&mut self) {
+        if let Some(filter) = self.filter.take() {
+            self.cursor = filter.before;
+            self.top = 0;
+        }
+    }
+
+    /// Closes the filter. The cursor stays, so the parents of its row open.
+    pub fn clear_filter(&mut self, connections: &[Connection]) {
+        let row = self.current(connections);
+        if self.filter.take().is_none() {
+            return;
+        }
+        self.top = 0;
+        if let Some(row) = row
+            && let Some(schema) = row.catalog_schema(connections)
+        {
+            let open = self
+                .expansion
+                .entry(connections[row.connection].id)
+                .or_default();
+            open.open = true;
+            open.schemas.entry(schema.name.clone()).or_default();
+        }
+    }
+
     pub fn is_open(&self, row: &Row, connections: &[Connection]) -> bool {
+        if self.is_filtered() {
+            return matches!(row.kind, RowKind::Connection | RowKind::Schema);
+        }
         let Some(open) = self.expansion.get(&connections[row.connection].id) else {
             return false;
         };

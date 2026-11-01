@@ -15,9 +15,13 @@ use self::mysql::MySqlConnector;
 use self::postgres::PostgresConnector;
 use self::redis::RedisConnector;
 use self::target::{Engine, NetworkTarget};
-use crate::catalog::Catalog;
+use crate::catalog::{Catalog, ForeignKey};
 use crate::exec::{ReadLimit, ResultSink};
 use crate::sql::Dialect;
+
+/// The database notices that one statement keeps. A loop of notices must not fill the
+/// memory, so a later notice only adds to a count.
+pub const MAX_NOTICES: usize = 100;
 
 /// Session values that the runner applies at each reservation,
 /// because the session cleanup removes them.
@@ -194,4 +198,12 @@ pub trait Session: Send {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<String>, ExecError>;
+    /// Reads the keys that leave a relation. A source without keys keeps this default.
+    async fn read_foreign_keys(
+        &mut self,
+        _schema: &str,
+        _relation: &str,
+    ) -> Result<Vec<ForeignKey>, ExecError> {
+        Ok(Vec::new())
+    }
 }

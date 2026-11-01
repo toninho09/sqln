@@ -5,7 +5,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{Fixture, key};
-use crossterm::event::KeyCode;
+use crossterm::event::{Event, KeyCode};
 use edtui::Index2;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -54,7 +54,7 @@ fn a_key_stays_under_the_target_with_the_full_budget_loaded() {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use crossterm::event::{Event, KeyEvent, KeyModifiers};
+    use crossterm::event::{KeyEvent, KeyModifiers};
     use sqln::app::{App, Options};
     use sqln::clipboard::MemoryClipboard;
     use sqln::exec::Settings;
@@ -168,7 +168,6 @@ fn table_page_keys_and_frames_stay_under_the_target() {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use crossterm::event::Event;
     use sqln::app::{App, Options};
     use sqln::clipboard::MemoryClipboard;
     use sqln::exec::Settings;
@@ -220,17 +219,16 @@ fn table_page_keys_and_frames_stay_under_the_target() {
     assert!(worst < Duration::from_millis(50), "{worst:?}");
 }
 
-#[test]
-#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
-fn a_key_in_a_large_navigator_stays_under_the_target() {
+/// Opens a navigator with 20,000 tables, and returns after its catalog arrives.
+fn large_navigator(name: &str) -> sqln::app::App {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use crossterm::event::{Event, KeyEvent, KeyModifiers};
+    use crossterm::event::{KeyEvent, KeyModifiers};
     use sqln::app::{App, Options};
     use sqln::clipboard::MemoryClipboard;
 
-    let path = common::temp_db("latency-tree");
+    let path = common::temp_db(name);
     let mut setup = String::from("BEGIN;");
     for index in 0..20_000 {
         setup.push_str(&format!("CREATE TABLE table_{index}(a, b, c);"));
@@ -246,7 +244,6 @@ fn a_key_in_a_large_navigator_stays_under_the_target() {
     };
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
     let mut app = App::new(options, clipboard, Theme::ansi());
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     let press = |app: &mut App, code| app.on_event(Event::Key(key(code)));
 
     app.on_event(Event::Key(KeyEvent::new(
@@ -260,6 +257,38 @@ fn a_key_in_a_large_navigator_stays_under_the_target() {
         app.drain_events();
         assert!(Instant::now() < deadline);
     }
+    app
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn a_key_in_a_filtered_navigator_stays_under_the_target() {
+    let mut app = large_navigator("latency-filter");
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    app.on_event(Event::Key(key(KeyCode::Char('/'))));
+
+    let mut worst = Duration::ZERO;
+    for code in "table_1".chars().map(KeyCode::Char).chain([
+        KeyCode::Down,
+        KeyCode::Down,
+        KeyCode::Up,
+        KeyCode::Backspace,
+    ]) {
+        let started = Instant::now();
+        app.on_event(Event::Key(key(code)));
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        worst = worst.max(started.elapsed());
+    }
+    println!("20,000 tables with a filter: worst key plus frame {worst:?}");
+    assert!(worst < Duration::from_millis(50), "{worst:?}");
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn a_key_in_a_large_navigator_stays_under_the_target() {
+    let mut app = large_navigator("latency-tree");
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let press = |app: &mut sqln::app::App, code| app.on_event(Event::Key(key(code)));
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Right);
 
@@ -287,7 +316,6 @@ fn the_autosave_of_a_large_script_stays_under_the_target() {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use crossterm::event::Event;
     use sqln::app::{App, Options};
     use sqln::clipboard::MemoryClipboard;
     use sqln::store::{Root, Store};

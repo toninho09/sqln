@@ -2304,9 +2304,10 @@ fn a_change_of_keyboard_in_the_settings_keeps_the_text_the_cursor_and_the_histor
     session.code(KeyCode::Tab);
     session.code(KeyCode::Right);
     session.code(KeyCode::Right);
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    // Reopen tabs, Query history, Bell seconds, and Save.
+    for _ in 0..4 {
+        session.code(KeyCode::Tab);
+    }
     session.code(KeyCode::Enter);
     let editor = &session.app.console().editor;
     assert_eq!(editor.keyboard(), sqln::editor::KeyboardMode::Vim);
@@ -2760,8 +2761,10 @@ fn the_settings_choose_the_reopening_of_the_tabs() {
     session.assert_sees("< On >");
     session.code(KeyCode::Right);
     session.assert_sees("< Off >");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    // Query history, Bell seconds, and Save.
+    for _ in 0..3 {
+        session.code(KeyCode::Tab);
+    }
     session.code(KeyCode::Enter);
     session.assert_sees("settings are saved");
     let text = fs::read_to_string(store.global.config_file()).unwrap();
@@ -2817,8 +2820,9 @@ fn the_tab_key_stays_in_the_open_section_and_goes_back_to_the_sidebar() {
     let (store, _) = two_connections("p-settings-tab");
     let mut session = Session::start(&store);
     session.prefix(',');
-    // Scope, Keyboard, Reopen tabs, Query history, Save, Cancel, and the sidebar.
-    for _ in 0..7 {
+    // Scope, Keyboard, Reopen tabs, Query history, Bell seconds, Save, Cancel, and the
+    // sidebar.
+    for _ in 0..8 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Down);

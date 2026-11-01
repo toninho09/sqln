@@ -8,6 +8,7 @@ use tokio::sync::mpsc::Sender;
 use super::{ExecEvent, StatementKey};
 use crate::export::ExportWriter;
 use crate::grid::{Budget, Reservation, Row};
+use crate::ui::text;
 
 const BATCH_ROWS: usize = 200;
 
@@ -191,6 +192,15 @@ impl ResultSink {
             && let ExecEvent::Rows { bytes, .. } = error.0
         {
             self.budget.release(bytes);
+        }
+    }
+
+    /// Sends the notices of the database. `more` counts the notices that stayed out.
+    pub async fn notices(&mut self, texts: Vec<String>, more: usize) {
+        let more = (more > 0).then(|| text::more_notices(more));
+        for text in texts.into_iter().chain(more) {
+            let key = self.key;
+            let _ = self.events.send(ExecEvent::Notice { key, text }).await;
         }
     }
 

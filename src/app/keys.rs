@@ -32,7 +32,7 @@ impl App {
     /// Returns the panel that receives keys, without a text field.
     fn panel(&self) -> Option<Region> {
         if self.navigator_focused {
-            return Some(Region::Navigator);
+            return (!self.navigator.filter_is_editing()).then_some(Region::Navigator);
         }
         if let Some(tab) = self.table() {
             let in_grid = tab.focus == TableFocus::Grid && tab.result.search.is_none();
@@ -129,6 +129,7 @@ impl App {
         match panel {
             Some(Region::Grid) => self.on_shifted_grid_key(chord),
             Some(_) => {}
+            None if self.navigator_focused => self.on_tree_filter_key(key),
             None if self.table_active.is_some() => self.on_table_text_key(key),
             None if self.console().focus == Focus::Results => self.console_mut().on_search_key(key),
             None => self.on_editor_key(key),
@@ -250,7 +251,11 @@ impl App {
             | Action::NavigatorAdd
             | Action::NavigatorScripts
             | Action::NavigatorDeletePassword
-            | Action::NavigatorStructure => self.on_navigator_action(action),
+            | Action::NavigatorStructure
+            | Action::NavigatorGenerate
+            | Action::NavigatorCopyName
+            | Action::NavigatorFilter
+            | Action::NavigatorClearFilter => self.on_navigator_action(action),
             _ => self.on_grid_action(action, extend),
         }
     }
@@ -386,7 +391,12 @@ impl App {
 
     fn open_keys(&mut self) {
         let in_table = self.table_active.is_some();
-        let (region, name) = match self.panel() {
+        let panel = if self.navigator_focused {
+            Some(Region::Navigator)
+        } else {
+            self.panel()
+        };
+        let (region, name) = match panel {
             Some(Region::Navigator) => (Some(Region::Navigator), text::REGION_NAVIGATOR),
             Some(_) if in_table => (Some(Region::Grid), text::REGION_TABLE),
             Some(_) => (Some(Region::Grid), text::REGION_GRID),
@@ -878,6 +888,10 @@ impl App {
             Action::OpenHistory => !in_table && self.history_is_open_to(connection),
             Action::FocusLeft => !self.navigator.collapsed && !self.navigator_focused,
             Action::FocusRight => self.navigator_focused,
+            Action::NavigatorFilter => !self.navigator.collapsed,
+            Action::NavigatorClearFilter => self.navigator.filter_input().is_some(),
+            Action::NavigatorGenerate => self.can_generate(),
+            Action::NavigatorCopyName => self.navigator.current(&self.connections).is_some(),
             _ => true,
         }
     }
@@ -892,6 +906,9 @@ impl App {
             Action::NavigatorAdd,
             Action::NavigatorScripts,
             Action::NavigatorStructure,
+            Action::NavigatorGenerate,
+            Action::NavigatorCopyName,
+            Action::NavigatorFilter,
         ]
         .map(|action| (action, self.navigator_focused));
         let results = [

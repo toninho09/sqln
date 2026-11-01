@@ -149,6 +149,15 @@ Um comando que não cabe sai inteiro da linha, então a tela nunca mostra uma te
 - Na lista de consoles, `rename` e `remove` aparecem só em uma linha de script.
 - Durante uma exportação, a linha mostra a tecla de parar antes do progresso.
 
+**Filtro da árvore:** o campo ocupa a primeira linha do explorador, e a linha de status mostra `FILTER` durante a digitação.
+Sem resultado, a árvore mostra `No match` e `Loaded catalogs only`.
+
+**Avisos do banco:** um `NOTICE` do PostgreSQL ou um aviso do MySQL entra em **Messages** com o número da instrução. A aba mostra `Messages (n)`, e a aba ativa não muda.
+
+**Idade da transação:** a linha de status mostra `Transaction open 3m` a partir de 1 min. Com 5 min ou mais, o texto usa a cor de erro.
+
+**Sinal:** uma execução de `bellAfterSeconds` ou mais toca o BEL do terminal no fim. Um Stop não toca.
+
 **Mensagens:** uma mensagem ocupa a linha de dicas por 8 s.
 Uma tecla, uma colagem ou um clique remove a mensagem antes disso. O ponteiro e a roda não removem.
 A espera de credenciais fica na linha enquanto a espera durar, e termina com ela.

@@ -735,6 +735,7 @@ impl RedisSession {
                 name,
                 kind: RelationKind::Table,
                 columns: Columns::NotLoaded,
+                foreign_keys: Vec::new(),
             })
             .collect();
         Ok((relations, partial))

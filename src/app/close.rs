@@ -1,15 +1,19 @@
 //! Execution signals, and the questions of a close and of the application exit.
 
+use std::time::Duration;
+
 use super::{App, DialogAction};
 use crate::connector::{TransactionCommand, TransactionState};
 use crate::console::{AfterTransaction, Signal};
 use crate::exec::ConsoleId;
+use crate::store::config::DEFAULT_BELL_AFTER_SECONDS;
 use crate::ui::text;
 
 impl App {
     pub(super) fn on_signal(&mut self, id: ConsoleId, signal: Signal) {
         match signal {
             Signal::ExecutionFinished { schema_changed } => {
+                self.note_long_run(id);
                 if schema_changed
                     && let Some(connection) =
                         self.console_by_id(id).and_then(|item| item.connection)
@@ -40,6 +44,18 @@ impl App {
             Signal::TransactionChanged => self.on_transaction_changed(id),
             Signal::TransactionFailed(message) => self.on_transaction_failed(id, &message),
         }
+    }
+
+    /// Asks for the bell when the run of a tab took the time of the option.
+    pub(super) fn note_long_run(&mut self, id: ConsoleId) {
+        let seconds = self
+            .persist
+            .as_ref()
+            .map_or(DEFAULT_BELL_AFTER_SECONDS, |item| item.bell_after_seconds);
+        let long = self
+            .tab_run(id)
+            .is_some_and(|(_, run)| run.rings_after(Duration::from_secs(seconds)));
+        self.bell |= seconds > 0 && long;
     }
 
     fn console_name(&mut self, id: ConsoleId) -> String {
@@ -239,7 +255,7 @@ impl App {
             DialogAction::CloseConnection(id) => self.confirm_close(id, true),
             DialogAction::RunAnyway(id, scope) => {
                 if let Some(index) = self.console_index(id) {
-                    self.consoles[index].transaction = TransactionState::None;
+                    self.consoles[index].set_transaction(TransactionState::None);
                     self.start_run(index, scope);
                 }
             }
