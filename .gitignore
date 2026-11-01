@@ -3,5 +3,4 @@ target/
 .test-certs/
 .pi/
 spikes/
-PLAN.md
 test.db

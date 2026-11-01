@@ -1,72 +1,72 @@
-# SQLN — Como outras ferramentas resolvem os mesmos pontos
+# SQLN — How other tools solve the same points
 
-Esta pesquisa foi feita em 2026-10-30.
-Ela vem da documentação pública e não substitui os testes de [spikes/RESULTS.md](../spikes/RESULTS.md).
-Algumas fontes são antigas, e o comportamento atual pode ser diferente.
+This research was done on 2026-10-30.
+It comes from public documentation and does not replace the tests in [RESULTS](RESULTS.md).
+Some sources are old, and the current behavior may differ.
 
-## Resultados no console
+## Console results
 
-| Ferramenta | Solução |
+| Tool | Solution |
 |---|---|
-| Harlequin | Teto de 500 linhas, aplicado no banco; não trunca em silêncio |
-| lazysql | Teto de 1.000 linhas no editor SQL; o valor 0 remove o teto |
-| DataGrip | 500 linhas por página, com botão para a próxima página |
-| DBeaver | Busca a próxima parte ao chegar ao fim; com `LIMIT`, faz consultas com limites maiores |
-| pgAdmin | Cursor no servidor opcional, que exige transação e não mostra o total |
-| psql | `FETCH_COUNT` busca em grupos; a consulta pode falhar depois de mostrar linhas |
+| Harlequin | Cap of 500 rows, applied at the database; does not truncate silently |
+| lazysql | Cap of 1,000 rows in the SQL editor; the value 0 removes the cap |
+| DataGrip | 500 rows per page, with a button for the next page |
+| DBeaver | Fetches the next part at the end; with `LIMIT`, it runs queries with larger limits |
+| pgAdmin | Optional server-side cursor, which needs a transaction and does not show the total |
+| psql | `FETCH_COUNT` fetches in groups; the query may fail after it shows rows |
 
-## Visão de tabela
+## Table view
 
-| Ferramenta | Solução |
+| Tool | Solution |
 |---|---|
-| lazysql | Busca uma página e mais uma linha; mostra `300+ rows` |
-| pgAdmin | Em 2020, ordenava por chave primária para estabilizar as páginas |
-| Rainfrog | Prévia de 100 linhas |
-| DataGrip | Busca e filtro local atuam somente na página atual |
+| lazysql | Fetches one page plus one row; shows `300+ rows` |
+| pgAdmin | In 2020, it sorted by primary key to stabilize pages |
+| Rainfrog | Preview of 100 rows |
+| DataGrip | Search and local filter act only on the current page |
 
-## Cancelamento
+## Cancellation
 
-| Ferramenta | Solução |
+| Tool | Solution |
 |---|---|
-| PostgreSQL | O protocolo abre uma nova conexão, não responde e pode não ter efeito |
-| Cliente `mysql` | `KILL QUERY`, depois `KILL CONNECTION`, por uma segunda conexão |
-| DataGrip | Cancela; depois de 10 s oferece desativar a fonte, e a consulta continua no banco |
+| PostgreSQL | The protocol opens a new connection, does not answer, and may have no effect |
+| `mysql` client | `KILL QUERY`, then `KILL CONNECTION`, through a second connection |
+| DataGrip | Cancels; after 10 s it offers to disable the source, and the query keeps running at the database |
 
-## Conexão e sessão
+## Connection and session
 
-| Ferramenta | Solução |
+| Tool | Solution |
 |---|---|
-| DataGrip | Conecta na primeira ação; oferece keep-alive e modos de sessão compartilhada, dupla ou dedicada |
-| DataGrip | Seletor de schema na barra do console |
-| DBeaver | Keep-alive e conexão separada opcional por editor |
-| psql | O prompt mostra `?` quando o estado da transação é indeterminado |
+| DataGrip | Connects on the first action; offers keep-alive and shared, dual, or dedicated session modes |
+| DataGrip | Schema selector in the console toolbar |
+| DBeaver | Keep-alive and an optional separate connection per editor |
+| psql | The prompt shows `?` when the transaction state is undetermined |
 
-As fontes divergem sobre o modo de sessão padrão do DataGrip 2026.2.
+The sources disagree about the default session mode of DataGrip 2026.2.
 
-## Tipos e arquivos
+## Types and files
 
-| Ferramenta | Solução |
+| Tool | Solution |
 |---|---|
-| DBeaver | Formato nativo do banco, conforme o driver |
-| DataGrip | Formatação no cliente, com fuso configurável |
-| Rainfrog | SQLx com tipos específicos; não aceita tipos geométricos |
-| DataGrip | Separa `dataSources.xml` de `dataSources.local.xml`; consoles ficam fora do projeto |
-| DBeaver | `.dbeaver/data-sources.json` e credenciais em arquivo cifrado separado |
+| DBeaver | Native database format, according to the driver |
+| DataGrip | Client-side formatting, with a configurable time zone |
+| Rainfrog | SQLx with specific types; does not accept geometric types |
+| DataGrip | Separates `dataSources.xml` from `dataSources.local.xml`; consoles stay outside the project |
+| DBeaver | `.dbeaver/data-sources.json` and credentials in a separate encrypted file |
 
-## Confiança
+## Trust
 
-| Ferramenta | Solução |
+| Tool | Solution |
 |---|---|
-| SSH | Confirma uma chave nova, recusa uma chave alterada e guarda o registro fora do projeto |
-| direnv | Bloqueia um `.envrc` novo até `direnv allow` |
-| VS Code | Abre pastas desconhecidas em modo restrito |
+| SSH | Confirms a new key, refuses a changed key, and keeps the record outside the project |
+| direnv | Blocks a new `.envrc` until `direnv allow` |
+| VS Code | Opens unknown folders in restricted mode |
 
-## Pilha parecida
+## Similar stack
 
-O Rainfrog é a referência de código mais próxima.
-Ele usa `sqlx`, `ratatui`, `crossterm`, `keyring`, `tokio` e `ratatui-textarea`.
+Rainfrog is the closest code reference.
+It uses `sqlx`, `ratatui`, `crossterm`, `keyring`, `tokio`, and `ratatui-textarea`.
 
-## Fontes
+## Sources
 
 - [DataGrip: Sessions](https://www.jetbrains.com/help/datagrip/managing-connection-sessions.html)
 - [DataGrip: Query consoles](https://www.jetbrains.com/help/datagrip/query-consoles.html)

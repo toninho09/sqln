@@ -1,0 +1,172 @@
+# SQLN — Feature map
+
+## State of this document
+
+This document lists each feature of the application, its main files, and how it works.
+The [architecture](ARCHITECTURE.md) gives the deep rules; the [plan](INITIAL_PLAN.md) gives the functional rules.
+The file paths are relative to `src/`.
+
+## Map
+
+| # | Feature | Main files |
+|---|---|---|
+| 1 | Application shell and main loop | `app.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs` |
+| 2 | Key map and discovery | `input.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `ui/text.rs` |
+| 3 | Navigator and tree filter | `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs` |
+| 4 | Connections and connection form | `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs` |
+| 5 | Database connectors | `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/redis.rs`, `connector/tls.rs` |
+| 6 | Connection pool | `pool.rs` |
+| 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs` |
+| 8 | Run protection | `app/guard.rs`, `sql/classify.rs` |
+| 9 | Transactions | `exec/runner.rs`, `ui/statusline.rs` |
+| 10 | SQL editor | `editor/mod.rs`, `editor/conventional.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
+| 11 | SQL analysis and formatter | `sql/lexer.rs`, `sql/statement.rs`, `sql/classify.rs`, `sql/format.rs` |
+| 12 | Autocomplete | `complete/mod.rs`, `complete/context.rs`, `complete/keywords.rs`, `catalog.rs` |
+| 13 | Catalog and structure tab | `catalog.rs`, `structure.rs` |
+| 14 | Results grid | `result.rs`, `grid/mod.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs` |
+| 15 | Table view | `table.rs`, `app/tables.rs`, `ui/table.rs` |
+| 16 | Export and file explorer | `export/mod.rs`, `export/form.rs`, `ui/export.rs`, `app/export.rs`, `browser.rs`, `ui/browser.rs`, `app/browse.rs` |
+| 17 | Query history | `history.rs`, `store/history.rs`, `app/history.rs`, `ui/history.rs` |
+| 18 | Folders and configuration | `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `settings.rs`, `ui/settings.rs` |
+| 19 | Console saving and saved consoles | `script_file.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs` |
+| 20 | Credentials and trust | `creds.rs`, `trust.rs`, `app/auth.rs`, `ui/auth.rs` |
+| 21 | Appearance and themes | `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs` |
+| 22 | Operation and diagnostics | `main.rs`, `terminal.rs`, `log.rs` |
+
+## 1. Application shell and main loop
+
+Files: `app.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs`.
+
+`run` owns the application state and the screen. The main loop waits for a key for up to 20 ms, and then reads at most 64 execution events per frame. A state update does no input or output. The application draws only after a change. `app/keys` applies the key priority of [KEYMAP](KEYMAP.md), and `app/mouse` handles clicks, the wheel, and the drag of dividers and columns. `app/hints` builds the hint row from the state on screen. `app/close` asks the exit questions in order, one console at a time, and applies each answer at once. `terminal` sets up the terminal and restores it at exit and on panic.
+
+## 2. Key map and discovery
+
+Files: `input.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `ui/text.rs`.
+
+`input` maps each key to an action in each focus region. It supports two-key sequences and reads the user `keymap` rules from `config.json`. `Ctrl+W` opens the prefix menu (`ui/which_key`) with the second keys in groups. `Ctrl+P` opens the command palette; `filter_list` filters by words, and the same core serves the history window. `ui/text` keeps all interface text in one file. A new console without text shows the first screen (`ui/welcome`), with the main keys, and the first character ends it.
+
+## 3. Navigator and tree filter
+
+Files: `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs`.
+
+The navigator shows the tree of connections, schemas, relations, and columns. `/` filters the tree in memory, from the loaded catalogs, and opens no connection. `g` lists the SQL templates of a relation, and the application inserts the generated text. `y` copies the qualified name.
+
+## 4. Connections and connection form
+
+Files: `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs`.
+
+`Definition` holds one saved connection, and `Source` tells the global scope from the project scope. The form holds text only and builds a definition on request. `app/connections` owns the catalogs and the actions of the navigator and the form. A file or a URI from the command line enters `connector/target`; that connection lives for the session only and writes no file. `p` in the navigator erases the saved password, and the removal of a connection offers that deletion separately.
+
+## 5. Database connectors
+
+Files: `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/redis.rs`, `connector/tls.rs`.
+
+`Connector` declares the dialect and the `Capabilities`. `Session` runs one statement, delivers the rows to `ResultSink`, and reports the transaction state. Only this module knows driver types. PostgreSQL reads through the simple protocol, so each value keeps the database text. MySQL keeps the text and reads notices with `SHOW WARNINGS`. SQLite runs `rusqlite` on its own thread, because the driver is synchronous. Redis runs one command per line, with the quote rules of `split_words`. TLS uses verification by default, except on `localhost`, loopback, and Unix sockets; `connector/tls` reads CA and client certificate files.
+
+Cancellation uses a `Canceller` separate from the session: `CancelToken` on PostgreSQL, `KILL QUERY` on a temporary connection on MySQL, `InterruptHandle` on SQLite, and `CLIENT UNBLOCK` on Redis. Cleaning returns the session to its base state (`DISCARD ALL`, `Conn::reset`, drop, or `DISCARD` and `UNWATCH`).
+
+## 6. Connection pool
+
+Files: `pool.rs`.
+
+Each connection definition has one pool. The default limit is five. The pool serves a free idle connection, opens below the limit with a 30 s deadline, or queues the request in arrival order. On reuse, `is_alive` removes a lost connection. Cleaning happens before the return, and a session with unconfirmed cleaning is dropped. **Disconnect** closes the idle sessions and raises the generation; sessions of an old generation close on return.
+
+## 7. Script execution
+
+Files: `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs`.
+
+The console sends a copy of the text and receives an `ExecutionId`. `sql` separates the statements, and the pool delivers a reservation or queues the request. Each console has one task (`exec/runner`) that owns the reserved session. The task runs one statement at a time, applies the row cap plus one row, and asks the transaction state after each statement. On error, timeout, or stop, the sequence ends. `exec/sink` batches 200 rows, applies the cap and the budget, and sends notices before the end of the statement; a cap cancellation is not a statement error.
+
+Stop triggers the `Canceller` and starts a 5 s deadline. The task keeps reading and discards the rows. Without an answer and without a transaction, `exec` closes the connection. With an open transaction, the interface asks for confirmation. The application drops an event whose `ExecutionId` is not current, so an old response never refills a grid.
+
+## 8. Run protection
+
+Files: `app/guard.rs`, `sql/classify.rs`.
+
+Before a run, the application asks one question in two cases: a write without `WHERE` (`sql::lacks_where`), or a state change on a production connection (`sql::changes_state`). A connection with `"production": true` shows the badge. Redis asks before a command outside its read list.
+
+## 9. Transactions
+
+Files: `exec/runner.rs`, the `Session` methods of each connector, `ui/statusline.rs`.
+
+A console runs in autocommit by default. Manual mode sends `TransactionCommand` for commit and rollback. Each driver reports its state its own way: `is_autocommit` on SQLite, `SERVER_STATUS_IN_TRANS` on MySQL, and a clock probe through the simple protocol on PostgreSQL. An unknown state demands confirmation before the next run. The status line shows the age of an open transaction, with the error color from 5 min.
+
+## 10. SQL editor
+
+Files: `editor/mod.rs`, `editor/conventional.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs`.
+
+EdTUI holds the text. In the conventional mode, `editor/conventional` owns the selection with IDE keys, and EdTUI stays in insert mode. The Vim mode is the alternative; both modes share the run actions. `editor/buffer` holds the text operations on `Lines`. Search is literal and without case (`find.rs`), with one shared bar for both modes and replace support. `undo` and `redo` keep up to 100 entries each; the history has no memory cap, and [ARCHITECTURE](ARCHITECTURE.md) lists that debt.
+
+## 11. SQL analysis and formatter
+
+Files: `sql/lexer.rs`, `sql/statement.rs`, `sql/classify.rs`, `sql/format.rs`.
+
+The lexer tokenizes per dialect. The statement splitter keeps the positions and handles `DELIMITER`; the table view refuses a text with a second command or an open token. `sql/classify` decides three classes: a plain read (`is_plain_read`), a missing `WHERE` (`lacks_where`), and a state change (`changes_state`). The formatter moves only line breaks and spaces, so each token stays the same.
+
+## 12. Autocomplete
+
+Files: `complete/mod.rs`, `complete/context.rs`, `complete/keywords.rs`, `catalog.rs`.
+
+`complete/context` reads the text around the cursor and finds the expected kind of name. The suggestions come from the catalog: schemas, tables, views, and columns read on demand, with aliases, quotes, and the keywords of the dialect. After `ON`, the suggestion uses the foreign keys that the application reads together with the columns. The `suggestionKeys` preference chooses the key.
+
+## 13. Catalog and structure tab
+
+Files: `catalog.rs`, `structure.rs`.
+
+The catalog is a cache in memory, outside the disk. Schemas and tables load first; columns and foreign keys load on demand. A key failure does not fail the columns. The structure tab runs the catalog queries of `structure`, per database, scope, and section.
+
+## 14. Results grid
+
+Files: `result.rs`, `grid/mod.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs`.
+
+A console result and a table page share `result::ResultTab`: one grid with cursor, selection, and search. The grid keeps result tabs, the **Messages** tab, and a detail view. `grid/budget` counts the bytes of the loaded rows; a reservation frees its cost on drop. `grid/search` searches the loaded rows only, never the database, and advances 8 ms per loop turn. `r` opens the row window. `f` formats a JSON value with `grid/json`; only the white space changes. `grid/tsv` builds the copy text, with the DataGrip shape and the data that DataGrip loses; `clipboard` prefers the system clipboard and falls back to OSC 52.
+
+## 15. Table view
+
+Files: `table.rs`, `app/tables.rs`, `ui/table.rs`.
+
+`table::page_sql` builds `SELECT *` with `WHERE`, `ORDER BY`, and `LIMIT n+1 OFFSET k`, each clause on one line. The extra row proves that a next page exists, and **Load more** uses the loaded rows as the offset. `c` counts the rows with `COUNT(*)` on the same path. The header sorts, and the filter bar accepts SQL with autocomplete. A source without `Capabilities::table_filters` hides `WHERE`, `ORDER BY`, **Clear**, and sorting, and turns **Apply** into **Reload**. A Redis key tab pages values by type, with the internal `SQLN.VALUE` text of `connector::redis::value_page`; that text is not a server command.
+
+## 16. Export
+
+Files: `export/mod.rs`, `export/form.rs`, `ui/export.rs`, `app/export.rs`, `browser.rs`, `ui/browser.rs`, `app/browse.rs`.
+
+The dialog holds the choices and writes nothing. The formats are CSV, TSV, JSON, JSON Lines, and SQL inserts. The rows come from the selection, the loaded rows, or all rows; a full read of all rows needs a new read only when the grid does not hold each row. The options cover header, delimiter, null text, BOM, grouping, and batch. A confirmation writes the choices to `preferences.export` in the global file. `app/export` runs the flow: dialog, questions, rows, and the end of the file. The file explorer of `browser` serves the path fields of the export and of the connection form; `Ctrl+O` or the `...` button opens it.
+
+## 17. Query history
+
+Files: `history.rs`, `store/history.rs`, `app/history.rs`, `ui/history.rs`.
+
+Each statement appends one JSON line to the global `history.jsonl`, with `at`, `connection`, `ok`, and `sql`. `app/history` writes the note of each statement. `Ctrl+W H` opens the window, and the filter uses the same core as the palette. Secrets stay out of the file. The `queryHistory` option turns the feature off.
+
+## 18. Folders and configuration
+
+Files: `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `settings.rs`, `ui/settings.rs`.
+
+The store has the global folder and, when it exists, the project `.sqln/` folder; `--project` chooses another project. The load reads both files, and one error blocks the start with the file and the position in the message. Each write of `config.json` takes `locks/config.lock`, rereads the file, applies the change, and writes atomically: exclusive temporary, permission `0600` on Unix, sync, and rename. `app/persist` checks each second for external changes and offers **Reload**. The settings dialog edits the preferences of one scope, shows the inherited values, and removes a project definition.
+
+## 19. Console saving and saved consoles
+
+Files: `script_file.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs`.
+
+Each console has a `consoles/<id>.sql` file and a `consoles/<id>.json` file; the UUID is the `id` and the base of both names. The autosave waits 500 ms after the last edit and retries for 5 s on failure; `Ctrl+S` saves at once. The write is atomic, and a failure keeps the text and shows the alert. A `locks/<id>.lock` file with `flock` keeps one instance per console. `ScriptFile::poll` rereads the file only when the size or the date changed, and then compares the hash; one question lists the scripts that another program changed or removed. `workspace.json` keeps cursor, scroll, layout, and open tabs; at startup, the application reopens the tabs of the last session when `reopenTabs` is on. `app/scripts` lists the consoles, opens them, and manages the scripts without a connection; the rename prompt of `ui/name` serves the tab and the rows of the lists. The attach flow copies both files, verifies them, removes the originals, and runs no SQL.
+
+## 20. Credentials and trust
+
+Files: `creds.rs`, `trust.rs`, `app/auth.rs`, `ui/auth.rs`.
+
+`app/auth` is the gate before each operation that needs a session: execution, catalog, columns, pages, and connection test. It checks the trust on the destination and the project path, asks the confirmations, and then gets the password from the `credential` reference: `none`, `session`, `vault`, or `globalPlainText`. The vault account is the service `sqln` with scope, ID, engine, address, user, and TLS in the name; a change of any part asks for a new password. The blocking calls run one at a time on `Manager::spawn_blocking`, off the interface thread, and a token stops a cancelled job.
+
+A vault failure offers retry, session use, or cancel, never silent plain text. Without a vault, `credentials.json` serves, with migration to the vault after a confirmation. A refused password (`28P01` on PostgreSQL, `1045` and `1698` on MySQL) opens the prompt; the new password passes a test before any write, and the second refusal suspends the automatic reads. `Secret` and the passwords zeroize their buffers on drop. `trust.json` keeps the confirmed destinations and the canonical paths of the projects, written under `trust.lock`; an invalid file authorizes nothing.
+
+## 21. Appearance and themes
+
+Files: `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs`.
+
+The themes are `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-latte`, `gruvbox`, and `nord`. The RGB schemes need a truecolor terminal, and `NO_COLOR` removes the colors. Each connection can select a theme and an icon. The icons come in Unicode and Nerd Font sets. The status line shows the focus, the connection, the state, and the use of resources. `ui/wrap` wraps the text of a window row by row, on demand.
+
+## 22. Operation and diagnostics
+
+Files: `main.rs`, `terminal.rs`, `log.rs`.
+
+The command line accepts `--project`, `--dialect`, `--log`, `--help`, and `--version`, and one target: a SQLite file or a connection URI. The setup covers mouse, paste, and the small terminal warning. The restore runs at exit and on panic, with a panic report. Shutdown signals enter the exit questions. `--log` records kinds of events, never SQL, values, or passwords. The BEL sounds after `bellAfterSeconds`, with a default of 10 s.

@@ -1,4 +1,4 @@
-// Tests with real servers. Start them with the commands of `spikes/RESULTS.md`, and
+// Tests with real servers. Start them with the commands of `docs/RESULTS.md`, and
 // load `scripts/test-env.sh`. Without the variables, these tests print "skipped".
 //
 // Each test uses its own tables, so the tests can run at the same time.

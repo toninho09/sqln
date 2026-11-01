@@ -1,664 +1,664 @@
-# SQLN — Registro de decisões
+# SQLN — Decision record
 
-Este documento registra as escolhas e as alternativas rejeitadas.
-As regras completas estão no [plano](../PLAN.md).
-Não reabrir uma decisão sem um fato novo.
+This document records the choices and the rejected alternatives.
+The complete rules are in the [plan](INITIAL_PLAN.md).
+Do not reopen a decision without a new fact.
 
-## Filtro da árvore, avisos do banco, sinal, idade da transação, geração de SQL e `JOIN` — 2026-11-01
+## Tree filter, database notices, bell, transaction age, SQL generation, and `JOIN` — 2026-11-01
 
-O usuário aprovou sete itens da análise do projeto.
-A confirmação de produção no Redis reabre a decisão 6 de "Redis e Valkey" só para uma conexão `PROD`. O fato novo é a marca `PROD`, que nasceu depois dessa decisão.
+The user approved seven items of the project analysis.
+The production confirmation on Redis reopens decision 6 of "Redis and Valkey" only for a `PROD` connection. The new fact is the `PROD` mark, which came after that decision.
 
-| Item | Ponto | Decisão | Rejeitado | Motivo |
+| Item | Point | Decision | Rejected | Reason |
 |---|---|---|---|---|
-| Filtro | Forma | Dentro da árvore do navegador | Janela de busca | Escolha do usuário |
-| Filtro | Alcance | Compara o nome da relação e o nome do schema, só nos catálogos em memória. Nunca conecta | Comparar colunas | Regra "conectar no primeiro uso". Colunas vêm sob demanda |
-| Filtro | Teclas | `/` e `Ctrl+F` abrem. `Up` e `Down` movem nas relações. `Enter` abre a tabela. `Tab` vai à árvore filtrada. `Esc` no campo cancela e devolve o cursor. `Esc` na árvore limpa e mantém o cursor, com os pais abertos | `Enter` só sai do campo | `Enter` abre a primeira tabela com uma tecla |
-| Filtro | Depois de abrir | O filtro fica, e a árvore filtrada aceita `i`, `y` e `g`. `Left` e `Right` não agem nela | Limpar ao abrir | Permite abrir várias tabelas do mesmo filtro |
-| Avisos | Momento | No fim da instrução | Ao vivo | Menos código |
-| Avisos | MySQL | `SHOW WARNINGS LIMIT 100` automático quando a contagem passa de 0 | Mostrar só a contagem | A limpeza da sessão apaga os avisos entre execuções, então o usuário não consegue ler depois |
-| Avisos | Limite | 100 avisos por instrução, e uma linha com o resto | Sem limite | Um `RAISE NOTICE` em laço encheria a memória |
-| Avisos | Visibilidade | Nível novo `Warning`, aba `Messages (n)`, e a aba ativa não muda | Abrir **Mensagens** | Mantém a regra "último resultado" |
-| Redis | Classe | Lista fixa de leituras. Um nome fora da lista pergunta | `COMMAND INFO` antes de executar | A pergunta roda na thread da interface, sem rede. Um falso alerta só custa uma tecla |
-| Redis | Sem pergunta | Leituras, `SELECT`, `MULTI`, `EXEC`, `DISCARD`, `WATCH` e `UNWATCH` | Perguntar em tudo | Mesmo papel de `BEGIN` e `USE`. Cada comando de um `MULTI` conta sozinho |
-| Sinal | Forma | BEL, em qualquer situação | Só sem foco; OSC 9; desligado por padrão | Escolha do usuário. BEL funciona em todo terminal |
-| Sinal | Quando toca | Fim normal ou com falha, em console e exportação. Stop e página de tabela não tocam | Tocar sempre | Quem usou Stop está no teclado |
-| Sinal | Opção | `bellAfterSeconds` no `config.json` e em Settings > General. 0 desliga, padrão 10 | Liga e desliga separados | Um campo resolve os dois |
-| Transação | Forma | Minutos inteiros: `Transaction open 3m`, `Transaction open 1h 05m`. Abaixo de 1 min, sem idade | Segundos | Evita desenhar a tela sem necessidade |
-| Transação | Alerta | Cor de erro a partir de 5 min, sem opção | Opção em Settings | YAGNI |
-| Transação | Origem | Relógio do cliente, desde que o SQLN vê a transação aberta. Vale também em `Transaction failed` | Consultar o banco | Sem consulta nova |
-| Geração | Modelos | `SELECT *`, `SELECT` com colunas, `INSERT`, `UPDATE` e `DELETE` | Sem `UPDATE` e `DELETE`; só área de transferência | Escolha do usuário |
-| Geração | Teclas | `g` abre a lista. `y` e `Ctrl+C` copiam o nome sem aspas. Em uma coluna, `g` usa a tabela dela, e `y` copia a coluna | Uma tecla por modelo | Gasta só uma tecla |
-| Geração | Texto | `SELECT` com `LIMIT 100`. `INSERT` com `VALUES (<a>, <b>)`. `UPDATE` com `SET a = <a>, b = <b>` e `WHERE ;`. `DELETE` com `WHERE ;`. O schema sai quando é o atual do console | `?` nos valores; `NULL` nos valores | `<coluna>` e `WHERE` vazio são erro de sintaxe nos três bancos, então um texto incompleto não grava nada. O plano aprovava `?`, mas um teste mostrou que o SQLite grava `NULL` em um `?` sem valor, e o usuário escolheu `<coluna>` em todos os dialetos |
-| Geração | Views | A lista mostra só os dois `SELECT` | Todos os modelos | Uma view raramente aceita escrita |
-| Geração | Redis | `g` não age. `y` funciona | Gerar `GET` | O tipo da chave muda o comando |
-| Geração | Destino | Cursor do console ativo, se ele for da conexão. Senão, o primeiro console aberto dela. Senão, um console novo. Não executa | Sempre um console novo | É a regra do histórico |
-| `JOIN` | Alcance | Só logo depois de `ON` | Depois de `JOIN`; depois de `AND` | As duas tabelas já estão no texto. Uma leitura inversa custaria uma consulta por tabela |
-| `JOIN` | Leitura | As chaves vêm junto com as colunas, com uma consulta a mais. Uma falha nas chaves não falha as colunas | Método e evento próprios | Sem caminho novo de autorização |
-| `JOIN` | Chave composta | `a = b AND c = d` em uma sugestão | Uma sugestão por coluna | A condição fica completa |
-| `JOIN` | SQLite | Uma chave sem coluna de destino fica fora | Ler a chave primária da tabela de destino | Caso raro, e a lista só fica sem aquela sugestão |
+| Filter | Shape | Inside the navigator tree | Search window | User choice |
+| Filter | Scope | Compares the relation name and the schema name, only in the in-memory catalogs. Never connects | Compare columns | "Connect on first use" rule. Columns come on demand |
+| Filter | Keys | `/` and `Ctrl+F` open. `Up` and `Down` move among relations. `Enter` opens the table. `Tab` goes to the filtered tree. `Esc` in the field cancels and returns the cursor. `Esc` in the tree clears and keeps the cursor, with the parents open | `Enter` only leaves the field | `Enter` opens the first table with one key |
+| Filter | After opening | The filter stays, and the filtered tree accepts `i`, `y`, and `g`. `Left` and `Right` do not act on it | Clear on open | Allows opening several tables of the same filter |
+| Notices | Moment | At the end of the statement | Live | Less code |
+| Notices | MySQL | `SHOW WARNINGS LIMIT 100` automatic when the count goes above 0 | Show only the count | The session cleaning erases the notices between executions, so the user cannot read them later |
+| Notices | Limit | 100 notices per statement, and one line with the rest | No limit | A `RAISE NOTICE` in a loop would fill the memory |
+| Notices | Visibility | New `Warning` level, `Messages (n)` tab, and the active tab does not change | Open **Messages** | Keeps the "last result" rule |
+| Redis | Class | Fixed read list. A name outside the list asks | `COMMAND INFO` before running | The question runs on the interface thread, without network. A false alert only costs one key |
+| Redis | Without question | Reads, `SELECT`, `MULTI`, `EXEC`, `DISCARD`, `WATCH`, and `UNWATCH` | Ask on everything | Same role as `BEGIN` and `USE`. Each command of a `MULTI` counts on its own |
+| Bell | Shape | BEL, in any situation | Only without focus; OSC 9; off by default | User choice. BEL works in every terminal |
+| Bell | When it rings | Normal end or with failure, in console and export. Stop and table page do not ring | Ring always | Whoever used Stop is at the keyboard |
+| Bell | Option | `bellAfterSeconds` in `config.json` and in Settings > General. 0 turns off, default 10 | Separate on and off | One field resolves both |
+| Transaction | Shape | Whole minutes: `Transaction open 3m`, `Transaction open 1h 05m`. Below 1 min, no age | Seconds | Avoids drawing the screen without need |
+| Transaction | Alert | Error color from 5 min, without an option | Option in Settings | YAGNI |
+| Transaction | Source | Client clock, since SQLN sees the transaction open. Also applies in `Transaction failed` | Ask the database | No new query |
+| Generation | Templates | `SELECT *`, `SELECT` with columns, `INSERT`, `UPDATE`, and `DELETE` | Without `UPDATE` and `DELETE`; clipboard only | User choice |
+| Generation | Keys | `g` opens the list. `y` and `Ctrl+C` copy the name without quotes. On a column, `g` uses its table, and `y` copies the column | One key per template | Spends only one key |
+| Generation | Text | `SELECT` with `LIMIT 100`. `INSERT` with `VALUES (<a>, <b>)`. `UPDATE` with `SET a = <a>, b = <b>` and `WHERE ;`. `DELETE` with `WHERE ;`. The schema leaves when it is the current one of the console | `?` in the values; `NULL` in the values | `<column>` and an empty `WHERE` are syntax errors in the three databases, so an incomplete text writes nothing. The plan approved `?`, but a test showed that SQLite writes `NULL` into a `?` without a value, and the user chose `<column>` in all dialects |
+| Generation | Views | The list shows only the two `SELECT` | All templates | A view rarely accepts writes |
+| Generation | Redis | `g` does not act. `y` works | Generate `GET` | The type of the key changes the command |
+| Generation | Target | Cursor of the active console, if it belongs to the connection. Otherwise, the first open console of it. Otherwise, a new console. Does not run | Always a new console | It is the history rule |
+| `JOIN` | Scope | Only right after `ON` | After `JOIN`; after `AND` | The two tables are already in the text. A reverse read would cost one query per table |
+| `JOIN` | Read | The keys come together with the columns, with one extra query. A key failure does not fail the columns | Own method and event | No new authorization path |
+| `JOIN` | Composite key | `a = b AND c = d` in one suggestion | One suggestion per column | The condition stays complete |
+| `JOIN` | SQLite | A key without a target column stays out | Read the primary key of the target table | Rare case, and the list only stays without that suggestion |
 
-Decisões de implementação:
+Implementation decisions:
 
-| Ponto | Decisão | Rejeitado | Motivo |
+| Point | Decision | Rejected | Reason |
 |---|---|---|---|
-| Módulo da geração | `src/generate.rs` | `src/sql/generate.rs`, como o plano dizia | O texto usa `quote_name` do autocomplete, e `sql` não depende de `complete` |
-| `unnest` | `unnest(k.conkey, k.confkey)` sem schema | `pg_catalog.unnest` | O PostgreSQL só lê dois arrays em paralelo na forma sem schema |
-| Avisos no MySQL | Um `SHOW` do usuário não dispara a leitura | Ler sempre | A contagem continua na resposta, e a leitura repetiria os avisos |
+| Module of the generation | `src/generate.rs` | `src/sql/generate.rs`, as the plan said | The text uses `quote_name` from the autocomplete, and `sql` does not depend on `complete` |
+| `unnest` | `unnest(k.conkey, k.confkey)` without schema | `pg_catalog.unnest` | PostgreSQL only reads two arrays in parallel in the schemaless form |
+| Notices on MySQL | A user `SHOW` does not trigger the read | Always read | The count stays in the response, and the read would repeat the notices |
 
-### Limitações conhecidas
+### Known limitations
 
-- O filtro não acha uma tabela de uma conexão com o catálogo fora da memória. Abra a conexão antes.
-- Em Redis, o filtro lê só as até 1.000 chaves da árvore.
-- Um `RAISE NOTICE` de progresso aparece só no fim da instrução, e uma sessão fechada por falta de resposta perde os avisos.
-- Depois de um aviso no MySQL, `ROW_COUNT()` na instrução seguinte devolve -1.
-- Em `CALL` no MySQL, só os avisos do último resultado aparecem.
-- Abas de tabela e exportações ignoram os avisos do banco.
-- O sinal depende do terminal. Um perfil com o sinal desligado não toca.
-- A idade da transação conta desde que o SQLN vê a transação, não desde o `BEGIN` no servidor. Em um script longo, ela começa no fim da instrução que abriu a transação.
-- A idade aparece só na aba do console em tela.
-- Um modelo de `INSERT` ou `UPDATE` em uma tabela sem colunas conhecidas não abre e mostra uma nota.
-- Um comando de módulo que só lê pergunta em `PROD`, pois está fora da lista.
+- The filter does not find a table of a connection with the catalog out of memory. Open the connection first.
+- In Redis, the filter reads only the up to 1,000 keys of the tree.
+- A progress `RAISE NOTICE` appears only at the end of the statement, and a session closed for lack of response loses the notices.
+- After a notice on MySQL, `ROW_COUNT()` in the next statement returns -1.
+- In `CALL` on MySQL, only the notices of the last result appear.
+- Table tabs and exports ignore the database notices.
+- The bell depends on the terminal. A profile with the bell off does not ring.
+- The transaction age counts since SQLN sees the transaction, not since the `BEGIN` at the server. In a long script, it starts at the end of the statement that opened the transaction.
+- The age appears only in the console tab on screen.
+- An `INSERT` or `UPDATE` template on a table without known columns does not open and shows a note.
+- A module command that only reads asks in `PROD`, because it is outside the list.
 
-## Versão oficial do EdTUI — 2026-11-01
+## Official version of EdTUI — 2026-11-01
 
-O usuário removeu o fork `vendor/edtui`, e o projeto volta a usar o `edtui` 0.11.7 publicado.
-Esta decisão reabre o item "4. Desfazer" de "Fechamento das decisões" e a linha "Limite do desfazer" de "Credenciais e editor".
+The user removed the `vendor/edtui` fork, and the project goes back to the published `edtui` 0.11.7.
+This decision reopens the item "4. Undo" of "Decision close" and the row "Undo limit" of "Credentials and editor".
 
-| Ponto | Decisão | Rejeitado | Motivo |
+| Point | Decision | Rejected | Reason |
 |---|---|---|---|
-| Limite do desfazer | Sem teto de memória. Cada pilha guarda até 100 entradas | Manter o fork; enviar o limite ao projeto original; publicar o fork com outro nome; histórico próprio | `cargo install` ignora `[patch]`, e o fork bloqueava a publicação. O envio ao projeto original faria o lançamento depender do mantenedor. O histórico próprio não limita a memória no modo Vim |
-| Aviso de entrada grande | Removido | Manter o aviso | Sem limite, toda entrada fica no histórico |
-| Risco de memória | Débito técnico, descrito em `ARCHITECTURE.md`, seção "Limite conhecido do editor" | Bloquear o lançamento | Escolha do usuário. Scripts comuns ficam muito abaixo do pior caso |
+| Undo limit | No memory cap. Each stack keeps up to 100 entries | Keep the fork; send the cap to the original project; publish the fork under another name; own history | `cargo install` ignores `[patch]`, and the fork blocked publishing. Sending it to the original project would make the release depend on the maintainer. The own history does not cap the memory in the Vim mode |
+| Big entry warning | Removed | Keep the warning | Without a cap, every entry stays in the history |
+| Memory risk | Technical debt, described in `ARCHITECTURE.md`, section "Known editor limit" | Block the release | User choice. Common scripts stay far below the worst case |
 
-## Linha na vertical, JSON, comentário e total de linhas — 2026-11-01
+## Vertical row, JSON, comment, and row count — 2026-11-01
 
-O usuário aprovou quatro itens da análise do projeto.
-O total de linhas não reabre a regra da paginação: uma página continua a pedir uma linha a mais, sem contar o total. A contagem é uma ação separada.
+The user approved four items of the project analysis.
+The row count does not reopen the pagination rule: a page keeps asking for one extra row, without counting the total. The count is a separate action.
 
-| Item | Ponto | Decisão | Rejeitado | Motivo |
+| Item | Point | Decision | Rejected | Reason |
 |---|---|---|---|---|
-| Linha | Local | Janela sobre a grade, com a tecla `r` | Modo vertical dentro da grade | A janela já tem rolagem, cópia e fechamento. O modo exigiria novo desenho, mouse, busca e seleção |
-| Linha | Navegação | `Left`, `Right`, `h` e `l`. Para na última linha carregada, e o cursor da grade acompanha | Ler a próxima página | A janela não faz consulta |
-| Linha | Valor longo | Até 4.096 colunas, com `…` | Valor inteiro | Um valor enorme atrasaria a tecla, e `Enter` mostra o valor inteiro |
-| JSON | Forma | Automática, com `f` para trocar. **Format JSON** em Settings define a forma inicial, ligada por padrão | Só automática | Pedido do usuário |
-| JSON | Cópia | `Ctrl+C` copia a forma visível | Sempre o original | O usuário escolhe a forma com `f`, e a grade copia o original |
-| JSON | Motor | Reescreve só os espaços e valida com `IgnoredAny` | `serde_json::Value` | `Value` reordena as chaves e perde dígitos, e a regra proíbe alterar valores |
-| JSON | Limites | Entrada até 1 MiB, saída até 8 MiB. Acima disso, o valor fica como texto | Sem limite | Cada linha de um JSON profundo repete o recuo, e 200 KB de `[` gerariam dezenas de GB |
-| Comentário | Teclas | `Ctrl+W /`, `Ctrl+/` e `Ctrl+7` | Só `Ctrl+W /` | Pedido do usuário. É uma exceção ao critério 1 de `KEYMAP.md`, e `Ctrl+W /` atende ao critério 2. Sem aprimoramento, o terminal envia `Ctrl+/` como `Ctrl+7` |
-| Comentário | Regra | Sem seleção, a linha do cursor. Linhas em branco ficam iguais. Todas comentadas perdem o comentário; nos outros casos, o comentário entra no menor recuo | Comentar cada linha no próprio recuo | É o costume das IDEs, e o texto mantém a forma |
-| Total | Forma | Tecla `c`, com `COUNT(*)` exato e o filtro aplicado | Estimativa automática; `COUNT(*)` automático | `COUNT(*)` em uma tabela grande segura uma conexão, e a estimativa erra com filtro e não existe no SQLite |
-| Total | Caminho | O mesmo de uma página | Método novo no gerente | Prazo, Stop, pool, senha e orçamento valem sem código novo |
-| Total | Validade | **Apply** e **Clear** limpam o total, e a ordenação mantém | Limpar sempre | A ordem não muda a contagem |
-| Total | Disponível | Só com mais linhas para carregar, em uma aba de tabela ou view | Toda aba | Sem mais linhas, a grade já tem o total. Chave Redis e estrutura não têm SQL de contagem |
+| Row | Place | Window over the grid, with the `r` key | Vertical mode inside the grid | The window already has scroll, copy, and close. The mode would need new design, mouse, search, and selection |
+| Row | Navigation | `Left`, `Right`, `h`, and `l`. Stops at the last loaded row, and the grid cursor follows | Read the next page | The window makes no query |
+| Row | Long value | Up to 4,096 columns, with `…` | Whole value | A huge value would delay the key, and `Enter` shows the whole value |
+| JSON | Shape | Automatic, with `f` to switch. **Format JSON** in Settings defines the initial shape, on by default | Automatic only | User request |
+| JSON | Copy | `Ctrl+C` copies the visible shape | Always the original | The user picks the shape with `f`, and the grid copies the original |
+| JSON | Engine | Rewrites only the spaces and validates with `IgnoredAny` | `serde_json::Value` | `Value` reorders the keys and loses digits, and the rule forbids changing values |
+| JSON | Limits | Input up to 1 MiB, output up to 8 MiB. Above that, the value stays as text | No limit | Each line of a deep JSON repeats the indent, and 200 KB of `[` would generate tens of GB |
+| Comment | Keys | `Ctrl+W /`, `Ctrl+/`, and `Ctrl+7` | Only `Ctrl+W /` | User request. It is an exception to criterion 1 of `KEYMAP.md`, and `Ctrl+W /` meets criterion 2. Without enhancement, the terminal sends `Ctrl+/` as `Ctrl+7` |
+| Comment | Rule | Without a selection, the cursor line. Blank lines stay the same. All commented lose the comment; in the other cases, the comment enters at the smallest indent | Comment each line at its own indent | It is the IDE habit, and the text keeps its shape |
+| Count | Shape | `c` key, with exact `COUNT(*)` and the applied filter | Automatic estimate; automatic `COUNT(*)` | `COUNT(*)` on a big table holds a connection, the estimate errs with a filter, and it does not exist on SQLite |
+| Count | Path | The same as a page | New method in the manager | Deadline, Stop, pool, password, and budget apply without new code |
+| Count | Validity | **Apply** and **Clear** clear the total, and sorting keeps it | Clear always | The order does not change the count |
+| Count | Available | Only with more rows to load, in a table or view tab | Every tab | Without more rows, the grid already has the total. Redis key and structure have no count SQL |
 
-### Limitações conhecidas
+### Known limitations
 
-- O comentário lê linhas, não tokens. Uma linha dentro de uma string ou de um comentário de bloco recebe o prefixo.
-- `--x` no MySQL não é comentário, mas a remoção o trata como comentário.
-- O total fica velho quando outra sessão muda a tabela, até o próximo **Apply**.
-- Uma coluna JSON sem formato de objeto ou array, como um número ou uma string, não troca de forma.
+- The comment reads lines, not tokens. A line inside a string or a block comment receives the prefix.
+- `--x` on MySQL is not a comment, but the removal treats it as a comment.
+- The count gets old when another session changes the table, until the next **Apply**.
+- A JSON column without an object or array shape, such as a number or a string, does not switch shape.
 
-## Alvo, proteção da execução, formatador e histórico — 2026-11-01
+## Command-line target, run protection, formatter, and history — 2026-11-01
 
-O usuário aprovou cinco itens da análise do projeto.
-O histórico reabre a seção 17 do plano, que o deixava fora da primeira versão.
+The user approved five items of the project analysis.
+The history reopens section 17 of the plan, which kept it out of the first version.
 
-| Item | Ponto | Decisão | Rejeitado | Motivo |
+| Item | Point | Decision | Rejected | Reason |
 |---|---|---|---|---|
-| Alvo | Conexão | `sqln arquivo.db` e `sqln postgres://...` duram só a sessão | Salvar em `config.json` | Uma URI nova criaria um cadastro a cada uso |
-| Alvo | Texto do console | Fica em memória, e a saída avisa antes de perder o texto | Salvar em um script | O script precisa de uma conexão salva |
-| Alvo | URI sem senha | PostgreSQL e MySQL: o terminal pede a senha oculta antes da interface. `Enter` vazio segue sem senha. Redis não pergunta | Falhar com erro | A senha fora da URI não vai para o histórico do shell |
-| Alvo | Senha recusada | O erro aparece em Mensagens, e o usuário repete o comando | Pedir na interface | O pedido da interface exige um `ConnectionKey` |
-| Alvo | Quantidade | Um por comando | Vários | YAGNI |
-| Alvo | Início | Sem **Create project**. As abas salvas não abrem e ficam no arquivo | Manter os dois | O usuário já disse o que quer abrir |
-| Alvo | Arquivo inexistente | O console espera o diálogo de criação | Ligar à primeira conexão salva | O console mudaria de banco sem aviso |
-| `WHERE` | Instruções | `UPDATE` e `DELETE` sem `WHERE` no nível principal | Incluir `TRUNCATE` e `DROP` | Esses dois não têm `WHERE`; a marca de produção cobre os dois |
-| `WHERE` | Conexões | Todas, menos as somente leitura, sem opção para desligar | Só produção | Um `DELETE` sem `WHERE` custa caro em qualquer banco |
-| `WHERE` | Modo manual | Também avisa | Pular | Regra única |
-| Produção | Efeito | Selo `PROD` e confirmação antes de uma execução que não seja leitura simples | Só o selo | O selo sozinho não impede um engano |
-| Produção | Sem pergunta | Leitura simples, `BEGIN`, `START`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE` e `USE` | Perguntar em tudo | `SET` pergunta, pois `SET GLOBAL` muda o servidor |
-| Produção | Selo | Na barra de status, com texto e sem sair por falta de largura | Abas e navegador | O texto vale com `NO_COLOR` |
-| Produção | Conexão ativa | A marca muda sem reconectar | Exigir desconexão | A marca não muda a sessão |
-| Diálogo | Forma | Um por execução, com foco em **Cancel**, contagem e primeira instrução de risco | Um por instrução; digitar o nome | Um script longo não vira uma fila de perguntas |
-| Formatador | Motor | Próprio, sobre o lexer do projeto | `sqlformat` | O crate não tem dialeto MySQL, e o lexer já conhece os dialetos do projeto |
-| Formatador | Segurança | Fora de uma quebra de linha, o gap entre tokens só encolhe para um espaço. A conferência compara todos os tokens e recusa uma diferença | Refazer os espaços | O lexer guarda `>=` como dois tokens |
-| Formatador | Strings | Duas strings em duas linhas ficam em duas linhas | Juntar na mesma linha | Em SQL, juntar as duas na mesma linha é erro |
-| Formatador | Alcance | A seleção; sem seleção, a instrução sob o cursor | O script inteiro | É a regra do Run |
-| Formatador | Instruções | `SELECT`, `WITH`, `VALUES`, `INSERT`, `UPDATE` e `DELETE` | Todas | Rotinas têm corpo próprio, e o risco não compensa |
-| Formatador | Caixa | Mantém o texto digitado | Maiúsculas | Segue a decisão do autocomplete |
-| Formatador | Lista | O primeiro item fica na linha da cláusula | Quebrar depois da cláusula | Não exige olhar à frente, e uma lista de um item fica em uma linha |
-| Histórico | Arquivo | `history.jsonl` na pasta global, permissão `0600`, ligado por padrão | Por projeto; só em memória | Projetos antigos não têm essa linha no `.gitignore` |
-| Histórico | Conteúdo | Cada instrução de console que chegou ao banco, com hora, conexão e sucesso ou falha | Tempo e linhas | YAGNI |
-| Histórico | Fora | Tabelas, catálogo, exportação e conexões sem cadastro | Registrar tudo | Só o texto do usuário interessa |
-| Histórico | Segredos | Não grava `PASSWORD`, `PASSWD`, `IDENTIFIED`, `REQUIREPASS` e `MASTERAUTH`, nem Redis `AUTH`, `ACL` e `HELLO` | Gravar tudo | Segue a regra do cliente `mysql` |
-| Histórico | Limites | Arquivo até 8 MiB; na abertura, um arquivo maior guarda os 4 MiB mais novos. Uma instrução acima de 64 KiB e uma repetição seguida não entram | Sem limite | O arquivo cresce sem limite e a janela lê tudo |
-| Histórico | Escrita | Uma escrita por quadro, com o arquivo aberto de novo | Arquivo aberto o tempo todo | `trim` troca o arquivo, e outra instância continuaria a gravar no arquivo antigo |
-| Histórico | Janela | `Ctrl+W H` e paleta. Lista a conexão do console, com filtro por palavras | Todas as conexões | O SQL de outro banco raramente serve |
-| Histórico | `Enter` | Insere no cursor e não executa | Executar | O usuário revisa antes |
+| Target | Connection | `sqln file.db` and `sqln postgres://...` last only for the session | Save into `config.json` | A new URI would create a form entry on each use |
+| Target | Console text | Stays in memory, and exit warns before losing the text | Save into a script | The script needs a saved connection |
+| Target | URI without password | PostgreSQL and MySQL: the terminal asks for the hidden password before the interface. Empty `Enter` goes on without a password. Redis does not ask | Fail with error | The password outside the URI does not go to the shell history |
+| Target | Refused password | The error appears in Messages, and the user repeats the command | Ask in the interface | The interface prompt needs a `ConnectionKey` |
+| Target | Amount | One per command | Several | YAGNI |
+| Target | Startup | No **Create project**. The saved tabs do not open and stay in the file | Keep both | The user already said what to open |
+| Target | Missing file | The console waits for the creation dialog | Attach to the first saved connection | The console would change database without a warning |
+| `WHERE` | Statements | `UPDATE` and `DELETE` without `WHERE` at the main level | Include `TRUNCATE` and `DROP` | Those two have no `WHERE`; the production mark covers both |
+| `WHERE` | Connections | All, except the read-only ones, without an option to turn off | Production only | A `DELETE` without `WHERE` costs a lot on any database |
+| `WHERE` | Manual mode | Also warns | Skip | Single rule |
+| Production | Effect | `PROD` badge and confirmation before an execution that is not a plain read | Only the badge | The badge alone does not prevent a mistake |
+| Production | Without question | Plain read, `BEGIN`, `START`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`, and `USE` | Ask on everything | `SET` asks, because `SET GLOBAL` changes the server |
+| Production | Badge | In the status bar, with text and without leaving for lack of width | Tabs and navigator | The text works with `NO_COLOR` |
+| Production | Active connection | The mark changes without reconnecting | Require a disconnect | The mark does not change the session |
+| Dialog | Shape | One per execution, with focus on **Cancel**, count, and first risky statement | One per statement; type the name | A long script does not become a queue of questions |
+| Formatter | Engine | Own, over the project lexer | `sqlformat` | The crate has no MySQL dialect, and the lexer already knows the project dialects |
+| Formatter | Safety | Outside a line break, the gap between tokens only shrinks to one space. The check compares all tokens and refuses a difference | Redo the spaces | The lexer keeps `>=` as two tokens |
+| Formatter | Strings | Two strings on two lines stay on two lines | Join on the same line | In SQL, joining the two on the same line is an error |
+| Formatter | Scope | The selection; without a selection, the statement under the cursor | The whole script | It is the Run rule |
+| Formatter | Statements | `SELECT`, `WITH`, `VALUES`, `INSERT`, `UPDATE`, and `DELETE` | All | Routines have their own body, and the risk does not pay |
+| Formatter | Case | Keeps the typed text | Uppercase | Follows the autocomplete decision |
+| Formatter | List | The first item stays on the clause line | Break after the clause | Needs no lookahead, and a one-item list stays on one line |
+| History | File | `history.jsonl` in the global folder, permission `0600`, on by default | Per project; memory only | Old projects do not have that line in the `.gitignore` |
+| History | Content | Each console statement that reached the database, with time, connection, and success or failure | Time and rows | YAGNI |
+| History | Outside | Tables, catalog, export, and connections without a form entry | Record everything | Only the user text matters |
+| History | Secrets | Does not record `PASSWORD`, `PASSWD`, `IDENTIFIED`, `REQUIREPASS`, and `MASTERAUTH`, nor Redis `AUTH`, `ACL`, and `HELLO` | Record everything | Follows the `mysql` client rule |
+| History | Limits | File up to 8 MiB; at startup, a larger file keeps the newest 4 MiB. A statement above 64 KiB and a back-to-back repetition do not enter | No limit | The file grows without limit and the window reads everything |
+| History | Write | One write per frame, with the file opened again | File open all the time | `trim` replaces the file, and another instance would keep writing to the old file |
+| History | Window | `Ctrl+W H` and palette. Lists the console connection, with a word filter | All connections | The SQL of another database rarely serves |
+| History | `Enter` | Inserts at the cursor and does not run | Run | The user reviews first |
 
-### Limitações conhecidas
+### Known limitations
 
-- Uma senha na URI fica no histórico do shell e em `ps`. Omita a senha, e o terminal pede.
-- Uma conexão de linha de comando não reage a uma senha recusada. Repita o comando.
-- `DELETE t FROM t JOIN u ON ...` no MySQL pergunta, mesmo com o `JOIN` limitando as linhas.
-- Um `WHERE 1 = 1` satisfaz a proteção.
-- `SELECT minha_funcao()` pergunta em produção, pois o texto não prova que a função só lê.
-- Em Redis, a pergunta de produção usa uma lista fixa de leituras, então um comando de módulo que só lê também pergunta. Veja a seção de 2026-11-01 sobre o filtro da árvore e os avisos do banco.
-- O filtro de segredos lê palavras. Um segredo dentro de um literal, como `WHERE token = 'abc'`, entra no arquivo.
-- Uma coluna chamada `password` deixa a consulta fora do histórico.
-- Uma instrução gravada por outra instância durante `trim` pode se perder.
-- Uma palavra sem reserva no MySQL, como uma coluna `offset`, pode começar uma linha. O SQL continua válido.
-- `CREATE`, `ALTER` e rotinas não têm formatação.
+- A password in the URI stays in the shell history and in `ps`. Omit the password, and the terminal asks for it.
+- A command-line connection does not react to a refused password. Repeat the command.
+- `DELETE t FROM t JOIN u ON ...` on MySQL asks, even with the `JOIN` limiting the rows.
+- A `WHERE 1 = 1` satisfies the protection.
+- `SELECT my_function()` asks in production, because the text does not prove that the function only reads.
+- In Redis, the production question uses a fixed read list, so a module command that only reads also asks. See the 2026-11-01 section about the tree filter and the database notices.
+- The secret filter reads words. A secret inside a literal, such as `WHERE token = 'abc'`, enters the file.
+- A column named `password` keeps the query out of the history.
+- A statement written by another instance during `trim` can get lost.
+- An unreserved word on MySQL, such as an `offset` column, can start a line. The SQL stays valid.
+- `CREATE`, `ALTER`, and routines have no formatting.
 
-## Linha de dicas — 2026-10-31
+## Hint line — 2026-10-31
 
-O usuário pediu que o rodapé sempre mostre os comandos mais relevantes para o momento.
-Uma auditoria achou comandos úteis fora da linha e comandos sem efeito dentro dela.
+The user asked that the footer always show the most relevant commands for the moment.
+An audit found useful commands outside the line and commands without effect inside it.
 
-| Ponto | Decisão | Rejeitado | Motivo |
+| Point | Decision | Rejected | Reason |
 |---|---|---|---|
-| Regra | Cada estado lista os comandos que agem nele, em ordem de relevância | Lista fixa por painel | Uma tecla sem efeito gasta espaço, e uma tecla útil fica escondida |
-| Espaço | Um comando que não cabe sai inteiro, e um comando curto depois dele ainda entra | Cortar a linha na borda; exigir que cada estado caiba em 80 colunas | A ordem decide o que uma tela pequena mostra, e nenhuma tecla fica cortada. Isso substitui a regra de fechar a linha do explorador em 80 colunas |
-| Parar | Primeiro comando em toda a aba ocupada | Só no editor | Uma leitura longa ocupa uma sessão, e o foco pode estar na grade |
-| Transação | `commit` e `rollback` vêm primeiro no editor e nos resultados | Só nos botões | A transação segura uma sessão até o usuário decidir |
-| Navegador | Os comandos mudam com a linha do cursor. Os comandos da conexão ficam na linha da conexão | Mesma lista em toda linha | Em uma tabela, `Del` removeria a conexão inteira, e essa dica não ajuda ali. As teclas continuam a agir, e `F1` lista todas |
-| Sem conexão | O editor troca `run` e `script` por `connection` e `navigator` | Manter `run` | Sem conexão, `F5` só mostra um aviso |
-| Ordem das janelas | A escolha das dicas segue a ordem de `on_key` | Manter a ordem própria | A linha precisa nomear as teclas da janela que recebe as teclas |
-| Rótulos do navegador (2026-11-01) | Cada comando diz o próprio objeto, como `n new console` e `Del remove connection`. Os comandos de console vêm antes dos comandos de conexão | Títulos de grupo, como `Console:` e `Connection:`; manter `new`, `add`, `edit` e `drop` | O usuário não via se um comando agia no console ou na conexão. Em 80 colunas, uma conexão SQLite perde `a`, `Del`, `Right` e `F1`. As teclas continuam a agir |
+| Rule | Each state lists the commands that act on it, in relevance order | Fixed list per panel | A key without effect spends space, and a useful key stays hidden |
+| Space | A command that does not fit leaves whole, and a short command after it still enters | Cut the line at the border; require each state to fit in 80 columns | The order decides what a small screen shows, and no key stays cut. This replaces the rule of closing the navigator line at 80 columns |
+| Stop | First command in every busy tab | Only in the editor | A long read holds a session, and the focus may be in the grid |
+| Transaction | `commit` and `rollback` come first in the editor and the results | Only on the buttons | The transaction holds a session until the user decides |
+| Navigator | The commands change with the cursor row. The connection commands stay on the connection line | Same list on every line | On a table, `Del` would remove the whole connection, and that hint does not help there. The keys keep acting, and `F1` lists all |
+| Without connection | The editor swaps `run` and `script` for `connection` and `navigator` | Keep `run` | Without a connection, `F5` only shows a warning |
+| Window order | The hint choice follows the `on_key` order | Keep its own order | The line needs to name the keys of the window that receives the keys |
+| Navigator labels (2026-11-01) | Each command names its own object, such as `n new console` and `Del remove connection`. The console commands come before the connection commands | Group titles, such as `Console:` and `Connection:`; keep `new`, `add`, `edit`, and `drop` | The user could not see whether a command acted on the console or the connection. At 80 columns, a SQLite connection loses `a`, `Del`, `Right`, and `F1`. The keys keep acting |
 
-## Aba de estrutura — 2026-10-31
+## Structure tab — 2026-10-31
 
-O usuário pediu uma forma de ver o schema de uma tabela e de um banco, e reabriu a regra que excluía a aba de estrutura da primeira versão.
-O navegador mostrava só os nomes das colunas.
+The user asked for a way to see the schema of a table and of a database, and reopened the rule that excluded the structure tab from the first version.
+The navigator showed only the column names.
 
-| Ponto | Decisão aprovada | Rejeitado | Motivo |
+| Point | Approved decision | Rejected | Reason |
 |---|---|---|---|
-| 1. Local | Aba própria na faixa principal, com grade somente leitura | Alternar na aba da tabela; console gerado; tipos no navegador | Reaproveita busca, cópia, exportação, parada e pool. Não mistura filtro e paginação com a estrutura |
-| 2. Conteúdo da tabela | Colunas (tipo, nulo, padrão, chave primária), índices e chaves estrangeiras | Só colunas; incluir o DDL | O PostgreSQL não tem `SHOW CREATE TABLE`, e um texto montado pela ferramenta poderia divergir do real |
-| 3. Schema ou banco | Todas as colunas, uma linha por coluna | Só as relações; nada | A busca da grade acha uma coluna em qualquer tabela |
-| 4. Redis e Valkey | Recusar com aviso na barra de status | Mostrar tipo, TTL e memória da chave | Uma chave não tem colunas |
-| 5. Teclas | `i` abre a estrutura. `[` e `]` trocam a seção | Tecla própria para a seção | `[` e `]` já trocam de resultado no console |
-| 6. Reinício | A aba de estrutura não volta na próxima sessão | Salvar em `OpenTabs` | O custo de abrir é uma tecla |
-| 7. Atualização | **Reload** e a troca de seção releem a grade. DDL não atualiza a aba sozinho | Guardar as três seções | A leitura é curta, e sem guardar nada a grade nunca fica velha sem aviso |
-| 8. Muitas linhas | A grade usa a paginação e o orçamento da tabela | Ler tudo de uma vez | Um banco grande pode ter muitas colunas |
-| 9. Exportação | Seleção, linhas carregadas e **All rows** funcionam, sem tabela de destino | Bloquear a exportação | A grade não é uma tabela, então o SQL INSERT pede o nome, como no console |
-| 10. Linha de conexão | `i` mostra todos os schemas que o navegador mostra | Só o schema atual | Atende ao pedido de ver o banco inteiro |
-| 11. Linha de coluna | `i` abre a estrutura da tabela dessa coluna | Não fazer nada | A coluna pertence a uma tabela |
+| 1. Place | Own tab in the main strip, with a read-only grid | Switch inside the table tab; generated console; types in the navigator | Reuses search, copy, export, stop, and pool. Does not mix filter and pagination with the structure |
+| 2. Table content | Columns (type, null, default, primary key), indexes, and foreign keys | Columns only; include the DDL | PostgreSQL has no `SHOW CREATE TABLE`, and a text assembled by the tool could differ from the real one |
+| 3. Schema or database | All the columns, one row per column | Only the relations; nothing | The grid search finds a column in any table |
+| 4. Redis and Valkey | Refuse with a warning in the status bar | Show type, TTL, and memory of the key | A key has no columns |
+| 5. Keys | `i` opens the structure. `[` and `]` switch the section | Own key for the section | `[` and `]` already switch results in the console |
+| 6. Restart | The structure tab does not come back in the next session | Save into `OpenTabs` | The cost of opening is one key |
+| 7. Refresh | **Reload** and the section switch reread the grid. DDL does not update the tab on its own | Keep the three sections | The read is short, and without keeping anything the grid never gets old without a warning |
+| 8. Many rows | The grid uses the pagination and the budget of the table | Read everything at once | A big database can have many columns |
+| 9. Export | Selection, loaded rows, and **All rows** work, without a target table | Block the export | The grid is not a table, so SQL INSERT asks for the name, as in the console |
+| 10. Connection row | `i` shows all the schemas the navigator shows | Only the current schema | Meets the request to see the whole database |
+| 11. Column row | `i` opens the structure of the table of that column | Do nothing | The column belongs to a table |
 
-Decisões de implementação:
+Implementation decisions:
 
-| Ponto | Decisão | Rejeitado | Motivo |
+| Point | Decision | Rejected | Reason |
 |---|---|---|---|
-| Aba | `TableTab` com `structure` e `filters = false` | Tipo novo de aba | A aba de tabela já tem prazo, parada, fila do pool, orçamento, senha e páginas |
-| Leitura | SQL por `Session::run`, como uma página | Novo método em `Session` | Nenhum conector muda, e a leitura aceita parada e prazo |
-| Nome em literal | PostgreSQL usa `E'...'` | `quote_literal` nos três bancos | Com `standard_conforming_strings = off`, um nome hostil do catálogo poderia fechar um literal comum |
-| Linha de dicas | Pedido do usuário: `i struct` aparece no navegador e na grade de uma tabela | Deixar `i` só no `F1` e na paleta | O usuário não achou a tecla. Veja a seção **Linha de dicas** |
+| Tab | `TableTab` with `structure` and `filters = false` | New tab type | The table tab already has deadline, stop, pool queue, budget, password, and pages |
+| Read | SQL through `Session::run`, like a page | New method in `Session` | No connector changes, and the read accepts stop and deadline |
+| Name in literal | PostgreSQL uses `E'...'` | `quote_literal` on the three databases | With `standard_conforming_strings = off`, a hostile catalog name could close a common literal |
+| Hint line | User request: `i struct` appears in the navigator and in the grid of a table | Leave `i` only in `F1` and the palette | The user did not find the key. See the **Hint line** section |
 
-### Limitações conhecidas da estrutura
+### Known limitations of the structure
 
-- Um índice de expressão mostra `expression` no MySQL e no SQLite. O PostgreSQL mostra a expressão.
-- Uma chave estrangeira do SQLite não tem nome, então a coluna `name` mostra o número da chave.
-- Com `NO_BACKSLASH_ESCAPES` no MySQL, um nome com barra invertida não encontra a tabela e a grade fica vazia. O nome continua dentro do literal.
+- An expression index shows `expression` on MySQL and SQLite. PostgreSQL shows the expression.
+- A SQLite foreign key has no name, so the `name` column shows the key number.
+- With `NO_BACKSLASH_ESCAPES` on MySQL, a name with a backslash does not find the table and the grid stays empty. The name stays inside the literal.
 
-## Explorador de arquivos — 2026-10-31
+## File explorer — 2026-10-31
 
-**Definido:** um botão `...` ao lado dos campos de caminho abre um explorador, e o usuário aprova as 10 decisões abaixo.
-O campo continua editável. O explorador só ajuda a preencher.
+**Defined:** a `...` button beside the path fields opens an explorer, and the user approves the 10 decisions below.
+The field stays editable. The explorer only helps to fill it.
 
-| Ponto | Decisão aprovada | Rejeitado | Motivo |
+| Point | Approved decision | Rejected | Reason |
 |---|---|---|---|
-| 1. Tipo | Janela própria no terminal, sem dependência nova | Diálogo nativo com `rfd`; só completar o caminho | O diálogo nativo falha em SSH e num Linux sem portal, e tira o foco do terminal. Completar não mostra as pastas |
-| 2. Abrir pelo teclado | `Ctrl+O` no campo. A barra de dicas mostra a tecla, o `...` serve ao mouse, e a ordem do `Tab` não muda | O `...` como parada do `Tab` | A parada acrescenta até 3 passos no formulário de rede |
-| 3. Campos | File do Export, File do SQLite, CA, certificado do cliente e chave do cliente | Só File do Export e do SQLite | O custo por campo é pequeno, e a tela fica coerente |
-| 4. Arquivo novo | Linha **Use this folder** no topo, só no Export e no SQLite. Ela troca a pasta e mantém o nome do campo | Campo de nome e botões na janela; só arquivos que existem | Um modo só. Com o campo vazio, ele recebe a pasta, e o usuário digita o nome |
-| 5. Teclas | Como na paleta: letras filtram e setas movem. `←` e `Backspace` com filtro vazio sobem uma pasta. `→` e `Enter` entram. Vale nos dois mapas de teclas | `j k h l` e `/` no modo vim | Repete um padrão do app e evita dois modos de tecla |
-| 6. Arquivos mostrados | Todos | Filtro por extensão | Um banco SQLite aceita qualquer extensão, e o filtro digitado resolve o resto |
-| 7. Ocultos | Escondidos. Um filtro que começa com `.` mostra todos | Sempre visíveis; uma tecla alterna | Não usa tecla nova. `Ctrl+H` não serve, pois muitos terminais o enviam como `Backspace` |
-| 8. Mouse | Clique move o cursor, duplo clique abre, e a roda rola | Clique único abre | Com clique único, o duplo clique por hábito entra na pasta e ativa outra linha |
-| 9. Pasta inicial | Pasta do caminho do campo. Sem ela, a pasta existente mais próxima. Campo vazio: pasta atual | Sempre a pasta atual; lembrar a última pasta | O Export já começa na pasta salva, e o campo já traz essa pasta |
-| 10. Home | `~` com filtro vazio vai para a home | Sem atalho | Uma tecla, e o campo File do Export já aceita `~` |
+| 1. Type | Own window in the terminal, without a new dependency | Native dialog with `rfd`; only complete the path | The native dialog fails on SSH and on a Linux without a portal, and takes the focus from the terminal. Completing does not show the folders |
+| 2. Open by keyboard | `Ctrl+O` in the field. The hint bar shows the key, the `...` serves the mouse, and the `Tab` order does not change | The `...` as a `Tab` stop | The stop adds up to 3 steps in the network form |
+| 3. Fields | File of Export, File of SQLite, CA, client certificate, and client key | Only File of Export and SQLite | The cost per field is small, and the screen stays coherent |
+| 4. New file | **Use this folder** row at the top, only in Export and SQLite. It changes the folder and keeps the name of the field | Name field and buttons in the window; only existing files | One mode only. With an empty field, it receives the folder, and the user types the name |
+| 5. Keys | As in the palette: letters filter and arrows move. `←` and `Backspace` with an empty filter go up one folder. `→` and `Enter` enter. Valid in both key maps | `j k h l` and `/` in the vim mode | Repeats an app pattern and avoids two key modes |
+| 6. Files shown | All | Filter by extension | A SQLite database accepts any extension, and the typed filter resolves the rest |
+| 7. Hidden | Hidden. A filter that starts with `.` shows all | Always visible; a key toggles | Does not use a new key. `Ctrl+H` does not serve, because many terminals send it as `Backspace` |
+| 8. Mouse | Click moves the cursor, double click opens, and the wheel scrolls | Single click opens | With single click, the double click out of habit enters the folder and activates another row |
+| 9. Start folder | Folder of the field path. Without it, the closest existing folder. Empty field: current folder | Always the current folder; remember the last folder | Export already starts in the saved folder, and the field already carries that folder |
+| 10. Home | `~` with an empty filter goes to the home folder | Without a shortcut | One key, and the File field of Export already accepts `~` |
 
-Estas escolhas seguem as regras acima nos pontos que elas deixaram abertos.
+These choices follow the rules above on the points the rules left open.
 
-| Assunto | Escolha | Rejeitado | Motivo |
+| Subject | Choice | Rejected | Reason |
 |---|---|---|---|
-| Caminho no campo | Sempre absoluto | `~/...` | O campo do SQLite não expande `~` |
-| Extensão do Export | **Use this folder** mantém a extensão ligada ao formato. Escolher um arquivo desliga essa ligação | Sempre desligar | A troca de pasta não muda o nome |
-| Replace | A janela continua no botão **Export** | Perguntar no explorador | O campo ainda pode mudar antes do Export |
-| Filtro com texto | Esconde `../` e **Use this folder** | Manter as linhas fixas | `Enter` age no primeiro resultado |
-| Caminho que o campo alteraria | Uma nota recusa o caminho com caractere de controle, com espaço nas pontas ou fora de UTF-8 | Preencher assim mesmo | O campo guardaria outro caminho, sem aviso |
-| Link para pasta | Aparece como pasta, e `../` volta à pasta de origem | Mostrar o destino real | O usuário volta para onde estava |
-| Fora do escopo | Criar pasta, renomear, apagar, tamanho, data e favoritos | | O Export já cria as pastas que faltam |
-| Tamanho dos modais | Pedido do usuário: o Export, o formulário de conexão e o explorador crescem até 140 colunas e deixam 8 livres. O explorador fica 8 colunas mais estreito que o modal, e sua lista vai de 14 a 35 linhas | Tamanho fixo; crescer sem limite | Um caminho longo aparece inteiro, e um limite mantém o rótulo perto do valor |
+| Path in the field | Always absolute | `~/...` | The SQLite field does not expand `~` |
+| Export extension | **Use this folder** keeps the extension tied to the format. Picking a file unties it | Always untie | The folder change does not change the name |
+| Replace | The window stays on the **Export** button | Ask in the explorer | The field can still change before the Export |
+| Filter with text | Hides `../` and **Use this folder** | Keep the fixed rows | `Enter` acts on the first result |
+| Path the field would change | A note refuses the path with a control character, with spaces at the ends, or outside UTF-8 | Fill anyway | The field would keep another path, without a warning |
+| Folder link | Appears as a folder, and `../` returns to the source folder | Show the real target | The user goes back to where they were |
+| Out of scope | Create folder, rename, delete, size, date, and favorites |  | Export already creates the missing folders |
+| Modal sizes | User request: Export, the connection form, and the explorer grow to 140 columns and leave 8 free. The explorer stays 8 columns narrower than the modal, and its list goes from 14 to 35 rows | Fixed size; grow without limit | A long path appears whole, and a limit keeps the label near the value |
 
-O usuário também aprovou o crescimento dos outros modais. Cada modal cresce só com espaço livre, deixa 8 colunas livres, e nunca fica menor que antes.
+The user also approved the growth of the other modals. Each modal grows only with free space, leaves 8 columns free, and never gets smaller than before.
 
-| Modal | Decisão aprovada | Rejeitado | Motivo |
+| Modal | Approved decision | Rejected | Reason |
 |---|---|---|---|
-| Settings | Até 140 colunas. A altura não muda | Até 100 colunas | Settings e Export têm o mesmo layout |
-| Paleta de comandos | Até 100 colunas e 30 linhas. Continua no topo | Só mais linhas | Mostra mais comandos sem rolar |
-| Listas de schema, consoles, scripts e conexões | Até 100 colunas e 30 linhas. A altura segue a quantidade de itens | Tamanho fixo | Um nome longo de script era cortado |
-| Conflitos de scripts | Até 100 colunas e 30 linhas. O nome recebe as colunas novas | Tamanho fixo | O nome identifica o script |
-| Renomear e senha | Até 100 colunas. A altura não muda | Tamanho fixo | O destino da conexão e o nome têm mais espaço |
-| Perguntas | Até 100 colunas | Limite de 72 colunas | Um caminho longo quebra em menos linhas |
-| Detalhe da célula e ajuda | Até 140 colunas | Limite de 90 colunas | Um valor longo mostra mais texto em cada linha |
+| Settings | Up to 140 columns. The height does not change | Up to 100 columns | Settings and Export have the same layout |
+| Command palette | Up to 100 columns and 30 rows. Stays on top | Only more rows | Shows more commands without scrolling |
+| Schema, console, script, and connection lists | Up to 100 columns and 30 rows. The height follows the number of items | Fixed size | A long script name was cut |
+| Script conflicts | Up to 100 columns and 30 rows. The name receives the new columns | Fixed size | The name identifies the script |
+| Rename and password | Up to 100 columns. The height does not change | Fixed size | The connection destination and the name get more space |
+| Questions | Up to 100 columns | Limit of 72 columns | A long path breaks into fewer lines |
+| Cell detail and help | Up to 140 columns | Limit of 90 columns | A long value shows more text on each line |
 
-O menu do `Ctrl+W` não cresce, pois ele não é modal e fica preso ao canto da tela.
+The `Ctrl+W` menu does not grow, because it is not modal and stays pinned to the screen corner.
 
-### Limitações conhecidas do explorador
+### Known limitations of the explorer
 
-- A leitura da pasta fica na thread da interface, como `is_dir` e `exists` em `destination_of`. Um disco de rede lento pode travar a tela durante a leitura.
+- The folder read stays on the interface thread, like `is_dir` and `exists` in `destination_of`. A slow network disk can freeze the screen during the read.
 
-## Exportação para arquivo — 2026-10-31
+## Export to file — 2026-10-31
 
-**Definido:** o usuário pede a exportação de resultados por um modal e aprova as 25 decisões abaixo.
-Este pedido reabre as regras "Exportação para arquivo" e "Extratores além do TSV padrão" da lista de itens fora da primeira versão. O editor de extratores continua fora.
+**Defined:** the user asks for the export of results through a modal and approves the 25 decisions below.
+This request reopens the rules "Export to file" and "Extractors beyond the default TSV" of the list of items outside the first version. The extractor editor stays outside.
 
-| Ponto | Decisão aprovada | Rejeitado | Motivo |
+| Point | Approved decision | Rejected | Reason |
 |---|---|---|---|
-| 1. Alcance | O modal oferece Selection, Loaded rows e All rows. All rows relê o banco, sem a grade e sem o teto de 256 MiB | Só linhas carregadas; só todas as linhas | A grade guarda 1.000 linhas por padrão, e um arquivo incompleto sem pedido é o pior erro de uma exportação |
-| 2. Reler no console | Só com `is_plain_read`. Outro comando fica só com Loaded rows, e o modal explica o motivo | Qualquer comando com aviso; nunca no console | Reler repete o comando, e um comando que grava repetiria a gravação |
-| 3. Formatos | CSV, TSV, JSON, JSON Lines e SQL INSERT | XLSX | XLSX traz uma dependência nova |
-| 4. Destino | Só arquivo; `Ctrl+C` não muda | Arquivo e área de transferência | Um fluxo só |
-| 5. Execução | Na tarefa da aba, na mesma sessão. O modal fecha, a aba fica ocupada, a linha de status mostra as linhas gravadas, Stop cancela, e a grade mantém o resultado | Segundo plano com conexão própria | Uma transação aberta vê os mesmos dados, e a aba não ocupa outra conexão |
-| 6. Tempo | All rows ignora `sql_timeout`; Stop é a saída | Mesmo `sql_timeout` | O padrão de 30 segundos encerraria uma exportação grande |
-| 7. Parcial | Grava em `<nome>.tmp`. Em Stop ou erro, uma janela pergunta: manter (renomeia para o destino) ou apagar | Sempre apagar; sempre manter | É uma escolha do usuário em cada caso |
-| 8. Arquivo existente | Janela com Replace e Cancel; Cancel volta ao modal | Recusar; criar outro nome | Nenhum arquivo muda sem confirmação |
-| 9. Opções de CSV e TSV | Cabeçalho (ligado), delimitador só no CSV (`,`, `;`, `\|`), texto do NULL (vazio ou `NULL`) e BOM UTF-8 (desligado) | Menos opções | O Excel em português espera `;`, e sem BOM ele quebra os acentos |
-| 10. Binário | CSV e TSV seguem a regra da grade. JSON usa Base64 em todo `Value::Binary`. SQL usa o literal do dialeto | Regra da grade também no JSON | Base64 é o costume em JSON |
-| 11. Nomes repetidos no JSON | Sufixo numérico: `id` e `id_2` | Recusar o JSON; repetir a chave | Nenhum valor se perde, e o JSON continua válido |
-| 12. Agrupar INSERT | O modal mostra a escolha: um por linha (padrão) ou agrupado | Sem escolha | É uma escolha do usuário em cada caso |
-| 13. Lote do INSERT | Campo só com agrupado, padrão 100 | Fixo em 100 | O MySQL recusa um comando acima de `max_allowed_packet` |
-| 14. Números no JSON | Número com o texto do banco. `NaN` e `Infinity` viram string | Sempre string; opção no modal | O arquivo guarda todos os dígitos |
-| 15. Scripts | All rows só com um comando na execução ou com transação aberta | Permitir com aviso; reler o script inteiro | A sessão é limpa entre execuções, então reler só o `SELECT` depois de um `SET` pode ler outra tabela sem erro |
-| 16. Redis e Valkey | Só Selection e Loaded rows, sem SQL INSERT | Tudo nas abas de chave | Não existe `is_plain_read` para Redis, e a aba de chave lê por páginas |
-| 17. Abrir o modal | Tecla `e` na grade e ação na paleta | Também no navegador; só paleta | A tecla fica perto da grade, e `e` está livre nos dois mapas de teclas |
-| 18. Caminho inicial | Pasta salva ou pasta atual, com `<origem>-AAAA-MM-DD-HHMM.<ext>`. A extensão segue o formato até o usuário editar o caminho | Sem data; pasta Downloads | A janela de arquivo existente quase nunca aparece |
-| 19. Lembrar escolhas | Formato, opções e pasta persistem | Só na sessão; não lembrar | Quem usa `;` não escolhe de novo |
-| 20. Vários resultados | Só o resultado ativo; um modal gera um arquivo | Um arquivo por aba de resultado | Multiplicaria as janelas de arquivo existente e de parcial |
-| 21. Navegador | Fora do escopo | Tecla na tabela do navegador | O usuário retirou o pedido |
-| 22. Onde salvar | `preferences.export` no `config.json` global, ao confirmar o Export | Escopo ativo; `workspace.json` | O `config.json` de um projeto é versionado, e a pasta seria um caminho de uma máquina só |
-| 23. Layout | Barra lateral com os formatos, igual ao diálogo Settings | Formulário em uma coluna | Mostra todos os formatos de uma vez, e o mouse escolhe com um clique |
-| 24. Alcance inicial | Selection, se existir. Senão All rows, se disponível. Senão Loaded rows | Selection ou Loaded rows | Evita um arquivo incompleto por engano |
-| 25. Exportações simultâneas | Uma por aba. O modal recusa um destino em uso | Uma por vez | Cada aba tem a sua tarefa, e dois destinos iguais usariam o mesmo temporário |
+| 1. Range | The modal offers Selection, Loaded rows, and All rows. All rows rereads the database, without the grid and without the 256 MiB cap | Only loaded rows; only all rows | The grid keeps 1,000 rows by default, and an incomplete file without a request is the worst export error |
+| 2. Reread in the console | Only with `is_plain_read`. Another command stays with Loaded rows only, and the modal explains the reason | Any command with a warning; never in the console | Rereading repeats the command, and a command that writes would repeat the write |
+| 3. Formats | CSV, TSV, JSON, JSON Lines, and SQL INSERT | XLSX | XLSX brings a new dependency |
+| 4. Destination | File only; `Ctrl+C` does not change | File and clipboard | One flow only |
+| 5. Execution | In the tab task, on the same session. The modal closes, the tab becomes busy, the status line shows the written rows, Stop cancels, and the grid keeps the result | Background with its own connection | An open transaction sees the same data, and the tab does not take another connection |
+| 6. Time | All rows ignores `sql_timeout`; Stop is the exit | Same `sql_timeout` | The 30-second default would end a big export |
+| 7. Partial | Writes to `<name>.tmp`. On Stop or error, a window asks: keep (renames to the target) or erase | Always erase; always keep | It is a user choice in each case |
+| 8. Existing file | Window with Replace and Cancel; Cancel returns to the modal | Refuse; create another name | No file changes without confirmation |
+| 9. CSV and TSV options | Header (on), delimiter only in CSV (`,`, `;`, `\|`), NULL text (empty or `NULL`), and UTF-8 BOM (off) | Fewer options | Excel in Portuguese expects `;`, and without a BOM it breaks the accents |
+| 10. Binary | CSV and TSV follow the grid rule. JSON uses Base64 on every `Value::Binary`. SQL uses the dialect literal | Grid rule in JSON too | Base64 is the habit in JSON |
+| 11. Repeated names in JSON | Numeric suffix: `id` and `id_2` | Refuse the JSON; repeat the key | No value gets lost, and the JSON stays valid |
+| 12. Group INSERT | The modal shows the choice: one per row (default) or grouped | Without a choice | It is a user choice in each case |
+| 13. INSERT batch | Field only with grouped, default 100 | Fixed at 100 | MySQL refuses a command above `max_allowed_packet` |
+| 14. Numbers in JSON | Number with the database text. `NaN` and `Infinity` become strings | Always string; option in the modal | The file keeps all digits |
+| 15. Scripts | All rows only with a command in the execution or with an open transaction | Allow with a warning; reread the whole script | The session is cleaned between executions, so rereading only the `SELECT` after a `SET` may read another table without an error |
+| 16. Redis and Valkey | Only Selection and Loaded rows, without SQL INSERT | Everything in the key tabs | There is no `is_plain_read` for Redis, and the key tab reads by pages |
+| 17. Open the modal | `e` key in the grid and action in the palette | Also in the navigator; palette only | The key stays near the grid, and `e` is free in both key maps |
+| 18. Start path | Saved folder or current folder, with `<source>-YYYY-MM-DD-HHMM.<ext>`. The extension follows the format until the user edits the path | No date; Downloads folder | The existing-file window almost never appears |
+| 19. Remember choices | Format, options, and folder persist | Session only; do not remember | Whoever uses `;` does not choose again |
+| 20. Several results | Only the active result; one modal generates one file | One file per result tab | It would multiply the existing-file and partial windows |
+| 21. Navigator | Out of scope | Key in the navigator table | The user withdrew the request |
+| 22. Where to save | `preferences.export` in the global `config.json`, when Export confirms | Active scope; `workspace.json` | The `config.json` of a project is versioned, and the folder would be a path of one machine only |
+| 23. Layout | Sidebar with the formats, like the Settings dialog | One-column form | Shows all the formats at once, and the mouse picks with one click |
+| 24. Start range | Selection, when it exists. Otherwise All rows, when available. Otherwise Loaded rows | Selection or Loaded rows | Avoids an incomplete file by mistake |
+| 25. Simultaneous exports | One per tab. The modal refuses a destination in use | One at a time | Each tab has its task, and two equal destinations would share the same temporary file |
 
-Estas escolhas seguem as regras acima nos pontos que elas deixaram abertos.
+These choices follow the rules above on the points the rules left open.
 
-| Assunto | Escolha | Rejeitado | Motivo |
+| Subject | Choice | Rejected | Reason |
 |---|---|---|---|
-| Filtro da tabela | All rows usa o filtro e a ordem aplicados | O texto digitado | A grade mostra o que foi aplicado |
-| `Enter` no modal | Só o botão **Export** exporta. Em outro campo, `Enter` vai ao próximo, como no diálogo Settings | `Enter` exporta de qualquer campo | Pedido do usuário: evita uma exportação sem querer |
-| All rows oculto | Quando a grade já tem tudo, só Loaded rows aparece | Reler mesmo assim | Evita uma consulta sem ganho |
-| Quando abrir | Só com a aba livre e um resultado ativo | Abrir na aba **Messages** | Sem resultado não há o que gravar |
-| Zero linhas | Gera um arquivo: só cabeçalho, `[]` ou vazio | Recusar | O resultado vazio também é uma resposta |
-| JSON | Um objeto por linha dentro do array, sem indentar campos; a saída é UTF-8 | Indentação completa | O arquivo fica pequeno e legível |
-| Campo File | Aceita `~`, cria as pastas que faltam e recusa uma pasta como destino | Exigir uma pasta existente | É o que um usuário de terminal espera |
-| Nome de origem | Troca `/`, `\`, `:` e caracteres de controle por `-`; a hora é local | Hora UTC | O nome precisa ser válido e legível |
-| Sem linhas gravadas | Stop ou erro antes da primeira linha apaga o temporário, sem janela | Mostrar a janela | Não há nada para manter |
-| **Keep** | Fecha o formato, então o JSON parcial continua válido; a janela avisa quando substitui um arquivo antigo | Deixar o arquivo aberto | O parcial continua legível |
-| Fechar durante a exportação | Usa a confirmação atual de execução, e o temporário é apagado | Janela de parcial | A aba some, e a janela não teria contexto |
-| Permissão | Padrão do sistema | `0600` | O arquivo é do usuário, como o de qualquer programa |
-| Falha ao salvar as escolhas | Mostra uma nota, e a exportação continua | Cancelar | A exportação é o pedido principal |
-| `preferences.export` no projeto | Erro de configuração | Ignorar | O campo existe só no escopo global |
-| Progresso | A linha de status lê um contador da exportação | Um evento a cada lote | O canal tem 256 posições e a tela lê um número limitado de eventos por quadro, então os eventos poderiam atrasar a gravação |
-| Hora local | `chrono` com a feature `clock` | `time`; `libc` | `time` recusa o fuso local em um processo com várias threads, e o projeto não tem `unsafe` |
+| Table filter | All rows uses the applied filter and order | The typed text | The grid shows what was applied |
+| `Enter` in the modal | Only the **Export** button exports. In another field, `Enter` goes to the next, as in the Settings dialog | `Enter` exports from any field | User request: avoids an export by accident |
+| Hidden All rows | When the grid already has everything, only Loaded rows appears | Reread anyway | Avoids a query with no gain |
+| When to open | Only with the tab free and an active result | Open on the **Messages** tab | Without a result there is nothing to write |
+| Zero rows | Generates a file: header only, `[]`, or empty | Refuse | The empty result is also an answer |
+| JSON | One object per line inside the array, without indenting fields; the output is UTF-8 | Full indentation | The file stays small and readable |
+| File field | Accepts `~`, creates the missing folders, and refuses a folder as target | Require an existing folder | It is what a terminal user expects |
+| Source name | Replaces `/`, `\`, `:`, and control characters with `-`; the time is local | UTC time | The name needs to be valid and readable |
+| Without written rows | Stop or error before the first row erases the temporary file, without a window | Show the window | There is nothing to keep |
+| **Keep** | Closes the format, so the partial JSON stays valid; the window warns when it replaces an old file | Leave the file open | The partial stays readable |
+| Close during the export | Uses the current execution confirmation, and the temporary file is erased | Partial window | The tab disappears, and the window would have no context |
+| Permission | System default | `0600` | The file belongs to the user, like any program file |
+| Failure to save the choices | Shows a note, and the export continues | Cancel | The export is the main request |
+| `preferences.export` in the project | Configuration error | Ignore | The field exists only in the global scope |
+| Progress | The status line reads a counter of the export | One event per batch | The channel has 256 slots and the screen reads a limited number of events per frame, so the events could delay the write |
+| Local time | `chrono` with the `clock` feature | `time`; `libc` | `time` refuses the local time zone in a multi-threaded process, and the project has no `unsafe` |
 
-### Limitações conhecidas da exportação
+### Known limitations of the export
 
-- Uma coluna JSON do banco vira string, pois `Value` não guarda o tipo da coluna.
-- `is_plain_read` recusa uma função desconhecida. `SELECT minha_funcao(x)` fica com Loaded rows.
-- All rows lê os dados de agora, que podem diferir da grade.
-- O CSV não neutraliza fórmulas como `=SOMA(...)`, pois o projeto não altera valores.
-- A troca final do temporário não confere o destino de novo.
+- A JSON column of the database becomes a string, because `Value` does not keep the column type.
+- `is_plain_read` refuses an unknown function. `SELECT my_function(x)` stays with Loaded rows.
+- All rows reads the data of now, which can differ from the grid.
+- The CSV does not neutralize formulas such as `=SUM(...)`, because the project does not change values.
+- The final rename of the temporary file does not check the target again.
 
-## Redis e Valkey — 2026-10-31
+## Redis and Valkey — 2026-10-31
 
-**Definido:** o usuário pede suporte a Redis e Valkey e aprova as 11 recomendações abaixo.
-Este pedido reabre a regra "MongoDB, Redis e Kafka ficam fora da primeira versão" somente para Redis e Valkey.
+**Defined:** the user asks for Redis and Valkey support and approves the 11 recommendations below.
+This request reopens the rule "MongoDB, Redis, and Kafka stay out of the first version" only for Redis and Valkey.
 
-| Ponto | Decisão aprovada | Rejeitado | Motivo |
+| Point | Approved decision | Rejected | Reason |
 |---|---|---|---|
-| 1. Entrada no console | Um comando por linha, como no `redis-cli`; `#` no início da linha é comentário | `;` termina o comando | O texto do `redis-cli` funciona sem mudança |
-| 2. Explorador | Bancos e até 1.000 chaves por banco, com `SCAN`; `Enter` abre o valor em uma aba | Só bancos com lista paginada; só bancos | Permite navegar sem escrever comandos |
-| 3. Somente leitura | Consultar `COMMAND INFO` e recusar comandos sem a marca `readonly`; sem resposta do servidor, recusar | Lista fixa; retirar a opção | Cobre Valkey e módulos, e o servidor não tem sessão somente leitura |
-| 4. Transações | Sem modo manual; `MULTI` e `EXEC` funcionam em um script | Ligar o modo manual a `MULTI` e `EXEC` | Dentro de `MULTI`, uma leitura responde `QUEUED`, sem dados |
-| 5. Comandos contínuos | Recusar `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE` e `MONITOR` | Fluxo contínuo na grade | O console não tem fluxo contínuo |
-| 6. Comandos destrutivos | Sem confirmação | Pedir confirmação | `DROP` também não pede confirmação |
-| 7. TLS de `redis://` | Regra do SQLN: local sem TLS, remoto verifica; `?sslmode=disable` desliga; `rediss://` sempre usa TLS | `redis://` nunca usa TLS | A senha só viaja sem TLS por escolha explícita |
-| 8. Topologia | Somente servidor único | Cluster; Cluster e Sentinel | Cluster e Sentinel mudam o pool |
-| 9. Resultado na grade | Valor em uma célula, lista em linhas, mapa nas colunas `field` e `value`, valor aninhado como texto | Tudo como texto | Aproveita a grade; exige RESP3 |
-| 10. Autocomplete | Nomes de comandos, com lista fixa | Também nomes de chaves | A lista de chaves pode ser parcial |
-| 11. Tipo de conexão | Um tipo "Redis/Valkey", com `redis://`, `rediss://`, `valkey://` e `valkeys://` | Dois tipos | O protocolo é o mesmo |
+| 1. Console input | One command per line, as in `redis-cli`; `#` at the start of the line is a comment | `;` ends the command | The `redis-cli` text works without change |
+| 2. Explorer | Databases and up to 1,000 keys per database, with `SCAN`; `Enter` opens the value in a tab | Only databases with a paginated list; only databases | Allows browsing without writing commands |
+| 3. Read only | Ask `COMMAND INFO` and refuse commands without the `readonly` mark; without a server response, refuse | Fixed list; remove the option | Covers Valkey and modules, and the server has no read-only session |
+| 4. Transactions | No manual mode; `MULTI` and `EXEC` work in a script | Tie the manual mode to `MULTI` and `EXEC` | Inside `MULTI`, a read answers `QUEUED`, without data |
+| 5. Continuous commands | Refuse `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE`, and `MONITOR` | Continuous flow in the grid | The console has no continuous flow |
+| 6. Destructive commands | Without confirmation | Ask for confirmation | `DROP` also does not ask for confirmation |
+| 7. TLS of `redis://` | SQLN rule: local without TLS, remote verifies; `?sslmode=disable` turns it off; `rediss://` always uses TLS | `redis://` never uses TLS | The password only travels without TLS by explicit choice |
+| 8. Topology | Single server only | Cluster; Cluster and Sentinel | Cluster and Sentinel change the pool |
+| 9. Result in the grid | Value in one cell, list in rows, map in the `field` and `value` columns, nested value as text | Everything as text | Uses the grid; needs RESP3 |
+| 10. Autocomplete | Command names, with a fixed list | Also key names | The key list can be partial |
+| 11. Connection type | One "Redis/Valkey" type, with `redis://`, `rediss://`, `valkey://`, and `valkeys://` | Two types | The protocol is the same |
 
-Estas escolhas seguem as regras acima nos pontos que elas deixaram abertos.
+These choices follow the rules above on the points the rules left open.
 
-| Assunto | Escolha | Rejeitado | Motivo |
+| Subject | Choice | Rejected | Reason |
 |---|---|---|---|
-| Driver | `redis` 1.8, com `MultiplexedConnection` em um stream próprio | TLS do driver | O TLS do driver não usa as raízes de `connector::tls`; o stream próprio mantém uma regra de TLS para todas as fontes |
-| Banco no formulário | Número, validado no formulário, na URI e no `config.json` | Texto livre | Redis não tem nomes de banco |
-| Usuário | Opcional somente para Redis | Exigir `default` | Um servidor sem ACL não tem usuário |
-| Comandos de identidade | Recusar `AUTH`, `HELLO` e `RESET` | Permitir | A sessão volta ao pool, e outro console receberia o novo login |
-| Replicação | Recusar `SYNC` e `PSYNC` com os comandos contínuos | Permitir | Esses comandos também não terminam |
-| Testes | `tests/redis.rs`, separado de `tests/servers.rs` | Somar ao `tests/servers.rs` | Esse arquivo repete SQL em cada servidor |
+| Driver | `redis` 1.8, with `MultiplexedConnection` on its own stream | Driver TLS | The driver TLS does not use the `connector::tls` roots; the own stream keeps one TLS rule for all sources |
+| Database in the form | Number, validated in the form, in the URI, and in `config.json` | Free text | Redis has no database names |
+| User | Optional only for Redis | Require `default` | A server without ACL has no user |
+| Identity commands | Refuse `AUTH`, `HELLO`, and `RESET` | Allow | The session returns to the pool, and another console would receive the new login |
+| Replication | Refuse `SYNC` and `PSYNC` with the continuous commands | Allow | Those commands also do not end |
+| Tests | `tests/redis.rs`, separate from `tests/servers.rs` | Add to `tests/servers.rs` | That file repeats SQL on each server |
 
-### Limitações conhecidas de Redis e Valkey
+### Known limitations of Redis and Valkey
 
-| Assunto | Limitação |
+| Subject | Limitation |
 |---|---|
-| Somente leitura | A proteção fica só no cliente. `PING`, `INFO`, `ECHO`, `TIME`, `SELECT`, `CONFIG`, `CLIENT`, `OBJECT`, `MEMORY` e `XINFO` ficam recusados, pois o servidor não marca esses nomes como `readonly`. O seletor de banco continua a funcionar |
-| Stop | Só para um comando que espera, como `BLPOP`. Em outro comando, o SQLN fecha a conexão, e o servidor termina o comando |
-| Comando lento | Um `KEYS *` longo prende o servidor, então o pedido de parada pode esperar 5 segundos sem resposta |
-| Teto e orçamento | O driver lê a resposta inteira antes do teto de linhas e do orçamento da grade. Um `LRANGE k 0 -1` enorme usa memória antes do corte |
-| Explorador | Mostra até 1.000 chaves na ordem de chegada do `SCAN`, ordenadas por nome. Bancos vazios não aparecem, exceto o banco atual. Uma chave que não é UTF-8 não aparece e marca a lista como parcial. Um comando não atualiza a árvore; use **Refresh** |
-| Páginas de valor | `HSCAN`, `SSCAN` e `XRANGE` não têm offset, então cada página repete a leitura anterior, com o custo de `OFFSET` em SQL. Um hash ou set que muda pode repetir ou pular itens |
-| Tipos de módulo | Um tipo de módulo, como JSON, não abre em aba. Use o console |
-| `MULTI` | Vale somente dentro da mesma execução. Executar `MULTI` sozinho descarta a fila no fim da execução |
-| `CLIENT REPLY OFF` | O SQLN não recusa esse comando. A sessão fica sem resposta até o prazo ou até o Stop |
-| Topologia | Sem Cluster e sem Sentinel. Uma resposta `MOVED` aparece como erro |
-| Versão | RESP3 exige Redis 6 ou mais novo. Um servidor mais antigo falha ao conectar |
-| Autocomplete | A lista de comandos é fixa, sem comandos de módulo e sem chaves |
-| Linha de comando | Um valor não ocupa duas linhas. Use `\n` entre aspas duplas |
+| Read only | The protection stays only in the client. `PING`, `INFO`, `ECHO`, `TIME`, `SELECT`, `CONFIG`, `CLIENT`, `OBJECT`, `MEMORY`, and `XINFO` stay refused, because the server does not mark those names as `readonly`. The database selector keeps working |
+| Stop | Only for a command that waits, such as `BLPOP`. In another command, SQLN closes the connection, and the server ends the command |
+| Slow command | A long `KEYS *` holds the server, so the stop request may wait 5 seconds without a response |
+| Cap and budget | The driver reads the whole response before the row cap and the grid budget. A huge `LRANGE k 0 -1` uses memory before the cut |
+| Explorer | Shows up to 1,000 keys in the `SCAN` arrival order, sorted by name. Empty databases do not appear, except the current database. A key that is not UTF-8 does not appear and marks the list as partial. A command does not update the tree; use **Refresh** |
+| Value pages | `HSCAN`, `SSCAN`, and `XRANGE` have no offset, so each page repeats the previous read, with the SQL `OFFSET` cost. A hash or set that changes can repeat or skip items |
+| Module types | A module type, such as JSON, does not open in a tab. Use the console |
+| `MULTI` | Valid only inside the same execution. Running `MULTI` alone discards the queue at the end of the execution |
+| `CLIENT REPLY OFF` | SQLN does not refuse that command. The session stays without a response until the deadline or the Stop |
+| Topology | No Cluster and no Sentinel. A `MOVED` response appears as an error |
+| Version | RESP3 needs Redis 6 or newer. An older server fails to connect |
+| Autocomplete | The command list is fixed, without module commands and without keys |
+| Command line | A value does not take two lines. Use `\n` in double quotes |
 
-### Pendências de Redis e Valkey
+### Pending items of Redis and Valkey
 
-- Validar em um terminal real: cadastro, explorador, aba de valor e cofre.
-- Testar um socket Unix com servidor real. O Docker no macOS não compartilha esse socket, e o código só tem teste de compilação.
-- Testar o Stop de um comando que não espera. Um script Lua longo prenderia os outros testes no mesmo servidor.
-- Testar um servidor com ACL restrita, sem `CLIENT ID` ou sem `COMMAND INFO`.
-- Testar serviços gerenciados, que podem renomear comandos.
+- Validate in a real terminal: form, explorer, value tab, and vault.
+- Test a Unix socket with a real server. Docker on macOS does not share that socket, and the code has only a build test.
+- Test the Stop of a command that does not wait. A long Lua script would hold the other tests on the same server.
+- Test a server with a restricted ACL, without `CLIENT ID` or without `COMMAND INFO`.
+- Test managed services, which can rename commands.
 
-## Interface no estilo nvim — 2026-10-31
+## nvim-style interface — 2026-10-31
 
-**Definido:** o usuário pede uma interface mais bonita, próxima do nvim e de uma IDE.
-O usuário aprova estes quatro pontos antes da implementação.
-O código já implementa os quatro pontos.
+**Defined:** the user asks for a prettier interface, close to nvim and an IDE.
+The user approves these four points before the implementation.
+The code already implements the four points.
 
-| Ponto | Decisão aprovada | Rejeitado | Motivo |
+| Point | Approved decision | Rejected | Reason |
 |---|---|---|---|
-| Cores | Tema `astrodark` em RGB com truecolor; tema ANSI nos demais casos; `NO_COLOR` sem cor | Somente ANSI | Fundos e tons próprios separam os painéis; a paleta vem do tema do nvim do usuário. Esta decisão substitui "usar as cores ANSI do terminal" |
-| Layout | Sem caixas: abas em toda a largura, explorador, título de painel, barra de status e linha de dicas | Caixa com borda em cada painel | Cada caixa gasta duas linhas e duas colunas, e 80 x 24 é o mínimo |
-| Ícones | Unicode por padrão; `icons: "nerd"` em `config.json` | Somente Nerd Font | A fonte Monaco do usuário não tem esses símbolos |
-| Ícone da conexão | Com `icons: "nerd"`, o logo do banco fica antes do nome, salvo com um ícone escolhido na conexão. No conjunto Unicode, `⛁` fica antes do nome e `pg`, `my`, `sq` ou `rd` depois. `NO_COLOR` não tem ícone | Emoji, que ocupa 2 colunas e não é logo; imagem no terminal, ilegível em 1 ou 2 células | O Unicode não tem esses logos. No iTerm, o Nerd Font Bundle mostra os logos e mantém a Monaco no texto |
-| Temas | Esquemas de cores como dados em `ui/schemes`, escolhidos em `Settings > Appearance`, com prévia antes de salvar. Detalhes em "Temas — 2026-10-31" | Uma função de estilos para cada tema | Cada tema novo vira uma tabela de cores, e os testes conferem o contraste |
-| Recursos | Menu do `Ctrl+W`, paleta de comandos, tela inicial, barras de rolagem, linha atual e número de linha na grade | Somente mudanças visuais | O usuário também pede uma interface mais intuitiva |
+| Colors | `astrodark` theme in RGB with truecolor; ANSI theme in the other cases; `NO_COLOR` without color | ANSI only | Own backgrounds and tones separate the panels; the palette comes from the nvim theme of the user. This decision replaces "use the ANSI colors of the terminal" |
+| Layout | No boxes: tabs over the whole width, navigator, panel title, status bar, and hint line | Box with border on each panel | Each box spends two rows and two columns, and 80 x 24 is the minimum |
+| Icons | Unicode by default; `icons: "nerd"` in `config.json` | Nerd Font only | The Monaco font of the user does not have those symbols |
+| Connection icon | With `icons: "nerd"`, the database logo comes before the name, unless the connection has a chosen icon. In the Unicode set, `⛁` comes before the name and `pg`, `my`, `sq`, or `rd` after. `NO_COLOR` has no icon | Emoji, which takes 2 columns and is not a logo; image in the terminal, unreadable at 1 or 2 cells | Unicode does not have those logos. In iTerm, the Nerd Font Bundle shows the logos and keeps Monaco in the text |
+| Themes | Color schemes as data in `ui/schemes`, picked in `Settings > Appearance`, with a preview before saving. Details in "Themes — 2026-10-31" | One style function per theme | Each new theme becomes a color table, and the tests check the contrast |
+| Features | `Ctrl+W` menu, command palette, welcome screen, scroll bars, current line, and row number in the grid | Visual changes only | The user also asks for a more intuitive interface |
 
-Estas escolhas seguem as regras acima nos pontos que elas deixaram abertos.
+These choices follow the rules above on the points the rules left open.
 
-| Assunto | Escolha | Rejeitado | Motivo |
+| Subject | Choice | Rejected | Reason |
 |---|---|---|---|
-| Botões de página na tabela | **Previous** e **Next** movem o cursor nas linhas acumuladas; **Next** carrega a página que falta | Trocar as linhas a cada página, com nova consulta para voltar | Mantém a regra de manter as linhas anteriores, o orçamento e a consulta por página; voltar não repete a consulta |
-| Botões de página no console | Não oferecer | Nova consulta por página | Vale a decisão de mais linhas no console: repetir a consulta altera o SQL e pode mostrar outro resultado |
-| Tecla que aceita sugestão | Opção `suggestionKeys`: `tab` (padrão), `enter` ou `both`, no editor e no filtro da tabela | Somente `Tab`, como no plano original | Reaberta pelo usuário em 2026-10-31; o padrão mantém a regra antiga, e `Enter` só aceita por escolha explícita |
-| Precisão do tempo | Três casas decimais durante a execução e no último tempo, com atualização a cada 100 ms | Segundos inteiros; 250 ms | Pedido do usuário; a 250 ms os últimos dígitos ficam quase parados |
-| Estado da execução nas abas | Selo com fundo colorido no início da aba, com o tempo durante a execução | Símbolo no fim da aba, ao lado do nome | No fim, `✗` ficaria ao lado do `×` de fechar; um bloco de cor é difícil de perder |
-| Fim do selo de resultado | O selo sai quando o usuário deixa a aba, ou com a próxima execução | Manter até a próxima execução; sair ao entrar na aba | Uma aba com selo significa um resultado que o usuário ainda não viu |
-| Início do tempo | Quando a execução começa, sem a espera por senha | Desde a tecla de executar | O tempo mede o banco, e não a digitação da senha |
-| Abas da última sessão | Reabrir ao iniciar, com a opção `reopenTabs` e padrão ligado | Lista manual somente, como no plano original; perguntar ao iniciar | Reaberta pelo usuário em 2026-10-31: o texto já fica salvo, e a reabertura não executa SQL |
-| Tabela da última sessão | Carregar na primeira seleção; uma aba que começa na tela espera `Enter` ou **Apply** | Carregar ao iniciar | A regra de conectar no primeiro uso continua: a abertura não conecta e não pede senha |
-| Lista de abas após uma falha | Configuração inválida ou console bloqueado mantém a lista do arquivo | Gravar a lista da sessão atual | Uma sessão que não conseguiu reabrir as abas não pode apagar essa lista |
-| Fechar aba com o mouse | `×` no fim de cada aba, com as perguntas de `Ctrl+W c` | Fechar sem perguntas; mostrar `×` só na aba ativa | Um clique não pode descartar uma transação ou um texto; o `×` em cada aba fecha outra aba sem trocar a tela |
-| Comandos da linha de dicas | Tecla com o estilo das teclas do menu, efeito com a cor de dica e dois espaços entre os comandos | Separar com ` · ` | A cor marca o início de cada comando; ` · ` passa de 80 colunas no explorador, e dois espaços fecham em 80 |
-| Duração das mensagens | 8 s; uma tecla, uma colagem ou um clique remove antes | Remover só com tecla; o ponteiro e a roda também removem | Uma mensagem sem prazo fica congelada para quem usa o mouse; mover o ponteiro não é uma resposta à mensagem |
-| Espera de credenciais | A mensagem vem do estado da tentativa | Usar o mesmo prazo das outras mensagens | Uma espera longa no cofre continua ativa depois de 8 s, e o fim da espera deve remover a mensagem |
-| Altura | Linha sob as abas e título do painel somente com 30 linhas ou mais | Sempre mostrar | Em 80 x 24, o editor e a grade mantêm as 18 linhas de antes |
-| Tema sem cor | Mantém `[Run]`, sem ícones e sem `○` | Mesmos símbolos dos outros temas | Sem cor, o colchete identifica um botão |
-| Tema ANSI | Sem fundo na base, no painel e na linha atual | Fundo preto | O perfil do terminal pode ser claro |
-| Números do editor | Desenho próprio, com `LineNumbers::None` no EdTUI | Mudar o fork | O fork deve ficar pequeno até o lançamento |
-| Segunda tecla da paleta | `Ctrl+W :` | Somente `Ctrl+P` | A regra 2 de `KEYMAP.md` pede outro caminho, e `Ctrl+P` não está no registro do `keytest` |
-| Teclas na paleta | Uma tecla do explorador aparece somente com o explorador em foco | Mostrar sempre | Fora do explorador, essa letra vira texto |
-| Rótulo da tecla | `Ctrl+P`, com a letra maiúscula | `Ctrl+p` | Uma letra sozinha mantém a caixa, pois `n` e `N` são teclas diferentes |
-| Formulário de conexão | Grupos com quatro arranjos, do mais espaçado ao compacto, conforme a tela | Rolagem dentro da janela | Todos os campos ficam visíveis, e o teste de 80 x 24 continua válido |
-| Foco no formulário | Marca, rótulo em destaque e fundo próprio | Somente o cursor | O usuário não via o campo selecionado |
-| Arquivo SQLite no formulário | O texto digitado parte do diretório atual, e a conexão grava o caminho completo; um caminho salvo e não alterado fica como está | Resolver o texto digitado pelo escopo; converter também um caminho salvo | O usuário pede o caminho do teste. O teste usava o diretório atual, e a conexão salva abria outro arquivo. Editar outro campo não muda um caminho relativo escrito à mão |
-| Arquivo SQLite em um projeto | Gravar também o caminho completo no `config.json` do projeto | Gravar relativo à raiz do projeto | É o pedido do usuário. Consequência: esse caminho vale somente nesta máquina; um caminho relativo escrito à mão continua válido |
+| Page buttons in the table | **Previous** and **Next** move the cursor in the accumulated rows; **Next** loads the missing page | Replace the rows on each page, with a new query to go back | Keeps the rule of keeping the previous rows, the budget, and the query per page; going back does not repeat the query |
+| Page buttons in the console | Do not offer | New query per page | The more-rows decision in the console applies: repeating the query changes the SQL and can show another result |
+| Key that accepts a suggestion | `suggestionKeys` option: `tab` (default), `enter`, or `both`, in the editor and the table filter | Only `Tab`, as in the original plan | Reopened by the user on 2026-10-31; the default keeps the old rule, and `Enter` accepts only by explicit choice |
+| Time precision | Three decimal places during the execution and in the last time, with an update every 100 ms | Whole seconds; 250 ms | User request; at 250 ms the last digits stay almost still |
+| Execution state in the tabs | Badge with a colored background at the start of the tab, with the time during the execution | Symbol at the end of the tab, beside the name | At the end, `✗` would sit beside the closing `×`; a color block is hard to miss |
+| End of the result badge | The badge leaves when the user leaves the tab, or with the next execution | Keep until the next execution; leave when entering the tab | A tab with a badge means a result the user has not seen yet |
+| Start of the time | When the execution starts, without the password wait | From the run key | The time measures the database, not the password typing |
+| Tabs of the last session | Reopen at startup, with the `reopenTabs` option and default on | Manual list only, as in the original plan; ask at startup | Reopened by the user on 2026-10-31: the text is already saved, and the reopening runs no SQL |
+| Table of the last session | Load on the first selection; a tab that starts on screen waits for `Enter` or **Apply** | Load at startup | The connect-on-first-use rule stays: the opening does not connect and does not ask for a password |
+| Tab list after a failure | Invalid configuration or a locked console keeps the file list | Write the list of the current session | A session that could not reopen the tabs cannot erase that list |
+| Close tab with the mouse | `×` at the end of each tab, with the questions of `Ctrl+W c` | Close without questions; show `×` only on the active tab | A click cannot discard a transaction or a text; the `×` on each tab closes another tab without changing the screen |
+| Hint line commands | Key with the menu key style, effect with the hint color, and two spaces between the commands | Separate with ` · ` | The color marks the start of each command; ` · ` passes 80 columns in the navigator, and two spaces fit in 80 |
+| Message duration | 8 s; a key, a paste, or a click removes it before | Remove only with a key; the pointer and the wheel also remove | A message without a deadline stays frozen for a mouse user; moving the pointer is not an answer to the message |
+| Credential wait | The message comes from the state of the attempt | Use the same deadline of the other messages | A long vault wait stays active after 8 s, and the end of the wait must remove the message |
+| Height | Line under the tabs and panel title only with 30 lines or more | Always show | At 80 x 24, the editor and the grid keep the 18 rows of before |
+| Theme without color | Keeps `[Run]`, without icons and without `○` | Same symbols as the other themes | Without color, the bracket identifies a button |
+| ANSI theme | No background on the base, the panel, and the current line | Black background | The terminal profile can be light |
+| Editor numbers | Own drawing, with `LineNumbers::None` in EdTUI | Change the fork | The fork must stay small until the release |
+| Second palette key | `Ctrl+W :` | Only `Ctrl+P` | Rule 2 of `KEYMAP.md` asks for another path, and `Ctrl+P` is not in the `keytest` record |
+| Keys in the palette | A navigator key appears only with the navigator in focus | Always show | Outside the navigator, that letter becomes text |
+| Key label | `Ctrl+P`, with the uppercase letter | `Ctrl+p` | A lone letter keeps the case, because `n` and `N` are different keys |
+| Connection form | Groups with four arrangements, from the most spaced to the compact, according to the screen | Scrolling inside the window | All the fields stay visible, and the 80 x 24 test stays valid |
+| Form focus | Mark, highlighted label, and own background | Cursor only | The user could not see the selected field |
+| SQLite file in the form | The typed text starts from the current directory, and the connection saves the full path; a saved and unchanged path stays as it is | Resolve the typed text by scope; convert a saved path too | The user asks for the path of the test. The test used the current directory, and the saved connection opened another file. Editing another field does not change a hand-written relative path |
+| SQLite file in a project | Write the full path also into the project `config.json` | Write relative to the project root | It is the user request. Consequence: that path is valid only on this machine; a hand-written relative path stays valid |
 
-## Fechamento das decisões — 2026-10-31
+## Decision close — 2026-10-31
 
-**Definido:** o usuário aceita todas as 12 recomendações abaixo.
-A aprovação fecha as decisões, mas não declara as mudanças como implementadas.
-A seção 1 do plano separa o código atual dos ajustes que faltam.
+**Defined:** the user accepts all 12 recommendations below.
+The approval closes the decisions, but does not declare the changes as implemented.
+Section 1 of the plan separates the current code from the missing adjustments.
 
-| Ponto | Decisão aprovada | Referência |
+| Point | Approved decision | Reference |
 |---|---|---|
-| 1. Renomear consoles | `Ctrl+W N` e ação na lista; recusar nome vazio ou repetido na conexão; preservar identidade e arquivos | Plano, seção 12 |
-| 2. Trocar conexão | `Ctrl+W a`, confirmação, salvamento anterior, preservação do texto e limpeza dos resultados; não executar nem converter SQL | Plano, seção 12 |
-| 3. CTEs | Sugerir nomes e colunas identificáveis de `WITH`, com aliases e escopo; não consultar o banco para descobri-las | Plano, seção 6 |
-| 4. Desfazer | Até 100 entradas e 64 MiB por console; remover as mais antigas e avisar sobre entrada isolada acima do orçamento | Plano, seção 5 |
-| 5. Dicas e ajuda | Mostrar teclas efetivas do `keymap` e somente ações disponíveis, inclusive no prefixo | Plano, seção 5 |
-| 6. Configurações | `Ctrl+W ,`, escopos, valores herdados e os cinco campos do esboço; avisar antes de perder seleção ou histórico ao trocar teclado | Plano, seção 11 |
-| 7. Arquivos | Aprovar o salvamento e os conflitos existentes; usar **Fechar e descartar texto** para o arquivo removido | Plano, seção 12 |
-| 8. Listas | Aprovar listas de consoles e scripts sem conexão, confirmação de exclusão e associação sem execução | Plano, seção 12 |
-| 9. Configuração e estado | Aprovar recarga, bloqueio por erro e escopos; avisar sem bloquear quando `workspace.json` estiver ilegível | Plano, seções 11 e 12 |
-| 10. Tabelas | Aprovar abertura, rótulos, ordenação e páginas; misturar abas na ordem de abertura e não criar console ao fechar o último com tabela aberta | Plano, seção 10 |
-| 11. Credenciais | Uso inicial só na sessão, gravação explícita, recuperação e migração confirmadas; confiança com foco em Cancelar | Plano, seção 13 |
-| 12. Cofre | `keyring-core`, Keychain e Secret Service; falha desconhecida é erro, nunca ausência; validar em serviços reais | Plano, seção 13; arquitetura, seção 9 |
+| 1. Rename consoles | `Ctrl+W N` and action in the list; refuse an empty or repeated name in the connection; keep identity and files | Plan, section 12 |
+| 2. Change connection | `Ctrl+W a`, confirmation, previous save, text preservation, and result clearing; do not run or convert SQL | Plan, section 12 |
+| 3. CTEs | Suggest identifiable names and columns of `WITH`, with aliases and scope; do not query the database to find them | Plan, section 6 |
+| 4. Undo | Up to 100 entries and 64 MiB per console; remove the oldest and warn about a single entry above the budget | Plan, section 5 |
+| 5. Hints and help | Show the effective `keymap` keys and only available actions, including in the prefix | Plan, section 5 |
+| 6. Settings | `Ctrl+W ,`, scopes, inherited values, and the five fields of the sketch; warn before losing selection or history on keyboard change | Plan, section 11 |
+| 7. Files | Approve the existing saving and conflicts; use **Close and discard text** for the removed file | Plan, section 12 |
+| 8. Lists | Approve the console and scripts-without-connection lists, delete confirmation, and attach without execution | Plan, section 12 |
+| 9. Configuration and state | Approve reload, lock on error, and scopes; warn without blocking when `workspace.json` is unreadable | Plan, sections 11 and 12 |
+| 10. Tables | Approve opening, labels, sorting, and pages; mix tabs in the opening order and do not create a console when closing the last one with a table open | Plan, section 10 |
+| 11. Credentials | Initial session-only use, explicit storage, confirmed recovery and migration; trust with focus on Cancel | Plan, section 13 |
+| 12. Vault | `keyring-core`, Keychain, and Secret Service; unknown failure is an error, never an absence; validate on real services | Plan, section 13; architecture, section 9 |
 
-Terminal real, mouse, disco de rede, certificados e falhas de rede continuam como validações pendentes.
+Real terminal, mouse, network disk, certificates, and network failures stay as pending validations.
 
-## Estado da entrega de credenciais
+## State of the credential delivery
 
-O código implementa a etapa de credenciais, com texto simples autorizado, migração, senha recusada e exclusão separada.
-O Keychain e o Secret Service em contêiner estão validados; falta repetir o Secret Service em um desktop Linux real.
-A [matriz do plano](../PLAN.md#fechamento-da-etapa-de-credenciais) registra os critérios de conclusão.
-Os testes com cofre em memória e bancos reais não substituem essa validação nativa.
-O critério de cofre ausente vem da validação: somente respostas confirmadas no Linux, nunca no macOS.
+The code implements the credential phase, with authorized plain text, migration, refused password, and separate deletion.
+Keychain and Secret Service in a container are validated; the Secret Service still needs a repeat on a real Linux desktop.
+The [plan matrix](INITIAL_PLAN.md#credential-phase-close) records the completion criteria.
+The tests with an in-memory vault and real databases do not replace that native validation.
+The missing-vault criterion comes from the validation: only responses confirmed on Linux, never on macOS.
 
-## Credenciais e editor — 2026-10-31
+## Credentials and editor — 2026-10-31
 
-**Definido:** o usuário aprova estes pontos depois da leitura do código.
-A aprovação fecha as decisões, mas não declara as mudanças como implementadas.
+**Defined:** the user approves these points after reading the code.
+The approval closes the decisions, but does not declare the changes as implemented.
 
-| Ponto | Decisão aprovada | Rejeitado | Motivo |
+| Point | Approved decision | Rejected | Reason |
 |---|---|---|---|
-| Keychain | Validar nesta máquina, com o usuário presente | Adiar | O texto simples depende dessa validação |
-| Secret Service | Contêiner Linux agora e desktop real antes do lançamento | Somente desktop real | O contêiner cobre serviço ausente, bloqueio e operações comuns, mas não uma sessão de desktop |
-| Senha em texto simples | `credentials.json` na pasta global, com `0600`, por identidade, para os dois escopos | `password` no `config.json` global e seção para conexões de projeto | `config.json` fica sem segredos, e os dois escopos usam um só formato |
-| Fim da suspensão | Cada ação explícita abre a solicitação de senha; uma senha aceita ou a edição da conexão encerra a suspensão | Somente **Desconectar** ou edição | Execuções e catálogo param de insistir, sem um passo extra para o usuário |
-| Limite do desfazer | Fork pequeno do `edtui` por `[patch]`; no lançamento, enviar ao projeto original ou publicar com outro nome | Copiar o código para `src/`; histórico próprio | A mudança fica em `Stack`; a cópia traz 10.169 linhas de terceiros, e o histórico próprio é frágil |
+| Keychain | Validate on this machine, with the user present | Postpone | Plain text depends on that validation |
+| Secret Service | Linux container now and a real desktop before the release | Real desktop only | The container covers missing service, lock, and common operations, but not a desktop session |
+| Plain-text password | `credentials.json` in the global folder, with `0600`, per identity, for both scopes | `password` in the global `config.json` and a section for project connections | `config.json` stays without secrets, and both scopes use one format |
+| End of the suspension | Each explicit action opens the password prompt; an accepted password or the connection edit ends the suspension | Only **Disconnect** or edit | Executions and catalog stop insisting, without an extra step for the user |
+| Undo limit | Small fork of `edtui` through `[patch]`; at release, send to the original project or publish under another name | Copy the code into `src/`; own history | The change stays in `Stack`; the copy brings 10,169 third-party lines, and the own history is fragile |
 
-## Execução e resultados
+## Execution and results
 
-| Assunto | Escolha | Rejeitado | Motivo |
+| Subject | Choice | Rejected | Reason |
 |---|---|---|---|
-| Resultado no console | Ler até um teto e encerrar a leitura | Leitura aberta com pausa | Uma pausa encerrou a conexão no MySQL e prende recursos |
-| Mais linhas no console | O usuário aumenta o teto e executa de novo | Nova consulta por página | Repete comandos, altera o SQL e pode mostrar outros dados |
-| Teto padrão | 1.000 linhas | 500 linhas | Valor do lazysql; Harlequin e DataGrip usam 500 |
-| Fim da leitura no teto | Conforme o comando | Sempre cancelar ou sempre consumir | Cancelar pode desfazer uma alteração |
-| Visão de tabela | Nova consulta por página | Leitura aberta entre páginas | Libera a conexão; aceita-se o risco de ordem instável |
-| Próxima página | Pedir uma linha a mais | `COUNT` | Evita custo no banco |
-| Aba em leitura | Bloquear o fechamento | Confirmar ou descartar | Menos estados |
-| Aba de tabela | Tarefa de console sem editor, com uma página por `Run` | Tarefa própria para as páginas | Reaproveita prazo, parada, cancelamento, fila do pool e orçamento |
-| Linha extra da página | Teto do sink em `n+1`, com `LIMIT n+1` no SQL | Teto `n`, com o sink pedindo o cancelamento na linha extra | O cancelamento abre uma conexão nova no PostgreSQL e no MySQL a cada página |
-| Cláusulas da consulta de tabela | Uma por linha | Texto em uma linha | Um comentário `--` no filtro removeria o `LIMIT` |
-| Carregar mais com o orçamento cheio | Recusar até algum dado sair do orçamento; um valor maior que o orçamento recusa sempre | Tentar a consulta e falhar de novo | Evita uma consulta que não pode terminar |
-| Aba de tabela fechada em leitura | Parar a consulta e fechar sem pergunta | Bloquear como o resultado de um console | A consulta não tem transação, então parar não perde dados |
-| Valores da grade | Texto do banco; tipo só na apresentação | Decodificar tipos em Rust | Preserva precisão e aceita tipos desconhecidos |
-| Fim da leitura no SQLite | Encerrar no cliente com `readonly`; consumir nos demais casos | Sempre consumir | Resultado infinito terminaria somente pelo prazo |
-| Aba depois da execução | Último resultado; **Mensagens** em qualquer outro fim | Sempre o último resultado | Uma parada ficaria invisível atrás de uma grade vazia |
-| Cursor da grade | Conta como seleção de uma célula para `Ctrl+C` | Exigir seleção | A grade sempre tem uma célula atual, como no DataGrip |
-| Função em consulta no teto | Consumir as linhas | Cancelar toda consulta com `SELECT` | O cancelamento desfaz `SELECT grava(id)` em silêncio; consumir custa somente tempo |
-| Busca na grade | Partes de 8 ms entre as teclas, com 1.000.000 de resultados na lista | Lista sem limite ou leitura em uma tecla | 2 milhões de linhas levam 0,6 s; um texto curto encheria a memória |
-| Largura manual | `<`, `>`, `=` e arrasto no cabeçalho | Só o mouse | Toda ação essencial tem um caminho pelo teclado |
-| Fechar resultado | `x` ou `Delete` na grade | `Ctrl+W c` | `Ctrl+W c` fecha o console, e essa diferença evita perda por engano |
-| Parar uma instrução | Cancelar e fechar como último recurso | Só fechar a conexão | Com a conexão fechada, um `INSERT` terminou nos dois bancos |
-| Prazo do cancelamento | 5 segundos | Sem prazo | DataGrip oferece escalonamento parecido |
-| Conexão de cancelamento | Temporária e fora do limite do pool | Respeitar o limite literalmente | O protocolo exige outra conexão |
+| Result in the console | Read up to a cap and end the read | Open read with pause | A pause ended the connection on MySQL and holds resources |
+| More rows in the console | The user raises the cap and runs again | New query per page | Repeats commands, changes the SQL, and can show other data |
+| Default cap | 1,000 rows | 500 rows | lazysql value; Harlequin and DataGrip use 500 |
+| End of the read at the cap | According to the command | Always cancel or always consume | Cancel can undo a change |
+| Table view | New query per page | Open read between pages | Frees the connection; the unstable-order risk is accepted |
+| Next page | Ask for one extra row | `COUNT` | Avoids cost at the database |
+| Tab reading | Block the close | Confirm or discard | Fewer states |
+| Table tab | Console task without an editor, with one page per `Run` | Own task for the pages | Reuses deadline, stop, cancellation, pool queue, and budget |
+| Extra row of the page | Sink cap at `n+1`, with `LIMIT n+1` in the SQL | Cap at `n`, with the sink requesting the cancellation on the extra row | The cancellation opens a new connection in PostgreSQL and MySQL on each page |
+| Table query clauses | One per line | Text on one line | A `--` comment in the filter would remove the `LIMIT` |
+| Load more with a full budget | Refuse until some data leaves the budget; a value bigger than the budget refuses always | Try the query and fail again | Avoids a query that cannot finish |
+| Table tab closed while reading | Stop the query and close without a question | Block like a console result | The query has no transaction, so stopping loses no data |
+| Grid values | Database text; type only in presentation | Decode types in Rust | Keeps precision and accepts unknown types |
+| End of the read on SQLite | End at the client with `readonly`; consume in the other cases | Always consume | An infinite result would end only by the deadline |
+| Tab after the execution | Last result; **Messages** on any other end | Always the last result | A stop would stay invisible behind an empty grid |
+| Grid cursor | Counts as a one-cell selection for `Ctrl+C` | Require a selection | The grid always has a current cell, as in DataGrip |
+| Function in a query at the cap | Consume the rows | Cancel every query with `SELECT` | The cancellation undoes `SELECT writes(id)` silently; consuming costs only time |
+| Grid search | 8 ms slices between keys, with 1,000,000 results in the list | List without a limit or read in one key | 2 million rows take 0.6 s; a short text would fill the memory |
+| Manual width | `<`, `>`, `=`, and drag on the header | Mouse only | Every essential action has a keyboard path |
+| Close result | `x` or `Delete` in the grid | `Ctrl+W c` | `Ctrl+W c` closes the console, and that difference avoids a loss by mistake |
+| Stop a statement | Cancel and close as the last resort | Only close the connection | With the connection closed, an `INSERT` finished on both databases |
+| Cancellation deadline | 5 seconds | Without a deadline | DataGrip offers a similar escalation |
+| Cancellation connection | Temporary and outside the pool limit | Respect the limit literally | The protocol needs another connection |
 
-## Arquivos e salvamento
+## Files and saving
 
-Estas escolhas estão aprovadas em 2026-10-31, com os ajustes registrados no plano.
-O código oferece sessão, cofre e a exceção global autorizada em texto simples, em `credentials.json`.
+These choices are approved on 2026-10-31, with the adjustments recorded in the plan.
+The code offers session, vault, and the authorized global plain-text exception, in `credentials.json`.
 
-| Assunto | Escolha | Rejeitado | Motivo |
+| Subject | Choice | Rejected | Reason |
 |---|---|---|---|
-| Biblioteca JSON | `serde` e `serde_json`, com `deny_unknown_fields` | Leitura manual | Um campo desconhecido invalida o arquivo, como o plano exige; a posição do erro vem do leitor |
-| Identidade de um console | UUID `v4` no nome dos arquivos | Contador | Vários computadores criam consoles de um projeto no Git sem colisão |
-| Bloqueio de arquivo | `File::try_lock` da biblioteca padrão, em `locks/<id>.lock` | `fs2`, `fd-lock` | O plano pede o bloqueio do sistema, e a biblioteca padrão o oferece sem dependência nova |
-| Hash dos arquivos | `DefaultHasher` | `sha2` | O hash só compara conteúdos dentro de um processo, e nunca vai para um arquivo |
-| Detecção de mudança | Conferência a cada segundo, por tamanho e data, e depois hash | `notify` | O plano permite observar a pasta ou comparar o hash; a conferência é portátil e não pede uma dependência |
-| Criação dos arquivos | Na primeira edição do console | Ao abrir o console | Um console vazio não deixa lixo em um repositório |
-| Erro de configuração | Bloqueia as conexões, e `Ctrl+W r` recarrega | Carregar só o escopo válido | O plano proíbe o escopo parcial |
-| Mudança externa da configuração | Pergunta, com **Ignore** como foco inicial | Recarga automática | O plano pede a pergunta, e o foco inicial não altera nada |
-| Conexão que sai do arquivo | Sai da aplicação só quando está ociosa | Fechar a sessão | O plano proíbe a recarga de alterar conexões ativas |
-| Senha no código atual | Sessão ou cofre, com referência `session`, `none` ou `vault`; o segredo não vai para o arquivo | Gravar o segredo no projeto | A exceção global autorizada ainda aguarda implementação e validação do cofre real |
-| Ordem do fechamento | Grava o texto, depois fecha | Fechar e gravar | A gravação que falha mantém o console aberto |
-| Layout | `workspace.json` do projeto, ou do escopo global sem projeto | Um arquivo por escopo | O layout pertence à sessão, e não à conexão |
-| Associação entre escopos | Grava o texto pendente, copia, confere e remove os originais | Mover com `rename` | A pasta de destino pode estar em outro disco |
+| JSON library | `serde` and `serde_json`, with `deny_unknown_fields` | Manual reading | An unknown field invalidates the file, as the plan requires; the error position comes from the reader |
+| Identity of a console | UUID `v4` in the file names | Counter | Several computers create consoles of a project in Git without collision |
+| File lock | `File::try_lock` of the standard library, in `locks/<id>.lock` | `fs2`, `fd-lock` | The plan asks for the system lock, and the standard library offers it without a new dependency |
+| File hashes | `DefaultHasher` | `sha2` | The hash only compares contents inside one process, and never goes to a file |
+| Change detection | Check each second, by size and date, and then hash | `notify` | The plan allows watching the folder or comparing the hash; the check is portable and needs no dependency |
+| File creation | At the first edit of the console | At console open | An empty console leaves no litter in a repository |
+| Configuration error | Blocks the connections, and `Ctrl+W r` reloads | Load only the valid scope | The plan forbids the partial scope |
+| External change of the configuration | Question, with **Ignore** as initial focus | Automatic reload | The plan asks for the question, and the initial focus changes nothing |
+| Connection that leaves the file | Leaves the application only when it is idle | Close the session | The plan forbids the reload from changing active connections |
+| Password in the current code | Session or vault, with a `session`, `none`, or `vault` reference; the secret does not go to the file | Write the secret into the project | The authorized global exception still awaits implementation and real vault validation |
+| Close order | Writes the text, then closes | Close and write | The write that fails keeps the console open |
+| Layout | `workspace.json` of the project, or of the global scope without a project | One file per scope | The layout belongs to the session, not to the connection |
+| Attach between scopes | Writes the pending text, copies, checks, and removes the originals | Move with `rename` | The destination folder can be on another disk |
 
-## Visão de tabela
+## Table view
 
-Estas escolhas estão aprovadas em 2026-10-31.
-A nova ordem das abas e o fechamento sem console substituto ainda exigem mudanças no código.
+These choices are approved on 2026-10-31.
+The new tab order and the close without a replacement console still need code changes.
 
-| Assunto | Escolha | Rejeitado | Motivo |
+| Subject | Choice | Rejected | Reason |
 |---|---|---|---|
-| Abrir uma tabela | `Enter` e duplo clique; `Direita` abre as colunas | `Enter` abre as colunas | `docs/KEYMAP.md` já previa a mudança do `Enter` |
-| Ordem das abas | Consoles e tabelas juntos na ordem de abertura | Separar por tipo, como no código atual | Mantém a sequência de abertura do usuário |
-| Rótulo da aba | `nome (table)` ou `nome (view)` | Só o nome | O plano pede um rótulo que identifique a view |
-| Clique no cabeçalho | Crescente, decrescente e sem ordem | Só crescente | Um clique a mais desfaz a ordem, sem usar o campo |
-| Aviso de ordem instável | Uma linha fixa enquanto não existir ordem | Só com mais de uma página | O plano pede o aviso sempre que não houver ordem aplicada |
-| Consulta em andamento | Recusar aplicar, limpar, ordenar e carregar mais | Parar e recomeçar | Menos estados; a resposta antiga não encontra a aba em outro estado |
-| Fechar o último console | Selecionar uma tabela aberta, sem criar um console | Criar um console vazio, como no código atual | Uma aba de tabela não precisa de um console visível |
-| Campos do filtro | Uma linha, com quebras convertidas em espaço | Editor de várias linhas | O filtro é uma condição curta |
+| Open a table | `Enter` and double click; `Right` opens the columns | `Enter` opens the columns | `docs/KEYMAP.md` already planned the `Enter` change |
+| Tab order | Consoles and tables together in the opening order | Separate by type, as in the current code | Keeps the user opening sequence |
+| Tab label | `name (table)` or `name (view)` | Name only | The plan asks for a label that identifies the view |
+| Header click | Ascending, descending, and no order | Ascending only | One more click undoes the order, without using the field |
+| Unstable order warning | One fixed line while no order exists | Only with more than one page | The plan asks for the warning whenever no order is applied |
+| Query in progress | Refuse apply, clear, sort, and load more | Stop and restart | Fewer states; the old response does not find the tab in another state |
+| Close the last console | Select an open table, without creating a console | Create an empty console, as in the current code | A table tab does not need a visible console |
+| Filter fields | One line, with breaks converted to space | Multi-line editor | The filter is a short condition |
 
-## Sessão e conexão
+## Session and connection
 
-| Assunto | Escolha | Rejeitado | Motivo |
+| Subject | Choice | Rejected | Reason |
 |---|---|---|---|
-| Estado de sessão | Seletor de banco ou schema por console | Conexão fixa por console | Cinco consoles ocupariam o pool |
-| Conectar | No primeiro uso | Ação explícita ou ao iniciar | Pede a senha somente quando necessário |
-| Queda de conexão | Substituir ociosas e falhar reservadas | Repetir o comando | Repetir pode duplicar alterações |
-| Limpeza falha | Descartar a conexão | Recuperar | Mais simples e seguro |
-| Nome da conexão na barra | Encurtar o nome | Encurtar o estado | O usuário precisa ver sempre a transação e a execução |
-| Fila do pool | Sem limite | Com limite | Cada console tem uma execução |
-| Cancelamento atrasado | Esperar o pedido antes de reutilizar a sessão | Reutilizar ao fim da instrução | Um pedido atrasado poderia atingir a instrução seguinte |
-| Fim do pedido no PostgreSQL | Ler até o servidor fechar a conexão do pedido | `cancel_query` do driver | Ele retorna ao escrever, e o `UPDATE` depois de um `SELECT` no teto foi cancelado em um teste com carga |
-| `sslmode=require` | Verificar o certificado | Criptografar sem verificar, como no `libpq` | O plano proíbe ignorar a verificação |
-| `sslmode=prefer` e `allow` | Recusar o texto | Aceitar | Esses modos podem usar conexão sem TLS em silêncio |
-| CA padrão | Sistema e `webpki-roots` | Somente uma das fontes | CAs de empresas ficam no sistema; `mysql_async` já traz a segunda |
-| Confiança | Confirmar por destino | Confirmar por projeto | Segue o modelo do SSH e não depende de detectar clones |
-| Somente leitura | Campo por conexão, aplicado pelo banco | Confirmar `DELETE` sem `WHERE` | O banco aplica a regra |
-| Filtro da tabela | Uma única instrução | Aceitar qualquer texto | Os drivers aceitam várias instruções |
-| Limpeza no MySQL | `Conn::reset` e volta ao banco da conexão; sem banco, fechar a sessão | Somente `Conn::reset` | `COM_RESET_CONNECTION` mantém o banco, e um `USE` passaria para o console seguinte |
-| Seletor com transação aberta | Recusar a troca | Trocar com `SET` ou `USE` | Uma sessão reservada não recebe o contexto, e uma transação com erro recusa `SET` |
-| Desconectar com trabalho aberto | Recusar e nomear o console | Perguntar e parar o console | Menos estados; o usuário resolve a transação com os controles existentes |
-| Desconectar com leitura do catálogo | Esperar a sessão por até 5 segundos | Informar o fim logo depois de fechar as ociosas | A mensagem seria falsa, e o formulário ficava preso no modo de renomear |
-| Conexão removida | O console fica aberto, sem conexão | Fechar os consoles | O texto não se perde, como nos scripts sem conexão |
+| Session state | Database or schema selector per console | Fixed connection per console | Five consoles would occupy the pool |
+| Connect | On first use | Explicit action or at startup | Asks for the password only when needed |
+| Connection loss | Replace idle ones and fail the reserved ones | Repeat the command | Repeating can duplicate changes |
+| Failed cleaning | Drop the connection | Recover | Simpler and safer |
+| Connection name in the bar | Shorten the name | Shorten the state | The user needs to always see the transaction and the execution |
+| Pool queue | Without a limit | With a limit | Each console has one execution |
+| Late cancellation | Wait for the request before reusing the session | Reuse at the end of the statement | A late request could hit the next statement |
+| End of the request on PostgreSQL | Read until the server closes the request connection | Driver `cancel_query` | It returns at write time, and the `UPDATE` after a `SELECT` at the cap was cancelled in a load test |
+| `sslmode=require` | Verify the certificate | Encrypt without verifying, as in `libpq` | The plan forbids ignoring the verification |
+| `sslmode=prefer` and `allow` | Refuse the text | Accept | Those modes can use a connection without TLS in silence |
+| Default CA | System and `webpki-roots` | Only one of the sources | Company CAs stay in the system; `mysql_async` already brings the second one |
+| Trust | Confirm per destination | Confirm per project | Follows the SSH model and does not depend on detecting clones |
+| Read only | Field per connection, applied by the database | Confirm `DELETE` without `WHERE` | The database applies the rule |
+| Table filter | A single statement | Accept any text | The drivers accept several statements |
+| Cleaning on MySQL | `Conn::reset` and back to the database of the connection; without a database, close the session | Only `Conn::reset` | `COM_RESET_CONNECTION` keeps the database, and a `USE` would pass to the next console |
+| Selector with an open transaction | Refuse the change | Change with `SET` or `USE` | A reserved session does not receive the context, and a transaction with an error refuses `SET` |
+| Disconnect with open work | Refuse and name the console | Ask and stop the console | Fewer states; the user resolves the transaction with the existing controls |
+| Disconnect with a catalog read | Wait for the session for up to 5 seconds | Report the end right after closing the idle ones | The message would be false, and the form stayed stuck in the rename mode |
+| Removed connection | The console stays open, without a connection | Close the consoles | The text is not lost, as in the scripts without connection |
 
-## Bibliotecas
+## Libraries
 
-| Assunto | Escolha | Rejeitado | Motivo |
+| Subject | Choice | Rejected | Reason |
 |---|---|---|---|
-| Drivers | `tokio-postgres`, `mysql_async` e `rusqlite` | SQLx | `timeout` falhou, faltam cancelamento e reset, e o pool escondeu conexão recusada |
-| Pool | Implementação própria | Pool de biblioteca | Regras próprias de fila, reserva e limpeza |
-| Laço principal | Espera de 20 ms na tecla, com canal limitado | Thread só para as teclas | O canal limitado controla a leitura do banco, sem outra thread |
-| Tarefa por console | Uma tarefa Tokio guarda a sessão | Mapa de sessões no gerente | A transação fica com seu dono, e o cancelamento fica junto da leitura |
-| Tokens por tecla | Reaproveitar os tokens do realce no autocomplete | Analisar o texto duas vezes | Com 50.000 linhas, reduziu de 55 ms para 33 ms |
-| Editor | EdTUI com camada convencional | `ratatui-textarea` | Falta realce de sintaxe e modo Vim |
-| Análise de SQL | Tokenizador próprio | `sqlparser-rs` ou tree-sitter | Precisa tolerar texto incompleto; protótipo aprovado |
-| Realce de sintaxe | Tokenizador próprio com `Highlight` | `syntect` pelo EdTUI | O EdTUI gera RGB e reinicia o estado a cada linha; o plano exige ANSI e `NO_COLOR` |
-| Edição no modo convencional | Função própria sobre `state.lines` | Ações do EdTUI | `insert_str` conta bytes, `Paste` trata um LF inicial como linha inteira |
-| Desfazer | Pilha do EdTUI, com grupos por palavra | Uma entrada por tecla | A pilha guarda 100 entradas; `DeleteChar(0)` cria o ponto de desfazer |
-| Refazer | Contador sobre a pilha do EdTUI | Pilha própria | O EdTUI não limpa `redo` depois de uma nova edição |
-| Clique no editor | Cálculo próprio da posição | Mapeamento do EdTUI | O EdTUI conta uma coluna por caractere e para no último caractere |
-| Sonda no PostgreSQL | Relógio pelo protocolo simples | `SAVEPOINT` | `SAVEPOINT` gera erros no log |
-| Estado no MySQL | `SERVER_STATUS_IN_TRANS` da resposta, e `DO 0` depois de um erro | `SET TRANSACTION`; `performance_schema` | A sonda apagava o `SET TRANSACTION` do usuário e limpava `SHOW WARNINGS`; `performance_schema` exige privilégios |
-| Tipos no PostgreSQL | `prepare` antes do protocolo simples | Heurística sobre o texto | `bytea` e números exigem o tipo; custa uma ida ao servidor |
-| Provedor do TLS | `ring` | `aws-lc-rs` | Evita um segundo provedor e a compilação de `aws-lc` |
+| Drivers | `tokio-postgres`, `mysql_async`, and `rusqlite` | SQLx | `timeout` failed, cancellation and reset were missing, and the pool hid a refused connection |
+| Pool | Own implementation | Library pool | Own rules of queue, reservation, and cleaning |
+| Main loop | 20 ms wait on the key, with a bounded channel | Thread only for the keys | The bounded channel controls the database read, without another thread |
+| Task per console | One Tokio task keeps the session | Session map in the manager | The transaction stays with its owner, and the cancellation stays with the read |
+| Tokens per key | Reuse the highlight tokens in the autocomplete | Parse the text twice | With 50,000 lines, it went from 55 ms to 33 ms |
+| Editor | EdTUI with a conventional layer | `ratatui-textarea` | No syntax highlight and no Vim mode |
+| SQL analysis | Own tokenizer | `sqlparser-rs` or tree-sitter | Needs to tolerate incomplete text; approved prototype |
+| Syntax highlight | Own tokenizer with `Highlight` | `syntect` through EdTUI | EdTUI generates RGB and resets the state on each line; the plan requires ANSI and `NO_COLOR` |
+| Conventional mode editing | Own function over `state.lines` | EdTUI actions | `insert_str` counts bytes, and `Paste` treats a leading LF as a whole line |
+| Undo | EdTUI stack, with groups per word | One entry per key | The stack keeps 100 entries; `DeleteChar(0)` creates the undo point |
+| Redo | Counter over the EdTUI stack | Own stack | EdTUI does not clear `redo` after a new edit |
+| Click in the editor | Own position calculation | EdTUI mapping | EdTUI counts one column per character and stops at the last character |
+| Probe on PostgreSQL | Clock through the simple protocol | `SAVEPOINT` | `SAVEPOINT` generates log errors |
+| State on MySQL | `SERVER_STATUS_IN_TRANS` of the response, and `DO 0` after an error | `SET TRANSACTION`; `performance_schema` | The probe erased the user `SET TRANSACTION` and cleared `SHOW WARNINGS`; `performance_schema` needs privileges |
+| Types on PostgreSQL | `prepare` before the simple protocol | Heuristic over the text | `bytea` and numbers need the type; costs one round trip to the server |
+| TLS provider | `ring` | `aws-lc-rs` | Avoids a second provider and the `aws-lc` build |
 
-## Produto
+## Product
 
-| Assunto | Escolha | Rejeitado | Motivo |
+| Subject | Choice | Rejected | Reason |
 |---|---|---|---|
-| Entrega | Primeira versão completa, com versionamento local | Versões parciais públicas | Decisão do projeto |
-| Ordem das etapas | Interface completa antes da visão de tabela | Tabela primeiro, com abertura provisória | A tabela abre pelo navegador e usa as abas; a abertura provisória seria removida depois |
-| TSV | Formato do DataGrip, menos as perdas de dados | Cópia exata do DataGrip | A cópia não deve perder dados em silêncio |
-| Atalhos no Mac | Sem depender de `Ctrl`+setas, `Home`, `End`, `PageUp` e `PageDown` | Atalhos clássicos de IDE | Parte não funciona, e muitos teclados não têm essas teclas |
-| Prefixo | `Ctrl+W` nos dois modos | Fechar aba com `Ctrl+W` | Caminho comum, sem depender do terminal |
-| Sair | `Ctrl+W q` | Somente fechar a última aba | A saída com vários consoles precisa de um comando; `q` segue o Vim |
-| Adicionar conexão | `a` no navegador | Item na árvore | O navegador vazio já oferece um caminho, e a tecla segue `n`, `e` e `r` |
-| Perguntas simultâneas | Fila, com uma pergunta aberta | Substituir a pergunta aberta | Dois consoles podem pedir uma resposta no mesmo instante |
-| Nome automático | Menor `console-N` disponível na conexão, entre consoles abertos e salvos | Contador único da aplicação | Os conjuntos de consoles pertencem às conexões |
-| Senha no formulário | Campo mascarado; sessão como opção inicial e cofre mediante escolha explícita | Salvar automaticamente | O usuário autoriza o armazenamento do segredo |
-| Senha na URI | Mascarar na tela, com o mesmo tamanho | Mostrar o texto digitado | O plano proíbe mostrar senhas; o cursor continua certo |
-| Commit por atalho | Sem confirmação | Pedir confirmação | Mesmo comportamento dos botões |
-| Metadados | Um `.json` ao lado de cada `.sql` | Índice único ou comentário no script | Reduz conflitos no Git e mantém o script limpo |
-| Telemetria | Nenhuma | Opcional | A aplicação só acessa a rede para falar com os bancos |
-| Abertura da lista | Ao digitar, além de `Ctrl+Space` | Somente `Ctrl+Space` | A JetBrains é a referência; `Enter` continua a quebrar a linha |
-| Caixa das palavras-chave | Segue o texto digitado | Sempre maiúsculas | Respeita o estilo do script |
-| Busca | Texto literal, sem distinguir caixa | Expressão regular | Padrão das IDEs; reduz o escopo |
-| `COPY` com `STDOUT` | Recusar, como `STDIN` | Tratar como erro do driver | O protocolo não cabe na grade, e o motivo fica claro |
-| Posição do erro | Sublinhar o token sem mover o cursor | Mover o cursor | O usuário pode continuar a editar durante a execução |
-| Janela de detalhe | Quebrar as linhas sob demanda | `Paragraph` do Ratatui ou texto cortado | Um valor de 40 MB custava 2,3 s por quadro; agora custa 0,4 ms, com o texto completo |
-| Substituir tudo | `Ctrl+A` no campo de substituição | `Alt+A` | No macOS, `Option`+letra depende do terminal |
-| Arquivo `.sql` externo | Depois da primeira versão | Na primeira versão | Reduz o escopo |
-| Licença | `MIT OR Apache-2.0` | GPL ou proprietária | Padrão do ecossistema Rust |
-| Catálogo de exemplo | Somente nos testes, sem `--no-catalog` | Ativo por padrão no binário | Sem catálogo, a seção 6 pede palavras-chave; tabelas inventadas enganam o usuário |
-| Publicação | Remover `publish = false` no lançamento | Manter, com somente binários | `cargo install sqln` depende do crates.io |
-| Respostas de catálogo | Número em cada leitura; a resposta antiga sai | Aceitar qualquer resposta | Uma leitura antiga podia apagar do navegador uma tabela recém-criada |
-| Teste de parada | Esperar o início real da instrução | Esperar 300 ms fixos | Sob carga, a conexão levava mais que isso, e o produto agia certo |
+| Delivery | Complete first version, with local versioning | Public partial versions | Project decision |
+| Phase order | Complete interface before the table view | Table first, with a provisional opening | The table opens through the navigator and uses the tabs; the provisional opening would be removed later |
+| TSV | DataGrip format, minus the data losses | Exact DataGrip copy | The copy must not lose data in silence |
+| Shortcuts on Mac | Without depending on `Ctrl`+arrows, `Home`, `End`, `PageUp`, and `PageDown` | Classic IDE shortcuts | Part does not work, and many keyboards lack those keys |
+| Prefix | `Ctrl+W` in both modes | Close tab with `Ctrl+W` | Common path, without depending on the terminal |
+| Quit | `Ctrl+W q` | Only close the last tab | The exit with several consoles needs a command; `q` follows Vim |
+| Add connection | `a` in the navigator | Item in the tree | The empty navigator already offers a path, and the key follows `n`, `e`, and `r` |
+| Simultaneous questions | Queue, with one open question | Replace the open question | Two consoles can ask for an answer at the same moment |
+| Automatic name | Smallest available `console-N` in the connection, among open and saved consoles | Single application counter | The console sets belong to the connections |
+| Password in the form | Masked field; session as the initial option and vault by explicit choice | Save automatically | The user authorizes the secret storage |
+| Password in the URI | Mask on screen, with the same size | Show the typed text | The plan forbids showing passwords; the cursor stays correct |
+| Commit by shortcut | Without confirmation | Ask for confirmation | Same behavior as the buttons |
+| Metadata | One `.json` beside each `.sql` | Single index or comment in the script | Reduces Git conflicts and keeps the script clean |
+| Telemetry | None | Optional | The application only touches the network to talk to the databases |
+| List opening | While typing, besides `Ctrl+Space` | Only `Ctrl+Space` | JetBrains is the reference; `Enter` keeps breaking the line |
+| Keyword case | Follows the typed text | Always uppercase | Respects the script style |
+| Search | Literal text, case-insensitive | Regular expression | IDE pattern; reduces the scope |
+| `COPY` with `STDOUT` | Refuse, like `STDIN` | Treat as a driver error | The protocol does not fit the grid, and the reason stays clear |
+| Error position | Underline the token without moving the cursor | Move the cursor | The user can keep editing during the execution |
+| Detail window | Wrap the lines on demand | Ratatui `Paragraph` or cut text | A 40 MB value cost 2.3 s per frame; now it costs 0.4 ms, with the full text |
+| Replace all | `Ctrl+A` in the replace field | `Alt+A` | On macOS, `Option`+letter depends on the terminal |
+| External `.sql` file | After the first version | In the first version | Reduces the scope |
+| License | `MIT OR Apache-2.0` | GPL or proprietary | Rust ecosystem standard |
+| Example catalog | Tests only, without `--no-catalog` | Active by default in the binary | Without a catalog, section 6 asks for keywords; invented tables mislead the user |
+| Publishing | Remove `publish = false` at release | Keep, with binaries only | `cargo install sqln` depends on crates.io |
+| Catalog responses | Number on each read; the old response leaves | Accept any response | An old read could erase from the navigator a table just created |
+| Stop test | Wait for the real start of the statement | Wait fixed 300 ms | Under load, the connection took more than that, and the product acted correctly |
 
-## Implementação — 2026-10-31
+## Implementation — 2026-10-31
 
-Estas escolhas seguem as regras do plano nos pontos que as regras deixaram abertos.
+These choices follow the plan rules on the points the rules left open.
 
-| Assunto | Escolha | Rejeitado | Motivo |
+| Subject | Choice | Rejected | Reason |
 |---|---|---|---|
-| Nova senha | Conferir com uma conexão de teste antes de gravar | Gravar e descobrir na próxima execução | Uma senha recusada nunca chega a um armazenamento |
-| Primeira recusa | Não repetir a execução | Repetir sozinha depois da nova senha | Mais simples de explicar; a ação pedida durante a suspensão continua, pois nenhum SQL saiu |
-| Último console | Console oculto, fora da fileira de abas | Permitir zero consoles | O código assume um console ativo; o usuário não vê diferença |
-| Fim da última tabela | Encerrar a aplicação | Mostrar o console oculto | "Fechar a última aba" já é um caminho de saída |
-| Troca de teclado | Mudar o modo no próprio editor | Recriar o editor e avisar | Nada se perde, então nenhum aviso é necessário |
-| Relatório de panic | Local e pilha de chamadas, sem a mensagem | Incluir a mensagem | A mensagem pode citar SQL ou um valor |
-| Log | Tipos de evento, sem texto de erro do banco | Registrar as mensagens | Um erro do banco pode citar um valor |
-| Sinais | `SIGHUP`, `SIGINT`, `SIGQUIT` e `SIGTERM` | Somente `SIGTERM` | Fechar o terminal envia `SIGHUP` |
-| Arquivo em texto simples | Recusar link e permissão aberta | Corrigir a permissão sozinho | O mesmo cuidado do `ssh` com uma chave privada |
+| New password | Check with a test connection before writing | Write and find out on the next execution | A refused password never reaches a storage |
+| First refusal | Do not repeat the execution | Repeat on its own after the new password | Simpler to explain; the action requested during the suspension continues, because no SQL left |
+| Last console | Hidden console, outside the tab strip | Allow zero consoles | The code assumes an active console; the user sees no difference |
+| End of the last table | End the application | Show the hidden console | "Close the last tab" is already an exit path |
+| Keyboard switch | Change the mode in the editor itself | Recreate the editor and warn | Nothing is lost, so no warning is needed |
+| Panic report | Place and call stack, without the message | Include the message | The message can quote SQL or a value |
+| Log | Event types, without database error text | Record the messages | A database error can quote a value |
+| Signals | `SIGHUP`, `SIGINT`, `SIGQUIT`, and `SIGTERM` | Only `SIGTERM` | Closing the terminal sends `SIGHUP` |
+| Plain-text file | Refuse a link and an open permission | Fix the permission on its own | The same care of `ssh` with a private key |
 
-## Temas — 2026-10-31
+## Themes — 2026-10-31
 
-O usuário pediu temas, troca em tempo de execução e a escolha do tema padrão em Settings.
-O tema por conexão, para identificar produção, fica para depois.
+The user asked for themes, runtime switching, and the default theme choice in Settings.
+The per-connection theme, to identify production, stays for later.
 
-| Ponto | Decisão | Rejeitado | Motivo |
+| Point | Decision | Rejected | Reason |
 |---|---|---|---|
-| Lista | Tokyo Night, Catppuccin Mocha, Catppuccin Latte, Gruvbox e Nord, além de Astrodark e `ansi` | Mais temas | Os tons diferem à primeira vista, o que ajuda o tema por conexão. Latte cobre quem prefere fundo claro |
-| Definição | `Scheme` em `ui/schemes.rs`; `Theme::from_scheme` distribui as cores | Copiar os estilos para cada tema | Um tema novo não repete a lista de estilos |
-| Ajustes de cor | Latte, Nord e Tokyo Night mudam alguns tons da paleta original | Paleta original sem mudança | Alguns tons originais não passam no contraste mínimo: 4,5 no texto e 3 em marcas e rótulos |
-| Prévia | A escolha muda as cores antes de salvar, e cancelar restaura o tema salvo | Aplicar só ao salvar | O nome do tema não mostra as cores. A prévia também limita o dano em um terminal sem truecolor |
-| Seção | `Appearance`, por último na lista | Campo em `General` | O tema por conexão e os ícones têm lugar natural nessa seção |
-| Valores do arquivo | `kebab-case`, como `tokyo-night` | `lowercase` | `auto`, `astrodark` e `ansi` continuam válidos, e os nomes novos ficam legíveis |
+| List | Tokyo Night, Catppuccin Mocha, Catppuccin Latte, Gruvbox, and Nord, besides Astrodark and `ansi` | More themes | The tones differ at first sight, which helps the per-connection theme. Latte covers those who prefer a light background |
+| Definition | `Scheme` in `ui/schemes.rs`; `Theme::from_scheme` distributes the colors | Copy the styles for each theme | A new theme does not repeat the style list |
+| Color adjustments | Latte, Nord, and Tokyo Night change some tones of the original palette | Original palette without changes | Some original tones do not pass the minimum contrast: 4.5 on text and 3 on marks and labels |
+| Preview | The choice changes the colors before saving, and cancel restores the saved theme | Apply only on save | The theme name does not show the colors. The preview also limits the damage on a terminal without truecolor |
+| Section | `Appearance`, last in the list | Field in `General` | The per-connection theme and the icons have a natural place in that section |
+| File values | `kebab-case`, such as `tokyo-night` | `lowercase` | `auto`, `astrodark`, and `ansi` stay valid, and the new names stay readable |
 
-### Tema por conexão
+### Per-connection theme
 
-| Ponto | Decisão | Rejeitado | Motivo |
+| Point | Decision | Rejected | Reason |
 |---|---|---|---|
-| Quem decide | A conexão da aba aberta, em console ou tabela, muda a tela inteira | Conexão selecionada no explorador; só a barra de status | O alerta de produção precisa acompanhar onde o comando roda. A seleção no explorador não executa nada |
-| Sem tema próprio | A aba usa o tema padrão | Herdar o tema da aba anterior | A cor de uma aba não depende do caminho até ela |
-| Ponto de escolha | `App::draw` calcula o tema a cada quadro, em `theme_choice` | Trocar o tema em cada mudança de aba | Há muitos caminhos de troca de aba. O cálculo em um só ponto não esquece nenhum, e a prévia não precisa de código próprio |
-| Conexão ativa | O formulário permite mudar nome e tema (`display_only`), e o botão passa de `Save name` para `Save` | Exigir desconexão | O usuário precisa marcar produção com a sessão aberta. Tema não muda o acesso, então nenhuma sessão fecha |
-| Recarga | `update_stored` aplica o tema mesmo com a conexão em uso | Adiar até desconectar | O arquivo e a tela ficam iguais, e a transação continua |
-| Settings com tema próprio | A tela mostra o tema padrão escolhido enquanto o diálogo está aberto | Manter o tema da conexão | Sem isso, a prévia pareceria não funcionar em uma aba com tema próprio |
-| Local no formulário | Último campo das opções | Junto do nome | Fica no fim do `Tab` e não muda a ordem dos campos de acesso |
+| Who decides | The connection of the open tab, in console or table, changes the whole screen | Selected connection in the navigator; only the status bar | The production alert needs to follow where the command runs. The selection in the navigator runs nothing |
+| Without its own theme | The tab uses the default theme | Inherit the theme of the previous tab | The color of a tab does not depend on the path to it |
+| Choice point | `App::draw` computes the theme each frame, in `theme_choice` | Change the theme on each tab change | There are many tab-change paths. The computation in one point forgets none, and the preview needs no own code |
+| Active connection | The form allows changing name and theme (`display_only`), and the button goes from `Save name` to `Save` | Require a disconnect | The user needs to mark production with the session open. A theme does not change access, so no session closes |
+| Reload | `update_stored` applies the theme even with the connection in use | Postpone until disconnect | The file and the screen stay equal, and the transaction continues |
+| Settings with its own theme | The screen shows the chosen default theme while the dialog is open | Keep the connection theme | Without that, the preview would seem broken in a tab with its own theme |
+| Place in the form | Last field of the options | Beside the name | It sits at the end of `Tab` and does not change the order of the access fields |
 
-Com os campos **Theme** e **Icon**, o formulário usa o modo compacto até 31 linhas. O modo com espaços entre grupos agora pede 32 linhas.
+With the **Theme** and **Icon** fields, the form uses the compact mode up to 31 rows. The mode with spaces between groups now needs 32 rows.
 
-### Ícone por conexão
+### Per-connection icon
 
-| Ponto | Decisão | Rejeitado | Motivo |
+| Point | Decision | Rejected | Reason |
 |---|---|---|---|
-| Escolha | Lista fixa de 14 ícones no formulário | Campo de texto para colar um símbolo | O SQLN não consegue consultar a fonte do terminal. A lista garante um símbolo existente, e um símbolo colado poderia virar caixa vazia |
-| Símbolos | Unicode de 1 coluna, conferidos com a Monaco no macOS, iguais em todos os conjuntos | Símbolos da Nerd Font | A Nerd Font é opcional, e sem ela esses símbolos viram caixa vazia. Estes símbolos existem com ou sem ela |
-| Fora da lista | `⚡`, que vira emoji de 2 colunas, e `⛨` e `⚿`, mais largos que a célula | Aceitar qualquer símbolo Unicode | Um símbolo largo desalinha a linha do explorador |
-| `NO_COLOR` | Mostra o ícone escolhido | Esconder, como os outros ícones | A escolha é do usuário, e o tema não identifica produção nesse modo |
-| Marca do banco | Fica depois do nome, em todos os conjuntos | Sumir, porque o logo saiu do lugar | O ícone escolhido não diz qual é o banco |
+| Choice | Fixed list of 14 icons in the form | Text field to paste a symbol | SQLN cannot ask the terminal font. The list guarantees an existing symbol, and a pasted symbol could become an empty box |
+| Symbols | Unicode of 1 column, checked with Monaco on macOS, equal in all sets | Nerd Font symbols | Nerd Font is optional, and without it those symbols become an empty box. These symbols exist with or without it |
+| Outside the list | `⚡`, which becomes a 2-column emoji, and `⛨` and `⚿`, wider than the cell | Accept any Unicode symbol | A wide symbol misaligns the navigator line |
+| `NO_COLOR` | Shows the chosen icon | Hide, like the other icons | The choice belongs to the user, and the theme does not identify production in that mode |
+| Database mark | Stays after the name, in all sets | Disappear, because the logo left its place | The chosen icon does not say which the database is |
 
-### Limitações conhecidas
+### Known limitations
 
-- Um tema RGB em um terminal sem truecolor pode mostrar cores erradas. A escolha explícita vence, porque `COLORTERM` falta em alguns terminais com suporte, como em uma sessão SSH.
-- Com `NO_COLOR`, o campo muda o arquivo, mas não muda as cores. O tema por conexão não identifica produção nesse modo.
-- Ao desconectar com o formulário aberto, ele recarrega a definição salva. Um nome ou tema ainda sem salvar volta ao valor salvo.
+- An RGB theme on a terminal without truecolor can show wrong colors. The explicit choice wins, because `COLORTERM` is missing in some terminals with support, such as an SSH session.
+- With `NO_COLOR`, the field changes the file but not the colors. The per-connection theme does not identify production in that mode.
+- On a disconnect with the form open, it reloads the saved definition. A name or theme not yet saved goes back to the saved value.
 
-### Pendências
+### Pending items
 
-- Validar os temas e os ícones em um terminal real. A checagem visual usou as telas desenhadas com a fonte Monaco, fora do terminal.
+- Validate the themes and the icons in a real terminal. The visual check used the screens drawn with the Monaco font, outside the terminal.

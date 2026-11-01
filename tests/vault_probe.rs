@@ -1,5 +1,5 @@
 //! A manual probe of the native vault. It prints the outcome of each step, and it uses
-//! a fixed value that is not a secret. `spikes/RESULTS.md` explains how to run it.
+//! a fixed value that is not a secret. `docs/RESULTS.md` explains how to run it.
 
 use std::sync::Arc;
 

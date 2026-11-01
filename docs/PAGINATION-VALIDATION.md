@@ -1,65 +1,65 @@
-# Verificação dos botões de página
+# Page button verification
 
-Os botões ficam somente nas abas de tabela.
-As decisões de `docs/DECISIONS.md` continuam em vigor.
-O esboço de `docs/UI.md` mostra os botões e a barra de carga.
+The buttons live only in table tabs.
+The decisions in `docs/DECISIONS.md` remain in force.
+The sketch in `docs/UI.md` shows the buttons and the load bar.
 
-## Resultados
+## Results
 
-| Verificação | Resultado |
+| Check | Result |
 |---|---|
-| `cargo test --tests`, com PostgreSQL 18 e MySQL 8.4 reais | 942 aprovados, 7 ignorados, nenhuma falha |
-| `cargo clippy --all-targets -- -D warnings` | Sem avisos |
-| `cargo test --test table`, em 10 rodadas consecutivas | 122 aprovados por rodada |
-| Defeitos injetados na paginação | 17 detectados de 17; nenhuma falha de compilação |
-| Binário release em PTY, com SQLite real | Nove verificações em cada um dos três layouts abaixo |
-| `cargo test --release --test latency -- --nocapture --test-threads=1` | Cinco aprovados |
-| Paginação com 50.000 linhas carregadas | Pior tecla mais quadro: 0,95 ms; meta: menos de 50 ms |
+| `cargo test --tests`, with real PostgreSQL 18 and MySQL 8.4 | 942 passed, 7 ignored, no failures |
+| `cargo clippy --all-targets -- -D warnings` | No warnings |
+| `cargo test --test table`, in 10 consecutive rounds | 122 passed per round |
+| Injected defects in pagination | 17 detected of 17; no build failures |
+| Release binary in a PTY, with real SQLite | Nine checks in each of the three layouts below |
+| `cargo test --release --test latency -- --nocapture --test-threads=1` | Five passed |
+| Pagination with 50,000 loaded rows | Worst key plus frame: 0.95 ms; goal: under 50 ms |
 
-Os sete testes ignorados incluem cinco testes de latência do build de desenvolvimento.
-Os cinco testes de latência passam no build release.
+The seven ignored tests include five latency tests of the debug build.
+The five latency tests pass in the release build.
 
-O teste de servidor verifica páginas carregadas, carga por **Next**, retorno, última página e **Load more**.
-A verificação completa encontra uma expectativa antiga no teste de schema.
-O teste agora procura o schema no título visível, não no botão que pode sair da barra.
-Essa correção não altera o produto.
+The server test checks loaded pages, load by **Next**, going back, the last page, and **Load more**.
+The full check finds an old expectation in the schema test.
+The test now looks for the schema in the visible title, not in the button that can leave the bar.
+That fix does not change the product.
 
-## Binário em PTY
+## Binary in a PTY
 
-Layouts: ANSI em 120×40, `astrodark` em 80×24 e `NO_COLOR` em 100×30.
-O teste envia teclas e eventos de mouse SGR ao binário.
-Um emulador de terminal interpreta os quadros recebidos.
+Layouts: ANSI at 120×40, `astrodark` at 80×24, and `NO_COLOR` at 100×30.
+The test sends keys and SGR mouse events to the binary.
+A terminal emulator interprets the received frames.
 
-As nove verificações cobrem a primeira página, **Next** por mouse, **Previous** por mouse e **Next** sobre dados carregados.
-Também cobrem carga da última página, limite final, retorno por teclado, **Load more** sem movimento e página única sem botões.
+The nine checks cover the first page, **Next** by mouse, **Previous** by mouse, and **Next** over loaded data.
+They also cover last-page load, the end limit, going back by keyboard, **Load more** without movement, and a single page without buttons.
 
-## Defeitos injetados
+## Injected defects
 
-Uma cópia temporária do código recebe um defeito por rodada.
-A cópia sem defeitos passa nos 122 testes antes das injeções.
-Os testes detectam cada alteração abaixo:
+A temporary copy of the code receives one defect per round.
+The copy without defects passes the 122 tests before the injections.
+The tests detect each change below:
 
-1. Consultar novamente ao avançar sobre dados carregados.
-2. Não colocar a página no topo da grade.
-3. Manter a página ao usar **Previous**.
-4. Manter a página ao usar **Next**.
-5. Remover o destino do pedido de página.
-6. Remover o destino ao concluir a autorização.
-7. Mover o cursor depois de uma carga interrompida.
-8. Não mover o cursor depois de uma carga concluída.
-9. Mover o cursor com **Load more**.
-10. Mostrar botões para uma página única.
-11. Esconder os botões antes da carga da segunda página.
-12. Mostrar **Next** indisponível para dados carregados.
-13. Mostrar **Previous** disponível na primeira página.
-14. Tirar espaço do estado da carga para manter os botões longos.
-15. Manter os botões durante a busca de linhas.
-16. Fazer o clique em **Next** voltar uma página.
-17. Desconsiderar a última página parcial.
+1. Query again when moving forward over loaded data.
+2. Not place the page at the top of the grid.
+3. Keep the page when **Previous** runs.
+4. Keep the page when **Next** runs.
+5. Remove the target from the page request.
+6. Remove the target when authorization completes.
+7. Move the cursor after an interrupted load.
+8. Not move the cursor after a completed load.
+9. Move the cursor with **Load more**.
+10. Show buttons for a single page.
+11. Hide the buttons before the load of the second page.
+12. Show **Next** as unavailable for loaded data.
+13. Show **Previous** as available on the first page.
+14. Take space from the load state to keep long buttons.
+15. Keep the buttons during the row fetch.
+16. Make the click on **Next** go back one page.
+17. Ignore the last partial page.
 
-## Limites
+## Limits
 
-- O PTY não substitui um teste no iTerm real.
-- Esta etapa não verifica fontes Nerd Font nem TLS dos servidores.
-- O LSP não inicia porque falta `rust-analyzer` no toolchain local.
-  Instale o componente com `rustup component add rust-analyzer`, ou ajuste o comando em `pi-lsp.json`.
+- A PTY does not replace a test in a real iTerm.
+- This step does not check Nerd Font sources or server TLS.
+- The LSP does not start because `rust-analyzer` is missing from the local toolchain.
+  Install the component with `rustup component add rust-analyzer`, or adjust the command in `pi-lsp.json`.

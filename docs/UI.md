@@ -1,82 +1,82 @@
-# SQLN — Esboços das telas
+# SQLN — Screen sketches
 
-## Estado do desenho
+## State of the design
 
-Este documento apresenta uma proposta visual baseada no [plano funcional](../PLAN.md).
-O plano continua sendo a referência das decisões confirmadas.
+This document presents a visual proposal based on the [functional plan](INITIAL_PLAN.md).
+The plan remains the reference for the confirmed decisions.
 
-Os valores, nomes e dados abaixo são exemplos fictícios.
-Tamanhos, espaçamentos e cores ainda são propostas visuais.
-Os atalhos aprovados estão em `docs/KEYMAP.md`.
-O usuário aprova os fluxos e ajustes registrados em `docs/DECISIONS.md` em 2026-10-31.
-Essa aprovação não significa que todos os fluxos já existem no código.
-A interface final usa inglês; os rótulos em português destes esboços são exemplos.
-A aplicação implementa as seções 1 a 4 e 6, e parte das seções 5 e 8.
-O cadastro oferece **Session only** e **System vault**. Sem cofre, a gravação oferece texto simples depois do aviso.
-A tela de abertura da seção 1 é uma lista sobre a tela, e não um painel com busca.
-A seção 2 descreve a tela atual, no estilo aprovado em 2026-10-31.
-Os outros esboços mostram o conteúdo de cada tela, e não o seu desenho exato.
-As janelas têm borda arredondada, e os botões perdem os colchetes nos temas com cor.
+The values, names, and data below are fictional examples.
+Sizes, spacing, and colors are still visual proposals.
+The approved shortcuts are in `docs/KEYMAP.md`.
+The user approved the flows and adjustments recorded in `docs/DECISIONS.md` on 2026-10-31.
+That approval does not mean that all flows already exist in the code.
+The final interface uses English; the Portuguese labels in these sketches were examples.
+The application implements sections 1 to 4 and 6, and part of sections 5 and 8.
+The form offers **Session only** and **System vault**. Without a vault, saving offers plain text after the warning.
+The opening screen of section 1 is a list over the screen, not a panel with search.
+Section 2 describes the current screen, in the style approved on 2026-10-31.
+The other sketches show the content of each screen, not its exact drawing.
+Windows have a rounded border, and buttons lose the brackets in themes with color.
 
-## 1. Inicialização e abertura de console
+## 1. Startup and console opening
 
-Se não encontrar `.sqln/` no diretório atual ou nos superiores, perguntar sobre sua criação.
-Aceitar cria o projeto no diretório atual. Recusar mantém somente o escopo global.
-
-```text
-┌─ Criar projeto ─────────────────────────────────────┐
-│ Nenhuma pasta .sqln/ foi encontrada.                 │
-│ Criar um projeto no diretório atual?                │
-│                                                    │
-│ [Criar projeto]  [Usar somente configurações globais]│
-└────────────────────────────────────────────────────┘
-```
-
-Ao iniciar, a aplicação reabre as abas da última sessão, na mesma ordem e com a mesma aba ativa.
-A opção **Reopen tabs** do diálogo Settings (`reopenTabs` em `config.json`) desliga isso. O padrão é ligado.
-
-`sqln arquivo.db` e `sqln postgres://usuario@host/banco` abrem uma conexão só para esta sessão.
-Nesse caso, as abas salvas não abrem, a pergunta **Create project** não aparece e nada vai para os arquivos.
-O projeto usa a lista do seu `workspace.json`. Sem projeto, a aplicação usa a lista global.
-Nenhuma aba executa SQL ou abre uma conexão ao iniciar.
-Um console sem texto não volta, porque não tem arquivo. Uma aba cuja conexão saiu do cadastro também não volta.
-Um console que outra instância usa fica fechado, e a lista do arquivo não muda ao sair.
-
-Implementação atual: `n` no navegador abre uma lista sobre a tela, com o título `Consoles of <conexão> · <escopo>`.
-A primeira linha, **+ New console**, cria um console. As outras linhas mostram o nome, a idade da última alteração e a marca `(open)`.
-A lista não tem campo de busca nem botões. `Enter` escolhe, `Delete` remove, e `Esc` cancela.
-`s` no navegador abre a lista **Scripts without a connection**, que mostra também o escopo de cada script.
+If `.sqln/` is not found in the current directory or the upper ones, ask about its creation.
+Accept creates the project in the current directory. Refuse keeps only the global scope.
 
 ```text
-┌─ Conexões ──────────┬─ Consoles de app (local) ──────────────┐
-│ app (local)        │ Buscar: [                             ]│
-│ app (global)       │                                        │
-│ warehouse          │ console-1                hoje, 10:30    │
-│                    │ investigar-pedidos       ontem, 16:20   │
-│                    │                                        │
-│                    │ [Abrir]  [Criar novo console]           │
-└────────────────────┴────────────────────────────────────────┘
+┌─ Create project ────────────────────────────────────┐
+│ No .sqln/ folder was found.                          │
+│ Create a project in the current directory?           │
+│                                                      │
+│ [Create project]  [Use only global settings]         │
+└──────────────────────────────────────────────────────┘
 ```
 
-O campo de busca e a apresentação de horários são propostas de desenho.
-A filtragem por conexão e a oferta de reutilização já estão definidas.
+At startup, the application reopens the tabs of the last session, in the same order and with the same active tab.
+The **Reopen tabs** option of the Settings dialog (`reopenTabs` in `config.json`) turns that off. The default is on.
 
-Abrir um console já aberto seleciona sua aba existente.
-Criar outro console gera um nome automático, que pode ser alterado depois.
-`Ctrl+W N` renomeia o console atual; a lista também oferece a ação.
-Recusar nomes vazios ou repetidos na mesma conexão, sem mudar identidade, arquivos, conexão ou escopo.
+`sqln file.db` and `sqln postgres://user@host/database` open a connection for this session only.
+In that case, the saved tabs do not open, the **Create project** question does not appear, and nothing goes to the files.
+The project uses the list of its `workspace.json`. Without a project, the application uses the global list.
+No tab runs SQL or opens a connection at startup.
+A console without text does not come back, because it has no file. A tab whose connection left the form also does not come back.
+A console that another instance uses stays closed, and the file list does not change at exit.
 
-`Ctrl+W a` abre a troca ou associação de conexão do console.
-Bloquear durante execução ou transação aberta.
-Mostrar a conexão atual, a nova conexão e a pasta de destino antes da confirmação.
-Salvar antes da troca; uma falha cancela a troca.
-Preservar texto, nome, cursor e rolagem; limpar resultados, mensagens e seleção de banco ou schema.
-Não executar nem converter o SQL automaticamente.
+Current implementation: `n` in the navigator opens a list over the screen, with the title `Consoles of <connection> · <scope>`.
+The first line, **+ New console**, creates a console. The other lines show the name, the age of the last change, and the `(open)` mark.
+The list has no search field and no buttons. `Enter` picks, `Delete` removes, and `Esc` cancels.
+`s` in the navigator opens the **Scripts without a connection** list, which also shows the scope of each script.
 
-## 2. Visão de console
+```text
+┌─ Connections ───────┬─ Consoles of app (local) ──────────────┐
+│ app (local)         │ Search: [                             ]│
+│ app (global)        │                                        │
+│ warehouse           │ console-1                today, 10:30  │
+│                     │ investigate-orders       yesterday, 16:20 │
+│                     │                                        │
+│                     │ [Open]  [Create new console]           │
+└─────────────────────┴────────────────────────────────────────┘
+```
 
-Editor e resultados aparecem juntos.
-O usuário pode arrastar o divisor e recolher o navegador de conexões.
+The search field and the time presentation are design proposals.
+The filtering by connection and the reuse offer are already defined.
+
+Opening an already open console selects its existing tab.
+Creating another console generates an automatic name, which can change later.
+`Ctrl+W N` renames the current console; the list also offers the action.
+Refuse empty or repeated names in the same connection, without changing identity, files, connection, or scope.
+
+`Ctrl+W a` opens the connection change or attach of the console.
+Block during an execution or an open transaction.
+Show the current connection, the new connection, and the destination folder before the confirmation.
+Save before the change; a failure cancels the change.
+Keep text, name, cursor, and scroll; clear results, messages, and database or schema selection.
+Do not run or convert the SQL automatically.
+
+## 2. Console view
+
+Editor and results appear together.
+The user can drag the divider and collapse the connection navigator.
 
 ```text
 ▎ ◐ 12.345s  console-1 ×   ✓  orders ×   ✗  users (table) ×
@@ -95,224 +95,224 @@ O usuário pode arrastar o divisor e recolher o navegador de conexões.
  F5 run  Shift+F5 script  Ctrl+Space suggestions  Ctrl+F find  F1 keys
 ```
 
-Com `"preferences": { "icons": "nerd" }` em `config.json`, o logo do banco fica antes do nome, e `pg` sai da linha.
-Esse conjunto muda todos os símbolos da interface e exige uma Nerd Font.
-No iTerm, instale o Nerd Font Bundle em `Settings > Profiles > Text > Manage Special Exceptions`. O texto continua com a fonte do perfil.
+With `"preferences": { "icons": "nerd" }` in `config.json`, the database logo comes before the name, and `pg` leaves the line.
+That set changes all symbols of the interface and needs a Nerd Font.
+In iTerm, install the Nerd Font Bundle at `Settings > Profiles > Text > Manage Special Exceptions`. The text keeps the profile font.
 
-A linha sob as abas e o título do painel aparecem somente com 30 linhas ou mais.
-Em 80 x 24, o editor e a grade dividem 18 linhas.
+The line under the tabs and the panel title appear only with 30 lines or more.
+At 80 x 24, the editor and the grid share 18 lines.
 
-**Estado da execução nas abas:** um selo colorido fica no início da aba.
+**Execution state in the tabs:** a colored badge stays at the start of the tab.
 
-| Selo | Estado | Sem cor (`NO_COLOR`) |
+| Badge | State | Without color (`NO_COLOR`) |
 |---|---|---|
-| `◐ 12.345s` | Executando, com o tempo. A marca gira | `\| 12.345s` |
-| `✓` | Terminou | `ok` |
-| `✗` | Erro, tempo limite ou conexão perdida | `ERR` |
-| `■` | Parada pelo usuário | `stop` |
+| `◐ 12.345s` | Running, with the time. The mark spins | `\| 12.345s` |
+| `✓` | Finished | `ok` |
+| `✗` | Error, timeout, or connection loss | `ERR` |
+| `■` | Stopped by the user | `stop` |
 
-O selo do resultado fica até o usuário sair da aba em que o viu. Uma aba que termina fora da tela mantém o selo até uma visita.
-A próxima execução troca o selo. Consoles e tabelas usam os mesmos selos.
+The badge of the result stays until the user leaves the tab where they saw it. A tab that ends off-screen keeps the badge until a visit.
+The next execution changes the badge. Consoles and tables use the same badges.
 
-**Tempo:** a barra de status mostra `Running 12.345s` durante a execução e `Idle (last 2.440s)` depois.
-O tempo tem três casas decimais, e a tela atualiza a cada 100 ms somente durante uma execução. Tempos longos usam `1m 05.123s` e `1h 02m 05.123s`.
-O tempo começa com a execução, então a espera por senha não conta.
+**Time:** the status bar shows `Running 12.345s` during the execution and `Idle (last 2.440s)` after.
+The time has three decimal places, and the screen updates every 100 ms only during an execution. Long times use `1m 05.123s` and `1h 02m 05.123s`.
+The time starts with the execution, so the wait for a password does not count.
 
-**Abas:** cada aba tem `×` no fim. `NO_COLOR` mostra `X`, e Nerd Font mostra o seu símbolo.
-Um clique em `×` ou na coluna depois dele fecha a aba, com as perguntas de `Ctrl+W c`.
-Fechar outra aba não muda a aba na tela. Fechar a última aba encerra a aplicação.
-Uma aba que a linha corta não mostra `×`. Um clique nela abre a aba inteira.
+**Tabs:** each tab has `×` at the end. `NO_COLOR` shows `X`, and Nerd Font shows its symbol.
+A click on `×` or on the column after it closes the tab, with the questions of `Ctrl+W c`.
+Closing another tab does not change the tab on screen. Closing the last tab ends the application.
+A tab cut by the line does not show `×`. A click on it opens the whole tab.
 
-**Linha de dicas:** cada tecla usa o estilo das teclas do menu do `Ctrl+W`, e o efeito usa a cor de dica.
-Dois espaços separam os comandos. Sem cor, a tecla fica em negrito e o efeito fica fraco.
-A linha lista só os comandos que agem no estado da tela, do mais relevante para o menos relevante.
-Um comando que não cabe sai inteiro da linha, então a tela nunca mostra uma tecla cortada. `F1` lista todas as teclas.
+**Hint line:** each key uses the style of the keys of the `Ctrl+W` menu, and the effect uses the hint color.
+Two spaces separate the commands. Without color, the key is bold and the effect is dim.
+The line lists only the commands that act on the screen state, from the most relevant to the least.
+A command that does not fit leaves the line whole, so the screen never shows a cut key. `F1` lists all keys.
 
-| Estado | Primeiros comandos |
+| State | First commands |
 |---|---|
-| Editor | Encerrar a transação, executar, ir para os resultados e sugestões |
-| Editor sem conexão | Escolher a conexão e ir para o navegador |
-| Editor em execução | Parar |
-| Resultados | Parar, encerrar a transação, voltar ao editor, copiar, exportar e abrir o valor |
-| **Messages** | Voltar ao editor e trocar de aba |
-| Grade de uma tabela | Parar, carregar, `WHERE`, `ORDER BY`, ordenar, mais linhas e página ou seção |
-| Linha de conexão | Abrir, expandir, estrutura, novo console, atualizar, editar, desconectar, senha, remover e adicionar |
-| Linha de schema | Expandir, estrutura, novo console e atualizar |
-| Linha de tabela ou view | Abrir, colunas, estrutura, novo console e atualizar |
-| Linha de coluna | Voltar à tabela, estrutura, novo console e atualizar |
+| Editor | End the transaction, run, go to the results, and suggestions |
+| Editor without connection | Choose the connection and go to the navigator |
+| Editor running | Stop |
+| Results | Stop, end the transaction, return to the editor, copy, export, and open the value |
+| **Messages** | Return to the editor and switch tab |
+| Grid of a table | Stop, load, `WHERE`, `ORDER BY`, sort, more rows, and page or section |
+| Connection line | Open, expand, structure, new console, refresh, edit, disconnect, password, remove, and add |
+| Schema line | Expand, structure, new console, and refresh |
+| Table or view line | Open, columns, structure, new console, and refresh |
+| Column line | Return to the table, structure, new console, and refresh |
 
-- `commit` e `rollback` aparecem só com uma transação aberta. Depois de um erro na transação, aparece só `rollback`.
-- `disc` aparece só com uma sessão aberta. `pwd` aparece só em uma conexão que usa senha.
-- Copiar, abrir o valor e buscar aparecem só com linhas na grade.
-- `more` aparece só com mais linhas para ler. `page` aparece só com mais de uma página.
-- Nos formulários, a linha muda com o campo: texto, opção, caminho ou botão.
-- Na lista de consoles, `rename` e `remove` aparecem só em uma linha de script.
-- Durante uma exportação, a linha mostra a tecla de parar antes do progresso.
+- `commit` and `rollback` appear only with an open transaction. After an error in the transaction, only `rollback` appears.
+- `disc` appears only with an open session. `pwd` appears only on a connection that uses a password.
+- Copy, open the value, and search appear only with rows in the grid.
+- `more` appears only with more rows to read. `page` appears only with more than one page.
+- In the forms, the line changes with the field: text, option, path, or button.
+- In the console list, `rename` and `remove` appear only on a script row.
+- During an export, the line shows the stop key before the progress.
 
-**Filtro da árvore:** o campo ocupa a primeira linha do explorador, e a linha de status mostra `FILTER` durante a digitação.
-Sem resultado, a árvore mostra `No match` e `Loaded catalogs only`.
+**Tree filter:** the field takes the first line of the navigator, and the status line shows `FILTER` during typing.
+Without a result, the tree shows `No match` and `Loaded catalogs only`.
 
-**Avisos do banco:** um `NOTICE` do PostgreSQL ou um aviso do MySQL entra em **Messages** com o número da instrução. A aba mostra `Messages (n)`, e a aba ativa não muda.
+**Database notices:** a PostgreSQL `NOTICE` or a MySQL warning enters **Messages** with the statement number. The tab shows `Messages (n)`, and the active tab does not change.
 
-**Idade da transação:** a linha de status mostra `Transaction open 3m` a partir de 1 min. Com 5 min ou mais, o texto usa a cor de erro.
+**Transaction age:** the status bar shows `Transaction open 3m` from 1 min. At 5 min or more, the text uses the error color.
 
-**Sinal:** uma execução de `bellAfterSeconds` ou mais toca o BEL do terminal no fim. Um Stop não toca.
+**Bell:** an execution of `bellAfterSeconds` or more rings the terminal BEL at the end. A Stop does not ring.
 
-**Mensagens:** uma mensagem ocupa a linha de dicas por 8 s.
-Uma tecla, uma colagem ou um clique remove a mensagem antes disso. O ponteiro e a roda não removem.
-A espera de credenciais fica na linha enquanto a espera durar, e termina com ela.
-Uma gravação que continua a falhar repete o alerta a cada nova tentativa.
-A dica de configuração inválida fica até `Ctrl+W r` carregar um arquivo válido.
+**Messages:** one message takes the hint line for 8 s.
+A key, a paste, or a click removes the message before that. The pointer and the wheel do not remove.
+The credential wait stays on the line while the wait lasts, and ends with it.
+A write that keeps failing repeats the alert on each new attempt.
+The invalid configuration hint stays until `Ctrl+W r` loads a valid file.
 
-**Foco:** a etiqueta da barra de status nomeia o lugar das teclas: `EDITOR`, `RESULTS`, `EXPLORER`, `FILTER` ou `TABLE`.
-No modo Vim, o editor mostra `NORMAL`, `INSERT` ou `VISUAL`.
-O título do painel em foco usa a cor de destaque.
-A linha atual do editor e da grade aparece somente no painel em foco.
+**Focus:** the status bar label names the place of the keys: `EDITOR`, `RESULTS`, `EXPLORER`, `FILTER`, or `TABLE`.
+In the Vim mode, the editor shows `NORMAL`, `INSERT`, or `VISUAL`.
+The title of the focused panel uses the highlight color.
+The current line of the editor and the grid appears only in the focused panel.
 
-**Barra de status:** o selo `PROD`, a transação e a execução nunca saem da barra.
+**Status bar:** the `PROD` badge, the transaction, and the execution never leave the bar.
 
-**Confirmação da execução:** uma instrução `UPDATE` ou `DELETE` sem `WHERE` abre **Confirm the run**, com foco em **Cancel**.
-Uma conexão de produção abre o mesmo diálogo para qualquer mudança. A janela mostra a contagem e a primeira instrução de risco.
-Uma conexão somente leitura não pergunta, pois o banco recusa a escrita.
+**Run confirmation:** an `UPDATE` or `DELETE` statement without `WHERE` opens **Confirm the run**, with focus on **Cancel**.
+A production connection opens the same dialog for any change. The window shows the count and the first risky statement.
+A read-only connection does not ask, because the database refuses the write.
 
-**Formatação:** `Ctrl+W f` formata a seleção ou a instrução sob o cursor, em um passo de desfazer.
+**Formatting:** `Ctrl+W f` formats the selection or the statement under the cursor, in one undo step.
 
-**Comentário:** `Ctrl+W /` ou `Ctrl+/` comenta a seleção ou a linha do cursor, em um passo de desfazer. O cursor e a seleção continuam nos mesmos caracteres, então a mesma tecla desfaz a mudança.
+**Comment:** `Ctrl+W /` or `Ctrl+/` comments the selection or the cursor line, in one undo step. The cursor and the selection stay on the same characters, so the same key undoes the change.
 
-Sem espaço, a barra remove nesta ordem: posição, dados, pool e schema. Depois, o nome da conexão encurta.
-Uma transação aberta usa a cor de aviso. Uma transação com falha ou desconhecida usa a cor de erro.
+Without space, the bar removes in this order: position, data, pool, and schema. Then the connection name shortens.
+An open transaction uses the warning color. A failed or unknown transaction uses the error color.
 
-**Grade:** o número da linha conta as linhas carregadas.
-A borda de um cabeçalho aceita o arrasto nas três colunas entre duas colunas da grade.
+**Grid:** the row number counts the loaded rows.
+The border of a header accepts the drag on the three columns between two grid columns.
 
-**Barras de rolagem:** o editor e a grade reservam a última coluna.
-O explorador usa a sua última coluna somente com excesso de linhas.
+**Scroll bars:** the editor and the grid reserve the last column.
+The navigator uses its last column only with excess rows.
 
-Os indicadores ficam na coluna livre, entre o número da linha e o texto:
+The indicators stay in the free column, between the row number and the text:
 
-| Símbolo | Estado |
+| Symbol | State |
 |---|---|
-| `●` | Executando |
-| `✓` | Sucesso |
-| `⋯` | Teto ou orçamento atingido |
-| `✗` | Erro |
-| `—` | Não executada |
-| `■` | Parada |
+| `●` | Running |
+| `✓` | Success |
+| `⋯` | Cap or budget reached |
+| `✗` | Error |
+| `—` | Not run |
+| `■` | Stopped |
 | `◷` | Timeout |
-| `?` | Resultado desconhecido |
+| `?` | Unknown result |
 
-Quando o banco informa a posição de um erro, o editor sublinha o token e mantém o cursor.
-A marca sai com a próxima edição, e uma edição durante a execução impede a marca.
+When the database reports the position of an error, the editor underlines the token and keeps the cursor.
+The mark leaves with the next edit, and an edit during the execution prevents the mark.
 
-Esse exemplo mostra uma execução concluída, com duas instruções.
-A segunda instrução atingiu o teto de linhas e encerrou a leitura.
-A conexão já voltou ao pool, e o usuário percorre as linhas sem nova consulta.
-Não mostrar sucesso definitivo de uma instrução antes de terminar sua leitura.
+This example shows a finished execution, with two statements.
+The second statement reached the row cap and ended the read.
+The connection already returned to the pool, and the user walks the rows without a new query.
+Do not show final success of a statement before its read ends.
 
-Regras dos controles:
+Control rules:
 
-- **Executar:** usa a seleção ou, sem seleção, a instrução sob o cursor.
-- **Script inteiro:** executa o texto completo, parando no primeiro erro.
-- **Parar script:** interrompe a sequência sem fechar o console, apagar o texto ou resolver a transação automaticamente.
-- Não enviar as próximas instruções após aceitar a parada; não prometer interrupção imediata no servidor.
-- Parar uma instrução ativa envia o cancelamento e aguarda 5 segundos pela resposta.
-- Sem resposta, fechar a conexão; com transação aberta, pedir confirmação antes de fechar.
-- Depois de fechar, indicar que o resultado da instrução é desconhecido.
-- O seletor de banco ou schema vale para cada execução, mesmo com outra conexão física.
-- Aceitar uma nova execução limpa as abas de resultados anteriores desse console, sem apagar o texto ou resolver a transação.
-- A limpeza ocorre mesmo quando a nova execução precisa aguardar conexão; uma tentativa bloqueada não limpa os resultados.
-- Cada resultado lê linhas até o teto, sem aguardar uma ação do usuário.
-- Um resultado sem linhas mostra as colunas e a indicação de zero linhas.
-- Ao atingir o teto, informar que o resultado pode ter mais linhas.
-- Para ver mais linhas, aumentar o teto e executar o comando de novo.
-- Bloquear outra execução, troca de modo e botões de commit ou rollback enquanto a execução estiver pendente ou ativa.
-- Trocar o modo pelo seletor da barra ou pelo atalho.
+- **Run:** uses the selection or, without a selection, the statement under the cursor.
+- **Whole script:** runs the full text, stopping at the first error.
+- **Stop script:** interrupts the sequence without closing the console, erasing the text, or resolving the transaction automatically.
+- Do not send the next statements after accepting the stop; do not promise immediate interruption at the server.
+- Stopping an active statement sends the cancellation and waits 5 seconds for the response.
+- Without a response, close the connection; with an open transaction, ask for confirmation before closing.
+- After closing, indicate that the result of the statement is unknown.
+- The database or schema selector applies to each execution, even with another physical connection.
+- Accepting a new run clears the result tabs of that console, without erasing the text or resolving the transaction.
+- The clearing happens even when the new run needs to wait for a connection; a blocked attempt does not clear the results.
+- Each result reads rows up to the cap, without waiting for a user action.
+- A result without rows shows the columns and the zero-row indication.
+- At the cap, report that the result may have more rows.
+- To see more rows, raise the cap and run the command again.
+- Block another execution, mode switch, and commit or rollback buttons while the execution is pending or active.
+- Switch the mode through the bar selector or the shortcut.
 
-O timeout SQL padrão é de 30 segundos, configurável, com opção de executar sem prazo.
-Ele não substitui o prazo de conexão nem limita a espera no pool.
-Contar o prazo por instrução, descontando a espera no pool e incluindo a leitura das linhas.
+The default SQL timeout is 30 seconds, configurable, with an option to run without a deadline.
+It does not replace the connection deadline and does not limit the pool wait.
+Count the deadline per statement, subtracting the pool wait and including the row read.
 
-Depois da execução, uma transação aberta mantém sua conexão reservada.
-Nesse estado, o usuário pode iniciar outra execução ou resolver a transação pelos controles disponíveis.
+After the execution, an open transaction keeps its connection reserved.
+In that state, the user can start another execution or resolve the transaction through the available controls.
 
-## 3. Visão de tabela
+## 3. Table view
 
-Duplo clique na tabela abre uma aba na mesma faixa dos consoles.
-Abrir novamente a mesma tabela seleciona essa aba, sem duplicar.
+Double click on a table opens a tab in the same strip of the consoles.
+Opening the same table again selects that tab, without duplicating.
 
 ```text
-┌─ Conexões ────────┬─ console-1 ─ [users (table)] ──────────────────────────────────────┐
-│ app (local)       │ app_db.public.users                                                │
-│   public          │ WHERE    [active = true                                          ] │
-│     users         │ ORDER BY [                                                       ] │
-│     orders        │ [✓ Apply]  [✕ Clear]  [↓ Load more]  [■ Stop]                      │
-│ app (global)      ├─────┬──────────┬───────────────────────────────────────────────────│
-│ warehouse         │ id  │ name     │ active                                            │
-│                   │ 101 │ Ana      │ true                                              │
-│                   │ 102 │ Bruno    │ true                                              │
-│                   │ ...                                                                │
-│                   │ 200 rows loaded          [◀ Previous]  Page 2 of 2+  [▶ Next]      │
-│                   │ No ORDER BY: rows can repeat or be missing between pages.          │
-├───────────────────┴────────────────────────────────────────────────────────────────────┤
-│ App (local) · Dados das grades: 1/256 MiB                                              │
+┌─ Connections ──────┬─ console-1 ─ [users (table)] ──────────────────────────────────────┐
+│ app (local)        │ app_db.public.users                                                │
+│   public           │ WHERE    [active = true                                          ] │
+│     users          │ ORDER BY [                                                       ] │
+│     orders         │ [✓ Apply]  [✕ Clear]  [↓ Load more]  [■ Stop]                      │
+│ app (global)       ├─────┬──────────┬───────────────────────────────────────────────────│
+│ warehouse          │ id  │ name     │ active                                            │
+│                    │ 101 │ Ana      │ true                                              │
+│                    │ 102 │ Bruno    │ true                                              │
+│                    │ ...                                                                │
+│                    │ 200 rows loaded          [◀ Previous]  Page 2 of 2+  [▶ Next]      │
+│                    │ No ORDER BY: rows can repeat or be missing between pages.          │
+├────────────────────┴────────────────────────────────────────────────────────────────────┤
+│ App (local) · Grid data: 1/256 MiB                                                     │
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-O exemplo mostra um filtro que o usuário já aplicou.
-Manter filtros e ordenação somente enquanto essa aba permanecer aberta.
-Fechar a aba descarta esses valores; reabrir começa sem filtros nem ordenação.
-Uma aba de tabela da última sessão volta sem linhas, sem filtro e sem ordenação.
-A primeira seleção da aba carrega as linhas. Uma aba que já começa na tela mostra `Enter loads the rows.` e espera `Enter` ou **Apply**, para a abertura não conectar nem pedir senha.
-Uma tabela nova não recebe ordenação automática, nem por chave primária.
+The example shows a filter that the user already applied.
+Keep filters and sorting only while that tab stays open.
+Closing the tab discards those values; reopening starts without filters or sorting.
+A table tab of the last session comes back without rows, without a filter, and without sorting.
+The first selection of the tab loads the rows. A tab that already starts on screen shows `Enter loads the rows.` and waits for `Enter` or **Apply**, so the opening does not connect or ask for a password.
+A new table does not receive automatic sorting, not even by primary key.
 
-Regras da barra:
+Bar rules:
 
-- Digitar não executa consultas.
-- Recusar um filtro com outra instrução.
-- `Ctrl+W x` para uma consulta da tabela em andamento.
-- `Tab` aceita uma sugestão de autocomplete. A opção **Autocomplete** troca essa tecla por `Enter` ou pelas duas.
-- `Enter` aplica o conteúdo dos campos, mesmo com autocomplete aberto.
-- `[Aplicar]` tem o mesmo efeito de `Enter`.
-- `[Limpar]` limpa os campos e aplica a consulta sem filtro nem ordenação.
-- Clique no cabeçalho aplica a ordenação imediatamente, mantendo o `WHERE` já aplicado.
-- Não aplicar um rascunho de `WHERE` como efeito do clique no cabeçalho.
-- Filtro ou ordenação inválidos deixam a grade vazia, com o erro e os campos disponíveis para correção.
+- Typing does not run queries.
+- Refuse a filter with another statement.
+- `Ctrl+W x` stops a table query in progress.
+- `Tab` accepts an autocomplete suggestion. The **Autocomplete** option changes that key to `Enter` or to both.
+- `Enter` applies the content of the fields, even with autocomplete open.
+- `[Apply]` has the same effect as `Enter`.
+- `[Clear]` clears the fields and applies the query without a filter or sorting.
+- A click on the header applies sorting at once, keeping the `WHERE` already applied.
+- Do not apply a `WHERE` draft as an effect of the header click.
+- Invalid filter or sorting leave the grid empty, with the error and the fields available for correction.
 
-Implementação atual, de cima para baixo: título, campo `WHERE`, campo `ORDER BY`, botões
-**Apply**, **Clear**, **Load more** e **Stop**, grade, resumo e uma linha de aviso.
-O título aparece somente com 30 linhas ou mais. O uso do pool e dos dados fica na barra de status.
-O rótulo da aba é `nome (table)` ou `nome (view)`.
-**Definido:** a faixa mistura consoles e tabelas na ordem de abertura.
-Fechar o último console com uma tabela aberta seleciona uma tabela, sem criar um console vazio.
-O código ainda agrupa consoles antes das tabelas e cria um console vazio ao fechar o último.
-O resumo mostra as linhas carregadas e o estado.
-A tecla `c` conta as linhas do filtro aplicado, e o resumo passa a mostrar `100 of 12,345 rows loaded`. A tecla só age quando existem mais linhas para carregar.
-A contagem usa o prazo, o Stop, a fila do pool e a senha de uma página, e não muda a grade. **Apply** e **Clear** limpam o total, e a ordenação mantém o total.
-A linha de aviso mostra o risco da ordem instável, ou a mensagem da última consulta.
-O erro de uma primeira página ocupa a área da grade.
-O clique no cabeçalho ordena em ordem crescente, depois decrescente, e depois remove a ordem.
+Current implementation, from top to bottom: title, `WHERE` field, `ORDER BY` field, buttons
+**Apply**, **Clear**, **Load more**, and **Stop**, grid, summary, and one warning line.
+The title appears only with 30 lines or more. The pool and data use stays in the status bar.
+The tab label is `name (table)` or `name (view)`.
+**Defined:** the strip mixes consoles and tables in the opening order.
+Closing the last console with an open table selects a table, without creating an empty console.
+The code still groups consoles before tables and creates an empty console when the last one closes.
+The summary shows the loaded rows and the state.
+The `c` key counts the rows of the applied filter, and the summary starts to show `100 of 12,345 rows loaded`. The key only acts when more rows exist to load.
+The count uses the deadline, Stop, the pool queue, and the password of a page, and does not change the grid. **Apply** and **Clear** clear the total, and sorting keeps the total.
+The warning line shows the risk of the unstable order, or the message of the last query.
+The error of a first page takes the grid area.
+A click on the header sorts in ascending order, then descending, and then removes the order.
 
-Rolagem e navegação percorrem os dados já carregados.
-Mais linhas exigem **Carregar mais** ou **Next**.
-Com mais de uma página, a linha sob a grade mostra **Previous**, `Page 2 of 3+` e **Next**. O `+` indica que a tabela pode ter mais linhas.
-Cada página é um trecho das linhas acumuladas, e o botão coloca a primeira linha da página no topo da grade.
-**Next** mostra uma página já carregada sem consulta. Se a página ainda não veio, **Next** carrega a página e depois a mostra.
-**Previous** nunca consulta o banco. O número da página acompanha o cursor.
-A linha prioriza o estado da carga. Sem espaço, os botões usam a forma curta `◀ 2/3+ ▶`, e a nota `more rows available` sai primeiro. Um estado longo tira os botões da linha, e `[` e `]` continuam a funcionar.
-Carregar uma página faz uma nova consulta, sem manter uma leitura aberta entre páginas.
-**Carregar mais** mantém o cursor e a rolagem atuais.
-**Carregar mais** pode aguardar uma conexão livre.
-Sem uma ordenação única, linhas podem repetir ou faltar entre as páginas.
-Mostrar esse aviso quando não existir uma ordenação aplicada.
-O teto global de 256 MiB pode suspender novas cargas, sem apagar as linhas existentes.
-Se um valor ultrapassar o limite, indicar o motivo sem representá-lo como nulo, vazio ou conteúdo truncado sem aviso.
-A cópia segue o formato TSV confirmado na seção 10 do plano, sem cabeçalhos.
+Scrolling and navigation walk the already loaded data.
+More rows need **Load more** or **Next**.
+With more than one page, the line under the grid shows **Previous**, `Page 2 of 3+`, and **Next**. The `+` says that the table may have more rows.
+Each page is a slice of the accumulated rows, and the button puts the first row of the page at the top of the grid.
+**Next** shows an already loaded page without a query. If the page did not come yet, **Next** loads the page and then shows it.
+**Previous** never queries the database. The page number follows the cursor.
+The line prioritizes the load state. Without space, the buttons use the short form `◀ 2/3+ ▶`, and the `more rows available` note leaves first. A long state takes the buttons off the line, and `[` and `]` keep working.
+Loading a page makes a new query, without keeping a read open between pages.
+**Load more** keeps the current cursor and scroll.
+**Load more** may wait for a free connection.
+Without a unique sort, rows can repeat or go missing between pages.
+Show that warning when no sorting is applied.
+The global cap of 256 MiB can suspend new loads, without erasing the existing rows.
+If a value goes above the limit, report the reason without representing it as null, empty, or truncated content without a warning.
+The copy follows the TSV format confirmed in section 10 of the plan, without headers.
 
-### Aba de estrutura
+### Structure tab
 
-`i` em uma linha do navegador, ou na grade de uma tabela, abre a aba de estrutura.
-O rótulo da aba é `nome (structure)`. Abrir a mesma estrutura de novo seleciona a aba.
-A aba da tabela e a aba de estrutura ficam abertas juntas.
+`i` on a navigator row, or in the grid of a table, opens the structure tab.
+The tab label is `name (structure)`. Opening the same structure again selects the tab.
+The table tab and the structure tab stay open together.
 
 ```text
 │ [console-1] [users (table)] [users (structure)]                                        │
@@ -325,32 +325,32 @@ A aba da tabela e a aba de estrutura ficam abertas juntas.
 │ active  boolean  yes       true                                                        │
 ```
 
-| Linha do navegador | Conteúdo |
+| Navigator row | Content |
 |---|---|
-| Tabela, view ou coluna | Três seções: colunas, índices e chaves estrangeiras |
-| Schema | Todas as colunas do schema, sem seções |
-| Conexão | Todas as colunas dos schemas que o navegador mostra, sem seções |
+| Table, view, or column | Three sections: columns, indexes, and foreign keys |
+| Schema | All the columns of the schema, without sections |
+| Connection | All the columns of the schemas the navigator shows, without sections |
 
-| Grade | Colunas |
+| Grid | Columns |
 |---|---|
-| Colunas da tabela | `name`, `type`, `nullable`, `default`, `key` |
-| Índices | `name`, `columns`, `unique` |
-| Chaves estrangeiras | `name`, `columns`, `references`, `on_update`, `on_delete` |
-| Schema ou conexão | `schema`, `relation`, `name`, `type`, `nullable`, `default` |
+| Table columns | `name`, `type`, `nullable`, `default`, `key` |
+| Indexes | `name`, `columns`, `unique` |
+| Foreign keys | `name`, `columns`, `references`, `on_update`, `on_delete` |
+| Schema or connection | `schema`, `relation`, `name`, `type`, `nullable`, `default` |
 
-- O título de uma conexão mostra `all schemas` no lugar do nome.
-- A aba não tem os campos `WHERE` e `ORDER BY`, e um clique no cabeçalho não ordena.
-- `[` e `]`, ou um clique no nome da seção, trocam a seção. A troca relê a grade.
-- Em um schema ou uma conexão, `[` e `]` mudam a página.
-- **Reload** relê a grade. DDL não atualiza a aba sozinho.
-- A grade usa a paginação, o orçamento, a busca, a cópia e a exportação da aba de tabela.
-- A exportação não tem tabela de destino, como em um console.
-- A aba não volta na próxima sessão.
-- Redis e Valkey não têm estrutura. `i` mostra o motivo na barra de status.
+- The title of a connection shows `all schemas` in the place of the name.
+- The tab has no `WHERE` and `ORDER BY` fields, and a click on the header does not sort.
+- `[` and `]`, or a click on the section name, switch the section. The switch rereads the grid.
+- On a schema or a connection, `[` and `]` change the page.
+- **Reload** rereads the grid. DDL does not update the tab on its own.
+- The grid uses the pagination, the budget, the search, the copy, and the export of the table tab.
+- The export has no target table, as in a console.
+- The tab does not come back in the next session.
+- Redis and Valkey have no structure. `i` shows the reason in the status bar.
 
-### Exportação
+### Export
 
-`e` na grade, ou **Export the result to a file** na paleta, abre o modal. A exportação cobre o resultado ativo e gera um arquivo.
+`e` in the grid, or **Export the result to a file** in the palette, opens the modal. The export covers the active result and generates a file.
 
 ```text
 ╭─ Export ───────┬─────────────────────────────────────────────────────╮
@@ -365,435 +365,435 @@ A aba da tabela e a aba de estrutura ficam abertas juntas.
 ╰────────────────┴─────────────────────────────────────────────────────╯
 ```
 
-| Alcance | O que grava |
+| Range | What it writes |
 |---|---|
-| **Selection** | As linhas e as colunas selecionadas |
-| **Loaded rows** | As linhas da grade |
-| **All rows** | Todas as linhas e colunas, com uma nova leitura. A tabela usa o filtro e a ordem aplicados |
+| **Selection** | The selected rows and columns |
+| **Loaded rows** | The rows of the grid |
+| **All rows** | All the rows and columns, with a new read. The table uses the applied filter and order |
 
-O modal abre em **Selection**, se existir. Senão, abre em **All rows**, se disponível, e por último em **Loaded rows**.
-**All rows** some quando a grade já tem tudo.
-No console, **All rows** exige uma leitura pura e um comando na execução, ou uma transação aberta. Nos outros casos, o modal explica o motivo.
-Redis e Valkey oferecem só as linhas carregadas, sem SQL INSERT.
+The modal opens at **Selection**, when it exists. Otherwise, it opens at **All rows**, when available, and last at **Loaded rows**.
+**All rows** disappears when the grid already has everything.
+In the console, **All rows** needs a plain read and a command in the execution, or an open transaction. In the other cases, the modal explains the reason.
+Redis and Valkey offer only the loaded rows, without SQL INSERT.
 
-| Formato | Opções |
+| Format | Options |
 |---|---|
-| CSV | Cabeçalho, delimitador, texto do NULL e BOM |
-| TSV | Cabeçalho, texto do NULL e BOM |
-| JSON e JSON Lines | Nenhuma |
-| SQL INSERT | Tabela, um por linha ou agrupado, e linhas por `INSERT` |
+| CSV | Header, delimiter, NULL text, and BOM |
+| TSV | Header, NULL text, and BOM |
+| JSON and JSON Lines | None |
+| SQL INSERT | Table, one per row or grouped, and rows per `INSERT` |
 
-O modal tem 72 colunas e cresce até 140 numa tela maior, com 8 colunas livres. A altura não muda, pois ela já mostra todos os campos.
-O campo **File** aceita `~` e um caminho relativo à pasta atual, e cria as pastas que faltam. A extensão segue o formato até o usuário editar o caminho.
-Um arquivo existente pede **Replace** ou **Cancel**.
-O botão `...` e `Ctrl+O` abrem o explorador de arquivos.
+The modal has 72 columns and grows to 140 on a larger screen, with 8 free columns. The height does not change, because it already shows all the fields.
+The **File** field accepts `~` and a path relative to the current folder, and creates the missing folders. The extension follows the format until the user edits the path.
+An existing file asks for **Replace** or **Cancel**.
+The `...` button and `Ctrl+O` open the file explorer.
 
-Depois de **Export**, o modal fecha, a aba fica ocupada, e a linha de dicas mostra as linhas gravadas. Cada aba pode ter uma exportação, e o modal recusa um destino em uso.
-**All rows** não tem limite de tempo, e **Stop** cancela. A grade mantém o resultado.
-A gravação usa `<nome>.tmp` e renomeia no fim. Depois de **Stop** ou de um erro, uma janela oferece **Delete** e **Keep**. Sem linhas gravadas, o temporário some sem pergunta.
+After **Export**, the modal closes, the tab becomes busy, and the hint line shows the written rows. Each tab can have one export, and the modal refuses a destination in use.
+**All rows** has no time limit, and **Stop** cancels. The grid keeps the result.
+The write uses `<name>.tmp` and renames at the end. After **Stop** or an error, a window offers **Delete** and **Keep**. Without written rows, the temporary file disappears without a question.
 
-### Explorador de arquivos
+### File explorer
 
-Os campos de caminho têm um botão `...`. O botão e `Ctrl+O` abrem esta janela acima do modal:
+The path fields have a `...` button. The button and `Ctrl+O` open this window above the modal:
 
 ```text
 ╭ Choose a file ───────────────────────────────────────────────╮
-│ /home/ana/projetos/loja                                      │
+│ /home/ana/projects/store                                     │
 │ >                                                            │
 │ Use this folder                                              │
 │ ../                                                          │
 │ docs/                                                        │
 │ src/                                                         │
 │ Cargo.toml                                                   │
-│ loja.db                                                      │
+│ store.db                                                     │
 ╰──────────────────────────────────────────────────────────────╯
 ```
 
-A janela fica 8 colunas mais estreita que o modal, e a lista mostra de 14 a 35 linhas, conforme a altura da tela.
-Os campos são **File** do Export, **File** do SQLite, **CA file**, **Client certificate** e **Client key**.
-A janela abre na pasta do caminho do campo. Sem ela, abre na pasta existente mais próxima, e com o campo vazio abre na pasta atual.
-As pastas vêm primeiro, e a ordem ignora maiúsculas. Todos os arquivos aparecem, menos os ocultos. Um filtro que começa com `.` mostra os ocultos.
-`Enter` numa pasta entra nela. `Enter` num arquivo preenche o campo com o caminho absoluto e fecha a janela. `Esc` fecha a janela, e o campo não muda.
+The window stays 8 columns narrower than the modal, and the list shows 14 to 35 rows, according to the screen height.
+The fields are **File** of Export, **File** of SQLite, **CA file**, **Client certificate**, and **Client key**.
+The window opens in the folder of the field path. Without it, it opens in the closest existing folder, and with an empty field it opens in the current folder.
+Folders come first, and the order ignores case. All files appear, except the hidden ones. A filter that starts with `.` shows the hidden ones.
+`Enter` on a folder enters it. `Enter` on a file fills the field with the absolute path and closes the window. `Esc` closes the window, and the field does not change.
 
-**Use this folder** aparece só no Export e no SQLite, pois esses campos aceitam um arquivo novo. A linha troca a pasta e mantém o nome do campo. Com o campo vazio, ele recebe a pasta, e o usuário digita o nome.
-No Export, a extensão continua a seguir o formato depois de **Use this folder**, e para de seguir depois de escolher um arquivo.
-Fechar a aba ou sair apaga o temporário.
+**Use this folder** appears only in Export and SQLite, because those fields accept a new file. The row changes the folder and keeps the name of the field. With an empty field, it receives the folder, and the user types the name.
+In Export, the extension keeps following the format after **Use this folder**, and stops following after picking a file.
+Closing the tab or exiting erases the temporary file.
 
-### Chave Redis ou Valkey
+### Redis or Valkey key
 
-No navegador, cada banco numerado mostra até 1.000 chaves. `(partial list)` ao lado do banco indica uma lista incompleta.
-`Enter` em uma chave abre o valor em uma aba com o rótulo `<chave> (key)`.
-A aba usa a grade, as páginas e **Load more**, sem `WHERE`, `ORDER BY`, **Clear** e ordenação.
-**Reload** lê o valor de novo.
-No console, cada linha é um comando, como no `redis-cli`. Um `#` no início da linha faz um comentário.
+In the navigator, each numbered database shows up to 1,000 keys. `(partial list)` beside the database marks an incomplete list.
+`Enter` on a key opens the value in a tab with the label `<key> (key)`.
+The tab uses the grid, the pages, and **Load more**, without `WHERE`, `ORDER BY`, **Clear**, and sorting.
+**Reload** reads the value again.
+In the console, each line is one command, as in `redis-cli`. A `#` at the start of the line makes a comment.
 
-## 4. Cadastro de conexão
+## 4. Connection form
 
-Oferecer formulário e entrada por URI, com a mesma política de credenciais.
-Com projeto ativo, selecionar projeto por padrão e permitir escolher global.
-Sem projeto ativo, oferecer somente global.
-O exemplo abaixo considera um projeto ativo.
+Offer form and URI input, with the same credential policy.
+With an active project, select project by default and allow choosing global.
+Without an active project, offer only global.
+The example below considers an active project.
 
 ```text
-┌─ Conexão ──────────────────────────────────────────────┐
-│ Tipo:       [PostgreSQL]                               │
-│ Nome:       [app]                                      │
-│ Escopo:     [Projeto]  (pode alterar para Global)       │
-│ Entrada:    [Campos / URI]                             │
-│                                                       │
+┌─ Connection ───────────────────────────────────────────┐
+│ Type:       [PostgreSQL]                               │
+│ Name:       [app]                                      │
+│ Scope:      [Project]  (can change to Global)          │
+│ Input:      [Fields / URI]                             │
+│                                                        │
 │ Host:       [db.example.test]                          │
-│ Porta:      [5432]                                     │
-│ Banco:      [app_db]                                   │
-│ Usuário:    [app_user]                                 │
-│ Credencial: [Somente nesta sessão]                    │
-│ TLS:        [Verificar certificado]                    │
-│ CA:         [Do sistema]                               │
-│ Certificado de cliente: [Nenhum]                       │
+│ Port:       [5432]                                     │
+│ Database:   [app_db]                                   │
+│ User:       [app_user]                                 │
+│ Credential: [Session only]                             │
+│ TLS:        [Verify certificate]                       │
+│ CA:         [From the system]                          │
+│ Client certificate: [None]                             │
 │ Pool:       [5]                                        │
-│ Somente leitura: [ ]                                   │
-│ Produção:   [ ]                                        │
-│ Conectar:   prazo [30] segundos                        │
-│ Tema:       [Padrão]                                   │
-│ Ícone:      [Padrão]                                   │
-│                                                       │
-│ [Testar conexão]  [Salvar]  [Cancelar]                │
-└───────────────────────────────────────────────────────┘
+│ Read only:  [ ]                                        │
+│ Production: [ ]                                        │
+│ Connect:    deadline [30] seconds                      │
+│ Theme:      [Default]                                  │
+│ Icon:       [Default]                                  │
+│                                                        │
+│ [Test connection]  [Save]  [Cancel]                    │
+└────────────────────────────────────────────────────────┘
 ```
 
-Os campos mudam conforme o tipo. SQLite usa arquivo, não banco em memória.
+The fields change according to the type. SQLite uses a file, not an in-memory database.
 
-Implementação atual: o formulário agrupa os campos em **General**, **Address**, **Credentials**, **Security** e **Options**.
-O formulário escolhe o primeiro arranjo que cabe na tela, com 2 linhas e 2 colunas de folga:
+Current implementation: the form groups the fields in **General**, **Address**, **Credentials**, **Security**, and **Options**.
+The form picks the first arrangement that fits the screen, with 2 rows and 2 columns of slack:
 
-| Arranjo | Altura com PostgreSQL | Largura |
+| Arrangement | Height with PostgreSQL | Width |
 |---|---|---|
-| Uma coluna, com títulos e espaço entre os grupos | 33 | 72 |
-| Duas colunas, com títulos e espaço entre os grupos | 22 | 116 |
-| Uma coluna, com espaço entre os grupos | 28 | 72 |
-| Uma coluna, sem espaço | 22 | 72 |
+| One column, with titles and space between the groups | 33 | 72 |
+| Two columns, with titles and space between the groups | 22 | 116 |
+| One column, with space between the groups | 28 | 72 |
+| One column, without space | 22 | 72 |
 
-Numa tela maior, a largura cresce até 140 colunas e deixa 8 colunas livres. O arranjo não muda, pois a largura cresce depois da escolha.
+On a larger screen, the width grows to 140 columns and leaves 8 columns free. The arrangement does not change, because the width grows after the choice.
 
-O campo em foco tem uma marca no início da linha, rótulo em destaque e fundo próprio.
-Sem cor, a marca é `>`, e o rótulo fica em negrito.
-A nota do formulário termina na linha acima dos botões. Uma nota longa ocupa as duas linhas da área.
-O sucesso do teste usa a cor de sucesso. Uma nota de andamento usa a cor de aviso, e um erro usa a cor de erro.
-Resolver caminhos relativos do `config.json` conforme o escopo: raiz do projeto ou pasta global de configuração.
-No formulário, um arquivo SQLite digitado parte do diretório atual, e a conexão grava o caminho completo.
-Um caminho salvo e não alterado continua como está no arquivo, e o teste usa a pasta do escopo.
+The focused field has a mark at the start of the line, a highlighted label, and its own background.
+Without color, the mark is `>`, and the label is bold.
+The form note ends on the line above the buttons. A long note takes the two lines of the area.
+A test success uses the success color. A progress note uses the warning color, and an error uses the error color.
+Resolve relative paths of `config.json` according to the scope: project root or global configuration folder.
+In the form, a typed SQLite file starts from the current directory, and the connection saves the full path.
+A saved and unchanged path continues as it is in the file, and the test uses the folder of the scope.
 
-O formulário sugere TLS desativado em `localhost`, `127.0.0.0/8`, `::1` e socket Unix, e verificação nos demais.
-O campo **Somente leitura** é aplicado pelo banco e evita acidentes.
+The form suggests disabled TLS on `localhost`, `127.0.0.0/8`, `::1`, and Unix socket, and verification on the others.
+The **Read only** field is applied by the database and prevents accidents.
 
-O campo **Production** mostra `PROD` na barra de status, inclusive com `NO_COLOR`.
-Ele também pede confirmação antes de uma execução que não seja leitura simples.
-O campo muda com a conexão ativa, como o nome e o tema.
+The **Production** field shows `PROD` in the status bar, including with `NO_COLOR`.
+It also asks for confirmation before an execution that is not a plain read.
+The field changes with the active connection, like the name and the theme.
 
-Exigir nome obrigatório e único por escopo, sem distinguir maiúsculas e minúsculas, inclusive ao renomear.
-Permitir nomes iguais entre global e projeto, com indicação de origem quando houver colisão.
+Require a required and unique name per scope, without case distinction, including on rename.
+Allow equal names between global and project, with an origin mark when there is a collision.
 
-Exigir desconexão antes de alterar dados de acesso, TLS ou limite do pool de uma definição conectada.
-Uma URI não autoriza salvar senha na configuração do projeto.
-Não mostrar senhas em exemplos, mensagens de erro ou representações públicas da conexão.
+Require a disconnect before changing access data, TLS, or the pool limit of a connected definition.
+A URI does not authorize saving a password in the project configuration.
+Do not show passwords in examples, error messages, or public representations of the connection.
 
-## 5. Confirmações e erros
+## 5. Confirmations and errors
 
-### Transação aberta
+### Open transaction
 
-Ao fechar um console com transação aberta, oferecer commit, rollback ou cancelamento do fechamento.
-Na saída da aplicação, perguntar separadamente para cada console.
-Executar a escolha antes de apresentar a pergunta do próximo console.
-Cancelar depois não desfaz operações já concluídas.
+When closing a console with an open transaction, offer commit, rollback, or cancel of the close.
+At application exit, ask separately for each console.
+Run the choice before presenting the question of the next console.
+Cancelling later does not undo already finished operations.
 
-Ao ativar autocommit com transação aberta, usar as mesmas três decisões para concluir ou cancelar a troca.
-Não selecionar commit como consequência automática da solicitação de troca.
+When switching to autocommit with an open transaction, use the same three decisions to finish or cancel the switch.
+Do not select commit as an automatic consequence of the switch request.
 
-Se o commit ou rollback do fechamento falhar, manter o console aberto e mostrar o erro.
-Oferecer nova tentativa, quando a sessão original e o estado da transação permitirem, ou cancelar o fechamento.
-Não repetir a operação automaticamente nem usar outra conexão para tentar concluir a transação anterior.
-Se perder a conexão sem confirmar o resultado, indicar que o resultado é desconhecido.
-Durante a saída, resolver a falha atual antes de perguntar sobre outro console.
+If the commit or rollback of the close fails, keep the console open and show the error.
+Offer a retry, when the original session and the transaction state allow it, or cancel the close.
+Do not repeat the operation automatically or use another connection to try to finish the previous transaction.
+If the connection is lost without confirming the result, indicate that the result is unknown.
+During exit, resolve the current failure before asking about another console.
 
-### Conexão
+### Connection
 
-- Conectar no primeiro uso, sem abrir conexões ao iniciar a aplicação.
-- Oferecer a ação **Desconectar** em cada definição conectada.
-- Antes da primeira conexão a um destino nesta máquina, mostrar host, porta, usuário e TLS.
-- Perguntar de novo quando um desses valores mudar.
-- Após perder uma transação aberta, marcar o estado como desconhecido e exigir confirmação antes da próxima execução.
+- Connect on first use, without opening connections at application startup.
+- Offer the **Disconnect** action on each connected definition.
+- Before the first connection to a destination on this machine, show host, port, user, and TLS.
+- Ask again when one of those values changes.
+- After losing an open transaction, mark the state as unknown and require confirmation before the next execution.
 
-### Leitura e fechamento
+### Reading and closing
 
-- Fechar um console ativo pede confirmação para parar a sequência após finalizar a instrução atual.
-- Não permitir fechar um resultado enquanto sua instrução ainda lê linhas; usar **Parar script**.
-- Não prometer cancelamento imediato do comando em andamento no servidor.
+- Closing an active console asks for confirmation to stop the sequence after the current statement finishes.
+- Do not allow closing a result while its statement still reads rows; use **Stop script**.
+- Do not promise immediate cancellation of the command in progress at the server.
 
-### Arquivo e configuração
+### File and configuration
 
-- Excluir um console salvo ou uma conexão exige confirmação dos itens afetados.
-- Fechar uma aba não exclui seu script salvo.
-- Remover uma conexão preserva seus scripts em disco, sem exclusão em cascata ou reassociação automática por nome.
-- Mostrar esses scripts na lista Scripts sem conexão, permitindo abrir e editar sem executar SQL.
-- Exigir escolha e confirmação de uma conexão antes de executar; associar não executa SQL automaticamente.
-- Se a associação mudar o escopo, informar a nova localização do arquivo antes de concluir.
-- Falha de salvamento mantém o texto em memória e mostra um alerta.
-- Fechar com alterações não gravadas exige confirmação explícita.
-- Alteração externa do script exige escolha entre recarregar e sobrescrever.
-- Uma configuração JSON inválida mostra arquivo e posição do erro, sem liberar operações com bancos até a correção.
-- O usuário corrige esse arquivo fora da aplicação e usa **Recarregar**.
-- `workspace.json` ilegível usa o estado inicial e mostra um aviso não bloqueante.
-- A ação para um script removido usa o rótulo **Fechar e descartar texto**.
+- Deleting a saved console or a connection needs confirmation of the affected items.
+- Closing a tab does not delete its saved script.
+- Removing a connection keeps its scripts on disk, without cascade deletion or automatic reattach by name.
+- Show those scripts in the Scripts without a connection list, allowing open and edit without running SQL.
+- Require the choice and confirmation of a connection before running; attaching does not run SQL automatically.
+- If the attach changes the scope, report the new file location before finishing.
+- A save failure keeps the text in memory and shows an alert.
+- Closing with unwritten changes needs explicit confirmation.
+- An external change of the script needs a choice between reload and overwrite.
+- An invalid JSON configuration shows file and error position, without unlocking database operations until the fix.
+- The user fixes that file outside the application and uses **Reload**.
+- An unreadable `workspace.json` uses the initial state and shows a non-blocking warning.
+- The action for a removed script uses the label **Close and discard text**.
 
-### Credenciais
+### Credentials
 
-Usar o cofre como armazenamento principal.
-Somente a ausência de cofre permite oferecer gravação global em texto simples, mediante autorização explícita.
-Cofre bloqueado ou com erro não ativa essa exceção.
-Com o cofre bloqueado ou com erro, oferecer **Tentar novamente**, **Usar senha nesta sessão** e **Cancelar**.
-Tratar uma falha desconhecida como erro, nunca como ausência.
-Confirmar a distinção em testes reais antes de liberar texto simples como alternativa.
-Senha de sessão permanece em memória, por conexão, até fechar a aplicação.
-Se a gravação falhar, manter a senha em memória, informar que ela não foi salva e oferecer nova tentativa explícita.
-Quando um cofre passar a existir, pedir confirmação para migrar e verificar a gravação antes de oferecer remover a senha global.
-Falha na migração não autoriza apagar a senha anterior.
+Use the vault as the main storage.
+Only the absence of a vault allows offering global plain-text storage, with explicit authorization.
+A locked vault or a vault with an error does not enable that exception.
+With the vault locked or with an error, offer **Try again**, **Use password in this session**, and **Cancel**.
+Treat an unknown failure as an error, never as an absence.
+Confirm that distinction in real tests before releasing plain text as an alternative.
+A session password stays in memory, per connection, until the application closes.
+If the write fails, keep the password in memory, report that it was not saved, and offer an explicit retry.
+When a vault starts to exist, ask for confirmation to migrate and verify the write before offering to remove the global password.
+A migration failure does not authorize erasing the previous password.
 
-Usar identidades estáveis ao mover um projeto.
-Pedir confirmação antes de reutilizar credenciais em cópias ou quando não for possível distinguir cópia de mudança de pasta.
-Em outro computador sem a credencial, solicitar a senha, sem transportar segredos pelo projeto.
-Mudar o destino não autoriza enviar a senha anterior automaticamente.
-Remover uma conexão não apaga sua senha do cofre; excluir essa senha exige confirmação separada.
-Avisar que outras cópias do projeto podem usar a mesma credencial.
+Use stable identities when moving a project.
+Ask for confirmation before reusing credentials on copies or when copy and folder change cannot be told apart.
+On another computer without the credential, ask for the password, without carrying secrets through the project.
+Changing the destination does not authorize sending the previous password automatically.
+Removing a connection does not erase its password from the vault; deleting that password needs a separate confirmation.
+Warn that other copies of the project may use the same credential.
 
-Solicitar a senha antes do primeiro uso que precisar dela, inclusive teste e leitura do catálogo.
-Iniciar com uso somente na sessão. Salvar exige uma escolha explícita.
-A solicitação de senha, a confiança e a recuperação de falhas do cofre já existem no código.
-A senha fica mascarada, e a opção de salvar começa desmarcada.
-O formulário permite sessão ou cofre; testar uma senha digitada não a grava nem substitui a senha da conexão salva.
-Um caminho novo de projeto exige confirmação também ao testar ou salvar uma definição existente.
+Ask for the password before the first use that needs it, including test and catalog read.
+Start with session-only use. Saving needs an explicit choice.
+The password prompt, the trust confirmation, and the vault failure recovery already exist in the code.
+The password stays masked, and the save option starts unchecked.
+The form allows session or vault; testing a typed password does not write it or replace the password of the saved connection.
+A new project path needs confirmation also when testing or saving an existing definition.
 
-#### Fluxos de credenciais
+#### Credential flows
 
-Estes fluxos seguem regras aprovadas.
+These flows follow approved rules.
 
-| Fluxo | Conteúdo necessário | Regra de segurança |
+| Flow | Required content | Security rule |
 |---|---|---|
-| Texto simples global | Aviso antes da autorização, opção desmarcada e identificação de `credentials.json` na pasta global | Oferecer somente com ausência confirmada de cofre; nunca gravar o segredo no projeto |
-| Migração | Confirmação para migrar e, após conferência, oferta de remoção da senha global | Preservar a fonte em caso de falha e informar migração incompleta |
-| Senha recusada | Solicitação de outra senha uma vez e indicação de suspensão após a segunda recusa; durante a suspensão, cada ação explícita abre a solicitação | Não confundir recusa com falha de rede, TLS ou execução SQL; não tentar conectar sozinha durante a suspensão |
-| Exclusão da credencial | Confirmação separada, com identificação da conexão e aviso sobre outras cópias do projeto | Remover a conexão não autoriza apagar o segredo |
+| Global plain text | Warning before authorization, unchecked option, and identification of `credentials.json` in the global folder | Offer only with a confirmed absence of vault; never write the secret into the project |
+| Migration | Confirmation to migrate and, after the check, the offer to remove the global password | Keep the source on failure and report the incomplete migration |
+| Refused password | Prompt for another password once and suspension notice after the second refusal; during suspension, each explicit action opens the prompt | Do not confuse refusal with network, TLS, or SQL failure; do not try to connect on its own during suspension |
+| Credential deletion | Separate confirmation, with the connection identified and a warning about other project copies | Removing the connection does not authorize erasing the secret |
 
-Os testes de tela atuais não validam os diálogos nativos do Keychain nem do Secret Service.
-A [matriz do plano](../PLAN.md#fechamento-da-etapa-de-credenciais) separa implementação e validação pendentes.
+The current screen tests do not validate the native dialogs of Keychain or Secret Service.
+The [plan matrix](INITIAL_PLAN.md#credential-phase-close) separates implementation and pending validation.
 
-## 6. Navegação e foco
+## 6. Navigation and focus
 
-O modo convencional é padrão. O modo Vim também atua na navegação da interface.
-O mouse funciona nos dois modos.
+The conventional mode is the default. The Vim mode also acts on the interface navigation.
+The mouse works in both modes.
 
-Contextos que precisam de tratamento separado:
+Contexts that need separate handling:
 
-| Contexto | Comportamento |
+| Context | Behavior |
 |---|---|
-| Navegador | Selecionar conexão ou objeto; abrir tabela por duplo clique |
-| Abas principais | Alternar entre consoles e tabelas já abertos |
-| Editor | Editar SQL; `Tab` aceita sugestões e `Enter` quebra a linha, salvo outra escolha em **Autocomplete**; executar somente por uma ação explícita |
-| Filtros | `Tab` completa; `Enter` aplica |
-| Resultados | Selecionar e copiar dados; navegar somente nas linhas carregadas |
-| Diálogo | Resolver a pergunta sem acionar comandos de execução ao fundo |
+| Navigator | Select connection or object; open table by double click |
+| Main tabs | Switch between already open consoles and tables |
+| Editor | Edit SQL; `Tab` accepts suggestions and `Enter` breaks the line, unless another choice in **Autocomplete**; run only through an explicit action |
+| Filters | `Tab` completes; `Enter` applies |
+| Results | Select and copy data; navigate only in the loaded rows |
+| Dialog | Resolve the question without triggering execution commands in the background |
 
-O autocomplete inicial oferece schemas, tabelas, views e colunas; funções e assinaturas ficam fora desse escopo.
-Sem catálogo disponível, sugerir as palavras-chave do dialeto.
-Os atalhos de foco, abas e execução estão definidos em [KEYMAP.md](KEYMAP.md).
-Atalhos de navegação não capturam caracteres durante a inserção de texto.
-Dados, nomes e erros externos não devem ser interpretados como sequências de controle do terminal.
+The initial autocomplete offers schemas, tables, views, and columns; functions and signatures stay outside that scope.
+Without a catalog available, suggest the keywords of the dialect.
+The focus, tab, and execution shortcuts are defined in [KEYMAP.md](KEYMAP.md).
+Navigation shortcuts do not capture characters during text input.
+Data, names, and external errors must not be interpreted as terminal control sequences.
 
-## 7. Retorno ao console
+## 7. Return to the console
 
-Reabrir um console recupera seu texto, cursor e rolagem.
-Não recuperar dados das grades nem executar SQL automaticamente.
-Se o console já estiver aberto, apenas selecionar a aba existente.
-Se estiver em uso por outra instância, bloquear sua abertura nesta instância.
+Reopening a console recovers its text, cursor, and scroll.
+Do not recover grid data or run SQL automatically.
+If the console is already open, only select the existing tab.
+If another instance uses it, block its opening in this instance.
 
-## 8. Esboços complementares
+## 8. Complementary sketches
 
-### Transação manual aberta
+### Open manual transaction
 
-A aba **Mensagens** mostra avisos, erros e comandos sem linhas.
+The **Messages** tab shows notices, errors, and commands without rows.
 
 ```text
 ┌─ console-1 ──────────────────────────────────────────────┐
 │ Schema: [public]                                         │
-│ [Executar] [Script inteiro] [Parar script]               │
-│ Modo: [Manual] · Transação aberta · [Commit] [Rollback]  │
+│ [Run] [Whole script] [Stop script]                       │
+│ Mode: [Manual] · Open transaction · [Commit] [Rollback]  │
 ├──────────────────────────────────────────────────────────┤
 │ 1 ✓ UPDATE users SET active = false WHERE id = 7;        │
 ├──────────────────────────────────────────────────────────┤
-│ Mensagens                                                │
-│ 1 linha alterada. Transação ainda não confirmada.        │
+│ Messages                                                 │
+│ 1 row changed. Transaction not confirmed yet.            │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Espera no pool
+### Pool wait
 
-**Parar script** cancela o aguardo sem enviar SQL ao banco.
+**Stop script** cancels the wait without sending SQL to the database.
 
 ```text
 ┌─ console-2 ──────────────────────────────────────────────┐
-│ Aguardando conexão · Pool ocupado: 5/5                   │
-│ O SQL ainda não foi enviado ao banco.                    │
-│ [Parar script]                                           │
+│ Waiting for connection · Pool busy: 5/5                  │
+│ The SQL has not reached the database yet.                │
+│ [Stop script]                                            │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Cancelamento
+### Cancellation
 
-O primeiro esboço mostra a espera de 5 segundos pela resposta da instrução.
-O segundo aparece somente com transação aberta.
+The first sketch shows the 5-second wait for the statement response.
+The second appears only with an open transaction.
 
 ```text
-┌─ Parar script ───────────────────────────────────────────┐
-│ Cancelamento enviado. Aguardando a resposta do banco.    │
-│ Tempo: 3 de 5 segundos                                   │
+┌─ Stop script ────────────────────────────────────────────┐
+│ Cancellation sent. Waiting for the database response.    │
+│ Time: 3 of 5 seconds                                     │
 └──────────────────────────────────────────────────────────┘
 ```
 
 ```text
-┌─ Fechar conexão ─────────────────────────────────────────┐
-│ O banco não respondeu ao cancelamento.                   │
-│ Fechar a conexão encerra a transação aberta.             │
-│ As alterações não confirmadas serão perdidas.            │
+┌─ Close connection ───────────────────────────────────────┐
+│ The database did not answer the cancellation.            │
+│ Closing the connection ends the open transaction.        │
+│ The uncommitted changes will be lost.                    │
 │                                                          │
-│ [Fechar conexão]  [Continuar aguardando]                 │
+│ [Close connection]  [Keep waiting]                       │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Orçamento esgotado
+### Budget exhausted
 
-Nos consoles, o orçamento encerra a leitura como o teto de linhas.
-Na visão de tabela, **Carregar mais** fica indisponível até existir espaço.
+In the consoles, the budget ends the read like the row cap.
+In the table view, **Load more** stays unavailable until space exists.
 
 ```text
-┌─ Dados das grades ───────────────────────────────────────┐
-│ Orçamento atingido: 256/256 MiB                          │
-│ As linhas carregadas foram mantidas.                     │
-│ Feche abas ou aumente o limite para carregar mais linhas. │
+┌─ Grid data ──────────────────────────────────────────────┐
+│ Budget reached: 256/256 MiB                              │
+│ The loaded rows were kept.                               │
+│ Close tabs or raise the limit to load more rows.         │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Cadastro de SQLite
+### SQLite form
 
-Se o arquivo não existir, perguntar antes de criá-lo.
+If the file does not exist, ask before creating it.
 
 ```text
-┌─ Conexão ────────────────────────────────────────────────┐
-│ Tipo:         [SQLite]                                   │
-│ Nome:         [local]                                    │
-│ Escopo:       [Projeto]  (pode alterar para Global)      │
-│ Arquivo:      [data/app.db]                              │
-│ foreign_keys: [Padrão do SQLite]                         │
-│ Bloqueio:     prazo [5] segundos                         │
+┌─ Connection ─────────────────────────────────────────────┐
+│ Type:         [SQLite]                                   │
+│ Name:         [local]                                    │
+│ Scope:        [Project]  (can change to Global)          │
+│ File:         [data/app.db]                              │
+│ foreign_keys: [SQLite default]                           │
+│ Lock:         deadline [5] seconds                       │
 │ Pool:         [5]                                        │
 │                                                          │
-│ [Testar conexão]  [Salvar]  [Cancelar]                   │
+│ [Test connection]  [Save]  [Cancel]                      │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Entrada por URI
+### URI input
 
-Uma senha na URI segue as regras de credenciais e não fica na configuração do projeto.
+A password in the URI follows the credential rules and does not stay in the project configuration.
 
 ```text
-┌─ Conexão ────────────────────────────────────────────────┐
-│ Tipo:    [PostgreSQL]                                    │
-│ Nome:    [app]                                           │
-│ Escopo:  [Projeto]  (pode alterar para Global)           │
-│ Entrada: [URI]                                           │
+┌─ Connection ─────────────────────────────────────────────┐
+│ Type:    [PostgreSQL]                                    │
+│ Name:    [app]                                           │
+│ Scope:   [Project]  (can change to Global)               │
+│ Input:   [URI]                                           │
 │ URI:     [postgres://app_user@db.example.test/app_db]    │
 │                                                          │
-│ [Testar conexão]  [Salvar]  [Cancelar]                   │
+│ [Test connection]  [Save]  [Cancel]                      │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Edição de conexão conectada
+### Edit of a connected connection
 
-Dados de acesso, TLS e limite do pool exigem desconexão.
+Access data, TLS, and the pool limit need a disconnect.
 
 ```text
-┌─ Editar conexão: app (local) ────────────────────────────┐
-│ Esta conexão está conectada.                             │
-│ Desconecte para alterar acesso, TLS ou limite do pool.   │
+┌─ Edit connection: app (local) ───────────────────────────┐
+│ This connection is connected.                            │
+│ Disconnect to change access, TLS, or the pool limit.     │
 │                                                          │
-│ Nome: [app]                                              │
+│ Name: [app]                                              │
 │                                                          │
-│ [Desconectar]  [Salvar nome]  [Cancelar]                 │
+│ [Disconnect]  [Save name]  [Cancel]                      │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Confirmação de destino
+### Destination confirmation
 
-Esta pergunta aparece antes da primeira conexão a um destino nesta máquina, conforme a seção 3 do plano.
-Mostrar destino, usuário e TLS; iniciar com foco em **Cancelar**.
-A confirmação já existe no código. Um caminho novo pode mostrar **Confirm project path**.
-Cancelar impede o envio da operação que espera essas credenciais.
+This question appears before the first connection to a destination on this machine, according to section 3 of the plan.
+Show destination, user, and TLS; start with focus on **Cancel**.
+The confirmation already exists in the code. A new path can show **Confirm project path**.
+Cancel prevents sending the operation that awaits those credentials.
 
 ```text
-┌─ Confirmar destino ──────────────────────────────────────┐
+┌─ Confirm destination ────────────────────────────────────┐
 │ Host:    db.example.test                                 │
-│ Porta:   5432                                            │
-│ Usuário: app_user                                        │
-│ TLS:     Verificar certificado                           │
+│ Port:    5432                                            │
+│ User:    app_user                                        │
+│ TLS:     Verify certificate                              │
 │                                                          │
-│ [Confirmar]  [Cancelar]                                  │
+│ [Confirm]  [Cancel]                                      │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Solicitação de senha
+### Password prompt
 
-Iniciar com uso somente na sessão, com a opção de salvar desmarcada.
-O texto da opção muda conforme o cofre.
-Sem cofre, a opção informa que a gravação global usa **texto simples** e exige autorização.
-Cofre bloqueado ou com erro não permite essa alternativa.
+Start with session-only use, with the save option unchecked.
+The option text changes according to the vault.
+Without a vault, the option says that the global storage uses **plain text** and needs authorization.
+A locked vault or a vault with an error does not allow that alternative.
 
 ```text
-┌─ Senha: app (local) ─────────────────────────────────────┐
-│ Usuário: app_user                                        │
-│ Senha:   [••••••••]                                      │
+┌─ Password: app (local) ──────────────────────────────────┐
+│ User:    app_user                                        │
+│ Password:  [••••••••]                                    │
 │                                                          │
-│ [ ] Salvar no cofre do sistema                           │
+│ [ ] Save in the system vault                             │
 │                                                          │
-│ [Conectar]  [Cancelar]                                   │
+│ [Connect]  [Cancel]                                      │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Scripts sem conexão
+### Scripts without a connection
 
-A execução fica bloqueada até a escolha e a confirmação de uma conexão.
+The execution stays blocked until the choice and confirmation of a connection.
 
 ```text
-┌─ Scripts sem conexão ────────────────────────────────────┐
-│ investigar-pedidos       ontem, 16:20                    │
-│ relatorio-mensal         12/10, 09:15                    │
+┌─ Scripts without a connection ───────────────────────────┐
+│ investigate-orders         yesterday, 16:20              │
+│ monthly-report             10/12, 09:15                  │
 │                                                          │
-│ [Abrir]  [Associar a uma conexão]                        │
+│ [Open]  [Attach to a connection]                         │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Configurações
+### Settings
 
-Abrir com `Ctrl+W ,`.
-A janela tem 72 colunas e cresce até 140 numa tela maior, com 8 colunas livres. A altura não muda.
-As listas, os conflitos, **Rename console**, a senha e as perguntas crescem até 100 colunas. As listas e os conflitos também crescem até 30 linhas. O detalhe da célula e a ajuda crescem até 140 colunas.
-O projeto grava somente os valores que declara.
-Oferecer escopo global ou do projeto e os sete campos abaixo.
-Mostrar os valores herdados do global e permitir remover uma definição do projeto para usar o global.
-**Salvar** grava as alterações de todas as seções. **Cancelar** não altera nada.
-A barra lateral agrupa os campos nas seções **General**, **Editor** e **Results**. O painel mostra uma seção por vez.
-O escopo e os botões ficam fora das seções, e aparecem em todas elas.
-Uma nota de erro aparece acima dos botões, mesmo quando o campo está em outra seção.
-Uma seção nova precisa de uma linha na tabela `SECTIONS`, e a janela cresce com a maior seção.
-Manter `config.json` para opções avançadas, como o `keymap`.
-Ao mudar o modo de teclado, preservar texto, cursor e rolagem.
-A troca acontece no próprio editor, então a seleção e o histórico continuam, inclusive na recarga.
+Open with `Ctrl+W ,`.
+The window has 72 columns and grows to 140 on a larger screen, with 8 free columns. The height does not change.
+The lists, the conflicts, **Rename console**, the password, and the questions grow to 100 columns. The lists and the conflicts also grow to 30 rows. The cell detail and the help grow to 140 columns.
+The project writes only the values it declares.
+Offer the global or project scope and the ten fields below.
+Show the values inherited from global and allow removing a project definition to use the global one.
+**Save** writes the changes of all sections. **Cancel** changes nothing.
+The sidebar groups the fields in the **General**, **Editor**, **Results**, and **Appearance** sections. The panel shows one section at a time.
+The scope and the buttons stay outside the sections, and appear in all of them.
+An error note appears above the buttons, even when the field is in another section.
+A new section needs a row in the `SECTIONS` table, and the window grows with the largest section.
+Keep `config.json` for advanced options, such as the `keymap`.
+When the keyboard mode changes, keep text, cursor, and scroll.
+The switch happens in the editor itself, so the selection and the history continue, including on reload.
 
 ```text
 ╭─ Settings ─────┬─────────────────────────────────────────────────────╮
@@ -812,110 +812,110 @@ A troca acontece no próprio editor, então a seleção e o histórico continuam
 ╰────────────────┴─────────────────────────────────────────────────────╯
 ```
 
-A seção **Appearance** tem o campo **Default theme**.
-A escolha muda as cores na hora, antes de salvar. `Esc` e **Cancel** trazem de volta o tema salvo.
-No escopo global, um tema definido no projeto continua com prioridade.
+The **Appearance** section has the **Default theme** field.
+The choice changes the colors at once, before saving. `Esc` and **Cancel** bring back the saved theme.
+In the global scope, a theme defined in the project keeps priority.
 
-O formulário de conexão tem o campo **Theme**, que define um tema só para aquela conexão.
-O valor **Default** usa o tema padrão. A aba aberta decide as cores da tela inteira: a tela usa o tema da conexão da aba, e uma aba sem tema próprio usa o tema padrão.
-Esse campo também muda as cores antes de salvar. Ele funciona com a conexão ativa e não fecha a sessão nem a transação.
-Enquanto Settings está aberto, a tela mostra o tema padrão escolhido, mesmo em uma aba com tema próprio.
+The connection form has the **Theme** field, which defines a theme only for that connection.
+The **Default** value uses the default theme. The open tab decides the colors of the whole screen: the screen uses the theme of the connection of the tab, and a tab without its own theme uses the default theme.
+That field also changes the colors before saving. It works with the active connection and does not close the session or the transaction.
+While Settings is open, the screen shows the chosen default theme, even in a tab with its own theme.
 
-O campo **Icon** troca o ícone da conexão no explorador. O valor **Default** usa o ícone do banco.
-Os ícones são `⚠ ☠ ☢ ⚑ ♛ ⚗ ★ ◆ ⚒ ⚙ ⌂ ♥ ❄ ✔`, e o nome no arquivo é o nome em inglês em minúsculas, como `skull`.
-O ícone escolhido fica antes do nome, e a marca do banco (`pg`, ou o logo com a Nerd Font) fica depois dele:
+The **Icon** field changes the icon of the connection in the navigator. The **Default** value uses the database icon.
+The icons are `⚠ ☠ ☢ ⚑ ♛ ⚗ ★ ◆ ⚒ ⚙ ⌂ ♥ ❄ ✔`, and the name in the file is the English name in lowercase, such as `skull`.
+The chosen icon stays before the name, and the database mark (`pg`, or the logo with the Nerd Font) stays after it:
 
 ```text
  ▸ ● ☠ prod  pg
 ```
 
-Esse campo também funciona com a conexão ativa e aparece em todos os conjuntos de ícones, inclusive com `NO_COLOR`.
+That field also works with the active connection and appears in all icon sets, including with `NO_COLOR`.
 
-| Tema | Valor em `theme` | Uso |
+| Theme | Value in `theme` | Use |
 |---|---|---|
-| Auto | `auto` | Astrodark com truecolor; cores do terminal nos demais casos |
-| Astrodark | `astrodark` | Escuro neutro |
-| Terminal colors | `ansi` | Cores do perfil do terminal, sem truecolor |
-| Tokyo Night | `tokyo-night` | Escuro azulado |
-| Catppuccin Mocha | `catppuccin-mocha` | Escuro violeta |
-| Catppuccin Latte | `catppuccin-latte` | Claro |
-| Gruvbox | `gruvbox` | Escuro quente |
-| Nord | `nord` | Cinza azulado |
+| Auto | `auto` | Astrodark with truecolor; terminal colors in the other cases |
+| Astrodark | `astrodark` | Neutral dark |
+| Terminal colors | `ansi` | Colors of the terminal profile, without truecolor |
+| Tokyo Night | `tokyo-night` | Bluish dark |
+| Catppuccin Mocha | `catppuccin-mocha` | Violet dark |
+| Catppuccin Latte | `catppuccin-latte` | Light |
+| Gruvbox | `gruvbox` | Warm dark |
+| Nord | `nord` | Bluish gray |
 
-`NO_COLOR` tem prioridade sobre qualquer tema.
+`NO_COLOR` has priority over any theme.
 
-### Fechamento com transação aberta
+### Close with an open transaction
 
-O foco inicial fica em **Cancelar fechamento**, a opção sem efeito no banco.
-Não existe commit como resposta padrão.
+The initial focus stays on **Cancel close**, the option with no effect on the database.
+There is no commit as a default answer.
 
 ```text
-┌─ Fechar console-1 ───────────────────────────────────────┐
-│ Este console tem uma transação aberta.                   │
+┌─ Close console-1 ────────────────────────────────────────┐
+│ This console has an open transaction.                    │
 │                                                          │
-│ [Commit e fechar]  [Rollback e fechar]                   │
-│ [Cancelar fechamento]                                    │
+│ [Commit and close]  [Rollback and close]                 │
+│ [Cancel close]                                           │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Janela de detalhe
+### Detail window
 
-`Enter` na grade abre o valor completo. A janela é somente leitura.
+`Enter` in the grid opens the full value. The window is read-only.
 
 ```text
-┌─ users.bio · linha 2 ────────────────────────────────────┐
-│ Texto completo do valor selecionado, com quebra de       │
-│ linha automática e rolagem.                              │
+┌─ users.bio · row 2 ──────────────────────────────────────┐
+│ Full text of the selected value, with automatic          │
+│ line wrap and scroll.                                    │
 │                                                          │
-│ 1.240 caracteres · texto                                 │
-│ [Copiar]  [Fechar]                                       │
+│ 1,240 characters · text                                  │
+│ [Copy]  [Close]                                          │
 └──────────────────────────────────────────────────────────┘
 ```
 
-Um objeto ou array JSON válido de até 1 MiB abre formatado, e `f` troca entre o texto formatado e o original.
-A formatação só muda espaços: as chaves mantêm a ordem, e os números mantêm os dígitos.
-`Ctrl+C` copia a forma visível, e o `Ctrl+C` da grade copia o valor original.
-A opção **Format JSON** do diálogo Settings escolhe a forma inicial. O padrão é ligado.
+A valid JSON object or array of up to 1 MiB opens formatted, and `f` switches between the formatted text and the original.
+The formatting only changes spaces: the keys keep the order, and the numbers keep the digits.
+`Ctrl+C` copies the visible shape, and the grid `Ctrl+C` copies the original value.
+The **Format JSON** option of the Settings dialog chooses the initial shape. The default is on.
 
-### Janela de linha
+### Row window
 
-`r` na grade abre a linha do cursor na vertical. A janela é somente leitura.
+`r` in the grid opens the row of the cursor vertically. The window is read-only.
 
 ```text
 ╭─ row 3 of 100 loaded ───────────╮
 │ id         : 3                  │
 │ name       : Ana Souza          │
-│ bio        : texto longo que    │
-│              quebra alinhado    │
+│ bio        : long text that     │
+│              wraps aligned      │
 │ deleted_at : NULL               │
 ╰─────────────────── 12 columns ──╯
 ```
 
-`Left` e `Right` mudam de linha, sem ler outra página, e o cursor da grade acompanha a linha.
-A janela mantém a rolagem, então as mesmas colunas ficam à vista ao comparar duas linhas.
-Cada valor mostra até 4.096 colunas e termina com `…` no corte. `Enter` na grade mostra o valor inteiro.
-O JSON fica compacto nesta janela.
+`Left` and `Right` change row, without reading another page, and the grid cursor follows the row.
+The window keeps the scroll, so the same columns stay in view when comparing two rows.
+Each value shows up to 4,096 columns and ends with `…` at the cut. `Enter` in the grid shows the whole value.
+The JSON stays compact in this window.
 
-### Tela de ajuda
+### Help screen
 
-A tela mostra os atalhos do modo ativo e do painel em foco.
+The screen shows the shortcuts of the active mode and the focused panel.
 
 ```text
-┌─ Ajuda · Convencional · Editor ──────────────────────────┐
-│ Ctrl+Enter ou F5   Executar                              │
-│ Shift+Enter        Script inteiro                        │
-│ Ctrl+W x           Parar script                          │
-│ Ctrl+Space         Sugestões                             │
-│ Ctrl+F             Buscar e substituir                   │
-│ Ctrl+W h/j/k/l     Mudar de painel                       │
+┌─ Help · Conventional · Editor ───────────────────────────┐
+│ Ctrl+Enter or F5   Run                                   │
+│ Shift+Enter        Whole script                          │
+│ Ctrl+W x           Stop script                           │
+│ Ctrl+Space         Suggestions                           │
+│ Ctrl+F             Search and replace                    │
+│ Ctrl+W h/j/k/l     Change panel                          │
 │                                                          │
-│ Esc  Fechar                                              │
+│ Esc  Close                                               │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Menu do prefixo
+### Prefix menu
 
-`Ctrl+W` abre esta janela acima da barra de status. A janela mostra as teclas efetivas do `keymap`.
+`Ctrl+W` opens this window above the status bar. The window shows the effective keys of the `keymap`.
 
 ```text
 ╭─ Ctrl+W ─────────────────────────────────────────────────────────╮
@@ -925,16 +925,16 @@ A tela mostra os atalhos do modo ativo e do painel em foco.
 ╰──────────────────────────────────────────────────────────────────╯
 ```
 
-### Histórico de consultas
+### Query history
 
-`Ctrl+W H` abre a janela **Query history**, com as instruções da conexão do console, a mais nova primeira.
-Cada linha mostra sucesso ou falha, a idade e o início do SQL. As palavras digitadas filtram a lista.
-`Enter` insere a instrução no cursor e não executa. A opção **Query history** do diálogo Settings desliga o histórico.
+`Ctrl+W H` opens the **Query history** window, with the statements of the console connection, the newest first.
+Each row shows success or failure, the age, and the start of the SQL. The typed words filter the list.
+`Enter` inserts the statement at the cursor and does not run it. The **Query history** option of the Settings dialog turns the history off.
 
-### Paleta de comandos
+### Command palette
 
-`Ctrl+P` abre esta janela. Cada palavra do filtro precisa aparecer no nome ou na tecla.
-A janela tem 64 colunas e 12 linhas de lista, e cresce até 100 colunas e 30 linhas numa tela maior. Ela continua no topo.
+`Ctrl+P` opens this window. Each word of the filter needs to appear in the name or the key.
+The window has 64 columns and 12 list rows, and grows to 100 columns and 30 rows on a larger screen. It stays on top.
 
 ```text
 ╭─ Commands ───────────────────────────────────────────╮
@@ -945,10 +945,10 @@ A janela tem 64 colunas e 12 linhas de lista, e cresce até 100 colunas e 30 lin
 ╰──────────────────────────────────────────────────────╯
 ```
 
-### Tela inicial
+### Welcome screen
 
-A tela aparece sobre um editor sem texto. Ela não guarda estado e não captura teclas.
-O primeiro caractere digitado remove a tela.
+The screen appears over an editor without text. It keeps no state and captures no keys.
+The first typed character removes the screen.
 
 ```text
            SQLN 0.1.0
@@ -961,43 +961,43 @@ O primeiro caractere digitado remove a tela.
                    F1  Show all keys
 ```
 
-Sem conexão, a tela mostra **No connection yet** e o caminho `Ctrl+W h a`.
+Without a connection, the screen shows **No connection yet** and the path `Ctrl+W h a`.
 
-### Terminal pequeno
+### Small terminal
 
-A aplicação preserva o estado e volta a desenhar quando o tamanho for suficiente.
+The application keeps the state and draws again when the size is enough.
 
 ```text
 ┌─ SQLN ───────────────────────────────────────────────────┐
-│ Terminal pequeno: 52 x 14                                │
-│ Tamanho mínimo: 80 x 24                                  │
-│ Execuções e transações continuam ativas.                 │
+│ Small terminal: 52 x 14                                  │
+│ Minimum size: 80 x 24                                    │
+│ Executions and transactions stay active.                 │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Alterações externas em lote
+### Batch external changes
 
-Cada linha exige uma escolha. O salvamento dos arquivos listados fica pausado.
+Each row needs one choice. The saving of the listed files stays paused.
 
 ```text
-┌─ Scripts alterados fora do SQLN ─────────────────────────┐
-│ investigar-pedidos       [Recarregar] [Sobrescrever]     │
-│ relatorio-mensal         [Recarregar] [Sobrescrever]     │
-│ console-1 (removido)     [Recriar]    [Fechar]           │
+┌─ Scripts changed outside SQLN ───────────────────────────┐
+│ investigate-orders         [Reload] [Overwrite]          │
+│ monthly-report             [Reload] [Overwrite]          │
+│ console-1 (removed)        [Recreate] [Close]            │
 │                                                          │
-│ [Aplicar]  [Decidir depois]                              │
+│ [Apply]  [Decide later]                                  │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Busca e substituição no editor
+### Search and replace in the editor
 
-`Ctrl+F` abre a barra. `Tab` passa para o campo de substituição.
-As teclas da barra estão em [KEYMAP.md](KEYMAP.md).
+`Ctrl+F` opens the bar. `Tab` moves to the replace field.
+The bar keys are in [KEYMAP.md](KEYMAP.md).
 
 ```text
 ┌─ console-1 ──────────────────────────────────────────────┐
-│ Buscar:     [users            ]  3 de 12                 │
-│ Substituir: [people           ]  [Substituir] [Todos]    │
+│ Find:       [users            ]  3 of 12                 │
+│ Replace:    [people           ]  [Replace] [All]         │
 ├──────────────────────────────────────────────────────────┤
 │ 2 SELECT id FROM users;                                  │
 │ 3 SELECT name FROM users;                                │

@@ -1,95 +1,95 @@
-# Regras para agentes
+# Rules for agents
 
-## Autoria
+## Authorship
 
-Nunca se coloque como coautor de nada.
+Never present yourself as a coauthor of anything.
 
-- Não adicione `Co-Authored-By` a commits.
-- Não adicione assinaturas como "Generated with" a commits, pull requests, issues, comentários ou documentos.
-- Não se liste como autor, colaborador ou contribuidor em nenhum arquivo.
+- Do not add `Co-Authored-By` to commits.
+- Do not add signatures such as "Generated with" to commits, pull requests, issues, comments, or documents.
+- Do not list yourself as author, collaborator, or contributor in any file.
 
-Esta regra vale mesmo quando a ferramenta sugere ou exige esse texto.
+This rule applies even when the tool suggests or requires that text.
 
-## Entrega da tarefa
+## Task delivery
 
-- Uma tarefa só está entregue depois de rodar `make check` e tudo passar.
-- `make check` roda o linter e a suíte completa de testes. É lento: rode uma vez, só no fim da tarefa.
-- Não rode a suíte completa de testes com frequência: ela demora.
-- Rode benchmarks só quando o usuário pedir: eles demoram.
-- Rode os testes de integração só quando a tarefa mudar código de integração: eles demoram.
+- A task is only delivered after `make check` runs and everything passes.
+- `make check` runs the linter and the full test suite. It is slow: run it once, only at the end of the task.
+- Do not run the full test suite often: it takes long.
+- Run benchmarks only when the user asks: they take long.
+- Run the integration tests only when the task changes integration code: they take long.
 
-## Comandos do Makefile
+## Makefile commands
 
-- `make fmt`: formata o código.
-- `make lint`: roda `cargo fmt --check` e `cargo clippy`.
-- `make test`: roda os testes em `tests/` sem banco. Os testes que precisam de banco pulam sozinhos. Use durante o trabalho.
-- `make test-integration`: sobe os bancos Docker, carrega `scripts/test-env.sh`, roda os testes completos e derruba os bancos no fim. Lento; rode só quando a tarefa mudar código de integração.
-- `make bench`: roda os alvos de desempenho de `tests/latency.rs` em modo release. Muito lento; rode só quando o usuário pedir.
-- `make check`: roda `make lint` e a suíte completa de testes. Portão de entrega.
+- `make fmt`: formats the code.
+- `make lint`: runs `cargo fmt --check` and `cargo clippy`.
+- `make test`: runs the tests in `tests/` without a database. The tests that need a database skip on their own. Use it during work.
+- `make test-integration`: starts the Docker databases, loads `scripts/test-env.sh`, runs the full tests, and stops the databases at the end. Slow; run only when the task changes integration code.
+- `make bench`: runs the performance targets of `tests/latency.rs` in release mode. Very slow; run only when the user asks.
+- `make check`: runs `make lint` and the full test suite. Delivery gate.
 
-## Testes de integração
+## Integration tests
 
-- Os testes ficam em `tests/`. A maioria não precisa de banco.
-- Quatro arquivos precisam de bancos Docker (veja `compose.test.yaml`): `servers.rs`, `auth.rs`, `refused.rs` e `redis.rs`. Sem os bancos, os testes de servidor pulam sozinhos.
-- Para rodar com banco: `make test-integration`. O comando sobe o Docker, roda tudo e derruba os bancos no fim.
-- Para TLS completo: rode `scripts/test-certs.sh` e suba o compose com `--profile tls` antes de `make test-integration`.
+- The tests live in `tests/`. Most do not need a database.
+- Four files need Docker databases (see `compose.test.yaml`): `servers.rs`, `auth.rs`, `refused.rs`, and `redis.rs`. Without the databases, the server tests skip on their own.
+- To run with a database: `make test-integration`. The command starts Docker, runs everything, and stops the databases at the end.
+- For full TLS: run `scripts/test-certs.sh` and start the compose with `--profile tls` before `make test-integration`.
 
-## Respostas
+## Replies
 
-- Responda de forma resumida, para economizar tokens.
+- Reply briefly, to save tokens.
 
 ## Codebase-memory
 
-O grafo deste repo está indexado como `Users-antoniolorenzon-Projects-sqln`.
+The graph of this repo is indexed as `Users-antoniolorenzon-Projects-sqln`.
 
-O servidor MCP está desativado. Use o CLI:
+The MCP server is disabled. Use the CLI:
 
 ```
-~/.local/bin/codebase-memory-mcp cli --json <tool> --<flag> <valor>
+~/.local/bin/codebase-memory-mcp cli --json <tool> --<flag> <value>
 ```
 
-### Fluxo
+### Flow
 
-1. Consulte o grafo antes de procurar código com grep.
-2. Ache o nome exato com `search_graph` antes de chamar `trace_path`.
-3. Confira a cobertura com `check_index_coverage` antes de concluir algo negativo ou completo.
-4. Reindexe com `index_repository` quando o grafo estiver desatualizado.
+1. Check the graph before you search code with grep.
+2. Find the exact name with `search_graph` before you call `trace_path`.
+3. Confirm coverage with `check_index_coverage` before you conclude something negative or complete.
+4. Reindex with `index_repository` when the graph is outdated.
 
-### Comandos comuns
+### Common commands
 
 ```bash
 CM=~/.local/bin/codebase-memory-mcp
 P=Users-antoniolorenzon-Projects-sqln
 
-# Estado do índice
+# Index status
 $CM cli --json index_status --project $P
 
-# Busca por nome (regex)
+# Search by name (regex)
 $CM cli --json search_graph --project $P --name-pattern ".*connect.*"
 
-# Busca textual com ranking (ignora name-pattern)
+# Text search with ranking (ignores name-pattern)
 $CM cli --json search_graph --project $P --query "connection pool"
 
-# Rastreio de chamadas (exige nome exato; both inclui chamadores externos)
-$CM cli --json trace_path --project $P --function-name NomeExato --direction both --depth 3
+# Call tracing (needs the exact name; both includes external callers)
+$CM cli --json trace_path --project $P --function-name ExactName --direction both --depth 3
 
-# Impacto de mudanças locais (diff do git)
+# Impact of local changes (git diff)
 $CM cli --json detect_changes --project $P
 
-# Cobertura do índice por arquivos
+# Index coverage by files
 $CM cli --json check_index_coverage --project $P --paths src/lib.rs --paths src/main.rs
 
-# Snippet de código pelo nome qualificado
-$CM cli --json get_code_snippet --project $P --qualified-name "$P.src.lib.nome_da_funcao"
+# Code snippet by qualified name
+$CM cli --json get_code_snippet --project $P --qualified-name "$P.src.lib.function_name"
 
-# Reindexar
+# Reindex
 $CM cli --json index_repository --repo-path "$(git rev-parse --show-toplevel)"
 ```
 
-### Regras
+### Rules
 
-- Passe arrays com a flag repetida (`--paths a --paths b`) ou com `--args-file <json>`.
-- Verifique `has_more` em `search_graph`; pagine com `--offset`.
-- Se `trace_path` retornar `ambiguous`, passe o `qualified_name` sugerido em `--function-name`.
-- `trace_path` filtra arquivos de teste por padrão; use `--include-tests true` para incluí-los.
-- Para arestas específicas (ex.: HTTP_CALLS), use `query_graph` com Cypher e `LIMIT`.
+- Pass arrays with the repeated flag (`--paths a --paths b`) or with `--args-file <json>`.
+- Check `has_more` in `search_graph`; paginate with `--offset`.
+- If `trace_path` returns `ambiguous`, pass the suggested `qualified_name` in `--function-name`.
+- `trace_path` filters test files by default; use `--include-tests true` to include them.
+- For specific edges (e.g., HTTP_CALLS), use `query_graph` with Cypher and `LIMIT`.
