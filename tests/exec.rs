@@ -12,6 +12,7 @@ use sqln::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, Manager, ReadLimit, RunOptions, Settings,
     StatementStatus,
 };
+use sqln::export::{ExportOptions, ExportWriter};
 use sqln::grid::{Budget, Row, Value};
 use tokio::sync::mpsc::Receiver;
 
@@ -651,4 +652,102 @@ fn the_catalog_reads_relations_first_and_columns_on_demand() {
             break;
         }
     }
+}
+
+const PLAIN_ROWS: &str = "WITH RECURSIVE c AS (SELECT 1 AS x UNION ALL SELECT x + 1 FROM c WHERE x < 500000) SELECT x FROM c";
+
+fn export_file(name: &str) -> (std::path::PathBuf, ExportWriter) {
+    let path = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("exec-export")
+        .join(format!("{name}.csv"));
+    let writer = ExportWriter::create(&path, ExportOptions::default()).unwrap();
+    (path, writer)
+}
+
+fn export_options(writer: &ExportWriter) -> RunOptions {
+    RunOptions {
+        export: Some(writer.clone()),
+        ..RunOptions::default()
+    }
+}
+
+#[test]
+fn an_export_passes_the_row_cap_the_budget_and_the_time_limit() {
+    let settings = Settings {
+        row_cap: 2,
+        budget_bytes: 4_096,
+        sql_timeout: Some(Duration::from_millis(5)),
+        ..Settings::default()
+    };
+    let mut h = Harness::open("export-limits", settings);
+    let (path, writer) = export_file("limits");
+    let options = export_options(&writer);
+    let execution = h
+        .manager
+        .run(h.console, vec![PLAIN_ROWS.to_owned()], options);
+    let run = h.collect(execution);
+    assert_eq!(run.end, Some(ExecutionEnd::Completed), "{run:?}");
+    assert_eq!(run.statuses, [StatementStatus::Success]);
+    assert!(run.columns.is_empty(), "the grid gets no columns");
+    assert!(run.rows.is_empty(), "the grid gets no rows");
+    assert_eq!(h.budget.used(), 0);
+    assert_eq!(writer.rows(), 500_000);
+    writer.promote(&path).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap().lines().count(),
+        500_001
+    );
+}
+
+#[test]
+fn a_normal_run_keeps_the_time_limit_after_an_export() {
+    let settings = Settings {
+        sql_timeout: Some(Duration::from_millis(50)),
+        ..Settings::default()
+    };
+    let mut h = Harness::open("export-then-run", settings);
+    let (_, writer) = export_file("then-run");
+    let options = export_options(&writer);
+    let execution = h
+        .manager
+        .run(h.console, vec!["SELECT 1".to_owned()], options);
+    h.collect(execution);
+    writer.discard();
+    let run = h.run(&[HUGE_COUNT]);
+    assert_eq!(run.end, Some(ExecutionEnd::TimedOut));
+}
+
+#[test]
+fn a_stop_ends_an_export_and_the_session_stays_usable() {
+    let mut h = Harness::open("export-stop", Settings::default());
+    let (_, writer) = export_file("stop");
+    let options = export_options(&writer);
+    let execution = h
+        .manager
+        .run(h.console, vec![HUGE_SELECT.to_owned()], options);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while writer.rows() == 0 {
+        assert!(Instant::now() < deadline, "no row arrived");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    h.manager.stop(h.console);
+    let run = h.collect(execution);
+    assert_eq!(run.end, Some(ExecutionEnd::Stopped), "{run:?}");
+    assert!(writer.rows() > 0);
+    writer.discard();
+    assert_eq!(h.cell("SELECT 7"), number("7"));
+}
+
+#[test]
+fn a_failed_write_ends_the_read() {
+    let mut h = Harness::open("export-failed", Settings::default());
+    let (_, writer) = export_file("failed");
+    let options = export_options(&writer);
+    writer.discard();
+    let execution = h
+        .manager
+        .run(h.console, vec![HUGE_SELECT.to_owned()], options);
+    let run = h.collect(execution);
+    assert_eq!(writer.rows(), 0);
+    assert_ne!(run.end, Some(ExecutionEnd::TimedOut), "{run:?}");
 }

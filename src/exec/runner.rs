@@ -15,6 +15,7 @@ use super::{
     RunRequest, StatementKey, StatementStatus, context,
 };
 use crate::connector::{ExecError, StatementEnd, TransactionCommand, TransactionState};
+use crate::export::ExportWriter;
 use crate::grid::Budget;
 use crate::pool::Lease;
 
@@ -161,6 +162,7 @@ impl ConsoleTask {
         // A reserved session has this context, and a failed transaction refuses `SET`.
         let context = context(&self.binding.settings, options.schema);
         let cap = options.row_cap.unwrap_or(self.binding.settings.row_cap);
+        let export = options.export;
         if !reserved && let Err(error) = lease.session().apply_context(&context).await {
             self.finish(execution, ExecutionEnd::Failed, Some(error.message))
                 .await;
@@ -198,7 +200,9 @@ impl ConsoleTask {
             };
 
             self.emit(ExecEvent::StatementStarted { key }).await;
-            let (waited, reason) = self.run_statement(key, active, sql, cap, commands).await;
+            let (waited, reason) = self
+                .run_statement(key, active, sql, (cap, export.clone()), commands)
+                .await;
             let closed = matches!(
                 waited,
                 Waited::Closed
@@ -247,6 +251,10 @@ impl ConsoleTask {
 
         if let Some(lease) = lease {
             self.keep_or_release(lease).await;
+        }
+        if let Some(export) = export {
+            // The sync can take time, and this task shares its thread with other consoles.
+            let _ = tokio::task::spawn_blocking(move || export.seal()).await;
         }
         self.finish(execution, end, None).await;
     }
@@ -299,10 +307,19 @@ impl ConsoleTask {
         key: StatementKey,
         lease: &mut Lease,
         sql: &str,
-        cap: usize,
+        (cap, export): (usize, Option<ExportWriter>),
         commands: &mut UnboundedReceiver<Command>,
     ) -> (Waited, Option<StopReason>) {
-        let sink = ResultSink::new(key, self.events.clone(), self.budget.clone(), cap);
+        let mut sink = ResultSink::new(key, self.events.clone(), self.budget.clone(), cap);
+        // An export ends with the user. It has no time limit.
+        let time_limit = self
+            .binding
+            .settings
+            .sql_timeout
+            .filter(|_| export.is_none());
+        if let Some(export) = export {
+            sink.export_to(export);
+        }
         let stopping = sink.stop_flag();
         let session = lease.session();
         let canceller = session.canceller();
@@ -314,7 +331,7 @@ impl ConsoleTask {
 
         let mut run = session.run(sql, sink);
         let settings = self.binding.settings.clone();
-        let mut limit = pin!(sleep(settings.sql_timeout.unwrap_or(NO_LIMIT)));
+        let mut limit = pin!(sleep(time_limit.unwrap_or(NO_LIMIT)));
         let mut grace = pin!(sleep(NO_LIMIT));
         let mut reason = None;
         let mut asked = false;
@@ -336,7 +353,7 @@ impl ConsoleTask {
                         grace.as_mut().reset(tokio::time::Instant::now());
                     }
                 }
-                () = &mut limit, if reason.is_none() && settings.sql_timeout.is_some() => {
+                () = &mut limit, if reason.is_none() && time_limit.is_some() => {
                     reason = Some(StopReason::Timeout);
                     request = Some(cancel());
                     grace.as_mut().reset(tokio::time::Instant::now() + settings.stop_grace);

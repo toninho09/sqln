@@ -1,5 +1,6 @@
 //! All interface text. This file keeps the text in one place for a later translation.
 
+use crate::export::ExportFormat;
 use crate::input::{Action, SuggestionKeys};
 
 /// One command of the hint bar: a key and its effect. A note has an empty key.
@@ -121,6 +122,12 @@ pub const HINT_FORM: &[HintPart] = &[
     ("Tab", "next"),
     ("Left/Right", "change"),
     ("Enter", "next or press"),
+    ("Esc", "cancel"),
+];
+pub const HINT_EXPORT_FORMATS: &[HintPart] = &[
+    ("Up/Down", "format"),
+    ("Tab", "next"),
+    ("Enter", "next"),
     ("Esc", "cancel"),
 ];
 pub const HINT_DIALOG: &[HintPart] = &[
@@ -404,6 +411,40 @@ pub const CONSOLE_RENAMED: &str = "The console has a new name.";
 pub const CONNECTION_CHANGE_BUSY: &str = "End the execution and the transaction before the change.";
 pub const NO_OTHER_CONNECTION: &str = "No other connection is available.";
 pub const SETTINGS_SAVED: &str = "The settings are saved.";
+pub const TITLE_EXPORT: &str = "Export";
+pub const TITLE_EXPORT_EXISTS: &str = "File exists";
+pub const TITLE_EXPORT_PART: &str = "Incomplete export";
+pub const BUTTON_EXPORT: &str = "Export";
+pub const OPTION_EXPORT_REPLACE: &str = "Replace";
+pub const OPTION_EXPORT_KEEP: &str = "Keep";
+pub const OPTION_EXPORT_DELETE: &str = "Delete";
+pub const FIELD_EXPORT_ROWS: &str = "Rows";
+pub const FIELD_EXPORT_FILE: &str = "File";
+pub const FIELD_EXPORT_HEADER: &str = "Header";
+pub const FIELD_EXPORT_DELIMITER: &str = "Delimiter";
+pub const FIELD_EXPORT_NULL: &str = "NULL text";
+pub const FIELD_EXPORT_BOM: &str = "UTF-8 BOM";
+pub const FIELD_EXPORT_TABLE: &str = "Table";
+pub const FIELD_EXPORT_GROUPING: &str = "INSERT";
+pub const FIELD_EXPORT_BATCH: &str = "Rows per INSERT";
+pub const VALUE_EXPORT_ALL_ROWS: &str = "All rows";
+pub const VALUE_EXPORT_ONE_ROW: &str = "One per row";
+pub const VALUE_EXPORT_GROUPED: &str = "Grouped";
+pub const VALUE_EXPORT_NULL_EMPTY: &str = "Empty";
+pub const VALUE_EXPORT_NULL_WORD: &str = "NULL";
+pub const EXPORT_NO_FILE: &str = "Write the path of the file.";
+pub const EXPORT_IS_FOLDER: &str = "This path is a folder. Write a file name.";
+pub const EXPORT_NO_TABLE: &str = "Write the table of the INSERT statements.";
+pub const EXPORT_IN_USE: &str = "Another export writes to this file.";
+pub const EXPORT_ALL_READ: &str =
+    "All rows needs a plain read. This statement can change data, so it does not run again.";
+pub const EXPORT_ALL_SCRIPT: &str =
+    "All rows needs one statement. Run this statement alone, then export.";
+pub const EXPORT_ALL_SOURCE: &str =
+    "All rows is not available for this source. Load more rows first.";
+pub const EXPORT_RESULT_CLOSED: &str = "The result closed before the end of the export.";
+pub const EXPORT_DELETED: &str = "The incomplete file is deleted.";
+pub const EXPORT_STOPPED: &str = "The export stopped before the first row.";
 pub const SECTION_GENERAL: &str = "General";
 pub const SECTION_EDITOR: &str = "Editor";
 pub const SECTION_RESULTS: &str = "Results";
@@ -417,6 +458,62 @@ pub const FIELD_BUDGET: &str = "Data (MiB)";
 pub const FIELD_THEME: &str = "Default theme";
 pub const FIELD_CONNECTION_THEME: &str = "Theme";
 pub const FIELD_CONNECTION_ICON: &str = "Icon";
+
+pub fn export_format_name(format: ExportFormat) -> &'static str {
+    match format {
+        ExportFormat::Csv => "CSV",
+        ExportFormat::Tsv => "TSV",
+        ExportFormat::Json => "JSON",
+        ExportFormat::JsonLines => "JSON Lines",
+        ExportFormat::SqlInsert => "SQL INSERT",
+    }
+}
+
+pub fn export_selection(rows: usize, columns: usize) -> String {
+    format!("Selection ({rows} × {columns})")
+}
+
+pub fn export_loaded(rows: usize) -> String {
+    format!("Loaded rows ({rows})")
+}
+
+pub fn export_delimiter(symbol: char) -> String {
+    format!("{symbol}")
+}
+
+pub fn export_exists(path: &str) -> String {
+    format!("{path} exists. Replace this file?")
+}
+
+pub fn export_progress(rows: usize, path: &str) -> String {
+    format!("Export: {rows} rows written to {path}")
+}
+
+pub fn export_done(rows: usize, path: &str) -> String {
+    format!("Exported {rows} rows to {path}.")
+}
+
+pub fn export_failed(reason: &str) -> String {
+    format!("The export failed: {reason}")
+}
+
+pub fn export_choices_failed(reason: &str) -> String {
+    format!("The export choices are not saved: {reason}")
+}
+
+/// Asks about the rows of an export that did not end. `failure` holds the reason.
+pub fn export_part(rows: usize, failure: Option<&str>, replaces: bool) -> String {
+    let start = failure.map_or_else(
+        || format!("The export stopped after {rows} rows."),
+        |reason| format!("The export failed after {rows} rows: {reason}"),
+    );
+    let question = if replaces {
+        "Keep replaces the old file."
+    } else {
+        "Keep this incomplete file?"
+    };
+    format!("{start} {question}")
+}
 
 pub fn settings_number(name: &str) -> String {
     format!("{name} needs a number of 1 or more.")
@@ -635,6 +732,7 @@ pub fn action_text(action: Action) -> &'static str {
         Action::RenameConsole => "Rename the console",
         Action::ChangeConnection => "Change the connection of the console",
         Action::OpenSettings => "Open the settings",
+        Action::GridExport => "Export the result to a file",
         Action::NavigatorScripts => "Scripts without a connection",
         Action::NavigatorDeletePassword => "Delete the saved password",
         Action::ReloadConfig => "Load the configuration again",

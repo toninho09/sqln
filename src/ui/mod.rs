@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod conflicts;
 pub mod console;
+pub mod export;
 pub mod form;
 pub mod icons;
 pub mod name;

@@ -5,14 +5,14 @@ use std::borrow::Cow;
 
 use super::Value;
 
-fn quote(text: &str) -> Cow<'_, str> {
-    if text.is_empty() {
-        return Cow::Borrowed("\"\"");
+/// Quotes a field that holds a separator, or that a reader could take for a `NULL`.
+pub fn delimited_text<'a>(text: &'a str, delimiter: char, null: &str) -> Cow<'a, str> {
+    let plain = !text.is_empty() && text != null && !text.contains([delimiter, '\n', '\r', '"']);
+    if plain {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(format!("\"{}\"", text.replace('"', "\"\"")))
     }
-    if text.contains(['\t', '\n', '\r', '"']) {
-        return Cow::Owned(format!("\"{}\"", text.replace('"', "\"\"")));
-    }
-    Cow::Borrowed(text)
 }
 
 pub fn hex(bytes: &[u8]) -> String {
@@ -20,18 +20,19 @@ pub fn hex(bytes: &[u8]) -> String {
     format!("0x{digits}")
 }
 
-fn binary(bytes: &[u8]) -> Cow<'_, str> {
+fn binary<'a>(bytes: &'a [u8], delimiter: char, null: &str) -> Cow<'a, str> {
     match std::str::from_utf8(bytes) {
-        Ok(text) if !text.contains(char::is_control) => quote(text),
+        Ok(text) if !text.contains(char::is_control) => delimited_text(text, delimiter, null),
         _ => Cow::Owned(hex(bytes)),
     }
 }
 
-fn cell(value: &Value) -> Cow<'_, str> {
+/// Returns the text of a cell. `null` is the text of a `NULL` value.
+pub fn delimited_cell<'a>(value: &'a Value, delimiter: char, null: &'a str) -> Cow<'a, str> {
     match value {
-        Value::Null => Cow::Borrowed(""),
-        Value::Text(text) | Value::Number(text) => quote(text),
-        Value::Binary(bytes) => binary(bytes),
+        Value::Null => Cow::Borrowed(null),
+        Value::Text(text) | Value::Number(text) => delimited_text(text, delimiter, null),
+        Value::Binary(bytes) => binary(bytes, delimiter, null),
     }
 }
 
@@ -43,7 +44,7 @@ pub fn encode<'a>(rows: impl Iterator<Item = &'a [Value]>) -> String {
             if index > 0 {
                 out.push('\t');
             }
-            out.push_str(&cell(value));
+            out.push_str(&delimited_cell(value, '\t', ""));
         }
         out.push('\n');
     }

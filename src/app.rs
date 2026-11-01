@@ -4,6 +4,7 @@ mod auth;
 mod close;
 mod conflicts;
 mod connections;
+mod export;
 mod keys;
 mod mouse;
 mod persist;
@@ -38,6 +39,8 @@ use crate::console::{AfterTransaction, Console, Focus};
 use crate::creds::{Identity, PlainFile};
 use crate::editor::{KeyboardMode, RunScope, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, Settings};
+use crate::export::ExportChoices;
+use crate::export::form::ExportForm;
 use crate::form::ConnectionForm;
 use crate::grid::Budget;
 use crate::input::{Chord, Keymap, SuggestionKeys};
@@ -51,6 +54,7 @@ use crate::store::{Scope, Store};
 use crate::table::{TableFocus, TableTab};
 use crate::terminal::Session;
 use crate::ui::console::BarData;
+use crate::ui::export::{ExportLayout, draw_export};
 use crate::ui::form::{FormLayout, draw_form};
 use crate::ui::name::{NamePrompt, draw_name};
 use crate::ui::navigator::draw_navigator;
@@ -110,6 +114,7 @@ pub struct Options {
     pub appearance: (Option<ThemeName>, Option<IconName>),
     /// The keys that accept a suggestion.
     pub suggestion_keys: SuggestionKeys,
+    pub export_choices: ExportChoices,
 }
 
 impl Default for Options {
@@ -129,6 +134,7 @@ impl Default for Options {
             vault: None,
             appearance: (None, None),
             suggestion_keys: SuggestionKeys::default(),
+            export_choices: ExportChoices::default(),
         }
     }
 }
@@ -160,6 +166,11 @@ enum DialogAction {
     AuthMigrate(u64),
     AuthRemovePlain(u64),
     DeletePassword(Identity),
+    /// Replace the file of the export dialog.
+    ExportReplace,
+    /// Give the incomplete file of a tab its final name.
+    ExportKeep(ConsoleId),
+    ExportDelete(ConsoleId),
 }
 
 struct Dialog {
@@ -219,6 +230,7 @@ struct ScreenLayout {
     table: TableLayout,
     form: FormLayout,
     settings: SettingsLayout,
+    export: ExportLayout,
     conflicts: ConflictLayout,
     password: Vec<(usize, Rect)>,
     /// The options of the open dialog, with the row of those options.
@@ -282,6 +294,11 @@ pub struct App {
     /// The request for a new name of a console.
     rename: Option<NamePrompt>,
     settings_form: Option<SettingsForm>,
+    export_form: Option<ExportForm>,
+    /// The first choices of the next export dialog.
+    export_choices: ExportChoices,
+    /// The exports in progress, with at most one for each tab.
+    exports: Vec<export::ExportRun>,
     /// The files of the application. It is `None` when nothing loads or saves.
     persist: Option<persist::Persist>,
     auth: auth::Auth,
@@ -362,6 +379,9 @@ impl App {
             overlay: None,
             rename: None,
             settings_form: None,
+            export_form: None,
+            export_choices: options.export_choices.clone(),
+            exports: Vec::new(),
             status: None,
             status_shown: None,
             started: Instant::now(),
@@ -584,6 +604,7 @@ impl App {
             || self.palette.is_some()
             || self.rename.is_some()
             || self.settings_form.is_some()
+            || self.export_form.is_some()
             || self.auth.prompt.is_some();
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
@@ -602,6 +623,11 @@ impl App {
                     form.paste(&text);
                 }
             }
+            Event::Paste(text) if self.dialogs.is_empty() && self.export_form.is_some() => {
+                if let Some(form) = &mut self.export_form {
+                    form.paste(&text);
+                }
+            }
             Event::Paste(text) if self.dialogs.is_empty() && self.palette.is_some() => {
                 if let Some(palette) = &mut self.palette {
                     palette.paste(&text);
@@ -614,6 +640,7 @@ impl App {
             Event::Mouse(mouse) if self.picker.is_some() => self.on_picker_mouse(mouse),
             Event::Mouse(mouse) if self.palette.is_some() => self.on_palette_mouse(mouse),
             Event::Mouse(mouse) if self.settings_form.is_some() => self.on_settings_mouse(mouse),
+            Event::Mouse(mouse) if self.export_form.is_some() => self.on_export_mouse(mouse),
             Event::Mouse(mouse) if !blocked => self.on_mouse(mouse),
             _ => {}
         }
@@ -644,10 +671,11 @@ impl App {
 
     /// Returns true when the next step must not wait for a key.
     pub fn has_work(&self) -> bool {
-        match self.table() {
+        let search = match self.table() {
             Some(tab) => tab.result.search_has_work(),
             None => self.console().search_has_work(),
-        }
+        };
+        search || self.exports_have_work()
     }
 
     /// Reads waiting execution events and continues the row search.
@@ -662,6 +690,7 @@ impl App {
                 Some(index) => self.tables[index].result.continue_search(deadline),
                 None => self.console_mut().continue_search(deadline),
             }
+            self.continue_exports(deadline);
         }
         let mut changed = changed;
         for _ in 0..EVENTS_PER_FRAME {
@@ -710,6 +739,9 @@ impl App {
     }
 
     fn on_console_event(&mut self, event: ExecEvent) {
+        if self.on_export_event(&event) {
+            return;
+        }
         let Some(id) = event.console() else { return };
         let budget = self.budget.clone();
         if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
@@ -956,8 +988,13 @@ impl App {
     }
 
     fn draw_hint(&self, frame: &mut Frame, area: Rect) {
-        let line = match self.status.as_deref().or_else(|| self.auth_wait()) {
-            Some(status) => Line::styled(status.to_owned(), self.theme.status),
+        let message = self
+            .status
+            .clone()
+            .or_else(|| self.export_progress())
+            .or_else(|| self.auth_wait().map(str::to_owned));
+        let line = match message {
+            Some(status) => Line::styled(status, self.theme.status),
             None => hint_line(&self.hint_items(), &self.theme),
         };
         // The row starts one column after the edge, as the status line does.
@@ -1015,6 +1052,9 @@ impl App {
         }
         if let Some(form) = &self.settings_form {
             self.layout.settings = draw_settings(frame, form, &self.theme);
+        }
+        if let Some(form) = &self.export_form {
+            self.layout.export = draw_export(frame, form, &self.theme);
         }
         if let Some(prompt) = &self.rename {
             draw_name(frame, prompt, &self.theme);

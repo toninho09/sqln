@@ -20,6 +20,7 @@ use crate::connection::{
 use crate::connector::sqlite::SqliteTarget;
 use crate::connector::target::{Address, ClientCertificate, Engine, NetworkTarget, Tls, TlsFiles};
 use crate::editor::KeyboardMode;
+use crate::export::ExportChoices;
 use crate::input::{Keymap, SuggestionKeys};
 
 pub const VERSION: u32 = 1;
@@ -164,6 +165,9 @@ pub struct Preferences {
     pub reopen_tabs: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggestion_keys: Option<SuggestionKeys>,
+    /// The choices of the export dialog. Only the global file holds them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export: Option<ExportChoices>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -310,6 +314,8 @@ pub struct Config {
     pub reopen_tabs: bool,
     /// The keys that accept a suggestion.
     pub suggestion_keys: SuggestionKeys,
+    /// The last choices of the export dialog.
+    pub export: ExportChoices,
     /// The global connections first, then the project connections.
     pub connections: Vec<Stored>,
 }
@@ -351,6 +357,14 @@ fn validate(file: &ConfigFile, scope: Scope) -> Result<(), String> {
     ] {
         if value == Some(0) {
             return Err(format!("{name} needs 1 or more."));
+        }
+    }
+    if let Some(export) = &preferences.export {
+        if scope == Scope::Project {
+            return Err("export is valid only in the global file.".to_owned());
+        }
+        if export.batch == 0 {
+            return Err("export.batch needs 1 or more.".to_owned());
         }
     }
     let mut ids = HashSet::new();
@@ -683,6 +697,7 @@ fn combine(
             .and_then(|preferences| preferences.suggestion_keys)
             .or(global.suggestion_keys)
             .unwrap_or_default(),
+        export: global.export.clone().unwrap_or_default(),
         connections,
     })
 }
@@ -726,6 +741,13 @@ pub fn change_preferences(
     preferences: Preferences,
 ) -> Result<u64, String> {
     change_file(root, scope, |config| config.preferences = preferences)
+}
+
+/// Writes the choices of the export dialog. The other values of the file stay.
+pub fn change_export(root: &Root, export: ExportChoices) -> Result<u64, String> {
+    change_file(root, Scope::Global, |config| {
+        config.preferences.export = Some(export);
+    })
 }
 
 fn change_file(

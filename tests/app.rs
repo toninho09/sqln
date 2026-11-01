@@ -1231,3 +1231,514 @@ fn a_stopped_statement_needs_no_second_message() {
     f.assert_sees("Statement 1: stopped.");
     assert!(!f.sees("Stopped before"));
 }
+
+/// A read of plain rows that does not end by itself. The form of the `WITH` passes
+/// `is_plain_read`, which refuses `c(x)` as an unknown function.
+const ENDLESS_ROWS: &str = "WITH RECURSIVE c AS (SELECT 1 AS x UNION ALL SELECT x + 1 FROM c WHERE x < 1000000000) SELECT x FROM c;";
+const TEN_ROWS: &str = "CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (1), (2), (3), (4), (5), (6), (7), (8), (9), (10);";
+
+fn export_dir(name: &str) -> PathBuf {
+    let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    path
+}
+
+fn capped(rows: usize) -> Settings {
+    Settings {
+        row_cap: rows,
+        ..Settings::default()
+    }
+}
+
+fn read(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap()
+}
+
+impl Fixture {
+    fn capped(name: &str, rows: usize) -> Self {
+        Self::with(name, KeyboardMode::Conventional, capped(rows), TEN_ROWS)
+    }
+
+    fn open_export(&mut self) {
+        self.prefix('j');
+        self.press(key(KeyCode::Char('e')));
+    }
+
+    /// Replaces the path of the dialog. The focus starts on the sidebar.
+    fn set_export_path(&mut self, path: &Path) {
+        self.press(key(KeyCode::Tab));
+        self.press(key(KeyCode::Tab));
+        for _ in 0..100 {
+            self.press(key(KeyCode::Backspace));
+        }
+        self.write(&path.display().to_string());
+    }
+
+    fn export_to(&mut self, path: &Path) {
+        self.open_export();
+        self.set_export_path(path);
+        self.press_export();
+    }
+
+    /// Presses the button of the dialog. `Enter` works only with the focus on it.
+    fn press_export(&mut self) {
+        self.click_text("[Export]");
+    }
+
+    /// Waits for rows in the file of an export that does not end by itself.
+    fn wait_for_rows(&mut self) {
+        self.pump_until(|f| f.sees("rows written") && !f.sees("Export: 0 rows"));
+    }
+
+    fn wait_for_table(&mut self) {
+        self.pump_until(|f| f.app.table().is_some_and(|tab| !tab.is_busy()));
+    }
+
+    fn click_text(&mut self, text: &str) {
+        let screen = self.screen();
+        let (y, row) = screen
+            .lines()
+            .enumerate()
+            .find(|(_, row)| row.contains(text))
+            .unwrap_or_else(|| panic!("{text:?} is not on the screen:\n{screen}"));
+        let byte = row.find(text).unwrap();
+        self.app.on_event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: row[..byte].chars().count() as u16,
+            row: y as u16,
+            modifiers: KeyModifiers::NONE,
+        }));
+    }
+}
+
+#[test]
+fn an_export_writes_the_rows_of_the_grid() {
+    let dir = export_dir("export-grid");
+    let path = dir.join("out.csv");
+    let mut f = Fixture::new("export-grid");
+    f.run_script("SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2, NULL;");
+    f.open_export();
+    f.assert_sees("Loaded rows (2)");
+    assert!(!f.sees("All rows"), "the grid already holds each row");
+    f.set_export_path(&path);
+    f.press_export();
+    f.idle();
+    assert_eq!(read(&path), "a,b\n1,x\n2,\n");
+    f.assert_sees("Exported 2 rows");
+    assert!(!dir.join("out.csv.tmp").exists());
+}
+
+#[test]
+fn all_rows_reads_past_the_row_cap_and_the_grid_stays() {
+    let dir = export_dir("export-all");
+    let path = dir.join("out.csv");
+    let mut f = Fixture::capped("export-all", 3);
+    f.run_script("SELECT v FROM t;");
+    f.open_export();
+    f.assert_sees("All rows");
+    f.set_export_path(&path);
+    f.press_export();
+    f.idle();
+    assert_eq!(read(&path).lines().count(), 11);
+    let console = f.app.console_mut();
+    assert_eq!(console.results.len(), 1);
+    assert_eq!(console.results[0].table.rows.len(), 3);
+    f.assert_sees("Exported 10 rows");
+}
+
+#[test]
+fn a_statement_that_writes_does_not_run_again() {
+    let dir = export_dir("export-write");
+    let path = dir.join("out.csv");
+    let mut f = Fixture::capped("export-write", 2);
+    f.run_script("INSERT INTO t VALUES (11), (12), (13) RETURNING v;");
+    let before = f.file_query("SELECT count(*) FROM t");
+    f.open_export();
+    f.assert_sees("Loaded rows (2)");
+    f.assert_sees("needs a plain read");
+    f.set_export_path(&path);
+    f.press_export();
+    f.idle();
+    assert_eq!(read(&path), "v\n11\n12\n");
+    assert_eq!(f.file_query("SELECT count(*) FROM t"), before);
+}
+
+#[test]
+fn a_statement_of_a_script_does_not_run_alone() {
+    let mut f = Fixture::capped("export-script", 3);
+    f.run_script("SELECT 1 AS a; SELECT v FROM t;");
+    f.open_export();
+    f.assert_sees("Loaded rows (3)");
+    f.assert_sees("needs one statement");
+}
+
+#[test]
+fn an_open_transaction_lets_a_script_read_again_on_its_session() {
+    let dir = export_dir("export-transaction");
+    let path = dir.join("out.csv");
+    let mut f = Fixture::capped("export-transaction", 3);
+    f.prefix('m');
+    f.run_script("INSERT INTO t VALUES (11); SELECT v FROM t;");
+    f.open_export();
+    f.assert_sees("All rows");
+    f.set_export_path(&path);
+    f.press_export();
+    f.idle();
+    assert_eq!(
+        read(&path).lines().count(),
+        12,
+        "the read sees the row of the transaction"
+    );
+    assert_eq!(f.file_query("SELECT count(*) FROM t"), 10);
+}
+
+#[test]
+fn a_selection_writes_its_rows_and_its_columns() {
+    let dir = export_dir("export-selection");
+    let path = dir.join("out.csv");
+    let mut f = Fixture::new("export-selection");
+    f.run_script(
+        "SELECT 1 AS a, 2 AS b, 3 AS c UNION ALL SELECT 4, 5, 6 UNION ALL SELECT 7, 8, 9;",
+    );
+    f.prefix('j');
+    f.press(key(KeyCode::Down));
+    f.press(key(KeyCode::Right));
+    f.press(shift(KeyCode::Down));
+    f.press(shift(KeyCode::Right));
+    f.press(key(KeyCode::Char('e')));
+    f.assert_sees("Selection (2 × 2)");
+    f.set_export_path(&path);
+    f.press_export();
+    f.idle();
+    assert_eq!(read(&path), "b,c\n5,6\n8,9\n");
+}
+
+#[test]
+fn an_existing_file_asks_first_and_cancel_returns_to_the_dialog() {
+    let dir = export_dir("export-exists");
+    let path = dir.join("out.csv");
+    std::fs::write(&path, "old").unwrap();
+    let mut f = Fixture::new("export-exists");
+    f.run_script("SELECT 1 AS a;");
+    f.export_to(&path);
+    f.assert_sees("File exists");
+    f.press(key(KeyCode::Esc));
+    f.idle();
+    assert_eq!(read(&path), "old");
+    f.assert_sees("Loaded rows (1)");
+    f.press(key(KeyCode::Enter));
+    f.assert_sees("File exists");
+    f.press(key(KeyCode::Right));
+    f.press(key(KeyCode::Enter));
+    f.idle();
+    assert_eq!(read(&path), "a\n1\n");
+}
+
+#[test]
+fn stop_asks_and_delete_leaves_no_file() {
+    let dir = export_dir("export-delete");
+    let path = dir.join("out.csv");
+    let mut f = Fixture::capped("export-delete", 2);
+    f.run_script(ENDLESS_ROWS);
+    f.export_to(&path);
+    f.wait_for_rows();
+    assert!(dir.join("out.csv.tmp").exists());
+    f.prefix('x');
+    f.idle();
+    f.assert_sees("Incomplete export");
+    f.press(key(KeyCode::Esc));
+    assert!(!path.exists());
+    assert!(!dir.join("out.csv.tmp").exists());
+    f.assert_sees("The incomplete file is deleted.");
+}
+
+#[test]
+fn keep_closes_the_format_of_the_part() {
+    let dir = export_dir("export-keep");
+    let path = dir.join("out.json");
+    let mut f = Fixture::capped("export-keep", 2);
+    f.run_script(ENDLESS_ROWS);
+    f.open_export();
+    f.press(key(KeyCode::Down));
+    f.press(key(KeyCode::Down));
+    f.set_export_path(&path);
+    f.press_export();
+    f.wait_for_rows();
+    f.prefix('x');
+    f.idle();
+    f.press(key(KeyCode::Right));
+    f.press(key(KeyCode::Enter));
+    let rows: serde_json::Value = serde_json::from_str(&read(&path)).unwrap();
+    assert!(!rows.as_array().unwrap().is_empty());
+    assert!(!dir.join("out.json.tmp").exists());
+}
+
+#[test]
+fn stop_before_the_first_row_deletes_the_file_without_a_question() {
+    let dir = export_dir("export-early-stop");
+    let path = dir.join("out.csv");
+    let mut f = Fixture::new("export-early-stop");
+    f.run_script("SELECT 1 AS a;");
+    f.export_to(&path);
+    f.prefix('x');
+    f.idle();
+    f.assert_sees("The export stopped before the first row.");
+    assert!(!f.sees("Incomplete export"));
+    assert!(!dir.join("out.csv.tmp").exists());
+}
+
+#[test]
+fn a_result_without_rows_writes_a_file() {
+    let dir = export_dir("export-empty");
+    let path = dir.join("out.csv");
+    let mut f = Fixture::new("export-empty");
+    f.run_script("SELECT 1 AS a WHERE 0;");
+    f.export_to(&path);
+    f.idle();
+    assert_eq!(read(&path), "a\n");
+}
+
+#[test]
+fn a_path_that_cannot_exist_shows_the_failure() {
+    let dir = export_dir("export-bad-path");
+    let blocker = dir.join("file");
+    std::fs::write(&blocker, "").unwrap();
+    let mut f = Fixture::new("export-bad-path");
+    f.run_script("SELECT 1 AS a;");
+    f.export_to(&blocker.join("out.csv"));
+    f.idle();
+    f.assert_sees("The export failed");
+}
+
+#[test]
+fn the_dialog_refuses_a_folder_and_an_empty_path() {
+    let dir = export_dir("export-folder");
+    let mut f = Fixture::new("export-folder");
+    f.run_script("SELECT 1 AS a;");
+    f.export_to(&dir);
+    f.assert_sees("This path is a folder.");
+    f.click_text("File");
+    for _ in 0..100 {
+        f.press(key(KeyCode::Backspace));
+    }
+    f.press_export();
+    f.assert_sees("Write the path of the file.");
+}
+
+#[test]
+fn a_console_insert_needs_a_table_name() {
+    let dir = export_dir("export-table");
+    let path = dir.join("out.sql");
+    let mut f = Fixture::new("export-table");
+    f.run_script("SELECT 1 AS a, 'x' AS b;");
+    f.open_export();
+    for _ in 0..4 {
+        f.press(key(KeyCode::Down));
+    }
+    f.set_export_path(&path);
+    f.press_export();
+    f.assert_sees("Write the table");
+    f.click_text("Table");
+    f.write("target");
+    f.press_export();
+    f.idle();
+    assert_eq!(
+        read(&path),
+        "INSERT INTO target (\"a\", \"b\") VALUES (1, 'x');\n"
+    );
+}
+
+#[test]
+fn a_table_writes_its_filter_and_its_name() {
+    let dir = export_dir("export-tab");
+    let path = dir.join("out.sql");
+    let settings = Settings {
+        page_size: 2,
+        ..Settings::default()
+    };
+    let mut f = Fixture::with("export-tab", KeyboardMode::Conventional, settings, TEN_ROWS);
+    common::open_table(&mut f.app, 0, "t");
+    f.wait_for_table();
+    f.prefix('k');
+    f.type_text("v > 7");
+    f.press(key(KeyCode::Enter));
+    f.wait_for_table();
+    f.prefix('j');
+    f.press(key(KeyCode::Char('e')));
+    f.assert_sees("All rows");
+    for _ in 0..4 {
+        f.press(key(KeyCode::Down));
+    }
+    f.set_export_path(&path);
+    f.press_export();
+    f.wait_for_table();
+    f.pump_until(|_| path.exists());
+    assert_eq!(
+        read(&path),
+        "INSERT INTO \"main\".\"t\" (\"v\") VALUES (8);\n\
+         INSERT INTO \"main\".\"t\" (\"v\") VALUES (9);\n\
+         INSERT INTO \"main\".\"t\" (\"v\") VALUES (10);\n"
+    );
+    assert_eq!(f.app.table().unwrap().loaded(), 2, "the grid stays");
+}
+
+#[test]
+fn two_tabs_can_export_and_one_destination_is_refused() {
+    let dir = export_dir("export-tabs");
+    let path = dir.join("out.csv");
+    let mut f = Fixture::capped("export-tabs", 2);
+    f.run_script(ENDLESS_ROWS);
+    f.export_to(&path);
+    f.wait_for_rows();
+
+    common::open_table(&mut f.app, 0, "t");
+    f.wait_for_table();
+    f.prefix('j');
+    f.press(key(KeyCode::Char('e')));
+    f.set_export_path(&path);
+    f.press_export();
+    f.assert_sees("Another export writes to this file.");
+
+    let other = dir.join("other.csv");
+    f.click_text("File");
+    for _ in 0..100 {
+        f.press(key(KeyCode::Backspace));
+    }
+    f.write(&other.display().to_string());
+    f.press_export();
+    f.pump_until(|_| other.exists());
+    assert_eq!(read(&other).lines().count(), 11);
+
+    f.prefix('c');
+    f.prefix('x');
+    f.idle();
+    f.press(key(KeyCode::Esc));
+    assert!(!dir.join("out.csv.tmp").exists());
+}
+
+#[test]
+fn closing_a_table_removes_the_file_of_its_export() {
+    let dir = export_dir("export-close");
+    let path = dir.join("out.csv");
+    let settings = Settings {
+        page_size: 2,
+        ..Settings::default()
+    };
+    let setup = "CREATE TABLE t (x INTEGER); WITH RECURSIVE c AS (SELECT 1 AS x UNION ALL SELECT x + 1 FROM c WHERE x < 200000) INSERT INTO t SELECT x FROM c;";
+    let mut f = Fixture::with("export-close", KeyboardMode::Conventional, settings, setup);
+    common::open_table(&mut f.app, 0, "t");
+    f.wait_for_table();
+    f.prefix('j');
+    f.press(key(KeyCode::Char('e')));
+    f.set_export_path(&path);
+    f.press_export();
+    f.prefix('c');
+    assert!(f.app.table().is_none());
+    assert!(!dir.join("out.csv.tmp").exists());
+    assert!(!path.exists());
+}
+
+#[test]
+fn the_results_stay_while_an_export_uses_them() {
+    let dir = export_dir("export-held");
+    let path = dir.join("out.csv");
+    let mut f = Fixture::capped("export-held", 2);
+    f.run_script(ENDLESS_ROWS);
+    f.export_to(&path);
+    f.wait_for_rows();
+    f.press(key(KeyCode::Char('x')));
+    assert_eq!(f.app.console_mut().results.len(), 1);
+    f.prefix('x');
+    f.idle();
+    f.press(key(KeyCode::Esc));
+}
+
+#[test]
+fn the_key_does_nothing_without_a_result() {
+    let mut f = Fixture::new("export-messages");
+    f.run_script("CREATE TABLE a (v INTEGER);");
+    f.open_export();
+    assert!(!f.sees("SQL INSERT"));
+
+    f.run_script("SELECT 1 AS a;");
+    f.prefix('j');
+    f.press(key(KeyCode::Char(']')));
+    assert!(f.app.console_mut().showing_messages());
+    f.press(key(KeyCode::Char('e')));
+    assert!(!f.sees("SQL INSERT"));
+}
+
+#[test]
+fn the_palette_opens_the_export_only_with_a_result() {
+    let mut f = Fixture::new("export-palette");
+    f.press(ctrl('p'));
+    f.write("export");
+    assert!(!f.sees("Export the result"));
+    f.press(key(KeyCode::Esc));
+
+    f.run_script("SELECT 1 AS a;");
+    f.press(ctrl('p'));
+    f.write("export");
+    f.assert_sees("Export the result");
+    f.press(key(KeyCode::Enter));
+    f.assert_sees("SQL INSERT");
+}
+
+#[test]
+fn the_mouse_changes_the_format_and_presses_the_buttons() {
+    let mut f = Fixture::new("export-mouse");
+    f.run_script("SELECT 1 AS a;");
+    f.open_export();
+    f.click_text("JSON Lines");
+    f.assert_sees(".jsonl");
+    f.click_text("Cancel");
+    assert!(!f.sees("SQL INSERT"));
+}
+
+#[test]
+fn a_stopped_read_offers_all_rows() {
+    let mut f = Fixture::with(
+        "export-stopped-read",
+        KeyboardMode::Conventional,
+        capped(1_000_000),
+        "",
+    );
+    f.select_all_and_write(ENDLESS_ROWS);
+    f.press(KeyEvent::new(KeyCode::F(5), KeyModifiers::SHIFT));
+    f.pump_until(|f| {
+        f.app
+            .console_mut()
+            .results
+            .first()
+            .is_some_and(|result| !result.table.rows.is_empty())
+    });
+    f.prefix('x');
+    f.idle();
+    f.prefix('j');
+    f.press(key(KeyCode::Char('[')));
+    assert!(!f.app.console_mut().showing_messages());
+    f.press(key(KeyCode::Char('e')));
+    f.assert_sees("All rows");
+}
+
+#[test]
+fn enter_exports_only_from_the_button() {
+    let dir = export_dir("export-enter");
+    let path = dir.join("out.csv");
+    let mut f = Fixture::new("export-enter");
+    f.run_script("SELECT 1 AS a;");
+    f.open_export();
+    f.set_export_path(&path);
+    // The fields after File: Header, Delimiter, NULL text, and UTF-8 BOM.
+    for _ in 0..5 {
+        f.press(key(KeyCode::Enter));
+        f.idle();
+        assert!(f.sees("[Export]"), "the dialog stays open");
+        assert!(!path.exists());
+    }
+    f.press(key(KeyCode::Enter));
+    f.idle();
+    assert_eq!(read(&path), "a\n1\n");
+    assert!(!f.sees("[Export]"));
+}

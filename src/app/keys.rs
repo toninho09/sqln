@@ -7,6 +7,7 @@ use crate::connector::{Namespace, TransactionCommand, TransactionState};
 use crate::console::{AfterTransaction, Focus, GridAction, Phase};
 use crate::editor::{KeyboardMode, RunRefusal, RunScope};
 use crate::exec::{ConnectionId, RunOptions};
+use crate::export::form as export_form;
 use crate::form::FormRequest;
 use crate::input::{Action, Chord, Lookup, Region};
 use crate::palette::{Command, Palette, PaletteRequest};
@@ -77,6 +78,10 @@ impl App {
         }
         if self.settings_form.is_some() {
             self.on_settings_key(key);
+            return;
+        }
+        if self.export_form.is_some() {
+            self.on_export_key(key);
             return;
         }
         if self.picker.is_some() {
@@ -217,6 +222,7 @@ impl App {
             Action::RenameConsole => self.start_rename(),
             Action::ChangeConnection => self.start_connection_change(),
             Action::OpenSettings => self.open_settings(),
+            Action::GridExport => self.open_export(),
             Action::FocusLeft => self.focus_navigator(),
             Action::FocusRight => self.navigator_focused = false,
             Action::FocusUp => self.focus_console(Focus::Editor),
@@ -262,7 +268,8 @@ impl App {
                 });
             }
             GridAction::CloseResult => {
-                if !self.console_mut().close_result(&budget) {
+                let held = self.has_export(self.console().id);
+                if held || !self.console_mut().close_result(&budget) {
                     self.status = Some(text::RESULT_READING.to_owned());
                 }
             }
@@ -412,6 +419,7 @@ impl App {
                     manual: manual && self.has_transactions(connection),
                     schema,
                     row_cap: None,
+                    export: None,
                 };
                 let console = &self.consoles[index];
                 let revision = console.editor.revision();
@@ -436,6 +444,9 @@ impl App {
 
     pub(super) fn stop(&mut self, index: usize) {
         let id = self.consoles[index].id;
+        if self.stop_export(id) {
+            return;
+        }
         if self.cancel_auth_console(id) {
             if self.consoles[index].closing {
                 self.close_step(id);
@@ -562,6 +573,14 @@ impl App {
             SettingsRequest::None => {}
             SettingsRequest::Cancel => self.settings_form = None,
             SettingsRequest::Save => self.save_settings(),
+        }
+    }
+
+    fn on_export_key(&mut self, key: KeyEvent) {
+        let vim = self.vim();
+        if let Some(form) = &mut self.export_form {
+            let request = form.on_key(key, vim);
+            self.on_export_request(request);
         }
     }
 
@@ -736,6 +755,7 @@ impl App {
             Action::GridFocusFilter | Action::GridFocusOrder | Action::GridSortColumn => {
                 self.table().is_none_or(|tab| tab.filters)
             }
+            Action::GridExport => self.can_export(),
             Action::RenameConsole | Action::ChangeConnection => !in_table,
             Action::FocusLeft => !self.navigator.collapsed && !self.navigator_focused,
             Action::FocusRight => self.navigator_focused,
@@ -751,8 +771,13 @@ impl App {
             .map(|action| (action, true));
         let explorer = [Action::NavigatorAdd, Action::NavigatorScripts]
             .map(|action| (action, self.navigator_focused));
+        let results = [Action::GridExport].map(|action| {
+            let key_works = self.panel() == Some(Region::Grid);
+            (action, key_works)
+        });
         let commands = global
             .chain(explorer)
+            .chain(results)
             .filter(|(action, _)| self.command_available(*action))
             .map(|(action, key_works)| Command {
                 action,
@@ -851,6 +876,12 @@ impl App {
             } else {
                 text::HINT_SETTINGS
             }
+        } else if let Some(form) = &self.export_form {
+            if form.focus == export_form::Field::Formats {
+                text::HINT_EXPORT_FORMATS
+            } else {
+                text::HINT_FORM
+            }
         } else if self.conflicts.is_some() {
             text::HINT_CONFLICTS
         } else if let Some(picker) = &self.picker {
@@ -896,6 +927,7 @@ impl App {
                         (Action::GridLoadMore, "more"),
                         (Action::GridNextResult, "page"),
                         (Action::GridCopy, "copy"),
+                        (Action::GridExport, "export"),
                         (
                             Action::GridOpenValue,
                             if tab.pending { "load" } else { "value" },
@@ -917,9 +949,10 @@ impl App {
             return self.hint_parts(&[
                 (Action::FocusUp, "editor"),
                 (Action::GridCopy, "copy"),
+                (Action::GridExport, "export"),
                 (Action::GridOpenValue, "value"),
                 (Action::GridFind, "find"),
-                (Action::GridNextResult, "tabs"),
+                (Action::GridNextResult, "tab"),
                 (Action::Help, "keys"),
             ]);
         } else if console.editor.suggestions().is_some() {

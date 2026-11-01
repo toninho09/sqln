@@ -27,6 +27,7 @@ use sqln::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, Manager, ReadLimit, ResultSink, RunOptions,
     Settings, StatementKey, StatementStatus,
 };
+use sqln::export::{ExportOptions, ExportWriter};
 use sqln::form::Field;
 use sqln::grid::{Budget, Row, Value};
 use sqln::ui::theme::Theme;
@@ -2265,4 +2266,64 @@ fn a_mysql_session_without_a_database_closes_after_a_use() {
         first,
         "MySQL cannot leave a database, so the session closes"
     );
+}
+
+#[test]
+fn an_export_reads_past_the_row_cap_and_stops_on_request() {
+    for server in servers() {
+        let settings = Settings {
+            row_cap: 10,
+            max_connections: 1,
+            ..Settings::default()
+        };
+        let mut h = Harness::open(&server, settings);
+        server.prepare_huge_read(&mut h);
+        let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join("servers-export")
+            .join(format!("{:?}.csv", server.kind));
+        let options = |writer: &ExportWriter| RunOptions {
+            export: Some(writer.clone()),
+            ..RunOptions::default()
+        };
+
+        let read = match server.kind {
+            Kind::Postgres => "SELECT generate_series(1, 5000) AS x",
+            Kind::MySql => "SELECT a.x FROM t_huge a, t_huge b LIMIT 5000",
+        };
+        let writer = ExportWriter::create(&path, ExportOptions::default()).unwrap();
+        let execution = h
+            .manager
+            .run(h.console, vec![read.to_owned()], options(&writer));
+        let run = h.collect(execution);
+        assert_eq!(
+            run.end,
+            Some(ExecutionEnd::Completed),
+            "{:?}: {run:?}",
+            server.kind
+        );
+        assert!(run.rows.is_empty());
+        assert_eq!(writer.rows(), 5000);
+        writer.promote(&path).unwrap();
+        let lines = std::fs::read_to_string(&path).unwrap().lines().count();
+        assert_eq!(lines, 5001, "{:?}", server.kind);
+
+        let writer = ExportWriter::create(&path, ExportOptions::default()).unwrap();
+        let sql = vec![server.huge_read().to_owned()];
+        let execution = h.manager.run(h.console, sql, options(&writer));
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while writer.rows() < 1000 {
+            assert!(Instant::now() < deadline, "{:?}", server.kind);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        h.manager.stop(h.console);
+        let run = h.collect(execution);
+        assert_eq!(
+            run.end,
+            Some(ExecutionEnd::Stopped),
+            "{:?}: {run:?}",
+            server.kind
+        );
+        writer.discard();
+        assert_eq!(h.run_ok(&["SELECT 7"]).text(0, 0), "7");
+    }
 }

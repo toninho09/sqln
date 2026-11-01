@@ -131,6 +131,8 @@ pub struct Console {
     pub connection: Option<ConnectionId>,
     /// The schema or database that each execution of this console applies.
     pub schema: Option<String>,
+    /// The schema of the last execution. A new read of its statements needs this schema.
+    ran_schema: Option<String>,
     pub editor: SqlEditor,
     /// The files of the console. A console without a file keeps its text in memory.
     pub file: Option<ScriptFile>,
@@ -187,6 +189,7 @@ impl Console {
             name,
             connection: None,
             schema: None,
+            ran_schema: None,
             editor,
             file: None,
             discard_text: false,
@@ -224,6 +227,20 @@ impl Console {
         )
     }
 
+    /// Returns the statement of a result, for a new read of its rows.
+    pub fn statement_of(&self, result: &ResultTab) -> Option<&str> {
+        self.statements.get(result.statement).map(String::as_str)
+    }
+
+    /// Returns true when the last execution held one statement.
+    pub fn ran_alone(&self) -> bool {
+        self.statements.len() == 1
+    }
+
+    pub fn ran_schema(&self) -> Option<&str> {
+        self.ran_schema.as_deref()
+    }
+
     pub fn showing_messages(&self) -> bool {
         self.active >= self.results.len()
     }
@@ -257,6 +274,7 @@ impl Console {
         self.first_not_executed = None;
         self.execution = execution;
         self.statements.clone_from(&plan.statements);
+        self.ran_schema.clone_from(&self.schema);
         self.phase = Phase::Waiting;
         self.editor.set_marks(plan);
     }
@@ -296,14 +314,16 @@ impl Console {
             ExecEvent::Columns { key, columns } if self.is_current(key.execution) => {
                 self.results_made += 1;
                 self.reading = true;
-                self.results
-                    .push(ResultTab::new(self.results_made, columns));
+                let mut result = ResultTab::new(self.results_made, columns);
+                result.statement = key.index;
+                self.results.push(result);
             }
             ExecEvent::Rows { key, rows, bytes } => self.on_rows(key, rows, bytes, budget),
             ExecEvent::ResultDone { key, rows, limit } if self.is_current(key.execution) => {
                 self.reading = false;
                 if let Some(result) = self.results.last_mut() {
                     result.summary = read_summary(rows, limit);
+                    result.limit = limit;
                 }
             }
             ExecEvent::StatementFinished {
@@ -433,6 +453,11 @@ impl Console {
             };
         }
         self.run.finish(end);
+        // A stopped statement can report a success, so only the end of the execution
+        // tells that the last result can miss rows.
+        if let Some(result) = self.results.last_mut() {
+            result.cut_short = end != ExecutionEnd::Completed;
+        }
         if let Some(message) = message {
             self.push_message(MessageLevel::Error, message);
         }

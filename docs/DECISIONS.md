@@ -4,6 +4,68 @@ Este documento registra as escolhas e as alternativas rejeitadas.
 As regras completas estão no [plano](../PLAN.md).
 Não reabrir uma decisão sem um fato novo.
 
+## Exportação para arquivo — 2026-10-31
+
+**Definido:** o usuário pede a exportação de resultados por um modal e aprova as 25 decisões abaixo.
+Este pedido reabre as regras "Exportação para arquivo" e "Extratores além do TSV padrão" da lista de itens fora da primeira versão. O editor de extratores continua fora.
+
+| Ponto | Decisão aprovada | Rejeitado | Motivo |
+|---|---|---|---|
+| 1. Alcance | O modal oferece Selection, Loaded rows e All rows. All rows relê o banco, sem a grade e sem o teto de 256 MiB | Só linhas carregadas; só todas as linhas | A grade guarda 1.000 linhas por padrão, e um arquivo incompleto sem pedido é o pior erro de uma exportação |
+| 2. Reler no console | Só com `is_plain_read`. Outro comando fica só com Loaded rows, e o modal explica o motivo | Qualquer comando com aviso; nunca no console | Reler repete o comando, e um comando que grava repetiria a gravação |
+| 3. Formatos | CSV, TSV, JSON, JSON Lines e SQL INSERT | XLSX | XLSX traz uma dependência nova |
+| 4. Destino | Só arquivo; `Ctrl+C` não muda | Arquivo e área de transferência | Um fluxo só |
+| 5. Execução | Na tarefa da aba, na mesma sessão. O modal fecha, a aba fica ocupada, a linha de status mostra as linhas gravadas, Stop cancela, e a grade mantém o resultado | Segundo plano com conexão própria | Uma transação aberta vê os mesmos dados, e a aba não ocupa outra conexão |
+| 6. Tempo | All rows ignora `sql_timeout`; Stop é a saída | Mesmo `sql_timeout` | O padrão de 30 segundos encerraria uma exportação grande |
+| 7. Parcial | Grava em `<nome>.tmp`. Em Stop ou erro, uma janela pergunta: manter (renomeia para o destino) ou apagar | Sempre apagar; sempre manter | É uma escolha do usuário em cada caso |
+| 8. Arquivo existente | Janela com Replace e Cancel; Cancel volta ao modal | Recusar; criar outro nome | Nenhum arquivo muda sem confirmação |
+| 9. Opções de CSV e TSV | Cabeçalho (ligado), delimitador só no CSV (`,`, `;`, `\|`), texto do NULL (vazio ou `NULL`) e BOM UTF-8 (desligado) | Menos opções | O Excel em português espera `;`, e sem BOM ele quebra os acentos |
+| 10. Binário | CSV e TSV seguem a regra da grade. JSON usa Base64 em todo `Value::Binary`. SQL usa o literal do dialeto | Regra da grade também no JSON | Base64 é o costume em JSON |
+| 11. Nomes repetidos no JSON | Sufixo numérico: `id` e `id_2` | Recusar o JSON; repetir a chave | Nenhum valor se perde, e o JSON continua válido |
+| 12. Agrupar INSERT | O modal mostra a escolha: um por linha (padrão) ou agrupado | Sem escolha | É uma escolha do usuário em cada caso |
+| 13. Lote do INSERT | Campo só com agrupado, padrão 100 | Fixo em 100 | O MySQL recusa um comando acima de `max_allowed_packet` |
+| 14. Números no JSON | Número com o texto do banco. `NaN` e `Infinity` viram string | Sempre string; opção no modal | O arquivo guarda todos os dígitos |
+| 15. Scripts | All rows só com um comando na execução ou com transação aberta | Permitir com aviso; reler o script inteiro | A sessão é limpa entre execuções, então reler só o `SELECT` depois de um `SET` pode ler outra tabela sem erro |
+| 16. Redis e Valkey | Só Selection e Loaded rows, sem SQL INSERT | Tudo nas abas de chave | Não existe `is_plain_read` para Redis, e a aba de chave lê por páginas |
+| 17. Abrir o modal | Tecla `e` na grade e ação na paleta | Também no navegador; só paleta | A tecla fica perto da grade, e `e` está livre nos dois mapas de teclas |
+| 18. Caminho inicial | Pasta salva ou pasta atual, com `<origem>-AAAA-MM-DD-HHMM.<ext>`. A extensão segue o formato até o usuário editar o caminho | Sem data; pasta Downloads | A janela de arquivo existente quase nunca aparece |
+| 19. Lembrar escolhas | Formato, opções e pasta persistem | Só na sessão; não lembrar | Quem usa `;` não escolhe de novo |
+| 20. Vários resultados | Só o resultado ativo; um modal gera um arquivo | Um arquivo por aba de resultado | Multiplicaria as janelas de arquivo existente e de parcial |
+| 21. Navegador | Fora do escopo | Tecla na tabela do navegador | O usuário retirou o pedido |
+| 22. Onde salvar | `preferences.export` no `config.json` global, ao confirmar o Export | Escopo ativo; `workspace.json` | O `config.json` de um projeto é versionado, e a pasta seria um caminho de uma máquina só |
+| 23. Layout | Barra lateral com os formatos, igual ao diálogo Settings | Formulário em uma coluna | Mostra todos os formatos de uma vez, e o mouse escolhe com um clique |
+| 24. Alcance inicial | Selection, se existir. Senão All rows, se disponível. Senão Loaded rows | Selection ou Loaded rows | Evita um arquivo incompleto por engano |
+| 25. Exportações simultâneas | Uma por aba. O modal recusa um destino em uso | Uma por vez | Cada aba tem a sua tarefa, e dois destinos iguais usariam o mesmo temporário |
+
+Estas escolhas seguem as regras acima nos pontos que elas deixaram abertos.
+
+| Assunto | Escolha | Rejeitado | Motivo |
+|---|---|---|---|
+| Filtro da tabela | All rows usa o filtro e a ordem aplicados | O texto digitado | A grade mostra o que foi aplicado |
+| `Enter` no modal | Só o botão **Export** exporta. Em outro campo, `Enter` vai ao próximo, como no diálogo Settings | `Enter` exporta de qualquer campo | Pedido do usuário: evita uma exportação sem querer |
+| All rows oculto | Quando a grade já tem tudo, só Loaded rows aparece | Reler mesmo assim | Evita uma consulta sem ganho |
+| Quando abrir | Só com a aba livre e um resultado ativo | Abrir na aba **Messages** | Sem resultado não há o que gravar |
+| Zero linhas | Gera um arquivo: só cabeçalho, `[]` ou vazio | Recusar | O resultado vazio também é uma resposta |
+| JSON | Um objeto por linha dentro do array, sem indentar campos; a saída é UTF-8 | Indentação completa | O arquivo fica pequeno e legível |
+| Campo File | Aceita `~`, cria as pastas que faltam e recusa uma pasta como destino | Exigir uma pasta existente | É o que um usuário de terminal espera |
+| Nome de origem | Troca `/`, `\`, `:` e caracteres de controle por `-`; a hora é local | Hora UTC | O nome precisa ser válido e legível |
+| Sem linhas gravadas | Stop ou erro antes da primeira linha apaga o temporário, sem janela | Mostrar a janela | Não há nada para manter |
+| **Keep** | Fecha o formato, então o JSON parcial continua válido; a janela avisa quando substitui um arquivo antigo | Deixar o arquivo aberto | O parcial continua legível |
+| Fechar durante a exportação | Usa a confirmação atual de execução, e o temporário é apagado | Janela de parcial | A aba some, e a janela não teria contexto |
+| Permissão | Padrão do sistema | `0600` | O arquivo é do usuário, como o de qualquer programa |
+| Falha ao salvar as escolhas | Mostra uma nota, e a exportação continua | Cancelar | A exportação é o pedido principal |
+| `preferences.export` no projeto | Erro de configuração | Ignorar | O campo existe só no escopo global |
+| Progresso | A linha de status lê um contador da exportação | Um evento a cada lote | O canal tem 256 posições e a tela lê um número limitado de eventos por quadro, então os eventos poderiam atrasar a gravação |
+| Hora local | `chrono` com a feature `clock` | `time`; `libc` | `time` recusa o fuso local em um processo com várias threads, e o projeto não tem `unsafe` |
+
+### Limitações conhecidas da exportação
+
+- Uma coluna JSON do banco vira string, pois `Value` não guarda o tipo da coluna.
+- `is_plain_read` recusa uma função desconhecida. `SELECT minha_funcao(x)` fica com Loaded rows.
+- All rows lê os dados de agora, que podem diferir da grade.
+- O CSV não neutraliza fórmulas como `=SOMA(...)`, pois o projeto não altera valores.
+- A troca final do temporário não confere o destino de novo.
+
 ## Redis e Valkey — 2026-10-31
 
 **Definido:** o usuário pede suporte a Redis e Valkey e aprova as 11 recomendações abaixo.

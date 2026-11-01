@@ -93,7 +93,7 @@ pub struct TableTab {
 }
 
 /// Returns the relation as the `FROM` clause writes it.
-fn from_clause(relation: &RelationRef, dialect: Dialect) -> String {
+pub fn from_clause(relation: &RelationRef, dialect: Dialect) -> String {
     format!(
         "{}.{}",
         quote_identifier(&relation.schema, dialect),
@@ -114,8 +114,22 @@ fn is_one_statement(sql: &str, dialect: Dialect) -> bool {
     !open && split(sql, dialect).len() == 1
 }
 
-/// Builds the query of one page. Each clause starts a line, so a line comment in
+/// Builds the query of all rows. Each clause starts a line, so a line comment in
 /// the filter cannot remove the next clause.
+pub fn select_sql(dialect: Dialect, relation: &RelationRef, filter: &str, order: &str) -> String {
+    let mut sql = format!("SELECT * FROM {}", from_clause(relation, dialect));
+    if !filter.is_empty() {
+        sql.push_str("\nWHERE ");
+        sql.push_str(filter);
+    }
+    if !order.is_empty() {
+        sql.push_str("\nORDER BY ");
+        sql.push_str(order);
+    }
+    sql
+}
+
+/// Builds the query of one page.
 pub fn page_sql(
     dialect: Dialect,
     relation: &RelationRef,
@@ -127,15 +141,7 @@ pub fn page_sql(
     if dialect == Dialect::Redis {
         return Ok(value_page(relation, offset, page_size.saturating_add(1)));
     }
-    let mut sql = format!("SELECT * FROM {}", from_clause(relation, dialect));
-    if !filter.is_empty() {
-        sql.push_str("\nWHERE ");
-        sql.push_str(filter);
-    }
-    if !order.is_empty() {
-        sql.push_str("\nORDER BY ");
-        sql.push_str(order);
-    }
+    let mut sql = select_sql(dialect, relation, filter, order);
     sql.push_str(&format!(
         "\nLIMIT {} OFFSET {offset}",
         page_size.saturating_add(1)
@@ -501,6 +507,7 @@ impl TableTab {
         let done = load.as_ref().is_some_and(|load| load.done);
         self.phase = Phase::Idle;
         self.run.finish(end);
+        self.result.cut_short |= end != ExecutionEnd::Completed;
         // A page that ended early leaves rows that the next page continues.
         if !done && self.loaded() > 0 {
             self.has_more = true;

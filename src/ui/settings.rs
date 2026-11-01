@@ -15,26 +15,26 @@ use crate::grid::printable;
 use crate::settings::{Field, SECTIONS, SettingsForm};
 use crate::store::Scope;
 
-const WIDTH: u16 = 72;
+pub(super) const WIDTH: u16 = 72;
 /// The columns of the sidebar, without the divider.
-const SIDEBAR_WIDTH: u16 = 16;
+pub(super) const SIDEBAR_WIDTH: u16 = 16;
 const LABEL_WIDTH: u16 = 14;
 /// The value columns of a number field.
 const NUMBER_WIDTH: usize = 12;
 /// The rows of the note above the buttons.
-const NOTE_ROWS: u16 = 2;
+pub(super) const NOTE_ROWS: u16 = 2;
 /// The columns before a label: a space, the focus mark, and a space.
-const LEFT: u16 = 3;
+pub(super) const LEFT: u16 = 3;
 /// The empty columns after a value.
-const RIGHT: u16 = 2;
+pub(super) const RIGHT: u16 = 2;
 /// The rows inside the window, from its top.
 const SCOPE_ROW: u16 = 1;
 const TITLE_ROW: u16 = 3;
 const FIRST_FIELD_ROW: u16 = 4;
 /// The rows after the last field: a gap, the note, the buttons, and a gap.
-const FOOTER_ROWS: u16 = NOTE_ROWS + 3;
+pub(super) const FOOTER_ROWS: u16 = NOTE_ROWS + 3;
 /// The rows of the top and bottom borders.
-const BORDER_ROWS: u16 = 2;
+pub(super) const BORDER_ROWS: u16 = 2;
 
 /// The screen areas of the sidebar and the fields. The mouse uses them.
 #[derive(Clone, Debug, Default)]
@@ -112,9 +112,26 @@ fn value<'a>(form: &SettingsForm, field: Field, theme: &Theme) -> Line<'a> {
     Line::from(Span::styled(format!("< {name} >"), style))
 }
 
-/// Draws one row: the focus mark, the label, and the value.
 fn draw_field_row(frame: &mut Frame, area: Rect, form: &SettingsForm, field: Field, theme: &Theme) {
-    let focused = form.focus == field;
+    draw_row(
+        frame,
+        area,
+        (label(field), LABEL_WIDTH),
+        form.focus == field,
+        value(form, field, theme),
+        theme,
+    );
+}
+
+/// Draws one row: the focus mark, the label, and the value.
+pub(super) fn draw_row(
+    frame: &mut Frame,
+    area: Rect,
+    (name, label_width): (&str, u16),
+    focused: bool,
+    value: Line,
+    theme: &Theme,
+) {
     if focused {
         let mark = Span::styled(theme.icons.focus_mark, theme.panel_title_focused);
         frame.render_widget(
@@ -133,12 +150,12 @@ fn draw_field_row(frame: &mut Frame, area: Rect, form: &SettingsForm, field: Fie
     };
     let label_area = Rect {
         x: area.x + LEFT,
-        width: LABEL_WIDTH,
+        width: label_width,
         ..area
     };
-    frame.render_widget(Paragraph::new(label(field)).style(label_style), label_area);
+    frame.render_widget(Paragraph::new(name).style(label_style), label_area);
 
-    let start = area.x + LEFT + LABEL_WIDTH;
+    let start = area.x + LEFT + label_width;
     let value_area = Rect {
         x: start,
         width: area.right().saturating_sub(start + RIGHT),
@@ -158,23 +175,32 @@ fn draw_field_row(frame: &mut Frame, area: Rect, form: &SettingsForm, field: Fie
         width: value_area.width.saturating_sub(2),
         ..value_area
     };
-    frame.render_widget(Paragraph::new(value(form, field, theme)), text_area);
+    frame.render_widget(Paragraph::new(value), text_area);
 }
 
-/// Draws the sections and returns their rows. The open section stays marked when the
+/// Returns the columns of the value of a row.
+pub(super) fn value_width(row: Rect, label_width: u16) -> usize {
+    usize::from(row.width.saturating_sub(LEFT + label_width + RIGHT + 2))
+}
+
+/// Draws the rows of a sidebar and returns them. The open row stays marked when the
 /// focus goes to the fields, as the row of the explorer does.
-fn draw_sidebar(frame: &mut Frame, area: Rect, form: &SettingsForm, theme: &Theme) -> Vec<Rect> {
-    let focused = form.focus == Field::Sections;
+pub(super) fn draw_sidebar_rows(
+    frame: &mut Frame,
+    area: Rect,
+    titles: &[&str],
+    (open, focused): (usize, bool),
+    theme: &Theme,
+) -> Vec<Rect> {
     let mut rows = Vec::new();
-    for (y, (index, section)) in (area.y..).zip(SECTIONS.iter().enumerate()) {
+    for (y, (index, title)) in (area.y..).zip(titles.iter().enumerate()) {
         let row = Rect {
             y,
             height: 1,
             ..area
         };
         rows.push(row);
-        let open = index == form.section;
-        if open {
+        if index == open {
             let style = if focused {
                 theme.tree_selected
             } else {
@@ -182,7 +208,7 @@ fn draw_sidebar(frame: &mut Frame, area: Rect, form: &SettingsForm, theme: &Them
             };
             frame.buffer_mut().set_style(row, style);
         }
-        if open && focused {
+        if index == open && focused {
             let mark = Span::styled(theme.icons.focus_mark, theme.panel_title_focused);
             frame.render_widget(
                 Paragraph::new(mark),
@@ -194,7 +220,7 @@ fn draw_sidebar(frame: &mut Frame, area: Rect, form: &SettingsForm, theme: &Them
             );
         }
         frame.render_widget(
-            Paragraph::new(section.title),
+            Paragraph::new(*title),
             Rect {
                 x: row.x + LEFT,
                 width: row.width.saturating_sub(LEFT),
@@ -206,7 +232,7 @@ fn draw_sidebar(frame: &mut Frame, area: Rect, form: &SettingsForm, theme: &Them
 }
 
 /// Draws the line between the sidebar and the fields. The line joins the window border.
-fn draw_divider(frame: &mut Frame, window: Rect, x: u16, theme: &Theme) {
+pub(super) fn draw_divider(frame: &mut Frame, window: Rect, x: u16, theme: &Theme) {
     for y in window.y..window.bottom() {
         let symbol = if y == window.y {
             "┬"
@@ -219,6 +245,57 @@ fn draw_divider(frame: &mut Frame, window: Rect, x: u16, theme: &Theme) {
             .buffer_mut()
             .set_string(x, y, symbol, theme.float_border);
     }
+}
+
+/// Draws a note that ends on the row above `row`. A long note goes up to the next row.
+pub(super) fn draw_note(frame: &mut Frame, content: Rect, row: u16, note: &str, style: Style) {
+    let message = printable(note);
+    let width = usize::from(content.width).max(1);
+    let rows = u16::try_from(message.width().div_ceil(width))
+        .unwrap_or(NOTE_ROWS)
+        .clamp(1, NOTE_ROWS);
+    let place = Rect {
+        y: row.saturating_sub(rows),
+        height: rows,
+        ..content
+    };
+    let paragraph = Paragraph::new(Line::styled(message, style)).wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, place);
+}
+
+/// Draws a row of buttons and returns their areas.
+pub(super) fn draw_buttons<T: Copy + PartialEq>(
+    frame: &mut Frame,
+    content: Rect,
+    row: u16,
+    (buttons, focus): (&[(T, &str)], T),
+    theme: &Theme,
+) -> Vec<(T, Rect)> {
+    let mut areas = Vec::new();
+    let mut spans = Vec::new();
+    let mut x = content.x;
+    for (field, label) in buttons {
+        let style = if focus == *field {
+            theme.dialog_focus
+        } else {
+            theme.dialog_option
+        };
+        let name = theme.button(label);
+        let width = u16::try_from(name.width()).unwrap_or(0);
+        areas.push((*field, Rect::new(x, row, width, 1)));
+        spans.push(Span::styled(name, style));
+        spans.push(Span::raw("  "));
+        x += width + 2;
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)),
+        Rect {
+            y: row,
+            height: 1,
+            ..content
+        },
+    );
+    areas
 }
 
 pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> SettingsLayout {
@@ -240,8 +317,10 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
         width: inner.width.saturating_sub(SIDEBAR_WIDTH + 1),
         ..inner
     };
+    let titles: Vec<&str> = SECTIONS.iter().map(|section| section.title).collect();
+    let open = (form.section, form.focus == Field::Sections);
     let mut layout = SettingsLayout {
-        sections: draw_sidebar(frame, sidebar, form, theme),
+        sections: draw_sidebar_rows(frame, sidebar, &titles, open, theme),
         fields: Vec::new(),
     };
 
@@ -278,52 +357,18 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
 
     let button_row = pane.bottom().saturating_sub(2);
     if let Some(note) = &form.note {
-        // The note ends on the row above the buttons, and a long note goes up to the next row.
-        let message = printable(note);
-        let width = usize::from(content.width).max(1);
-        let rows = u16::try_from(message.width().div_ceil(width))
-            .unwrap_or(NOTE_ROWS)
-            .clamp(1, NOTE_ROWS);
-        let place = Rect {
-            y: button_row.saturating_sub(rows),
-            height: rows,
-            ..content
-        };
-        let paragraph =
-            Paragraph::new(Line::styled(message, theme.error)).wrap(Wrap { trim: false });
-        frame.render_widget(paragraph, place);
+        draw_note(frame, content, button_row, note, theme.error);
     }
-
-    let style = |field| {
-        if form.focus == field {
-            theme.dialog_focus
-        } else {
-            theme.dialog_option
-        }
-    };
     let buttons = [
         (Field::Save, text::BUTTON_SAVE),
         (Field::Cancel, text::OPTION_CANCEL),
     ];
-    let mut spans = Vec::new();
-    let mut x = content.x;
-    for (field, label) in buttons {
-        let name = theme.button(label);
-        let width = u16::try_from(name.width()).unwrap_or(0);
-        layout
-            .fields
-            .push((field, Rect::new(x, button_row, width, 1)));
-        spans.push(Span::styled(name, style(field)));
-        spans.push(Span::raw("  "));
-        x += width + 2;
-    }
-    frame.render_widget(
-        Paragraph::new(Line::from(spans)),
-        Rect {
-            y: button_row,
-            height: 1,
-            ..content
-        },
-    );
+    layout.fields.extend(draw_buttons(
+        frame,
+        content,
+        button_row,
+        (&buttons, form.focus),
+        theme,
+    ));
     layout
 }

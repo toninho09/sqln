@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
+use super::export::ExportRead;
 use super::{App, DialogAction};
 use crate::catalog::RelationRef;
 use crate::connection::{CatalogState, ConnectionKey, Definition, Source};
@@ -40,6 +41,10 @@ pub(super) enum Use {
         connection: ConnectionId,
         request: PageRequest,
     },
+    Export {
+        console: ConsoleId,
+        read: ExportRead,
+    },
     Test(u64),
     Save,
     /// Asks for a new password after a refusal. It runs nothing.
@@ -49,7 +54,9 @@ pub(super) enum Use {
 impl Use {
     fn console(&self) -> Option<ConsoleId> {
         match self {
-            Self::Run { console, .. } | Self::Page { console, .. } => Some(*console),
+            Self::Run { console, .. }
+            | Self::Page { console, .. }
+            | Self::Export { console, .. } => Some(*console),
             _ => None,
         }
     }
@@ -840,11 +847,13 @@ impl App {
                     manual: false,
                     schema: None,
                     row_cap: Some(request.row_cap),
+                    export: None,
                 };
                 let (first, show) = (request.first, request.show);
                 let execution = manager.run(console, vec![request.sql], options);
                 tab.started(execution, first, show);
             }
+            Use::Export { console, read } => self.start_read(console, read),
             Use::Test(test) => {
                 let Some(definition) = definition else { return };
                 manager.test_connection(test, definition.connector(), definition.connect_timeout);

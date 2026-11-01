@@ -57,7 +57,8 @@ impl fmt::Display for WriteError {
     }
 }
 
-fn temporary(path: &Path) -> PathBuf {
+/// Returns the temporary file of a path, in the same folder.
+pub fn temporary(path: &Path) -> PathBuf {
     let mut name = path.file_name().map(ToOwned::to_owned).unwrap_or_default();
     name.push(".tmp");
     path.with_file_name(name)

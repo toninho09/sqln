@@ -224,6 +224,7 @@ Se o cofre falhar, a opção de sessão não oferece gravação global em texto 
 | Selecionar | `Shift`+setas | `v` |
 | Selecionar tudo | `Ctrl+A` | `ggVG` |
 | Copiar em TSV | `Ctrl+C` | `y` |
+| Exportar para um arquivo | `e` | `e` |
 | Limpar a seleção | `Esc` | `Esc` |
 | Abrir valor | `Enter` | `Enter` |
 | Buscar nas linhas carregadas | `Ctrl+F` | `/` |
@@ -235,6 +236,21 @@ Se o cofre falhar, a opção de sessão não oferece gravação global em texto 
 Sem seleção, `Ctrl+C` copia a célula atual.
 O resultado que ainda recebe linhas não fecha, e a aba **Mensagens** também não.
 Na aba **Mensagens**, as setas percorrem o texto.
+
+`e` abre a exportação. A paleta oferece a mesma ação, também com o foco no editor.
+Sem resultado, na aba **Mensagens** ou com a aba ocupada, a tecla não faz nada.
+
+Na exportação:
+
+| Ação | Tecla |
+|---|---|
+| Próximo campo | `Tab` ou `Enter` |
+| Mudar o formato, na barra lateral | `Up` e `Down` |
+| Mudar uma escolha | `Left` e `Right` |
+| Pressionar **Export** ou **Cancel** | `Enter` no botão |
+| Cancelar | `Esc` |
+
+Só o botão **Export** exporta.
 
 Na busca da grade:
 

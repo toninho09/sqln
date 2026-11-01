@@ -186,6 +186,7 @@ pub enum Action {
     GridFocusOrder,
     GridSortColumn,
     GridLoadMore,
+    GridExport,
 }
 
 impl Action {
@@ -639,6 +640,7 @@ const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(Action::GridLoadMore, Region::Grid, "loadMore", &["m"], &[]),
+    both(Action::GridExport, Region::Grid, "gridExport", &["e"], &[]),
 ];
 
 /// The answer of the map to one key.

@@ -29,3 +29,13 @@ pub fn quote_with(name: &str, open: char) -> String {
 pub fn quote_identifier(name: &str, dialect: Dialect) -> String {
     quote_with(name, if dialect == Dialect::MySql { '`' } else { '"' })
 }
+
+/// Writes text as a string literal of the dialect. MySQL also reads a backslash as an escape.
+pub fn quote_literal(text: &str, dialect: Dialect) -> String {
+    let literal = quote_with(text, '\'');
+    if dialect == Dialect::MySql {
+        literal.replace('\\', "\\\\")
+    } else {
+        literal
+    }
+}

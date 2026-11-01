@@ -8,6 +8,7 @@ pub mod console;
 pub mod creds;
 pub mod editor;
 pub mod exec;
+pub mod export;
 pub mod find;
 pub mod form;
 pub mod grid;

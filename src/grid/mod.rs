@@ -8,7 +8,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub use self::budget::{Budget, DEFAULT_LIMIT, Reservation, row_cost};
 pub use self::search::RowSearch;
-pub use self::tsv::hex;
+pub use self::tsv::{delimited_cell, delimited_text, hex};
 use crate::find;
 
 /// The limit of a width that the application calculates.

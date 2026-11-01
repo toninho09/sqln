@@ -263,6 +263,49 @@ O teto global de 256 MiB pode suspender novas cargas, sem apagar as linhas exist
 Se um valor ultrapassar o limite, indicar o motivo sem representá-lo como nulo, vazio ou conteúdo truncado sem aviso.
 A cópia segue o formato TSV confirmado na seção 10 do plano, sem cabeçalhos.
 
+### Exportação
+
+`e` na grade, ou **Export the result to a file** na paleta, abre o modal. A exportação cobre o resultado ativo e gera um arquivo.
+
+```text
+╭─ Export ───────┬─────────────────────────────────────────────────────╮
+│ > CSV          │   Rows             < All rows >                     │
+│   TSV          │   File             ./users-2026-10-31-1530.csv      │
+│   JSON         │   Header           < On >                           │
+│   JSON Lines   │   Delimiter        < , >                            │
+│   SQL INSERT   │   NULL text        < Empty >                        │
+│                │   UTF-8 BOM        < Off >                          │
+│                │                                                     │
+│                │   [Export]  [Cancel]                                │
+╰────────────────┴─────────────────────────────────────────────────────╯
+```
+
+| Alcance | O que grava |
+|---|---|
+| **Selection** | As linhas e as colunas selecionadas |
+| **Loaded rows** | As linhas da grade |
+| **All rows** | Todas as linhas e colunas, com uma nova leitura. A tabela usa o filtro e a ordem aplicados |
+
+O modal abre em **Selection**, se existir. Senão, abre em **All rows**, se disponível, e por último em **Loaded rows**.
+**All rows** some quando a grade já tem tudo.
+No console, **All rows** exige uma leitura pura e um comando na execução, ou uma transação aberta. Nos outros casos, o modal explica o motivo.
+Redis e Valkey oferecem só as linhas carregadas, sem SQL INSERT.
+
+| Formato | Opções |
+|---|---|
+| CSV | Cabeçalho, delimitador, texto do NULL e BOM |
+| TSV | Cabeçalho, texto do NULL e BOM |
+| JSON e JSON Lines | Nenhuma |
+| SQL INSERT | Tabela, um por linha ou agrupado, e linhas por `INSERT` |
+
+O campo **File** aceita `~` e um caminho relativo à pasta atual, e cria as pastas que faltam. A extensão segue o formato até o usuário editar o caminho.
+Um arquivo existente pede **Replace** ou **Cancel**.
+
+Depois de **Export**, o modal fecha, a aba fica ocupada, e a linha de dicas mostra as linhas gravadas. Cada aba pode ter uma exportação, e o modal recusa um destino em uso.
+**All rows** não tem limite de tempo, e **Stop** cancela. A grade mantém o resultado.
+A gravação usa `<nome>.tmp` e renomeia no fim. Depois de **Stop** ou de um erro, uma janela oferece **Delete** e **Keep**. Sem linhas gravadas, o temporário some sem pergunta.
+Fechar a aba ou sair apaga o temporário.
+
 ### Chave Redis ou Valkey
 
 No navegador, cada banco numerado mostra até 1.000 chaves. `(partial list)` ao lado do banco indica uma lista incompleta.

@@ -151,6 +151,7 @@ impl App {
         let replaced = last && !self.consoles[index].hidden;
         if replaced {
             if self.tables.is_empty() {
+                self.discard_exports();
                 self.quit = true;
                 return;
             }
@@ -196,6 +197,7 @@ impl App {
             .position(|console| console.is_busy() || console.in_transaction());
         let Some(index) = next else {
             if self.flush_all() {
+                self.discard_exports();
                 self.quit = true;
             }
             return;
@@ -254,6 +256,9 @@ impl App {
             DialogAction::DeleteScript(scope, id) => self.delete_script(scope, &id),
             DialogAction::Associate(console, connection) => self.associate(console, connection),
             DialogAction::DeletePassword(identity) => self.delete_password(identity),
+            DialogAction::ExportReplace => self.start_export(),
+            DialogAction::ExportKeep(id) => self.keep_export(id),
+            DialogAction::ExportDelete(id) => self.delete_export(id),
             action @ (DialogAction::AuthCancel(_)
             | DialogAction::AuthConfirm(_)
             | DialogAction::AuthRetry(_)

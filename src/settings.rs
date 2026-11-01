@@ -109,7 +109,7 @@ pub struct SettingsForm {
 }
 
 /// Returns the value after `value` in a list of choices.
-fn next_choice<T: Copy + PartialEq>(order: &[T], value: T, forward: bool) -> T {
+pub fn next_choice<T: Copy + PartialEq>(order: &[T], value: T, forward: bool) -> T {
     let index = order.iter().position(|item| *item == value).unwrap_or(0);
     let next = if forward {
         index + 1

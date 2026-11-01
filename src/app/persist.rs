@@ -9,6 +9,7 @@ use super::{App, DialogAction, Options};
 use crate::connection::{Connection, ConnectionKey, Definition, refresh_labels};
 use crate::editor::{KeyboardMode, SqlEditor};
 use crate::exec::ConnectionId;
+use crate::export::ExportChoices;
 use crate::script_file::Trouble;
 use crate::settings::SettingsForm;
 use crate::store::config::{self, Change, Config, ConfigError, CredentialName, Loaded, Stored};
@@ -79,6 +80,7 @@ impl Persist {
         options.keymap = Some(config.keymap);
         options.appearance = (config.theme, config.icons);
         options.suggestion_keys = config.suggestion_keys;
+        options.export_choices = config.export;
         config.connections
     }
 }
@@ -223,6 +225,7 @@ impl App {
         }
         self.keymap = config.keymap;
         self.suggestion_keys = config.suggestion_keys;
+        self.export_choices = config.export;
         self.appearance = (config.theme, config.icons);
         if config.keyboard != self.keyboard {
             self.set_keyboard(config.keyboard);
@@ -416,6 +419,32 @@ impl App {
                 }
             }
             Err(message) => form.note = Some(message),
+        }
+    }
+
+    /// Keeps the choices of the export dialog. A write that fails leaves a note, and
+    /// the export goes on.
+    pub(super) fn save_export_choices(&mut self, choices: ExportChoices) {
+        if self.export_choices == choices {
+            return;
+        }
+        self.export_choices = choices.clone();
+        let Some(persist) = &mut self.persist else {
+            return;
+        };
+        let Some(root) = persist.store.root(Scope::Global) else {
+            return;
+        };
+        match config::change_export(root, choices) {
+            Ok(hash) => {
+                let global = persist.hashes.iter_mut();
+                if let Some((_, known)) =
+                    global.into_iter().find(|(item, _)| *item == Scope::Global)
+                {
+                    *known = Some(hash);
+                }
+            }
+            Err(message) => self.status = Some(text::export_choices_failed(&message)),
         }
     }
 

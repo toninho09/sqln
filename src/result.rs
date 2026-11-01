@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::exec::ReadLimit;
 use crate::grid::{GridView, ResultTable, RowSearch, Value, printable};
 use crate::input::Action;
 use crate::ui::text;
@@ -15,6 +16,12 @@ pub struct ResultTab {
     pub view: GridView,
     pub summary: String,
     pub search: Option<RowSearch>,
+    /// The position of the statement of this result in its execution.
+    pub statement: usize,
+    /// What stopped the read at a limit.
+    pub limit: ReadLimit,
+    /// True when the execution ended before the last row: a stop, an error, or the time.
+    pub cut_short: bool,
 }
 
 /// The action of a key in the results panel.
@@ -38,7 +45,15 @@ impl ResultTab {
             view: GridView::default(),
             summary: String::new(),
             search: None,
+            statement: 0,
+            limit: ReadLimit::None,
+            cut_short: false,
         }
+    }
+
+    /// Returns true when the grid holds each row of the result.
+    pub fn is_complete(&self) -> bool {
+        self.limit == ReadLimit::None && !self.cut_short
     }
 
     /// Returns true when the search has rows to read.

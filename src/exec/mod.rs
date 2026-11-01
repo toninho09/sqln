@@ -16,6 +16,7 @@ use crate::catalog::{Catalog, RelationRef};
 use crate::connector::{
     ConnectError, Connector, SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
+use crate::export::ExportWriter;
 use crate::grid::{Budget, DEFAULT_LIMIT, Row};
 use crate::pool::Pool;
 
@@ -195,6 +196,24 @@ impl ExecEvent {
     }
 }
 
+impl ExecEvent {
+    /// Returns the execution of the event.
+    pub fn execution(&self) -> Option<ExecutionId> {
+        match self {
+            ExecEvent::Queued { execution, .. }
+            | ExecEvent::Started { execution, .. }
+            | ExecEvent::ConfirmClose { execution, .. }
+            | ExecEvent::ExecutionFinished { execution, .. } => Some(*execution),
+            ExecEvent::StatementStarted { key }
+            | ExecEvent::Columns { key, .. }
+            | ExecEvent::Rows { key, .. }
+            | ExecEvent::ResultDone { key, .. }
+            | ExecEvent::StatementFinished { key, .. } => Some(key.execution),
+            _ => None,
+        }
+    }
+}
+
 /// The parameters of one execution.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RunOptions {
@@ -204,6 +223,8 @@ pub struct RunOptions {
     pub schema: Option<String>,
     /// A row cap for this execution. Without a value, the setting of the connection applies.
     pub row_cap: Option<usize>,
+    /// The file of an export. The rows go there, and the time limit does not apply.
+    pub export: Option<ExportWriter>,
 }
 
 pub struct RunRequest {

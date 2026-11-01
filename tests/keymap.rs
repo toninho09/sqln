@@ -118,6 +118,16 @@ fn the_grid_has_the_keys_of_the_table_view_in_both_modes() {
 }
 
 #[test]
+fn the_grid_opens_the_export_in_both_modes() {
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        assert_eq!(
+            Keymap::new(mode).lookup(Region::Grid, chord("e")),
+            Lookup::Action(Action::GridExport)
+        );
+    }
+}
+
+#[test]
 fn the_keys_of_the_table_view_can_change_by_name() {
     let items = overrides(&[("loadMore", &["ctrl+l"]), ("sortColumn", &[])]);
     let map = Keymap::with_overrides(KeyboardMode::Conventional, &items).unwrap();

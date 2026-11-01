@@ -426,6 +426,35 @@ impl App {
     }
 }
 
+impl App {
+    pub(super) fn on_export_mouse(&mut self, mouse: MouseEvent) {
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+        let position = Position::new(mouse.column, mouse.row);
+        let layout = &self.layout.export;
+        let format = layout
+            .formats
+            .iter()
+            .position(|area| area.contains(position));
+        let field = layout
+            .fields
+            .iter()
+            .find(|(_, area)| area.contains(position))
+            .map(|(field, _)| *field);
+        let Some(form) = &mut self.export_form else {
+            return;
+        };
+        if let Some(format) = format {
+            form.open_format(format);
+        } else if let Some(field) = field {
+            form.focus_on(field);
+            let request = form.press();
+            self.on_export_request(request);
+        }
+    }
+}
+
 fn main_tab_at(tabs: &[MainTab], position: Position) -> Option<MainTab> {
     tabs.iter()
         .copied()

@@ -19,9 +19,11 @@ use ratatui::style::Color;
 use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
 use sqln::connection::Source;
+use sqln::export::{Delimiter, ExportChoices, ExportFormat};
 use sqln::form::{Field, FormNote};
 use sqln::input::SuggestionKeys;
 use sqln::script_file::Trouble;
+use sqln::settings::SettingsForm;
 use sqln::store::config::{self, ConnectionIcon, Preferences, ThemeName};
 use sqln::store::scripts::{self, ScriptMeta};
 use sqln::store::{Root, Scope, Store, file};
@@ -3434,4 +3436,109 @@ fn the_project_choice_of_keys_comes_before_the_global_choice() {
 fn an_unknown_choice_of_keys_is_a_configuration_error() {
     let (store, _) = reopening_store("p-keys-unknown", r#"{"suggestionKeys":"space"}"#);
     assert!(sqln::store::config::load(&store).config.is_err());
+}
+
+#[test]
+fn the_export_choices_stay_in_the_global_file_only() {
+    let (store, _) = two_connections("p-export-global");
+    let project = fs::read_to_string(store.project.as_ref().unwrap().config_file()).unwrap();
+    let choices = ExportChoices {
+        format: ExportFormat::Json,
+        delimiter: Delimiter::Semicolon,
+        batch: 50,
+        folder: Some(PathBuf::from("/data/out")),
+        ..ExportChoices::default()
+    };
+    config::change_export(&store.global, choices.clone()).unwrap();
+    assert_eq!(
+        fs::read_to_string(store.project.as_ref().unwrap().config_file()).unwrap(),
+        project
+    );
+    let text = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(text.contains("\"export\""), "{text}");
+    assert!(text.contains("first"), "the connections stay: {text}");
+    assert_eq!(config::load(&store).config.unwrap().export, choices);
+}
+
+#[test]
+fn a_file_without_export_choices_gives_the_defaults() {
+    let (store, _) = two_connections("p-export-default");
+    assert_eq!(
+        config::load(&store).config.unwrap().export,
+        ExportChoices::default()
+    );
+}
+
+#[test]
+fn export_in_a_project_file_is_a_configuration_error() {
+    let (store, _) = two_connections("p-export-project");
+    write_config(
+        store.project.as_ref().unwrap(),
+        r#"{"export":{"format":"tsv"}}"#,
+        &[],
+    );
+    let error = config::load(&store).config.unwrap_err().to_string();
+    assert!(error.contains("export"), "{error}");
+}
+
+#[test]
+fn a_batch_of_zero_is_a_configuration_error() {
+    let (store, _) = two_connections("p-export-batch");
+    write_config(&store.global, r#"{"export":{"batch":0}}"#, &[]);
+    let error = config::load(&store).config.unwrap_err().to_string();
+    assert!(error.contains("batch"), "{error}");
+}
+
+#[test]
+fn the_settings_keep_the_export_choices() {
+    let choices = ExportChoices {
+        format: ExportFormat::Tsv,
+        ..ExportChoices::default()
+    };
+    let preferences = Preferences {
+        export: Some(choices.clone()),
+        ..Preferences::default()
+    };
+    let form = SettingsForm::new(preferences, None);
+    assert_eq!(form.preferences().unwrap().export, Some(choices));
+}
+
+#[test]
+fn an_export_saves_its_choices_without_the_change_question() {
+    let (store, base) = two_connections("p-export-session");
+    let output = base.join("files").join("out.csv");
+    let mut session = Session::start(&store);
+    session.write("SELECT 1 AS a;");
+    session.press(KeyEvent::new(KeyCode::F(5), KeyModifiers::SHIFT));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while session.app.console_mut().is_busy() || session.app.console_mut().results.is_empty() {
+        session.app.drain_events();
+        assert!(Instant::now() < deadline, "{}", session.screen());
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    session.prefix('j');
+    session.code(KeyCode::Char('e'));
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    for _ in 0..100 {
+        session.code(KeyCode::Backspace);
+    }
+    session.write(&output.display().to_string());
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Right);
+    session.click_text("[Export]");
+    while session.app.console_mut().is_busy() || !output.exists() {
+        session.app.drain_events();
+        assert!(Instant::now() < deadline, "{}", session.screen());
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(fs::read_to_string(&output).unwrap(), "a\n1\n");
+    let saved = config::load(&store).config.unwrap().export;
+    assert_eq!(saved.delimiter, Delimiter::Semicolon);
+    assert_eq!(saved.folder.as_deref(), output.parent());
+
+    session.now += Duration::from_secs(10);
+    session.app.tick_at(session.now);
+    session.assert_not_sees("Reload");
 }

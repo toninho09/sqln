@@ -281,6 +281,9 @@ impl App {
         let Some(index) = self.table_active else {
             return;
         };
+        if self.stop_export(self.tables[index].id) {
+            return;
+        }
         if self.cancel_auth_console(self.tables[index].id) {
             return;
         }
@@ -300,6 +303,7 @@ impl App {
             return;
         }
         self.cancel_auth_console(self.tables[index].id);
+        self.discard_export(self.tables[index].id);
         let tab = self.tables.remove(index);
         self.budget.release(tab.result.table.bytes);
         if let Some(manager) = &mut self.manager {

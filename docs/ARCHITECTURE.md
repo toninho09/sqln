@@ -48,6 +48,7 @@ Thread principal                    Runtime Tokio
 | `pool` | Limite, fila, reserva e limpeza |
 | `connector` | Contrato e conectores PostgreSQL, MySQL, SQLite e Redis/Valkey |
 | `grid` | Linhas, larguras, busca, orçamento e TSV |
+| `export` | Formatos de exportação, arquivo temporário e formulário do modal |
 | `find` | Comparação de texto das duas buscas |
 | `clipboard` | Área de transferência do sistema e OSC 52 |
 | `terminal` | Preparação e restauração do terminal |
@@ -399,6 +400,7 @@ Regras da leitura, conforme o código:
 
 - `version` é obrigatório e vale 1. Um campo desconhecido invalida o arquivo.
 - Todos os campos de `preferences` são opcionais, e `keymap` tem as seções `conventional` e `vim`.
+- `preferences.export` guarda as escolhas do modal de exportação: `format`, `header`, `delimiter`, `nullText`, `bom`, `grouped`, `batch` e `folder`. A aplicação grava esse campo ao confirmar uma exportação, e ele só é válido no arquivo global.
 - `credential` ausente vale `none`. `pool` ausente vale 5 conexões.
 - Um `id` ou um `name` repetido no mesmo arquivo invalida o arquivo. O nome ignora maiúsculas e minúsculas.
 - Um caminho relativo (`file`, `caFile`, `clientCert`, `clientKey`) fica como o usuário o escreveu no arquivo. A resolução ocorre ao abrir a conexão.
