@@ -20,6 +20,7 @@ use crate::input::SuggestionKeys;
 use crate::line_input::{Edit, LineInput};
 use crate::result::ResultTab;
 use crate::sql::{Dialect, TokenKind, quote_identifier, split, tokenize};
+use crate::structure::{Scope, Section, Structure, structure_sql};
 use crate::ui::text;
 
 /// The part of a table tab that receives the keys.
@@ -65,8 +66,10 @@ pub struct TableTab {
     pub connection: ConnectionId,
     pub relation: RelationRef,
     pub is_view: bool,
-    /// False for a source without SQL. The tab then shows a value, without its fields.
+    /// False for a tab without SQL text: a value of a key, or a structure.
     pub filters: bool,
+    /// The catalog grid of a structure tab. `None` means a tab of rows.
+    pub structure: Option<Structure>,
     pub result: ResultTab,
     pub focus: TableFocus,
     pub filter: LineInput,
@@ -129,6 +132,11 @@ pub fn select_sql(dialect: Dialect, relation: &RelationRef, filter: &str, order:
     sql
 }
 
+/// Writes the part of a query that reads one page and the row after it.
+fn limit_clause(page_size: usize, offset: usize) -> String {
+    format!("\nLIMIT {} OFFSET {offset}", page_size.saturating_add(1))
+}
+
 /// Builds the query of one page.
 pub fn page_sql(
     dialect: Dialect,
@@ -142,10 +150,7 @@ pub fn page_sql(
         return Ok(value_page(relation, offset, page_size.saturating_add(1)));
     }
     let mut sql = select_sql(dialect, relation, filter, order);
-    sql.push_str(&format!(
-        "\nLIMIT {} OFFSET {offset}",
-        page_size.saturating_add(1)
-    ));
+    sql.push_str(&limit_clause(page_size, offset));
     if is_one_statement(&sql, dialect) {
         Ok(sql)
     } else {
@@ -193,6 +198,7 @@ impl TableTab {
             relation,
             is_view,
             filters: true,
+            structure: None,
             result: ResultTab::new(0, Vec::new()),
             focus: TableFocus::Grid,
             filter: LineInput::default(),
@@ -274,21 +280,84 @@ impl TableTab {
     }
 
     pub fn label(&self) -> String {
-        text::table_label(&self.relation.relation, self.kind())
+        match &self.structure {
+            Some(structure) => text::table_label(&structure.name, self.kind()),
+            None => text::table_label(&self.relation.relation, self.kind()),
+        }
     }
 
     /// Returns the word that names what this tab shows.
     pub fn kind(&self) -> &'static str {
-        match (self.filters, self.is_view) {
-            (false, _) => "key",
-            (true, true) => "view",
-            (true, false) => "table",
+        match (&self.structure, self.filters, self.is_view) {
+            (Some(_), ..) => "structure",
+            (None, false, _) => "key",
+            (None, true, true) => "view",
+            (None, true, false) => "table",
         }
     }
 
-    /// Returns true for the same relation of the same connection.
+    /// Returns true for the rows of the same relation of the same connection.
     pub fn is(&self, connection: ConnectionId, relation: &RelationRef) -> bool {
-        self.connection == connection && self.relation == *relation
+        self.connection == connection && self.relation == *relation && self.structure.is_none()
+    }
+
+    /// Returns true for the same structure of the same connection.
+    pub fn shows_structure(
+        &self,
+        connection: ConnectionId,
+        scope: Scope,
+        relation: &RelationRef,
+    ) -> bool {
+        self.connection == connection
+            && self.relation == *relation
+            && self
+                .structure
+                .as_ref()
+                .is_some_and(|item| item.scope == scope)
+    }
+
+    /// Returns the section on screen, for a tab with sections.
+    pub fn section(&self) -> Option<Section> {
+        let structure = self.structure.as_ref()?;
+        structure.has_sections().then_some(structure.section)
+    }
+
+    /// Changes the section. The next query of the tab reads it.
+    pub fn set_section(&mut self, section: Section) {
+        if let Some(structure) = &mut self.structure {
+            structure.section = section;
+        }
+    }
+
+    /// Returns the query of the whole grid, without a page.
+    pub fn read_sql(&self, dialect: Dialect) -> Option<String> {
+        match &self.structure {
+            Some(item) => structure_sql(dialect, item.scope, &self.relation, item.section),
+            None => Some(select_sql(
+                dialect,
+                &self.relation,
+                &self.applied_filter,
+                &self.applied_order,
+            )),
+        }
+    }
+
+    /// Builds the query of one page of this tab.
+    fn page_sql(&self, dialect: Dialect, offset: usize) -> Result<String, String> {
+        match &self.structure {
+            Some(_) => self
+                .read_sql(dialect)
+                .map(|sql| sql + &limit_clause(self.page_size, offset))
+                .ok_or_else(|| text::STRUCTURE_REFUSED.to_owned()),
+            None => page_sql(
+                dialect,
+                &self.relation,
+                &self.applied_filter,
+                &self.applied_order,
+                self.page_size,
+                offset,
+            ),
+        }
     }
 
     /// Frees the rows of the grid and their budget.
@@ -346,15 +415,7 @@ impl TableTab {
         self.limit = ReadLimit::None;
         self.load = None;
         self.list = None;
-        let sql = page_sql(
-            dialect,
-            &self.relation,
-            &self.applied_filter,
-            &self.applied_order,
-            self.page_size,
-            0,
-        );
-        match sql {
+        match self.page_sql(dialect, 0) {
             Ok(sql) => Some(PageRequest {
                 sql,
                 first: true,
@@ -386,16 +447,9 @@ impl TableTab {
         if self.is_blocked(budget) {
             return Err(text::TABLE_BLOCKED);
         }
-        let offset = self.loaded();
-        let sql = page_sql(
-            dialect,
-            &self.relation,
-            &self.applied_filter,
-            &self.applied_order,
-            self.page_size,
-            offset,
-        )
-        .map_err(|_| text::TABLE_TEXT_REFUSED)?;
+        let sql = self
+            .page_sql(dialect, self.loaded())
+            .map_err(|_| text::TABLE_TEXT_REFUSED)?;
         self.message = None;
         Ok(PageRequest {
             sql,

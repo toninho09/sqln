@@ -30,6 +30,8 @@ use sqln::exec::{
 use sqln::export::{ExportOptions, ExportWriter};
 use sqln::form::Field;
 use sqln::grid::{Budget, Row, Value};
+use sqln::sql::Dialect;
+use sqln::structure::{Scope, Section, structure_sql};
 use sqln::ui::theme::Theme;
 use tokio::sync::mpsc::Receiver;
 
@@ -1779,6 +1781,167 @@ impl Screen {
     fn table_ids(&self) -> Vec<String> {
         let table = &self.app.table().unwrap().result.table;
         table.rows.iter().map(|row| row[0].display()).collect()
+    }
+}
+
+#[test]
+fn the_structure_queries_read_the_catalog_of_each_server() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        h.run_ok(&[
+            "DROP VIEW IF EXISTS s_view",
+            "DROP TABLE IF EXISTS s_child",
+            "DROP TABLE IF EXISTS s_parent",
+            "CREATE TABLE s_parent (a int, b int, PRIMARY KEY (a, b))",
+            "CREATE TABLE s_child (\
+               id int PRIMARY KEY, \
+               label varchar(30) NOT NULL DEFAULT 'x', \
+               pa int, \
+               pb int, \
+               CONSTRAINT s_fk FOREIGN KEY (pa, pb) REFERENCES s_parent (a, b) \
+                 ON DELETE CASCADE)",
+            "CREATE INDEX s_idx ON s_child (label, pa)",
+            "CREATE VIEW s_view AS SELECT id FROM s_child",
+        ]);
+        h.manager.load_catalog(h.connection, 0);
+        let catalog = loop {
+            if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
+                break catalog.unwrap();
+            }
+        };
+        let schema = catalog.current_schema.clone().unwrap();
+        let dialect = match server.kind {
+            Kind::Postgres => Dialect::Postgres,
+            Kind::MySql => Dialect::MySql,
+        };
+        let child = RelationRef {
+            schema: schema.clone(),
+            relation: "s_child".into(),
+        };
+        let mut read = |scope, target: &RelationRef, section| {
+            let sql = structure_sql(dialect, scope, target, section).unwrap();
+            h.run_ok(&[&sql])
+        };
+
+        let columns = read(Scope::Relation, &child, Section::Columns);
+        assert_eq!(
+            columns.columns[0],
+            ["name", "type", "nullable", "default", "key"],
+            "{:?}",
+            server.kind
+        );
+        assert_eq!(columns.rows.len(), 4, "{:?}", server.kind);
+        assert_eq!(columns.text(0, 0), "id");
+        assert_eq!(columns.text(0, 2), "no");
+        assert_eq!(columns.text(0, 4), "PK");
+        assert_eq!(columns.rows[1][4], Value::Null, "{:?}", server.kind);
+        assert!(columns.text(1, 1).contains("30"), "{:?}", server.kind);
+        assert!(columns.text(1, 3).contains('x'), "{:?}", server.kind);
+        assert_eq!(columns.text(2, 2), "yes");
+
+        let indexes = read(Scope::Relation, &child, Section::Indexes);
+        assert_eq!(indexes.columns[0], ["name", "columns", "unique"]);
+        let index = (0..indexes.rows.len())
+            .find(|row| indexes.text(*row, 0) == "s_idx")
+            .unwrap();
+        assert_eq!(indexes.text(index, 1), "label, pa", "{:?}", server.kind);
+        assert_eq!(indexes.text(index, 2), "no");
+        let primary = (0..indexes.rows.len())
+            .find(|row| indexes.text(*row, 1) == "id")
+            .unwrap();
+        assert_eq!(indexes.text(primary, 2), "yes");
+
+        let keys = read(Scope::Relation, &child, Section::ForeignKeys);
+        assert_eq!(
+            keys.columns[0],
+            ["name", "columns", "references", "on_update", "on_delete"]
+        );
+        assert_eq!(keys.rows.len(), 1, "{:?}", server.kind);
+        assert_eq!(keys.text(0, 0), "s_fk");
+        assert_eq!(keys.text(0, 1), "pa, pb");
+        assert_eq!(keys.text(0, 2), format!("{schema}.s_parent (a, b)"));
+        assert_eq!(keys.text(0, 3), "NO ACTION", "{:?}", server.kind);
+        assert_eq!(keys.text(0, 4), "CASCADE");
+
+        let view = RelationRef {
+            schema: schema.clone(),
+            relation: "s_view".into(),
+        };
+        let columns = read(Scope::Relation, &view, Section::Columns);
+        assert_eq!(columns.rows.len(), 1, "{:?}", server.kind);
+
+        let in_schema = RelationRef {
+            schema: schema.clone(),
+            relation: String::new(),
+        };
+        let wide = read(Scope::Schema, &in_schema, Section::Columns);
+        assert_eq!(
+            wide.columns[0],
+            ["schema", "relation", "name", "type", "nullable", "default"]
+        );
+        let found = |run: &Run| {
+            (0..run.rows.len())
+                .filter(|row| run.text(*row, 1).starts_with("s_"))
+                .count()
+        };
+        assert_eq!(found(&wide), 7, "{:?}", server.kind);
+
+        let everything = read(Scope::Connection, &RelationRef::default(), Section::Columns);
+        assert_eq!(found(&everything), 7, "{:?}", server.kind);
+        assert!(
+            !(0..everything.rows.len()).any(|row| {
+                let name = everything.text(row, 0);
+                name == "information_schema" || name == "mysql" || name.starts_with("pg_")
+            }),
+            "{:?}",
+            server.kind
+        );
+        h.run_ok(&[
+            "DROP VIEW s_view",
+            "DROP TABLE s_child",
+            "DROP TABLE s_parent",
+        ]);
+    }
+}
+
+#[test]
+fn a_hostile_name_stays_a_name_in_the_structure_queries() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let dialect = match server.kind {
+            Kind::Postgres => Dialect::Postgres,
+            Kind::MySql => Dialect::MySql,
+        };
+        let name = "x'; DROP TABLE s_safe; -- \\";
+        let quoted = sqln::sql::quote_identifier(name, dialect);
+        let (drop_table, create) = (
+            format!("DROP TABLE IF EXISTS {quoted}"),
+            format!("CREATE TABLE {quoted} (id int)"),
+        );
+        h.run_ok(&[
+            "DROP TABLE IF EXISTS s_safe",
+            "CREATE TABLE s_safe (id int)",
+            &drop_table,
+            &create,
+        ]);
+        h.manager.load_catalog(h.connection, 0);
+        let schema = loop {
+            if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
+                break catalog.unwrap().current_schema.unwrap();
+            }
+        };
+        let target = RelationRef {
+            schema,
+            relation: name.into(),
+        };
+        for section in Section::ALL {
+            let sql = structure_sql(dialect, Scope::Relation, &target, section).unwrap();
+            let run = h.run_ok(&[&sql]);
+            if section == Section::Columns {
+                assert_eq!(run.rows.len(), 1, "{:?}", server.kind);
+            }
+        }
+        h.run_ok(&["SELECT * FROM s_safe", &drop_table, "DROP TABLE s_safe"]);
     }
 }
 

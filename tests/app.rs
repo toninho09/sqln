@@ -1533,6 +1533,7 @@ fn stop_asks_and_delete_leaves_no_file() {
     f.export_to(&path);
     f.wait_for_rows();
     assert!(dir.join("out.csv.tmp").exists());
+    f.assert_sees("Ctrl+W x stops.");
     f.prefix('x');
     f.idle();
     f.assert_sees("Incomplete export");

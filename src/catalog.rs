@@ -28,7 +28,7 @@ pub struct Schema {
 }
 
 /// Identifies one relation of the catalog.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RelationRef {
     pub schema: String,
     pub relation: String,

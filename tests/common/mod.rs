@@ -159,6 +159,20 @@ pub fn temp_db(name: &str) -> std::path::PathBuf {
 pub fn open_table(app: &mut App, connection: usize, name: &str) {
     use sqln::navigator::RowKind;
 
+    select_row(app, connection, &[RowKind::Table, RowKind::View], name);
+    app.on_event(Event::Key(key(KeyCode::Enter)));
+}
+
+/// Moves the cursor of the navigator to a row, with the keys of the navigator. It opens
+/// the rows above the target and waits for the catalog.
+pub fn select_row(
+    app: &mut App,
+    connection: usize,
+    kinds: &[sqln::navigator::RowKind],
+    name: &str,
+) {
+    use sqln::navigator::RowKind;
+
     use sqln::connection::CatalogState;
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -182,10 +196,9 @@ pub fn open_table(app: &mut App, connection: usize, name: &str) {
     for _ in 0..500 {
         let row = app.navigator().current(app.connections()).unwrap();
         let is_target = row.connection == connection
-            && matches!(row.kind, RowKind::Table | RowKind::View)
+            && kinds.contains(&row.kind)
             && row.name(app.connections()) == name;
         if is_target {
-            press(app, KeyCode::Enter);
             return;
         }
         let branch = matches!(row.kind, RowKind::Connection | RowKind::Schema);

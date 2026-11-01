@@ -206,7 +206,7 @@ impl App {
     }
 
     /// The row of the list under the cursor, when it stands for a saved script.
-    fn picker_script(&self) -> Option<ScriptEntry> {
+    pub(super) fn picker_script(&self) -> Option<ScriptEntry> {
         let picker = self.picker.as_ref()?;
         match &picker.kind {
             PickerKind::Consoles { scripts, .. } => scripts.get(picker.cursor.checked_sub(1)?),

@@ -16,7 +16,9 @@ use crate::settings::SettingsRequest;
 use crate::table::TableFocus;
 use crate::ui::console::Control;
 use crate::ui::navigator::TREE_PAD;
-use crate::ui::{MainTab, TableControl, column_edge_at, grid_cell_at, header_column_at, tab_at};
+use crate::ui::{
+    MainTab, TableControl, column_edge_at, grid_cell_at, header_column_at, section_at, tab_at,
+};
 
 /// The console keeps this width when the user drags the divider of the navigator.
 pub(super) const MIN_MAIN_WIDTH: u16 = 40;
@@ -141,6 +143,11 @@ impl App {
         let area = layout.grid;
         if layout.controls.contains(position) {
             self.on_table_control_press(mouse.column);
+        } else if layout.sections.contains(position) {
+            if let Some(section) = section_at(layout.sections, mouse.column) {
+                self.focus_table(TableFocus::Grid);
+                self.show_section(section);
+            }
         } else if layout.summary.contains(position) {
             self.on_pager_press(mouse.column);
         } else if layout.filter.contains(position) {

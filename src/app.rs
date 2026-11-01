@@ -6,6 +6,7 @@ mod close;
 mod conflicts;
 mod connections;
 mod export;
+mod hints;
 mod keys;
 mod mouse;
 mod persist;
@@ -63,7 +64,9 @@ use crate::ui::name::{NamePrompt, draw_name};
 use crate::ui::navigator::draw_navigator;
 use crate::ui::palette::draw_palette;
 use crate::ui::settings::{SettingsLayout, draw_settings};
-use crate::ui::statusline::{StatusData, StatusPanel, draw_statusline, hint_line, run_time};
+use crate::ui::statusline::{
+    StatusData, StatusPanel, draw_statusline, fit_hints, hint_line, run_time,
+};
 use crate::ui::theme::{ColorEnv, Theme};
 use crate::ui::which_key::draw_which_key;
 use crate::ui::wrap::WrappedText;
@@ -1008,15 +1011,18 @@ impl App {
             .clone()
             .or_else(|| self.export_progress())
             .or_else(|| self.auth_wait().map(str::to_owned));
-        let line = match message {
-            Some(status) => Line::styled(status, self.theme.status),
-            None => hint_line(&self.hint_items(), &self.theme),
-        };
         // The row starts one column after the edge, as the status line does.
         let area = Rect {
             x: area.x + 1,
             width: area.width.saturating_sub(1),
             ..area
+        };
+        let line = match message {
+            Some(status) => Line::styled(status, self.theme.status),
+            None => {
+                let items = fit_hints(&self.hint_items(), usize::from(area.width));
+                hint_line(&items, &self.theme)
+            }
         };
         frame.render_widget(Paragraph::new(line), area);
     }

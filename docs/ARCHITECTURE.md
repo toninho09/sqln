@@ -44,6 +44,7 @@ Thread principal                    Runtime Tokio
 | `console` | Editor, resultados, mensagens e estado de um console |
 | `result` | Grade de um resultado com cursor e busca, usada por consoles e tabelas |
 | `table` | Aba de tabela: páginas, campos, ordenação, sugestões e consulta |
+| `structure` | Consultas de catálogo da aba de estrutura, por banco, escopo e seção |
 | `line_input` | Campo de texto de uma linha, usado pelos campos da barra de filtro |
 | `exec` | Execuções, scripts, teto e cancelamento |
 | `pool` | Limite, fila, reserva e limpeza |

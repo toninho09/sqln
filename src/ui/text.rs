@@ -98,15 +98,16 @@ pub const HINT_PICKER: &[HintPart] = &[
 ];
 pub const HINT_CHOOSE: &[HintPart] = &[("Up/Down", "move"), ("Enter", "choose"), ("Esc", "cancel")];
 pub const HINT_NAME: &[HintPart] = &[("Enter", "saves"), ("Esc", "cancels")];
-pub const HINT_SETTINGS: &[HintPart] = &[
+pub const HINT_SETTINGS_TEXT: &[HintPart] = &[
     ("Tab", "next"),
-    ("Left/Right", "change"),
-    ("", "An empty field removes the value"),
+    ("Enter", "next"),
     ("Esc", "cancel"),
+    ("", "An empty field removes the value"),
 ];
 pub const HINT_SETTINGS_SECTIONS: &[HintPart] =
     &[("Up/Down", "section"), ("Tab", "next"), ("Esc", "cancel")];
-pub const HINT_CTRL_SPACE: &[HintPart] = &[("Ctrl+Space", "suggestions"), ("Ctrl+F", "find")];
+pub const HINT_SUGGESTIONS: &[HintPart] = &[("Ctrl+Space", "suggestions")];
+pub const HINT_FIND: &[HintPart] = &[("Ctrl+F", "find")];
 pub const HINT_EDITOR_STAYS: &[HintPart] = &[("", "The editor stays available")];
 pub const HINT_CONFLICTS: &[HintPart] = &[
     ("Up/Down", "move"),
@@ -114,16 +115,16 @@ pub const HINT_CONFLICTS: &[HintPart] = &[
     ("Enter", "next"),
     ("Esc", "decide later"),
 ];
-pub const HINT_CONFIG_ERROR: &[HintPart] = &[
-    ("", "Configuration error. Fix the file, then"),
-    ("Ctrl+W r", "loads it again"),
-];
+/// The application adds the key that reads the file again.
+pub const HINT_CONFIG_ERROR: &[HintPart] = &[("", "Configuration error. Fix the file, then")];
 pub const HINT_FORM: &[HintPart] = &[
     ("Tab", "next"),
     ("Left/Right", "change"),
-    ("Enter", "next or press"),
+    ("Enter", "next"),
     ("Esc", "cancel"),
 ];
+pub const HINT_FORM_TEXT: &[HintPart] = &[("Tab", "next"), ("Enter", "next"), ("Esc", "cancel")];
+pub const HINT_FORM_BUTTON: &[HintPart] = &[("Tab", "next"), ("Enter", "press"), ("Esc", "cancel")];
 pub const HINT_FORM_PATH: &[HintPart] = &[
     ("Tab", "next"),
     ("Ctrl+O", "browse"),
@@ -510,8 +511,12 @@ pub fn export_exists(path: &str) -> String {
     format!("{path} exists. Replace this file?")
 }
 
-pub fn export_progress(rows: usize, path: &str) -> String {
-    format!("Export: {rows} rows written to {path}")
+pub fn export_progress(rows: usize, path: &str, stop: Option<&str>) -> String {
+    let progress = format!("Export: {rows} rows written to {path}");
+    match stop {
+        Some(key) => format!("{key} stops. {progress}"),
+        None => progress,
+    }
 }
 
 pub fn export_done(rows: usize, path: &str) -> String {
@@ -599,6 +604,11 @@ pub const RESULT_READING: &str = "This result receives rows. Ctrl+W x stops the 
 pub const COPIED: &str = "Copied.";
 pub const NO_MESSAGES: &str = "No messages.";
 pub const MESSAGES_TAB: &str = "Messages";
+pub const SECTION_COLUMNS: &str = "Columns";
+pub const SECTION_INDEXES: &str = "Indexes";
+pub const SECTION_FOREIGN_KEYS: &str = "Foreign keys";
+pub const ALL_SCHEMAS: &str = "all schemas";
+pub const STRUCTURE_REFUSED: &str = "This source has no structure. Keys have no columns.";
 
 pub const LABEL_WHERE: &str = "WHERE";
 pub const LABEL_ORDER_BY: &str = "ORDER BY";
@@ -760,6 +770,8 @@ pub fn action_text(action: Action) -> &'static str {
         Action::GridExport => "Export the result to a file",
         Action::NavigatorScripts => "Scripts without a connection",
         Action::NavigatorDeletePassword => "Delete the saved password",
+        Action::NavigatorStructure => "Show the structure of the row",
+        Action::GridStructure => "Show the structure of the table",
         Action::ReloadConfig => "Load the configuration again",
         Action::GridUp => "Up",
         Action::GridDown => "Down",
@@ -817,6 +829,16 @@ pub fn table_keys_row(keys: &str, action: Action) -> String {
     }
 }
 
+/// Writes a row of the list of keys of a structure with sections. The result keys
+/// move between the sections.
+pub fn section_keys_row(keys: &str, action: Action) -> String {
+    match action {
+        Action::GridPreviousResult => format!("{keys:<24}Previous section"),
+        Action::GridNextResult => format!("{keys:<24}Next section"),
+        _ => keys_row(keys, action),
+    }
+}
+
 pub fn count(number: usize) -> String {
     let digits = number.to_string();
     let mut grouped = String::new();
@@ -856,6 +878,10 @@ pub fn table_label(name: &str, kind: &str) -> String {
 
 pub fn table_title(connection: &str, schema: &str, relation: &str, kind: &str) -> String {
     format!("{connection} · {schema}.{relation} · {kind}")
+}
+
+pub fn structure_title(connection: &str, name: &str) -> String {
+    format!("{connection} · {name} · structure")
 }
 
 pub fn redis_unknown_type(kind: &str) -> String {

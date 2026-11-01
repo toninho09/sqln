@@ -37,7 +37,7 @@ pub use self::console::{
     draw_overlay, draw_panel_title, draw_picker, draw_rule, draw_small_terminal, grid_cell_at,
     header_column_at, main_tab_label, run_badge, tab_at,
 };
-pub use self::table::{TableBar, TableControl, TableLayout, draw_table};
+pub use self::table::{TableBar, TableControl, TableLayout, draw_table, section_at};
 use self::theme::Theme;
 use crate::complete::SuggestionKind;
 use crate::editor::{MarkState, SearchBar, SearchField, SqlEditor, SuggestionList, TAB_WIDTH};

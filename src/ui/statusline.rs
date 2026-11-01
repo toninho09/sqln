@@ -206,6 +206,22 @@ pub fn hint_text(items: &[HintItem]) -> String {
     parts.join(GAP)
 }
 
+/// Keeps the commands that fit a row, in their order. A command that does not fit stays
+/// out whole, so the row shows no cut key, and a later short command can still fit.
+pub fn fit_hints(items: &[HintItem], width: usize) -> Vec<HintItem> {
+    let mut used = 0;
+    let mut kept = Vec::new();
+    for item in items {
+        let gap = if kept.is_empty() { 0 } else { GAP.len() };
+        let cost = gap + item.text().width();
+        if used + cost <= width {
+            used += cost;
+            kept.push(item.clone());
+        }
+    }
+    kept
+}
+
 /// Returns a row of commands. The style of the keys and the gap separate each command.
 pub fn hint_line(items: &[HintItem], theme: &Theme) -> Line<'static> {
     let mut spans = Vec::new();

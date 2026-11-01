@@ -4,6 +4,55 @@ Este documento registra as escolhas e as alternativas rejeitadas.
 As regras completas estão no [plano](../PLAN.md).
 Não reabrir uma decisão sem um fato novo.
 
+## Linha de dicas — 2026-10-31
+
+O usuário pediu que o rodapé sempre mostre os comandos mais relevantes para o momento.
+Uma auditoria achou comandos úteis fora da linha e comandos sem efeito dentro dela.
+
+| Ponto | Decisão | Rejeitado | Motivo |
+|---|---|---|---|
+| Regra | Cada estado lista os comandos que agem nele, em ordem de relevância | Lista fixa por painel | Uma tecla sem efeito gasta espaço, e uma tecla útil fica escondida |
+| Espaço | Um comando que não cabe sai inteiro, e um comando curto depois dele ainda entra | Cortar a linha na borda; exigir que cada estado caiba em 80 colunas | A ordem decide o que uma tela pequena mostra, e nenhuma tecla fica cortada. Isso substitui a regra de fechar a linha do explorador em 80 colunas |
+| Parar | Primeiro comando em toda a aba ocupada | Só no editor | Uma leitura longa ocupa uma sessão, e o foco pode estar na grade |
+| Transação | `commit` e `rollback` vêm primeiro no editor e nos resultados | Só nos botões | A transação segura uma sessão até o usuário decidir |
+| Navegador | Os comandos mudam com a linha do cursor. Os comandos da conexão ficam na linha da conexão | Mesma lista em toda linha | Em uma tabela, `Del` removeria a conexão inteira, e essa dica não ajuda ali. As teclas continuam a agir, e `F1` lista todas |
+| Sem conexão | O editor troca `run` e `script` por `connection` e `navigator` | Manter `run` | Sem conexão, `F5` só mostra um aviso |
+| Ordem das janelas | A escolha das dicas segue a ordem de `on_key` | Manter a ordem própria | A linha precisa nomear as teclas da janela que recebe as teclas |
+
+## Aba de estrutura — 2026-10-31
+
+O usuário pediu uma forma de ver o schema de uma tabela e de um banco, e reabriu a regra que excluía a aba de estrutura da primeira versão.
+O navegador mostrava só os nomes das colunas.
+
+| Ponto | Decisão aprovada | Rejeitado | Motivo |
+|---|---|---|---|
+| 1. Local | Aba própria na faixa principal, com grade somente leitura | Alternar na aba da tabela; console gerado; tipos no navegador | Reaproveita busca, cópia, exportação, parada e pool. Não mistura filtro e paginação com a estrutura |
+| 2. Conteúdo da tabela | Colunas (tipo, nulo, padrão, chave primária), índices e chaves estrangeiras | Só colunas; incluir o DDL | O PostgreSQL não tem `SHOW CREATE TABLE`, e um texto montado pela ferramenta poderia divergir do real |
+| 3. Schema ou banco | Todas as colunas, uma linha por coluna | Só as relações; nada | A busca da grade acha uma coluna em qualquer tabela |
+| 4. Redis e Valkey | Recusar com aviso na barra de status | Mostrar tipo, TTL e memória da chave | Uma chave não tem colunas |
+| 5. Teclas | `i` abre a estrutura. `[` e `]` trocam a seção | Tecla própria para a seção | `[` e `]` já trocam de resultado no console |
+| 6. Reinício | A aba de estrutura não volta na próxima sessão | Salvar em `OpenTabs` | O custo de abrir é uma tecla |
+| 7. Atualização | **Reload** e a troca de seção releem a grade. DDL não atualiza a aba sozinho | Guardar as três seções | A leitura é curta, e sem guardar nada a grade nunca fica velha sem aviso |
+| 8. Muitas linhas | A grade usa a paginação e o orçamento da tabela | Ler tudo de uma vez | Um banco grande pode ter muitas colunas |
+| 9. Exportação | Seleção, linhas carregadas e **All rows** funcionam, sem tabela de destino | Bloquear a exportação | A grade não é uma tabela, então o SQL INSERT pede o nome, como no console |
+| 10. Linha de conexão | `i` mostra todos os schemas que o navegador mostra | Só o schema atual | Atende ao pedido de ver o banco inteiro |
+| 11. Linha de coluna | `i` abre a estrutura da tabela dessa coluna | Não fazer nada | A coluna pertence a uma tabela |
+
+Decisões de implementação:
+
+| Ponto | Decisão | Rejeitado | Motivo |
+|---|---|---|---|
+| Aba | `TableTab` com `structure` e `filters = false` | Tipo novo de aba | A aba de tabela já tem prazo, parada, fila do pool, orçamento, senha e páginas |
+| Leitura | SQL por `Session::run`, como uma página | Novo método em `Session` | Nenhum conector muda, e a leitura aceita parada e prazo |
+| Nome em literal | PostgreSQL usa `E'...'` | `quote_literal` nos três bancos | Com `standard_conforming_strings = off`, um nome hostil do catálogo poderia fechar um literal comum |
+| Linha de dicas | Pedido do usuário: `i struct` aparece no navegador e na grade de uma tabela | Deixar `i` só no `F1` e na paleta | O usuário não achou a tecla. Veja a seção **Linha de dicas** |
+
+### Limitações conhecidas da estrutura
+
+- Um índice de expressão mostra `expression` no MySQL e no SQLite. O PostgreSQL mostra a expressão.
+- Uma chave estrangeira do SQLite não tem nome, então a coluna `name` mostra o número da chave.
+- Com `NO_BACKSLASH_ESCAPES` no MySQL, um nome com barra invertida não encontra a tabela e a grade fica vazia. O nome continua dentro do literal.
+
 ## Explorador de arquivos — 2026-10-31
 
 **Definido:** um botão `...` ao lado dos campos de caminho abre um explorador, e o usuário aprova as 10 decisões abaixo.

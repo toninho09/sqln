@@ -32,7 +32,9 @@ use sqln::editor::KeyboardMode;
 use sqln::exec::{Flow, ResultSink, Settings};
 use sqln::grid::{Row, Value};
 use sqln::input::SuggestionKeys;
+use sqln::navigator::RowKind;
 use sqln::sql::Dialect;
+use sqln::structure::{Scope, Section};
 use sqln::table::{TableFocus, clicked_order, page_sql};
 use sqln::ui::theme::Theme;
 use tokio::sync::Notify;
@@ -205,6 +207,8 @@ struct Recorder {
     /// True makes `run` wait for `release` after `mid_rows` rows.
     mid_hold: AtomicBool,
     mid_rows: usize,
+    /// True makes the source a Redis server.
+    redis: bool,
 }
 
 impl Recorder {
@@ -235,14 +239,18 @@ impl Canceller for StopHold {
 #[async_trait]
 impl Connector for RecordingConnector {
     fn dialect(&self) -> Dialect {
-        Dialect::Postgres
+        if self.0.redis {
+            Dialect::Redis
+        } else {
+            Dialect::Postgres
+        }
     }
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             namespace: Namespace::Schema,
             transactions: true,
-            ..Capabilities::default()
+            table_filters: !self.0.redis,
         }
     }
 
@@ -288,6 +296,10 @@ impl Session for RecordingSession {
         let failing = self.0.fail_when.lock().unwrap().clone();
         if failing.is_some_and(|fragment| sql.contains(&fragment)) {
             return Err(ExecError::new("syntax error near the filter"));
+        }
+        // A page of a key is not SQL, and these tests read no value.
+        if self.0.redis {
+            return Ok(StatementEnd::default());
         }
         let (limit, offset) = page_of(sql);
         sink.set_columns(COLUMNS.iter().map(|name| (*name).to_owned()).collect())
@@ -613,6 +625,475 @@ fn numbered(count: usize) -> String {
 fn first_cell(f: &Fixture) -> String {
     let table = &f.app.table().unwrap().result.table;
     table.rows[0][0].display()
+}
+
+// ---------------------------------------------------------------------------
+// The structure tab.
+
+impl Fixture {
+    /// Presses `i` on a row of the navigator.
+    fn structure_of(&mut self, kinds: &[RowKind], name: &str) {
+        common::select_row(&mut self.app, 0, kinds, name);
+        self.code(KeyCode::Char('i'));
+        self.loaded();
+    }
+
+    fn structure_of_table(&mut self, name: &str) {
+        self.structure_of(&[RowKind::Table], name);
+    }
+
+    fn section(&self) -> Option<Section> {
+        self.app.table().unwrap().section()
+    }
+
+    /// Returns the cells of the first column, for a tab of a real database.
+    fn first_column(&self) -> Vec<String> {
+        let table = &self.app.table().unwrap().result.table;
+        table.rows.iter().map(|row| row[0].display()).collect()
+    }
+}
+
+const STRUCTURE_SETUP: &str = "\
+    CREATE TABLE owners(id INTEGER PRIMARY KEY);\
+    CREATE TABLE items(\
+      id INTEGER PRIMARY KEY,\
+      owner INTEGER REFERENCES owners(id),\
+      label TEXT NOT NULL DEFAULT 'none');\
+    CREATE INDEX items_label ON items(label);";
+
+fn structure_files(name: &str) -> Fixture {
+    Fixture::sqlite(name, STRUCTURE_SETUP, Settings::default())
+}
+
+#[test]
+fn i_on_a_table_shows_its_columns_in_a_new_tab() {
+    let mut f = structure_files("structure-table");
+    f.structure_of_table("items");
+    assert!(!f.app.navigator_focused());
+    f.assert_sees("items (structure)");
+    f.assert_sees("nullable");
+    f.assert_sees("INTEGER");
+    f.assert_sees("none");
+    assert_eq!(f.first_column(), ["id", "owner", "label"]);
+}
+
+#[test]
+fn a_structure_tab_has_no_filter_fields_and_a_reload_button() {
+    let (mut f, _) = Fixture::recorded(Recorder::default());
+    f.structure_of_table("users");
+    f.assert_not_sees("WHERE");
+    f.assert_not_sees("ORDER BY");
+    f.assert_sees("Reload");
+}
+
+#[test]
+fn a_second_i_selects_the_open_structure_tab() {
+    let (mut f, recorder) = Fixture::recorded(Recorder::default());
+    f.structure_of_table("users");
+    let reads = recorder.count();
+    f.structure_of_table("users");
+    assert_eq!(f.app.tables().len(), 1);
+    assert_eq!(recorder.count(), reads);
+}
+
+#[test]
+fn the_rows_and_the_structure_of_a_table_are_two_tabs() {
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 3,
+        ..Recorder::default()
+    });
+    f.open_table("users");
+    f.structure_of_table("users");
+    assert_eq!(f.app.tables().len(), 2);
+    f.assert_sees("users (table)");
+    f.assert_sees("users (structure)");
+    f.open_table("users");
+    assert_eq!(f.app.tables().len(), 2);
+    assert!(f.app.table().unwrap().structure.is_none());
+}
+
+#[test]
+fn i_on_the_grid_of_a_table_shows_its_structure() {
+    let mut f = structure_files("structure-grid");
+    f.open_table("items");
+    f.code(KeyCode::Char('i'));
+    f.loaded();
+    assert_eq!(f.app.tables().len(), 2);
+    assert_eq!(f.first_column(), ["id", "owner", "label"]);
+}
+
+#[test]
+fn i_in_a_structure_tab_opens_no_other_tab() {
+    let (mut f, _) = Fixture::recorded(Recorder::default());
+    f.structure_of_table("users");
+    f.code(KeyCode::Char('i'));
+    assert_eq!(f.app.tables().len(), 1);
+}
+
+#[test]
+fn the_keys_of_the_results_change_the_section_and_read_it() {
+    let mut f = structure_files("structure-sections");
+    f.structure_of_table("items");
+    assert_eq!(f.section(), Some(Section::Columns));
+    f.assert_sees("Foreign keys");
+
+    f.code(KeyCode::Char(']'));
+    f.loaded();
+    assert_eq!(f.section(), Some(Section::Indexes));
+    assert_eq!(f.first_column(), ["items_label"]);
+
+    f.code(KeyCode::Char(']'));
+    f.loaded();
+    assert_eq!(f.section(), Some(Section::ForeignKeys));
+    f.assert_sees("owners (id)");
+
+    f.code(KeyCode::Char('['));
+    f.loaded();
+    assert_eq!(f.section(), Some(Section::Indexes));
+}
+
+#[test]
+fn a_click_on_a_section_reads_it() {
+    let mut f = structure_files("structure-click");
+    f.structure_of_table("items");
+    f.click_text("Foreign keys");
+    f.loaded();
+    assert_eq!(f.section(), Some(Section::ForeignKeys));
+    f.assert_sees("owners (id)");
+}
+
+#[test]
+fn a_section_cannot_change_during_a_read() {
+    let (mut f, recorder) = Fixture::recorded(Recorder::default());
+    recorder.hold.store(true, Ordering::SeqCst);
+    common::select_row(&mut f.app, 0, &[RowKind::Table], "users");
+    f.code(KeyCode::Char('i'));
+    f.pump_until(|f| f.app.table().is_some_and(|tab| tab.is_busy()));
+    f.code(KeyCode::Char(']'));
+    assert_eq!(f.section(), Some(Section::Columns));
+    recorder.hold.store(false, Ordering::SeqCst);
+    recorder.release.notify_one();
+    f.loaded();
+}
+
+#[test]
+fn i_on_a_column_shows_the_structure_of_its_table() {
+    let mut f = structure_files("structure-column");
+    common::select_row(&mut f.app, 0, &[RowKind::Table], "items");
+    f.code(KeyCode::Right);
+    f.pump_until(|f| {
+        let connections = f.app.connections();
+        let rows = f.app.navigator().rows(connections);
+        rows.iter().any(|row| row.kind == RowKind::Column)
+    });
+    f.code(KeyCode::Down);
+    f.code(KeyCode::Char('i'));
+    f.loaded();
+    f.assert_sees("items (structure)");
+}
+
+#[test]
+fn i_on_a_schema_lists_the_columns_of_each_table_without_sections() {
+    let mut f = structure_files("structure-schema");
+    f.structure_of(&[RowKind::Schema], "main");
+    f.assert_sees("main (structure)");
+    f.assert_not_sees("Foreign keys");
+    assert_eq!(f.section(), None);
+    let tab = f.app.table().unwrap();
+    assert_eq!(tab.structure.as_ref().unwrap().scope, Scope::Schema);
+    assert_eq!(tab.loaded(), 4);
+    f.assert_sees("owners");
+    f.assert_sees("items");
+}
+
+#[test]
+fn i_on_a_connection_lists_the_columns_of_each_schema() {
+    let mut f = structure_files("structure-connection");
+    let name = f.app.connections()[0].name.clone();
+    f.structure_of(&[RowKind::Connection], &name);
+    let tab = f.app.table().unwrap();
+    assert_eq!(tab.structure.as_ref().unwrap().scope, Scope::Connection);
+    assert_eq!(tab.loaded(), 4);
+    assert_eq!(first_cell(&f), "main");
+}
+
+#[test]
+fn the_keys_of_the_results_change_the_page_of_a_schema() {
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 250,
+        ..Recorder::default()
+    });
+    f.structure_of(&[RowKind::Schema], "public");
+    assert_eq!(f.rows_loaded(), 100);
+    f.code(KeyCode::Char(']'));
+    f.loaded();
+    assert_eq!(f.rows_loaded(), 200);
+    assert_eq!(page_of(&recorder.statements()[1]), (101, 100));
+}
+
+#[test]
+fn a_structure_tab_reads_again_with_the_reload_button() {
+    let (mut f, recorder) = Fixture::recorded(Recorder::default());
+    f.structure_of_table("users");
+    let reads = recorder.count();
+    f.click_text("Reload");
+    f.loaded();
+    assert_eq!(recorder.count(), reads + 1);
+}
+
+#[test]
+fn the_hints_of_a_structure_tab_name_the_section() {
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 3,
+        ..Recorder::default()
+    });
+    f.structure_of_table("users");
+    f.assert_sees("] section");
+    f.assert_not_sees("i struct");
+    f.assert_not_sees("where");
+}
+
+#[test]
+fn the_hints_of_a_table_show_the_structure_key_at_the_minimum_width() {
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 3,
+        ..Recorder::default()
+    });
+    f.open_table("users");
+    let hints = f.hints_at(80);
+    assert!(hints.contains("s sort  i struct  Ctrl+C copy"), "{hints}");
+    let hints = f.hints_at(120);
+    assert!(hints.ends_with("e export  F1 keys"), "{hints}");
+}
+
+#[test]
+fn a_table_of_many_rows_keeps_the_structure_key_at_the_minimum_width() {
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 250,
+        ..Recorder::default()
+    });
+    f.open_table("users");
+    let hints = f.hints_at(80);
+    assert!(hints.contains("] page  i struct"), "{hints}");
+}
+
+impl Fixture {
+    fn hints_at(&mut self, width: u16) -> String {
+        self.screen_at(width, 24)
+            .lines()
+            .last()
+            .unwrap()
+            .trim()
+            .to_owned()
+    }
+}
+
+#[test]
+fn a_busy_table_puts_the_stop_key_first() {
+    let (mut f, recorder) = Fixture::recorded(Recorder::default());
+    recorder.hold.store(true, Ordering::SeqCst);
+    common::open_table(&mut f.app, 0, "users");
+    f.pump_until(|f| f.app.table().is_some_and(|tab| tab.is_busy()));
+    let row = f.hints_at(80);
+    assert!(row.starts_with("Ctrl+W x stop"), "{row}");
+    recorder.hold.store(false, Ordering::SeqCst);
+    recorder.release.notify_one();
+    f.loaded();
+    let row = f.hints_at(100);
+    assert!(!row.contains("stop"), "{row}");
+}
+
+#[test]
+fn a_busy_filter_field_shows_the_stop_key() {
+    let (mut f, recorder) = Fixture::recorded(Recorder::default());
+    f.open_table("users");
+    f.focus_filter();
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.code(KeyCode::Enter);
+    f.pump_until(|f| f.app.table().is_some_and(|tab| tab.is_busy()));
+    let row = f.hints_at(80);
+    assert!(row.starts_with("Ctrl+W x stop"), "{row}");
+    recorder.hold.store(false, Ordering::SeqCst);
+    recorder.release.notify_one();
+    f.loaded();
+}
+
+#[test]
+fn a_busy_result_of_a_console_shows_the_stop_key() {
+    let (mut f, recorder) = Fixture::recorded(Recorder::default());
+    f.app
+        .on_event(Event::Paste("SELECT 1 LIMIT 1 OFFSET 0;".to_owned()));
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.code(KeyCode::F(5));
+    f.pump_until(|f| f.app.console_mut().is_busy());
+    f.prefix('j');
+    let row = f.hints_at(80);
+    assert!(row.starts_with("Ctrl+W x stop"), "{row}");
+    recorder.hold.store(false, Ordering::SeqCst);
+    recorder.release.notify_one();
+    f.pump_until(|f| !f.app.console_mut().is_busy());
+}
+
+#[test]
+fn a_table_without_more_rows_hides_the_commands_of_more_rows() {
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 3,
+        ..Recorder::default()
+    });
+    f.open_table("users");
+    let row = f.hints_at(100);
+    assert!(!row.contains("m more"), "{row}");
+    assert!(!row.contains("] page"), "{row}");
+    assert!(row.contains("i struct"), "{row}");
+}
+
+#[test]
+fn a_table_with_more_rows_shows_the_commands_of_more_rows() {
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 250,
+        ..Recorder::default()
+    });
+    f.open_table("users");
+    let row = f.hints_at(100);
+    assert!(row.contains("m more  ] page  i struct"), "{row}");
+}
+
+#[test]
+fn a_table_without_rows_hides_the_commands_of_a_row() {
+    let (mut f, _) = Fixture::recorded(Recorder::default());
+    f.open_table("users");
+    let row = f.hints_at(100);
+    assert!(row.contains("f where"), "{row}");
+    for command in ["sort", "copy", "value", "find"] {
+        assert!(!row.contains(command), "{command}: {row}");
+    }
+}
+
+#[test]
+fn a_table_shows_the_find_key_with_rows() {
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 3,
+        ..Recorder::default()
+    });
+    f.open_table("users");
+    let row = f.hints_at(120);
+    assert!(row.contains("Ctrl+F find"), "{row}");
+}
+
+#[test]
+fn a_structure_tab_hides_the_load_key_without_more_rows() {
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 3,
+        ..Recorder::default()
+    });
+    f.structure_of_table("users");
+    let row = f.hints_at(100);
+    assert!(!row.contains("m more"), "{row}");
+    assert!(row.starts_with("] section"), "{row}");
+}
+
+#[test]
+fn a_connection_shows_the_disconnect_key_only_with_sessions() {
+    let (mut f, _) = Fixture::recorded(Recorder::default());
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    let row = f.hints_at(120);
+    assert!(!row.contains("D disc"), "{row}");
+    f.open_table("users");
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    let row = f.hints_at(120);
+    assert!(row.contains("D disc"), "{row}");
+}
+
+#[test]
+fn a_redis_row_hides_the_structure_key() {
+    let (mut f, _) = Fixture::recorded(Recorder {
+        redis: true,
+        ..Recorder::default()
+    });
+    common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
+    let row = f.hints_at(100);
+    assert!(!row.contains("i struct"), "{row}");
+}
+
+#[test]
+fn the_row_of_sections_fits_the_smallest_screen() {
+    let mut f = structure_files("structure-small");
+    f.structure_of_table("items");
+    let screen = f.screen_at(80, 24);
+    assert!(screen.contains("Foreign keys"), "{screen}");
+    assert!(screen.contains("nullable"), "{screen}");
+}
+
+#[test]
+fn the_title_of_a_connection_does_not_repeat_its_name() {
+    let (mut f, _) = Fixture::recorded(Recorder::default());
+    f.structure_of(&[RowKind::Connection], "server");
+    f.assert_sees("server · all schemas · structure");
+}
+
+#[test]
+fn the_help_of_a_structure_tab_lists_only_the_keys_that_act() {
+    let (mut f, _) = Fixture::recorded(Recorder::default());
+    f.structure_of_table("users");
+    f.code(KeyCode::F(1));
+    let screen = f.screen_at(100, 70);
+    assert!(screen.contains("Next section"), "{screen}");
+    assert!(!screen.contains("Next page of rows"), "{screen}");
+    assert!(!screen.contains("Edit the WHERE filter"), "{screen}");
+    assert!(!screen.contains("Show the structure"), "{screen}");
+}
+
+#[test]
+fn the_help_of_a_table_tab_lists_the_structure_key() {
+    let (mut f, _) = Fixture::recorded(Recorder::default());
+    f.open_table("users");
+    f.code(KeyCode::F(1));
+    let screen = f.screen_at(100, 70);
+    assert!(screen.contains("Next page of rows"), "{screen}");
+    assert!(
+        screen.contains("Show the structure of the table"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn the_palette_opens_the_structure_of_the_table_on_screen() {
+    let (mut f, _) = Fixture::recorded(Recorder::default());
+    f.open_table("users");
+    f.press(ctrl('p'));
+    f.type_text("structure of the table");
+    f.code(KeyCode::Enter);
+    f.loaded();
+    f.assert_sees("users (structure)");
+
+    f.press(ctrl('p'));
+    f.assert_not_sees("Show the structure of the table");
+}
+
+#[test]
+fn a_redis_source_refuses_the_structure_with_a_reason() {
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        redis: true,
+        ..Recorder::default()
+    });
+    common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
+    f.code(KeyCode::Char('i'));
+    assert!(f.app.tables().is_empty());
+    assert_eq!(recorder.count(), 0);
+    f.assert_sees(sqln::ui::text::STRUCTURE_REFUSED);
+}
+
+#[test]
+fn a_key_of_redis_refuses_the_structure_in_its_grid() {
+    let (mut f, _) = Fixture::recorded(Recorder {
+        redis: true,
+        ..Recorder::default()
+    });
+    f.open_table("users");
+    f.assert_not_sees("i struct");
+    f.code(KeyCode::Char('i'));
+    assert_eq!(f.app.tables().len(), 1);
+    f.assert_sees(sqln::ui::text::STRUCTURE_REFUSED);
 }
 
 // ---------------------------------------------------------------------------

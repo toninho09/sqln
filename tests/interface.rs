@@ -544,10 +544,10 @@ fn the_hint_bar_gives_the_keys_and_their_effects_two_styles() {
     let mut screen = Screen::new("hint-styles", theme, KeyboardMode::Conventional);
     screen.prefix('h');
     let buffer = screen.buffer(100, 30);
-    for key in ["Enter", "n new", "Del", "p pwd"] {
+    for key in ["Enter", "n new", "Del", "a add"] {
         assert_eq!(hint_cell(&buffer, key).fg, theme.key.fg.unwrap(), "{key}");
     }
-    for effect in ["open", "new", "drop", "pwd"] {
+    for effect in ["open", "new", "drop", "add"] {
         assert_eq!(
             hint_cell(&buffer, effect).fg,
             theme.hint.fg.unwrap(),
@@ -585,14 +585,15 @@ fn a_note_in_the_hint_bar_has_no_key_style() {
 }
 
 #[test]
-fn each_command_of_the_explorer_fits_the_minimum_width_with_its_own_space() {
+fn the_explorer_keeps_the_commands_of_a_connection_at_the_minimum_width() {
     for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
         let mut screen = Screen::new("hint-width", Theme::plain(), keyboard);
         screen.prefix('h');
         let row = rows(&screen.buffer(80, 24)).pop().unwrap();
         assert_eq!(row.chars().count(), 80);
-        assert!(row.contains("Enter open  n new  s scripts  a add"), "{row}");
-        assert!(row.trim_end().ends_with(" drop  p pwd"), "{row}");
+        assert!(row.contains("Enter open  "), "{row}");
+        assert!(row.contains("i struct  n new  r refresh  e edit"), "{row}");
+        assert!(row.trim_end().ends_with(" drop  a add"), "{row}");
     }
 }
 

@@ -301,10 +301,12 @@ fn each_hint_fits_the_minimum_terminal_width() {
         text::HINT_PICKER,
         text::HINT_CHOOSE,
         text::HINT_NAME,
-        text::HINT_SETTINGS,
+        text::HINT_SETTINGS_TEXT,
         text::HINT_CONFLICTS,
         text::HINT_CONFIG_ERROR,
         text::HINT_FORM,
+        text::HINT_FORM_TEXT,
+        text::HINT_FORM_BUTTON,
         text::HINT_DIALOG,
         text::HINT_OVERLAY,
         text::HINT_PREFIX,
@@ -518,9 +520,18 @@ fn the_wheel_scrolls_the_text() {
 }
 
 fn hint_app(keyboard: KeyboardMode, keymap: Option<Keymap>) -> App {
+    hint_app_on(keyboard, keymap, None)
+}
+
+fn hint_app_on(
+    keyboard: KeyboardMode,
+    keymap: Option<Keymap>,
+    database: Option<std::path::PathBuf>,
+) -> App {
     let options = Options {
         keyboard,
         keymap,
+        database,
         ..Options::default()
     };
     App::new(
@@ -562,7 +573,12 @@ fn the_hint_bar_shows_the_keys_of_the_key_map() {
         ("nextTab".to_owned(), vec!["ctrl+w u".to_owned()]),
     ]);
     let keymap = Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap();
-    let app = hint_app(KeyboardMode::Conventional, Some(keymap));
+    let database = common::temp_db("hint-key-map");
+    rusqlite::Connection::open(&database)
+        .unwrap()
+        .execute_batch("CREATE TABLE t(a);")
+        .unwrap();
+    let app = hint_app_on(KeyboardMode::Conventional, Some(keymap), Some(database));
     let hint = app.hint();
     assert!(hint.contains("F6 run"), "{hint}");
     assert!(!hint.starts_with("F5"), "{hint}");

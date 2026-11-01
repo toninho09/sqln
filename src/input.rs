@@ -160,6 +160,7 @@ pub enum Action {
     NavigatorAdd,
     NavigatorScripts,
     NavigatorDeletePassword,
+    NavigatorStructure,
     GridUp,
     GridDown,
     GridLeft,
@@ -187,6 +188,7 @@ pub enum Action {
     GridSortColumn,
     GridLoadMore,
     GridExport,
+    GridStructure,
 }
 
 impl Action {
@@ -198,6 +200,7 @@ impl Action {
                 | Action::GridFocusOrder
                 | Action::GridSortColumn
                 | Action::GridLoadMore
+                | Action::GridStructure
         )
     }
 
@@ -482,6 +485,13 @@ const DEFAULTS: &[Item] = &[
         &["p"],
         &[],
     ),
+    both(
+        Action::NavigatorStructure,
+        Region::Navigator,
+        "navigatorStructure",
+        &["i"],
+        &[],
+    ),
     both(Action::GridUp, Region::Grid, "gridUp", &["up"], &["k"]),
     both(
         Action::GridDown,
@@ -641,6 +651,13 @@ const DEFAULTS: &[Item] = &[
     ),
     both(Action::GridLoadMore, Region::Grid, "loadMore", &["m"], &[]),
     both(Action::GridExport, Region::Grid, "gridExport", &["e"], &[]),
+    both(
+        Action::GridStructure,
+        Region::Grid,
+        "gridStructure",
+        &["i"],
+        &[],
+    ),
 ];
 
 /// The answer of the map to one key.

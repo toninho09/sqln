@@ -2,19 +2,17 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{App, DialogAction, Overlay, PickerKind};
+use super::{App, DialogAction, Overlay};
 use crate::connector::{Namespace, TransactionCommand, TransactionState};
 use crate::console::{AfterTransaction, Focus, GridAction, Phase};
 use crate::editor::{KeyboardMode, RunRefusal, RunScope};
 use crate::exec::{ConnectionId, RunOptions};
-use crate::export::form as export_form;
 use crate::form::FormRequest;
 use crate::input::{Action, Chord, Lookup, Region};
 use crate::palette::{Command, Palette, PaletteRequest};
-use crate::settings::{self, SettingsRequest};
+use crate::settings::SettingsRequest;
 use crate::table::TableFocus;
 use crate::ui::name::NameAction;
-use crate::ui::statusline::{HintItem, hint_text};
 use crate::ui::text;
 use crate::ui::welcome::Welcome;
 use crate::ui::which_key::KeyGroup;
@@ -243,7 +241,8 @@ impl App {
             | Action::NavigatorDelete
             | Action::NavigatorAdd
             | Action::NavigatorScripts
-            | Action::NavigatorDeletePassword => self.on_navigator_action(action),
+            | Action::NavigatorDeletePassword
+            | Action::NavigatorStructure => self.on_navigator_action(action),
             _ => self.on_grid_action(action, extend),
         }
     }
@@ -354,22 +353,24 @@ impl App {
 
     fn key_rows(&self, region: Region) -> Vec<String> {
         let in_table = self.table_active.is_some();
+        let sections = self.table().is_some_and(|tab| tab.section().is_some());
+        let row = match (in_table, sections) {
+            (true, true) => text::section_keys_row,
+            (true, false) => text::table_keys_row,
+            (false, _) => text::keys_row,
+        };
         self.keymap
             .actions(region)
             .filter(|action| {
                 if in_table {
                     !action.is_console_only()
+                        && (!action.is_table_only() || self.command_available(*action))
                 } else {
                     !action.is_table_only()
                 }
             })
             .filter_map(|action| {
                 let keys = self.keymap.keys(action);
-                let row = if in_table {
-                    text::table_keys_row
-                } else {
-                    text::keys_row
-                };
                 (!keys.is_empty()).then(|| row(&keys.join(", "), action))
             })
             .collect()
@@ -641,16 +642,6 @@ impl App {
         steady.or(keys.first()).map(|key| text::key_label(key))
     }
 
-    fn hint_parts(&self, items: &[(Action, &'static str)]) -> Vec<HintItem> {
-        let shown = items.iter().filter_map(|(action, label)| {
-            Some(HintItem {
-                key: self.shown_key(*action)?,
-                label,
-            })
-        });
-        shown.collect()
-    }
-
     /// Joins the second keys of `Ctrl+W` for a group of actions.
     fn prefix_keys(&self, actions: &[Action]) -> String {
         let second = |action: &Action| {
@@ -742,7 +733,7 @@ impl App {
     }
 
     /// Returns true when an action has an effect in the current state.
-    fn command_available(&self, action: Action) -> bool {
+    pub(super) fn command_available(&self, action: Action) -> bool {
         let console = self.console();
         let in_table = self.table_active.is_some();
         let idle = !console.is_busy();
@@ -760,6 +751,7 @@ impl App {
             Action::GridFocusFilter | Action::GridFocusOrder | Action::GridSortColumn => {
                 self.table().is_none_or(|tab| tab.filters)
             }
+            Action::GridStructure => self.table().is_some_and(|tab| tab.filters),
             Action::GridExport => self.can_export(),
             Action::RenameConsole | Action::ChangeConnection => !in_table,
             Action::FocusLeft => !self.navigator.collapsed && !self.navigator_focused,
@@ -774,9 +766,13 @@ impl App {
             .keymap
             .actions(Region::Global)
             .map(|action| (action, true));
-        let explorer = [Action::NavigatorAdd, Action::NavigatorScripts]
-            .map(|action| (action, self.navigator_focused));
-        let results = [Action::GridExport].map(|action| {
+        let explorer = [
+            Action::NavigatorAdd,
+            Action::NavigatorScripts,
+            Action::NavigatorStructure,
+        ]
+        .map(|action| (action, self.navigator_focused));
+        let results = [Action::GridExport, Action::GridStructure].map(|action| {
             let key_works = self.panel() == Some(Region::Grid);
             (action, key_works)
         });
@@ -842,141 +838,5 @@ impl App {
         rows.extend(keyed(Action::OpenPalette, text::WELCOME_COMMANDS));
         rows.extend(keyed(Action::Help, text::WELCOME_KEYS));
         Some(Welcome { note, rows })
-    }
-
-    fn list_hint(&self, others: (text::HintPart, text::HintPart)) -> Vec<HintItem> {
-        HintItem::of(&text::hint_list(self.suggestion_keys, others))
-    }
-
-    fn editor_hint(&self) -> Vec<HintItem> {
-        let mut items = self.hint_parts(&[(Action::Run, "run"), (Action::RunScript, "script")]);
-        items.extend(HintItem::of(text::HINT_CTRL_SPACE));
-        items.extend(self.hint_parts(&[(Action::Help, "keys")]));
-        items
-    }
-
-    fn running_hint(&self) -> Vec<HintItem> {
-        let mut items = self.hint_parts(&[(Action::Stop, "stop")]);
-        items.extend(HintItem::of(text::HINT_EDITOR_STAYS));
-        items
-    }
-
-    /// Returns the text of the hint bar.
-    pub fn hint(&self) -> String {
-        hint_text(&self.hint_items())
-    }
-
-    /// Returns the commands of the hint bar, with the keys of the active key map.
-    pub(super) fn hint_items(&self) -> Vec<HintItem> {
-        let console = self.console();
-        let fixed = if !self.dialogs.is_empty() {
-            text::HINT_DIALOG
-        } else if self.auth.prompt.is_some() {
-            text::AUTH_PASSWORD_HINT
-        } else if self.rename.is_some() {
-            text::HINT_NAME
-        } else if self.browser.is_some() {
-            text::HINT_BROWSER
-        } else if let Some(form) = &self.settings_form {
-            if form.focus == settings::Field::Sections {
-                text::HINT_SETTINGS_SECTIONS
-            } else {
-                text::HINT_SETTINGS
-            }
-        } else if let Some(form) = &self.export_form {
-            if form.focus == export_form::Field::Formats {
-                text::HINT_EXPORT_FORMATS
-            } else if form.focus == export_form::Field::File {
-                text::HINT_FORM_PATH
-            } else {
-                text::HINT_FORM
-            }
-        } else if self.conflicts.is_some() {
-            text::HINT_CONFLICTS
-        } else if let Some(picker) = &self.picker {
-            match picker.kind {
-                PickerKind::Consoles { .. } | PickerKind::Orphans { .. } => text::HINT_PICKER,
-                _ => text::HINT_CHOOSE,
-            }
-        } else if self.overlay.is_some() {
-            text::HINT_OVERLAY
-        } else if let Some(form) = &self.form {
-            if form.focus.is_path() {
-                text::HINT_FORM_PATH
-            } else {
-                text::HINT_FORM
-            }
-        } else if self.palette.is_some() {
-            text::HINT_PALETTE
-        } else if self.pending_key.is_some_and(Chord::is_prefix) {
-            text::HINT_PREFIX
-        } else if self
-            .persist
-            .as_ref()
-            .is_some_and(|persist| persist.error.is_some())
-        {
-            text::HINT_CONFIG_ERROR
-        } else if self.navigator_focused {
-            return self.hint_parts(&[
-                (Action::NavigatorOpen, "open"),
-                (Action::NavigatorNewConsole, "new"),
-                (Action::NavigatorScripts, "scripts"),
-                (Action::NavigatorAdd, "add"),
-                (Action::NavigatorEdit, "edit"),
-                (Action::NavigatorRefresh, "refresh"),
-                (Action::NavigatorDisconnect, "disc"),
-                (Action::NavigatorDelete, "drop"),
-                (Action::NavigatorDeletePassword, "pwd"),
-            ]);
-        } else if let Some(tab) = self.table() {
-            match tab.focus {
-                _ if tab.list.is_some() => return self.list_hint(text::LIST_FILTER_KEYS),
-                TableFocus::Grid if tab.result.search.is_some() => text::HINT_GRID_SEARCH,
-                TableFocus::Grid => {
-                    let items = [
-                        (Action::GridFocusFilter, "where"),
-                        (Action::GridFocusOrder, "order by"),
-                        (Action::GridSortColumn, "sort"),
-                        (Action::GridLoadMore, "more"),
-                        (Action::GridNextResult, "page"),
-                        (Action::GridCopy, "copy"),
-                        (Action::GridExport, "export"),
-                        (
-                            Action::GridOpenValue,
-                            if tab.pending { "load" } else { "value" },
-                        ),
-                        (Action::Help, "keys"),
-                    ];
-                    let items = items.map(|item| (self.command_available(item.0), item));
-                    let shown: Vec<_> = items
-                        .into_iter()
-                        .filter_map(|(available, item)| available.then_some(item))
-                        .collect();
-                    return self.hint_parts(&shown);
-                }
-                _ => text::HINT_FILTER,
-            }
-        } else if console.focus == Focus::Results && console.search_is_open() {
-            text::HINT_GRID_SEARCH
-        } else if console.focus == Focus::Results {
-            return self.hint_parts(&[
-                (Action::FocusUp, "editor"),
-                (Action::GridCopy, "copy"),
-                (Action::GridExport, "export"),
-                (Action::GridOpenValue, "value"),
-                (Action::GridFind, "find"),
-                (Action::GridNextResult, "tab"),
-                (Action::Help, "keys"),
-            ]);
-        } else if console.editor.suggestions().is_some() {
-            return self.list_hint(text::LIST_EDITOR_KEYS);
-        } else if console.editor.search().is_some() {
-            text::HINT_SEARCH
-        } else if console.is_busy() {
-            return self.running_hint();
-        } else {
-            return self.editor_hint();
-        };
-        HintItem::of(fixed)
     }
 }

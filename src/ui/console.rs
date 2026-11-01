@@ -340,7 +340,8 @@ pub fn draw_console(
         draw_welcome(frame, editor, welcome, theme);
     }
     let focused = focused && console.focus == Focus::Results;
-    draw_tabs(frame, tabs, console, focused, theme);
+    let active = console.active.min(console.results.len());
+    draw_tabs(frame, tabs, &tab_labels(console), active, focused, theme);
 
     if console.showing_messages() {
         draw_messages(frame, results, console, theme);
@@ -397,12 +398,12 @@ fn tab_labels(console: &Console) -> Vec<String> {
     labels
 }
 
-/// Lists each result tab with its text and its first column. The row of the tabs
-/// starts with a rule, and each tab has one column on each side of its label.
-fn tab_places(console: &Console, area: Rect) -> Vec<(String, u16)> {
+/// Lists each tab with its text and its first column. The row of the tabs starts
+/// with a rule, and each tab has one column on each side of its label.
+fn tab_places(labels: &[String], area: Rect) -> Vec<(String, u16)> {
     let mut x = area.x.saturating_add(1);
     let mut places = Vec::new();
-    for label in tab_labels(console) {
+    for label in labels {
         let shown = format!(" {label} ");
         let width = u16::try_from(shown.width()).unwrap_or(u16::MAX);
         places.push((shown, x));
@@ -411,16 +412,23 @@ fn tab_places(console: &Console, area: Rect) -> Vec<(String, u16)> {
     places
 }
 
-fn draw_tabs(frame: &mut Frame, area: Rect, console: &Console, focused: bool, theme: &Theme) {
+/// Draws a row of tabs: the results of a console, or the sections of a structure.
+pub fn draw_tabs(
+    frame: &mut Frame,
+    area: Rect,
+    labels: &[String],
+    active: usize,
+    focused: bool,
+    theme: &Theme,
+) {
     draw_rule(frame, area, theme);
-    let active = console.active.min(console.results.len());
     let active_style = if focused {
         theme.result_tab_active.patch(theme.panel_title_focused)
     } else {
         theme.result_tab_active
     };
     let buffer = frame.buffer_mut();
-    for (index, (label, x)) in tab_places(console, area).into_iter().enumerate() {
+    for (index, (label, x)) in tab_places(labels, area).into_iter().enumerate() {
         if x >= area.right() {
             break;
         }
@@ -434,11 +442,16 @@ fn draw_tabs(frame: &mut Frame, area: Rect, console: &Console, focused: bool, th
 }
 
 /// Returns the tab at a screen column.
-pub fn tab_at(console: &Console, area: Rect, column: u16) -> Option<usize> {
-    tab_places(console, area).iter().position(|(label, x)| {
+pub fn label_at(labels: &[String], area: Rect, column: u16) -> Option<usize> {
+    tab_places(labels, area).iter().position(|(label, x)| {
         let end = usize::from(*x) + label.width();
         column >= *x && usize::from(column) < end
     })
+}
+
+/// Returns the result tab of a console at a screen column.
+pub fn tab_at(console: &Console, area: Rect, column: u16) -> Option<usize> {
+    label_at(&tab_labels(console), area, column)
 }
 
 fn draw_messages(frame: &mut Frame, area: Rect, console: &Console, theme: &Theme) {

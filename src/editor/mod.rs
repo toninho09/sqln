@@ -183,6 +183,11 @@ impl SqlEditor {
         self.snapshot = None;
     }
 
+    /// Returns true when typing writes text, so `Ctrl+Space` can open the list.
+    pub fn is_inserting(&self) -> bool {
+        self.state.mode == EditorMode::Insert
+    }
+
     pub fn keyboard(&self) -> KeyboardMode {
         self.keyboard
     }

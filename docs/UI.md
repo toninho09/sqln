@@ -122,6 +122,29 @@ Uma aba que a linha corta não mostra `×`. Um clique nela abre a aba inteira.
 
 **Linha de dicas:** cada tecla usa o estilo das teclas do menu do `Ctrl+W`, e o efeito usa a cor de dica.
 Dois espaços separam os comandos. Sem cor, a tecla fica em negrito e o efeito fica fraco.
+A linha lista só os comandos que agem no estado da tela, do mais relevante para o menos relevante.
+Um comando que não cabe sai inteiro da linha, então a tela nunca mostra uma tecla cortada. `F1` lista todas as teclas.
+
+| Estado | Primeiros comandos |
+|---|---|
+| Editor | Encerrar a transação, executar, ir para os resultados e sugestões |
+| Editor sem conexão | Escolher a conexão e ir para o navegador |
+| Editor em execução | Parar |
+| Resultados | Parar, encerrar a transação, voltar ao editor, copiar, exportar e abrir o valor |
+| **Messages** | Voltar ao editor e trocar de aba |
+| Grade de uma tabela | Parar, carregar, `WHERE`, `ORDER BY`, ordenar, mais linhas e página ou seção |
+| Linha de conexão | Abrir, expandir, estrutura, novo console, atualizar, editar, desconectar, senha, remover e adicionar |
+| Linha de schema | Expandir, estrutura, novo console e atualizar |
+| Linha de tabela ou view | Abrir, colunas, estrutura, novo console e atualizar |
+| Linha de coluna | Voltar à tabela, estrutura, novo console e atualizar |
+
+- `commit` e `rollback` aparecem só com uma transação aberta. Depois de um erro na transação, aparece só `rollback`.
+- `disc` aparece só com uma sessão aberta. `pwd` aparece só em uma conexão que usa senha.
+- Copiar, abrir o valor e buscar aparecem só com linhas na grade.
+- `more` aparece só com mais linhas para ler. `page` aparece só com mais de uma página.
+- Nos formulários, a linha muda com o campo: texto, opção, caminho ou botão.
+- Na lista de consoles, `rename` e `remove` aparecem só em uma linha de script.
+- Durante uma exportação, a linha mostra a tecla de parar antes do progresso.
 
 **Mensagens:** uma mensagem ocupa a linha de dicas por 8 s.
 Uma tecla, uma colagem ou um clique remove a mensagem antes disso. O ponteiro e a roda não removem.
@@ -220,7 +243,6 @@ Fechar a aba descarta esses valores; reabrir começa sem filtros nem ordenação
 Uma aba de tabela da última sessão volta sem linhas, sem filtro e sem ordenação.
 A primeira seleção da aba carrega as linhas. Uma aba que já começa na tela mostra `Enter loads the rows.` e espera `Enter` ou **Apply**, para a abertura não conectar nem pedir senha.
 Uma tabela nova não recebe ordenação automática, nem por chave primária.
-Não incluir uma aba de estrutura nesta versão.
 
 Regras da barra:
 
@@ -262,6 +284,46 @@ Mostrar esse aviso quando não existir uma ordenação aplicada.
 O teto global de 256 MiB pode suspender novas cargas, sem apagar as linhas existentes.
 Se um valor ultrapassar o limite, indicar o motivo sem representá-lo como nulo, vazio ou conteúdo truncado sem aviso.
 A cópia segue o formato TSV confirmado na seção 10 do plano, sem cabeçalhos.
+
+### Aba de estrutura
+
+`i` em uma linha do navegador, ou na grade de uma tabela, abre a aba de estrutura.
+O rótulo da aba é `nome (structure)`. Abrir a mesma estrutura de novo seleciona a aba.
+A aba da tabela e a aba de estrutura ficam abertas juntas.
+
+```text
+│ [console-1] [users (table)] [users (structure)]                                        │
+│ app · users · structure                                                                │
+│ [✓ Reload]  [↓ Load more]  [■ Stop]                                                    │
+│ ─ Columns ─ Indexes ─ Foreign keys ──────────────────────────────────────────────────  │
+│ name    type     nullable  default  key                                                │
+│ id      integer  no                 PK                                                 │
+│ email   text     no                                                                    │
+│ active  boolean  yes       true                                                        │
+```
+
+| Linha do navegador | Conteúdo |
+|---|---|
+| Tabela, view ou coluna | Três seções: colunas, índices e chaves estrangeiras |
+| Schema | Todas as colunas do schema, sem seções |
+| Conexão | Todas as colunas dos schemas que o navegador mostra, sem seções |
+
+| Grade | Colunas |
+|---|---|
+| Colunas da tabela | `name`, `type`, `nullable`, `default`, `key` |
+| Índices | `name`, `columns`, `unique` |
+| Chaves estrangeiras | `name`, `columns`, `references`, `on_update`, `on_delete` |
+| Schema ou conexão | `schema`, `relation`, `name`, `type`, `nullable`, `default` |
+
+- O título de uma conexão mostra `all schemas` no lugar do nome.
+- A aba não tem os campos `WHERE` e `ORDER BY`, e um clique no cabeçalho não ordena.
+- `[` e `]`, ou um clique no nome da seção, trocam a seção. A troca relê a grade.
+- Em um schema ou uma conexão, `[` e `]` mudam a página.
+- **Reload** relê a grade. DDL não atualiza a aba sozinho.
+- A grade usa a paginação, o orçamento, a busca, a cópia e a exportação da aba de tabela.
+- A exportação não tem tabela de destino, como em um console.
+- A aba não volta na próxima sessão.
+- Redis e Valkey não têm estrutura. `i` mostra o motivo na barra de status.
 
 ### Exportação
 

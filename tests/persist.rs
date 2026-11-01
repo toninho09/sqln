@@ -22,6 +22,7 @@ use sqln::connection::Source;
 use sqln::export::{Delimiter, ExportChoices, ExportFormat};
 use sqln::form::{Field, FormNote};
 use sqln::input::SuggestionKeys;
+use sqln::navigator::RowKind;
 use sqln::script_file::Trouble;
 use sqln::settings::SettingsForm;
 use sqln::store::config::{self, ConnectionIcon, Preferences, ThemeName};
@@ -2572,6 +2573,110 @@ fn a_table_of_the_last_session_loads_at_its_selection() {
 }
 
 #[test]
+fn the_list_of_consoles_offers_rename_and_remove_only_on_a_script() {
+    let (store, _) = reopening_store("p-hint-picker", "{}");
+    let mut session = Session::start(&store);
+    session.type_and_save("SELECT 1;");
+    session.go_to_connection("s");
+    session.code(KeyCode::Char('n'));
+    session.assert_sees("New console");
+    let hint = session.app.hint();
+    assert!(!hint.contains("rename"), "{hint}");
+    assert!(!hint.contains("remove"), "{hint}");
+
+    session.code(KeyCode::Down);
+    let hint = session.app.hint();
+    assert!(hint.contains("r rename"), "{hint}");
+    assert!(hint.contains("Del remove a script"), "{hint}");
+}
+
+#[test]
+fn the_settings_show_the_keys_of_the_focused_field() {
+    let (store, _) = reopening_store("p-hint-settings", "{}");
+    let mut session = Session::start(&store);
+    let mut seen = Vec::new();
+    // The first section has choices, and the third section has text fields.
+    for section in [0, 2] {
+        session.prefix(',');
+        for _ in 0..section {
+            session.code(KeyCode::Down);
+        }
+        for _ in 0..8 {
+            let hint = session.app.hint();
+            if hint.contains("An empty field removes the value") {
+                assert!(!hint.contains("Left/Right"), "a text field: {hint}");
+                seen.push("text");
+            } else if hint.contains("Left/Right change") {
+                seen.push("choice");
+            } else if hint.contains("Enter press") {
+                seen.push("button");
+            }
+            session.code(KeyCode::Tab);
+        }
+        session.code(KeyCode::Esc);
+    }
+    for kind in ["text", "choice", "button"] {
+        assert!(seen.contains(&kind), "{kind} is not in {seen:?}");
+    }
+}
+
+#[test]
+fn a_structure_tab_does_not_reopen() {
+    let (store, _) = reopening_store("p-reopen-structure", "{}");
+    let mut first = Session::start(&store);
+    first.type_and_save("SELECT 1;");
+    common::select_row(&mut first.app, 0, &[RowKind::Table], "items");
+    first.code(KeyCode::Char('i'));
+    first.pump_sees("items (structure)");
+    first.quit();
+    drop(first);
+
+    let mut second = Session::start(&store);
+    assert!(second.app.tables().is_empty());
+    assert!(!second.top_row().contains("structure"));
+}
+
+#[test]
+fn an_export_of_all_rows_reads_the_whole_structure() {
+    let (store, base) = global_only("p-export-structure");
+    let db = database(&base, "s", "CREATE TABLE wide(a INT, b INT, c INT, d INT);");
+    let entry = sqlite_entry("g1", "s", &db.display().to_string());
+    write_config(&store.global, r#"{"pageSize":2}"#, &[entry]);
+    let output = base.join("files").join("wide.csv");
+    let mut session = Session::start(&store);
+    common::select_row(&mut session.app, 0, &[RowKind::Table], "wide");
+    session.code(KeyCode::Char('i'));
+    session.pump_sees("wide (structure)");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while session.app.table().is_none_or(|tab| tab.is_busy()) {
+        session.app.drain_events();
+        assert!(Instant::now() < deadline, "{}", session.screen());
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(session.app.table().unwrap().loaded(), 2);
+
+    session.code(KeyCode::Char('e'));
+    session.assert_sees("All rows");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    for _ in 0..100 {
+        session.code(KeyCode::Backspace);
+    }
+    session.write(&output.display().to_string());
+    session.click_text("[Export]");
+    while !output.exists() {
+        session.app.drain_events();
+        assert!(Instant::now() < deadline, "{}", session.screen());
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let contents = fs::read_to_string(&output).unwrap();
+    let lines: Vec<&str> = contents.lines().collect();
+    assert_eq!(lines.len(), 5, "{contents}");
+    assert!(lines[0].starts_with("name"), "{contents}");
+    assert!(lines[4].starts_with('d'), "{contents}");
+}
+
+#[test]
 fn a_table_on_screen_at_the_start_waits_for_a_key_and_has_no_empty_console() {
     let (store, _) = reopening_store("p-reopen-active", "{}");
     let mut first = Session::start(&store);
@@ -2581,6 +2686,11 @@ fn a_table_on_screen_at_the_start_waits_for_a_key_and_has_no_empty_console() {
     drop(first);
 
     let mut second = Session::start(&store);
+    assert!(
+        second.app.hint().starts_with("Enter load"),
+        "{}",
+        second.app.hint()
+    );
     assert_eq!(
         second.app.table().map(|tab| tab.label()).as_deref(),
         Some("items (table)")
@@ -2591,7 +2701,7 @@ fn a_table_on_screen_at_the_start_waits_for_a_key_and_has_no_empty_console() {
         second.top_row()
     );
     second.assert_sees("Enter loads the rows.");
-    second.assert_sees("Enter load  F1 keys");
+    second.assert_sees("Enter load  f where");
     for _ in 0..20 {
         second.app.drain_events();
     }

@@ -24,6 +24,7 @@ pub mod script_file;
 pub mod settings;
 pub mod sql;
 pub mod store;
+pub mod structure;
 pub mod table;
 pub mod terminal;
 pub mod trust;

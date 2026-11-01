@@ -12,9 +12,10 @@ use crate::exec::{
 use crate::export::form::{AllRows, ExportForm, ExportRequest, ExportSource, RowChoice};
 use crate::export::{ExportOptions, ExportWriter, resolve_path, time_stamp};
 use crate::grid::printable;
+use crate::input::Action;
 use crate::result::ResultTab;
 use crate::sql::{Dialect, is_plain_read};
-use crate::table::{TableTab, from_clause, select_sql};
+use crate::table::{TableTab, from_clause};
 use crate::ui::text;
 
 /// What an export waits for.
@@ -154,10 +155,13 @@ impl App {
         let result = self.active_result()?;
         let dialect = self.tab_connection()?.dialect;
         let (name, table) = match self.table() {
-            Some(tab) => (
-                tab.relation.relation.clone(),
-                from_clause(&tab.relation, dialect),
-            ),
+            Some(tab) => match &tab.structure {
+                Some(structure) => (structure.name.clone(), String::new()),
+                None => (
+                    tab.relation.relation.clone(),
+                    from_clause(&tab.relation, dialect),
+                ),
+            },
             None => (self.console().name.clone(), String::new()),
         };
         let selection = result
@@ -246,16 +250,9 @@ impl App {
     fn request_read(&mut self, destination: PathBuf, options: ExportOptions) {
         let id = self.active_tab_id();
         let source = match self.table() {
-            Some(tab) => Some((
-                select_sql(
-                    options.dialect,
-                    &tab.relation,
-                    tab.applied_filter(),
-                    tab.applied_order(),
-                ),
-                None,
-                Some(tab.connection),
-            )),
+            Some(tab) => tab
+                .read_sql(options.dialect)
+                .map(|sql| (sql, None, Some(tab.connection))),
             None => {
                 let console = self.console();
                 let sql = console
@@ -572,6 +569,7 @@ impl App {
         Some(text::export_progress(
             run.writer.rows(),
             &shown_path(&run.destination),
+            self.shown_key(Action::Stop).as_deref(),
         ))
     }
 }

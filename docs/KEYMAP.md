@@ -159,6 +159,7 @@ No macOS, o terminal trata `Cmd+C` e `Cmd+V`.
 | Editar conexão | `e` | `e` |
 | Excluir, com confirmação | `Delete` | `x` |
 | Scripts sem conexão | `s` | `s` |
+| Mostrar a estrutura | `i` | `i` |
 
 `Enter` em uma conexão seleciona o primeiro console aberto dela ou cria um console.
 `n` abre a lista de consoles da conexão, com **+ New console** na primeira linha. Sem consoles salvos, `n` cria um console.
@@ -167,6 +168,10 @@ Na lista, `Enter` escolhe a linha, `Delete` (ou `x` no modo Vim) remove o script
 Em um schema, `Enter` abre ou fecha a linha.
 Em uma tabela ou uma view, `Enter` abre a visão de tabela, ou seleciona a aba dela, quando já existe.
 `Direita` e `Esquerda` abrem e fecham as colunas de uma tabela.
+`i` abre a estrutura da linha: tabela, view, coluna, schema ou conexão.
+Na grade de uma tabela, `i` abre a estrutura dessa tabela.
+Na aba de estrutura de uma tabela, `[` e `]` trocam a seção. Nas outras abas de tabela, essas teclas mudam a página.
+A linha de dicas muda com a linha do cursor. Os comandos da conexão aparecem na linha da conexão, mas as teclas agem em qualquer linha dela.
 
 ## Formulário de conexão
 

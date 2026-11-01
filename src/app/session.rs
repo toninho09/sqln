@@ -52,6 +52,8 @@ impl App {
                     id: file.meta.id.clone(),
                 })
             }
+            // A structure tab costs one key to open, so it does not come back.
+            Tab::Table(index) if self.tables[index].structure.is_some() => None,
             Tab::Table(index) => {
                 let tab = &self.tables[index];
                 let key = self.connection(tab.connection)?.key.clone()?;

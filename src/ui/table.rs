@@ -7,13 +7,16 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
-use super::console::{BUTTON_GAP, draw_buttons, draw_grid, draw_panel_title, search_line};
+use super::console::{
+    BUTTON_GAP, draw_buttons, draw_grid, draw_panel_title, draw_tabs, label_at, search_line,
+};
 use super::theme::Theme;
 use super::{draw_suggestions, input_spans, text};
 use crate::console::{Message, MessageLevel, Phase};
 use crate::exec::ReadLimit;
 use crate::grid::printable;
 use crate::line_input::LineInput;
+use crate::structure::{Scope, Section};
 use crate::table::{TableFocus, TableTab};
 
 const LABEL_WIDTH: u16 = 10;
@@ -44,6 +47,8 @@ pub struct TableLayout {
     pub controls: Rect,
     /// Each button, with its first column and the column after its end.
     pub buttons: Vec<(u16, u16, TableControl)>,
+    /// The row of the sections of a structure. It has no height in other tabs.
+    pub sections: Rect,
     pub grid: Rect,
     /// The row under the grid, with the buttons of the pages.
     pub summary: Rect,
@@ -56,6 +61,24 @@ pub struct TableBar<'a> {
     pub blocked: bool,
     /// True on a tall screen, which has a title row.
     pub title: bool,
+}
+
+fn section_labels() -> Vec<String> {
+    Section::ALL
+        .map(|section| {
+            match section {
+                Section::Columns => text::SECTION_COLUMNS,
+                Section::Indexes => text::SECTION_INDEXES,
+                Section::ForeignKeys => text::SECTION_FOREIGN_KEYS,
+            }
+            .to_owned()
+        })
+        .to_vec()
+}
+
+/// Returns the section at a screen column.
+pub fn section_at(area: Rect, column: u16) -> Option<Section> {
+    label_at(&section_labels(), area, column).map(|index| Section::ALL[index])
 }
 
 /// Writes the label of a table tab.
@@ -231,11 +254,21 @@ pub fn draw_table(
     focused: bool,
     theme: &Theme,
 ) -> TableLayout {
-    let [title, filter, order, controls, grid, summary, notice] = Layout::vertical([
+    let [
+        title,
+        filter,
+        order,
+        controls,
+        sections,
+        grid,
+        summary,
+        notice,
+    ] = Layout::vertical([
         Constraint::Length(u16::from(bar.title)),
         Constraint::Length(u16::from(tab.filters)),
         Constraint::Length(u16::from(tab.filters)),
         Constraint::Length(1),
+        Constraint::Length(u16::from(tab.section().is_some())),
         Constraint::Min(0),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -243,12 +276,18 @@ pub fn draw_table(
     .areas(area);
 
     if bar.title {
-        let heading = text::table_title(
-            bar.connection,
-            &tab.relation.schema,
-            &tab.relation.relation,
-            tab.kind(),
-        );
+        let heading = match &tab.structure {
+            Some(structure) if structure.scope == Scope::Connection => {
+                text::structure_title(bar.connection, text::ALL_SCHEMAS)
+            }
+            Some(structure) => text::structure_title(bar.connection, &structure.name),
+            None => text::table_title(
+                bar.connection,
+                &tab.relation.schema,
+                &tab.relation.relation,
+                tab.kind(),
+            ),
+        };
         draw_panel_title(frame, title, &printable(&heading), focused, theme);
     }
 
@@ -274,6 +313,11 @@ pub fn draw_table(
         control_items(tab, bar.blocked, theme),
         theme,
     );
+
+    if let Some(section) = tab.section() {
+        let labels = section_labels();
+        draw_tabs(frame, sections, &labels, section.index(), focused, theme);
+    }
 
     let message_in_grid = tab.result.table.columns.is_empty() && tab.message.is_some();
     if tab.result.table.columns.is_empty() {
@@ -336,6 +380,7 @@ pub fn draw_table(
         order,
         controls,
         buttons,
+        sections,
         grid,
         summary,
         pager,

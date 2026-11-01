@@ -8,6 +8,7 @@ use crate::exec::{ConnectionId, ConsoleId};
 use crate::input::Action;
 use crate::navigator::{Row, RowKind};
 use crate::sql::Dialect;
+use crate::structure::{Scope, Section, Structure, structure_sql};
 use crate::table::{PageRequest, TableFocus, TableTab};
 use crate::ui::text;
 use crate::ui::{TabView, main_tab_label, run_badge, table};
@@ -163,6 +164,105 @@ impl App {
         self.select_table(index);
         self.navigator_focused = false;
         self.apply_table();
+    }
+
+    /// Opens the structure of a navigator row. A column shows the structure of its table.
+    pub(super) fn open_row_structure(&mut self, row: &Row) {
+        let item = &self.connections[row.connection];
+        let connection = item.id;
+        let (scope, relation, name) = match row.kind {
+            RowKind::Connection => (Scope::Connection, RelationRef::default(), item.name.clone()),
+            RowKind::Schema => {
+                let schema = row.name(&self.connections).to_owned();
+                let relation = RelationRef {
+                    schema: schema.clone(),
+                    relation: String::new(),
+                };
+                (Scope::Schema, relation, schema)
+            }
+            RowKind::Table | RowKind::View | RowKind::Column => {
+                let Some(relation) = row.relation_ref(&self.connections) else {
+                    return;
+                };
+                let name = relation.relation.clone();
+                (Scope::Relation, relation, name)
+            }
+        };
+        self.open_structure(connection, scope, relation, name);
+    }
+
+    /// Opens the structure of the table tab on screen.
+    fn open_table_structure(&mut self) {
+        if let Some(tab) = self.table().filter(|tab| tab.structure.is_none()) {
+            let (connection, relation) = (tab.connection, tab.relation.clone());
+            let name = relation.relation.clone();
+            self.open_structure(connection, Scope::Relation, relation, name);
+        }
+    }
+
+    /// Opens a structure tab. A structure that is open only gets the focus. For a source
+    /// without structure, the status line gives the reason.
+    fn open_structure(
+        &mut self,
+        connection: ConnectionId,
+        scope: Scope,
+        relation: RelationRef,
+        name: String,
+    ) {
+        if self.config_blocked() {
+            return;
+        }
+        let Some(dialect) = self.dialect_of(connection) else {
+            return;
+        };
+        if structure_sql(dialect, scope, &relation, Section::Columns).is_none() {
+            self.status = Some(text::STRUCTURE_REFUSED.to_owned());
+            return;
+        }
+        if let Some(index) = self
+            .tables
+            .iter()
+            .position(|tab| tab.shows_structure(connection, scope, &relation))
+        {
+            self.select_table(index);
+            self.navigator_focused = false;
+            return;
+        }
+        let Some(id) = self
+            .manager
+            .as_mut()
+            .and_then(|manager| manager.open_console(connection))
+        else {
+            return;
+        };
+        let mut tab = self.new_table_tab(id, connection, relation, false);
+        tab.filters = false;
+        tab.structure = Some(Structure::new(scope, name));
+        self.tables.push(tab);
+        let index = self.tables.len() - 1;
+        self.select_table(index);
+        self.navigator_focused = false;
+        self.apply_table();
+    }
+
+    /// Shows a section of the structure tab on screen. The grid reads it again.
+    pub(super) fn show_section(&mut self, section: Section) {
+        if self.ready_table().is_none() {
+            return;
+        }
+        if let Some(tab) = self.table_mut() {
+            tab.set_section(section);
+        }
+        self.apply_table();
+    }
+
+    /// Moves to the next or the previous section. A tab without sections moves a page.
+    fn step_table(&mut self, forward: bool) {
+        match self.table().and_then(TableTab::section) {
+            Some(section) => self.show_section(section.step(forward)),
+            None if forward => self.next_table_page(),
+            None => self.previous_table_page(),
+        }
     }
 
     /// Builds a tab with the features of its connection, at the end of the tab row.
@@ -356,8 +456,9 @@ impl App {
             | Action::RenameConsole
             | Action::ChangeConnection
             | Action::GridCloseResult => {}
-            Action::GridPreviousResult => self.previous_table_page(),
-            Action::GridNextResult => self.next_table_page(),
+            Action::GridPreviousResult => self.step_table(false),
+            Action::GridNextResult => self.step_table(true),
+            Action::GridStructure => self.open_table_structure(),
             Action::Stop => self.stop_table(),
             Action::CloseTab => {
                 if let Some(index) = self.table_active {

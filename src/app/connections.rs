@@ -326,6 +326,7 @@ impl App {
             Action::NavigatorOpen if is_relation(&row) => self.open_table(&row),
             Action::NavigatorOpen => self.toggle(&row),
             Action::NavigatorNewConsole => self.request_console(id),
+            Action::NavigatorStructure => self.open_row_structure(&row),
             Action::NavigatorRefresh => {
                 if !self.ask_new_password(id) {
                     self.reload_catalog(id);
@@ -568,7 +569,7 @@ impl App {
         }
     }
 
-    fn saved_identity(&self, connection: &Connection) -> Option<Identity> {
+    pub(super) fn saved_identity(&self, connection: &Connection) -> Option<Identity> {
         Identity::of(connection.key.as_ref()?, connection.definition.as_ref()?)
     }
 
