@@ -1,178 +1,356 @@
-# SQLN — Arquitetura
+# SQLN — Architecture
 
-## Estado deste documento
+## State of this document
 
-**Definido:** este documento está aprovado.
-Ele detalha a arquitetura do [plano](../PLAN.md).
-Os nomes e as assinaturas são exemplos, não contratos finais.
-Os fatos sobre os drivers vêm de [spikes/RESULTS.md](../spikes/RESULTS.md).
+**Defined:** this document is approved.
+It details the architecture of the [plan](INITIAL_PLAN.md).
+The names and the signatures are examples, not final contracts.
+The facts about the drivers come from [RESULTS](RESULTS.md).
 
-## 1. Visão geral
+## 1. Overview
 
-O projeto é um único crate Rust.
-A interface roda na thread principal e nunca espera o banco.
-Cada conexão física pertence a um ator próprio.
+The project is a single Rust crate.
+The interface runs on the main thread and never waits for the database.
+Each console has its own task, owner of the reserved session. This document calls that task an actor.
+The execution manager keeps one pool per connection, and all connections use a single runtime and a single event channel.
 
 ```text
-Thread principal                    Runtime Tokio
-┌─────────────────────┐  Comando   ┌───────────────────────────┐
-│ Eventos do terminal │ ─────────▶ │ Gerente de execução       │
-│ Roteador de teclas  │            │  ├── Script runner        │
-│ Estado da aplicação │ ◀───────── │  └── Pool por definição   │
-│ Desenho             │  Evento    │       └── Ator de conexão │
+Main thread                        Tokio runtime
+┌─────────────────────┐  Command   ┌───────────────────────────┐
+│ Terminal events     │ ─────────▶ │ Execution manager         │
+│ Key router          │            │  ├── Script runner        │
+│ Application state   │ ◀───────── │  └── Pool per definition  │
+│ Drawing             │  Event     │       └── Connection actor│
 └─────────────────────┘            └───────────────────────────┘
-                                     Thread própria: rusqlite
+                                     Own thread: rusqlite
 ```
 
-## 2. Módulos
+## 2. Modules
 
-| Módulo | Responsabilidade |
+| Module | Responsibility |
 |---|---|
-| `app` | Estado da aplicação, ações e atualização do estado |
-| `ui` | Desenho das telas e dos widgets |
-| `input` | Mapa de teclas, foco, mouse e prioridade |
-| `editor` | EdTUI, camada convencional, busca e substituição |
-| `sql` | Tokenizador e separação de instruções |
-| `complete` | Sugestões do autocomplete |
-| `catalog` | Cache em memória; schemas e tabelas primeiro, colunas sob demanda |
-| `exec` | Execuções, scripts, teto e cancelamento |
-| `pool` | Limite, fila, reserva e limpeza |
-| `connector` | Contrato e conectores PostgreSQL, MySQL e SQLite |
-| `grid` | Linhas, orçamento, TSV e área de transferência |
-| `store` | Configuração, consoles, salvamento e bloqueios |
-| `creds` | Cofre e senhas de sessão, com `zeroize` |
-| `trust` | Destinos confirmados e caminhos conhecidos |
+| `app` | Application state, actions, and state updates |
+| `ui` | Drawing of the screens and the widgets, themes (`theme`), color schemes (`schemes`), symbols (`icons`), status bar (`statusline`), and prefix menu (`which_key`) |
+| `palette` | State and filter of the command palette; `app` builds the list, and `ui` draws it |
+| `browser` | State of the file explorer of the path fields: folder, rows, and filter |
+| `input` | Key map: regions, actions, sequences, and `keymap` rules |
+| `navigator` | Tree of connections, schemas, relations, and columns |
+| `form` | Fields and validation of the connection form |
+| `connection` | Connection definitions and the state of each connection in the application |
+| `editor` | EdTUI, conventional layer, search, and replace |
+| `sql` | Tokenizer, statement separation, and statement classes |
+| `complete` | Autocomplete suggestions |
+| `catalog` | In-memory cache; schemas and tables first, columns and foreign keys on demand |
+| `generate` | SQL templates of the navigator |
+| `console` | Editor, results, messages, and state of a console |
+| `result` | Grid of one result with cursor and search, used by consoles and tables |
+| `table` | Table tab: pages, fields, sorting, suggestions, and query |
+| `structure` | Catalog queries of the structure tab, per database, scope, and section |
+| `line_input` | Single-line text field, used by the filter bar fields |
+| `exec` | Executions, scripts, cap, and cancellation |
+| `pool` | Limit, queue, reservation, and cleaning |
+| `connector` | Contract and PostgreSQL, MySQL, SQLite, and Redis/Valkey connectors |
+| `grid` | Rows, widths, search, budget, TSV, and readable JSON shape (`json`) |
+| `export` | Export formats, temporary file, and modal form |
+| `find` | Text comparison of the two searches |
+| `clipboard` | System clipboard and OSC 52 |
+| `terminal` | Terminal setup and restore |
+| `store` | Folders of the scopes, `config.json`, console scripts, `workspace.json`, atomic writes, and locks |
+| `script_file` | Saved state of a console: hash, line ending, save wait, and write problem |
+| `creds` | Vault and session passwords, with `zeroize` |
+| `trust` | Confirmed destinations and known paths |
+| `settings` | Form of the preferences per scope |
+| `log` | Optional event log, without SQL or values |
 
-`ui` e `input` não dependem de `connector`.
-Somente `connector` conhece tipos dos drivers.
+`ui` and `input` do not depend on `connector`.
+Only `connector` knows driver types.
 
-## 3. Concorrência
+`app::auth` integrates `creds` and `trust` into first use, with the password and trust dialogs.
+`creds` offers identities, session passwords, and the vault adapters.
+`trust` offers the reading and the writing of global confirmations.
+The vault calls are synchronous, but `Manager::spawn_blocking` runs them off the interface thread.
+`app` applies the key priority and the mouse. `app/auth.rs`, `app/keys.rs`, `app/hints.rs`, `app/mouse.rs`, `app/close.rs`, `app/connections.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs`, `app/session.rs`, `app/conflicts.rs`, `app/history.rs`, `app/guard.rs`, `app/export.rs`, and `app/browse.rs` divide that code.
+`store` keeps the folders and the files. It knows nothing about `app`, `ui`, or `connector`.
 
-### Regras
+### Files and saving
 
-1. A thread principal recebe eventos do terminal e eventos do runtime.
-2. A atualização do estado não faz entrada ou saída.
-3. Cada conexão física fica em um ator com canal de comandos.
-4. O cancelamento usa um objeto separado da conexão, pois o ator pode estar ocupado.
-5. O `rusqlite` roda em uma thread própria, porque é síncrono.
-6. Cada lote de linhas segue para a interface por um canal limitado.
+`store::Store` has the global folder and, when it exists, the project folder. Each folder is a `Root`, with the folder of the `config.json` (`dir`) and the base of the relative paths (`base`). The project base is the root, not `.sqln/`.
 
-### Por que usar um ator por conexão
+| Part | Responsibility |
+|---|---|
+| `store::file` | `write_atomic`, `write_private_atomic` (exclusive temporary and permission `0600` on Unix), hash, locks, and cleanup of old `.tmp` files |
+| `store::config` | Reading with `serde`, validation, precedence, `Definition` of each entry, and `change_connections` (reread under lock, change, and write) |
+| `store::scripts` | `.sql` and `.json` files of a console, list, lock per console, copy between scopes, and line ending |
+| `store::workspace` | `workspace.json`, read without error and written under the `config.lock` lock |
+| `store::history` | `history.jsonl`: one JSON line per statement, appended at the end of the file, read per connection, and truncated at the start of the file |
+| `script_file::ScriptFile` | Hash of the last written content, 500 ms wait, 5 s retry, and problem (`Failed`, `Changed`, or `Removed`) |
+| `app::persist` | Load at startup, reload, check each second, close order, and session state |
+| `app::scripts` | Console list, scripts without connection, opening, removal, and attaching |
+| `app::conflicts` | Question about scripts changed outside SQLN |
+| `app::guard` | Question before an execution: statement without `WHERE` and production change |
+| `app::history` | Notes of each statement and history window |
 
-`mysql_async` e `rusqlite` exigem acesso exclusivo à conexão durante uma instrução.
-O ator mantém a leitura ativa e continua a consumir linhas depois de um cancelamento.
-Os testes mostraram que abandonar a leitura pode bloquear o servidor.
+Code rules:
 
-### Eventos antigos
+1. The load reads both files. An error in one file blocks the whole application, without a partial scope.
+2. Each read error carries the file and the position (line and column). The message never carries a value from the file.
+3. The write of `config.json` takes `locks/config.lock`, reads the file again, applies the change, and writes with the read hash. The file of the other scope does not change.
+4. The `config.json` keeps only what the scope declares. The reading does not rewrite the default values.
+5. The `id` of a script is a UUID and is the name of both files. The list ignores a `.json` that is unreadable or whose name differs from the `id`.
+6. The lock of a console is the file `locks/<id>.lock`, with `flock`. The system releases it at process end.
+7. `ScriptFile::due` compares the editor revision with the last written one. The main loop passes the clock, and the test controls the time.
+8. The line ending of the file (`LF` or `CRLF`) stays in the `ScriptFile`. The editor always uses `LF`.
+9. `ScriptFile::poll` reads the file only if the size or the date changed, and then compares the hash.
+10. A connection definition carries the base folder. `Definition::connector` resolves the relative paths with it at open time.
 
-Cada execução recebe um `ExecutionId`.
-A aplicação descarta um evento cujo `ExecutionId` não seja o atual da aba.
-Isso impede que uma resposta antiga repovoe uma grade.
+### Credential preparation
 
-## 4. Contrato dos conectores
+`app::auth` receives each operation before it sends it to the manager.
+The preparation covers executions, catalog, columns, pages, and connection tests of saved definitions.
+Ready connectors and local definitions without a file key do not come from imported configuration.
+
+1. Check trust on the destination and the project path.
+2. Ask for confirmation when needed, before reading the vault or sending credentials.
+3. Get the password according to `credential`, or use passwordless authentication for `none`.
+4. Update the connector of the pool without erasing text, schema, or editor state.
+5. Send only the operation that still matches the current request.
+
+A local form authorizes its destination. It does not implicitly authorize credential reuse on a new project path.
+Testing an existing form also does not skip that confirmation.
+The save option starts unchecked; a test with a typed password does not replace the password of the saved definition.
+
+The queue keeps the SQL, the options, and the editor revision at the time of the request.
+Editing during the wait does not change the SQL sent and does not assign its marks to the new text.
+Each response has a token. The connection has a generation, and the test has a copy of the form.
+Cancellation or change invalidates old responses.
+Cancel also removes the requests of the same generation that await the same preparation.
+
+`Manager::spawn_blocking` limits the system operations to one at a time, with an async semaphore.
+Jobs wait without occupying blocking threads; a token prevents a cancelled job from starting vault access.
+The responses use a private preparation channel, separate from the SQL execution events.
+A native call already started may continue after cancel, but its response does not start SQL.
+
+The interface offers explicit retry or a session password after a vault failure.
+Failure to write the reference after a vault save keeps the credential and reports the incomplete state.
+Without a vault, the reading uses `credentials.json`. A write failure without a vault offers plain text after the warning.
+A password refusal clears the session and opens a new prompt. The new password passes `test_connection` before any write.
+
+### Table tab
+
+Each table tab has a console task of the execution manager, but without an editor and without a transaction.
+The tab requests a page with `Run`, and receives the same events as a console.
+Thus, the deadline, the stop, the cancellation, the pool queue, and the budget apply without new code.
+The task keeps the connection only during the query, because a table query never leaves a transaction open.
+
+The count of the `c` key uses the same path, with `PageRequest::count`. `Load::count` prevents the number from changing the grid, `has_more`, `limit`, or `cut_short`.
+
+1. `table::page_sql` builds the query: `SELECT *`, `WHERE`, `ORDER BY`, and `LIMIT n+1 OFFSET k`, each clause on one line.
+2. The tokenizer refuses the text with a second command or an open token, before it sends the query.
+3. `RunOptions::row_cap` limits the `ResultSink` to `n+1` rows, and the SQL `LIMIT` guarantees that cap. The sink never requests the cancellation.
+4. The tab keeps the first `n` rows and drops the extra row, with its cost returned to the budget. The extra row proves that a next page exists.
+5. The `OFFSET` of **Load more** is the number of rows already loaded.
+6. The first page of a query clears the rows, and the `ExecutionId` drops old responses.
+
+A table query and a console query share the same `ExecEvent`.
+The identity of the tab comes from the console counter of the manager, so the numbers do not collide.
+
+A Redis key tab uses the same path, without SQL:
+
+1. `table::page_sql` builds `SQLN.VALUE <database> <key> <offset> <amount>` per `connector::redis::value_page`. That text is not a server command.
+2. The session reads `TYPE` on each page, because the key may change between two pages.
+3. The session uses the command of the type: `GET`, `LRANGE`, `HSCAN`, `SSCAN`, `ZRANGE`, or `XRANGE`.
+4. A false `Capabilities::table_filters` removes `WHERE`, `ORDER BY`, **Clear**, and sorting from the tab. **Apply** becomes **Reload**.
+
+### Known editor limit
+
+**Technical debt:** the undo history has no memory cap. This item does not block the release.
+
+Each undo entry of EdTUI keeps a full copy of the text, and each console has its own stacks.
+`undo` and `redo` keep up to 100 entries each, and EdTUI does not clear `redo` after a new edit.
+By estimate, a 50,000-line script takes about 15 MB per entry, 1.5 GB in the 100 `undo` entries, and 3 GB with both stacks full.
+In the conventional mode, 100 entries equal about 100 typed words.
+Common scripts stay far below that, and closing the console frees that memory.
+
+`Stack` and the `undo` and `redo` fields of EdTUI are private, and the public API does not measure or remove entries.
+Therefore, SQLN cannot cap that history without an EdTUI change.
+
+**Exit:** when EdTUI publishes an API for it, cap the history at 64 MiB per console.
+The oldest entries leave first, and an entry above the cap produces a warning.
+
+## 3. Concurrency
+
+### Rules
+
+1. The main thread receives terminal events and runtime events.
+2. The state update does no input or output.
+3. Each console has an actor with a command channel, and that actor keeps the reserved session.
+4. Cancellation uses an object separate from the connection, because the actor may be busy.
+5. `rusqlite` runs on its own thread, because it is synchronous.
+6. Each row batch goes to the interface through a bounded channel.
+
+### Main loop
+
+The main thread waits for a key for up to 20 ms and then reads the execution events.
+It reads at most 64 events per frame, so a large load does not delay the keys.
+The grid search advances 8 ms per loop turn, without waiting while there are rows to read.
+The event channel is bounded, and that controls the speed of the database read.
+The application draws only after a change.
+
+### Why an actor per connection
+
+`mysql_async` and `rusqlite` need exclusive access to the connection during a statement.
+The actor keeps the read active and keeps consuming rows after a cancellation.
+The tests showed that abandoning the read can block the server.
+
+### Old events
+
+Each execution receives an `ExecutionId`.
+The application drops an event whose `ExecutionId` is not the current one of the tab.
+That prevents an old response from refilling a grid.
+
+## 4. Connector contract
 
 ```rust
-trait Connector {
-    async fn connect(&self, target: &Target, secret: Secret) -> Result<Box<dyn Session>, ConnectError>;
+trait Connector: Send + Sync {
+    fn dialect(&self) -> Dialect;
+    fn capabilities(&self) -> Capabilities;
+    async fn connect(&self) -> Result<Box<dyn Session>, ConnectError>;
 }
 
 trait Session: Send {
-    fn canceller(&self) -> Canceller;
+    fn canceller(&self) -> Arc<dyn Canceller>;
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError>;
-    async fn run(&mut self, sql: &str, cap: RowCap, sink: RowSink) -> Result<StatementEnd, ExecError>;
-    async fn transaction_state(&mut self) -> Result<TransactionState, ExecError>;
-    async fn reset(&mut self) -> Result<ResetOutcome, ExecError>;
-    async fn close(self: Box<Self>);
+    async fn run(&mut self, sql: &str, sink: ResultSink) -> Result<StatementEnd, ExecError>;
+    async fn transaction_state(&mut self) -> TransactionState;
+    async fn control(&mut self, command: TransactionCommand) -> Result<(), ExecError>;
+    async fn reset(&mut self) -> ResetOutcome;
+    async fn is_alive(&mut self) -> bool;
+    async fn read_catalog(&mut self) -> Result<Catalog, ExecError>;
+    async fn read_columns(&mut self, schema: &str, relation: &str) -> Result<Vec<String>, ExecError>;
+    async fn read_foreign_keys(&mut self, schema: &str, relation: &str) -> Result<Vec<ForeignKey>, ExecError>;
 }
 ```
 
-| Banco | Cancelamento | Limpeza | Estado da transação |
+The `async-trait` crate makes `Box<dyn Session>` possible.
+`read_foreign_keys` has an empty default, so a source without keys does not write the method. `Manager::load_columns` reads the keys together with the columns, and a key failure does not fail the columns.
+`Capabilities` declares whether the source has transactions, whether the console chooses a schema or a database, and whether the table tab accepts filter and order in SQL.
+Cancellation and pagination enter that declaration when a source needs them, because the connectors use the same contract on those points.
+Each console has a Tokio task, which keeps the session between executions while the transaction stays open.
+The task keeps the future of `run` alive after a cancellation, to read the database response.
+Closing the connection is the only case that abandons that future.
+
+| Database | Cancellation | Cleaning | Transaction state |
 |---|---|---|---|
-| PostgreSQL | `CancelToken` | `DISCARD ALL` | Sonda por relógio, pelo protocolo simples |
-| MySQL | `KILL QUERY` em conexão temporária | `Conn::reset` | `SET TRANSACTION`, preservando o modo da sessão |
-| SQLite | `InterruptHandle` | Descartar a conexão | `is_autocommit` |
+| PostgreSQL | `CancelToken` | `DISCARD ALL` | Clock probe, through the simple protocol |
+| MySQL | `KILL QUERY` on a temporary connection | `Conn::reset` and back to the database of the connection | `SERVER_STATUS_IN_TRANS` of the last response; `DO 0` after an error |
+| SQLite | `InterruptHandle` | Drop the connection | `is_autocommit` |
+| Redis/Valkey | `CLIENT UNBLOCK` on a temporary connection; no effect, close the session | `DISCARD`, `UNWATCH`, and back to the database of the connection | Always `None`: the source has no manual transaction |
 
-`run` envia uma instrução, entrega as linhas em texto e obedece ao teto.
-Os valores chegam como `Option<Bytes>` e o tipo da coluna acompanha os metadados.
+`run` sends one statement, delivers the rows to `ResultSink`, and obeys the `Flow::Stop` return.
+One statement may deliver several results, such as `CALL` in MySQL, and the cap applies to each one.
+`ResultSink` sends `ResultDone` at the end of each result.
+Dropping `ResultSink` returns the rows still in the batch to the budget.
+`ResultSink` applies the cap and the budget, and gathers the rows in batches of 200.
+`ResultSink::notices` sends `ExecEvent::Notice` before the end of the statement. PostgreSQL keeps the notices in the connection task, with `poll_message`. MySQL reads `SHOW WARNINGS` when the count goes above 0. `MAX_NOTICES` limits both to 100 per statement.
+`Value` keeps `Null`, `Text`, `Number`, or `Binary`, always with the database text.
+`Conn::reset` keeps the current database, so a `USE` would stay in the session without the next step.
+The cleaning reads `DATABASE()` and goes back to the database of the connection. Without a database in the connection, the session closes, because MySQL does not leave a database.
+The variant serves presentation only, such as aligning numbers.
 
-## 5. Execução de um script
+## 5. Script execution
 
-1. O console pede a execução e recebe um `ExecutionId`.
-2. A aplicação limpa os resultados anteriores e libera o orçamento.
-3. O editor entrega uma cópia do texto.
-4. `sql` separa as instruções e guarda suas posições.
-5. `pool` entrega uma reserva, ou a execução entra na fila.
-6. O ator aplica o banco ou schema selecionado.
-7. Para cada instrução, o ator executa `run`.
-8. Depois de cada instrução, o ator consulta o estado da transação.
-9. Em erro, timeout ou parada, a sequência termina.
-10. Sem transação aberta, `pool` limpa e devolve a conexão.
+1. The console requests the execution and receives an `ExecutionId`.
+2. The application clears the previous results and frees the budget.
+3. The editor delivers a copy of the text.
+4. `sql` separates the statements and keeps their positions.
+5. `pool` delivers a reservation, or the execution enters the queue.
+6. The actor applies the selected database or schema.
+7. For each statement, the actor runs `run`.
+8. After each statement, the actor asks for the transaction state.
+9. On error, timeout, or stop, the sequence ends.
+10. Without an open transaction, `pool` cleans and returns the connection.
 
-### Teto de linhas
+### Row cap
 
-1. O ator entrega linhas até o teto, mais uma linha para saber se existe mais.
-2. Em uma consulta de leitura sem transação, o ator aciona o cancelamento.
-3. Nos demais casos, o ator consome o restante sem guardar as linhas.
-4. Nos dois casos, o ator lê até a resposta da instrução.
-5. Um cancelamento causado pelo teto não vira erro da instrução.
+1. The actor delivers rows up to the cap, plus one row to know whether more exist.
+2. In a read query without a transaction, the actor triggers the cancellation. `sql::is_plain_read` decides from the text.
+3. In the other cases, the actor consumes the rest without keeping the rows.
+4. In both cases, the actor reads until the statement response.
+5. A cancellation caused by the cap does not become a statement error.
 
-### Interrupção
+### Interruption
 
-1. `exec` aciona `Canceller` e inicia o prazo de 5 segundos.
-2. O ator continua lendo e descartando as linhas.
-3. Com a resposta, a execução termina e a conexão segue o fluxo normal.
-4. Sem resposta e sem transação, `exec` fecha a conexão.
-5. Sem resposta e com transação, a interface pede confirmação.
+1. `exec` triggers `Canceller` and starts the 5-second deadline.
+2. The actor keeps reading and discarding the rows. `Flow::Discard` marks that state.
+3. With the response, the actor waits for the cancellation request to finish, and the connection follows the normal flow.
+4. Without a response and without a transaction, `exec` closes the connection.
+5. Without a response and with a transaction, the interface asks for confirmation.
+6. If the request fails, the deadline ends at once.
+7. If the request does not finish after the response, the session is dropped, because it could hit the next statement.
 
-## 6. Pool próprio
+`Canceller::cancel` returns after the database handles the request.
+In PostgreSQL, that requires reading until the server closes the request connection.
+In MySQL, the response of `KILL QUERY` already confirms the request.
 
-Cada definição de conexão tem um pool, com este estado:
+## 6. Own pool
 
-| Campo | Conteúdo |
+Each connection definition has a pool, with this state:
+
+| Field | Content |
 |---|---|
-| `limit` | Limite configurado, com padrão de cinco |
-| `idle` | Conexões livres |
-| `in_use` | Conexões reservadas |
-| `opening` | Conexões em estabelecimento |
-| `cleaning` | Conexões em limpeza |
-| `waiters` | Fila em ordem de chegada |
+| `limit` | Configured limit, with a default of five |
+| `idle` | Free connections |
+| `in_use` | Reserved connections |
+| `opening` | Connections being established |
+| `cleaning` | Connections being cleaned |
+| `waiters` | Queue in arrival order |
 
-A soma de `idle`, `in_use`, `opening` e `cleaning` nunca ultrapassa `limit`.
-A conexão temporária de cancelamento fica fora dessa soma.
+The sum of `idle`, `in_use`, `opening`, and `cleaning` never goes above `limit`.
+The temporary cancellation connection stays out of that sum.
 
-1. Com uma conexão livre, entregar essa conexão.
-2. Abaixo do limite, abrir uma conexão com `timeout` de 30 segundos em toda a operação.
-3. No limite, colocar a solicitação na fila, sem prazo.
-4. Ao liberar uma vaga, atender a primeira solicitação ainda ativa.
-5. Em erro de conexão, devolver o erro à solicitação, sem repetir a tentativa.
-6. Cancelar uma espera remove a solicitação da fila.
+1. With a free connection, deliver that connection.
+2. Below the limit, open a connection with a `timeout` of 30 seconds over the whole operation.
+3. At the limit, put the request in the queue, without a deadline.
+4. When a slot frees, serve the first request still active.
+5. On a connection error, return the error to the request, without a retry.
+6. Cancelling a wait removes the request from the queue.
+7. On reuse of an idle connection, call `is_alive`. A lost connection gives place to a new one.
 
-Uma conexão com a limpeza não confirmada é descartada.
-A reposição ocorre somente quando houver nova necessidade.
+A reserved session does not receive `apply_context` again, because a transaction with an error refuses `SET`.
+A session with an unknown state is dropped.
+**Disconnect** closes the idle sessions and raises the generation of the pool.
+A session of a previous generation closes on return, such as one of an in-flight catalog read.
+The `Disconnected` event waits for that session for up to 5 seconds, and the interface reports when it stays in use.
 
-## 7. Estados
+A connection with unconfirmed cleaning is dropped.
+The replacement happens only when a new need exists.
 
-| Dimensão | Valores |
+## 7. States
+
+| Dimension | Values |
 |---|---|
-| Execução | Ociosa, aguardando conexão, executando, finalizando, concluída, teto atingido, erro, timeout, parada, cancelada antes de iniciar, interrompida para fechamento |
-| Modo de transação | Autocommit ou manual |
-| Transação | Inexistente, aberta, com erro ou desconhecida |
-| Reserva | Sem conexão, aguardando, em uso ou em limpeza |
+| Execution | Idle, waiting for connection, running, finishing, done, cap reached, error, timeout, stopped, cancelled before start, interrupted for close |
+| Transaction mode | Autocommit or manual |
+| Transaction | None, open, with error, or unknown |
+| Reservation | No connection, waiting, in use, or cleaning |
 
-| Comando | Evento de resposta |
+The interface refuses **Disconnect** and removal before it sends the command, while a console of the connection has an execution or a transaction.
+
+| Command | Response event |
 |---|---|
 | `Run` | `Queued`, `Started`, `Rows`, `StatementFinished`, `ExecutionFinished` |
 | `Stop` | `Stopping`, `ConfirmClose`, `ExecutionFinished` |
-| `Commit`, `Rollback` | `TransactionChanged` ou `TransactionFailed` |
+| `Commit`, `Rollback` | `TransactionChanged` or `TransactionFailed` |
 | `CancelWait` | `ExecutionFinished` |
-| `Disconnect` | `Disconnected` ou `DisconnectBlocked` |
+| `Disconnect` | `Disconnected` |
+| `TestConnection` | `ConnectionTested` |
 
-## 8. Arquivos
+## 8. Files
 
 ### `config.json`
 
-Este esquema vale para os escopos global e de projeto.
-O projeto nunca recebe `password`.
+This schema applies to the global and project scopes.
+No scope receives `password`. The plain-text authorized password stays in `credentials.json`.
 
 ```json
 {
@@ -182,7 +360,14 @@ O projeto nunca recebe `password`.
     "pageSize": 100,
     "rowCap": 1000,
     "gridBudgetBytes": 268435456,
-    "keymap": {}
+    "keymap": {},
+    "theme": "auto",
+    "icons": "unicode",
+    "reopenTabs": true,
+    "queryHistory": true,
+    "formatJson": true,
+    "bellAfterSeconds": 10,
+    "suggestionKeys": "tab"
   },
   "connections": [
     {
@@ -198,7 +383,8 @@ O projeto nunca recebe `password`.
       "tls": { "mode": "verify", "caFile": null, "clientCert": null, "clientKey": null },
       "pool": { "maxConnections": 5 },
       "connectTimeoutSeconds": 30,
-      "sqlTimeoutSeconds": 30
+      "sqlTimeoutSeconds": 30,
+      "theme": "nord"
     },
     {
       "id": "6a1d4c12-7c0e-4f0b-9a55-0c2f4b6f7d10",
@@ -215,34 +401,51 @@ O projeto nunca recebe `password`.
 }
 ```
 
-| Campo | Valores |
+| Field | Values |
 |---|---|
-| `kind` | `postgres`, `mysql` ou `sqlite` |
-| `credential` | `vault`, `session`, `globalPlainText` ou `none` |
-| `tls.mode` | `verify` ou `disabled` |
+| `kind` | `postgres`, `mysql`, `sqlite`, or `redis` |
+| `credential` | `vault`, `session`, `globalPlainText`, or `none` |
+| `tls.mode` | `verify` or `disabled` |
+| `theme` | Optional. A value of `theme` of `preferences`. Without the field, the connection uses the default theme |
+| `icon` | Optional. `warning`, `skull`, `radiation`, `flag`, `crown`, `flask`, `star`, `diamond`, `tools`, `gear`, `home`, `heart`, `snowflake`, or `check`. Without the field, the connection uses the database icon |
 
-O valor `globalPlainText` existe somente no escopo global.
-O valor `sqlTimeoutSeconds: null` executa sem prazo.
-`apply_context` reaplica `readOnly` a cada reserva, pois a limpeza da sessão o remove.
+The `globalPlainText` value exists only in the global scope.
+The value `sqlTimeoutSeconds: null` runs without a deadline, and the absence of the field means 30 seconds.
 
-### Metadados do console
+Reading rules, according to the code:
 
-Cada console tem `consoles/<id>.sql` e `consoles/<id>.json`:
+- `version` is required and equals 1. An unknown field invalidates the file.
+- All fields of `preferences` are optional, and `keymap` has the `conventional` and `vim` sections.
+- `preferences.export` keeps the choices of the export modal: `format`, `header`, `delimiter`, `nullText`, `bom`, `grouped`, `batch`, and `folder`. The application writes that field when it confirms an export, and it is valid only in the global file.
+- An absent `credential` means `none`. An absent `pool` means 5 connections.
+- A repeated `id` or `name` in the same file invalidates the file. The name ignores case.
+- A relative path (`file`, `caFile`, `clientCert`, `clientKey`) stays as the user wrote it in the file. The resolution happens at connection open.
+- The form writes the full path of a typed SQLite file, from the current directory. A saved and unchanged `file` keeps its text.
+- A network connection without `tls` uses TLS with verification, except on `localhost`, loopback, and Unix socket.
+`apply_context` reapplies `readOnly` on each reservation, because the session cleaning removes it.
+
+### Console metadata
+
+Each console has `consoles/<id>.sql` and `consoles/<id>.json`:
 
 ```json
 {
   "version": 1,
   "id": "9b2e7d44-3f6a-4c55-8e21-1d4f0a7c9e33",
-  "name": "investigar-pedidos",
+  "name": "investigate-orders",
   "connectionId": "0f3726f5-16d2-46af-82f9-54736aaa81f8",
   "connectionScope": "project",
   "schema": "public"
 }
 ```
 
-### Estado local
+### Local state
 
-`workspace.json` nunca entra no Git:
+`workspace.json` never enters Git.
+**Defined:** if the file is unreadable, use the initial state and show a non-blocking warning.
+The code still uses the initial state without a warning.
+
+Example:
 
 ```json
 {
@@ -253,23 +456,32 @@ Cada console tem `consoles/<id>.sql` e `consoles/<id>.json`:
       "scroll": { "row": 0, "col": 0 }
     }
   },
-  "layout": { "navigatorCollapsed": false, "navigatorWidth": 24, "editorRatio": 0.5 }
+  "layout": { "navigatorCollapsed": false, "navigatorWidth": 24, "editorRatio": 0.5 },
+  "openTabs": {
+    "tabs": [
+      { "kind": "console", "scope": "project", "id": "018f…" },
+      { "kind": "table", "scope": "global", "connection": "g1", "schema": "public", "relation": "users", "view": false }
+    ],
+    "active": 0
+  }
 }
 ```
 
-### Lista de arquivos
+### File list
 
-| Arquivo | Local | Git |
+| File | Place | Git |
 |---|---|---|
-| `config.json` | Global e projeto | Versionável no projeto |
-| `consoles/<id>.sql` | Global e projeto | Versionável no projeto |
-| `consoles/<id>.json` | Global e projeto | Versionável no projeto |
-| `workspace.json` | Global e projeto | Ignorado |
-| `locks/<id>.lock` | Global e projeto | Ignorado |
-| `.gitignore` | Projeto | Versionável |
-| `trust.json` | Somente global | Fora do projeto |
+| `config.json` | Global and project | Versionable in the project |
+| `consoles/<id>.sql` | Global and project | Versionable in the project |
+| `consoles/<id>.json` | Global and project | Versionable in the project |
+| `workspace.json` | Global and project | Ignored |
+| `locks/<id>.lock` | Global and project | Ignored |
+| `.gitignore` | Project | Versionable |
+| `trust.json` | Global only | Outside the project |
+| `credentials.json` | Global only | Outside the project |
+| `history.jsonl` | Global only | Outside the project |
 
-Conteúdo de `.sqln/.gitignore`:
+Content of `.sqln/.gitignore`:
 
 ```text
 workspace.json
@@ -277,90 +489,153 @@ locks/
 *.tmp
 ```
 
-`trust.json` guarda os destinos confirmados e os caminhos conhecidos dos projetos.
+`history.jsonl` keeps one line per statement, with `at`, `connection`, `ok`, and `sql`.
+A connection receives `"production": true` to show the badge and confirm the changes. The field leaves the file when it equals `false`.
 
-## 9. Referência de credencial
+`trust.json` keeps the confirmed destinations and the known paths of the projects.
+The implemented format has `version: 1`, `destinations`, and `projects`.
+Each destination includes engine, TCP address or socket, user, and TLS configuration, without a password.
+Each project records `connectionId` and a list of canonical `paths`.
+The path does not take part in the vault account; a new path needs a separate confirmation.
+`Trust::required` does not create files. An invalid or unreadable file returns an error, without authorizing the destination.
+`Trust::confirm` takes `locks/trust.lock`, rereads the file, and writes with a hash check.
+The file and its temporary file have permission `0600` on Unix.
+No call writes trust into the project files.
 
-No cofre, cada entrada usa o serviço `sqln` e uma conta com este formato:
+`credentials.json` keeps the plain-text authorized passwords.
+The file stays in the global folder and has permission `0600` on Unix, including the temporary file.
+`PlainFile` refuses a link, a file with an open permission, and an invalid content, without overwriting.
+Each entry uses the account of section 9 as key, for global and project connections.
+Without a vault, the application reads that file by identity before it asks for the password.
+Changing the destination, the user, or the TLS changes the key, so the previous password is not sent.
+
+## 9. Credential reference
+
+In the vault, each entry uses the service `sqln` and an account with this format:
 
 ```text
-<escopo>/<id-da-conexão>/<host>:<porta>/<usuário>/<tls>
+<scope>/<connection-id>/<engine>/<escaped-JSON-address>/<escaped-user>/<escaped-JSON-TLS>
 ```
 
-Exemplo: `project/0f3726f5-16d2-46af-82f9-54736aaa81f8/db.example.test:5432/app_user/verify`.
+`Identity::account` implements that format with percent escaping per component.
+The engine also takes part in the identity, to separate PostgreSQL from MySQL.
+The address includes host and port, or the socket path.
+The TLS includes mode and the configured paths of CA, client certificate, and key.
+Use the paths as configured, without including the project root in relative paths.
+The separate confirmation of the project path controls reuse after a folder move or copy.
+The escaping prevents collisions among separators, percent signs, and components with arbitrary text.
 
-Mudar o destino, o usuário ou o TLS muda a conta.
-Assim, a aplicação não encontra a senha anterior e precisa pedir outra.
-Renomear a conexão não muda a conta.
-O caminho da pasta não faz parte da conta.
+Changing the destination, the user, or the TLS changes the account.
+Thus, the application does not find the previous password and needs to ask for another one.
+Renaming the connection does not change the account.
+The folder path is not part of the account.
 
-Para o projeto, usar `keyring-core` com um armazenamento específico por plataforma.
-A documentação do `keyring` 4 recomenda esse caminho para aplicações.
+**Defined:** use `keyring-core` with a store specific to each platform.
+Use Keychain on macOS and Secret Service on Linux.
+The documentation of `keyring` 4 recommends that path for applications.
+`SystemVault` already offers reading, writing, and deletion with its own store, without changing the global default of the process.
+`Credentials` keeps session passwords per `Identity` and holds the password in memory after a write failure.
+`save_verified` writes and checks the reading; it removes no plain-text source.
+Vault errors use fixed messages, without the provider text or password bytes.
+`app::auth` already uses those adapters. The automated tests inject `Options::vault`, without touching the real vault.
 
-| Resposta do cofre | Significado | Ação |
-|---|---|---|
-| `NoEntry` | Sem credencial | Pedir a senha |
-| `NoStorageAccess` | Cofre bloqueado ou sem acesso | Oferecer nova tentativa e senha de sessão |
-| `NoDefaultStore` | Cofre ausente | Aplicar as regras de cofre ausente |
-| `PlatformFailure` | Erro do cofre | Oferecer nova tentativa e senha de sessão |
+The table below describes the real responses, according to the [plan validation](INITIAL_PLAN.md#validation-of-the-real-vaults).
 
-O bloqueio do Keychain e o cofre do Linux ainda não foram testados.
+| Real response | System | Result | Action |
+|---|---|---|---|
+| `NoEntry` | macOS and Linux | No credential | Ask for the password |
+| Missing bus socket | Linux | `Absent` | Apply the missing vault rules |
+| D-Bus `ServiceUnknown` | Linux | `Absent` | Apply the missing vault rules |
+| `secret_service::Error::Unavailable` | Linux | `Absent` | Apply the missing vault rules |
+| `Locked`, `NoResult`, and `Prompt` | Linux | `NoAccess` | Offer retry and session password |
+| `-25244` | macOS | `NoAccess` | Offer retry and session password |
+| `-128`, `-25293`, `-25299`, `-25307`, and `-25308` | macOS | `Failed` | Offer retry and session password |
+| Unknown failure | macOS and Linux | `Failed`, never `Absent` | Offer retry and session password |
 
-## 10. Fluxos de recuperação
+`is_absent` accepts only the three `Absent` responses, by the error type.
+On macOS, the Keychain is part of the system, so no failure means a missing vault.
+`SystemVault` uses its own store, so `NoDefaultStore` does not happen on that path.
+A locked Keychain returns `-25293` or `-128`, not `NoStorageAccess`, and the interface offers the same options.
 
-### Gravação de arquivo
+On missing access or error, offer **Try again**, **Use password in this session**, and **Cancel**.
+Ask for the password before the first use that needs it, including test and catalog read.
+Start the prompt with session-only use; saving needs an explicit choice.
+The trust confirmation shows destination, user, and TLS, with **Cancel** as initial focus.
+The real tests confirm these criteria on Keychain and Secret Service in a container.
+Repeat the Secret Service on a real Linux desktop before the release.
 
-1. Gravar em `<arquivo>.tmp`, na mesma pasta.
-2. Sincronizar o arquivo com o disco.
-3. Comparar o hash do arquivo de destino com o último hash conhecido.
-4. Renomear o arquivo temporário sobre o destino.
-5. Em caso de falha, remover o temporário, manter o texto e mostrar o alerta.
+### Refused password
 
-### Encerramento inesperado
+`ConnectError::password_refused` marks only the database refusal: `28P01` in PostgreSQL, `1045` and `1698` in MySQL.
+An error message does not prove the refusal, and `28000` also covers a `pg_hba.conf` rule.
+`ExecEvent::PasswordRefused` carries the pool number. An old pool does not speak about the current password.
+Several sessions may fail with the same password, so only the first event counts.
 
-1. Ao iniciar, remover os arquivos `.tmp` antigos.
-2. O sistema libera os bloqueios do processo encerrado.
-3. O banco encerra as sessões e as transações abertas, conforme sua semântica.
-4. A aplicação não tenta recuperar transações nem executa SQL.
+| State | Behavior |
+|---|---|
+| First refusal | Open the prompt. The new password passes `test_connection` before the write |
+| Second refusal | Suspend the definition and show the warning |
+| During suspension | Catalog and columns do not open a session; each explicit action opens the prompt |
+| Password accepted or connection edit | End the suspension. The pending action continues, because no SQL reached the database |
 
-O salvamento pode perder até 500 ms de digitação.
+A network or TLS failure during the check shows the error and does not count as a refusal.
+With sessions still open, the new password only enters after a disconnect.
 
-### Falha ao gravar a senha
+## 10. Recovery flows
 
-1. Manter a senha em memória.
-2. Informar que a senha não foi salva.
-3. Oferecer nova tentativa explícita.
+### File write
 
-### Migração para o cofre
+1. Write the temporary file in the same folder. For `config.json`, `trust.json`, and `credentials.json`, use an exclusive name and permission `0600` on Unix.
+2. Sync the file to disk.
+3. Compare the hash of the target file with the last known hash.
+4. Rename the temporary file over the target.
+5. On failure, remove the temporary file, keep the text, and show the alert.
 
-1. Detectar uma senha global com um cofre disponível.
-2. Pedir confirmação.
-3. Gravar a senha no cofre.
-4. Ler a senha do cofre e comparar.
-5. Oferecer a remoção da senha global.
-6. Em qualquer falha, manter a senha global e informar a migração incompleta.
+### Unexpected shutdown
 
-### Associação de um script sem conexão
+1. At startup, remove the old `.tmp` files.
+2. The system releases the locks of the ended process.
+3. The database ends the open sessions and transactions, according to its semantics.
+4. The application does not try to recover transactions and runs no SQL.
 
-1. O usuário escolhe uma conexão.
-2. Se o escopo mudar, a interface mostra a nova localização.
-3. O usuário confirma.
-4. Copiar o `.sql` e o `.json` para o destino.
-5. Verificar os dois arquivos.
-6. Remover os originais.
-7. Atualizar `connectionId` e `connectionScope`.
+The saving can lose up to 500 ms of typing.
 
-A aplicação não executa SQL nesse fluxo.
+### Password write failure
 
-### Projeto movido ou copiado
+1. Keep the password in memory.
+2. Report that the password was not saved.
+3. Offer an explicit retry.
 
-1. Comparar a raiz do projeto com os caminhos de `trust.json`.
-2. Se o caminho for novo, pedir confirmação antes de reutilizar uma credencial.
-3. Registrar o novo caminho depois da confirmação.
+### Migration to the vault
 
-### Perda de conexão
+1. Detect a global password with a vault available.
+2. Ask for confirmation.
+3. Write the password to the vault.
+4. Read the password from the vault and compare.
+5. Offer removal of the global password.
+6. On any failure, keep the global password and report the incomplete migration.
 
-1. Conexão ociosa: remover do pool, sem mensagem.
-2. Conexão em execução: falhar a instrução e não repetir o SQL.
-3. Transação aberta: marcar o estado como desconhecido.
-4. Antes da próxima execução nesse console, exigir confirmação.
+### Attaching a script without connection
+
+1. The user picks a connection.
+2. If the scope changes, the interface shows the new location.
+3. The user confirms.
+4. Copy the `.sql` and the `.json` to the destination.
+5. Verify both files.
+6. Remove the originals.
+7. Update `connectionId` and `connectionScope`.
+
+The application runs no SQL in that flow.
+
+### Project moved or copied
+
+1. Compare the project root with the paths of `trust.json`.
+2. If the path is new, ask for confirmation before reusing a credential.
+3. Record the new path after the confirmation.
+
+### Connection loss
+
+1. Idle connection: remove from the pool, without a message.
+2. Connection running: fail the statement and do not repeat the SQL.
+3. Open transaction: mark the state as unknown.
+4. Before the next execution in that console, require confirmation.

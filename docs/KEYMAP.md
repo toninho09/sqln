@@ -1,204 +1,434 @@
-# SQLN — Navegação e atalhos
+# SQLN — Navigation and shortcuts
 
-## Estado deste documento
+## State of this document
 
-**Definido:** este documento está aprovado.
-Ele detalha a navegação e os atalhos do [plano](../PLAN.md).
-O plano continua sendo a referência das regras funcionais.
+**Defined:** this document is approved.
+It details the navigation and the shortcuts of the [plan](INITIAL_PLAN.md).
+The plan remains the reference for the functional rules.
 
-## Critérios de escolha
+## Choice criteria
 
-1. Usar teclas que o iTerm entregou no teste `keytest`.
-2. Oferecer outro caminho para cada ação essencial.
-3. Não depender somente de `Ctrl`+setas, `Home`, `End`, `PageUp` ou `PageDown`.
-4. Manter as mesmas ações de execução nos modos convencional e Vim.
+1. Use keys that iTerm delivered in the `keytest` test.
+2. Offer another path for each essential action.
+3. Not depend only on `Ctrl`+arrows, `Home`, `End`, `PageUp`, or `PageDown`.
+4. Keep the same execution actions in the conventional and Vim modes.
 
-`F1`, `Shift+F5` e as letras depois de `Ctrl+W` ainda não foram testados com a aplicação.
-Terminal.app e terminais do Linux também não foram testados.
+The `input` module applies the `keymap` field, and the application reads it from `config.json`.
+**Defined:** the bar, the `F1` help, and the prefix options show the effective keys of the `keymap`.
+Do not show removed shortcuts or actions unavailable in the current panel.
+Double click on a table and click on a header were not tested in a real terminal.
+`Shift+F5` and `Ctrl+Enter` were tested with simulated sequences in a PTY, not in iTerm.
+The letters after `Ctrl+W` and `F1` were also not tested in iTerm.
+Terminal.app and Linux terminals were also not tested.
 
-## Regiões de foco
+## Focus regions
 
-| Região | Função |
+| Region | Role |
 |---|---|
-| Navegador | Conexões, objetos e Scripts sem conexão |
-| Abas principais | Consoles e tabelas abertos |
-| Editor | Texto SQL do console |
-| Barra de filtro | Campos `WHERE` e `ORDER BY` da visão de tabela |
-| Grade | Linhas do resultado ou da tabela |
-| Abas de resultado | Resultados e **Mensagens** do console |
-| Diálogo | Pergunta que bloqueia as demais regiões |
+| Navigator | Connections, objects, and Scripts without connection |
+| Main tabs | Open consoles and tables |
+| Editor | SQL text of the console |
+| Filter bar | `WHERE` and `ORDER BY` fields of the table view |
+| Grid | Rows of the result or of the table |
+| Result tabs | Results and **Messages** of the console |
+| Dialog | Question that blocks the other regions |
 
-## Prioridade das teclas
+## Key priority
 
-A aplicação testa cada tecla nesta ordem e para na primeira correspondência:
+The application tests each key in this order and stops at the first match:
 
-1. Diálogo aberto.
-2. Lista de sugestões aberta.
-3. Prefixo `Ctrl+W` ativo.
-4. Campo de texto em foco, como editor, filtro ou busca.
-5. Atalhos do painel em foco.
-6. Atalhos globais.
+1. Open dialog.
+2. Open suggestion list.
+3. Active `Ctrl+W` prefix.
+4. Text field in focus, such as editor, filter, or search.
+5. Shortcuts of the focused panel.
+6. Global shortcuts.
 
-Durante a inserção de texto, um caractere sempre vira texto.
-Uma tecla sem ação não produz efeito nem mensagem.
+During text input, a character always becomes text.
+A key without an action produces no effect and no message.
 
-## Prefixo `Ctrl+W`
+## `Ctrl+W` prefix
 
-O prefixo funciona nos dois modos, sem depender de recursos do terminal.
-Depois de `Ctrl+W`, pressione uma tecla. `Esc` cancela o prefixo.
-A barra de dicas mostra as opções enquanto o prefixo estiver ativo.
+The prefix works in both modes, without terminal features.
+After `Ctrl+W`, press one key. `Esc` cancels the prefix.
+A window shows the options, in groups, while the prefix is active.
+The window uses the effective keys of the `keymap`, and the hint bar shows `Ctrl+W …  Esc cancel`.
 
-| Tecla | Ação |
+| Key | Action |
 |---|---|
-| `h`, `j`, `k`, `l` ou setas | Mudar de painel |
-| `n` e `p` | Próxima aba e aba anterior |
-| `c` | Fechar a aba |
-| `b` | Recolher ou mostrar o navegador |
-| `e` | Executar |
-| `s` | Script inteiro |
-| `x` | Parar o script ou a consulta da tabela |
-| `m` | Trocar entre autocommit e manual |
+| `h`, `j`, `k`, `l`, or arrows | Change panel |
+| `n` and `p` | Next tab and previous tab |
+| `N` | Rename the current console |
+| `a` | Change or attach the console connection |
+| `,` | Open Settings |
+| `c` | Close the tab |
+| `q` | Quit the application |
+| `b` | Collapse or show the navigator |
+| `e` | Run |
+| `s` | Whole script |
+| `x` | Stop the script or the table query |
+| `f` | Format the SQL |
+| `/` | Comment or uncomment the lines |
+| `m` | Switch between autocommit and manual |
 | `C` | Commit |
 | `R` | Rollback |
-| `d` | Escolher banco ou schema |
-| `?` | Abrir a ajuda |
+| `d` | Choose database or schema |
+| `r` | Read the configuration again |
+| `?` | Open help |
+| `:` | Open the command palette |
 
-`Ctrl+W C` e `Ctrl+W R` não pedem confirmação, como os botões de commit e rollback.
+`Ctrl+W C` and `Ctrl+W R` do not ask for confirmation, like the commit and rollback buttons.
+`Ctrl+W N` uses uppercase `N` and does not replace `Ctrl+W n`.
+`Ctrl+W H` uses uppercase `H` and does not replace `Ctrl+W h`.
+The console list offers the rename action with `r`.
+The connection change asks for confirmation and does not run SQL. The rules are in section 12 of the plan.
+The main tabs follow the opening order, without groups by type.
+Closing the last console with an open table does not create another console tab.
 
-No modo convencional, `Ctrl+W` não fecha a aba, ao contrário de muitas IDEs.
-O prefixo é o caminho comum aos dois modos, e o terminal entrega essa tecla.
+In the conventional mode, `Ctrl+W` does not close the tab, unlike many IDEs.
+The prefix is the common path to both modes, and the terminal delivers that key.
 
-## Ações globais
+## Global actions
 
-| Ação | Atalho | Alternativa |
+| Action | Shortcut | Alternative |
 |---|---|---|
-| Executar | `Ctrl+Enter` | `F5` ou `Ctrl+W e` |
-| Script inteiro | `Shift+Enter` | `Shift+F5` ou `Ctrl+W s` |
-| Parar script | `Ctrl+W x` | Botão **Parar script** |
-| Ajuda | `F1` | `Ctrl+W ?` |
-| Sair | Fechar a última aba | Comando de saída pela interface |
+| Run | `Ctrl+Enter` | `F5` or `Ctrl+W e` |
+| Whole script | `Shift+Enter` | `Shift+F5` or `Ctrl+W s` |
+| Stop script | `Ctrl+W x` | **Stop script** button |
+| Format the SQL | `Ctrl+W f` | Command palette |
+| Comment or uncomment the lines | `Ctrl+W /` | `Ctrl+/` or command palette |
+| Query history | `Ctrl+W H` | Command palette |
+| Help | `F1` | `Ctrl+W ?` |
+| Command palette | `Ctrl+P` | `Ctrl+W :` |
+| Quit | `Ctrl+W q` | Close the last tab |
 
-`Ctrl+Enter` e `Shift+Enter` exigem aprimoramento de teclado no terminal.
-Ao iniciar, a aplicação detecta esse recurso e mostra na barra de dicas o caminho disponível.
+`Ctrl+Enter` and `Shift+Enter` need keyboard enhancement in the terminal.
+At startup, the application detects that feature and shows the available path in the hint bar.
 
-`Ctrl+C` não encerra a aplicação nem para o script.
-Com seleção, ele copia. Sem seleção, ele não faz nada.
+The palette lists the actions available in the current state, with the key of each one.
+Type to filter. `Up` and `Down` move the line, `Enter` runs, `Esc` closes, and a click runs the line.
+An action without a key stays in the list. A navigator key appears only with the navigator in focus.
+`Ctrl+P` has priority over the `MoveUp` of EdTUI during input in the Vim mode.
+
+The comment action acts on the selection or on the cursor line, with `-- ` in SQL and `# ` in Redis.
+A selection that ends at column 0 leaves that line out. If all lines have the comment, the action removes it.
+A terminal without keyboard enhancement sends `Ctrl+/` as the byte of `Ctrl+7`, so both keys do the same action.
+`Ctrl+/` is not in the `keytest` record. Use `Ctrl+W /` if the terminal does not deliver that key.
+
+`Ctrl+C` does not end the application and does not stop the script.
+With a selection, it copies. Without a selection, it does nothing.
 
 ## Editor
 
-| Ação | Convencional | Vim |
+| Action | Conventional | Vim |
 |---|---|---|
-| Modo de inserção | Sempre ativo | `i`, `a` e `o` |
-| Sair da inserção | Sem efeito | `Esc` |
-| Desfazer | `Ctrl+Z` | `u` |
-| Refazer | `Ctrl+Y` ou `Ctrl+Shift+Z` | `Ctrl+R` |
-| Selecionar | `Shift`+setas | `v` |
-| Selecionar tudo | `Ctrl+A` | `ggVG` |
-| Copiar, recortar e colar | `Ctrl+C`, `Ctrl+X` e `Ctrl+V` | `y`, `d` e `p` |
-| Mover por palavra | `Alt`+setas | `w` e `b` |
-| Buscar | `Ctrl+F` | `/` |
-| Substituir | `Ctrl+F`, depois `Tab` | `Ctrl+F`, depois `Tab` |
-| Sugestões | `Ctrl+Space` | `Ctrl+Space` |
-| Gravar agora | `Ctrl+S` | `Ctrl+S` |
+| Insert mode | Always active | `i`, `a`, and `o` |
+| Leave insert | No effect | `Esc` |
+| Undo | `Ctrl+Z` | `u` |
+| Redo | `Ctrl+Y` or `Ctrl+Shift+Z` | `Ctrl+R` |
+| Select | `Shift`+arrows | `v` |
+| Select all | `Ctrl+A` | `ggVG` |
+| Copy, cut, and paste | `Ctrl+C`, `Ctrl+X`, and `Ctrl+V` | `y`, `d`, and `p` |
+| Move by word | `Alt`+arrows | `w` and `b` |
+| Search | `Ctrl+F` | `/` |
+| Replace | `Ctrl+F`, then `Tab` | `Ctrl+F`, then `Tab` |
+| Suggestions | `Ctrl+Space` | `Ctrl+Space` |
+| Save now | `Ctrl+S` | `Ctrl+S` |
 
-Com sugestões abertas, `Tab` aceita, `Enter` quebra a linha e `Esc` fecha a lista.
-As setas percorrem a lista enquanto ela estiver aberta.
+The list opens when you type a name or a dot, and `Ctrl+Space` opens the list without a prefix.
+In the Vim mode, the list works only during insert.
+With suggestions open, `Tab` accepts, `Enter` breaks the line, and `Esc` closes the list.
+The **Autocomplete** option of the Settings dialog (`suggestionKeys`) changes the key that accepts: `tab` (default), `enter`, or `both`. The key that does not accept keeps its effect.
+The arrows walk the list while it is open.
 
-No macOS, o terminal trata `Cmd+C` e `Cmd+V`.
-`Cmd+V` chega à aplicação como uma colagem.
-`Cmd+C` copia a seleção do terminal, não a seleção do editor.
+In the search bar:
 
-## Navegador
+| Action | Key |
+|---|---|
+| Change field | `Tab` and `Shift+Tab` |
+| Next match | `Enter` in the search field, or `Down` |
+| Previous match | `Up` |
+| Replace the current match | `Enter` in the replace field |
+| Replace all | `Ctrl+A` in the replace field |
+| Close the bar | `Esc` |
 
-| Ação | Convencional | Vim |
+On macOS, the terminal handles `Cmd+C` and `Cmd+V`.
+`Cmd+V` reaches the application as a paste.
+`Cmd+C` copies the terminal selection, not the editor selection.
+
+## Navigator
+
+| Action | Conventional | Vim |
 |---|---|---|
-| Mover | Setas | `j` e `k` |
-| Recolher e expandir | `Esquerda` e `Direita` | `h` e `l` |
-| Abrir | `Enter` | `Enter` |
-| Novo console | `n` | `n` |
-| Atualizar catálogo | `r` | `r` |
-| Desconectar | `D` | `D` |
-| Editar conexão | `e` | `e` |
-| Excluir, com confirmação | `Delete` | `x` |
+| Move | Arrows | `j` and `k` |
+| Collapse and expand | `Left` and `Right` | `h` and `l` |
+| Open | `Enter` | `Enter` |
+| New console | `n` | `n` |
+| Refresh catalog | `r` | `r` |
+| Disconnect | `D` | `D` |
+| Add connection | `a` | `a` |
+| Edit connection | `e` | `e` |
+| Delete the saved password | `p` | `p` |
+| Delete, with confirmation | `Delete` | `x` |
+| Scripts without connection | `s` | `s` |
+| Show the structure | `i` | `i` |
+| Generate SQL | `g` | `g` |
+| Copy the row name | `y` or `Ctrl+C` | `y` or `Ctrl+C` |
+| Filter the tables | `/` or `Ctrl+F` | `/` or `Ctrl+F` |
+| Clear the filter | `Esc` | `Esc` |
 
-## Grade
+`Enter` on a connection selects the first open console of it or creates a console.
+`n` opens the console list of the connection, with **+ New console** on the first line. Without saved consoles, `n` creates a console.
+In the list, `Enter` picks the row, `Delete` (or `x` in the Vim mode) removes the script of the row, and `Esc` cancels.
+`s` opens the list of scripts without connection, with the same keys.
+On a schema, `Enter` opens or closes the row.
+On a table or a view, `Enter` opens the table view, or selects its tab when it already exists.
+`Right` and `Left` open and close the columns of a table.
+`i` opens the structure of the row: table, view, column, schema, or connection.
+In the grid of a table, `i` opens the structure of that table.
+In the structure tab of a table, `[` and `]` switch the section. In the other table tabs, those keys change the page.
+The hint line changes with the cursor line. The connection commands appear on the connection line, but the keys act on any line of it.
+The labels say the object of the command, such as `n new console` and `a add connection`.
+A command that does not fit leaves the line, and the key keeps acting.
 
-| Ação | Convencional | Vim |
+`p` erases the saved password of the connection, with a confirmation. The hint appears only when a password is saved.
+`g` opens the list of SQL templates of a table, a view, or the table of a column. The text goes to the cursor of the console of the connection and does not run. Redis has no templates.
+`y` copies the row name, without quotes.
+
+### Tree filter
+
+The filter lists the tables and the views that match each word, by the relation name or the schema name. It reads only the in-memory catalogs and does not open connections.
+
+| Action | Key in the field |
+|---|---|
+| Open the table of the cursor | `Enter` |
+| Move between relations | `Up` and `Down` |
+| Go to the filtered tree | `Tab` |
+| Cancel and return the cursor | `Esc` |
+
+The filter stays after you open a table. In the filtered tree, the navigator keys act, except `Left` and `Right`. `/` returns to the field, and `Esc` clears the filter with the cursor on the same row.
+`Enter` or `Tab` with an empty field close the filter.
+
+## Connection form
+
+| Action | Key |
+|---|---|
+| Next field | `Tab`, `Down`, or `Enter` in a field |
+| Previous field | `Shift+Tab` or `Up` |
+| Change an option | `Left` and `Right`; in the Vim mode, also `h` and `l` |
+| Toggle **Read only** | `Space`, `Left`, or `Right` |
+| Press a button | `Enter` |
+| Cancel | `Esc` |
+
+In a text field, every letter becomes text.
+In the Vim mode, `j` and `k` change field only outside text fields.
+
+## Settings
+
+Focus starts on the sidebar. `Tab` walks the sidebar, the scope, the fields of the open section, and the buttons.
+
+| Action | Key |
+|---|---|
+| Change section, in the sidebar | `Up` and `Down`; in the Vim mode, also `j` and `k` |
+| Next field | `Tab`, or `Enter` in a field; outside the sidebar, also `Down` |
+| Previous field | `Shift+Tab`; outside the sidebar, also `Up` |
+| Change an option | `Left` and `Right`; in the Vim mode, also `h` and `l` |
+| Press a button | `Enter` |
+| Cancel | `Esc` |
+
+## Password prompt
+
+The password stays masked, including during paste. Save starts unchecked.
+
+| Action | Key |
+|---|---|
+| Enter password | Type or paste in the field |
+| Next field | `Tab` or `Down` |
+| Previous field | `Shift+Tab` or `Up` |
+| Toggle save in the vault | `Space` or `Enter` on the option |
+| Connect | `Enter` in the password field or on the **Connect** button |
+| Cancel without starting the operation | `Esc` or **Cancel** button |
+
+Outside the password field, the horizontal arrows change focus.
+In the Vim mode, `h/k` and `j/l` also change focus outside the field.
+Inside the field, those letters always become text.
+The mouse selects the field, toggles the option, or presses a button.
+If the vault fails, the session option does not offer global storage in plain text.
+
+## Grid
+
+| Action | Conventional | Vim |
 |---|---|---|
-| Mover | Setas | `h`, `j`, `k` e `l` |
-| Primeira e última linha | `Alt+Up` e `Alt+Down` | `gg` e `G` |
-| Primeira e última coluna | `Alt+Left` e `Alt+Right` | `0` e `$` |
-| Selecionar | `Shift`+setas | `v` |
-| Selecionar tudo | `Ctrl+A` | `ggVG` |
-| Copiar em TSV | `Ctrl+C` | `y` |
-| Abrir valor | `Enter` | `Enter` |
-| Buscar nas linhas carregadas | `Ctrl+F` | `/` |
-| Resultado anterior e próximo | `[` e `]` | `[` e `]` |
+| Move | Arrows | `h`, `j`, `k`, and `l` |
+| First and last row | `Alt+Up` and `Alt+Down` | `gg` and `G` |
+| First and last column | `Alt+Left` and `Alt+Right` | `0` and `$` |
+| Select | `Shift`+arrows | `v` |
+| Select all | `Ctrl+A` | `ggVG` |
+| Copy as TSV | `Ctrl+C` | `y` |
+| Export to a file | `e` | `e` |
+| Clear the selection | `Esc` | `Esc` |
+| Open value | `Enter` | `Enter` |
+| Open the row vertically | `r` | `r` |
+| Search in the loaded rows | `Ctrl+F` | `/` |
+| Shrink and grow the column | `<` and `>` | `<` and `>` |
+| Automatic column width | `=` | `=` |
+| Close the result | `x` or `Delete` | `x` or `Delete` |
+| Previous and next result | `[` and `]` | `[` and `]` |
 
-Na visão de tabela, a grade também oferece:
+Without a selection, `Ctrl+C` copies the current cell.
+The result that still receives rows does not close, and the **Messages** tab does not either.
 
-| Ação | Tecla |
+In the value window and the row window, the keys are the same in both maps:
+
+| Action | Key |
 |---|---|
-| Foco em `WHERE` | `f` |
-| Foco em `ORDER BY` | `o` |
-| Ordenar pela coluna atual | `s` |
-| Carregar mais | `m` |
+| Scroll | `Up` and `Down`, or `j` and `k` |
+| Toggle the shape of a JSON value | `f` |
+| Change row, in the row window | `Left` and `Right`, or `h` and `l` |
+| Copy the visible text | `Ctrl+C` |
+| Close | `Esc` or `Enter` |
 
-## Barra de filtro
+In the **Messages** tab, the arrows walk the text.
 
-| Ação | Tecla |
+`e` opens the export. The palette offers the same action, also with focus in the editor.
+Without a result, in the **Messages** tab, or with a busy tab, the key does nothing.
+
+In the export:
+
+| Action | Key |
 |---|---|
-| Aceitar sugestão | `Tab` |
-| Aplicar os campos | `Enter` |
-| Mudar de campo | `Shift+Tab`, ou `Tab` sem sugestões |
-| Voltar à grade | `Esc` |
+| Next field | `Tab` or `Enter` |
+| Change the format, in the sidebar | `Up` and `Down` |
+| Change a choice | `Left` and `Right` |
+| Open the file explorer, in the **File** field | `Ctrl+O` |
+| Press **Export** or **Cancel** | `Enter` on the button |
+| Cancel | `Esc` |
 
-## Diálogos
+Only the **Export** button exports.
 
-| Ação | Tecla |
+`Ctrl+O` also opens the explorer in the path fields of the connection form.
+
+In the file explorer, the keys are the same in both maps:
+
+| Action | Key |
 |---|---|
-| Mudar de opção | `Tab` e `Shift+Tab`; no modo Vim, também `h` e `l` |
-| Confirmar a opção em foco | `Enter` |
-| Cancelar | `Esc` |
+| Filter the names | Type the text |
+| Show hidden names | Filter that starts with `.` |
+| Move the cursor | `Up`, `Down`, `PageUp`, and `PageDown` |
+| Open the row | `Enter` |
+| Enter the folder, with an empty filter | `Right` |
+| Go up one folder, with an empty filter | `Left` or `Backspace` |
+| Go to the home folder, with an empty filter | `~` |
+| Close without changing the field | `Esc` |
 
-O foco inicial fica sempre na opção sem efeito no banco ou no disco.
-`Enter` nunca aciona commit, rollback ou exclusão sem foco explícito nessa opção.
+With the mouse, a click moves the cursor, and a double click opens the row.
+
+In the grid search:
+
+| Action | Key |
+|---|---|
+| Next match | `Enter` or `Down` |
+| Previous match | `Up` |
+| Close the bar | `Esc` |
+
+In the table view, the grid also offers:
+
+| Action | Key |
+|---|---|
+| Focus `WHERE` | `f` |
+| Focus `ORDER BY` | `o` |
+| Sort by the current column | `s` |
+| Load more | `m` |
+| Count the rows of the applied filter | `c` |
+| Previous and next page | `[` and `]` |
+
+## Filter bar
+
+| Action | Key |
+|---|---|
+| Accept suggestion | `Tab`, or the key of the **Autocomplete** option |
+| Apply the fields | `Enter` |
+| Change field | `Shift+Tab`, or `Tab` without suggestions |
+| Open the suggestions | `Ctrl+Space`, or when you type a name |
+| Close the suggestions | `Esc` |
+| Return to the grid | `Esc`, with the suggestions closed |
+
+`Ctrl+W k` goes to the `WHERE` field, and `Ctrl+W j` returns to the grid.
+In the table view, the script and transaction actions have no effect, because the table has no script and no transaction.
+Those actions are `F5`, `Shift+F5`, `Ctrl+W e`, `Ctrl+W s`, `Ctrl+W m`, `Ctrl+W C`, `Ctrl+W R`, and `Ctrl+W d`.
+In the table grid, `x` and `Delete` also have no effect.
+`Ctrl+W c` closes the table tab and frees its data.
+
+## Question about changed scripts
+
+| Action | Key |
+|---|---|
+| Change row or button | `Up`, `Down`, `Tab`, and `Shift+Tab`; in the Vim mode, also `j` and `k` |
+| Change the action of a row | `Left`, `Right`, and `Space`; in the Vim mode, also `h` and `l` |
+| Choose the action and go to the next line | `Enter` |
+| Apply, with focus on **Apply** | `Enter` |
+| Decide later | `Esc`, or `Enter` on **Decide later** |
+
+**Apply** needs an action on each line.
+
+## Dialogs
+
+| Action | Key |
+|---|---|
+| Change option | `Tab` and `Shift+Tab`; in the Vim mode, also `h` and `l` |
+| Confirm the focused option | `Enter` |
+| Cancel | `Esc` |
+
+The initial focus always stays on the option with no effect on the database or the disk.
+`Enter` never triggers commit, rollback, or delete without explicit focus on that option.
 
 ## Mouse
 
-| Gesto | Efeito |
+| Gesture | Effect |
 |---|---|
-| Clique | Selecionar um item e mudar o foco |
-| Clique em uma aba | Trocar de aba |
-| Clique no cabeçalho da tabela | Aplicar a ordenação |
-| Duplo clique em uma tabela | Abrir a visão de tabela |
-| Roda | Percorrer listas, editor e grade |
-| Arrasto em um divisor | Ajustar os painéis |
-| Arrasto na grade | Selecionar células |
+| Click | Select an item and change focus |
+| Click on a tab | Switch tab |
+| Click on the `×` of a tab | Close the tab, with the questions of `Ctrl+W c` |
+| Click on the `EXPLORER` title | Give focus to the navigator |
+| Click on the table header | Apply sorting: ascending, descending, and no order |
+| Double click on a table | Open the table view, with two clicks on the same cell within 400 ms |
+| Click on a bar field or button | Give focus to the field, or press the button |
+| Click on **Previous** or **Next** | Change page in the table grid |
+| Click on a row of the script question | Change the action of the row, or press the button |
+| Wheel | Scroll lists, editor, and grid |
+| Drag on a divider | Resize the panels |
+| Drag on a header border | Resize the column width |
+| Drag on the grid | Select cells |
 
-O teste `keytest` não registrou um arrasto.
-Com captura de mouse ativa, a seleção nativa do terminal exige `Option` no iTerm.
+A click also answers a dialog and presses the console bar buttons.
+A click anywhere also removes the hint line message.
+The result tab line acts as a divider between the editor and the results.
+The `keytest` test did not record a drag.
+With mouse capture active, the native terminal selection needs `Option` in iTerm.
 
 ## Terminal
 
-1. Pedir somente a desambiguação de teclas, não o relato de todas as teclas.
-2. Ignorar eventos de teclas modificadoras isoladas.
-3. Tratar `Event::Paste` como colagem.
-4. Restaurar o terminal ao sair, inclusive depois de um panic.
+1. Request only keyboard disambiguation, not the report of all keys.
+2. Ignore events of lone modifier keys.
+3. Treat `Event::Paste` as a paste.
+4. Restore the terminal at exit, including after a panic.
 
-## Configuração
+## Configuration
 
-O campo `keymap` de `config.json` associa uma ação a uma lista de teclas, por modo.
+The `keymap` field of `config.json` maps an action to a list of keys, per mode.
 
 ```json
 {
   "keymap": {
-    "conventional": { "run": ["ctrl+enter", "f5"], "stop": [] },
+    "conventional": { "run": ["ctrl+enter", "f5", "ctrl+w e"], "stop": [] },
     "vim": { "run": ["ctrl+enter", "f5"] }
   }
 }
 ```
 
-Uma lista vazia remove o atalho da ação.
-Duas ações com a mesma tecla, na mesma região, invalidam a configuração.
-Nesse caso, valem as regras de configuração inválida do plano.
+A list replaces the default keys of the action, and an empty list removes the shortcut.
+A key can have two parts separated by a space, such as `ctrl+w e` and `g g`.
+Two actions with the same key, in the same region, invalidate the configuration.
+A key and a sequence that starts with it also invalidate the configuration.
+An unknown action or key name also invalidates the configuration.
+In that case, the invalid configuration rules of the plan apply.

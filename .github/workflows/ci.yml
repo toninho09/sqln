@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+
+      - name: Fetch locked dependencies
+        run: cargo fetch --locked
+
+      - name: Run delivery checks
+        run: make check
+
+  integration:
+    name: Database integration and TLS (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Fetch locked dependencies
+        run: cargo fetch --locked
+
+      - name: Create disposable TLS certificates
+        run: scripts/test-certs.sh
+
+      - name: Start test databases and TLS endpoints
+        run: docker compose -f compose.test.yaml --profile tls up -d --wait --wait-timeout 180
+
+      - name: Run database integration tests
+        shell: bash
+        run: |
+          . scripts/test-env.sh
+          export SQLN_TEST_TLS=1
+          cargo test --locked --test servers --test auth --test refused --test redis
+
+      - name: Show database logs on failure
+        if: failure()
+        run: docker compose -f compose.test.yaml --profile tls logs --no-color --tail 200
+
+      - name: Stop test databases
+        if: always()
+        run: docker compose -f compose.test.yaml --profile tls down --volumes --remove-orphans
