@@ -64,7 +64,7 @@ impl Budget {
         let cost = row_cost(row);
         let reserved = self
             .used
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                 used.checked_add(cost).filter(|total| *total <= limit)
             });
         match reserved {
@@ -76,7 +76,7 @@ impl Budget {
     pub fn release(&self, bytes: usize) {
         let _ = self
             .used
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                 Some(used.saturating_sub(bytes))
             });
     }
