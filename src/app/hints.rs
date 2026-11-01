@@ -295,7 +295,7 @@ impl App {
     fn navigator_hint(&self) -> Vec<HintItem> {
         let Some(row) = self.navigator.current(&self.connections) else {
             return self.hint_parts(&[
-                (Action::NavigatorAdd, "add"),
+                (Action::NavigatorAdd, "add connection"),
                 (Action::NavigatorScripts, "scripts"),
                 (Action::Help, "keys"),
             ]);
@@ -309,8 +309,29 @@ impl App {
             .manager
             .as_ref()
             .is_some_and(|manager| manager.is_connected(item.id));
+        let enter = match row.kind {
+            RowKind::Connection => "console",
+            RowKind::View => "open view",
+            _ => "open table",
+        };
         self.hints_when(&[
-            (Action::NavigatorOpen, "open", connection || relation),
+            (Action::NavigatorOpen, enter, connection || relation),
+            (Action::NavigatorNewConsole, "new console", true),
+            (Action::NavigatorScripts, "scripts", connection),
+            (Action::NavigatorRefresh, "refresh", true),
+            (Action::NavigatorEdit, "edit connection", connection),
+            (
+                Action::NavigatorDisconnect,
+                "disconnect",
+                connection && connected,
+            ),
+            (
+                Action::NavigatorDeletePassword,
+                "delete password",
+                connection && self.saved_identity(item).is_some(),
+            ),
+            (Action::NavigatorAdd, "add connection", connection),
+            (Action::NavigatorDelete, "remove connection", connection),
             (
                 Action::NavigatorExpand,
                 if relation { "columns" } else { "expand" },
@@ -326,18 +347,6 @@ impl App {
                 "struct",
                 item.dialect != Dialect::Redis,
             ),
-            (Action::NavigatorNewConsole, "new", true),
-            (Action::NavigatorRefresh, "refresh", true),
-            (Action::NavigatorEdit, "edit", connection),
-            (Action::NavigatorDisconnect, "disc", connection && connected),
-            (
-                Action::NavigatorDeletePassword,
-                "pwd",
-                connection && self.saved_identity(item).is_some(),
-            ),
-            (Action::NavigatorDelete, "drop", connection),
-            (Action::NavigatorAdd, "add", connection),
-            (Action::NavigatorScripts, "scripts", connection),
             (Action::Help, "keys", true),
         ])
     }

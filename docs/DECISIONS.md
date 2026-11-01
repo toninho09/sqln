@@ -109,6 +109,7 @@ Uma auditoria achou comandos úteis fora da linha e comandos sem efeito dentro d
 | Navegador | Os comandos mudam com a linha do cursor. Os comandos da conexão ficam na linha da conexão | Mesma lista em toda linha | Em uma tabela, `Del` removeria a conexão inteira, e essa dica não ajuda ali. As teclas continuam a agir, e `F1` lista todas |
 | Sem conexão | O editor troca `run` e `script` por `connection` e `navigator` | Manter `run` | Sem conexão, `F5` só mostra um aviso |
 | Ordem das janelas | A escolha das dicas segue a ordem de `on_key` | Manter a ordem própria | A linha precisa nomear as teclas da janela que recebe as teclas |
+| Rótulos do navegador (2026-11-01) | Cada comando diz o próprio objeto, como `n new console` e `Del remove connection`. Os comandos de console vêm antes dos comandos de conexão | Títulos de grupo, como `Console:` e `Connection:`; manter `new`, `add`, `edit` e `drop` | O usuário não via se um comando agia no console ou na conexão. Em 80 colunas, uma conexão SQLite perde `a`, `Del`, `Right` e `F1`. As teclas continuam a agir |
 
 ## Aba de estrutura — 2026-10-31
 

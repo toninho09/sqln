@@ -183,6 +183,8 @@ Em uma tabela ou uma view, `Enter` abre a visão de tabela, ou seleciona a aba d
 Na grade de uma tabela, `i` abre a estrutura dessa tabela.
 Na aba de estrutura de uma tabela, `[` e `]` trocam a seção. Nas outras abas de tabela, essas teclas mudam a página.
 A linha de dicas muda com a linha do cursor. Os comandos da conexão aparecem na linha da conexão, mas as teclas agem em qualquer linha dela.
+Os rótulos dizem o objeto do comando, como `n new console` e `a add connection`.
+Um comando que não cabe sai da linha, e a tecla continua a agir.
 
 ## Formulário de conexão
 

@@ -19,8 +19,8 @@ use sqln::navigator::RowKind;
 use sqln::ui::statusline::{HintItem, fit_hints, hint_text};
 use sqln::ui::theme::Theme;
 
-const SETUP: &str =
-    "CREATE TABLE items(id INTEGER, label TEXT); INSERT INTO items VALUES (1, 'a');";
+const SETUP: &str = "CREATE TABLE items(id INTEGER, label TEXT); INSERT INTO items VALUES (1, 'a');
+     CREATE VIEW first_items AS SELECT id FROM items;";
 
 struct Screen {
     app: App,
@@ -254,7 +254,7 @@ fn a_console_with_only_messages_has_no_other_tab_to_show() {
 fn a_navigator_without_connections_shows_how_to_add_one() {
     let mut s = Screen::start(Options::default());
     s.prefix('h');
-    s.assert_shows(&["a add"]);
+    s.assert_shows(&["a add connection"]);
     s.assert_hides(&["open", "struct", "edit", "refresh"]);
 }
 
@@ -262,15 +262,20 @@ fn a_navigator_without_connections_shows_how_to_add_one() {
 fn a_connection_row_shows_the_commands_of_a_connection() {
     let mut s = Screen::conventional("connection");
     s.prefix('h');
-    s.assert_shows(&[
-        "Enter open",
+    let row = s.hints_at(200);
+    for text in [
+        "Enter console",
+        "n new console",
+        "s scripts",
+        "r refresh",
+        "e edit connection",
+        "a add connection",
+        "Del remove connection",
         "Right expand",
         "i struct",
-        "n new",
-        "e edit",
-        "r refresh",
-        "Del drop",
-    ]);
+    ] {
+        assert!(row.contains(text), "{text:?} is not in {row:?}");
+    }
 }
 
 #[test]
@@ -278,14 +283,14 @@ fn a_sqlite_file_keeps_no_session_to_disconnect() {
     let mut s = Screen::conventional("disconnect");
     s.run("SELECT 1;");
     s.prefix('h');
-    s.assert_hides(&["D disc"]);
+    s.assert_hides(&["D disconnect"]);
 }
 
 #[test]
 fn a_sqlite_file_has_no_saved_password_to_delete() {
     let mut s = Screen::conventional("password");
     s.prefix('h');
-    s.assert_hides(&["p pwd"]);
+    s.assert_hides(&["p delete password"]);
 }
 
 #[test]
@@ -293,24 +298,37 @@ fn an_open_row_shows_the_key_that_closes_it() {
     let mut s = Screen::conventional("collapse");
     s.prefix('h');
     s.code(KeyCode::Right);
-    s.assert_shows(&["Left collapse"]);
-    s.assert_hides(&["Right expand"]);
+    let row = s.hints_at(200);
+    assert!(row.contains("Left collapse"), "{row}");
+    assert!(!row.contains("Right expand"), "{row}");
 }
 
 #[test]
 fn a_schema_row_shows_the_commands_of_its_tree() {
     let mut s = Screen::conventional("schema");
     s.select(RowKind::Schema, "main");
-    s.assert_shows(&["i struct", "n new", "r refresh"]);
-    s.assert_hides(&["Enter open", "e edit", "drop", "add", "scripts"]);
+    s.assert_shows(&["i struct", "n new console", "r refresh"]);
+    s.assert_hides(&["Enter open", "e edit", "remove", "add", "scripts"]);
 }
 
 #[test]
 fn a_table_row_shows_the_commands_of_a_table() {
     let mut s = Screen::conventional("table");
     s.select(RowKind::Table, "items");
-    s.assert_shows(&["Enter open", "Right columns", "i struct", "n new"]);
-    s.assert_hides(&["e edit", "drop", "disc", "add", "scripts"]);
+    s.assert_shows(&[
+        "Enter open table",
+        "Right columns",
+        "i struct",
+        "n new console",
+    ]);
+    s.assert_hides(&["e edit", "remove", "disc", "add", "scripts"]);
+}
+
+#[test]
+fn a_view_row_shows_that_enter_opens_a_view() {
+    let mut s = Screen::conventional("view");
+    s.select(RowKind::View, "first_items");
+    s.assert_shows(&["Enter open view", "n new console"]);
 }
 
 #[test]
