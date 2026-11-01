@@ -189,6 +189,7 @@ impl App {
             ExportRequest::None => {}
             ExportRequest::Cancel => self.export_form = None,
             ExportRequest::Export => self.confirm_export(),
+            ExportRequest::Browse => self.open_browser(),
         }
     }
 

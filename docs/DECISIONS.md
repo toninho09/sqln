@@ -4,6 +4,55 @@ Este documento registra as escolhas e as alternativas rejeitadas.
 As regras completas estão no [plano](../PLAN.md).
 Não reabrir uma decisão sem um fato novo.
 
+## Explorador de arquivos — 2026-10-31
+
+**Definido:** um botão `...` ao lado dos campos de caminho abre um explorador, e o usuário aprova as 10 decisões abaixo.
+O campo continua editável. O explorador só ajuda a preencher.
+
+| Ponto | Decisão aprovada | Rejeitado | Motivo |
+|---|---|---|---|
+| 1. Tipo | Janela própria no terminal, sem dependência nova | Diálogo nativo com `rfd`; só completar o caminho | O diálogo nativo falha em SSH e num Linux sem portal, e tira o foco do terminal. Completar não mostra as pastas |
+| 2. Abrir pelo teclado | `Ctrl+O` no campo. A barra de dicas mostra a tecla, o `...` serve ao mouse, e a ordem do `Tab` não muda | O `...` como parada do `Tab` | A parada acrescenta até 3 passos no formulário de rede |
+| 3. Campos | File do Export, File do SQLite, CA, certificado do cliente e chave do cliente | Só File do Export e do SQLite | O custo por campo é pequeno, e a tela fica coerente |
+| 4. Arquivo novo | Linha **Use this folder** no topo, só no Export e no SQLite. Ela troca a pasta e mantém o nome do campo | Campo de nome e botões na janela; só arquivos que existem | Um modo só. Com o campo vazio, ele recebe a pasta, e o usuário digita o nome |
+| 5. Teclas | Como na paleta: letras filtram e setas movem. `←` e `Backspace` com filtro vazio sobem uma pasta. `→` e `Enter` entram. Vale nos dois mapas de teclas | `j k h l` e `/` no modo vim | Repete um padrão do app e evita dois modos de tecla |
+| 6. Arquivos mostrados | Todos | Filtro por extensão | Um banco SQLite aceita qualquer extensão, e o filtro digitado resolve o resto |
+| 7. Ocultos | Escondidos. Um filtro que começa com `.` mostra todos | Sempre visíveis; uma tecla alterna | Não usa tecla nova. `Ctrl+H` não serve, pois muitos terminais o enviam como `Backspace` |
+| 8. Mouse | Clique move o cursor, duplo clique abre, e a roda rola | Clique único abre | Com clique único, o duplo clique por hábito entra na pasta e ativa outra linha |
+| 9. Pasta inicial | Pasta do caminho do campo. Sem ela, a pasta existente mais próxima. Campo vazio: pasta atual | Sempre a pasta atual; lembrar a última pasta | O Export já começa na pasta salva, e o campo já traz essa pasta |
+| 10. Home | `~` com filtro vazio vai para a home | Sem atalho | Uma tecla, e o campo File do Export já aceita `~` |
+
+Estas escolhas seguem as regras acima nos pontos que elas deixaram abertos.
+
+| Assunto | Escolha | Rejeitado | Motivo |
+|---|---|---|---|
+| Caminho no campo | Sempre absoluto | `~/...` | O campo do SQLite não expande `~` |
+| Extensão do Export | **Use this folder** mantém a extensão ligada ao formato. Escolher um arquivo desliga essa ligação | Sempre desligar | A troca de pasta não muda o nome |
+| Replace | A janela continua no botão **Export** | Perguntar no explorador | O campo ainda pode mudar antes do Export |
+| Filtro com texto | Esconde `../` e **Use this folder** | Manter as linhas fixas | `Enter` age no primeiro resultado |
+| Caminho que o campo alteraria | Uma nota recusa o caminho com caractere de controle, com espaço nas pontas ou fora de UTF-8 | Preencher assim mesmo | O campo guardaria outro caminho, sem aviso |
+| Link para pasta | Aparece como pasta, e `../` volta à pasta de origem | Mostrar o destino real | O usuário volta para onde estava |
+| Fora do escopo | Criar pasta, renomear, apagar, tamanho, data e favoritos | | O Export já cria as pastas que faltam |
+| Tamanho dos modais | Pedido do usuário: o Export, o formulário de conexão e o explorador crescem até 140 colunas e deixam 8 livres. O explorador fica 8 colunas mais estreito que o modal, e sua lista vai de 14 a 35 linhas | Tamanho fixo; crescer sem limite | Um caminho longo aparece inteiro, e um limite mantém o rótulo perto do valor |
+
+O usuário também aprovou o crescimento dos outros modais. Cada modal cresce só com espaço livre, deixa 8 colunas livres, e nunca fica menor que antes.
+
+| Modal | Decisão aprovada | Rejeitado | Motivo |
+|---|---|---|---|
+| Settings | Até 140 colunas. A altura não muda | Até 100 colunas | Settings e Export têm o mesmo layout |
+| Paleta de comandos | Até 100 colunas e 30 linhas. Continua no topo | Só mais linhas | Mostra mais comandos sem rolar |
+| Listas de schema, consoles, scripts e conexões | Até 100 colunas e 30 linhas. A altura segue a quantidade de itens | Tamanho fixo | Um nome longo de script era cortado |
+| Conflitos de scripts | Até 100 colunas e 30 linhas. O nome recebe as colunas novas | Tamanho fixo | O nome identifica o script |
+| Renomear e senha | Até 100 colunas. A altura não muda | Tamanho fixo | O destino da conexão e o nome têm mais espaço |
+| Perguntas | Até 100 colunas | Limite de 72 colunas | Um caminho longo quebra em menos linhas |
+| Detalhe da célula e ajuda | Até 140 colunas | Limite de 90 colunas | Um valor longo mostra mais texto em cada linha |
+
+O menu do `Ctrl+W` não cresce, pois ele não é modal e fica preso ao canto da tela.
+
+### Limitações conhecidas do explorador
+
+- A leitura da pasta fica na thread da interface, como `is_dir` e `exists` em `destination_of`. Um disco de rede lento pode travar a tela durante a leitura.
+
 ## Exportação para arquivo — 2026-10-31
 
 **Definido:** o usuário pede a exportação de resultados por um modal e aprova as 25 decisões abaixo.

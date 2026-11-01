@@ -6,13 +6,13 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Clear;
 
-use super::console::centered;
+use super::console::{centered, modal_width};
 use super::settings::{
-    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, SIDEBAR_WIDTH, WIDTH, draw_buttons, draw_divider,
-    draw_note, draw_row, draw_sidebar_rows, value_width,
+    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, SIDEBAR_WIDTH, WIDTH, browse_width, draw_browse_button,
+    draw_buttons, draw_divider, draw_note, draw_row, draw_sidebar_rows, value_width,
 };
 use super::theme::Theme;
-use super::{float_block, input_spans, text};
+use super::{float_block, input_spans, last_chars, text};
 use crate::export::NullText;
 use crate::export::form::{ExportForm, Field, RowChoice};
 
@@ -28,6 +28,8 @@ pub struct ExportLayout {
     /// One area for each format of the form, in the same order.
     pub formats: Vec<Rect>,
     pub fields: Vec<(Field, Rect)>,
+    /// The button of the path.
+    pub browse: Option<Rect>,
 }
 
 fn label(field: Field) -> &'static str {
@@ -73,8 +75,7 @@ fn value<'a>(form: &ExportForm, field: Field, width: usize, theme: &Theme) -> Li
         let chars: Vec<char> = input.text().chars().collect();
         // The end of a path holds the name of the file and its extension.
         if field == Field::File && !focused {
-            let first = chars.len().saturating_sub(width);
-            return Line::raw(chars[first..].iter().collect::<String>());
+            return Line::raw(last_chars(&chars, width));
         }
         return Line::from(input_spans(&chars, input.cursor(), width, focused, theme).0);
     }
@@ -88,7 +89,8 @@ fn value<'a>(form: &ExportForm, field: Field, width: usize, theme: &Theme) -> Li
 
 pub fn draw_export(frame: &mut Frame, form: &ExportForm, theme: &Theme) -> ExportLayout {
     let height = BORDER_ROWS + FIRST_FIELD_ROW + MAX_FIELDS + FOOTER_ROWS;
-    let area = centered(frame.area(), WIDTH, height);
+    let width = modal_width(frame.area().width, WIDTH);
+    let area = centered(frame.area(), width, height);
     frame.render_widget(Clear, area);
     let block = float_block(text::TITLE_EXPORT, theme);
     let inner = block.inner(area);
@@ -125,6 +127,7 @@ pub fn draw_export(frame: &mut Frame, form: &ExportForm, theme: &Theme) -> Expor
             theme,
         ),
         fields: Vec::new(),
+        browse: None,
     };
 
     for (y, field) in (pane.y + FIRST_FIELD_ROW..).zip(form.fields()) {
@@ -133,7 +136,10 @@ pub fn draw_export(frame: &mut Frame, form: &ExportForm, theme: &Theme) -> Expor
             height: 1,
             ..pane
         };
-        let line = value(form, field, value_width(row, LABEL_WIDTH), theme);
+        let is_path = field == Field::File;
+        let button = if is_path { browse_width(theme) } else { 0 };
+        let width = value_width(row, LABEL_WIDTH).saturating_sub(usize::from(button));
+        let line = value(form, field, width, theme);
         draw_row(
             frame,
             row,
@@ -142,6 +148,10 @@ pub fn draw_export(frame: &mut Frame, form: &ExportForm, theme: &Theme) -> Expor
             line,
             theme,
         );
+        if is_path {
+            let focused = form.focus == field;
+            layout.browse = Some(draw_browse_button(frame, row, focused, theme));
+        }
         layout.fields.push((field, row));
     }
 

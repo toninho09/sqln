@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-use super::console::centered;
+use super::console::{centered, short_modal_width};
 use super::float_block;
 use super::statusline::{HintItem, hint_line};
 use super::theme::Theme;
@@ -114,7 +114,7 @@ pub fn draw_password(
     prompt: &PasswordPrompt,
     theme: &Theme,
 ) -> Vec<(usize, Rect)> {
-    let area = centered(frame.area(), 70, 9);
+    let area = centered(frame.area(), short_modal_width(frame.area().width, 70), 9);
     frame.render_widget(Clear, area);
     let block = float_block(&prompt.title, theme);
     let inner = block.inner(area);

@@ -18,7 +18,11 @@ use crate::connector::Namespace;
 use crate::console::{Console, Focus, MessageLevel, Phase, ResultTab, RunClock, RunEnd};
 use crate::grid::{COLUMN_GAP, GridView, ResultTable, RowSearch, Value, printable};
 
-const MAX_PICKER_ROWS: u16 = 12;
+const PICKER_WIDTH: u16 = 48;
+/// The rows of a list on a small screen.
+const PICKER_ROWS: u16 = 12;
+/// The rows of the list window without the list.
+const PICKER_CHROME_ROWS: u16 = 3;
 /// The text between two buttons of a toolbar.
 pub(super) const BUTTON_GAP: u16 = 2;
 /// The columns between a row number and the first column: a space, a rule, and a space.
@@ -672,6 +676,34 @@ pub fn grid_cell_at(
         .map(|(index, _, _)| (row_index, index))
 }
 
+/// The columns that stay free beside a modal that grows.
+const MODAL_FREE_COLUMNS: u16 = 8;
+/// The rows that stay free above and below a modal that grows.
+pub(super) const MODAL_FREE_ROWS: u16 = 4;
+const MODAL_WIDTH_LIMIT: u16 = 140;
+const SHORT_MODAL_WIDTH_LIMIT: u16 = 100;
+const LIST_ROWS_LIMIT: u16 = 30;
+
+/// Returns a size that leaves `free` cells of the screen, from `base` to `limit`.
+pub fn fitted(screen: u16, free: u16, base: u16, limit: u16) -> u16 {
+    screen.saturating_sub(free).clamp(base, limit.max(base))
+}
+
+/// Returns the width of a modal. A long path needs the free columns of a wide screen.
+pub fn modal_width(screen: u16, base: u16) -> u16 {
+    fitted(screen, MODAL_FREE_COLUMNS, base, MODAL_WIDTH_LIMIT)
+}
+
+/// Returns the width of a modal with short rows, such as a list of names.
+pub fn short_modal_width(screen: u16, base: u16) -> u16 {
+    fitted(screen, MODAL_FREE_COLUMNS, base, SHORT_MODAL_WIDTH_LIMIT)
+}
+
+/// Returns the largest count of rows of a list. `chrome` is the other rows of its window.
+pub fn list_rows(screen: u16, chrome: u16, base: u16) -> u16 {
+    fitted(screen, MODAL_FREE_ROWS + chrome, base, LIST_ROWS_LIMIT)
+}
+
 pub fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
@@ -693,7 +725,7 @@ pub fn draw_dialog(
     theme: &Theme,
 ) -> (Vec<(u16, u16, usize)>, u16) {
     let area = frame.area();
-    let width = area.width.saturating_sub(8).clamp(20, 72);
+    let width = fitted(area.width, MODAL_FREE_COLUMNS, 20, SHORT_MODAL_WIDTH_LIMIT);
     let inner_width = usize::from(width.saturating_sub(2)).max(1);
     let body_rows: usize = body
         .lines()
@@ -746,10 +778,14 @@ pub fn draw_picker(
     loading: bool,
     theme: &Theme,
 ) -> (Rect, usize) {
-    let rows = u16::try_from(items.len())
-        .unwrap_or(MAX_PICKER_ROWS)
-        .min(MAX_PICKER_ROWS);
-    let box_area = centered(frame.area(), 48, rows + 3);
+    let screen = frame.area();
+    let limit = list_rows(screen.height, PICKER_CHROME_ROWS, PICKER_ROWS);
+    let rows = u16::try_from(items.len()).unwrap_or(limit).min(limit);
+    let box_area = centered(
+        screen,
+        short_modal_width(screen.width, PICKER_WIDTH),
+        rows + PICKER_CHROME_ROWS,
+    );
     frame.render_widget(Clear, box_area);
     let block = float_block(title, theme);
     let inner = block.inner(box_area);
@@ -798,8 +834,10 @@ pub fn draw_overlay(
     let area = frame.area();
     let box_area = centered(
         area,
-        area.width.saturating_sub(8).min(90),
-        area.height.saturating_sub(4),
+        area.width
+            .saturating_sub(MODAL_FREE_COLUMNS)
+            .min(MODAL_WIDTH_LIMIT),
+        area.height.saturating_sub(MODAL_FREE_ROWS),
     );
     frame.render_widget(Clear, box_area);
     let block = float_block(printable(title).trim(), theme)

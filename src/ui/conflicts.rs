@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-use super::console::centered;
+use super::console::{centered, list_rows, short_modal_width};
 use super::float_block;
 use super::text;
 use super::theme::Theme;
@@ -29,7 +29,12 @@ pub struct ConflictLayout {
 }
 
 const WIDTH: u16 = 66;
+/// The columns of a name in a window of `WIDTH`. A wider window gives its columns to it.
 const NAME_WIDTH: usize = 24;
+/// The rows of the list on a small screen.
+const ROWS: u16 = 12;
+/// The rows of the window without the list: the borders, the note, and the buttons.
+const CHROME_ROWS: u16 = 6;
 
 pub fn draw_conflicts(
     frame: &mut Frame,
@@ -38,8 +43,11 @@ pub fn draw_conflicts(
     note: Option<&str>,
     theme: &Theme,
 ) -> ConflictLayout {
-    let height = u16::try_from(rows.len()).unwrap_or(10).min(12) + 6;
-    let area = centered(frame.area(), WIDTH, height);
+    let screen = frame.area();
+    let limit = list_rows(screen.height, CHROME_ROWS, ROWS);
+    let height = u16::try_from(rows.len()).unwrap_or(limit).min(limit) + CHROME_ROWS;
+    let area = centered(screen, short_modal_width(screen.width, WIDTH), height);
+    let name_width = NAME_WIDTH + usize::from(area.width.saturating_sub(WIDTH));
     frame.render_widget(Clear, area);
     let block = float_block(text::TITLE_CONFLICTS, theme);
     let inner = block.inner(area);
@@ -60,7 +68,7 @@ pub fn draw_conflicts(
         } else {
             text::STATE_CHANGED
         };
-        let name: String = printable(row.name).chars().take(NAME_WIDTH).collect();
+        let name: String = printable(row.name).chars().take(name_width).collect();
         let choice = format!("< {} >", row.choice.unwrap_or(text::CHOICE_NONE));
         let style = if index == cursor {
             theme.dialog_focus
@@ -68,7 +76,7 @@ pub fn draw_conflicts(
             theme.dialog_option
         };
         let spans = vec![
-            Span::raw(format!("{name:<NAME_WIDTH$} {state:<9} ")),
+            Span::raw(format!("{name:<name_width$} {state:<9} ")),
             Span::styled(choice, style),
         ];
         frame.render_widget(Paragraph::new(Line::from(spans)), line);

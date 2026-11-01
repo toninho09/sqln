@@ -406,6 +406,32 @@ fn the_extension_follows_the_format_until_the_path_changes() {
 }
 
 #[test]
+fn the_extension_follows_the_format_after_a_new_folder() {
+    let mut f = form(AllRows::Complete, None);
+    f.set_path(&format!("/data/users-{STAMP}.csv"), false);
+    press(&mut f, KeyCode::Down);
+    assert_eq!(f.path_text(), format!("/data/users-{STAMP}.tsv"));
+}
+
+#[test]
+fn a_chosen_file_keeps_its_extension() {
+    let mut f = form(AllRows::Complete, None);
+    f.set_path("/data/old.txt", true);
+    press(&mut f, KeyCode::Down);
+    assert_eq!(f.format, ExportFormat::Tsv);
+    assert_eq!(f.path_text(), "/data/old.txt");
+}
+
+#[test]
+fn only_the_path_asks_for_the_file_browser() {
+    let mut f = form(AllRows::Complete, None);
+    let browse = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    assert!(matches!(f.on_key(browse, false), ExportRequest::None));
+    f.focus_on(Field::File);
+    assert!(matches!(f.on_key(browse, false), ExportRequest::Browse));
+}
+
+#[test]
 fn the_saved_folder_starts_the_path() {
     let choices = ExportChoices {
         folder: Some(PathBuf::from("/data/out")),

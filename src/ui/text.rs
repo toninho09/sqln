@@ -124,6 +124,21 @@ pub const HINT_FORM: &[HintPart] = &[
     ("Enter", "next or press"),
     ("Esc", "cancel"),
 ];
+pub const HINT_FORM_PATH: &[HintPart] = &[
+    ("Tab", "next"),
+    ("Ctrl+O", "browse"),
+    ("Enter", "next"),
+    ("Esc", "cancel"),
+];
+pub const HINT_BROWSER: &[HintPart] = &[
+    ("", "Write to filter"),
+    ("Up/Down", "move"),
+    ("Enter", "open"),
+    ("Left", "up"),
+    ("~", "home"),
+    (".", "hidden"),
+    ("Esc", "cancel"),
+];
 pub const HINT_EXPORT_FORMATS: &[HintPart] = &[
     ("Up/Down", "format"),
     ("Tab", "next"),
@@ -411,6 +426,16 @@ pub const CONSOLE_RENAMED: &str = "The console has a new name.";
 pub const CONNECTION_CHANGE_BUSY: &str = "End the execution and the transaction before the change.";
 pub const NO_OTHER_CONNECTION: &str = "No other connection is available.";
 pub const SETTINGS_SAVED: &str = "The settings are saved.";
+pub const TITLE_BROWSER: &str = "Choose a file";
+pub const BUTTON_BROWSE: &str = "...";
+pub const BROWSER_USE_FOLDER: &str = "Use this folder";
+pub const BROWSER_EMPTY: &str = "No matching items";
+pub const BROWSER_BAD_PATH: &str = "A text field cannot hold this path.";
+
+pub fn browser_unreadable(reason: &str) -> String {
+    format!("Cannot read the folder: {reason}")
+}
+
 pub const TITLE_EXPORT: &str = "Export";
 pub const TITLE_EXPORT_EXISTS: &str = "File exists";
 pub const TITLE_EXPORT_PART: &str = "Incomplete export";

@@ -7,10 +7,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
-use super::console::centered;
+use super::console::{centered, modal_width};
 use super::float_block;
 use super::icons::connection_symbol;
 use super::input_spans;
+use super::settings::{browse_width, draw_browse_button};
 use super::text;
 use super::theme::Theme;
 use crate::connector::target::hide_uri_password;
@@ -156,6 +157,8 @@ fn group_title(group: Group) -> &'static str {
 #[derive(Clone, Debug, Default)]
 pub struct FormLayout {
     pub fields: Vec<(Field, Rect)>,
+    /// The buttons of the path fields.
+    pub browse: Vec<(Field, Rect)>,
 }
 
 fn label(field: Field) -> &'static str {
@@ -266,14 +269,15 @@ fn value_spans(
     }
 }
 
-/// Draws one row: the focus mark, the label, and the value.
+/// Draws one row: the focus mark, the label, and the value. It returns the area of the
+/// button of a path field.
 fn draw_field_row(
     frame: &mut Frame,
     area: Rect,
     form: &ConnectionForm,
     field: Field,
     theme: &Theme,
-) {
+) -> Option<Rect> {
     let focused = form.focus == field;
     if focused {
         let mark = Span::styled(theme.icons.focus_mark, theme.panel_title_focused);
@@ -318,8 +322,19 @@ fn draw_field_row(
         width: value.width.saturating_sub(2),
         ..value
     };
+    let text = Rect {
+        width: text.width.saturating_sub(if field.is_path() {
+            browse_width(theme)
+        } else {
+            0
+        }),
+        ..text
+    };
     let spans = value_spans(form, field, usize::from(text.width).max(1), theme);
     frame.render_widget(Paragraph::new(Line::from(spans)), text);
+    field
+        .is_path()
+        .then(|| draw_browse_button(frame, area, focused, theme))
 }
 
 /// Draws the groups of one column, from the top of `area`.
@@ -356,7 +371,9 @@ fn draw_column(
                 height: 1,
                 ..area
             };
-            draw_field_row(frame, row, form, *field, theme);
+            if let Some(button) = draw_field_row(frame, row, form, *field, theme) {
+                layout.browse.push((*field, button));
+            }
             layout.fields.push((*field, row));
             y += 1;
         }
@@ -373,7 +390,7 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
         .collect();
     let spacing = Spacing::choose(frame.area(), &groups);
     let (width, height) = spacing.size(&groups);
-    let area = centered(frame.area(), width, height);
+    let area = centered(frame.area(), modal_width(frame.area().width, width), height);
     frame.render_widget(Clear, area);
     let title = match &form.editing {
         None => text::TITLE_NEW_CONNECTION.to_owned(),

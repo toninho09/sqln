@@ -7,6 +7,7 @@ use ratatui::layout::{Position, Rect};
 
 use super::{App, MAX_EDITOR_RATIO, MIN_EDITOR_RATIO};
 use crate::console::Focus;
+use crate::export::form::Field;
 use crate::form::FormRequest;
 use crate::input::Action;
 use crate::navigator::{MIN_WIDTH, Navigator, RowKind};
@@ -351,6 +352,37 @@ impl App {
         }
     }
 
+    /// A click moves the cursor, and a second click opens the row. With one click, the
+    /// second click of a habit would act on a row of the next folder.
+    pub(super) fn on_browser_mouse(&mut self, mouse: MouseEvent) {
+        let (area, first) = self.layout.browser;
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left)
+                if area.contains(Position::new(mouse.column, mouse.row)) =>
+            {
+                let index = first + usize::from(mouse.row - area.y);
+                let double = self.is_double_click(mouse);
+                let Some(browser) = &mut self.browser else {
+                    return;
+                };
+                browser.point_at(index);
+                if double {
+                    let request = browser.open(index);
+                    self.on_browser_request(request);
+                }
+            }
+            MouseEventKind::ScrollUp => self.scroll_browser(-WHEEL_ROWS),
+            MouseEventKind::ScrollDown => self.scroll_browser(WHEEL_ROWS),
+            _ => {}
+        }
+    }
+
+    fn scroll_browser(&mut self, rows: isize) {
+        if let Some(browser) = &mut self.browser {
+            browser.move_by(rows);
+        }
+    }
+
     pub(super) fn on_palette_mouse(&mut self, mouse: MouseEvent) {
         let (area, first) = self.layout.palette;
         let inside = area.contains(Position::new(mouse.column, mouse.row));
@@ -373,22 +405,26 @@ impl App {
             return;
         }
         let position = Position::new(mouse.column, mouse.row);
-        let field = self
-            .layout
-            .form
-            .fields
-            .iter()
-            .find(|(_, area)| area.contains(position));
-        let Some((field, _)) = field else { return };
-        let field = *field;
+        let layout = &self.layout.form;
+        let inside = |(_, area): &&(_, Rect)| area.contains(position);
+        let button = layout.browse.iter().find(inside);
+        let Some((chosen, _)) = button.or(layout.fields.iter().find(inside)) else {
+            return;
+        };
+        let (chosen, browse) = (*chosen, button.is_some());
         let Some(form) = &mut self.form else { return };
-        form.focus_on(field);
+        form.focus_on(chosen);
+        if browse {
+            self.open_browser();
+            return;
+        }
         let request = form.press();
         match request {
             FormRequest::Test => self.test_form(),
             FormRequest::Save => self.save_form(),
             FormRequest::Disconnect => self.disconnect_form(),
             FormRequest::Cancel => self.form = None,
+            FormRequest::Browse => self.open_browser(),
             FormRequest::None => {}
         }
     }
@@ -433,6 +469,7 @@ impl App {
         }
         let position = Position::new(mouse.column, mouse.row);
         let layout = &self.layout.export;
+        let browse = layout.browse.is_some_and(|area| area.contains(position));
         let format = layout
             .formats
             .iter()
@@ -445,7 +482,10 @@ impl App {
         let Some(form) = &mut self.export_form else {
             return;
         };
-        if let Some(format) = format {
+        if browse {
+            form.focus_on(Field::File);
+            self.open_browser();
+        } else if let Some(format) = format {
             form.open_format(format);
         } else if let Some(field) = field {
             form.focus_on(field);

@@ -270,7 +270,7 @@ A cópia segue o formato TSV confirmado na seção 10 do plano, sem cabeçalhos.
 ```text
 ╭─ Export ───────┬─────────────────────────────────────────────────────╮
 │ > CSV          │   Rows             < All rows >                     │
-│   TSV          │   File             ./users-2026-10-31-1530.csv      │
+│   TSV          │   File             sers-2026-10-31-1530.csv [...]  │
 │   JSON         │   Header           < On >                           │
 │   JSON Lines   │   Delimiter        < , >                            │
 │   SQL INSERT   │   NULL text        < Empty >                        │
@@ -298,12 +298,40 @@ Redis e Valkey oferecem só as linhas carregadas, sem SQL INSERT.
 | JSON e JSON Lines | Nenhuma |
 | SQL INSERT | Tabela, um por linha ou agrupado, e linhas por `INSERT` |
 
+O modal tem 72 colunas e cresce até 140 numa tela maior, com 8 colunas livres. A altura não muda, pois ela já mostra todos os campos.
 O campo **File** aceita `~` e um caminho relativo à pasta atual, e cria as pastas que faltam. A extensão segue o formato até o usuário editar o caminho.
 Um arquivo existente pede **Replace** ou **Cancel**.
+O botão `...` e `Ctrl+O` abrem o explorador de arquivos.
 
 Depois de **Export**, o modal fecha, a aba fica ocupada, e a linha de dicas mostra as linhas gravadas. Cada aba pode ter uma exportação, e o modal recusa um destino em uso.
 **All rows** não tem limite de tempo, e **Stop** cancela. A grade mantém o resultado.
 A gravação usa `<nome>.tmp` e renomeia no fim. Depois de **Stop** ou de um erro, uma janela oferece **Delete** e **Keep**. Sem linhas gravadas, o temporário some sem pergunta.
+
+### Explorador de arquivos
+
+Os campos de caminho têm um botão `...`. O botão e `Ctrl+O` abrem esta janela acima do modal:
+
+```text
+╭ Choose a file ───────────────────────────────────────────────╮
+│ /home/ana/projetos/loja                                      │
+│ >                                                            │
+│ Use this folder                                              │
+│ ../                                                          │
+│ docs/                                                        │
+│ src/                                                         │
+│ Cargo.toml                                                   │
+│ loja.db                                                      │
+╰──────────────────────────────────────────────────────────────╯
+```
+
+A janela fica 8 colunas mais estreita que o modal, e a lista mostra de 14 a 35 linhas, conforme a altura da tela.
+Os campos são **File** do Export, **File** do SQLite, **CA file**, **Client certificate** e **Client key**.
+A janela abre na pasta do caminho do campo. Sem ela, abre na pasta existente mais próxima, e com o campo vazio abre na pasta atual.
+As pastas vêm primeiro, e a ordem ignora maiúsculas. Todos os arquivos aparecem, menos os ocultos. Um filtro que começa com `.` mostra os ocultos.
+`Enter` numa pasta entra nela. `Enter` num arquivo preenche o campo com o caminho absoluto e fecha a janela. `Esc` fecha a janela, e o campo não muda.
+
+**Use this folder** aparece só no Export e no SQLite, pois esses campos aceitam um arquivo novo. A linha troca a pasta e mantém o nome do campo. Com o campo vazio, ele recebe a pasta, e o usuário digita o nome.
+No Export, a extensão continua a seguir o formato depois de **Use this folder**, e para de seguir depois de escolher um arquivo.
 Fechar a aba ou sair apaga o temporário.
 
 ### Chave Redis ou Valkey
@@ -357,6 +385,8 @@ O formulário escolhe o primeiro arranjo que cabe na tela, com 2 linhas e 2 colu
 | Duas colunas, com títulos e espaço entre os grupos | 22 | 116 |
 | Uma coluna, com espaço entre os grupos | 28 | 72 |
 | Uma coluna, sem espaço | 22 | 72 |
+
+Numa tela maior, a largura cresce até 140 colunas e deixa 8 colunas livres. O arranjo não muda, pois a largura cresce depois da escolha.
 
 O campo em foco tem uma marca no início da linha, rótulo em destaque e fundo próprio.
 Sem cor, a marca é `>`, e o rótulo fica em negrito.
@@ -661,6 +691,8 @@ A execução fica bloqueada até a escolha e a confirmação de uma conexão.
 ### Configurações
 
 Abrir com `Ctrl+W ,`.
+A janela tem 72 colunas e cresce até 140 numa tela maior, com 8 colunas livres. A altura não muda.
+As listas, os conflitos, **Rename console**, a senha e as perguntas crescem até 100 colunas. As listas e os conflitos também crescem até 30 linhas. O detalhe da célula e a ajuda crescem até 140 colunas.
 O projeto grava somente os valores que declara.
 Oferecer escopo global ou do projeto e os sete campos abaixo.
 Mostrar os valores herdados do global e permitir remover uma definição do projeto para usar o global.
@@ -782,6 +814,7 @@ A tela mostra os atalhos do modo ativo e do painel em foco.
 ### Paleta de comandos
 
 `Ctrl+P` abre esta janela. Cada palavra do filtro precisa aparecer no nome ou na tecla.
+A janela tem 64 colunas e 12 linhas de lista, e cresce até 100 colunas e 30 linhas numa tela maior. Ela continua no topo.
 
 ```text
 ╭─ Commands ───────────────────────────────────────────╮

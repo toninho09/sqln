@@ -32,6 +32,7 @@ Thread principal                    Runtime Tokio
 | `app` | Estado da aplicação, ações e atualização do estado |
 | `ui` | Desenho das telas e dos widgets, temas (`theme`), esquemas de cores (`schemes`), símbolos (`icons`), barra de status (`statusline`) e menu do prefixo (`which_key`) |
 | `palette` | Estado e filtro da paleta de comandos; `app` monta a lista, e `ui` desenha |
+| `browser` | Estado do explorador de arquivos dos campos de caminho: pasta, linhas e filtro |
 | `input` | Mapa de teclas: regiões, ações, sequências e regras de `keymap` |
 | `navigator` | Árvore de conexões, schemas, relações e colunas |
 | `form` | Campos e validação do cadastro de conexão |

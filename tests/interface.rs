@@ -1269,6 +1269,134 @@ fn a_click_selects_a_field_in_each_placement() {
     }
 }
 
+/// Opens the form of a new SQLite connection, with the focus on its file.
+fn sqlite_form_screen(name: &str) -> Screen {
+    let mut screen = form_screen(name, Theme::plain());
+    screen.code(KeyCode::Right);
+    screen.code(KeyCode::Right);
+    focus_field(&mut screen, Field::File);
+    screen
+}
+
+fn focus_field(screen: &mut Screen, field: Field) {
+    for _ in 0..32 {
+        if screen.app.form().unwrap().focus == field {
+            return;
+        }
+        screen.code(KeyCode::Tab);
+    }
+    panic!("the form has no field {field:?}");
+}
+
+#[test]
+fn the_file_browser_fills_the_file_of_a_sqlite_connection() {
+    let dir = temp_dir("form-browse");
+    std::fs::write(dir.join("shop.db"), "").unwrap();
+    let dir = dir.canonicalize().unwrap();
+    let mut screen = sqlite_form_screen("form-browse");
+    assert!(screen.app.hint().contains("Ctrl+O browse"));
+    screen.write(&format!("{}/", dir.display()));
+
+    screen.app.on_event(Event::Key(ctrl('o')));
+    assert!(screen.screen(100, 40).contains("Use this folder"));
+    screen.type_text("shop");
+    screen.code(KeyCode::Enter);
+    assert!(!screen.screen(100, 40).contains("Choose a file"));
+    let form = screen.app.form().unwrap();
+    let path = dir.join("shop.db");
+    assert_eq!(form.text(Field::File), path.display().to_string());
+    assert_eq!(form.cursor, form.text(Field::File).chars().count());
+}
+
+#[test]
+fn use_this_folder_leaves_the_file_of_a_connection_ready_for_a_name() {
+    let dir = temp_dir("form-browse-folder").canonicalize().unwrap();
+    let mut screen = sqlite_form_screen("form-browse-folder");
+    screen.write(&format!("{}/", dir.display()));
+    screen.app.on_event(Event::Key(ctrl('o')));
+    screen.code(KeyCode::Enter);
+    screen.type_text("new.db");
+    assert_eq!(
+        screen.app.form().unwrap().text(Field::File),
+        dir.join("new.db").display().to_string()
+    );
+}
+
+#[test]
+fn the_button_of_a_field_opens_the_file_browser_for_that_field() {
+    for (width, height) in [(100, 40), (130, 26), (100, 30), (80, 24)] {
+        let mut screen = form_screen("form-browse-tls", Theme::plain());
+        let shown = screen.screen(width, height);
+        assert_eq!(shown.matches("[...]").count(), 3, "{width} x {height}");
+        let (y, row) = shown
+            .lines()
+            .enumerate()
+            .find(|(_, row)| row.contains("Client key"))
+            .unwrap();
+        let label = row.find("Client key").unwrap();
+        let button = label + row[label..].find("[...]").unwrap();
+        screen.click(row[..button].chars().count() as u16, y as u16);
+        assert_eq!(screen.app.form().unwrap().focus, Field::ClientKey);
+        let shown = screen.screen(width, height);
+        assert!(shown.contains("Choose a file"), "{shown}");
+        assert!(!shown.contains("Use this folder"), "{shown}");
+
+        screen.code(KeyCode::Esc);
+        assert!(!screen.screen(width, height).contains("Choose a file"));
+        assert_eq!(screen.app.form().unwrap().text(Field::ClientKey), "");
+    }
+}
+
+#[test]
+fn another_field_does_not_open_the_file_browser() {
+    let mut screen = form_screen("form-browse-name", Theme::plain());
+    focus_field(&mut screen, Field::Name);
+    assert!(!screen.app.hint().contains("Ctrl+O"));
+    screen.app.on_event(Event::Key(ctrl('o')));
+    assert!(!screen.screen(100, 40).contains("Choose a file"));
+}
+
+/// Returns the columns of the top border of a window.
+fn window_width(screen: &str, title: &str) -> usize {
+    let row = screen.lines().find(|row| row.contains(title)).unwrap();
+    let first = row.chars().position(|c| c == '╭').unwrap();
+    let last = row.chars().position(|c| c == '╮').unwrap();
+    last - first + 1
+}
+
+#[test]
+fn the_form_grows_with_the_screen_and_keeps_its_placement() {
+    let mut screen = form_screen("form-grow", Theme::plain());
+    for (width, height, expected) in [(80, 24, 72), (100, 40, 92), (160, 40, 140), (200, 26, 140)] {
+        let shown = screen.screen(width, height);
+        let title = "New connection";
+        assert_eq!(window_width(&shown, title), expected, "{width} x {height}");
+    }
+}
+
+#[test]
+fn a_click_selects_a_field_of_a_wide_form() {
+    let mut screen = form_screen("form-grow-click", Theme::plain());
+    let lines = rows(&screen.buffer(200, 50));
+    let row = lines
+        .iter()
+        .position(|line| line.contains("CA file"))
+        .unwrap();
+    let button = lines[row].find("[...]").unwrap();
+    screen.click(lines[row][..button].chars().count() as u16, row as u16);
+    assert_eq!(screen.app.form().unwrap().focus, Field::CaFile);
+    assert!(screen.screen(200, 50).contains("Choose a file"));
+}
+
+#[test]
+fn a_long_path_stays_away_from_the_button() {
+    let mut screen = sqlite_form_screen("form-browse-long");
+    screen.write(&"x".repeat(200));
+    let shown = screen.screen(100, 40);
+    // The cursor takes the column after the text, and a gap comes before the button.
+    assert!(shown.contains("xx  [...]"), "{shown}");
+}
+
 #[test]
 fn the_form_keeps_a_note_visible_in_each_placement() {
     for (width, height) in [(100, 40), (130, 26), (100, 30), (80, 24)] {

@@ -76,6 +76,10 @@ impl App {
             self.on_name_key(key);
             return;
         }
+        if self.browser.is_some() {
+            self.on_browser_key(key);
+            return;
+        }
         if self.settings_form.is_some() {
             self.on_settings_key(key);
             return;
@@ -593,6 +597,7 @@ impl App {
             FormRequest::Test => self.test_form(),
             FormRequest::Save => self.save_form(),
             FormRequest::Disconnect => self.disconnect_form(),
+            FormRequest::Browse => self.open_browser(),
         }
     }
 
@@ -870,6 +875,8 @@ impl App {
             text::AUTH_PASSWORD_HINT
         } else if self.rename.is_some() {
             text::HINT_NAME
+        } else if self.browser.is_some() {
+            text::HINT_BROWSER
         } else if let Some(form) = &self.settings_form {
             if form.focus == settings::Field::Sections {
                 text::HINT_SETTINGS_SECTIONS
@@ -879,6 +886,8 @@ impl App {
         } else if let Some(form) = &self.export_form {
             if form.focus == export_form::Field::Formats {
                 text::HINT_EXPORT_FORMATS
+            } else if form.focus == export_form::Field::File {
+                text::HINT_FORM_PATH
             } else {
                 text::HINT_FORM
             }
@@ -891,8 +900,12 @@ impl App {
             }
         } else if self.overlay.is_some() {
             text::HINT_OVERLAY
-        } else if self.form.is_some() {
-            text::HINT_FORM
+        } else if let Some(form) = &self.form {
+            if form.focus.is_path() {
+                text::HINT_FORM_PATH
+            } else {
+                text::HINT_FORM
+            }
         } else if self.palette.is_some() {
             text::HINT_PALETTE
         } else if self.pending_key.is_some_and(Chord::is_prefix) {

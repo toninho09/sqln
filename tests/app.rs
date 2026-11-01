@@ -1313,6 +1313,95 @@ impl Fixture {
 }
 
 #[test]
+fn the_file_browser_chooses_the_folder_of_an_export() {
+    let dir = export_dir("export-browse");
+    let folder = dir.join("reports");
+    std::fs::create_dir(&folder).unwrap();
+    let mut f = Fixture::new("export-browse");
+    f.run_script("SELECT 1 AS a;");
+    f.open_export();
+    f.set_export_path(&dir.join("out.csv"));
+    assert!(f.app.hint().contains("Ctrl+O browse"), "{}", f.app.hint());
+
+    f.press(ctrl('o'));
+    assert!(f.sees("Choose a file"));
+    assert!(f.app.hint().contains("Write to filter"), "{}", f.app.hint());
+    f.press(key(KeyCode::Down));
+    f.press(key(KeyCode::Down));
+    f.press(key(KeyCode::Enter));
+    f.press(key(KeyCode::Enter));
+    assert!(!f.sees("Choose a file"));
+
+    f.press_export();
+    f.pump_until(|f| f.sees("1 rows") || f.sees("1 row"));
+    let path = folder.canonicalize().unwrap().join("out.csv");
+    assert_eq!(read(&path), "a\n1\n");
+}
+
+#[test]
+fn a_wide_screen_shows_more_of_the_path_of_an_export() {
+    let dir = export_dir("export-wide");
+    let path = dir.join("a-very-long-name-of-a-report-for-the-wide-dialog-of-an-export.csv");
+    let mut f = Fixture::new("export-wide");
+    f.run_script("SELECT 1 AS a;");
+    f.open_export();
+    f.set_export_path(&path);
+    f.press(key(KeyCode::Tab));
+    let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+    let mut draw = |width| {
+        let mut terminal = Terminal::new(TestBackend::new(width, 40)).unwrap();
+        terminal.draw(|frame| f.app.draw(frame)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let cells = buffer.content().chunks(usize::from(width));
+        cells
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(!draw(80).contains(&name));
+    assert!(draw(160).contains(&name));
+}
+
+#[test]
+fn escape_leaves_the_path_of_an_export() {
+    let dir = export_dir("export-browse-escape");
+    let path = dir.join("out.csv");
+    let mut f = Fixture::new("export-browse-escape");
+    f.run_script("SELECT 1 AS a;");
+    f.open_export();
+    f.set_export_path(&path);
+    f.click_text("[...]");
+    assert!(f.sees("Choose a file"));
+    f.press(key(KeyCode::Esc));
+    assert!(!f.sees("Choose a file"));
+    assert!(f.sees("[Export]"));
+    f.press_export();
+    f.pump_until(|_| path.exists());
+}
+
+#[test]
+fn a_double_click_opens_a_row_of_the_file_browser() {
+    let dir = export_dir("export-browse-mouse");
+    std::fs::create_dir(dir.join("inner")).unwrap();
+    std::fs::write(dir.join("inner/old.csv"), "").unwrap();
+    let mut f = Fixture::new("export-browse-mouse");
+    f.run_script("SELECT 1 AS a;");
+    f.open_export();
+    f.set_export_path(&dir.join("out.csv"));
+    f.click_text("[...]");
+
+    f.click_text(" inner/");
+    assert!(f.sees(" inner/"), "one click only moves the cursor");
+    f.click_text(" inner/");
+    assert!(f.sees(" old.csv"));
+    f.click_text(" old.csv");
+    assert!(f.sees("Choose a file"));
+    f.click_text(" old.csv");
+    assert!(!f.sees("Choose a file"));
+    assert!(f.sees("old.csv"), "the field shows the chosen file");
+}
+
+#[test]
 fn an_export_writes_the_rows_of_the_grid() {
     let dir = export_dir("export-grid");
     let path = dir.join("out.csv");

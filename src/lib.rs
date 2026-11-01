@@ -1,4 +1,5 @@
 pub mod app;
+pub mod browser;
 pub mod catalog;
 pub mod clipboard;
 pub mod complete;

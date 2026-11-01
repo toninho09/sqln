@@ -79,6 +79,14 @@ impl Field {
             _ => FieldStyle::Text,
         }
     }
+
+    /// Returns true for a field that holds the path of a file.
+    pub fn is_path(self) -> bool {
+        matches!(
+            self,
+            Field::File | Field::CaFile | Field::ClientCertificate | Field::ClientKey
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,6 +116,8 @@ pub enum FormRequest {
     Test,
     Save,
     Disconnect,
+    /// Opens the file browser for the focused field.
+    Browse,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -441,6 +451,12 @@ impl ConnectionForm {
         }
     }
 
+    /// Writes the choice of the file browser in the focused field.
+    pub fn set_focused_path(&mut self, path: &str) {
+        self.set(self.focus, path.to_owned());
+        self.cursor = self.focused_len();
+    }
+
     /// Writes pasted text in a text field. A form field holds one line.
     pub fn on_paste(&mut self, text: &str) {
         if matches!(self.focus.style(), FieldStyle::Text | FieldStyle::Secret) {
@@ -464,6 +480,11 @@ impl ConnectionForm {
             KeyCode::Tab | KeyCode::Down => self.move_focus(true),
             KeyCode::BackTab | KeyCode::Up => self.move_focus(false),
             KeyCode::Enter => return self.on_enter(),
+            KeyCode::Char('o')
+                if key.modifiers == KeyModifiers::CONTROL && self.focus.is_path() =>
+            {
+                return FormRequest::Browse;
+            }
             KeyCode::Left if in_text => self.cursor = self.cursor.saturating_sub(1),
             KeyCode::Right if in_text => self.cursor = (self.cursor + 1).min(self.focused_len()),
             KeyCode::Left if style == FieldStyle::Button => self.move_focus(false),

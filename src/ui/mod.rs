@@ -1,6 +1,7 @@
 //! Screen drawing.
 
 pub mod auth;
+pub mod browser;
 pub mod conflicts;
 pub mod console;
 pub mod export;
@@ -46,6 +47,11 @@ use crate::editor::{MarkState, SearchBar, SearchField, SqlEditor, SuggestionList
 const GUTTER_COLUMNS: u16 = 4;
 const MAX_LIST_ROWS: usize = 8;
 const MIN_LIST_WIDTH: u16 = 24;
+
+/// Returns the last characters of a text. The end of a path holds its last name.
+pub(crate) fn last_chars(chars: &[char], width: usize) -> String {
+    chars[chars.len().saturating_sub(width)..].iter().collect()
+}
 
 /// Returns the block of a window above the panels.
 pub(crate) fn float_block<'a>(title: &str, theme: &Theme) -> Block<'a> {

@@ -1,6 +1,7 @@
 //! The application shell: the consoles, the connections, and the screen.
 
 mod auth;
+mod browse;
 mod close;
 mod conflicts;
 mod connections;
@@ -31,6 +32,7 @@ use ratatui::widgets::{Block, Paragraph};
 use tokio::sync::mpsc::Receiver;
 
 use self::mouse::Drag;
+use crate::browser::FileBrowser;
 use crate::catalog::Catalog;
 use crate::clipboard::{SharedClipboard, SystemClipboard};
 use crate::connection::{Connection, Definition};
@@ -53,6 +55,7 @@ use crate::store::scripts::ScriptEntry;
 use crate::store::{Scope, Store};
 use crate::table::{TableFocus, TableTab};
 use crate::terminal::Session;
+use crate::ui::browser::draw_browser;
 use crate::ui::console::BarData;
 use crate::ui::export::{ExportLayout, draw_export};
 use crate::ui::form::{FormLayout, draw_form};
@@ -239,6 +242,8 @@ struct ScreenLayout {
     picker: (Rect, usize),
     /// The list of the command palette, with the index of its first row.
     palette: (Rect, usize),
+    /// The list of the file browser, with the index of its first row.
+    browser: (Rect, usize),
 }
 
 pub struct App {
@@ -295,6 +300,8 @@ pub struct App {
     rename: Option<NamePrompt>,
     settings_form: Option<SettingsForm>,
     export_form: Option<ExportForm>,
+    /// The file browser of the focused path field in the export dialog or in the form.
+    browser: Option<FileBrowser>,
     /// The first choices of the next export dialog.
     export_choices: ExportChoices,
     /// The exports in progress, with at most one for each tab.
@@ -380,6 +387,7 @@ impl App {
             rename: None,
             settings_form: None,
             export_form: None,
+            browser: None,
             export_choices: options.export_choices.clone(),
             exports: Vec::new(),
             status: None,
@@ -605,6 +613,7 @@ impl App {
             || self.rename.is_some()
             || self.settings_form.is_some()
             || self.export_form.is_some()
+            || self.browser.is_some()
             || self.auth.prompt.is_some();
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
@@ -616,6 +625,11 @@ impl App {
             Event::Paste(text) if self.dialogs.is_empty() && self.rename.is_some() => {
                 if let Some(prompt) = &mut self.rename {
                     prompt.paste(&text);
+                }
+            }
+            Event::Paste(text) if self.dialogs.is_empty() && self.browser.is_some() => {
+                if let Some(browser) = &mut self.browser {
+                    browser.paste(&text);
                 }
             }
             Event::Paste(text) if self.dialogs.is_empty() && self.settings_form.is_some() => {
@@ -637,6 +651,7 @@ impl App {
             Event::Mouse(mouse) if !self.dialogs.is_empty() => self.on_dialog_mouse(mouse),
             Event::Mouse(mouse) if self.auth.prompt.is_some() => self.on_password_mouse(mouse),
             Event::Mouse(mouse) if self.conflicts.is_some() => self.on_conflicts_mouse(mouse),
+            Event::Mouse(mouse) if self.browser.is_some() => self.on_browser_mouse(mouse),
             Event::Mouse(mouse) if self.picker.is_some() => self.on_picker_mouse(mouse),
             Event::Mouse(mouse) if self.palette.is_some() => self.on_palette_mouse(mouse),
             Event::Mouse(mouse) if self.settings_form.is_some() => self.on_settings_mouse(mouse),
@@ -1055,6 +1070,9 @@ impl App {
         }
         if let Some(form) = &self.export_form {
             self.layout.export = draw_export(frame, form, &self.theme);
+        }
+        if let Some(browser) = &self.browser {
+            self.layout.browser = draw_browser(frame, browser, &self.theme);
         }
         if let Some(prompt) = &self.rename {
             draw_name(frame, prompt, &self.theme);

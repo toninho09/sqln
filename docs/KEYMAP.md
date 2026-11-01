@@ -247,10 +247,28 @@ Na exportação:
 | Próximo campo | `Tab` ou `Enter` |
 | Mudar o formato, na barra lateral | `Up` e `Down` |
 | Mudar uma escolha | `Left` e `Right` |
+| Abrir o explorador de arquivos, no campo **File** | `Ctrl+O` |
 | Pressionar **Export** ou **Cancel** | `Enter` no botão |
 | Cancelar | `Esc` |
 
 Só o botão **Export** exporta.
+
+`Ctrl+O` também abre o explorador nos campos de caminho do formulário de conexão.
+
+No explorador de arquivos, as teclas são iguais nos dois mapas:
+
+| Ação | Tecla |
+|---|---|
+| Filtrar os nomes | Digitar o texto |
+| Mostrar os nomes ocultos | Filtro que começa com `.` |
+| Mover o cursor | `Up`, `Down`, `PageUp` e `PageDown` |
+| Abrir a linha | `Enter` |
+| Entrar na pasta, com filtro vazio | `Right` |
+| Subir uma pasta, com filtro vazio | `Left` ou `Backspace` |
+| Ir para a home, com filtro vazio | `~` |
+| Fechar sem mudar o campo | `Esc` |
+
+Com o mouse, um clique move o cursor, e um duplo clique abre a linha.
 
 Na busca da grade:
 

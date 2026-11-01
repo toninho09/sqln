@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
-use super::console::centered;
+use super::console::{centered, short_modal_width};
 use super::float_block;
 use super::statusline::{HintItem, hint_line};
 use super::theme::Theme;
@@ -63,7 +63,7 @@ impl NamePrompt {
 }
 
 pub fn draw_name(frame: &mut Frame, prompt: &NamePrompt, theme: &Theme) {
-    let area = centered(frame.area(), 60, 6);
+    let area = centered(frame.area(), short_modal_width(frame.area().width, 60), 6);
     frame.render_widget(Clear, area);
     let block = float_block(text::TITLE_RENAME, theme);
     let inner = block.inner(area);

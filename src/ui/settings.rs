@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
-use super::console::centered;
+use super::console::{centered, modal_width};
 use super::float_block;
 use super::theme::Theme;
 use super::{input_spans, text};
@@ -178,6 +178,34 @@ pub(super) fn draw_row(
     frame.render_widget(Paragraph::new(value), text_area);
 }
 
+/// Returns the columns that the button of a path field takes from its value, with a gap.
+pub(super) fn browse_width(theme: &Theme) -> u16 {
+    u16::try_from(theme.button(text::BUTTON_BROWSE).width() + 1).unwrap_or(0)
+}
+
+/// Draws the button of a path field at the end of its row, and returns its area.
+pub(super) fn draw_browse_button(
+    frame: &mut Frame,
+    row: Rect,
+    focused: bool,
+    theme: &Theme,
+) -> Rect {
+    let width = browse_width(theme).saturating_sub(1);
+    let area = Rect {
+        x: row.right().saturating_sub(RIGHT + 1 + width),
+        width,
+        ..row
+    };
+    let style = if focused {
+        theme.dialog_focus
+    } else {
+        theme.dialog_option
+    };
+    let name = Span::styled(theme.button(text::BUTTON_BROWSE), style);
+    frame.render_widget(Paragraph::new(name), area);
+    area
+}
+
 /// Returns the columns of the value of a row.
 pub(super) fn value_width(row: Rect, label_width: u16) -> usize {
     usize::from(row.width.saturating_sub(LEFT + label_width + RIGHT + 2))
@@ -299,7 +327,8 @@ pub(super) fn draw_buttons<T: Copy + PartialEq>(
 }
 
 pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> SettingsLayout {
-    let area = centered(frame.area(), WIDTH, window_height());
+    let width = modal_width(frame.area().width, WIDTH);
+    let area = centered(frame.area(), width, window_height());
     frame.render_widget(Clear, area);
     let block = float_block(text::TITLE_SETTINGS, theme);
     let inner = block.inner(area);

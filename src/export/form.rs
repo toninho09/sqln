@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{Delimiter, ExportChoices, ExportFormat, ExportOptions, NullText, file_name};
 use crate::line_input::LineInput;
@@ -63,6 +63,8 @@ pub enum ExportRequest {
     None,
     Cancel,
     Export,
+    /// Opens the file browser for the path.
+    Browse,
 }
 
 pub struct ExportForm {
@@ -306,6 +308,11 @@ impl ExportForm {
             KeyCode::Esc => return ExportRequest::Cancel,
             KeyCode::Enter if self.focus == Field::Export => return ExportRequest::Export,
             KeyCode::Enter if self.focus == Field::Cancel => return ExportRequest::Cancel,
+            KeyCode::Char('o')
+                if key.modifiers == KeyModifiers::CONTROL && self.focus == Field::File =>
+            {
+                return ExportRequest::Browse;
+            }
             KeyCode::Enter => self.move_focus(true),
             KeyCode::Tab => self.move_focus(true),
             KeyCode::BackTab => self.move_focus(false),
@@ -351,6 +358,13 @@ impl ExportForm {
             Ok(rows) if rows > 0 => Ok(rows),
             _ => Err(text::settings_number(text::FIELD_EXPORT_BATCH)),
         }
+    }
+
+    /// Writes the choice of the file browser in the path. A chosen file has its own
+    /// extension, so `chose_file` stops the extension that follows the format.
+    pub fn set_path(&mut self, path: &str, chose_file: bool) {
+        self.file.set(path);
+        self.file_edited |= chose_file;
     }
 
     /// Returns the text of the path, as the user sees it.
