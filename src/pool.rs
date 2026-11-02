@@ -18,7 +18,8 @@ enum Grant {
 
 struct Waiter {
     id: u64,
-    grant: oneshot::Sender<Grant>,
+    /// Sends the place and the generation of the pool at the moment of the grant.
+    grant: oneshot::Sender<(Grant, u64)>,
 }
 
 #[derive(Default)]
@@ -52,7 +53,8 @@ impl Inner {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Gives a free place to the first waiter that still waits.
+    /// Gives a free place to the first waiter that still waits. The grant carries the
+    /// generation of the pool, so a later `close_idle` cannot return an old session.
     fn wake(&self, state: &mut State) {
         while state.total() < self.limit || !state.idle.is_empty() {
             let Some(waiter) = state.waiters.pop_front() else {
@@ -60,7 +62,7 @@ impl Inner {
             };
             let grant = state.idle.pop().map_or(Grant::Open, Grant::Session);
             state.busy += 1;
-            if let Err(grant) = waiter.grant.send(grant) {
+            if let Err((grant, _)) = waiter.grant.send((grant, state.generation)) {
                 state.busy -= 1;
                 if let Grant::Session(session) = grant {
                     state.idle.push(session);
@@ -69,10 +71,13 @@ impl Inner {
         }
     }
 
-    fn return_grant(&self, grant: Grant) {
+    fn return_grant(&self, grant: Grant, generation: u64) {
         let mut state = self.lock();
         state.busy -= 1;
-        if let Grant::Session(session) = grant {
+        // A session of an older generation closes, as `Lease::release` decides.
+        if let Grant::Session(session) = grant
+            && state.generation == generation
+        {
             state.idle.push(session);
         }
         self.wake(&mut state);
@@ -91,7 +96,7 @@ impl Inner {
 struct WaitGuard {
     inner: Arc<Inner>,
     id: u64,
-    grant: Option<oneshot::Receiver<Grant>>,
+    grant: Option<oneshot::Receiver<(Grant, u64)>>,
 }
 
 impl Drop for WaitGuard {
@@ -104,8 +109,8 @@ impl Drop for WaitGuard {
             .waiters
             .retain(|waiter| waiter.id != self.id);
         grant.close();
-        if let Ok(grant) = grant.try_recv() {
-            self.inner.return_grant(grant);
+        if let Ok((grant, generation)) = grant.try_recv() {
+            self.inner.return_grant(grant, generation);
         }
     }
 }
@@ -197,8 +202,7 @@ impl Pool {
 
     /// Waits for a place without a time limit. A drop of this future cancels the wait.
     pub async fn acquire(&self) -> Result<Lease, ConnectError> {
-        let grant = self.reserve().await;
-        let generation = self.inner.lock().generation;
+        let (grant, generation) = self.reserve().await;
         let mut lease = Lease {
             session: None,
             inner: self.inner.clone(),
@@ -225,17 +229,19 @@ impl Pool {
         Ok(lease)
     }
 
-    async fn reserve(&self) -> Grant {
+    /// Reserves a place and reads the generation of the pool under the same lock, so a
+    /// `close_idle` in between cannot hide the age of a session.
+    async fn reserve(&self) -> (Grant, u64) {
         let (mut guard, answer) = {
             let mut state = self.inner.lock();
             if state.waiters.is_empty() {
                 if let Some(session) = state.idle.pop() {
                     state.busy += 1;
-                    return Grant::Session(session);
+                    return (Grant::Session(session), state.generation);
                 }
                 if state.total() < self.inner.limit {
                     state.busy += 1;
-                    return Grant::Open;
+                    return (Grant::Open, state.generation);
                 }
             }
             let id = state.next_waiter;

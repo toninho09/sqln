@@ -364,3 +364,26 @@ async fn close_idle_gives_the_free_place_to_a_waiter() {
     take(&pool).await.release().await;
     assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn close_idle_between_the_grant_and_its_read_closes_the_session() {
+    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let pool = pool(&fake, 1);
+    let lease = take(&pool).await;
+    let waiting = {
+        let pool = pool.clone();
+        tokio::spawn(async move { take(&pool).await })
+    };
+    // The waiter enters the queue before the place arrives.
+    tokio::task::yield_now().await;
+    lease.release().await;
+    // The grant is on its way to the waiter, and this close changes the generation.
+    pool.close_idle();
+    let lease = waiting.await.unwrap();
+    lease.release().await;
+    assert!(
+        !pool.has_sessions(),
+        "the session of the old generation closes"
+    );
+    assert_eq!(pool.usage().0, 0);
+}

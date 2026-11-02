@@ -495,6 +495,15 @@ impl Console {
 
     fn on_execution_finished(&mut self, end: ExecutionEnd, message: Option<String>) -> Signal {
         if end == ExecutionEnd::Refused {
+            // A refused execution started no statement. The console must not wait for
+            // an end that already came, so its state returns to idle.
+            if let Some(message) = message {
+                self.push_message(MessageLevel::Error, message);
+            }
+            self.phase = Phase::Idle;
+            self.execution = None;
+            self.reading = false;
+            self.run.wait();
             return Signal::ExecutionFinished {
                 schema_changed: false,
             };

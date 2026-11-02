@@ -162,7 +162,7 @@ pub fn tokenize(sql: &str, dialect: Dialect) -> Vec<Token> {
     Lexer::new(sql, dialect).collect()
 }
 
-fn is_word_byte(byte: u8) -> bool {
+pub(super) fn is_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80
 }
 

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 /// A temporary file older than this is the remainder of a process that stopped.
-const OLD_TEMPORARY: Duration = Duration::from_secs(60);
+pub const OLD_TEMPORARY: Duration = Duration::from_secs(60);
 
 /// Returns the hash of the content of a file. It is valid inside one process.
 pub fn hash(bytes: &[u8]) -> u64 {
@@ -64,6 +64,12 @@ pub fn temporary(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
+/// Returns a unique temporary file of a path, in the same folder. Two writers of
+/// the same destination never share a temporary file.
+pub fn temporary_unique(path: &Path) -> PathBuf {
+    path.with_file_name(format!(".{}.tmp", uuid::Uuid::new_v4()))
+}
+
 fn check(path: &Path, expect: Expect) -> Result<(), WriteError> {
     match expect {
         Expect::Any => Ok(()),
@@ -116,7 +122,7 @@ fn write(path: &Path, bytes: &[u8], expect: Expect, private: bool) -> Result<u64
         fs::create_dir_all(folder).map_err(failed)?;
     }
     let temporary = if private {
-        path.with_file_name(format!(".{}.tmp", uuid::Uuid::new_v4()))
+        temporary_unique(path)
     } else {
         temporary(path)
     };
@@ -160,6 +166,49 @@ pub fn remove_old_temporary_files(folder: &Path) {
             .ok()
             .and_then(|time| SystemTime::now().duration_since(time).ok());
         if age.is_some_and(|age| age >= OLD_TEMPORARY) {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+/// Returns true when a name comes from `temporary_unique`.
+fn is_unique_temporary(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some(stem) = name
+        .strip_prefix('.')
+        .and_then(|name| name.strip_suffix(".tmp"))
+    else {
+        return false;
+    };
+    uuid::Uuid::parse_str(stem).is_ok()
+}
+
+/// Removes the unique temporary files of exports that no writer holds. A writer
+/// locks its file, so a file without a lock comes from a process that stopped.
+/// A file younger than `min_age` stays, because its writer can still lock it.
+pub fn remove_orphan_temporaries(folder: &Path, min_age: Duration) {
+    let Ok(entries) = fs::read_dir(folder) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !is_unique_temporary(&path) {
+            continue;
+        }
+        let age = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|time| SystemTime::now().duration_since(time).ok());
+        if !age.is_some_and(|age| age >= min_age) {
+            continue;
+        }
+        let Ok(file) = File::options().read(true).write(true).open(&path) else {
+            continue;
+        };
+        if file.try_lock().is_ok() {
             let _ = fs::remove_file(path);
         }
     }

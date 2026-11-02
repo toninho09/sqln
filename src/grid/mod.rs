@@ -168,7 +168,12 @@ impl ResultTable {
     pub fn tsv(&self, top: usize, bottom: usize, left: usize, right: usize) -> String {
         let cells: Vec<Vec<Value>> = self.rows[top..=bottom]
             .iter()
-            .map(|row| row[left..=right].to_vec())
+            .map(|row| {
+                // A broken reply can hold a row without its last values.
+                (left..=right)
+                    .map(|col| row.get(col).cloned().unwrap_or(Value::Null))
+                    .collect()
+            })
             .collect();
         tsv::encode(cells.iter().map(Vec::as_slice))
     }

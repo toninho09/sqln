@@ -168,6 +168,14 @@ fn the_list_of_results_has_a_limit() {
 }
 
 #[test]
+fn the_copy_of_a_row_with_fewer_cells_pads_with_nulls() {
+    let mut table = ResultTable::new(vec!["a".into(), "b".into()]);
+    let short: Row = vec![text("x")].into_boxed_slice();
+    table.append(vec![short], 0);
+    assert_eq!(table.tsv(0, 0, 0, 1), "x\t\n");
+}
+
+#[test]
 fn a_manual_width_stays_when_new_rows_arrive() {
     let mut table = ResultTable::new(vec!["a".into()]);
     assert_eq!(table.width(0), 4);

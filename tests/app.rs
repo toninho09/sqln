@@ -1198,6 +1198,61 @@ fn finish_with_stop(f: &mut Fixture, statuses: Vec<sqln::exec::StatementStatus>)
 }
 
 #[test]
+fn a_refused_execution_returns_the_console_to_idle() {
+    use sqln::editor::RunScope;
+    use sqln::exec::{ExecEvent, ExecutionEnd, StatementStatus};
+    use sqln::grid::Budget;
+
+    let mut f = Fixture::new("refused-run");
+    f.write("SELECT 1;");
+    let budget = Budget::new(1024);
+    let plan = f
+        .app
+        .console_mut()
+        .editor
+        .plan_run(RunScope::Script)
+        .unwrap();
+    let console = f.app.console_mut().id;
+    f.app.console_mut().begin_execution(7, &plan, &budget);
+    assert!(f.app.console().is_busy());
+    let event = ExecEvent::ExecutionFinished {
+        console,
+        execution: 7,
+        end: ExecutionEnd::Refused,
+        message: Some("The console already has an execution.".to_owned()),
+    };
+    f.app.console_mut().on_event(event, &budget);
+    assert!(
+        !f.app.console().is_busy(),
+        "a refused execution leaves no wait for an end"
+    );
+    f.assert_sees("The console already has an execution.");
+    // The console accepts a new execution after the refusal.
+    f.app.console_mut().begin_execution(8, &plan, &budget);
+    assert!(f.app.console().is_busy());
+    let key = sqln::exec::StatementKey {
+        console,
+        execution: 8,
+        index: 0,
+    };
+    let event = ExecEvent::StatementFinished {
+        key,
+        status: StatementStatus::Success,
+        end: Some(Default::default()),
+        error_offset: None,
+    };
+    f.app.console_mut().on_event(event, &budget);
+    let event = ExecEvent::ExecutionFinished {
+        console,
+        execution: 8,
+        end: ExecutionEnd::Completed,
+        message: None,
+    };
+    f.app.console_mut().on_event(event, &budget);
+    assert!(!f.app.console().is_busy());
+}
+
+#[test]
 fn a_stop_between_statements_explains_the_end() {
     use sqln::exec::StatementStatus;
     let mut f = Fixture::new("stop-between");
@@ -1242,6 +1297,19 @@ fn export_dir(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
     path
+}
+
+/// Counts the temporary files of an export in a folder. Every temporary name
+/// ends in `.tmp`, and no final file of an export does.
+fn temporaries(dir: &Path) -> usize {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "tmp"))
+                .count()
+        })
+        .unwrap_or(0)
 }
 
 fn capped(rows: usize) -> Settings {
@@ -1415,7 +1483,7 @@ fn an_export_writes_the_rows_of_the_grid() {
     f.idle();
     assert_eq!(read(&path), "a,b\n1,x\n2,\n");
     f.assert_sees("Exported 2 rows");
-    assert!(!dir.join("out.csv.tmp").exists());
+    assert_eq!(temporaries(&dir), 0);
 }
 
 #[test]
@@ -1532,14 +1600,14 @@ fn stop_asks_and_delete_leaves_no_file() {
     f.run_script(ENDLESS_ROWS);
     f.export_to(&path);
     f.wait_for_rows();
-    assert!(dir.join("out.csv.tmp").exists());
+    assert_eq!(temporaries(&dir), 1);
     f.assert_sees("Ctrl+W x stops.");
     f.prefix('x');
     f.idle();
     f.assert_sees("Incomplete export");
     f.press(key(KeyCode::Esc));
     assert!(!path.exists());
-    assert!(!dir.join("out.csv.tmp").exists());
+    assert_eq!(temporaries(&dir), 0);
     f.assert_sees("The incomplete file is deleted.");
 }
 
@@ -1561,7 +1629,7 @@ fn keep_closes_the_format_of_the_part() {
     f.press(key(KeyCode::Enter));
     let rows: serde_json::Value = serde_json::from_str(&read(&path)).unwrap();
     assert!(!rows.as_array().unwrap().is_empty());
-    assert!(!dir.join("out.json.tmp").exists());
+    assert_eq!(temporaries(&dir), 0);
 }
 
 #[test]
@@ -1575,7 +1643,7 @@ fn stop_before_the_first_row_deletes_the_file_without_a_question() {
     f.idle();
     f.assert_sees("The export stopped before the first row.");
     assert!(!f.sees("Incomplete export"));
-    assert!(!dir.join("out.csv.tmp").exists());
+    assert_eq!(temporaries(&dir), 0);
 }
 
 #[test]
@@ -1704,7 +1772,7 @@ fn two_tabs_can_export_and_one_destination_is_refused() {
     f.prefix('x');
     f.idle();
     f.press(key(KeyCode::Esc));
-    assert!(!dir.join("out.csv.tmp").exists());
+    assert_eq!(temporaries(&dir), 0);
 }
 
 #[test]
@@ -1725,7 +1793,7 @@ fn closing_a_table_removes_the_file_of_its_export() {
     f.press_export();
     f.prefix('c');
     assert!(f.app.table().is_none());
-    assert!(!dir.join("out.csv.tmp").exists());
+    assert_eq!(temporaries(&dir), 0);
     assert!(!path.exists());
 }
 

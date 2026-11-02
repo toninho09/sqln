@@ -1,5 +1,5 @@
 use super::Dialect;
-use super::lexer::{Lexer, Token, TokenKind};
+use super::lexer::{Lexer, Token, TokenKind, is_word_byte};
 
 /// A sequence of tokens that the splitter can move forward.
 trait TokenSource {
@@ -110,7 +110,8 @@ impl Compound {
     }
 }
 
-/// Returns the byte range of the first word at or after `from`.
+/// Returns the byte range of the first word at or after `from`. The word bytes are
+/// the ones of the lexer, so a word with non-ASCII letters stays whole.
 fn next_word(sql: &str, from: usize) -> (usize, usize) {
     let bytes = sql.as_bytes();
     let mut pos = from;
@@ -118,7 +119,7 @@ fn next_word(sql: &str, from: usize) -> (usize, usize) {
         pos += 1;
     }
     let start = pos;
-    while pos < bytes.len() && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_') {
+    while pos < bytes.len() && is_word_byte(bytes[pos]) {
         pos += 1;
     }
     (start, pos)
@@ -160,6 +161,23 @@ fn split_lines(sql: &str, source: &mut impl TokenSource) -> Vec<Statement> {
     statements
 }
 
+/// Returns the byte after the delimiter at `start`, when the text holds it there.
+/// A delimiter that ends with a word character must end at a word boundary, so it
+/// cannot cut an identifier that starts with the same characters.
+fn delimiter_end(sql: &str, delimiter: &str, start: usize) -> Option<usize> {
+    if !sql[start..].starts_with(delimiter) {
+        return None;
+    }
+    let last = *delimiter.as_bytes().last()?;
+    let end = start + delimiter.len();
+    let whole_word = !is_word_byte(last)
+        || sql
+            .as_bytes()
+            .get(end)
+            .is_none_or(|byte| !is_word_byte(*byte));
+    whole_word.then_some(end)
+}
+
 fn split_source(sql: &str, dialect: Dialect, source: &mut impl TokenSource) -> Vec<Statement> {
     if dialect == Dialect::Redis {
         return split_lines(sql, source);
@@ -192,8 +210,7 @@ fn split_source(sql: &str, dialect: Dialect, source: &mut impl TokenSource) -> V
             continue;
         }
 
-        if sql[token.start..].starts_with(delimiter) {
-            let after = token.start + delimiter.len();
+        if let Some(after) = delimiter_end(sql, delimiter, token.start) {
             source.seek(after);
             if compound.depth == 0 {
                 if let Some(begin) = start.take() {

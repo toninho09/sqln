@@ -432,6 +432,22 @@ fn items(reply: &Reply) -> &[Reply] {
     }
 }
 
+/// Builds the rows of a hash or a set from the flat items of `SCAN`. A broken reply
+/// can end with a group without its last values, so each row grows with nulls.
+fn scan_rows(found: &[Reply], columns: usize) -> Vec<Row> {
+    found
+        .chunks(columns)
+        .map(|cells| {
+            cells
+                .iter()
+                .map(cell)
+                .chain(std::iter::repeat(Value::Null))
+                .take(columns)
+                .collect()
+        })
+        .collect()
+}
+
 /// Reads the numbers of the databases with keys from the text of `INFO keyspace`.
 pub fn keyspace_databases(info: &str) -> Vec<u32> {
     info.lines()
@@ -681,11 +697,10 @@ impl RedisSession {
             let [next, found] = items(&reply) else {
                 return Err(ExecError::new(text::REDIS_BAD_REPLY));
             };
-            let rows: Vec<Row> = items(found)
-                .chunks(columns.len())
+            let rows: Vec<Row> = scan_rows(items(found), columns.len())
+                .into_iter()
                 .skip(skip)
                 .take(left)
-                .map(|cells| cells.iter().map(cell).collect())
                 .collect();
             skip = skip.saturating_sub(items(found).len() / columns.len());
             left -= rows.len();
@@ -831,5 +846,25 @@ impl Session for RedisSession {
         _relation: &str,
     ) -> Result<Vec<String>, ExecError> {
         Ok(Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_short_group_of_a_scan_grows_with_nulls() {
+        let item = |text: &str| Reply::BulkString(text.as_bytes().to_vec());
+        let found = vec![item("a"), item("1"), item("b")];
+        let rows = scan_rows(&found, 2);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].len(), 2);
+        assert_eq!(
+            rows[1].len(),
+            2,
+            "the row of a broken reply keeps its width"
+        );
+        assert!(matches!(rows[1][1], Value::Null));
     }
 }

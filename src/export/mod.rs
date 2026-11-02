@@ -377,12 +377,17 @@ impl Eq for ExportWriter {}
 
 impl ExportWriter {
     /// Creates the temporary file beside the destination, and the missing folders.
+    /// The file holds a lock, so the cleanup of a later export keeps it.
     pub fn create(destination: &Path, options: ExportOptions) -> io::Result<Self> {
         if let Some(folder) = destination.parent() {
             fs::create_dir_all(folder)?;
+            file::remove_orphan_temporaries(folder, file::OLD_TEMPORARY);
         }
-        let temporary = file::temporary(destination);
-        let out = BufWriter::new(File::create(&temporary)?);
+        let temporary = file::temporary_unique(destination);
+        let file = File::create(&temporary)?;
+        file.try_lock()
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let out = BufWriter::new(file);
         Ok(Self(Arc::new(Shared {
             state: Mutex::new(State {
                 encoder: Some(Encoder::new(out, options)),

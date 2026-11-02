@@ -258,6 +258,63 @@ fn folder(name: &str) -> PathBuf {
     path
 }
 
+/// Counts the temporary files of an export in a folder. Every temporary name
+/// ends in `.tmp`, and no final file of an export does.
+fn temporaries(dir: &Path) -> usize {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "tmp"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+#[test]
+fn two_exports_of_one_destination_use_two_temporary_files() {
+    let base = folder("export-unique");
+    let destination = base.join("out.csv");
+    let first = ExportWriter::create(&destination, with_format(ExportFormat::Csv)).unwrap();
+    let second = ExportWriter::create(&destination, with_format(ExportFormat::Csv)).unwrap();
+    assert_ne!(
+        format!("{first:?}"),
+        format!("{second:?}"),
+        "each export owns its temporary file"
+    );
+    first.discard();
+    second.discard();
+}
+
+#[test]
+fn a_cleanup_removes_the_temporary_of_a_stopped_process() {
+    use std::time::Duration;
+
+    use sqln::store::file;
+
+    let base = folder("export-orphans");
+    fs::create_dir_all(&base).unwrap();
+    let destination = base.join("out.csv");
+    let orphan = file::temporary_unique(&destination);
+    fs::write(&orphan, "rows").unwrap();
+    let foreign = base.join("notes.tmp");
+    fs::write(&foreign, "not an export").unwrap();
+    let live = file::temporary_unique(&destination);
+    let held = fs::File::options()
+        .write(true)
+        .create_new(true)
+        .open(&live)
+        .unwrap();
+    held.try_lock().unwrap();
+    file::remove_orphan_temporaries(&base, Duration::ZERO);
+    assert!(!orphan.exists(), "the file of a stopped process goes away");
+    assert!(foreign.exists(), "a foreign file with the same end stays");
+    assert!(live.exists(), "the file of a live writer stays");
+    drop(held);
+    file::remove_orphan_temporaries(&base, Duration::ZERO);
+    assert!(!live.exists(), "the file without a writer goes away");
+}
+
 #[test]
 fn a_file_appears_only_after_the_promotion() {
     let base = folder("export-writer");
@@ -267,10 +324,10 @@ fn a_file_appears_only_after_the_promotion() {
     assert!(writer.write_row(&[number("1")]));
     assert_eq!(writer.rows(), 1);
     assert!(!destination.exists());
-    assert!(base.join("new/folder/out.csv.tmp").exists());
+    assert_eq!(temporaries(&base.join("new/folder")), 1);
     writer.promote(&destination).unwrap();
     assert_eq!(fs::read_to_string(&destination).unwrap(), "a\n1\n");
-    assert!(!base.join("new/folder/out.csv.tmp").exists());
+    assert_eq!(temporaries(&base.join("new/folder")), 0);
 }
 
 #[test]
@@ -282,7 +339,7 @@ fn a_discard_leaves_no_file_and_ends_the_writes() {
     assert!(!writer.write_row(&[number("1")]));
     assert_eq!(writer.rows(), 0);
     assert!(!destination.exists());
-    assert!(!base.join("out.csv.tmp").exists());
+    assert_eq!(temporaries(&base), 0);
 }
 
 #[test]
