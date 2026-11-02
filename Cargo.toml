@@ -1,6 +1,6 @@
 [package]
 name = "sqln"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Terminal database client with several SQL consoles"
 license = "MIT OR Apache-2.0"
@@ -21,7 +21,7 @@ rusqlite = { version = "0.38", features = ["bundled"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 tokio = { version = "1.54", features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
 tokio-postgres = "0.7.18"
 tokio-postgres-rustls = { version = "0.14", default-features = false, features = ["ring"] }

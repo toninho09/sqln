@@ -2957,7 +2957,7 @@ dependencies = [
 
 [[package]]
 name = "sqln"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "apple-native-keyring-store",
  "arboard",
