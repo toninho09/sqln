@@ -30,7 +30,7 @@ use crate::ui::text;
 const QUERY_INTERRUPTED: u16 = 1317;
 /// The value of a binary column in the character set field of the protocol.
 const BINARY_CHARSET: u16 = 63;
-const TCP_KEEPALIVE_MS: u32 = 30_000;
+const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
 /// A statement with no effect. Its answer has the state of the transaction.
 const STATUS_REQUEST: &str = "DO 0";
 const CATALOG_SQL: &str = "\
@@ -109,7 +109,7 @@ fn driver_options(target: &NetworkTarget) -> Result<Opts, ConnectError> {
                 .map(|password| password.expose().to_owned()),
         )
         .db_name(target.database.clone())
-        .tcp_keepalive(Some(TCP_KEEPALIVE_MS))
+        .tcp_keepalive(Some(TCP_KEEPALIVE))
         // The driver can move to a local socket that the user did not ask for.
         .prefer_socket(false)
         .ssl_opts(ssl_options(&target.tls)?);

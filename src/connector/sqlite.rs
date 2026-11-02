@@ -230,13 +230,7 @@ fn run(conn: &Connection, sql: &str, mut sink: ResultSink) -> Result<StatementEn
     let read_only = statement.readonly();
     let has_columns = statement.column_count() > 0;
     if has_columns {
-        sink.set_columns_blocking(
-            statement
-                .column_names()
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-        );
+        sink.set_columns_blocking(statement.column_names().map(str::to_owned).collect());
     }
     let read = read_rows(&mut statement, read_only, &mut sink);
     drop(statement);

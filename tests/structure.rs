@@ -44,11 +44,7 @@ fn database() -> Connection {
 /// Runs a query and returns its header and its rows as text.
 fn read(connection: &Connection, sql: &str) -> (Vec<String>, Vec<Vec<String>>) {
     let mut statement = connection.prepare(sql).unwrap();
-    let header: Vec<String> = statement
-        .column_names()
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect();
+    let header: Vec<String> = statement.column_names().map(str::to_owned).collect();
     let count = header.len();
     let rows = statement
         .query_map([], |row| {
