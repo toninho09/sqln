@@ -193,6 +193,13 @@ impl App {
         if self.config_blocked() {
             return;
         }
+        if action
+            .console()
+            .is_some_and(|id| self.association_pending(id))
+        {
+            self.status = Some(text::CONNECTION_CHANGE_PENDING.to_owned());
+            return;
+        }
         let Some(connection) = self.connection(id) else {
             return;
         };

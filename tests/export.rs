@@ -20,7 +20,7 @@ fn number(value: &str) -> Value {
 }
 
 fn binary(bytes: &[u8]) -> Value {
-    Value::Binary(bytes.into())
+    Value::binary(bytes)
 }
 
 fn encode(options: ExportOptions, columns: &[&str], rows: &[Vec<Value>]) -> String {

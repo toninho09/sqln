@@ -392,7 +392,7 @@ fn cell(reply: &Reply) -> Value {
         Reply::Double(number) => Value::Number(number.to_string().into()),
         Reply::BulkString(bytes) => match std::str::from_utf8(bytes) {
             Ok(text) => Value::Text(text.into()),
-            Err(_) => Value::Binary(bytes.as_slice().into()),
+            Err(_) => Value::binary(bytes.as_slice()),
         },
         Reply::Attribute { data, .. } => cell(data),
         other => Value::Text(reply_text(other).into()),

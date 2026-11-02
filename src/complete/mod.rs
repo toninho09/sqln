@@ -3,6 +3,8 @@
 
 mod context;
 pub mod keywords;
+#[cfg(test)]
+mod tests;
 
 use std::ops::Range;
 
@@ -406,22 +408,48 @@ impl Builder {
     }
 
     fn finish(self, replace: Range<usize>, typed: &str) -> Completion {
-        let mut items = self.items;
-        items.sort_by_cached_key(|item| {
-            let suggestion = &item.suggestion;
-            (
-                item.rank,
-                suggestion.kind,
-                suggestion.label.to_lowercase(),
-                suggestion.detail.clone(),
-            )
-        });
-        items.dedup_by(|a, b| {
-            a.suggestion.kind == b.suggestion.kind && a.suggestion.insert == b.suggestion.insert
-        });
-        items.truncate(MAX_ITEMS);
-
-        let mut items: Vec<Suggestion> = items.into_iter().map(|item| item.suggestion).collect();
+        let mut keys: Vec<_> = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                (
+                    item.rank,
+                    item.suggestion.kind,
+                    item.suggestion.label.to_lowercase(),
+                    item.suggestion.detail.as_deref(),
+                    index,
+                )
+            })
+            .collect();
+        let mut remaining = keys.as_mut_slice();
+        let mut selected = Vec::with_capacity(MAX_ITEMS);
+        let mut batch_size = MAX_ITEMS;
+        let mut previous: Option<&Suggestion> = None;
+        while !remaining.is_empty() && selected.len() < MAX_ITEMS {
+            let count = remaining.len().min(batch_size);
+            if count < remaining.len() {
+                remaining.select_nth_unstable(count);
+            }
+            let (batch, rest) = remaining.split_at_mut(count);
+            batch.sort_unstable();
+            for key in batch {
+                let suggestion = &self.items[key.4].suggestion;
+                let duplicate = previous.is_some_and(|last| {
+                    last.kind == suggestion.kind && last.insert == suggestion.insert
+                });
+                previous = Some(suggestion);
+                if !duplicate {
+                    selected.push(suggestion.clone());
+                    if selected.len() == MAX_ITEMS {
+                        break;
+                    }
+                }
+            }
+            remaining = rest;
+            batch_size = batch_size.saturating_mul(2);
+        }
+        let mut items = selected;
         if let [only] = items.as_slice()
             && only.insert == typed
         {

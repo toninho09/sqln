@@ -190,9 +190,9 @@ fn value(cell: ValueRef<'_>) -> Value {
         // A text value is not always valid UTF-8, so the bytes keep the data.
         ValueRef::Text(bytes) => match std::str::from_utf8(bytes) {
             Ok(text) => Value::Text(text.into()),
-            Err(_) => Value::Binary(bytes.into()),
+            Err(_) => Value::binary(bytes),
         },
-        ValueRef::Blob(bytes) => Value::Binary(bytes.into()),
+        ValueRef::Blob(bytes) => Value::binary(bytes),
     }
 }
 

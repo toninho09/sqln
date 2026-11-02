@@ -345,12 +345,56 @@ fn the_autosave_of_a_large_script_stays_under_the_target() {
     let mut app = App::new(options, clipboard, Theme::ansi());
     let row = "INSERT INTO orders (id, name, total) VALUES (1, 'a text value', 10.50);\n";
     app.on_event(Event::Paste(row.repeat(50_000)));
-    // The first steps see the edit. The last one writes the 3.6 MiB text.
+    // The last step requests the write without waiting for the disk.
     let start = Instant::now();
     app.tick_at(start);
     let write = Instant::now();
     app.tick_at(start + Duration::from_millis(600));
     let spent = write.elapsed();
-    println!("the autosave of 50,000 lines took {spent:?}");
+    println!("the autosave request for 50,000 lines took {spent:?}");
+    assert!(spent < Duration::from_millis(50), "{spent:?}");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while app.has_pending_saves() {
+        app.drain_events();
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn binary_previews_stay_under_the_target_after_classification() {
+    use sqln::grid::Value;
+
+    for ending in [b'x', 0, 255] {
+        let mut bytes = vec![b'x'; 16 * 1024 * 1024];
+        bytes.push(ending);
+        let value = Value::binary(bytes);
+        let started = Instant::now();
+        for _ in 0..1000 {
+            std::hint::black_box(value.preview(40));
+        }
+        let spent = started.elapsed();
+        println!("1,000 binary previews: {spent:?}");
+        assert!(spent < Duration::from_millis(50), "{spent:?}");
+    }
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn a_search_slice_in_one_large_cell_stays_under_the_target() {
+    use sqln::grid::{ResultTable, RowSearch, Value};
+
+    let mut table = ResultTable::new(vec!["value".into()]);
+    table.append(
+        vec![vec![Value::Text("a".repeat(50_000_000).into())].into_boxed_slice()],
+        0,
+    );
+    let mut search = RowSearch::new((0, 0));
+    search.push_str("aaaaab");
+    let started = Instant::now();
+    search.scan(&table, started + Duration::from_millis(8));
+    let spent = started.elapsed();
+    assert!(search.has_work(&table));
     assert!(spent < Duration::from_millis(50), "{spent:?}");
 }

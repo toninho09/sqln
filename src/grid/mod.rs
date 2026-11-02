@@ -1,5 +1,6 @@
 //! Result data: values, widths, cursor, selection, budget, and TSV copy.
 
+mod binary;
 mod budget;
 pub mod json;
 mod search;
@@ -7,10 +8,10 @@ mod tsv;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+pub use self::binary::Binary;
 pub use self::budget::{Budget, DEFAULT_LIMIT, Reservation, row_cost};
 pub use self::search::RowSearch;
 pub use self::tsv::{delimited_cell, delimited_text, hex};
-use crate::find;
 
 /// The limit of a width that the application calculates.
 const MAX_COLUMN_WIDTH: usize = 40;
@@ -26,7 +27,7 @@ pub enum Value {
     Null,
     Text(Box<str>),
     Number(Box<str>),
-    Binary(Box<[u8]>),
+    Binary(Binary),
 }
 
 pub type Row = Box<[Value]>;
@@ -59,15 +60,16 @@ fn printable_start(text: &str, width: usize) -> String {
 }
 
 impl Value {
+    pub fn binary(bytes: impl Into<Box<[u8]>>) -> Self {
+        Self::Binary(Binary::new(bytes.into()))
+    }
+
     /// Returns the text of a grid cell. It stays on one line.
     pub fn display(&self) -> String {
         match self {
             Value::Null => "NULL".to_owned(),
             Value::Text(text) | Value::Number(text) => printable(text),
-            Value::Binary(bytes) => match std::str::from_utf8(bytes) {
-                Ok(text) if !text.contains(char::is_control) => text.to_owned(),
-                _ => hex(bytes),
-            },
+            Value::Binary(bytes) => bytes.text().map_or_else(|| hex(bytes), str::to_owned),
         }
     }
 
@@ -76,19 +78,41 @@ impl Value {
         match self {
             Value::Null => "NULL".to_owned(),
             Value::Text(text) | Value::Number(text) => printable_start(text, width),
-            Value::Binary(bytes) => match std::str::from_utf8(bytes) {
-                Ok(text) if !text.contains(char::is_control) => printable_start(text, width),
-                _ => hex(&bytes[..bytes.len().min(width / 2)]),
+            Value::Binary(bytes) => match bytes.text() {
+                Some(text) => printable_start(text, width),
+                None => hex(&bytes[..bytes.len().min(width / 2)]),
             },
         }
     }
 
-    fn matches(&self, needle: &[char]) -> bool {
-        match self {
-            Value::Null => find::contains("NULL", needle),
-            Value::Text(text) | Value::Number(text) => find::contains(text, needle),
-            Value::Binary(_) => find::contains(&self.display(), needle),
-        }
+    /// Returns one search character and the next offset without copying the cell.
+    fn search_char(&self, offset: usize) -> Option<(char, usize)> {
+        let text = match self {
+            Self::Null => "NULL",
+            Self::Text(text) | Self::Number(text) => text,
+            Self::Binary(bytes) => match bytes.text() {
+                Some(text) => text,
+                None => {
+                    let c = match offset {
+                        0 => '0',
+                        1 => 'x',
+                        _ => {
+                            let at = offset - 2;
+                            let byte = *bytes.get(at / 2)?;
+                            let nibble = if at.is_multiple_of(2) {
+                                byte >> 4
+                            } else {
+                                byte & 15
+                            };
+                            char::from(b"0123456789ABCDEF"[usize::from(nibble)])
+                        }
+                    };
+                    return Some((c, offset + 1));
+                }
+            },
+        };
+        let c = text.get(offset..)?.chars().next()?;
+        Some((c, offset + c.len_utf8()))
     }
 
     /// Returns the complete text of the detail window.
@@ -166,16 +190,10 @@ impl ResultTable {
     }
 
     pub fn tsv(&self, top: usize, bottom: usize, left: usize, right: usize) -> String {
-        let cells: Vec<Vec<Value>> = self.rows[top..=bottom]
-            .iter()
-            .map(|row| {
-                // A broken reply can hold a row without its last values.
-                (left..=right)
-                    .map(|col| row.get(col).cloned().unwrap_or(Value::Null))
-                    .collect()
-            })
-            .collect();
-        tsv::encode(cells.iter().map(Vec::as_slice))
+        tsv::encode(self.rows[top..=bottom].iter().map(|row| {
+            // A broken reply can hold a row without its last values.
+            (left..=right).map(move |col| row.get(col).unwrap_or(&Value::Null))
+        }))
     }
 }
 

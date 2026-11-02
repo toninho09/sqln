@@ -120,7 +120,7 @@ fn each_reply_shape_has_its_grid() {
     assert_eq!(rows[0][0], Value::Number("7".into()));
 
     let (_, rows) = reply_grid(&Reply::BulkString(vec![0xff])).unwrap();
-    assert_eq!(rows[0][0], Value::Binary(vec![0xff].into()));
+    assert_eq!(rows[0][0], Value::binary(vec![0xff]));
 
     let (columns, rows) = reply_grid(&Reply::Array(vec![bulk("a"), bulk("b")])).unwrap();
     assert_eq!(columns, ["value"]);

@@ -232,7 +232,7 @@ fn cell_value(cell: Option<&mysql_async::Value>, column: &Column) -> Value {
     match std::str::from_utf8(bytes) {
         Ok(text) if !is_binary(column) && is_number(column) => Value::Number(text.into()),
         Ok(text) if !is_binary(column) => Value::Text(text.into()),
-        _ => Value::Binary(bytes.into()),
+        _ => Value::binary(bytes),
     }
 }
 

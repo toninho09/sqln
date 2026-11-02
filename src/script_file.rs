@@ -4,6 +4,11 @@
 //! when to write. A failed write never drops the text: the problem stays in
 //! `trouble`, and the console keeps working.
 
+mod worker;
+
+use worker::PendingSave;
+pub(crate) use worker::SaveWorker;
+
 use std::io;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -33,10 +38,132 @@ impl Trouble {
     }
 }
 
+struct Saved {
+    hash: u64,
+    seen: Option<(u64, SystemTime)>,
+}
+
+type SaveReply = (Option<FileLock>, Result<SaveUpdate, WriteError>);
+
+struct SaveUpdate {
+    text: Option<Saved>,
+    relocated: Option<Relocation>,
+}
+
+struct Relocation {
+    scope: Scope,
+    meta: ScriptMeta,
+    lock: Option<FileLock>,
+    hash: Option<u64>,
+    seen: Option<(u64, SystemTime)>,
+}
+
+struct SaveRequest {
+    root: Root,
+    meta: ScriptMeta,
+    text: String,
+    ending: LineEnding,
+    mode: SaveMode,
+    acquire_lock: bool,
+}
+
+enum SaveMode {
+    Create,
+    Check(Expect),
+    Overwrite,
+    Metadata,
+    Relocate {
+        from: Root,
+        scope: Scope,
+        hash: Option<u64>,
+        moved: bool,
+    },
+}
+
+impl SaveRequest {
+    fn run(self) -> SaveReply {
+        let lock = if self.acquire_lock {
+            scripts::lock(&self.root, &self.meta.id).ok().flatten()
+        } else {
+            None
+        };
+        (lock, self.write())
+    }
+
+    fn write(self) -> Result<SaveUpdate, WriteError> {
+        match self.mode {
+            SaveMode::Metadata => {
+                scripts::write_meta(&self.root, &self.meta, Expect::Any)
+                    .map_err(WriteError::Failed)?;
+                return Ok(SaveUpdate {
+                    text: None,
+                    relocated: None,
+                });
+            }
+            SaveMode::Relocate {
+                ref from,
+                scope,
+                hash,
+                moved,
+            } => {
+                let (hash, lock) = if moved {
+                    let lock = scripts::lock(&self.root, &self.meta.id)
+                        .map_err(|error| WriteError::Failed(error.to_string()))?
+                        .ok_or_else(|| {
+                            WriteError::Failed(crate::ui::text::SCRIPT_BUSY.to_owned())
+                        })?;
+                    let hash = scripts::move_to(from, &self.root, &self.meta)
+                        .map_err(WriteError::Failed)?;
+                    (Some(hash), Some(lock))
+                } else {
+                    scripts::write_meta(&self.root, &self.meta, Expect::Any)
+                        .map_err(WriteError::Failed)?;
+                    (hash, None)
+                };
+                let seen = scripts::stat(&self.root, &self.meta.id);
+                return Ok(SaveUpdate {
+                    text: None,
+                    relocated: Some(Relocation {
+                        scope,
+                        meta: self.meta,
+                        lock,
+                        hash,
+                        seen,
+                    }),
+                });
+            }
+            _ => {}
+        }
+        let bytes = scripts::encode(&self.text, self.ending);
+        let hash = match self.mode {
+            SaveMode::Create => {
+                scripts::create(&self.root, &self.meta, &bytes).map_err(WriteError::Failed)?
+            }
+            SaveMode::Check(expect) => {
+                scripts::write_text(&self.root, &self.meta.id, &bytes, expect)?
+            }
+            SaveMode::Overwrite => {
+                scripts::write_meta(&self.root, &self.meta, Expect::Any)
+                    .map_err(WriteError::Failed)?;
+                scripts::write_text(&self.root, &self.meta.id, &bytes, Expect::Any)?
+            }
+            SaveMode::Metadata | SaveMode::Relocate { .. } => unreachable!(),
+        };
+        Ok(SaveUpdate {
+            text: Some(Saved {
+                hash,
+                seen: scripts::stat(&self.root, &self.meta.id),
+            }),
+            relocated: None,
+        })
+    }
+}
+
 pub struct ScriptFile {
     pub meta: ScriptMeta,
     pub scope: Scope,
     pub trouble: Option<Trouble>,
+    pending: Option<PendingSave>,
     _lock: Option<FileLock>,
     /// The hash of the text file at the last write or read. `None` means no text file.
     hash: Option<u64>,
@@ -59,6 +186,7 @@ impl ScriptFile {
             scope,
             trouble: None,
             _lock: lock,
+            pending: None,
             hash: None,
             meta_written: false,
             ending: LineEnding::Lf,
@@ -111,14 +239,16 @@ impl ScriptFile {
         self.due_at.is_some_and(|at| now >= at)
     }
 
-    fn written(&mut self, root: &Root, hash: u64, revision: u64) {
-        self.hash = Some(hash);
+    fn written(&mut self, saved: Saved, revision: u64) {
+        self.hash = Some(saved.hash);
         self.meta_written = true;
         self.saved_revision = revision;
-        self.seen_revision = None;
-        self.due_at = None;
+        if self.seen_revision.is_none_or(|seen| seen == revision) {
+            self.seen_revision = None;
+            self.due_at = None;
+        }
         self.trouble = None;
-        self.seen = scripts::stat(root, &self.meta.id);
+        self.seen = saved.seen;
     }
 
     fn failed(&mut self, error: WriteError, now: Instant) -> Trouble {
@@ -142,43 +272,164 @@ impl ScriptFile {
         revision: u64,
         now: Instant,
     ) -> Result<(), Trouble> {
-        let bytes = scripts::encode(text, self.ending);
-        let result = match (self.hash, self.meta_written) {
-            (None, false) => scripts::create(root, &self.meta, &bytes).map_err(WriteError::Failed),
-            (None, true) => scripts::write_text(root, &self.meta.id, &bytes, Expect::Missing),
-            (Some(hash), _) => scripts::write_text(root, &self.meta.id, &bytes, Expect::Hash(hash)),
-        };
-        match result {
-            Ok(hash) => {
-                self.written(root, hash, revision);
-                Ok(())
-            }
-            Err(error) => Err(self.failed(error, now)),
-        }
+        self.wait_save(now)?;
+        let request = self.request(root, text.to_owned(), false);
+        self.apply_save(request.run(), revision, now)
     }
 
     /// Writes the text over the file, whatever the file holds. The user chose it.
     pub fn overwrite(&mut self, root: &Root, text: &str, revision: u64) -> Result<(), Trouble> {
         let now = Instant::now();
-        if scripts::write_meta(root, &self.meta, Expect::Any).is_err() {
-            return Err(self.failed(
-                WriteError::Failed("The files cannot be written.".into()),
-                now,
-            ));
+        let _ = self.wait_save(now);
+        let request = self.request(root, text.to_owned(), true);
+        self.apply_save(request.run(), revision, now)
+    }
+
+    fn request(&self, root: &Root, text: String, overwrite: bool) -> SaveRequest {
+        let mode = if overwrite {
+            SaveMode::Overwrite
+        } else {
+            match (self.hash, self.meta_written) {
+                (None, false) => SaveMode::Create,
+                (None, true) => SaveMode::Check(Expect::Missing),
+                (Some(hash), _) => SaveMode::Check(Expect::Hash(hash)),
+            }
+        };
+        SaveRequest {
+            root: root.clone(),
+            meta: self.meta.clone(),
+            text,
+            ending: self.ending,
+            mode,
+            acquire_lock: !self.meta_written && self._lock.is_none(),
         }
-        let bytes = scripts::encode(text, self.ending);
-        match scripts::write_text(root, &self.meta.id, &bytes, Expect::Any) {
-            Ok(hash) => {
-                self.written(root, hash, revision);
+    }
+
+    pub(crate) fn meta_written(&self) -> bool {
+        self.meta_written
+    }
+
+    pub fn is_saving(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    pub(crate) fn start_save(
+        &mut self,
+        worker: &SaveWorker,
+        root: &Root,
+        text: String,
+        revision: u64,
+        overwrite: bool,
+    ) {
+        self.start_request(worker, self.request(root, text, overwrite), revision);
+    }
+
+    fn apply_save(&mut self, reply: SaveReply, revision: u64, now: Instant) -> Result<(), Trouble> {
+        let (lock, result) = reply;
+        if let Some(lock) = lock {
+            self._lock = Some(lock);
+        }
+        match result {
+            Ok(update) => {
+                if let Some(saved) = update.text {
+                    self.written(saved, revision);
+                }
+                if let Some(relocated) = update.relocated {
+                    if self.scope != relocated.scope {
+                        self._lock = relocated.lock;
+                    }
+                    self.scope = relocated.scope;
+                    self.meta = relocated.meta;
+                    self.hash = relocated.hash;
+                    self.seen = relocated.seen;
+                    self.meta_written = true;
+                }
                 Ok(())
             }
             Err(error) => Err(self.failed(error, now)),
         }
     }
 
+    pub(crate) fn start_metadata(&mut self, worker: &SaveWorker, root: &Root) {
+        let mut request = self.request(root, String::new(), false);
+        request.mode = SaveMode::Metadata;
+        self.start_request(worker, request, self.saved_revision);
+    }
+
+    pub(crate) fn start_relocate(
+        &mut self,
+        worker: &SaveWorker,
+        from: &Root,
+        to: &Root,
+        scope: Scope,
+        meta: ScriptMeta,
+    ) {
+        let request = SaveRequest {
+            root: to.clone(),
+            meta,
+            text: String::new(),
+            ending: self.ending,
+            acquire_lock: false,
+            mode: SaveMode::Relocate {
+                from: from.clone(),
+                scope,
+                hash: self.hash,
+                moved: scope != self.scope,
+            },
+        };
+        self.start_request(worker, request, self.saved_revision);
+    }
+
+    fn start_request(&mut self, worker: &SaveWorker, request: SaveRequest, revision: u64) {
+        assert!(!self.is_saving() && worker.ready());
+        let metadata_name =
+            (!matches!(&request.mode, SaveMode::Check(_))).then(|| request.meta.name.clone());
+        self.pending = Some(PendingSave {
+            revision,
+            metadata_name,
+            receiver: Some(worker.submit(request)),
+        });
+    }
+
+    /// Applies a finished write without waiting for the worker.
+    pub(crate) fn poll_save(
+        &mut self,
+        now: Instant,
+    ) -> Option<(Result<(), Trouble>, Option<String>)> {
+        let pending = self.pending.as_ref()?;
+        let result = match pending.receiver.as_ref()?.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => (
+                None,
+                Err(WriteError::Failed("The save worker stopped.".into())),
+            ),
+        };
+        let mut pending = self.pending.take().unwrap();
+        pending.receiver.take();
+        Some((
+            self.apply_save(result, pending.revision, now),
+            pending.metadata_name.take(),
+        ))
+    }
+
+    pub(crate) fn wait_save(&mut self, now: Instant) -> Result<(), Trouble> {
+        let Some(mut pending) = self.pending.take() else {
+            return Ok(());
+        };
+        let result = pending.receiver.take().unwrap().recv().unwrap_or_else(|_| {
+            (
+                None,
+                Err(WriteError::Failed("The save worker stopped.".into())),
+            )
+        });
+        self.apply_save(result, pending.revision, now)
+    }
+
     /// Reads the file again. The caller replaces the editor, and it passes the
     /// revision of the new editor to `adopt`.
     pub fn reload(&mut self, root: &Root) -> io::Result<String> {
+        let _ = self.wait_save(Instant::now());
         let (text, hash) = scripts::read_text(root, &self.meta.id)?;
         let (text, ending) = scripts::decode(&text);
         self.hash = Some(hash);
@@ -209,12 +460,15 @@ impl ScriptFile {
 
     /// The user closes the console without the pending text.
     pub fn discard(&mut self, revision: u64) {
+        let _ = self.wait_save(Instant::now());
         self.saved_revision = revision;
         self.trouble = None;
     }
 
     /// Writes the identity file again, after a change of the schema.
     pub fn write_meta(&mut self, root: &Root) -> Result<(), String> {
+        self.wait_save(Instant::now())
+            .map_err(|error| format!("{error:?}"))?;
         if !self.meta_written {
             return Ok(());
         }
@@ -243,6 +497,9 @@ impl ScriptFile {
     /// Looks for a change of the files by another program. It reads the file only when
     /// its size or its time changed.
     pub fn poll(&mut self, root: &Root) {
+        if self.is_saving() {
+            return;
+        }
         if self.trouble.as_ref().is_some_and(Trouble::needs_choice) {
             return;
         }

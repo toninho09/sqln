@@ -6,7 +6,12 @@
 use std::time::Instant;
 
 use super::ResultTable;
-use crate::find::needle;
+use crate::find::Matcher;
+
+const CHARS_PER_STEP: usize = 512;
+
+#[cfg(test)]
+mod tests;
 
 /// The list stops here, so that a short text does not fill the memory.
 const MAX_MATCHES: usize = 1_000_000;
@@ -14,10 +19,12 @@ const MAX_MATCHES: usize = 1_000_000;
 #[derive(Debug)]
 pub struct RowSearch {
     query: String,
-    needle: Vec<char>,
+    matcher: Matcher,
     /// The cells that match, ordered by row and column.
     matches: Vec<(usize, usize)>,
     next_row: usize,
+    next_col: usize,
+    offset: usize,
     /// The first result is the first match at or after this cell.
     origin: (usize, usize),
     current: Option<usize>,
@@ -28,9 +35,11 @@ impl RowSearch {
     pub fn new(origin: (usize, usize)) -> Self {
         Self {
             query: String::new(),
-            needle: Vec::new(),
+            matcher: Matcher::default(),
             matches: Vec::new(),
             next_row: 0,
+            next_col: 0,
+            offset: 0,
             origin,
             current: None,
             capped: false,
@@ -52,7 +61,9 @@ impl RowSearch {
     }
 
     fn restart(&mut self) {
-        self.needle = needle(&self.query);
+        self.matcher = Matcher::new(&self.query);
+        self.next_col = 0;
+        self.offset = 0;
         self.matches.clear();
         self.next_row = 0;
         self.current = None;
@@ -61,21 +72,13 @@ impl RowSearch {
 
     /// Returns true when loaded rows wait for a read.
     pub fn has_work(&self, table: &ResultTable) -> bool {
-        !self.needle.is_empty() && !self.capped && self.next_row < table.rows.len()
+        !self.matcher.is_empty() && !self.capped && self.next_row < table.rows.len()
     }
 
     /// Reads rows until the deadline. It returns the first result when it finds it.
     pub fn scan(&mut self, table: &ResultTable, deadline: Instant) -> Option<(usize, usize)> {
         while self.has_work(table) {
-            for (col, value) in table.rows[self.next_row].iter().enumerate() {
-                if value.matches(&self.needle) {
-                    self.matches.push((self.next_row, col));
-                }
-            }
-            self.next_row += 1;
-            if self.matches.len() >= MAX_MATCHES {
-                self.capped = true;
-            }
+            self.scan_step(table, CHARS_PER_STEP);
             if Instant::now() >= deadline {
                 break;
             }
@@ -90,6 +93,37 @@ impl RowSearch {
             self.current = Some(0);
         }
         self.current.map(|index| self.matches[index])
+    }
+
+    /// Reads at most one row or `chars` characters.
+    fn scan_step(&mut self, table: &ResultTable, mut chars: usize) {
+        let row = &table.rows[self.next_row];
+        while self.next_col < row.len() {
+            if let Some((c, next)) = row[self.next_col].search_char(self.offset) {
+                chars -= 1;
+                if let Some(found) = self.matcher.push(c) {
+                    self.offset = next;
+                    if found {
+                        self.matches.push((self.next_row, self.next_col));
+                        self.next_cell();
+                    }
+                }
+                if chars == 0 {
+                    return;
+                }
+            } else {
+                self.next_cell();
+            }
+        }
+        self.next_row += 1;
+        self.next_col = 0;
+        self.capped = self.matches.len() >= MAX_MATCHES;
+    }
+
+    fn next_cell(&mut self) {
+        self.next_col += 1;
+        self.offset = 0;
+        self.matcher.reset();
     }
 
     /// Moves to the next or the previous result, and it returns the cell.

@@ -149,7 +149,7 @@ fn a_query_delivers_columns_and_rows_as_database_text() {
     assert_eq!(run.rows[0][1], number("1.5"));
     assert_eq!(run.rows[0][2], Value::Text("ação".into()));
     assert_eq!(run.rows[0][3], Value::Null);
-    assert_eq!(run.rows[0][4], Value::Binary(Box::from([0x00, 0xFF])));
+    assert_eq!(run.rows[0][4], Value::binary([0x00, 0xFF]));
     assert_eq!(run.rows[0][5], number("1e20"));
 }
 
@@ -172,7 +172,7 @@ fn invalid_utf8_text_stays_as_bytes() {
     );
     assert_eq!(
         h.cell("SELECT CAST(x'FF41' AS TEXT)"),
-        Value::Binary(Box::from([0xFF, 0x41]))
+        Value::binary([0xFF, 0x41])
     );
 }
 

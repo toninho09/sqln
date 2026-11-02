@@ -455,6 +455,8 @@ pub const NAME_EMPTY: &str = "The console needs a name.";
 pub const NAME_TAKEN: &str = "Another console of this connection has this name.";
 pub const CONSOLE_RENAMED: &str = "The console has a new name.";
 pub const CONNECTION_CHANGE_BUSY: &str = "End the execution and the transaction before the change.";
+pub const CONNECTION_CHANGE_PENDING: &str =
+    "The connection change is in progress. Try again after it completes.";
 pub const NO_OTHER_CONNECTION: &str = "No other connection is available.";
 pub const SETTINGS_SAVED: &str = "The settings are saved.";
 pub const TITLE_BROWSER: &str = "Choose a file";

@@ -62,7 +62,7 @@ fn the_search_reads_every_value_kind() {
     let row: Row = Box::new([
         Value::Null,
         Value::Number("12345".into()),
-        Value::Binary(Box::new([0xFF, 0xAB])),
+        Value::binary([0xFF, 0xAB]),
     ]);
     table.append(vec![row], 0);
     assert_eq!(search(&table, "null", (0, 0)).1, Some((0, 0)));
@@ -212,8 +212,8 @@ fn a_preview_is_the_start_of_the_display_text() {
         text("a\tb\nc"),
         text("日本語のテキスト"),
         Value::Number("12345".into()),
-        Value::Binary(Box::new([0xFF, 0x00, 0xAB, 0x10])),
-        Value::Binary(Box::new(*b"text")),
+        Value::binary([0xFF, 0x00, 0xAB, 0x10]),
+        Value::binary(*b"text"),
     ];
     for value in values {
         let display = value.display();
@@ -439,7 +439,7 @@ fn the_row_window_writes_one_aligned_line_for_each_column() {
     let values: Row = vec![
         Value::Number("1".into()),
         Value::Null,
-        Value::Binary(vec![0, 255].into_boxed_slice()),
+        Value::binary(vec![0, 255]),
         text("first\nsecond"),
     ]
     .into_boxed_slice();

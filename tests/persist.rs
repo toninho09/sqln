@@ -127,6 +127,7 @@ impl Session {
 
     fn press(&mut self, event: crossterm::event::KeyEvent) {
         self.app.on_event(Event::Key(event));
+        self.finish_saves();
     }
 
     fn code(&mut self, code: KeyCode) {
@@ -146,6 +147,16 @@ impl Session {
     fn wait(&mut self, millis: u64) {
         self.now += Duration::from_millis(millis);
         self.app.tick_at(self.now);
+        self.finish_saves();
+    }
+
+    fn finish_saves(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.app.has_pending_saves() {
+            assert!(Instant::now() < deadline, "script writes do not finish");
+            self.app.tick_at(self.now);
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 
     /// Writes text and lets the autosave save it.

@@ -83,7 +83,8 @@ The vault calls are synchronous, but `Manager::spawn_blocking` runs them off the
 | `store::scripts` | `.sql` and `.json` files of a console, list, lock per console, copy between scopes, and line ending |
 | `store::workspace` | `workspace.json`, read without error and written under the `config.lock` lock |
 | `store::history` | `history.jsonl`: one JSON line per statement, appended at the end of the file, read per connection, and truncated at the start of the file |
-| `script_file::ScriptFile` | Hash of the last written content, 500 ms wait, 5 s retry, and problem (`Failed`, `Changed`, or `Removed`) |
+| `script_file::ScriptFile` | Hash, 500 ms wait, 5 s retry, pending write, and problem (`Failed`, `Changed`, or `Removed`) |
+| `script_file::worker` | One bounded worker for script text, metadata, and moves between scopes |
 | `app::persist` | Load at startup, reload, check each second, close order, and session state |
 | `app::scripts` | Console list, scripts without connection, opening, removal, and attaching |
 | `app::conflicts` | Question about scripts changed outside SQLN |
@@ -102,6 +103,11 @@ Code rules:
 8. The line ending of the file (`LF` or `CRLF`) stays in the `ScriptFile`. The editor always uses `LF`.
 9. `ScriptFile::poll` reads the file only if the size or the date changed, and then compares the hash.
 10. A connection definition carries the base folder. `Definition::connector` resolves the relative paths with it at open time.
+11. Script writes use a dedicated worker, separate from credential access. Only one operation runs at a time.
+12. Each script keeps at most one pending operation. The interface keeps later requests without additional text snapshots.
+13. A write response updates only its captured editor revision. Later edits stay dirty. Close waits for the latest revision.
+14. File polling skips a script while its operation runs. Emergency shutdown waits before it writes the remaining text.
+15. A pending association blocks new SQL executions and export reads for its console until it succeeds or fails.
 
 ### Credential preparation
 
@@ -192,7 +198,8 @@ The oldest entries leave first, and an entry above the cap produces a warning.
 
 The main thread waits for a key for up to 20 ms and then reads the execution events.
 It reads at most 64 events per frame, so a large load does not delay the keys.
-The grid search advances 8 ms per loop turn, without waiting while there are rows to read.
+The grid search advances 8 ms per loop turn. It checks the deadline after a row or 512 characters.
+The search resumes inside a cell and streams binary hexadecimal text without a full copy.
 The event channel is bounded, and that controls the speed of the database read.
 The application draws only after a change.
 
@@ -256,6 +263,8 @@ Dropping `ResultSink` returns the rows still in the batch to the budget.
 `Conn::reset` keeps the current database, so a `USE` would stay in the session without the next step.
 The cleaning reads `DATABASE()` and goes back to the database of the connection. Without a database in the connection, the session closes, because MySQL does not leave a database.
 The variant serves presentation only, such as aligning numbers.
+`Value::binary` classifies binary bytes once, before they reach the interface. The wrapper preserves the original bytes.
+A preview reads only the visible prefix. TSV encoding borrows selected values without cloning the selection.
 
 ## 5. Script execution
 

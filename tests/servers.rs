@@ -290,7 +290,7 @@ fn values_keep_the_text_of_the_database_in_postgres() {
     );
     assert_eq!(row[1], Value::Null);
     assert_eq!(row[2], Value::Text("".into()));
-    assert_eq!(row[3], Value::Binary(Box::new([0x00, 0xFF])));
+    assert_eq!(row[3], Value::binary([0x00, 0xFF]));
     assert_eq!(row[4], Value::Text("2026-10-30 12:34:56.789".into()));
     assert_eq!(row[5], Value::Text("ação 日本".into()));
     assert_eq!(row[6], Value::Text("{1,2}".into()));
@@ -329,14 +329,14 @@ fn values_keep_the_text_of_the_database_in_mysql() {
     );
     assert_eq!(row[1], Value::Null);
     assert_eq!(row[2], Value::Text("".into()));
-    assert_eq!(row[3], Value::Binary(Box::new([0x00, 0xFF])));
+    assert_eq!(row[3], Value::binary([0x00, 0xFF]));
     assert_eq!(row[4], Value::Text("2026-10-30 12:34:56".into()));
     assert_eq!(row[5], Value::Text("ação 日本".into()));
     assert_eq!(row[6], Value::Number("1.50".into()));
     assert_eq!(row[7], Value::Number("7".into()));
     assert_eq!(row[8], Value::Text("{\"a\": 1}".into()));
     assert_eq!(row[9], Value::Text("2026-10-30".into()));
-    assert_eq!(row[10], Value::Binary(Box::new([0x41])));
+    assert_eq!(row[10], Value::binary([0x41]));
 }
 
 #[test]

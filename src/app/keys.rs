@@ -866,7 +866,9 @@ impl App {
             connection.is_some_and(|item| item.capabilities.namespace != Namespace::None);
         match action {
             Action::OpenPalette => false,
-            Action::Run | Action::RunScript => !in_table && idle,
+            Action::Run | Action::RunScript => {
+                !in_table && idle && !self.association_pending(console.id)
+            }
             Action::Stop => self.table().map_or(!idle, |tab| tab.is_busy()),
             Action::ToggleMode => !in_table && idle && transactions,
             Action::Commit | Action::Rollback => !in_table && idle && console.in_transaction(),

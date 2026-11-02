@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 
-use super::Value;
+use super::{Binary, Value};
 
 /// Quotes a field that holds a separator, or that a reader could take for a `NULL`.
 pub fn delimited_text<'a>(text: &'a str, delimiter: char, null: &str) -> Cow<'a, str> {
@@ -20,10 +20,10 @@ pub fn hex(bytes: &[u8]) -> String {
     format!("0x{digits}")
 }
 
-fn binary<'a>(bytes: &'a [u8], delimiter: char, null: &str) -> Cow<'a, str> {
-    match std::str::from_utf8(bytes) {
-        Ok(text) if !text.contains(char::is_control) => delimited_text(text, delimiter, null),
-        _ => Cow::Owned(hex(bytes)),
+fn binary<'a>(bytes: &'a Binary, delimiter: char, null: &str) -> Cow<'a, str> {
+    match bytes.text() {
+        Some(text) => delimited_text(text, delimiter, null),
+        None => Cow::Owned(hex(bytes)),
     }
 }
 
@@ -37,10 +37,10 @@ pub fn delimited_cell<'a>(value: &'a Value, delimiter: char, null: &'a str) -> C
 }
 
 /// Writes rows of cells, with a line feed after each row and without a header.
-pub fn encode<'a>(rows: impl Iterator<Item = &'a [Value]>) -> String {
+pub fn encode<'a>(rows: impl Iterator<Item = impl Iterator<Item = &'a Value>>) -> String {
     let mut out = String::new();
     for row in rows {
-        for (index, value) in row.iter().enumerate() {
+        for (index, value) in row.enumerate() {
             if index > 0 {
                 out.push('\t');
             }

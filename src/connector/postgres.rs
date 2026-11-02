@@ -330,7 +330,7 @@ fn bytea_value(text: &str) -> Value {
                 .map(|index| u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok())
                 .collect::<Option<Box<[u8]>>>()
         });
-    decoded.map_or_else(|| Value::Text(text.into()), Value::Binary)
+    decoded.map_or_else(|| Value::Text(text.into()), Value::binary)
 }
 
 fn row_values(row: &SimpleQueryRow, kinds: &[ColumnKind]) -> Result<Row, ExecError> {
