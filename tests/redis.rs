@@ -248,6 +248,24 @@ fn a_saved_connection_keeps_its_kind_without_a_user() {
     assert_eq!(read, definition);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_socket_refuses_tls() {
+    let target = parse_uri("rediss:///0?socket=/tmp/sqln-none.sock").unwrap();
+    let error = network_connector(target).connect().await.err().unwrap();
+    assert_eq!(error.message, sqln::ui::text::REDIS_SOCKET_TLS);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_missing_socket_reports_an_error() {
+    let path = common::temp_dir("redis-no-socket").join("none.sock");
+    let target = parse_uri(&format!("redis:///0?socket={}", path.display())).unwrap();
+    let error = network_connector(target).connect().await.err().unwrap();
+    assert!(!error.message.is_empty());
+    assert!(!error.password_refused);
+}
+
 // The tests below need a server.
 
 fn uris() -> Vec<String> {

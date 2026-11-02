@@ -1501,6 +1501,28 @@ fn a_double_click_opens_a_row_of_the_file_browser() {
 }
 
 #[test]
+fn the_wheel_moves_the_cursor_of_the_file_browser() {
+    let dir = export_dir("export-browse-wheel");
+    for folder in ["a", "b", "c", "d", "e"] {
+        std::fs::create_dir(dir.join(folder)).unwrap();
+        std::fs::write(dir.join(folder).join(format!("in-{folder}.csv")), "").unwrap();
+    }
+    let mut f = Fixture::new("export-browse-wheel");
+    f.run_script("SELECT 1 AS a;");
+    f.open_export();
+    f.set_export_path(&dir.join("out.csv"));
+    f.press(ctrl('o'));
+
+    // Each step moves three rows. The folder `a` follows `Use this folder` and `../`, so
+    // two steps down and one step up stop on the folder `b`.
+    f.app.on_event(mouse(MouseEventKind::ScrollDown, 0, 0));
+    f.app.on_event(mouse(MouseEventKind::ScrollDown, 0, 0));
+    f.app.on_event(mouse(MouseEventKind::ScrollUp, 0, 0));
+    f.press(key(KeyCode::Enter));
+    f.assert_sees("in-b.csv");
+}
+
+#[test]
 fn an_export_writes_the_rows_of_the_grid() {
     let dir = export_dir("export-grid");
     let path = dir.join("out.csv");

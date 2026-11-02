@@ -58,7 +58,7 @@ impl Clipboard for SystemClipboard {
         {
             return CopyOutcome::Copied;
         }
-        send_osc52(text)
+        write_osc52(&mut std::io::stdout(), text)
     }
 
     fn paste(&mut self) -> Option<String> {
@@ -66,8 +66,8 @@ impl Clipboard for SystemClipboard {
     }
 }
 
-fn send_osc52(text: &str) -> CopyOutcome {
-    let mut output = std::io::stdout();
+/// Asks the terminal to copy the text.
+pub fn write_osc52(output: &mut impl Write, text: &str) -> CopyOutcome {
     let sequence = format!("\x1b]52;c;{}\x07", base64(text.as_bytes()));
     match output
         .write_all(sequence.as_bytes())

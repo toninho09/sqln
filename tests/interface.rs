@@ -1002,6 +1002,33 @@ fn the_palette_works_with_the_mouse() {
 }
 
 #[test]
+fn the_wheel_moves_the_cursor_of_the_palette() {
+    let wheel = |kind| {
+        Event::Mouse(MouseEvent {
+            kind,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    let mut screen = Screen::new("palette-wheel", Theme::plain(), KeyboardMode::Conventional);
+    screen.palette();
+    let first = screen.buffer(100, 30);
+
+    screen.app.on_event(wheel(MouseEventKind::ScrollDown));
+    let second = screen.buffer(100, 30);
+    assert_ne!(first, second);
+    screen.app.on_event(wheel(MouseEventKind::ScrollUp));
+    assert_eq!(first, screen.buffer(100, 30));
+    screen.code(KeyCode::Down);
+    assert_eq!(
+        second,
+        screen.buffer(100, 30),
+        "the wheel acts as the arrow"
+    );
+}
+
+#[test]
 fn the_palette_shows_only_commands_that_have_an_effect() {
     let mut screen = Screen::new("palette-state", Theme::plain(), KeyboardMode::Conventional);
     screen.palette();

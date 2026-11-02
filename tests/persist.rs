@@ -198,14 +198,32 @@ impl Session {
         );
     }
 
-    fn click(&mut self, column: u16, row: u16) {
-        let kind = MouseEventKind::Down(MouseButton::Left);
+    /// Looks for a text of a modal. The line breaks depend on the length of a path, so
+    /// the comparison ignores the spaces and the border.
+    fn assert_sees_wrapped(&mut self, text: &str) {
+        let flat = |text: &str| -> String {
+            text.chars()
+                .filter(|c| !c.is_whitespace() && *c != '│')
+                .collect()
+        };
+        let screen = self.screen();
+        assert!(
+            flat(&screen).contains(&flat(text)),
+            "{text:?} is not on the screen:\n{screen}"
+        );
+    }
+
+    fn mouse(&mut self, kind: MouseEventKind, column: u16, row: u16) {
         self.app.on_event(Event::Mouse(MouseEvent {
             kind,
             column,
             row,
             modifiers: KeyModifiers::NONE,
         }));
+    }
+
+    fn click(&mut self, column: u16, row: u16) {
+        self.mouse(MouseEventKind::Down(MouseButton::Left), column, row);
     }
 
     /// Returns the column and the row of a text on the screen.
@@ -1502,7 +1520,7 @@ fn the_question_about_a_removal_names_the_file_and_the_scripts_that_stay() {
     session.go_to_connection("gone");
     session.code(KeyCode::Delete);
     session.assert_sees("Remove the definition of gone from");
-    session.assert_sees("scripts of the connection stay");
+    session.assert_sees_wrapped("scripts of the connection stay");
     // Cancel removes nothing.
     session.code(KeyCode::Enter);
     assert_eq!(session.app.connections().len(), 1);
@@ -1520,16 +1538,29 @@ fn script_path(root: &Root, id: &str) -> PathBuf {
 }
 
 fn session_with_saved_console(name: &str) -> (Session, Store, String) {
+    session_with_preferences(name, "{}")
+}
+
+fn session_with_preferences(name: &str, preferences: &str) -> (Session, Store, String) {
     let (store, base) = global_only(name);
     let db = database(&base, "s", "");
     write_config(
         &store.global,
-        "{}",
+        preferences,
         &[sqlite_entry("g1", "s", &db.display().to_string())],
     );
     let mut session = Session::start(&store);
     session.type_and_save("SELECT 1;");
     let id = consoles_in(&store.global, Scope::Global)[0].meta.id.clone();
+    (session, store, id)
+}
+
+/// Opens the question about one script that another program changed.
+fn question_about_a_changed_script(name: &str, preferences: &str) -> (Session, Store, String) {
+    let (mut session, store, id) = session_with_preferences(name, preferences);
+    fs::write(script_path(&store.global, &id), "SELECT 'theirs';").unwrap();
+    session.wait(1_000);
+    session.assert_sees("Scripts changed outside SQLN");
     (session, store, id)
 }
 
@@ -1698,6 +1729,120 @@ fn ctrl_s_opens_the_question_again_for_a_script_in_conflict() {
     session.assert_not_sees("Scripts changed outside SQLN");
     session.press(ctrl('s'));
     session.assert_sees("Scripts changed outside SQLN");
+}
+
+#[test]
+fn a_row_shows_the_action_that_the_user_chose() {
+    let (mut session, _, _) = question_about_a_changed_script("p-conflict-labels", "{}");
+    session.assert_sees("< choose >");
+    session.code(KeyCode::Right);
+    session.assert_sees("< Reload >");
+    session.code(KeyCode::Char(' '));
+    session.assert_sees("< Overwrite >");
+    session.code(KeyCode::Left);
+    session.assert_sees("< Reload >");
+}
+
+#[test]
+fn a_row_of_a_removed_script_offers_recreate_and_close() {
+    let (mut session, store, id) = session_with_saved_console("p-conflict-labels-removed");
+    scripts::remove(&store.global, &id).unwrap();
+    session.wait(1_000);
+    session.code(KeyCode::Right);
+    session.assert_sees("< Recreate >");
+    session.code(KeyCode::Right);
+    session.assert_sees("< Close >");
+}
+
+#[test]
+fn enter_chooses_on_a_row_and_goes_to_apply() {
+    let (mut session, _, _) = question_about_a_changed_script("p-conflict-enter", "{}");
+    session.code(KeyCode::Enter); // Reload
+    session.assert_sees("< Reload >");
+    session.code(KeyCode::Enter); // Apply
+    session.assert_not_sees("Scripts changed outside SQLN");
+    assert_eq!(session.text(), "SELECT 'theirs';");
+}
+
+#[test]
+fn the_cursor_of_the_question_goes_around_the_rows_and_the_buttons() {
+    let (mut session, _, _) = question_about_a_changed_script("p-conflict-around", "{}");
+    session.code(KeyCode::Up); // from the first row to Decide later
+    session.code(KeyCode::BackTab); // Apply
+    session.code(KeyCode::Enter);
+    session.assert_sees("Choose an action for each script.");
+}
+
+#[test]
+fn left_and_right_change_the_button_of_the_question() {
+    let (mut session, store, id) = question_about_a_changed_script("p-conflict-buttons", "{}");
+    session.code(KeyCode::Tab); // Apply
+    session.code(KeyCode::Right); // Decide later
+    session.code(KeyCode::Left); // Apply
+    session.code(KeyCode::Enter);
+    session.assert_sees("Choose an action for each script.");
+    session.code(KeyCode::Left); // Decide later
+    session.code(KeyCode::Enter);
+    session.assert_not_sees("Scripts changed outside SQLN");
+    assert_eq!(session.text(), "SELECT 1;");
+    assert_eq!(text_of(&store.global, &id), "SELECT 'theirs';");
+}
+
+#[test]
+fn the_vim_keys_work_in_the_question() {
+    let preferences = r#"{"keyboardMode":"vim"}"#;
+    let (mut session, store, id) = question_about_a_changed_script("p-conflict-vim", preferences);
+    session.code(KeyCode::Char('l')); // Reload
+    session.code(KeyCode::Char('h')); // Overwrite
+    session.assert_sees("< Overwrite >");
+    session.code(KeyCode::Char('j')); // Apply
+    session.code(KeyCode::Char('j')); // Decide later
+    session.code(KeyCode::Char('k')); // Apply
+    session.code(KeyCode::Enter);
+    session.assert_not_sees("Scripts changed outside SQLN");
+    assert_eq!(text_of(&store.global, &id), "SELECT 1;");
+}
+
+#[test]
+fn the_mouse_chooses_and_applies_in_the_question() {
+    let (mut session, _, _) = question_about_a_changed_script("p-conflict-mouse", "{}");
+    session.click_text("< choose >");
+    session.assert_sees("< Reload >");
+    session.click_text("Apply");
+    session.assert_not_sees("Scripts changed outside SQLN");
+    assert_eq!(session.text(), "SELECT 'theirs';");
+}
+
+#[test]
+fn only_a_left_click_on_a_button_ends_the_question() {
+    let (mut session, _, _) = question_about_a_changed_script("p-conflict-mouse-later", "{}");
+    let (column, row) = session.locate("Decide later");
+    session.mouse(MouseEventKind::Down(MouseButton::Right), column, row);
+    session.mouse(MouseEventKind::Up(MouseButton::Left), column, row);
+    session.click(0, 0);
+    session.assert_sees("Scripts changed outside SQLN");
+    session.click(column, row);
+    session.assert_not_sees("Scripts changed outside SQLN");
+    assert_eq!(session.text(), "SELECT 1;");
+}
+
+#[test]
+fn the_wheel_moves_the_cursor_of_the_list_of_consoles() {
+    let (store, _) = reopening_store("p-picker-wheel", "{}");
+    let mut session = Session::start(&store);
+    session.type_and_save("SELECT 1;");
+    session.go_to_connection("s");
+    session.code(KeyCode::Char('n'));
+    session.assert_sees("New console");
+    assert!(!session.app.hint().contains("r rename"));
+
+    session.mouse(MouseEventKind::ScrollDown, 0, 0);
+    assert!(session.app.hint().contains("r rename"));
+    // The last row stops the cursor.
+    session.mouse(MouseEventKind::ScrollDown, 0, 0);
+    assert!(session.app.hint().contains("r rename"));
+    session.mouse(MouseEventKind::ScrollUp, 0, 0);
+    assert!(!session.app.hint().contains("r rename"));
 }
 
 #[test]

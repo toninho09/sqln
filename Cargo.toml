@@ -47,6 +47,9 @@ zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-async-i
 [dev-dependencies]
 tokio = { version = "1.54", features = ["rt-multi-thread", "sync", "time", "macros"] }
 
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { version = "1", default-features = false, features = ["std", "process", "pty", "termios"] }
+
 [[bench]]
 name = "hot_paths"
 harness = false
