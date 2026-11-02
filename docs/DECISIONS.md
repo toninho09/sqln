@@ -4,6 +4,15 @@ This document records the choices and the rejected alternatives.
 The complete rules are in the [plan](INITIAL_PLAN.md).
 Do not reopen a decision without a new fact.
 
+## MySQL client key — 2026-11-02
+
+`mysql_async` 0.37 reads client keys in PKCS#1, PKCS#8, and SEC1 form. The user removed the SQLN check that accepted only PKCS#1.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| Key form | The driver decides | Keep the SQLN check | The check refused keys that the driver reads |
+| Bad key | The connection fails with the error of the driver | A message of SQLN | The form of a key has no SQLN limit to explain |
+
 ## Import from a file — 2026-11-02
 
 The user asked for an import of a file into a table, inspired by DataGrip, and approved the 31 decisions below.

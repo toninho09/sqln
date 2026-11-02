@@ -18,10 +18,15 @@ openssl req -newkey rsa:2048 -nodes -keyout client.key -out client.csr -subj '/C
 printf 'basicConstraints=CA:FALSE\nextendedKeyUsage=clientAuth\n' > client.ext
 openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 30 -out client.crt -extfile client.ext 2>/dev/null
 
-# tokio-postgres reads PKCS#8. mysql_async reads RSA PKCS#1 only.
+# tokio-postgres reads PKCS#8. mysql_async reads PKCS#1, PKCS#8, and SEC1.
 openssl pkcs8 -topk8 -nocrypt -in client.key -out client.pk8.key 2>/dev/null
 openssl rsa -traditional -in client.key -out client.rsa.key 2>/dev/null ||
     openssl rsa -in client.key -out client.rsa.key 2>/dev/null
+
+# An EC key in SEC1 form needs its own client certificate.
+openssl ecparam -name prime256v1 -genkey -noout -out client-ec.key 2>/dev/null
+openssl req -new -key client-ec.key -out client-ec.csr -subj '/CN=certuser' 2>/dev/null
+openssl x509 -req -in client-ec.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 30 -out client-ec.crt -extfile client.ext 2>/dev/null
 
 cat > pg_hba.conf <<'HBA'
 local all all trust

@@ -363,8 +363,6 @@ pub const FORM_CLIENT_PAIR: &str = "A client certificate needs its file and its 
 pub const FORM_TLS_FILES: &str = "TLS files need a connection with TLS.";
 pub const FORM_CONNECTED: &str =
     "This connection is connected. Disconnect it to change access, TLS, or the pool.";
-pub const MYSQL_CLIENT_KEY: &str =
-    "MySQL needs an RSA client key in PKCS#1 form (BEGIN RSA PRIVATE KEY).";
 pub const FIELD_KIND: &str = "Type";
 pub const FIELD_NAME: &str = "Name";
 pub const FIELD_SCOPE: &str = "Scope";

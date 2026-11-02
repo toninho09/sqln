@@ -1538,21 +1538,35 @@ fn tls_refuses_a_server_without_tls() {
     }
 }
 
+/// The text of a connection of `certuser`. A full path in `key` replaces the folder.
+fn client_uri(
+    server: &TlsServer,
+    folder: &std::path::Path,
+    certificate: &str,
+    key: &str,
+) -> String {
+    format!(
+        "{}://certuser@localhost:{}/spike?sslmode=verify-full&sslrootcert={}&sslcert={}&sslkey={}",
+        server.scheme,
+        server.port,
+        folder.join("ca.crt").display(),
+        folder.join(certificate).display(),
+        folder.join(key).display(),
+    )
+}
+
+fn mysql_tls_servers() -> Vec<TlsServer> {
+    let mut found = tls_servers();
+    found.retain(|server| server.scheme == "mysql");
+    found
+}
+
 #[test]
 fn tls_accepts_a_client_certificate() {
     let Some(folder) = certs() else { return };
     for server in tls_servers() {
-        let TlsServer {
-            scheme,
-            port,
-            user_key,
-        } = server;
-        let uri = format!(
-            "{scheme}://certuser@localhost:{port}/spike?sslmode=verify-full&sslrootcert={}&sslcert={}&sslkey={}",
-            folder.join("ca.crt").display(),
-            folder.join("client.crt").display(),
-            folder.join(user_key).display(),
-        );
+        let uri = client_uri(&server, &folder, "client.crt", server.user_key);
+        let TlsServer { scheme, port, .. } = server;
         assert!(try_connect(&uri).is_ok(), "{scheme}");
         let without = format!(
             "{scheme}://certuser@localhost:{port}/spike?sslmode=verify-full&sslrootcert={}",
@@ -1560,6 +1574,49 @@ fn tls_accepts_a_client_certificate() {
         );
         assert!(try_connect(&without).is_err(), "{scheme}");
     }
+}
+
+#[test]
+fn tls_accepts_each_form_of_a_client_key_on_mysql() {
+    let Some(folder) = certs() else { return };
+    let forms = [
+        ("client.crt", "client.rsa.key", "RSA PRIVATE KEY"),
+        ("client.crt", "client.pk8.key", "PRIVATE KEY"),
+        ("client-ec.crt", "client-ec.key", "EC PRIVATE KEY"),
+    ];
+    for server in mysql_tls_servers() {
+        for (certificate, key, form) in forms {
+            let text = std::fs::read_to_string(folder.join(key)).unwrap();
+            assert!(text.contains(&format!("-----BEGIN {form}-----")), "{key}");
+            let uri = client_uri(&server, &folder, certificate, key);
+            assert_eq!(try_connect(&uri).err(), None, "{key}");
+        }
+    }
+}
+
+#[test]
+fn a_bad_client_key_on_mysql_is_a_connection_error() {
+    let Some(folder) = certs() else { return };
+    let bad = std::env::temp_dir().join(format!("sqln-key-{}.pem", std::process::id()));
+    let files = [
+        ("no key", "no key in this file\n"),
+        (
+            "bad key",
+            "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
+        ),
+    ];
+    for server in mysql_tls_servers() {
+        for (name, text) in files {
+            std::fs::write(&bad, text).unwrap();
+            let uri = client_uri(&server, &folder, "client.crt", &bad.display().to_string());
+            let error = try_connect(&uri).err().unwrap();
+            println!("{name}: {error}");
+        }
+        let uri = client_uri(&server, &folder, "client.crt", "missing.key");
+        let error = try_connect(&uri).err().unwrap();
+        println!("missing key: {error}");
+    }
+    let _ = std::fs::remove_file(bad);
 }
 
 #[test]
@@ -2380,25 +2437,6 @@ fn the_form_tests_a_real_server_and_a_wrong_password_stays_hidden() {
         assert!(!screen.contains("The connection works."), "{screen}");
         s.app.shutdown();
     }
-}
-
-#[test]
-fn a_client_key_in_another_form_gets_a_clear_message() {
-    let path = std::env::temp_dir().join(format!("sqln-key-{}.pem", std::process::id()));
-    std::fs::write(
-        &path,
-        "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
-    )
-    .unwrap();
-    let uri = format!(
-        "mysql://reader@127.0.0.1:1/app?sslmode=verify-full&sslcert={0}&sslkey={0}",
-        path.display(),
-    );
-    let connector = network_connector(parse_uri(&uri).unwrap());
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let error = runtime.block_on(connector.connect()).err().unwrap();
-    assert!(error.message.contains("PKCS#1"), "{error:?}");
-    std::fs::remove_file(path).unwrap();
 }
 
 #[test]

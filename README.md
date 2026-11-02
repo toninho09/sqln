@@ -447,7 +447,7 @@ sqln 'valkeys://valkey.example.com/0'
 
 The form also accepts CA files and client certificates.
 URI parameters include `sslrootcert`, `sslcert`, and `sslkey`; a client certificate requires both certificate and key.
-MySQL client keys need RSA PKCS#1 format. PostgreSQL client keys use PKCS#8 in the test setup.
+MySQL client keys can use PKCS#1, PKCS#8, or SEC1 format. PostgreSQL client keys use PKCS#8 in the test setup.
 
 SQLN does not use an unverified TLS fallback. Even `sslmode=require` and `verify-ca` use full verification.
 An explicit `sslmode=disable` removes TLS; use it only when the connection environment permits unencrypted traffic.
