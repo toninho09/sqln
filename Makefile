@@ -24,9 +24,10 @@ test-integration:
 	docker compose -f compose.test.yaml down; \
 	exit $$status
 
-# Print the performance report, then run the targets in tests/latency.rs (release build). Slow; run only on request.
+# Print the performance and memory reports, then run the targets in tests/latency.rs (release build). Slow; run only on request.
 bench:
 	@cargo bench --bench hot_paths
+	@cargo bench --bench memory
 	@cargo test --release --test latency -- --nocapture --test-threads=1
 
 # Delivery gate: linters plus the full test suite. Slow; run once, at task end.

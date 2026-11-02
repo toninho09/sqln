@@ -3,13 +3,13 @@ use crate::grid::Value;
 
 fn table(values: Vec<Value>) -> ResultTable {
     let mut table = ResultTable::new(vec!["value".into()]);
-    table.append(vec![values.into_boxed_slice()], 0);
+    table.append(vec![values.into_iter().collect()], 0);
     table
 }
 
 #[test]
 fn a_search_resumes_inside_a_multibyte_cell() {
-    let table = table(vec![Value::Text("xx日本語AÇÃOyy".into())]);
+    let table = table(vec![Value::Text("xx日本語AÇÃOyy")]);
     let mut search = RowSearch::new((0, 0));
     search.push_str("日本語ação");
     search.scan_step(&table, 4);
@@ -25,7 +25,7 @@ fn a_search_resumes_inside_a_multibyte_cell() {
 
 #[test]
 fn a_long_prefix_fallback_also_yields_between_steps() {
-    let table = table(vec![Value::Text(("a".repeat(5000) + "c").into())]);
+    let table = table(vec![Value::Text(&("a".repeat(5000) + "c"))]);
     let mut search = RowSearch::new((0, 0));
     search.push_str(&("a".repeat(5000) + "b"));
     search.scan_step(&table, 5000);
@@ -41,7 +41,7 @@ fn a_long_prefix_fallback_also_yields_between_steps() {
 
 #[test]
 fn a_query_change_clears_the_partial_match() {
-    let table = table(vec![Value::Text("aaaaab".into())]);
+    let table = table(vec![Value::Text("aaaaab")]);
     let mut search = RowSearch::new((0, 0));
     search.push_str("aaaab");
     search.scan_step(&table, 3);
@@ -55,7 +55,7 @@ fn a_query_change_clears_the_partial_match() {
 
 #[test]
 fn binary_search_streams_hexadecimal_and_its_prefix() {
-    let table = table(vec![Value::binary([0xff, 0xab, 0x00])]);
+    let table = table(vec![Value::binary(&[0xff, 0xab, 0x00])]);
     for query in ["0xff", "FfAb", "ab00", "xFFAB00"] {
         let mut search = RowSearch::new((0, 0));
         search.push_str(query);
@@ -68,7 +68,7 @@ fn binary_search_streams_hexadecimal_and_its_prefix() {
 
 #[test]
 fn an_expired_deadline_does_not_finish_a_large_cell() {
-    let table = table(vec![Value::Text(("x".repeat(100_000) + "needle").into())]);
+    let table = table(vec![Value::Text(&("x".repeat(100_000) + "needle"))]);
     let mut search = RowSearch::new((0, 0));
     search.push_str("needle");
     search.scan(&table, Instant::now());
@@ -80,9 +80,9 @@ fn an_expired_deadline_does_not_finish_a_large_cell() {
 #[test]
 fn matching_resets_between_cells_and_handles_repeated_prefixes() {
     let table = table(vec![
-        Value::Text("aaaaa".into()),
-        Value::Text("b".into()),
-        Value::Text("aaaaaaaaaaaaaaaaab".into()),
+        Value::Text("aaaaa"),
+        Value::Text("b"),
+        Value::Text("aaaaaaaaaaaaaaaaab"),
     ]);
     let mut search = RowSearch::new((0, 0));
     search.push_str("aaaaab");

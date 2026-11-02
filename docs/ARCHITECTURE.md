@@ -50,7 +50,7 @@ Main thread                        Tokio runtime
 | `exec` | Executions, scripts, cap, and cancellation |
 | `pool` | Limit, queue, reservation, and cleaning |
 | `connector` | Contract and PostgreSQL, MySQL, SQLite, and Redis/Valkey connectors |
-| `grid` | Rows, widths, search, budget, TSV, and readable JSON shape (`json`) |
+| `grid` | Rows in one block each (`row`), widths, search, budget, TSV, and readable JSON shape (`json`) |
 | `export` | Export formats, temporary file, and modal form |
 | `find` | Text comparison of the two searches |
 | `clipboard` | System clipboard and OSC 52 |
@@ -173,7 +173,7 @@ A Redis key tab uses the same path, without SQL:
 
 Each undo entry of EdTUI keeps a full copy of the text, and each console has its own stacks.
 `undo` and `redo` keep up to 100 entries each, and EdTUI does not clear `redo` after a new edit.
-By estimate, a 50,000-line script takes about 15 MB per entry, 1.5 GB in the 100 `undo` entries, and 3 GB with both stacks full.
+By measure, a 50,000-line script takes 16.8 MiB per entry and 1.7 GiB in the 100 `undo` entries. By estimate, it takes 3.4 GiB with both stacks full.
 In the conventional mode, 100 entries equal about 100 typed words.
 Common scripts stay far below that, and closing the console frees that memory.
 
@@ -200,6 +200,22 @@ Two rules copy code of the libraries. Check them after an update of EdTUI or Rat
 2. `FrameState::paint_row` copies the cell rule of `Span::render` of Ratatui.
 
 `each_column_of_a_long_row_keeps_its_colors` guards both rules.
+
+### Result rows
+
+A block of memory for each value costs more than the text of a usual value.
+Therefore, `grid::Row` keeps all the values of a row in one block, and a read gets a `Value` that borrows from that block.
+The connectors write each row through `RowWriter`, so a read also has fewer allocations.
+A row of 3 usual values takes about 100 B, and the same row took about 200 B with a block for each value.
+
+Each cell has a head and the bytes of its value, so a read walks the row from its first column.
+To read many columns of a row, use `Row::cells` and not `Row::get`, because each `get` starts again.
+
+`Row` holds the only `unsafe` code of `src/`: a read of text skips the check of UTF-8.
+That check took a third of the time of a copy or of an export, and each text in a row comes from a `str`.
+
+The budget counts the block of each row, so the same limit holds about twice the rows.
+The limit in memory stays the same.
 
 ## 3. Concurrency
 

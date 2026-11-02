@@ -23,7 +23,7 @@ The file paths are relative to `src/`.
 | 11 | SQL analysis and formatter | `sql/lexer.rs`, `sql/statement.rs`, `sql/classify.rs`, `sql/format.rs` |
 | 12 | Autocomplete | `complete/mod.rs`, `complete/context.rs`, `complete/keywords.rs`, `catalog.rs` |
 | 13 | Catalog and structure tab | `catalog.rs`, `structure.rs` |
-| 14 | Results grid | `result.rs`, `grid/mod.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs` |
+| 14 | Results grid | `result.rs`, `grid/mod.rs`, `grid/row.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs` |
 | 15 | Table view | `table.rs`, `app/tables.rs`, `ui/table.rs` |
 | 16 | Export and file explorer | `export/mod.rs`, `export/form.rs`, `ui/export.rs`, `app/export.rs`, `browser.rs`, `ui/browser.rs`, `app/browse.rs` |
 | 17 | Query history | `history.rs`, `store/history.rs`, `app/history.rs`, `ui/history.rs` |
@@ -117,9 +117,9 @@ The catalog is a cache in memory, outside the disk. Schemas and tables load firs
 
 ## 14. Results grid
 
-Files: `result.rs`, `grid/mod.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs`.
+Files: `result.rs`, `grid/mod.rs`, `grid/row.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs`.
 
-A console result and a table page share `result::ResultTab`: one grid with cursor, selection, and search. The grid keeps result tabs, the **Messages** tab, and a detail view. `grid/budget` counts the bytes of the loaded rows; a reservation frees its cost on drop. `grid/search` searches the loaded rows only, never the database, and advances 8 ms per loop turn. `r` opens the row window. `f` formats a JSON value with `grid/json`; only the white space changes. `grid/tsv` builds the copy text, with the DataGrip shape and the data that DataGrip loses; `clipboard` prefers the system clipboard and falls back to OSC 52.
+A console result and a table page share `result::ResultTab`: one grid with cursor, selection, and search. The grid keeps result tabs, the **Messages** tab, and a detail view. `grid/row` keeps each row in one block, and a read gets a `Value` that borrows from it. `grid/budget` counts the bytes of the loaded rows; a reservation frees its cost on drop. `grid/search` searches the loaded rows only, never the database, and advances 8 ms per loop turn. `r` opens the row window. `f` formats a JSON value with `grid/json`; only the white space changes. `grid/tsv` builds the copy text, with the DataGrip shape and the data that DataGrip loses; `clipboard` prefers the system clipboard and falls back to OSC 52.
 
 ## 15. Table view
 

@@ -64,20 +64,23 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 /// Writes the text of a cell. `null` is the text of a `NULL` value.
-pub fn push_cell(out: &mut String, value: &Value, delimiter: u8, null: &str) {
+pub fn push_cell(out: &mut String, value: Value<'_>, delimiter: u8, null: &str) {
     match value {
         Value::Null => out.push_str(null),
         Value::Text(text) | Value::Number(text) => push_field(out, text, delimiter, null),
         Value::Binary(bytes) => match bytes.text() {
             Some(text) => push_field(out, text, delimiter, null),
-            None => out.push_str(&hex(bytes)),
+            None => out.push_str(&hex(&bytes)),
         },
     }
 }
 
 /// Writes rows of cells, with a line feed after each row and without a header.
-pub fn encode<'a>(rows: impl Iterator<Item = impl Iterator<Item = &'a Value>>) -> String {
-    let mut out = String::new();
+pub fn encode<'a>(
+    rows: impl Iterator<Item = impl Iterator<Item = Value<'a>>>,
+    size: usize,
+) -> String {
+    let mut out = String::with_capacity(size);
     for row in rows {
         for (index, value) in row.enumerate() {
             if index > 0 {

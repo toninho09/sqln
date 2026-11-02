@@ -15,7 +15,7 @@ fn format(sql: &str) -> String {
 
 fn tokens_of(sql: &str, dialect: Dialect) -> Vec<&str> {
     let tokens = tokenize(sql, dialect);
-    let texts = tokens.iter().map(|token| &sql[token.start..token.end]);
+    let texts = tokens.iter().map(|token| &sql[token.start()..token.end()]);
     texts.collect()
 }
 

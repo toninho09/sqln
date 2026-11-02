@@ -500,7 +500,7 @@ make fmt     # Format Rust code.
 make lint    # Check formatting and Clippy.
 make test    # Run tests without requiring database servers.
 make check   # Run lint and the complete default test suite.
-make bench   # Print the performance report and run the latency targets.
+make bench   # Print the performance and memory reports and run the latency targets.
 ```
 
 Database-dependent tests skip when their environment is absent. A passing local check alone does not prove database integration.

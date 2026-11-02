@@ -404,8 +404,11 @@ impl App {
         };
         for row in rows.by_ref() {
             let cells = source.table.rows.get(row);
-            let cells = cells.and_then(|cells| cells.get(columns.clone()));
-            if !cells.is_some_and(|cells| run.writer.write_row(cells)) {
+            let Some(cells) = cells.filter(|cells| cells.columns() >= columns.end) else {
+                return true;
+            };
+            let cells = cells.cells().skip(columns.start).take(columns.len());
+            if !run.writer.write_row(cells) {
                 return true;
             }
             if Instant::now() >= deadline {

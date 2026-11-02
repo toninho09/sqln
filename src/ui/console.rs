@@ -522,7 +522,7 @@ fn visible_columns(table: &ResultTable, view: &GridView, area: Rect) -> Vec<(usi
     columns
 }
 
-fn draw_cell(buffer: &mut Buffer, x: u16, y: u16, width: u16, value: &Value, style: Style) {
+fn draw_cell(buffer: &mut Buffer, x: u16, y: u16, width: u16, value: Value<'_>, style: Style) {
     let (text, used) = fit(&value.preview(usize::from(width)), usize::from(width));
     let offset = if matches!(value, Value::Number(_)) {
         width.saturating_sub(u16::try_from(used).unwrap_or(width))
@@ -618,10 +618,7 @@ pub fn draw_grid(
         };
         draw_row_number(buffer, area, body, y, row_index + 1, number);
         draw_rules(buffer, body, &columns, y, theme);
-        for (column, x, width) in &columns {
-            let Some(value) = row.get(*column) else {
-                continue;
-            };
+        for ((column, x, width), value) in columns.iter().zip(row.cells().skip(view.left)) {
             let selected = selection.is_some_and(|range| {
                 (range.top..=range.bottom).contains(&row_index)
                     && (range.left..=range.right).contains(column)

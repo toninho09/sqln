@@ -22,7 +22,7 @@ use crate::catalog::{
     group_foreign_keys,
 };
 use crate::exec::{Flow, ResultSink};
-use crate::grid::{Row, Value};
+use crate::grid::{Row, RowWriter, Value};
 use crate::sql::{Dialect, counts_rows, is_plain_read};
 use crate::ui::text;
 
@@ -222,25 +222,26 @@ fn is_binary(column: &Column) -> bool {
         )
 }
 
-fn cell_value(cell: Option<&mysql_async::Value>, column: &Column) -> Value {
+fn write_cell(row: &mut RowWriter, cell: Option<&mysql_async::Value>, column: &Column) {
     let bytes = match cell {
-        None | Some(mysql_async::Value::NULL) => return Value::Null,
+        None | Some(mysql_async::Value::NULL) => return row.push(Value::Null),
         Some(mysql_async::Value::Bytes(bytes)) => bytes.as_slice(),
         // The text protocol sends bytes. This line keeps any other form readable.
-        Some(other) => return Value::Text(other.as_sql(true).into()),
+        Some(other) => return row.push(Value::Text(&other.as_sql(true))),
     };
-    match std::str::from_utf8(bytes) {
-        Ok(text) if !is_binary(column) && is_number(column) => Value::Number(text.into()),
-        Ok(text) if !is_binary(column) => Value::Text(text.into()),
+    row.push(match std::str::from_utf8(bytes) {
+        Ok(text) if !is_binary(column) && is_number(column) => Value::Number(text),
+        Ok(text) if !is_binary(column) => Value::Text(text),
         _ => Value::binary(bytes),
-    }
+    });
 }
 
-fn row_values(row: &mysql_async::Row) -> Row {
+fn row_values(cells: &mut RowWriter, row: &mysql_async::Row) -> Row {
     let columns = row.columns_ref();
-    (0..row.len())
-        .map(|index| cell_value(row.as_ref(index), &columns[index]))
-        .collect()
+    for (index, column) in columns.iter().enumerate() {
+        write_cell(cells, row.as_ref(index), column);
+    }
+    cells.finish()
 }
 
 /// Finds the text after `near` in a syntax error of the database.
@@ -363,6 +364,7 @@ impl MySqlSession {
                 sink.set_columns(names).await;
             }
             let mut storing = true;
+            let mut writer = RowWriter::default();
             loop {
                 let row = match result.next().await {
                     Ok(Some(row)) => row,
@@ -378,7 +380,7 @@ impl MySqlSession {
                 if !storing {
                     continue;
                 }
-                let flow = sink.push(row_values(&row)).await;
+                let flow = sink.push(row_values(&mut writer, &row)).await;
                 storing = flow == Flow::Continue;
                 if flow == Flow::Stop && free && is_plain_read(sql, Dialect::MySql) {
                     stopped_at_cap = canceller.cancel().await.is_ok();

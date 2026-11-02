@@ -20,7 +20,7 @@ use crate::catalog::{
     group_foreign_keys,
 };
 use crate::exec::{Flow, ResultSink};
-use crate::grid::{Row, Value};
+use crate::grid::{RowWriter, Value};
 use crate::sql::Dialect;
 
 const MAIN_SCHEMA: &str = "main";
@@ -182,17 +182,17 @@ fn apply_context(conn: &Connection, context: &SessionContext) -> Result<(), Exec
         .map_err(exec_error)
 }
 
-fn value(cell: ValueRef<'_>) -> Value {
+fn write_value(row: &mut RowWriter, cell: ValueRef<'_>) {
     match cell {
-        ValueRef::Null => Value::Null,
-        ValueRef::Integer(number) => Value::Number(number.to_string().into_boxed_str()),
-        ValueRef::Real(number) => Value::Number(format!("{number:?}").into_boxed_str()),
+        ValueRef::Null => row.push(Value::Null),
+        ValueRef::Integer(number) => row.push(Value::Number(&number.to_string())),
+        ValueRef::Real(number) => row.push(Value::Number(&format!("{number:?}"))),
         // A text value is not always valid UTF-8, so the bytes keep the data.
-        ValueRef::Text(bytes) => match std::str::from_utf8(bytes) {
-            Ok(text) => Value::Text(text.into()),
+        ValueRef::Text(bytes) => row.push(match std::str::from_utf8(bytes) {
+            Ok(text) => Value::Text(text),
             Err(_) => Value::binary(bytes),
-        },
-        ValueRef::Blob(bytes) => Value::binary(bytes),
+        }),
+        ValueRef::Blob(bytes) => row.push(Value::binary(bytes)),
     }
 }
 
@@ -204,17 +204,16 @@ fn read_rows(
 ) -> Result<(), ExecError> {
     let column_count = statement.column_count();
     let mut storing = true;
+    let mut cells = RowWriter::default();
     let mut rows = statement.raw_query();
     while let Some(row) = rows.next().map_err(exec_error)? {
         if !storing {
             continue;
         }
-        let mut cells = Vec::with_capacity(column_count);
         for index in 0..column_count {
-            cells.push(value(row.get_ref(index).map_err(exec_error)?));
+            write_value(&mut cells, row.get_ref(index).map_err(exec_error)?);
         }
-        let cells: Row = cells.into_boxed_slice();
-        if sink.push_blocking(cells) != Flow::Continue {
+        if sink.push_blocking(cells.finish()) != Flow::Continue {
             // A read ends in the client, and it needs no cancellation here.
             if read_only {
                 break;

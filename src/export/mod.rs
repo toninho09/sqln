@@ -162,22 +162,22 @@ fn is_number(text: &str) -> bool {
     serde_json::from_str::<serde_json::Number>(text).is_ok()
 }
 
-fn write_json_value(out: &mut impl Write, value: &Value) -> io::Result<()> {
+fn write_json_value(out: &mut impl Write, value: Value<'_>) -> io::Result<()> {
     match value {
         Value::Null => out.write_all(b"null"),
         Value::Number(text) if is_number(text) => out.write_all(text.as_bytes()),
         Value::Text(text) | Value::Number(text) => Ok(serde_json::to_writer(out, text)?),
-        Value::Binary(bytes) => Ok(serde_json::to_writer(out, &base64(bytes))?),
+        Value::Binary(bytes) => Ok(serde_json::to_writer(out, &base64(&bytes))?),
     }
 }
 
-fn sql_value(value: &Value, dialect: Dialect) -> Cow<'_, str> {
+fn sql_value(value: Value<'_>, dialect: Dialect) -> Cow<'_, str> {
     match value {
         Value::Null => "NULL".into(),
-        Value::Number(text) if is_number(text) => (&**text).into(),
+        Value::Number(text) if is_number(text) => text.into(),
         Value::Text(text) | Value::Number(text) => quote_literal(text, dialect).into(),
         Value::Binary(bytes) => {
-            let digits = hex(bytes);
+            let digits = hex(&bytes);
             let digits = digits.trim_start_matches("0x");
             if dialect == Dialect::Postgres {
                 format!("'\\x{digits}'").into()
@@ -285,7 +285,7 @@ impl<W: Write> Encoder<W> {
         Ok(())
     }
 
-    fn write_json_object(&mut self, row: &[Value]) -> io::Result<()> {
+    fn write_json_object<'a>(&mut self, row: impl Iterator<Item = Value<'a>>) -> io::Result<()> {
         self.out.write_all(b"{")?;
         for (index, (key, value)) in self.keys.iter().zip(row).enumerate() {
             if index > 0 {
@@ -298,10 +298,10 @@ impl<W: Write> Encoder<W> {
         self.out.write_all(b"}")
     }
 
-    fn write_delimited(&mut self, row: &[Value]) -> io::Result<()> {
+    fn write_delimited<'a>(&mut self, row: impl Iterator<Item = Value<'a>>) -> io::Result<()> {
         let delimiter = self.delimiter();
         self.line.clear();
-        for (index, value) in row.iter().enumerate() {
+        for (index, value) in row.enumerate() {
             if index > 0 {
                 self.line.push(char::from(delimiter));
             }
@@ -311,14 +311,14 @@ impl<W: Write> Encoder<W> {
         self.out.write_all(self.line.as_bytes())
     }
 
-    fn write_insert(&mut self, row: &[Value]) -> io::Result<()> {
+    fn write_insert<'a>(&mut self, row: impl Iterator<Item = Value<'a>>) -> io::Result<()> {
         let batch = self.options.batch.max(1);
         match (self.open_rows, batch) {
             (0, 1) => write!(self.out, "{} (", self.insert)?,
             (0, _) => write!(self.out, "{}\n  (", self.insert)?,
             _ => self.out.write_all(b",\n  (")?,
         }
-        for (index, value) in row.iter().enumerate() {
+        for (index, value) in row.enumerate() {
             if index > 0 {
                 self.out.write_all(b", ")?;
             }
@@ -330,7 +330,7 @@ impl<W: Write> Encoder<W> {
         self.out.write_all(end)
     }
 
-    pub fn row(&mut self, row: &[Value]) -> io::Result<()> {
+    pub fn row<'a>(&mut self, row: impl Iterator<Item = Value<'a>>) -> io::Result<()> {
         match self.options.format {
             ExportFormat::Csv | ExportFormat::Tsv => self.write_delimited(row),
             ExportFormat::Json => {
@@ -444,7 +444,7 @@ impl ExportWriter {
     }
 
     /// Writes one row. A false value tells the reader to stop.
-    pub fn write_row(&self, row: &[Value]) -> bool {
+    pub fn write_row<'a>(&self, row: impl Iterator<Item = Value<'a>>) -> bool {
         let written = self.apply(|encoder| encoder.row(row));
         if written {
             self.0.rows.fetch_add(1, Ordering::Relaxed);

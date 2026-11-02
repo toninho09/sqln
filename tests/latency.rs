@@ -464,7 +464,7 @@ fn binary_previews_stay_under_the_target_after_classification() {
     for ending in [b'x', 0, 255] {
         let mut bytes = vec![b'x'; 16 * 1024 * 1024];
         bytes.push(ending);
-        let value = Value::binary(bytes);
+        let value = Value::binary(&bytes);
         let started = Instant::now();
         for _ in 0..1000 {
             std::hint::black_box(value.preview(40));
@@ -482,7 +482,7 @@ fn a_search_slice_in_one_large_cell_stays_under_the_target() {
 
     let mut table = ResultTable::new(vec!["value".into()]);
     table.append(
-        vec![vec![Value::Text("a".repeat(50_000_000).into())].into_boxed_slice()],
+        vec![[Value::Text(&"a".repeat(50_000_000))].into_iter().collect()],
         0,
     );
     let mut search = RowSearch::new((0, 0));

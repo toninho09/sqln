@@ -288,7 +288,7 @@ fn top_level_words(sql: &str, dialect: Dialect) -> Vec<&str> {
     let mut depth = 0_usize;
     let mut words = Vec::new();
     for token in tokenize(sql, dialect) {
-        let text = &sql[token.start..token.end];
+        let text = &sql[token.start()..token.end()];
         match token.kind {
             TokenKind::Punctuation if text == "(" => depth += 1,
             TokenKind::Punctuation if text == ")" => depth = depth.saturating_sub(1),
@@ -326,7 +326,7 @@ fn redis_changes_state(sql: &str) -> bool {
     let tokens = tokenize(sql, Dialect::Redis);
     let first = tokens.iter().find(|token| token.kind != TokenKind::Comment);
     !first.is_some_and(|token| {
-        let word = &sql[token.start..token.end];
+        let word = &sql[token.start()..token.end()];
         token.kind == TokenKind::Word && (is_any(word, REDIS_READS) || is_any(word, REDIS_SESSION))
     })
 }
@@ -355,7 +355,7 @@ pub fn is_plain_read(sql: &str, dialect: Dialect) -> bool {
         .collect();
     let word = |index: usize| {
         code.get(index)
-            .map_or("", |token| &sql[token.start..token.end])
+            .map_or("", |token| &sql[token.start()..token.end()])
     };
     if code
         .first()
@@ -389,7 +389,7 @@ pub fn is_secret(sql: &str, dialect: Dialect) -> bool {
     let mut words = tokens
         .iter()
         .filter(|token| token.kind == TokenKind::Word)
-        .map(|token| &sql[token.start..token.end]);
+        .map(|token| &sql[token.start()..token.end()]);
     let command = words.next().unwrap_or("");
     (dialect == Dialect::Redis && is_any(command, SECRET_COMMANDS))
         || is_any(command, SECRET_WORDS)
@@ -401,7 +401,7 @@ pub fn counts_rows(sql: &str, dialect: Dialect) -> bool {
     let tokens = tokenize(sql, dialect);
     let first = tokens.iter().find(|token| token.kind != TokenKind::Comment);
     first.is_some_and(|token| {
-        let word = &sql[token.start..token.end];
+        let word = &sql[token.start()..token.end()];
         is_any(
             word,
             &[
@@ -418,7 +418,7 @@ pub fn reads_or_writes_stdio(sql: &str, dialect: Dialect) -> bool {
     let mut words = tokens
         .iter()
         .filter(|token| token.kind == TokenKind::Word)
-        .map(|token| &sql[token.start..token.end]);
+        .map(|token| &sql[token.start()..token.end()]);
     words
         .next()
         .is_some_and(|word| word.eq_ignore_ascii_case("COPY"))

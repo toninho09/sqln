@@ -33,7 +33,7 @@ impl TokenSource for TokenSlice<'_> {
         while self
             .tokens
             .get(self.index)
-            .is_some_and(|token| token.start < position)
+            .is_some_and(|token| token.start() < position)
         {
             self.index += 1;
         }
@@ -146,14 +146,14 @@ fn split_lines(sql: &str, source: &mut impl TokenSource) -> Vec<Statement> {
             continue;
         }
         match statements.last_mut() {
-            Some(last) if !sql[last.end..token.start].contains('\n') => {
-                last.end = token.end;
-                last.end_with_delimiter = token.end;
+            Some(last) if !sql[last.end..token.start()].contains('\n') => {
+                last.end = token.end();
+                last.end_with_delimiter = token.end();
             }
             _ => statements.push(Statement {
-                start: token.start,
-                end: token.end,
-                end_with_delimiter: token.end,
+                start: token.start(),
+                end: token.end(),
+                end_with_delimiter: token.end(),
                 terminated: false,
             }),
         }
@@ -192,17 +192,17 @@ fn split_source(sql: &str, dialect: Dialect, source: &mut impl TokenSource) -> V
         if token.kind == TokenKind::Comment {
             continue;
         }
-        let word = &sql[token.start..token.end];
+        let word = &sql[token.start()..token.end()];
 
         if dialect == Dialect::MySql
             && start.is_none()
             && token.kind == TokenKind::Word
             && word.eq_ignore_ascii_case("DELIMITER")
         {
-            let line_end = sql[token.start..]
+            let line_end = sql[token.start()..]
                 .find('\n')
-                .map_or(sql.len(), |at| token.start + at);
-            let value = sql[token.end..line_end].trim();
+                .map_or(sql.len(), |at| token.start() + at);
+            let value = sql[token.end()..line_end].trim();
             if !value.is_empty() {
                 delimiter = value;
             }
@@ -210,7 +210,7 @@ fn split_source(sql: &str, dialect: Dialect, source: &mut impl TokenSource) -> V
             continue;
         }
 
-        if let Some(after) = delimiter_end(sql, delimiter, token.start) {
+        if let Some(after) = delimiter_end(sql, delimiter, token.start()) {
             source.seek(after);
             if compound.depth == 0 {
                 if let Some(begin) = start.take() {
@@ -226,11 +226,11 @@ fn split_source(sql: &str, dialect: Dialect, source: &mut impl TokenSource) -> V
             continue;
         }
 
-        start.get_or_insert(token.start);
-        last_end = token.end;
+        start.get_or_insert(token.start());
+        last_end = token.end();
 
         if matches!(token.kind, TokenKind::Word | TokenKind::Number) && compound.reads_words() {
-            let (next_start, next_end) = next_word(sql, token.end);
+            let (next_start, next_end) = next_word(sql, token.end());
             if compound.on_word(word, &sql[next_start..next_end], dialect) {
                 source.seek(next_end);
                 last_end = next_end;

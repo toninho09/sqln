@@ -97,15 +97,17 @@ impl RowSearch {
 
     /// Reads at most one row or `chars` characters.
     fn scan_step(&mut self, table: &ResultTable, mut chars: usize) {
-        let row = &table.rows[self.next_row];
-        while self.next_col < row.len() {
-            if let Some((c, next)) = row[self.next_col].search_char(self.offset) {
+        let mut cells = table.rows[self.next_row].cells().skip(self.next_col);
+        let mut cell = cells.next();
+        while let Some(value) = cell {
+            if let Some((c, next)) = value.search_char(self.offset) {
                 chars -= 1;
                 if let Some(found) = self.matcher.push(c) {
                     self.offset = next;
                     if found {
                         self.matches.push((self.next_row, self.next_col));
                         self.next_cell();
+                        cell = cells.next();
                     }
                 }
                 if chars == 0 {
@@ -113,6 +115,7 @@ impl RowSearch {
                 }
             } else {
                 self.next_cell();
+                cell = cells.next();
             }
         }
         self.next_row += 1;

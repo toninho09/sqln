@@ -817,8 +817,8 @@ fn a_vault_password_is_used_with_real_postgres_and_the_sql_snapshot_stays_fixed(
     f.vault.release();
     f.idle();
     assert_eq!(
-        f.app.console().results[0].table.rows[0][0],
-        sqln::grid::Value::Number("11".into())
+        f.app.console().results[0].table.rows[0].get(0).unwrap(),
+        sqln::grid::Value::Number("11")
     );
     assert!(f.app.console().editor.text().contains("SELECT 22"));
     assert!(f.app.console_mut().editor.marks().is_empty());

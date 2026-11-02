@@ -3,13 +3,17 @@
 mod binary;
 mod budget;
 pub mod json;
+mod row;
 mod search;
 mod tsv;
+
+use std::iter::repeat;
 
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub use self::binary::Binary;
 pub use self::budget::{Budget, DEFAULT_LIMIT, Reservation, row_cost};
+pub use self::row::{Row, RowWriter};
 pub use self::search::RowSearch;
 pub use self::tsv::{delimited_text, hex, push_cell};
 
@@ -22,15 +26,13 @@ pub const COLUMN_GAP: usize = 3;
 const MAX_MANUAL_WIDTH: usize = 200;
 
 /// A value keeps the text of the database. The variant only guides the presentation.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Value {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Value<'a> {
     Null,
-    Text(Box<str>),
-    Number(Box<str>),
-    Binary(Binary),
+    Text(&'a str),
+    Number(&'a str),
+    Binary(Binary<'a>),
 }
-
-pub type Row = Box<[Value]>;
 
 pub fn printable_char(c: char) -> char {
     match c {
@@ -48,7 +50,7 @@ pub fn printable(text: &str) -> String {
 }
 
 /// Works as `printable`, and it stops at the characters that fill `width` columns.
-fn printable_start(text: &str, width: usize) -> String {
+pub fn printable_start(text: &str, width: usize) -> String {
     let mut used = 0;
     text.chars()
         .map(printable_char)
@@ -59,22 +61,22 @@ fn printable_start(text: &str, width: usize) -> String {
         .collect()
 }
 
-impl Value {
-    pub fn binary(bytes: impl Into<Box<[u8]>>) -> Self {
-        Self::Binary(Binary::new(bytes.into()))
+impl<'a> Value<'a> {
+    pub fn binary(bytes: &'a [u8]) -> Self {
+        Self::Binary(Binary::new(bytes))
     }
 
     /// Returns the text of a grid cell. It stays on one line.
-    pub fn display(&self) -> String {
+    pub fn display(self) -> String {
         match self {
             Value::Null => "NULL".to_owned(),
             Value::Text(text) | Value::Number(text) => printable(text),
-            Value::Binary(bytes) => bytes.text().map_or_else(|| hex(bytes), str::to_owned),
+            Value::Binary(bytes) => bytes.text().map_or_else(|| hex(&bytes), str::to_owned),
         }
     }
 
     /// Returns the start of `display`, so a large value does not cost each frame.
-    pub fn preview(&self, width: usize) -> String {
+    pub fn preview(self, width: usize) -> String {
         match self {
             Value::Null => "NULL".to_owned(),
             Value::Text(text) | Value::Number(text) => printable_start(text, width),
@@ -87,7 +89,7 @@ impl Value {
 
     /// Returns one search character and the next offset without copying the cell.
     #[inline]
-    fn search_char(&self, offset: usize) -> Option<(char, usize)> {
+    fn search_char(self, offset: usize) -> Option<(char, usize)> {
         let text = match self {
             Self::Null => "NULL",
             Self::Text(text) | Self::Number(text) => text,
@@ -97,7 +99,7 @@ impl Value {
                     let c = match offset {
                         0 => '0',
                         1 => 'x',
-                        _ => tsv::hex_digit(bytes, offset - 2)?,
+                        _ => tsv::hex_digit(&bytes, offset - 2)?,
                     };
                     return Some((c, offset + 1));
                 }
@@ -108,10 +110,10 @@ impl Value {
     }
 
     /// Returns the complete text of the detail window.
-    pub fn full_text(&self) -> String {
+    pub fn full_text(self) -> String {
         match self {
             Value::Null => "NULL".to_owned(),
-            Value::Text(text) | Value::Number(text) => text.to_string(),
+            Value::Text(text) | Value::Number(text) => text.to_owned(),
             Value::Binary(_) => self.display(),
         }
     }
@@ -150,7 +152,7 @@ impl ResultTable {
 
     pub fn append(&mut self, rows: Vec<Row>, bytes: usize) {
         for row in &rows {
-            for (width, value) in self.natural.iter_mut().zip(row.iter()) {
+            for (width, value) in self.natural.iter_mut().zip(row) {
                 *width = (*width).max(cell_width(value)).min(MAX_COLUMN_WIDTH);
             }
         }
@@ -182,15 +184,26 @@ impl ResultTable {
     }
 
     pub fn tsv(&self, top: usize, bottom: usize, left: usize, right: usize) -> String {
-        tsv::encode(self.rows[top..=bottom].iter().map(|row| {
-            // A broken reply can hold a row without its last values.
-            (left..=right).map(move |col| row.get(col).unwrap_or(&Value::Null))
-        }))
+        let rows = &self.rows[top..=bottom];
+        // The heads of the cells take the place of the separators, and the rest is for
+        // the quotes. A short guess doubles the text, and the pages that stay free cost
+        // nothing.
+        let size = rows.iter().map(Row::bytes).sum::<usize>();
+        let size = size + size / 8;
+        let columns = right - left + 1;
+        // A broken reply can hold a row without its last values.
+        let cells = rows.iter().map(|row| {
+            row.cells()
+                .skip(left)
+                .chain(repeat(Value::Null))
+                .take(columns)
+        });
+        tsv::encode(cells, size)
     }
 }
 
 /// Stops at the column limit, so a long value does not cost a full scan.
-fn cell_width(value: &Value) -> usize {
+fn cell_width(value: Value<'_>) -> usize {
     let text = match value {
         Value::Null => return 4,
         Value::Text(text) | Value::Number(text) => text,

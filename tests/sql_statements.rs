@@ -280,7 +280,7 @@ fn every_token_starts_and_ends_on_a_character_boundary() {
     for dialect in [Dialect::Postgres, Dialect::MySql, Dialect::Sqlite] {
         for token in tokenize(sql, dialect) {
             assert!(
-                sql.get(token.start..token.end).is_some(),
+                sql.get(token.start()..token.end()).is_some(),
                 "{token:?} {dialect:?}"
             );
         }

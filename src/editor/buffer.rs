@@ -280,11 +280,11 @@ impl Snapshot {
     pub fn row_tokens(&self, row: usize, left: usize, end: usize) -> Vec<(&Token, usize, usize)> {
         let start = self.offset(Index2::new(row, left));
         let stop = self.offset(Index2::new(row, end));
-        let first = self.tokens.partition_point(|token| token.end <= start);
+        let first = self.tokens.partition_point(|token| token.end() <= start);
         let mut found = Vec::new();
         let (mut at, mut col) = (start, left);
         for token in &self.tokens[first..] {
-            let (from, to) = (token.start.max(start), token.end.min(stop));
+            let (from, to) = (token.start().max(start), token.end().min(stop));
             if from >= stop {
                 break;
             }

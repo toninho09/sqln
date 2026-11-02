@@ -36,7 +36,7 @@ use sqln::connector::target::parse_uri;
 use sqln::editor::RunScope;
 use sqln::exec::Settings;
 use sqln::export::{Encoder, ExportFormat, ExportOptions, ExportWriter};
-use sqln::grid::{GridView, Row, RowSearch, Value};
+use sqln::grid::{Binary, GridView, Row, RowSearch, RowWriter, Value};
 use sqln::history::{HistoryRow, history_list};
 use sqln::input::Action;
 use sqln::result::ResultTab;
@@ -397,18 +397,22 @@ fn editor(bench: &mut Bench) {
     }
 }
 
-fn cell(row: usize, column: usize) -> Value {
+fn write_cell(cells: &mut RowWriter, row: usize, column: usize) {
     match column % 3 {
-        0 => Value::Number(row.to_string().into()),
-        1 => Value::Text(format!("a text value of row {row}").into()),
-        _ if row.is_multiple_of(10) => Value::Null,
-        _ => Value::Text("a \"quoted\" text, with a comma".into()),
+        0 => cells.push(Value::Number(&row.to_string())),
+        1 => cells.push(Value::Text(&format!("a text value of row {row}"))),
+        _ if row.is_multiple_of(10) => cells.push(Value::Null),
+        _ => cells.push(Value::Text("a \"quoted\" text, with a comma")),
     }
 }
 
 fn rows(rows: usize, columns: usize) -> Vec<Row> {
-    let row = |row| (0..columns).map(|column| cell(row, column)).collect();
-    (0..rows).map(row).collect()
+    let mut cells = RowWriter::default();
+    let mut row = |row| {
+        (0..columns).for_each(|column| write_cell(&mut cells, row, column));
+        cells.finish()
+    };
+    (0..rows).map(&mut row).collect()
 }
 
 fn names(columns: usize) -> Vec<String> {
@@ -425,8 +429,8 @@ fn result(row_count: usize, columns: usize) -> ResultTab {
 
 fn value_result(text: String) -> ResultTab {
     let mut tab = ResultTab::new(1, vec!["value".to_owned()]);
-    let row = vec![Value::Text(text.into())].into_boxed_slice();
-    tab.table.append(vec![row], 0);
+    tab.table
+        .append(vec![[Value::Text(&text)].into_iter().collect()], 0);
     tab
 }
 
@@ -497,7 +501,7 @@ fn grid(bench: &mut Bench) {
         "grid/classify a binary value",
         (LARGE_VALUE, "bytes"),
         || vec![b'x'; LARGE_VALUE],
-        |bytes| Value::binary(std::mem::take(bytes)),
+        |bytes| Binary::new(bytes).len(),
     );
 
     let text = "a text value of a usual size ".repeat(LARGE_VALUE / 29);
@@ -510,8 +514,9 @@ fn grid(bench: &mut Bench) {
         "grid/open a binary value of 64 MiB",
         || {
             let mut tab = ResultTab::new(1, vec!["value".to_owned()]);
-            let value = Value::binary(vec![0xFF; LARGE_VALUE]);
-            tab.table.append(vec![vec![value].into_boxed_slice()], 0);
+            let bytes = vec![0xFF; LARGE_VALUE];
+            let value = Value::binary(&bytes);
+            tab.table.append(vec![vec![value].into_iter().collect()], 0);
             tab
         },
         |tab| tab.on_action(Action::GridOpenValue, false, false),
@@ -874,7 +879,7 @@ fn export(bench: &mut Bench) {
             |encoder| {
                 encoder.start(&columns).unwrap();
                 for row in table() {
-                    encoder.row(row).unwrap();
+                    encoder.row(row.cells()).unwrap();
                 }
                 encoder.finish().unwrap();
             },
@@ -888,7 +893,7 @@ fn export(bench: &mut Bench) {
         |writer| {
             writer.start(&columns);
             for row in table() {
-                assert!(writer.write_row(row));
+                assert!(writer.write_row(row.cells()));
             }
             writer.promote(&path).unwrap();
         },

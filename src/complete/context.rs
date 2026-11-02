@@ -105,11 +105,11 @@ pub struct Cte {
 }
 
 fn raw(text: &str, token: Token) -> &str {
-    &text[token.start..token.end]
+    &text[token.start()..token.end()]
 }
 
 fn is_punctuation(text: &str, token: Token, value: u8) -> bool {
-    token.kind == TokenKind::Punctuation && text.as_bytes()[token.start] == value
+    token.kind == TokenKind::Punctuation && text.as_bytes()[token.start()] == value
 }
 
 fn is_word(text: &str, token: Option<&Token>, words: &[&str]) -> bool {
@@ -181,8 +181,8 @@ pub fn analyze(
     let mut tokens = tokenize(text, dialect);
     let in_literal = tokens.iter().any(|token| {
         matches!(token.kind, TokenKind::Comment | TokenKind::String)
-            && token.start < offset
-            && (offset < token.end || (offset == token.end && !token.closed))
+            && token.start() < offset
+            && (offset < token.end() || (offset == token.end() && !token.closed))
     });
     if in_literal {
         return None;
@@ -190,10 +190,10 @@ pub fn analyze(
     tokens.retain(|token| token.kind != TokenKind::Comment);
 
     let partial = tokens.iter().position(|token| {
-        token.start < offset
+        token.start() < offset
             && match token.kind {
-                TokenKind::Word | TokenKind::Number => offset <= token.end,
-                TokenKind::QuotedIdentifier => offset < token.end || !token.closed,
+                TokenKind::Word | TokenKind::Number => offset <= token.end(),
+                TokenKind::QuotedIdentifier => offset < token.end() || !token.closed,
                 _ => false,
             }
     });
@@ -202,7 +202,7 @@ pub fn analyze(
     }
 
     let boundary =
-        partial.unwrap_or_else(|| tokens.iter().filter(|token| token.end <= offset).count());
+        partial.unwrap_or_else(|| tokens.iter().filter(|token| token.end() <= offset).count());
 
     let mut head = boundary;
     let mut qualifiers = Vec::new();
@@ -225,11 +225,13 @@ pub fn analyze(
         Some(index) => {
             let token = tokens[index];
             let quoted = token.kind == TokenKind::QuotedIdentifier;
-            let begin = token.start + usize::from(quoted);
+            let begin = token.start() + usize::from(quoted);
             (
-                region.start + token.start..region.start + token.end,
+                region.start + token.start()..region.start + token.end(),
                 text[begin..offset.max(begin)].to_owned(),
-                quoted.then(|| text[token.start..].chars().next()).flatten(),
+                quoted
+                    .then(|| text[token.start()..].chars().next())
+                    .flatten(),
             )
         }
         None => (cursor..cursor, String::new(), None),

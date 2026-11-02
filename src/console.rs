@@ -374,6 +374,8 @@ impl Console {
                 if let Some(result) = self.results.last_mut() {
                     result.summary = read_summary(rows, limit);
                     result.limit = limit;
+                    // The list can hold room for twice its rows, and no more rows arrive.
+                    result.table.rows.shrink_to_fit();
                 }
             }
             ExecEvent::Notice { key, text } if self.is_current(key.execution) => {

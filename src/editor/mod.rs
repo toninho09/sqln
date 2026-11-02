@@ -347,7 +347,11 @@ impl SqlEditor {
 
     fn snapshot(&mut self) -> &Snapshot {
         let revision = self.revision;
-        let current = self.snapshot.take_if(|(cached, _)| *cached == revision);
+        // The old copy leaves first, so a key keeps one copy at its peak.
+        let current = self
+            .snapshot
+            .take()
+            .filter(|(cached, _)| *cached == revision);
         let cached =
             current.unwrap_or_else(|| (revision, Snapshot::new(&self.state.lines, self.dialect)));
         &self.snapshot.insert(cached).1
@@ -625,14 +629,14 @@ impl SqlEditor {
         let (at, statement_end) = (mark.start + offset, mark.start + mark.text.len());
         let revision = self.revision;
         let tokens = &self.snapshot().tokens;
-        let next = tokens.partition_point(|token| token.end <= at);
+        let next = tokens.partition_point(|token| token.end() <= at);
         let token = tokens
             .get(next)
-            .filter(|token| token.start <= at && at < statement_end)
+            .filter(|token| token.start() <= at && at < statement_end)
             .or_else(|| tokens[..next].last());
         self.error_spot = token.map(|token| ErrorSpot {
-            start: token.start,
-            end: token.end,
+            start: token.start(),
+            end: token.end(),
             revision,
         });
     }
@@ -709,9 +713,13 @@ impl SqlEditor {
         }
     }
 
-    /// Returns true when EdTUI changed the text.
+    /// Returns true when EdTUI changed the text. Only the Vim mode has this copy.
     fn sync_vim_shadow(&mut self) -> bool {
-        if self.vim_shadow.as_ref() == Some(&self.state.lines) {
+        if self
+            .vim_shadow
+            .as_ref()
+            .is_none_or(|shadow| *shadow == self.state.lines)
+        {
             return false;
         }
         self.vim_shadow = Some(self.state.lines.clone());
@@ -1055,7 +1063,7 @@ impl SqlEditor {
         }
         for (row, end) in window.rows() {
             for (token, first, last) in snapshot.row_tokens(row, window.left, end) {
-                let word = &snapshot.text[token.start..token.end];
+                let word = &snapshot.text[token.start()..token.end()];
                 let style = match token.kind {
                     TokenKind::Word if keywords::is_keyword(word, dialect) => theme.keyword,
                     TokenKind::Number => theme.number,

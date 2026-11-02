@@ -1,41 +1,56 @@
 //! Binary bytes with a presentation determined once, before drawing.
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Binary {
-    data: Data,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Binary<'a> {
+    data: Data<'a>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Data {
-    Text(Box<str>),
-    Hex(Box<[u8]>),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Data<'a> {
+    Text(&'a str),
+    Hex(&'a [u8]),
 }
 
-impl Binary {
-    pub fn new(bytes: Box<[u8]>) -> Self {
-        let data = match String::from_utf8(bytes.into_vec()) {
-            Ok(text) if !text.contains(char::is_control) => Data::Text(text.into_boxed_str()),
-            Ok(text) => Data::Hex(text.into_bytes().into_boxed_slice()),
-            Err(error) => Data::Hex(error.into_bytes().into_boxed_slice()),
+impl<'a> Binary<'a> {
+    pub fn new(bytes: &'a [u8]) -> Self {
+        let data = match std::str::from_utf8(bytes) {
+            Ok(text) if !text.contains(char::is_control) => Data::Text(text),
+            _ => Data::Hex(bytes),
         };
         Self { data }
     }
 
-    pub fn text(&self) -> Option<&str> {
-        match &self.data {
+    /// Returns a value that a row holds as text.
+    pub(super) fn of_text(text: &'a str) -> Self {
+        let data = Data::Text(text);
+        Self { data }
+    }
+
+    /// Returns a value that a row holds as bytes.
+    pub(super) fn of_bytes(bytes: &'a [u8]) -> Self {
+        let data = Data::Hex(bytes);
+        Self { data }
+    }
+
+    pub fn text(&self) -> Option<&'a str> {
+        match self.data {
             Data::Text(text) => Some(text),
             Data::Hex(_) => None,
         }
     }
-}
 
-impl std::ops::Deref for Binary {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        match &self.data {
+    pub fn bytes(&self) -> &'a [u8] {
+        match self.data {
             Data::Text(text) => text.as_bytes(),
             Data::Hex(bytes) => bytes,
         }
+    }
+}
+
+impl std::ops::Deref for Binary<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        self.bytes()
     }
 }

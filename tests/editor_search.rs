@@ -16,6 +16,16 @@ fn search_finds_every_match_without_case() {
     assert_eq!(bar.current, 0);
 }
 
+/// Only the Vim mode compares the text after a key. The conventional mode once kept a
+/// full copy of the text after this key, for as long as the editor lived.
+#[test]
+fn opening_the_bar_is_not_a_change_of_the_text() {
+    let mut f = Fixture::conventional("users");
+    let revision = f.editor.revision();
+    f.press(ctrl('f'));
+    assert_eq!(f.editor.revision(), revision);
+}
+
 #[test]
 fn typing_in_the_bar_leaves_the_text_unchanged() {
     let mut f = Fixture::conventional("users");

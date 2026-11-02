@@ -101,7 +101,7 @@ impl<'a> Writer<'a> {
 
     fn text(&self, index: usize) -> &'a str {
         let token = self.tokens[index];
-        &self.sql[token.start..token.end]
+        &self.sql[token.start()..token.end()]
     }
 
     /// Returns the text of the nearest token that is not a comment.
@@ -247,7 +247,7 @@ impl<'a> Writer<'a> {
         for index in 0..self.tokens.len() {
             let gap = match index {
                 0 => "",
-                _ => &self.sql[self.tokens[index - 1].end..self.tokens[index].start],
+                _ => &self.sql[self.tokens[index - 1].end()..self.tokens[index].start()],
             };
             if self.tokens[index].kind == TokenKind::Comment {
                 self.comment(index, gap);
@@ -268,13 +268,13 @@ fn token_texts(sql: &str, dialect: Dialect) -> Vec<&str> {
     let tokens = tokenize(sql, dialect);
     tokens
         .iter()
-        .map(|token| &sql[token.start..token.end])
+        .map(|token| &sql[token.start()..token.end()])
         .collect()
 }
 
 /// Returns true for a token that the lexer did not close, other than a line comment.
 fn is_open(sql: &str, token: &Token) -> bool {
-    !token.closed && (token.kind != TokenKind::Comment || sql[token.start..].starts_with("/*"))
+    !token.closed && (token.kind != TokenKind::Comment || sql[token.start()..].starts_with("/*"))
 }
 
 /// Formats one statement, without its delimiter. A statement of another kind stays as
@@ -287,7 +287,7 @@ pub fn format_statement(sql: &str, dialect: Dialect) -> Option<String> {
     let first = tokens
         .iter()
         .find(|token| token.kind != TokenKind::Comment)?;
-    if dialect == Dialect::Redis || !is_any(&sql[first.start..first.end], FORMATTED) {
+    if dialect == Dialect::Redis || !is_any(&sql[first.start()..first.end()], FORMATTED) {
         return Some(sql.to_owned());
     }
     let formatted = Writer::new(sql, &tokens).run();

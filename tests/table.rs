@@ -303,8 +303,8 @@ impl Session for RecordingSession {
         }
         if sql.starts_with("SELECT COUNT(*)") {
             sink.set_columns(vec!["count".to_owned()]).await;
-            let total = Value::Number(self.0.rows.to_string().into_boxed_str());
-            sink.push(vec![total].into_boxed_slice()).await;
+            let total = Value::Number(&self.0.rows.to_string());
+            sink.push(vec![total].into_iter().collect()).await;
             let (rows, limit) = sink.finish().await;
             return Ok(StatementEnd {
                 rows,
@@ -323,11 +323,9 @@ impl Session for RecordingSession {
             } else {
                 format!("name{index}")
             };
-            let row: Row = vec![
-                Value::Number(index.to_string().into_boxed_str()),
-                Value::Text(text.into_boxed_str()),
-            ]
-            .into_boxed_slice();
+            let row: Row = vec![Value::Number(&index.to_string()), Value::Text(&text)]
+                .into_iter()
+                .collect();
             if sink.push(row).await != Flow::Continue {
                 break;
             }
@@ -636,7 +634,7 @@ fn numbered(count: usize) -> String {
 
 fn first_cell(f: &Fixture) -> String {
     let table = &f.app.table().unwrap().result.table;
-    table.rows[0][0].display()
+    table.rows[0].get(0).unwrap().display()
 }
 
 // ---------------------------------------------------------------------------
@@ -661,7 +659,11 @@ impl Fixture {
     /// Returns the cells of the first column, for a tab of a real database.
     fn first_column(&self) -> Vec<String> {
         let table = &self.app.table().unwrap().result.table;
-        table.rows.iter().map(|row| row[0].display()).collect()
+        table
+            .rows
+            .iter()
+            .map(|row| row.get(0).unwrap().display())
+            .collect()
     }
 }
 
@@ -2292,7 +2294,7 @@ fn the_extra_row_of_a_page_leaves_the_budget_with_the_exact_cost() {
         execution: 5,
         index: 0,
     };
-    let row = |n: &str| -> Row { vec![Value::Text(n.into())].into_boxed_slice() };
+    let row = |n: &str| -> Row { vec![Value::Text(n)].into_iter().collect() };
     let rows = vec![row("a"), row("b"), row("c")];
     let cost: usize = rows
         .iter()
@@ -2381,7 +2383,8 @@ fn the_list_of_a_sqlite_table_waits_for_its_columns_and_then_shows_them() {
 #[test]
 fn the_budget_stops_a_page_and_refuses_load_more_until_space_is_free() {
     let settings = Settings {
-        budget_bytes: 1_000,
+        // A page of 8 rows takes about 210 bytes.
+        budget_bytes: 350,
         page_size: 8,
         ..Settings::default()
     };
@@ -2432,7 +2435,8 @@ fn the_budget_stops_a_page_and_refuses_load_more_until_space_is_free() {
 #[test]
 fn freed_space_loads_nothing_until_the_user_asks() {
     let settings = Settings {
-        budget_bytes: 1_000,
+        // A page of 8 rows takes about 210 bytes.
+        budget_bytes: 350,
         page_size: 8,
         ..Settings::default()
     };
@@ -2445,6 +2449,7 @@ fn freed_space_loads_nothing_until_the_user_asks() {
     );
     f.open_table("orders");
     f.open_table("users");
+    f.assert_sees("data budget reached");
     let queries = recorder.count();
     f.prefix('p');
     f.prefix('c');
@@ -2485,7 +2490,7 @@ fn ids(f: &Fixture) -> Vec<String> {
         .table
         .rows
         .iter()
-        .map(|row| row[0].display())
+        .map(|row| row.get(0).unwrap().display())
         .collect()
 }
 
@@ -3404,7 +3409,8 @@ fn a_next_load_moves_only_its_table_after_the_user_changes_tabs() {
 fn loaded_pages_still_work_when_the_budget_refuses_a_new_page() {
     let settings = Settings {
         page_size: 4,
-        budget_bytes: 1_000,
+        // A row of this table takes about 70 bytes.
+        budget_bytes: 470,
         ..Settings::default()
     };
     let recorder = Recorder {
@@ -3510,7 +3516,7 @@ fn the_count_returns_its_bytes_to_the_budget_and_keeps_a_limit_of_the_page() {
         execution: 5,
         index: 0,
     };
-    let row: Row = vec![Value::Number("42".into())].into_boxed_slice();
+    let row: Row = vec![Value::Number("42")].into_iter().collect();
     let sqln::grid::Reservation::Accepted(bytes) = budget.reserve(&row) else {
         panic!("the budget refused the row");
     };

@@ -24,7 +24,7 @@ This rule applies even when the tool suggests or requires that text.
 - `make lint`: runs `cargo fmt --check` and `cargo clippy`.
 - `make test`: runs the tests in `tests/` without a database. The tests that need a database skip on their own. Use it during work.
 - `make test-integration`: starts the Docker databases, loads `scripts/test-env.sh`, runs the full tests, and stops the databases at the end. Slow; run only when the task changes integration code.
-- `make bench`: prints the performance report of `benches/hot_paths.rs`, then runs the performance targets of `tests/latency.rs` in release mode. Very slow; run only when the user asks. To run a part of the report, use `cargo bench --bench hot_paths -- <part of a name>`.
+- `make bench`: prints the performance report of `benches/hot_paths.rs` and the memory report of `benches/memory.rs`, then runs the performance targets of `tests/latency.rs` in release mode. Very slow; run only when the user asks. To run a part of a report, use `cargo bench --bench hot_paths -- <part of a name>` or `cargo bench --bench memory -- <part of a name>`.
 - `make check`: runs `make lint` and the full test suite. Delivery gate.
 
 ## Integration tests

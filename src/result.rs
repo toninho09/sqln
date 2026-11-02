@@ -199,7 +199,7 @@ impl ResultTab {
 }
 
 /// Returns the start of a value, with a mark when the value goes on.
-fn row_value(value: &Value) -> String {
+fn row_value(value: Value<'_>) -> String {
     let shown = value.preview(ROW_VALUE_WIDTH + 1);
     let (start, _) = fit(&shown, ROW_VALUE_WIDTH);
     if start.len() < shown.len() {
