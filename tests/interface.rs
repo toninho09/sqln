@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, temp_db, temp_dir};
+use common::{ctrl, key, shift, temp_db, temp_dir};
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -856,6 +856,23 @@ fn a_click_on_a_result_tab_and_on_the_explorer_title_moves_the_focus() {
     let (column, row) = screen.locate("EXPLORER");
     screen.click(column, row);
     assert!(screen.app.navigator_focused());
+}
+
+#[test]
+fn a_click_on_a_tab_works_with_more_results_than_columns() {
+    let mut screen = Screen::new("many-tabs", Theme::plain(), KeyboardMode::Conventional);
+    let script = "SELECT 1 AS a;\n".repeat(400);
+    screen.app.on_event(Event::Paste(script));
+    screen.app.on_event(Event::Key(shift(KeyCode::F(5))));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while screen.app.console().is_busy() {
+        screen.app.drain_events();
+        assert!(Instant::now() < deadline, "the run did not end");
+    }
+    assert_eq!(screen.app.console().results.len(), 400);
+    let (column, row) = screen.locate("Result 2");
+    screen.click(column, row);
+    assert_eq!(screen.app.console().active, 1);
 }
 
 #[test]

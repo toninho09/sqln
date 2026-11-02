@@ -4,13 +4,15 @@ mod buffer;
 mod conventional;
 mod search;
 
+use std::collections::{BTreeSet, HashMap};
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use edtui::actions::{DeleteChar, SwitchMode};
 use edtui::{EditorEventHandler, EditorMode, EditorState, Highlight, Index2, Lines};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthChar;
 
-use self::buffer::{Snapshot, normalize_newlines, replace_range, toggle_comment};
+use self::buffer::{Snapshot, normalize_newlines, replace_ranges, toggle_comment};
 use self::conventional::{EditKind, INDENT, UndoGroup};
 pub use self::search::{Match, SearchBar, SearchField};
 use crate::catalog::{Catalog, RelationRef};
@@ -22,6 +24,69 @@ use crate::ui::text;
 use crate::ui::theme::Theme;
 
 pub const TAB_WIDTH: usize = 4;
+
+/// The part of the text that one frame shows.
+struct Window {
+    top: usize,
+    left: usize,
+    /// The first column after the window on each row, from the row `top`.
+    ends: Vec<usize>,
+}
+
+impl Window {
+    /// Lists each row with the first column after the window.
+    fn rows(&self) -> impl Iterator<Item = (usize, usize)> {
+        (self.top..).zip(self.ends.iter().copied())
+    }
+
+    /// Returns true when a match of one row touches the window.
+    fn shows(&self, found: &Match) -> bool {
+        let end = self.ends[found.start.row - self.top];
+        found.end.col > self.left && found.start.col < end
+    }
+}
+
+/// Returns the `(row, index)` nearest to a row. A tie takes the lowest index.
+fn nearest_place(places: &BTreeSet<(usize, usize)>, row: usize) -> Option<(usize, usize)> {
+    let first_on = |row: usize| places.range((row, 0)..).next().copied();
+    let before = places.range(..(row, 0)).next_back();
+    let before = before.and_then(|(row, _)| first_on(*row));
+    match (before, first_on(row)) {
+        (Some(before), Some(after)) if row - before.0 <= after.0 - row => Some(before),
+        (before, after) => after.or(before),
+    }
+}
+
+/// Returns the cells of a character on the screen of the editor.
+fn cells(c: char) -> usize {
+    match c {
+        '\t' => TAB_WIDTH,
+        c => c.width().unwrap_or(0),
+    }
+}
+
+/// Returns the last column that a cursor reaches in `width` cells from `left`.
+fn last_column(line: &[char], left: usize, width: usize) -> usize {
+    let mut used = 0;
+    let rest = line.get(left..).unwrap_or_default();
+    let fitting = rest.iter().take_while(|c| {
+        used += cells(**c);
+        used < width
+    });
+    left + fitting.count()
+}
+
+/// Returns the column after the characters that `width` cells show from `left`. Only a
+/// plain character counts, because the cells of another one depend on its neighbors.
+fn window_end(line: &[char], left: usize, width: usize) -> usize {
+    let mut used = 0;
+    let rest = line.get(left..).unwrap_or_default();
+    let shown = rest.iter().take_while(|c| {
+        used += usize::from(c.is_ascii_graphic() || **c == ' ');
+        used <= width
+    });
+    (left + shown.count()).min(line.len())
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum KeyboardMode {
@@ -584,7 +649,7 @@ impl SqlEditor {
         if self.revision != self.plan_revision {
             return;
         }
-        let Some(mark) = self.marks.iter().find(|mark| mark.index == index) else {
+        let Some(mark) = self.mark_place(index).map(|place| &self.marks[place]) else {
             return;
         };
         let (at, statement_end) = (mark.start + offset, mark.start + mark.text.len());
@@ -602,9 +667,16 @@ impl SqlEditor {
         });
     }
 
+    /// Returns the place of a mark. The marks stay in the order of their statements.
+    fn mark_place(&self, index: usize) -> Option<usize> {
+        self.marks
+            .binary_search_by_key(&index, |mark| mark.index)
+            .ok()
+    }
+
     pub fn set_mark_state(&mut self, index: usize, state: MarkState) {
-        if let Some(mark) = self.marks.iter_mut().find(|mark| mark.index == index) {
-            mark.state = Some(state);
+        if let Some(place) = self.mark_place(index) {
+            self.marks[place].state = Some(state);
         }
     }
 
@@ -617,20 +689,23 @@ impl SqlEditor {
             let mut marks = std::mem::take(&mut self.marks);
             let snapshot = self.snapshot();
             let text = snapshot.text.as_str();
-            let statements = split(text, dialect);
-            let mut used = vec![false; statements.len()];
+            let mut free: HashMap<&str, BTreeSet<(usize, usize)>> = HashMap::new();
+            for (index, statement) in split(text, dialect).iter().enumerate() {
+                let row = snapshot.row_of(statement.start);
+                free.entry(statement.text(text))
+                    .or_default()
+                    .insert((row, index));
+            }
             marks.retain_mut(|mark| {
-                let nearest = statements
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, statement)| !used[*index] && statement.text(text) == mark.text)
-                    .map(|(index, statement)| (index, snapshot.position(statement.start).row))
-                    .min_by_key(|(_, row)| row.abs_diff(mark.row));
-                if let Some((index, row)) = nearest {
-                    used[index] = true;
-                    mark.row = row;
-                }
-                nearest.is_some()
+                let Some(places) = free.get_mut(mark.text.as_str()) else {
+                    return false;
+                };
+                let Some(place) = nearest_place(places, mark.row) else {
+                    return false;
+                };
+                places.remove(&place);
+                mark.row = place.0;
+                true
             });
             self.marks = marks;
         }
@@ -933,10 +1008,7 @@ impl SqlEditor {
     /// the cursor goes to the start of the first one.
     fn replace_ranges(&mut self, ranges: &[(Index2, Index2, &str)]) {
         self.state.execute(DeleteChar(0));
-        let lines = &mut self.state.lines;
-        for (start, end, text) in ranges.iter().rev() {
-            replace_range(lines, *start, *end, text);
-        }
+        replace_ranges(&mut self.state.lines, ranges);
         let first = ranges[0].0;
         self.state.cursor = Index2::new(first.row, first.col);
         self.anchor = None;
@@ -950,9 +1022,32 @@ impl SqlEditor {
         }
     }
 
-    /// Writes the highlights of the rows that the next frame shows.
-    pub fn prepare_frame(&mut self, height: usize, theme: &Theme) {
-        self.page_height = height;
+    /// Returns the first column of the next frame. EdTUI moves its view with this rule
+    /// during the draw, and the highlights must be ready before the draw.
+    fn next_left(&self, width: usize) -> usize {
+        let (left, _) = self.state.viewport_offset();
+        let line = buffer::row(&self.state.lines, self.state.cursor.row);
+        let last = match self.state.mode {
+            EditorMode::Normal => line.len().saturating_sub(1),
+            _ => line.len(),
+        };
+        let cursor = self.state.cursor.col.min(last);
+        if cursor < left {
+            return cursor;
+        }
+        if cursor <= last_column(line, left, width) {
+            return left;
+        }
+        let mut used = 0;
+        let fitting = (0..=cursor).rev().take_while(|col| {
+            used += line.get(*col).map_or(1, |c| cells(*c));
+            used < width
+        });
+        cursor.saturating_sub(fitting.count())
+    }
+
+    /// Returns the part of the text that the next frame shows.
+    fn next_window(&self, width: usize, height: usize) -> Window {
         let cursor_row = self.state.cursor.row;
         let (_, top) = self.state.viewport_offset();
         let top = if cursor_row < top {
@@ -962,8 +1057,32 @@ impl SqlEditor {
         } else {
             top
         };
+        let left = self.next_left(width);
+        let ends = (top..=top + height)
+            .map(|row| window_end(buffer::row(&self.state.lines, row), left, width))
+            .collect();
+        Window { top, left, ends }
+    }
+
+    /// Writes the highlights of the part of the text that the next frame shows. EdTUI
+    /// tests each character of a row against each highlight until one holds it, so more
+    /// highlights cost time on each character. Each row that goes past the window starts
+    /// the list with one plain highlight, and the rest of the row stops there.
+    pub fn prepare_frame(&mut self, width: usize, height: usize, theme: &Theme) {
+        self.page_height = height;
+        let window = self.next_window(width, height);
         let dialect = self.dialect;
-        let mut highlights = self.search_highlights(top, height, theme);
+        let lines = &self.state.lines;
+        let mut highlights: Vec<Highlight> = window
+            .rows()
+            .filter_map(|(row, end)| {
+                let length = buffer::row(lines, row).len();
+                let rest =
+                    Highlight::new(Index2::new(row, end), Index2::new(row, length), theme.base);
+                (end < length).then_some(rest)
+            })
+            .collect();
+        highlights.extend(self.search_highlights(&window, theme));
         let spot = self
             .error_spot
             .as_ref()
@@ -978,42 +1097,36 @@ impl SqlEditor {
                 theme.error_spot,
             ));
         }
-        let visible_start = snapshot.line_start(top);
-        let visible_end = snapshot.line_start(top + height + 1);
-        let first = snapshot
-            .tokens
-            .partition_point(|token| token.end <= visible_start);
-        for token in &snapshot.tokens[first..] {
-            if token.start >= visible_end {
-                break;
+        for (row, end) in window.rows() {
+            for (token, first, last) in snapshot.row_tokens(row, window.left, end) {
+                let word = &snapshot.text[token.start..token.end];
+                let style = match token.kind {
+                    TokenKind::Word if keywords::is_keyword(word, dialect) => theme.keyword,
+                    TokenKind::Number => theme.number,
+                    TokenKind::String => theme.string,
+                    TokenKind::QuotedIdentifier => theme.identifier,
+                    TokenKind::Comment => theme.comment,
+                    _ => continue,
+                };
+                let (start, end) = (Index2::new(row, first), Index2::new(row, last));
+                highlights.push(Highlight::new(start, end, style));
             }
-            let word = &snapshot.text[token.start..token.end];
-            let style = match token.kind {
-                TokenKind::Word if keywords::is_keyword(word, dialect) => theme.keyword,
-                TokenKind::Number => theme.number,
-                TokenKind::String => theme.string,
-                TokenKind::QuotedIdentifier => theme.identifier,
-                TokenKind::Comment => theme.comment,
-                _ => continue,
-            };
-            let start = snapshot.position(token.start);
-            let end = snapshot.position_before(token.end);
-            highlights.push(Highlight::new(start, end, style));
         }
         self.state.set_highlights(highlights);
     }
 
-    fn search_highlights(&self, top: usize, height: usize, theme: &Theme) -> Vec<Highlight> {
+    fn search_highlights(&self, window: &Window, theme: &Theme) -> Vec<Highlight> {
         let Some(search) = &self.search else {
             return Vec::new();
         };
         let current = search.current_match();
         let first = search
             .matches
-            .partition_point(|found| found.start.row < top);
+            .partition_point(|found| found.start.row < window.top);
         search.matches[first..]
             .iter()
-            .take_while(|found| found.start.row <= top + height)
+            .take_while(|found| found.start.row < window.top + window.ends.len())
+            .filter(|found| window.shows(found))
             .map(|found| {
                 let style = if Some(*found) == current {
                     theme.search_current

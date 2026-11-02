@@ -250,6 +250,75 @@ fn a_jump_to_a_far_row_highlights_on_the_first_frame() {
     );
 }
 
+/// Each capital letter on the screen belongs to a keyword, so each one has its color.
+fn assert_keywords_have_their_color(buffer: &Buffer, place: &str) {
+    let area = buffer.area;
+    let cells = (area.top()..area.bottom())
+        .flat_map(|y| (area.left()..area.right()).map(move |x| (x, y)))
+        .filter(|cell| {
+            buffer[*cell]
+                .symbol()
+                .starts_with(|c: char| c.is_ascii_uppercase())
+        });
+    let mut seen = 0;
+    for cell in cells {
+        assert_eq!(buffer[cell].fg, Color::Blue, "{place}\n{}", screen(buffer));
+        seen += 1;
+    }
+    assert!(seen > 0, "{place}\n{}", screen(buffer));
+}
+
+#[test]
+fn each_column_of_a_long_row_keeps_its_colors() {
+    let rows = [
+        "SELECT a, ".repeat(100),
+        "\tSELECT b ".repeat(100),
+        "SELECT 日本語, ".repeat(100),
+        "SELECT '👩‍💻👩‍💻👩‍💻', ".repeat(100),
+    ];
+    for row in &rows {
+        let length = row.chars().count();
+        let text = format!("{row}\n{row}");
+        for mut f in [Fixture::conventional(&text), Fixture::vim(&text)] {
+            let places = (0..=length).step_by(37).chain([length, 3]);
+            for col in places {
+                f.editor.set_cursor(Index2::new(1, col));
+                let buffer = draw(&mut f.editor, &Theme::ansi(), 50, 6);
+                assert_keywords_have_their_color(&buffer, &format!("column {col}"));
+            }
+        }
+    }
+}
+
+#[test]
+fn a_comment_keeps_its_color_on_each_row_past_the_window() {
+    let long = "c".repeat(300);
+    let mut f = Fixture::conventional(&format!("/* {long}\n{long}\n{long} */"));
+    f.editor.set_cursor(Index2::new(1, 250));
+    let theme = Theme::ansi();
+    let buffer = draw(&mut f.editor, &theme, 40, 6);
+    for y in 0..3 {
+        let x = (0..40).find(|x| buffer[(*x, y)].symbol() == "c").unwrap();
+        assert_eq!(buffer[(x, y)].fg, theme.comment.fg.unwrap(), "{y}");
+    }
+}
+
+#[test]
+fn a_match_far_along_a_long_row_has_its_style() {
+    let mut f = Fixture::conventional(&"a users ".repeat(500));
+    f.press(ctrl('f'));
+    f.write("users");
+    for _ in 0..300 {
+        f.press(key(KeyCode::Enter));
+    }
+    let buffer = draw(&mut f.editor, &Theme::ansi(), 60, 6);
+    let (_, y) = find(&buffer, "a users a users");
+    assert_ne!(f.editor.state.viewport_offset().0, 0);
+    let row = (0..60).map(|x| buffer[(x, y)].bg).collect::<Vec<_>>();
+    assert!(row.contains(&Color::Yellow), "{}", screen(&buffer));
+    assert!(row.contains(&Color::Green), "{}", screen(&buffer));
+}
+
 /// The first editor row of the application screen.
 const TOP: u16 = 2;
 /// The first text column of the application screen, with one digit in the line numbers.

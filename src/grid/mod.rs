@@ -11,7 +11,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 pub use self::binary::Binary;
 pub use self::budget::{Budget, DEFAULT_LIMIT, Reservation, row_cost};
 pub use self::search::RowSearch;
-pub use self::tsv::{delimited_cell, delimited_text, hex};
+pub use self::tsv::{delimited_text, hex, push_cell};
 
 /// The limit of a width that the application calculates.
 const MAX_COLUMN_WIDTH: usize = 40;
@@ -96,16 +96,7 @@ impl Value {
                     let c = match offset {
                         0 => '0',
                         1 => 'x',
-                        _ => {
-                            let at = offset - 2;
-                            let byte = *bytes.get(at / 2)?;
-                            let nibble = if at.is_multiple_of(2) {
-                                byte >> 4
-                            } else {
-                                byte & 15
-                            };
-                            char::from(b"0123456789ABCDEF"[usize::from(nibble)])
-                        }
+                        _ => tsv::hex_digit(bytes, offset - 2)?,
                     };
                     return Some((c, offset + 1));
                 }

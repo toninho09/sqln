@@ -6,7 +6,9 @@
 use std::borrow::Cow;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::num::NonZero;
+use std::path::{Path, PathBuf};
+use std::thread;
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
@@ -15,6 +17,8 @@ use super::file::{self, Expect, FileLock, WriteError};
 use super::{Root, Scope};
 
 pub const VERSION: u32 = 1;
+/// A thread costs more than a few files, so a small folder reads on one thread.
+const MIN_SCRIPTS_PER_THREAD: usize = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,35 +96,54 @@ fn is_safe_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// Reads the identity of a script. A file that cannot be read returns `None`.
+fn read_entry(root: &Root, scope: Scope, path: &Path) -> Option<ScriptEntry> {
+    let meta: ScriptMeta = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    let stem = path.file_stem()?.to_str()?;
+    if meta.id != stem || !is_safe_id(stem) {
+        return None;
+    }
+    let modified = [sql_file(root, &meta.id).as_path(), path]
+        .iter()
+        .find_map(|path| fs::metadata(path).and_then(|meta| meta.modified()).ok());
+    Some(ScriptEntry {
+        meta,
+        scope,
+        modified,
+    })
+}
+
 /// Lists the scripts of a folder, the newest first. A file that cannot be read stays out.
+/// Each script needs its own file, so a large folder reads on several threads.
 pub fn list(root: &Root, scope: Scope) -> Vec<ScriptEntry> {
     let Ok(entries) = fs::read_dir(root.consoles_dir()) else {
         return Vec::new();
     };
-    let mut scripts: Vec<ScriptEntry> = entries
+    let paths: Vec<PathBuf> = entries
         .flatten()
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
                 .is_some_and(|extension| extension == "json")
         })
-        .filter_map(|entry| {
-            let meta: ScriptMeta = serde_json::from_slice(&fs::read(entry.path()).ok()?).ok()?;
-            let stem = entry.path().file_stem()?.to_str()?.to_owned();
-            if meta.id != stem || !is_safe_id(&stem) {
-                return None;
-            }
-            let modified = [sql_file(root, &meta.id), entry.path()]
-                .iter()
-                .find_map(|path| fs::metadata(path).and_then(|meta| meta.modified()).ok());
-            Some(ScriptEntry {
-                meta,
-                scope,
-                modified,
-            })
-        })
         .collect();
+    let workers = thread::available_parallelism().map_or(1, NonZero::get);
+    let share = paths.len().div_ceil(workers).max(MIN_SCRIPTS_PER_THREAD);
+    let mut scripts: Vec<ScriptEntry> = thread::scope(|threads| {
+        let workers: Vec<_> = paths
+            .chunks(share)
+            .map(|part| {
+                threads.spawn(move || {
+                    let read = part.iter().filter_map(|path| read_entry(root, scope, path));
+                    read.collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap_or_default())
+            .collect()
+    });
     scripts.sort_by(|a, b| {
         b.modified
             .cmp(&a.modified)

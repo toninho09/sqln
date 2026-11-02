@@ -335,6 +335,37 @@ fn a_new_row_above_moves_the_mark_with_its_statement() {
 }
 
 #[test]
+fn the_main_loop_waits_for_a_key_only_when_no_event_arrives() {
+    let mut f = Fixture::new("key-wait");
+    assert_ne!(f.app.key_wait(), Duration::ZERO);
+    f.app.on_event(Event::Paste("SELECT 1;\n".repeat(2_000)));
+    f.press(KeyEvent::new(KeyCode::F(5), KeyModifiers::SHIFT));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut flowed = false;
+    while f.app.console_mut().is_busy() {
+        f.app.drain_events();
+        flowed |= f.app.key_wait() == Duration::ZERO;
+        assert!(Instant::now() < deadline, "the run did not end");
+    }
+    assert!(flowed);
+    f.app.drain_events();
+    f.app.drain_events();
+    assert_ne!(f.app.key_wait(), Duration::ZERO);
+}
+
+#[test]
+fn the_scroll_of_messages_reaches_the_rows_past_the_first_screen() {
+    let mut f = Fixture::new("messages-scroll");
+    f.run_script(&"CREATE TEMP TABLE IF NOT EXISTS t(a);\n".repeat(100));
+    let console = f.app.console_mut();
+    console.active = console.results.len();
+    console.messages_scroll = 90;
+    let screen = f.screen();
+    assert!(screen.contains("Statement 91:"), "{screen}");
+    assert!(!screen.contains("Statement 90:"), "{screen}");
+}
+
+#[test]
 fn a_new_execution_clears_results_and_frees_the_budget() {
     let settings = Settings::default();
     let mut f = Fixture::with("clear", KeyboardMode::Conventional, settings, "");

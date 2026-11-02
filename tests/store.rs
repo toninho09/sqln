@@ -719,6 +719,27 @@ fn the_list_skips_damaged_files_and_names_that_do_not_match() {
 }
 
 #[test]
+fn a_large_folder_lists_each_script_in_the_same_order() {
+    const SCRIPTS: usize = 600;
+    let (store, _) = store_in("scripts-large");
+    let root = &store.global;
+    for index in 0..SCRIPTS {
+        let id = format!("s{index}");
+        let script = meta(&id, &format!("name {index:03}"), "c1", Scope::Global);
+        scripts::create(root, &script, "x").unwrap();
+    }
+    write(&root.consoles_dir().join("bad.json"), "{");
+    let list = scripts::list(root, Scope::Global);
+    assert_eq!(list.len(), SCRIPTS);
+    let order = |a: &scripts::ScriptEntry, b: &scripts::ScriptEntry| {
+        b.modified
+            .cmp(&a.modified)
+            .then_with(|| a.meta.name.cmp(&b.meta.name))
+    };
+    assert!(list.is_sorted_by(|a, b| order(a, b).is_le()));
+}
+
+#[test]
 fn removing_a_script_removes_both_files_and_a_second_removal_is_quiet() {
     let (store, _) = store_in("scripts-remove");
     let root = &store.global;

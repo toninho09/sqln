@@ -106,15 +106,16 @@ pub fn draw_editor(
     // The last column holds the scrollbar, so the text keeps its width in a long script.
     let [text, scroll] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]).areas(text);
-    editor.set_text_area(gutterless(text, editor));
-    editor.prepare_frame(usize::from(text.height), theme);
+    // The application draws the line numbers, because EdTUI leaves no space around them.
+    let text_area = gutterless(text, editor);
+    editor.set_text_area(text_area);
+    let (width, height) = (text_area.width.into(), text_area.height.into());
+    editor.prepare_frame(width, height, theme);
     let editor_theme = EditorTheme::default()
         .base(theme.base)
         .cursor_style(theme.cursor)
         .selection_style(theme.selection)
         .hide_status_line();
-    // The application draws the line numbers, because EdTUI leaves no space around them.
-    let text_area = gutterless(text, editor);
     EditorView::new(&mut editor.state)
         .theme(editor_theme)
         .wrap(false)

@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use serde::{Deserialize, Serialize};
 
 use crate::clipboard::base64;
-use crate::grid::{Value, delimited_cell, delimited_text, hex};
+use crate::grid::{Value, delimited_text, hex, push_cell};
 use crate::sql::{Dialect, quote_identifier, quote_literal};
 use crate::store::file;
 
@@ -253,7 +253,7 @@ impl<W: Write> Encoder<W> {
                 let delimiter = self.delimiter();
                 let names: Vec<String> = columns
                     .iter()
-                    .map(|name| delimited_text(name, delimiter, null).into_owned())
+                    .map(|name| delimited_text(name, delimiter, null))
                     .collect();
                 writeln!(self.out, "{}", names.join(&delimiter.to_string()))?;
             }
@@ -294,7 +294,7 @@ impl<W: Write> Encoder<W> {
             if index > 0 {
                 line.push(delimiter);
             }
-            line.push_str(&delimited_cell(value, delimiter, self.options.null));
+            push_cell(&mut line, value, delimiter, self.options.null);
         }
         line.push('\n');
         self.out.write_all(line.as_bytes())

@@ -183,6 +183,16 @@ Therefore, SQLN cannot cap that history without an EdTUI change.
 **Exit:** when EdTUI publishes an API for it, cap the history at 64 MiB per console.
 The oldest entries leave first, and an entry above the cap produces a warning.
 
+**Technical debt:** a screen of long rows costs time on each key. This item does not block the release.
+
+EdTUI reads each visible row to its end, and it tests each character against the highlights of the frame.
+The highlights are one flat list, so the rows of a frame share it.
+SQLN sends only the highlights of the visible columns, and the list starts with one plain highlight for each row past the window.
+One long row then costs little: a row of 1 MiB takes about 13 ms per key.
+A screen with many long rows still costs more: 40 rows of 30 KiB take about 65 ms per key, above the target of 50 ms.
+
+**Exit:** when EdTUI stops at the visible cells of a row, remove the plain highlights.
+
 ## 3. Concurrency
 
 ### Rules
@@ -197,7 +207,10 @@ The oldest entries leave first, and an entry above the cap produces a warning.
 ### Main loop
 
 The main thread waits for a key for up to 20 ms and then reads the execution events.
-It reads at most 64 events per frame, so a large load does not delay the keys.
+It does not wait while events arrive, because the bounded channel would then stop the database.
+It reads events for up to 8 ms per frame, so a large load does not delay the keys.
+The limit is a time and not a count, because the number of frames must not grow with the events.
+A frame builds only what the screen shows: the visible tabs, the visible messages, and the highlights of the visible columns.
 The grid search advances 8 ms per loop turn. It checks the deadline after a row or 512 characters.
 The search resumes inside a cell and streams binary hexadecimal text without a full copy.
 The event channel is bounded, and that controls the speed of the database read.

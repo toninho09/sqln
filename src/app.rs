@@ -89,15 +89,16 @@ const TALL_HEIGHT: u16 = 30;
 /// A console without a connection takes its identity from the end of the range,
 /// and the manager gives identities from the start.
 const FIRST_UNBOUND_CONSOLE: ConsoleId = u64::MAX;
-const EVENTS_PER_FRAME: usize = 64;
-/// The time of one step of the row search, so that a key waits less than a frame.
-const SEARCH_SLICE: Duration = Duration::from_millis(8);
+/// The time of one step of work between two frames, so that a key waits less than a frame.
+const WORK_SLICE: Duration = Duration::from_millis(8);
 /// The time between two frames of a run. The time on screen needs this rate.
 const RUN_FRAME: Duration = Duration::from_millis(100);
 /// The frames that each picture of the mark of a run stays.
 const FRAMES_PER_PICTURE: usize = 2;
 /// A message of the hint bar stays this time, unless the user acts first.
 const STATUS_TIME: Duration = Duration::from_secs(8);
+/// The time that the main loop waits for a key when no work waits.
+const KEY_WAIT: Duration = Duration::from_millis(20);
 const DEFAULT_EDITOR_RATIO: u16 = 50;
 const MIN_EDITOR_RATIO: u16 = 10;
 const MAX_EDITOR_RATIO: u16 = 90;
@@ -346,6 +347,8 @@ pub struct App {
     transaction_minute: Option<u64>,
     /// True when a long run ended and the main loop did not ring the bell yet.
     bell: bool,
+    /// True when the last read found execution events.
+    events_flow: bool,
     /// A SQL template that waits for the columns of its relation.
     pending_sql: Option<(SqlRequest, Template)>,
     /// The request for a new name of a console.
@@ -450,6 +453,7 @@ impl App {
             run_frame: 0,
             transaction_minute: None,
             bell: false,
+            events_flow: false,
             pending_sql: None,
             persist,
             auth: auth::Auth::new(options.vault.take(), plain),
@@ -776,6 +780,16 @@ impl App {
         search || self.exports_have_work()
     }
 
+    /// Returns the time that the main loop can wait for a key. Events that arrive now
+    /// can fill the bounded channel in less time, and a full channel stops the database.
+    pub fn key_wait(&self) -> Duration {
+        if self.events_flow || self.has_work() {
+            Duration::ZERO
+        } else {
+            KEY_WAIT
+        }
+    }
+
     /// Reads waiting execution events and continues the row search.
     /// It returns true when the screen changed.
     pub fn drain_events(&mut self) -> bool {
@@ -783,27 +797,29 @@ impl App {
         let authorized = self.poll_auth();
         let changed = self.has_work() || ticked || authorized;
         if changed {
-            let deadline = Instant::now() + SEARCH_SLICE;
+            let deadline = Instant::now() + WORK_SLICE;
             match self.table_active {
                 Some(index) => self.tables[index].result.continue_search(deadline),
                 None => self.console_mut().continue_search(deadline),
             }
             self.continue_exports(deadline);
         }
-        let mut changed = changed;
-        for _ in 0..EVENTS_PER_FRAME {
-            let Some(event) = self
-                .events
-                .as_mut()
-                .and_then(|events| events.try_recv().ok())
-            else {
-                break;
-            };
+        // The number of frames must not grow with the events, because a frame has a cost.
+        let deadline = Instant::now() + WORK_SLICE;
+        self.events_flow = false;
+        while let Some(event) = self
+            .events
+            .as_mut()
+            .and_then(|events| events.try_recv().ok())
+        {
             self.on_exec_event(event);
-            changed = true;
+            self.events_flow = true;
+            if Instant::now() >= deadline {
+                break;
+            }
         }
         self.flush_history();
-        changed
+        changed || self.events_flow
     }
 
     fn on_exec_event(&mut self, event: ExecEvent) {
@@ -1269,12 +1285,7 @@ fn event_loop(app: &mut App, session: &mut Session, signal: &AtomicBool) -> io::
             app.shutdown();
             return Ok(());
         }
-        let wait = if app.has_work() {
-            Duration::ZERO
-        } else {
-            Duration::from_millis(20)
-        };
-        if poll(wait)? {
+        if poll(app.key_wait())? {
             app.on_event(read()?);
             while poll(Duration::ZERO)? {
                 app.on_event(read()?);

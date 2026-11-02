@@ -341,7 +341,8 @@ pub fn draw_console(
     }
     let focused = focused && console.focus == Focus::Results;
     let active = console.active.min(console.results.len());
-    draw_tabs(frame, tabs, &tab_labels(console), active, focused, theme);
+    let labels = tab_labels(console, tabs);
+    draw_tabs(frame, tabs, &labels, active, focused, theme);
 
     if console.showing_messages() {
         draw_messages(frame, results, console, theme);
@@ -396,10 +397,13 @@ pub(super) fn message_style(message: &Message, theme: &Theme) -> Style {
     }
 }
 
-fn tab_labels(console: &Console) -> Vec<String> {
+/// Lists the labels of a console. A tab takes more than one column, so a result after
+/// the first `area.width` results stays out of sight, and it has no label.
+fn tab_labels(console: &Console, area: Rect) -> Vec<String> {
     let mut labels: Vec<String> = console
         .results
         .iter()
+        .take(usize::from(area.width))
         .map(|result| text::result_tab(result.number))
         .collect();
     labels.push(text::messages_tab(console.warnings()));
@@ -459,7 +463,7 @@ pub fn label_at(labels: &[String], area: Rect, column: u16) -> Option<usize> {
 
 /// Returns the result tab of a console at a screen column.
 pub fn tab_at(console: &Console, area: Rect, column: u16) -> Option<usize> {
-    label_at(&tab_labels(console), area, column)
+    label_at(&tab_labels(console, area), area, column)
 }
 
 fn draw_messages(frame: &mut Frame, area: Rect, console: &Console, theme: &Theme) {
@@ -473,9 +477,12 @@ fn draw_messages(frame: &mut Frame, area: Rect, console: &Console, theme: &Theme
         frame.render_widget(Paragraph::new(Line::from(line)), area);
         return;
     }
+    // A message takes one row or more, so the next messages stay out of sight.
+    let shown = usize::from(console.messages_scroll) + usize::from(area.height);
     let lines: Vec<Line> = console
         .messages
         .iter()
+        .take(shown)
         .map(|message| Line::styled(printable(&message.text), message_style(message, theme)))
         .collect();
     let paragraph = Paragraph::new(lines)

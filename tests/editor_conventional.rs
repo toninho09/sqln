@@ -3,7 +3,7 @@ mod common;
 use common::{Fixture, alt, ctrl, key, shift};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use edtui::Index2;
-use sqln::editor::KeyboardMode;
+use sqln::editor::{KeyboardMode, RunScope};
 use sqln::sql::Dialect;
 
 use KeyCode::{Backspace, Delete, Down, End, Enter, Home, Left, Right, Tab, Up};
@@ -482,4 +482,44 @@ fn redis_uses_its_own_comment() {
     assert_eq!(f.text(), "# GET a");
     f.editor.toggle_comment();
     assert_eq!(f.text(), "GET a");
+}
+
+fn fixture_with_marks(text: &str) -> Fixture {
+    let mut f = Fixture::conventional(text);
+    let plan = f.editor.plan_run(RunScope::Script).unwrap();
+    f.editor.set_marks(&plan);
+    f
+}
+
+fn rows_after_paste(f: &mut Fixture, text: &str) -> Vec<usize> {
+    f.press(ctrl('a'));
+    f.editor.on_paste(text);
+    f.editor.marks().iter().map(|mark| mark.row).collect()
+}
+
+#[test]
+fn equal_statements_keep_one_mark_each() {
+    let mut f = fixture_with_marks("SELECT 1;\nSELECT 1;\nSELECT 2;\nSELECT 1;");
+    let text = "\nSELECT 1;\nSELECT 1;\nSELECT 2;\nSELECT 1;";
+    assert_eq!(rows_after_paste(&mut f, text), [1, 2, 3, 4]);
+}
+
+#[test]
+fn a_mark_goes_to_the_nearest_copy_of_its_statement() {
+    let mut f = fixture_with_marks("\n\n\n\n\nSELECT 1;");
+    let text = "SELECT 1;\n\n\n\n\n\nSELECT 1;";
+    assert_eq!(rows_after_paste(&mut f, text), [6]);
+}
+
+#[test]
+fn two_copies_at_the_same_distance_give_the_mark_to_the_first_one() {
+    let mut f = fixture_with_marks("SELECT 9;\nSELECT 1;\nSELECT 8;");
+    let text = "SELECT 1;\nSELECT 2;\nSELECT 1;";
+    assert_eq!(rows_after_paste(&mut f, text), [0]);
+}
+
+#[test]
+fn a_mark_without_a_free_copy_of_its_text_goes_away() {
+    let mut f = fixture_with_marks("SELECT 1;\nSELECT 1;\nSELECT 2;");
+    assert_eq!(rows_after_paste(&mut f, "SELECT 3;\nSELECT 1;"), [1]);
 }

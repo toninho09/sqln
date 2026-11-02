@@ -99,6 +99,26 @@ fn ctrl_a_replaces_all_in_one_undo_step() {
 }
 
 #[test]
+fn ctrl_a_keeps_the_text_around_each_match() {
+    let text = "ab ab\n\nxx ab yy ab\nab";
+    for (replacement, result) in [
+        ("long", "long long\n\nxx long yy long\nlong"),
+        ("", " \n\nxx  yy \n"),
+    ] {
+        let mut f = Fixture::conventional(text);
+        f.press(ctrl('f'));
+        f.write("ab");
+        f.press(key(Tab));
+        f.write(replacement);
+        f.press(ctrl('a'));
+        assert_eq!(f.text(), result);
+        f.press(key(Esc));
+        f.press(ctrl('z'));
+        assert_eq!(f.text(), text);
+    }
+}
+
+#[test]
 fn replacement_that_contains_the_query_stops_after_one_pass() {
     let mut f = Fixture::conventional("a a");
     f.press(ctrl('f'));
