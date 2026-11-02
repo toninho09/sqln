@@ -573,6 +573,26 @@ fn stop_undoes_a_run_and_keeps_the_tab_usable() {
     assert_eq!(f.count(), "1");
 }
 
+/// The stop races with the connection, so ten runs reach the wait for it.
+#[test]
+fn a_stop_before_the_connection_reports_the_stop() {
+    for run in 0..10 {
+        let mut f = Fixture::new(&format!("dialog-early-stop-{run}"));
+        f.open_dialog();
+        let mut file = String::from("id,name\n");
+        for row in 1000..20_000 {
+            file.push_str(&format!("{row},x\n"));
+        }
+        let path = f.file("people.csv", file.as_bytes());
+        f.choose(&path);
+        f.click_text("[Import]");
+        f.press(ctrl('w'));
+        f.code(KeyCode::Char('x'));
+        f.wait_for("Import not complete");
+        assert!(f.sees("The import stopped."), "run {run}:\n{}", f.screen());
+    }
+}
+
 impl Fixture {
     /// Selects the log mode, and puts the focus on the path of the log.
     fn focus_log(&mut self) {

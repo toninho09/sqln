@@ -315,7 +315,9 @@ impl App {
         let log = (progress.errors() > 0).then(|| log.display().to_string());
         let reason = match end {
             ExecutionEnd::Completed => None,
-            ExecutionEnd::Stopped => Some(text::IMPORT_STOPPED.to_owned()),
+            ExecutionEnd::Stopped | ExecutionEnd::CanceledBeforeStart => {
+                Some(text::IMPORT_STOPPED.to_owned())
+            }
             _ => failure,
         };
         let body = text::import_report(&text::ImportReport {
