@@ -16,24 +16,35 @@ pub(super) fn hex_digit(bytes: &[u8], place: usize) -> Option<char> {
     Some(char::from(HEX_DIGITS[usize::from(nibble)]))
 }
 
+/// Reads all the bytes without an early stop, because the compiler then tests many bytes
+/// in one step. A separator is ASCII, so a byte of another character never matches.
+fn has_separator(text: &str, delimiter: u8) -> bool {
+    text.bytes().fold(false, |found, byte| {
+        found | (byte == delimiter) | (byte == b'\n') | (byte == b'\r') | (byte == b'"')
+    })
+}
+
 /// Writes a field. It quotes a field that holds a separator, or that a reader could take
 /// for a `NULL`.
-fn push_field(out: &mut String, text: &str, delimiter: char, null: &str) {
-    if !text.is_empty() && text != null && !text.contains([delimiter, '\n', '\r', '"']) {
+fn push_field(out: &mut String, text: &str, delimiter: u8, null: &str) {
+    if !text.is_empty() && text != null && !has_separator(text, delimiter) {
         out.push_str(text);
         return;
     }
     out.push('"');
-    for (index, part) in text.split('"').enumerate() {
-        if index > 0 {
-            out.push_str("\"\"");
+    let mut start = 0;
+    for (at, byte) in text.bytes().enumerate() {
+        if byte == b'"' {
+            out.push_str(&text[start..=at]);
+            out.push('"');
+            start = at + 1;
         }
-        out.push_str(part);
     }
+    out.push_str(&text[start..]);
     out.push('"');
 }
 
-pub fn delimited_text(text: &str, delimiter: char, null: &str) -> String {
+pub fn delimited_text(text: &str, delimiter: u8, null: &str) -> String {
     let mut out = String::with_capacity(text.len());
     push_field(&mut out, text, delimiter, null);
     out
@@ -53,7 +64,7 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 /// Writes the text of a cell. `null` is the text of a `NULL` value.
-pub fn push_cell(out: &mut String, value: &Value, delimiter: char, null: &str) {
+pub fn push_cell(out: &mut String, value: &Value, delimiter: u8, null: &str) {
     match value {
         Value::Null => out.push_str(null),
         Value::Text(text) | Value::Number(text) => push_field(out, text, delimiter, null),
@@ -72,7 +83,7 @@ pub fn encode<'a>(rows: impl Iterator<Item = impl Iterator<Item = &'a Value>>) -
             if index > 0 {
                 out.push('\t');
             }
-            push_cell(&mut out, value, '\t', "");
+            push_cell(&mut out, value, b'\t', "");
         }
         out.push('\n');
     }

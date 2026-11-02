@@ -183,15 +183,23 @@ Therefore, SQLN cannot cap that history without an EdTUI change.
 **Exit:** when EdTUI publishes an API for it, cap the history at 64 MiB per console.
 The oldest entries leave first, and an entry above the cap produces a warning.
 
-**Technical debt:** a screen of long rows costs time on each key. This item does not block the release.
+### Editor frame
 
-EdTUI reads each visible row to its end, and it tests each character against the highlights of the frame.
-The highlights are one flat list, so the rows of a frame share it.
-SQLN sends only the highlights of the visible columns, and the list starts with one plain highlight for each row past the window.
-One long row then costs little: a row of 1 MiB takes about 13 ms per key.
-A screen with many long rows still costs more: 40 rows of 30 KiB take about 65 ms per key, above the target of 50 ms.
+EdTUI reads each row of the screen to its end, and it tests each character against a flat list of highlights.
+With that rule, the time of a frame grows with the square of the size of the screen.
+Therefore, SQLN gives EdTUI no highlights, and `editor::frame` gives it rows that stop at the end of the window.
+After the draw, `editor::frame` writes the styles on the cells.
+A frame then costs time only for the cells of the screen: a full screen of 300 by 100 cells takes about 3 ms per key.
 
-**Exit:** when EdTUI stops at the visible cells of a row, remove the plain highlights.
+The text of the user is not complete during the draw, so `FrameState` returns the rows when it drops.
+A panic also drops it, because the last save of a panic reads the text.
+
+Two rules copy code of the libraries. Check them after an update of EdTUI or Ratatui:
+
+1. `SqlEditor::next_left` copies `update_viewport_horizontal` of EdTUI.
+2. `FrameState::paint_row` copies the cell rule of `Span::render` of Ratatui.
+
+`each_column_of_a_long_row_keeps_its_colors` guards both rules.
 
 ## 3. Concurrency
 
@@ -210,7 +218,7 @@ The main thread waits for a key for up to 20 ms and then reads the execution eve
 It does not wait while events arrive, because the bounded channel would then stop the database.
 It reads events for up to 8 ms per frame, so a large load does not delay the keys.
 The limit is a time and not a count, because the number of frames must not grow with the events.
-A frame builds only what the screen shows: the visible tabs, the visible messages, and the highlights of the visible columns.
+A frame builds only what the screen shows: the visible tabs, the visible messages, and the styles of the visible columns.
 The grid search advances 8 ms per loop turn. It checks the deadline after a row or 512 characters.
 The search resumes inside a cell and streams binary hexadecimal text without a full copy.
 The event channel is bounded, and that controls the speed of the database read.

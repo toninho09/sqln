@@ -1,4 +1,5 @@
-// The target is under 50 ms per key. Run it with `cargo test --release --test latency`.
+// The target is under 50 ms per key. Run it with `make bench`: the tests must run one at a
+// time, because tests that run together take time from each other and fail.
 
 mod common;
 
@@ -41,8 +42,12 @@ fn worst_key_and_frame(lines: usize) -> Duration {
 }
 
 fn worst_key_on(f: &mut Fixture) -> Duration {
+    worst_key_in(f, 120, 40)
+}
+
+fn worst_key_in(f: &mut Fixture, width: u16, height: u16) -> Duration {
     let theme = Theme::ansi();
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     let mut worst = Duration::ZERO;
     for index in 0..60 {
         let started = Instant::now();
@@ -81,6 +86,26 @@ fn a_key_on_a_long_row_stays_under_the_target() {
         println!("one row of {kib} KiB: worst key plus frame {worst:?}");
         assert!(worst < TARGET, "{kib} KiB: {worst:?}");
     }
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn a_key_on_a_screen_of_long_rows_stays_under_the_target() {
+    let row = format!("{ROW} ").repeat(30 * 1024 / (ROW.len() + 1));
+    let mut f = Fixture::conventional(&vec![row; 40].join("\n"));
+    let worst = worst_key_on(&mut f);
+    println!("40 rows of 30 KiB: worst key plus frame {worst:?}");
+    assert!(worst < TARGET, "{worst:?}");
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn a_key_on_a_full_large_terminal_stays_under_the_target() {
+    let row = format!("{ROW} ").repeat(300 / (ROW.len() + 1) + 1);
+    let mut f = Fixture::conventional(&vec![row; 200].join("\n"));
+    let worst = worst_key_in(&mut f, 300, 100);
+    println!("300 by 100 cells of SQL: worst key plus frame {worst:?}");
+    assert!(worst < TARGET, "{worst:?}");
 }
 
 #[test]

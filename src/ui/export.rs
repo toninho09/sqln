@@ -57,7 +57,7 @@ fn choice(form: &ExportForm, field: Field) -> String {
             _ => text::export_loaded(source.loaded),
         },
         Field::Header => text::on_off(form.header).to_owned(),
-        Field::Delimiter => text::export_delimiter(form.delimiter.symbol()),
+        Field::Delimiter => text::export_delimiter(char::from(form.delimiter.symbol())),
         Field::NullText => match form.null_text {
             NullText::Empty => text::VALUE_EXPORT_NULL_EMPTY.to_owned(),
             NullText::Word => text::VALUE_EXPORT_NULL_WORD.to_owned(),

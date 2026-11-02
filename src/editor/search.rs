@@ -65,18 +65,16 @@ impl SearchBar {
 
 fn find_matches(lines: &Lines, query: &str) -> Vec<Match> {
     let needle = needle(query);
-    if needle.is_empty() {
+    let Some((first, rest)) = needle.split_first() else {
         return Vec::new();
-    }
+    };
+    let is_at = |chars: &[char]| chars.iter().zip(rest).all(|(a, b)| fold(*a) == *b);
     let mut matches = Vec::new();
     for (row, chars) in lines.iter_row().enumerate() {
+        let last = (chars.len() + 1).saturating_sub(needle.len());
         let mut col = 0;
-        while col + needle.len() <= chars.len() {
-            if chars[col..col + needle.len()]
-                .iter()
-                .zip(&needle)
-                .all(|(a, b)| fold(*a) == *b)
-            {
+        while col < last {
+            if fold(chars[col]) == *first && is_at(&chars[col + 1..]) {
                 matches.push(Match {
                     start: Index2::new(row, col),
                     end: Index2::new(row, col + needle.len()),

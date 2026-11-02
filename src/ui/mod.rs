@@ -110,18 +110,20 @@ pub fn draw_editor(
     let text_area = gutterless(text, editor);
     editor.set_text_area(text_area);
     let (width, height) = (text_area.width.into(), text_area.height.into());
-    editor.prepare_frame(width, height, theme);
+    let mut frame_state = editor.prepare_frame(width, height, theme);
     let editor_theme = EditorTheme::default()
         .base(theme.base)
         .cursor_style(theme.cursor)
         .selection_style(theme.selection)
         .hide_status_line();
-    EditorView::new(&mut editor.state)
+    EditorView::new(frame_state.state())
         .theme(editor_theme)
         .wrap(false)
         .tab_width(TAB_WIDTH)
         .line_numbers(LineNumbers::None)
         .render(text_area, frame.buffer_mut());
+    frame_state.paint(text_area, frame.buffer_mut(), theme.cursor);
+    drop(frame_state);
 
     if focused {
         draw_current_line(frame.buffer_mut(), text, editor, theme);

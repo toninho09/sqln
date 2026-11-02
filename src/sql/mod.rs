@@ -23,10 +23,17 @@ pub enum Dialect {
 
 /// Wraps a name in `open` quotes and doubles the quotes inside the name.
 pub fn quote_with(name: &str, open: char) -> String {
-    format!(
-        "{open}{}{open}",
-        name.replace(open, &format!("{open}{open}"))
-    )
+    let mut quoted = String::with_capacity(name.len() + 2);
+    quoted.push(open);
+    for (index, part) in name.split(open).enumerate() {
+        if index > 0 {
+            quoted.push(open);
+            quoted.push(open);
+        }
+        quoted.push_str(part);
+    }
+    quoted.push(open);
+    quoted
 }
 
 /// Writes a name with the identifier quotes of the dialect. It always quotes.

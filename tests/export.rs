@@ -74,6 +74,38 @@ fn csv_quotes_what_a_reader_needs_and_keeps_the_rest() {
 }
 
 #[test]
+fn each_quote_of_a_field_is_doubled() {
+    let rows = vec![vec![
+        text("\""),
+        text("a\"b\"c"),
+        text("\"日本\""),
+        text("日,本"),
+    ]];
+    assert_eq!(
+        encode(with_format(ExportFormat::Csv), &["a", "b", "c", "d"], &rows),
+        "a,b,c,d\n\"\"\"\",\"a\"\"b\"\"c\",\"\"\"日本\"\"\",\"日,本\"\n"
+    );
+}
+
+#[test]
+fn a_field_with_a_line_end_has_quotes() {
+    let rows = vec![vec![text("a\rb"), text("a\nb")]];
+    assert_eq!(
+        encode(with_format(ExportFormat::Csv), &["a", "b"], &rows),
+        "a,b\n\"a\rb\",\"a\nb\"\n"
+    );
+}
+
+#[test]
+fn a_character_outside_ascii_is_not_a_separator() {
+    let rows = vec![vec![text("a，b"), text("日本語")]];
+    assert_eq!(
+        encode(with_format(ExportFormat::Csv), &["a", "b"], &rows),
+        "a,b\na，b,日本語\n"
+    );
+}
+
+#[test]
 fn tsv_cells_match_the_copy_of_the_grid() {
     let rows = vec![vec![Value::Null, text(""), text("tab\there"), text("a,b")]];
     let mut table = sqln::grid::ResultTable::new(vec!["a".to_owned(); 4]);
@@ -92,7 +124,7 @@ fn tsv_cells_match_the_copy_of_the_grid() {
 fn the_options_of_csv_change_the_file() {
     let rows = vec![vec![Value::Null, text("NULL"), text("a;b"), text("a,b")]];
     let options = ExportOptions {
-        delimiter: ';',
+        delimiter: b';',
         null: "NULL",
         bom: true,
         header: false,
@@ -239,6 +271,9 @@ fn each_dialect_writes_its_literals() {
         "INSERT INTO t (\"a\", \"b\") VALUES ('a\\b', X'DEAD');\n"
     );
     assert_eq!(quote_literal("o'k", Dialect::MySql), "'o''k'");
+    assert_eq!(quote_literal("'", Dialect::Postgres), "''''");
+    assert_eq!(quote_literal("", Dialect::Sqlite), "''");
+    assert_eq!(quote_literal("''", Dialect::Sqlite), "''''''");
 }
 
 #[test]

@@ -4,6 +4,7 @@ use common::{Fixture, ctrl, key, shift};
 use crossterm::event::KeyCode::{BackTab, Backspace, Down, Enter, Esc, Right, Tab, Up};
 use edtui::Index2;
 use sqln::editor::SearchField;
+use sqln::find::fold;
 
 #[test]
 fn search_finds_every_match_without_case() {
@@ -171,4 +172,45 @@ fn a_paste_in_the_bar_uses_its_first_line() {
     f.editor.on_paste("use\nother");
     assert_eq!(f.editor.search().unwrap().find, "use");
     assert_eq!(f.text(), "users");
+}
+
+fn match_starts(f: &Fixture) -> Vec<(usize, usize)> {
+    let matches = &f.editor.search().unwrap().matches;
+    let start = |found: &sqln::editor::Match| (found.start.row, found.start.col);
+    matches.iter().map(start).collect()
+}
+
+#[test]
+fn a_match_can_end_a_row_or_fill_it() {
+    let mut f = Fixture::conventional("xab\nab\na\n\nb");
+    f.press(ctrl('f'));
+    f.write("ab");
+    assert_eq!(match_starts(&f), [(0, 1), (1, 0)]);
+}
+
+#[test]
+fn matches_do_not_share_a_character() {
+    let mut f = Fixture::conventional("aaaaa");
+    f.press(ctrl('f'));
+    f.write("aa");
+    assert_eq!(match_starts(&f), [(0, 0), (0, 2)]);
+}
+
+#[test]
+fn a_search_compares_each_character_without_case() {
+    let mut f = Fixture::conventional("AÇÃO ação k K \u{212A}");
+    f.press(ctrl('f'));
+    f.write("Ação");
+    assert_eq!(match_starts(&f), [(0, 0), (0, 5)]);
+    f.press(key(Esc));
+    f.press(ctrl('f'));
+    f.write("k");
+    assert_eq!(match_starts(&f), [(0, 10), (0, 12), (0, 14)]);
+}
+
+#[test]
+fn the_fold_of_a_character_is_its_first_lower_case_character() {
+    for c in (0..=char::MAX as u32).filter_map(char::from_u32) {
+        assert_eq!(fold(c), c.to_lowercase().next().unwrap_or(c), "{c:?}");
+    }
 }

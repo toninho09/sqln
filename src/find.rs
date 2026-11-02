@@ -1,7 +1,12 @@
 //! The text comparison of the searches: literal and without case.
 
+#[inline]
 pub fn fold(c: char) -> char {
-    c.to_lowercase().next().unwrap_or(c)
+    if c.is_ascii() {
+        c.to_ascii_lowercase()
+    } else {
+        c.to_lowercase().next().unwrap_or(c)
+    }
 }
 
 pub fn needle(query: &str) -> Vec<char> {
@@ -46,6 +51,7 @@ impl Matcher {
     }
 
     /// Returns None when a prefix fallback needs another step for this character.
+    #[inline]
     pub fn push(&mut self, c: char) -> Option<bool> {
         if self.is_empty() {
             return Some(false);

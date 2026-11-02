@@ -86,6 +86,7 @@ impl Value {
     }
 
     /// Returns one search character and the next offset without copying the cell.
+    #[inline]
     fn search_char(&self, offset: usize) -> Option<(char, usize)> {
         let text = match self {
             Self::Null => "NULL",

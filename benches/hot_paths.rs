@@ -15,7 +15,7 @@ mod common;
 use std::cell::{OnceCell, RefCell};
 use std::fs::{self, File};
 use std::hint::black_box;
-use std::io;
+use std::io::{self, BufWriter};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -181,9 +181,13 @@ struct Screen {
 
 impl Screen {
     fn new(fixture: Fixture, letter: char) -> Self {
+        Self::sized(fixture, letter, 120, 40)
+    }
+
+    fn sized(fixture: Fixture, letter: char, width: u16, height: u16) -> Self {
         Self {
             fixture,
-            terminal: Terminal::new(TestBackend::new(120, 40)).unwrap(),
+            terminal: Terminal::new(TestBackend::new(width, height)).unwrap(),
             theme: Theme::ansi(),
             letter,
             typed: false,
@@ -304,6 +308,16 @@ fn replace_fixture(text: &str) -> Fixture {
 }
 
 fn editor(bench: &mut Bench) {
+    for (width, height) in [(120, 40), (200, 60), (300, 100)] {
+        bench.key(
+            &format!("editor/key and frame, full SQL screen of {width} by {height}"),
+            || {
+                let fixture = Fixture::conventional(&long_text(usize::from(width), 200));
+                Screen::sized(fixture, 's', width, height)
+            },
+            Screen::key_and_frame,
+        );
+    }
     for kib in [10, 30, 100, 1024] {
         bench.key(
             &format!("editor/key and frame, one line of {kib} KiB"),
@@ -550,7 +564,9 @@ fn script_root(name: &str, count: usize) -> Root {
             "g1".to_owned(),
             Scope::Global,
         );
-        let path = root.consoles_dir().join(format!("{id}.json"));
+        let folder = root.consoles_dir();
+        fs::write(folder.join(format!("{id}.sql")), SCRIPT_LINE).unwrap();
+        let path = folder.join(format!("{id}.json"));
         fs::write(path, serde_json::to_vec(&meta).unwrap()).unwrap();
     }
     root
@@ -828,7 +844,7 @@ fn export_options(format: ExportFormat) -> ExportOptions {
     ExportOptions {
         format,
         header: true,
-        delimiter: ',',
+        delimiter: b',',
         null: "",
         bom: false,
         batch: 100,
@@ -854,7 +870,7 @@ fn export(bench: &mut Bench) {
         bench.rate(
             &format!("export/encode 200,000 rows as {name}"),
             (ROWS, "rows"),
-            || Encoder::new(io::sink(), export_options(format)),
+            || Encoder::new(BufWriter::new(io::sink()), export_options(format)),
             |encoder| {
                 encoder.start(&columns).unwrap();
                 for row in table() {

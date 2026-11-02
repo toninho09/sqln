@@ -2,18 +2,21 @@
 
 mod buffer;
 mod conventional;
+mod frame;
 mod search;
 
 use std::collections::{BTreeSet, HashMap};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use edtui::actions::{DeleteChar, SwitchMode};
-use edtui::{EditorEventHandler, EditorMode, EditorState, Highlight, Index2, Lines};
+use edtui::{EditorEventHandler, EditorMode, EditorState, Index2, Lines, RowIndex};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthChar;
 
 use self::buffer::{Snapshot, normalize_newlines, replace_ranges, toggle_comment};
 use self::conventional::{EditKind, INDENT, UndoGroup};
+pub use self::frame::FrameState;
+use self::frame::{Styles, Window, window_end};
 pub use self::search::{Match, SearchBar, SearchField};
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{CopyOutcome, EditorClipboard, SharedClipboard};
@@ -24,27 +27,6 @@ use crate::ui::text;
 use crate::ui::theme::Theme;
 
 pub const TAB_WIDTH: usize = 4;
-
-/// The part of the text that one frame shows.
-struct Window {
-    top: usize,
-    left: usize,
-    /// The first column after the window on each row, from the row `top`.
-    ends: Vec<usize>,
-}
-
-impl Window {
-    /// Lists each row with the first column after the window.
-    fn rows(&self) -> impl Iterator<Item = (usize, usize)> {
-        (self.top..).zip(self.ends.iter().copied())
-    }
-
-    /// Returns true when a match of one row touches the window.
-    fn shows(&self, found: &Match) -> bool {
-        let end = self.ends[found.start.row - self.top];
-        found.end.col > self.left && found.start.col < end
-    }
-}
 
 /// Returns the `(row, index)` nearest to a row. A tie takes the lowest index.
 fn nearest_place(places: &BTreeSet<(usize, usize)>, row: usize) -> Option<(usize, usize)> {
@@ -74,18 +56,6 @@ fn last_column(line: &[char], left: usize, width: usize) -> usize {
         used < width
     });
     left + fitting.count()
-}
-
-/// Returns the column after the characters that `width` cells show from `left`. Only a
-/// plain character counts, because the cells of another one depend on its neighbors.
-fn window_end(line: &[char], left: usize, width: usize) -> usize {
-    let mut used = 0;
-    let rest = line.get(left..).unwrap_or_default();
-    let shown = rest.iter().take_while(|c| {
-        used += usize::from(c.is_ascii_graphic() || **c == ' ');
-        used <= width
-    });
-    (left + shown.count()).min(line.len())
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1023,7 +993,7 @@ impl SqlEditor {
     }
 
     /// Returns the first column of the next frame. EdTUI moves its view with this rule
-    /// during the draw, and the highlights must be ready before the draw.
+    /// during the draw, and the window must be ready before the draw.
     fn next_left(&self, width: usize) -> usize {
         let (left, _) = self.state.viewport_offset();
         let line = buffer::row(&self.state.lines, self.state.cursor.row);
@@ -1064,25 +1034,15 @@ impl SqlEditor {
         Window { top, left, ends }
     }
 
-    /// Writes the highlights of the part of the text that the next frame shows. EdTUI
-    /// tests each character of a row against each highlight until one holds it, so more
-    /// highlights cost time on each character. Each row that goes past the window starts
-    /// the list with one plain highlight, and the rest of the row stops there.
-    pub fn prepare_frame(&mut self, width: usize, height: usize, theme: &Theme) {
+    /// Finds the styles of the part of the text that the next frame shows, and returns
+    /// the state to draw. Each row stops at the end of the window until that state drops,
+    /// so the text is not complete during the draw.
+    pub fn prepare_frame(&mut self, width: usize, height: usize, theme: &Theme) -> FrameState<'_> {
         self.page_height = height;
         let window = self.next_window(width, height);
         let dialect = self.dialect;
-        let lines = &self.state.lines;
-        let mut highlights: Vec<Highlight> = window
-            .rows()
-            .filter_map(|(row, end)| {
-                let length = buffer::row(lines, row).len();
-                let rest =
-                    Highlight::new(Index2::new(row, end), Index2::new(row, length), theme.base);
-                (end < length).then_some(rest)
-            })
-            .collect();
-        highlights.extend(self.search_highlights(&window, theme));
+        let mut styles = Styles::new(&window);
+        self.mark_search(&window, &mut styles, theme);
         let spot = self
             .error_spot
             .as_ref()
@@ -1091,11 +1051,7 @@ impl SqlEditor {
         let snapshot = self.snapshot();
         if let Some((start, end)) = spot {
             let start = snapshot.position(start);
-            highlights.push(Highlight::new(
-                start,
-                snapshot.position_before(end),
-                theme.error_spot,
-            ));
+            styles.mark(start, snapshot.position_before(end), theme.error_spot);
         }
         for (row, end) in window.rows() {
             for (token, first, last) in snapshot.row_tokens(row, window.left, end) {
@@ -1108,35 +1064,45 @@ impl SqlEditor {
                     TokenKind::Comment => theme.comment,
                     _ => continue,
                 };
-                let (start, end) = (Index2::new(row, first), Index2::new(row, last));
-                highlights.push(Highlight::new(start, end, style));
+                styles.mark(Index2::new(row, first), Index2::new(row, last), style);
             }
         }
-        self.state.set_highlights(highlights);
+        let mut rows = Vec::new();
+        for (row, end) in window.rows() {
+            if let Some(line) = self.state.lines.get_mut(RowIndex::new(row))
+                && end < line.len()
+            {
+                let cut = line[..end].to_vec();
+                rows.push((row, std::mem::replace(line, cut)));
+            }
+        }
+        FrameState {
+            state: &mut self.state,
+            rows,
+            styles,
+        }
     }
 
-    fn search_highlights(&self, window: &Window, theme: &Theme) -> Vec<Highlight> {
+    fn mark_search(&self, window: &Window, styles: &mut Styles, theme: &Theme) {
         let Some(search) = &self.search else {
-            return Vec::new();
+            return;
         };
         let current = search.current_match();
         let first = search
             .matches
             .partition_point(|found| found.start.row < window.top);
-        search.matches[first..]
+        let shown = search.matches[first..]
             .iter()
-            .take_while(|found| found.start.row < window.top + window.ends.len())
-            .filter(|found| window.shows(found))
-            .map(|found| {
-                let style = if Some(*found) == current {
-                    theme.search_current
-                } else {
-                    theme.search_match
-                };
-                let end = Index2::new(found.end.row, found.end.col - 1);
-                Highlight::new(found.start, end, style)
-            })
-            .collect()
+            .take_while(|found| found.start.row < window.top + window.ends.len());
+        for found in shown {
+            let style = if Some(*found) == current {
+                theme.search_current
+            } else {
+                theme.search_match
+            };
+            let end = Index2::new(found.end.row, found.end.col - 1);
+            styles.mark(found.start, end, style);
+        }
     }
 
     pub fn set_text_area(&mut self, area: Rect) {
