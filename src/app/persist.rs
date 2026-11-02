@@ -114,6 +114,7 @@ impl Persist {
         settings.row_cap = config.row_cap.unwrap_or(settings.row_cap);
         settings.budget_bytes = config.budget_bytes.unwrap_or(settings.budget_bytes);
         options.keyboard = config.keyboard;
+        options.undo_limit = config.undo_limit_bytes;
         options.keymap = Some(config.keymap);
         options.appearance = (config.theme, config.icons);
         options.suggestion_keys = config.suggestion_keys;
@@ -262,6 +263,10 @@ impl App {
             self.settings.budget_bytes = bytes;
             self.budget.set_limit(bytes);
         }
+        self.undo_limit = config.undo_limit_bytes;
+        for console in &mut self.consoles {
+            console.editor.set_undo_limit(config.undo_limit_bytes);
+        }
         self.keymap = config.keymap;
         self.suggestion_keys = config.suggestion_keys;
         if let Some(persist) = &mut self.persist {
@@ -286,14 +291,15 @@ impl App {
 
     /// Gives a console a new editor with a text. The cursor stays when it fits.
     pub(super) fn replace_editor(&mut self, index: usize, text: &str) {
+        let dialect = self.consoles[index].editor.dialect();
+        let editor = self.new_editor(text, dialect);
         let console = &mut self.consoles[index];
         let was_dirty = console
             .file
             .as_ref()
             .is_some_and(|file| file.is_dirty(console.editor.revision()));
         let cursor = console.editor.cursor();
-        let dialect = console.editor.dialect();
-        console.editor = SqlEditor::new(text, self.keyboard, dialect, self.clipboard.clone());
+        console.editor = editor;
         let lines = text.split('\n').collect::<Vec<_>>();
         if let Some(line) = lines.get(cursor.row)
             && cursor.col <= line.chars().count()

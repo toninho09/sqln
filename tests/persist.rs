@@ -9,22 +9,24 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, temp_dir};
+use common::{ctrl, key, shift, temp_dir};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use edtui::Index2;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::style::Color;
 use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
 use sqln::connection::Source;
+use sqln::editor::DEFAULT_UNDO_LIMIT;
 use sqln::export::{Delimiter, ExportChoices, ExportFormat};
 use sqln::form::{Field, FormNote};
 use sqln::input::SuggestionKeys;
 use sqln::navigator::RowKind;
 use sqln::script_file::Trouble;
-use sqln::settings::SettingsForm;
+use sqln::settings::{Field as SettingsField, SECTIONS, SettingsForm};
 use sqln::store::config::{self, ConnectionIcon, Preferences, ThemeName};
 use sqln::store::scripts::{self, ScriptMeta};
 use sqln::store::{Root, Scope, Store, file};
@@ -3248,6 +3250,8 @@ fn a_save_writes_the_changes_of_all_sections() {
     session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
     session.code(KeyCode::Right);
+    // Undo and Save.
+    session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
     session.assert_sees("settings are saved");
@@ -3525,6 +3529,8 @@ fn the_settings_choose_the_keys_of_the_list_and_the_change_works_at_once() {
     session.assert_sees("< Enter >");
     session.code(KeyCode::Right);
     session.assert_sees("< Tab or Enter >");
+    // Undo and Save.
+    session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
     session.assert_sees("settings are saved");
@@ -3534,6 +3540,120 @@ fn the_settings_choose_the_keys_of_the_list_and_the_change_works_at_once() {
     session.open_suggestions();
     session.code(KeyCode::Enter);
     assert_eq!(session.text(), ACCEPTED);
+}
+
+const UNDO_ROW: usize = 600 * 1024;
+
+impl Session {
+    /// Writes rows and empties each one in its own step. It returns the steps that undo.
+    fn undo_steps_after_removing_rows(&mut self, rows: usize) -> usize {
+        self.write(&vec!["x".repeat(UNDO_ROW); rows].join("\n"));
+        for row in 0..rows {
+            let editor = &mut self.app.console_mut().editor;
+            editor.set_cursor(Index2::new(row, 0));
+            self.press(shift(KeyCode::End));
+            self.code(KeyCode::Backspace);
+        }
+        let steps = std::iter::repeat_with(|| {
+            let revision = self.app.console().editor.revision();
+            self.press(ctrl('z'));
+            self.app.console().editor.revision() != revision
+        });
+        steps.take_while(|changed| *changed).count()
+    }
+}
+
+#[test]
+fn the_settings_write_the_undo_limit_and_it_acts_at_once_and_on_new_consoles() {
+    let (store, _) = reopening_store("p-undo-settings", "{}");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.code(KeyCode::Down);
+    session.assert_sees("Undo (MiB)");
+    session.assert_sees("Default: 64");
+    // Autocomplete and Undo.
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Char('1'));
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+    let text = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(text.contains("\"undoLimitBytes\": 1048576"), "{text}");
+
+    assert_eq!(session.undo_steps_after_removing_rows(3), 1);
+    session.new_console();
+    assert_eq!(session.undo_steps_after_removing_rows(3), 1);
+}
+
+#[test]
+fn a_reload_changes_the_undo_limit_of_the_open_consoles() {
+    let (store, base) = global_only("p-undo-reload");
+    let db = database(&base, "s", "").display().to_string();
+    let entry = sqlite_entry("g1", "s", &db);
+    write_config(&store.global, "{}", std::slice::from_ref(&entry));
+    let mut session = Session::start(&store);
+    assert_eq!(
+        session.undo_steps_after_removing_rows(2),
+        3,
+        "the paste and two rows"
+    );
+    write_config(&store.global, r#"{"undoLimitBytes":1}"#, &[entry]);
+    session.prefix('r');
+    assert_eq!(session.undo_steps_after_removing_rows(2), 1);
+}
+
+#[test]
+fn the_undo_limit_of_a_project_comes_before_the_global_limit_and_the_default() {
+    let (store, base) = store("p-undo-scopes");
+    let project = store.project.clone().unwrap();
+    let db = database(&base, "s", "").display().to_string();
+    let limit = |store: &Store| config::load(store).config.unwrap().undo_limit_bytes;
+    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db)]);
+    assert_eq!(limit(&store), DEFAULT_UNDO_LIMIT);
+    write_config(
+        &store.global,
+        r#"{"undoLimitBytes":2000}"#,
+        &[sqlite_entry("g1", "s", &db)],
+    );
+    assert_eq!(limit(&store), 2000);
+    write_config(&project, r#"{"undoLimitBytes":1000}"#, &[]);
+    assert_eq!(limit(&store), 1000);
+}
+
+#[test]
+fn a_file_refuses_an_undo_limit_of_zero() {
+    let (store, _) = global_only("p-undo-zero");
+    write_config(&store.global, r#"{"undoLimitBytes":0}"#, &[]);
+    assert!(config::load(&store).config.is_err());
+}
+
+#[test]
+fn the_undo_field_writes_bytes_and_keeps_an_empty_value_out_of_the_file() {
+    assert!(SECTIONS[1].fields.contains(&SettingsField::UndoLimit));
+    let mut form = SettingsForm::new(Preferences::default(), None);
+    assert_eq!(form.preferences().unwrap().undo_limit_bytes, None);
+    assert!(form.inherited(SettingsField::UndoLimit).contains("64"));
+    form.focus_on(SettingsField::UndoLimit);
+    form.paste("128");
+    let preferences = form.preferences().unwrap();
+    assert_eq!(preferences.undo_limit_bytes, Some(128 * 1024 * 1024));
+}
+
+#[test]
+fn the_undo_field_refuses_zero_and_keeps_exact_bytes_without_a_change() {
+    let mut form = SettingsForm::new(Preferences::default(), None);
+    form.focus_on(SettingsField::UndoLimit);
+    form.paste("0");
+    assert!(form.preferences().is_err());
+
+    let exact = Preferences {
+        undo_limit_bytes: Some(1_000_000),
+        grid_budget_bytes: Some(3_000_000),
+        ..Preferences::default()
+    };
+    let form = SettingsForm::new(exact.clone(), None);
+    assert_eq!(form.preferences().unwrap(), exact);
 }
 
 #[test]

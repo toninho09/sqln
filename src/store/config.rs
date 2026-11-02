@@ -19,7 +19,7 @@ use crate::connection::{
 };
 use crate::connector::sqlite::SqliteTarget;
 use crate::connector::target::{Address, ClientCertificate, Engine, NetworkTarget, Tls, TlsFiles};
-use crate::editor::KeyboardMode;
+use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode};
 use crate::export::ExportChoices;
 use crate::input::{Keymap, SuggestionKeys};
 
@@ -159,6 +159,8 @@ pub struct Preferences {
     pub row_cap: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grid_budget_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undo_limit_bytes: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keymap: Option<Keymaps>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -319,6 +321,8 @@ pub struct Config {
     pub page_size: Option<usize>,
     pub row_cap: Option<usize>,
     pub budget_bytes: Option<usize>,
+    /// The limit of the undo history of one console, in the conventional mode.
+    pub undo_limit_bytes: usize,
     pub keymap: Keymap,
     pub theme: Option<ThemeName>,
     pub icons: Option<IconName>,
@@ -372,6 +376,7 @@ fn validate(file: &ConfigFile, scope: Scope) -> Result<(), String> {
         ("pageSize", preferences.page_size),
         ("rowCap", preferences.row_cap),
         ("gridBudgetBytes", preferences.grid_budget_bytes),
+        ("undoLimitBytes", preferences.undo_limit_bytes),
     ] {
         if value == Some(0) {
             return Err(format!("{name} needs 1 or more."));
@@ -702,6 +707,8 @@ fn combine(
         page_size: pick(|preferences| preferences.page_size),
         row_cap: pick(|preferences| preferences.row_cap),
         budget_bytes: pick(|preferences| preferences.grid_budget_bytes),
+        undo_limit_bytes: pick(|preferences| preferences.undo_limit_bytes)
+            .unwrap_or(DEFAULT_UNDO_LIMIT),
         keymap,
         theme: project
             .and_then(|preferences| preferences.theme)

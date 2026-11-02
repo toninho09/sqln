@@ -184,7 +184,7 @@ impl App {
             .map(|item| (item.id, item.dialect));
         let dialect = connection.map_or(self.fallback_dialect, |(_, dialect)| dialect);
         let mut console = self.unbound_console(dialect);
-        console.editor = SqlEditor::new(&text, self.keyboard, dialect, self.clipboard.clone());
+        console.editor = self.new_editor(&text, dialect);
         console.name.clone_from(&entry.meta.name);
         console.schema.clone_from(&entry.meta.schema);
         let revision = console.editor.revision();

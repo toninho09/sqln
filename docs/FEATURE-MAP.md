@@ -19,7 +19,7 @@ The file paths are relative to `src/`.
 | 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs` |
 | 8 | Run protection | `app/guard.rs`, `sql/classify.rs` |
 | 9 | Transactions | `exec/runner.rs`, `ui/statusline.rs` |
-| 10 | SQL editor | `editor/mod.rs`, `editor/conventional.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
+| 10 | SQL editor | `editor/mod.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
 | 11 | SQL analysis and formatter | `sql/lexer.rs`, `sql/statement.rs`, `sql/classify.rs`, `sql/format.rs` |
 | 12 | Autocomplete | `complete/mod.rs`, `complete/context.rs`, `complete/keywords.rs`, `catalog.rs` |
 | 13 | Catalog and structure tab | `catalog.rs`, `structure.rs` |
@@ -93,9 +93,9 @@ A console runs in autocommit by default. Manual mode sends `TransactionCommand` 
 
 ## 10. SQL editor
 
-Files: `editor/mod.rs`, `editor/conventional.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs`.
+Files: `editor/mod.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs`.
 
-EdTUI holds the text. In the conventional mode, `editor/conventional` owns the selection with IDE keys, and EdTUI stays in insert mode. The Vim mode is the alternative; both modes share the run actions. `editor/buffer` holds the text operations on `Lines`. Search is literal and without case (`find.rs`), with one shared bar for both modes and replace support. `undo` and `redo` keep up to 100 entries each; the history has no memory cap, and [ARCHITECTURE](ARCHITECTURE.md) lists that debt.
+EdTUI holds the text. In the conventional mode, `editor/conventional` owns the selection with IDE keys, and EdTUI stays in insert mode. The Vim mode is the alternative; both modes share the run actions. `editor/buffer` holds the text operations on `Lines`. Search is literal and without case (`find.rs`), with one shared bar for both modes and replace support. `editor/undo` holds the history of the conventional mode, and `undoLimitBytes` limits its size. The Vim mode uses the stacks of EdTUI, which have no memory cap, and [ARCHITECTURE](ARCHITECTURE.md) lists that debt.
 
 ## 11. SQL analysis and formatter
 

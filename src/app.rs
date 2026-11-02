@@ -42,7 +42,7 @@ use crate::connection::{Connection, Definition};
 use crate::connector::{Connector, Namespace, TransactionCommand};
 use crate::console::{AfterTransaction, Console, Focus};
 use crate::creds::{Identity, PlainFile};
-use crate::editor::{KeyboardMode, RunScope, SqlEditor};
+use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode, RunScope, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, Settings};
 use crate::export::ExportChoices;
 use crate::export::form::ExportForm;
@@ -105,6 +105,8 @@ const MAX_EDITOR_RATIO: u16 = 90;
 
 pub struct Options {
     pub keyboard: KeyboardMode,
+    /// The limit of the undo history of one console, in the conventional mode.
+    pub undo_limit: usize,
     /// The key map. Without a value, the defaults of `keyboard` apply.
     pub keymap: Option<Keymap>,
     pub dialect: Dialect,
@@ -137,6 +139,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             keyboard: KeyboardMode::Conventional,
+            undo_limit: DEFAULT_UNDO_LIMIT,
             keymap: None,
             dialect: Dialect::Postgres,
             catalog: None,
@@ -314,6 +317,7 @@ pub struct App {
     budget: Arc<Budget>,
     settings: Settings,
     keyboard: KeyboardMode,
+    undo_limit: usize,
     keymap: Keymap,
     suggestion_keys: SuggestionKeys,
     database: Option<PathBuf>,
@@ -424,6 +428,7 @@ impl App {
             budget,
             settings: options.settings,
             keyboard: options.keyboard,
+            undo_limit: options.undo_limit,
             keymap,
             suggestion_keys: options.suggestion_keys,
             database: options.database,
@@ -495,8 +500,15 @@ impl App {
         app
     }
 
+    /// Each editor of a console comes from here, so it has the limit of the settings.
+    fn new_editor(&self, text: &str, dialect: Dialect) -> SqlEditor {
+        let mut editor = SqlEditor::new(text, self.keyboard, dialect, self.clipboard.clone());
+        editor.set_undo_limit(self.undo_limit);
+        editor
+    }
+
     fn unbound_console(&mut self, dialect: Dialect) -> Console {
-        let editor = SqlEditor::new("", self.keyboard, dialect, self.clipboard.clone());
+        let editor = self.new_editor("", dialect);
         let name = text::console_name(self.next_console_number);
         self.next_console_number += 1;
         let id = self.next_unbound_console;

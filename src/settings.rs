@@ -3,6 +3,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 
+use crate::editor::DEFAULT_UNDO_LIMIT;
 use crate::input::SuggestionKeys;
 use crate::line_input::LineInput;
 use crate::store::Scope;
@@ -30,6 +31,7 @@ pub enum Field {
     BellAfter,
     FormatJson,
     SuggestionKeys,
+    UndoLimit,
     Theme,
     Save,
     Cancel,
@@ -54,7 +56,7 @@ pub const SECTIONS: [Section; 4] = [
     },
     Section {
         title: text::SECTION_EDITOR,
-        fields: &[Field::SuggestionKeys],
+        fields: &[Field::SuggestionKeys, Field::UndoLimit],
     },
     Section {
         title: text::SECTION_RESULTS,
@@ -84,12 +86,18 @@ struct Draft {
     page_size: LineInput,
     row_cap: LineInput,
     budget: LineInput,
+    undo_limit: LineInput,
     bell_after: LineInput,
     reopen_tabs: Option<bool>,
     query_history: Option<bool>,
     format_json: Option<bool>,
     suggestion_keys: Option<SuggestionKeys>,
     theme: Option<ThemeName>,
+}
+
+/// Returns a size as the whole MiB of a field.
+fn mebibytes(bytes: Option<usize>) -> Option<usize> {
+    bytes.map(|bytes| bytes.div_ceil(MEBIBYTE))
 }
 
 fn number_text<T: ToString>(value: Option<T>) -> LineInput {
@@ -100,14 +108,12 @@ fn number_text<T: ToString>(value: Option<T>) -> LineInput {
 
 impl Draft {
     fn of(preferences: &Preferences) -> Self {
-        let budget = preferences
-            .grid_budget_bytes
-            .map(|bytes| bytes.div_ceil(MEBIBYTE));
         Self {
             keyboard: preferences.keyboard_mode,
             page_size: number_text(preferences.page_size),
             row_cap: number_text(preferences.row_cap),
-            budget: number_text(budget),
+            budget: number_text(mebibytes(preferences.grid_budget_bytes)),
+            undo_limit: number_text(mebibytes(preferences.undo_limit_bytes)),
             bell_after: number_text(preferences.bell_after_seconds),
             reopen_tabs: preferences.reopen_tabs,
             query_history: preferences.query_history,
@@ -161,6 +167,22 @@ fn parse(input: &LineInput, name: &str) -> Result<Option<usize>, String> {
         Ok(number) if number > 0 => Ok(Some(number)),
         _ => Err(text::settings_number(name)),
     }
+}
+
+/// Reads a size in MiB. A value that the user did not change keeps its exact bytes.
+fn parse_bytes(
+    input: &LineInput,
+    name: &str,
+    current: Option<usize>,
+) -> Result<Option<usize>, String> {
+    let value = parse(input, name)?;
+    if value == mebibytes(current) {
+        return Ok(current);
+    }
+    value.map_or(Ok(None), |value| {
+        let bytes = value.checked_mul(MEBIBYTE);
+        bytes.map(Some).ok_or_else(|| text::settings_number(name))
+    })
 }
 
 /// Reads a time in seconds. Here the value 0 has a meaning: it stops the bell.
@@ -256,6 +278,7 @@ impl SettingsForm {
             Field::PageSize => Some(&draft.page_size),
             Field::RowCap => Some(&draft.row_cap),
             Field::Budget => Some(&draft.budget),
+            Field::UndoLimit => Some(&draft.undo_limit),
             Field::BellAfter => Some(&draft.bell_after),
             _ => None,
         }
@@ -268,6 +291,7 @@ impl SettingsForm {
             Field::PageSize => Some(&mut draft.page_size),
             Field::RowCap => Some(&mut draft.row_cap),
             Field::Budget => Some(&mut draft.budget),
+            Field::UndoLimit => Some(&mut draft.undo_limit),
             Field::BellAfter => Some(&mut draft.bell_after),
             _ => None,
         }
@@ -281,9 +305,8 @@ impl SettingsForm {
             Field::Keyboard => global.keyboard_mode.map(text::keyboard_name),
             Field::PageSize => global.page_size.map(|value| value.to_string()),
             Field::RowCap => global.row_cap.map(|value| value.to_string()),
-            Field::Budget => global
-                .grid_budget_bytes
-                .map(|bytes| bytes.div_ceil(MEBIBYTE).to_string()),
+            Field::Budget => mebibytes(global.grid_budget_bytes).map(|value| value.to_string()),
+            Field::UndoLimit => mebibytes(global.undo_limit_bytes).map(|value| value.to_string()),
             Field::BellAfter => global.bell_after_seconds.map(|value| value.to_string()),
             Field::ReopenTabs => global
                 .reopen_tabs
@@ -316,6 +339,9 @@ impl SettingsForm {
             }
             _ if field == Field::SuggestionKeys => {
                 text::default_value(text::suggestion_keys_name(SuggestionKeys::default()))
+            }
+            _ if field == Field::UndoLimit => {
+                text::default_value(&(DEFAULT_UNDO_LIMIT / MEBIBYTE).to_string())
             }
             _ if field == Field::Theme => {
                 text::default_value(text::theme_name(ThemeName::default()))
@@ -459,7 +485,7 @@ impl SettingsForm {
     }
 
     /// Returns the preferences of the scope. The other values of the file, such as the
-    /// `keymap`, stay, and a budget that the user did not change keeps its exact bytes.
+    /// `keymap`, stay.
     pub fn preferences(&self) -> Result<Preferences, String> {
         let draft = self.draft();
         let base = match (self.scope, &self.project) {
@@ -476,16 +502,13 @@ impl SettingsForm {
         preferences.page_size = parse(&draft.page_size, text::FIELD_PAGE_SIZE)?;
         preferences.row_cap = parse(&draft.row_cap, text::FIELD_ROW_CAP)?;
         preferences.bell_after_seconds = parse_seconds(&draft.bell_after, text::FIELD_BELL_AFTER)?;
-        let budget = parse(&draft.budget, text::FIELD_BUDGET)?;
-        let same = budget == base.grid_budget_bytes.map(|bytes| bytes.div_ceil(MEBIBYTE));
-        if !same {
-            let bytes = budget.map(|value| value.checked_mul(MEBIBYTE));
-            preferences.grid_budget_bytes = match bytes {
-                Some(None) => return Err(text::settings_number(text::FIELD_BUDGET)),
-                Some(value) => value,
-                None => None,
-            };
-        }
+        preferences.grid_budget_bytes =
+            parse_bytes(&draft.budget, text::FIELD_BUDGET, base.grid_budget_bytes)?;
+        preferences.undo_limit_bytes = parse_bytes(
+            &draft.undo_limit,
+            text::FIELD_UNDO_LIMIT,
+            base.undo_limit_bytes,
+        )?;
         Ok(preferences)
     }
 }

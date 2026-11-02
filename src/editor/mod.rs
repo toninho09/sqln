@@ -4,6 +4,7 @@ mod buffer;
 mod conventional;
 mod frame;
 mod search;
+mod undo;
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -18,6 +19,8 @@ use self::conventional::{EditKind, INDENT, UndoGroup};
 pub use self::frame::FrameState;
 use self::frame::{Styles, Window, window_end};
 pub use self::search::{Match, SearchBar, SearchField};
+pub use self::undo::DEFAULT_UNDO_LIMIT;
+use self::undo::UndoHistory;
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{CopyOutcome, EditorClipboard, SharedClipboard};
 use crate::complete::{Completion, keywords, suggest_in};
@@ -148,6 +151,9 @@ pub struct SqlEditor {
     anchor: Option<Index2>,
     preferred_col: Option<usize>,
     undo_group: Option<UndoGroup>,
+    /// The steps of the conventional mode. It is empty in the Vim mode.
+    history: UndoHistory,
+    /// The redo steps of EdTUI that a new edit did not end.
     redo_depth: usize,
     page_height: usize,
     text_area: Option<Rect>,
@@ -195,6 +201,7 @@ impl SqlEditor {
             anchor: None,
             preferred_col: None,
             undo_group: None,
+            history: UndoHistory::default(),
             redo_depth: 0,
             page_height: 20,
             text_area: None,
@@ -217,6 +224,11 @@ impl SqlEditor {
         self.dialect
     }
 
+    /// Changes the limit of the undo history of the conventional mode.
+    pub fn set_undo_limit(&mut self, bytes: usize) {
+        self.history.set_limit(bytes);
+    }
+
     /// Changes the SQL rules of the text. The next frame reads the text again.
     pub fn set_dialect(&mut self, dialect: Dialect) {
         self.dialect = dialect;
@@ -233,7 +245,7 @@ impl SqlEditor {
     }
 
     /// Changes the keyboard mode in place. The text, the cursor, the scroll, the
-    /// history, and the selection stay.
+    /// history, and the selection stay. Only the steps that wait for a redo can end.
     pub fn set_keyboard(&mut self, keyboard: KeyboardMode) {
         if self.keyboard == keyboard {
             return;
@@ -244,6 +256,7 @@ impl SqlEditor {
         self.undo_group = None;
         match keyboard {
             KeyboardMode::Vim => {
+                self.history.move_to_edtui(&mut self.state);
                 self.anchor = None;
                 self.vim_shadow = Some(self.state.lines.clone());
                 let selected = self.state.selection.is_some();
@@ -985,8 +998,13 @@ impl SqlEditor {
     /// Replaces ranges as one undo step. The ranges come in the order of the text, and
     /// the cursor goes to the start of the first one.
     fn replace_ranges(&mut self, ranges: &[(Index2, Index2, &str)]) {
-        self.state.execute(DeleteChar(0));
-        replace_ranges(&mut self.state.lines, ranges);
+        match self.keyboard {
+            KeyboardMode::Conventional => self.replace_ranges_in_one_step(ranges),
+            KeyboardMode::Vim => {
+                self.state.execute(DeleteChar(0));
+                replace_ranges(&mut self.state.lines, ranges);
+            }
+        }
         let first = ranges[0].0;
         self.state.cursor = Index2::new(first.row, first.col);
         self.anchor = None;
@@ -998,6 +1016,20 @@ impl SqlEditor {
         if let Some(search) = &mut self.search {
             search.refresh(&self.state.lines, first);
         }
+    }
+
+    /// Records one step from the start of the first range to the end of the last one.
+    /// The text after the last range does not change, so it gives the end of the step.
+    fn replace_ranges_in_one_step(&mut self, ranges: &[(Index2, Index2, &str)]) {
+        let (start, last) = (ranges[0].0, ranges[ranges.len() - 1].1);
+        let lines = &mut self.state.lines;
+        let removed = buffer::text_in(lines, start, last);
+        let rows_after = lines.len() - last.row;
+        let columns_after = buffer::row(lines, last.row).len() - last.col;
+        replace_ranges(lines, ranges);
+        let row = lines.len() - rows_after;
+        let end = Index2::new(row, buffer::row(lines, row).len() - columns_after);
+        self.history.push(start, end, removed, self.state.cursor);
     }
 
     /// Returns the first column of the next frame. EdTUI moves its view with this rule

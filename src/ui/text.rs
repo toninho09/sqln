@@ -525,6 +525,7 @@ pub fn template_name(template: Template) -> &'static str {
 pub const FIELD_FORMAT_JSON: &str = "Format JSON";
 pub const FIELD_BELL_AFTER: &str = "Bell seconds";
 pub const FIELD_SUGGESTION_KEYS: &str = "Autocomplete";
+pub const FIELD_UNDO_LIMIT: &str = "Undo (MiB)";
 pub const FIELD_PAGE_SIZE: &str = "Page size";
 pub const FIELD_ROW_CAP: &str = "Row cap";
 pub const FIELD_BUDGET: &str = "Data (MiB)";

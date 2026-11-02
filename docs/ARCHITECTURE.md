@@ -167,21 +167,36 @@ A Redis key tab uses the same path, without SQL:
 3. The session uses the command of the type: `GET`, `LRANGE`, `HSCAN`, `SSCAN`, `ZRANGE`, or `XRANGE`.
 4. A false `Capabilities::table_filters` removes `WHERE`, `ORDER BY`, **Clear**, and sorting from the tab. **Apply** becomes **Reload**.
 
+### Undo history
+
+The conventional mode has its own history in `editor::undo`. A step keeps only the text that an edit replaced, so a step of typing costs some bytes.
+`undoLimitBytes` limits the history of each console, with 64 MiB as the default. Settings shows this value in MiB, in the Editor section.
+The oldest steps leave first, and the newest step of the undo and redo lists always stays. Thus, one step can go above the limit, and the last edit always has an undo.
+The history has no limit of steps.
+
+Undo and redo are one operation: a step replaces the text between two positions and returns the step that reverses it.
+A step of many ranges, such as a replacement of all matches, covers the text from the first range to the last one.
+
+The steps of the conventional mode and the Vim mode stay in one order after a change of keyboard:
+
+1. A change to the Vim mode gives the 100 newest steps to EdTUI, and the steps that wait for a redo end.
+2. After a change to the conventional mode, `Ctrl+Z` reads the history first and then EdTUI, because the steps of EdTUI are older. `Ctrl+Y` reads them in the opposite order.
+
 ### Known editor limit
 
-**Technical debt:** the undo history has no memory cap. This item does not block the release.
+**Technical debt:** the undo history of the Vim mode has no memory cap. This item does not block the release.
 
 Each undo entry of EdTUI keeps a full copy of the text, and each console has its own stacks.
 `undo` and `redo` keep up to 100 entries each, and EdTUI does not clear `redo` after a new edit.
 By measure, a 50,000-line script takes 16.8 MiB per entry and 1.7 GiB in the 100 `undo` entries. By estimate, it takes 3.4 GiB with both stacks full.
-In the conventional mode, 100 entries equal about 100 typed words.
+In the Vim mode, one entry is one change, and `undoLimitBytes` does not apply.
+The entries also stay after a change to the conventional mode.
 Common scripts stay far below that, and closing the console frees that memory.
 
 `Stack` and the `undo` and `redo` fields of EdTUI are private, and the public API does not measure or remove entries.
 Therefore, SQLN cannot cap that history without an EdTUI change.
 
-**Exit:** when EdTUI publishes an API for it, cap the history at 64 MiB per console.
-The oldest entries leave first, and an entry above the cap produces a warning.
+**Exit:** when EdTUI publishes an API for it, apply `undoLimitBytes` to the Vim mode.
 
 ### Editor frame
 
@@ -406,6 +421,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
     "pageSize": 100,
     "rowCap": 1000,
     "gridBudgetBytes": 268435456,
+    "undoLimitBytes": 67108864,
     "keymap": {},
     "theme": "auto",
     "icons": "unicode",
