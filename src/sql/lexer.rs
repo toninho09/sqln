@@ -15,10 +15,21 @@ pub enum TokenKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,
-    pub start: usize,
-    pub end: usize,
     /// False for an unterminated token and for a line comment.
     pub closed: bool,
+    // The editor keeps one token for each word of a script, so each byte counts.
+    start: u32,
+    end: u32,
+}
+
+impl Token {
+    pub fn start(&self) -> usize {
+        self.start as usize
+    }
+
+    pub fn end(&self) -> usize {
+        self.end as usize
+    }
 }
 
 /// Produces tokens from text. A statement splitter can set `pos` to skip text.
@@ -126,9 +137,9 @@ impl<'a> Lexer<'a> {
     /// Returns true for the PostgreSQL form `E'text'`.
     fn after_escape_prefix(&self, start: usize) -> bool {
         self.previous.is_some_and(|token| {
-            token.end == start
+            token.end() == start
                 && token.kind == TokenKind::Word
-                && self.sql[token.start..token.end].eq_ignore_ascii_case("e")
+                && self.sql[token.start()..token.end()].eq_ignore_ascii_case("e")
         })
     }
 }
@@ -146,11 +157,12 @@ impl Iterator for Lexer<'_> {
         }
         let start = self.pos;
         let (kind, end, closed) = self.read_token(start);
+        // A text of 4 GiB ends here. The rest stays one piece without tokens.
         let token = Token {
             kind,
-            start,
-            end,
             closed,
+            start: u32::try_from(start).ok()?,
+            end: u32::try_from(end).ok()?,
         };
         self.pos = end;
         self.previous = Some(token);
@@ -159,10 +171,13 @@ impl Iterator for Lexer<'_> {
 }
 
 pub fn tokenize(sql: &str, dialect: Dialect) -> Vec<Token> {
-    Lexer::new(sql, dialect).collect()
+    let mut tokens: Vec<Token> = Lexer::new(sql, dialect).collect();
+    // The editor keeps this list until the next edit.
+    tokens.shrink_to_fit();
+    tokens
 }
 
-fn is_word_byte(byte: u8) -> bool {
+pub(super) fn is_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80
 }
 

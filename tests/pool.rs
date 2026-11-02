@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures_util::FutureExt;
 use sqln::catalog::Catalog;
 use sqln::connector::{
     Canceller, ConnectError, Connector, ExecError, ResetOutcome, Session, SessionContext,
@@ -108,6 +109,36 @@ async fn take(pool: &Pool) -> Lease {
         Ok(Err(error)) => panic!("{error:?}"),
         Err(_) => panic!("no place arrived"),
     }
+}
+
+#[tokio::test]
+async fn a_canceled_wait_returns_the_session_that_reached_it() {
+    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let pool = pool(&fake, 1);
+    let lease = take(&pool).await;
+    let mut wait = Box::pin(pool.acquire());
+    assert!((&mut wait).now_or_never().is_none(), "the place is in use");
+    // The release gives the session to the waiter, and the waiter stops before it reads it.
+    lease.release().await;
+    drop(wait);
+    assert_eq!(pool.usage(), (0, 1));
+    take(&pool).await.release().await;
+    assert_eq!(fake.opened.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_canceled_wait_closes_a_session_of_an_old_generation() {
+    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let pool = pool(&fake, 1);
+    let lease = take(&pool).await;
+    let mut wait = Box::pin(pool.acquire());
+    assert!((&mut wait).now_or_never().is_none(), "the place is in use");
+    lease.release().await;
+    pool.close_idle();
+    drop(wait);
+    assert_eq!(pool.usage(), (0, 1));
+    take(&pool).await.release().await;
+    assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -363,4 +394,27 @@ async fn close_idle_gives_the_free_place_to_a_waiter() {
     assert_eq!(pool.usage().0, 0);
     take(&pool).await.release().await;
     assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn close_idle_between_the_grant_and_its_read_closes_the_session() {
+    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let pool = pool(&fake, 1);
+    let lease = take(&pool).await;
+    let waiting = {
+        let pool = pool.clone();
+        tokio::spawn(async move { take(&pool).await })
+    };
+    // The waiter enters the queue before the place arrives.
+    tokio::task::yield_now().await;
+    lease.release().await;
+    // The grant is on its way to the waiter, and this close changes the generation.
+    pool.close_idle();
+    let lease = waiting.await.unwrap();
+    lease.release().await;
+    assert!(
+        !pool.has_sessions(),
+        "the session of the old generation closes"
+    );
+    assert_eq!(pool.usage().0, 0);
 }

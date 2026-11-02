@@ -98,7 +98,7 @@ impl ResultSink {
             return Flow::Discard;
         }
         if let Some(export) = &self.export {
-            if !export.write_row(&row) {
+            if !export.write_row(row.cells()) {
                 return Flow::Stop;
             }
             self.stored += 1;

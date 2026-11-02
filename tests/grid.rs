@@ -4,12 +4,12 @@ use std::time::{Duration, Instant};
 
 use sqln::exec::{ExecEvent, Flow, ResultSink, StatementKey};
 use sqln::grid::json::{FORMAT_LIMIT, pretty};
-use sqln::grid::{Budget, ResultTable, Row, RowSearch, Value};
+use sqln::grid::{Budget, Reservation, ResultTable, Row, RowSearch, RowWriter, Value};
 use sqln::result::ResultTab;
 use sqln::ui::wrap::WrappedText;
 
-fn text(value: &str) -> Value {
-    Value::Text(value.into())
+fn text(value: &str) -> Value<'_> {
+    Value::Text(value)
 }
 
 fn row(values: &[&str]) -> Row {
@@ -59,11 +59,13 @@ fn the_search_ignores_case_and_reads_each_column() {
 #[test]
 fn the_search_reads_every_value_kind() {
     let mut table = ResultTable::new(vec!["a".into(), "b".into(), "c".into()]);
-    let row: Row = Box::new([
+    let row: Row = [
         Value::Null,
-        Value::Number("12345".into()),
-        Value::Binary(Box::new([0xFF, 0xAB])),
-    ]);
+        Value::Number("12345"),
+        Value::binary(&[0xFF, 0xAB]),
+    ]
+    .into_iter()
+    .collect();
     table.append(vec![row], 0);
     assert_eq!(search(&table, "null", (0, 0)).1, Some((0, 0)));
     assert_eq!(search(&table, "234", (0, 0)).1, Some((0, 1)));
@@ -167,6 +169,87 @@ fn the_list_of_results_has_a_limit() {
     assert!(found.is_partial(&table));
 }
 
+/// Values at each length where the head of a cell changes size.
+#[test]
+fn a_row_returns_each_kind_of_value_at_each_length() {
+    let bytes = |length: usize| "a".repeat(length);
+    for length in [0, 1, 30, 31, 32, 157, 158, 159, 16_414, 16_415, 2_097_182] {
+        let text = bytes(length);
+        let hex = vec![0xFF; length];
+        let values = [
+            Value::Text(&text),
+            Value::Null,
+            Value::Number(&text),
+            Value::binary(text.as_bytes()),
+            Value::binary(&hex),
+            Value::Text("last"),
+        ];
+        let row: Row = values.into_iter().collect();
+        assert_eq!(row.cells().collect::<Vec<_>>(), values, "{length}");
+        assert_eq!(row.columns(), values.len(), "{length}");
+        assert_eq!(row.get(5), Some(Value::Text("last")), "{length}");
+        assert_eq!(row.get(6), None, "{length}");
+    }
+}
+
+#[test]
+fn a_row_keeps_text_of_many_bytes_and_each_value_kind_apart() {
+    let row: Row = [
+        Value::Text("ação 日本語 🦀"),
+        Value::Number("1"),
+        Value::Text("NULL"),
+        Value::Null,
+        Value::Text(""),
+        Value::binary(b"text"),
+        Value::binary(&[0xFF]),
+        Value::binary(&[]),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(row.get(0).unwrap().display(), "ação 日本語 🦀");
+    assert!(matches!(row.get(1), Some(Value::Number("1"))));
+    assert_ne!(row.get(2), row.get(3), "a text is not a NULL");
+    assert_ne!(row.get(3), row.get(4), "an empty text is not a NULL");
+    let binary = |column: usize| match row.get(column) {
+        Some(Value::Binary(bytes)) => bytes,
+        other => panic!("not binary: {other:?}"),
+    };
+    assert_eq!(binary(5).text(), Some("text"));
+    assert_eq!(binary(6).text(), None);
+    assert_eq!(&binary(6)[..], &[0xFF]);
+    assert_eq!(binary(7).text(), Some(""), "no bytes are valid text");
+}
+
+#[test]
+fn a_writer_starts_each_row_empty() {
+    let mut writer = RowWriter::default();
+    let large = "a".repeat(100_000);
+    for text in ["short", &large, "after"] {
+        writer.push(Value::Text(text));
+        let row = writer.finish();
+        assert_eq!(row.cells().collect::<Vec<_>>(), [Value::Text(text)]);
+    }
+    assert_eq!(writer.finish(), Row::default());
+}
+
+#[test]
+fn the_budget_counts_the_block_of_a_row_and_finds_a_value_above_the_limit() {
+    let row: Row = [text("a"), text("bc")].into_iter().collect();
+    assert_eq!(row.bytes(), 5, "a head and its value for each cell");
+    let budget = Budget::new(size_of::<Row>() + 4);
+    assert_eq!(budget.reserve(&row), Reservation::BudgetReached);
+    let budget = Budget::new(1);
+    assert_eq!(budget.reserve(&row), Reservation::ValueTooLarge);
+}
+
+#[test]
+fn the_copy_of_a_row_with_fewer_cells_pads_with_nulls() {
+    let mut table = ResultTable::new(vec!["a".into(), "b".into()]);
+    let short: Row = vec![text("x")].into_iter().collect();
+    table.append(vec![short], 0);
+    assert_eq!(table.tsv(0, 0, 0, 1), "x\t\n");
+}
+
 #[test]
 fn a_manual_width_stays_when_new_rows_arrive() {
     let mut table = ResultTable::new(vec!["a".into()]);
@@ -203,9 +286,9 @@ fn a_preview_is_the_start_of_the_display_text() {
         text("plain"),
         text("a\tb\nc"),
         text("日本語のテキスト"),
-        Value::Number("12345".into()),
-        Value::Binary(Box::new([0xFF, 0x00, 0xAB, 0x10])),
-        Value::Binary(Box::new(*b"text")),
+        Value::Number("12345"),
+        Value::binary(&[0xFF, 0x00, 0xAB, 0x10]),
+        Value::binary(b"text"),
     ];
     for value in values {
         let display = value.display();
@@ -222,7 +305,8 @@ fn a_preview_is_the_start_of_the_display_text() {
 
 #[test]
 fn a_preview_of_a_large_value_reads_only_its_start() {
-    let value = text(&"x".repeat(50_000_000));
+    let long = "x".repeat(50_000_000);
+    let value = text(&long);
     let started = Instant::now();
     for _ in 0..1000 {
         assert_eq!(value.preview(40).len(), 40);
@@ -429,12 +513,13 @@ fn result_of(columns: &[&str], rows: Vec<Row>) -> ResultTab {
 #[test]
 fn the_row_window_writes_one_aligned_line_for_each_column() {
     let values: Row = vec![
-        Value::Number("1".into()),
+        Value::Number("1"),
         Value::Null,
-        Value::Binary(vec![0, 255].into_boxed_slice()),
+        Value::binary(&[0, 255]),
         text("first\nsecond"),
     ]
-    .into_boxed_slice();
+    .into_iter()
+    .collect();
     let tab = result_of(&["id", "deleted_at", "hash", "note"], vec![values]);
     let window = tab.row_window(0).unwrap();
     assert_eq!(

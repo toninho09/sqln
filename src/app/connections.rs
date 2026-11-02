@@ -127,11 +127,13 @@ impl App {
         let fresh = (self.persist.is_some() && self.consoles[index].file.is_none())
             .then(|| self.fresh_console_name(connection));
         let console = &mut self.consoles[index];
+        let previous = console.id;
         console.id = id;
         console.connection = Some(connection);
         if let Some(name) = fresh {
             console.name = name;
         }
+        self.rekey_saves(previous, id);
     }
 
     /// Returns `console-N` with the lowest number that no console of the connection uses,
@@ -804,9 +806,11 @@ impl App {
         if let Some(manager) = &mut self.manager {
             manager.close_console(console.id);
         }
+        let previous = console.id;
         console.id = id;
         console.connection = None;
         console.schema = None;
+        self.rekey_saves(previous, id);
     }
 
     pub(super) fn open_picker(&mut self) {

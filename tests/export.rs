@@ -11,16 +11,16 @@ use sqln::export::{
 use sqln::grid::Value;
 use sqln::sql::{Dialect, quote_literal};
 
-fn text(value: &str) -> Value {
-    Value::Text(value.into())
+fn text(value: &str) -> Value<'_> {
+    Value::Text(value)
 }
 
-fn number(value: &str) -> Value {
-    Value::Number(value.into())
+fn number(value: &str) -> Value<'_> {
+    Value::Number(value)
 }
 
-fn binary(bytes: &[u8]) -> Value {
-    Value::Binary(bytes.into())
+fn binary(bytes: &[u8]) -> Value<'_> {
+    Value::binary(bytes)
 }
 
 fn encode(options: ExportOptions, columns: &[&str], rows: &[Vec<Value>]) -> String {
@@ -29,7 +29,7 @@ fn encode(options: ExportOptions, columns: &[&str], rows: &[Vec<Value>]) -> Stri
     let columns: Vec<String> = columns.iter().map(|name| (*name).to_owned()).collect();
     encoder.start(&columns).unwrap();
     for row in rows {
-        encoder.row(row).unwrap();
+        encoder.row(row.iter().copied()).unwrap();
     }
     encoder.finish().unwrap();
     String::from_utf8(out).unwrap()
@@ -74,10 +74,42 @@ fn csv_quotes_what_a_reader_needs_and_keeps_the_rest() {
 }
 
 #[test]
+fn each_quote_of_a_field_is_doubled() {
+    let rows = vec![vec![
+        text("\""),
+        text("a\"b\"c"),
+        text("\"日本\""),
+        text("日,本"),
+    ]];
+    assert_eq!(
+        encode(with_format(ExportFormat::Csv), &["a", "b", "c", "d"], &rows),
+        "a,b,c,d\n\"\"\"\",\"a\"\"b\"\"c\",\"\"\"日本\"\"\",\"日,本\"\n"
+    );
+}
+
+#[test]
+fn a_field_with_a_line_end_has_quotes() {
+    let rows = vec![vec![text("a\rb"), text("a\nb")]];
+    assert_eq!(
+        encode(with_format(ExportFormat::Csv), &["a", "b"], &rows),
+        "a,b\n\"a\rb\",\"a\nb\"\n"
+    );
+}
+
+#[test]
+fn a_character_outside_ascii_is_not_a_separator() {
+    let rows = vec![vec![text("a，b"), text("日本語")]];
+    assert_eq!(
+        encode(with_format(ExportFormat::Csv), &["a", "b"], &rows),
+        "a,b\na，b,日本語\n"
+    );
+}
+
+#[test]
 fn tsv_cells_match_the_copy_of_the_grid() {
     let rows = vec![vec![Value::Null, text(""), text("tab\there"), text("a,b")]];
     let mut table = sqln::grid::ResultTable::new(vec!["a".to_owned(); 4]);
-    table.append(vec![rows[0].clone().into_boxed_slice()], 0);
+    table.append(vec![rows[0].clone().into_iter().collect()], 0);
     let options = ExportOptions {
         header: false,
         ..with_format(ExportFormat::Tsv)
@@ -92,7 +124,7 @@ fn tsv_cells_match_the_copy_of_the_grid() {
 fn the_options_of_csv_change_the_file() {
     let rows = vec![vec![Value::Null, text("NULL"), text("a;b"), text("a,b")]];
     let options = ExportOptions {
-        delimiter: ';',
+        delimiter: b';',
         null: "NULL",
         bom: true,
         header: false,
@@ -239,6 +271,9 @@ fn each_dialect_writes_its_literals() {
         "INSERT INTO t (\"a\", \"b\") VALUES ('a\\b', X'DEAD');\n"
     );
     assert_eq!(quote_literal("o'k", Dialect::MySql), "'o''k'");
+    assert_eq!(quote_literal("'", Dialect::Postgres), "''''");
+    assert_eq!(quote_literal("", Dialect::Sqlite), "''");
+    assert_eq!(quote_literal("''", Dialect::Sqlite), "''''''");
 }
 
 #[test]
@@ -247,7 +282,7 @@ fn a_second_result_adds_no_second_header() {
     let mut encoder = Encoder::new(&mut out, with_format(ExportFormat::Csv));
     encoder.start(&["a".to_owned()]).unwrap();
     encoder.start(&["b".to_owned()]).unwrap();
-    encoder.row(&[number("1")]).unwrap();
+    encoder.row([number("1")].into_iter()).unwrap();
     encoder.finish().unwrap();
     assert_eq!(String::from_utf8(out).unwrap(), "a\n1\n");
 }
@@ -258,19 +293,76 @@ fn folder(name: &str) -> PathBuf {
     path
 }
 
+/// Counts the temporary files of an export in a folder. Every temporary name
+/// ends in `.tmp`, and no final file of an export does.
+fn temporaries(dir: &Path) -> usize {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "tmp"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+#[test]
+fn two_exports_of_one_destination_use_two_temporary_files() {
+    let base = folder("export-unique");
+    let destination = base.join("out.csv");
+    let first = ExportWriter::create(&destination, with_format(ExportFormat::Csv)).unwrap();
+    let second = ExportWriter::create(&destination, with_format(ExportFormat::Csv)).unwrap();
+    assert_ne!(
+        format!("{first:?}"),
+        format!("{second:?}"),
+        "each export owns its temporary file"
+    );
+    first.discard();
+    second.discard();
+}
+
+#[test]
+fn a_cleanup_removes_the_temporary_of_a_stopped_process() {
+    use std::time::Duration;
+
+    use sqln::store::file;
+
+    let base = folder("export-orphans");
+    fs::create_dir_all(&base).unwrap();
+    let destination = base.join("out.csv");
+    let orphan = file::temporary_unique(&destination);
+    fs::write(&orphan, "rows").unwrap();
+    let foreign = base.join("notes.tmp");
+    fs::write(&foreign, "not an export").unwrap();
+    let live = file::temporary_unique(&destination);
+    let held = fs::File::options()
+        .write(true)
+        .create_new(true)
+        .open(&live)
+        .unwrap();
+    held.try_lock().unwrap();
+    file::remove_orphan_temporaries(&base, Duration::ZERO);
+    assert!(!orphan.exists(), "the file of a stopped process goes away");
+    assert!(foreign.exists(), "a foreign file with the same end stays");
+    assert!(live.exists(), "the file of a live writer stays");
+    drop(held);
+    file::remove_orphan_temporaries(&base, Duration::ZERO);
+    assert!(!live.exists(), "the file without a writer goes away");
+}
+
 #[test]
 fn a_file_appears_only_after_the_promotion() {
     let base = folder("export-writer");
     let destination = base.join("new/folder/out.csv");
     let writer = ExportWriter::create(&destination, with_format(ExportFormat::Csv)).unwrap();
     writer.start(&["a".to_owned()]);
-    assert!(writer.write_row(&[number("1")]));
+    assert!(writer.write_row([number("1")].into_iter()));
     assert_eq!(writer.rows(), 1);
     assert!(!destination.exists());
-    assert!(base.join("new/folder/out.csv.tmp").exists());
+    assert_eq!(temporaries(&base.join("new/folder")), 1);
     writer.promote(&destination).unwrap();
     assert_eq!(fs::read_to_string(&destination).unwrap(), "a\n1\n");
-    assert!(!base.join("new/folder/out.csv.tmp").exists());
+    assert_eq!(temporaries(&base.join("new/folder")), 0);
 }
 
 #[test]
@@ -279,10 +371,10 @@ fn a_discard_leaves_no_file_and_ends_the_writes() {
     let destination = base.join("out.csv");
     let writer = ExportWriter::create(&destination, with_format(ExportFormat::Csv)).unwrap();
     writer.discard();
-    assert!(!writer.write_row(&[number("1")]));
+    assert!(!writer.write_row([number("1")].into_iter()));
     assert_eq!(writer.rows(), 0);
     assert!(!destination.exists());
-    assert!(!base.join("out.csv.tmp").exists());
+    assert_eq!(temporaries(&base), 0);
 }
 
 #[test]
@@ -291,10 +383,10 @@ fn a_seal_closes_the_format_once() {
     let destination = base.join("out.json");
     let writer = ExportWriter::create(&destination, with_format(ExportFormat::Json)).unwrap();
     writer.start(&["a".to_owned()]);
-    assert!(writer.write_row(&[number("1")]));
+    assert!(writer.write_row([number("1")].into_iter()));
     writer.seal();
     writer.seal();
-    assert!(!writer.write_row(&[number("2")]));
+    assert!(!writer.write_row([number("2")].into_iter()));
     writer.promote(&destination).unwrap();
     assert_eq!(
         fs::read_to_string(&destination).unwrap(),

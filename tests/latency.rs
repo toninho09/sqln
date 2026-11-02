@@ -1,23 +1,53 @@
-// The target is under 50 ms per key. Run it with `cargo test --release --test latency`.
+// The target is under 50 ms per key. Run it with `make bench`: the tests must run one at a
+// time, because tests that run together take time from each other and fail.
 
 mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{Fixture, key};
+use common::{Fixture, ctrl, key, shift};
 use crossterm::event::{Event, KeyCode};
 use edtui::Index2;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use sqln::app::{App, Options};
+use sqln::exec::Settings;
 use sqln::ui::draw_editor;
 use sqln::ui::theme::Theme;
 
+const TARGET: Duration = Duration::from_millis(50);
+const ROW: &str = "INSERT INTO orders (id, name, total) VALUES (1, 'a text value', 10.50);";
+
+fn sqlite_app(name: &str, settings: Settings) -> App {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use sqln::clipboard::MemoryClipboard;
+
+    let path = common::temp_db(name);
+    rusqlite::Connection::open(&path).unwrap();
+    let options = Options {
+        database: Some(path),
+        settings,
+        ..Options::default()
+    };
+    let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
+    App::new(options, clipboard, Theme::ansi())
+}
+
 fn worst_key_and_frame(lines: usize) -> Duration {
-    let row = "INSERT INTO orders (id, name, total) VALUES (1, 'a text value', 10.50);\n";
-    let mut f = Fixture::conventional(&row.repeat(lines));
+    let mut f = Fixture::conventional(&format!("{ROW}\n").repeat(lines));
     f.editor.set_cursor(Index2::new(lines / 2, 0));
+    worst_key_on(&mut f)
+}
+
+fn worst_key_on(f: &mut Fixture) -> Duration {
+    worst_key_in(f, 120, 40)
+}
+
+fn worst_key_in(f: &mut Fixture, width: u16, height: u16) -> Duration {
     let theme = Theme::ansi();
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     let mut worst = Duration::ZERO;
     for index in 0..60 {
         let started = Instant::now();
@@ -41,38 +71,103 @@ fn key_with_suggestions_and_frame_stay_under_the_target() {
     for lines in [100, 1_000, 10_000, 50_000] {
         let worst = worst_key_and_frame(lines);
         println!("{lines} lines: worst key plus frame {worst:?}");
-        assert!(
-            worst < Duration::from_millis(50),
-            "{lines} lines: {worst:?}"
-        );
+        assert!(worst < TARGET, "{lines} lines: {worst:?}");
     }
 }
 
 #[test]
 #[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn a_key_on_a_long_row_stays_under_the_target() {
+    for kib in [100, 1024] {
+        let text = format!("{ROW} ").repeat(kib * 1024 / (ROW.len() + 1));
+        let mut f = Fixture::conventional(&text);
+        f.editor.set_cursor(Index2::new(0, text.len() / 2));
+        let worst = worst_key_on(&mut f);
+        println!("one row of {kib} KiB: worst key plus frame {worst:?}");
+        assert!(worst < TARGET, "{kib} KiB: {worst:?}");
+    }
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn a_key_on_a_screen_of_long_rows_stays_under_the_target() {
+    let row = format!("{ROW} ").repeat(30 * 1024 / (ROW.len() + 1));
+    let mut f = Fixture::conventional(&vec![row; 40].join("\n"));
+    let worst = worst_key_on(&mut f);
+    println!("40 rows of 30 KiB: worst key plus frame {worst:?}");
+    assert!(worst < TARGET, "{worst:?}");
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn a_key_on_a_full_large_terminal_stays_under_the_target() {
+    let row = format!("{ROW} ").repeat(300 / (ROW.len() + 1) + 1);
+    let mut f = Fixture::conventional(&vec![row; 200].join("\n"));
+    let worst = worst_key_in(&mut f, 300, 100);
+    println!("300 by 100 cells of SQL: worst key plus frame {worst:?}");
+    assert!(worst < TARGET, "{worst:?}");
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn replace_all_in_one_row_stays_under_the_target() {
+    let mut f = Fixture::conventional(&format!("{ROW} ").repeat(50_000));
+    f.press(ctrl('f'));
+    f.write("order");
+    f.press(key(KeyCode::Tab));
+    f.write("sale");
+    let started = Instant::now();
+    f.press(ctrl('a'));
+    let time = started.elapsed();
+    println!("replace all of 50,000 matches in one row: {time:?}");
+    assert!(f.editor.search().unwrap().matches.is_empty());
+    assert!(time < TARGET, "{time:?}");
+}
+
+/// The time of a run grows with its statements. A frame for each few events gave a time
+/// that grew with the square of the statements.
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn a_large_script_ends_soon_and_the_next_key_stays_under_the_target() {
+    const STATEMENTS: usize = 50_000;
+    let mut app = sqlite_app("latency-script", Settings::default());
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let script = "CREATE TEMP TABLE IF NOT EXISTS t(a);\n".repeat(STATEMENTS);
+    app.on_event(Event::Paste(script));
+    app.on_event(Event::Key(shift(KeyCode::F(5))));
+    let started = Instant::now();
+    while app.console_mut().is_busy() {
+        std::thread::sleep(app.key_wait());
+        if app.drain_events() {
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+        }
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+    println!("{STATEMENTS} statements: {:?}", started.elapsed());
+    assert!(app.console_mut().messages.len() >= STATEMENTS);
+
+    let mut worst = Duration::ZERO;
+    for _ in 0..20 {
+        let started = Instant::now();
+        app.on_event(Event::Key(key(KeyCode::Char('x'))));
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        worst = worst.max(started.elapsed());
+    }
+    println!("{STATEMENTS} marks: worst key plus frame {worst:?}");
+    assert!(worst < TARGET, "{worst:?}");
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
 fn a_key_stays_under_the_target_with_the_full_budget_loaded() {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     use crossterm::event::{KeyEvent, KeyModifiers};
-    use sqln::app::{App, Options};
-    use sqln::clipboard::MemoryClipboard;
-    use sqln::exec::Settings;
 
-    let path = common::temp_db("latency-budget");
-    rusqlite::Connection::open(&path).unwrap();
     let settings = Settings {
         row_cap: usize::MAX,
         sql_timeout: None,
         ..Settings::default()
     };
-    let options = Options {
-        database: Some(path),
-        settings,
-        ..Options::default()
-    };
-    let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
-    let mut app = App::new(options, clipboard, Theme::ansi());
+    let mut app = sqlite_app("latency-budget", settings);
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
 
     app.on_event(Event::Paste(
@@ -345,12 +440,56 @@ fn the_autosave_of_a_large_script_stays_under_the_target() {
     let mut app = App::new(options, clipboard, Theme::ansi());
     let row = "INSERT INTO orders (id, name, total) VALUES (1, 'a text value', 10.50);\n";
     app.on_event(Event::Paste(row.repeat(50_000)));
-    // The first steps see the edit. The last one writes the 3.6 MiB text.
+    // The last step requests the write without waiting for the disk.
     let start = Instant::now();
     app.tick_at(start);
     let write = Instant::now();
     app.tick_at(start + Duration::from_millis(600));
     let spent = write.elapsed();
-    println!("the autosave of 50,000 lines took {spent:?}");
+    println!("the autosave request for 50,000 lines took {spent:?}");
+    assert!(spent < Duration::from_millis(50), "{spent:?}");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while app.has_pending_saves() {
+        app.drain_events();
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn binary_previews_stay_under_the_target_after_classification() {
+    use sqln::grid::Value;
+
+    for ending in [b'x', 0, 255] {
+        let mut bytes = vec![b'x'; 16 * 1024 * 1024];
+        bytes.push(ending);
+        let value = Value::binary(&bytes);
+        let started = Instant::now();
+        for _ in 0..1000 {
+            std::hint::black_box(value.preview(40));
+        }
+        let spent = started.elapsed();
+        println!("1,000 binary previews: {spent:?}");
+        assert!(spent < Duration::from_millis(50), "{spent:?}");
+    }
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn a_search_slice_in_one_large_cell_stays_under_the_target() {
+    use sqln::grid::{ResultTable, RowSearch, Value};
+
+    let mut table = ResultTable::new(vec!["value".into()]);
+    table.append(
+        vec![[Value::Text(&"a".repeat(50_000_000))].into_iter().collect()],
+        0,
+    );
+    let mut search = RowSearch::new((0, 0));
+    search.push_str("aaaaab");
+    let started = Instant::now();
+    search.scan(&table, started + Duration::from_millis(8));
+    let spent = started.elapsed();
+    assert!(search.has_work(&table));
     assert!(spent < Duration::from_millis(50), "{spent:?}");
 }

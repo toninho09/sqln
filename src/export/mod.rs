@@ -3,6 +3,7 @@
 
 pub mod form;
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
@@ -13,12 +14,14 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use serde::{Deserialize, Serialize};
 
 use crate::clipboard::base64;
-use crate::grid::{Value, delimited_cell, delimited_text, hex};
+use crate::grid::{Value, delimited_text, hex, push_cell};
 use crate::sql::{Dialect, quote_identifier, quote_literal};
 use crate::store::file;
 
 const DEFAULT_BATCH: usize = 100;
 const BOM: &[u8] = "\u{feff}".as_bytes();
+/// The bytes that wait in memory. A write to the file costs more than some bytes.
+const WRITE_BUFFER: usize = 256 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,11 +66,11 @@ pub enum Delimiter {
 impl Delimiter {
     pub const ALL: [Self; 3] = [Self::Comma, Self::Semicolon, Self::Pipe];
 
-    pub fn symbol(self) -> char {
+    pub fn symbol(self) -> u8 {
         match self {
-            Self::Comma => ',',
-            Self::Semicolon => ';',
-            Self::Pipe => '|',
+            Self::Comma => b',',
+            Self::Semicolon => b';',
+            Self::Pipe => b'|',
         }
     }
 }
@@ -124,7 +127,8 @@ impl Default for ExportChoices {
 pub struct ExportOptions {
     pub format: ExportFormat,
     pub header: bool,
-    pub delimiter: char,
+    /// An ASCII character.
+    pub delimiter: u8,
     pub null: &'static str,
     pub bom: bool,
     /// The rows of one `INSERT`.
@@ -158,27 +162,27 @@ fn is_number(text: &str) -> bool {
     serde_json::from_str::<serde_json::Number>(text).is_ok()
 }
 
-fn json_value(value: &Value) -> String {
+fn write_json_value(out: &mut impl Write, value: Value<'_>) -> io::Result<()> {
     match value {
-        Value::Null => "null".to_owned(),
-        Value::Number(text) if is_number(text) => text.to_string(),
-        Value::Text(text) | Value::Number(text) => json_string(text),
-        Value::Binary(bytes) => json_string(&base64(bytes)),
+        Value::Null => out.write_all(b"null"),
+        Value::Number(text) if is_number(text) => out.write_all(text.as_bytes()),
+        Value::Text(text) | Value::Number(text) => Ok(serde_json::to_writer(out, text)?),
+        Value::Binary(bytes) => Ok(serde_json::to_writer(out, &base64(&bytes))?),
     }
 }
 
-fn sql_value(value: &Value, dialect: Dialect) -> String {
+fn sql_value(value: Value<'_>, dialect: Dialect) -> Cow<'_, str> {
     match value {
-        Value::Null => "NULL".to_owned(),
-        Value::Number(text) if is_number(text) => text.to_string(),
-        Value::Text(text) | Value::Number(text) => quote_literal(text, dialect),
+        Value::Null => "NULL".into(),
+        Value::Number(text) if is_number(text) => text.into(),
+        Value::Text(text) | Value::Number(text) => quote_literal(text, dialect).into(),
         Value::Binary(bytes) => {
-            let digits = hex(bytes);
+            let digits = hex(&bytes);
             let digits = digits.trim_start_matches("0x");
             if dialect == Dialect::Postgres {
-                format!("'\\x{digits}'")
+                format!("'\\x{digits}'").into()
             } else {
-                format!("X'{digits}'")
+                format!("X'{digits}'").into()
             }
         }
     }
@@ -213,6 +217,8 @@ pub struct Encoder<W: Write> {
     started: bool,
     /// The rows in the JSON array, or in the open `INSERT`.
     open_rows: usize,
+    /// The text of one delimited row. It keeps its memory from row to row.
+    line: String,
 }
 
 impl<W: Write> Encoder<W> {
@@ -224,12 +230,13 @@ impl<W: Write> Encoder<W> {
             insert: String::new(),
             started: false,
             open_rows: 0,
+            line: String::new(),
         }
     }
 
-    fn delimiter(&self) -> char {
+    fn delimiter(&self) -> u8 {
         if self.options.format == ExportFormat::Tsv {
-            '\t'
+            b'\t'
         } else {
             self.options.delimiter
         }
@@ -253,9 +260,10 @@ impl<W: Write> Encoder<W> {
                 let delimiter = self.delimiter();
                 let names: Vec<String> = columns
                     .iter()
-                    .map(|name| delimited_text(name, delimiter, null).into_owned())
+                    .map(|name| delimited_text(name, delimiter, null))
                     .collect();
-                writeln!(self.out, "{}", names.join(&delimiter.to_string()))?;
+                let line = names.join(&char::from(delimiter).to_string());
+                writeln!(self.out, "{line}")?;
             }
         }
         match self.options.format {
@@ -277,53 +285,64 @@ impl<W: Write> Encoder<W> {
         Ok(())
     }
 
-    fn json_object(&self, row: &[Value]) -> String {
-        let fields: Vec<String> = self
-            .keys
-            .iter()
-            .zip(row)
-            .map(|(key, value)| format!("{key}:{}", json_value(value)))
-            .collect();
-        format!("{{{}}}", fields.join(","))
-    }
-
-    fn write_delimited(&mut self, row: &[Value]) -> io::Result<()> {
-        let delimiter = self.delimiter();
-        let mut line = String::new();
-        for (index, value) in row.iter().enumerate() {
+    fn write_json_object<'a>(&mut self, row: impl Iterator<Item = Value<'a>>) -> io::Result<()> {
+        self.out.write_all(b"{")?;
+        for (index, (key, value)) in self.keys.iter().zip(row).enumerate() {
             if index > 0 {
-                line.push(delimiter);
+                self.out.write_all(b",")?;
             }
-            line.push_str(&delimited_cell(value, delimiter, self.options.null));
+            self.out.write_all(key.as_bytes())?;
+            self.out.write_all(b":")?;
+            write_json_value(&mut self.out, value)?;
         }
-        line.push('\n');
-        self.out.write_all(line.as_bytes())
+        self.out.write_all(b"}")
     }
 
-    fn write_insert(&mut self, row: &[Value]) -> io::Result<()> {
-        let dialect = self.options.dialect;
-        let values: Vec<String> = row.iter().map(|value| sql_value(value, dialect)).collect();
-        let values = values.join(", ");
+    fn write_delimited<'a>(&mut self, row: impl Iterator<Item = Value<'a>>) -> io::Result<()> {
+        let delimiter = self.delimiter();
+        self.line.clear();
+        for (index, value) in row.enumerate() {
+            if index > 0 {
+                self.line.push(char::from(delimiter));
+            }
+            push_cell(&mut self.line, value, delimiter, self.options.null);
+        }
+        self.line.push('\n');
+        self.out.write_all(self.line.as_bytes())
+    }
+
+    fn write_insert<'a>(&mut self, row: impl Iterator<Item = Value<'a>>) -> io::Result<()> {
         let batch = self.options.batch.max(1);
-        let start = match (self.open_rows, batch) {
-            (0, 1) => format!("{} ", self.insert),
-            (0, _) => format!("{}\n  ", self.insert),
-            _ => ",\n  ".to_owned(),
-        };
+        match (self.open_rows, batch) {
+            (0, 1) => write!(self.out, "{} (", self.insert)?,
+            (0, _) => write!(self.out, "{}\n  (", self.insert)?,
+            _ => self.out.write_all(b",\n  (")?,
+        }
+        for (index, value) in row.enumerate() {
+            if index > 0 {
+                self.out.write_all(b", ")?;
+            }
+            let text = sql_value(value, self.options.dialect);
+            self.out.write_all(text.as_bytes())?;
+        }
         self.open_rows = (self.open_rows + 1) % batch;
-        let end = if self.open_rows == 0 { ";\n" } else { "" };
-        write!(self.out, "{start}({values}){end}")
+        let end: &[u8] = if self.open_rows == 0 { b");\n" } else { b")" };
+        self.out.write_all(end)
     }
 
-    pub fn row(&mut self, row: &[Value]) -> io::Result<()> {
+    pub fn row<'a>(&mut self, row: impl Iterator<Item = Value<'a>>) -> io::Result<()> {
         match self.options.format {
             ExportFormat::Csv | ExportFormat::Tsv => self.write_delimited(row),
             ExportFormat::Json => {
-                let start = if self.open_rows == 0 { "[\n" } else { ",\n" };
+                let start: &[u8] = if self.open_rows == 0 { b"[\n" } else { b",\n" };
                 self.open_rows += 1;
-                write!(self.out, "{start}{}", self.json_object(row))
+                self.out.write_all(start)?;
+                self.write_json_object(row)
             }
-            ExportFormat::JsonLines => writeln!(self.out, "{}", self.json_object(row)),
+            ExportFormat::JsonLines => {
+                self.write_json_object(row)?;
+                self.out.write_all(b"\n")
+            }
             ExportFormat::SqlInsert => self.write_insert(row),
         }
     }
@@ -377,12 +396,17 @@ impl Eq for ExportWriter {}
 
 impl ExportWriter {
     /// Creates the temporary file beside the destination, and the missing folders.
+    /// The file holds a lock, so the cleanup of a later export keeps it.
     pub fn create(destination: &Path, options: ExportOptions) -> io::Result<Self> {
         if let Some(folder) = destination.parent() {
             fs::create_dir_all(folder)?;
+            file::remove_orphan_temporaries(folder, file::OLD_TEMPORARY);
         }
-        let temporary = file::temporary(destination);
-        let out = BufWriter::new(File::create(&temporary)?);
+        let temporary = file::temporary_unique(destination);
+        let file = File::create(&temporary)?;
+        file.try_lock()
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let out = BufWriter::with_capacity(WRITE_BUFFER, file);
         Ok(Self(Arc::new(Shared {
             state: Mutex::new(State {
                 encoder: Some(Encoder::new(out, options)),
@@ -420,7 +444,7 @@ impl ExportWriter {
     }
 
     /// Writes one row. A false value tells the reader to stop.
-    pub fn write_row(&self, row: &[Value]) -> bool {
+    pub fn write_row<'a>(&self, row: impl Iterator<Item = Value<'a>>) -> bool {
         let written = self.apply(|encoder| encoder.row(row));
         if written {
             self.0.rows.fetch_add(1, Ordering::Relaxed);

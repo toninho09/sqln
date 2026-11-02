@@ -2,10 +2,11 @@ mod common;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::rc::Rc;
 
 use common::sample_catalog;
-use common::{Fixture, ctrl, key};
+use common::{Fixture, ctrl, key, shift};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -248,6 +249,173 @@ fn a_jump_to_a_far_row_highlights_on_the_first_frame() {
         "{}",
         screen(&buffer)
     );
+}
+
+/// Each capital letter on the screen belongs to a keyword, so each one has its color.
+fn assert_keywords_have_their_color(buffer: &Buffer, place: &str) {
+    let area = buffer.area;
+    let cells = (area.top()..area.bottom())
+        .flat_map(|y| (area.left()..area.right()).map(move |x| (x, y)))
+        .filter(|cell| {
+            buffer[*cell]
+                .symbol()
+                .starts_with(|c: char| c.is_ascii_uppercase())
+        });
+    let mut seen = 0;
+    for cell in cells {
+        assert_eq!(buffer[cell].fg, Color::Blue, "{place}\n{}", screen(buffer));
+        seen += 1;
+    }
+    assert!(seen > 0, "{place}\n{}", screen(buffer));
+}
+
+#[test]
+fn each_column_of_a_long_row_keeps_its_colors() {
+    let rows = [
+        "SELECT a, ".repeat(100),
+        "\tSELECT b ".repeat(100),
+        "SELECT 日本語, ".repeat(100),
+        "SELECT '👩‍💻👩‍💻👩‍💻', ".repeat(100),
+        "SELECT \u{1}a, ".repeat(100),
+        "SELECT e\u{301}a, ".repeat(100),
+    ];
+    for row in &rows {
+        let length = row.chars().count();
+        let text = format!("{row}\n{row}");
+        for mut f in [Fixture::conventional(&text), Fixture::vim(&text)] {
+            let places = (0..=length).step_by(37).chain([length, 3]);
+            for col in places {
+                f.editor.set_cursor(Index2::new(1, col));
+                let buffer = draw(&mut f.editor, &Theme::ansi(), 50, 6);
+                assert_keywords_have_their_color(&buffer, &format!("column {col}"));
+            }
+        }
+    }
+}
+
+#[test]
+fn a_frame_leaves_the_text_of_the_user() {
+    let long = "SELECT 1, ".repeat(100);
+    let text = format!("{long}\nSELECT 'a\u{1}b'\n{long}");
+    let mut f = Fixture::conventional(&text);
+    draw(&mut f.editor, &Theme::ansi(), 40, 6);
+    assert_eq!(f.editor.text(), text);
+}
+
+/// The last save of a panic reads the text, so the short rows of a draw must not stay.
+#[test]
+fn a_panic_in_a_draw_leaves_the_text_of_the_user() {
+    let text = "SELECT \u{1}a, ".repeat(100);
+    let mut f = Fixture::conventional(&text);
+    let unwound = catch_unwind(AssertUnwindSafe(|| {
+        let _frame = f.editor.prepare_frame(40, 5, &Theme::ansi());
+        resume_unwind(Box::new(()));
+    }));
+    assert!(unwound.is_err());
+    assert_eq!(f.editor.text(), text);
+}
+
+/// A terminal does not show a control character, so it takes no cell.
+#[test]
+fn the_cursor_stays_on_its_character_after_a_hidden_character() {
+    let row = "SELECT 'a\u{1}b\u{7}c', d";
+    let mut f = Fixture::conventional(row);
+    let shown = row.chars().enumerate().filter(|(_, c)| !c.is_control());
+    for (col, c) in shown {
+        f.editor.set_cursor(Index2::new(0, col));
+        let buffer = draw(&mut f.editor, &Theme::ansi(), 40, 6);
+        let cursor = buffer
+            .content
+            .iter()
+            .find(|cell| cell.modifier.contains(Modifier::REVERSED))
+            .unwrap();
+        assert_eq!(cursor.symbol(), c.to_string(), "{col}\n{}", screen(&buffer));
+    }
+}
+
+#[test]
+fn a_selection_stays_over_a_keyword_and_the_cursor_stays_over_all() {
+    let theme = Theme::astrodark();
+    let mut f = Fixture::conventional("SELECT 1");
+    f.press(shift(KeyCode::Right));
+    f.press(shift(KeyCode::Right));
+    let buffer = draw(&mut f.editor, &theme, 40, 6);
+    let row = find(&buffer, "SELECT");
+    let cell = |offset: u16| &buffer[(row.0 + offset, row.1)];
+    assert_eq!(cell(0).bg, theme.selection.bg.unwrap(), "{:?}", cell(0));
+    assert_ne!(cell(0).fg, theme.keyword.fg.unwrap(), "{:?}", cell(0));
+    assert_eq!(cell(2).style().bg, theme.cursor.bg, "{:?}", cell(2));
+    assert_eq!(cell(2).style().fg, theme.cursor.fg, "{:?}", cell(2));
+    assert_eq!(cell(3).fg, theme.keyword.fg.unwrap(), "{:?}", cell(3));
+}
+
+#[test]
+fn a_mark_stays_on_its_letter_when_a_match_ends_before_it() {
+    let theme = Theme::ansi();
+    let mut f = Fixture::conventional("a\u{308}, b");
+    f.press(ctrl('f'));
+    f.write("a");
+    let buffer = draw(&mut f.editor, &theme, 40, 6);
+    let cell = buffer
+        .content
+        .iter()
+        .find(|cell| cell.symbol() == "a\u{308}")
+        .unwrap_or_else(|| panic!("{}", screen(&buffer)));
+    assert_eq!(cell.bg, theme.search_current.bg.unwrap());
+}
+
+#[test]
+fn a_match_inside_a_group_of_characters_has_its_style() {
+    let theme = Theme::ansi();
+    for (text, part) in [("x 👩‍💻 y", "💻"), ("x e\u{301} y", "\u{301}")] {
+        let mut f = Fixture::conventional(text);
+        f.press(ctrl('f'));
+        f.write(part);
+        let buffer = draw(&mut f.editor, &theme, 40, 6);
+        let cell = buffer
+            .content
+            .iter()
+            .skip(80)
+            .find(|cell| cell.symbol().contains(part))
+            .unwrap_or_else(|| panic!("{}", screen(&buffer)));
+        assert_eq!(cell.bg, theme.search_current.bg.unwrap(), "{text}");
+    }
+}
+
+#[test]
+fn a_wide_character_keeps_the_next_columns_in_their_cells() {
+    let mut f = Fixture::conventional("日本語 SELECT 1");
+    let buffer = draw(&mut f.editor, &Theme::ansi(), 40, 6);
+    assert_keywords_have_their_color(&buffer, "after wide characters");
+}
+
+#[test]
+fn a_comment_keeps_its_color_on_each_row_past_the_window() {
+    let long = "c".repeat(300);
+    let mut f = Fixture::conventional(&format!("/* {long}\n{long}\n{long} */"));
+    f.editor.set_cursor(Index2::new(1, 250));
+    let theme = Theme::ansi();
+    let buffer = draw(&mut f.editor, &theme, 40, 6);
+    for y in 0..3 {
+        let x = (0..40).find(|x| buffer[(*x, y)].symbol() == "c").unwrap();
+        assert_eq!(buffer[(x, y)].fg, theme.comment.fg.unwrap(), "{y}");
+    }
+}
+
+#[test]
+fn a_match_far_along_a_long_row_has_its_style() {
+    let mut f = Fixture::conventional(&"a users ".repeat(500));
+    f.press(ctrl('f'));
+    f.write("users");
+    for _ in 0..300 {
+        f.press(key(KeyCode::Enter));
+    }
+    let buffer = draw(&mut f.editor, &Theme::ansi(), 60, 6);
+    let (_, y) = find(&buffer, "a users a users");
+    assert_ne!(f.editor.state.viewport_offset().0, 0);
+    let row = (0..60).map(|x| buffer[(x, y)].bg).collect::<Vec<_>>();
+    assert!(row.contains(&Color::Yellow), "{}", screen(&buffer));
+    assert!(row.contains(&Color::Green), "{}", screen(&buffer));
 }
 
 /// The first editor row of the application screen.

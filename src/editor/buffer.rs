@@ -59,6 +59,37 @@ pub fn replace_range(lines: &mut Lines, start: Index2, end: Index2, text: &str) 
     position
 }
 
+/// Replaces ranges in one pass, so that a long row with many ranges costs one copy. The
+/// ranges come in the order of the text, and they do not overlap.
+pub fn replace_ranges(lines: &mut Lines, ranges: &[(Index2, Index2, &str)]) {
+    let mut rows = std::mem::take(lines).into_vecs();
+    if rows.is_empty() {
+        rows.push(Vec::new());
+    }
+    let last = rows.len() - 1;
+    let end = Index2::new(last, rows[last].len());
+    let mut done = Vec::with_capacity(rows.len());
+    let mut open = Vec::new();
+    let mut at = Index2::new(0, 0);
+    for (start, stop, text) in ranges.iter().copied().chain([(end, end, "")]) {
+        while at.row < start.row {
+            open.extend_from_slice(&rows[at.row][at.col..]);
+            done.push(std::mem::take(&mut open));
+            at = Index2::new(at.row + 1, 0);
+        }
+        open.extend_from_slice(&rows[at.row][at.col..start.col]);
+        let mut parts = text.split('\n');
+        open.extend(parts.next().unwrap_or_default().chars());
+        for part in parts {
+            done.push(std::mem::take(&mut open));
+            open.extend(part.chars());
+        }
+        at = stop;
+    }
+    done.push(open);
+    *lines = Lines::new(done);
+}
+
 /// The result of a comment toggle on a group of rows.
 pub struct Comment {
     /// The new text of the rows.
@@ -223,8 +254,12 @@ impl Snapshot {
                 .map_or(line.len(), |(offset, _)| offset)
     }
 
+    pub fn row_of(&self, offset: usize) -> usize {
+        self.line_starts.partition_point(|start| *start <= offset) - 1
+    }
+
     pub fn position(&self, offset: usize) -> Index2 {
-        let row = self.line_starts.partition_point(|start| *start <= offset) - 1;
+        let row = self.row_of(offset);
         Index2::new(
             row,
             self.text[self.line_starts[row]..offset].chars().count(),
@@ -238,5 +273,29 @@ impl Snapshot {
             0 if offset > 0 => self.position(offset - 1),
             col => Index2::new(position.row, col.saturating_sub(1)),
         }
+    }
+
+    /// Lists the tokens on the columns `left..end` of a row. Each one comes with its
+    /// first and its last column there, because a token can go past these columns.
+    pub fn row_tokens(&self, row: usize, left: usize, end: usize) -> Vec<(&Token, usize, usize)> {
+        let start = self.offset(Index2::new(row, left));
+        let stop = self.offset(Index2::new(row, end));
+        let first = self.tokens.partition_point(|token| token.end() <= start);
+        let mut found = Vec::new();
+        let (mut at, mut col) = (start, left);
+        for token in &self.tokens[first..] {
+            let (from, to) = (token.start().max(start), token.end().min(stop));
+            if from >= stop {
+                break;
+            }
+            if from < to {
+                col += self.text[at..from].chars().count();
+                let first_col = col;
+                col += self.text[from..to].chars().count();
+                at = to;
+                found.push((token, first_col, col - 1));
+            }
+        }
+        found
     }
 }

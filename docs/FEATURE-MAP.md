@@ -19,11 +19,11 @@ The file paths are relative to `src/`.
 | 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs` |
 | 8 | Run protection | `app/guard.rs`, `sql/classify.rs` |
 | 9 | Transactions | `exec/runner.rs`, `ui/statusline.rs` |
-| 10 | SQL editor | `editor/mod.rs`, `editor/conventional.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
+| 10 | SQL editor | `editor/mod.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
 | 11 | SQL analysis and formatter | `sql/lexer.rs`, `sql/statement.rs`, `sql/classify.rs`, `sql/format.rs` |
 | 12 | Autocomplete | `complete/mod.rs`, `complete/context.rs`, `complete/keywords.rs`, `catalog.rs` |
 | 13 | Catalog and structure tab | `catalog.rs`, `structure.rs` |
-| 14 | Results grid | `result.rs`, `grid/mod.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs` |
+| 14 | Results grid | `result.rs`, `grid/mod.rs`, `grid/row.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs` |
 | 15 | Table view | `table.rs`, `app/tables.rs`, `ui/table.rs` |
 | 16 | Export and file explorer | `export/mod.rs`, `export/form.rs`, `ui/export.rs`, `app/export.rs`, `browser.rs`, `ui/browser.rs`, `app/browse.rs` |
 | 17 | Query history | `history.rs`, `store/history.rs`, `app/history.rs`, `ui/history.rs` |
@@ -93,9 +93,9 @@ A console runs in autocommit by default. Manual mode sends `TransactionCommand` 
 
 ## 10. SQL editor
 
-Files: `editor/mod.rs`, `editor/conventional.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs`.
+Files: `editor/mod.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs`.
 
-EdTUI holds the text. In the conventional mode, `editor/conventional` owns the selection with IDE keys, and EdTUI stays in insert mode. The Vim mode is the alternative; both modes share the run actions. `editor/buffer` holds the text operations on `Lines`. Search is literal and without case (`find.rs`), with one shared bar for both modes and replace support. `undo` and `redo` keep up to 100 entries each; the history has no memory cap, and [ARCHITECTURE](ARCHITECTURE.md) lists that debt.
+EdTUI holds the text. In the conventional mode, `editor/conventional` owns the selection with IDE keys, and EdTUI stays in insert mode. The Vim mode is the alternative; both modes share the run actions. `editor/buffer` holds the text operations on `Lines`. Search is literal and without case (`find.rs`), with one shared bar for both modes and replace support. `editor/undo` holds the history of the conventional mode, and `undoLimitBytes` limits its size. The Vim mode uses the stacks of EdTUI, which have no memory cap, and [ARCHITECTURE](ARCHITECTURE.md) lists that debt.
 
 ## 11. SQL analysis and formatter
 
@@ -117,9 +117,9 @@ The catalog is a cache in memory, outside the disk. Schemas and tables load firs
 
 ## 14. Results grid
 
-Files: `result.rs`, `grid/mod.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs`.
+Files: `result.rs`, `grid/mod.rs`, `grid/row.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs`.
 
-A console result and a table page share `result::ResultTab`: one grid with cursor, selection, and search. The grid keeps result tabs, the **Messages** tab, and a detail view. `grid/budget` counts the bytes of the loaded rows; a reservation frees its cost on drop. `grid/search` searches the loaded rows only, never the database, and advances 8 ms per loop turn. `r` opens the row window. `f` formats a JSON value with `grid/json`; only the white space changes. `grid/tsv` builds the copy text, with the DataGrip shape and the data that DataGrip loses; `clipboard` prefers the system clipboard and falls back to OSC 52.
+A console result and a table page share `result::ResultTab`: one grid with cursor, selection, and search. The grid keeps result tabs, the **Messages** tab, and a detail view. `grid/row` keeps each row in one block, and a read gets a `Value` that borrows from it. `grid/budget` counts the bytes of the loaded rows; a reservation frees its cost on drop. `grid/search` searches the loaded rows only, never the database, and advances 8 ms per loop turn. `r` opens the row window. `f` formats a JSON value with `grid/json`; only the white space changes. `grid/tsv` builds the copy text, with the DataGrip shape and the data that DataGrip loses; `clipboard` prefers the system clipboard and falls back to OSC 52.
 
 ## 15. Table view
 

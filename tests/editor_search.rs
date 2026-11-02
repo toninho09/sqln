@@ -4,6 +4,7 @@ use common::{Fixture, ctrl, key, shift};
 use crossterm::event::KeyCode::{BackTab, Backspace, Down, Enter, Esc, Right, Tab, Up};
 use edtui::Index2;
 use sqln::editor::SearchField;
+use sqln::find::fold;
 
 #[test]
 fn search_finds_every_match_without_case() {
@@ -13,6 +14,16 @@ fn search_finds_every_match_without_case() {
     let bar = f.editor.search().unwrap();
     assert_eq!(bar.matches.len(), 3);
     assert_eq!(bar.current, 0);
+}
+
+/// Only the Vim mode compares the text after a key. The conventional mode once kept a
+/// full copy of the text after this key, for as long as the editor lived.
+#[test]
+fn opening_the_bar_is_not_a_change_of_the_text() {
+    let mut f = Fixture::conventional("users");
+    let revision = f.editor.revision();
+    f.press(ctrl('f'));
+    assert_eq!(f.editor.revision(), revision);
 }
 
 #[test]
@@ -99,6 +110,26 @@ fn ctrl_a_replaces_all_in_one_undo_step() {
 }
 
 #[test]
+fn ctrl_a_keeps_the_text_around_each_match() {
+    let text = "ab ab\n\nxx ab yy ab\nab";
+    for (replacement, result) in [
+        ("long", "long long\n\nxx long yy long\nlong"),
+        ("", " \n\nxx  yy \n"),
+    ] {
+        let mut f = Fixture::conventional(text);
+        f.press(ctrl('f'));
+        f.write("ab");
+        f.press(key(Tab));
+        f.write(replacement);
+        f.press(ctrl('a'));
+        assert_eq!(f.text(), result);
+        f.press(key(Esc));
+        f.press(ctrl('z'));
+        assert_eq!(f.text(), text);
+    }
+}
+
+#[test]
 fn replacement_that_contains_the_query_stops_after_one_pass() {
     let mut f = Fixture::conventional("a a");
     f.press(ctrl('f'));
@@ -151,4 +182,45 @@ fn a_paste_in_the_bar_uses_its_first_line() {
     f.editor.on_paste("use\nother");
     assert_eq!(f.editor.search().unwrap().find, "use");
     assert_eq!(f.text(), "users");
+}
+
+fn match_starts(f: &Fixture) -> Vec<(usize, usize)> {
+    let matches = &f.editor.search().unwrap().matches;
+    let start = |found: &sqln::editor::Match| (found.start.row, found.start.col);
+    matches.iter().map(start).collect()
+}
+
+#[test]
+fn a_match_can_end_a_row_or_fill_it() {
+    let mut f = Fixture::conventional("xab\nab\na\n\nb");
+    f.press(ctrl('f'));
+    f.write("ab");
+    assert_eq!(match_starts(&f), [(0, 1), (1, 0)]);
+}
+
+#[test]
+fn matches_do_not_share_a_character() {
+    let mut f = Fixture::conventional("aaaaa");
+    f.press(ctrl('f'));
+    f.write("aa");
+    assert_eq!(match_starts(&f), [(0, 0), (0, 2)]);
+}
+
+#[test]
+fn a_search_compares_each_character_without_case() {
+    let mut f = Fixture::conventional("AÇÃO ação k K \u{212A}");
+    f.press(ctrl('f'));
+    f.write("Ação");
+    assert_eq!(match_starts(&f), [(0, 0), (0, 5)]);
+    f.press(key(Esc));
+    f.press(ctrl('f'));
+    f.write("k");
+    assert_eq!(match_starts(&f), [(0, 10), (0, 12), (0, 14)]);
+}
+
+#[test]
+fn the_fold_of_a_character_is_its_first_lower_case_character() {
+    for c in (0..=char::MAX as u32).filter_map(char::from_u32) {
+        assert_eq!(fold(c), c.to_lowercase().next().unwrap_or(c), "{c:?}");
+    }
 }

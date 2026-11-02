@@ -63,6 +63,7 @@ fn label(field: Field) -> &'static str {
         Field::BellAfter => text::FIELD_BELL_AFTER,
         Field::FormatJson => text::FIELD_FORMAT_JSON,
         Field::SuggestionKeys => text::FIELD_SUGGESTION_KEYS,
+        Field::UndoLimit => text::FIELD_UNDO_LIMIT,
         Field::Theme => text::FIELD_THEME,
         Field::Sections | Field::Save | Field::Cancel => "",
     }

@@ -163,6 +163,8 @@ pub struct Console {
     /// The moment that the application first saw the open transaction.
     transaction_since: Option<Instant>,
     pub manual: bool,
+    /// The warnings in `messages`. Each frame needs this number.
+    warnings: usize,
     pub messages_scroll: u16,
     /// True while the close of this console waits for a step.
     pub closing: bool,
@@ -215,6 +217,7 @@ impl Console {
             transaction: TransactionState::None,
             transaction_since: None,
             manual: false,
+            warnings: 0,
             messages_scroll: 0,
             closing: false,
             pending_transaction: None,
@@ -302,8 +305,7 @@ impl Console {
         for result in self.results.drain(..) {
             budget.release(result.table.bytes);
         }
-        self.messages.clear();
-        self.messages_scroll = 0;
+        self.clear_messages();
         self.active = 0;
         self.results_made = 0;
         self.stop_reported = false;
@@ -320,8 +322,7 @@ impl Console {
         for result in self.results.drain(..) {
             budget.release(result.table.bytes);
         }
-        self.messages.clear();
-        self.messages_scroll = 0;
+        self.clear_messages();
         self.active = 0;
         self.results_made = 0;
         self.editor.clear_marks();
@@ -330,12 +331,18 @@ impl Console {
     /// Returns the number of warnings in **Messages**. Its tab shows the number, because
     /// a run that ends well selects its last result.
     pub fn warnings(&self) -> usize {
-        let warning = |message: &&Message| message.level == MessageLevel::Warning;
-        self.messages.iter().filter(warning).count()
+        self.warnings
     }
 
     fn push_message(&mut self, level: MessageLevel, text: String) {
+        self.warnings += usize::from(level == MessageLevel::Warning);
         self.messages.push(Message { level, text });
+    }
+
+    fn clear_messages(&mut self) {
+        self.messages.clear();
+        self.warnings = 0;
+        self.messages_scroll = 0;
     }
 
     fn is_current(&self, execution: ExecutionId) -> bool {
@@ -367,6 +374,8 @@ impl Console {
                 if let Some(result) = self.results.last_mut() {
                     result.summary = read_summary(rows, limit);
                     result.limit = limit;
+                    // The list can hold room for twice its rows, and no more rows arrive.
+                    result.table.rows.shrink_to_fit();
                 }
             }
             ExecEvent::Notice { key, text } if self.is_current(key.execution) => {
@@ -495,6 +504,15 @@ impl Console {
 
     fn on_execution_finished(&mut self, end: ExecutionEnd, message: Option<String>) -> Signal {
         if end == ExecutionEnd::Refused {
+            // A refused execution started no statement. The console must not wait for
+            // an end that already came, so its state returns to idle.
+            if let Some(message) = message {
+                self.push_message(MessageLevel::Error, message);
+            }
+            self.phase = Phase::Idle;
+            self.execution = None;
+            self.reading = false;
+            self.run.wait();
             return Signal::ExecutionFinished {
                 schema_changed: false,
             };

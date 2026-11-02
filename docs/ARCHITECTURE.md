@@ -50,7 +50,7 @@ Main thread                        Tokio runtime
 | `exec` | Executions, scripts, cap, and cancellation |
 | `pool` | Limit, queue, reservation, and cleaning |
 | `connector` | Contract and PostgreSQL, MySQL, SQLite, and Redis/Valkey connectors |
-| `grid` | Rows, widths, search, budget, TSV, and readable JSON shape (`json`) |
+| `grid` | Rows in one block each (`row`), widths, search, budget, TSV, and readable JSON shape (`json`) |
 | `export` | Export formats, temporary file, and modal form |
 | `find` | Text comparison of the two searches |
 | `clipboard` | System clipboard and OSC 52 |
@@ -83,7 +83,8 @@ The vault calls are synchronous, but `Manager::spawn_blocking` runs them off the
 | `store::scripts` | `.sql` and `.json` files of a console, list, lock per console, copy between scopes, and line ending |
 | `store::workspace` | `workspace.json`, read without error and written under the `config.lock` lock |
 | `store::history` | `history.jsonl`: one JSON line per statement, appended at the end of the file, read per connection, and truncated at the start of the file |
-| `script_file::ScriptFile` | Hash of the last written content, 500 ms wait, 5 s retry, and problem (`Failed`, `Changed`, or `Removed`) |
+| `script_file::ScriptFile` | Hash, 500 ms wait, 5 s retry, pending write, and problem (`Failed`, `Changed`, or `Removed`) |
+| `script_file::worker` | One bounded worker for script text, metadata, and moves between scopes |
 | `app::persist` | Load at startup, reload, check each second, close order, and session state |
 | `app::scripts` | Console list, scripts without connection, opening, removal, and attaching |
 | `app::conflicts` | Question about scripts changed outside SQLN |
@@ -102,6 +103,11 @@ Code rules:
 8. The line ending of the file (`LF` or `CRLF`) stays in the `ScriptFile`. The editor always uses `LF`.
 9. `ScriptFile::poll` reads the file only if the size or the date changed, and then compares the hash.
 10. A connection definition carries the base folder. `Definition::connector` resolves the relative paths with it at open time.
+11. Script writes use a dedicated worker, separate from credential access. Only one operation runs at a time.
+12. Each script keeps at most one pending operation. The interface keeps later requests without additional text snapshots.
+13. A write response updates only its captured editor revision. Later edits stay dirty. Close waits for the latest revision.
+14. File polling skips a script while its operation runs. Emergency shutdown waits before it writes the remaining text.
+15. A pending association blocks new SQL executions and export reads for its console until it succeeds or fails.
 
 ### Credential preparation
 
@@ -161,21 +167,70 @@ A Redis key tab uses the same path, without SQL:
 3. The session uses the command of the type: `GET`, `LRANGE`, `HSCAN`, `SSCAN`, `ZRANGE`, or `XRANGE`.
 4. A false `Capabilities::table_filters` removes `WHERE`, `ORDER BY`, **Clear**, and sorting from the tab. **Apply** becomes **Reload**.
 
+### Undo history
+
+The conventional mode has its own history in `editor::undo`. A step keeps only the text that an edit replaced, so a step of typing costs some bytes.
+`undoLimitBytes` limits the history of each console, with 64 MiB as the default. Settings shows this value in MiB, in the Editor section.
+The oldest steps leave first, and the newest step of the undo and redo lists always stays. Thus, one step can go above the limit, and the last edit always has an undo.
+The history has no limit of steps.
+
+Undo and redo are one operation: a step replaces the text between two positions and returns the step that reverses it.
+A step of many ranges, such as a replacement of all matches, covers the text from the first range to the last one.
+
+The steps of the conventional mode and the Vim mode stay in one order after a change of keyboard:
+
+1. A change to the Vim mode gives the 100 newest steps to EdTUI, and the steps that wait for a redo end.
+2. After a change to the conventional mode, `Ctrl+Z` reads the history first and then EdTUI, because the steps of EdTUI are older. `Ctrl+Y` reads them in the opposite order.
+
 ### Known editor limit
 
-**Technical debt:** the undo history has no memory cap. This item does not block the release.
+**Technical debt:** the undo history of the Vim mode has no memory cap. This item does not block the release.
 
 Each undo entry of EdTUI keeps a full copy of the text, and each console has its own stacks.
 `undo` and `redo` keep up to 100 entries each, and EdTUI does not clear `redo` after a new edit.
-By estimate, a 50,000-line script takes about 15 MB per entry, 1.5 GB in the 100 `undo` entries, and 3 GB with both stacks full.
-In the conventional mode, 100 entries equal about 100 typed words.
+By measure, a 50,000-line script takes 16.8 MiB per entry and 1.7 GiB in the 100 `undo` entries. By estimate, it takes 3.4 GiB with both stacks full.
+In the Vim mode, one entry is one change, and `undoLimitBytes` does not apply.
+The entries also stay after a change to the conventional mode.
 Common scripts stay far below that, and closing the console frees that memory.
 
 `Stack` and the `undo` and `redo` fields of EdTUI are private, and the public API does not measure or remove entries.
 Therefore, SQLN cannot cap that history without an EdTUI change.
 
-**Exit:** when EdTUI publishes an API for it, cap the history at 64 MiB per console.
-The oldest entries leave first, and an entry above the cap produces a warning.
+**Exit:** when EdTUI publishes an API for it, apply `undoLimitBytes` to the Vim mode.
+
+### Editor frame
+
+EdTUI reads each row of the screen to its end, and it tests each character against a flat list of highlights.
+With that rule, the time of a frame grows with the square of the size of the screen.
+Therefore, SQLN gives EdTUI no highlights, and `editor::frame` gives it rows that stop at the end of the window.
+After the draw, `editor::frame` writes the styles on the cells.
+A frame then costs time only for the cells of the screen: a full screen of 300 by 100 cells takes about 3 ms per key.
+
+The text of the user is not complete during the draw, so `FrameState` returns the rows when it drops.
+A panic also drops it, because the last save of a panic reads the text.
+
+Two rules copy code of the libraries. Check them after an update of EdTUI or Ratatui:
+
+1. `SqlEditor::next_left` copies `update_viewport_horizontal` of EdTUI.
+2. `FrameState::paint_row` copies the cell rule of `Span::render` of Ratatui.
+
+`each_column_of_a_long_row_keeps_its_colors` guards both rules.
+
+### Result rows
+
+A block of memory for each value costs more than the text of a usual value.
+Therefore, `grid::Row` keeps all the values of a row in one block, and a read gets a `Value` that borrows from that block.
+The connectors write each row through `RowWriter`, so a read also has fewer allocations.
+A row of 3 usual values takes about 100 B, and the same row took about 200 B with a block for each value.
+
+Each cell has a head and the bytes of its value, so a read walks the row from its first column.
+To read many columns of a row, use `Row::cells` and not `Row::get`, because each `get` starts again.
+
+`Row` holds the only `unsafe` code of `src/`: a read of text skips the check of UTF-8.
+That check took a third of the time of a copy or of an export, and each text in a row comes from a `str`.
+
+The budget counts the block of each row, so the same limit holds about twice the rows.
+The limit in memory stays the same.
 
 ## 3. Concurrency
 
@@ -191,8 +246,12 @@ The oldest entries leave first, and an entry above the cap produces a warning.
 ### Main loop
 
 The main thread waits for a key for up to 20 ms and then reads the execution events.
-It reads at most 64 events per frame, so a large load does not delay the keys.
-The grid search advances 8 ms per loop turn, without waiting while there are rows to read.
+It does not wait while events arrive, because the bounded channel would then stop the database.
+It reads events for up to 8 ms per frame, so a large load does not delay the keys.
+The limit is a time and not a count, because the number of frames must not grow with the events.
+A frame builds only what the screen shows: the visible tabs, the visible messages, and the styles of the visible columns.
+The grid search advances 8 ms per loop turn. It checks the deadline after a row or 512 characters.
+The search resumes inside a cell and streams binary hexadecimal text without a full copy.
 The event channel is bounded, and that controls the speed of the database read.
 The application draws only after a change.
 
@@ -256,6 +315,8 @@ Dropping `ResultSink` returns the rows still in the batch to the budget.
 `Conn::reset` keeps the current database, so a `USE` would stay in the session without the next step.
 The cleaning reads `DATABASE()` and goes back to the database of the connection. Without a database in the connection, the session closes, because MySQL does not leave a database.
 The variant serves presentation only, such as aligning numbers.
+`Value::binary` classifies binary bytes once, before they reach the interface. The wrapper preserves the original bytes.
+A preview reads only the visible prefix. TSV encoding borrows selected values without cloning the selection.
 
 ## 5. Script execution
 
@@ -360,6 +421,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
     "pageSize": 100,
     "rowCap": 1000,
     "gridBudgetBytes": 268435456,
+    "undoLimitBytes": 67108864,
     "keymap": {},
     "theme": "auto",
     "icons": "unicode",

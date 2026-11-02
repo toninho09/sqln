@@ -9,7 +9,9 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use common::{ctrl, key, temp_dir};
-use crossterm::event::{Event, KeyCode, KeyEvent};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use sqln::app::{App, Options};
@@ -65,6 +67,22 @@ impl Session {
     fn prefix(&mut self, c: char) {
         self.send(ctrl('w'));
         self.press(KeyCode::Char(c));
+    }
+
+    fn mouse(&mut self, kind: MouseEventKind, column: u16, row: u16) {
+        self.app.on_event(Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }));
+    }
+
+    /// Clears the editor and opens the window of the history.
+    fn open_window(&mut self) {
+        self.send(ctrl('a'));
+        self.press(KeyCode::Backspace);
+        self.prefix('H');
     }
 
     fn idle(&mut self) {
@@ -387,6 +405,47 @@ fn the_filter_keeps_the_rows_with_each_word() {
     assert!(!screen.contains("SELECT 2"), "{screen}");
     session.press(KeyCode::Enter);
     assert_eq!(session.app.console().editor.text(), "SELECT a FROM t");
+}
+
+#[test]
+fn a_click_on_a_row_inserts_its_statement_and_does_not_run_it() {
+    let mut session = Session::new("history-click", "{}");
+    session.run("SELECT 1");
+    session.run("SELECT 2");
+    session.open_window();
+    let screen = session.screen();
+    let (y, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("SELECT 1"))
+        .unwrap();
+    let column = line[..line.find("SELECT 1").unwrap()].chars().count();
+    let left = MouseEventKind::Down(MouseButton::Left);
+
+    session.mouse(left, 0, 0);
+    assert!(session.screen().contains("Query history"), "outside");
+    session.mouse(left, column as u16, y as u16);
+    session.idle();
+    assert!(!session.screen().contains("Query history"));
+    assert_eq!(session.app.console().editor.text(), "SELECT 1");
+    assert_eq!(session.entries().len(), 2);
+}
+
+#[test]
+fn the_wheel_moves_the_cursor_of_the_window() {
+    let mut session = Session::new("history-wheel", "{}");
+    session.run("SELECT 1");
+    session.run("SELECT 2");
+    session.open_window();
+    session.mouse(MouseEventKind::ScrollDown, 0, 0);
+    session.press(KeyCode::Enter);
+    assert_eq!(session.app.console().editor.text(), "SELECT 1");
+
+    session.open_window();
+    session.mouse(MouseEventKind::ScrollDown, 0, 0);
+    session.mouse(MouseEventKind::ScrollUp, 0, 0);
+    session.press(KeyCode::Enter);
+    assert_eq!(session.app.console().editor.text(), "SELECT 2");
 }
 
 #[test]

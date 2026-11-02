@@ -23,7 +23,7 @@ use super::{
 };
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, RelationRef, Schema};
 use crate::exec::{Flow, ResultSink};
-use crate::grid::{Row, Value};
+use crate::grid::{Row, RowWriter, Value};
 use crate::sql::Dialect;
 use crate::ui::text;
 
@@ -384,23 +384,25 @@ fn reply_text(reply: &Reply) -> String {
     }
 }
 
-/// Returns the value of one cell of the grid.
-fn cell(reply: &Reply) -> Value {
+/// Writes the value of one cell of the grid.
+fn write_cell(row: &mut RowWriter, reply: &Reply) {
     match reply {
-        Reply::Nil => Value::Null,
-        Reply::Int(number) => Value::Number(number.to_string().into()),
-        Reply::Double(number) => Value::Number(number.to_string().into()),
-        Reply::BulkString(bytes) => match std::str::from_utf8(bytes) {
-            Ok(text) => Value::Text(text.into()),
-            Err(_) => Value::Binary(bytes.as_slice().into()),
-        },
-        Reply::Attribute { data, .. } => cell(data),
-        other => Value::Text(reply_text(other).into()),
+        Reply::Nil => row.push(Value::Null),
+        Reply::Int(number) => row.push(Value::Number(&number.to_string())),
+        Reply::Double(number) => row.push(Value::Number(&number.to_string())),
+        Reply::BulkString(bytes) => row.push(match std::str::from_utf8(bytes) {
+            Ok(text) => Value::Text(text),
+            Err(_) => Value::binary(bytes),
+        }),
+        Reply::Attribute { data, .. } => write_cell(row, data),
+        other => row.push(Value::Text(&reply_text(other))),
     }
 }
 
 fn row(cells: &[&Reply]) -> Row {
-    cells.iter().map(|reply| cell(reply)).collect()
+    let mut row = RowWriter::default();
+    cells.iter().for_each(|reply| write_cell(&mut row, reply));
+    row.finish()
 }
 
 /// Writes a reply as a grid, with its columns and rows. `None` is a reply without data:
@@ -430,6 +432,20 @@ fn items(reply: &Reply) -> &[Reply] {
         Reply::Array(items) | Reply::Set(items) => items,
         _ => &[],
     }
+}
+
+/// Builds the rows of a hash or a set from the flat items of `SCAN`. A broken reply
+/// can end with a group without its last values, so each row grows with nulls.
+fn scan_rows(found: &[Reply], columns: usize) -> Vec<Row> {
+    found
+        .chunks(columns)
+        .map(|cells| {
+            let mut row = RowWriter::default();
+            cells.iter().for_each(|reply| write_cell(&mut row, reply));
+            (cells.len()..columns).for_each(|_| row.push(Value::Null));
+            row.finish()
+        })
+        .collect()
 }
 
 /// Reads the numbers of the databases with keys from the text of `INFO keyspace`.
@@ -681,11 +697,10 @@ impl RedisSession {
             let [next, found] = items(&reply) else {
                 return Err(ExecError::new(text::REDIS_BAD_REPLY));
             };
-            let rows: Vec<Row> = items(found)
-                .chunks(columns.len())
+            let rows: Vec<Row> = scan_rows(items(found), columns.len())
+                .into_iter()
                 .skip(skip)
                 .take(left)
-                .map(|cells| cells.iter().map(cell).collect())
                 .collect();
             skip = skip.saturating_sub(items(found).len() / columns.len());
             left -= rows.len();
@@ -831,5 +846,25 @@ impl Session for RedisSession {
         _relation: &str,
     ) -> Result<Vec<String>, ExecError> {
         Ok(Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_short_group_of_a_scan_grows_with_nulls() {
+        let item = |text: &str| Reply::BulkString(text.as_bytes().to_vec());
+        let found = vec![item("a"), item("1"), item("b")];
+        let rows = scan_rows(&found, 2);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].columns(), 2);
+        assert_eq!(
+            rows[1].columns(),
+            2,
+            "the row of a broken reply keeps its width"
+        );
+        assert_eq!(rows[1].get(1), Some(Value::Null));
     }
 }

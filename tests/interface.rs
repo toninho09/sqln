@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, temp_db, temp_dir};
+use common::{ctrl, key, shift, temp_db, temp_dir};
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -859,6 +859,23 @@ fn a_click_on_a_result_tab_and_on_the_explorer_title_moves_the_focus() {
 }
 
 #[test]
+fn a_click_on_a_tab_works_with_more_results_than_columns() {
+    let mut screen = Screen::new("many-tabs", Theme::plain(), KeyboardMode::Conventional);
+    let script = "SELECT 1 AS a;\n".repeat(400);
+    screen.app.on_event(Event::Paste(script));
+    screen.app.on_event(Event::Key(shift(KeyCode::F(5))));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while screen.app.console().is_busy() {
+        screen.app.drain_events();
+        assert!(Instant::now() < deadline, "the run did not end");
+    }
+    assert_eq!(screen.app.console().results.len(), 400);
+    let (column, row) = screen.locate("Result 2");
+    screen.click(column, row);
+    assert_eq!(screen.app.console().active, 1);
+}
+
+#[test]
 fn the_edge_of_a_header_accepts_each_column_of_the_gap() {
     for offset in 0..3 {
         let mut screen = Screen::new("edge", Theme::plain(), KeyboardMode::Conventional);
@@ -981,6 +998,33 @@ fn the_palette_works_with_the_mouse() {
     assert!(
         shown.contains("no configuration files"),
         "the command ran:\n{shown}"
+    );
+}
+
+#[test]
+fn the_wheel_moves_the_cursor_of_the_palette() {
+    let wheel = |kind| {
+        Event::Mouse(MouseEvent {
+            kind,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    let mut screen = Screen::new("palette-wheel", Theme::plain(), KeyboardMode::Conventional);
+    screen.palette();
+    let first = screen.buffer(100, 30);
+
+    screen.app.on_event(wheel(MouseEventKind::ScrollDown));
+    let second = screen.buffer(100, 30);
+    assert_ne!(first, second);
+    screen.app.on_event(wheel(MouseEventKind::ScrollUp));
+    assert_eq!(first, screen.buffer(100, 30));
+    screen.code(KeyCode::Down);
+    assert_eq!(
+        second,
+        screen.buffer(100, 30),
+        "the wheel acts as the arrow"
     );
 }
 

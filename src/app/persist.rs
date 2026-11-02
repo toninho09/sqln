@@ -1,7 +1,7 @@
 //! The files of the running application: the configuration, the autosave of the
 //! consoles, the changes that other programs make, and the state of the session.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -9,9 +9,9 @@ use super::history::HistoryLog;
 use super::{App, DialogAction, Options};
 use crate::connection::{Connection, ConnectionKey, Definition, refresh_labels};
 use crate::editor::{KeyboardMode, SqlEditor};
-use crate::exec::ConnectionId;
+use crate::exec::{ConnectionId, ConsoleId};
 use crate::export::ExportChoices;
-use crate::script_file::Trouble;
+use crate::script_file::{SaveWorker, Trouble};
 use crate::settings::SettingsForm;
 use crate::store::config::{self, Change, Config, ConfigError, CredentialName, Loaded, Stored};
 use crate::store::scripts::{self, ScriptMeta};
@@ -23,7 +23,23 @@ use crate::ui::text;
 /// The time between two checks of the files for a change by another program.
 const POLL_EVERY: Duration = Duration::from_secs(1);
 
+#[cfg(test)]
+mod tests;
+
+#[derive(Default)]
+pub(super) struct SaveIntent {
+    manual: bool,
+    close: bool,
+    associate: Option<ConnectionId>,
+    overwrite: bool,
+    metadata: bool,
+    association_running: Option<ConnectionId>,
+    rename: Option<(String, String)>,
+}
+
 pub(super) struct Persist {
+    worker: SaveWorker,
+    pub(super) saves: HashMap<ConsoleId, SaveIntent>,
     pub store: Store,
     /// The hash of each configuration file at the last load or check.
     pub hashes: Vec<(Scope, Option<u64>)>,
@@ -73,6 +89,8 @@ impl Persist {
         }
         let session_target = options.session_target;
         let persist = Self {
+            worker: SaveWorker::new(),
+            saves: HashMap::new(),
             store,
             hashes,
             error,
@@ -96,6 +114,7 @@ impl Persist {
         settings.row_cap = config.row_cap.unwrap_or(settings.row_cap);
         settings.budget_bytes = config.budget_bytes.unwrap_or(settings.budget_bytes);
         options.keyboard = config.keyboard;
+        options.undo_limit = config.undo_limit_bytes;
         options.keymap = Some(config.keymap);
         options.appearance = (config.theme, config.icons);
         options.suggestion_keys = config.suggestion_keys;
@@ -244,6 +263,10 @@ impl App {
             self.settings.budget_bytes = bytes;
             self.budget.set_limit(bytes);
         }
+        self.undo_limit = config.undo_limit_bytes;
+        for console in &mut self.consoles {
+            console.editor.set_undo_limit(config.undo_limit_bytes);
+        }
         self.keymap = config.keymap;
         self.suggestion_keys = config.suggestion_keys;
         if let Some(persist) = &mut self.persist {
@@ -268,14 +291,15 @@ impl App {
 
     /// Gives a console a new editor with a text. The cursor stays when it fits.
     pub(super) fn replace_editor(&mut self, index: usize, text: &str) {
+        let dialect = self.consoles[index].editor.dialect();
+        let editor = self.new_editor(text, dialect);
         let console = &mut self.consoles[index];
         let was_dirty = console
             .file
             .as_ref()
             .is_some_and(|file| file.is_dirty(console.editor.revision()));
         let cursor = console.editor.cursor();
-        let dialect = console.editor.dialect();
-        console.editor = SqlEditor::new(text, self.keyboard, dialect, self.clipboard.clone());
+        console.editor = editor;
         let lines = text.split('\n').collect::<Vec<_>>();
         if let Some(line) = lines.get(cursor.row)
             && cursor.col <= line.chars().count()
@@ -492,18 +516,18 @@ impl App {
         if revision == 0 {
             return;
         }
-        let Some(root) = self.persist_root(key.scope) else {
+        if self.persist_root(key.scope).is_none() {
             return;
-        };
+        }
         let id = scripts::new_id();
-        let lock = scripts::lock(&root, &id).ok().flatten();
+        let lock = None;
         let mut meta = ScriptMeta::new(id, console.name.clone(), key.id, key.scope);
         meta.schema.clone_from(&console.schema);
         let file = crate::script_file::ScriptFile::new(key.scope, meta, lock, 0);
         self.consoles[index].file = Some(file);
     }
 
-    /// Writes the text of a console at once.
+    /// Writes a console during emergency shutdown, after the worker completes.
     pub(super) fn save_console(&mut self, index: usize, now: Instant) -> Result<(), Trouble> {
         let console = &mut self.consoles[index];
         let Some(file) = &mut console.file else {
@@ -549,8 +573,247 @@ impl App {
             self.open_conflicts();
             return;
         }
-        if self.save_console(index, Instant::now()).is_ok() {
-            self.status = Some(text::SAVED.to_owned());
+        self.persist
+            .as_mut()
+            .unwrap()
+            .saves
+            .entry(self.consoles[index].id)
+            .or_default()
+            .manual = true;
+        self.start_console_save(index, false);
+    }
+
+    /// Returns true while a script write or its continuation waits.
+    pub fn has_pending_saves(&self) -> bool {
+        self.persist
+            .as_ref()
+            .is_some_and(|persist| !persist.saves.is_empty())
+            || self
+                .consoles
+                .iter()
+                .any(|console| console.file.as_ref().is_some_and(|file| file.is_saving()))
+    }
+
+    pub(super) fn association_pending(&self, id: ConsoleId) -> bool {
+        self.persist
+            .as_ref()
+            .and_then(|persist| persist.saves.get(&id))
+            .is_some_and(|intent| intent.associate.is_some())
+    }
+
+    fn start_console_save(&mut self, index: usize, autosave: bool) {
+        let target = self
+            .persist
+            .as_ref()
+            .and_then(|persist| persist.saves.get(&self.consoles[index].id))
+            .and_then(|intent| intent.associate)
+            .and_then(|id| {
+                self.connections
+                    .iter()
+                    .find(|connection| connection.id == id)
+            })
+            .and_then(|connection| connection.key.clone());
+        let Some(persist) = &mut self.persist else {
+            return;
+        };
+        let console = &mut self.consoles[index];
+        let Some(file) = &mut console.file else {
+            return;
+        };
+        if file.is_saving() || !persist.worker.ready() {
+            return;
+        }
+        let intent = persist.saves.get_mut(&console.id);
+        let overwrite = intent.as_ref().is_some_and(|intent| intent.overwrite);
+        if !autosave && intent.is_none() {
+            return;
+        }
+        if !overwrite && file.trouble.as_ref().is_some_and(Trouble::needs_choice) {
+            return;
+        }
+        let Some(root) = persist.store.root(file.scope) else {
+            return;
+        };
+        if let Some(intent) = intent.as_ref() {
+            if intent.metadata && !overwrite && file.meta_written() {
+                file.start_metadata(&persist.worker, root);
+                persist.saves.get_mut(&console.id).unwrap().metadata = false;
+                return;
+            }
+            if intent.associate.is_some() && !file.is_dirty(console.editor.revision()) {
+                let Some(key) = target else {
+                    persist.saves.remove(&console.id);
+                    return;
+                };
+                let Some(to) = persist.store.root(key.scope) else {
+                    return;
+                };
+                let mut meta = file.meta.clone();
+                meta.connection_id = key.id;
+                meta.connection_scope = key.scope;
+                meta.schema = None;
+                file.start_relocate(&persist.worker, root, to, key.scope, meta);
+                persist
+                    .saves
+                    .get_mut(&console.id)
+                    .unwrap()
+                    .association_running = intent.associate;
+                return;
+            }
+        }
+        let text = console.editor.text();
+        file.start_save(
+            &persist.worker,
+            root,
+            text,
+            console.editor.revision(),
+            overwrite,
+        );
+        if let Some(intent) = intent {
+            intent.overwrite = false;
+        }
+    }
+
+    fn poll_saves(&mut self, now: Instant) -> bool {
+        let mut completed = Vec::new();
+        for console in &mut self.consoles {
+            if let Some((result, metadata_name)) =
+                console.file.as_mut().and_then(|file| file.poll_save(now))
+            {
+                completed.push((console.id, result, metadata_name));
+            }
+        }
+        let changed = !completed.is_empty();
+        for (id, result, metadata_name) in completed {
+            let Some(index) = self.console_index(id) else {
+                continue;
+            };
+            let console = &self.consoles[index];
+            let id = console.id;
+            let name = console.name.clone();
+            let dirty = console
+                .file
+                .as_ref()
+                .is_some_and(|file| file.is_dirty(console.editor.revision()));
+            if let Err(Trouble::Failed(message)) = &result {
+                self.status = Some(text::save_failed(&name, message));
+                self.status_shown = None;
+            }
+            let intent = self
+                .persist
+                .as_mut()
+                .and_then(|persist| persist.saves.remove(&id));
+            let Some(mut intent) = intent else { continue };
+            if let Err(problem) = result {
+                if let Some((previous, requested)) = &intent.rename {
+                    let console = &mut self.consoles[index];
+                    console.name.clone_from(previous);
+                    if let Some(file) = &mut console.file {
+                        file.meta.name.clone_from(previous);
+                    }
+                    self.status = Some(text::script_failed(requested, &format!("{problem:?}")));
+                }
+                if intent.close {
+                    self.show_unsaved(index, problem);
+                } else if intent.associate.is_some() {
+                    self.status = Some(text::ASSOCIATE_SAVE_FIRST.to_owned());
+                }
+                continue;
+            }
+            if let Some((previous, _)) = &mut intent.rename
+                && let Some(name) = metadata_name
+            {
+                *previous = name;
+            }
+            if let Some(connection) = intent.association_running.take() {
+                if intent.associate == Some(connection) {
+                    intent.associate = None;
+                }
+                let name = self.consoles[index].name.clone();
+                self.consoles[index].file.as_mut().unwrap().meta.name = name;
+                if let Some(target) = self.connection(connection) {
+                    let dialect = target.dialect;
+                    let name = target.name.clone();
+                    self.bind_keeping_name(index, connection, dialect);
+                    self.status = Some(text::associated(&name));
+                }
+            }
+            let id = self.consoles[index].id;
+            if intent.metadata
+                || intent.overwrite
+                || intent.associate.is_some()
+                || (dirty && !self.consoles[index].discard_text && (intent.manual || intent.close))
+            {
+                self.persist.as_mut().unwrap().saves.insert(id, intent);
+                continue;
+            }
+            if intent.rename.is_some() {
+                self.status = Some(text::CONSOLE_RENAMED.to_owned());
+            }
+            if intent.manual {
+                self.status = Some(text::SAVED.to_owned());
+            }
+            if intent.close {
+                self.close_step(id);
+            }
+        }
+        changed
+    }
+
+    pub(super) fn queue_save_for_move(&mut self, index: usize, connection: ConnectionId) {
+        let console = &self.consoles[index];
+        if console
+            .file
+            .as_ref()
+            .is_some_and(|file| file.trouble.is_some())
+        {
+            self.status = Some(text::ASSOCIATE_SAVE_FIRST.to_owned());
+            return;
+        }
+        self.persist
+            .as_mut()
+            .unwrap()
+            .saves
+            .entry(console.id)
+            .or_default()
+            .associate = Some(connection);
+        self.start_console_save(index, false);
+    }
+
+    pub(super) fn queue_metadata(&mut self, index: usize, rename: Option<(String, String)>) {
+        let intent = self
+            .persist
+            .as_mut()
+            .unwrap()
+            .saves
+            .entry(self.consoles[index].id)
+            .or_default();
+        intent.metadata = true;
+        if let Some((previous, requested)) = rename {
+            let previous = intent
+                .rename
+                .as_ref()
+                .map_or(previous, |(old, _)| old.clone());
+            intent.rename = Some((previous, requested));
+        }
+        self.start_console_save(index, false);
+    }
+
+    pub(super) fn rekey_saves(&mut self, previous: ConsoleId, current: ConsoleId) {
+        if let Some(persist) = &mut self.persist
+            && let Some(intent) = persist.saves.remove(&previous)
+        {
+            persist.saves.insert(current, intent);
+        }
+    }
+
+    pub(super) fn cancel_save_close(&mut self, id: ConsoleId) {
+        if let Some(intent) = self
+            .persist
+            .as_mut()
+            .and_then(|persist| persist.saves.get_mut(&id))
+        {
+            intent.close = false;
         }
     }
 
@@ -563,6 +826,7 @@ impl App {
         if self.persist.is_none() {
             return changed;
         }
+        changed |= self.poll_saves(now);
         for index in 0..self.consoles.len() {
             self.ensure_file(index);
             let console = &mut self.consoles[index];
@@ -570,15 +834,8 @@ impl App {
             let Some(file) = &mut console.file else {
                 continue;
             };
-            let before = file.trouble.clone();
-            if file.due(revision, now) {
-                let _ = self.save_console(index, now);
-            }
-            let after = self.consoles[index]
-                .file
-                .as_ref()
-                .and_then(|file| file.trouble.clone());
-            changed |= before != after;
+            let due = file.due(revision, now);
+            self.start_console_save(index, due);
         }
         if self
             .persist
@@ -663,28 +920,70 @@ impl App {
     /// Writes the pending text before a close. It returns false after it asked a
     /// question, because the text has no safe place to go.
     pub(super) fn flush_console(&mut self, index: usize) -> bool {
-        if self.persist.is_none() || self.consoles[index].discard_text {
+        if self.persist.is_none() {
+            return true;
+        }
+        if self.consoles[index].discard_text {
+            let console = &self.consoles[index];
+            let saving = console.file.as_ref().is_some_and(|file| file.is_saving());
+            let persist = self.persist.as_mut().unwrap();
+            persist.saves.remove(&console.id);
+            if saving {
+                persist.saves.entry(console.id).or_default().close = true;
+                return false;
+            }
             return true;
         }
         self.ensure_file(index);
         let console = &self.consoles[index];
         let revision = console.editor.revision();
-        let name = console.name.clone();
         let id = console.id;
+        let saving = console.file.as_ref().is_some_and(|file| file.is_saving())
+            || self
+                .persist
+                .as_ref()
+                .and_then(|persist| persist.saves.get(&id))
+                .is_some_and(|intent| intent.overwrite);
+        if saving {
+            self.queue_save_close(index);
+            return false;
+        }
         let problem = match &console.file {
             Some(file) if file.trouble.as_ref().is_some_and(Trouble::needs_choice) => {
                 file.trouble.clone()
             }
-            Some(file) if file.is_dirty(revision) => self.save_console(index, Instant::now()).err(),
+            Some(file) if file.is_dirty(revision) => {
+                self.queue_save_close(index);
+                return false;
+            }
             Some(_) => None,
             None if console.editor.text().is_empty() => None,
             None => Some(Trouble::Failed(text::NO_PLACE.to_owned())),
         };
         let Some(problem) = problem else { return true };
+        self.show_unsaved(index, problem);
+        false
+    }
+
+    fn queue_save_close(&mut self, index: usize) {
+        self.persist
+            .as_mut()
+            .unwrap()
+            .saves
+            .entry(self.consoles[index].id)
+            .or_default()
+            .close = true;
+        self.start_console_save(index, false);
+    }
+
+    fn show_unsaved(&mut self, index: usize, problem: Trouble) {
+        let console = &self.consoles[index];
+        let name = &console.name;
+        let id = console.id;
         let body = match &problem {
-            Trouble::Failed(message) => text::unsaved_failed(&name, message),
-            Trouble::Changed => text::unsaved_changed(&name),
-            Trouble::Removed => text::unsaved_removed(&name),
+            Trouble::Failed(message) => text::unsaved_failed(name, message),
+            Trouble::Changed => text::unsaved_changed(name),
+            Trouble::Removed => text::unsaved_removed(name),
         };
         let discard = if problem == Trouble::Removed {
             text::OPTION_CLOSE_DISCARD
@@ -699,7 +998,6 @@ impl App {
                 (discard, DialogAction::DiscardAndClose(id)),
             ],
         );
-        false
     }
 
     /// Writes what it can for a signal or a panic. These cases allow no question, so a
@@ -709,8 +1007,38 @@ impl App {
             return;
         }
         let now = Instant::now();
+        for console in &mut self.consoles {
+            if let Some(file) = &mut console.file {
+                let _ = file.wait_save(now);
+            }
+        }
         for index in 0..self.consoles.len() {
             self.ensure_file(index);
+            let intent = self
+                .persist
+                .as_mut()
+                .and_then(|persist| persist.saves.remove(&self.consoles[index].id));
+            if let Some(intent) = intent
+                && let Some(file) = &mut self.consoles[index].file
+                && let Some(root) = self
+                    .persist
+                    .as_ref()
+                    .and_then(|persist| persist.store.root(file.scope))
+            {
+                if intent.metadata {
+                    let _ = file.write_meta(root);
+                }
+                if intent.overwrite {
+                    let console = &mut self.consoles[index];
+                    let text = console.editor.text();
+                    let revision = console.editor.revision();
+                    let _ = console
+                        .file
+                        .as_mut()
+                        .unwrap()
+                        .overwrite(root, &text, revision);
+                }
+            }
             let console = &self.consoles[index];
             let revision = console.editor.revision();
             let waits = |file: &crate::script_file::ScriptFile| {
@@ -816,9 +1144,11 @@ impl App {
         else {
             return;
         };
-        if let Err(message) = file.write_meta(root) {
-            self.status = Some(text::save_failed(&console.name, &message));
+        if !file.meta_written() && !file.is_saving() {
+            return;
         }
+        let _ = root;
+        self.queue_metadata(index, None);
     }
 
     /// Replaces the text of a console with the text of its file. The user chose it.
@@ -855,12 +1185,15 @@ impl App {
         else {
             return;
         };
-        let text = console.editor.text();
-        if let Err(Trouble::Failed(message)) =
-            file.overwrite(root, &text, console.editor.revision())
-        {
-            self.status = Some(text::save_failed(&console.name, &message));
-        }
+        let _ = root;
+        self.persist
+            .as_mut()
+            .unwrap()
+            .saves
+            .entry(self.consoles[index].id)
+            .or_default()
+            .overwrite = true;
+        self.start_console_save(index, false);
     }
 
     pub(super) fn connection_by_key(&self, scope: Scope, id: &str) -> Option<&Connection> {

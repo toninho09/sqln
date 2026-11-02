@@ -2,17 +2,25 @@
 
 mod buffer;
 mod conventional;
+mod frame;
 mod search;
+mod undo;
+
+use std::collections::{BTreeSet, HashMap};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use edtui::actions::{DeleteChar, SwitchMode};
-use edtui::{EditorEventHandler, EditorMode, EditorState, Highlight, Index2, Lines};
+use edtui::{EditorEventHandler, EditorMode, EditorState, Index2, Lines, RowIndex};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthChar;
 
-use self::buffer::{Snapshot, normalize_newlines, replace_range, toggle_comment};
+use self::buffer::{Snapshot, normalize_newlines, replace_ranges, toggle_comment};
 use self::conventional::{EditKind, INDENT, UndoGroup};
+pub use self::frame::FrameState;
+use self::frame::{Styles, Window, window_end};
 pub use self::search::{Match, SearchBar, SearchField};
+pub use self::undo::DEFAULT_UNDO_LIMIT;
+use self::undo::UndoHistory;
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{CopyOutcome, EditorClipboard, SharedClipboard};
 use crate::complete::{Completion, keywords, suggest_in};
@@ -22,6 +30,36 @@ use crate::ui::text;
 use crate::ui::theme::Theme;
 
 pub const TAB_WIDTH: usize = 4;
+
+/// Returns the `(row, index)` nearest to a row. A tie takes the lowest index.
+fn nearest_place(places: &BTreeSet<(usize, usize)>, row: usize) -> Option<(usize, usize)> {
+    let first_on = |row: usize| places.range((row, 0)..).next().copied();
+    let before = places.range(..(row, 0)).next_back();
+    let before = before.and_then(|(row, _)| first_on(*row));
+    match (before, first_on(row)) {
+        (Some(before), Some(after)) if row - before.0 <= after.0 - row => Some(before),
+        (before, after) => after.or(before),
+    }
+}
+
+/// Returns the cells of a character on the screen of the editor.
+fn cells(c: char) -> usize {
+    match c {
+        '\t' => TAB_WIDTH,
+        c => c.width().unwrap_or(0),
+    }
+}
+
+/// Returns the last column that a cursor reaches in `width` cells from `left`.
+fn last_column(line: &[char], left: usize, width: usize) -> usize {
+    let mut used = 0;
+    let rest = line.get(left..).unwrap_or_default();
+    let fitting = rest.iter().take_while(|c| {
+        used += cells(**c);
+        used < width
+    });
+    left + fitting.count()
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum KeyboardMode {
@@ -113,6 +151,9 @@ pub struct SqlEditor {
     anchor: Option<Index2>,
     preferred_col: Option<usize>,
     undo_group: Option<UndoGroup>,
+    /// The steps of the conventional mode. It is empty in the Vim mode.
+    history: UndoHistory,
+    /// The redo steps of EdTUI that a new edit did not end.
     redo_depth: usize,
     page_height: usize,
     text_area: Option<Rect>,
@@ -160,6 +201,7 @@ impl SqlEditor {
             anchor: None,
             preferred_col: None,
             undo_group: None,
+            history: UndoHistory::default(),
             redo_depth: 0,
             page_height: 20,
             text_area: None,
@@ -182,6 +224,11 @@ impl SqlEditor {
         self.dialect
     }
 
+    /// Changes the limit of the undo history of the conventional mode.
+    pub fn set_undo_limit(&mut self, bytes: usize) {
+        self.history.set_limit(bytes);
+    }
+
     /// Changes the SQL rules of the text. The next frame reads the text again.
     pub fn set_dialect(&mut self, dialect: Dialect) {
         self.dialect = dialect;
@@ -198,7 +245,7 @@ impl SqlEditor {
     }
 
     /// Changes the keyboard mode in place. The text, the cursor, the scroll, the
-    /// history, and the selection stay.
+    /// history, and the selection stay. Only the steps that wait for a redo can end.
     pub fn set_keyboard(&mut self, keyboard: KeyboardMode) {
         if self.keyboard == keyboard {
             return;
@@ -209,6 +256,7 @@ impl SqlEditor {
         self.undo_group = None;
         match keyboard {
             KeyboardMode::Vim => {
+                self.history.move_to_edtui(&mut self.state);
                 self.anchor = None;
                 self.vim_shadow = Some(self.state.lines.clone());
                 let selected = self.state.selection.is_some();
@@ -312,7 +360,11 @@ impl SqlEditor {
 
     fn snapshot(&mut self) -> &Snapshot {
         let revision = self.revision;
-        let current = self.snapshot.take_if(|(cached, _)| *cached == revision);
+        // The old copy leaves first, so a key keeps one copy at its peak.
+        let current = self
+            .snapshot
+            .take()
+            .filter(|(cached, _)| *cached == revision);
         let cached =
             current.unwrap_or_else(|| (revision, Snapshot::new(&self.state.lines, self.dialect)));
         &self.snapshot.insert(cached).1
@@ -584,27 +636,34 @@ impl SqlEditor {
         if self.revision != self.plan_revision {
             return;
         }
-        let Some(mark) = self.marks.iter().find(|mark| mark.index == index) else {
+        let Some(mark) = self.mark_place(index).map(|place| &self.marks[place]) else {
             return;
         };
         let (at, statement_end) = (mark.start + offset, mark.start + mark.text.len());
         let revision = self.revision;
         let tokens = &self.snapshot().tokens;
-        let next = tokens.partition_point(|token| token.end <= at);
+        let next = tokens.partition_point(|token| token.end() <= at);
         let token = tokens
             .get(next)
-            .filter(|token| token.start <= at && at < statement_end)
+            .filter(|token| token.start() <= at && at < statement_end)
             .or_else(|| tokens[..next].last());
         self.error_spot = token.map(|token| ErrorSpot {
-            start: token.start,
-            end: token.end,
+            start: token.start(),
+            end: token.end(),
             revision,
         });
     }
 
+    /// Returns the place of a mark. The marks stay in the order of their statements.
+    fn mark_place(&self, index: usize) -> Option<usize> {
+        self.marks
+            .binary_search_by_key(&index, |mark| mark.index)
+            .ok()
+    }
+
     pub fn set_mark_state(&mut self, index: usize, state: MarkState) {
-        if let Some(mark) = self.marks.iter_mut().find(|mark| mark.index == index) {
-            mark.state = Some(state);
+        if let Some(place) = self.mark_place(index) {
+            self.marks[place].state = Some(state);
         }
     }
 
@@ -617,20 +676,23 @@ impl SqlEditor {
             let mut marks = std::mem::take(&mut self.marks);
             let snapshot = self.snapshot();
             let text = snapshot.text.as_str();
-            let statements = split(text, dialect);
-            let mut used = vec![false; statements.len()];
+            let mut free: HashMap<&str, BTreeSet<(usize, usize)>> = HashMap::new();
+            for (index, statement) in split(text, dialect).iter().enumerate() {
+                let row = snapshot.row_of(statement.start);
+                free.entry(statement.text(text))
+                    .or_default()
+                    .insert((row, index));
+            }
             marks.retain_mut(|mark| {
-                let nearest = statements
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, statement)| !used[*index] && statement.text(text) == mark.text)
-                    .map(|(index, statement)| (index, snapshot.position(statement.start).row))
-                    .min_by_key(|(_, row)| row.abs_diff(mark.row));
-                if let Some((index, row)) = nearest {
-                    used[index] = true;
-                    mark.row = row;
-                }
-                nearest.is_some()
+                let Some(places) = free.get_mut(mark.text.as_str()) else {
+                    return false;
+                };
+                let Some(place) = nearest_place(places, mark.row) else {
+                    return false;
+                };
+                places.remove(&place);
+                mark.row = place.0;
+                true
             });
             self.marks = marks;
         }
@@ -664,9 +726,13 @@ impl SqlEditor {
         }
     }
 
-    /// Returns true when EdTUI changed the text.
+    /// Returns true when EdTUI changed the text. Only the Vim mode has this copy.
     fn sync_vim_shadow(&mut self) -> bool {
-        if self.vim_shadow.as_ref() == Some(&self.state.lines) {
+        if self
+            .vim_shadow
+            .as_ref()
+            .is_none_or(|shadow| *shadow == self.state.lines)
+        {
             return false;
         }
         self.vim_shadow = Some(self.state.lines.clone());
@@ -932,10 +998,12 @@ impl SqlEditor {
     /// Replaces ranges as one undo step. The ranges come in the order of the text, and
     /// the cursor goes to the start of the first one.
     fn replace_ranges(&mut self, ranges: &[(Index2, Index2, &str)]) {
-        self.state.execute(DeleteChar(0));
-        let lines = &mut self.state.lines;
-        for (start, end, text) in ranges.iter().rev() {
-            replace_range(lines, *start, *end, text);
+        match self.keyboard {
+            KeyboardMode::Conventional => self.replace_ranges_in_one_step(ranges),
+            KeyboardMode::Vim => {
+                self.state.execute(DeleteChar(0));
+                replace_ranges(&mut self.state.lines, ranges);
+            }
         }
         let first = ranges[0].0;
         self.state.cursor = Index2::new(first.row, first.col);
@@ -950,9 +1018,46 @@ impl SqlEditor {
         }
     }
 
-    /// Writes the highlights of the rows that the next frame shows.
-    pub fn prepare_frame(&mut self, height: usize, theme: &Theme) {
-        self.page_height = height;
+    /// Records one step from the start of the first range to the end of the last one.
+    /// The text after the last range does not change, so it gives the end of the step.
+    fn replace_ranges_in_one_step(&mut self, ranges: &[(Index2, Index2, &str)]) {
+        let (start, last) = (ranges[0].0, ranges[ranges.len() - 1].1);
+        let lines = &mut self.state.lines;
+        let removed = buffer::text_in(lines, start, last);
+        let rows_after = lines.len() - last.row;
+        let columns_after = buffer::row(lines, last.row).len() - last.col;
+        replace_ranges(lines, ranges);
+        let row = lines.len() - rows_after;
+        let end = Index2::new(row, buffer::row(lines, row).len() - columns_after);
+        self.history.push(start, end, removed, self.state.cursor);
+    }
+
+    /// Returns the first column of the next frame. EdTUI moves its view with this rule
+    /// during the draw, and the window must be ready before the draw.
+    fn next_left(&self, width: usize) -> usize {
+        let (left, _) = self.state.viewport_offset();
+        let line = buffer::row(&self.state.lines, self.state.cursor.row);
+        let last = match self.state.mode {
+            EditorMode::Normal => line.len().saturating_sub(1),
+            _ => line.len(),
+        };
+        let cursor = self.state.cursor.col.min(last);
+        if cursor < left {
+            return cursor;
+        }
+        if cursor <= last_column(line, left, width) {
+            return left;
+        }
+        let mut used = 0;
+        let fitting = (0..=cursor).rev().take_while(|col| {
+            used += line.get(*col).map_or(1, |c| cells(*c));
+            used < width
+        });
+        cursor.saturating_sub(fitting.count())
+    }
+
+    /// Returns the part of the text that the next frame shows.
+    fn next_window(&self, width: usize, height: usize) -> Window {
         let cursor_row = self.state.cursor.row;
         let (_, top) = self.state.viewport_offset();
         let top = if cursor_row < top {
@@ -962,8 +1067,22 @@ impl SqlEditor {
         } else {
             top
         };
+        let left = self.next_left(width);
+        let ends = (top..=top + height)
+            .map(|row| window_end(buffer::row(&self.state.lines, row), left, width))
+            .collect();
+        Window { top, left, ends }
+    }
+
+    /// Finds the styles of the part of the text that the next frame shows, and returns
+    /// the state to draw. Each row stops at the end of the window until that state drops,
+    /// so the text is not complete during the draw.
+    pub fn prepare_frame(&mut self, width: usize, height: usize, theme: &Theme) -> FrameState<'_> {
+        self.page_height = height;
+        let window = self.next_window(width, height);
         let dialect = self.dialect;
-        let mut highlights = self.search_highlights(top, height, theme);
+        let mut styles = Styles::new(&window);
+        self.mark_search(&window, &mut styles, theme);
         let spot = self
             .error_spot
             .as_ref()
@@ -972,58 +1091,58 @@ impl SqlEditor {
         let snapshot = self.snapshot();
         if let Some((start, end)) = spot {
             let start = snapshot.position(start);
-            highlights.push(Highlight::new(
-                start,
-                snapshot.position_before(end),
-                theme.error_spot,
-            ));
+            styles.mark(start, snapshot.position_before(end), theme.error_spot);
         }
-        let visible_start = snapshot.line_start(top);
-        let visible_end = snapshot.line_start(top + height + 1);
-        let first = snapshot
-            .tokens
-            .partition_point(|token| token.end <= visible_start);
-        for token in &snapshot.tokens[first..] {
-            if token.start >= visible_end {
-                break;
+        for (row, end) in window.rows() {
+            for (token, first, last) in snapshot.row_tokens(row, window.left, end) {
+                let word = &snapshot.text[token.start()..token.end()];
+                let style = match token.kind {
+                    TokenKind::Word if keywords::is_keyword(word, dialect) => theme.keyword,
+                    TokenKind::Number => theme.number,
+                    TokenKind::String => theme.string,
+                    TokenKind::QuotedIdentifier => theme.identifier,
+                    TokenKind::Comment => theme.comment,
+                    _ => continue,
+                };
+                styles.mark(Index2::new(row, first), Index2::new(row, last), style);
             }
-            let word = &snapshot.text[token.start..token.end];
-            let style = match token.kind {
-                TokenKind::Word if keywords::is_keyword(word, dialect) => theme.keyword,
-                TokenKind::Number => theme.number,
-                TokenKind::String => theme.string,
-                TokenKind::QuotedIdentifier => theme.identifier,
-                TokenKind::Comment => theme.comment,
-                _ => continue,
-            };
-            let start = snapshot.position(token.start);
-            let end = snapshot.position_before(token.end);
-            highlights.push(Highlight::new(start, end, style));
         }
-        self.state.set_highlights(highlights);
+        let mut rows = Vec::new();
+        for (row, end) in window.rows() {
+            if let Some(line) = self.state.lines.get_mut(RowIndex::new(row))
+                && end < line.len()
+            {
+                let cut = line[..end].to_vec();
+                rows.push((row, std::mem::replace(line, cut)));
+            }
+        }
+        FrameState {
+            state: &mut self.state,
+            rows,
+            styles,
+        }
     }
 
-    fn search_highlights(&self, top: usize, height: usize, theme: &Theme) -> Vec<Highlight> {
+    fn mark_search(&self, window: &Window, styles: &mut Styles, theme: &Theme) {
         let Some(search) = &self.search else {
-            return Vec::new();
+            return;
         };
         let current = search.current_match();
         let first = search
             .matches
-            .partition_point(|found| found.start.row < top);
-        search.matches[first..]
+            .partition_point(|found| found.start.row < window.top);
+        let shown = search.matches[first..]
             .iter()
-            .take_while(|found| found.start.row <= top + height)
-            .map(|found| {
-                let style = if Some(*found) == current {
-                    theme.search_current
-                } else {
-                    theme.search_match
-                };
-                let end = Index2::new(found.end.row, found.end.col - 1);
-                Highlight::new(found.start, end, style)
-            })
-            .collect()
+            .take_while(|found| found.start.row < window.top + window.ends.len());
+        for found in shown {
+            let style = if Some(*found) == current {
+                theme.search_current
+            } else {
+                theme.search_match
+            };
+            let end = Index2::new(found.end.row, found.end.col - 1);
+            styles.mark(found.start, end, style);
+        }
     }
 
     pub fn set_text_area(&mut self, area: Rect) {

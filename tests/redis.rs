@@ -92,7 +92,7 @@ fn a_key_page_keeps_any_name() {
 }
 
 fn texts(row: &Row) -> Vec<String> {
-    row.iter()
+    row.cells()
         .map(|value| match value {
             Value::Null => "NULL".to_owned(),
             Value::Text(text) | Value::Number(text) => text.to_string(),
@@ -114,13 +114,13 @@ fn each_reply_shape_has_its_grid() {
     assert_eq!(texts(&rows[0]), ["v"]);
 
     let (_, rows) = reply_grid(&Reply::Nil).unwrap();
-    assert_eq!(rows[0][0], Value::Null);
+    assert_eq!(rows[0].get(0).unwrap(), Value::Null);
 
     let (_, rows) = reply_grid(&Reply::Int(7)).unwrap();
-    assert_eq!(rows[0][0], Value::Number("7".into()));
+    assert_eq!(rows[0].get(0).unwrap(), Value::Number("7"));
 
     let (_, rows) = reply_grid(&Reply::BulkString(vec![0xff])).unwrap();
-    assert_eq!(rows[0][0], Value::Binary(vec![0xff].into()));
+    assert_eq!(rows[0].get(0).unwrap(), Value::binary(&[0xff]));
 
     let (columns, rows) = reply_grid(&Reply::Array(vec![bulk("a"), bulk("b")])).unwrap();
     assert_eq!(columns, ["value"]);
@@ -246,6 +246,24 @@ fn a_saved_connection_keeps_its_kind_without_a_user() {
     let mut read = to_definition(&entry, "/base".into());
     read.base = None;
     assert_eq!(read, definition);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_socket_refuses_tls() {
+    let target = parse_uri("rediss:///0?socket=/tmp/sqln-none.sock").unwrap();
+    let error = network_connector(target).connect().await.err().unwrap();
+    assert_eq!(error.message, sqln::ui::text::REDIS_SOCKET_TLS);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_missing_socket_reports_an_error() {
+    let path = common::temp_dir("redis-no-socket").join("none.sock");
+    let target = parse_uri(&format!("redis:///0?socket={}", path.display())).unwrap();
+    let error = network_connector(target).connect().await.err().unwrap();
+    assert!(!error.message.is_empty());
+    assert!(!error.password_refused);
 }
 
 // The tests below need a server.
@@ -407,7 +425,7 @@ fn each_type_reaches_the_grid_by_its_shape() {
         assert_eq!(run.grid(), [["a b"]]);
 
         let run = h.run_ok(&["GET shape:none"]);
-        assert_eq!(run.rows[0][0], Value::Null);
+        assert_eq!(run.rows[0].get(0).unwrap(), Value::Null);
 
         let run = h.run_ok(&["LRANGE shape:l 0 -1"]);
         assert_eq!(run.grid(), [["x"], ["y"]]);
@@ -417,10 +435,10 @@ fn each_type_reaches_the_grid_by_its_shape() {
         assert_eq!(run.grid(), [["f1", "v1"]]);
 
         let run = h.run_ok(&["ZSCORE shape:z m"]);
-        assert_eq!(run.rows[0][0], Value::Number("1.5".into()));
+        assert_eq!(run.rows[0].get(0).unwrap(), Value::Number("1.5"));
 
         let run = h.run_ok(&["LLEN shape:l"]);
-        assert_eq!(run.rows[0][0], Value::Number("2".into()));
+        assert_eq!(run.rows[0].get(0).unwrap(), Value::Number("2"));
     }
 }
 
@@ -561,7 +579,7 @@ fn a_multi_that_stays_open_ends_with_the_execution() {
         h.run_ok(&["DEL open:a"]);
         h.run_ok(&["MULTI", "SET open:a v"]);
         let run = h.run_ok(&["GET open:a"]);
-        assert_eq!(run.rows[0][0], Value::Null, "{run:?}");
+        assert_eq!(run.rows[0].get(0).unwrap(), Value::Null, "{run:?}");
     }
 }
 
@@ -572,7 +590,7 @@ fn the_session_returns_to_its_database() {
         h.run_ok(&["DEL back:a"]);
         h.run_ok(&["SELECT 5", "SET back:a v", "EXPIRE back:a 60"]);
         let run = h.run_ok(&["GET back:a"]);
-        assert_eq!(run.rows[0][0], Value::Null, "{run:?}");
+        assert_eq!(run.rows[0].get(0).unwrap(), Value::Null, "{run:?}");
     }
 }
 

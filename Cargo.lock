@@ -2957,7 +2957,7 @@ dependencies = [
 
 [[package]]
 name = "sqln"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "apple-native-keyring-store",
  "arboard",
@@ -2982,6 +2982,7 @@ dependencies = [
  "tokio-postgres",
  "tokio-postgres-rustls",
  "tokio-rustls",
+ "unicode-segmentation",
  "unicode-width",
  "uuid",
  "webpki-roots 1.0.11",

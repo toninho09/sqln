@@ -59,6 +59,9 @@ impl App {
         let mut rows = Vec::new();
         for console in &self.consoles {
             let Some(file) = &console.file else { continue };
+            if file.is_saving() || persist.saves.contains_key(&console.id) {
+                continue;
+            }
             let Some(trouble) = file
                 .trouble
                 .as_ref()

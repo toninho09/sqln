@@ -226,6 +226,7 @@ impl App {
         match action {
             DialogAction::Dismiss => {}
             DialogAction::CancelClose(id) => {
+                self.cancel_save_close(id);
                 self.exiting = false;
                 if let Some(console) = self.console_by_id(id) {
                     console.closing = false;

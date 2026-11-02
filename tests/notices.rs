@@ -63,7 +63,7 @@ impl Session for FakeSession {
         match sql {
             "read" => {
                 sink.set_columns(vec!["a".to_owned()]).await;
-                sink.push(Box::new([Value::Null])).await;
+                sink.push([Value::Null].into_iter().collect()).await;
                 let texts = vec!["WARNING: one".to_owned(), "NOTICE: two".to_owned()];
                 sink.notices(texts, 3).await;
                 let (rows, limit) = sink.finish().await;

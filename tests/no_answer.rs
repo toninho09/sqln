@@ -124,7 +124,7 @@ impl Session for FakeSession {
         self.0.statements.lock().unwrap().push(sql.to_owned());
         if self.0.stream_rows.load(Ordering::SeqCst) {
             sink.set_columns(vec!["a".to_owned()]).await;
-            let row = || -> sqln::grid::Row { Box::new([sqln::grid::Value::Null]) };
+            let row = || -> sqln::grid::Row { [sqln::grid::Value::Null].into_iter().collect() };
             while sink.push(row()).await != Flow::Discard {
                 tokio::task::yield_now().await;
             }

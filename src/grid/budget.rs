@@ -22,7 +22,7 @@ pub struct Budget {
     used: AtomicUsize,
 }
 
-fn value_bytes(value: &Value) -> usize {
+fn value_bytes(value: Value<'_>) -> usize {
     match value {
         Value::Null => 0,
         Value::Text(text) | Value::Number(text) => text.len(),
@@ -31,8 +31,8 @@ fn value_bytes(value: &Value) -> usize {
 }
 
 /// Returns the bytes that one row keeps in memory, without allocator overhead.
-pub fn row_cost(row: &[Value]) -> usize {
-    size_of::<Row>() + std::mem::size_of_val(row) + row.iter().map(value_bytes).sum::<usize>()
+pub fn row_cost(row: &Row) -> usize {
+    size_of::<Row>() + row.bytes()
 }
 
 impl Budget {
@@ -56,12 +56,12 @@ impl Budget {
         self.limit.load(Ordering::Relaxed)
     }
 
-    pub fn reserve(&self, row: &[Value]) -> Reservation {
+    pub fn reserve(&self, row: &Row) -> Reservation {
         let limit = self.limit();
-        if row.iter().any(|value| value_bytes(value) > limit) {
+        let cost = row_cost(row);
+        if cost > limit && row.cells().any(|value| value_bytes(value) > limit) {
             return Reservation::ValueTooLarge;
         }
-        let cost = row_cost(row);
         let reserved = self
             .used
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {

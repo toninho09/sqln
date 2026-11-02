@@ -6,7 +6,8 @@ use edtui::actions::{DeleteChar, Redo, SwitchMode, Undo};
 use edtui::{EditorMode, Index2};
 
 use super::buffer::{
-    document_end, last_row, next_position, previous_position, row, text_in, word_left, word_right,
+    document_end, last_row, next_position, previous_position, replace_range, row, text_in,
+    word_left, word_right,
 };
 use super::{KeyboardMode, SqlEditor};
 
@@ -215,11 +216,26 @@ impl SqlEditor {
                 cursor: self.state.cursor,
             })
             && kind != EditKind::Other;
-        if !continues {
-            // `DeleteChar(0)` is the public way to record an undo point. It changes no text.
-            self.state.execute(DeleteChar(0));
-        }
-        let cursor = super::buffer::replace_range(&mut self.state.lines, start, end, text);
+        let lines = &mut self.state.lines;
+        let cursor = match self.keyboard {
+            KeyboardMode::Conventional => {
+                let removed = text_in(lines, start, end);
+                let cursor = replace_range(lines, start, end, text);
+                if continues {
+                    self.history.join(start, end, &removed, cursor);
+                } else {
+                    self.history.push(start, cursor, removed, self.state.cursor);
+                }
+                cursor
+            }
+            KeyboardMode::Vim => {
+                if !continues {
+                    // `DeleteChar(0)` is the public way to record an undo point.
+                    self.state.execute(DeleteChar(0));
+                }
+                replace_range(&mut self.state.lines, start, end, text)
+            }
+        };
         self.state.cursor = cursor;
         self.anchor = None;
         self.preferred_col = None;
@@ -230,22 +246,35 @@ impl SqlEditor {
     }
 
     fn undo(&mut self) {
-        let before = self.state.lines.clone();
-        self.state.execute(Undo);
+        let state = &mut self.state;
+        let changed =
+            self.history.undo(&mut state.lines, &mut state.cursor) || self.undo_vim_step();
         self.after_history_step();
-        if self.state.lines != before {
-            self.redo_depth += 1;
+        if changed {
             self.mark_changed();
         }
     }
 
-    /// EdTUI keeps old redo entries after a new edit, so a depth counter hides them.
+    /// The steps of the Vim mode stay in EdTUI, and they are older than the steps of the
+    /// history. It returns true when the text changed.
+    fn undo_vim_step(&mut self) -> bool {
+        let before = self.state.lines.clone();
+        self.state.execute(Undo);
+        let changed = self.state.lines != before;
+        self.redo_depth += usize::from(changed);
+        changed
+    }
+
+    /// The steps of EdTUI are older, so they come back first. EdTUI keeps old redo entries
+    /// after a new edit, so a depth counter hides them.
     fn redo(&mut self) {
-        if self.redo_depth == 0 {
+        let state = &mut self.state;
+        if self.redo_depth > 0 {
+            self.redo_depth -= 1;
+            state.execute(Redo);
+        } else if !self.history.redo(&mut state.lines, &mut state.cursor) {
             return;
         }
-        self.redo_depth -= 1;
-        self.state.execute(Redo);
         self.after_history_step();
         self.mark_changed();
     }

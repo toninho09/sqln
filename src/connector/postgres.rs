@@ -34,7 +34,7 @@ use crate::catalog::{
     group_foreign_keys,
 };
 use crate::exec::{Flow, ResultSink};
-use crate::grid::{Row, Value};
+use crate::grid::{Row, RowWriter, Value};
 use crate::sql::{Dialect, counts_rows, is_plain_read, reads_or_writes_stdio};
 use crate::ui::text;
 
@@ -321,7 +321,7 @@ fn column_kind(column: &Type) -> ColumnKind {
 }
 
 /// Reads the `\x00ff` form. The `escape` form of `bytea_output` stays as text.
-fn bytea_value(text: &str) -> Value {
+fn write_bytea(row: &mut RowWriter, text: &str) {
     let decoded = text
         .strip_prefix("\\x")
         .filter(|hex| hex.len().is_multiple_of(2))
@@ -330,23 +330,26 @@ fn bytea_value(text: &str) -> Value {
                 .map(|index| u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok())
                 .collect::<Option<Box<[u8]>>>()
         });
-    decoded.map_or_else(|| Value::Text(text.into()), Value::Binary)
+    row.push(decoded.as_deref().map_or(Value::Text(text), Value::binary));
 }
 
-fn row_values(row: &SimpleQueryRow, kinds: &[ColumnKind]) -> Result<Row, ExecError> {
-    let mut cells = Vec::with_capacity(row.len());
+fn row_values(
+    cells: &mut RowWriter,
+    row: &SimpleQueryRow,
+    kinds: &[ColumnKind],
+) -> Result<Row, ExecError> {
     for index in 0..row.len() {
         let text = row
             .try_get(index)
             .map_err(|error| ExecError::new(describe(&error)))?;
-        cells.push(match (text, kinds.get(index)) {
-            (None, _) => Value::Null,
-            (Some(text), Some(ColumnKind::Number)) => Value::Number(text.into()),
-            (Some(text), Some(ColumnKind::Binary)) => bytea_value(text),
-            (Some(text), _) => Value::Text(text.into()),
-        });
+        match (text, kinds.get(index)) {
+            (None, _) => cells.push(Value::Null),
+            (Some(text), Some(ColumnKind::Number)) => cells.push(Value::Number(text)),
+            (Some(text), Some(ColumnKind::Binary)) => write_bytea(cells, text),
+            (Some(text), _) => cells.push(Value::Text(text)),
+        }
     }
-    Ok(cells.into_boxed_slice())
+    Ok(cells.finish())
 }
 
 /// The database counts characters from 1, and the editor uses bytes from 0.
@@ -463,6 +466,7 @@ impl PostgresSession {
         let mut outcome = Outcome::default();
         let mut storing = true;
         let mut stopped_at_cap = false;
+        let mut writer = RowWriter::default();
         loop {
             let message = match stream.try_next().await {
                 Ok(Some(message)) => message,
@@ -483,7 +487,7 @@ impl PostgresSession {
                     sink.set_columns(names).await;
                 }
                 SimpleQueryMessage::Row(row) if storing => {
-                    let flow = sink.push(row_values(&row, kinds)?).await;
+                    let flow = sink.push(row_values(&mut writer, &row, kinds)?).await;
                     storing = flow == Flow::Continue;
                     let free = self.transaction == TransactionState::None;
                     if flow == Flow::Stop && free && is_plain_read(sql, Dialect::Postgres) {

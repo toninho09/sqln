@@ -4,6 +4,21 @@ This document records the choices and the rejected alternatives.
 The complete rules are in the [plan](INITIAL_PLAN.md).
 Do not reopen a decision without a new fact.
 
+## Undo history of the conventional mode — 2026-11-02
+
+The user approved an own history for the conventional mode.
+This decision reopens the row "Undo limit" of "Official version of EdTUI", and the rows "Undo" and "Redo" of "Execution and results", only for the conventional mode.
+The new fact is the measure: 1.7 GiB in 100 entries of a 50,000-line script. The Vim mode keeps the stack of EdTUI, and its cap stays as technical debt.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| History | One step keeps the replaced text, in `editor::undo`, only in the conventional mode | Fork of EdTUI; keep the debt | The fork blocks publishing. The conventional mode is the default, and SQLN makes all its edits |
+| Limit | `undoLimitBytes` per console, 64 MiB by default. Settings > Editor shows it in MiB, and a saved value acts at once | Fixed value | User choice |
+| Limit of steps | None. Only the size limits the history | Keep 100 steps | With 100 steps, a larger size gives no more steps of typing |
+| Step above the limit | The newest step stays, without a warning. The oldest steps leave | Remove it and warn | An undo of a large deletion stays possible, and that step takes less memory than the same text in the editor |
+| Change of keyboard | The history stays. The Vim mode receives the 100 newest steps, as full copies | Clear the history and warn | The behavior of the history stays. A warning needs a new window |
+| Redo at a change to Vim | The steps that wait for a redo end | Keep them | It needs a new order between two stacks for a rare case |
+
 ## Tree filter, database notices, bell, transaction age, SQL generation, and `JOIN` — 2026-11-01
 
 The user approved seven items of the project analysis.

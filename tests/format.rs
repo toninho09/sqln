@@ -15,7 +15,7 @@ fn format(sql: &str) -> String {
 
 fn tokens_of(sql: &str, dialect: Dialect) -> Vec<&str> {
     let tokens = tokenize(sql, dialect);
-    let texts = tokens.iter().map(|token| &sql[token.start..token.end]);
+    let texts = tokens.iter().map(|token| &sql[token.start()..token.end()]);
     texts.collect()
 }
 
@@ -293,4 +293,18 @@ fn the_vim_mode_leaves_the_selection_after_a_format() {
     assert_eq!(f.text(), "SELECT a\nFROM t");
     assert!(!f.editor.is_inserting());
     assert_eq!(f.editor.selected_text(), None);
+}
+
+#[test]
+fn several_statements_on_several_rows_change_in_one_step() {
+    let text = "select 1 from a; select 2 from b;\n  \nselect 3 from c;";
+    let mut f = Fixture::conventional(text);
+    f.press(ctrl('a'));
+    f.editor.format_sql().unwrap();
+    assert_eq!(
+        f.text(),
+        "select 1\nfrom a; select 2\nfrom b;\n  \nselect 3\nfrom c;"
+    );
+    f.press(ctrl('z'));
+    assert_eq!(f.text(), text);
 }

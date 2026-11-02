@@ -1,7 +1,7 @@
 //! The saved consoles: the list that opens them again, the scripts without a
 //! connection, the removal of a script, and the association with a connection.
 
-use std::time::{Instant, SystemTime};
+use std::time::SystemTime;
 
 use edtui::Index2;
 
@@ -9,7 +9,7 @@ use super::{App, DialogAction, Picker, PickerKind};
 use crate::connection::Connection;
 use crate::editor::SqlEditor;
 use crate::exec::{ConnectionId, ConsoleId};
-use crate::script_file::{ScriptFile, Trouble};
+use crate::script_file::ScriptFile;
 use crate::store::file::Expect;
 use crate::store::scripts::{self, ScriptEntry};
 use crate::store::workspace;
@@ -184,7 +184,7 @@ impl App {
             .map(|item| (item.id, item.dialect));
         let dialect = connection.map_or(self.fallback_dialect, |(_, dialect)| dialect);
         let mut console = self.unbound_console(dialect);
-        console.editor = SqlEditor::new(&text, self.keyboard, dialect, self.clipboard.clone());
+        console.editor = self.new_editor(&text, dialect);
         console.name.clone_from(&entry.meta.name);
         console.schema.clone_from(&entry.meta.schema);
         let revision = console.editor.revision();
@@ -369,32 +369,37 @@ impl App {
         };
         let result = match prompt.target {
             NameTarget::Console(console) => self.rename_console(console, &name),
-            NameTarget::Script(entry) => self.rename_script(&entry, &name),
+            NameTarget::Script(entry) => self.rename_script(&entry, &name).map(|_| false),
         };
-        self.status = Some(match result {
-            Ok(()) => text::CONSOLE_RENAMED.to_owned(),
-            Err(message) => text::script_failed(&name, &message),
-        });
+        match result {
+            Ok(true) => {}
+            Ok(false) => self.status = Some(text::CONSOLE_RENAMED.to_owned()),
+            Err(message) => self.status = Some(text::script_failed(&name, &message)),
+        }
     }
 
-    fn rename_console(&mut self, id: ConsoleId, name: &str) -> Result<(), String> {
+    fn rename_console(&mut self, id: ConsoleId, name: &str) -> Result<bool, String> {
         let Some(index) = self.console_index(id) else {
-            return Ok(());
+            return Ok(false);
         };
         let root = self.consoles[index]
             .file
             .as_ref()
             .and_then(|file| self.persist_root(file.scope));
         let console = &mut self.consoles[index];
-        if let (Some(file), Some(root)) = (&mut console.file, &root) {
+        let mut rename = None;
+        if let (Some(file), Some(_)) = (&mut console.file, &root) {
             let old = std::mem::replace(&mut file.meta.name, name.to_owned());
-            if let Err(message) = file.write_meta(root) {
-                file.meta.name = old;
-                return Err(message);
+            if file.meta_written() || file.is_saving() {
+                rename = Some((old, name.to_owned()));
             }
         }
         console.name = name.to_owned();
-        Ok(())
+        let pending = rename.is_some();
+        if pending {
+            self.queue_metadata(index, rename);
+        }
+        Ok(pending)
     }
 
     fn rename_script(&mut self, entry: &ScriptEntry, name: &str) -> Result<(), String> {
@@ -464,7 +469,7 @@ impl App {
 
     /// Moves a console to a connection. The name stays, and the results of the last
     /// connection end. It sends no SQL.
-    fn bind_keeping_name(
+    pub(super) fn bind_keeping_name(
         &mut self,
         index: usize,
         connection: ConnectionId,
@@ -587,76 +592,14 @@ impl App {
             self.change_memory_console(index, connection);
             return;
         }
-        let Some(target) = self.connection(connection) else {
-            return;
-        };
-        let Some(key) = target.key.clone() else {
-            return;
-        };
-        let dialect = target.dialect;
-        let name = target.name.clone();
-        let now = Instant::now();
-        // The move copies the saved text, so the pending text goes to the file first.
-        if self.consoles[index].file.is_some() && self.save_console_for_move(index, now).is_err() {
-            self.status = Some(text::ASSOCIATE_SAVE_FIRST.to_owned());
+        if self
+            .connection(connection)
+            .and_then(|target| target.key.as_ref())
+            .is_none()
+        {
             return;
         }
-        let Some(to_root) = self.persist_root(key.scope) else {
-            return;
-        };
-        let Some(file) = &mut self.consoles[index].file else {
-            return;
-        };
-        let Some(from_root) = self
-            .persist
-            .as_ref()
-            .and_then(|p| p.store.root(file.scope))
-            .cloned()
-        else {
-            return;
-        };
-        let mut meta = file.meta.clone();
-        meta.connection_id = key.id;
-        meta.connection_scope = key.scope;
-        meta.schema = None;
-        if file.scope == key.scope {
-            file.meta = meta;
-            if let Err(message) = file.write_meta(&to_root) {
-                self.status = Some(text::script_failed(&name, &message));
-                return;
-            }
-        } else {
-            let lock = match scripts::lock(&to_root, &meta.id) {
-                Ok(Some(lock)) => lock,
-                _ => {
-                    self.status = Some(text::SCRIPT_BUSY.to_owned());
-                    return;
-                }
-            };
-            if let Err(message) = scripts::move_to(&from_root, &to_root, &meta) {
-                self.status = Some(text::script_failed(&name, &message));
-                return;
-            }
-            file.relocate(key.scope, meta, Some(lock), &to_root);
-        }
-        self.bind_keeping_name(index, connection, dialect);
-        self.status = Some(text::associated(&name));
-    }
-
-    fn save_console_for_move(&mut self, index: usize, now: Instant) -> Result<(), Trouble> {
-        let console = &self.consoles[index];
-        let dirty = console
-            .file
-            .as_ref()
-            .is_some_and(|file| file.is_dirty(console.editor.revision()));
-        if let Some(trouble) = console.file.as_ref().and_then(|file| file.trouble.clone()) {
-            return Err(trouble);
-        }
-        if dirty {
-            self.save_console(index, now)
-        } else {
-            Ok(())
-        }
+        self.queue_save_for_move(index, connection);
     }
 }
 

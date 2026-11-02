@@ -115,7 +115,7 @@ pub fn from_clause(relation: &RelationRef, dialect: Dialect) -> String {
 fn is_one_statement(sql: &str, dialect: Dialect) -> bool {
     let open = tokenize(sql, dialect).iter().any(|token| {
         if token.kind == TokenKind::Comment {
-            sql[token.start..].starts_with("/*") && !token.closed
+            sql[token.start()..].starts_with("/*") && !token.closed
         } else {
             !token.closed
         }
@@ -587,14 +587,14 @@ impl TableTab {
         };
         if load.count {
             budget.release(bytes);
-            let number = rows.first().and_then(|row| row.first());
+            let number = rows.first().and_then(|row| row.get(0));
             self.total = number.and_then(|value| value.full_text().parse().ok());
             return;
         }
         let room = self.page_size.saturating_sub(load.received);
         if rows.len() > room {
             let extra = rows.split_off(room);
-            let cost: usize = extra.iter().map(|row| row_cost(row)).sum();
+            let cost: usize = extra.iter().map(row_cost).sum();
             budget.release(cost);
             bytes = bytes.saturating_sub(cost);
             load.extra = true;

@@ -138,7 +138,7 @@ struct Run {
 
 impl Run {
     fn text(&self, row: usize, column: usize) -> String {
-        match &self.rows[row][column] {
+        match self.rows[row].get(column).unwrap() {
             Value::Text(text) | Value::Number(text) => text.to_string(),
             other => panic!("not text: {other:?}"),
         }
@@ -285,20 +285,20 @@ fn values_keep_the_text_of_the_database_in_postgres() {
     ]);
     let row = &run.rows[0];
     assert_eq!(
-        row[0],
-        Value::Number("12345678901234567890.123456789".into())
+        row.get(0).unwrap(),
+        Value::Number("12345678901234567890.123456789")
     );
-    assert_eq!(row[1], Value::Null);
-    assert_eq!(row[2], Value::Text("".into()));
-    assert_eq!(row[3], Value::Binary(Box::new([0x00, 0xFF])));
-    assert_eq!(row[4], Value::Text("2026-10-30 12:34:56.789".into()));
-    assert_eq!(row[5], Value::Text("ação 日本".into()));
-    assert_eq!(row[6], Value::Text("{1,2}".into()));
-    assert_eq!(row[7], Value::Text("{\"a\": 1}".into()));
-    assert_eq!(row[8], Value::Number("1.5".into()));
-    assert_eq!(row[9], Value::Number("7".into()));
-    assert_eq!(row[10], Value::Text("1 day".into()));
-    assert_eq!(row[11], Value::Text("t".into()));
+    assert_eq!(row.get(1).unwrap(), Value::Null);
+    assert_eq!(row.get(2).unwrap(), Value::Text(""));
+    assert_eq!(row.get(3).unwrap(), Value::binary(&[0x00, 0xFF]));
+    assert_eq!(row.get(4).unwrap(), Value::Text("2026-10-30 12:34:56.789"));
+    assert_eq!(row.get(5).unwrap(), Value::Text("ação 日本"));
+    assert_eq!(row.get(6).unwrap(), Value::Text("{1,2}"));
+    assert_eq!(row.get(7).unwrap(), Value::Text("{\"a\": 1}"));
+    assert_eq!(row.get(8).unwrap(), Value::Number("1.5"));
+    assert_eq!(row.get(9).unwrap(), Value::Number("7"));
+    assert_eq!(row.get(10).unwrap(), Value::Text("1 day"));
+    assert_eq!(row.get(11).unwrap(), Value::Text("t"));
 }
 
 #[test]
@@ -308,7 +308,7 @@ fn a_text_that_looks_like_binary_stays_text_in_postgres() {
     };
     let mut h = Harness::open(&server, Settings::default());
     let run = h.run_ok(&["SELECT '\\x00ff'::text"]);
-    assert_eq!(run.rows[0][0], Value::Text("\\x00ff".into()));
+    assert_eq!(run.rows[0].get(0).unwrap(), Value::Text("\\x00ff"));
 }
 
 #[test]
@@ -324,19 +324,19 @@ fn values_keep_the_text_of_the_database_in_mysql() {
     );
     let row = &run.rows[0];
     assert_eq!(
-        row[0],
-        Value::Number("12345678901234567890.123456789".into())
+        row.get(0).unwrap(),
+        Value::Number("12345678901234567890.123456789")
     );
-    assert_eq!(row[1], Value::Null);
-    assert_eq!(row[2], Value::Text("".into()));
-    assert_eq!(row[3], Value::Binary(Box::new([0x00, 0xFF])));
-    assert_eq!(row[4], Value::Text("2026-10-30 12:34:56".into()));
-    assert_eq!(row[5], Value::Text("ação 日本".into()));
-    assert_eq!(row[6], Value::Number("1.50".into()));
-    assert_eq!(row[7], Value::Number("7".into()));
-    assert_eq!(row[8], Value::Text("{\"a\": 1}".into()));
-    assert_eq!(row[9], Value::Text("2026-10-30".into()));
-    assert_eq!(row[10], Value::Binary(Box::new([0x41])));
+    assert_eq!(row.get(1).unwrap(), Value::Null);
+    assert_eq!(row.get(2).unwrap(), Value::Text(""));
+    assert_eq!(row.get(3).unwrap(), Value::binary(&[0x00, 0xFF]));
+    assert_eq!(row.get(4).unwrap(), Value::Text("2026-10-30 12:34:56"));
+    assert_eq!(row.get(5).unwrap(), Value::Text("ação 日本"));
+    assert_eq!(row.get(6).unwrap(), Value::Number("1.50"));
+    assert_eq!(row.get(7).unwrap(), Value::Number("7"));
+    assert_eq!(row.get(8).unwrap(), Value::Text("{\"a\": 1}"));
+    assert_eq!(row.get(9).unwrap(), Value::Text("2026-10-30"));
+    assert_eq!(row.get(10).unwrap(), Value::binary(&[0x41]));
 }
 
 #[test]
@@ -835,8 +835,8 @@ fn the_cleanup_removes_session_state_between_executions() {
             server.kind
         );
         assert_ne!(
-            second.rows[1][0],
-            Value::Text("dirty".into()),
+            second.rows[1].get(0).unwrap(),
+            Value::Text("dirty"),
             "{:?}",
             server.kind
         );
@@ -1787,7 +1787,11 @@ impl Screen {
 
     fn table_ids(&self) -> Vec<String> {
         let table = &self.app.table().unwrap().result.table;
-        table.rows.iter().map(|row| row[0].display()).collect()
+        table
+            .rows
+            .iter()
+            .map(|row| row.get(0).unwrap().display())
+            .collect()
     }
 }
 
@@ -1841,7 +1845,12 @@ fn the_structure_queries_read_the_catalog_of_each_server() {
         assert_eq!(columns.text(0, 0), "id");
         assert_eq!(columns.text(0, 2), "no");
         assert_eq!(columns.text(0, 4), "PK");
-        assert_eq!(columns.rows[1][4], Value::Null, "{:?}", server.kind);
+        assert_eq!(
+            columns.rows[1].get(4).unwrap(),
+            Value::Null,
+            "{:?}",
+            server.kind
+        );
         assert!(columns.text(1, 1).contains("30"), "{:?}", server.kind);
         assert!(columns.text(1, 3).contains('x'), "{:?}", server.kind);
         assert_eq!(columns.text(2, 2), "yes");
@@ -2436,7 +2445,10 @@ fn a_mysql_session_without_a_database_closes_after_a_use() {
     let mut h = Harness::open(&definition, settings);
     let first = h.run(&["USE spike", server.backend_id()]).text(0, 0);
     let run = h.run(&["SELECT DATABASE()", server.backend_id()]);
-    assert!(matches!(run.rows[0][0], Value::Null), "{run:?}");
+    assert!(
+        matches!(run.rows[0].get(0).unwrap(), Value::Null),
+        "{run:?}"
+    );
     assert_ne!(
         run.text(1, 0),
         first,

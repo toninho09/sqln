@@ -108,6 +108,39 @@ fn mysql_delimiter_changes_the_separator() {
 }
 
 #[test]
+fn mysql_word_delimiter_keeps_a_whole_word() {
+    let sql = "DELIMITER go\nSELECT * FROM goods\ngo\nSELECT 2\ngo";
+    assert_eq!(
+        texts(sql, Dialect::MySql),
+        ["SELECT * FROM goods", "SELECT 2"],
+        "a delimiter must not cut an identifier that starts with it"
+    );
+}
+
+#[test]
+fn mysql_word_delimiter_matches_at_the_end_of_the_text() {
+    assert_eq!(
+        texts("DELIMITER go\nSELECT 1 go", Dialect::MySql),
+        ["SELECT 1"]
+    );
+}
+
+#[test]
+fn a_non_ascii_letter_keeps_a_compound_word_whole() {
+    // `ATOMIC\u{e9}` is one identifier, so `BEGIN` opens no body and the first
+    // semicolon ends the statement.
+    let sql = "CREATE FUNCTION f() BEGIN ATOMIC\u{e9} SELECT 1; END; SELECT 2;";
+    assert_eq!(
+        texts(sql, Dialect::Postgres),
+        [
+            "CREATE FUNCTION f() BEGIN ATOMIC\u{e9} SELECT 1",
+            "END",
+            "SELECT 2"
+        ]
+    );
+}
+
+#[test]
 fn mysql_compound_body_without_delimiter() {
     let sql = "CREATE PROCEDURE p() BEGIN IF 1 THEN SELECT 1; END IF; WHILE 0 DO SELECT 2; END WHILE; END; SELECT 3;";
     let found = texts(sql, Dialect::MySql);
@@ -247,7 +280,7 @@ fn every_token_starts_and_ends_on_a_character_boundary() {
     for dialect in [Dialect::Postgres, Dialect::MySql, Dialect::Sqlite] {
         for token in tokenize(sql, dialect) {
             assert!(
-                sql.get(token.start..token.end).is_some(),
+                sql.get(token.start()..token.end()).is_some(),
                 "{token:?} {dialect:?}"
             );
         }

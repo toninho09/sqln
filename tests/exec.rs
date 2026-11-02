@@ -125,13 +125,13 @@ impl Harness {
         self.run_on(self.console, statements, false)
     }
 
-    fn cell(&mut self, sql: &str) -> Value {
-        self.run(&[sql]).rows.remove(0)[0].clone()
+    fn cell(&mut self, sql: &str) -> Row {
+        self.run(&[sql]).rows.remove(0)
     }
 }
 
-fn number(text: &str) -> Value {
-    Value::Number(text.into())
+fn number(text: &str) -> Value<'_> {
+    Value::Number(text)
 }
 
 fn success(count: usize) -> Vec<StatementStatus> {
@@ -145,12 +145,12 @@ fn a_query_delivers_columns_and_rows_as_database_text() {
     assert_eq!(run.columns, [["a", "b", "c", "d", "e", "f"]]);
     assert_eq!(run.statuses, success(1));
     assert_eq!(run.end, Some(ExecutionEnd::Completed));
-    assert_eq!(run.rows[0][0], number("1"));
-    assert_eq!(run.rows[0][1], number("1.5"));
-    assert_eq!(run.rows[0][2], Value::Text("ação".into()));
-    assert_eq!(run.rows[0][3], Value::Null);
-    assert_eq!(run.rows[0][4], Value::Binary(Box::from([0x00, 0xFF])));
-    assert_eq!(run.rows[0][5], number("1e20"));
+    assert_eq!(run.rows[0].get(0).unwrap(), number("1"));
+    assert_eq!(run.rows[0].get(1).unwrap(), number("1.5"));
+    assert_eq!(run.rows[0].get(2).unwrap(), Value::Text("ação"));
+    assert_eq!(run.rows[0].get(3).unwrap(), Value::Null);
+    assert_eq!(run.rows[0].get(4).unwrap(), Value::binary(&[0x00, 0xFF]));
+    assert_eq!(run.rows[0].get(5).unwrap(), number("1e20"));
 }
 
 #[test]
@@ -165,14 +165,15 @@ fn a_result_without_rows_keeps_its_columns() {
 #[test]
 fn invalid_utf8_text_stays_as_bytes() {
     let mut h = Harness::open("bytes", Settings::default());
-    let value = h.cell("SELECT CAST(x'FF00' AS TEXT)");
+    let row = h.cell("SELECT CAST(x'FF00' AS TEXT)");
+    let value = row.get(0).unwrap();
     assert!(
         matches!(value, Value::Binary(_) | Value::Text(_)),
         "{value:?}"
     );
     assert_eq!(
-        h.cell("SELECT CAST(x'FF41' AS TEXT)"),
-        Value::Binary(Box::from([0xFF, 0x41]))
+        h.cell("SELECT CAST(x'FF41' AS TEXT)").get(0).unwrap(),
+        Value::binary(&[0xFF, 0x41])
     );
 }
 
@@ -204,7 +205,7 @@ fn the_script_stops_at_the_first_error() {
     );
     assert_eq!(run.statuses[3], StatementStatus::NotExecuted);
     assert_eq!(
-        h.cell("SELECT count(*) FROM t"),
+        h.cell("SELECT count(*) FROM t").get(0).unwrap(),
         number("1"),
         "the first insert stays"
     );
@@ -260,7 +261,10 @@ fn the_cap_does_not_change_a_statement_with_returning() {
     ]);
     assert_eq!(run.rows.len(), 2);
     assert_eq!(run.limits[1], ReadLimit::RowCap);
-    assert_eq!(h.cell("SELECT count(*) FROM t"), number("5"));
+    assert_eq!(
+        h.cell("SELECT count(*) FROM t").get(0).unwrap(),
+        number("5")
+    );
 }
 
 #[test]
@@ -314,7 +318,11 @@ fn the_time_limit_applies_per_statement_and_stops_the_script() {
         [StatementStatus::Timeout, StatementStatus::NotExecuted]
     );
     assert_eq!(run.end, Some(ExecutionEnd::TimedOut));
-    assert_eq!(h.cell("SELECT 1"), number("1"), "the next execution works");
+    assert_eq!(
+        h.cell("SELECT 1").get(0).unwrap(),
+        number("1"),
+        "the next execution works"
+    );
 }
 
 #[test]
@@ -330,7 +338,7 @@ fn a_stop_interrupts_the_statement_and_the_following_ones() {
         [StatementStatus::Stopped, StatementStatus::NotExecuted]
     );
     assert_eq!(run.end, Some(ExecutionEnd::Stopped));
-    assert_eq!(h.cell("SELECT 1"), number("1"));
+    assert_eq!(h.cell("SELECT 1").get(0).unwrap(), number("1"));
 }
 
 #[test]
@@ -355,7 +363,7 @@ fn a_stop_while_waiting_sends_no_sql() {
     assert!(run.statuses.is_empty());
 
     assert_eq!(
-        h.cell("SELECT count(*) FROM t"),
+        h.cell("SELECT count(*) FROM t").get(0).unwrap(),
         number("1"),
         "the first console keeps its session"
     );
@@ -377,7 +385,7 @@ fn a_console_waits_and_runs_when_the_transaction_of_another_ends() {
     std::thread::sleep(Duration::from_millis(100));
     h.run(&["COMMIT"]);
     let run = h.collect(execution);
-    assert_eq!(run.rows[0][0], number("7"));
+    assert_eq!(run.rows[0].get(0).unwrap(), number("7"));
 }
 
 #[test]
@@ -388,17 +396,24 @@ fn a_transaction_keeps_its_session_between_executions() {
     assert_eq!(run.transaction, Some(TransactionState::Open));
 
     assert_eq!(
-        h.cell("SELECT count(*) FROM t"),
+        h.cell("SELECT count(*) FROM t").get(0).unwrap(),
         number("1"),
         "the same session sees the row"
     );
     let other = h.manager.open_console(h.connection).unwrap();
     let run = h.run_on(other, &["SELECT count(*) FROM t"], false);
-    assert_eq!(run.rows[0][0], number("0"), "another session does not");
+    assert_eq!(
+        run.rows[0].get(0).unwrap(),
+        number("0"),
+        "another session does not"
+    );
 
     let run = h.run(&["ROLLBACK"]);
     assert_eq!(run.transaction, Some(TransactionState::None));
-    assert_eq!(h.cell("SELECT count(*) FROM t"), number("0"));
+    assert_eq!(
+        h.cell("SELECT count(*) FROM t").get(0).unwrap(),
+        number("0")
+    );
 }
 
 #[test]
@@ -408,7 +423,10 @@ fn an_error_inside_a_transaction_keeps_it_open() {
     let run = h.run(&["BEGIN", "INSERT INTO t VALUES (1)", "SELECT * FROM missing"]);
     assert_eq!(run.end, Some(ExecutionEnd::Failed));
     assert_eq!(run.transaction, Some(TransactionState::Open));
-    assert_eq!(h.cell("SELECT count(*) FROM t"), number("1"));
+    assert_eq!(
+        h.cell("SELECT count(*) FROM t").get(0).unwrap(),
+        number("1")
+    );
 }
 
 #[test]
@@ -443,7 +461,10 @@ fn manual_mode_opens_a_transaction_and_commit_confirms_it() {
             ..
         }
     ));
-    assert_eq!(h.cell("SELECT count(*) FROM t"), number("0"));
+    assert_eq!(
+        h.cell("SELECT count(*) FROM t").get(0).unwrap(),
+        number("0")
+    );
 
     h.run_on(console, &["INSERT INTO t VALUES (2)"], true);
     h.manager.transaction(console, TransactionCommand::Commit);
@@ -454,7 +475,10 @@ fn manual_mode_opens_a_transaction_and_commit_confirms_it() {
             ..
         }
     ));
-    assert_eq!(h.cell("SELECT count(*) FROM t"), number("1"));
+    assert_eq!(
+        h.cell("SELECT count(*) FROM t").get(0).unwrap(),
+        number("1")
+    );
 }
 
 #[test]
@@ -523,7 +547,7 @@ fn an_interrupted_change_in_a_transaction_reports_the_rollback_of_the_database()
         "SQLite ends the transaction"
     );
     assert_eq!(
-        h.cell("SELECT count(*) FROM t"),
+        h.cell("SELECT count(*) FROM t").get(0).unwrap(),
         number("1"),
         "the delete did not stay"
     );
@@ -548,7 +572,10 @@ fn read_only_applies_at_each_reservation() {
             "{run:?}"
         );
     }
-    assert_eq!(h.cell("SELECT count(*) FROM t"), number("0"));
+    assert_eq!(
+        h.cell("SELECT count(*) FROM t").get(0).unwrap(),
+        number("0")
+    );
 }
 
 #[test]
@@ -780,7 +807,7 @@ fn a_stop_ends_an_export_and_the_session_stays_usable() {
     assert_eq!(run.end, Some(ExecutionEnd::Stopped), "{run:?}");
     assert!(writer.rows() > 0);
     writer.discard();
-    assert_eq!(h.cell("SELECT 7"), number("7"));
+    assert_eq!(h.cell("SELECT 7").get(0).unwrap(), number("7"));
 }
 
 #[test]
