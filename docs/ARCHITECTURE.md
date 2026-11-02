@@ -52,6 +52,7 @@ Main thread                        Tokio runtime
 | `connector` | Contract and PostgreSQL, MySQL, SQLite, and Redis/Valkey connectors |
 | `grid` | Rows in one block each (`row`), widths, search, budget, TSV, and readable JSON shape (`json`) |
 | `export` | Export formats, temporary file, and modal form |
+| `import` | File readers, `INSERT` text, batches, the error log, and modal form |
 | `find` | Text comparison of the two searches |
 | `clipboard` | System clipboard and OSC 52 |
 | `terminal` | Terminal setup and restore |
@@ -479,6 +480,7 @@ Reading rules, according to the code:
 - `version` is required and equals 1. An unknown field invalidates the file.
 - All fields of `preferences` are optional, and `keymap` has the `conventional` and `vim` sections.
 - `preferences.export` keeps the choices of the export modal: `format`, `header`, `delimiter`, `nullText`, `bom`, `grouped`, `batch`, and `folder`. The application writes that field when it confirms an export, and it is valid only in the global file.
+- `preferences.import` keeps the choices of the import modal: `encoding`, `header`, `delimiter`, `nullText`, `batch`, and `folder`. It exists only in the global file, as `preferences.export` does.
 - An absent `credential` means `none`. An absent `pool` means 5 connections.
 - A repeated `id` or `name` in the same file invalidates the file. The name ignores case.
 - A relative path (`file`, `caFile`, `clientCert`, `clientKey`) stays as the user wrote it in the file. The resolution happens at connection open.

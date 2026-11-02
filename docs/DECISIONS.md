@@ -4,6 +4,68 @@ This document records the choices and the rejected alternatives.
 The complete rules are in the [plan](INITIAL_PLAN.md).
 Do not reopen a decision without a new fact.
 
+## Import from a file — 2026-11-02
+
+The user asked for an import of a file into a table, inspired by DataGrip, and approved the 31 decisions below.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Target | An existing table. A new table stays for a second delivery | Existing and new table | A new table needs types per dialect and an editable `CREATE TABLE` |
+| 2. Formats | CSV, TSV, JSON, and JSON Lines | CSV and TSV only | User choice: the formats that the export writes, without SQL |
+| 3. Failure | The user chooses: All or nothing, By batch, or Log errors | One fixed behavior | User choice |
+| 4. Window | A dialog with sections in a sidebar | Steps; one screen with all areas | A terminal of 80 columns cannot show all areas |
+| 5. Write | `INSERT` in batches, one path for the three databases. `COPY` and `LOAD DATA` only after a measure asks for them | Native load per database | One path. `LOAD DATA` needs `local_infile` on the server |
+| 6. Open | `I` in the navigator and in a table grid, and a palette action. Tables only | Any grid | The import needs a target table |
+| 7. Mapping | By name, without a case difference. Without a header, by position. Manual choice per column, with an option to ignore | Manual only | The usual file needs no manual step |
+| 8. Existing rows | The import only adds rows | `TRUNCATE`; upsert | Fewer ways to lose data |
+| 9. Parser | Own streaming code that knows if a field had quotes | `csv` crate | The export writes `NULL` as an empty field and empty text as `""` |
+| 10. `NULL` in CSV | An empty field without quotes is `NULL`, `""` is empty text, with an option for the word `NULL` | Empty text for both | This is the rule of the export |
+| 11. Encoding | UTF-8 (a BOM is ignored) and Windows-1252, with no new dependency | UTF-8 only; `encoding_rs` | Excel in Portuguese often saves Windows-1252 |
+| 12. Delimiter | The dialog detects it from the extension and the first line, and the user can change it | Manual only | The usual file needs no manual step |
+| 13. Binary in CSV | `0x...` in a binary column becomes a binary literal | Text | The export writes binary in this form |
+| 14. Safety | No import on a read-only connection, Redis, or a view. Production asks with file, table, and connection | Same question as a run | A file has no statement to show |
+| 15. Execution | In the table tab, without `sql_timeout`. Stop undoes All or nothing. In the other modes, the saved batches stay | Background with own connection | Same reason as the export |
+| 16. Preview | The first 50 rows, with the current format and mapping | All rows | A file can be large |
+| 17. Remember | `preferences.import` in the global `config.json`, without the failure mode | Session only | Same rule as the export |
+| 18. End | Shows the inserted rows, the rows with errors, and the log path, and reloads the tab | Status line only | The user needs the path of the log |
+| 19. Modes | All or nothing: `BEGIN`, batches, `COMMIT`; the first error runs `ROLLBACK`. By batch: each batch commits alone; the first error stops; the saved batches stay. Log errors: as By batch, but a failed batch runs again row by row, a bad row goes to the log, and the import continues | Savepoints | Each batch commits alone, so a failed batch leaves nothing to undo |
+| 20. First mode | Always All or nothing. The mode is not saved | Remember the mode | The other modes leave partial data, so they need a choice each time |
+| 21. Place of an error | All or nothing and By batch show the range of the batch and the reason. A format error and Log errors show the exact line | The exact line always | A multi-row `INSERT` does not name the row |
+| 22. Log | `<source>-errors-YYYY-MM-DD-HHMM.log` beside the source, with an editable path. Each error has the line, the reason, and the original row | Reason only | The user can correct the rows from the log |
+| 23. Error limit | Log errors stops after 1,000 errors, with an editable field | No limit | A wrong mapping would fail on each row |
+| 24. Batch | A field with a default of 100 rows, and a limit of 1 MiB per statement | Fixed size | MySQL refuses a statement above `max_allowed_packet` |
+| 25. JSON form | JSON is an array of objects. JSON Lines is one object per line. Another form is a row error | Nested paths | The form that the export writes |
+| 26. JSON columns | The keys of the first 1,000 objects, in order of appearance. A later key is ignored, with a note at the end | Read the whole file first | A large file would wait for a full read |
+| 27. Missing key | `NULL` | Column default | SQLite does not accept `DEFAULT` in `VALUES` |
+| 28. Nested value | An object or an array becomes JSON text | Refuse the row | This fits a JSON column |
+| 29. Boolean | `true` and `false` in PostgreSQL; `1` and `0` in MySQL and SQLite | Text in all | MySQL refuses `'true'` in a numeric column |
+| 30. Binary in JSON | Base64 in a binary column is decoded. Wrong Base64 is a row error | Text | The export writes binary in this form |
+| 31. Out of scope | New table, upsert, trim of spaces, `NULL` for a value that does not convert, disabled indexes, several files, a restart from a line, and SQL files | | Each stays out of this delivery |
+
+These choices follow the rules above on the points that the rules left open.
+
+| Subject | Choice | Rejected | Reason |
+|---|---|---|---|
+| Options section | The dialog has the sections File, Format, Columns, Options, and Preview | Mode fields in File | Decisions 19 to 24 need a place |
+| Literals | The file is untrusted text. PostgreSQL uses `E'...'`, and MySQL uses `_utf8mb4 0x...` for text with a backslash | `quote_literal` | These forms do not change with `standard_conforming_strings` or `NO_BACKSLASH_ESCAPES` |
+| NUL byte | A value with a NUL byte is a row error | Remove the byte | The project does not change values |
+| Number in JSON | A quoted literal with all digits | A bare number | PostgreSQL refuses a bare number in a `jsonb` or `boolean` column, and rounds it in an `integer` column |
+| JSON encoding | Always UTF-8. The encoding field exists only for CSV and TSV | Encoding for each format | JSON files are UTF-8 |
+| Log path | `Ctrl+O` and the `...` button open the file explorer, with **Use this folder** | Text only | User request: the log can go to another folder |
+| Log file | The file starts at the first error, and a later run in the same minute adds to it | Always create it | A clean run leaves no file |
+| Blank line | A blank line is skipped, except in a file of one column, where it is `NULL` | Always skip | The export writes a blank line for `NULL` in one column |
+| Close and exit | A close of the tab or of the application during an import acts as Stop | A new question | All or nothing undoes its rows, and the other modes keep the saved batches |
+| Other text in a binary column | Its UTF-8 bytes | A text literal | The export writes binary that is valid text as that text. SQLite would keep the type of text, and `bytea` would read each backslash |
+
+### Known limitations of the import
+
+- A MyISAM table cannot undo: All or nothing loses its promise, and Log errors can repeat rows of a failed batch.
+- A generated column fails in the database when the mapping includes it. The user must ignore that column.
+- In PostgreSQL, an `id` from the file does not move the sequence of the column.
+- A second import of a partial file repeats rows in a table without a unique key.
+- Valid `0x...` text in a binary column always becomes binary.
+- The statements of an import do not enter the history or **Messages**.
+
 ## Undo history of the conventional mode — 2026-11-02
 
 The user approved an own history for the conventional mode.

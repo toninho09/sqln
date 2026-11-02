@@ -1,6 +1,8 @@
 //! The task of one console. It runs scripts one statement at a time, and it keeps
 //! the session between executions while a transaction stays open.
 
+mod import;
+
 use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -38,6 +40,27 @@ enum Waited {
     Closed,
 }
 
+impl Waited {
+    /// Returns true when the session cannot run another statement.
+    fn closes_session(&self) -> bool {
+        matches!(
+            self,
+            Waited::Closed
+                | Waited::Finished {
+                    reusable: false,
+                    ..
+                }
+        )
+    }
+}
+
+/// How one statement runs: the row cap, the file of an export, and the time limit.
+struct Delivery {
+    cap: usize,
+    export: Option<ExportWriter>,
+    timed: bool,
+}
+
 pub struct ConsoleTask {
     console: ConsoleId,
     binding: Binding,
@@ -68,6 +91,7 @@ impl ConsoleTask {
         while let Some(command) = commands.recv().await {
             match command {
                 Command::Run(request) => self.run_script(request, &mut commands).await,
+                Command::Import(request) => self.run_import(request, &mut commands).await,
                 Command::Transaction(command) => self.control(command).await,
                 Command::Rebind(binding) => self.binding = binding,
                 Command::Stop | Command::ConfirmClose(_) => {}
@@ -200,17 +224,16 @@ impl ConsoleTask {
             };
 
             self.emit(ExecEvent::StatementStarted { key }).await;
+            let delivery = Delivery {
+                cap,
+                export: export.clone(),
+                // An export ends with the user. It has no time limit.
+                timed: export.is_none(),
+            };
             let (waited, reason) = self
-                .run_statement(key, active, sql, (cap, export.clone()), commands)
+                .run_statement(key, active, sql, delivery, commands)
                 .await;
-            let closed = matches!(
-                waited,
-                Waited::Closed
-                    | Waited::Finished {
-                        reusable: false,
-                        ..
-                    }
-            );
+            let closed = waited.closes_session();
             let error_offset = match &waited {
                 Waited::Finished {
                     result: Err(error), ..
@@ -280,6 +303,11 @@ impl ConsoleTask {
                 self.finish(execution, ExecutionEnd::Refused, Some(message))
                     .await;
             }
+            Command::Import(request) => {
+                let message = "The console already has an execution.".to_owned();
+                self.finish(request.execution, ExecutionEnd::Refused, Some(message))
+                    .await;
+            }
             Command::Transaction(_) => {
                 let message = "The console has an execution in progress.".to_owned();
                 self.emit(ExecEvent::TransactionFailed { console, message })
@@ -307,16 +335,12 @@ impl ConsoleTask {
         key: StatementKey,
         lease: &mut Lease,
         sql: &str,
-        (cap, export): (usize, Option<ExportWriter>),
+        delivery: Delivery,
         commands: &mut UnboundedReceiver<Command>,
     ) -> (Waited, Option<StopReason>) {
+        let Delivery { cap, export, timed } = delivery;
         let mut sink = ResultSink::new(key, self.events.clone(), self.budget.clone(), cap);
-        // An export ends with the user. It has no time limit.
-        let time_limit = self
-            .binding
-            .settings
-            .sql_timeout
-            .filter(|_| export.is_none());
+        let time_limit = self.binding.settings.sql_timeout.filter(|_| timed);
         if let Some(export) = export {
             sink.export_to(export);
         }

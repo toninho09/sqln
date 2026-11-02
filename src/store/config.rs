@@ -21,6 +21,7 @@ use crate::connector::sqlite::SqliteTarget;
 use crate::connector::target::{Address, ClientCertificate, Engine, NetworkTarget, Tls, TlsFiles};
 use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode};
 use crate::export::ExportChoices;
+use crate::import::ImportChoices;
 use crate::input::{Keymap, SuggestionKeys};
 
 pub const VERSION: u32 = 1;
@@ -180,6 +181,9 @@ pub struct Preferences {
     /// The choices of the export dialog. Only the global file holds them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub export: Option<ExportChoices>,
+    /// The choices of the import dialog. Only the global file holds them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<ImportChoices>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -338,6 +342,8 @@ pub struct Config {
     pub suggestion_keys: SuggestionKeys,
     /// The last choices of the export dialog.
     pub export: ExportChoices,
+    /// The last choices of the import dialog.
+    pub import: ImportChoices,
     /// The global connections first, then the project connections.
     pub connections: Vec<Stored>,
 }
@@ -388,6 +394,14 @@ fn validate(file: &ConfigFile, scope: Scope) -> Result<(), String> {
         }
         if export.batch == 0 {
             return Err("export.batch needs 1 or more.".to_owned());
+        }
+    }
+    if let Some(import) = &preferences.import {
+        if scope == Scope::Project {
+            return Err("import is valid only in the global file.".to_owned());
+        }
+        if import.batch == 0 {
+            return Err("import.batch needs 1 or more.".to_owned());
         }
     }
     let mut ids = HashSet::new();
@@ -737,6 +751,7 @@ fn combine(
             .or(global.suggestion_keys)
             .unwrap_or_default(),
         export: global.export.clone().unwrap_or_default(),
+        import: global.import.clone().unwrap_or_default(),
         connections,
     })
 }
@@ -780,6 +795,13 @@ pub fn change_preferences(
     preferences: Preferences,
 ) -> Result<u64, String> {
     change_file(root, scope, |config| config.preferences = preferences)
+}
+
+/// Writes the choices of the import dialog. The other values of the file stay.
+pub fn change_import(root: &Root, import: ImportChoices) -> Result<u64, String> {
+    change_file(root, Scope::Global, |config| {
+        config.preferences.import = Some(import);
+    })
 }
 
 /// Writes the choices of the export dialog. The other values of the file stay.

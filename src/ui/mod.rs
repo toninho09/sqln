@@ -8,6 +8,7 @@ pub mod export;
 pub mod form;
 pub mod history;
 pub mod icons;
+pub mod import;
 pub mod name;
 pub mod navigator;
 pub mod palette;

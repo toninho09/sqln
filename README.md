@@ -41,6 +41,7 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Table browsing.** Apply SQL filters, sort columns, move between pages, and count rows on request.
 - **Results inspection.** Select cells, search loaded rows, inspect a row vertically, and format JSON values.
 - **Export.** Write CSV, TSV, JSON, JSON Lines, or SQL inserts from the export dialog.
+- **Import.** Load CSV, TSV, JSON, or JSON Lines into a table, with column mapping and a preview.
 - **Execution controls.** Run a statement, a selection, or a script, with row limits, deadlines, and cancellation.
 - **Transactions.** Use autocommit or manual mode, with transaction state and age on screen.
 - **Saved work.** Save consoles automatically and reopen tabs with their cursor, scroll, and layout.
@@ -297,6 +298,25 @@ Export supports CSV, TSV, JSON, JSON Lines, and SQL inserts.
 Choose a selection, loaded rows, or all rows. An all-rows export can run a new read and observe newer data.
 Only the **Export** button writes the file. `Esc` cancels the dialog.
 
+### Import a file
+
+Press `I` on a table in the navigator, or in the grid of a table tab.
+
+1. Choose a file. The dialog detects the format and the delimiter.
+2. Check the mapping in **Columns**. A column without a file column keeps its default.
+3. Choose what a failure does in **Options**.
+4. Check the first rows in **Preview**, and press **Import**.
+
+| Mode | On a failed row |
+|---|---|
+| All or nothing | The first error undoes the whole import. This mode is the start of each dialog |
+| By batch | The first error stops the import. The saved batches stay |
+| Log errors | The bad row goes to a log file, and the import continues. It stops after the error limit |
+
+The import only adds rows to an existing table.
+The log holds the rows of the file in plain text.
+A connection marked as production asks before the import.
+
 ## Transactions and execution
 
 Consoles start in autocommit mode. Each console runs one statement at a time within its script.
@@ -487,6 +507,7 @@ A `.sql` path is not a script-opening argument; file targets are SQLite database
 - There is no integrated SSH tunnel, IAM authentication, or Kerberos authentication.
 - PostgreSQL `COPY FROM STDIN` and `COPY TO STDOUT` are not supported.
 - Search in results covers loaded rows only. Exporting all rows can issue a new read.
+- Import cannot create a table, update rows, or read SQL files. A MyISAM table cannot undo an import.
 - Undo and redo have entry limits but no memory budget. Large scripts and repeated edits can use substantial memory.
 - Native terminals, clipboard behavior, network disks, real network failures, and desktop vault prompts need further manual validation.
 - Workflow builds do not provide signing, notarization, or a dependency audit.

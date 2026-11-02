@@ -11,6 +11,7 @@ use crate::connection::{Connection, ConnectionKey, Definition, refresh_labels};
 use crate::editor::{KeyboardMode, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId};
 use crate::export::ExportChoices;
+use crate::import::ImportChoices;
 use crate::script_file::{SaveWorker, Trouble};
 use crate::settings::SettingsForm;
 use crate::store::config::{self, Change, Config, ConfigError, CredentialName, Loaded, Stored};
@@ -119,6 +120,7 @@ impl Persist {
         options.appearance = (config.theme, config.icons);
         options.suggestion_keys = config.suggestion_keys;
         options.export_choices = config.export;
+        options.import_choices = config.import;
         config.connections
     }
 }
@@ -275,6 +277,7 @@ impl App {
             persist.bell_after_seconds = config.bell_after_seconds;
         }
         self.export_choices = config.export;
+        self.import_choices = config.import;
         self.appearance = (config.theme, config.icons);
         if config.keyboard != self.keyboard {
             self.set_keyboard(config.keyboard);
@@ -479,13 +482,27 @@ impl App {
             return;
         }
         self.export_choices = choices.clone();
+        self.change_global(|root| config::change_export(root, choices));
+    }
+
+    /// Keeps the choices of the import dialog, as `save_export_choices` does.
+    pub(super) fn save_import_choices(&mut self, choices: ImportChoices) {
+        if self.import_choices == choices {
+            return;
+        }
+        self.import_choices = choices.clone();
+        self.change_global(|root| config::change_import(root, choices));
+    }
+
+    /// Writes a change to the global file, and keeps its new hash.
+    fn change_global(&mut self, change: impl FnOnce(&Root) -> Result<u64, String>) {
         let Some(persist) = &mut self.persist else {
             return;
         };
         let Some(root) = persist.store.root(Scope::Global) else {
             return;
         };
-        match config::change_export(root, choices) {
+        match change(root) {
             Ok(hash) => {
                 let global = persist.hashes.iter_mut();
                 if let Some((_, known)) =

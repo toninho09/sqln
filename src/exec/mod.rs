@@ -18,6 +18,7 @@ use crate::connector::{
 };
 use crate::export::ExportWriter;
 use crate::grid::{Budget, DEFAULT_LIMIT, Row};
+use crate::import::ImportJob;
 use crate::pool::Pool;
 
 const EVENT_CAPACITY: usize = 256;
@@ -241,6 +242,11 @@ pub struct RunRequest {
     pub options: RunOptions,
 }
 
+pub struct ImportRequest {
+    pub execution: ExecutionId,
+    pub job: ImportJob,
+}
+
 /// The pool and the limits that a console uses.
 #[derive(Clone)]
 struct Binding {
@@ -264,6 +270,7 @@ impl Binding {
 
 enum Command {
     Run(RunRequest),
+    Import(ImportRequest),
     Stop,
     ConfirmClose(bool),
     Transaction(TransactionCommand),
@@ -453,6 +460,13 @@ impl Manager {
                 options,
             }),
         );
+        execution
+    }
+
+    /// Accepts an import and returns its identity.
+    pub fn import(&self, console: ConsoleId, job: ImportJob) -> ExecutionId {
+        let execution = self.next_execution.fetch_add(1, Ordering::Relaxed);
+        self.send(console, Command::Import(ImportRequest { execution, job }));
         execution
     }
 

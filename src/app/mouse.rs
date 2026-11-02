@@ -525,6 +525,47 @@ impl App {
     }
 }
 
+impl App {
+    pub(super) fn on_import_mouse(&mut self, mouse: MouseEvent) {
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+        let position = Position::new(mouse.column, mouse.row);
+        let layout = &self.layout.import;
+        let browse = layout.browse.filter(|(_, area)| area.contains(position));
+        let section = layout
+            .sections
+            .iter()
+            .position(|area| area.contains(position));
+        let column = layout
+            .columns
+            .iter()
+            .find(|(_, area)| area.contains(position))
+            .map(|(column, _)| *column);
+        let field = layout
+            .fields
+            .iter()
+            .find(|(_, area)| area.contains(position))
+            .map(|(field, _)| *field);
+        let Some(form) = &mut self.import_form else {
+            return;
+        };
+        if let Some((path, _)) = browse {
+            form.focus_on(path);
+            self.open_browser();
+        } else if let Some(section) = section {
+            form.open_section(section);
+        } else if let Some(column) = column {
+            form.select_column(column);
+        } else if let Some(field) = field {
+            form.focus_on(field);
+            let action = form.press();
+            self.on_import_action(action);
+        }
+        self.request_probe();
+    }
+}
+
 fn main_tab_at(tabs: &[MainTab], position: Position) -> Option<MainTab> {
     tabs.iter()
         .copied()

@@ -165,6 +165,7 @@ pub enum Action {
     NavigatorDeletePassword,
     NavigatorStructure,
     NavigatorGenerate,
+    NavigatorImport,
     NavigatorCopyName,
     NavigatorFilter,
     NavigatorClearFilter,
@@ -197,6 +198,7 @@ pub enum Action {
     GridLoadMore,
     GridCountRows,
     GridExport,
+    GridImport,
     GridStructure,
 }
 
@@ -532,6 +534,13 @@ const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(
+        Action::NavigatorImport,
+        Region::Navigator,
+        "navigatorImport",
+        &["I"],
+        &[],
+    ),
+    both(
         Action::NavigatorCopyName,
         Region::Navigator,
         "navigatorCopyName",
@@ -725,6 +734,7 @@ const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(Action::GridExport, Region::Grid, "gridExport", &["e"], &[]),
+    both(Action::GridImport, Region::Grid, "gridImport", &["I"], &[]),
     both(
         Action::GridStructure,
         Region::Grid,

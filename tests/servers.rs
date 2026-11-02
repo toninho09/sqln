@@ -30,6 +30,8 @@ use sqln::exec::{
 use sqln::export::{ExportOptions, ExportWriter};
 use sqln::form::Field;
 use sqln::grid::{Budget, Row, Value};
+use sqln::import::statement::{Target, TargetColumn};
+use sqln::import::{ImportFormat, ImportJob, ImportMode, ImportProgress, ReadOptions, log_path};
 use sqln::sql::Dialect;
 use sqln::structure::{Scope, Section, structure_sql};
 use sqln::ui::theme::Theme;
@@ -2689,4 +2691,404 @@ fn a_foreign_key_to_another_schema_names_that_schema_in_postgres() {
     assert_eq!(keys.len(), 1, "{keys:?}");
     assert_eq!(keys[0].target.schema, "s_fk");
     h.run_ok(&["DROP SCHEMA s_fk CASCADE"]);
+}
+
+// ---------------------------------------------------------------------------
+// The import.
+
+impl Server {
+    fn dialect(&self) -> Dialect {
+        match self.kind {
+            Kind::Postgres => Dialect::Postgres,
+            Kind::MySql => Dialect::MySql,
+        }
+    }
+
+    /// Returns a table with one column of each kind.
+    fn import_table(&self, name: &str) -> String {
+        match self.kind {
+            Kind::Postgres => format!(
+                "CREATE TABLE {name} (id integer PRIMARY KEY, name text, data bytea, \
+                 flag boolean, amount numeric(30, 5), doc jsonb)"
+            ),
+            Kind::MySql => format!(
+                "CREATE TABLE {name} (id int PRIMARY KEY, name text, data blob, \
+                 flag tinyint, amount decimal(30, 5), doc json)"
+            ),
+        }
+    }
+
+    /// Returns a read of the columns of `import_table`, as text.
+    fn import_read(&self, name: &str) -> String {
+        match self.kind {
+            Kind::Postgres => format!(
+                "SELECT id::text, name, upper(encode(data, 'hex')), flag::text, \
+                 amount::text, doc::text FROM {name} ORDER BY id"
+            ),
+            Kind::MySql => format!(
+                "SELECT CAST(id AS CHAR), name, HEX(data), CAST(flag AS CHAR), \
+                 CAST(amount AS CHAR), CAST(doc AS CHAR) FROM {name} ORDER BY id"
+            ),
+        }
+    }
+
+    /// Returns the table in the text of a statement.
+    fn table_name(&self, name: &str) -> String {
+        match self.kind {
+            Kind::Postgres => format!("\"public\".\"{name}\""),
+            Kind::MySql => format!("`spike`.`{name}`"),
+        }
+    }
+
+    fn import_target(&self, name: &str, columns: &[&str], base64: bool) -> Target {
+        Target {
+            table: self.table_name(name),
+            columns: columns
+                .iter()
+                .enumerate()
+                .map(|(source, column)| TargetColumn {
+                    name: (*column).to_owned(),
+                    binary: *column == "data",
+                    source,
+                })
+                .collect(),
+            dialect: self.dialect(),
+            base64,
+        }
+    }
+}
+
+fn import_file(name: &str, text: &str) -> std::path::PathBuf {
+    let path = common::temp_dir(name).join("data.txt");
+    std::fs::write(&path, text).unwrap();
+    path
+}
+
+fn import_job(
+    server: &Server,
+    path: &std::path::Path,
+    table: &str,
+    format: ImportFormat,
+    columns: &[&str],
+    mode: ImportMode,
+) -> ImportJob {
+    ImportJob {
+        path: path.to_owned(),
+        read: ReadOptions {
+            format,
+            dialect: server.dialect(),
+            ..ReadOptions::default()
+        },
+        columns: columns.iter().map(|name| (*name).to_owned()).collect(),
+        target: server.import_target(table, columns, !format.is_delimited()),
+        mode,
+        batch: 2,
+        error_limit: 1000,
+        log: log_path(path, "x"),
+        progress: Arc::new(ImportProgress::default()),
+    }
+}
+
+impl Harness {
+    fn import(&mut self, job: ImportJob) -> (ExecutionEnd, Option<String>) {
+        let execution = self.manager.import(self.console, job);
+        loop {
+            if let ExecEvent::ExecutionFinished {
+                execution: finished,
+                end,
+                message,
+                ..
+            } = self.next()
+                && finished == execution
+            {
+                return (end, message);
+            }
+        }
+    }
+}
+
+const ALL_COLUMNS: [&str; 6] = ["id", "name", "data", "flag", "amount", "doc"];
+
+#[test]
+fn an_import_keeps_the_value_of_each_type() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let table = "t_import_types";
+        h.run(&[&format!("DROP TABLE IF EXISTS {table}")]);
+        h.run_ok(&[&server.import_table(table)]);
+        let file = concat!(
+            r#"{"id": 1, "name": "a'b\\c\"d", "data": "AAEC/w==", "flag": true, "#,
+            r#""amount": 1234567890123456789012.12345, "doc": {"k": [1, 2]}}"#,
+            "\n",
+            r#"{"id": 2, "name": null, "data": null, "flag": false, "amount": 0.5, "doc": null}"#,
+            "\n",
+            r#"{"id": 3, "name": "ação 日本語"}"#,
+            "\n",
+        );
+        let path = import_file(&format!("server-types-{:?}", server.kind), file);
+        let job = import_job(
+            &server,
+            &path,
+            table,
+            ImportFormat::JsonLines,
+            &ALL_COLUMNS,
+            ImportMode::AllOrNothing,
+        );
+        let (end, message) = h.import(job);
+        assert_eq!(
+            end,
+            ExecutionEnd::Completed,
+            "{:?}: {message:?}",
+            server.kind
+        );
+        let run = h.run_ok(&[&server.import_read(table)]);
+        assert_eq!(run.text(0, 1), r#"a'b\c"d"#, "{:?}", server.kind);
+        assert_eq!(run.text(0, 2), "000102FF", "{:?}", server.kind);
+        assert_eq!(
+            run.text(0, 4),
+            "1234567890123456789012.12345",
+            "{:?}",
+            server.kind
+        );
+        assert!(run.text(0, 5).contains("\"k\""), "{:?}", server.kind);
+        assert_eq!(run.rows[1].get(1), Some(Value::Null), "{:?}", server.kind);
+        assert_eq!(run.text(2, 1), "ação 日本語", "{:?}", server.kind);
+        let flag = run.text(0, 3);
+        assert!(flag == "true" || flag == "1", "{flag}");
+        h.run_ok(&[&format!("DROP TABLE {table}")]);
+    }
+}
+
+#[test]
+fn a_file_of_an_export_returns_the_same_rows_on_each_server() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let (from, to) = ("t_import_from", "t_import_to");
+        h.run(&[&format!("DROP TABLE IF EXISTS {from}, {to}")]);
+        h.run_ok(&[&server.import_table(from), &server.import_table(to)]);
+        let binary = match server.kind {
+            Kind::Postgres => "'\\x00ff41'",
+            Kind::MySql => "X'00ff41'",
+        };
+        let text = "A plain back slash \\\\ and a quote ''";
+        let flag = if server.kind == Kind::Postgres {
+            "true"
+        } else {
+            "1"
+        };
+        h.run_ok(&[&format!(
+            "INSERT INTO {from} (id, name, data, flag, amount, doc) VALUES \
+             (1, '{text}', {binary}, {flag}, 1.5, '{{\"a\": 1}}'), \
+             (2, '', NULL, NULL, NULL, NULL)"
+        )]);
+        for (export, format, base64) in [
+            (ExportFormatOf::Csv, ImportFormat::Csv, false),
+            (ExportFormatOf::Json, ImportFormat::Json, true),
+        ] {
+            h.run_ok(&[&format!("DELETE FROM {to}")]);
+            let path = common::temp_dir(&format!("server-trip-{:?}-{format:?}", server.kind))
+                .join("data.txt");
+            let options = ExportOptions {
+                format: export.format(),
+                ..ExportOptions::default()
+            };
+            let writer = ExportWriter::create(&path, options).unwrap();
+            let select =
+                format!("SELECT id, name, data, flag, amount, doc FROM {from} ORDER BY id");
+            let run = RunOptions {
+                export: Some(writer.clone()),
+                ..RunOptions::default()
+            };
+            let execution = h.manager.run(h.console, vec![select], run);
+            assert_eq!(h.collect(execution).end, Some(ExecutionEnd::Completed));
+            writer.promote(&path).unwrap();
+            let mut job = import_job(
+                &server,
+                &path,
+                to,
+                format,
+                &ALL_COLUMNS,
+                ImportMode::AllOrNothing,
+            );
+            job.target.base64 = base64;
+            let (end, message) = h.import(job);
+            assert_eq!(
+                end,
+                ExecutionEnd::Completed,
+                "{:?}: {message:?}",
+                server.kind
+            );
+            let read = |h: &mut Harness, name: &str| {
+                let run = h.run_ok(&[&server.import_read(name)]);
+                run.rows
+                    .iter()
+                    .map(|row| row.cells().map(Value::display).collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                read(&mut h, from),
+                read(&mut h, to),
+                "{:?} {format:?}",
+                server.kind
+            );
+        }
+        h.run_ok(&[&format!("DROP TABLE {from}"), &format!("DROP TABLE {to}")]);
+    }
+}
+
+/// The formats of the export that return to a table on a server.
+#[derive(Clone, Copy)]
+enum ExportFormatOf {
+    Csv,
+    Json,
+}
+
+impl ExportFormatOf {
+    fn format(self) -> sqln::export::ExportFormat {
+        match self {
+            Self::Csv => sqln::export::ExportFormat::Csv,
+            Self::Json => sqln::export::ExportFormat::Json,
+        }
+    }
+}
+
+#[test]
+fn each_import_mode_does_its_work_on_each_server() {
+    const FILE: &str = "id,name\n1,a\n2,b\n3,c\n1,again\n5,e\n";
+    for server in servers() {
+        for mode in ImportMode::ALL {
+            let mut h = Harness::open(&server, Settings::default());
+            let table = "t_import_modes";
+            h.run(&[&format!("DROP TABLE IF EXISTS {table}")]);
+            h.run_ok(&[&server.import_table(table)]);
+            let path = import_file(&format!("server-modes-{:?}-{mode:?}", server.kind), FILE);
+            let job = import_job(
+                &server,
+                &path,
+                table,
+                ImportFormat::Csv,
+                &["id", "name"],
+                mode,
+            );
+            let (log, progress) = (job.log.clone(), job.progress.clone());
+            let (end, message) = h.import(job);
+            let (expected_end, rows) = match mode {
+                ImportMode::AllOrNothing => (ExecutionEnd::Failed, "0"),
+                ImportMode::ByBatch => (ExecutionEnd::Failed, "2"),
+                ImportMode::LogErrors => (ExecutionEnd::Completed, "4"),
+            };
+            let tag = format!("{:?} {mode:?}: {message:?}", server.kind);
+            assert_eq!(end, expected_end, "{tag}");
+            assert_eq!(h.count(table), rows, "{tag}");
+            assert_eq!(progress.rows().to_string(), rows, "{tag}");
+            if mode == ImportMode::LogErrors {
+                let text = std::fs::read_to_string(log).unwrap();
+                assert!(text.contains("Line 5:"), "{tag}: {text}");
+                assert!(text.contains("1,again"), "{tag}: {text}");
+            } else {
+                assert!(message.unwrap().contains("lines 4 to 5"), "{tag}");
+            }
+            h.run_ok(&[&format!("DROP TABLE {table}")]);
+        }
+    }
+}
+
+#[test]
+fn stop_undoes_all_or_nothing_on_each_server() {
+    let mut file = String::from("id,name\n");
+    for row in 0..200_000 {
+        file.push_str(&format!("{row},x\n"));
+    }
+    for server in servers() {
+        let settings = Settings {
+            // A debug build needs time to end a statement in transit.
+            stop_grace: Duration::from_secs(50),
+            ..Settings::default()
+        };
+        let mut h = Harness::open(&server, settings);
+        let table = "t_import_stop";
+        h.run(&[&format!("DROP TABLE IF EXISTS {table}")]);
+        h.run_ok(&[&server.import_table(table)]);
+        let path = import_file(&format!("server-stop-{:?}", server.kind), &file);
+        let job = import_job(
+            &server,
+            &path,
+            table,
+            ImportFormat::Csv,
+            &["id", "name"],
+            ImportMode::AllOrNothing,
+        );
+        let progress = job.progress.clone();
+        let execution = h.manager.import(h.console, job);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while progress.rows() < 100 {
+            assert!(Instant::now() < deadline, "{:?}", server.kind);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        h.manager.stop(h.console);
+        let run = h.collect(execution);
+        assert_eq!(run.end, Some(ExecutionEnd::Stopped), "{:?}", server.kind);
+        assert_eq!(progress.rows(), 0, "{:?}", server.kind);
+        assert_eq!(h.count(table), "0", "{:?}", server.kind);
+        h.run_ok(&[&format!("DROP TABLE {table}")]);
+    }
+}
+
+#[test]
+fn a_literal_of_an_import_ignores_the_settings_of_the_session() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let table = "t_import_literal";
+        h.run(&[&format!("DROP TABLE IF EXISTS {table}")]);
+        h.run_ok(&[&server.import_table(table)]);
+        let setting = match server.kind {
+            Kind::Postgres => "SET standard_conforming_strings = off",
+            Kind::MySql => "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'",
+        };
+        let target = server.import_target(table, &["id", "name", "data"], false);
+        let hostile = "a\\'); DROP TABLE x; --\\";
+        let cells = [
+            Some("1".to_owned()),
+            Some(hostile.to_owned()),
+            Some("b\\c".to_owned()),
+        ];
+        let insert = format!("{}{}", target.head(), target.values(&cells).unwrap());
+        // One execution keeps one session, so the setting reaches the `INSERT`.
+        h.run_ok(&[setting, &insert]);
+        let run = h.run_ok(&[&server.import_read(table)]);
+        assert_eq!(run.text(0, 1), hostile, "{:?}", server.kind);
+        assert_eq!(run.text(0, 2), "625C63", "{:?}", server.kind);
+        h.run_ok(&[&format!("DROP TABLE {table}")]);
+    }
+}
+
+#[test]
+fn the_dialog_reads_the_binary_type_of_each_server() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let table = "t_import_dialog";
+        h.run(&[&format!("DROP TABLE IF EXISTS {table}")]);
+        h.run_ok(&[&server.import_table(table)]);
+
+        let path = import_file(
+            &format!("server-dialog-{:?}", server.kind),
+            "id,name,data\n7,Ana,0x00FF\n",
+        );
+        let mut s = Screen::with_definition(&server);
+        s.open_table(table);
+        s.prefix('j');
+        s.press(KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT));
+        s.wait_until(|s| s.screen().contains("Import to"));
+        s.type_text(&path.display().to_string());
+        s.code(KeyCode::Tab);
+        s.wait_until(|s| s.screen().contains("3 file columns"));
+        s.code(KeyCode::Tab);
+        s.code(KeyCode::Enter);
+        s.wait_until(|s| s.screen().contains("Import complete"));
+        s.app.shutdown();
+
+        let run = h.run_ok(&[&server.import_read(table)]);
+        assert_eq!(run.text(0, 2), "00FF", "{:?}", server.kind);
+        h.run_ok(&[&format!("DROP TABLE {table}")]);
+    }
 }

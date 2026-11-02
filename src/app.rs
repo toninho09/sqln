@@ -9,6 +9,7 @@ mod export;
 mod guard;
 mod hints;
 mod history;
+mod import;
 mod keys;
 mod mouse;
 mod persist;
@@ -50,6 +51,8 @@ use crate::form::ConnectionForm;
 use crate::generate::Template;
 use crate::grid::Budget;
 use crate::history::HistoryList;
+use crate::import::ImportChoices;
+use crate::import::form::ImportForm;
 use crate::input::{Chord, Keymap, SuggestionKeys};
 use crate::navigator::Navigator;
 use crate::palette::Palette;
@@ -66,6 +69,7 @@ use crate::ui::console::BarData;
 use crate::ui::export::{ExportLayout, draw_export};
 use crate::ui::form::{FormLayout, draw_form};
 use crate::ui::history::draw_history;
+use crate::ui::import::{ImportLayout, draw_import};
 use crate::ui::name::{NamePrompt, draw_name};
 use crate::ui::navigator::draw_navigator;
 use crate::ui::palette::draw_palette;
@@ -133,6 +137,7 @@ pub struct Options {
     /// The keys that accept a suggestion.
     pub suggestion_keys: SuggestionKeys,
     pub export_choices: ExportChoices,
+    pub import_choices: ImportChoices,
 }
 
 impl Default for Options {
@@ -155,6 +160,7 @@ impl Default for Options {
             appearance: (None, None),
             suggestion_keys: SuggestionKeys::default(),
             export_choices: ExportChoices::default(),
+            import_choices: ImportChoices::default(),
         }
     }
 }
@@ -190,6 +196,8 @@ enum DialogAction {
     DeletePassword(Identity),
     /// Replace the file of the export dialog.
     ExportReplace,
+    /// Start the import that the question of production showed.
+    ImportConfirmed,
     /// Give the incomplete file of a tab its final name.
     ExportKeep(ConsoleId),
     ExportDelete(ConsoleId),
@@ -281,6 +289,7 @@ struct ScreenLayout {
     form: FormLayout,
     settings: SettingsLayout,
     export: ExportLayout,
+    import: ImportLayout,
     conflicts: ConflictLayout,
     password: Vec<(usize, Rect)>,
     /// The options of the open dialog, with the row of those options.
@@ -359,12 +368,21 @@ pub struct App {
     rename: Option<NamePrompt>,
     settings_form: Option<SettingsForm>,
     export_form: Option<ExportForm>,
-    /// The file browser of the focused path field in the export dialog or in the form.
+    import_form: Option<ImportForm>,
+    /// The file browser of the focused path field in a dialog or in the form.
     browser: Option<FileBrowser>,
     /// The first choices of the next export dialog.
     export_choices: ExportChoices,
     /// The exports in progress, with at most one for each tab.
     exports: Vec<export::ExportRun>,
+    /// The first choices of the next import dialog.
+    import_choices: ImportChoices,
+    /// The imports in progress, with at most one for each tab.
+    imports: Vec<import::ImportRun>,
+    /// The answers of the file reads of the import dialog.
+    import_probes: import::ProbeChannel,
+    /// A table tab that opens the import dialog after its first page.
+    import_wanted: Option<ConsoleId>,
     /// The files of the application. It is `None` when nothing loads or saves.
     persist: Option<persist::Persist>,
     auth: auth::Auth,
@@ -448,9 +466,14 @@ impl App {
             rename: None,
             settings_form: None,
             export_form: None,
+            import_form: None,
             browser: None,
             export_choices: options.export_choices.clone(),
             exports: Vec::new(),
+            import_choices: options.import_choices.clone(),
+            imports: Vec::new(),
+            import_probes: import::ProbeChannel::default(),
+            import_wanted: None,
             status: None,
             status_shown: None,
             started: Instant::now(),
@@ -697,6 +720,7 @@ impl App {
             || self.rename.is_some()
             || self.settings_form.is_some()
             || self.export_form.is_some()
+            || self.import_form.is_some()
             || self.browser.is_some()
             || self.auth.prompt.is_some();
         match event {
@@ -726,6 +750,11 @@ impl App {
                     form.paste(&text);
                 }
             }
+            Event::Paste(text) if self.dialogs.is_empty() && self.import_form.is_some() => {
+                if let Some(form) = &mut self.import_form {
+                    form.paste(&text);
+                }
+            }
             Event::Paste(text) if self.dialogs.is_empty() && self.palette.is_some() => {
                 if let Some(palette) = &mut self.palette {
                     palette.paste(&text);
@@ -746,6 +775,7 @@ impl App {
             Event::Mouse(mouse) if self.history.is_some() => self.on_history_mouse(mouse),
             Event::Mouse(mouse) if self.settings_form.is_some() => self.on_settings_mouse(mouse),
             Event::Mouse(mouse) if self.export_form.is_some() => self.on_export_mouse(mouse),
+            Event::Mouse(mouse) if self.import_form.is_some() => self.on_import_mouse(mouse),
             Event::Mouse(mouse) if !blocked => self.on_mouse(mouse),
             _ => {}
         }
@@ -807,7 +837,8 @@ impl App {
     pub fn drain_events(&mut self) -> bool {
         let ticked = self.tick();
         let authorized = self.poll_auth();
-        let changed = self.has_work() || ticked || authorized;
+        let probed = self.poll_probes();
+        let changed = self.has_work() || ticked || authorized || probed;
         if changed {
             let deadline = Instant::now() + WORK_SLICE;
             match self.table_active {
@@ -866,14 +897,15 @@ impl App {
         }
     }
 
-    fn on_console_event(&mut self, event: ExecEvent) {
-        if self.on_export_event(&event) {
+    fn on_console_event(&mut self, mut event: ExecEvent) {
+        if self.on_export_event(&event) || self.on_import_event(&mut event) {
             return;
         }
         let Some(id) = event.console() else { return };
         let budget = self.budget.clone();
         if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
             tab.on_event(event, &budget);
+            self.continue_wanted_import();
             return;
         }
         if let ExecEvent::StatementFinished { key, status, .. } = &event {
@@ -1131,6 +1163,7 @@ impl App {
             .status
             .clone()
             .or_else(|| self.export_progress())
+            .or_else(|| self.import_progress())
             .or_else(|| self.auth_wait().map(str::to_owned));
         // The row starts one column after the edge, as the status line does.
         let area = Rect {
@@ -1201,6 +1234,9 @@ impl App {
         }
         if let Some(form) = &self.export_form {
             self.layout.export = draw_export(frame, form, &self.theme);
+        }
+        if let Some(form) = &self.import_form {
+            self.layout.import = draw_import(frame, form, &self.theme);
         }
         if let Some(browser) = &self.browser {
             self.layout.browser = draw_browser(frame, browser, &self.theme);

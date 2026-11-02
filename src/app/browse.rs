@@ -5,10 +5,13 @@ use crate::browser::{BrowserRequest, FileBrowser};
 use crate::form::Field;
 
 impl App {
-    /// Only the export path and the SQLite file can name a file that does not exist.
+    /// Only the export path, the import log, and the SQLite file can name a file that
+    /// does not exist.
     pub(super) fn open_browser(&mut self) {
         let (path, new_file) = if let Some(form) = &self.export_form {
             (form.path_text(), true)
+        } else if let Some(form) = &self.import_form {
+            form.browser_start()
         } else if let Some(form) = &self.form {
             (form.text(form.focus), form.focus == Field::File)
         } else {
@@ -38,6 +41,9 @@ impl App {
         self.browser = None;
         if let Some(form) = &mut self.export_form {
             form.set_path(&path, chose_file);
+        } else if let Some(form) = &mut self.import_form {
+            form.set_path(&path);
+            self.request_probe();
         } else if let Some(form) = &mut self.form {
             form.set_focused_path(&path);
         }

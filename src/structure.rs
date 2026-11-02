@@ -2,7 +2,7 @@
 //! structure tab. Each query has a stable order, so the pages repeat no row.
 
 use crate::catalog::RelationRef;
-use crate::sql::{Dialect, quote_literal};
+use crate::sql::{Dialect, escape_literal, quote_literal};
 
 /// What a structure tab shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,11 +63,10 @@ impl Structure {
     }
 }
 
-/// Writes a name of the catalog as a literal. The `E` form of PostgreSQL does not change
-/// with `standard_conforming_strings`, so a name cannot end the literal early.
+/// Writes a name of the catalog as a literal.
 fn name_literal(name: &str, dialect: Dialect) -> String {
     if dialect == Dialect::Postgres {
-        format!("E{}", quote_literal(&name.replace('\\', "\\\\"), dialect))
+        escape_literal(name)
     } else {
         quote_literal(name, dialect)
     }

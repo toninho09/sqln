@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
 use super::export::ExportRead;
+use super::import::ImportStep;
 use super::{App, DialogAction};
 use crate::catalog::RelationRef;
 use crate::connection::{CatalogState, ConnectionKey, Definition, Source};
@@ -45,6 +46,10 @@ pub(super) enum Use {
         console: ConsoleId,
         read: ExportRead,
     },
+    Import {
+        console: ConsoleId,
+        step: ImportStep,
+    },
     Test(u64),
     Save,
     /// Asks for a new password after a refusal. It runs nothing.
@@ -56,7 +61,8 @@ impl Use {
         match self {
             Self::Run { console, .. }
             | Self::Page { console, .. }
-            | Self::Export { console, .. } => Some(*console),
+            | Self::Export { console, .. }
+            | Self::Import { console, .. } => Some(*console),
             _ => None,
         }
     }
@@ -865,6 +871,7 @@ impl App {
                 }
             }
             Use::Export { console, read } => self.start_read(console, read),
+            Use::Import { console, step } => self.start_import_step(console, step),
             Use::Test(test) => {
                 let Some(definition) = definition else { return };
                 manager.test_connection(test, definition.connector(), definition.connect_timeout);
@@ -876,6 +883,7 @@ impl App {
 
     fn cancel_auth_use(&mut self, action: &Use) {
         if let Some(id) = action.console() {
+            self.clear_wanted_import(id);
             if let Some(console) = self.console_by_id(id) {
                 console.phase = Phase::Idle;
             }

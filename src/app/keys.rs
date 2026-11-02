@@ -91,6 +91,10 @@ impl App {
             self.on_export_key(key);
             return;
         }
+        if self.import_form.is_some() {
+            self.on_import_key(key);
+            return;
+        }
         if self.picker.is_some() {
             self.on_picker_key(key);
             return;
@@ -234,6 +238,7 @@ impl App {
             Action::ChangeConnection => self.start_connection_change(),
             Action::OpenSettings => self.open_settings(),
             Action::GridExport => self.open_export(),
+            Action::GridImport => self.open_import(),
             Action::FocusLeft => self.focus_navigator(),
             Action::FocusRight => self.navigator_focused = false,
             Action::FocusUp => self.focus_console(Focus::Editor),
@@ -253,6 +258,7 @@ impl App {
             | Action::NavigatorDeletePassword
             | Action::NavigatorStructure
             | Action::NavigatorGenerate
+            | Action::NavigatorImport
             | Action::NavigatorCopyName
             | Action::NavigatorFilter
             | Action::NavigatorClearFilter => self.on_navigator_action(action),
@@ -706,6 +712,14 @@ impl App {
         }
     }
 
+    fn on_import_key(&mut self, key: KeyEvent) {
+        let vim = self.vim();
+        if let Some(form) = &mut self.import_form {
+            let action = form.on_key(key, vim);
+            self.on_import_action(action);
+        }
+    }
+
     fn on_form_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
         let Some(form) = &mut self.form else { return };
@@ -878,6 +892,8 @@ impl App {
             }
             Action::GridStructure => self.table().is_some_and(|tab| tab.filters),
             Action::GridExport => self.can_export(),
+            Action::GridImport => self.can_import(),
+            Action::NavigatorImport => self.can_import_row(),
             Action::GridCountRows => self
                 .table()
                 .is_some_and(|tab| tab.filters && tab.has_more && !tab.is_busy()),
@@ -909,6 +925,7 @@ impl App {
             Action::NavigatorScripts,
             Action::NavigatorStructure,
             Action::NavigatorGenerate,
+            Action::NavigatorImport,
             Action::NavigatorCopyName,
             Action::NavigatorFilter,
         ]
@@ -917,6 +934,7 @@ impl App {
             Action::GridOpenRow,
             Action::GridCountRows,
             Action::GridExport,
+            Action::GridImport,
             Action::GridStructure,
         ]
         .map(|action| {

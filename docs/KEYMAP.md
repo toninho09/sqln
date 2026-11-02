@@ -173,6 +173,7 @@ On macOS, the terminal handles `Cmd+C` and `Cmd+V`.
 | Scripts without connection | `s` | `s` |
 | Show the structure | `i` | `i` |
 | Generate SQL | `g` | `g` |
+| Import a file to the table of the row | `I` | `I` |
 | Copy the row name | `y` or `Ctrl+C` | `y` or `Ctrl+C` |
 | Filter the tables | `/` or `Ctrl+F` | `/` or `Ctrl+F` |
 | Clear the filter | `Esc` | `Esc` |
@@ -266,6 +267,7 @@ If the vault fails, the session option does not offer global storage in plain te
 | Select all | `Ctrl+A` | `ggVG` |
 | Copy as TSV | `Ctrl+C` | `y` |
 | Export to a file | `e` | `e` |
+| Import a file, in a table tab | `I` | `I` |
 | Clear the selection | `Esc` | `Esc` |
 | Open value | `Enter` | `Enter` |
 | Open the row vertically | `r` | `r` |
@@ -305,6 +307,26 @@ In the export:
 | Cancel | `Esc` |
 
 Only the **Export** button exports.
+
+`I` opens the import of the table. In the navigator, it first opens the table of the row.
+A view, a read-only connection, Redis, a structure tab, or a busy tab has no import, and the key does nothing.
+
+In the import:
+
+| Action | Key |
+|---|---|
+| Next field | `Tab` or `Enter` |
+| Open another section, in the sidebar | `Up` and `Down` |
+| Change a choice | `Left` and `Right` |
+| Open the file explorer, in the **File** and **Log file** fields | `Ctrl+O` |
+| Select a table column, in **Columns** | `Up` and `Down` |
+| Change its file column, in **Columns** | `Left` and `Right` |
+| Scroll the rows and the columns, in **Preview** | Arrows |
+| Press **Import** or **Cancel** | `Enter` on the button |
+| Cancel | `Esc` |
+
+The file field reads the file when the focus leaves it.
+Only the **Import** button imports.
 
 `Ctrl+O` also opens the explorer in the path fields of the connection form.
 

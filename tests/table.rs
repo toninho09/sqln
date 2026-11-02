@@ -877,7 +877,7 @@ fn the_hints_of_a_table_show_the_structure_key_at_the_minimum_width() {
     let hints = f.hints_at(80);
     assert!(hints.contains("s sort  i struct  Ctrl+C copy"), "{hints}");
     let hints = f.hints_at(120);
-    assert!(hints.ends_with("e export  F1 keys"), "{hints}");
+    assert!(hints.ends_with("e export  I import  F1 keys"), "{hints}");
 }
 
 #[test]

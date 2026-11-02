@@ -8,6 +8,7 @@ use crate::connector::TransactionState;
 use crate::console::Focus;
 use crate::export::form as export_form;
 use crate::form::FieldStyle;
+use crate::import::form as import_form;
 use crate::input::{Action, Chord};
 use crate::navigator::{Navigator, RowKind};
 use crate::settings;
@@ -91,6 +92,17 @@ impl App {
                 export_form::Field::Formats => text::HINT_EXPORT_FORMATS,
                 export_form::Field::File => text::HINT_FORM_PATH,
                 export_form::Field::Export | export_form::Field::Cancel => text::HINT_FORM_BUTTON,
+                field if form.input(field).is_some() => text::HINT_FORM_TEXT,
+                _ => text::HINT_FORM,
+            });
+        }
+        if let Some(form) = &self.import_form {
+            return Some(match form.focus {
+                import_form::Field::Sections => text::HINT_IMPORT_SECTIONS,
+                field if field.is_path() => text::HINT_FORM_PATH,
+                import_form::Field::Columns => text::HINT_IMPORT_COLUMNS,
+                import_form::Field::Preview => text::HINT_IMPORT_PREVIEW,
+                import_form::Field::Import | import_form::Field::Cancel => text::HINT_FORM_BUTTON,
                 field if form.input(field).is_some() => text::HINT_FORM_TEXT,
                 _ => text::HINT_FORM,
             });
@@ -289,6 +301,11 @@ impl App {
                 "export",
                 self.command_available(Action::GridExport),
             ),
+            (
+                Action::GridImport,
+                "import",
+                self.command_available(Action::GridImport),
+            ),
             (Action::Help, "keys", true),
         ])
     }
@@ -359,6 +376,7 @@ impl App {
                 "generate SQL",
                 self.can_generate(),
             ),
+            (Action::NavigatorImport, "import", self.can_import_row()),
             (Action::NavigatorCopyName, "copy name", true),
             (Action::NavigatorFilter, "filter", true),
             (Action::Help, "keys", true),

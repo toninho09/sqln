@@ -23,6 +23,7 @@ use sqln::connection::Source;
 use sqln::editor::DEFAULT_UNDO_LIMIT;
 use sqln::export::{Delimiter, ExportChoices, ExportFormat};
 use sqln::form::{Field, FormNote};
+use sqln::import::{Encoding, ImportChoices};
 use sqln::input::SuggestionKeys;
 use sqln::navigator::RowKind;
 use sqln::script_file::Trouble;
@@ -3828,6 +3829,72 @@ fn the_project_choice_of_keys_comes_before_the_global_choice() {
 fn an_unknown_choice_of_keys_is_a_configuration_error() {
     let (store, _) = reopening_store("p-keys-unknown", r#"{"suggestionKeys":"space"}"#);
     assert!(sqln::store::config::load(&store).config.is_err());
+}
+
+#[test]
+fn the_import_choices_stay_in_the_global_file_only() {
+    let (store, _) = two_connections("p-import-global");
+    let project = fs::read_to_string(store.project.as_ref().unwrap().config_file()).unwrap();
+    let choices = ImportChoices {
+        encoding: Encoding::Windows1252,
+        header: false,
+        delimiter: Delimiter::Semicolon,
+        batch: 50,
+        folder: Some(PathBuf::from("/data/in")),
+        ..ImportChoices::default()
+    };
+    config::change_import(&store.global, choices.clone()).unwrap();
+    assert_eq!(
+        fs::read_to_string(store.project.as_ref().unwrap().config_file()).unwrap(),
+        project
+    );
+    let text = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(text.contains("\"import\""), "{text}");
+    assert!(text.contains("first"), "the connections stay: {text}");
+    assert_eq!(config::load(&store).config.unwrap().import, choices);
+}
+
+#[test]
+fn a_file_without_import_choices_gives_the_defaults() {
+    let (store, _) = two_connections("p-import-default");
+    assert_eq!(
+        config::load(&store).config.unwrap().import,
+        ImportChoices::default()
+    );
+}
+
+#[test]
+fn import_in_a_project_file_is_a_configuration_error() {
+    let (store, _) = two_connections("p-import-project");
+    write_config(
+        store.project.as_ref().unwrap(),
+        r#"{"import":{"header":false}}"#,
+        &[],
+    );
+    let error = config::load(&store).config.unwrap_err().to_string();
+    assert!(error.contains("import"), "{error}");
+}
+
+#[test]
+fn an_import_batch_of_zero_is_a_configuration_error() {
+    let (store, _) = two_connections("p-import-batch");
+    write_config(&store.global, r#"{"import":{"batch":0}}"#, &[]);
+    let error = config::load(&store).config.unwrap_err().to_string();
+    assert!(error.contains("batch"), "{error}");
+}
+
+#[test]
+fn the_settings_keep_the_import_choices() {
+    let choices = ImportChoices {
+        header: false,
+        ..ImportChoices::default()
+    };
+    let preferences = Preferences {
+        import: Some(choices.clone()),
+        ..Preferences::default()
+    };
+    let form = SettingsForm::new(preferences, None);
+    assert_eq!(form.preferences().unwrap().import, Some(choices));
 }
 
 #[test]

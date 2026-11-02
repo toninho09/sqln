@@ -16,6 +16,7 @@ pub mod form;
 pub mod generate;
 pub mod grid;
 pub mod history;
+pub mod import;
 pub mod input;
 pub mod line_input;
 pub mod log;

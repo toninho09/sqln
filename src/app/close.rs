@@ -279,6 +279,7 @@ impl App {
             DialogAction::Associate(console, connection) => self.associate(console, connection),
             DialogAction::DeletePassword(identity) => self.delete_password(identity),
             DialogAction::ExportReplace => self.start_export(),
+            DialogAction::ImportConfirmed => self.start_import(),
             DialogAction::ExportKeep(id) => self.keep_export(id),
             DialogAction::ExportDelete(id) => self.delete_export(id),
             action @ (DialogAction::AuthCancel(_)

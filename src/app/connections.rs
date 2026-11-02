@@ -355,6 +355,7 @@ impl App {
             Action::NavigatorNewConsole => self.request_console(id),
             Action::NavigatorStructure => self.open_row_structure(&row),
             Action::NavigatorGenerate => self.open_templates(&row),
+            Action::NavigatorImport => self.import_row(&row),
             Action::NavigatorCopyName => {
                 let name = row.name(&self.connections).to_owned();
                 self.copy(&name);

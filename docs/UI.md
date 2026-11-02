@@ -148,6 +148,7 @@ A command that does not fit leaves the line whole, so the screen never shows a c
 - In the forms, the line changes with the field: text, option, path, or button.
 - In the console list, `rename` and `remove` appear only on a script row.
 - During an export, the line shows the stop key before the progress.
+- During an import, the line shows the rows, the errors, the part of the file, and the stop key.
 
 **Tree filter:** the field takes the first line of the navigator, and the status line shows `FILTER` during typing.
 Without a result, the tree shows `No match` and `Loaded catalogs only`.
@@ -392,6 +393,34 @@ After **Export**, the modal closes, the tab becomes busy, and the hint line show
 **All rows** has no time limit, and **Stop** cancels. The grid keeps the result.
 The write uses `<name>.tmp` and renames at the end. After **Stop** or an error, a window offers **Delete** and **Keep**. Without written rows, the temporary file disappears without a question.
 
+### Import
+
+`I` in the navigator or in a table grid, or the import action of the palette, opens the modal. The navigator first opens the table. The modal reads the columns of the table first, so the rows of the grid stay.
+
+```text
+╭ Import ────────┬──────────────────────────────────────────────────────────╮
+│                │   Import to people                                       │
+│   File         │   Column                Type              File column    │
+│   Format       │   id                    INTEGER           < ID >         │
+│ > Columns      │   name                  TEXT              < Name >       │
+│   Options      │   age                   INTEGER           < age >        │
+│   Preview      │   photo                 BLOB              < ignore >     │
+│                │                                                          │
+│                │   [Import]  [Cancel]                                     │
+╰────────────────┴──────────────────────────────────────────────────────────╯
+```
+
+The modal has 78 columns and grows to 140 on a larger screen, with 8 free columns.
+The sections are **File**, **Format**, **Columns**, **Options**, and **Preview**.
+**File** reads the path when the focus leaves the field. The name of the file and its first line choose the format and the delimiter, and the user can change them.
+**Columns** starts with a mapping by name, or by position in a file without a header. A table column with **ignore** keeps its default.
+**Options** starts with **All or nothing** in each dialog. **Log errors** adds the log path, with the `...` button and `Ctrl+O`, and the error limit.
+**Preview** shows the first 50 rows with the current choices, and a row with a problem shows its reason.
+
+After **Import**, the modal closes, the tab becomes busy, and the hint line shows the progress. **Stop** ends the import.
+At the end, a window shows the inserted rows, the rows with errors, and the path of the log. The tab then reads the table again.
+A connection marked as production asks before the import, with the file, the table, and the connection.
+
 ### File explorer
 
 The path fields have a `...` button. The button and `Ctrl+O` open this window above the modal:
@@ -410,12 +439,12 @@ The path fields have a `...` button. The button and `Ctrl+O` open this window ab
 ```
 
 The window stays 8 columns narrower than the modal, and the list shows 14 to 35 rows, according to the screen height.
-The fields are **File** of Export, **File** of SQLite, **CA file**, **Client certificate**, and **Client key**.
+The fields are **File** of Export, **File** and **Log file** of Import, **File** of SQLite, **CA file**, **Client certificate**, and **Client key**.
 The window opens in the folder of the field path. Without it, it opens in the closest existing folder, and with an empty field it opens in the current folder.
 Folders come first, and the order ignores case. All files appear, except the hidden ones. A filter that starts with `.` shows the hidden ones.
 `Enter` on a folder enters it. `Enter` on a file fills the field with the absolute path and closes the window. `Esc` closes the window, and the field does not change.
 
-**Use this folder** appears only in Export and SQLite, because those fields accept a new file. The row changes the folder and keeps the name of the field. With an empty field, it receives the folder, and the user types the name.
+**Use this folder** appears only in Export, **Log file** of Import, and SQLite, because those fields accept a new file. The row changes the folder and keeps the name of the field. With an empty field, it receives the folder, and the user types the name.
 In Export, the extension keeps following the format after **Use this folder**, and stops following after picking a file.
 Closing the tab or exiting erases the temporary file.
 
