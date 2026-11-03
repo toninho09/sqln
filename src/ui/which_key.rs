@@ -35,10 +35,11 @@ fn group_lines<'a>(group: &'a KeyGroup, theme: &Theme) -> Vec<Line<'a>> {
 
 /// Divides the groups into columns, with the fewest rows that hold them all.
 fn columns_of<'a>(groups: &'a [KeyGroup], theme: &Theme) -> Vec<Vec<Line<'a>>> {
-    let total: usize = groups.iter().map(|group| group.keys.len() + 2).sum();
+    let shown = || groups.iter().filter(|group| !group.keys.is_empty());
+    let total: usize = shown().map(|group| group.keys.len() + 2).sum();
     let target = total.div_ceil(usize::from(COLUMNS));
     let mut columns: Vec<Vec<Line>> = vec![Vec::new()];
-    for group in groups.iter().filter(|group| !group.keys.is_empty()) {
+    for group in shown() {
         let lines = group_lines(group, theme);
         let full = columns
             .last()

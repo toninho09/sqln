@@ -348,6 +348,7 @@ impl App {
             }
         }
         refresh_labels(&mut self.connections);
+        self.refresh_tree_consoles();
     }
 
     fn is_in_use(&self, id: ConnectionId) -> bool {
@@ -729,6 +730,7 @@ impl App {
                         file.meta.name.clone_from(previous);
                     }
                     self.status = Some(text::script_failed(requested, &format!("{problem:?}")));
+                    self.refresh_tree_consoles();
                 }
                 if intent.close {
                     self.show_unsaved(index, problem);

@@ -15,6 +15,7 @@ pub mod find;
 pub mod form;
 pub mod generate;
 pub mod grid;
+pub mod help;
 pub mod history;
 pub mod import;
 pub mod input;

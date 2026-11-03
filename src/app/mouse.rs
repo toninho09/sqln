@@ -216,9 +216,12 @@ impl App {
         let mark = usize::from(area.x + TREE_PAD) + row.depth() * 2;
         if usize::from(mouse.column) == mark && Navigator::is_branch(&row) {
             self.toggle(&row);
-        } else if self.is_double_click(mouse) && matches!(row.kind, RowKind::Table | RowKind::View)
-        {
-            self.open_table(&row);
+        } else if self.is_double_click(mouse) {
+            match row.kind {
+                RowKind::Table | RowKind::View => self.open_table(&row),
+                RowKind::Console => self.open_tree_console(&row),
+                _ => {}
+            }
         }
     }
 

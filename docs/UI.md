@@ -137,6 +137,8 @@ A command that does not fit leaves the line whole, so the screen never shows a c
 | **Messages** | Return to the editor and switch tab |
 | Grid of a table | Stop, load, `WHERE`, `ORDER BY`, sort, more rows, and page or section |
 | Connection line | Open, expand, structure, new console, refresh, edit, disconnect, password, remove, and add |
+| **Consoles** line | Expand or collapse, and new console |
+| Console line | Open, rename, remove, and return to the **Consoles** line |
 | Schema line | Expand, structure, new console, and refresh |
 | Table or view line | Open, columns, structure, new console, and refresh |
 | Column line | Return to the table, structure, new console, and refresh |
@@ -927,24 +929,38 @@ The JSON stays compact in this window.
 
 ### Help screen
 
-The screen shows the shortcuts of the active mode and the focused panel.
+`F1` shows the effective shortcuts of the active mode and the focused panel.
+The reference groups the panel keys, execution, transactions, connections, tabs, panels, and application commands.
+Empty groups do not appear. The key column has a separate style. Long keys and descriptions wrap without cuts.
+
+Type words to filter by group, command, or shortcut. Each word must match, without case sensitivity.
+`Tab` and `Shift+Tab` select a group, or **All**. The filter stays when the group changes.
+`Up` and `Down` scroll one row. `PageUp` and `PageDown` scroll one page. The mouse wheel also scrolls.
+`Ctrl+Home` and `Ctrl+End` go to the start and end. `Home` and `End` move the search cursor.
+`Ctrl+U` clears the filter. `Ctrl+C` copies the reference. `Esc`, `Enter`, and `F1` close it without running commands.
+The footer shows the matching command count and the visible row range. A scrollbar shows the position.
 
 ```text
-┌─ Help · Conventional · Editor ───────────────────────────┐
-│ Ctrl+Enter or F5   Run                                   │
-│ Shift+Enter        Whole script                          │
-│ Ctrl+W x           Stop script                           │
-│ Ctrl+Space         Suggestions                           │
-│ Ctrl+F             Search and replace                    │
-│ Ctrl+W h/j/k/l     Change panel                          │
-│                                                          │
-│ Esc  Close                                               │
-└──────────────────────────────────────────────────────────┘
+╭─ Keys · Conventional · Editor ──────────────────────────╮
+│ > Type a command or shortcut to filter                  │
+│ Group: All · Tab / Shift+Tab                            │
+│ Editor (5)                                             │
+│ Ctrl+Space                Suggestions                  │
+│ Ctrl+F                    Find and replace             │
+│ Ctrl+Z, Ctrl+Y            Undo, redo                    │
+│ Tab                       Accept the suggestion        │
+│ Esc                       Close the list               │
+│                                                        │
+│ Run (8)                                                │
+│ ctrl+enter, f5, ctrl+w e   Run the selection or the     │
+│                           statement                    │
+╰───────────────────────────── 42 commands · 1–10/56 ─────╯
 ```
 
 ### Prefix menu
 
 `Ctrl+W` opens this window above the status bar. The window shows the effective keys of the `keymap`.
+The rows change with the panel of the cursor, and a group without rows leaves the window. `docs/KEYMAP.md` has the rule.
 
 ```text
 ╭─ Ctrl+W ─────────────────────────────────────────────────────────╮

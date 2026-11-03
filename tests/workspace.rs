@@ -498,6 +498,7 @@ fn the_navigator_opens_each_level_of_the_catalog() {
     f.code(KeyCode::Right);
     f.pump_sees("main");
     f.code(KeyCode::Down);
+    f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.assert_sees("▸ users");
     f.assert_sees("▸ names (view)");
@@ -523,6 +524,7 @@ fn vim_keys_move_in_the_navigator_and_stay_text_in_the_editor() {
     f.navigator();
     f.code(KeyCode::Char('l'));
     f.pump_sees("main");
+    f.code(KeyCode::Char('j'));
     f.code(KeyCode::Char('j'));
     f.code(KeyCode::Char('l'));
     f.pump_sees("▸ t");
@@ -560,6 +562,7 @@ fn the_wheel_moves_the_navigator() {
     f.code(KeyCode::Right);
     f.pump_sees("main");
     f.code(KeyCode::Down);
+    f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.pump_sees("▸ t0");
     for _ in 0..30 {
@@ -581,6 +584,7 @@ fn a_catalog_read_keeps_the_cursor_and_the_open_columns() {
     f.navigator();
     f.code(KeyCode::Right);
     f.pump_sees("main");
+    f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.code(KeyCode::Down);
@@ -604,6 +608,7 @@ fn a_removed_item_moves_the_cursor_to_its_parent() {
     f.code(KeyCode::Right);
     f.pump_sees("main");
     f.code(KeyCode::Down);
+    f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.code(KeyCode::Down);
     f.code(KeyCode::Down);
@@ -620,6 +625,7 @@ fn r_reads_the_catalog_again() {
     f.navigator();
     f.code(KeyCode::Right);
     f.pump_sees("main");
+    f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.pump_sees("before_change");
@@ -1198,6 +1204,7 @@ fn a_name_from_the_database_cannot_send_terminal_sequences() {
     f.code(KeyCode::Right);
     f.pump_sees("main");
     f.code(KeyCode::Down);
+    f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.pump_sees("bad");
     assert!(!f.screen().contains('\x1b'), "{}", f.screen());
@@ -1615,6 +1622,7 @@ fn the_navigator_opens_a_view_and_its_columns() {
     f.navigator();
     f.code(KeyCode::Right);
     f.pump_sees("public");
+    f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.assert_sees("▸ active_users");

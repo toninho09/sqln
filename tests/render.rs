@@ -765,11 +765,14 @@ fn the_hint_bar_shows_the_keys_of_the_key_map() {
         .unwrap()
         .execute_batch("CREATE TABLE t(a);")
         .unwrap();
-    let app = hint_app_on(KeyboardMode::Conventional, Some(keymap), Some(database));
+    let mut app = hint_app_on(KeyboardMode::Conventional, Some(keymap), Some(database));
     let hint = app.hint();
     assert!(hint.contains("F6 run"), "{hint}");
     assert!(!hint.starts_with("F5"), "{hint}");
     assert!(!hint.contains("keys"), "{hint}");
+    // The menu names the next tab only with a second tab.
+    press_prefix(&mut app, 'h');
+    app.on_event(Event::Key(key(KeyCode::Char('n'))));
     let keys: Vec<String> = app
         .prefix_menu()
         .into_iter()

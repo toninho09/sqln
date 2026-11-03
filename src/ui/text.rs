@@ -177,6 +177,18 @@ pub const HINT_DIALOG: &[HintPart] = &[
     ("Enter", "confirm"),
     ("Esc", "cancel"),
 ];
+pub const HINT_HELP: &[HintPart] = &[
+    ("Type", "search"),
+    ("Tab", "group"),
+    ("Up/Down", "scroll"),
+    ("PgUp/PgDn", "page"),
+    ("Esc", "close"),
+];
+pub const HELP_SEARCH: &str = "Type a command or shortcut to filter";
+pub const HELP_ALL: &str = "All";
+pub const HELP_GROUP: &str = "Group";
+pub const HELP_GROUP_KEYS: &str = "Tab / Shift+Tab";
+
 pub const HINT_OVERLAY: &[HintPart] =
     &[("Up/Down", "scroll"), ("Ctrl+C", "copy"), ("Esc", "close")];
 pub const HINT_OVERLAY_ROW: &[HintPart] = &[
@@ -277,6 +289,8 @@ pub const MENU_SESSIONS: &str = "Sessions";
 pub const MENU_NEW_CONSOLE: &str = "New console";
 pub const MENU_SCRIPTS: &str = "Scripts";
 pub const MENU_REFRESH: &str = "Read the catalog";
+pub const MENU_RENAME_CONSOLE: &str = "Rename the console";
+pub const MENU_REMOVE_CONSOLE: &str = "Remove the console";
 pub const MENU_EDIT_CONNECTION: &str = "Edit connection";
 pub const MENU_ADD_CONNECTION: &str = "Add a connection";
 pub const MENU_REMOVE_CONNECTION: &str = "Remove connection";
@@ -1013,19 +1027,21 @@ pub const OPTION_CONTINUE: &str = "Run";
 pub const OPTION_RETRY: &str = "Try again";
 pub const OPTION_REMOVE: &str = "Remove";
 
-pub const FILTER_KEYS: &str = "\
-Enter                 Apply the fields
-Tab                   Accept the suggestion, or the next field
-Shift+Tab             Next field
-Ctrl+Space            Suggestions
-Esc                   Close the list, or go to the grid";
+pub const FILTER_KEYS: &[(&str, &str)] = &[
+    ("Enter", "Apply the fields"),
+    ("Tab", "Accept the suggestion, or the next field"),
+    ("Shift+Tab", "Next field"),
+    ("Ctrl+Space", "Suggestions"),
+    ("Esc", "Close the list, or go to the grid"),
+];
 
-pub const EDITOR_KEYS: &str = "\
-Ctrl+Space            Suggestions
-Ctrl+F                Find and replace
-Ctrl+Z, Ctrl+Y        Undo, redo
-Tab                   Accept the suggestion
-Esc                   Close the list";
+pub const EDITOR_KEYS: &[(&str, &str)] = &[
+    ("Ctrl+Space", "Suggestions"),
+    ("Ctrl+F", "Find and replace"),
+    ("Ctrl+Z, Ctrl+Y", "Undo, redo"),
+    ("Tab", "Accept the suggestion"),
+    ("Esc", "Close the list"),
+];
 
 pub fn action_text(action: Action) -> &'static str {
     match action {
@@ -1127,6 +1143,10 @@ pub fn keys_title(mode: &str, region: &str) -> String {
     format!(" {TITLE_KEYS} · {mode} · {region} ")
 }
 
+pub fn help_footer(commands: usize, first: usize, last: usize, total: usize) -> String {
+    format!(" {} · {first}–{last}/{total} ", plural(commands, "command"))
+}
+
 /// Writes one row of the help screen.
 pub fn keys_row(keys: &str, action: Action) -> String {
     format!("{keys:<24}{}", action_text(action))
@@ -1135,20 +1155,23 @@ pub fn keys_row(keys: &str, action: Action) -> String {
 /// Writes a row of the list of keys of a table. The result keys move between the
 /// pages of the table.
 pub fn table_keys_row(keys: &str, action: Action) -> String {
-    match action {
-        Action::GridPreviousResult => format!("{keys:<24}Previous page of rows"),
-        Action::GridNextResult => format!("{keys:<24}Next page of rows"),
-        _ => keys_row(keys, action),
-    }
+    format!("{keys:<24}{}", grid_action_text(action, true, false))
 }
 
 /// Writes a row of the list of keys of a structure with sections. The result keys
 /// move between the sections.
 pub fn section_keys_row(keys: &str, action: Action) -> String {
-    match action {
-        Action::GridPreviousResult => format!("{keys:<24}Previous section"),
-        Action::GridNextResult => format!("{keys:<24}Next section"),
-        _ => keys_row(keys, action),
+    format!("{keys:<24}{}", grid_action_text(action, true, true))
+}
+
+/// Names the page keys for the grid that receives them.
+pub fn grid_action_text(action: Action, table: bool, sections: bool) -> &'static str {
+    match (table, sections, action) {
+        (true, true, Action::GridPreviousResult) => "Previous section",
+        (true, true, Action::GridNextResult) => "Next section",
+        (true, false, Action::GridPreviousResult) => "Previous page of rows",
+        (true, false, Action::GridNextResult) => "Next page of rows",
+        _ => action_text(action),
     }
 }
 
@@ -1471,6 +1494,8 @@ pub const WORKSPACE_UNREADABLE: &str =
     "SQLN cannot read workspace.json. The layout and the cursors start again.";
 pub const AGE_NOW: &str = "just now";
 pub const MARK_OPEN: &str = " (open)";
+/// The node above the consoles of a connection in the navigator.
+pub const NODE_CONSOLES: &str = "Consoles";
 pub const NEW_CONSOLE_ROW: &str = "+ New console";
 pub const NO_ORPHANS: &str = "No scripts without a connection.";
 pub const TITLE_ORPHANS: &str = "Scripts without a connection";

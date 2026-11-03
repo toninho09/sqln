@@ -11,6 +11,7 @@ use crate::editor::{FormatOutcome, KeyboardMode, RunPlan, RunRefusal, RunScope};
 use crate::exec::{ConnectionId, RunOptions};
 use crate::form::FormRequest;
 use crate::grid::printable;
+use crate::help::Help;
 use crate::input::{Action, Chord, Lookup, Region};
 use crate::navigator::RowKind;
 use crate::palette::{Command, Palette, PaletteRequest};
@@ -116,6 +117,15 @@ impl App {
         }
         if self.picker.is_some() {
             self.on_picker_key(key);
+            return;
+        }
+        if let Some(help) = &mut self.help {
+            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                let contents = help.text();
+                self.copy(&contents);
+            } else if help.on_key(key) {
+                self.help = None;
+            }
             return;
         }
         if self.overlay.is_some() {
@@ -446,37 +456,59 @@ impl App {
             None if in_table => (None, text::REGION_FILTER),
             None => (None, text::REGION_EDITOR),
         };
-        let mut rows: Vec<String> = Vec::new();
-        match region {
-            Some(region) => rows.extend(self.key_rows(region)),
-            None if in_table => rows.push(text::FILTER_KEYS.to_owned()),
-            None => rows.push(text::EDITOR_KEYS.to_owned()),
+        let keys = match region {
+            Some(region) => self.help_keys(region),
+            None => {
+                let keys = if in_table {
+                    text::FILTER_KEYS
+                } else {
+                    text::EDITOR_KEYS
+                };
+                keys.iter()
+                    .map(|(key, label)| ((*key).to_owned(), *label))
+                    .collect()
+            }
+        };
+        let mut groups = vec![KeyGroup { title: name, keys }];
+        for (action, keys, label) in self.help_actions(Region::Global) {
+            use Action::*;
+            let title = match action {
+                Run | RunScript | Explain | ExplainAnalyze | Stop | FormatSql | ToggleComment
+                | OpenHistory => text::GROUP_RUN,
+                ToggleMode | Commit | Rollback => text::GROUP_TRANSACTION,
+                ChooseSchema | ChangeConnection | OpenSessions => text::GROUP_CONNECTION,
+                NextTab | PreviousTab | CloseTab | RenameConsole => text::GROUP_TABS,
+                FocusLeft | FocusRight | FocusUp | FocusDown | ToggleNavigator
+                | ExplorerCommands => text::GROUP_PANELS,
+                _ => text::GROUP_APPLICATION,
+            };
+            if let Some(group) = groups.iter_mut().find(|group| group.title == title) {
+                group.keys.push((keys, label));
+            } else {
+                groups.push(KeyGroup {
+                    title,
+                    keys: vec![(keys, label)],
+                });
+            }
         }
-        rows.push(String::new());
-        rows.extend(self.key_rows(Region::Global));
         let mode = if self.vim() {
             text::MODE_VIM
         } else {
             text::MODE_CONVENTIONAL
         };
-        self.overlay = Some(Overlay {
-            title: text::keys_title(mode, name),
-            contents: WrappedText::new(rows.join("\n")),
-            footer: String::new(),
-            scroll: 0,
-            other: None,
-            row: None,
-        });
+        self.help = Some(Help::new(text::keys_title(mode, name), groups));
     }
 
-    fn key_rows(&self, region: Region) -> Vec<String> {
+    fn help_keys(&self, region: Region) -> Vec<(String, &'static str)> {
+        self.help_actions(region)
+            .into_iter()
+            .map(|(_, key, label)| (key, label))
+            .collect()
+    }
+
+    fn help_actions(&self, region: Region) -> Vec<(Action, String, &'static str)> {
         let in_table = self.table_active.is_some();
         let sections = self.table().is_some_and(|tab| tab.section().is_some());
-        let row = match (in_table, sections) {
-            (true, true) => text::section_keys_row,
-            (true, false) => text::table_keys_row,
-            (false, _) => text::keys_row,
-        };
         self.keymap
             .actions(region)
             .filter(|action| {
@@ -489,7 +521,8 @@ impl App {
             })
             .filter_map(|action| {
                 let keys = self.keymap.keys(action);
-                (!keys.is_empty()).then(|| row(&keys.join(", "), action))
+                let label = text::grid_action_text(action, in_table, sections);
+                (!keys.is_empty()).then(|| (action, keys.join(", "), label))
             })
             .collect()
     }
@@ -895,9 +928,10 @@ impl App {
         use Action::*;
         let row = self.navigator.current(&self.connections);
         let item = row.as_ref().map(|row| &self.connections[row.connection]);
-        let on_connection = row
-            .as_ref()
-            .is_some_and(|row| row.kind == RowKind::Connection);
+        let on_kind = |kind| row.as_ref().is_some_and(|row| row.kind == kind);
+        let on_connection = on_kind(RowKind::Connection);
+        let on_console = on_kind(RowKind::Console);
+        let on_consoles = on_console || on_kind(RowKind::Consoles);
         let connected = item.is_some_and(|item| {
             let manager = self.manager.as_ref();
             manager.is_some_and(|manager| manager.is_connected(item.id))
@@ -909,13 +943,13 @@ impl App {
             (NavigatorRefresh, row.is_some()),
             (NavigatorEdit, on_connection),
             (NavigatorAdd, true),
-            (NavigatorDelete, on_connection),
+            (NavigatorDelete, on_connection || on_console),
             (NavigatorDisconnect, on_connection && connected),
             (NavigatorDeletePassword, on_connection && saved),
             (NavigatorSessions, self.can_open_sessions()),
             (
                 NavigatorStructure,
-                item.is_some_and(|item| item.dialect != Dialect::Redis),
+                !on_consoles && item.is_some_and(|item| item.dialect != Dialect::Redis),
             ),
             (NavigatorGenerate, self.can_generate()),
             (NavigatorImport, self.can_import_row()),
@@ -971,12 +1005,22 @@ impl App {
             ),
         ];
         let acting = self.explorer_commands();
+        let on_console = self
+            .navigator
+            .current(&self.connections)
+            .is_some_and(|row| row.kind == RowKind::Console);
         groups
             .iter()
             .map(|(title, rows)| {
                 let shown = rows.iter().filter_map(|(actions, label)| {
                     let action = actions.first().filter(|item| acting.contains(item))?;
-                    Some((self.shown_key(*action)?, *label))
+                    // On a console row, these two keys act on the console.
+                    let label = match action {
+                        NavigatorRefresh if on_console => text::MENU_RENAME_CONSOLE,
+                        NavigatorDelete if on_console => text::MENU_REMOVE_CONSOLE,
+                        _ => *label,
+                    };
+                    Some((self.shown_key(*action)?, label))
                 });
                 KeyGroup {
                     title,
@@ -986,7 +1030,56 @@ impl App {
             .collect()
     }
 
-    /// Returns the groups of the `Ctrl+W` menu. A removed key leaves its group.
+    /// Returns true when `Ctrl+W k` or `Ctrl+W j` moves the focus from the panel of the
+    /// cursor to another panel of the tab on screen.
+    fn focus_moves(&self, up: bool) -> bool {
+        if self.navigator_focused {
+            return false;
+        }
+        let console = self.console();
+        match self.table() {
+            Some(tab) if up => tab.filters && tab.focus == TableFocus::Grid,
+            Some(tab) => tab.focus != TableFocus::Grid,
+            None if up => console.focus == Focus::Results,
+            None => console.focus == Focus::Editor && !console.results.is_empty(),
+        }
+    }
+
+    /// Returns true when a command of the `Ctrl+W` menu has an effect now and belongs to
+    /// the panel of the cursor. The key of a command outside the menu keeps its action.
+    pub(super) fn fits_cursor(&self, action: Action) -> bool {
+        use Action::*;
+        let console = self.console();
+        let in_console = !self.navigator_focused && self.table_active.is_none();
+        let in_editor = in_console && console.focus == Focus::Editor;
+        let available = self.command_available(action);
+        match action {
+            // Only the palette leaves itself out of its list.
+            OpenPalette => true,
+            Run | RunScript => in_editor && available && console.can_run(),
+            Explain | ExplainAnalyze | FormatSql | ToggleComment => {
+                in_editor && available && !console.editor.is_blank()
+            }
+            OpenHistory => in_editor && available,
+            RenameConsole | ToggleMode | ChooseSchema => in_console && available,
+            ChangeConnection => {
+                in_console
+                    && available
+                    && !console.is_busy()
+                    && !console.in_transaction()
+                    && !self.connections.is_empty()
+            }
+            // A failed transaction can only end with a rollback.
+            Commit => available && console.transaction != TransactionState::Failed,
+            NextTab | PreviousTab => self.tab_order().len() > 1,
+            FocusUp => self.focus_moves(true),
+            FocusDown => self.focus_moves(false),
+            _ => available,
+        }
+    }
+
+    /// Returns the groups of the `Ctrl+W` menu, with the commands of the panel of the
+    /// cursor. A removed key leaves its group, and a row keeps only the keys that act.
     pub fn prefix_menu(&self) -> Vec<KeyGroup> {
         use Action::*;
         let groups: [MenuGroup; 6] = [
@@ -1054,7 +1147,9 @@ impl App {
             .iter()
             .map(|(title, rows)| {
                 let shown = rows.iter().filter_map(|(actions, label)| {
-                    let keys = self.prefix_keys(actions);
+                    let mut fitting = actions.to_vec();
+                    fitting.retain(|action| self.fits_cursor(*action));
+                    let keys = self.prefix_keys(&fitting);
                     (!keys.is_empty()).then_some((keys, *label))
                 });
                 KeyGroup {

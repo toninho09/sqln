@@ -9,6 +9,7 @@ use sqln::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
 use sqln::clipboard::MemoryClipboard;
 use sqln::editor::{KeyboardMode, SqlEditor};
 use sqln::sql::Dialect;
+use sqln::ui::which_key::KeyGroup;
 
 /// A fixed catalog for a test without a database.
 pub fn sample_catalog() -> Catalog {
@@ -146,16 +147,26 @@ impl Fixture {
     }
 }
 
-/// Returns a path for a database of one test. The file does not exist.
-/// Lists the rows of the explorer page of the `Ctrl+W` menu, as `key label`.
-pub fn explorer_page(app: &App) -> Vec<String> {
-    let groups = app.explorer_menu().into_iter();
+/// Lists the rows of a page of the `Ctrl+W` menu, as `key label`.
+fn menu_rows(groups: Vec<KeyGroup>) -> Vec<String> {
+    let groups = groups.into_iter();
     groups
         .flat_map(|group| group.keys)
         .map(|(key, label)| format!("{key} {label}"))
         .collect()
 }
 
+/// Lists the rows of the explorer page of the `Ctrl+W` menu, as `key label`.
+pub fn explorer_page(app: &App) -> Vec<String> {
+    menu_rows(app.explorer_menu())
+}
+
+/// Lists the rows of the first page of the `Ctrl+W` menu, as `key label`.
+pub fn prefix_page(app: &App) -> Vec<String> {
+    menu_rows(app.prefix_menu())
+}
+
+/// Returns a path for a database of one test. The file does not exist.
 pub fn temp_db(name: &str) -> std::path::PathBuf {
     let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}.db"));
     for suffix in ["", "-journal", "-wal", "-shm"] {

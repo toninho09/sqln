@@ -27,7 +27,7 @@ use sqln::store::{Root, Store};
 use sqln::ui::icons::{Icons, connection_symbol};
 use sqln::ui::schemes;
 use sqln::ui::theme::{ColorEnv, Theme};
-use sqln::ui::which_key::widest_row;
+use sqln::ui::which_key::{KeyGroup, draw_which_key, widest_row};
 use sqln::ui::{MainTab, TabView, draw_main_tabs, text};
 use unicode_width::UnicodeWidthStr;
 
@@ -916,7 +916,13 @@ fn the_menu_of_the_prefix_replaces_the_compressed_hint() {
     let mut screen = Screen::new("menu", Theme::plain(), KeyboardMode::Conventional);
     screen.app.on_event(Event::Key(ctrl('w')));
     let shown = screen.screen(80, 24);
-    for text in ["Panels", "Transaction", "Rollback", "Quit", "Ctrl+W …"] {
+    for text in [
+        "Panels",
+        "Transaction",
+        "Auto or manual",
+        "Quit",
+        "Ctrl+W …",
+    ] {
         assert!(shown.contains(text), "{text}:\n{shown}");
     }
     screen.code(KeyCode::Esc);
@@ -950,18 +956,36 @@ fn the_menu_omits_a_removed_key_and_fits_the_minimum_terminal() {
 }
 
 #[test]
-fn the_menu_names_the_sessions_and_the_explorer_page_at_the_minimum_terminal() {
+fn the_menu_names_the_explorer_page_at_the_minimum_terminal() {
     let mut screen = Screen::new("menu-new-rows", Theme::plain(), KeyboardMode::Conventional);
     screen.code_ctrl_w();
     let shown = screen.screen(80, 24);
-    for text in [
-        "S    Sessions",
-        "Tab  Explorer commands",
-        "Quit",
-        "Tab explorer",
-    ] {
+    for text in ["Tab  Explorer commands", "Quit", "Tab explorer"] {
         assert!(shown.contains(text), "{text}:\n{shown}");
     }
+}
+
+#[test]
+fn an_empty_group_does_not_change_the_menu() {
+    let group = |title, rows| KeyGroup {
+        title,
+        keys: vec![("k".to_owned(), "Label"); rows],
+    };
+    let shown: Vec<KeyGroup> = ["A", "B", "C", "D", "E", "F"]
+        .map(|title| group(title, 1))
+        .to_vec();
+    let mut with_empty = shown.clone();
+    with_empty.extend(["G", "H", "I"].map(|title| group(title, 0)));
+    let draw = |groups: &[KeyGroup]| {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw_which_key(frame, frame.area(), "Menu", groups, &Theme::plain());
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    };
+    assert_eq!(draw(&shown), draw(&with_empty));
 }
 
 #[test]
@@ -1093,6 +1117,7 @@ fn the_palette_hides_the_console_commands_in_a_table() {
     screen.prefix('h');
     screen.code(KeyCode::Right);
     screen.pump_until("main");
+    screen.code(KeyCode::Down);
     screen.code(KeyCode::Down);
     screen.code(KeyCode::Right);
     screen.pump_until("users");

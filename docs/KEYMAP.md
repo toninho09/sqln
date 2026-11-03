@@ -54,6 +54,25 @@ After `Ctrl+W`, press one key. `Esc` cancels the prefix.
 A window shows the options, in groups, while the prefix is active.
 The window uses the effective keys of the `keymap`, and the hint bar shows `Ctrl+W …  Esc cancel`.
 
+The window lists a command only when the command has an effect now and belongs to the panel of the cursor. A group without commands leaves the window.
+The key of a command outside the window keeps its action, so the table below lists each key.
+
+| Panel of the cursor | Commands of that panel only |
+|---|---|
+| Editor | Run, whole script, plan, format, comment, history, and the commands of the next row |
+| Results | Rename, mode, database or schema, and connection change |
+| Table and filter bar | None |
+| Navigator | None |
+
+Each panel also lists these commands:
+
+- The keys that move the focus from that panel.
+- Next tab and previous tab, with a second tab.
+- Close the tab, toggle the explorer, the explorer page, sessions of a source with sessions, palette, help, Settings, reload, and quit.
+- `x` during a run, `C` and `R` during a transaction, and only `R` in a failed transaction. These stay in the navigator, because the session stays occupied until the user acts.
+
+A table tab has no script and no transaction, so `C` and `R` do not appear there.
+
 | Key | Action |
 |---|---|
 | `h`, `j`, `k`, `l`, or arrows | Change panel |
@@ -195,6 +214,12 @@ On macOS, the terminal handles `Cmd+C` and `Cmd+V`.
 `n` opens the console list of the connection, with **+ New console** on the first line. Without saved consoles, `n` creates a console.
 In the list, `Enter` picks the row, `Delete` (or `x` in the Vim mode) removes the script of the row, and `Esc` cancels.
 `s` opens the list of scripts without connection, with the same keys.
+A connection with consoles shows a **Consoles** node above its schemas. The node starts closed, and `Right` opens it.
+The node lists the saved consoles, the newest first, and then the open consoles without a file. A console with a tab shows the `(open)` mark.
+On a console row, `Enter` opens the console or selects its tab, and a double click does the same.
+On a console row, `r` renames the console. An open console renames its tab.
+On a console row, `Delete` (or `x` in the Vim mode) removes the script, after a question. An open console refuses, and the connection stays.
+The **Consoles** node needs no session, so a failed catalog does not hide it. `r` on another row also reads the list of consoles again.
 On a schema, `Enter` opens or closes the row.
 On a table or a view, `Enter` opens the table view, or selects its tab when it already exists.
 `Right` and `Left` open and close the columns of a table.
@@ -202,7 +227,7 @@ On a table or a view, `Enter` opens the table view, or selects its tab when it a
 In the grid of a table, `i` opens the structure of that table.
 In the structure tab of a table, `[` and `]` switch the section. In the other table tabs, those keys change the page.
 `S` opens the sessions of the server of the row. SQLite, Redis, and Valkey refuse it with a reason.
-The hint line changes with the cursor line, and it shows only the main commands: open, new console, expand or collapse, `Ctrl+W commands`, and `F1 keys`. `Ctrl+W Tab` lists the others, and their keys keep acting. The connection commands appear on the connection line, but the keys act on any line of it.
+The hint line changes with the cursor line, and it shows only the main commands: open, new console, expand or collapse, `Ctrl+W commands`, and `F1 keys`. `Ctrl+W Tab` lists the others, and their keys keep acting. The connection commands appear on the connection line, but the keys act on any line of it, except `r` and `Delete` on a console row.
 The labels say the object of the command, such as `n new console` and `a add connection`.
 A command that does not fit leaves the line, and the key keeps acting.
 
@@ -212,7 +237,7 @@ A command that does not fit leaves the line, and the key keeps acting.
 
 ### Tree filter
 
-The filter lists the tables and the views that match each word, by the relation name or the schema name. It reads only the in-memory catalogs and does not open connections.
+The filter lists the tables and the views that match each word, by the relation name or the schema name. It leaves out the consoles. It reads only the in-memory catalogs and does not open connections.
 
 | Action | Key in the field |
 |---|---|
@@ -433,6 +458,7 @@ The initial focus always stays on the option with no effect on the database or t
 | Click on the `EXPLORER` title | Give focus to the navigator |
 | Click on the table header | Apply sorting: ascending, descending, and no order |
 | Double click on a table | Open the table view, with two clicks on the same cell within 400 ms |
+| Double click on a console row | Open the console, or select its tab |
 | Click on a bar field or button | Give focus to the field, or press the button |
 | Click on **Previous** or **Next** | Change page in the table grid |
 | Click on a row of the script question | Change the action of the row, or press the button |

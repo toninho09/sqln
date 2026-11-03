@@ -51,6 +51,7 @@ use crate::export::form::ExportForm;
 use crate::form::ConnectionForm;
 use crate::generate::Template;
 use crate::grid::Budget;
+use crate::help::Help;
 use crate::history::HistoryList;
 use crate::import::ImportChoices;
 use crate::import::form::ImportForm;
@@ -70,6 +71,7 @@ use crate::ui::browser::draw_browser;
 use crate::ui::console::BarData;
 use crate::ui::export::{ExportLayout, draw_export};
 use crate::ui::form::{FormLayout, draw_form};
+use crate::ui::help::draw_help;
 use crate::ui::history::draw_history;
 use crate::ui::import::{ImportLayout, draw_import};
 use crate::ui::name::{NamePrompt, draw_name};
@@ -352,6 +354,7 @@ pub struct App {
     history: Option<HistoryList>,
     form: Option<ConnectionForm>,
     overlay: Option<Overlay>,
+    help: Option<Help>,
     status: Option<String>,
     /// The message on the clock, with the time of its first frame.
     status_shown: Option<(String, Instant)>,
@@ -469,6 +472,7 @@ impl App {
             history: None,
             form: None,
             overlay: None,
+            help: None,
             rename: None,
             settings_form: None,
             export_form: None,
@@ -721,6 +725,7 @@ impl App {
         let blocked = !self.dialogs.is_empty()
             || self.conflicts.is_some()
             || self.overlay.is_some()
+            || self.help.is_some()
             || self.picker.is_some()
             || self.palette.is_some()
             || self.history.is_some()
@@ -772,6 +777,11 @@ impl App {
                     list.paste(&text);
                 }
             }
+            Event::Paste(text) if self.dialogs.is_empty() && self.help.is_some() => {
+                if let Some(help) = &mut self.help {
+                    help.paste(&text);
+                }
+            }
             Event::Paste(text) if !blocked => self.on_paste(&text),
             Event::Mouse(mouse) if !self.dialogs.is_empty() => self.on_dialog_mouse(mouse),
             Event::Mouse(mouse) if self.auth.prompt.is_some() => self.on_password_mouse(mouse),
@@ -783,6 +793,15 @@ impl App {
             Event::Mouse(mouse) if self.settings_form.is_some() => self.on_settings_mouse(mouse),
             Event::Mouse(mouse) if self.export_form.is_some() => self.on_export_mouse(mouse),
             Event::Mouse(mouse) if self.import_form.is_some() => self.on_import_mouse(mouse),
+            Event::Mouse(mouse) if self.help.is_some() => {
+                if let Some(help) = &mut self.help {
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => help.scroll = help.scroll.saturating_sub(3),
+                        MouseEventKind::ScrollDown => help.scroll = help.scroll.saturating_add(3),
+                        _ => {}
+                    }
+                }
+            }
             Event::Mouse(mouse) if !blocked => self.on_mouse(mouse),
             _ => {}
         }
@@ -1234,6 +1253,9 @@ impl App {
                 ..
             } = overlay;
             *scroll = draw_overlay(frame, title, contents, footer, *scroll, &self.theme);
+        }
+        if let Some(help) = &mut self.help {
+            draw_help(frame, help, &self.theme);
         }
         if let Some(palette) = &self.palette {
             self.layout.palette = draw_palette(frame, palette, &self.theme);

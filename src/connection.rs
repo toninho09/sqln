@@ -8,9 +8,10 @@ use crate::catalog::{Catalog, RelationRef};
 use crate::connector::sqlite::{SqliteConnector, SqliteTarget};
 use crate::connector::target::{Address, Engine, NetworkTarget, Tls};
 use crate::connector::{Capabilities, Connector, network_connector};
-use crate::exec::{ConnectionId, Settings};
+use crate::exec::{ConnectionId, ConsoleId, Settings};
 use crate::sql::Dialect;
 use crate::store::Scope;
+use crate::store::scripts::ScriptEntry;
 
 pub const DEFAULT_POOL_LIMIT: usize = 5;
 pub const DEFAULT_CONNECT_SECONDS: u64 = 30;
@@ -191,6 +192,16 @@ pub struct ConnectionKey {
     pub id: String,
 }
 
+/// One console of a connection in the navigator.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TreeConsole {
+    pub name: String,
+    /// The tab of an open console.
+    pub tab: Option<ConsoleId>,
+    /// The file of a saved console. An open console without text has no file.
+    pub script: Option<ScriptEntry>,
+}
+
 /// One connection of the running application.
 pub struct Connection {
     pub id: ConnectionId,
@@ -212,6 +223,9 @@ pub struct Connection {
     /// The number of the newest read. The answer of an older read is out of date.
     pub catalog_read: u64,
     pub requested_columns: Vec<RelationRef>,
+    /// The console rows of the navigator. Only a connection open in the tree keeps them
+    /// up to date, because the list reads the disk.
+    pub consoles: Vec<TreeConsole>,
 }
 
 impl Connection {
@@ -235,6 +249,7 @@ impl Connection {
             catalog_state: CatalogState::NotLoaded,
             catalog_read: 0,
             requested_columns: Vec::new(),
+            consoles: Vec::new(),
         }
     }
 

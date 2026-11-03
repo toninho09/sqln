@@ -246,6 +246,12 @@ impl Console {
         )
     }
 
+    /// Returns true when the console has a connection or a file. Without both, the
+    /// console has nothing to run.
+    pub fn can_run(&self) -> bool {
+        self.connection.is_some() || self.file.is_some()
+    }
+
     /// Sets the state of the transaction. The clock of an open transaction keeps its
     /// start when the transaction only changes from open to failed.
     pub fn set_transaction(&mut self, state: TransactionState) {

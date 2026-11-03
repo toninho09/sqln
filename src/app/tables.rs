@@ -193,6 +193,7 @@ impl App {
                 let name = relation.relation.clone();
                 (Scope::Relation, relation, name)
             }
+            RowKind::Consoles | RowKind::Console => return,
         };
         self.open_structure(connection, scope, relation, name);
     }

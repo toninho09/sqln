@@ -4,6 +4,49 @@ This document records the choices and the rejected alternatives.
 The complete rules are in the [plan](INITIAL_PLAN.md).
 Do not reopen a decision without a new fact.
 
+## Consoles in the tree of the explorer — 2026-11-02
+
+The user found that the tree did not show the consoles, and asked for a **Consoles** node in each connection. The `n` list stays as it is.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. List | Saved and open consoles, with the `(open)` mark | Only saved consoles | Each console tab of the connection has a row, also without text |
+| 2. Node | Only with consoles, and closed at the start | Open at the start; always present | The tables stay near the top, and a connection without consoles has no new row |
+| 3. `Delete` on a console row | Removes the script, with the question of the list. An open console refuses | No effect | The key already removes a script in the list, and on this row it must not ask to remove the connection |
+| 4. `r` on a console row | Renames, as in the list. An open console renames its tab | Read the catalog | A console has no catalog. `r` keeps its meaning on the other rows |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Place of the rows | `Connection::consoles`, rebuilt by `refresh_tree_consoles` | A read of the disk in `Navigator::rows` | The tree reads its rows at each frame and at each key |
+| When the rows change | After a change of a console, and when a connection opens | At each event | The list reads the disk. Only a connection open in the tree reads it |
+| Changes from outside | `r` on another row reads the list again | A watch of the folder | A second program rarely changes this list, and `r` already means a new read |
+| Tree filter | Lists only relations | Also lists consoles | `KEYMAP.md` defines the filter for tables and views |
+| Cursor | Holds the console name, and a rename moves it | Holds the script id | An open console without a file has no script id |
+| Order | Saved consoles first, the newest first, then open consoles without a file | Open consoles first | The list of `n` uses this order |
+
+Known limit: at the default width of the panel, a long name cuts the `(open)` mark. The tab row still shows the console.
+
+## `Ctrl+W` menu by panel — 2026-11-02
+
+The user asked that the `Ctrl+W` menu lists only the commands that fit the context of the cursor. `KEYMAP.md` already had this rule for the prefix options, but the code did not apply it.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Rule | A command stays when it has an effect now and belongs to the panel of the cursor | Only the state of the command | A run with the cursor in the navigator acts on the console, and not on the row |
+| 2. Key of a hidden command | The key keeps its action | The key stops | The menu is a list, and no current command changes. The hint row uses the same rule |
+| 3. Stop, commit, and rollback in the navigator | They stay while they act | Only with the cursor in the console | The session stays occupied until the user acts |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Place of the rule | `fits_cursor` adds the panel to `command_available` | Change `command_available` | The palette reads `command_available`, and this task does not change the palette |
+| Run commands | The conditions of `editor_hint`: a connection or a file to run, and a text to plan, format, or comment | Own conditions | The menu and the hint row agree |
+| Commit | `ending_commands` reads `fits_cursor`, so a failed transaction has no commit in both lists | Repeat the check | One point holds the rule |
+| Empty group | `columns_of` leaves it out of the height | Remove it in `prefix_menu` | The explorer page uses the same code |
+
 ## Explorer commands in the `Ctrl+W` menu — 2026-11-02
 
 The user found that `S` was not in the `Ctrl+W` menu, and asked for a shorter hint row in the explorer, with each command available in `Ctrl+W`. The user also asked that no current command changes. This request replaces the rule that the hint row lists each command that acts on a row of the explorer.

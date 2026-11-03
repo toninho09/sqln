@@ -187,6 +187,7 @@ impl App {
         if replaced && self.table_active.is_none() {
             self.table_active = Some(0);
         }
+        self.refresh_tree_consoles();
     }
 
     /// Adds the empty console that stays out of the tab row, once.

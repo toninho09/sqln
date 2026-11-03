@@ -4001,3 +4001,224 @@ fn an_export_saves_its_choices_without_the_change_question() {
     session.app.tick_at(session.now);
     session.assert_not_sees("Reload");
 }
+
+// ---------------------------------------------------------------------------
+// The consoles in the tree of the navigator.
+
+/// One connection with one saved console. The first console stays open, without text.
+fn session_with_tree_consoles(name: &str) -> (Session, Store) {
+    let (store, base) = global_only(name);
+    let db = database(&base, "s", "CREATE TABLE t (v INTEGER);");
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
+    write_script(&store, "investigate", "a");
+    (Session::start(&store), store)
+}
+
+fn write_script(store: &Store, name: &str, id: &str) {
+    let meta = ScriptMeta::new(id.into(), name.into(), "g1".into(), Scope::Global);
+    scripts::create(&store.global, &meta, "SELECT 1;").unwrap();
+}
+
+impl Session {
+    fn tree(&self) -> Vec<String> {
+        let connections = self.app.connections();
+        let rows = self.app.navigator().rows(connections);
+        rows.iter()
+            .map(|row| row.name(connections).to_owned())
+            .collect()
+    }
+
+    fn open_consoles_node(&mut self) {
+        common::select_row(&mut self.app, 0, &[RowKind::Consoles], "Consoles");
+        self.code(KeyCode::Right);
+    }
+
+    /// Moves the cursor to a console row. The node opens first.
+    fn select_tree_console(&mut self, name: &str) {
+        self.open_consoles_node();
+        common::select_row(&mut self.app, 0, &[RowKind::Console], name);
+    }
+
+    fn tree_row_name(&self) -> String {
+        let connections = self.app.connections();
+        let row = self.app.navigator().current(connections).unwrap();
+        row.name(connections).to_owned()
+    }
+
+    /// Reads the row and not the screen, because the panel can cut a long row.
+    fn tree_console_is_open(&self, name: &str) -> bool {
+        let consoles = &self.app.connections()[0].consoles;
+        let row = consoles.iter().find(|item| item.name == name).unwrap();
+        row.tab.is_some()
+    }
+}
+
+#[test]
+fn the_tree_lists_the_saved_and_the_open_consoles_under_a_closed_node() {
+    let (mut session, _store) = session_with_tree_consoles("tree-list");
+    common::select_row(&mut session.app, 0, &[RowKind::Consoles], "Consoles");
+    assert_eq!(session.tree(), ["s", "Consoles", "main"]);
+    session.code(KeyCode::Right);
+    assert_eq!(
+        session.tree(),
+        ["s", "Consoles", "investigate", "console-1", "main"]
+    );
+    session.assert_sees("console-1 (open)");
+    assert!(!session.tree_console_is_open("investigate"));
+}
+
+#[test]
+fn a_connection_without_consoles_has_no_node() {
+    let (store, base) = global_only("tree-no-node");
+    let one = database(&base, "one", "").display().to_string();
+    let two = database(&base, "two", "").display().to_string();
+    write_config(
+        &store.global,
+        "{}",
+        &[
+            sqlite_entry("g1", "first", &one),
+            sqlite_entry("g2", "second", &two),
+        ],
+    );
+    let mut session = Session::start(&store);
+    common::select_row(&mut session.app, 1, &[RowKind::Connection], "second");
+    session.code(KeyCode::Right);
+    let connections = session.app.connections();
+    let rows = session.app.navigator().rows(connections);
+    assert!(rows.iter().all(|row| row.kind != RowKind::Consoles));
+}
+
+#[test]
+fn enter_opens_a_saved_console_and_selects_an_open_console() {
+    let (mut session, _store) = session_with_tree_consoles("tree-enter");
+    session.select_tree_console("investigate");
+    session.code(KeyCode::Enter);
+    assert_eq!(session.app.consoles().len(), 2);
+    assert_eq!(session.app.console().name, "investigate");
+    assert!(!session.app.navigator_focused());
+    assert!(session.tree_console_is_open("investigate"));
+    common::select_row(&mut session.app, 0, &[RowKind::Console], "console-1");
+    session.code(KeyCode::Enter);
+    assert_eq!(session.app.consoles().len(), 2);
+    assert_eq!(session.app.console().name, "console-1");
+}
+
+#[test]
+fn a_closed_console_loses_its_mark_and_stays_in_the_tree() {
+    let (mut session, _store) = session_with_tree_consoles("tree-close");
+    session.select_tree_console("investigate");
+    session.code(KeyCode::Enter);
+    session.prefix('c');
+    assert_eq!(session.app.consoles().len(), 1);
+    assert!(!session.tree_console_is_open("investigate"));
+}
+
+#[test]
+fn delete_on_a_console_row_removes_its_script_and_keeps_the_connection() {
+    let (mut session, store) = session_with_tree_consoles("tree-delete");
+    session.select_tree_console("investigate");
+    session.code(KeyCode::Delete);
+    session.assert_sees("Remove console");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    assert!(consoles_in(&store.global, Scope::Global).is_empty());
+    assert_eq!(session.app.connections().len(), 1);
+    assert_eq!(session.tree(), ["s", "Consoles", "console-1", "main"]);
+}
+
+#[test]
+fn delete_on_an_open_console_row_refuses() {
+    let (mut session, _store) = session_with_tree_consoles("tree-delete-open");
+    session.select_tree_console("console-1");
+    session.code(KeyCode::Delete);
+    session.assert_sees(sqln::ui::text::SCRIPT_OPEN);
+    session.assert_not_sees("Remove console");
+    assert_eq!(session.app.consoles().len(), 1);
+}
+
+#[test]
+fn r_on_a_saved_console_row_renames_its_script_and_the_cursor_stays() {
+    let (mut session, store) = session_with_tree_consoles("tree-rename");
+    session.select_tree_console("investigate");
+    session.code(KeyCode::Char('r'));
+    erase_name(&mut session);
+    session.write("audit");
+    session.code(KeyCode::Enter);
+    let saved = consoles_in(&store.global, Scope::Global);
+    assert_eq!(saved[0].meta.name, "audit");
+    assert_eq!(session.tree_row_name(), "audit");
+}
+
+#[test]
+fn r_on_an_open_console_row_renames_its_tab() {
+    let (mut session, _store) = session_with_tree_consoles("tree-rename-open");
+    session.select_tree_console("console-1");
+    session.code(KeyCode::Char('r'));
+    erase_name(&mut session);
+    session.write("audit");
+    session.code(KeyCode::Enter);
+    assert_eq!(session.app.console().name, "audit");
+    assert_eq!(session.tree_row_name(), "audit");
+}
+
+#[test]
+fn r_on_another_row_reads_the_scripts_and_opens_no_name_window() {
+    let (mut session, store) = session_with_tree_consoles("tree-refresh");
+    session.open_consoles_node();
+    write_script(&store, "another", "b");
+    session.code(KeyCode::Char('r'));
+    assert!(session.tree().contains(&"another".to_owned()));
+    session.assert_not_sees("Rename console");
+}
+
+#[test]
+fn the_tree_filter_leaves_the_consoles_out() {
+    let (mut session, _store) = session_with_tree_consoles("tree-filter");
+    session.open_consoles_node();
+    session.code(KeyCode::Char('/'));
+    session.write("investigate");
+    assert!(session.tree().is_empty());
+}
+
+#[test]
+fn a_console_row_names_its_own_commands() {
+    let (mut session, _store) = session_with_tree_consoles("tree-commands");
+    session.select_tree_console("investigate");
+    let hint = session.app.hint();
+    for text in ["Enter open console", "r rename", "Del remove console"] {
+        assert!(hint.contains(text), "{hint}");
+    }
+    let page = common::explorer_page(&session.app);
+    for row in ["r Rename the console", "Del Remove the console"] {
+        assert!(page.contains(&row.to_owned()), "{page:?}");
+    }
+    for row in ["i Show the structure", "r Read the catalog"] {
+        assert!(!page.contains(&row.to_owned()), "{page:?}");
+    }
+}
+
+#[test]
+fn a_double_click_on_a_console_row_opens_it() {
+    let (mut session, _store) = session_with_tree_consoles("tree-click");
+    session.open_consoles_node();
+    let shown = session.screen();
+    let (row, line) = shown
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("investigate"))
+        .unwrap();
+    let column = line.chars().position(|c| c == 'i').unwrap();
+    let press = Event::Mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: u16::try_from(column).unwrap(),
+        row: u16::try_from(row).unwrap(),
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    });
+    session.app.on_event(press.clone());
+    session.app.on_event(press);
+    assert_eq!(session.app.console().name, "investigate");
+}

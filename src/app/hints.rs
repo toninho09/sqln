@@ -4,7 +4,6 @@
 //! screen shows. A command stays out of a list when its key does nothing in that state.
 
 use super::App;
-use crate::connector::TransactionState;
 use crate::console::Focus;
 use crate::export::form as export_form;
 use crate::form::FieldStyle;
@@ -117,6 +116,9 @@ impl App {
                 text::HINT_CHOOSE
             });
         }
+        if self.help.is_some() {
+            return Some(text::HINT_HELP);
+        }
         if let Some(overlay) = &self.overlay {
             return Some(if overlay.other.is_some() {
                 text::HINT_OVERLAY_JSON
@@ -161,15 +163,10 @@ impl App {
     /// The commands that end a run or a transaction. They lead the row of a console,
     /// because the session stays occupied until the user acts.
     fn ending_commands(&self) -> [Candidate; 3] {
-        let healthy = self.console().transaction != TransactionState::Failed;
         let available = |action| self.command_available(action);
         [
             (Action::Stop, "stop", available(Action::Stop)),
-            (
-                Action::Commit,
-                "commit",
-                available(Action::Commit) && healthy,
-            ),
+            (Action::Commit, "commit", self.fits_cursor(Action::Commit)),
             (Action::Rollback, "rollback", available(Action::Rollback)),
         ]
     }
@@ -197,10 +194,9 @@ impl App {
         self.editor_hint()
     }
 
-    /// A console without a connection and without a file has nothing to run.
     fn editor_hint(&self) -> Vec<HintItem> {
         let console = self.console();
-        let can_run = console.connection.is_some() || console.file.is_some();
+        let can_run = console.can_run();
         let mut commands = self.ending_commands().to_vec();
         commands.extend([
             (Action::Run, "run", can_run),
@@ -350,18 +346,26 @@ impl App {
         let branch = Navigator::is_branch(&row);
         let connection = row.kind == RowKind::Connection;
         let relation = matches!(row.kind, RowKind::Table | RowKind::View);
+        let console = row.kind == RowKind::Console;
         let enter = match row.kind {
             RowKind::Connection => "console",
+            RowKind::Console => "open console",
             RowKind::View => "open view",
             _ => "open table",
         };
         let mut items = self.hints_when(&[
             (Action::NavigatorClearFilter, "clear filter", filtered),
-            (Action::NavigatorOpen, enter, connection || relation),
+            (
+                Action::NavigatorOpen,
+                enter,
+                connection || relation || console,
+            ),
+            (Action::NavigatorRefresh, "rename", console),
+            (Action::NavigatorDelete, "remove console", console),
             (
                 Action::NavigatorNewConsole,
                 "new console",
-                connection || row.kind == RowKind::Schema,
+                connection || matches!(row.kind, RowKind::Consoles | RowKind::Schema),
             ),
             (
                 Action::NavigatorExpand,

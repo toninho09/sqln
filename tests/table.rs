@@ -1400,6 +1400,106 @@ impl Fixture {
         let tabs = self.app.tables().iter();
         tabs.filter(|tab| tab.shows_sessions()).count()
     }
+
+    fn menu_has(&self, row: &str) -> bool {
+        let rows = common::prefix_page(&self.app);
+        rows.iter().any(|item| item == row)
+    }
+}
+
+/// The rows of the first page that act only on a console.
+const CONSOLE_ROWS: &[&str] = &[
+    "e Run the statement",
+    "s Run the script",
+    "E Show the plan",
+    "A Plan with a run",
+    "f Format the SQL",
+    "/ Comment the rows",
+    "N Rename the tab",
+    "m Auto or manual",
+    "d Schema or database",
+    "a Change connection",
+];
+
+#[test]
+fn the_menu_of_a_console_of_a_server_lists_its_commands() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.app.on_event(Event::Paste("SELECT 1;".to_owned()));
+    for row in CONSOLE_ROWS.iter().chain(&["S Sessions"]) {
+        assert!(f.menu_has(row), "{row}");
+    }
+}
+
+#[test]
+fn the_menu_of_a_table_leaves_out_the_commands_of_a_console() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.open_table("users");
+    for row in CONSOLE_ROWS {
+        assert!(!f.menu_has(row), "{row}");
+    }
+    for row in [
+        "hk Move the focus",
+        "n Next tab",
+        "c Close the tab",
+        "S Sessions",
+    ] {
+        assert!(f.menu_has(row), "{row}");
+    }
+    f.press(ctrl('w'));
+    f.assert_sees("Application");
+    f.assert_not_sees("Transaction");
+    f.code(KeyCode::Esc);
+    f.focus_filter();
+    for row in CONSOLE_ROWS {
+        assert!(!f.menu_has(row), "{row}");
+    }
+    assert!(f.menu_has("hj Move the focus"));
+}
+
+#[test]
+fn a_tab_without_filters_has_no_key_up_in_the_menu() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.press(ctrl('w'));
+    f.press(shift(KeyCode::Char('S')));
+    f.loaded();
+    assert!(f.menu_has("h Move the focus"));
+}
+
+#[test]
+fn the_menu_of_the_explorer_keeps_the_sessions_of_the_row() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.prefix('h');
+    assert!(f.menu_has("S Sessions"));
+    assert!(!f.menu_has("d Schema or database"));
+}
+
+#[test]
+fn a_source_without_sessions_has_no_sessions_row() {
+    let f = Fixture::sqlite(
+        "menu-no-sessions.db",
+        "CREATE TABLE users (id INT);",
+        Settings::default(),
+    );
+    assert!(!f.menu_has("S Sessions"));
+}
+
+#[test]
+fn the_stop_row_needs_a_run_and_replaces_the_run_rows() {
+    let (mut f, recorder) = Fixture::recorded(Recorder::default());
+    f.app
+        .on_event(Event::Paste("SELECT 1 LIMIT 1 OFFSET 0;".to_owned()));
+    assert!(!f.menu_has("x Stop"));
+    assert!(f.menu_has("e Run the statement"));
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.code(KeyCode::F(5));
+    f.pump_until(|f| f.app.console_mut().is_busy());
+    assert!(f.menu_has("x Stop"));
+    assert!(!f.menu_has("e Run the statement"));
+    f.prefix('h');
+    assert!(f.menu_has("x Stop"), "the session stays occupied");
+    recorder.hold.store(false, Ordering::SeqCst);
+    recorder.release.notify_one();
+    f.pump_until(|f| !f.app.console_mut().is_busy());
 }
 
 #[test]
@@ -1633,6 +1733,7 @@ fn a_double_click_opens_a_table_and_one_click_does_not() {
     f.code(KeyCode::Right);
     f.pump_until(|f| f.app.connections()[0].catalog.is_some());
     f.code(KeyCode::Down);
+    f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.assert_sees("▸ t");
     // The mark of a row opens its columns, so the clicks hit the name.
@@ -1655,6 +1756,7 @@ fn right_still_opens_the_columns_of_a_table_in_the_navigator() {
     f.prefix('h');
     f.code(KeyCode::Right);
     f.pump_until(|f| f.app.connections()[0].catalog.is_some());
+    f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.code(KeyCode::Down);
@@ -1867,6 +1969,7 @@ fn two_clicks_far_apart_in_time_do_not_open_a_table() {
     f.prefix('h');
     f.code(KeyCode::Right);
     f.pump_until(|f| f.app.connections()[0].catalog.is_some());
+    f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     let screen = f.screen();
@@ -2397,6 +2500,7 @@ fn the_help_of_a_table_lists_its_own_keys() {
     f.grid();
     f.code(KeyCode::F(1));
     f.assert_sees("Keys · Conventional · Table");
+    f.code(KeyCode::Down);
     f.assert_sees("Sort by the column");
     f.assert_not_sees("Close the result");
     for _ in 0..4 {
@@ -2467,6 +2571,7 @@ fn a_database_name_cannot_send_terminal_sequences_through_a_table_tab() {
     f.prefix('h');
     f.code(KeyCode::Right);
     f.pump_until(|f| f.app.connections()[0].catalog.is_some());
+    f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.code(KeyCode::Down);

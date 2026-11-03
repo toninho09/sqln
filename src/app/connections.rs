@@ -134,6 +134,7 @@ impl App {
             console.name = name;
         }
         self.rekey_saves(previous, id);
+        self.refresh_tree_consoles();
     }
 
     /// Returns `console-N` with the lowest number that no console of the connection uses,
@@ -337,6 +338,7 @@ impl App {
         }
         if action == Action::NavigatorClearFilter {
             self.navigator.clear_filter(&self.connections);
+            self.refresh_tree_consoles();
             return;
         }
         let Some(row) = self.navigator.current(&self.connections) else {
@@ -350,6 +352,7 @@ impl App {
             Action::NavigatorCollapse => self.collapse(&row),
             Action::NavigatorExpand => self.expand(&row),
             Action::NavigatorOpen if row.kind == RowKind::Connection => self.open_console(id),
+            Action::NavigatorOpen if row.kind == RowKind::Console => self.open_tree_console(&row),
             Action::NavigatorOpen if is_relation(&row) => self.open_table(&row),
             Action::NavigatorOpen => self.toggle(&row),
             Action::NavigatorNewConsole => self.request_console(id),
@@ -361,7 +364,11 @@ impl App {
                 let name = row.name(&self.connections).to_owned();
                 self.copy(&name);
             }
+            Action::NavigatorRefresh if row.kind == RowKind::Console => {
+                self.rename_tree_console(&row);
+            }
             Action::NavigatorRefresh => {
+                self.refresh_tree_consoles();
                 if !self.ask_new_password(id) {
                     self.reload_catalog(id);
                 }
@@ -369,6 +376,9 @@ impl App {
             Action::NavigatorDeletePassword => self.confirm_password_deletion(id),
             Action::NavigatorDisconnect => self.disconnect(id),
             Action::NavigatorEdit => self.edit_connection(id),
+            Action::NavigatorDelete if row.kind == RowKind::Console => {
+                self.delete_tree_console(&row);
+            }
             Action::NavigatorDelete => self.confirm_removal(id),
             _ => {}
         }
@@ -542,7 +552,10 @@ impl App {
         self.navigator.expand(row, &self.connections);
         let id = self.connections[row.connection].id;
         match row.kind {
-            RowKind::Connection => self.ensure_catalog(id),
+            RowKind::Connection => {
+                self.refresh_tree_consoles();
+                self.ensure_catalog(id);
+            }
             RowKind::Table | RowKind::View => self.read_columns(row, id),
             _ => {}
         }
@@ -813,6 +826,7 @@ impl App {
         console.connection = None;
         console.schema = None;
         self.rekey_saves(previous, id);
+        self.refresh_tree_consoles();
     }
 
     pub(super) fn open_picker(&mut self) {
