@@ -45,6 +45,12 @@ pub(super) enum Use {
         connection: ConnectionId,
         request: PageRequest,
     },
+    /// The catalog queries of a diagram tab.
+    Diagram {
+        console: ConsoleId,
+        connection: ConnectionId,
+        statements: Vec<String>,
+    },
     Export {
         console: ConsoleId,
         read: ExportRead,
@@ -64,6 +70,7 @@ impl Use {
         match self {
             Self::Run { console, .. }
             | Self::Page { console, .. }
+            | Self::Diagram { console, .. }
             | Self::Export { console, .. }
             | Self::Import { console, .. } => Some(*console),
             _ => None,
@@ -883,6 +890,11 @@ impl App {
                     kind => tab.started_side_request(execution, kind),
                 }
             }
+            Use::Diagram {
+                console,
+                connection,
+                statements,
+            } => self.start_diagram_read(console, connection, statements),
             Use::Export { console, read } => self.start_read(console, read),
             Use::Import { console, step } => self.start_import_step(console, step),
             Use::Test(test) => {
@@ -901,6 +913,9 @@ impl App {
                 console.phase = Phase::Idle;
             }
             if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
+                tab.phase = Phase::Idle;
+            }
+            if let Some(tab) = self.diagrams.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Idle;
             }
         }

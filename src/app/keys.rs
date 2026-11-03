@@ -6,7 +6,7 @@ use super::guard::short;
 use super::tables::has_sessions;
 use super::{App, DialogAction, Overlay};
 use crate::connector::{Namespace, TransactionCommand, TransactionState};
-use crate::console::{AfterTransaction, Focus, GridAction, Phase, first_word};
+use crate::console::{AfterTransaction, Focus, GridAction, Phase};
 use crate::editor::{FormatOutcome, KeyboardMode, RunPlan, RunRefusal, RunScope};
 use crate::exec::{ConnectionId, RunOptions};
 use crate::form::FormRequest;
@@ -17,7 +17,7 @@ use crate::navigator::RowKind;
 use crate::palette::{Command, Palette, PaletteRequest};
 use crate::plan::Explain;
 use crate::settings::SettingsRequest;
-use crate::sql::{Dialect, is_plain_read};
+use crate::sql::{Dialect, first_keyword, is_plain_read};
 use crate::table::TableFocus;
 use crate::ui::console::fit;
 use crate::ui::name::NameAction;
@@ -54,6 +54,9 @@ impl App {
         if self.navigator_focused {
             return (!self.navigator.filter_is_editing()).then_some(Region::Navigator);
         }
+        if self.diagram_active.is_some() {
+            return Some(Region::Diagram);
+        }
         if let Some(tab) = self.table() {
             let in_grid = tab.focus == TableFocus::Grid && tab.result.search.is_none();
             return in_grid.then_some(Region::Grid);
@@ -64,7 +67,7 @@ impl App {
 
     /// Returns true when the grid of the tab on screen has the focus.
     pub(super) fn grid_has_focus(&self) -> bool {
-        if self.navigator_focused {
+        if self.navigator_focused || self.diagram_active.is_some() {
             return false;
         }
         match self.table() {
@@ -137,7 +140,8 @@ impl App {
             return;
         }
         let in_editor = !self.navigator_focused
-            && self.table_active.is_none()
+            && self.console_on_screen()
+            && !self.home()
             && self.console().focus == Focus::Editor;
         let keys = self.suggestion_keys;
         if (in_editor && self.console_mut().editor.on_list_key(key, keys))
@@ -168,6 +172,8 @@ impl App {
             Some(Region::Grid) => self.on_shifted_grid_key(chord),
             Some(_) => {}
             None if self.navigator_focused => self.on_tree_filter_key(key),
+            // The home screen has no text field.
+            None if self.home() => {}
             None if self.table_active.is_some() => self.on_table_text_key(key),
             None if self.console().focus == Focus::Results => self.console_mut().on_search_key(key),
             None => self.on_editor_key(key),
@@ -266,6 +272,12 @@ impl App {
     }
 
     pub(super) fn perform(&mut self, action: Action, extend: bool) {
+        if self.home() && !home_allows(action) {
+            return;
+        }
+        if self.diagram_active.is_some() && self.perform_on_diagram(action) {
+            return;
+        }
         if self.table_active.is_some() && self.perform_on_table(action) {
             return;
         }
@@ -278,6 +290,7 @@ impl App {
             Action::ToggleComment => self.comment_console(),
             Action::OpenHistory => self.open_history(),
             Action::OpenSessions => self.open_sessions(),
+            Action::OpenDiagram => self.open_diagram_here(),
             Action::ExplorerCommands => self.explorer_page = true,
             Action::Stop => self.stop(self.active),
             Action::ToggleMode => self.toggle_mode(),
@@ -315,6 +328,7 @@ impl App {
             | Action::NavigatorScripts
             | Action::NavigatorDeletePassword
             | Action::NavigatorStructure
+            | Action::NavigatorDiagram
             | Action::NavigatorSessions
             | Action::NavigatorGenerate
             | Action::NavigatorImport
@@ -432,11 +446,17 @@ impl App {
         self.navigator.collapsed = !self.navigator.collapsed;
         if self.navigator.collapsed {
             self.navigator_focused = false;
+        } else if self.home() {
+            self.focus_navigator();
         }
     }
 
     /// The user saw the end of the run of the tab on screen, so its mark goes.
     pub(super) fn leave_tab(&mut self) {
+        if let Some(tab) = self.diagram_mut() {
+            tab.run.seen();
+            return;
+        }
         match self.table_mut() {
             Some(tab) => tab.run.seen(),
             None => self.console_mut().run.seen(),
@@ -446,23 +466,26 @@ impl App {
     pub(super) fn select_console(&mut self, index: usize) {
         if index < self.consoles.len() {
             self.console_mut().editor.close_suggestions();
-            if self.table_active.is_some() || self.active != index {
+            if !self.console_on_screen() || self.active != index {
                 self.leave_tab();
             }
             self.active = index;
             self.table_active = None;
+            self.diagram_active = None;
         }
     }
 
     fn open_keys(&mut self) {
         let in_table = self.table_active.is_some();
-        let panel = if self.navigator_focused {
+        // The explorer is the only panel of the home screen.
+        let panel = if self.navigator_focused || self.home() {
             Some(Region::Navigator)
         } else {
             self.panel()
         };
         let (region, name) = match panel {
             Some(Region::Navigator) => (Some(Region::Navigator), text::REGION_NAVIGATOR),
+            Some(Region::Diagram) => (Some(Region::Diagram), text::REGION_DIAGRAM),
             Some(_) if in_table => (Some(Region::Grid), text::REGION_TABLE),
             Some(_) => (Some(Region::Grid), text::REGION_GRID),
             None if in_table => (None, text::REGION_FILTER),
@@ -488,7 +511,9 @@ impl App {
                 Run | RunScript | Explain | ExplainAnalyze | Stop | FormatSql | ToggleComment
                 | OpenHistory => text::GROUP_RUN,
                 ToggleMode | Commit | Rollback => text::GROUP_TRANSACTION,
-                ChooseSchema | ChangeConnection | OpenSessions => text::GROUP_CONNECTION,
+                ChooseSchema | ChangeConnection | OpenSessions | OpenDiagram => {
+                    text::GROUP_CONNECTION
+                }
                 NextTab | PreviousTab | CloseTab | RenameConsole => text::GROUP_TABS,
                 FocusLeft | FocusRight | FocusUp | FocusDown | ToggleNavigator
                 | ExplorerCommands => text::GROUP_PANELS,
@@ -604,7 +629,10 @@ impl App {
             });
         };
         match plan.statements.as_slice() {
-            [statement] if first_word(statement).eq_ignore_ascii_case("EXPLAIN") => {
+            [statement]
+                if first_keyword(statement, explain.dialect)
+                    .is_some_and(|word| word.eq_ignore_ascii_case("EXPLAIN")) =>
+            {
                 Err(text::PLAN_HAS_EXPLAIN)
             }
             [_] => Ok(Some(explain)),
@@ -963,6 +991,7 @@ impl App {
                 NavigatorStructure,
                 !on_consoles && item.is_some_and(|item| item.dialect != Dialect::Redis),
             ),
+            (NavigatorDiagram, self.can_open_diagram()),
             (NavigatorGenerate, self.can_generate()),
             (NavigatorImport, self.can_import_row()),
             (NavigatorCopyName, row.is_some()),
@@ -1009,6 +1038,7 @@ impl App {
                 text::GROUP_ROW,
                 &[
                     (&[NavigatorStructure], text::MENU_STRUCTURE),
+                    (&[NavigatorDiagram], text::MENU_DIAGRAM),
                     (&[NavigatorGenerate], text::MENU_GENERATE),
                     (&[NavigatorImport], text::MENU_IMPORT),
                     (&[NavigatorCopyName], text::MENU_COPY_NAME),
@@ -1045,7 +1075,7 @@ impl App {
     /// Returns true when `Ctrl+W k` or `Ctrl+W j` moves the focus from the panel of the
     /// cursor to another panel of the tab on screen.
     fn focus_moves(&self, up: bool) -> bool {
-        if self.navigator_focused {
+        if self.navigator_focused || self.diagram_active.is_some() {
             return false;
         }
         let console = self.console();
@@ -1062,7 +1092,7 @@ impl App {
     pub(super) fn fits_cursor(&self, action: Action) -> bool {
         use Action::*;
         let console = self.console();
-        let in_console = !self.navigator_focused && self.table_active.is_none();
+        let in_console = !self.navigator_focused && self.console_on_screen();
         let in_editor = in_console && console.focus == Focus::Editor;
         let available = self.command_available(action);
         match action {
@@ -1142,6 +1172,7 @@ impl App {
                     (&[ChooseSchema], text::MENU_SCHEMA),
                     (&[ChangeConnection], text::MENU_CHANGE),
                     (&[OpenSessions], text::MENU_SESSIONS),
+                    (&[OpenDiagram], text::MENU_DIAGRAM),
                 ],
             ),
             (
@@ -1179,8 +1210,18 @@ impl App {
 
     /// Returns true when an action has an effect in the current state.
     pub(super) fn command_available(&self, action: Action) -> bool {
+        if self.home() && !home_allows(action) {
+            return false;
+        }
+        // The results of the console stay out of reach behind a diagram.
+        if self.diagram_active.is_some() && action.region() == Region::Grid {
+            return false;
+        }
+        if action.region() == Region::Diagram {
+            return self.diagram_command_available(action);
+        }
         let console = self.console();
-        let in_table = self.table_active.is_some();
+        let in_table = !self.console_on_screen();
         let idle = !console.is_busy();
         let connection = self.active_connection();
         let transactions = connection.is_none_or(|item| item.capabilities.transactions);
@@ -1197,7 +1238,11 @@ impl App {
                     connection.is_some_and(|item| Explain::new(item.dialect, analyze).is_some());
                 !in_table && idle && plans
             }
-            Action::Stop => self.table().map_or(!idle, |tab| tab.is_busy()),
+            Action::Stop => match (self.diagram(), self.table()) {
+                (Some(tab), _) => tab.is_busy(),
+                (None, Some(tab)) => tab.is_busy(),
+                (None, None) => !idle,
+            },
             Action::ToggleMode => !in_table && idle && transactions,
             Action::Commit | Action::Rollback => !in_table && idle && console.in_transaction(),
             Action::ChooseSchema => !in_table && idle && namespace && !console.in_transaction(),
@@ -1210,6 +1255,8 @@ impl App {
                 .is_some_and(|tab| !tab.filters && !tab.is_busy()),
             Action::GridCancelQuery | Action::GridEndSession => self.can_signal_session(),
             Action::NavigatorSessions => self.can_open_sessions(),
+            Action::NavigatorDiagram => self.can_open_diagram(),
+            Action::OpenDiagram => self.can_open_diagram_here(),
             Action::OpenSessions => self.sessions_connection().is_some_and(|id| {
                 let dialect = self.connection(id).map(|item| item.dialect);
                 dialect.is_some_and(has_sessions)
@@ -1253,6 +1300,14 @@ impl App {
             Action::NavigatorFilter,
         ]
         .map(|action| (action, self.navigator_focused));
+        let diagram = [
+            Action::DiagramOpen,
+            Action::DiagramStructure,
+            Action::DiagramCopy,
+            Action::DiagramKeysOnly,
+            Action::DiagramReload,
+        ]
+        .map(|action| (action, self.panel() == Some(Region::Diagram)));
         let results = [
             Action::GridOpenRow,
             Action::GridCountRows,
@@ -1270,6 +1325,7 @@ impl App {
         let commands = global
             .chain(explorer)
             .chain(results)
+            .chain(diagram)
             .filter(|(action, _)| self.command_available(*action))
             .map(|(action, key_works)| Command {
                 action,
@@ -1312,10 +1368,7 @@ impl App {
         let keyed = |action, label| self.shown_key(action).map(|key| (key, label));
         let mut rows = Vec::new();
         let note = if self.connections.is_empty() {
-            let add = self
-                .shown_key(Action::FocusLeft)
-                .zip(self.shown_key(Action::NavigatorAdd));
-            rows.extend(add.map(|(focus, add)| (format!("{focus} {add}"), text::WELCOME_ADD)));
+            rows.extend(self.explorer_row(Action::NavigatorAdd, text::WELCOME_ADD));
             text::WELCOME_NO_CONNECTION
         } else {
             rows.extend(keyed(Action::Run, text::WELCOME_RUN));
@@ -1328,6 +1381,63 @@ impl App {
         };
         rows.extend(keyed(Action::OpenPalette, text::WELCOME_COMMANDS));
         rows.extend(keyed(Action::Help, text::WELCOME_KEYS));
-        Some(Welcome { note, rows })
+        Some(Welcome {
+            logo: false,
+            note,
+            rows,
+        })
     }
+
+    /// Returns the screen of the application without a tab.
+    pub(super) fn home_screen(&self) -> Welcome {
+        let keyed = |action, label| self.shown_key(action).map(|key| (key, label));
+        let mut rows = Vec::new();
+        if self.navigator.collapsed {
+            rows.extend(keyed(Action::ToggleNavigator, text::HOME_EXPLORER));
+        }
+        rows.extend(self.explorer_row(Action::NavigatorAdd, text::WELCOME_ADD));
+        let note = if self.connections.is_empty() {
+            text::WELCOME_NO_CONNECTION
+        } else {
+            rows.extend(self.explorer_row(Action::NavigatorNewConsole, text::HOME_CONSOLE));
+            text::HOME_NO_CONSOLE
+        };
+        rows.extend(self.explorer_row(Action::NavigatorScripts, text::HOME_SCRIPTS));
+        rows.extend(keyed(Action::OpenSettings, text::HOME_SETTINGS));
+        rows.extend(keyed(Action::OpenPalette, text::WELCOME_COMMANDS));
+        rows.extend(keyed(Action::Help, text::WELCOME_KEYS));
+        rows.extend(keyed(Action::Quit, text::HOME_QUIT));
+        Welcome {
+            logo: true,
+            note,
+            rows,
+        }
+    }
+
+    /// Returns the key that moves to the explorer, then the key of an explorer command,
+    /// with its label. That path acts from any panel.
+    fn explorer_row(&self, action: Action, label: &'static str) -> Option<(String, &'static str)> {
+        let focus = self.shown_key(Action::FocusLeft)?;
+        let key = self.shown_key(action)?;
+        Some((format!("{focus} {key}"), label))
+    }
+}
+
+/// Returns true for an action that acts on the home screen: a command of the explorer,
+/// or a command that needs no tab.
+fn home_allows(action: Action) -> bool {
+    use Action::*;
+    action.region() == Region::Navigator
+        || matches!(
+            action,
+            Help | OpenPalette
+                | Quit
+                | ToggleNavigator
+                | ReloadConfig
+                | OpenSettings
+                | FocusLeft
+                | ExplorerCommands
+                | OpenSessions
+                | OpenDiagram
+        )
 }

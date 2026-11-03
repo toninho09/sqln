@@ -4,6 +4,215 @@ This document records the choices and the rejected alternatives.
 The complete rules are in the [plan](INITIAL_PLAN.md).
 Do not reopen a decision without a new fact.
 
+## Home screen — 2026-11-03
+
+The user asked for a screen for the cases without a console. Before this change, a start without a connection opened a console that could not run, and the close of the last tab ended the application. This reopens two rules: "Closing the last tab ends the application" (`docs/UI.md`) and "End of the last table | End the application" (Implementation — 2026-10-31).
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Start | The home screen only when no connection exists, no tab of the last session comes back, and the command line names no database. With a connection, the first console uses the first connection, as before | The home screen at each start without a reopened tab | User choice |
+| 2. Focus | The explorer gets the focus. A hidden explorer keeps it hidden, and the focus does not move | No change of the focus | The explorer keys (`a`, `n`, `s`, `Enter`) act at once |
+| 3. Contents | An ASCII logo, the version, one line of state, and the main keys | The name and the keys only; a list of connections and scripts with its own keys | User choice. The list needs a new key region |
+| 4. `Ctrl+W c` on the home screen | No effect, and the `Ctrl+W` menu hides it. Only `Ctrl+W q` ends the application | End the application | No tab is open |
+| 5. Close of the last tab | The home screen appears, also after the last table or diagram | End the application | Follows from the request |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| State | The hidden console of "Last console" (Implementation — 2026-10-31). `App::home` is true when that console is on screen | Zero consoles | The code assumes an active console |
+| Allowed commands | `home_allows` keeps the explorer commands and the commands that need no tab. `perform` and `command_available` use it, so the palette and the `Ctrl+W` menu hide the others | One check in each command | One list. `switch_tab` divided by zero with no tab |
+| Start option | `Options::start_home`, which only `main` sets | The home screen for each `App` without a connection | 88 tests create an `App` without a connection and type SQL |
+| Drawing | `ui/welcome` draws both screens. `Welcome::logo` asks for the logo, and a short area shows the name instead | A second widget | One layout of keys |
+| Explorer row | The keys show the full path, such as `Ctrl+W h a`, and the explorer row needs only `a` | Only the explorer key | The path acts from any panel |
+
+## Idle limit and connection form with a sidebar — 2026-11-03
+
+The user asked for an idle limit in the connection form, with 300 seconds as the default. Before this change, SQLN never closed a session for inactivity. Only the server or the network closed it.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. What closes | Only the sessions that wait in the pool. A console with an open transaction keeps its session | Also the session of a transaction, with a rollback by the server | A close would lose work without a commit and without a question |
+| 2. Start of the count | Each session counts from its return to the pool | The connection counts from its last use, and all sessions close together | The pool keeps the session in use and closes the others |
+| 3. Value 0 | No limit, as in the SQL limit | Refuse 0 | The same rule as the SQL limit |
+| 4. Saved connections without the field | 300 seconds | No limit | It is the default of the request |
+| 5. Sources | All, also SQLite and Redis | Only the network sources | One rule |
+| 6. Message | None. The explorer mark changes, and the next use opens a session | A message in the status line | The close needs no action of the user |
+
+The new field did not fit: the largest form (a network source with the choice of a scope) had 21 fields and filled 80 x 24 exactly. The user then reopened the row "Connection form" of "nvim-style interface" (four arrangements, no scroll), and approved a sidebar with sections, as in Settings, the import, and the export.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Sections | The five groups: General, Address, Credentials, Security, and Options | Split Options into Limits and Appearance | The groups already exist, and Options fits |
+| 2. Section without fields | Out of the sidebar | Shown as disabled | SQLite has no Credentials and no Security |
+| 3. Error in another section | The form opens the section of the field and puts the focus on it | Only the note, as in Settings | The required fields, such as Host and User, live in other sections |
+| 4. Buttons | Fixed at the bottom of each section | In one section | As in Settings |
+| 5. Form of a connected connection | Also the sidebar: General and Options | One page | User choice |
+| 6. Keys and mouse | As in Settings: `Tab` walks the sidebar, the fields, and the buttons; `Up` and `Down` on the sidebar change the section; a click opens a section | Own keys | One model for the dialogs |
+| 7. First section | General, with the focus on Type, or on Name in an edit | The last section used | The focus of before stays |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Timer | One task of `Manager` for each pool, with a `WeakPool`. It sleeps until the next idle session reaches the limit | A check at the next use | A check at the next use does not free the server |
+| Event | `ExecEvent::IdleClosed`, which redraws the explorer and opens a display-only form for changes, as `Disconnected` does without its message | `Disconnected` | That event writes "Disconnected." |
+| Error field | `ConnectionForm::definition` returns `Invalid { field, message }` | A second check that finds the field | One check |
+| Height | All sections keep the height of the largest section of the form | The height of each section | The window does not move between sections |
+| Width | 76 columns: the sidebar, the label, and the longest choice | 72 | The value needs 26 columns |
+| Sidebar code | The form uses the functions of `ui/settings.rs` | Own copies | One drawing for the dialogs |
+
+### Known limitations of the idle limit
+
+- The cleanup of SQLite already closes the connection at each return to the pool, so SQLite never has an idle session, and the limit has no effect there.
+- A change of the limit needs a disconnection, as each change of the definition does, because the pool keeps its limit.
+
+## Horizontal wheel on the grid — 2026-11-03
+
+The user asked for a horizontal scroll of the grid with the touchpad. Before this change, only the ER diagram read the horizontal wheel.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Step | One column for each event, and the cursor moves with it, as the vertical wheel moves the cursor by rows | Several columns for each event | One gesture of a touchpad sends many events |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Place | Only the grid of a console or of a table tab. The navigator and the editor ignore the horizontal wheel | Each panel | These panels have no columns to move |
+| `Shift` and the vertical wheel | No own code | Read `Shift` | macOS already sends that gesture as a horizontal wheel |
+
+Known limitation: a terminal that does not send horizontal wheel events gives no horizontal scroll. iTerm2 has no check yet.
+
+## `LIMIT` with the row cap — 2026-11-03
+
+The user asked to stop a full scan of a large table when a read has no `WHERE` and no `LIMIT`. The new fact: the server does not know the row cap. The planner then plans for all rows, so `ORDER BY` on an indexed column can sort the whole table before the first row. In a transaction, the reader also reads every row to the end, because a cancellation ends the transaction. In MySQL, the cancellation opens a new connection for `KILL QUERY`, and the rows keep coming meanwhile.
+
+This decision reopens the rule "Do not repeat the command or add `LIMIT` to the user text" of the plan, section "Row cap in the consoles", and its item in the acceptance list. The rule against a repeated command stays.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Approach | The database receives `LIMIT` with the row cap and one row | A limit in the driver (`sql_select_limit` in MySQL, a cursor in PostgreSQL); a cancellation in a transaction with a `SAVEPOINT` | One rule for the three databases. The planner knows the limit, also in a transaction |
+| 2. Own `LIMIT` above the cap | No change. The cancellation at the cap stays | Replace it with the cap | The text of the user keeps its own clause |
+| 3. Message | One line in **Messages** for each statement that receives the limit | No message | The user sees that the database received another text |
+| 4. Setting | Settings > Results > **Limit in SQL**, key `capInSql`, global and per project | Fixed | User choice |
+| 5. Default | On | Off | The goal is to stop the full scan |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Rule | A plain read of `sql::is_plain_read` that starts with `SELECT`, `WITH`, `VALUES`, or `TABLE`, without `LIMIT`, `OFFSET`, `FETCH`, `FOR`, or `LOCK` in the main level | Each read | A `LIMIT` changes the effect of an unknown function, as a cancellation does. `EXPLAIN` would show another plan. `FOR` and `LOCK` refuse a `LIMIT` after them in MySQL |
+| Value | Row cap and one row | The row cap | The row after the cap proves that the result has more rows, as in the table tab |
+| Place | The clause goes on a new line at the end | The same line | A line comment at the end would hide the clause |
+| Runs | The runner adds the clause, so the table tab, the structure tab, and the consoles use one rule | Only the consoles | The sink keeps the same rows. An export and the diagram have no cap, so they keep the text |
+| Message level | `Info`, through `ExecEvent::LimitAdded` | A notice of the database | A notice counts as a warning on the tab, and the clause is not a warning |
+| Error place | The error place stays inside the text of the user | The place in the sent text | The editor marks the last token of the statement |
+
+### Known limitations of the added `LIMIT`
+
+- An incomplete statement, such as `SELECT * FROM`, can receive an error that names `LIMIT`. The line in **Messages** gives the cause.
+- An own `LIMIT` above the cap, and each statement out of the rule, keep the old flow: a cancellation without a transaction, and a read to the end in a transaction.
+- `ORDER BY` on a column without an index still reads the whole table, because the server must sort. With `LIMIT`, the server keeps only the first rows.
+- A `CALL` of MySQL does not change.
+
+### Saved settings on an open connection
+
+Before this change, a saved row cap reached a connection only when SQLN added or replaced it: at the start, or after a change of its definition. The user approved the fix and its rule.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Moment | A saved value acts from the next execution. A running script keeps its values | From the next statement of the running script | One script does not change its cap in the middle |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Shared value | `Binding` keeps the settings in an `Arc<Mutex<_>>`, and the consoles of the connection share it, as they share the `Budget` | A `Command::Settings` message | A running task drops a message in `refuse`, so it would need a pending value |
+| Read | `ConsoleTask` copies the settings when it receives a command, before each execution and import | A read in each statement | The rule of point 1 |
+| Write | `apply_config` calls `Manager::update_settings` for each connection, with the definition on top of the settings | Only the row cap | One path for each value of the connection |
+| Pool | The pool keeps its size and its connect time limit | A new pool | These values come from the definition, and the form needs a disconnect to change them |
+
+## ER diagram in the hint row and the `Ctrl+W` menu — 2026-11-03
+
+The user did not find the diagram in the hint row of the explorer or in the first page of the `Ctrl+W` menu. This request reopens, for this command only, the rule of 2026-11-02 that keeps only the main commands in the hint row of the explorer.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Hint row of the explorer | `d diagram` on each row where the key acts: connection, schema, table, and column | Only in the `Ctrl+W Tab` page | The user did not find the command |
+| 2. First page of `Ctrl+W` | `D ER diagram` in the **Connection** group, as `S Sessions`. With the focus in the explorer, the row decides. A table tab uses its table, and a console uses its current schema | Only in the `Ctrl+W Tab` page | The same model as the sessions |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Key | `Ctrl+W D` | `Ctrl+W d` | `Ctrl+W d` chooses the schema |
+| One rule | `row_diagram` and `diagram_target` give the target or the reason of a refusal. The key, the hint row, the menu, and the explorer page read them | A check for each place | The places agree |
+| Connection without its catalog | `d` reads the catalog, and the diagram of the current schema opens when it arrives (`pending_diagrams`). Each waiting connection opens its diagram | Hide the key until the catalog arrives; keep only the last request | The connection row is the first row of the tree. `pending_sql` already waits in this way. A second request does not cancel the first, because the user asked for both |
+| Label | `ER diagram` | `Show the ER diagram` | The long label fills the 19 columns of a row and touches the next column |
+| Palette | `Ctrl+W D` replaces the explorer entry | Both entries | One entry acts on the row in the explorer, as the sessions do |
+| Structure tab | A structure of a table uses its table. Other structures and the sessions use the current schema | Refuse | Each tab of a source with tables has a target |
+| Width | At 80 columns, the hint row of a connection keeps each command | Leave out `F1 keys` | The row fits |
+
+## ER diagram — 2026-11-03
+
+The user asked for an ER diagram of the schema, as in DataGrip. The comparison with DataGrip of 2026-11-02 listed it as an open gap. The user chose points 1 to 8, and approved points 9 to 20 with the plan.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Lines | Orthogonal lines with box characters, from the row of the key column to the row of the column that it reads, with an arrow at the table that the key reads. The selected table shows its lines in the focus color | Marks such as `→ table` without lines | The DataGrip model |
+| 2. Origin | Schema: all its tables. Table: the table and the tables that its keys join, one step away. Connection: the current schema. Column: its table | Schema only; the whole connection | Each row has a useful picture, and a connection can have many schemas |
+| 3. Box | Name, type, and key mark of each column. A key shows only the key columns | Always all columns; always keys only | More tables fit on the screen when the user asks |
+| 4. Export | `y` copies the Mermaid `erDiagram` text | A file dialog; PlantUML and DOT; nothing | GitHub and GitLab show Mermaid text as a diagram, and a copy needs no dialog |
+| 5. Navigation | The arrows, and `h`, `j`, `k`, `l` in the Vim mode, select the nearest table in a direction, and the view follows. `Shift`+arrows, `PageUp`, `PageDown`, the wheel, and a drag move the view | The arrows move the view and `Tab` selects | Selection is the main use, and `Shift`+arrows passed the iTerm keytest |
+| 6. Objects | Tables only: PostgreSQL `r`, `p`, and `f`, MySQL `BASE TABLE`, SQLite `table` | Tables and views | A view has no keys, so it would take space with no line |
+| 7. Key to another schema | A box with `schema.table` only, in a dim style | No line | The line keeps its meaning |
+| 8. Key | `d` in the navigator, in the `Ctrl+W Tab` page, and in the palette | `E` | The key was free in both modes, and `D` disconnects |
+| 9. Restart | The tab does not come back | Save it in `OpenTabs` | The structure tab rule: the cost of opening is one key |
+| 10. Refresh | `R` reads again. DDL does not update the tab | An automatic read | The structure tab rule |
+| 11. Redis and Valkey | Refuse with a reason in the status bar | An empty diagram | A key has no columns and no keys |
+| 12. Actions on the selected table | `Enter` opens its data, and `i` opens its structure | No action | The keys keep their meaning of the navigator |
+| 13. Size | No table limit. Only the memory budget limits the read, and a partial read shows `partial` | A table limit | The structure tab rule |
+| 14. Search in the diagram | Out of this delivery | Search with `/` | Not asked |
+| 15. Key of "keys only" | `K` | `t` | `k` is a Vim key, and `K` acts only in the diagram region |
+| 16. PostgreSQL partitions | The partitions stay out, and the key of a partitioned table appears once | Each partition as a box | PostgreSQL copies the key to each partition |
+| 17. Key from another schema | Also a box with the name only | No line | The same rule as point 7 |
+| 18. Mermaid content | The boxes on screen: with "keys only", only the key columns | Always all columns | The copy is the picture on screen |
+| 19. Click | A click on a box selects the table. No double click | A double click opens the data | `Enter` opens the data |
+| 20. Symbols | Box characters for the lines in each set. The `plain` set uses `<`, `>`, `PK`, and `FK` | ASCII lines without color | The rule `─` already shows with `NO_COLOR` |
+
+The first delivery kept `d` out of the hint row of the navigator, as the rule of 2026-11-02 says. The section above changed this on the same day.
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Tab | `Tab::Diagram` with its own `DiagramTab` and executor task | `TableTab` with a new `Scope` | `table_active` means a grid in many places, and a picture is not a grid |
+| Read | Two catalog queries through `Manager::run`, in one execution, with no row cap | A new `Session` method in each connector; one `load_columns` per table | No connector change, and the read keeps the time limit, the stop, the pool queue, the password, and the budget |
+| Key identity | Pairs join by table and key name | By key name only, as `group_foreign_keys` | PostgreSQL and SQLite repeat a key name in other tables |
+| SQLite key without target columns | It reads the primary key of the target | Leave it out, as the catalog read does | The structure tab shows that key |
+| PostgreSQL partitions | `NOT relispartition` and `conparentid = 0` | Read the partitions and join them | One filter in each query |
+| Layout | Layers from the left by the longest path, one row per crossed layer, four sweeps by the mean place of the neighbors, and tracks from the left with the rule of the shared rows | Free placement; a path search per line | The same model gives the same picture, and 500 tables with 597 keys take 12 ms in a release build |
+| Line storage | One sorted list of pieces per row | One map entry per cell | The map took three times longer |
+| Thread of the layout | The interface thread | A worker thread | 12 ms for 500 tables |
+| Nearest box | A box that starts past the edge of the selected box | A center past the center | A wider box below looked like a box on the right |
+| First selection | The selected table of a table focus, or the box at the top left | The first name | The view starts at the start of the picture |
+| Styles | Existing styles of the theme | New fields in the three themes | The same look with fewer changes |
+| View row | `d` refuses with a reason, and the explorer page hides it | Open the diagram of the schema | A view has no keys |
+| Mermaid label | The names of the key columns | The name of the key | A generated key name says less, and SQLite gives a number |
+| Mermaid cardinality | `\|o` when a key column accepts `NULL`, else `\|\|`. `--` when each key column is in the primary key of the child, else `..` | One fixed form | The text keeps the facts of the catalog |
+| Mermaid names | `e<n>` ids with the name as alias. A type or a column name keeps only letters, digits, `-`, `_`, parentheses, and brackets, and a changed name keeps the original as a comment | The raw names | A database name can hold any character |
+
+### Known limitations of the diagram
+
+- The diagram has no search, no zoom, and no export to an image file.
+- A stub has no columns, so its line meets its name row.
+- Two keys that read the same column share the end of their lines. A key that leaves a column that another key reads can share a row with it in the same gutter.
+- A cycle of track rules in a gutter would let two lines share cells. The layout counts it in `conflicts`, and the tests expect zero.
+- The layout runs on the interface thread. A very large schema delays the key that reads it or that toggles **keys only**.
+- Mermaid loses the spaces of a type, such as `character_varying(30)`. The documentation of Mermaid does not describe a key from a table to itself, and no Mermaid version was checked with it.
+- A SQLite column without a type shows `any` in the Mermaid text.
+
 ## Consoles in the tree of the explorer — 2026-11-02
 
 The user found that the tree did not show the consoles, and asked for a **Consoles** node in each connection. The `n` list stays as it is.
@@ -608,7 +817,7 @@ These choices follow the rules above on the points the rules left open.
 | Second palette key | `Ctrl+W :` | Only `Ctrl+P` | Rule 2 of `KEYMAP.md` asks for another path, and `Ctrl+P` is not in the `keytest` record |
 | Keys in the palette | A navigator key appears only with the navigator in focus | Always show | Outside the navigator, that letter becomes text |
 | Key label | `Ctrl+P`, with the uppercase letter | `Ctrl+p` | A lone letter keeps the case, because `n` and `N` are different keys |
-| Connection form | Groups with four arrangements, from the most spaced to the compact, according to the screen | Scrolling inside the window | All the fields stay visible, and the 80 x 24 test stays valid |
+| Connection form | Groups with four arrangements, from the most spaced to the compact, according to the screen. Reopened on 2026-11-03: a sidebar with sections | Scrolling inside the window | All the fields stay visible, and the 80 x 24 test stays valid |
 | Form focus | Mark, highlighted label, and own background | Cursor only | The user could not see the selected field |
 | SQLite file in the form | The typed text starts from the current directory, and the connection saves the full path; a saved and unchanged path stays as it is | Resolve the typed text by scope; convert a saved path too | The user asks for the path of the test. The test used the current directory, and the saved connection opened another file. Editing another field does not change a hand-written relative path |
 | SQLite file in a project | Write the full path also into the project `config.json` | Write relative to the project root | It is the user request. Consequence: that path is valid only on this machine; a hand-written relative path stays valid |
@@ -808,7 +1017,7 @@ These choices follow the plan rules on the points the rules left open.
 | New password | Check with a test connection before writing | Write and find out on the next execution | A refused password never reaches a storage |
 | First refusal | Do not repeat the execution | Repeat on its own after the new password | Simpler to explain; the action requested during the suspension continues, because no SQL left |
 | Last console | Hidden console, outside the tab strip | Allow zero consoles | The code assumes an active console; the user sees no difference |
-| End of the last table | End the application | Show the hidden console | "Close the last tab" is already an exit path |
+| End of the last table | End the application. Replaced on 2026-11-03: the home screen appears | Show the hidden console | "Close the last tab" is already an exit path |
 | Keyboard switch | Change the mode in the editor itself | Recreate the editor and warn | Nothing is lost, so no warning is needed |
 | Panic report | Place and call stack, without the message | Include the message | The message can quote SQL or a value |
 | Log | Event types, without database error text | Record the messages | A database error can quote a value |

@@ -156,8 +156,8 @@ impl App {
         let Some(index) = self.console_index(id) else {
             return;
         };
-        // The last tab ends the application. With a table open, a hidden console keeps
-        // the rule that the application has one console, and no tab appears for it.
+        // A hidden console keeps the rule that the application has one console, and no
+        // tab appears for it. Without a table or a diagram, the home screen appears.
         let last = self
             .consoles
             .iter()
@@ -166,11 +166,6 @@ impl App {
             == 1;
         let replaced = last && !self.consoles[index].hidden;
         if replaced {
-            if self.tables.is_empty() {
-                self.discard_exports();
-                self.quit = true;
-                return;
-            }
             self.keep_hidden_console();
         }
         self.save_editor_states(Some(index));
@@ -184,8 +179,14 @@ impl App {
         if self.active > index || self.active == self.consoles.len() {
             self.active = self.active.saturating_sub(1);
         }
-        if replaced && self.table_active.is_none() {
-            self.table_active = Some(0);
+        if replaced && self.console_on_screen() {
+            if !self.tables.is_empty() {
+                self.table_active = Some(0);
+            } else if !self.diagrams.is_empty() {
+                self.diagram_active = Some(0);
+            } else {
+                self.focus_navigator();
+            }
         }
         self.refresh_tree_consoles();
     }

@@ -5,6 +5,7 @@ mod browse;
 mod close;
 mod conflicts;
 mod connections;
+mod diagram;
 mod export;
 mod guard;
 mod hints;
@@ -42,8 +43,9 @@ use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{SharedClipboard, SystemClipboard};
 use crate::connection::{Connection, Definition};
 use crate::connector::{Connector, Namespace, TransactionCommand};
-use crate::console::{AfterTransaction, Console, Focus};
+use crate::console::{AfterTransaction, Console, Focus, Phase};
 use crate::creds::{Identity, PlainFile};
+use crate::diagram::tab::DiagramTab;
 use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, Settings};
 use crate::export::ExportChoices;
@@ -69,6 +71,7 @@ use crate::terminal::Session;
 use crate::terminal::{ring_bell, watch_terminal};
 use crate::ui::browser::draw_browser;
 use crate::ui::console::BarData;
+use crate::ui::diagram::{DiagramBar, draw_diagram};
 use crate::ui::export::{ExportLayout, draw_export};
 use crate::ui::form::{FormLayout, draw_form};
 use crate::ui::help::draw_help;
@@ -82,6 +85,7 @@ use crate::ui::statusline::{
     StatusData, StatusPanel, draw_statusline, fit_hints, hint_line, run_time,
 };
 use crate::ui::theme::{ColorEnv, Theme};
+use crate::ui::welcome::draw_welcome;
 use crate::ui::which_key::draw_which_key;
 use crate::ui::wrap::WrappedText;
 use crate::ui::{
@@ -125,6 +129,10 @@ pub struct Options {
     /// True when the command line names the database. The tabs of the last session
     /// stay closed and stay in their file, and the start offers no project.
     pub session_target: bool,
+    /// True when a start without a connection and without a tab of the last session
+    /// shows the home screen. `main` sets it. Without it, the start keeps an empty
+    /// console, as a test that types SQL with no connection needs.
+    pub start_home: bool,
     /// A ready connector. It has priority over `database`.
     pub connector: Option<Arc<dyn Connector>>,
     /// The name of `connector` in the interface.
@@ -155,6 +163,7 @@ impl Default for Options {
             database: None,
             connections: Vec::new(),
             session_target: false,
+            start_home: false,
             connector: None,
             label: None,
             settings: Settings::default(),
@@ -292,6 +301,8 @@ struct ScreenLayout {
     body: Rect,
     console: ConsoleLayout,
     table: TableLayout,
+    /// The picture of the diagram on screen.
+    diagram: Rect,
     form: FormLayout,
     settings: SettingsLayout,
     export: ExportLayout,
@@ -320,6 +331,10 @@ pub struct App {
     tabs_opened: u64,
     /// The table tab on screen, or `None` when the active console is on screen.
     table_active: Option<usize>,
+    /// The diagram tabs. The tab row mixes them with the other tabs in the order of opening.
+    diagrams: Vec<DiagramTab>,
+    /// The diagram tab on screen. At most one of `table_active` and this has a value.
+    diagram_active: Option<usize>,
     connections: Vec<Connection>,
     navigator: Navigator,
     navigator_focused: bool,
@@ -371,6 +386,9 @@ pub struct App {
     events_flow: bool,
     /// A SQL template that waits for the columns of its relation.
     pending_sql: Option<(SqlRequest, Template)>,
+    /// The connections whose diagrams wait for their catalogs, which give the current
+    /// schemas.
+    pending_diagrams: Vec<ConnectionId>,
     /// The request for a new name of a console.
     rename: Option<NamePrompt>,
     settings_form: Option<SettingsForm>,
@@ -445,6 +463,8 @@ impl App {
             tables: Vec::new(),
             tabs_opened: 0,
             table_active: None,
+            diagrams: Vec::new(),
+            diagram_active: None,
             connections: Vec::new(),
             navigator: Navigator::default(),
             navigator_focused: false,
@@ -493,6 +513,7 @@ impl App {
             bell: false,
             events_flow: false,
             pending_sql: None,
+            pending_diagrams: Vec::new(),
             persist,
             auth: auth::Auth::new(options.vault.take(), plain),
             conflicts: None,
@@ -508,7 +529,9 @@ impl App {
             quit: false,
         };
         let console = app.unbound_console(dialect);
+        let first = console.id;
         app.consoles.push(console);
+        let start_home = options.start_home && !options.session_target;
         if let Some(connector) = options.connector {
             let name = options
                 .label
@@ -531,6 +554,15 @@ impl App {
             app.bind_console(0, connection);
         }
         app.finish_start();
+        // The empty console of the start stays only when no tab of the last session came
+        // back. Without a connection, it gives its place to the home screen.
+        if start_home
+            && app.connections.is_empty()
+            && let Some(index) = app.console_index(first)
+        {
+            app.consoles[index].hidden = true;
+            app.focus_navigator();
+        }
         app
     }
 
@@ -625,6 +657,9 @@ impl App {
 
     /// Returns the connection of the open tab.
     fn tab_connection(&self) -> Option<&Connection> {
+        if let Some(tab) = self.diagram() {
+            return self.connection(tab.connection);
+        }
         match self.table() {
             Some(tab) => self.connection(tab.connection),
             None => self.active_connection(),
@@ -681,8 +716,9 @@ impl App {
         self.clock = now;
         let time = now.saturating_duration_since(self.started);
         let frame = usize::try_from(time.as_millis() / RUN_FRAME.as_millis()).unwrap_or(0);
-        let running =
-            self.consoles.iter().any(Console::is_busy) || self.tables.iter().any(TableTab::is_busy);
+        let running = self.consoles.iter().any(Console::is_busy)
+            || self.tables.iter().any(TableTab::is_busy)
+            || self.diagrams.iter().any(DiagramTab::is_busy);
         let changed = running && frame != self.run_frame;
         self.run_frame = frame;
         let minute = self
@@ -818,6 +854,10 @@ impl App {
             }
             return;
         }
+        // A diagram and the home screen have no text field.
+        if self.diagram_active.is_some() || self.home() {
+            return;
+        }
         if let Some(tab) = self.table_mut() {
             if tab.focus == TableFocus::Grid {
                 tab.result.paste_in_search(text);
@@ -910,6 +950,7 @@ impl App {
             }
             ExecEvent::ConnectionTested { test, result } => self.on_connection_tested(test, result),
             ExecEvent::Disconnected { connection } => self.on_disconnected(connection),
+            ExecEvent::IdleClosed { connection } => self.on_idle_closed(connection),
             ExecEvent::PasswordRefused { connection, pool } => {
                 crate::log::event("password refused");
                 self.on_password_refused(connection, pool);
@@ -929,6 +970,10 @@ impl App {
         }
         let Some(id) = event.console() else { return };
         let budget = self.budget.clone();
+        if let Some(tab) = self.diagrams.iter_mut().find(|tab| tab.id == id) {
+            tab.on_event(event, &budget);
+            return;
+        }
         if let Some(index) = self.tables.iter().position(|tab| tab.id == id) {
             self.tables[index].on_event(event, &budget);
             self.finish_session_signal(index);
@@ -977,8 +1022,12 @@ impl App {
             draw_rule(frame, rule, &self.theme);
         }
         let main = self.draw_side(frame, body);
-        if self.table_active.is_some() {
+        if self.diagram_active.is_some() {
+            self.draw_active_diagram(frame, main, tall);
+        } else if self.table_active.is_some() {
             self.draw_active_table(frame, main, tall);
+        } else if self.home() {
+            self.draw_home(frame, main);
         } else {
             self.draw_active_console(frame, main, tall);
         }
@@ -1067,6 +1116,13 @@ impl App {
         self.layout.console = draw_console(frame, area, console, &bar, ratio, focused, &self.theme);
     }
 
+    /// Draws the screen without a tab. The console areas stay empty, so the mouse finds
+    /// no editor.
+    fn draw_home(&mut self, frame: &mut Frame, area: Rect) {
+        self.layout.console = ConsoleLayout::default();
+        draw_welcome(frame, area, &self.home_screen(), &self.theme);
+    }
+
     fn draw_active_table(&mut self, frame: &mut Frame, area: Rect, tall: bool) {
         let Some(index) = self.table_active else {
             return;
@@ -1091,6 +1147,29 @@ impl App {
         );
     }
 
+    fn draw_active_diagram(&mut self, frame: &mut Frame, area: Rect, tall: bool) {
+        let Some(index) = self.diagram_active else {
+            return;
+        };
+        let connection = self.diagrams[index].connection;
+        let name = self
+            .connection(connection)
+            .map_or_else(String::new, |item| item.name.clone());
+        let bar = DiagramBar {
+            connection: &name,
+            title: tall,
+        };
+        let focused = !self.navigator_focused;
+        self.layout.diagram = draw_diagram(
+            frame,
+            area,
+            &mut self.diagrams[index],
+            &bar,
+            focused,
+            &self.theme,
+        );
+    }
+
     /// Returns the name of the place that receives keys, for the status line.
     fn status_panel(&self) -> StatusPanel {
         if self.navigator_focused {
@@ -1099,6 +1178,12 @@ impl App {
             } else {
                 StatusPanel::Explorer
             };
+        }
+        if self.diagram_active.is_some() {
+            return StatusPanel::Diagram;
+        }
+        if self.home() {
+            return StatusPanel::Home;
         }
         if let Some(tab) = self.table() {
             return if tab.focus == TableFocus::Grid {
@@ -1124,6 +1209,27 @@ impl App {
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
         let panel = self.status_panel();
         let data = (self.budget.used(), self.budget.limit());
+        if let Some(tab) = self.diagram() {
+            let item = self.connection(tab.connection);
+            let status = StatusData {
+                panel,
+                connection: item.map_or("", |item| item.name.as_str()),
+                production: item.is_some_and(Connection::is_production),
+                schema: Some(tab.focus.schema()),
+                session: None,
+                transaction_age: None,
+                phase: tab.phase,
+                run_time: run_time(tab.phase, &tab.run, self.clock),
+                pool: self
+                    .manager
+                    .as_ref()
+                    .map(|manager| manager.usage(tab.connection)),
+                data,
+                position: None,
+            };
+            draw_statusline(frame, area, &status, &self.theme);
+            return;
+        }
         if let Some(tab) = self.table() {
             let view = tab.result.view;
             let position =
@@ -1144,6 +1250,23 @@ impl App {
                     .map(|manager| manager.usage(tab.connection)),
                 data,
                 position,
+            };
+            draw_statusline(frame, area, &status, &self.theme);
+            return;
+        }
+        if self.home() {
+            let status = StatusData {
+                panel,
+                connection: "",
+                production: false,
+                schema: None,
+                session: None,
+                transaction_age: None,
+                phase: Phase::Idle,
+                run_time: None,
+                pool: None,
+                data,
+                position: None,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;

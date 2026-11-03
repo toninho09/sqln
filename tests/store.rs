@@ -374,6 +374,25 @@ fn a_missing_sql_timeout_is_the_default_and_null_is_no_limit() {
     assert_eq!(timeouts, [Some(30), None, Some(7)]);
 }
 
+#[test]
+fn a_missing_idle_limit_is_300_seconds_and_null_keeps_the_sessions() {
+    let (store, _) = store_in("idle-timeout");
+    write(
+        &store.global.config_file(),
+        r#"{"version":1,"connections":[
+            {"id":"a","name":"a","kind":"sqlite","file":"a.db"},
+            {"id":"b","name":"b","kind":"sqlite","file":"b.db","idleTimeoutSeconds":null},
+            {"id":"c","name":"c","kind":"sqlite","file":"c.db","idleTimeoutSeconds":7}]}"#,
+    );
+    let config = loaded(&store);
+    let limits: Vec<_> = config
+        .connections
+        .iter()
+        .map(|item| item.definition.idle_timeout.map(|t| t.as_secs()))
+        .collect();
+    assert_eq!(limits, [Some(300), None, Some(7)]);
+}
+
 fn error_of(store: &Store) -> config::ConfigError {
     config::load(store).config.unwrap_err()
 }
@@ -441,6 +460,11 @@ fn the_rules_of_the_content_make_a_file_invalid() {
         (
             r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"sqlite","file":"a",
             "sqlTimeoutSeconds":0}]}"#,
+            "timeout",
+        ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"sqlite","file":"a",
+            "idleTimeoutSeconds":0}]}"#,
             "timeout",
         ),
         (

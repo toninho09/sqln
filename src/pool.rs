@@ -2,13 +2,14 @@
 //! Idle, in use, opening, and cleaning sessions never exceed the limit.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
 use tokio::sync::oneshot;
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout};
 
 use crate::connector::{ConnectError, Connector, ResetOutcome, Session};
+use crate::sql::Dialect;
 
 /// The right to use one place of the pool, with a session or without one.
 enum Grant {
@@ -22,9 +23,25 @@ struct Waiter {
     grant: oneshot::Sender<(Grant, u64)>,
 }
 
+/// A session in the pool, with the moment of its return.
+struct Idle {
+    session: Box<dyn Session>,
+    since: Instant,
+}
+
+impl Idle {
+    fn now(session: Box<dyn Session>) -> Self {
+        Self {
+            session,
+            since: Instant::now(),
+        }
+    }
+}
+
 #[derive(Default)]
 struct State {
-    idle: Vec<Box<dyn Session>>,
+    /// The last session to return is the first to leave, so the older sessions age.
+    idle: Vec<Idle>,
     /// Places in use, opening, or in cleanup.
     busy: usize,
     waiters: VecDeque<Waiter>,
@@ -60,12 +77,15 @@ impl Inner {
             let Some(waiter) = state.waiters.pop_front() else {
                 return;
             };
-            let grant = state.idle.pop().map_or(Grant::Open, Grant::Session);
+            let grant = state
+                .idle
+                .pop()
+                .map_or(Grant::Open, |idle| Grant::Session(idle.session));
             state.busy += 1;
             if let Err((grant, _)) = waiter.grant.send((grant, state.generation)) {
                 state.busy -= 1;
                 if let Grant::Session(session) = grant {
-                    state.idle.push(session);
+                    state.idle.push(Idle::now(session));
                 }
             }
         }
@@ -78,7 +98,7 @@ impl Inner {
         if let Grant::Session(session) = grant
             && state.generation == generation
         {
-            state.idle.push(session);
+            state.idle.push(Idle::now(session));
         }
         self.wake(&mut state);
     }
@@ -120,6 +140,15 @@ pub struct Pool {
     inner: Arc<Inner>,
 }
 
+/// A pool that can close while this reference exists.
+pub struct WeakPool(Weak<Inner>);
+
+impl WeakPool {
+    pub fn upgrade(&self) -> Option<Pool> {
+        self.0.upgrade().map(|inner| Pool { inner })
+    }
+}
+
 /// One reserved place of the pool, with its session. A drop without `release`
 /// closes the session and frees the place, so a canceled future cannot lose a place.
 pub struct Lease {
@@ -150,7 +179,7 @@ impl Lease {
                 return;
             }
             state.busy -= 1;
-            state.idle.push(session);
+            state.idle.push(Idle::now(session));
             self.inner.wake(&mut state);
             drop(state);
             self.released = true;
@@ -180,6 +209,10 @@ impl Pool {
         }
     }
 
+    pub fn dialect(&self) -> Dialect {
+        self.inner.connector.dialect()
+    }
+
     /// Returns the places in use and the limit.
     pub fn usage(&self) -> (usize, usize) {
         (self.inner.lock().busy, self.inner.limit)
@@ -188,6 +221,33 @@ impl Pool {
     /// Returns true while the pool holds a session or a place in use.
     pub fn has_sessions(&self) -> bool {
         self.inner.lock().total() > 0
+    }
+
+    /// Closes each idle session that waited `limit` or more. Returns the number of
+    /// closed sessions and the wait until the next idle session reaches the limit.
+    pub fn close_expired(&self, limit: Duration) -> (usize, Duration) {
+        let now = Instant::now();
+        let mut state = self.inner.lock();
+        let (expired, kept): (Vec<Idle>, Vec<Idle>) = std::mem::take(&mut state.idle)
+            .into_iter()
+            .partition(|idle| now.duration_since(idle.since) >= limit);
+        state.idle = kept;
+        let next = state
+            .idle
+            .iter()
+            .map(|idle| limit.saturating_sub(now.duration_since(idle.since)))
+            .min()
+            .unwrap_or(limit);
+        self.inner.wake(&mut state);
+        drop(state);
+        let closed = expired.len();
+        drop(expired);
+        (closed, next)
+    }
+
+    /// Returns a reference that does not keep the pool open.
+    pub fn downgrade(&self) -> WeakPool {
+        WeakPool(Arc::downgrade(&self.inner))
     }
 
     /// Closes the idle sessions. A session in use closes when it returns.
@@ -235,9 +295,9 @@ impl Pool {
         let (mut guard, answer) = {
             let mut state = self.inner.lock();
             if state.waiters.is_empty() {
-                if let Some(session) = state.idle.pop() {
+                if let Some(idle) = state.idle.pop() {
                     state.busy += 1;
-                    return (Grant::Session(session), state.generation);
+                    return (Grant::Session(idle.session), state.generation);
                 }
                 if state.total() < self.inner.limit {
                     state.busy += 1;

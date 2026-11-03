@@ -12,13 +12,14 @@ use crate::sql::Dialect;
 use crate::structure::{Scope, Section, SessionSignal, Structure, structure_sql};
 use crate::table::{PageRequest, TableFocus, TableTab};
 use crate::ui::text;
-use crate::ui::{TabView, main_tab_label, run_badge, table};
+use crate::ui::{TabView, diagram, main_tab_label, run_badge, table};
 
 /// One tab of the tab row, with its index in the list of its kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Tab {
     Console(usize),
     Table(usize),
+    Diagram(usize),
 }
 
 /// Returns true for a source with a list of sessions.
@@ -53,7 +54,12 @@ impl App {
             .iter()
             .enumerate()
             .map(|(index, tab)| (tab.opened, Tab::Table(index)));
-        let mut order: Vec<(u64, Tab)> = consoles.chain(tables).collect();
+        let diagrams = self
+            .diagrams
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| (tab.opened, Tab::Diagram(index)));
+        let mut order: Vec<(u64, Tab)> = consoles.chain(tables).chain(diagrams).collect();
         order.sort_by_key(|(opened, _)| *opened);
         order.into_iter().map(|(_, tab)| tab).collect()
     }
@@ -75,6 +81,10 @@ impl App {
                     let tab = &self.tables[index];
                     (table::tab_label(tab, &self.theme), tab.phase, &tab.run)
                 }
+                Tab::Diagram(index) => {
+                    let tab = &self.diagrams[index];
+                    (diagram::tab_label(tab, &self.theme), tab.phase, &tab.run)
+                }
             };
             let picture = self.run_frame / FRAMES_PER_PICTURE;
             TabView {
@@ -87,9 +97,11 @@ impl App {
 
     /// Returns the position of the tab on screen in the tab row.
     pub(super) fn active_tab(&self) -> usize {
-        let active = self
-            .table_active
-            .map_or(Tab::Console(self.active), Tab::Table);
+        let active = match (self.diagram_active, self.table_active) {
+            (Some(index), _) => Tab::Diagram(index),
+            (None, Some(index)) => Tab::Table(index),
+            (None, None) => Tab::Console(self.active),
+        };
         self.tab_order()
             .iter()
             .position(|tab| *tab == active)
@@ -100,6 +112,7 @@ impl App {
         match self.tab_order().get(index) {
             Some(Tab::Table(table)) => self.select_table(*table),
             Some(Tab::Console(console)) => self.select_console(*console),
+            Some(Tab::Diagram(diagram)) => self.select_diagram(*diagram),
             None => {}
         }
     }
@@ -109,8 +122,9 @@ impl App {
     pub(super) fn close_tab(&mut self, index: usize) {
         self.console_mut().editor.close_suggestions();
         match self.tab_order().get(index) {
-            Some(Tab::Table(table)) => self.close_table_tab(*table),
+            Some(Tab::Table(table)) => self.close_table(*table),
             Some(Tab::Console(console)) => self.close_step(self.consoles[*console].id),
+            Some(Tab::Diagram(diagram)) => self.close_diagram(*diagram),
             None => {}
         }
     }
@@ -121,6 +135,7 @@ impl App {
             if self.table_active != Some(index) {
                 self.leave_tab();
             }
+            self.diagram_active = None;
             self.table_active = Some(index);
             if self.tables[index].pending {
                 self.apply_table();
@@ -147,6 +162,16 @@ impl App {
             return;
         };
         let connection = self.connections[row.connection].id;
+        self.open_relation(connection, relation, row.kind == RowKind::View);
+    }
+
+    /// Opens the table tab of a relation. A table that is open only gets the focus.
+    pub(super) fn open_relation(
+        &mut self,
+        connection: ConnectionId,
+        relation: RelationRef,
+        view: bool,
+    ) {
         if let Some(index) = self
             .tables
             .iter()
@@ -163,7 +188,6 @@ impl App {
         else {
             return;
         };
-        let view = row.kind == RowKind::View;
         let tab = self.new_table_tab(id, connection, relation, view);
         self.tables.push(tab);
         let index = self.tables.len() - 1;
@@ -248,13 +272,19 @@ impl App {
 
     /// Asks before a signal to the session under the cursor.
     fn ask_session_signal(&mut self, signal: SessionSignal) {
-        let Some(tab) = self.table().filter(|tab| tab.shows_sessions()) else {
+        let Some(connection) = self
+            .table()
+            .filter(|tab| tab.shows_sessions())
+            .map(|tab| tab.connection)
+        else {
             return;
         };
-        if self.is_read_only(tab.connection) {
-            self.status = Some(text::SESSIONS_READ_ONLY.to_owned());
+        if self.refuse_read_only_signal(connection) {
             return;
         }
+        let Some(tab) = self.table() else {
+            return;
+        };
         if tab.is_busy() {
             self.status = Some(text::TABLE_BUSY.to_owned());
             return;
@@ -287,14 +317,31 @@ impl App {
         );
     }
 
-    /// Sends the signal that the user confirmed. The tab must still be on screen.
+    /// Returns true when the connection is read-only. The status line then gives the reason.
+    fn refuse_read_only_signal(&mut self, connection: ConnectionId) -> bool {
+        let read_only = self.is_read_only(connection);
+        if read_only {
+            self.status = Some(text::SESSIONS_READ_ONLY.to_owned());
+        }
+        read_only
+    }
+
+    /// Sends the signal that the user confirmed. The tab must still be on screen, and the
+    /// read-only mode can start while the question is open.
     pub(super) fn send_session_signal(
         &mut self,
         console: ConsoleId,
         signal: SessionSignal,
         session: u64,
     ) {
-        if self.table().is_none_or(|tab| tab.id != console) {
+        let Some(connection) = self
+            .table()
+            .filter(|tab| tab.id == console)
+            .map(|tab| tab.connection)
+        else {
+            return;
+        };
+        if self.refuse_read_only_signal(connection) {
             return;
         }
         let Some(dialect) = self.ready_table() else {
@@ -325,7 +372,7 @@ impl App {
 
     /// Opens a structure tab. A structure that is open only gets the focus. For a source
     /// without structure, the status line gives the reason.
-    fn open_structure(
+    pub(super) fn open_structure(
         &mut self,
         connection: ConnectionId,
         scope: Scope,
@@ -557,19 +604,15 @@ impl App {
             Some(active) if active > index => Some(active - 1),
             other => other,
         };
-        // The hidden console comes back when a table closes for another reason.
-        if self.table_active.is_none() {
-            self.console_mut().hidden = false;
+        // Behind the hidden console, a diagram takes the screen, or the home screen
+        // appears.
+        if self.home() {
+            if self.diagrams.is_empty() {
+                self.focus_navigator();
+            } else {
+                self.diagram_active = Some(0);
+            }
         }
-    }
-
-    /// Closes a table tab. The close of the last tab ends the application.
-    fn close_table_tab(&mut self, index: usize) {
-        if self.tables.len() == 1 && self.consoles.iter().all(|console| console.hidden) {
-            self.request_exit();
-            return;
-        }
-        self.close_table(index);
     }
 
     /// Closes the table tabs of a connection that the user removed.
@@ -608,7 +651,7 @@ impl App {
             Action::Stop => self.stop_table(),
             Action::CloseTab => {
                 if let Some(index) = self.table_active {
-                    self.close_table_tab(index);
+                    self.close_table(index);
                 }
             }
             Action::FocusUp | Action::GridFocusFilter => self.focus_table(TableFocus::Filter),

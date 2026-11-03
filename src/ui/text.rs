@@ -256,11 +256,11 @@ pub const HINT_HISTORY: &[HintPart] = &[
 ];
 
 pub const TITLE_EXPLORER: &str = "EXPLORER";
-pub const FORM_GENERAL: &str = "GENERAL";
-pub const FORM_ADDRESS: &str = "ADDRESS";
-pub const FORM_CREDENTIALS: &str = "CREDENTIALS";
-pub const FORM_SECURITY: &str = "SECURITY";
-pub const FORM_OPTIONS: &str = "OPTIONS";
+pub const FORM_GENERAL: &str = "General";
+pub const FORM_ADDRESS: &str = "Address";
+pub const FORM_CREDENTIALS: &str = "Credentials";
+pub const FORM_SECURITY: &str = "Security";
+pub const FORM_OPTIONS: &str = "Options";
 pub const TITLE_PALETTE: &str = "Commands";
 pub const TITLE_PREFIX: &str = "Ctrl+W";
 pub const TITLE_EXPLORER_MENU: &str = "Ctrl+W · Explorer";
@@ -274,6 +274,8 @@ pub const STATUS_RESULTS: &str = "RESULTS";
 pub const STATUS_EXPLORER: &str = "EXPLORER";
 pub const STATUS_FILTER: &str = "FILTER";
 pub const STATUS_TABLE: &str = "TABLE";
+pub const STATUS_DIAGRAM: &str = "DIAGRAM";
+pub const STATUS_HOME: &str = "HOME";
 
 pub const GROUP_PANELS: &str = "Panels";
 pub const GROUP_TABS: &str = "Tabs";
@@ -304,6 +306,7 @@ pub const MENU_REMOVE_CONNECTION: &str = "Remove connection";
 pub const MENU_DISCONNECT: &str = "Disconnect";
 pub const MENU_DELETE_PASSWORD: &str = "Delete the password";
 pub const MENU_STRUCTURE: &str = "Show the structure";
+pub const MENU_DIAGRAM: &str = "ER diagram";
 pub const MENU_GENERATE: &str = "Generate SQL";
 pub const MENU_IMPORT: &str = "Import a file";
 pub const MENU_COPY_NAME: &str = "Copy the name";
@@ -334,6 +337,24 @@ pub const WELCOME_SUGGESTIONS: &str = "Show suggestions";
 pub const WELCOME_SUGGESTIONS_KEY: &str = "Ctrl+Space";
 pub const WELCOME_COMMANDS: &str = "Show all commands";
 pub const WELCOME_KEYS: &str = "Show all keys";
+
+pub const HOME_NO_CONSOLE: &str = "No console is open";
+pub const HOME_EXPLORER: &str = "Show the explorer";
+pub const HOME_CONSOLE: &str = "Open a console";
+pub const HOME_SCRIPTS: &str = "Scripts without a connection";
+pub const HOME_SETTINGS: &str = "Open the settings";
+pub const HOME_QUIT: &str = "Quit SQLN";
+/// The version under the logo of the home screen.
+pub const HOME_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The name of the application in large letters, for the home screen. Only ASCII, so
+/// each terminal shows it.
+pub const HOME_LOGO: [&str; 5] = [
+    r"  ____   ___  _     _   _ ",
+    r" / ___| / _ \| |   | \ | |",
+    r" \___ \| | | | |   |  \| |",
+    r"  ___) | |_| | |___| |\  |",
+    r" |____/ \__\_\_____|_| \_|",
+];
 
 /// Writes the name and the version for the first screen.
 pub fn welcome_title() -> String {
@@ -484,6 +505,7 @@ pub const FIELD_READ_ONLY: &str = "Read only";
 pub const FIELD_PRODUCTION: &str = "Production";
 pub const FIELD_CONNECT: &str = "Connect limit (seconds)";
 pub const FIELD_SQL_TIMEOUT: &str = "SQL limit (s, 0 = none)";
+pub const FIELD_IDLE_TIMEOUT: &str = "Idle limit (s, 0 = none)";
 pub const BUTTON_TEST: &str = "Test connection";
 pub const BUTTON_SAVE: &str = "Save";
 pub const BUTTON_DISCONNECT: &str = "Disconnect";
@@ -644,6 +666,7 @@ pub fn shortcut_region(region: crate::input::Region) -> &'static str {
         crate::input::Region::Global => VALUE_SCOPE_GLOBAL,
         crate::input::Region::Navigator => REGION_NAVIGATOR,
         crate::input::Region::Grid => REGION_GRID,
+        crate::input::Region::Diagram => REGION_DIAGRAM,
     }
 }
 pub const FIELD_KEYBOARD: &str = "Keyboard";
@@ -667,6 +690,7 @@ pub const FIELD_SUGGESTION_KEYS: &str = "Autocomplete";
 pub const FIELD_UNDO_LIMIT: &str = "Undo (MiB)";
 pub const FIELD_PAGE_SIZE: &str = "Page size";
 pub const FIELD_ROW_CAP: &str = "Row cap";
+pub const FIELD_CAP_IN_SQL: &str = "Limit in SQL";
 pub const FIELD_BUDGET: &str = "Data (MiB)";
 pub const FIELD_THEME: &str = "Default theme";
 pub const FIELD_CONNECTION_THEME: &str = "Theme";
@@ -940,12 +964,24 @@ pub fn messages_tab(warnings: usize) -> String {
 pub fn more_notices(count: usize) -> String {
     format!("{count} more notices.")
 }
+pub fn limit_added(rows: usize) -> String {
+    format!("SQLN added LIMIT {rows} to this statement.")
+}
 pub const SECTION_COLUMNS: &str = "Columns";
 pub const SECTION_INDEXES: &str = "Indexes";
 pub const SECTION_FOREIGN_KEYS: &str = "Foreign keys";
 pub const ALL_SCHEMAS: &str = "all schemas";
 pub const STRUCTURE_REFUSED: &str = "This source has no structure. Keys have no columns.";
 pub const SESSIONS_REFUSED: &str = "SQLN lists sessions only on PostgreSQL and MySQL.";
+pub const DIAGRAM_REFUSED: &str = "This source has no diagram. Keys have no columns.";
+pub const DIAGRAM_NO_SCHEMA: &str =
+    "The connection has no current schema. Use the row of a schema.";
+pub const DIAGRAM_VIEW: &str = "A view has no keys. Use the row of its schema.";
+pub const DIAGRAM_CONSOLE: &str = "A console has no tables. Use the row of a schema or a table.";
+pub const DIAGRAM_EMPTY: &str = "This schema has no tables.";
+pub const DIAGRAM_STOPPED: &str = "The read stopped. The diagram did not change.";
+pub const DIAGRAM_PARTIAL: &str = "partial: a limit stopped the read";
+pub const DIAGRAM_KEYS_ONLY: &str = "keys only";
 pub const SESSIONS_READ_ONLY: &str = "A read-only connection cannot change a session.";
 pub const SESSION_SIGNAL_SENT: &str = "The database accepted the request.";
 pub const SESSION_GONE: &str = "The session ended before the request.";
@@ -992,6 +1028,7 @@ pub const TABLE_NO_ORDER: &str = "No ORDER BY: pages can repeat or skip rows.";
 pub const BUTTON_RELOAD: &str = "Reload";
 pub const NOTE_PARTIAL_KEYS: &str = "(partial list)";
 pub const REGION_TABLE: &str = "Table";
+pub const REGION_DIAGRAM: &str = "Diagram";
 pub const REGION_FILTER: &str = "Filter";
 
 pub const MARK_PRODUCTION: &str = "PROD";
@@ -1177,6 +1214,23 @@ pub fn action_text(action: Action) -> &'static str {
         Action::GridFocusOrder => "Edit the ORDER BY text",
         Action::GridSortColumn => "Sort by the column",
         Action::GridLoadMore => "Load more rows",
+        Action::NavigatorDiagram => "Show the ER diagram of the row",
+        Action::OpenDiagram => "Show the ER diagram of the tab or the row",
+        Action::DiagramUp => "Select the table above",
+        Action::DiagramDown => "Select the table below",
+        Action::DiagramLeft => "Select the table on the left",
+        Action::DiagramRight => "Select the table on the right",
+        Action::DiagramPanUp => "Move the view up",
+        Action::DiagramPanDown => "Move the view down",
+        Action::DiagramPanLeft => "Move the view to the left",
+        Action::DiagramPanRight => "Move the view to the right",
+        Action::DiagramPageUp => "Move the view up one page",
+        Action::DiagramPageDown => "Move the view down one page",
+        Action::DiagramOpen => "Open the data of the table",
+        Action::DiagramStructure => "Show the structure of the table",
+        Action::DiagramCopy => "Copy the diagram as Mermaid text",
+        Action::DiagramReload => "Read the diagram again",
+        Action::DiagramKeysOnly => "Show only the key columns, or all",
     }
 }
 
@@ -1285,6 +1339,19 @@ pub fn table_title(connection: &str, schema: &str, relation: &str, kind: &str) -
 
 pub fn structure_title(connection: &str, name: &str) -> String {
     format!("{connection} · {name} · structure")
+}
+
+pub fn diagram_label(name: &str) -> String {
+    format!("{name} (diagram)")
+}
+
+pub fn diagram_title(connection: &str, name: &str) -> String {
+    format!("{connection} · {name} · diagram")
+}
+
+/// Writes the row under a diagram.
+pub fn diagram_summary(tables: usize, keys: usize) -> String {
+    format!("{} · {}", plural(tables, "table"), plural(keys, "key"))
 }
 
 /// Writes the title of the explorer page, with the row that its commands act on.

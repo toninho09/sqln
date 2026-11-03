@@ -216,20 +216,14 @@ impl Fixture {
         self.code(KeyCode::Left);
         self.code(KeyCode::Left);
         assert_eq!(self.app.form().unwrap().kind, Kind::Sqlite);
-        self.code(KeyCode::Tab);
+        self.focus_form(Field::Name);
         self.type_text(name);
-        self.code(KeyCode::Tab);
+        self.focus_form(Field::File);
         self.write(path.to_str().unwrap());
     }
 
     fn focus_form(&mut self, field: Field) {
-        for _ in 0..32 {
-            if self.app.form().unwrap().focus == field {
-                return;
-            }
-            self.code(KeyCode::Tab);
-        }
-        panic!("{field:?} is not in the form");
+        common::focus_form_field(&mut self.app, field);
     }
 
     fn save(&mut self) {
@@ -317,7 +311,7 @@ fn a_second_execution_stays_refused_in_its_own_console() {
 }
 
 #[test]
-fn closing_a_console_frees_its_rows_and_the_last_tab_quits() {
+fn closing_a_console_frees_its_rows_and_the_last_tab_shows_the_home_screen() {
     let mut f = Fixture::new("close-tab", "");
     f.run("SELECT 'value in the first console' AS a;");
     f.navigator();
@@ -327,9 +321,10 @@ fn closing_a_console_frees_its_rows_and_the_last_tab_quits() {
     assert_eq!(f.app.consoles().len(), 1);
     assert_eq!(f.app.console().name, "console-2");
     f.assert_sees("Data 0/256 MiB");
-    assert!(!f.app.should_quit());
+    assert!(!f.app.home());
     f.prefix('c');
-    assert!(f.app.should_quit());
+    assert!(f.app.home());
+    assert!(!f.app.should_quit());
 }
 
 #[test]
@@ -1186,13 +1181,13 @@ fn every_screen_fits_the_minimum_terminal() {
     f.navigator();
     f.code(KeyCode::Char('a'));
     let screen = rows(&f.buffer_at(80, 24)).join("\n");
-    for text in [
-        "Type",
-        "Connect limit",
-        "[Test connection]",
-        "[Save]",
-        "[Cancel]",
-    ] {
+    for text in ["Type", "[Test connection]", "[Save]", "[Cancel]"] {
+        assert!(screen.contains(text), "{text}\n{screen}");
+    }
+    // The largest section also fits.
+    f.focus_form(Field::Icon);
+    let screen = rows(&f.buffer_at(80, 24)).join("\n");
+    for text in ["Connect limit", "Idle limit", "Icon", "[Save]"] {
         assert!(screen.contains(text), "{text}\n{screen}");
     }
 }
@@ -1873,8 +1868,9 @@ fn the_close_mark_asks_the_same_question_as_the_key() {
 }
 
 #[test]
-fn the_close_mark_of_the_last_tab_ends_the_application() {
+fn the_close_mark_of_the_last_tab_shows_the_home_screen() {
     let mut f = Fixture::new("close-last", "");
     f.close_tab("console-1");
-    assert!(f.app.should_quit());
+    assert!(f.app.home());
+    assert!(!f.app.should_quit());
 }

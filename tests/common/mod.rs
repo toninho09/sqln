@@ -250,3 +250,37 @@ pub fn temp_dir(name: &str) -> std::path::PathBuf {
     std::fs::create_dir_all(&path).unwrap();
     path
 }
+
+/// Moves the focus of the connection form to a field with the keys of a user. A field of
+/// another section first opens that section from the sidebar.
+pub fn focus_form_field(app: &mut App, field: sqln::form::Field) {
+    use sqln::form::{Field, FieldStyle};
+    let press = |app: &mut App, code| {
+        app.on_event(Event::Key(key(code)));
+    };
+    let form = |app: &App| {
+        let form = app.form().expect("the form is open");
+        (form.focus, form.shown_section())
+    };
+    if field.style() != FieldStyle::Button && form(app).1 != field.group() {
+        for _ in 0..40 {
+            if form(app).0 == Field::Sections {
+                break;
+            }
+            press(app, KeyCode::BackTab);
+        }
+        for _ in 0..8 {
+            if form(app).1 == field.group() {
+                break;
+            }
+            press(app, KeyCode::Down);
+        }
+    }
+    for _ in 0..40 {
+        if form(app).0 == field {
+            return;
+        }
+        press(app, KeyCode::Tab);
+    }
+    panic!("{field:?} is not in the form");
+}

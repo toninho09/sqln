@@ -6,7 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 
 use super::{Field, SettingsForm, next_choice};
 use crate::editor::KeyboardMode;
-use crate::input::{Action, Chord, Keymap, Region};
+use crate::input::{Action, Chord, Region};
 use crate::store::Scope;
 use crate::store::config::{self, KeyboardName, Preferences};
 use crate::ui::text;
@@ -55,9 +55,14 @@ impl Shortcuts {
     }
 
     pub fn actions() -> impl Iterator<Item = Action> {
-        [Region::Global, Region::Navigator, Region::Grid]
-            .into_iter()
-            .flat_map(Action::in_region)
+        [
+            Region::Global,
+            Region::Navigator,
+            Region::Grid,
+            Region::Diagram,
+        ]
+        .into_iter()
+        .flat_map(Action::in_region)
     }
 
     pub fn is_editing(&self) -> bool {
@@ -96,21 +101,17 @@ impl Shortcuts {
 impl SettingsForm {
     /// Returns the keys at the selected scope, including its inherited keys.
     pub fn shortcut_keys(&self) -> Vec<String> {
-        self.shortcut_keys_for(
-            self.shortcuts.action,
-            &Keymap::new(self.shortcuts.keyboard()),
-        )
+        self.shortcut_keys_for(self.shortcuts.action)
     }
 
     /// Lists every command, including commands without a shortcut.
     pub fn shortcut_commands(&self) -> Vec<(Action, Vec<String>)> {
-        let defaults = Keymap::new(self.shortcuts.keyboard());
         Shortcuts::actions()
-            .map(|action| (action, self.shortcut_keys_for(action, &defaults)))
+            .map(|action| (action, self.shortcut_keys_for(action)))
             .collect()
     }
 
-    fn shortcut_keys_for(&self, action: Action, defaults: &Keymap) -> Vec<String> {
+    fn shortcut_keys_for(&self, action: Action) -> Vec<String> {
         let local = self.draft().keymap.as_ref().and_then(|maps| {
             let map = match self.shortcuts.mode {
                 KeyboardName::Conventional => &maps.conventional,
@@ -129,7 +130,7 @@ impl SettingsForm {
         {
             return keys.clone();
         }
-        defaults.keys(action).to_vec()
+        action.default_keys(self.shortcuts.keyboard())
     }
 
     pub(crate) fn shortcut_stops(&self) -> &'static [Field] {

@@ -101,6 +101,9 @@ impl App {
     }
 
     pub(super) fn active_result(&self) -> Option<&ResultTab> {
+        if self.diagram_active.is_some() {
+            return None;
+        }
         let result = match self.table() {
             Some(tab) => Some(&tab.result),
             None => {

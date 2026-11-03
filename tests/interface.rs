@@ -20,7 +20,7 @@ use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
 use sqln::console::Focus;
 use sqln::editor::KeyboardMode;
-use sqln::form::{ConnectionForm, Field, FormNote};
+use sqln::form::{ConnectionForm, Field, FormNote, Group};
 use sqln::input::Keymap;
 use sqln::store::config::{ConnectionIcon, IconName, ThemeName};
 use sqln::store::{Root, Store};
@@ -601,7 +601,9 @@ fn the_explorer_shows_the_first_commands_of_a_connection_at_the_minimum_width() 
         let row = rows(&screen.buffer(80, 24)).pop().unwrap();
         assert_eq!(row.chars().count(), 80);
         assert!(
-            row.contains("Enter console  n new console  Right expand  Ctrl+W commands  F1 keys"),
+            row.contains(
+                "Enter console  n new console  Right expand  d diagram  Ctrl+W commands  F1 keys"
+            ),
             "{row}"
         );
     }
@@ -1266,9 +1268,7 @@ fn the_focus_mark_moves_with_the_focus() {
     screen.code(KeyCode::Tab);
     assert!(!row_of(&mut screen, "Type").contains("> Type"));
     assert!(row_of(&mut screen, "Name").contains("> Name"));
-    for _ in 0..6 {
-        screen.code(KeyCode::Tab);
-    }
+    focus_field(&mut screen, Field::Password);
     assert!(row_of(&mut screen, "Password").contains("> Password"));
 }
 
@@ -1283,7 +1283,7 @@ fn the_row_with_the_focus_has_its_own_colors() {
         buffer[(column, row)].fg,
         theme.panel_title_focused.fg.unwrap()
     );
-    let (other, other_row) = screen.locate("Port");
+    let (other, other_row) = screen.locate("Entry");
     assert_ne!(
         buffer[(other, other_row)].fg,
         theme.panel_title_focused.fg.unwrap()
@@ -1294,73 +1294,115 @@ fn the_row_with_the_focus_has_its_own_colors() {
 }
 
 #[test]
-fn the_form_uses_the_room_of_the_screen() {
+fn each_section_shows_its_fields_and_the_buttons_in_each_screen() {
     let mut screen = form_screen("form-room", Theme::plain());
-    let tall = screen.screen(100, 40);
-    assert!(
-        tall.contains("GENERAL") && tall.contains("SECURITY"),
-        "{tall}"
-    );
-
-    let wide = screen.screen(130, 26);
-    let row = wide.lines().find(|line| line.contains("GENERAL")).unwrap();
-    assert!(
-        row.contains("SECURITY"),
-        "the second column starts on the same row:\n{wide}"
-    );
-    assert!(
-        wide.contains("< Verify the certificate >"),
-        "the longest choice fits:\n{wide}"
-    );
-
-    let medium = screen.screen(100, 33);
-    assert!(!medium.contains("GENERAL"), "{medium}");
-    let rows_of =
-        |text: &str, label: &str| text.lines().position(|line| line.contains(label)).unwrap();
-    assert_eq!(
-        rows_of(&medium, "Host or socket"),
-        rows_of(&medium, "Entry") + 2,
-        "{medium}"
-    );
-
-    let small = screen.screen(80, 24);
-    assert!(!small.contains("GENERAL"), "{small}");
-    assert_eq!(
-        rows_of(&small, "Host or socket"),
-        rows_of(&small, "Entry") + 1,
-        "{small}"
-    );
-
     for (width, height) in [(100, 40), (130, 26), (100, 30), (80, 24)] {
-        let shown = screen.screen(width, height);
+        let mut seen = Vec::new();
+        for title in ["General", "Address", "Credentials", "Security", "Options"] {
+            open_section(&mut screen, (width, height), title);
+            let shown = screen.screen(width, height);
+            assert!(shown.contains(&title.to_uppercase()), "{title}:\n{shown}");
+            for button in ["[Test connection]", "[Save]", "[Cancel]"] {
+                assert!(
+                    shown.contains(button),
+                    "{button} at {width} x {height}:\n{shown}"
+                );
+            }
+            seen.push(shown);
+        }
         for label in FORM_LABELS {
             assert!(
-                shown.contains(label),
-                "{label} at {width} x {height}:\n{shown}"
-            );
-        }
-        for button in ["[Test connection]", "[Save]", "[Cancel]"] {
-            assert!(
-                shown.contains(button),
-                "{button} at {width} x {height}:\n{shown}"
+                seen.iter().any(|shown| shown.contains(label)),
+                "{label} at {width} x {height}"
             );
         }
     }
 }
 
+#[test]
+fn the_sidebar_shows_only_the_sections_with_fields() {
+    let mut screen = form_screen("form-sections", Theme::plain());
+    let shown = screen.screen(100, 30);
+    assert!(
+        shown.contains("Credentials") && shown.contains("Security"),
+        "{shown}"
+    );
+    screen.code(KeyCode::Left);
+    screen.code(KeyCode::Left);
+    assert_eq!(screen.app.form().unwrap().kind, sqln::form::Kind::Sqlite);
+    let shown = screen.screen(100, 30);
+    assert!(!shown.contains("Credentials"), "{shown}");
+    assert!(!shown.contains("Security"), "{shown}");
+}
+
+#[test]
+fn the_keys_of_the_sidebar_open_a_section_and_tab_stays_in_it() {
+    let mut screen = form_screen("form-sidebar-keys", Theme::plain());
+    screen.code(KeyCode::BackTab);
+    assert_eq!(screen.app.form().unwrap().focus, Field::Sections);
+    screen.code(KeyCode::Down);
+    assert_eq!(screen.app.form().unwrap().shown_section(), Group::Address);
+    screen.code(KeyCode::Tab);
+    assert_eq!(screen.app.form().unwrap().focus, Field::Host);
+    // Tab passes the fields of the section and the buttons, then returns to the sidebar.
+    for _ in 0..6 {
+        screen.code(KeyCode::Tab);
+    }
+    assert_eq!(screen.app.form().unwrap().focus, Field::Sections);
+}
+
+#[test]
+fn the_form_of_a_connected_connection_has_its_own_sections() {
+    let target = sqln::connector::sqlite::SqliteTarget::new("shop.db");
+    let definition = sqln::connection::Definition::sqlite(target);
+    let mut form = ConnectionForm::editing(1, &definition, true);
+    assert_eq!(form.sections(), [Group::General, Group::Options]);
+    assert_eq!(form.section_fields(), [Field::Name]);
+    form.select_section(Group::Options);
+    assert_eq!(
+        form.section_fields(),
+        [Field::Theme, Field::Icon, Field::Production]
+    );
+    assert_eq!(
+        form.buttons(),
+        [Field::Disconnect, Field::Save, Field::Cancel]
+    );
+}
+
+#[test]
+fn an_error_opens_the_section_of_its_field() {
+    let mut screen = form_screen("form-error-section", Theme::plain());
+    focus_field(&mut screen, Field::Name);
+    screen.type_text("remote");
+    focus_field(&mut screen, Field::Save);
+    screen.code(KeyCode::Enter);
+    let form = screen.app.form().unwrap();
+    assert_eq!(form.focus, Field::Host);
+    assert_eq!(form.shown_section(), Group::Address);
+    assert!(screen.screen(100, 30).contains("ADDRESS"));
+}
+
 /// The form with the most fields: a network connection with the choice of a scope.
 #[test]
 fn the_largest_form_keeps_its_fields_and_buttons_in_the_smallest_screen() {
-    let form = ConnectionForm::new_in(true);
+    let mut form = ConnectionForm::new_in(true);
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal
-        .draw(|frame| {
-            sqln::ui::form::draw_form(frame, &form, &Theme::plain());
-        })
-        .unwrap();
-    let shown = rows(terminal.backend().buffer()).join("\n");
-    for label in FORM_LABELS.iter().chain(&["Scope", "Save", "Cancel"]) {
-        assert!(shown.contains(label), "{label}:\n{shown}");
+    let mut seen = String::new();
+    for section in form.sections() {
+        form.select_section(section);
+        terminal
+            .draw(|frame| {
+                sqln::ui::form::draw_form(frame, &form, &Theme::plain());
+            })
+            .unwrap();
+        let shown = rows(terminal.backend().buffer()).join("\n");
+        for button in ["Save", "Cancel"] {
+            assert!(shown.contains(button), "{button}:\n{shown}");
+        }
+        seen.push_str(&shown);
+    }
+    for label in FORM_LABELS.iter().chain(&["Scope", "Idle limit"]) {
+        assert!(seen.contains(label), "{label}:\n{seen}");
     }
 }
 
@@ -1368,6 +1410,8 @@ fn the_largest_form_keeps_its_fields_and_buttons_in_the_smallest_screen() {
 fn a_click_selects_a_field_in_each_placement() {
     for (width, height) in [(100, 40), (130, 26), (100, 30), (80, 24)] {
         let mut screen = form_screen("form-click", Theme::plain());
+        open_section(&mut screen, (width, height), "Security");
+        assert_eq!(screen.app.form().unwrap().shown_section(), Group::Security);
         let buffer = screen.buffer(width, height);
         let lines = rows(&buffer);
         let row = lines
@@ -1395,13 +1439,15 @@ fn sqlite_form_screen(name: &str) -> Screen {
 }
 
 fn focus_field(screen: &mut Screen, field: Field) {
-    for _ in 0..32 {
-        if screen.app.form().unwrap().focus == field {
-            return;
-        }
-        screen.code(KeyCode::Tab);
-    }
-    panic!("the form has no field {field:?}");
+    common::focus_form_field(&mut screen.app, field);
+}
+
+/// Clicks a section of the sidebar of the form.
+fn open_section(screen: &mut Screen, (width, height): (u16, u16), title: &str) {
+    let lines = rows(&screen.buffer(width, height));
+    let row = lines.iter().position(|line| line.contains(title)).unwrap();
+    let byte = lines[row].find(title).unwrap();
+    screen.click(lines[row][..byte].chars().count() as u16, row as u16);
 }
 
 #[test]
@@ -1442,6 +1488,7 @@ fn use_this_folder_leaves_the_file_of_a_connection_ready_for_a_name() {
 fn the_button_of_a_field_opens_the_file_browser_for_that_field() {
     for (width, height) in [(100, 40), (130, 26), (100, 30), (80, 24)] {
         let mut screen = form_screen("form-browse-tls", Theme::plain());
+        open_section(&mut screen, (width, height), "Security");
         let shown = screen.screen(width, height);
         assert_eq!(shown.matches("[...]").count(), 3, "{width} x {height}");
         let (y, row) = shown
@@ -1483,7 +1530,7 @@ fn window_width(screen: &str, title: &str) -> usize {
 #[test]
 fn the_form_grows_with_the_screen_and_keeps_its_placement() {
     let mut screen = form_screen("form-grow", Theme::plain());
-    for (width, height, expected) in [(80, 24, 72), (100, 40, 92), (160, 40, 140), (200, 26, 140)] {
+    for (width, height, expected) in [(80, 24, 76), (100, 40, 92), (160, 40, 140), (200, 26, 140)] {
         let shown = screen.screen(width, height);
         let title = "New connection";
         assert_eq!(window_width(&shown, title), expected, "{width} x {height}");
@@ -1493,6 +1540,7 @@ fn the_form_grows_with_the_screen_and_keeps_its_placement() {
 #[test]
 fn a_click_selects_a_field_of_a_wide_form() {
     let mut screen = form_screen("form-grow-click", Theme::plain());
+    open_section(&mut screen, (200, 50), "Security");
     let lines = rows(&screen.buffer(200, 50));
     let row = lines
         .iter()
@@ -1610,13 +1658,11 @@ fn a_working_connection_gives_a_success_note_and_a_test_in_progress_does_not() {
     let mut screen = form_screen("form-success-start", theme);
     screen.code(KeyCode::Left);
     screen.code(KeyCode::Left);
-    screen.code(KeyCode::Tab);
+    focus_field(&mut screen, Field::Name);
     screen.type_text("checked");
-    screen.code(KeyCode::Tab);
+    focus_field(&mut screen, Field::File);
     screen.write(path.to_str().unwrap());
-    while screen.app.form().unwrap().focus != Field::Test {
-        screen.code(KeyCode::Tab);
-    }
+    focus_field(&mut screen, Field::Test);
     screen.code(KeyCode::Enter);
     assert!(matches!(
         screen.app.form().unwrap().note,

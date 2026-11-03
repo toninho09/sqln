@@ -4,147 +4,33 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph, Wrap};
-use unicode_width::UnicodeWidthStr;
+use ratatui::widgets::{Clear, Paragraph};
 
 use super::console::{centered, modal_width};
 use super::float_block;
 use super::icons::connection_symbol;
 use super::input_spans;
-use super::settings::{browse_width, draw_browse_button};
+use super::settings::{
+    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, SIDEBAR_WIDTH, browse_width, draw_browse_button,
+    draw_buttons, draw_divider, draw_note, draw_sidebar_rows,
+};
 use super::text;
 use super::theme::Theme;
 use crate::connector::target::hide_uri_password;
-use crate::form::{ConnectionForm, Field, FieldStyle, FormNote, Kind};
+use crate::form::{ConnectionForm, Field, FieldStyle, FormNote, Group, Kind};
 use crate::grid::printable;
 use crate::store::Scope;
 
-const WIDTH: u16 = 72;
-/// The window with two columns. Each value keeps 26 columns, the width of the longest choice.
-const WIDE_WIDTH: u16 = 116;
-const LABEL_WIDTH: u16 = 24;
-const NOTE_ROWS: u16 = 2;
-/// The columns before a label: a space, the focus mark, and a space.
-const LEFT: u16 = 3;
-/// The empty columns after a value.
-const RIGHT: u16 = 2;
-/// The rows of the window without the fields: the border, the notes, and the buttons.
-const CHROME_ROWS: u16 = NOTE_ROWS + 3;
-/// The free rows and columns around the window, when the window has room to choose.
-const MARGIN: u16 = 2;
+/// The sidebar, the label, and the longest choice fit in this width.
+const WIDTH: u16 = 76;
+const LABEL_WIDTH: u16 = 25;
+/// The rows inside the window, from its top.
+const TITLE_ROW: u16 = 1;
+const FIRST_FIELD_ROW: u16 = 3;
 const MASK: char = '•';
 
-/// One way to place the fields. The first way that fits the screen applies.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Spacing {
-    two_columns: bool,
-    titles: bool,
-    gaps: bool,
-}
-
-const COMPACT: Spacing = Spacing {
-    two_columns: false,
-    titles: false,
-    gaps: false,
-};
-const SPACINGS: [Spacing; 4] = [
-    Spacing {
-        two_columns: false,
-        titles: true,
-        gaps: true,
-    },
-    Spacing {
-        two_columns: true,
-        titles: true,
-        gaps: true,
-    },
-    Spacing {
-        two_columns: false,
-        titles: false,
-        gaps: true,
-    },
-    COMPACT,
-];
-
-impl Spacing {
-    /// Divides the groups into columns. A group goes to the first column when most of its
-    /// fields stay in the first half of the fields.
-    fn columns<'a>(self, groups: &[&'a [Field]]) -> Vec<Vec<&'a [Field]>> {
-        if !self.two_columns {
-            return vec![groups.to_vec()];
-        }
-        let half = groups
-            .iter()
-            .map(|group| group.len())
-            .sum::<usize>()
-            .div_ceil(2);
-        let mut used = 0;
-        let (mut first, mut second) = (Vec::new(), Vec::new());
-        for group in groups {
-            if used + group.len() / 2 < half {
-                first.push(*group);
-                used += group.len();
-            } else {
-                second.push(*group);
-            }
-        }
-        vec![first, second]
-    }
-
-    fn rows_of(self, column: &[&[Field]]) -> u16 {
-        let fields: usize = column.iter().map(|group| group.len()).sum();
-        let titles = if self.titles { column.len() } else { 0 };
-        let gaps = if self.gaps {
-            column.len().saturating_sub(1)
-        } else {
-            0
-        };
-        u16::try_from(fields + titles + gaps).unwrap_or(u16::MAX)
-    }
-
-    /// Returns the width and the height of the window.
-    fn size(self, groups: &[&[Field]]) -> (u16, u16) {
-        let rows = self
-            .columns(groups)
-            .iter()
-            .map(|column| self.rows_of(column))
-            .max()
-            .unwrap_or(0);
-        let width = if self.two_columns { WIDE_WIDTH } else { WIDTH };
-        (width, rows + u16::from(self.gaps) * 2 + CHROME_ROWS)
-    }
-
-    fn choose(screen: Rect, groups: &[&[Field]]) -> Self {
-        let fits = |spacing: &Self| {
-            let (width, height) = spacing.size(groups);
-            width + MARGIN <= screen.width && height + MARGIN <= screen.height
-        };
-        SPACINGS.into_iter().find(fits).unwrap_or(COMPACT)
-    }
-}
-
-/// The groups of the form, in the order of its fields.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Group {
-    General,
-    Address,
-    Credentials,
-    Security,
-    Options,
-}
-
-fn group(field: Field) -> Group {
-    match field {
-        Field::Kind | Field::Name | Field::Scope | Field::Entry => Group::General,
-        Field::Uri | Field::Host | Field::Port | Field::Database | Field::File => Group::Address,
-        Field::User | Field::Password | Field::Credential => Group::Credentials,
-        Field::Tls | Field::CaFile | Field::ClientCertificate | Field::ClientKey => Group::Security,
-        _ => Group::Options,
-    }
-}
-
-fn group_title(group: Group) -> &'static str {
-    match group {
+fn section_title(section: Group) -> &'static str {
+    match section {
         Group::General => text::FORM_GENERAL,
         Group::Address => text::FORM_ADDRESS,
         Group::Credentials => text::FORM_CREDENTIALS,
@@ -153,9 +39,10 @@ fn group_title(group: Group) -> &'static str {
     }
 }
 
-/// The screen areas of the fields. The mouse uses them.
+/// The screen areas of the sidebar and the fields. The mouse uses them.
 #[derive(Clone, Debug, Default)]
 pub struct FormLayout {
+    pub sections: Vec<(Group, Rect)>,
     pub fields: Vec<(Field, Rect)>,
     /// The buttons of the path fields.
     pub browse: Vec<(Field, Rect)>,
@@ -186,12 +73,14 @@ fn label(field: Field) -> &'static str {
         Field::Production => text::FIELD_PRODUCTION,
         Field::ConnectTimeout => text::FIELD_CONNECT,
         Field::SqlTimeout => text::FIELD_SQL_TIMEOUT,
+        Field::IdleTimeout => text::FIELD_IDLE_TIMEOUT,
         Field::Theme => text::FIELD_CONNECTION_THEME,
         Field::Icon => text::FIELD_CONNECTION_ICON,
         Field::Test => text::BUTTON_TEST,
         Field::Save => text::BUTTON_SAVE,
         Field::Disconnect => text::BUTTON_DISCONNECT,
         Field::Cancel => text::BUTTON_CANCEL,
+        Field::Sections => "",
     }
 }
 
@@ -338,60 +227,17 @@ fn draw_field_row(
         .then(|| draw_browse_button(frame, area, focused, theme))
 }
 
-/// Draws the groups of one column, from the top of `area`.
-fn draw_column(
-    frame: &mut Frame,
-    area: Rect,
-    column: &[&[Field]],
-    spacing: Spacing,
-    form: &ConnectionForm,
-    theme: &Theme,
-    layout: &mut FormLayout,
-) {
-    let mut y = area.y;
-    for (index, fields) in column.iter().enumerate() {
-        if index > 0 && spacing.gaps {
-            y += 1;
-        }
-        if spacing.titles {
-            let title = fields
-                .first()
-                .map_or("", |field| group_title(group(*field)));
-            let place = Rect {
-                x: area.x + LEFT,
-                y,
-                width: area.width.saturating_sub(LEFT),
-                height: 1,
-            };
-            frame.render_widget(Paragraph::new(title).style(theme.panel_title), place);
-            y += 1;
-        }
-        for field in *fields {
-            let row = Rect {
-                y,
-                height: 1,
-                ..area
-            };
-            if let Some(button) = draw_field_row(frame, row, form, *field, theme) {
-                layout.browse.push((*field, button));
-            }
-            layout.fields.push((*field, row));
-            y += 1;
-        }
-    }
-}
-
 pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> FormLayout {
-    let fields = form.fields();
-    let (buttons, rows): (Vec<Field>, Vec<Field>) = fields
-        .into_iter()
-        .partition(|field| field.style() == FieldStyle::Button);
-    let groups: Vec<&[Field]> = rows
-        .chunk_by(|first, next| group(*first) == group(*next))
-        .collect();
-    let spacing = Spacing::choose(frame.area(), &groups);
-    let (width, height) = spacing.size(&groups);
-    let area = centered(frame.area(), modal_width(frame.area().width, width), height);
+    let sections = form.sections();
+    // All sections keep the size of the largest one, so the window does not move.
+    let tallest = sections
+        .iter()
+        .map(|section| form.fields_of(*section).len())
+        .max()
+        .unwrap_or(0);
+    let height =
+        BORDER_ROWS + FIRST_FIELD_ROW + u16::try_from(tallest).unwrap_or(u16::MAX) + FOOTER_ROWS;
+    let area = centered(frame.area(), modal_width(frame.area().width, WIDTH), height);
     frame.render_widget(Clear, area);
     let title = match &form.editing {
         None => text::TITLE_NEW_CONNECTION.to_owned(),
@@ -401,76 +247,77 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let pad = u16::from(spacing.gaps);
-    let body = Rect {
-        y: inner.y + pad,
-        height: inner.height.saturating_sub(pad * 2),
+    let sidebar = Rect {
+        y: inner.y + 1,
+        width: SIDEBAR_WIDTH,
+        height: inner.height.saturating_sub(1),
         ..inner
     };
-    let mut layout = FormLayout::default();
-    let columns = spacing.columns(&groups);
-    let column_width = body.width / u16::try_from(columns.len()).unwrap_or(1);
-    for (index, column) in (0u16..).zip(&columns) {
-        let place = Rect {
-            x: body.x + index * column_width,
-            width: column_width,
-            ..body
+    draw_divider(frame, area, sidebar.right(), theme);
+    let pane = Rect {
+        x: sidebar.right() + 1,
+        width: inner.width.saturating_sub(SIDEBAR_WIDTH + 1),
+        ..inner
+    };
+    let open = form.shown_section();
+    let titles: Vec<&str> = sections
+        .iter()
+        .map(|section| section_title(*section))
+        .collect();
+    let index = sections.iter().position(|section| *section == open);
+    let focused = form.focus == Field::Sections;
+    let rows = draw_sidebar_rows(
+        frame,
+        sidebar,
+        &titles,
+        (index.unwrap_or(0), focused),
+        theme,
+    );
+    let mut layout = FormLayout {
+        sections: sections.into_iter().zip(rows).collect(),
+        ..FormLayout::default()
+    };
+
+    let content = Rect {
+        x: pane.x + LEFT,
+        y: pane.y + TITLE_ROW,
+        width: pane.width.saturating_sub(LEFT + RIGHT),
+        height: 1,
+    };
+    let heading = section_title(open).to_uppercase();
+    frame.render_widget(Paragraph::new(heading).style(theme.panel_title), content);
+    for (y, field) in (pane.y + FIRST_FIELD_ROW..).zip(form.section_fields()) {
+        let row = Rect {
+            y,
+            height: 1,
+            ..pane
         };
-        draw_column(frame, place, column, spacing, form, theme, &mut layout);
+        if let Some(button) = draw_field_row(frame, row, form, field, theme) {
+            layout.browse.push((field, button));
+        }
+        layout.fields.push((field, row));
     }
 
-    let button_row = body.bottom().saturating_sub(1);
-    let content = Rect {
-        x: body.x + LEFT,
-        y: button_row.saturating_sub(NOTE_ROWS),
-        width: body.width.saturating_sub(LEFT + RIGHT),
-        height: NOTE_ROWS,
-    };
+    let button_row = pane.bottom().saturating_sub(2);
     if let Some(note) = &form.note {
         let (message, style) = match note {
             FormNote::Info(message) => (message, theme.status),
             FormNote::Success(message) => (message, theme.mark_good),
             FormNote::Error(message) => (message, theme.error),
         };
-        let message = printable(message);
-        // The note ends on the row above the buttons, and a long note goes up to the next row.
-        let width = usize::from(content.width).max(1);
-        let rows = u16::try_from(message.width().div_ceil(width))
-            .unwrap_or(NOTE_ROWS)
-            .clamp(1, NOTE_ROWS);
-        let place = Rect {
-            y: button_row.saturating_sub(rows),
-            height: rows,
-            ..content
-        };
-        let paragraph = Paragraph::new(Line::styled(message, style)).wrap(Wrap { trim: false });
-        frame.render_widget(paragraph, place);
+        draw_note(frame, content, button_row, message, style);
     }
-
-    let mut x = content.x;
-    let mut spans = Vec::new();
-    for field in buttons {
-        let name = theme.button(label(field));
-        let width = u16::try_from(name.width()).unwrap_or(0);
-        layout
-            .fields
-            .push((field, Rect::new(x, button_row, width, 1)));
-        let style: Style = if form.focus == field {
-            theme.dialog_focus
-        } else {
-            theme.dialog_option
-        };
-        spans.push(Span::styled(name, style));
-        spans.push(Span::raw("  "));
-        x += width + 2;
-    }
-    frame.render_widget(
-        Paragraph::new(Line::from(spans)),
-        Rect {
-            y: button_row,
-            height: 1,
-            ..content
-        },
-    );
+    let buttons: Vec<(Field, &str)> = form
+        .buttons()
+        .into_iter()
+        .map(|field| (field, label(field)))
+        .collect();
+    layout.fields.extend(draw_buttons(
+        frame,
+        content,
+        button_row,
+        (&buttons, form.focus),
+        theme,
+    ));
     layout
 }

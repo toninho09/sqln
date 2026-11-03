@@ -13,8 +13,8 @@ use crate::connector::sqlite::{SqliteTarget, validate_path};
 use crate::connector::{ConnectError, Connector, Namespace};
 use crate::console::Focus;
 use crate::creds::Identity;
-use crate::exec::{ConnectionId, Manager};
-use crate::form::{ConnectionForm, Field, FormNote};
+use crate::exec::{ConnectionId, Manager, Settings};
+use crate::form::{ConnectionForm, Field, FormNote, Invalid};
 use crate::generate::{Template, generate, qualified_name};
 use crate::grid::printable;
 use crate::input::Action;
@@ -59,15 +59,31 @@ impl App {
         if !self.ensure_manager() {
             return None;
         }
-        let settings = match &definition {
-            Some(definition) => definition.settings(&self.settings),
-            None => self.settings.clone(),
-        };
+        let settings = self.connection_settings(definition.as_ref());
         let manager = self.manager.as_mut()?;
         let id = manager.add_connection(connector.clone(), settings);
         self.connections
             .push(Connection::new(id, name, definition, connector.as_ref()));
         Some(id)
+    }
+
+    /// Returns the limits of a connection: its definition on top of the settings.
+    fn connection_settings(&self, definition: Option<&Definition>) -> Settings {
+        definition.map_or_else(
+            || self.settings.clone(),
+            |definition| definition.settings(&self.settings),
+        )
+    }
+
+    /// Gives the saved settings to each connection. A running execution keeps its values.
+    pub(super) fn update_connection_settings(&self) {
+        let Some(manager) = &self.manager else {
+            return;
+        };
+        for connection in &self.connections {
+            let settings = self.connection_settings(connection.definition.as_ref());
+            manager.update_settings(connection.id, settings);
+        }
     }
 
     pub(super) fn prepare_database(&mut self) {
@@ -99,6 +115,7 @@ impl App {
         definition.max_connections = self.settings.max_connections;
         definition.connect_timeout = self.settings.connect_timeout;
         definition.sql_timeout = self.settings.sql_timeout;
+        definition.idle_timeout = self.settings.idle_timeout;
         self.add_definition(definition)
     }
 
@@ -183,7 +200,7 @@ impl App {
     }
 
     /// Reads the catalog at its first use, so the start opens no connection.
-    fn ensure_catalog(&mut self, id: ConnectionId) {
+    pub(super) fn ensure_catalog(&mut self, id: ConnectionId) {
         let not_loaded = self
             .connection(id)
             .is_some_and(|connection| connection.catalog_state == CatalogState::NotLoaded);
@@ -242,6 +259,7 @@ impl App {
                 None
             }
         };
+        self.open_pending_diagram(id, schemas.is_some());
         self.update_picker(id, schemas);
     }
 
@@ -357,6 +375,7 @@ impl App {
             Action::NavigatorOpen => self.toggle(&row),
             Action::NavigatorNewConsole => self.request_console(id),
             Action::NavigatorStructure => self.open_row_structure(&row),
+            Action::NavigatorDiagram => self.open_row_diagram(&row),
             Action::NavigatorSessions => self.open_row_sessions(&row),
             Action::NavigatorGenerate => self.open_templates(&row),
             Action::NavigatorImport => self.import_row(&row),
@@ -670,6 +689,22 @@ impl App {
             return;
         }
         self.status = Some(text::DISCONNECTED.to_owned());
+        self.unlock_form(id);
+    }
+
+    /// The idle limit closed sessions. The explorer redraws, and no message appears.
+    pub(super) fn on_idle_closed(&mut self, id: ConnectionId) {
+        let connected = self
+            .manager
+            .as_ref()
+            .is_some_and(|manager| manager.is_connected(id));
+        if !connected {
+            self.unlock_form(id);
+        }
+    }
+
+    /// A form that only shows a connection accepts changes after the disconnection.
+    fn unlock_form(&mut self, id: ConnectionId) {
         let definition = self.connection(id).and_then(|item| item.definition.clone());
         let credential = self
             .connection(id)
@@ -805,6 +840,7 @@ impl App {
             }
         }
         self.close_tables_of(id);
+        self.close_diagrams_of(id);
         if let Some(manager) = &mut self.manager {
             manager.remove_connection(id);
         }
@@ -957,20 +993,18 @@ impl App {
         let Some(definition) = self.form_definition() else {
             return;
         };
-        let form_note = |app: &mut Self, note| {
-            if let Some(form) = &mut app.form {
-                form.note = Some(note);
-            }
-        };
         let definition = match definition {
             Ok(definition) => definition,
-            Err(message) => {
-                form_note(self, FormNote::Error(message));
+            Err(invalid) => {
+                self.show_invalid(invalid);
                 return;
             }
         };
         if let Some(path) = missing_file(&definition) {
-            form_note(self, FormNote::Error(text::form_file_missing(&path)));
+            self.show_invalid(Invalid {
+                field: Field::File,
+                message: text::form_file_missing(&path),
+            });
             return;
         }
         if !self.ensure_manager() {
@@ -1026,8 +1060,8 @@ impl App {
         }
         let definition = match self.form_definition() {
             Some(Ok(definition)) => definition,
-            Some(Err(message)) => {
-                self.set_form_error(message);
+            Some(Err(invalid)) => {
+                self.show_invalid(invalid);
                 return;
             }
             None => return,
@@ -1038,7 +1072,7 @@ impl App {
             self.form_scope(),
             editing,
         ) {
-            self.set_form_error(text::FORM_NAME_TAKEN.to_owned());
+            self.show_invalid(name_taken());
             return;
         }
         if let Some(path) = missing_file(&definition) {
@@ -1057,7 +1091,7 @@ impl App {
 
     /// Builds the definition of the form with the folder of its scope, so that a saved
     /// relative path opens here the same file that the connection opens.
-    pub(super) fn form_definition(&self) -> Option<Result<Definition, String>> {
+    pub(super) fn form_definition(&self) -> Option<Result<Definition, Invalid>> {
         let form = self.form.as_ref()?;
         let base = self
             .form_scope()
@@ -1088,7 +1122,7 @@ impl App {
                 }
                 self.apply_definition(definition);
             }
-            Some(Err(message)) => self.set_form_error(message),
+            Some(Err(invalid)) => self.show_invalid(invalid),
             None => {}
         }
     }
@@ -1096,6 +1130,14 @@ impl App {
     fn set_form_error(&mut self, message: String) {
         if let Some(form) = &mut self.form {
             form.note = Some(FormNote::Error(message));
+        }
+    }
+
+    /// Shows the error and opens the section of its field, with the focus on the field.
+    fn show_invalid(&mut self, invalid: Invalid) {
+        if let Some(form) = &mut self.form {
+            form.focus_on(invalid.field);
+            form.note = Some(FormNote::Error(invalid.message));
         }
     }
 
@@ -1111,11 +1153,14 @@ impl App {
             return;
         };
         if name.is_empty() {
-            self.set_form_error(text::FORM_NEEDS_NAME.to_owned());
+            self.show_invalid(Invalid {
+                field: Field::Name,
+                message: text::FORM_NEEDS_NAME.to_owned(),
+            });
             return;
         }
         if name_is_taken(&self.connections, &name, self.form_scope(), Some(id)) {
-            self.set_form_error(text::FORM_NAME_TAKEN.to_owned());
+            self.show_invalid(name_taken());
             return;
         }
         let Some(connection) = self.connection(id) else {
@@ -1252,5 +1297,12 @@ fn missing_file(definition: &Definition) -> Option<String> {
             Some(target.path.display().to_string())
         }
         _ => None,
+    }
+}
+
+fn name_taken() -> Invalid {
+    Invalid {
+        field: Field::Name,
+        message: text::FORM_NAME_TAKEN.to_owned(),
     }
 }

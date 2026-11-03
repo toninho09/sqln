@@ -120,7 +120,7 @@ The time starts with the execution, so the wait for a password does not count.
 
 **Tabs:** each tab has `×` at the end. `NO_COLOR` shows `X`, and Nerd Font shows its symbol.
 A click on `×` or on the column after it closes the tab, with the questions of `Ctrl+W c`.
-Closing another tab does not change the tab on screen. Closing the last tab ends the application.
+Closing another tab does not change the tab on screen. Closing the last tab shows the home screen.
 A tab cut by the line does not show `×`. A click on it opens the whole tab.
 
 **Hint line:** each key uses the style of the keys of the `Ctrl+W` menu, and the effect uses the hint color.
@@ -225,6 +225,7 @@ Control rules:
 - Accepting a new run clears the result tabs of that console, without erasing the text or resolving the transaction.
 - The clearing happens even when the new run needs to wait for a connection; a blocked attempt does not clear the results.
 - Each result reads rows up to the cap, without waiting for a user action.
+- With **Limit in SQL** on (the default, in Settings > Results), a plain read without its own limit goes to the database with `LIMIT` with the cap and one row. **Messages** shows `Statement n: SQLN added LIMIT <rows> to this statement.` as information, and `Messages (n)` does not count it.
 - A result without rows shows the columns and the zero-row indication.
 - At the cap, report that the result may have more rows.
 - To see more rows, raise the cap and run the command again.
@@ -351,6 +352,43 @@ The table tab and the structure tab stay open together.
 - The tab does not come back in the next session.
 - Redis and Valkey have no structure. `i` shows the reason in the status bar.
 
+### Diagram tab
+
+`d` on a navigator row, or `Ctrl+W D` in any panel, opens the ER diagram tab. `Ctrl+W D` uses the row with the focus in the navigator, the table of a table tab, or the current schema of a console. The tab label is `name (diagram)`. Opening the same diagram again selects the tab.
+
+```text
+│ [console-1] [main (diagram)]                                                           │
+│ shop.db · main · diagram                                                               │
+│┌ customers ───────┐           ┌ orders ────────────────┐                               │
+││ ◆ id     INTEGER │◀──────┐   │ ◆ id           INTEGER │◀─┐                            │
+││   name   TEXT    │       └───┤ ◇ customer_id  INTEGER │  │    ┌ order_items ────────┐ │
+│└──────────────────┘           │   total        NUMERIC │  └────┤ ◆ order_id  INTEGER │ │
+│                               └────────────────────────┘       └─────────────────────┘ │
+│┌ employees ────────────┐                                                               │
+││ ◆ id          INTEGER │◀─┐                                                            │
+││ ◇ manager_id  INTEGER ├──┘                                                            │
+│└───────────────────────┘                                                               │
+│ 4 tables · 3 keys                                                                      │
+```
+
+| Navigator row | Content |
+|---|---|
+| Schema | All the tables of the schema |
+| Table or column | The table, and the tables that its foreign keys join, one step away |
+| Connection | The tables of the current schema |
+
+- A box has the table name on its top border and one row per column: the key mark, the name, and the type. `◆` marks the primary key and `◇` marks a foreign key. Without color, the marks are `PK` and `FK`.
+- A line joins the row of the foreign key column to the row of the column that it reads. The arrow stands at the table that the key reads.
+- The parent of a key stands on the left of its child. A cycle turns one key to the other side. A key to the same table makes a loop on the right border.
+- The tables without keys stand in rows under the others.
+- A table of another schema is a box with `schema.table` only, in a dim style.
+- The selected box has the color of the focus, and so do its lines.
+- Views, and the partitions of a PostgreSQL table, stay out.
+- The row under the picture shows the count of tables and keys, `keys only`, and `partial` when a limit stopped the read.
+- **Reload** (`R`) reads the diagram again. DDL does not update the tab on its own.
+- The tab does not come back in the next session.
+- Redis and Valkey have no diagram. `d` shows the reason in the status bar.
+
 ### Export
 
 `e` in the grid, or **Export the result to a file** in the palette, opens the modal. The export covers the active result and generates a file.
@@ -466,44 +504,37 @@ Without an active project, offer only global.
 The example below considers an active project.
 
 ```text
-┌─ Connection ───────────────────────────────────────────┐
-│ Type:       [PostgreSQL]                               │
-│ Name:       [app]                                      │
-│ Scope:      [Project]  (can change to Global)          │
-│ Input:      [Fields / URI]                             │
-│                                                        │
-│ Host:       [db.example.test]                          │
-│ Port:       [5432]                                     │
-│ Database:   [app_db]                                   │
-│ User:       [app_user]                                 │
-│ Credential: [Session only]                             │
-│ TLS:        [Verify certificate]                       │
-│ CA:         [From the system]                          │
-│ Client certificate: [None]                             │
-│ Pool:       [5]                                        │
-│ Read only:  [ ]                                        │
-│ Production: [ ]                                        │
-│ Connect:    deadline [30] seconds                      │
-│ Theme:      [Default]                                  │
-│ Icon:       [Default]                                  │
-│                                                        │
-│ [Test connection]  [Save]  [Cancel]                    │
-└────────────────────────────────────────────────────────┘
+╭ New connection ┬──────────────────────────────────────────────────────────╮
+│                │                                                          │
+│ > General      │   GENERAL                                                │
+│   Address      │                                                          │
+│   Credentials  │ > Type                     < PostgreSQL >                │
+│   Security     │   Name                     app                           │
+│   Options      │   Scope                    < Project >                   │
+│                │   Entry                    < Fields >                    │
+│                │                                                          │
+│                │   [Test connection]  [Save]  [Cancel]                    │
+╰────────────────┴──────────────────────────────────────────────────────────╯
 ```
 
 The fields change according to the type. SQLite uses a file, not an in-memory database.
 
-Current implementation: the form groups the fields in **General**, **Address**, **Credentials**, **Security**, and **Options**.
-The form picks the first arrangement that fits the screen, with 2 rows and 2 columns of slack:
+The form has a sidebar, as the Settings dialog has. Each section shows its own fields:
 
-| Arrangement | Height with PostgreSQL | Width |
-|---|---|---|
-| One column, with titles and space between the groups | 33 | 72 |
-| Two columns, with titles and space between the groups | 22 | 116 |
-| One column, with space between the groups | 28 | 72 |
-| One column, without space | 22 | 72 |
+| Section | Fields |
+|---|---|
+| General | Type, Name, Scope of a new connection with a project, Entry of a network source |
+| Address | Host, Port, and Database; or the URI; or the SQLite file |
+| Credentials | User, Password, and Credential |
+| Security | TLS, CA file, client certificate, and client key |
+| Options | SQLite foreign keys and busy limit, Pool, Read only, Production, Connect limit, SQL limit, Idle limit, Theme, and Icon |
 
-On a larger screen, the width grows to 140 columns and leaves 8 columns free. The arrangement does not change, because the width grows after the choice.
+A section without fields stays out of the sidebar, so SQLite has no Credentials and no Security.
+The buttons stay at the bottom of each section.
+All sections keep the height of the largest section, so the window does not move. The width starts at 76 columns, grows to 140 columns on a larger screen, and leaves 8 columns free.
+The form of a connected connection also has the sidebar: General holds the name, and Options holds the theme, the icon, and the production mark.
+A save or a test with a bad value opens the section of the field and puts the focus on it.
+**Idle limit** closes a session that waits in the pool for that time, with 300 seconds as the default and 0 for no limit. A console with an open transaction keeps its session.
 
 The focused field has a mark at the start of the line, a highlighted label, and its own background.
 Without color, the mark is `>`, and the label is bold.
@@ -989,6 +1020,37 @@ The window has 64 columns and 12 list rows, and grows to 100 columns and 30 rows
 │ Scripts without a connection                         │
 ╰──────────────────────────────────────────────────────╯
 ```
+
+### Home screen
+
+The screen appears when no tab is open: after the close of the last tab, and at a start
+without a connection, without a tab of the last session, and without a database on the
+command line. With a connection, the start opens a console of the first connection.
+The explorer gets the focus, so `a`, `n`, `s`, and `Enter` act at once.
+The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` quits.
+
+```text
+ EXPLORER               │
+ ▸ one  sq              │                          ____   ___  _     _   _
+                        │                         / ___| / _ \| |   | \ | |
+                        │                         \___ \| | | | |   |  \| |
+                        │                          ___) | |_| | |___| |\  |
+                        │                         |____/ \__\_\_____|_| \_|
+                        │                                   0.1.2
+                        │                            No console is open
+                        │
+                        │                 Ctrl+W h a  Add a connection
+                        │                 Ctrl+W h n  Open a console
+                        │                 Ctrl+W h s  Scripts without a connection
+                        │                   Ctrl+W ,  Open the settings
+                        │                     Ctrl+P  Show all commands
+                        │                         F1  Show all keys
+                        │                   Ctrl+W q  Quit SQLN
+```
+
+Without a connection, the screen shows **No connection yet**, without the **Open a console** row.
+With the explorer hidden, the first row is `Ctrl+W b` **Show the explorer**, the status line shows `HOME`,
+and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.1.2` instead.
 
 ### Welcome screen
 

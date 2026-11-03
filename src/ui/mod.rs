@@ -4,6 +4,7 @@ pub mod auth;
 pub mod browser;
 pub mod conflicts;
 pub mod console;
+pub mod diagram;
 pub mod export;
 pub mod form;
 pub mod help;

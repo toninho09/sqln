@@ -1,12 +1,13 @@
 //! The saved consoles: the list that opens them again, the scripts without a
 //! connection, the removal of a script, and the association with a connection.
 
+use std::collections::HashMap;
 use std::time::SystemTime;
 
 use edtui::Index2;
 
 use super::{App, DialogAction, Picker, PickerKind};
-use crate::connection::{Connection, TreeConsole};
+use crate::connection::{Connection, ConnectionKey, TreeConsole};
 use crate::console::Console;
 use crate::editor::SqlEditor;
 use crate::exec::{ConnectionId, ConsoleId};
@@ -42,6 +43,15 @@ fn scope_word(scope: Scope) -> &'static str {
     }
 }
 
+/// Keeps the saved consoles of one connection.
+fn saved_of(entries: &[ScriptEntry], key: &ConnectionKey) -> Vec<ScriptEntry> {
+    entries
+        .iter()
+        .filter(|entry| entry.meta.connection_id == key.id)
+        .cloned()
+        .collect()
+}
+
 /// Returns true when a console shows a script.
 fn shows_script(console: &Console, entry: &ScriptEntry) -> bool {
     console
@@ -68,27 +78,27 @@ impl App {
         row
     }
 
+    /// Lists the saved consoles of a scope, the newest first. This reads the disk.
+    fn saved_consoles(&self, scope: Scope) -> Vec<ScriptEntry> {
+        self.persist_root(scope)
+            .map_or_else(Vec::new, |root| scripts::list(&root, scope))
+    }
+
     /// Lists the saved consoles of a connection, the newest first.
     pub(super) fn consoles_of(&self, connection: ConnectionId) -> Vec<ScriptEntry> {
         let Some(key) = self
             .connection(connection)
-            .and_then(|item| item.key.clone())
+            .and_then(|item| item.key.as_ref())
         else {
             return Vec::new();
         };
-        let Some(root) = self.persist_root(key.scope) else {
-            return Vec::new();
-        };
-        let mut entries = scripts::list(&root, key.scope);
-        entries.retain(|entry| entry.meta.connection_id == key.id);
-        entries
+        saved_of(&self.saved_consoles(key.scope), key)
     }
 
     /// Lists the consoles of a connection for the navigator: the saved consoles, the
     /// newest first, and then the open consoles without a file.
-    fn tree_consoles(&self, connection: ConnectionId) -> Vec<TreeConsole> {
-        let mut rows: Vec<TreeConsole> = self
-            .consoles_of(connection)
+    fn tree_consoles(&self, connection: ConnectionId, saved: Vec<ScriptEntry>) -> Vec<TreeConsole> {
+        let mut rows: Vec<TreeConsole> = saved
             .into_iter()
             .map(|entry| {
                 let tab = self.consoles.iter().find(|c| shows_script(c, &entry));
@@ -114,12 +124,24 @@ impl App {
 
     /// Rebuilds the console rows of the connections that the tree shows open. The other
     /// connections wait for their first open, so a change of a console reads less.
+    /// The open connections of one scope share one read of its folder.
     pub(super) fn refresh_tree_consoles(&mut self) {
+        let mut folders: HashMap<Scope, Vec<ScriptEntry>> = HashMap::new();
         for index in 0..self.connections.len() {
             let id = self.connections[index].id;
-            if self.navigator.is_connection_open(id) {
-                self.connections[index].consoles = self.tree_consoles(id);
+            if !self.navigator.is_connection_open(id) {
+                continue;
             }
+            let saved = self.connections[index]
+                .key
+                .as_ref()
+                .map_or_else(Vec::new, |key| {
+                    let folder = folders
+                        .entry(key.scope)
+                        .or_insert_with(|| self.saved_consoles(key.scope));
+                    saved_of(folder, key)
+                });
+            self.connections[index].consoles = self.tree_consoles(id, saved);
         }
     }
 

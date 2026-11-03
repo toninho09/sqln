@@ -493,3 +493,83 @@ fn a_search_slice_in_one_large_cell_stays_under_the_target() {
     assert!(search.has_work(&table));
     assert!(spent < Duration::from_millis(50), "{spent:?}");
 }
+
+/// A schema of `count` tables. Each table after the first has one or two keys to tables
+/// before it, from a fixed sequence.
+fn large_diagram(count: usize) -> sqln::diagram::Model {
+    use sqln::catalog::RelationRef;
+    use sqln::diagram::{ColumnRow, Focus, KeyRow, Model};
+
+    let relation = |index: usize| RelationRef {
+        schema: "app".to_owned(),
+        relation: format!("table_{index:04}"),
+    };
+    let column = |index: usize, name: &str, primary: Option<u32>| ColumnRow {
+        relation: relation(index),
+        name: name.to_owned(),
+        ty: "integer".to_owned(),
+        nullable: primary.is_none(),
+        primary,
+    };
+    let mut columns = Vec::new();
+    let mut keys = Vec::new();
+    for index in 0..count {
+        columns.push(column(index, "id", Some(1)));
+        for name in ["name", "created_at", "updated_at", "status"] {
+            columns.push(column(index, name, None));
+        }
+        let seed = (index as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let links = if index == 0 {
+            0
+        } else {
+            1 + usize::from(seed.is_multiple_of(5))
+        };
+        for place in 0..links {
+            let target = (seed >> (8 * place)) as usize % index;
+            let name = format!("ref_{place}");
+            columns.push(column(index, &name, None));
+            keys.push(KeyRow {
+                relation: relation(index),
+                key: name.clone(),
+                column: name,
+                target: relation(target),
+                target_column: Some("id".to_owned()),
+            });
+        }
+    }
+    Model::build(columns, keys, &Focus::Schema("app".to_owned()))
+}
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
+fn the_layout_and_the_frame_of_a_large_diagram_stay_under_the_target() {
+    use sqln::diagram::Focus;
+    use sqln::diagram::tab::DiagramTab;
+    use sqln::ui::diagram::{DiagramBar, draw_diagram};
+
+    let mut tab = DiagramTab::new(1, 1, Focus::Schema("app".to_owned()), 1);
+    tab.model = large_diagram(500);
+    let theme = Theme::ansi();
+    let bar = DiagramBar {
+        connection: "server",
+        title: true,
+    };
+    let mut terminal = Terminal::new(TestBackend::new(200, 60)).unwrap();
+    let mut worst = Duration::ZERO;
+    for _ in 0..6 {
+        let started = Instant::now();
+        // The key of "keys only" places the boxes again, as the end of a read does.
+        tab.toggle_keys_only();
+        terminal
+            .draw(|frame| {
+                draw_diagram(frame, frame.area(), &mut tab, &bar, true, &theme);
+            })
+            .unwrap();
+        worst = worst.max(started.elapsed());
+    }
+    let links = tab.model.links.len();
+    println!("500 tables, {links} keys: worst layout plus frame {worst:?}");
+    assert!((550..=650).contains(&links), "{links}");
+    assert_eq!(tab.layout.conflicts, 0);
+    assert!(worst < TARGET, "{worst:?}");
+}

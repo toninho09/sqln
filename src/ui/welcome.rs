@@ -1,4 +1,5 @@
-//! The first screen of a console. It has no state, and the first character ends it.
+//! The first screen of a console, and the home screen. Neither has state, and the
+//! first character ends the first screen of a console.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -11,6 +12,8 @@ use super::theme::Theme;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Welcome {
+    /// True for the home screen: the logo replaces the name when the area has room.
+    pub logo: bool,
     pub note: &'static str,
     /// The keys and what each one does.
     pub rows: Vec<(String, &'static str)>,
@@ -24,11 +27,22 @@ pub fn draw_welcome(frame: &mut Frame, area: Rect, welcome: &Welcome, theme: &Th
         .map(|(key, _)| key.width())
         .max()
         .unwrap_or(0);
-    let mut lines = vec![
-        Line::styled(text::welcome_title(), theme.welcome_title),
-        Line::styled(welcome.note, theme.hint),
-        Line::raw(""),
-    ];
+    let free = area.height.saturating_sub(1);
+    // The logo and the version take the place of the name, with the note, a blank row,
+    // and the rows of keys under them.
+    let logo = welcome.logo && usize::from(free) >= text::HOME_LOGO.len() + 3 + welcome.rows.len();
+    let mut lines = Vec::new();
+    if logo {
+        for row in text::HOME_LOGO {
+            lines.push(Line::styled(row, theme.welcome_title).centered());
+        }
+        lines.push(Line::styled(text::HOME_VERSION, theme.hint).centered());
+        lines.push(Line::styled(welcome.note, theme.hint).centered());
+    } else {
+        lines.push(Line::styled(text::welcome_title(), theme.welcome_title));
+        lines.push(Line::styled(welcome.note, theme.hint));
+    }
+    lines.push(Line::raw(""));
     for (key, label) in &welcome.rows {
         lines.push(Line::from(vec![
             Span::styled(format!("{key:>key_width$}"), theme.key),
@@ -37,7 +51,6 @@ pub fn draw_welcome(frame: &mut Frame, area: Rect, welcome: &Welcome, theme: &Th
     }
     let width = u16::try_from(lines.iter().map(Line::width).max().unwrap_or(0)).unwrap_or(u16::MAX);
     let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-    let free = area.height.saturating_sub(1);
     let y = area.y + 1 + free.saturating_sub(height) / 2;
     let x = area.x + area.width.saturating_sub(width) / 2;
     let place = Rect::new(x, y, width.min(area.width), height.min(free));

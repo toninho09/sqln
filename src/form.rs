@@ -8,21 +8,23 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use zeroize::Zeroizing;
 
 use crate::connection::{
-    DEFAULT_BUSY_SECONDS, DEFAULT_CONNECT_SECONDS, DEFAULT_POOL_LIMIT, DEFAULT_SQL_SECONDS,
-    Definition, Source,
+    DEFAULT_BUSY_SECONDS, DEFAULT_CONNECT_SECONDS, DEFAULT_IDLE_SECONDS, DEFAULT_POOL_LIMIT,
+    DEFAULT_SQL_SECONDS, Definition, Source,
 };
 use crate::connector::sqlite::{SqliteTarget, validate_path};
 use crate::connector::target::{
     Address, ClientCertificate, Engine, NetworkTarget, Secret, Tls, TlsFiles, parse_uri,
 };
 use crate::exec::ConnectionId;
-use crate::settings::next_optional;
+use crate::settings::{next_choice, next_optional};
 use crate::store::Scope;
 use crate::store::config::{ConnectionIcon, CredentialName, ThemeName};
 use crate::ui::text;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Field {
+    /// The sidebar. It is one place of the focus.
+    Sections,
     Kind,
     Name,
     Scope,
@@ -46,6 +48,7 @@ pub enum Field {
     Production,
     ConnectTimeout,
     SqlTimeout,
+    IdleTimeout,
     Theme,
     Icon,
     Test,
@@ -66,7 +69,8 @@ pub enum FieldStyle {
 impl Field {
     pub fn style(self) -> FieldStyle {
         match self {
-            Field::Kind
+            Field::Sections
+            | Field::Kind
             | Field::Scope
             | Field::Entry
             | Field::Credential
@@ -81,12 +85,51 @@ impl Field {
         }
     }
 
+    /// Returns the section of the sidebar that holds the field.
+    pub fn group(self) -> Group {
+        match self {
+            Field::Kind | Field::Name | Field::Scope | Field::Entry => Group::General,
+            Field::Uri | Field::Host | Field::Port | Field::Database | Field::File => {
+                Group::Address
+            }
+            Field::User | Field::Password | Field::Credential => Group::Credentials,
+            Field::Tls | Field::CaFile | Field::ClientCertificate | Field::ClientKey => {
+                Group::Security
+            }
+            _ => Group::Options,
+        }
+    }
+
     /// Returns true for a field that holds the path of a file.
     pub fn is_path(self) -> bool {
         matches!(
             self,
             Field::File | Field::CaFile | Field::ClientCertificate | Field::ClientKey
         )
+    }
+}
+
+/// The sections of the sidebar, in the order of the fields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Group {
+    General,
+    Address,
+    Credentials,
+    Security,
+    Options,
+}
+
+/// A value that stops the save. The form opens the section of the field.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Invalid {
+    pub field: Field,
+    pub message: String,
+}
+
+fn invalid(field: Field, message: impl Into<String>) -> Invalid {
+    Invalid {
+        field,
+        message: message.into(),
     }
 }
 
@@ -154,6 +197,8 @@ pub struct ConnectionForm {
     /// True when a project is open, so the form can offer its scope.
     pub project_available: bool,
     pub focus: Field,
+    /// The section that the sidebar shows.
+    pub section: Group,
     pub note: Option<FormNote>,
     /// The file of the saved definition, as its configuration writes it.
     stored_file: Option<String>,
@@ -206,6 +251,7 @@ impl ConnectionForm {
             scope: Scope::Global,
             project_available: false,
             focus: Field::Kind,
+            section: Group::General,
             note: None,
             test: None,
             cursor: 0,
@@ -216,6 +262,7 @@ impl ConnectionForm {
         form.set(Field::ConnectTimeout, DEFAULT_CONNECT_SECONDS.to_string());
         form.set(Field::BusyTimeout, DEFAULT_BUSY_SECONDS.to_string());
         form.set(Field::SqlTimeout, DEFAULT_SQL_SECONDS.to_string());
+        form.set(Field::IdleTimeout, DEFAULT_IDLE_SECONDS.to_string());
         form
     }
 
@@ -248,6 +295,8 @@ impl ConnectionForm {
         );
         let sql_seconds = definition.sql_timeout.map_or(0, |time| time.as_secs());
         form.set(Field::SqlTimeout, sql_seconds.to_string());
+        let idle_seconds = definition.idle_timeout.map_or(0, |time| time.as_secs());
+        form.set(Field::IdleTimeout, idle_seconds.to_string());
         match &definition.source {
             Source::Sqlite(target) => {
                 form.kind = Kind::Sqlite;
@@ -359,6 +408,7 @@ impl ConnectionForm {
         }
         fields.extend([
             Field::SqlTimeout,
+            Field::IdleTimeout,
             Field::Theme,
             Field::Icon,
             Field::Test,
@@ -368,20 +418,84 @@ impl ConnectionForm {
         fields
     }
 
+    /// Lists the sections that hold a field, in order.
+    pub fn sections(&self) -> Vec<Group> {
+        let mut sections: Vec<Group> = Vec::new();
+        for field in self.fields() {
+            let group = field.group();
+            if field.style() != FieldStyle::Button && sections.last() != Some(&group) {
+                sections.push(group);
+            }
+        }
+        sections
+    }
+
+    /// Returns the open section. A section without fields gives its place to the first one.
+    pub fn shown_section(&self) -> Group {
+        let sections = self.sections();
+        if sections.contains(&self.section) {
+            self.section
+        } else {
+            sections.first().copied().unwrap_or(Group::General)
+        }
+    }
+
+    /// Lists the fields of one section, without the buttons.
+    pub fn fields_of(&self, section: Group) -> Vec<Field> {
+        self.fields()
+            .into_iter()
+            .filter(|field| field.style() != FieldStyle::Button && field.group() == section)
+            .collect()
+    }
+
+    /// Lists the fields of the open section, without the buttons.
+    pub fn section_fields(&self) -> Vec<Field> {
+        self.fields_of(self.shown_section())
+    }
+
+    /// Lists the buttons. Each section shows them.
+    pub fn buttons(&self) -> Vec<Field> {
+        self.fields()
+            .into_iter()
+            .filter(|field| field.style() == FieldStyle::Button)
+            .collect()
+    }
+
+    /// Returns the places of the focus, in the order of `Tab`.
+    fn stops(&self) -> Vec<Field> {
+        let mut stops = vec![Field::Sections];
+        stops.extend(self.section_fields());
+        stops.extend(self.buttons());
+        stops
+    }
+
+    /// Puts the focus on a field and opens its section.
     pub fn focus_on(&mut self, field: Field) {
         self.focus = field;
+        if field != Field::Sections && field.style() != FieldStyle::Button {
+            self.section = field.group();
+        }
         self.cursor = self.focused_len();
     }
 
+    /// Opens one section and puts the focus on the sidebar. The mouse uses this.
+    pub fn select_section(&mut self, section: Group) {
+        self.section = section;
+        self.focus = Field::Sections;
+    }
+
     fn move_focus(&mut self, forward: bool) {
-        let fields = self.fields();
-        let count = fields.len();
-        let index = fields
-            .iter()
-            .position(|field| *field == self.focus)
-            .unwrap_or(0);
-        let next = (index + if forward { 1 } else { count - 1 }) % count;
-        self.focus_on(fields[next]);
+        let next = next_choice(&self.stops(), self.focus, forward);
+        self.focus_on(next);
+    }
+
+    /// `Up` and `Down` open another section from the sidebar, and move the focus elsewhere.
+    fn step(&mut self, forward: bool) {
+        if self.focus == Field::Sections {
+            self.section = next_choice(&self.sections(), self.shown_section(), forward);
+        } else {
+            self.move_focus(forward);
+        }
     }
 
     /// Changes the value of a choice or a flag.
@@ -491,8 +605,10 @@ impl ConnectionForm {
         let in_text = matches!(style, FieldStyle::Text | FieldStyle::Secret);
         match key.code {
             KeyCode::Esc => return FormRequest::Cancel,
-            KeyCode::Tab | KeyCode::Down => self.move_focus(true),
-            KeyCode::BackTab | KeyCode::Up => self.move_focus(false),
+            KeyCode::Tab => self.move_focus(true),
+            KeyCode::BackTab => self.move_focus(false),
+            KeyCode::Down => self.step(true),
+            KeyCode::Up => self.step(false),
             KeyCode::Enter => return self.on_enter(),
             KeyCode::Char('o')
                 if key.modifiers == KeyModifiers::CONTROL && self.focus.is_path() =>
@@ -512,8 +628,8 @@ impl ConnectionForm {
                 self.insert(c.encode_utf8(&mut [0; 4]));
             }
             KeyCode::Char(' ') if style == FieldStyle::Flag => self.change(true),
-            KeyCode::Char('j') if vim => self.move_focus(true),
-            KeyCode::Char('k') if vim => self.move_focus(false),
+            KeyCode::Char('j') if vim => self.step(true),
+            KeyCode::Char('k') if vim => self.step(false),
             KeyCode::Char('h') if vim && style == FieldStyle::Button => self.move_focus(false),
             KeyCode::Char('l') if vim && style == FieldStyle::Button => self.move_focus(true),
             KeyCode::Char('h') if vim => self.change(false),
@@ -548,10 +664,10 @@ impl ConnectionForm {
         }
     }
 
-    fn number(&self, field: Field, label: &str) -> Result<u64, String> {
+    fn number(&self, field: Field, label: &str) -> Result<u64, Invalid> {
         self.trimmed(field)
             .parse()
-            .map_err(|_| text::form_needs_number(label))
+            .map_err(|_| invalid(field, text::form_needs_number(label)))
     }
 
     fn optional_path(&self, field: Field) -> Option<PathBuf> {
@@ -567,7 +683,7 @@ impl ConnectionForm {
     }
 
     /// A remote address without TLS is the explicit choice of the TLS field.
-    fn tls(&self) -> Result<Tls, String> {
+    fn tls(&self) -> Result<Tls, Invalid> {
         let ca = self.optional_path(Field::CaFile);
         let client = match (
             self.optional_path(Field::ClientCertificate),
@@ -575,25 +691,28 @@ impl ConnectionForm {
         ) {
             (Some(certificate), Some(key)) => Some(ClientCertificate { certificate, key }),
             (None, None) => None,
-            _ => return Err(text::FORM_CLIENT_PAIR.to_owned()),
+            (None, Some(_)) => {
+                return Err(invalid(Field::ClientCertificate, text::FORM_CLIENT_PAIR));
+            }
+            (Some(_), None) => return Err(invalid(Field::ClientKey, text::FORM_CLIENT_PAIR)),
         };
         if self.verify_tls {
             return Ok(Tls::Verify(TlsFiles { ca, client }));
         }
         if ca.is_some() || client.is_some() {
-            return Err(text::FORM_TLS_FILES.to_owned());
+            return Err(invalid(Field::Tls, text::FORM_TLS_FILES));
         }
         Ok(Tls::Disabled)
     }
 
-    fn network_target(&self, engine: Engine) -> Result<NetworkTarget, String> {
+    fn network_target(&self, engine: Engine) -> Result<NetworkTarget, Invalid> {
         let host = self.trimmed(Field::Host);
         if host.is_empty() {
-            return Err(text::FORM_NEEDS_HOST.to_owned());
+            return Err(invalid(Field::Host, text::FORM_NEEDS_HOST));
         }
         let user = self.trimmed(Field::User);
         if user.is_empty() && engine.needs_user() {
-            return Err(text::FORM_NEEDS_USER.to_owned());
+            return Err(invalid(Field::User, text::FORM_NEEDS_USER));
         }
         let address = if host.starts_with('/') {
             Address::Socket(PathBuf::from(host))
@@ -602,7 +721,7 @@ impl ConnectionForm {
                 "" => engine.default_port(),
                 port => port
                     .parse()
-                    .map_err(|_| text::form_needs_number(text::FIELD_PORT))?,
+                    .map_err(|_| invalid(Field::Port, text::form_needs_number(text::FIELD_PORT)))?,
             };
             Address::Tcp {
                 host: host.to_owned(),
@@ -612,7 +731,7 @@ impl ConnectionForm {
         let tls = self.tls()?;
         let database = Some(self.trimmed(Field::Database)).filter(|text| !text.is_empty());
         if database.is_some_and(|name| !engine.accepts_database(name)) {
-            return Err(text::FORM_REDIS_DATABASE.to_owned());
+            return Err(invalid(Field::Database, text::FORM_REDIS_DATABASE));
         }
         Ok(NetworkTarget {
             engine,
@@ -624,10 +743,11 @@ impl ConnectionForm {
         })
     }
 
-    fn uri_target(&self, engine: Engine) -> Result<NetworkTarget, String> {
-        let mut target = parse_uri(self.trimmed(Field::Uri))?;
+    fn uri_target(&self, engine: Engine) -> Result<NetworkTarget, Invalid> {
+        let mut target =
+            parse_uri(self.trimmed(Field::Uri)).map_err(|message| invalid(Field::Uri, message))?;
         if target.engine != engine {
-            return Err(text::FORM_URI_KIND.to_owned());
+            return Err(invalid(Field::Uri, text::FORM_URI_KIND));
         }
         if target.password.is_none() {
             target.password = self.password();
@@ -635,12 +755,12 @@ impl ConnectionForm {
         Ok(target)
     }
 
-    fn sqlite_target(&self) -> Result<SqliteTarget, String> {
+    fn sqlite_target(&self) -> Result<SqliteTarget, Invalid> {
         let file = self.trimmed(Field::File);
         if file.is_empty() {
-            return Err(text::FORM_NEEDS_FILE.to_owned());
+            return Err(invalid(Field::File, text::FORM_NEEDS_FILE));
         }
-        validate_path(Path::new(file)).map_err(|error| error.message)?;
+        validate_path(Path::new(file)).map_err(|error| invalid(Field::File, error.message))?;
         let mut target = SqliteTarget::new(self.file_path(file)?);
         target.foreign_keys = self.foreign_keys;
         let seconds = self.number(Field::BusyTimeout, text::FIELD_BUSY)?;
@@ -651,19 +771,19 @@ impl ConnectionForm {
     /// Returns the path of the SQLite file. A path that the user writes starts at the
     /// current folder, and it becomes a full path, so the test and the saved connection
     /// open the same file. A saved path keeps its meaning in the configuration.
-    fn file_path(&self, file: &str) -> Result<PathBuf, String> {
+    fn file_path(&self, file: &str) -> Result<PathBuf, Invalid> {
         if self.stored_file.as_deref() == Some(file) {
             return Ok(PathBuf::from(file));
         }
-        std::path::absolute(file).map_err(|_| text::FORM_NO_CURRENT_FOLDER.to_owned())
+        std::path::absolute(file).map_err(|_| invalid(Field::File, text::FORM_NO_CURRENT_FOLDER))
     }
 
-    /// Builds the definition. The error text names the field and holds no input,
-    /// because a connection text can hold a password.
-    pub fn definition(&self) -> Result<Definition, String> {
+    /// Builds the definition. The error names the field and holds no input, because a
+    /// connection text can hold a password.
+    pub fn definition(&self) -> Result<Definition, Invalid> {
         let name = self.trimmed(Field::Name);
         if name.is_empty() {
-            return Err(text::FORM_NEEDS_NAME.to_owned());
+            return Err(invalid(Field::Name, text::FORM_NEEDS_NAME));
         }
         let source = match self.kind.engine() {
             None => Source::Sqlite(self.sqlite_target()?),
@@ -672,7 +792,7 @@ impl ConnectionForm {
         };
         let limit = self.number(Field::Pool, text::FIELD_POOL)?;
         if limit == 0 {
-            return Err(text::FORM_POOL_ZERO.to_owned());
+            return Err(invalid(Field::Pool, text::FORM_POOL_ZERO));
         }
         let mut definition = Definition::new(name, source);
         definition.read_only = self.read_only;
@@ -683,13 +803,19 @@ impl ConnectionForm {
         if self.kind != Kind::Sqlite {
             let seconds = self.number(Field::ConnectTimeout, text::FIELD_CONNECT)?;
             if seconds == 0 {
-                return Err(text::form_needs_number(text::FIELD_CONNECT));
+                return Err(invalid(
+                    Field::ConnectTimeout,
+                    text::form_needs_number(text::FIELD_CONNECT),
+                ));
             }
             definition.connect_timeout = Duration::from_secs(seconds);
         }
         // A limit of 0 seconds means that the statements have no time limit.
         let seconds = self.number(Field::SqlTimeout, text::FIELD_SQL_TIMEOUT)?;
         definition.sql_timeout = (seconds > 0).then(|| Duration::from_secs(seconds));
+        // A limit of 0 seconds keeps the idle sessions open.
+        let seconds = self.number(Field::IdleTimeout, text::FIELD_IDLE_TIMEOUT)?;
+        definition.idle_timeout = (seconds > 0).then(|| Duration::from_secs(seconds));
         Ok(definition)
     }
 }

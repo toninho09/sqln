@@ -113,6 +113,7 @@ impl Persist {
         let settings = &mut options.settings;
         settings.page_size = config.page_size.unwrap_or(settings.page_size);
         settings.row_cap = config.row_cap.unwrap_or(settings.row_cap);
+        settings.cap_in_sql = config.cap_in_sql;
         settings.budget_bytes = config.budget_bytes.unwrap_or(settings.budget_bytes);
         options.keyboard = config.keyboard;
         options.undo_limit = config.undo_limit_bytes;
@@ -261,6 +262,7 @@ impl App {
     fn apply_config(&mut self, config: Config) {
         self.settings.page_size = config.page_size.unwrap_or(self.settings.page_size);
         self.settings.row_cap = config.row_cap.unwrap_or(self.settings.row_cap);
+        self.settings.cap_in_sql = config.cap_in_sql;
         if let Some(bytes) = config.budget_bytes {
             self.settings.budget_bytes = bytes;
             self.budget.set_limit(bytes);
@@ -285,6 +287,7 @@ impl App {
             self.set_keyboard(config.keyboard);
         }
         self.apply_connections(config.connections);
+        self.update_connection_settings();
     }
 
     fn set_keyboard(&mut self, keyboard: KeyboardMode) {

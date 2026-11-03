@@ -96,7 +96,7 @@ impl ConsoleTask {
             return Sent::Lost;
         };
         let delivery = Delivery {
-            cap: self.binding.settings.row_cap,
+            cap: self.settings.row_cap,
             export: None,
             timed: false,
         };
@@ -261,7 +261,7 @@ impl ConsoleTask {
     ) -> Result<(SharedFeed, ImportMode), String> {
         let job = request.job;
         let mode = job.mode;
-        let context = context(&self.binding.settings, None);
+        let context = context(&self.settings, None);
         let session = lease.session();
         session
             .apply_context(&context)

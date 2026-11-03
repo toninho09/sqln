@@ -320,15 +320,21 @@ pub fn lacks_where(sql: &str, dialect: Dialect) -> bool {
         && !words.iter().any(|word| word.eq_ignore_ascii_case("WHERE"))
 }
 
+/// Returns the first word of a statement, after its comments. A statement that starts
+/// with another token, such as a name in quotes, has no first word.
+pub fn first_keyword(sql: &str, dialect: Dialect) -> Option<&str> {
+    let tokens = tokenize(sql, dialect);
+    let first = tokens
+        .iter()
+        .find(|token| token.kind != TokenKind::Comment)?;
+    (first.kind == TokenKind::Word).then(|| &sql[first.start()..first.end()])
+}
+
 /// Returns true for a Redis command out of the known reads. A name in quotes also asks,
 /// because the server reads that name as the command.
 fn redis_changes_state(sql: &str) -> bool {
-    let tokens = tokenize(sql, Dialect::Redis);
-    let first = tokens.iter().find(|token| token.kind != TokenKind::Comment);
-    !first.is_some_and(|token| {
-        let word = &sql[token.start()..token.end()];
-        token.kind == TokenKind::Word && (is_any(word, REDIS_READS) || is_any(word, REDIS_SESSION))
-    })
+    !first_keyword(sql, Dialect::Redis)
+        .is_some_and(|word| is_any(word, REDIS_READS) || is_any(word, REDIS_SESSION))
 }
 
 /// Returns true for a statement that a production connection confirms: it is not a
@@ -380,6 +386,26 @@ pub fn is_plain_read(sql: &str, dialect: Dialect) -> bool {
         }
     }
     true
+}
+
+/// The statements that accept a `LIMIT` at their end.
+const LIMIT_STARTS: &[&str] = &["SELECT", "WITH", "VALUES", "TABLE"];
+
+/// A main-level word that already limits the rows, or that refuses a `LIMIT` after it.
+const LIMIT_BLOCKERS: &[&str] = &["LIMIT", "OFFSET", "FETCH", "FOR", "LOCK"];
+
+/// Returns the statement with `LIMIT rows` at its end, so the server plans for few rows.
+/// Only a plain read without its own limit changes: a `LIMIT` would change the effect of
+/// an unknown function, as a cancellation does.
+pub fn with_row_limit(sql: &str, dialect: Dialect, rows: usize) -> Option<String> {
+    if dialect == Dialect::Redis || !is_plain_read(sql, dialect) {
+        return None;
+    }
+    let words = top_level_words(sql, dialect);
+    let accepts = words.first().is_some_and(|word| is_any(word, LIMIT_STARTS))
+        && !words.iter().any(|word| is_any(word, LIMIT_BLOCKERS));
+    // The new line keeps the clause out of a line comment at the end.
+    accepts.then(|| format!("{}\nLIMIT {rows}", sql.trim_end()))
 }
 
 /// Returns true for a statement that can hold a secret. The check reads words, so a

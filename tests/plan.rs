@@ -553,6 +553,26 @@ fn a_statement_with_explain_is_refused() {
 }
 
 #[test]
+fn a_comment_before_explain_does_not_hide_it() {
+    let mut run = Run::new("plan-explain-comment.db");
+    run.write("/* note */ explain SELECT 1");
+    run.explain();
+    let screen = run.screen();
+    assert!(screen.contains(text::PLAN_HAS_EXPLAIN), "{screen}");
+    assert_eq!(run.results(), 0);
+}
+
+#[test]
+fn explain_in_a_comment_does_not_refuse_the_plan() {
+    let mut run = Run::new("plan-comment-word.db");
+    run.write("-- explain this\nSELECT * FROM t JOIN u ON u.a = t.a");
+    run.explain();
+    let screen = run.screen();
+    assert!(!screen.contains(text::PLAN_HAS_EXPLAIN), "{screen}");
+    assert!(screen.contains("SCAN u"), "{screen}");
+}
+
+#[test]
 fn sqlite_refuses_a_real_run() {
     let mut run = Run::new("plan-analyze.db");
     run.write("SELECT 1");

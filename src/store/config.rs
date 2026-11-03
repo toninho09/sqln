@@ -15,7 +15,8 @@ use serde_json::error::Category;
 use super::file::{self, Expect};
 use super::{Root, Scope, Store};
 use crate::connection::{
-    DEFAULT_BUSY_SECONDS, DEFAULT_POOL_LIMIT, DEFAULT_SQL_SECONDS, Definition, Source,
+    DEFAULT_BUSY_SECONDS, DEFAULT_IDLE_SECONDS, DEFAULT_POOL_LIMIT, DEFAULT_SQL_SECONDS,
+    Definition, Source,
 };
 use crate::connector::sqlite::SqliteTarget;
 use crate::connector::target::{Address, ClientCertificate, Engine, NetworkTarget, Tls, TlsFiles};
@@ -57,6 +58,8 @@ pub enum KeyboardName {
 pub const DEFAULT_REOPEN_TABS: bool = true;
 pub const DEFAULT_QUERY_HISTORY: bool = true;
 pub const DEFAULT_FORMAT_JSON: bool = true;
+/// A plain read without its own limit receives `LIMIT` with the row cap.
+pub const DEFAULT_CAP_IN_SQL: bool = true;
 /// A run of this time or more rings the bell at its end. The value 0 stops the bell.
 pub const DEFAULT_BELL_AFTER_SECONDS: u64 = 10;
 
@@ -159,6 +162,8 @@ pub struct Preferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub row_cap: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cap_in_sql: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grid_budget_bytes: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub undo_limit_bytes: Option<usize>,
@@ -254,6 +259,10 @@ fn default_sql_timeout() -> Option<u64> {
     Some(DEFAULT_SQL_SECONDS)
 }
 
+fn default_idle_timeout() -> Option<u64> {
+    Some(DEFAULT_IDLE_SECONDS)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ConnectionEntry {
@@ -289,6 +298,9 @@ pub struct ConnectionEntry {
     /// A missing value means the default. A `null` value means no time limit.
     #[serde(default = "default_sql_timeout")]
     pub sql_timeout_seconds: Option<u64>,
+    /// A missing value means the default. A `null` value keeps the idle sessions open.
+    #[serde(default = "default_idle_timeout")]
+    pub idle_timeout_seconds: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<ThemeName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -324,6 +336,8 @@ pub struct Config {
     pub keyboard: KeyboardMode,
     pub page_size: Option<usize>,
     pub row_cap: Option<usize>,
+    /// True when a plain read without its own limit receives `LIMIT` with the row cap.
+    pub cap_in_sql: bool,
     pub budget_bytes: Option<usize>,
     /// The limit of the undo history of one console, in the conventional mode.
     pub undo_limit_bytes: usize,
@@ -434,7 +448,13 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
     if entry.pool.max_connections == 0 {
         return Err("pool.maxConnections needs 1 or more.".to_owned());
     }
-    if entry.sql_timeout_seconds == Some(0) || entry.connect_timeout_seconds == Some(0) {
+    if [
+        entry.sql_timeout_seconds,
+        entry.connect_timeout_seconds,
+        entry.idle_timeout_seconds,
+    ]
+    .contains(&Some(0))
+    {
         return Err("A timeout needs 1 or more seconds.".to_owned());
     }
     match entry.kind.engine() {
@@ -533,6 +553,7 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
         definition.connect_timeout = connect;
     }
     definition.sql_timeout = seconds(entry.sql_timeout_seconds);
+    definition.idle_timeout = seconds(entry.idle_timeout_seconds);
     definition.base = Some(base);
     definition.theme = entry.theme;
     definition.icon = entry.icon;
@@ -565,6 +586,7 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
         },
         connect_timeout_seconds: None,
         sql_timeout_seconds: definition.sql_timeout.map(|time| time.as_secs()),
+        idle_timeout_seconds: definition.idle_timeout.map(|time| time.as_secs()),
         theme: definition.theme,
         icon: definition.icon,
     };
@@ -750,6 +772,10 @@ fn combine(
         keyboard,
         page_size: pick(|preferences| preferences.page_size),
         row_cap: pick(|preferences| preferences.row_cap),
+        cap_in_sql: project
+            .and_then(|preferences| preferences.cap_in_sql)
+            .or(global.cap_in_sql)
+            .unwrap_or(DEFAULT_CAP_IN_SQL),
         budget_bytes: pick(|preferences| preferences.grid_budget_bytes),
         undo_limit_bytes: pick(|preferences| preferences.undo_limit_bytes)
             .unwrap_or(DEFAULT_UNDO_LIMIT),

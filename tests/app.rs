@@ -660,13 +660,13 @@ fn a_transaction_by_sql_shows_its_state_and_the_close_asks() {
     f.assert_sees("[Commit and close]");
     f.assert_sees("[Rollback and close]");
     f.press(key(KeyCode::Enter));
-    assert!(!f.app.should_quit(), "the default option cancels the close");
+    assert!(!f.app.home(), "the default option cancels the close");
 
     f.prefix('c');
     f.press(key(KeyCode::Tab));
     f.press(key(KeyCode::Tab));
     f.press(key(KeyCode::Enter));
-    f.pump_until(|f| f.app.should_quit());
+    f.pump_until(|f| f.app.home());
     assert_eq!(f.file_query("SELECT count(*) FROM t"), 1);
 }
 
@@ -682,7 +682,7 @@ fn rollback_and_close_discards_the_change() {
     f.prefix('c');
     f.press(key(KeyCode::Tab));
     f.press(key(KeyCode::Enter));
-    f.pump_until(|f| f.app.should_quit());
+    f.pump_until(|f| f.app.home());
     assert_eq!(f.file_query("SELECT count(*) FROM t"), 0);
 }
 
@@ -701,16 +701,16 @@ fn a_failed_commit_at_the_close_keeps_the_console_open_and_offers_a_retry() {
     f.press(key(KeyCode::Tab));
     f.press(key(KeyCode::Enter));
     f.pump_until(|f| f.sees("[Try again]"));
-    assert!(!f.app.should_quit());
+    assert!(!f.app.home());
     f.assert_sees("FOREIGN KEY");
     f.assert_sees("Transaction open");
 
     f.press(key(KeyCode::Esc));
-    assert!(!f.app.should_quit());
+    assert!(!f.app.home());
     f.prefix('R');
     f.pump_until(|f| f.sees("No transaction"));
     f.prefix('c');
-    assert!(f.app.should_quit());
+    assert!(f.app.home());
 }
 
 #[test]
@@ -728,7 +728,7 @@ fn the_close_during_an_execution_asks_and_stops_first() {
     f.prefix('c');
     f.press(key(KeyCode::Tab));
     f.press(key(KeyCode::Enter));
-    f.pump_until(|f| f.app.should_quit());
+    f.pump_until(|f| f.app.home());
 }
 
 #[test]

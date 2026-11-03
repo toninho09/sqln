@@ -507,12 +507,13 @@ fn each_hint_fits_the_minimum_terminal_width() {
 }
 
 #[test]
-fn the_prefix_closes_the_tab_and_the_application() {
+fn the_prefix_closes_the_last_tab_and_shows_the_home_screen() {
     let mut app = app(KeyboardMode::Conventional);
     send(&mut app, ctrl('w'));
     assert!(screen(&draw_app(&mut app, 80, 24)).contains("Close the tab"));
     send(&mut app, key(KeyCode::Char('c')));
-    assert!(app.should_quit());
+    assert!(app.home());
+    assert!(!app.should_quit());
 }
 
 #[test]
@@ -530,7 +531,7 @@ fn the_prefix_works_in_vim_normal_mode() {
     let mut app = app(KeyboardMode::Vim);
     send(&mut app, ctrl('w'));
     send(&mut app, key(KeyCode::Char('c')));
-    assert!(app.should_quit());
+    assert!(app.home());
 }
 
 #[test]

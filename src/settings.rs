@@ -10,8 +10,8 @@ pub mod shortcuts;
 use crate::line_input::LineInput;
 use crate::store::Scope;
 use crate::store::config::{
-    DEFAULT_BELL_AFTER_SECONDS, DEFAULT_FORMAT_JSON, DEFAULT_QUERY_HISTORY, DEFAULT_REOPEN_TABS,
-    KeyboardName, Keymaps, Preferences, ThemeName,
+    DEFAULT_BELL_AFTER_SECONDS, DEFAULT_CAP_IN_SQL, DEFAULT_FORMAT_JSON, DEFAULT_QUERY_HISTORY,
+    DEFAULT_REOPEN_TABS, KeyboardName, Keymaps, Preferences, ThemeName,
 };
 use crate::ui::text;
 use shortcuts::Shortcuts;
@@ -28,6 +28,7 @@ pub enum Field {
     Keyboard,
     PageSize,
     RowCap,
+    CapInSql,
     Budget,
     ReopenTabs,
     QueryHistory,
@@ -76,6 +77,7 @@ pub const SECTIONS: [Section; 5] = [
         fields: &[
             Field::PageSize,
             Field::RowCap,
+            Field::CapInSql,
             Field::Budget,
             Field::FormatJson,
         ],
@@ -102,6 +104,7 @@ struct Draft {
     keyboard: Option<KeyboardName>,
     page_size: LineInput,
     row_cap: LineInput,
+    cap_in_sql: Option<bool>,
     budget: LineInput,
     undo_limit: LineInput,
     bell_after: LineInput,
@@ -130,6 +133,7 @@ impl Draft {
             keyboard: preferences.keyboard_mode,
             page_size: number_text(preferences.page_size),
             row_cap: number_text(preferences.row_cap),
+            cap_in_sql: preferences.cap_in_sql,
             budget: number_text(mebibytes(preferences.grid_budget_bytes)),
             undo_limit: number_text(mebibytes(preferences.undo_limit_bytes)),
             bell_after: number_text(preferences.bell_after_seconds),
@@ -278,6 +282,10 @@ impl SettingsForm {
         self.draft().format_json
     }
 
+    pub fn cap_in_sql(&self) -> Option<bool> {
+        self.draft().cap_in_sql
+    }
+
     pub fn suggestion_keys(&self) -> Option<SuggestionKeys> {
         self.draft().suggestion_keys
     }
@@ -331,6 +339,9 @@ impl SettingsForm {
             Field::Keyboard => global.keyboard_mode.map(text::keyboard_name),
             Field::PageSize => global.page_size.map(|value| value.to_string()),
             Field::RowCap => global.row_cap.map(|value| value.to_string()),
+            Field::CapInSql => global
+                .cap_in_sql
+                .map(|value| text::on_off(value).to_owned()),
             Field::Budget => mebibytes(global.grid_budget_bytes).map(|value| value.to_string()),
             Field::UndoLimit => mebibytes(global.undo_limit_bytes).map(|value| value.to_string()),
             Field::BellAfter => global.bell_after_seconds.map(|value| value.to_string()),
@@ -360,6 +371,7 @@ impl SettingsForm {
             _ if field == Field::FormatJson => {
                 text::default_value(text::on_off(DEFAULT_FORMAT_JSON))
             }
+            _ if field == Field::CapInSql => text::default_value(text::on_off(DEFAULT_CAP_IN_SQL)),
             _ if field == Field::BellAfter => {
                 text::default_value(&DEFAULT_BELL_AFTER_SECONDS.to_string())
             }
@@ -439,6 +451,10 @@ impl SettingsForm {
                 let order = [None, Some(true), Some(false)];
                 self.draft_mut().format_json =
                     next_choice(&order, self.draft().format_json, forward);
+            }
+            Field::CapInSql => {
+                let order = [None, Some(true), Some(false)];
+                self.draft_mut().cap_in_sql = next_choice(&order, self.draft().cap_in_sql, forward);
             }
             Field::SuggestionKeys => {
                 let order = [
@@ -546,6 +562,7 @@ impl SettingsForm {
         preferences.reopen_tabs = draft.reopen_tabs;
         preferences.query_history = draft.query_history;
         preferences.format_json = draft.format_json;
+        preferences.cap_in_sql = draft.cap_in_sql;
         preferences.suggestion_keys = draft.suggestion_keys;
         preferences.theme = draft.theme;
         preferences.keymap = draft.keymap.clone();

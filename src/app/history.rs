@@ -104,7 +104,7 @@ impl App {
 
     pub(super) fn open_history(&mut self) {
         let connection = self.active_connection();
-        if self.table_active.is_some() || !self.history_is_open_to(connection) {
+        if !self.console_on_screen() || !self.history_is_open_to(connection) {
             return;
         }
         let Some(id) = connection.and_then(|item| item.key.as_ref()) else {

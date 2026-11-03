@@ -89,6 +89,7 @@ fn options_of(cli: Cli) -> Result<Options, String> {
             project: located.root.as_deref().map(Root::project),
         }),
         offer_project: located.offer,
+        start_home: true,
         ..Options::default()
     };
     if let Some(dialect) = cli.dialect {

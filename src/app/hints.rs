@@ -5,6 +5,7 @@
 
 use super::App;
 use crate::console::Focus;
+use crate::diagram::tab::DiagramTab;
 use crate::export::form as export_form;
 use crate::form::FieldStyle;
 use crate::import::form as import_form;
@@ -52,6 +53,23 @@ impl App {
         }
         if self.navigator_focused {
             return self.navigator_hint();
+        }
+        // Without the focus in the explorer, the row names the way to it.
+        if self.home() {
+            let explorer = if self.navigator.collapsed {
+                Action::ToggleNavigator
+            } else {
+                Action::FocusLeft
+            };
+            return self.hint_parts(&[
+                (explorer, "explorer"),
+                (Action::OpenPalette, "commands"),
+                (Action::Help, "keys"),
+                (Action::Quit, "quit"),
+            ]);
+        }
+        if let Some(tab) = self.diagram() {
+            return self.diagram_hint(tab);
         }
         if let Some(tab) = self.table() {
             return self.table_hint(tab);
@@ -275,6 +293,25 @@ impl App {
         self.hints_when(&commands)
     }
 
+    fn diagram_hint(&self, tab: &DiagramTab) -> Vec<HintItem> {
+        let boxes = !tab.model.entities.is_empty();
+        let chosen = tab.selected.is_some();
+        let keys = if tab.keys_only {
+            "all columns"
+        } else {
+            "keys only"
+        };
+        self.hints_when(&[
+            (Action::Stop, "stop", tab.is_busy()),
+            (Action::DiagramOpen, "data", chosen),
+            (Action::DiagramStructure, "struct", chosen),
+            (Action::DiagramKeysOnly, keys, boxes),
+            (Action::DiagramCopy, "mermaid", boxes),
+            (Action::DiagramReload, "reload", !tab.is_busy()),
+            (Action::Help, "keys", true),
+        ])
+    }
+
     fn table_hint(&self, tab: &TableTab) -> Vec<HintItem> {
         if tab.list.is_some() {
             return self.list_hint(text::LIST_FILTER_KEYS);
@@ -395,6 +432,7 @@ impl App {
                 if branch { "collapse" } else { "parent" },
                 (open || !branch) && !filtered,
             ),
+            (Action::NavigatorDiagram, "diagram", self.can_open_diagram()),
         ]);
         items.extend(HintItem::of(text::HINT_COMMANDS));
         items.extend(self.hint_parts(&[(Action::Help, "keys")]));

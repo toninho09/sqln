@@ -14,12 +14,13 @@ use tokio::time::{sleep, timeout};
 
 use super::{
     Binding, Command, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, ResultSink,
-    RunRequest, StatementKey, StatementStatus, context,
+    RunRequest, Settings, StatementKey, StatementStatus, context,
 };
 use crate::connector::{ExecError, StatementEnd, TransactionCommand, TransactionState};
 use crate::export::ExportWriter;
 use crate::grid::Budget;
 use crate::pool::Lease;
+use crate::sql::with_row_limit;
 
 /// A delay that stays longer than any statement. It stands for "no time limit".
 const NO_LIMIT: Duration = Duration::from_secs(60 * 60 * 24 * 365);
@@ -64,6 +65,8 @@ struct Delivery {
 pub struct ConsoleTask {
     console: ConsoleId,
     binding: Binding,
+    /// The settings of the current execution. A saved change acts from the next one.
+    settings: Settings,
     budget: Arc<Budget>,
     events: Sender<ExecEvent>,
     held: Option<Lease>,
@@ -77,8 +80,10 @@ impl ConsoleTask {
         budget: Arc<Budget>,
         events: Sender<ExecEvent>,
     ) -> Self {
+        let settings = binding.settings().clone();
         Self {
             console,
+            settings,
             binding,
             budget,
             events,
@@ -89,6 +94,7 @@ impl ConsoleTask {
 
     pub async fn serve(mut self, mut commands: UnboundedReceiver<Command>) {
         while let Some(command) = commands.recv().await {
+            self.settings = self.binding.settings().clone();
             match command {
                 Command::Run(request) => self.run_script(request, &mut commands).await,
                 Command::Import(request) => self.run_import(request, &mut commands).await,
@@ -184,8 +190,8 @@ impl ConsoleTask {
         self.emit(ExecEvent::Started { console, execution }).await;
 
         // A reserved session has this context, and a failed transaction refuses `SET`.
-        let context = context(&self.binding.settings, options.schema);
-        let cap = options.row_cap.unwrap_or(self.binding.settings.row_cap);
+        let context = context(&self.settings, options.schema);
+        let cap = options.row_cap.unwrap_or(self.settings.row_cap);
         let export = options.export;
         if !reserved && let Err(error) = lease.session().apply_context(&context).await {
             self.finish(execution, ExecutionEnd::Failed, Some(error.message))
@@ -340,10 +346,21 @@ impl ConsoleTask {
     ) -> (Waited, Option<StopReason>) {
         let Delivery { cap, export, timed } = delivery;
         let mut sink = ResultSink::new(key, self.events.clone(), self.budget.clone(), cap);
-        let time_limit = self.binding.settings.sql_timeout.filter(|_| timed);
+        let time_limit = self.settings.sql_timeout.filter(|_| timed);
+        // The row after the cap proves that the result has more rows. An export has no cap.
+        let rows = cap.saturating_add(1);
+        let limited = (self.settings.cap_in_sql && export.is_none() && cap < usize::MAX)
+            .then(|| with_row_limit(sql, self.binding.pool.dialect(), rows))
+            .flatten();
         if let Some(export) = export {
             sink.export_to(export);
         }
+        if limited.is_some() {
+            self.emit(ExecEvent::LimitAdded { key, rows }).await;
+        }
+        // An error in the added clause points to the end of the text of the user.
+        let user_end = sql.len();
+        let sql = limited.as_deref().unwrap_or(sql);
         let stopping = sink.stop_flag();
         let session = lease.session();
         let canceller = session.canceller();
@@ -354,7 +371,7 @@ impl ConsoleTask {
         };
 
         let mut run = session.run(sql, sink);
-        let settings = self.binding.settings.clone();
+        let settings = self.settings.clone();
         let mut limit = pin!(sleep(time_limit.unwrap_or(NO_LIMIT)));
         let mut grace = pin!(sleep(NO_LIMIT));
         let mut reason = None;
@@ -366,6 +383,10 @@ impl ConsoleTask {
             tokio::select! {
                 result = &mut run => {
                     let reusable = settle(request, settings.stop_grace).await;
+                    let result = result.map_err(|mut error| {
+                        error.offset = error.offset.map(|offset| offset.min(user_end));
+                        error
+                    });
                     return (Waited::Finished { result, reusable }, reason);
                 }
                 sent = async { request.as_mut().expect("the guard checks the request").await },

@@ -192,7 +192,7 @@ fn read_summary(rows: usize, limit: ReadLimit) -> String {
     }
 }
 
-pub(crate) fn first_word(sql: &str) -> &str {
+fn first_word(sql: &str) -> &str {
     sql.split(|c: char| !c.is_ascii_alphabetic())
         .find(|word| !word.is_empty())
         .unwrap_or("")
@@ -395,6 +395,10 @@ impl Console {
             ExecEvent::Notice { key, text } if self.is_current(key.execution) => {
                 let message = text::statement_error(key.index, &text);
                 self.push_message(MessageLevel::Warning, message);
+            }
+            ExecEvent::LimitAdded { key, rows } if self.is_current(key.execution) => {
+                let message = text::statement_error(key.index, &text::limit_added(rows));
+                self.push_message(MessageLevel::Info, message);
             }
             ExecEvent::StatementFinished {
                 key,

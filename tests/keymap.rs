@@ -165,12 +165,12 @@ fn the_application_waits_for_every_key_of_a_long_sequence() {
     let mut app = app_with_keys(&[("closeTab", &["f8 a b c"])]);
     for code in [KeyCode::F(8), KeyCode::Char('a'), KeyCode::Char('b')] {
         app.on_event(Event::Key(key(code)));
-        assert!(!app.should_quit());
+        assert!(!app.home());
         assert!(app.hint().contains("next key"));
         assert_eq!(app.console().editor.text(), "");
     }
     app.on_event(Event::Key(key(KeyCode::Char('c'))));
-    assert!(app.should_quit());
+    assert!(app.home());
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn escape_and_an_unmatched_key_cancel_a_sequence_without_entering_text() {
         for code in [KeyCode::F(8), KeyCode::Char('a'), end] {
             app.on_event(Event::Key(key(code)));
         }
-        assert!(!app.should_quit());
+        assert!(!app.home());
         assert_eq!(app.console().editor.text(), "");
     }
     app.on_event(Event::Key(key(KeyCode::Char('z'))));
@@ -195,7 +195,7 @@ fn a_long_global_sequence_still_works_after_a_shared_panel_prefix() {
     for code in [KeyCode::F(8), KeyCode::Char('c'), KeyCode::Char('c')] {
         app.on_event(Event::Key(key(code)));
     }
-    assert!(app.should_quit());
+    assert!(app.home());
 }
 
 #[test]
@@ -319,9 +319,9 @@ fn the_application_uses_the_map() {
     let mut app = App::new(options, clipboard, Theme::plain());
     app.on_event(Event::Key(ctrl('w')));
     app.on_event(Event::Key(key(KeyCode::Char('c'))));
-    assert!(!app.should_quit());
+    assert!(!app.home());
     app.on_event(Event::Key(key(KeyCode::F(9))));
-    assert!(app.should_quit());
+    assert!(app.home());
 }
 
 #[test]

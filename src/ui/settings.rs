@@ -59,6 +59,7 @@ fn label(field: Field) -> &'static str {
         Field::Keyboard => text::FIELD_KEYBOARD,
         Field::PageSize => text::FIELD_PAGE_SIZE,
         Field::RowCap => text::FIELD_ROW_CAP,
+        Field::CapInSql => text::FIELD_CAP_IN_SQL,
         Field::Budget => text::FIELD_BUDGET,
         Field::ReopenTabs => text::FIELD_REOPEN_TABS,
         Field::QueryHistory => text::FIELD_QUERY_HISTORY,
@@ -91,6 +92,10 @@ fn choice(form: &SettingsForm, field: Field) -> String {
             |value| text::on_off(value).to_owned(),
         ),
         Field::FormatJson => form.format_json().map_or_else(
+            || form.inherited(field),
+            |value| text::on_off(value).to_owned(),
+        ),
+        Field::CapInSql => form.cap_in_sql().map_or_else(
             || form.inherited(field),
             |value| text::on_off(value).to_owned(),
         ),

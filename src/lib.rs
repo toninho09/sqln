@@ -7,6 +7,7 @@ pub mod connection;
 pub mod connector;
 pub mod console;
 pub mod creds;
+pub mod diagram;
 pub mod editor;
 pub mod exec;
 pub mod export;

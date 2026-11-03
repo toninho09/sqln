@@ -268,7 +268,7 @@ fn a_connection_row_keeps_only_the_main_commands() {
     s.prefix('h');
     assert_eq!(
         s.hints_at(200),
-        "Enter console  n new console  Right expand  Ctrl+W commands  F1 keys"
+        "Enter console  n new console  Right expand  d diagram  Ctrl+W commands  F1 keys"
     );
 }
 
@@ -286,6 +286,7 @@ fn the_explorer_page_lists_the_commands_of_a_connection() {
             "a Add a connection",
             "Del Remove connection",
             "i Show the structure",
+            "d ER diagram",
             "y Copy the name",
             "/ Filter the tables",
         ]
@@ -323,7 +324,7 @@ fn a_schema_row_keeps_only_the_commands_of_its_tree() {
     s.select(RowKind::Schema, "main");
     assert_eq!(
         s.hints_at(200),
-        "n new console  Right expand  Ctrl+W commands  F1 keys"
+        "n new console  Right expand  d diagram  Ctrl+W commands  F1 keys"
     );
     let page = common::explorer_page(&s.app);
     for row in ["i Show the structure", "r Read the catalog"] {
@@ -342,7 +343,7 @@ fn a_table_row_keeps_only_the_commands_of_a_table() {
     s.select(RowKind::Table, "items");
     assert_eq!(
         s.hints_at(200),
-        "Enter open table  Right columns  Ctrl+W commands  F1 keys"
+        "Enter open table  Right columns  d diagram  Ctrl+W commands  F1 keys"
     );
     let page = common::explorer_page(&s.app);
     for row in ["g Generate SQL", "I Import a file", "n New console"] {

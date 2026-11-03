@@ -1045,6 +1045,12 @@ fn a_redis_row_hides_the_structure_key() {
         "{page:?}"
     );
     assert!(!page.contains(&"S Sessions".to_owned()), "{page:?}");
+    assert!(!page.contains(&"d ER diagram".to_owned()), "{page:?}");
+    assert!(!f.menu_has("D ER diagram"));
+    // The key keeps its action, and the status line gives the reason.
+    f.code(KeyCode::Char('d'));
+    assert!(f.app.diagrams().is_empty());
+    f.assert_sees("This source has no diagram");
 }
 
 #[test]
@@ -2690,6 +2696,29 @@ fn a_load_in_progress_blocks_disconnect_and_removal() {
 }
 
 #[test]
+fn a_horizontal_wheel_moves_the_cursor_one_column_and_stops_at_each_edge() {
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 10,
+        ..Recorder::default()
+    });
+    f.open_table("users");
+    let (column, row) = f.locate_below("[Apply]", "name0");
+    let col = |f: &Fixture| f.app.table().unwrap().result.view.col;
+    f.app
+        .on_event(mouse(MouseEventKind::ScrollRight, column, row));
+    assert_eq!(col(&f), 1);
+    f.app
+        .on_event(mouse(MouseEventKind::ScrollRight, column, row));
+    assert_eq!(col(&f), 1, "the last column stops the cursor");
+    f.app
+        .on_event(mouse(MouseEventKind::ScrollLeft, column, row));
+    f.app
+        .on_event(mouse(MouseEventKind::ScrollLeft, column, row));
+    assert_eq!(col(&f), 0, "the first column stops the cursor");
+    assert_eq!(f.app.table().unwrap().result.view.row, 0, "the row stays");
+}
+
+#[test]
 fn the_mouse_scrolls_selects_and_resizes_in_the_grid_of_a_table() {
     let (mut f, _) = Fixture::recorded(Recorder {
         rows: 100,
@@ -3122,9 +3151,10 @@ fn closing_the_last_console_while_a_table_is_open_keeps_the_table() {
     assert!(!f.app.should_quit());
     assert!(f.app.table().is_some(), "the table is on screen");
     f.assert_not_sees("console-");
-    // The last tab ends the application.
+    // The close of the last tab shows the home screen.
     f.prefix('c');
-    assert!(f.app.should_quit());
+    assert!(f.app.home());
+    assert!(!f.app.should_quit());
 }
 
 #[test]
@@ -3277,12 +3307,13 @@ fn the_close_mark_of_a_console_keeps_the_table_on_screen() {
 }
 
 #[test]
-fn the_close_mark_of_the_last_table_ends_the_application() {
+fn the_close_mark_of_the_last_table_shows_the_home_screen() {
     let mut f = Fixture::sqlite("close-last-table", &numbered(3), Settings::default());
     f.open_table("t");
     f.close_tab("console-1");
     f.close_tab("t (table)");
-    assert!(f.app.should_quit());
+    assert!(f.app.home());
+    assert!(!f.app.should_quit());
 }
 
 // ---- the state of a run in the tab row ----
@@ -4004,7 +4035,8 @@ fn the_count_key_shows_the_total_and_keeps_the_pages() {
     f.loaded();
     assert_eq!(
         recorder.statements().last().unwrap(),
-        "SELECT COUNT(*) FROM \"public\".\"users\""
+        "SELECT COUNT(*) FROM \"public\".\"users\"\nLIMIT 2",
+        "the count is a plain read, so it receives the row cap of its request"
     );
     f.assert_sees("100 of 1,250 rows loaded");
     assert!(!f.hints_at(200).contains("c count"));
@@ -4086,7 +4118,7 @@ fn a_count_reads_the_applied_filter_and_a_new_filter_clears_it() {
     f.loaded();
     assert_eq!(
         recorder.statements().last().unwrap(),
-        "SELECT COUNT(*) FROM \"public\".\"users\"\nWHERE id > 5"
+        "SELECT COUNT(*) FROM \"public\".\"users\"\nWHERE id > 5\nLIMIT 2"
     );
     assert_eq!(f.app.table().unwrap().total, Some(250));
 

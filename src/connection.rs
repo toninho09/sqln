@@ -16,6 +16,8 @@ use crate::store::scripts::ScriptEntry;
 pub const DEFAULT_POOL_LIMIT: usize = 5;
 pub const DEFAULT_CONNECT_SECONDS: u64 = 30;
 pub const DEFAULT_SQL_SECONDS: u64 = 30;
+/// An idle session of the pool closes after this time.
+pub const DEFAULT_IDLE_SECONDS: u64 = 300;
 pub const DEFAULT_BUSY_SECONDS: u64 = 5;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,6 +38,8 @@ pub struct Definition {
     pub connect_timeout: Duration,
     /// The time limit of one statement. `None` runs without a limit.
     pub sql_timeout: Option<Duration>,
+    /// An idle session of the pool closes after this time. `None` keeps it open.
+    pub idle_timeout: Option<Duration>,
     /// The folder of the relative paths. Without a folder, the working folder applies.
     pub base: Option<PathBuf>,
     /// The theme of the tabs of this connection. `None` uses the default theme.
@@ -54,6 +58,7 @@ impl Definition {
             max_connections: DEFAULT_POOL_LIMIT,
             connect_timeout: Duration::from_secs(DEFAULT_CONNECT_SECONDS),
             sql_timeout: Some(Duration::from_secs(DEFAULT_SQL_SECONDS)),
+            idle_timeout: Some(Duration::from_secs(DEFAULT_IDLE_SECONDS)),
             base: None,
             theme: None,
             icon: None,
@@ -109,6 +114,7 @@ impl Definition {
             max_connections: self.max_connections,
             connect_timeout: self.connect_timeout,
             sql_timeout: self.sql_timeout,
+            idle_timeout: self.idle_timeout,
             ..base.clone()
         }
     }

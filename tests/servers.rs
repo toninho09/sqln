@@ -22,6 +22,9 @@ use sqln::connector::target::parse_uri;
 use sqln::connector::{
     Connector, Session, TransactionCommand, TransactionState, network_connector,
 };
+use sqln::diagram::mermaid::to_mermaid;
+use sqln::diagram::sql::{diagram_sql, parse_column, parse_key};
+use sqln::diagram::{Focus, Model};
 use sqln::editor::KeyboardMode;
 use sqln::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, Manager, ReadLimit, ResultSink, RunOptions,
@@ -449,6 +452,60 @@ fn the_row_cap_ends_a_large_read_soon_and_the_session_stays_usable() {
             server.kind
         );
         println!("{:?}: row cap in {elapsed:?}", server.kind);
+    }
+}
+
+#[test]
+fn an_idle_session_closes_at_the_idle_limit_and_the_next_run_opens_one() {
+    for server in servers() {
+        let settings = Settings {
+            idle_timeout: Some(Duration::from_millis(200)),
+            ..Settings::default()
+        };
+        let mut h = Harness::open(&server, settings);
+        h.run_ok(&["SELECT 1"]);
+        assert!(h.manager.is_connected(h.connection), "{:?}", server.kind);
+        while !matches!(h.next(), ExecEvent::IdleClosed { .. }) {}
+        assert!(!h.manager.is_connected(h.connection), "{:?}", server.kind);
+        assert_eq!(h.run_ok(&["SELECT 7"]).text(0, 0), "7");
+    }
+}
+
+/// Without the added `LIMIT`, a transaction reads every row of this result, because a
+/// cancellation would end the transaction.
+#[test]
+fn the_added_limit_ends_a_large_read_in_a_transaction_soon_and_keeps_the_transaction() {
+    for server in servers() {
+        let settings = Settings {
+            row_cap: 100,
+            max_connections: 1,
+            ..Settings::default()
+        };
+        let mut h = Harness::open(&server, settings);
+        server.prepare_huge_read(&mut h);
+        let started = Instant::now();
+        let execution = h.start(&[server.huge_read()], true);
+        let run = h.collect(execution);
+        let elapsed = started.elapsed();
+        assert_eq!(
+            run.end,
+            Some(ExecutionEnd::Completed),
+            "{:?}: {run:?}",
+            server.kind
+        );
+        assert_eq!(run.limits, [ReadLimit::RowCap]);
+        assert_eq!(run.rows.len(), 100);
+        assert_eq!(run.transaction, Some(TransactionState::Open));
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "{:?} {elapsed:?}",
+            server.kind
+        );
+        assert_eq!(
+            h.control(TransactionCommand::Rollback),
+            TransactionState::None
+        );
+        println!("{:?}: added limit in {elapsed:?}", server.kind);
     }
 }
 
@@ -1679,13 +1736,7 @@ impl Screen {
     }
 
     fn focus_form(&mut self, field: Field) {
-        for _ in 0..32 {
-            if self.app.form().unwrap().focus == field {
-                return;
-            }
-            self.code(KeyCode::Tab);
-        }
-        panic!("{field:?} is not in the form");
+        common::focus_form_field(&mut self.app, field);
     }
 
     fn choose_schema(&mut self, name: Option<&str>) {
@@ -1977,6 +2028,169 @@ fn the_structure_queries_read_the_catalog_of_each_server() {
             "DROP VIEW s_view",
             "DROP TABLE s_child",
             "DROP TABLE s_parent",
+        ]);
+    }
+}
+
+/// Reads the diagram of a schema, with only the tables whose names start with `prefix`.
+/// The tests share each server, so the schema holds the tables of other tests.
+fn er_model(h: &mut Harness, dialect: Dialect, schema: &str, prefix: &str) -> Model {
+    let [columns, keys] = diagram_sql(dialect, schema).unwrap();
+    let ours = |name: &str| name.starts_with(prefix);
+    let (column_rows, key_rows) = (h.run_ok(&[&columns]).rows, h.run_ok(&[&keys]).rows);
+    let columns = column_rows.iter().filter_map(parse_column);
+    let columns = columns.filter(|row| ours(&row.relation.relation)).collect();
+    let keys = key_rows.iter().filter_map(parse_key);
+    let keys = keys
+        .filter(|row| ours(&row.relation.relation) || ours(&row.target.relation))
+        .collect();
+    Model::build(columns, keys, &Focus::Schema(schema.to_owned()))
+}
+
+/// Describes each link as `child(columns) -> schema.parent(columns)`.
+fn er_links(model: &Model) -> Vec<String> {
+    model
+        .links
+        .iter()
+        .map(|link| {
+            let (child, parent) = (&model.entities[link.child], &model.entities[link.parent]);
+            let from: Vec<&str> = link
+                .child_columns
+                .iter()
+                .map(|&column| child.columns[column].name.as_str())
+                .collect();
+            let to: Vec<&str> = link
+                .parent_columns
+                .iter()
+                .map(|column| column.map_or("?", |column| parent.columns[column].name.as_str()))
+                .collect();
+            format!(
+                "{}({}) -> {}.{}({})",
+                child.relation.relation,
+                from.join(","),
+                parent.relation.schema,
+                parent.relation.relation,
+                to.join(",")
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_diagram_queries_read_tables_keys_and_other_schemas_of_each_server() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let (dialect, other) = match server.kind {
+            Kind::Postgres => (Dialect::Postgres, "CREATE SCHEMA IF NOT EXISTS erk_other"),
+            Kind::MySql => (Dialect::MySql, "CREATE DATABASE IF NOT EXISTS erk_other"),
+        };
+        h.manager.load_catalog(h.connection, 0);
+        let schema = loop {
+            if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
+                break catalog.unwrap().current_schema.unwrap();
+            }
+        };
+        let audit = format!(
+            "CREATE TABLE erk_other.erk_audit (id int PRIMARY KEY, child int, \
+             CONSTRAINT erk_audit_child FOREIGN KEY (child) REFERENCES {schema}.erk_child (id))"
+        );
+        h.run_ok(&[
+            other,
+            "DROP TABLE IF EXISTS erk_other.erk_audit",
+            "DROP VIEW IF EXISTS erk_view",
+            "DROP TABLE IF EXISTS erk_child",
+            "DROP TABLE IF EXISTS erk_parent",
+            "DROP TABLE IF EXISTS erk_other.erk_users",
+            "CREATE TABLE erk_other.erk_users (id int PRIMARY KEY)",
+            "CREATE TABLE erk_parent (a int, b int, PRIMARY KEY (a, b))",
+            "CREATE TABLE erk_child (id int PRIMARY KEY, pa int NOT NULL, pb int NOT NULL, \
+               owner int, \
+               CONSTRAINT erk_fk FOREIGN KEY (pa, pb) REFERENCES erk_parent (a, b), \
+               CONSTRAINT erk_owner FOREIGN KEY (owner) REFERENCES erk_other.erk_users (id))",
+            &audit,
+            "CREATE VIEW erk_view AS SELECT id FROM erk_child",
+        ]);
+        let model = er_model(&mut h, dialect, &schema, "erk_");
+        let entities: Vec<(String, bool)> = model
+            .entities
+            .iter()
+            .map(|entity| (entity.relation.relation.clone(), entity.stub))
+            .collect();
+        // The view stays out, and the tables of the other schema are stubs.
+        assert_eq!(
+            entities,
+            [
+                ("erk_child".to_owned(), false),
+                ("erk_parent".to_owned(), false),
+                ("erk_audit".to_owned(), true),
+                ("erk_users".to_owned(), true),
+            ],
+            "{:?}",
+            server.kind
+        );
+        assert_eq!(
+            er_links(&model),
+            [
+                format!("erk_child(pa,pb) -> {schema}.erk_parent(a,b)"),
+                "erk_child(owner) -> erk_other.erk_users(?)".to_owned(),
+                format!("erk_audit() -> {schema}.erk_child(id)"),
+            ],
+            "{:?}",
+            server.kind
+        );
+        let parent = &model.entities[1];
+        assert_eq!(parent.columns[1].primary, Some(2), "{:?}", server.kind);
+        assert!(parent.columns[0].ty.contains("int"), "{:?}", server.kind);
+        let text = to_mermaid(&model, false);
+        assert!(text.contains("e2 ||..o{ e1 : \"pa, pb\""), "{text}");
+        assert!(text.contains("e4 |o..o{ e1 : \"owner\""), "{text}");
+        h.run_ok(&[
+            "DROP TABLE erk_other.erk_audit",
+            "DROP VIEW erk_view",
+            "DROP TABLE erk_child",
+            "DROP TABLE erk_parent",
+            "DROP TABLE erk_other.erk_users",
+        ]);
+    }
+}
+
+#[test]
+fn a_partitioned_table_appears_once_with_its_keys() {
+    for server in servers()
+        .into_iter()
+        .filter(|server| server.kind == Kind::Postgres)
+    {
+        let mut h = Harness::open(&server, Settings::default());
+        h.run_ok(&[
+            "DROP TABLE IF EXISTS erp_part_ref",
+            "DROP TABLE IF EXISTS erp_part",
+            "DROP TABLE IF EXISTS erp_part_parent",
+            "CREATE TABLE erp_part_parent (id int PRIMARY KEY)",
+            "CREATE TABLE erp_part (id int, k int, owner int REFERENCES erp_part_parent, \
+               PRIMARY KEY (id, k)) PARTITION BY RANGE (k)",
+            "CREATE TABLE erp_part_1 PARTITION OF erp_part FOR VALUES FROM (0) TO (10)",
+            "CREATE TABLE erp_part_2 PARTITION OF erp_part FOR VALUES FROM (10) TO (20)",
+            "CREATE TABLE erp_part_ref (id int PRIMARY KEY, pid int, pk int, \
+               FOREIGN KEY (pid, pk) REFERENCES erp_part (id, k))",
+        ]);
+        let model = er_model(&mut h, Dialect::Postgres, "public", "erp_");
+        let names: Vec<&str> = model
+            .entities
+            .iter()
+            .map(|entity| entity.relation.relation.as_str())
+            .collect();
+        assert_eq!(names, ["erp_part", "erp_part_parent", "erp_part_ref"]);
+        assert_eq!(
+            er_links(&model),
+            [
+                "erp_part(owner) -> public.erp_part_parent(id)",
+                "erp_part_ref(pid,pk) -> public.erp_part(id,k)",
+            ]
+        );
+        h.run_ok(&[
+            "DROP TABLE erp_part_ref",
+            "DROP TABLE erp_part",
+            "DROP TABLE erp_part_parent",
         ]);
     }
 }

@@ -46,6 +46,7 @@ Main thread                        Tokio runtime
 | `result` | Grid of one result with cursor and search, used by consoles and tables |
 | `table` | Table tab: pages, fields, sorting, suggestions, and query |
 | `structure` | Catalog queries of the structure tab, per database, scope, and section |
+| `diagram` | ER diagram: catalog queries, model, layout of boxes and lines, Mermaid text, and the state of a diagram tab |
 | `line_input` | Single-line text field, used by the filter bar fields |
 | `exec` | Executions, scripts, cap, and cancellation |
 | `pool` | Limit, queue, reservation, and cleaning |
@@ -334,6 +335,10 @@ A preview reads only the visible prefix. TSV encoding borrows selected values wi
 
 ### Row cap
 
+With `Settings::cap_in_sql`, the runner first sends `LIMIT` with the cap and one row on a new line at the end of a plain read. `sql::with_row_limit` decides from the text: the read must start with `SELECT`, `WITH`, `VALUES`, or `TABLE` and have no `LIMIT`, `OFFSET`, `FETCH`, `FOR`, or `LOCK` in the main level. `ExecEvent::LimitAdded` puts an `Info` line in **Messages**, and an error place stays inside the text of the user. An export and a run without a cap keep the text.
+
+The consoles of a connection share its settings through `Binding`. A save in Settings calls `Manager::update_settings`, and each execution copies the values at its start, so a running script keeps its cap.
+
 1. The actor delivers rows up to the cap, plus one row to know whether more exist.
 2. In a read query without a transaction, the actor triggers the cancellation. `sql::is_plain_read` decides from the text.
 3. In the other cases, the actor consumes the rest without keeping the rows.
@@ -377,6 +382,8 @@ The temporary cancellation connection stays out of that sum.
 5. On a connection error, return the error to the request, without a retry.
 6. Cancelling a wait removes the request from the queue.
 7. On reuse of an idle connection, call `is_alive`. A lost connection gives place to a new one.
+8. Each idle session keeps the moment of its return. The last session to return is the first to leave, so the other sessions age.
+9. With an idle limit (`idleTimeoutSeconds`, 300 by default), a task of `Manager` calls `Pool::close_expired` and closes each idle session that waited that time. The task holds a `WeakPool`, so it ends after the pool. A session in use stays, also the session of an open transaction. `ExecEvent::IdleClosed` redraws the explorer without a message.
 
 A reserved session does not receive `apply_context` again, because a transaction with an error refuses `SET`.
 A session with an unknown state is dropped.

@@ -290,13 +290,7 @@ impl Session {
     }
 
     fn focus_form(&mut self, field: Field) {
-        for _ in 0..32 {
-            if self.app.form().unwrap().focus == field {
-                return;
-            }
-            self.code(KeyCode::Tab);
-        }
-        panic!("{field:?} is not in the form");
+        common::focus_form_field(&mut self.app, field);
     }
 
     fn press_form_button(&mut self, field: Field) {
@@ -729,10 +723,9 @@ fn a_new_connection_goes_to_the_project_file_by_default_without_a_password() {
     session.assert_sees("Project");
     session.code(KeyCode::Right);
     session.code(KeyCode::Right);
-    session.code(KeyCode::Tab);
+    session.focus_form(Field::Name);
     session.write("saved");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    session.focus_form(Field::File);
     session.write(&db.display().to_string());
     session.press_form_button(Field::Save);
     assert!(session.app.form().is_none(), "{}", session.screen());
@@ -750,17 +743,13 @@ fn a_form_for_a_network_connection_saves_no_password_in_the_file() {
     session.press(ctrl('w'));
     session.code(KeyCode::Char('h'));
     session.code(KeyCode::Char('a'));
-    // The fields without a project: Kind, Name, Entry, Host, Port, Database, User, Password.
-    session.code(KeyCode::Tab);
+    session.focus_form(Field::Name);
     session.write("remote");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    session.focus_form(Field::Host);
     session.write("db.example.test");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    session.focus_form(Field::User);
     session.write("me");
-    session.code(KeyCode::Tab);
+    session.focus_form(Field::Password);
     session.write("hunter2");
     session.press_form_button(Field::Save);
     assert!(session.app.form().is_none(), "{}", session.screen());
@@ -791,13 +780,13 @@ fn two_scopes_can_use_the_same_name_and_one_scope_cannot() {
         session.code(KeyCode::Char('a'));
         session.code(KeyCode::Right);
         session.code(KeyCode::Right);
-        session.code(KeyCode::Tab);
+        session.focus_form(Field::Name);
         session.write("SAME");
-        session.code(KeyCode::Tab);
+        session.focus_form(Field::Scope);
         if scope_to_global {
             session.code(KeyCode::Right);
         }
-        session.code(KeyCode::Tab);
+        session.focus_form(Field::File);
         session.write(&path);
         session.press_form_button(Field::Save);
     };
@@ -895,9 +884,7 @@ fn the_sql_limit_of_a_connection_saves_and_zero_means_no_limit() {
     let mut session = Session::start(&store);
     session.go_to_connection("one");
     session.code(KeyCode::Char('e'));
-    for _ in 0..7 {
-        session.code(KeyCode::Tab);
-    }
+    session.focus_form(Field::SqlTimeout);
     session.assert_sees("SQL limit");
     erase_field(&mut session, 2);
     session.write("0");
@@ -907,6 +894,31 @@ fn the_sql_limit_of_a_connection_saves_and_zero_means_no_limit() {
     session.prefix('r');
     let definition = session.app.connections()[0].definition.as_ref().unwrap();
     assert_eq!(definition.sql_timeout, None);
+}
+
+#[test]
+fn the_idle_limit_of_a_connection_starts_at_300_and_zero_keeps_the_sessions() {
+    let (store, base) = global_only("p-idle-limit");
+    let db = database(&base, "e", "");
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "one", &db.display().to_string())],
+    );
+    let mut session = Session::start(&store);
+    session.go_to_connection("one");
+    session.code(KeyCode::Char('e'));
+    session.focus_form(Field::IdleTimeout);
+    session.assert_sees("Idle limit (s, 0 = none)");
+    session.assert_sees("300");
+    erase_field(&mut session, 3);
+    session.write("0");
+    session.press_form_button(Field::Save);
+    let text = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(text.contains("\"idleTimeoutSeconds\": null"), "{text}");
+    session.prefix('r');
+    let definition = session.app.connections()[0].definition.as_ref().unwrap();
+    assert_eq!(definition.idle_timeout, None);
 }
 
 #[test]
@@ -921,16 +933,14 @@ fn a_bad_sql_limit_keeps_the_form_open() {
     let mut session = Session::start(&store);
     session.go_to_connection("one");
     session.code(KeyCode::Char('e'));
-    for _ in 0..6 {
-        session.code(KeyCode::Tab);
-    }
+    session.focus_form(Field::SqlTimeout);
     erase_field(&mut session, 2);
     session.write("abc");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Enter);
-    assert!(session.app.form().is_some());
-    session.assert_sees("SQL limit");
+    session.press_form_button(Field::Save);
+    // The error opens the section of the field and puts the focus on it.
+    let form = session.app.form().expect("the form stays open");
+    assert_eq!(form.focus, Field::SqlTimeout);
+    session.assert_sees("SQL limit (s, 0 = none) needs a number.");
     // The file did not change.
     assert!(
         !fs::read_to_string(store.global.config_file())
@@ -1281,7 +1291,7 @@ fn an_empty_unbound_console_closes_without_a_question() {
     let (store, _) = global_only("p-unbound-empty");
     let mut session = Session::start(&store);
     session.prefix('c');
-    assert!(session.app.should_quit());
+    assert!(session.app.home());
 }
 
 #[test]
@@ -2396,7 +2406,7 @@ fn the_settings_write_only_the_scope_of_the_dialog() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("77");
-    for _ in 0..4 {
+    for _ in 0..5 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2431,7 +2441,7 @@ fn an_empty_field_removes_the_project_value_and_shows_the_global_value() {
     session.code(KeyCode::Backspace);
     session.code(KeyCode::Backspace);
     session.assert_sees("from global: 10");
-    for _ in 0..4 {
+    for _ in 0..5 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2446,7 +2456,7 @@ fn a_settings_value_of_zero_stays_in_the_dialog_with_a_note() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("0");
-    for _ in 0..4 {
+    for _ in 0..5 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2796,6 +2806,22 @@ fn a_structure_tab_does_not_reopen() {
     let mut second = Session::start(&store);
     assert!(second.app.tables().is_empty());
     assert!(!second.top_row().contains("structure"));
+}
+
+#[test]
+fn a_diagram_tab_does_not_reopen() {
+    let (store, _) = reopening_store("p-reopen-diagram", "{}");
+    let mut first = Session::start(&store);
+    first.type_and_save("SELECT 1;");
+    common::select_row(&mut first.app, 0, &[RowKind::Table], "items");
+    first.code(KeyCode::Char('d'));
+    first.pump_sees("items (diagram)");
+    first.quit();
+    drop(first);
+
+    let mut second = Session::start(&store);
+    assert!(second.app.diagrams().is_empty());
+    assert!(!second.top_row().contains("diagram"));
 }
 
 #[test]
@@ -3597,8 +3623,9 @@ fn a_save_writes_the_changes_of_all_sections() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("77");
-    // Back to the sidebar: Row cap, Data, Format JSON, Save, Cancel, and the sidebar.
-    for _ in 0..6 {
+    // Back to the sidebar: Row cap, Limit in SQL, Data, Format JSON, Save, Cancel,
+    // and the sidebar.
+    for _ in 0..7 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Up);
@@ -3622,7 +3649,7 @@ fn a_bad_value_of_a_closed_section_shows_the_note() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("0");
-    for _ in 0..6 {
+    for _ in 0..7 {
         session.code(KeyCode::Tab);
     }
     // The sidebar opens the first section. Then the focus goes to Save.
@@ -3663,6 +3690,113 @@ fn the_project_value_of_the_reopening_comes_before_the_global_value() {
     assert!(!reopen(&store));
     write_config(&project, r#"{"reopenTabs":true}"#, &[]);
     assert!(reopen(&store));
+}
+
+#[test]
+fn the_project_value_of_the_limit_in_sql_comes_before_the_global_value() {
+    let (store, base) = store("p-cap-in-sql-scopes");
+    let db = database(&base, "s", "").display().to_string();
+    let project = store.project.clone().unwrap();
+    let limited = |store: &Store| sqln::store::config::load(store).config.unwrap().cap_in_sql;
+    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db)]);
+    assert!(limited(&store), "the default adds the limit");
+    write_config(
+        &store.global,
+        r#"{"capInSql":false}"#,
+        &[sqlite_entry("g1", "s", &db)],
+    );
+    assert!(!limited(&store));
+    write_config(&project, r#"{"capInSql":true}"#, &[]);
+    assert!(limited(&store));
+}
+
+#[test]
+fn the_limit_in_sql_of_the_file_reaches_the_console() {
+    let (store, base) = global_only("p-cap-in-sql-run");
+    let db = database(&base, "r", "CREATE TABLE t (v INTEGER);");
+    write_config(
+        &store.global,
+        r#"{"capInSql":false}"#,
+        &[sqlite_entry("g1", "r", &db.display().to_string())],
+    );
+    let mut session = Session::start(&store);
+    session.write("SELECT v FROM t;");
+    run_and_wait(&mut session);
+    let console = session.app.console();
+    assert!(!console.results.is_empty());
+    assert!(
+        !console
+            .messages
+            .iter()
+            .any(|message| message.text.contains("LIMIT")),
+        "{:?}",
+        console.messages
+    );
+}
+
+#[test]
+fn a_saved_row_cap_and_limit_in_sql_reach_a_console_that_already_ran() {
+    let (store, _) = two_connections("p-settings-live");
+    let mut session = Session::start(&store);
+    session.write("SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3;");
+    run_and_wait(&mut session);
+    let added = |session: &Session| {
+        session
+            .app
+            .console()
+            .messages
+            .iter()
+            .any(|message| message.text.contains("SQLN added LIMIT"))
+    };
+    assert!(added(&session), "{:?}", session.app.console().messages);
+    assert_eq!(session.app.console().results[0].table.rows.len(), 3);
+
+    session.open_results_settings();
+    // Row cap 2, then Limit in SQL Off.
+    session.code(KeyCode::Tab);
+    session.write("2");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Right);
+    session.code(KeyCode::Right);
+    // Data, Format JSON, and Save.
+    for _ in 0..3 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+
+    run_and_wait(&mut session);
+    let result = &session.app.console().results[0];
+    assert_eq!(
+        result.table.rows.len(),
+        2,
+        "the new cap acts without a restart"
+    );
+    assert_eq!(result.limit, sqln::exec::ReadLimit::RowCap);
+    assert!(!added(&session), "{:?}", session.app.console().messages);
+}
+
+#[test]
+fn a_save_of_the_limit_in_sql_writes_the_file() {
+    let (store, _) = two_connections("p-cap-in-sql-save");
+    let project = store.project.clone().unwrap();
+    let mut session = Session::start(&store);
+    session.open_results_settings();
+    // Row cap, then Limit in SQL.
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.assert_sees("Limit in SQL");
+    session.assert_sees("< Default: On >");
+    session.code(KeyCode::Right);
+    session.code(KeyCode::Right);
+    // Data, Format JSON, and Save.
+    for _ in 0..3 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+    let text = fs::read_to_string(project.config_file()).unwrap();
+    assert!(text.contains("\"capInSql\": false"), "{text}");
 }
 
 #[test]
@@ -3748,18 +3882,20 @@ fn a_signal_or_a_panic_also_keeps_the_list_of_tabs() {
 }
 
 #[test]
-fn the_last_tab_ends_the_application_and_comes_back_at_the_next_start() {
+fn a_closed_last_tab_stays_closed_at_the_next_start() {
     let (store, _) = reopening_store("p-reopen-last", "{}");
     let mut first = Session::start(&store);
     first.type_and_save("SELECT 1;");
     first.prefix('c');
+    assert!(first.app.home());
+    first.quit();
     assert!(first.app.should_quit());
-    first.app.shutdown();
     drop(first);
 
+    // The connection gives the start a new empty console.
     let second = Session::start(&store);
-    assert_eq!(second.names(), ["console-1"]);
-    assert_eq!(second.text(), "SELECT 1;");
+    assert_eq!(second.text(), "");
+    assert_eq!(second.names(), ["console-2"]);
 }
 
 #[test]

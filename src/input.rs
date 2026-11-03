@@ -160,6 +160,7 @@ pub enum Region {
     Global,
     Navigator,
     Grid,
+    Diagram,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -172,6 +173,7 @@ pub enum Action {
     ToggleComment,
     OpenHistory,
     OpenSessions,
+    OpenDiagram,
     ExplorerCommands,
     Stop,
     ToggleMode,
@@ -207,6 +209,7 @@ pub enum Action {
     NavigatorScripts,
     NavigatorDeletePassword,
     NavigatorStructure,
+    NavigatorDiagram,
     NavigatorSessions,
     NavigatorGenerate,
     NavigatorImport,
@@ -247,24 +250,40 @@ pub enum Action {
     GridReload,
     GridCancelQuery,
     GridEndSession,
+    DiagramUp,
+    DiagramDown,
+    DiagramLeft,
+    DiagramRight,
+    DiagramPanUp,
+    DiagramPanDown,
+    DiagramPanLeft,
+    DiagramPanRight,
+    DiagramPageUp,
+    DiagramPageDown,
+    DiagramOpen,
+    DiagramStructure,
+    DiagramCopy,
+    DiagramReload,
+    DiagramKeysOnly,
 }
 
 impl Action {
+    fn item(self) -> &'static Item {
+        DEFAULTS.iter().find(|item| item.action == self).unwrap()
+    }
+
     /// Returns the name that `config.json` uses.
     pub fn name(self) -> &'static str {
-        DEFAULTS
-            .iter()
-            .find(|item| item.action == self)
-            .unwrap()
-            .name
+        self.item().name
     }
 
     pub fn region(self) -> Region {
-        DEFAULTS
-            .iter()
-            .find(|item| item.action == self)
-            .unwrap()
-            .region
+        self.item().region
+    }
+
+    /// Returns the keys of the action without the overrides of the configuration.
+    pub fn default_keys(self, mode: KeyboardMode) -> Vec<String> {
+        default_keys(self.item(), mode)
     }
 
     /// Lists the actions of a region in the order of the help screen.
@@ -385,6 +404,13 @@ const DEFAULTS: &[Item] = &[
         Region::Global,
         "openSessions",
         &["ctrl+w S"],
+        &[],
+    ),
+    both(
+        Action::OpenDiagram,
+        Region::Global,
+        "openDiagram",
+        &["ctrl+w D"],
         &[],
     ),
     both(
@@ -630,6 +656,13 @@ const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(
+        Action::NavigatorDiagram,
+        Region::Navigator,
+        "navigatorDiagram",
+        &["d"],
+        &[],
+    ),
+    both(
         Action::NavigatorSessions,
         Region::Navigator,
         "navigatorSessions",
@@ -864,6 +897,111 @@ const DEFAULTS: &[Item] = &[
         Action::GridEndSession,
         Region::Grid,
         "gridEndSession",
+        &["K"],
+        &[],
+    ),
+    both(
+        Action::DiagramUp,
+        Region::Diagram,
+        "diagramUp",
+        &["up"],
+        &["k"],
+    ),
+    both(
+        Action::DiagramDown,
+        Region::Diagram,
+        "diagramDown",
+        &["down"],
+        &["j"],
+    ),
+    both(
+        Action::DiagramLeft,
+        Region::Diagram,
+        "diagramLeft",
+        &["left"],
+        &["h"],
+    ),
+    both(
+        Action::DiagramRight,
+        Region::Diagram,
+        "diagramRight",
+        &["right"],
+        &["l"],
+    ),
+    both(
+        Action::DiagramPanUp,
+        Region::Diagram,
+        "diagramPanUp",
+        &["shift+up"],
+        &[],
+    ),
+    both(
+        Action::DiagramPanDown,
+        Region::Diagram,
+        "diagramPanDown",
+        &["shift+down"],
+        &[],
+    ),
+    both(
+        Action::DiagramPanLeft,
+        Region::Diagram,
+        "diagramPanLeft",
+        &["shift+left"],
+        &[],
+    ),
+    both(
+        Action::DiagramPanRight,
+        Region::Diagram,
+        "diagramPanRight",
+        &["shift+right"],
+        &[],
+    ),
+    both(
+        Action::DiagramPageUp,
+        Region::Diagram,
+        "diagramPageUp",
+        &["pageup"],
+        &[],
+    ),
+    both(
+        Action::DiagramPageDown,
+        Region::Diagram,
+        "diagramPageDown",
+        &["pagedown"],
+        &[],
+    ),
+    both(
+        Action::DiagramOpen,
+        Region::Diagram,
+        "diagramOpen",
+        &["enter"],
+        &[],
+    ),
+    both(
+        Action::DiagramStructure,
+        Region::Diagram,
+        "diagramStructure",
+        &["i"],
+        &[],
+    ),
+    both(
+        Action::DiagramCopy,
+        Region::Diagram,
+        "diagramCopy",
+        &["y"],
+        &[],
+    ),
+    both(
+        Action::DiagramReload,
+        Region::Diagram,
+        "diagramReload",
+        &["R"],
+        &[],
+    ),
+    both(
+        Action::DiagramKeysOnly,
+        Region::Diagram,
+        "diagramKeysOnly",
         &["K"],
         &[],
     ),

@@ -52,6 +52,7 @@ fn a_move_and_close_keep_the_latest_edits_after_the_console_changes_id() {
     app.save_now();
     pump(&mut app, Instant::now());
     let original = app.console().id;
+    let script = script_id(&app);
     let target = app.connections[1].id;
     let (started, mut release) = gate(&mut app);
     app.associate(original, target);
@@ -61,10 +62,13 @@ fn a_move_and_close_keep_the_latest_edits_after_the_console_changes_id() {
     let expected = app.console().editor.text();
     release.now();
     pump(&mut app, Instant::now());
-    assert_ne!(app.console().id, original);
-    assert_eq!(app.console().connection, Some(target));
-    assert!(app.should_quit());
-    assert_eq!(saved_text(&app, &root), expected);
+    assert!(app.home());
+    let entry = scripts::list(&root, Scope::Global)
+        .into_iter()
+        .find(|entry| entry.meta.id == script)
+        .unwrap();
+    assert_eq!(entry.meta.connection_id, "other");
+    assert_eq!(scripts::read_text(&root, &script).unwrap().0, expected);
 }
 
 fn association_target(app: &mut App, root: &Root, scope: Scope) -> (ConnectionId, Root) {
@@ -256,12 +260,13 @@ fn discarding_a_close_does_not_write_later_edits_or_wait_in_the_interface() {
     started.recv_timeout(Duration::from_secs(5)).unwrap();
     app.on_event(Event::Paste("\nSELECT 2;".into()));
     app.console_mut().discard_text = true;
+    let script = script_id(&app);
     app.close_step(app.console().id);
-    assert!(!app.should_quit());
+    assert!(!app.home());
     release.now();
     pump(&mut app, Instant::now());
-    assert!(app.should_quit());
-    assert_eq!(saved_text(&app, &root), "SELECT 1;");
+    assert!(app.home());
+    assert_eq!(scripts::read_text(&root, &script).unwrap().0, "SELECT 1;");
 }
 
 fn gate(app: &mut App) -> (Receiver<()>, Release) {
@@ -277,6 +282,11 @@ fn pump(app: &mut App, now: Instant) {
         app.tick_at(now);
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+/// Returns the script of the active console. The script stays on disk after a close.
+fn script_id(app: &App) -> String {
+    app.console().file.as_ref().unwrap().meta.id.clone()
 }
 
 fn saved_text(app: &App, root: &Root) -> String {
@@ -319,14 +329,15 @@ fn closing_waits_for_edits_made_after_the_first_save_request() {
     app.on_event(Event::Paste("SELECT 1;".into()));
     app.save_now();
     started.recv_timeout(Duration::from_secs(5)).unwrap();
+    let script = script_id(&app);
     app.close_step(app.console().id);
     app.on_event(Event::Paste("\nSELECT 2;".into()));
     let expected = app.console().editor.text();
-    assert!(!app.should_quit());
+    assert!(!app.home());
     release.now();
     pump(&mut app, Instant::now());
-    assert!(app.should_quit());
-    assert_eq!(saved_text(&app, &root), expected);
+    assert!(app.home());
+    assert_eq!(scripts::read_text(&root, &script).unwrap().0, expected);
 }
 
 #[test]
