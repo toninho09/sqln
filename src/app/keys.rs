@@ -472,6 +472,7 @@ impl App {
             self.active = index;
             self.table_active = None;
             self.diagram_active = None;
+            self.sync_command_history();
         }
     }
 

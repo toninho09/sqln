@@ -23,9 +23,9 @@ pub use self::undo::DEFAULT_UNDO_LIMIT;
 use self::undo::UndoHistory;
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{CopyOutcome, EditorClipboard, SharedClipboard};
-use crate::complete::{Completion, keywords, suggest_in};
+use crate::complete::{Completion, suggest_in};
 use crate::input::SuggestionKeys;
-use crate::sql::{Dialect, TokenKind, format_statement, split, split_tokens, statement_at};
+use crate::sql::{Dialect, format_statement, split, split_tokens, statement_at};
 use crate::ui::text;
 use crate::ui::theme::Theme;
 
@@ -1096,13 +1096,8 @@ impl SqlEditor {
         for (row, end) in window.rows() {
             for (token, first, last) in snapshot.row_tokens(row, window.left, end) {
                 let word = &snapshot.text[token.start()..token.end()];
-                let style = match token.kind {
-                    TokenKind::Word if keywords::is_keyword(word, dialect) => theme.keyword,
-                    TokenKind::Number => theme.number,
-                    TokenKind::String => theme.string,
-                    TokenKind::QuotedIdentifier => theme.identifier,
-                    TokenKind::Comment => theme.comment,
-                    _ => continue,
+                let Some(style) = theme.sql_token_style(token.kind, word, dialect) else {
+                    continue;
                 };
                 styles.mark(Index2::new(row, first), Index2::new(row, last), style);
             }

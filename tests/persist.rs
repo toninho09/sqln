@@ -2328,7 +2328,7 @@ fn the_list_renames_a_saved_console_that_no_tab_shows() {
 }
 
 #[test]
-fn a_change_of_connection_keeps_the_text_and_the_name_and_ends_the_results() {
+fn a_change_of_connection_keeps_the_text_name_and_history_and_ends_the_results() {
     let (store, _) = two_connections("p-change");
     let mut session = Session::start(&store);
     session.type_and_save("SELECT 1;");
@@ -2336,6 +2336,7 @@ fn a_change_of_connection_keeps_the_text_and_the_name_and_ends_the_results() {
     assert!(!session.app.console().results.is_empty());
     let name = session.app.console().name.clone();
     let old = session.app.console().connection;
+    let history = session.app.console().messages.id;
     session.prefix('a');
     session.assert_sees("Change connection");
     session.code(KeyCode::Enter);
@@ -2348,7 +2349,13 @@ fn a_change_of_connection_keeps_the_text_and_the_name_and_ends_the_results() {
     assert_eq!(console.name, name);
     assert_eq!(console.editor.text(), "SELECT 1;");
     assert!(console.results.is_empty());
-    assert!(console.messages.is_empty());
+    assert_eq!(console.messages.id, history);
+    assert!(
+        console
+            .messages
+            .iter()
+            .any(|message| message.text.contains("SELECT 1"))
+    );
     let saved = consoles_in(&store.global, Scope::Global);
     assert_eq!(saved[0].meta.connection_id, "g2");
 }
@@ -2406,7 +2413,7 @@ fn the_settings_write_only_the_scope_of_the_dialog() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("77");
-    for _ in 0..5 {
+    for _ in 0..6 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2441,7 +2448,7 @@ fn an_empty_field_removes_the_project_value_and_shows_the_global_value() {
     session.code(KeyCode::Backspace);
     session.code(KeyCode::Backspace);
     session.assert_sees("from global: 10");
-    for _ in 0..5 {
+    for _ in 0..6 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2456,7 +2463,7 @@ fn a_settings_value_of_zero_stays_in_the_dialog_with_a_note() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("0");
-    for _ in 0..5 {
+    for _ in 0..6 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -3623,9 +3630,9 @@ fn a_save_writes_the_changes_of_all_sections() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("77");
-    // Back to the sidebar: Row cap, Limit in SQL, Data, Format JSON, Save, Cancel,
-    // and the sidebar.
-    for _ in 0..7 {
+    // Back to the sidebar: Row cap, Limit in SQL, Data, Format JSON, System commands,
+    // Save, Cancel, and the sidebar.
+    for _ in 0..8 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Up);
@@ -3649,7 +3656,7 @@ fn a_bad_value_of_a_closed_section_shows_the_note() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("0");
-    for _ in 0..7 {
+    for _ in 0..8 {
         session.code(KeyCode::Tab);
     }
     // The sidebar opens the first section. Then the focus goes to Save.
@@ -3690,6 +3697,158 @@ fn the_project_value_of_the_reopening_comes_before_the_global_value() {
     assert!(!reopen(&store));
     write_config(&project, r#"{"reopenTabs":true}"#, &[]);
     assert!(reopen(&store));
+}
+
+#[test]
+fn system_commands_start_off_and_follow_the_preference_scope() {
+    let (store, base) = store("p-system-command-scopes");
+    let db = database(&base, "s", "").display().to_string();
+    let project = store.project.clone().unwrap();
+    let shown = |store: &Store| config::load(store).config.unwrap().show_system_commands;
+    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db)]);
+    assert!(!shown(&store));
+    write_config(
+        &store.global,
+        r#"{"showSystemCommands":true}"#,
+        &[sqlite_entry("g1", "s", &db)],
+    );
+    assert!(shown(&store));
+    write_config(&project, r#"{"showSystemCommands":false}"#, &[]);
+    assert!(!shown(&store));
+    config::change_preferences(&project, Scope::Project, Preferences::default()).unwrap();
+    assert!(shown(&store));
+}
+
+#[test]
+fn system_command_settings_show_and_hide_existing_records_without_removing_them() {
+    let (store, _) = two_connections("p-system-command-live");
+    let mut session = Session::start(&store);
+    session.write("SELECT 314 AS history_value;");
+    run_and_wait(&mut session);
+    let history_id = session.app.console().messages.id;
+    session.app.console_mut().active = session.app.console().results.len();
+    let visible = |session: &mut Session| {
+        session.screen();
+        session
+            .app
+            .console_mut()
+            .messages
+            .viewport(&mut 0, 100, 1000)
+            .into_iter()
+            .map(|message| message.text)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(!visible(&mut session).contains("PRAGMA query_only"));
+    assert!(
+        session
+            .app
+            .console()
+            .messages
+            .iter()
+            .any(|message| message.text.contains("PRAGMA query_only"))
+    );
+    session.prefix(',');
+    session.click_text("Results");
+    session.assert_sees("System commands");
+    session.assert_sees("< Default: Off >");
+    session.click_text("System commands");
+    session.click_text("[Save]");
+    session.assert_sees("settings are saved");
+    assert!(config::load(&store).config.unwrap().show_system_commands);
+    assert!(visible(&mut session).contains("PRAGMA query_only"));
+    assert!(visible(&mut session).contains("Time: "));
+    session.prefix(',');
+    session.click_text("Results");
+    session.click_text("System commands");
+    session.click_text("[Save]");
+    assert!(!config::load(&store).config.unwrap().show_system_commands);
+    assert!(!visible(&mut session).contains("PRAGMA query_only"));
+    assert_eq!(session.app.console().messages.id, history_id);
+    assert!(
+        session
+            .app
+            .console()
+            .messages
+            .iter()
+            .any(|message| message.text.contains("PRAGMA query_only"))
+    );
+    let restarted = Session::start(&store);
+    assert!(restarted.app.console().messages.is_empty());
+}
+
+#[test]
+fn saved_system_command_visibility_applies_when_the_application_starts() {
+    let (store, _) = two_connections("p-system-command-start");
+    let project = store.project.as_ref().unwrap();
+    let mut preferences = config::preferences(project, Scope::Project).unwrap();
+    preferences.show_system_commands = Some(true);
+    config::change_preferences(project, Scope::Project, preferences).unwrap();
+    let mut session = Session::start(&store);
+    session
+        .app
+        .console_mut()
+        .messages
+        .on_event(sqln::command_log::LogEvent::Started {
+            id: u64::MAX,
+            key: None,
+            user: false,
+            system: true,
+            header_len: 0,
+            dialect: sqln::sql::Dialect::Postgres,
+            text: "startup system command".to_owned(),
+        });
+    session
+        .app
+        .console_mut()
+        .messages
+        .on_event(sqln::command_log::LogEvent::Finished {
+            id: u64::MAX,
+            level: sqln::console::MessageLevel::Info,
+            text: "Completed.".to_owned(),
+            elapsed: Duration::from_millis(5),
+        });
+    session.assert_sees("startup system command");
+    session.assert_sees("Completed · 5.000 ms");
+}
+
+#[test]
+fn canceling_system_command_settings_keeps_the_saved_value() {
+    let (store, _) = two_connections("p-system-command-cancel");
+    let before = fs::read(store.project.as_ref().unwrap().config_file()).unwrap();
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.click_text("Results");
+    session.click_text("System commands");
+    session.assert_sees("< On >");
+    session.click_text("[Cancel]");
+    assert!(!config::load(&store).config.unwrap().show_system_commands);
+    assert_eq!(
+        fs::read(store.project.as_ref().unwrap().config_file()).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn system_command_settings_can_remove_a_project_override() {
+    let global = Preferences {
+        show_system_commands: Some(true),
+        ..Preferences::default()
+    };
+    let project = Preferences {
+        show_system_commands: Some(false),
+        ..Preferences::default()
+    };
+    let mut form = SettingsForm::new(global, Some(project));
+    form.focus_on(SettingsField::ShowSystemCommands);
+    assert_eq!(form.show_system_commands(), Some(false));
+    form.on_key(key(KeyCode::Right), false);
+    assert_eq!(form.show_system_commands(), None);
+    assert_eq!(form.preferences().unwrap().show_system_commands, None);
+    assert!(
+        form.inherited(SettingsField::ShowSystemCommands)
+            .contains("from global: On")
+    );
 }
 
 #[test]
@@ -3746,9 +3905,10 @@ fn a_saved_row_cap_and_limit_in_sql_reach_a_console_that_already_ran() {
             .console()
             .messages
             .iter()
-            .any(|message| message.text.contains("SQLN added LIMIT"))
+            .filter(|message| message.text.contains("SQLN added LIMIT"))
+            .count()
     };
-    assert!(added(&session), "{:?}", session.app.console().messages);
+    assert_eq!(added(&session), 1, "{:?}", session.app.console().messages);
     assert_eq!(session.app.console().results[0].table.rows.len(), 3);
 
     session.open_results_settings();
@@ -3758,8 +3918,8 @@ fn a_saved_row_cap_and_limit_in_sql_reach_a_console_that_already_ran() {
     session.code(KeyCode::Tab);
     session.code(KeyCode::Right);
     session.code(KeyCode::Right);
-    // Data, Format JSON, and Save.
-    for _ in 0..3 {
+    // Data, Format JSON, System commands, and Save.
+    for _ in 0..4 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -3773,7 +3933,11 @@ fn a_saved_row_cap_and_limit_in_sql_reach_a_console_that_already_ran() {
         "the new cap acts without a restart"
     );
     assert_eq!(result.limit, sqln::exec::ReadLimit::RowCap);
-    assert!(!added(&session), "{:?}", session.app.console().messages);
+    assert_eq!(
+        added(&session),
+        1,
+        "the old record stays, but the new run adds no limit"
+    );
 }
 
 #[test]
@@ -3789,8 +3953,8 @@ fn a_save_of_the_limit_in_sql_writes_the_file() {
     session.assert_sees("< Default: On >");
     session.code(KeyCode::Right);
     session.code(KeyCode::Right);
-    // Data, Format JSON, and Save.
-    for _ in 0..3 {
+    // Data, Format JSON, System commands, and Save.
+    for _ in 0..4 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);

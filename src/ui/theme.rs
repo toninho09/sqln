@@ -118,6 +118,26 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// Uses the same SQL token styles in the editor and in command messages.
+    pub fn sql_token_style(
+        &self,
+        kind: crate::sql::TokenKind,
+        word: &str,
+        dialect: crate::sql::Dialect,
+    ) -> Option<Style> {
+        use crate::sql::TokenKind;
+        match kind {
+            TokenKind::Word if crate::complete::keywords::is_keyword(word, dialect) => {
+                Some(self.keyword)
+            }
+            TokenKind::Number => Some(self.number),
+            TokenKind::String => Some(self.string),
+            TokenKind::QuotedIdentifier => Some(self.identifier),
+            TokenKind::Comment => Some(self.comment),
+            _ => None,
+        }
+    }
+
     pub fn from_env() -> Self {
         Self::automatic(ColorEnv::read())
     }

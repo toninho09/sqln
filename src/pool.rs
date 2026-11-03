@@ -8,6 +8,7 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout};
 
+use crate::command_log::TraceContext;
 use crate::connector::{ConnectError, Connector, ResetOutcome, Session};
 use crate::sql::Dialect;
 
@@ -262,6 +263,10 @@ impl Pool {
 
     /// Waits for a place without a time limit. A drop of this future cancels the wait.
     pub async fn acquire(&self) -> Result<Lease, ConnectError> {
+        self.acquire_traced(None).await
+    }
+
+    pub async fn acquire_traced(&self, trace: Option<TraceContext>) -> Result<Lease, ConnectError> {
         let (grant, generation) = self.reserve().await;
         let mut lease = Lease {
             session: None,
@@ -270,6 +275,7 @@ impl Pool {
             released: false,
         };
         if let Grant::Session(mut session) = grant {
+            session.set_trace_context(trace.clone());
             // An idle session that stopped gets a replacement, and the user sees no error.
             if session.is_alive().await {
                 lease.session = Some(session);
@@ -277,7 +283,7 @@ impl Pool {
             }
         }
         // The time limit covers the whole connection, as the driver limit does not.
-        let connect = self.inner.connector.connect();
+        let connect = self.inner.connector.connect_traced(trace);
         match timeout(self.inner.connect_timeout, connect).await {
             Ok(session) => lease.session = Some(session?),
             Err(_) => {

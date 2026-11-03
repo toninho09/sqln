@@ -4,6 +4,29 @@ This document records the choices and the rejected alternatives.
 The complete rules are in the [plan](INITIAL_PLAN.md).
 Do not reopen a decision without a new fact.
 
+## Messages command history — 2026-11-03
+
+The user requests a DataGrip-like command history, separate for each console.
+This replaces the previous clearing of Messages on execution or connection change.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| Lifetime | Accumulate in memory until the console closes | Persist the history; clear at each execution | User choice |
+| Scope | User commands, transaction control, internal and shared commands | Only editor SQL | User choice |
+| Imports | Exclude the entire import operation, including session setup and cleanup | Record generated inserts | User choice; preserves the import exclusion |
+| Shared commands | Capture the active SQL console of the same connection at operation start; discard without a match | All consoles; last console of the connection | User choice |
+| Text | The effective SQL and separate bound parameters; safe byte escapes for Redis | Original editor text; interpolated SQL | The record must describe the request that reaches the driver |
+| Protocol commands | Technical operation names, without invented SQL | Exclude commands without SQL | User choice |
+| Driver boundary | Application calls only; exclude authentication and hidden driver operations | Raw protocol capture | Keeps credentials outside the history and needs no driver changes |
+| Budget | 10 MiB per console; remove oldest records as whole blocks | Unlimited memory; a fixed command count | User choice |
+| Oversized record | Truncate with an explicit marker, without changing the database request | Exceed the budget; omit all text | User choice |
+| System command visibility | Settings > Results > System commands, Off by default; hide Internal and Shared records without deleting them | Stop capture; show by default | User choice |
+| Messages layout | Compact blocks with a separator heading, SQL syntax colors, and one result line with rows and time | Bordered boxes; a flat message list | User approval |
+| Messages colors | Use the editor token styles and the recorded dialect; color the result, not all SQL, on an error | Parse status text from SQL; remove syntax colors after an error | Keeps SQL, notices, and results distinct |
+| Command time | Measure each driver operation with a monotonic clock; show milliseconds on completion or interruption | Total script time only; include pool waiting | User request |
+| Scroll | Follow only at the end; preserve the current record while reading older records | Always follow; never follow | User choice |
+| Compatibility | Keep result selection and the warning count of the current execution | Let internal records select Messages or count as warnings | History does not change execution controls |
+
 ## Home screen — 2026-11-03
 
 The user asked for a screen for the cases without a console. Before this change, a start without a connection opened a console that could not run, and the close of the last tab ended the application. This reopens two rules: "Closing the last tab ends the application" (`docs/UI.md`) and "End of the last table | End the application" (Implementation — 2026-10-31).

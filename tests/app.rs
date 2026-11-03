@@ -66,6 +66,23 @@ impl Fixture {
         self.app.on_event(Event::Key(event));
     }
 
+    fn wheel(&mut self, kind: MouseEventKind, column: u16, row: u16) {
+        self.app.on_event(Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }));
+    }
+
+    fn message_history(name: &str) -> Self {
+        let mut fixture = Self::new(name);
+        fixture.prefix('b');
+        fixture.run_script(&"CREATE TEMP TABLE IF NOT EXISTS t(a);\n".repeat(40));
+        fixture.buffer();
+        fixture
+    }
+
     fn prefix(&mut self, c: char) {
         self.press(ctrl('w'));
         self.press(key(KeyCode::Char(c)));
@@ -308,7 +325,7 @@ fn the_margin_shows_each_statement_state_and_the_error_message() {
     assert!(screen.contains("1 ✓ SELECT 1;"), "{screen}");
     assert!(screen.contains("2 ✗ SELECT * FROM missing;"), "{screen}");
     assert!(screen.contains("3 — SELECT 3;"), "{screen}");
-    f.assert_sees("Statement 2: no such table: missing");
+    f.assert_sees("Error · no such table: missing");
     assert!(f.app.console_mut().showing_messages());
 }
 
@@ -356,13 +373,64 @@ fn the_main_loop_waits_for_a_key_only_when_no_event_arrives() {
 #[test]
 fn the_scroll_of_messages_reaches_the_rows_past_the_first_screen() {
     let mut f = Fixture::new("messages-scroll");
-    f.run_script(&"CREATE TEMP TABLE IF NOT EXISTS t(a);\n".repeat(100));
+    let script = (1..=100)
+        .map(|index| format!("CREATE TEMP TABLE IF NOT EXISTS t{index}(a);\n"))
+        .collect::<String>();
+    f.run_script(&script);
     let console = f.app.console_mut();
     console.active = console.results.len();
     console.messages_scroll = 90;
     let screen = f.screen();
-    assert!(screen.contains("Statement 91:"), "{screen}");
-    assert!(!screen.contains("Statement 90:"), "{screen}");
+    let messages = screen.split("Messages").nth(1).unwrap();
+    assert!(messages.contains("t16(a)"), "{screen}");
+    assert!(!messages.contains("t100(a)"), "{screen}");
+    f.app.console_mut().messages_scroll = usize::MAX;
+    let screen = f.screen();
+    let messages = screen.split("Messages").nth(1).unwrap();
+    assert!(messages.contains("t100(a)"), "{screen}");
+    assert!(!messages.contains("t16(a)"), "{screen}");
+}
+
+#[test]
+fn messages_keep_the_commands_and_row_counts_of_previous_runs() {
+    let mut f = Fixture::new("command-history");
+    f.run_script("SELECT 123 AS first_value;");
+    f.run_script("SELECT 456 AS next_value;");
+    let messages = f
+        .app
+        .console()
+        .messages
+        .iter()
+        .map(|message| message.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        messages.contains("SELECT 123 AS first_value\nLIMIT 1001"),
+        "{messages}"
+    );
+    assert!(
+        messages.contains("SELECT 456 AS next_value\nLIMIT 1001"),
+        "{messages}"
+    );
+    assert!(messages.contains("Statement 1: 1 row"), "{messages}");
+    assert_eq!(f.app.console().results.len(), 1);
+}
+
+#[test]
+fn messages_do_not_claim_that_a_skipped_command_reaches_the_database() {
+    let mut f = Fixture::new("command-history-error");
+    f.run_script("SELECT 123; SELECT * FROM no_such_history_table; SELECT 987;");
+    let messages = f
+        .app
+        .console()
+        .messages
+        .iter()
+        .map(|message| message.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(messages.contains("SELECT * FROM no_such_history_table"));
+    assert!(messages.contains("no such table"));
+    assert!(!messages.contains("SELECT 987"));
 }
 
 #[test]
@@ -402,7 +470,7 @@ fn the_row_cap_shows_its_message() {
 fn changes_report_rows_in_messages() {
     let mut f = Fixture::new("changes");
     f.run_script("CREATE TABLE t(a);\nINSERT INTO t VALUES (1), (2);");
-    f.assert_sees("Statement 2: 2 rows changed.");
+    f.assert_sees("Completed · 2 rows changed");
     assert_eq!(f.file_query("SELECT count(*) FROM t"), 2);
 }
 
@@ -439,7 +507,7 @@ fn a_stop_interrupts_and_shows_the_state() {
     f.pump_until(|f| f.sees(" 1 ●"));
     f.prefix('x');
     f.idle();
-    f.assert_sees("Statement 1: stopped.");
+    f.assert_sees("Stopped");
     assert!(f.screen().contains("1 ■"), "{}", f.screen());
 }
 
@@ -624,6 +692,79 @@ fn a_click_selects_a_cell_and_a_tab() {
     assert_eq!(f.app.console_mut().focus, Focus::Results);
     let view = f.app.console_mut().results[0].view;
     assert_eq!((view.row, view.col), (1, 1));
+}
+
+#[test]
+fn the_wheel_scrolls_messages_under_the_pointer_without_moving_the_editor() {
+    let mut f = Fixture::message_history("messages-wheel");
+    let before = f.app.console().messages_scroll;
+    let editor_scroll = f.app.console().editor.scroll();
+    assert!(before > 3);
+    assert_eq!(f.app.console().focus, Focus::Editor);
+    f.wheel(MouseEventKind::ScrollUp, 3, 25);
+    f.buffer();
+    assert_eq!(f.app.console().messages_scroll, before - 3);
+    assert_eq!(f.app.console().editor.scroll(), editor_scroll);
+    assert_eq!(f.app.console().focus, Focus::Editor);
+    f.wheel(MouseEventKind::ScrollDown, 3, 25);
+    f.buffer();
+    assert_eq!(f.app.console().messages_scroll, before);
+}
+
+#[test]
+fn message_wheel_bursts_stop_at_the_edges_without_delaying_the_reverse_direction() {
+    let mut f = Fixture::message_history("messages-wheel-edges");
+    let end = f.app.console().messages_scroll;
+    for _ in 0..100 {
+        f.wheel(MouseEventKind::ScrollDown, 3, 25);
+    }
+    f.wheel(MouseEventKind::ScrollUp, 3, 25);
+    f.buffer();
+    assert_eq!(f.app.console().messages_scroll, end - 3);
+    for _ in 0..100 {
+        f.wheel(MouseEventKind::ScrollUp, 3, 25);
+    }
+    f.buffer();
+    assert_eq!(f.app.console().messages_scroll, 0);
+    f.wheel(MouseEventKind::ScrollDown, 3, 25);
+    f.buffer();
+    assert_eq!(f.app.console().messages_scroll, 3);
+}
+
+#[test]
+fn wheels_over_the_editor_or_outside_messages_do_not_scroll_the_message_history() {
+    let mut f = Fixture::message_history("messages-wheel-regions");
+    let before = f.app.console().messages_scroll;
+    let editor_top = f.app.console().editor.scroll().1;
+    assert!(editor_top > 0);
+    f.wheel(MouseEventKind::ScrollUp, 10, 5);
+    assert_eq!(f.app.console().editor.scroll().1, editor_top - 1);
+    assert_eq!(f.app.console().messages_scroll, before);
+    for kind in [MouseEventKind::ScrollLeft, MouseEventKind::ScrollRight] {
+        f.wheel(kind, 3, 25);
+    }
+    f.wheel(MouseEventKind::ScrollUp, 3, 29);
+    assert_eq!(f.app.console().messages_scroll, before);
+}
+
+#[test]
+fn scrolling_messages_pauses_following_and_returning_to_the_end_resumes_it() {
+    let mut f = Fixture::message_history("messages-wheel-follow");
+    f.wheel(MouseEventKind::ScrollUp, 3, 25);
+    f.buffer();
+    let older = f.app.console().messages_scroll;
+    f.run_script("CREATE TEMP TABLE next_command(a);");
+    f.buffer();
+    assert_eq!(f.app.console().messages_scroll, older);
+    for _ in 0..100 {
+        f.wheel(MouseEventKind::ScrollDown, 3, 25);
+    }
+    f.buffer();
+    let end = f.app.console().messages_scroll;
+    assert!(end > older);
+    f.run_script("CREATE TEMP TABLE last_command(a);");
+    f.buffer();
+    assert!(f.app.console().messages_scroll > end);
 }
 
 #[test]

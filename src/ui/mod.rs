@@ -11,6 +11,7 @@ pub mod help;
 pub mod history;
 pub mod icons;
 pub mod import;
+pub mod messages;
 pub mod name;
 pub mod navigator;
 pub mod palette;

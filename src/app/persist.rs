@@ -120,6 +120,7 @@ impl Persist {
         options.keymap = Some(config.keymap);
         options.appearance = (config.theme, config.icons);
         options.suggestion_keys = config.suggestion_keys;
+        options.show_system_commands = config.show_system_commands;
         options.export_choices = config.export;
         options.import_choices = config.import;
         config.connections
@@ -275,6 +276,7 @@ impl App {
         self.explorer_page = false;
         self.keymap = config.keymap;
         self.suggestion_keys = config.suggestion_keys;
+        self.show_system_commands = config.show_system_commands;
         if let Some(persist) = &mut self.persist {
             persist.query_history = config.query_history;
             persist.format_json = config.format_json;

@@ -141,6 +141,7 @@ struct Run {
     end: Option<ExecutionEnd>,
     transaction: Option<TransactionState>,
     notices: Vec<String>,
+    commands: Vec<String>,
 }
 
 impl Run {
@@ -192,6 +193,10 @@ impl Harness {
         let mut run = Run::default();
         loop {
             match self.next() {
+                ExecEvent::CommandLog {
+                    event: sqln::command_log::LogEvent::Started { text, .. },
+                    ..
+                } => run.commands.push(text),
                 ExecEvent::Columns { columns, .. } => run.columns.push(columns),
                 ExecEvent::Rows { rows, bytes, .. } => {
                     run.rows.extend(rows);
@@ -276,6 +281,57 @@ fn sessions(limit: usize) -> Settings {
     Settings {
         max_connections: limit,
         ..Settings::default()
+    }
+}
+
+#[test]
+fn command_history_captures_effective_sql_cleanup_and_session_reuse() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        h.manager
+            .set_console_history(h.console, 1, "test database".to_owned());
+        let run = h.run_ok(&["SELECT 123 AS history_value"]);
+        let commands = run.commands.join("\n");
+        assert!(
+            commands.contains("SELECT 123 AS history_value\nLIMIT 1001"),
+            "{commands}"
+        );
+        assert!(commands.contains("Internal"));
+        match server.kind {
+            Kind::Postgres => {
+                assert!(commands.contains("Parse/Describe"));
+                assert!(commands.contains("transaction_timestamp()"));
+                assert!(commands.contains("DISCARD TEMP"));
+            }
+            Kind::MySql => assert!(commands.contains("COM_RESET_CONNECTION")),
+        }
+        let run = h.run_ok(&["SELECT 456 AS history_value"]);
+        let commands = run.commands.join("\n");
+        assert!(commands.contains("SELECT 456 AS history_value\nLIMIT 1001"));
+        if server.kind == Kind::MySql {
+            assert!(commands.contains("COM_PING"));
+        }
+    }
+}
+
+#[test]
+fn command_history_captures_internal_cancellation_requests() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        h.manager
+            .set_console_history(h.console, 1, "test database".to_owned());
+        let execution = h.start(&[&server.sleep(10)], false);
+        h.wait_started();
+        // Let the driver enter the command before asking for cancellation.
+        std::thread::sleep(Duration::from_millis(100));
+        h.manager.stop(h.console);
+        let run = h.collect(execution);
+        let commands = run.commands.join("\n");
+        let expected = match server.kind {
+            Kind::Postgres => "PostgreSQL CancelRequest",
+            Kind::MySql => "KILL QUERY",
+        };
+        assert!(commands.contains(expected), "{commands}");
     }
 }
 
@@ -2304,7 +2360,13 @@ fn a_table_view_pages_filters_and_orders_rows_of_each_server() {
         s.run_script(&format!(
             "DROP TABLE IF EXISTS app_pages;\nCREATE TABLE app_pages (id int, label varchar(30));\n{fill}"
         ));
-        s.wait_for("changed");
+        assert!(
+            s.app
+                .console()
+                .messages
+                .iter()
+                .any(|message| message.text.contains("changed"))
+        );
 
         s.open_table("app_pages");
         assert_eq!(s.table_ids().len(), 100);
@@ -2411,7 +2473,13 @@ fn a_table_view_quotes_the_names_of_each_server() {
         };
         let drop_first = drop.replace("DROP TABLE", "DROP TABLE IF EXISTS");
         s.run_script(&format!("{drop_first};\n{create};\n{insert};"));
-        s.wait_for("changed");
+        assert!(
+            s.app
+                .console()
+                .messages
+                .iter()
+                .any(|message| message.text.contains("changed"))
+        );
         s.open_table("App Items");
         assert_eq!(s.table_ids(), ["1", "2"]);
         s.wait_for("Mixed Case");

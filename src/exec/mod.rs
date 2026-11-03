@@ -13,6 +13,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedSender};
 
 pub use self::sink::{Flow, ReadLimit, ResultSink};
 use crate::catalog::{Catalog, ForeignKey, RelationRef};
+use crate::command_log::{LogEvent, TraceContext};
 use crate::connection::DEFAULT_IDLE_SECONDS;
 use crate::connector::{
     ConnectError, Connector, SessionContext, StatementEnd, TransactionCommand, TransactionState,
@@ -102,6 +103,10 @@ pub enum ExecutionEnd {
 
 #[derive(Debug)]
 pub enum ExecEvent {
+    CommandLog {
+        target: u64,
+        event: LogEvent,
+    },
     Queued {
         console: ConsoleId,
         execution: ExecutionId,
@@ -213,7 +218,8 @@ impl ExecEvent {
             | ExecEvent::Notice { key, .. }
             | ExecEvent::LimitAdded { key, .. }
             | ExecEvent::StatementFinished { key, .. } => Some(key.console),
-            ExecEvent::CatalogLoaded { .. }
+            ExecEvent::CommandLog { .. }
+            | ExecEvent::CatalogLoaded { .. }
             | ExecEvent::PasswordRefused { .. }
             | ExecEvent::ColumnsLoaded { .. }
             | ExecEvent::ConnectionTested { .. }
@@ -257,6 +263,7 @@ pub struct RunOptions {
 }
 
 pub struct RunRequest {
+    pub trace: Option<TraceContext>,
     pub execution: ExecutionId,
     pub statements: Vec<String>,
     pub options: RunOptions,
@@ -299,7 +306,7 @@ enum Command {
     Import(ImportRequest),
     Stop,
     ConfirmClose(bool),
-    Transaction(TransactionCommand),
+    Transaction(TransactionCommand, Option<TraceContext>),
     /// The connection changed. The application sends this only to an idle console
     /// without a reserved session.
     Rebind(Binding),
@@ -322,6 +329,8 @@ pub struct Manager {
     next_console: ConsoleId,
     next_execution: AtomicU64,
     next_pool: u64,
+    histories: HashMap<ConsoleId, TraceContext>,
+    active_history: Option<TraceContext>,
 }
 
 impl Manager {
@@ -342,6 +351,8 @@ impl Manager {
             next_console: 1,
             next_execution: AtomicU64::new(1),
             next_pool: 1,
+            histories: HashMap::new(),
+            active_history: None,
         };
         Ok((manager, receiver))
     }
@@ -498,6 +509,40 @@ impl Manager {
         Some(console)
     }
 
+    pub fn set_console_history(&mut self, console: ConsoleId, target: u64, name: String) {
+        if let Some(entry) = self.consoles.get(&console) {
+            let mut trace =
+                TraceContext::new(target, entry.connection, name, false, self.events.clone());
+            if let Some(binding) = self.connections.get(&entry.connection) {
+                trace.dialect = binding.pool.dialect();
+            }
+            self.histories.insert(console, trace);
+        }
+    }
+
+    pub fn set_active_history(&mut self, console: Option<ConsoleId>) {
+        self.active_history = console.and_then(|id| self.histories.get(&id).cloned());
+    }
+
+    fn shared_trace(&self, connection: ConnectionId) -> Option<TraceContext> {
+        self.active_history
+            .as_ref()
+            .filter(|trace| trace.connection == connection)
+            .map(|trace| {
+                let mut trace = trace.clone();
+                trace.shared = true;
+                trace
+            })
+    }
+
+    fn console_trace(&self, console: ConsoleId) -> Option<TraceContext> {
+        self.histories.get(&console).cloned().or_else(|| {
+            self.consoles
+                .get(&console)
+                .and_then(|entry| self.shared_trace(entry.connection))
+        })
+    }
+
     fn send(&self, console: ConsoleId, command: Command) {
         if let Some(entry) = self.consoles.get(&console) {
             let _ = entry.commands.send(command);
@@ -515,6 +560,7 @@ impl Manager {
         self.send(
             console,
             Command::Run(RunRequest {
+                trace: self.console_trace(console),
                 execution,
                 statements,
                 options,
@@ -539,12 +585,24 @@ impl Manager {
     }
 
     pub fn transaction(&self, console: ConsoleId, command: TransactionCommand) {
-        self.send(console, Command::Transaction(command));
+        self.send(
+            console,
+            Command::Transaction(command, self.console_trace(console)),
+        );
     }
 
     pub fn close_console(&mut self, console: ConsoleId) {
         self.send(console, Command::Close);
         self.consoles.remove(&console);
+        self.histories.remove(&console);
+        if self.active_history.as_ref().is_some_and(|trace| {
+            !self
+                .histories
+                .values()
+                .any(|item| item.target == trace.target)
+        }) {
+            self.active_history = None;
+        }
     }
 
     /// Reads the catalog through the pool, so it respects the connection limit.
@@ -554,8 +612,9 @@ impl Manager {
             return;
         };
         let events = self.events.clone();
+        let trace = self.shared_trace(connection);
         self.runtime.spawn(async move {
-            let catalog = match binding.pool.acquire().await {
+            let catalog = match binding.pool.acquire_traced(trace).await {
                 Ok(mut lease) => {
                     let result = lease.session().read_catalog().await;
                     lease.release().await;
@@ -583,8 +642,9 @@ impl Manager {
             return;
         };
         let events = self.events.clone();
+        let trace = self.shared_trace(connection);
         self.runtime.spawn(async move {
-            let (columns, foreign_keys) = match binding.pool.acquire().await {
+            let (columns, foreign_keys) = match binding.pool.acquire_traced(trace).await {
                 Ok(mut lease) => {
                     let session = lease.session();
                     let (schema, name) = (&relation.schema, &relation.relation);

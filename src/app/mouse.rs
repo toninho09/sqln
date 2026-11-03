@@ -275,6 +275,12 @@ impl App {
         let vertical = columns == 0;
         if vertical && self.layout.navigator.contains(position) {
             self.navigator.move_by(rows, &self.connections);
+        } else if vertical
+            && self.console_on_screen()
+            && self.console().showing_messages()
+            && self.layout.console.results.contains(position)
+        {
+            self.console_mut().scroll_messages(rows);
         } else if let Some((result, area)) = self.active_grid()
             && area.contains(position)
         {

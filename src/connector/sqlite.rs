@@ -19,6 +19,7 @@ use crate::catalog::{
     Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
     group_foreign_keys,
 };
+use crate::command_log::{self, TraceContext};
 use crate::exec::{Flow, ResultSink};
 use crate::grid::{RowWriter, Value};
 use crate::sql::Dialect;
@@ -61,7 +62,7 @@ pub fn validate_path(path: &Path) -> Result<(), ConnectError> {
     Ok(())
 }
 
-fn open(target: &SqliteTarget) -> Result<Connection, ConnectError> {
+fn open(target: &SqliteTarget, trace: &Option<TraceContext>) -> Result<Connection, ConnectError> {
     let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     if target.allow_create {
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
@@ -70,8 +71,11 @@ fn open(target: &SqliteTarget) -> Result<Connection, ConnectError> {
     let conn = Connection::open_with_flags(&target.path, flags).map_err(failed)?;
     conn.busy_timeout(target.busy_timeout).map_err(failed)?;
     if let Some(enabled) = target.foreign_keys {
-        conn.pragma_update(None, "foreign_keys", enabled)
-            .map_err(failed)?;
+        let sql = format!(
+            "PRAGMA foreign_keys = {}",
+            if enabled { "ON" } else { "OFF" }
+        );
+        command_log::observe_blocking(trace, &sql, || conn.execute_batch(&sql)).map_err(failed)?;
     }
     Ok(conn)
 }
@@ -93,16 +97,24 @@ impl Connector for SqliteConnector {
     }
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
+        self.connect_traced(None).await
+    }
+
+    async fn connect_traced(
+        &self,
+        trace: Option<TraceContext>,
+    ) -> Result<Box<dyn Session>, ConnectError> {
         validate_path(&self.target.path)?;
         let target = self.target.clone();
         let (opened, wait_opened) = oneshot::channel();
         let (requests, inbox) = channel();
+        let opening_trace = trace.clone();
         thread::Builder::new()
             .name("sqlite-session".to_owned())
-            .spawn(move || match open(&target) {
+            .spawn(move || match open(&target, &opening_trace) {
                 Ok(conn) => {
                     let _ = opened.send(Ok(conn.get_interrupt_handle()));
-                    serve(&conn, &inbox);
+                    serve(&conn, &inbox, opening_trace);
                 }
                 Err(error) => {
                     let _ = opened.send(Err(error));
@@ -115,6 +127,7 @@ impl Connector for SqliteConnector {
         Ok(Box::new(SqliteSession {
             requests,
             interrupt: Arc::new(Interrupt(interrupt)),
+            trace,
         }))
     }
 }
@@ -122,6 +135,7 @@ impl Connector for SqliteConnector {
 type Reply<T> = oneshot::Sender<Result<T, ExecError>>;
 
 enum Request {
+    Trace(Option<TraceContext>),
     Context(SessionContext, Reply<()>),
     Run(String, ResultSink, Reply<StatementEnd>),
     TransactionOpen(oneshot::Sender<bool>),
@@ -143,14 +157,24 @@ fn exec_error(error: rusqlite::Error) -> ExecError {
 }
 
 /// Runs in the session thread. It ends when the session drops its sender.
-fn serve(conn: &Connection, inbox: &Receiver<Request>) {
+fn serve(conn: &Connection, inbox: &Receiver<Request>, mut trace: Option<TraceContext>) {
     while let Ok(request) = inbox.recv() {
         match request {
+            Request::Trace(context) => trace = context,
             Request::Context(context, reply) => {
-                let _ = reply.send(apply_context(conn, &context));
+                let sql = format!(
+                    "PRAGMA query_only = {}",
+                    if context.read_only { "ON" } else { "OFF" }
+                );
+                let _ = reply.send(
+                    command_log::observe_blocking(&trace, &sql, || conn.execute_batch(&sql))
+                        .map_err(exec_error),
+                );
             }
             Request::Run(sql, sink, reply) => {
-                let _ = reply.send(run(conn, &sql, sink));
+                let _ = reply.send(command_log::observe_blocking(&trace, &sql, || {
+                    run(conn, &sql, sink)
+                }));
             }
             Request::TransactionOpen(reply) => {
                 let _ = reply.send(!conn.is_autocommit());
@@ -161,25 +185,24 @@ fn serve(conn: &Connection, inbox: &Receiver<Request>) {
                     TransactionCommand::Commit => "COMMIT",
                     TransactionCommand::Rollback => "ROLLBACK",
                 };
-                let _ = reply.send(conn.execute_batch(sql).map_err(exec_error));
+                let _ = reply.send(
+                    command_log::observe_blocking(&trace, sql, || conn.execute_batch(sql))
+                        .map_err(exec_error),
+                );
             }
             Request::Catalog(reply) => {
-                let _ = reply.send(read_catalog(conn).map_err(exec_error));
+                let _ = reply.send(read_catalog(conn, &trace).map_err(exec_error));
             }
             Request::Columns(schema, relation, reply) => {
-                let _ = reply.send(read_columns(conn, &schema, &relation).map_err(exec_error));
+                let _ =
+                    reply.send(read_columns(conn, &schema, &relation, &trace).map_err(exec_error));
             }
             Request::ForeignKeys(schema, relation, reply) => {
-                let keys = read_foreign_keys(conn, &schema, &relation);
+                let keys = read_foreign_keys(conn, &schema, &relation, &trace);
                 let _ = reply.send(keys.map_err(exec_error));
             }
         }
     }
-}
-
-fn apply_context(conn: &Connection, context: &SessionContext) -> Result<(), ExecError> {
-    conn.pragma_update(None, "query_only", context.read_only)
-        .map_err(exec_error)
 }
 
 fn write_value(row: &mut RowWriter, cell: ValueRef<'_>) {
@@ -249,11 +272,14 @@ fn quoted(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-fn read_catalog(conn: &Connection) -> rusqlite::Result<Catalog> {
-    let mut names = conn.prepare("SELECT name FROM pragma_database_list WHERE name <> 'temp'")?;
-    let names: Vec<String> = names
-        .query_map([], |row| row.get(0))?
-        .collect::<Result<_, _>>()?;
+fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> rusqlite::Result<Catalog> {
+    let sql = "SELECT name FROM pragma_database_list WHERE name <> 'temp'";
+    let names: Vec<String> = command_log::observe_blocking(trace, sql, || {
+        let mut names = conn.prepare(sql)?;
+        names
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()
+    })?;
 
     let mut schemas = Vec::with_capacity(names.len());
     for name in names {
@@ -263,22 +289,24 @@ fn read_catalog(conn: &Connection) -> rusqlite::Result<Catalog> {
              ORDER BY name",
             quoted(&name),
         );
-        let mut statement = conn.prepare(&sql)?;
-        let relations = statement
-            .query_map([], |row| {
-                let kind: String = row.get(1)?;
-                Ok(Relation {
-                    name: row.get(0)?,
-                    kind: if kind == "view" {
-                        RelationKind::View
-                    } else {
-                        RelationKind::Table
-                    },
-                    columns: Columns::NotLoaded,
-                    foreign_keys: Vec::new(),
-                })
-            })?
-            .collect::<Result<_, _>>()?;
+        let relations = command_log::observe_blocking(trace, &sql, || {
+            let mut statement = conn.prepare(&sql)?;
+            statement
+                .query_map([], |row| {
+                    let kind: String = row.get(1)?;
+                    Ok(Relation {
+                        name: row.get(0)?,
+                        kind: if kind == "view" {
+                            RelationKind::View
+                        } else {
+                            RelationKind::Table
+                        },
+                        columns: Columns::NotLoaded,
+                        foreign_keys: Vec::new(),
+                    })
+                })?
+                .collect::<rusqlite::Result<_>>()
+        })?;
         schemas.push(Schema {
             name,
             relations,
@@ -291,11 +319,23 @@ fn read_catalog(conn: &Connection) -> rusqlite::Result<Catalog> {
     })
 }
 
-fn read_columns(conn: &Connection, schema: &str, relation: &str) -> rusqlite::Result<Vec<String>> {
+fn read_columns(
+    conn: &Connection,
+    schema: &str,
+    relation: &str,
+    trace: &Option<TraceContext>,
+) -> rusqlite::Result<Vec<String>> {
     let sql = "SELECT name FROM pragma_table_info(?1, ?2)";
-    let mut statement = conn.prepare(sql)?;
-    let names = statement.query_map([relation, schema], |row| row.get(0))?;
-    names.collect()
+    command_log::observe_blocking(
+        trace,
+        format_args!("{sql}\nParameters: ?1={relation:?}, ?2={schema:?}"),
+        || {
+            let mut statement = conn.prepare(sql)?;
+            statement
+                .query_map([relation, schema], |row| row.get(0))?
+                .collect()
+        },
+    )
 }
 
 /// Reads the keys of a relation. A key without target columns points to the primary key
@@ -304,23 +344,30 @@ fn read_foreign_keys(
     conn: &Connection,
     schema: &str,
     relation: &str,
+    trace: &Option<TraceContext>,
 ) -> rusqlite::Result<Vec<ForeignKey>> {
     let sql = "SELECT id, \"table\", \"from\", \"to\" FROM pragma_foreign_key_list(?1, ?2) \
                WHERE \"to\" IS NOT NULL ORDER BY id, seq";
-    let mut statement = conn.prepare(sql)?;
-    let pairs = statement.query_map([relation, schema], |row| {
-        Ok(KeyColumn {
-            key: row.get::<_, i64>(0)?.to_string(),
-            target: RelationRef {
-                schema: schema.to_owned(),
-                relation: row.get(1)?,
-            },
-            column: row.get(2)?,
-            target_column: row.get(3)?,
-        })
-    })?;
-    let pairs: rusqlite::Result<Vec<KeyColumn>> = pairs.collect();
-    pairs.map(group_foreign_keys)
+    command_log::observe_blocking(
+        trace,
+        format_args!("{sql}\nParameters: ?1={relation:?}, ?2={schema:?}"),
+        || {
+            let mut statement = conn.prepare(sql)?;
+            let pairs = statement.query_map([relation, schema], |row| {
+                Ok(KeyColumn {
+                    key: row.get::<_, i64>(0)?.to_string(),
+                    target: RelationRef {
+                        schema: schema.to_owned(),
+                        relation: row.get(1)?,
+                    },
+                    column: row.get(2)?,
+                    target_column: row.get(3)?,
+                })
+            })?;
+            let pairs: rusqlite::Result<Vec<KeyColumn>> = pairs.collect();
+            pairs.map(group_foreign_keys)
+        },
+    )
 }
 
 struct Interrupt(InterruptHandle);
@@ -328,12 +375,19 @@ struct Interrupt(InterruptHandle);
 #[async_trait]
 impl Canceller for Interrupt {
     async fn cancel(&self) -> Result<(), String> {
-        self.0.interrupt();
-        Ok(())
+        self.cancel_traced(None).await
+    }
+    async fn cancel_traced(&self, trace: Option<TraceContext>) -> Result<(), String> {
+        command_log::observe(trace, "sqlite3_interrupt", async {
+            self.0.interrupt();
+            Ok(())
+        })
+        .await
     }
 }
 
 struct SqliteSession {
+    trace: Option<TraceContext>,
     requests: Sender<Request>,
     interrupt: Arc<Interrupt>,
 }
@@ -355,8 +409,13 @@ impl SqliteSession {
 
 #[async_trait]
 impl Session for SqliteSession {
+    fn set_trace_context(&mut self, trace: Option<TraceContext>) {
+        self.trace = trace.clone();
+        let _ = self.requests.send(Request::Trace(trace));
+    }
+
     fn canceller(&self) -> Arc<dyn Canceller> {
-        self.interrupt.clone()
+        command_log::canceller(self.interrupt.clone(), &self.trace)
     }
 
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError> {

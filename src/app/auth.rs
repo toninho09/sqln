@@ -820,6 +820,7 @@ impl App {
     }
 
     fn dispatch_authorized(&mut self, action: Use, definition: Option<Definition>) {
+        self.sync_command_history();
         let Some(manager) = &self.manager else { return };
         match action {
             Use::Catalog(id, read) => {

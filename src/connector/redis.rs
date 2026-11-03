@@ -176,13 +176,22 @@ impl Connector for RedisConnector {
     }
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
+        self.connect_traced(None).await
+    }
+
+    async fn connect_traced(
+        &self,
+        trace: Option<crate::command_log::TraceContext>,
+    ) -> Result<Box<dyn Session>, ConnectError> {
         let mut conn = open(&self.target).await?;
         // An account without this right can run commands, but Stop then closes the session.
-        let client = redis::cmd("CLIENT")
-            .arg("ID")
-            .query_async(&mut conn)
-            .await
-            .ok();
+        let client = crate::command_log::observe(
+            trace.clone(),
+            "CLIENT ID",
+            redis::cmd("CLIENT").arg("ID").query_async(&mut conn),
+        )
+        .await
+        .ok();
         let database = self.target.database.clone();
         Ok(Box::new(RedisSession {
             conn,
@@ -192,6 +201,7 @@ impl Connector for RedisConnector {
             }),
             database: database.unwrap_or_else(|| "0".to_owned()),
             read_only: false,
+            trace,
         }))
     }
 }
@@ -204,16 +214,21 @@ struct RedisCanceller {
 
 impl RedisCanceller {
     /// The server can stop only a command that waits. Other commands answer 0.
-    async fn unblock(&self) -> Result<(), String> {
+    async fn unblock(&self, trace: Option<crate::command_log::TraceContext>) -> Result<(), String> {
         let client = self.client.ok_or(text::REDIS_NO_STOP)?;
         let mut conn = open(&self.target).await.map_err(|error| error.message)?;
-        let stopped: i64 = redis::cmd("CLIENT")
-            .arg("UNBLOCK")
-            .arg(client)
-            .arg("ERROR")
-            .query_async(&mut conn)
-            .await
-            .map_err(|error| describe(&error))?;
+        let command = crate::command_log::limited(format_args!("CLIENT UNBLOCK {client} ERROR"));
+        let stopped: i64 = crate::command_log::observe(
+            trace,
+            command,
+            redis::cmd("CLIENT")
+                .arg("UNBLOCK")
+                .arg(client)
+                .arg("ERROR")
+                .query_async(&mut conn),
+        )
+        .await
+        .map_err(|error| describe(&error))?;
         if stopped == 1 {
             Ok(())
         } else {
@@ -225,7 +240,14 @@ impl RedisCanceller {
 #[async_trait]
 impl Canceller for RedisCanceller {
     async fn cancel(&self) -> Result<(), String> {
-        match timeout(SESSION_LIMIT, self.unblock()).await {
+        self.cancel_traced(None).await
+    }
+
+    async fn cancel_traced(
+        &self,
+        trace: Option<crate::command_log::TraceContext>,
+    ) -> Result<(), String> {
+        match timeout(SESSION_LIMIT, self.unblock(trace)).await {
             Ok(result) => result,
             Err(_) => Err("The cancel request got no answer.".to_owned()),
         }
@@ -494,7 +516,30 @@ impl Page {
     }
 }
 
+struct RedisCommand<'a>(&'a [&'a [u8]]);
+
+impl std::fmt::Display for RedisCommand<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (index, word) in self.0.iter().enumerate() {
+            if index > 0 {
+                f.write_str(" ")?;
+            }
+            f.write_str("\"")?;
+            for byte in *word {
+                match byte {
+                    b'"' | b'\\' => write!(f, "\\{}", char::from(*byte))?,
+                    0x20..=0x7e => write!(f, "{}", char::from(*byte))?,
+                    _ => write!(f, "\\x{byte:02x}")?,
+                }
+            }
+            f.write_str("\"")?;
+        }
+        Ok(())
+    }
+}
+
 struct RedisSession {
+    trace: Option<crate::command_log::TraceContext>,
     conn: MultiplexedConnection,
     canceller: Arc<RedisCanceller>,
     /// The database of the connection. A cleanup returns to it.
@@ -504,14 +549,25 @@ struct RedisSession {
 
 impl RedisSession {
     async fn ask(&mut self, words: &[&[u8]]) -> Result<Reply, ExecError> {
+        self.ask_traced(words, self.trace.clone()).await
+    }
+
+    async fn ask_traced(
+        &mut self,
+        words: &[&[u8]],
+        trace: Option<crate::command_log::TraceContext>,
+    ) -> Result<Reply, ExecError> {
         let mut command = Cmd::new();
         for word in words {
             command.arg(*word);
         }
-        command
-            .query_async(&mut self.conn)
-            .await
-            .map_err(|error| exec_error(&error))
+        crate::command_log::observe(
+            trace,
+            RedisCommand(words),
+            command.query_async(&mut self.conn),
+        )
+        .await
+        .map_err(|error| exec_error(&error))
     }
 
     async fn select(&mut self, database: &str) -> Result<(), ExecError> {
@@ -521,7 +577,15 @@ impl RedisSession {
     /// Returns true when the server marks a command as a read. Any other answer returns
     /// false, so a server that does not answer refuses the command.
     async fn is_read(&mut self, name: &[u8]) -> bool {
-        let Ok(reply) = self.ask(&[b"COMMAND", b"INFO", name]).await else {
+        let Ok(reply) = self
+            .ask_traced(
+                &[b"COMMAND", b"INFO", name],
+                self.trace
+                    .as_ref()
+                    .map(crate::command_log::TraceContext::internal),
+            )
+            .await
+        else {
             return false;
         };
         let flags = items(&reply)
@@ -783,15 +847,28 @@ impl RedisSession {
             .cmd("UNWATCH")
             .cmd("SELECT")
             .arg(&self.database);
-        let replies: Result<Vec<RedisResult<Reply>>, _> = pipe.query_async(&mut self.conn).await;
+        let command = format!(
+            "DISCARD\nCLIENT SETNAME \"\"\nCLIENT TRACKING OFF\nCLIENT NO-EVICT OFF\nCLIENT NO-TOUCH OFF\nUNWATCH\nSELECT {}",
+            self.database
+        );
+        let replies: Result<Vec<RedisResult<Reply>>, _> = crate::command_log::observe(
+            self.trace.clone(),
+            command,
+            pipe.query_async(&mut self.conn),
+        )
+        .await;
         matches!(replies.as_deref(), Ok([.., Ok(_), Ok(_)]))
     }
 }
 
 #[async_trait]
 impl Session for RedisSession {
+    fn set_trace_context(&mut self, trace: Option<crate::command_log::TraceContext>) {
+        self.trace = trace;
+    }
+
     fn canceller(&self) -> Arc<dyn Canceller> {
-        self.canceller.clone()
+        crate::command_log::canceller(self.canceller.clone(), &self.trace)
     }
 
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError> {

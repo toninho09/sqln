@@ -148,6 +148,8 @@ pub struct Options {
     pub appearance: (Option<ThemeName>, Option<IconName>),
     /// The keys that accept a suggestion.
     pub suggestion_keys: SuggestionKeys,
+    /// True when Messages shows internal and shared commands.
+    pub show_system_commands: bool,
     pub export_choices: ExportChoices,
     pub import_choices: ImportChoices,
 }
@@ -172,6 +174,7 @@ impl Default for Options {
             vault: None,
             appearance: (None, None),
             suggestion_keys: SuggestionKeys::default(),
+            show_system_commands: crate::store::config::DEFAULT_SHOW_SYSTEM_COMMANDS,
             export_choices: ExportChoices::default(),
             import_choices: ImportChoices::default(),
         }
@@ -350,6 +353,7 @@ pub struct App {
     undo_limit: usize,
     keymap: Keymap,
     suggestion_keys: SuggestionKeys,
+    show_system_commands: bool,
     database: Option<PathBuf>,
     clipboard: SharedClipboard,
     /// The theme of the terminal, before the choices of the configuration.
@@ -478,6 +482,7 @@ impl App {
             undo_limit: options.undo_limit,
             keymap,
             suggestion_keys: options.suggestion_keys,
+            show_system_commands: options.show_system_commands,
             database: options.database,
             clipboard,
             terminal_theme: theme,
@@ -699,11 +704,34 @@ impl App {
         });
     }
 
+    fn sync_command_history(&mut self) {
+        let Some(manager) = &mut self.manager else {
+            return;
+        };
+        for console in &self.consoles {
+            if let Some(connection) = console
+                .connection
+                .and_then(|id| self.connections.iter().find(|item| item.id == id))
+            {
+                manager.set_console_history(
+                    console.id,
+                    console.messages.id,
+                    format!("{} [{}]", connection.name, connection.id),
+                );
+            }
+        }
+        let active = (self.table_active.is_none() && self.diagram_active.is_none())
+            .then(|| self.consoles[self.active].id);
+        manager.set_active_history(active);
+    }
+
     pub fn on_event(&mut self, event: Event) {
+        self.sync_command_history();
         if ends_status(&event) {
             self.clear_status();
         }
         self.route_event(event);
+        self.sync_command_history();
         // The application keeps the message of the editor, so one clock serves both.
         if let Some(message) = self.console_mut().editor.take_status() {
             self.status = Some(message.to_owned());
@@ -901,6 +929,7 @@ impl App {
     /// Reads waiting execution events and continues the row search.
     /// It returns true when the screen changed.
     pub fn drain_events(&mut self) -> bool {
+        self.sync_command_history();
         let ticked = self.tick();
         let authorized = self.poll_auth();
         let probed = self.poll_probes();
@@ -933,6 +962,15 @@ impl App {
 
     fn on_exec_event(&mut self, event: ExecEvent) {
         match event {
+            ExecEvent::CommandLog { target, event } => {
+                if let Some(console) = self
+                    .consoles
+                    .iter_mut()
+                    .find(|console| console.messages.id == target)
+                {
+                    console.messages.on_event(event);
+                }
+            }
             ExecEvent::CatalogLoaded {
                 connection,
                 read,
@@ -1109,6 +1147,7 @@ impl App {
             transactions,
             title: tall,
             welcome: self.welcome(),
+            show_system_commands: self.show_system_commands,
         };
         let ratio = self.editor_ratio;
         let focused = !self.navigator_focused;

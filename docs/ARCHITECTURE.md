@@ -436,6 +436,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
     "reopenTabs": true,
     "queryHistory": true,
     "formatJson": true,
+    "showSystemCommands": false,
     "bellAfterSeconds": 10,
     "suggestionKeys": "tab"
   },

@@ -687,6 +687,7 @@ pub fn template_name(template: Template) -> &'static str {
     }
 }
 pub const FIELD_FORMAT_JSON: &str = "Format JSON";
+pub const FIELD_SHOW_SYSTEM_COMMANDS: &str = "System commands";
 pub const FIELD_BELL_AFTER: &str = "Bell seconds";
 pub const FIELD_SUGGESTION_KEYS: &str = "Autocomplete";
 pub const FIELD_UNDO_LIMIT: &str = "Undo (MiB)";
@@ -909,7 +910,7 @@ pub fn change_connection(
     format!(
         "Move {name} from {current} to {target}?\n\n{files} {folder}.\n\
          SQLN saves the text first, and it runs no SQL.\n\
-         The results, the messages, and the schema choice of the console end."
+         The results and the schema choice end. The Messages history stays."
     )
 }
 pub const TITLE_SCHEMA: &str = "Schema";
