@@ -6,8 +6,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
+use super::float_block;
 use super::theme::Theme;
-use super::{float_block, text};
 
 const COLUMNS: u16 = 3;
 const MAX_WIDTH: u16 = 78;
@@ -56,8 +56,14 @@ fn columns_of<'a>(groups: &'a [KeyGroup], theme: &Theme) -> Vec<Vec<Line<'a>>> {
     columns
 }
 
-/// Draws the menu at the bottom of `bounds`.
-pub fn draw_which_key(frame: &mut Frame, bounds: Rect, groups: &[KeyGroup], theme: &Theme) {
+/// Draws a page of the menu at the bottom of `bounds`.
+pub fn draw_which_key(
+    frame: &mut Frame,
+    bounds: Rect,
+    title: &str,
+    groups: &[KeyGroup],
+    theme: &Theme,
+) {
     let columns = columns_of(groups, theme);
     let rows = columns.iter().map(Vec::len).max().unwrap_or(0);
     let width = MAX_WIDTH.min(bounds.width);
@@ -68,7 +74,7 @@ pub fn draw_which_key(frame: &mut Frame, bounds: Rect, groups: &[KeyGroup], them
     let x = bounds.x + (bounds.width - width) / 2;
     let area = Rect::new(x, bounds.bottom() - height, width, height);
     frame.render_widget(Clear, area);
-    let block = float_block(text::TITLE_PREFIX, theme);
+    let block = float_block(title, theme);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

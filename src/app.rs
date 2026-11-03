@@ -396,6 +396,8 @@ pub struct App {
     fallback_dialect: Dialect,
     /// The first key of a sequence such as `Ctrl+W e`.
     pending_key: Option<Chord>,
+    /// True while the explorer page of the `Ctrl+W` menu waits for its key.
+    explorer_page: bool,
     drag: Option<Drag>,
     /// The time and the place of the last click in the navigator.
     last_click: Option<(Instant, u16, u16)>,
@@ -492,6 +494,7 @@ impl App {
             conflicts: None,
             fallback_dialect: options.dialect,
             pending_key: None,
+            explorer_page: false,
             drag: None,
             last_click: None,
             next_console_number: 1,
@@ -1188,8 +1191,12 @@ impl App {
 
     /// Draws the windows above the panels. `bounds` holds the rows above the status line.
     fn draw_layers(&mut self, frame: &mut Frame, bounds: Rect) {
-        if self.pending_key.is_some_and(Chord::is_prefix) {
-            draw_which_key(frame, bounds, &self.prefix_menu(), &self.theme);
+        if self.explorer_page {
+            let title = self.explorer_menu_title();
+            draw_which_key(frame, bounds, &title, &self.explorer_menu(), &self.theme);
+        } else if self.pending_key.is_some_and(Chord::is_prefix) {
+            let title = text::TITLE_PREFIX;
+            draw_which_key(frame, bounds, title, &self.prefix_menu(), &self.theme);
         }
         if let Some(form) = &self.form {
             self.layout.form = draw_form(frame, form, &self.theme);

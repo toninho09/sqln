@@ -259,23 +259,33 @@ fn a_navigator_without_connections_shows_how_to_add_one() {
 }
 
 #[test]
-fn a_connection_row_shows_the_commands_of_a_connection() {
+fn a_connection_row_keeps_only_the_main_commands() {
     let mut s = Screen::conventional("connection");
     s.prefix('h');
-    let row = s.hints_at(200);
-    for text in [
-        "Enter console",
-        "n new console",
-        "s scripts",
-        "r refresh",
-        "e edit connection",
-        "a add connection",
-        "Del remove connection",
-        "Right expand",
-        "i struct",
-    ] {
-        assert!(row.contains(text), "{text:?} is not in {row:?}");
-    }
+    assert_eq!(
+        s.hints_at(200),
+        "Enter console  n new console  Right expand  Ctrl+W commands  F1 keys"
+    );
+}
+
+#[test]
+fn the_explorer_page_lists_the_commands_of_a_connection() {
+    let mut s = Screen::conventional("connection-page");
+    s.prefix('h');
+    assert_eq!(
+        common::explorer_page(&s.app),
+        [
+            "n New console",
+            "s Scripts",
+            "r Read the catalog",
+            "e Edit connection",
+            "a Add a connection",
+            "Del Remove connection",
+            "i Show the structure",
+            "y Copy the name",
+            "/ Filter the tables",
+        ]
+    );
 }
 
 #[test]
@@ -283,14 +293,14 @@ fn a_sqlite_file_keeps_no_session_to_disconnect() {
     let mut s = Screen::conventional("disconnect");
     s.run("SELECT 1;");
     s.prefix('h');
-    s.assert_hides(&["D disconnect"]);
+    assert!(!common::explorer_page(&s.app).contains(&"D Disconnect".to_owned()));
 }
 
 #[test]
 fn a_sqlite_file_has_no_saved_password_to_delete() {
     let mut s = Screen::conventional("password");
     s.prefix('h');
-    s.assert_hides(&["p delete password"]);
+    assert!(!common::explorer_page(&s.app).contains(&"p Delete the password".to_owned()));
 }
 
 #[test]
@@ -304,31 +314,48 @@ fn an_open_row_shows_the_key_that_closes_it() {
 }
 
 #[test]
-fn a_schema_row_shows_the_commands_of_its_tree() {
+fn a_schema_row_keeps_only_the_commands_of_its_tree() {
     let mut s = Screen::conventional("schema");
     s.select(RowKind::Schema, "main");
-    s.assert_shows(&["i struct", "n new console", "r refresh"]);
-    s.assert_hides(&["Enter open", "e edit", "remove", "add", "scripts"]);
+    assert_eq!(
+        s.hints_at(200),
+        "n new console  Right expand  Ctrl+W commands  F1 keys"
+    );
+    let page = common::explorer_page(&s.app);
+    for row in ["i Show the structure", "r Read the catalog"] {
+        assert!(page.contains(&row.to_owned()), "{page:?}");
+    }
+    assert!(!page.contains(&"e Edit connection".to_owned()), "{page:?}");
+    assert!(
+        !page.contains(&"Del Remove connection".to_owned()),
+        "{page:?}"
+    );
 }
 
 #[test]
-fn a_table_row_shows_the_commands_of_a_table() {
+fn a_table_row_keeps_only_the_commands_of_a_table() {
     let mut s = Screen::conventional("table");
     s.select(RowKind::Table, "items");
-    s.assert_shows(&[
-        "Enter open table",
-        "Right columns",
-        "i struct",
-        "n new console",
-    ]);
-    s.assert_hides(&["e edit", "remove", "disc", "add", "scripts"]);
+    assert_eq!(
+        s.hints_at(200),
+        "Enter open table  Right columns  Ctrl+W commands  F1 keys"
+    );
+    let page = common::explorer_page(&s.app);
+    for row in ["g Generate SQL", "I Import a file", "n New console"] {
+        assert!(page.contains(&row.to_owned()), "{page:?}");
+    }
+    assert!(!page.contains(&"e Edit connection".to_owned()), "{page:?}");
+    assert!(
+        !page.contains(&"Del Remove connection".to_owned()),
+        "{page:?}"
+    );
 }
 
 #[test]
 fn a_view_row_shows_that_enter_opens_a_view() {
     let mut s = Screen::conventional("view");
     s.select(RowKind::View, "first_items");
-    s.assert_shows(&["Enter open view", "n new console"]);
+    s.assert_shows(&["Enter open view", "Ctrl+W commands"]);
 }
 
 #[test]
@@ -347,8 +374,9 @@ fn a_column_row_shows_its_parent_and_opens_nothing() {
         std::thread::sleep(Duration::from_millis(1));
     }
     s.code(KeyCode::Down);
-    s.assert_shows(&["Left parent", "i struct"]);
+    s.assert_shows(&["Left parent", "Ctrl+W commands"]);
     s.assert_hides(&["Enter open", "expand"]);
+    assert!(common::explorer_page(&s.app).contains(&"i Show the structure".to_owned()));
 }
 
 // ---------------------------------------------------------------------------

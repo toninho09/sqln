@@ -198,7 +198,7 @@ fn the_key_opens_the_dialog_from_the_grid_with_the_table_columns() {
 fn the_key_opens_the_table_and_the_dialog_from_the_navigator() {
     let mut f = Fixture::new("dialog-navigator");
     select_row(&mut f.app, 0, &[RowKind::Table], "people");
-    assert!(f.sees("import"), "the hint names the key");
+    assert!(common::explorer_page(&f.app).contains(&"I Import a file".to_owned()));
     f.import_key();
     f.wait_for("Import to people");
     assert_eq!(f.app.table().unwrap().relation.relation, "people");
@@ -217,7 +217,7 @@ fn a_key_on_a_table_that_is_open_opens_its_dialog() {
 fn a_view_has_no_import() {
     let mut f = Fixture::new("dialog-view");
     select_row(&mut f.app, 0, &[RowKind::View], "names");
-    assert!(!f.screen().lines().last().unwrap_or("").contains("import"));
+    assert!(!common::explorer_page(&f.app).contains(&"I Import a file".to_owned()));
     f.import_key();
     f.app.drain_events();
     assert!(!f.sees("Import to"));

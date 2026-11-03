@@ -46,7 +46,7 @@ Files: `app.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, 
 
 Files: `input.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `ui/text.rs`.
 
-`input` maps each key to an action in each focus region. It supports two-key sequences and reads the user `keymap` rules from `config.json`. `Ctrl+W` opens the prefix menu (`ui/which_key`) with the second keys in groups. `Ctrl+P` opens the command palette; `filter_list` filters by words, and the same core serves the history window. `ui/text` keeps all interface text in one file. A new console without text shows the first screen (`ui/welcome`), with the main keys, and the first character ends it.
+`input` maps each key to an action in each focus region. It supports two-key sequences and reads the user `keymap` rules from `config.json`. `Ctrl+W` opens the prefix menu (`ui/which_key`) with the second keys in groups. `Ctrl+W Tab` opens its explorer page: `explorer_commands` lists what acts on the current row, and a key of the page goes through the `Navigator` region of the key map, so the page needs no bindings of its own. `Ctrl+P` opens the command palette; `filter_list` filters by words, and the same core serves the history window. `ui/text` keeps all interface text in one file. A new console without text shows the first screen (`ui/welcome`), with the main keys, and the first character ends it.
 
 ## 3. Navigator and tree filter
 

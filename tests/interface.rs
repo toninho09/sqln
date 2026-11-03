@@ -94,6 +94,11 @@ impl Screen {
         }
     }
 
+    /// Opens the `Ctrl+W` menu and leaves it open.
+    fn code_ctrl_w(&mut self) {
+        self.app.on_event(Event::Key(ctrl('w')));
+    }
+
     fn prefix(&mut self, letter: char) {
         self.app.on_event(Event::Key(ctrl('w')));
         self.code(KeyCode::Char(letter));
@@ -544,10 +549,10 @@ fn the_hint_bar_gives_the_keys_and_their_effects_two_styles() {
     let mut screen = Screen::new("hint-styles", theme, KeyboardMode::Conventional);
     screen.prefix('h');
     let buffer = screen.buffer(100, 30);
-    for key in ["Enter", "n new", "e edit", "a add"] {
+    for key in ["Enter", "n new", "Right", "Ctrl+W"] {
         assert_eq!(hint_cell(&buffer, key).fg, theme.key.fg.unwrap(), "{key}");
     }
-    for effect in ["console", "new", "edit", "add"] {
+    for effect in ["console", "new", "expand", "commands"] {
         assert_eq!(
             hint_cell(&buffer, effect).fg,
             theme.hint.fg.unwrap(),
@@ -596,7 +601,7 @@ fn the_explorer_shows_the_first_commands_of_a_connection_at_the_minimum_width() 
         let row = rows(&screen.buffer(80, 24)).pop().unwrap();
         assert_eq!(row.chars().count(), 80);
         assert!(
-            row.contains("Enter console  n new console  s scripts  r refresh  e edit connection"),
+            row.contains("Enter console  n new console  Right expand  Ctrl+W commands  F1 keys"),
             "{row}"
         );
     }
@@ -940,6 +945,41 @@ fn the_menu_omits_a_removed_key_and_fits_the_minimum_terminal() {
     assert!(!keys.contains(&"q"), "{keys:?}");
     // The menu has three columns inside 76 columns, each with a space at its start.
     assert!(widest_row(&groups) <= 24, "{}", widest_row(&groups));
+    let page = app.explorer_menu();
+    assert!(widest_row(&page) <= 24, "{}", widest_row(&page));
+}
+
+#[test]
+fn the_menu_names_the_sessions_and_the_explorer_page_at_the_minimum_terminal() {
+    let mut screen = Screen::new("menu-new-rows", Theme::plain(), KeyboardMode::Conventional);
+    screen.code_ctrl_w();
+    let shown = screen.screen(80, 24);
+    for text in [
+        "S    Sessions",
+        "Tab  Explorer commands",
+        "Quit",
+        "Tab explorer",
+    ] {
+        assert!(shown.contains(text), "{text}:\n{shown}");
+    }
+}
+
+#[test]
+fn the_explorer_page_fits_the_minimum_terminal_and_names_its_row() {
+    let mut screen = Screen::new("menu-page", Theme::plain(), KeyboardMode::Conventional);
+    screen.prefix('h');
+    screen.code_ctrl_w();
+    screen.code(KeyCode::Tab);
+    let shown = screen.screen(80, 24);
+    for text in [
+        "Ctrl+W · Explorer · ",
+        "n    New console",
+        "/    Filter the tables",
+    ] {
+        assert!(shown.contains(text), "{text}:\n{shown}");
+    }
+    screen.code(KeyCode::Esc);
+    assert!(!screen.screen(80, 24).contains("Ctrl+W · Explorer"));
 }
 
 #[test]

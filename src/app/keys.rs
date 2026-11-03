@@ -3,18 +3,22 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::guard::short;
+use super::tables::has_sessions;
 use super::{App, DialogAction, Overlay};
 use crate::connector::{Namespace, TransactionCommand, TransactionState};
 use crate::console::{AfterTransaction, Focus, GridAction, Phase, first_word};
 use crate::editor::{FormatOutcome, KeyboardMode, RunPlan, RunRefusal, RunScope};
 use crate::exec::{ConnectionId, RunOptions};
 use crate::form::FormRequest;
+use crate::grid::printable;
 use crate::input::{Action, Chord, Lookup, Region};
+use crate::navigator::RowKind;
 use crate::palette::{Command, Palette, PaletteRequest};
 use crate::plan::Explain;
 use crate::settings::SettingsRequest;
 use crate::sql::{Dialect, is_plain_read};
 use crate::table::TableFocus;
+use crate::ui::console::fit;
 use crate::ui::name::NameAction;
 use crate::ui::text;
 use crate::ui::welcome::Welcome;
@@ -25,6 +29,9 @@ use crate::ui::wrap::WrappedText;
 type MenuRow = (&'static [Action], &'static str);
 /// The title of one group of the `Ctrl+W` menu, with its rows.
 type MenuGroup = (&'static str, &'static [MenuRow]);
+
+/// The longest name of a row in the title of the explorer page.
+const EXPLORER_TITLE_NAME: usize = 48;
 
 /// What a run starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,6 +136,10 @@ impl App {
             return;
         }
         let chord = Chord::from_event(key);
+        if std::mem::take(&mut self.explorer_page) {
+            self.on_explorer_page_key(chord);
+            return;
+        }
         if let Some(first) = self.pending_key.take() {
             self.on_second_key(first, chord);
             return;
@@ -170,6 +181,15 @@ impl App {
                 true
             }
             Lookup::None => false,
+        }
+    }
+
+    /// Runs the command of a key of the explorer page. Any other key closes the page.
+    fn on_explorer_page_key(&mut self, chord: Chord) {
+        if let Lookup::Action(action) = self.keymap.lookup(Region::Navigator, chord)
+            && self.explorer_commands().contains(&action)
+        {
+            self.perform(action, false);
         }
     }
 
@@ -235,6 +255,8 @@ impl App {
             Action::FormatSql => self.format_console(),
             Action::ToggleComment => self.comment_console(),
             Action::OpenHistory => self.open_history(),
+            Action::OpenSessions => self.open_sessions(),
+            Action::ExplorerCommands => self.explorer_page = true,
             Action::Stop => self.stop(self.active),
             Action::ToggleMode => self.toggle_mode(),
             Action::Commit => self.transaction(TransactionCommand::Commit),
@@ -860,14 +882,108 @@ impl App {
     /// Joins the second keys of `Ctrl+W` for a group of actions.
     fn prefix_keys(&self, actions: &[Action]) -> String {
         let second = |action: &Action| {
-            self.keymap.keys(*action).iter().find_map(|key| {
-                key.strip_prefix("ctrl+w ")?
-                    .chars()
-                    .next()
-                    .map(String::from)
-            })
+            let keys = self.keymap.keys(*action).iter();
+            keys.filter_map(|key| key.strip_prefix("ctrl+w "))
+                .map(text::key_label)
+                .next()
         };
         actions.iter().filter_map(second).collect()
+    }
+
+    /// Lists the commands of the explorer that act on the row under its cursor.
+    pub(super) fn explorer_commands(&self) -> Vec<Action> {
+        use Action::*;
+        let row = self.navigator.current(&self.connections);
+        let item = row.as_ref().map(|row| &self.connections[row.connection]);
+        let on_connection = row
+            .as_ref()
+            .is_some_and(|row| row.kind == RowKind::Connection);
+        let connected = item.is_some_and(|item| {
+            let manager = self.manager.as_ref();
+            manager.is_some_and(|manager| manager.is_connected(item.id))
+        });
+        let saved = item.is_some_and(|item| self.saved_identity(item).is_some());
+        let commands = [
+            (NavigatorNewConsole, row.is_some()),
+            (NavigatorScripts, true),
+            (NavigatorRefresh, row.is_some()),
+            (NavigatorEdit, on_connection),
+            (NavigatorAdd, true),
+            (NavigatorDelete, on_connection),
+            (NavigatorDisconnect, on_connection && connected),
+            (NavigatorDeletePassword, on_connection && saved),
+            (NavigatorSessions, self.can_open_sessions()),
+            (
+                NavigatorStructure,
+                item.is_some_and(|item| item.dialect != Dialect::Redis),
+            ),
+            (NavigatorGenerate, self.can_generate()),
+            (NavigatorImport, self.can_import_row()),
+            (NavigatorCopyName, row.is_some()),
+            (NavigatorFilter, self.command_available(NavigatorFilter)),
+        ];
+        let acting = commands.into_iter().filter(|command| command.1);
+        acting.map(|command| command.0).collect()
+    }
+
+    /// Returns the title of the explorer page, with the row that its commands act on.
+    pub(super) fn explorer_menu_title(&self) -> String {
+        let row = self.navigator.current(&self.connections);
+        let name = row.as_ref().map(|row| {
+            let name = printable(row.name(&self.connections));
+            fit(&name, EXPLORER_TITLE_NAME).0
+        });
+        text::explorer_menu_title(name.as_deref())
+    }
+
+    /// Returns the groups of the explorer page. Each command keeps its key of the explorer.
+    pub fn explorer_menu(&self) -> Vec<KeyGroup> {
+        use Action::*;
+        let groups: [MenuGroup; 3] = [
+            (
+                text::GROUP_CONSOLE,
+                &[
+                    (&[NavigatorNewConsole], text::MENU_NEW_CONSOLE),
+                    (&[NavigatorScripts], text::MENU_SCRIPTS),
+                    (&[NavigatorRefresh], text::MENU_REFRESH),
+                ],
+            ),
+            (
+                text::GROUP_CONNECTION,
+                &[
+                    (&[NavigatorEdit], text::MENU_EDIT_CONNECTION),
+                    (&[NavigatorAdd], text::MENU_ADD_CONNECTION),
+                    (&[NavigatorDelete], text::MENU_REMOVE_CONNECTION),
+                    (&[NavigatorDisconnect], text::MENU_DISCONNECT),
+                    (&[NavigatorDeletePassword], text::MENU_DELETE_PASSWORD),
+                    (&[NavigatorSessions], text::MENU_SESSIONS),
+                ],
+            ),
+            (
+                text::GROUP_ROW,
+                &[
+                    (&[NavigatorStructure], text::MENU_STRUCTURE),
+                    (&[NavigatorGenerate], text::MENU_GENERATE),
+                    (&[NavigatorImport], text::MENU_IMPORT),
+                    (&[NavigatorCopyName], text::MENU_COPY_NAME),
+                    (&[NavigatorFilter], text::MENU_FILTER),
+                ],
+            ),
+        ];
+        let acting = self.explorer_commands();
+        groups
+            .iter()
+            .map(|(title, rows)| {
+                let shown = rows.iter().filter_map(|(actions, label)| {
+                    let action = actions.first().filter(|item| acting.contains(item))?;
+                    Some((self.shown_key(*action)?, *label))
+                });
+                KeyGroup {
+                    title,
+                    keys: shown.collect(),
+                }
+            })
+            .collect()
     }
 
     /// Returns the groups of the `Ctrl+W` menu. A removed key leaves its group.
@@ -882,6 +998,7 @@ impl App {
                         text::MENU_FOCUS,
                     ),
                     (&[ToggleNavigator], text::MENU_NAVIGATOR),
+                    (&[ExplorerCommands], text::MENU_EXPLORER),
                 ],
             ),
             (
@@ -919,6 +1036,7 @@ impl App {
                 &[
                     (&[ChooseSchema], text::MENU_SCHEMA),
                     (&[ChangeConnection], text::MENU_CHANGE),
+                    (&[OpenSessions], text::MENU_SESSIONS),
                 ],
             ),
             (
@@ -985,6 +1103,10 @@ impl App {
                 .is_some_and(|tab| !tab.filters && !tab.is_busy()),
             Action::GridCancelQuery | Action::GridEndSession => self.can_signal_session(),
             Action::NavigatorSessions => self.can_open_sessions(),
+            Action::OpenSessions => self.sessions_connection().is_some_and(|id| {
+                let dialect = self.connection(id).map(|item| item.dialect);
+                dialect.is_some_and(has_sessions)
+            }),
             Action::GridExport => self.can_export(),
             Action::GridImport => self.can_import(),
             Action::NavigatorImport => self.can_import_row(),
@@ -1018,7 +1140,6 @@ impl App {
             Action::NavigatorAdd,
             Action::NavigatorScripts,
             Action::NavigatorStructure,
-            Action::NavigatorSessions,
             Action::NavigatorGenerate,
             Action::NavigatorImport,
             Action::NavigatorCopyName,

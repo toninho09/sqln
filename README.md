@@ -215,6 +215,8 @@ Uppercase keys matter: `Ctrl+W C` and `Ctrl+W c` are different actions.
 | Next / previous main tab | `Ctrl+W n` / `Ctrl+W p` |
 | Run selection or current statement | `F5` or `Ctrl+W e` |
 | Run the whole script | `Shift+F5` or `Ctrl+W s` |
+| Show the sessions of the server | `Ctrl+W S` |
+| Open the commands of the explorer | `Ctrl+W Tab` |
 | Show the plan of a statement | `Ctrl+W E` |
 | Run a statement and show its plan | `Ctrl+W A` |
 | Stop execution | `Ctrl+W x` |
@@ -268,6 +270,9 @@ Change **Autocomplete** in Settings if you prefer `Enter` or both keys to accept
 | Remove saved password, with confirmation | `p` |
 
 The tree filter searches loaded catalogs only. It does not open a connection to find more objects.
+
+The hint row of the navigator shows only the main commands. Press `Ctrl+W`, then `Tab`, to list each command of the current row.
+That page uses the same keys as the table above, and it works from any panel. Its title names the row that the commands act on.
 
 The [full key map](docs/KEYMAP.md) covers forms, dialogs, export, mouse controls, and custom shortcuts.
 
@@ -342,6 +347,7 @@ A plan uses one statement. The query history does not record plans.
 ### Server sessions
 
 Press `S` in the navigator to open the sessions of a PostgreSQL or MySQL server.
+Press `Ctrl+W S` in any panel to open the sessions of the connection of the current tab.
 The list shows each session that the database user can see, except the session that reads the list.
 
 - Press `q` to cancel the query of the session under the cursor. The session stays open.

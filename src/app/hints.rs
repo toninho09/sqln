@@ -12,7 +12,6 @@ use crate::import::form as import_form;
 use crate::input::{Action, Chord};
 use crate::navigator::{Navigator, RowKind};
 use crate::settings;
-use crate::sql::Dialect;
 use crate::table::{TableFocus, TableTab};
 use crate::ui::statusline::{HintItem, hint_text};
 use crate::ui::text;
@@ -30,6 +29,9 @@ impl App {
     pub(super) fn hint_items(&self) -> Vec<HintItem> {
         if let Some(parts) = self.window_hint() {
             return HintItem::of(parts);
+        }
+        if self.explorer_page {
+            return HintItem::of(text::HINT_EXPLORER_MENU);
         }
         if self.pending_key.is_some_and(Chord::is_prefix) {
             return HintItem::of(text::HINT_PREFIX);
@@ -330,8 +332,9 @@ impl App {
         ])
     }
 
-    /// Lists the commands of the row under the cursor. The commands of a connection
-    /// stay on its row, because their keys never act on a table or on a schema alone.
+    /// Lists the commands of the moment for the row under the cursor. The explorer has
+    /// many commands, so this row keeps the main ones. `Ctrl+W` lists the others, and
+    /// `explorer_commands` is the full list.
     fn navigator_hint(&self) -> Vec<HintItem> {
         let filtered = self.navigator.is_filtered();
         let Some(row) = self.navigator.current(&self.connections) else {
@@ -343,39 +346,23 @@ impl App {
                 (Action::Help, "keys", true),
             ]);
         };
-        let item = &self.connections[row.connection];
         let open = self.navigator.is_open(&row, &self.connections);
         let branch = Navigator::is_branch(&row);
         let connection = row.kind == RowKind::Connection;
         let relation = matches!(row.kind, RowKind::Table | RowKind::View);
-        let connected = self
-            .manager
-            .as_ref()
-            .is_some_and(|manager| manager.is_connected(item.id));
         let enter = match row.kind {
             RowKind::Connection => "console",
             RowKind::View => "open view",
             _ => "open table",
         };
-        self.hints_when(&[
+        let mut items = self.hints_when(&[
             (Action::NavigatorClearFilter, "clear filter", filtered),
             (Action::NavigatorOpen, enter, connection || relation),
-            (Action::NavigatorNewConsole, "new console", true),
-            (Action::NavigatorScripts, "scripts", connection),
-            (Action::NavigatorRefresh, "refresh", true),
-            (Action::NavigatorEdit, "edit connection", connection),
             (
-                Action::NavigatorDisconnect,
-                "disconnect",
-                connection && connected,
+                Action::NavigatorNewConsole,
+                "new console",
+                connection || row.kind == RowKind::Schema,
             ),
-            (
-                Action::NavigatorDeletePassword,
-                "delete password",
-                connection && self.saved_identity(item).is_some(),
-            ),
-            (Action::NavigatorAdd, "add connection", connection),
-            (Action::NavigatorDelete, "remove connection", connection),
             (
                 Action::NavigatorExpand,
                 if relation { "columns" } else { "expand" },
@@ -386,25 +373,9 @@ impl App {
                 if branch { "collapse" } else { "parent" },
                 (open || !branch) && !filtered,
             ),
-            (
-                Action::NavigatorStructure,
-                "struct",
-                item.dialect != Dialect::Redis,
-            ),
-            (
-                Action::NavigatorSessions,
-                "sessions",
-                connection && self.can_open_sessions(),
-            ),
-            (
-                Action::NavigatorGenerate,
-                "generate SQL",
-                self.can_generate(),
-            ),
-            (Action::NavigatorImport, "import", self.can_import_row()),
-            (Action::NavigatorCopyName, "copy name", true),
-            (Action::NavigatorFilter, "filter", true),
-            (Action::Help, "keys", true),
-        ])
+        ]);
+        items.extend(HintItem::of(text::HINT_COMMANDS));
+        items.extend(self.hint_parts(&[(Action::Help, "keys")]));
+        items
     }
 }

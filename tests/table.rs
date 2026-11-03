@@ -1025,12 +1025,11 @@ fn a_structure_tab_hides_the_load_key_without_more_rows() {
 fn a_connection_shows_the_disconnect_key_only_with_sessions() {
     let (mut f, _) = Fixture::recorded(Recorder::default());
     common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
-    let row = f.hints_at(120);
-    assert!(!row.contains("D disc"), "{row}");
+    let disconnect = "D Disconnect".to_owned();
+    assert!(!common::explorer_page(&f.app).contains(&disconnect));
     f.open_table("users");
     common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
-    let row = f.hints_at(120);
-    assert!(row.contains("D disc"), "{row}");
+    assert!(common::explorer_page(&f.app).contains(&disconnect));
 }
 
 #[test]
@@ -1040,8 +1039,12 @@ fn a_redis_row_hides_the_structure_key() {
         ..Recorder::default()
     });
     common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
-    let row = f.hints_at(100);
-    assert!(!row.contains("i struct"), "{row}");
+    let page = common::explorer_page(&f.app);
+    assert!(
+        !page.contains(&"i Show the structure".to_owned()),
+        "{page:?}"
+    );
+    assert!(!page.contains(&"S Sessions".to_owned()), "{page:?}");
 }
 
 #[test]
@@ -1381,6 +1384,148 @@ fn the_reload_key_does_nothing_in_a_table_with_a_filter() {
     f.loaded();
     assert_eq!(recorder.count(), before);
     assert!(!f.app.hint().contains("reload"));
+}
+
+// ---------------------------------------------------------------------------
+// The `Ctrl+W` menu and its explorer page.
+
+impl Fixture {
+    /// Presses `Ctrl+W Tab`, which opens the explorer page.
+    fn open_explorer_page(&mut self) {
+        self.press(ctrl('w'));
+        self.code(KeyCode::Tab);
+    }
+
+    fn session_tabs(&self) -> usize {
+        let tabs = self.app.tables().iter();
+        tabs.filter(|tab| tab.shows_sessions()).count()
+    }
+}
+
+#[test]
+fn ctrl_w_s_opens_the_sessions_of_the_connection_of_the_console() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.press(ctrl('w'));
+    f.press(shift(KeyCode::Char('S')));
+    f.loaded();
+    assert_eq!(f.session_tabs(), 1);
+    assert_eq!(session_reads(&recorder), 1);
+}
+
+#[test]
+fn ctrl_w_s_uses_the_connection_of_a_table_tab() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_table("users");
+    f.press(ctrl('w'));
+    f.press(shift(KeyCode::Char('S')));
+    f.loaded();
+    assert_eq!(f.session_tabs(), 1);
+    assert_eq!(session_reads(&recorder), 1);
+}
+
+#[test]
+fn ctrl_w_s_refuses_a_source_without_sessions() {
+    let mut f = Fixture::sqlite(
+        "menu-sessions-sqlite.db",
+        "CREATE TABLE users (id INT);",
+        Settings::default(),
+    );
+    f.press(ctrl('w'));
+    f.press(shift(KeyCode::Char('S')));
+    assert!(f.app.tables().is_empty());
+    f.assert_sees(sqln::ui::text::SESSIONS_REFUSED);
+}
+
+#[test]
+fn the_page_runs_a_command_from_any_focus_on_the_row_of_the_explorer() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    f.prefix('l');
+    assert!(!f.app.hint().contains("Ctrl+W commands"), "the focus left");
+    f.open_explorer_page();
+    f.assert_sees("Ctrl+W · Explorer · server");
+    f.press(shift(KeyCode::Char('S')));
+    f.loaded();
+    assert_eq!(f.session_tabs(), 1);
+    assert_eq!(session_reads(&recorder), 1);
+}
+
+#[test]
+fn the_page_keeps_the_keys_of_the_explorer() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    let consoles = f.app.consoles().len();
+    f.open_explorer_page();
+    f.code(KeyCode::Char('n'));
+    f.assert_not_sees("Ctrl+W · Explorer");
+    assert_eq!(f.app.consoles().len(), consoles + 1);
+}
+
+#[test]
+fn the_delete_key_of_the_page_asks_first() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    f.open_explorer_page();
+    f.code(KeyCode::Delete);
+    f.assert_sees("Remove");
+    assert_eq!(f.app.connections().len(), 1);
+}
+
+#[test]
+fn esc_closes_the_page_and_runs_nothing() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_explorer_page();
+    f.assert_sees("Ctrl+W · Explorer");
+    f.code(KeyCode::Esc);
+    f.assert_not_sees("Ctrl+W · Explorer");
+    assert!(f.app.tables().is_empty());
+    assert_eq!(recorder.count(), 0);
+}
+
+#[test]
+fn a_key_without_a_command_on_the_row_closes_the_page() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    let before = recorder.count();
+    f.open_explorer_page();
+    // `g` acts only on a table or a view.
+    f.code(KeyCode::Char('g'));
+    f.assert_not_sees("Ctrl+W · Explorer");
+    assert_eq!(recorder.count(), before);
+}
+
+#[test]
+fn the_next_key_after_the_page_is_a_normal_key() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.open_explorer_page();
+    f.code(KeyCode::Esc);
+    f.press(ctrl('w'));
+    f.assert_sees("Tab explorer");
+}
+
+#[test]
+fn the_keys_of_ctrl_w_keep_their_meaning_with_the_focus_in_the_explorer() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.open_table("users");
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    let consoles = f.app.consoles().len();
+    let before = f.app.tables()[0].opened;
+    // `Ctrl+W n` is the next tab, and not the new console of the key `n`.
+    f.prefix('n');
+    f.app.drain_events();
+    assert_eq!(f.app.consoles().len(), consoles);
+    assert_eq!(f.app.tables()[0].opened, before);
+    assert!(f.app.table().is_none(), "the next tab is the console");
+}
+
+#[test]
+fn the_vim_mode_uses_its_own_key_in_the_page() {
+    let (mut f, _) = Fixture::recorded_in(two_sessions(), Settings::default(), KeyboardMode::Vim);
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    assert!(common::explorer_page(&f.app).contains(&"x Remove connection".to_owned()));
+    f.open_explorer_page();
+    f.code(KeyCode::Char('x'));
+    f.assert_sees("Remove");
 }
 
 // ---------------------------------------------------------------------------

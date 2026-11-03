@@ -4,6 +4,26 @@ This document records the choices and the rejected alternatives.
 The complete rules are in the [plan](INITIAL_PLAN.md).
 Do not reopen a decision without a new fact.
 
+## Explorer commands in the `Ctrl+W` menu — 2026-11-02
+
+The user found that `S` was not in the `Ctrl+W` menu, and asked for a shorter hint row in the explorer, with each command available in `Ctrl+W`. The user also asked that no current command changes. This request replaces the rule that the hint row lists each command that acts on a row of the explorer.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Access | A second page of the menu, `Ctrl+W Tab`, with the keys of the explorer | New letters in the first page; the same letters in the first page with the focus in the explorer; a list that runs nothing | Seven keys of the explorer have another meaning after `Ctrl+W`. A page keeps one letter per command and changes no key. A list that runs nothing would show `n New console` while `n` opens the next tab |
+| 2. Where the page works | In any panel, on the row of the explorer | Only with the focus in the explorer | The title names the row, so the target stays on screen |
+| 3. Hint row | Each row of the explorer shows only the main commands | Only the connection row | The page lists each command, so one rule serves each row |
+| Sessions | `Ctrl+W S` stays in the first page, with the connection of the tab | Only in the page | The user asked for it. The key was free |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Keys of the page | A key goes through the `Navigator` region of the key map | Own bindings for each command | A custom key works in the page with no more code, and a new command needs one row |
+| What the page lists | `explorer_commands`, the commands that act on the row | Each command at all times | The row of the footer used this rule, and a key without effect spends space |
+| Connection commands | Only on the connection row | On each row | On a table, `Del` would remove the whole connection |
+| Second key text | `prefix_keys` uses `key_label` | Keep the first character | `tab` would show as `t` |
+
 ## Query plan and server sessions — 2026-11-02
 
 The user compared SQLN with DataGrip and asked for a plan of the two execution gaps. This request reopens the rule "Own view for `EXPLAIN`" of the first version.

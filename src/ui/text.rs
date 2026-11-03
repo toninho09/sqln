@@ -219,7 +219,9 @@ pub fn key_label(key: &str) -> String {
         .join(" ")
 }
 
-pub const HINT_PREFIX: &[HintPart] = &[("Ctrl+W", "…"), ("Esc", "cancel")];
+pub const HINT_PREFIX: &[HintPart] = &[("Ctrl+W", "…"), ("Tab", "explorer"), ("Esc", "cancel")];
+pub const HINT_EXPLORER_MENU: &[HintPart] = &[("Ctrl+W Tab", "…"), ("Esc", "cancel")];
+pub const HINT_COMMANDS: &[HintPart] = &[("Ctrl+W", "commands")];
 pub const HINT_PALETTE: &[HintPart] = &[
     ("", "Write to filter"),
     ("Up/Down", "move"),
@@ -242,6 +244,7 @@ pub const FORM_SECURITY: &str = "SECURITY";
 pub const FORM_OPTIONS: &str = "OPTIONS";
 pub const TITLE_PALETTE: &str = "Commands";
 pub const TITLE_PREFIX: &str = "Ctrl+W";
+pub const TITLE_EXPLORER_MENU: &str = "Ctrl+W · Explorer";
 pub const NO_COMMANDS: &str = "No command matches";
 
 pub const STATUS_EDITOR: &str = "EDITOR";
@@ -259,6 +262,8 @@ pub const GROUP_RUN: &str = "Run";
 pub const GROUP_TRANSACTION: &str = "Transaction";
 pub const GROUP_CONNECTION: &str = "Connection";
 pub const GROUP_APPLICATION: &str = "Application";
+pub const GROUP_CONSOLE: &str = "Console";
+pub const GROUP_ROW: &str = "Row";
 pub const MENU_FOCUS: &str = "Move the focus";
 pub const MENU_NAVIGATOR: &str = "Toggle the explorer";
 pub const MENU_NEXT_TAB: &str = "Next tab";
@@ -267,6 +272,21 @@ pub const MENU_RENAME: &str = "Rename the tab";
 pub const MENU_CLOSE_TAB: &str = "Close the tab";
 pub const MENU_RUN: &str = "Run the statement";
 pub const MENU_SCRIPT: &str = "Run the script";
+pub const MENU_EXPLORER: &str = "Explorer commands";
+pub const MENU_SESSIONS: &str = "Sessions";
+pub const MENU_NEW_CONSOLE: &str = "New console";
+pub const MENU_SCRIPTS: &str = "Scripts";
+pub const MENU_REFRESH: &str = "Read the catalog";
+pub const MENU_EDIT_CONNECTION: &str = "Edit connection";
+pub const MENU_ADD_CONNECTION: &str = "Add a connection";
+pub const MENU_REMOVE_CONNECTION: &str = "Remove connection";
+pub const MENU_DISCONNECT: &str = "Disconnect";
+pub const MENU_DELETE_PASSWORD: &str = "Delete the password";
+pub const MENU_STRUCTURE: &str = "Show the structure";
+pub const MENU_GENERATE: &str = "Generate SQL";
+pub const MENU_IMPORT: &str = "Import a file";
+pub const MENU_COPY_NAME: &str = "Copy the name";
+pub const MENU_FILTER: &str = "Filter the tables";
 pub const MENU_EXPLAIN: &str = "Show the plan";
 pub const MENU_EXPLAIN_ANALYZE: &str = "Plan with a run";
 pub const MENU_STOP: &str = "Stop";
@@ -1020,6 +1040,8 @@ pub fn action_text(action: Action) -> &'static str {
         Action::FormatSql => "Format the SQL",
         Action::ToggleComment => "Comment or uncomment the rows",
         Action::OpenHistory => "Open the query history",
+        Action::OpenSessions => "Show the sessions of the server",
+        Action::ExplorerCommands => "Show the commands of the explorer",
         Action::Help => "Open this screen",
         Action::OpenPalette => "Open the commands",
         Action::CloseTab => "Close the tab",
@@ -1191,6 +1213,14 @@ pub fn table_title(connection: &str, schema: &str, relation: &str, kind: &str) -
 
 pub fn structure_title(connection: &str, name: &str) -> String {
     format!("{connection} · {name} · structure")
+}
+
+/// Writes the title of the explorer page, with the row that its commands act on.
+pub fn explorer_menu_title(row: Option<&str>) -> String {
+    match row {
+        Some(row) => format!("{TITLE_EXPLORER_MENU} · {row}"),
+        None => TITLE_EXPLORER_MENU.to_owned(),
+    }
 }
 
 pub fn sessions_title(connection: &str) -> String {

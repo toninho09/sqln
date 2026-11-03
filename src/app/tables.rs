@@ -21,6 +21,11 @@ pub(super) enum Tab {
     Table(usize),
 }
 
+/// Returns true for a source with a list of sessions.
+pub(super) fn has_sessions(dialect: Dialect) -> bool {
+    matches!(dialect, Dialect::Postgres | Dialect::MySql)
+}
+
 impl App {
     pub fn tables(&self) -> &[TableTab] {
         &self.tables
@@ -194,19 +199,40 @@ impl App {
 
     /// Opens the sessions of the server of a navigator row.
     pub(super) fn open_row_sessions(&mut self, row: &Row) {
-        let item = &self.connections[row.connection];
-        let (connection, name) = (item.id, item.name.clone());
+        self.open_sessions_of(self.connections[row.connection].id);
+    }
+
+    /// Opens the sessions of the connection that `Ctrl+W S` names.
+    pub(super) fn open_sessions(&mut self) {
+        match self.sessions_connection() {
+            Some(connection) => self.open_sessions_of(connection),
+            None => self.status = Some(text::NO_SELECTED_CONNECTION.to_owned()),
+        }
+    }
+
+    fn open_sessions_of(&mut self, connection: ConnectionId) {
+        let Some(name) = self.connection(connection).map(|item| item.name.clone()) else {
+            return;
+        };
         self.open_structure(connection, Scope::Sessions, RelationRef::default(), name);
+    }
+
+    /// Returns the connection of the open tab. With the focus in the navigator, or
+    /// without a connection in the tab, the row decides.
+    pub(super) fn sessions_connection(&self) -> Option<ConnectionId> {
+        let row = self.navigator.current(&self.connections);
+        let row = row.map(|row| self.connections[row.connection].id);
+        if self.navigator_focused {
+            return row;
+        }
+        self.tab_connection().map(|item| item.id).or(row)
     }
 
     /// Returns true when the navigator row belongs to a source with sessions.
     pub(super) fn can_open_sessions(&self) -> bool {
         self.navigator
             .current(&self.connections)
-            .is_some_and(|row| {
-                let dialect = self.connections[row.connection].dialect;
-                matches!(dialect, Dialect::Postgres | Dialect::MySql)
-            })
+            .is_some_and(|row| has_sessions(self.connections[row.connection].dialect))
     }
 
     /// Returns true when a key can send a signal to the session under the cursor.

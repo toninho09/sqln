@@ -64,6 +64,8 @@ The window uses the effective keys of the `keymap`, and the hint bar shows `Ctrl
 | `c` | Close the tab |
 | `q` | Quit the application |
 | `b` | Collapse or show the navigator |
+| `Tab` | Open the page with the commands of the explorer |
+| `S` | Show the sessions of the connection of the tab |
 | `e` | Run |
 | `s` | Whole script |
 | `E` | Show the plan of the statement |
@@ -83,6 +85,11 @@ The window uses the effective keys of the `keymap`, and the hint bar shows `Ctrl
 `Ctrl+W N` uses uppercase `N` and does not replace `Ctrl+W n`.
 `Ctrl+W H` uses uppercase `H` and does not replace `Ctrl+W h`.
 `Ctrl+W E` and `Ctrl+W A` use uppercase keys and do not replace `Ctrl+W e` and `Ctrl+W a`.
+`Ctrl+W S` uses uppercase `S` and does not replace `Ctrl+W s`. With the focus in the navigator, it uses the connection of the row.
+
+`Ctrl+W Tab` opens a second page of the menu. The page lists the commands of the navigator that act on the current row, with the keys of the navigator, so `Ctrl+W Tab n` is the `n` of the navigator.
+The page works from any panel, and its title names the row that the commands act on. `Esc` closes it, and a key without a command closes it too.
+The keys of the page do not change `Ctrl+W n` or any other key of the prefix.
 The console list offers the rename action with `r`.
 The connection change asks for confirmation and does not run SQL. The rules are in section 12 of the plan.
 The main tabs follow the opening order, without groups by type.
@@ -195,7 +202,7 @@ On a table or a view, `Enter` opens the table view, or selects its tab when it a
 In the grid of a table, `i` opens the structure of that table.
 In the structure tab of a table, `[` and `]` switch the section. In the other table tabs, those keys change the page.
 `S` opens the sessions of the server of the row. SQLite, Redis, and Valkey refuse it with a reason.
-The hint line changes with the cursor line. The connection commands appear on the connection line, but the keys act on any line of it.
+The hint line changes with the cursor line, and it shows only the main commands: open, new console, expand or collapse, `Ctrl+W commands`, and `F1 keys`. `Ctrl+W Tab` lists the others, and their keys keep acting. The connection commands appear on the connection line, but the keys act on any line of it.
 The labels say the object of the command, such as `n new console` and `a add connection`.
 A command that does not fit leaves the line, and the key keeps acting.
 
