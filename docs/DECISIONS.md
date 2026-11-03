@@ -4,6 +4,57 @@ This document records the choices and the rejected alternatives.
 The complete rules are in the [plan](INITIAL_PLAN.md).
 Do not reopen a decision without a new fact.
 
+## Query plan and server sessions — 2026-11-02
+
+The user compared SQLN with DataGrip and asked for a plan of the two execution gaps. This request reopens the rule "Own view for `EXPLAIN`" of the first version.
+
+Query plan:
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Screen | Result tab of the console, with a tree in the grid | Own tab in the main strip; own widget with expand and collapse | Reuses search, copy, the row window, and export |
+| 2. Commands | `Ctrl+W E` for the estimate, and `Ctrl+W A` for a real run | Estimate only | The real time is the most useful data |
+| 3. Real run of a statement that can write | Ask, and then run | Refuse; run in a transaction and undo | `is_plain_read` counts each unknown function as a write, so a refusal blocks valid reads. A transaction adds another run path |
+| 4. Selection with several statements | Refuse, with a reason | One plan per statement | Simpler, and a `SET` in the selection would give an error |
+| 5. History | A plan stays out | Save the text with `EXPLAIN` | The history keeps the queries of the user |
+
+Server sessions:
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 6. Place | Tab in the main strip, with `S` in the navigator and in the palette | Modal window | Reuses the structure tab |
+| 7. Databases | PostgreSQL and MySQL. SQLite refuses with a reason. Redis and Valkey stay out | Redis and Valkey with `CLIENT LIST` | `CLIENT LIST` works in a console, and a tab needs an own reader |
+| 8. Reach | Each session that the database user can see | Current database only | The `database` column separates them |
+| 9. Actions | `q` cancels the query, and `K` ends the session | End only | A cancel keeps the connection of the other person |
+| 10. Question | Always | Production only | One wrong key ends the work of another person |
+| 11. Read-only connection | Refuse both actions | Allow | The database does not refuse them, so SQLN keeps the promise |
+| 12. Session of the list | Hide it | Show it with a mark | A session must not end itself |
+| 13. Refresh | Manual with `R`, and automatic after an action | Also by interval | An interval makes a continuous read on the server |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Run path | `RunTarget` carries the statements or a plan through `run`, `RunAnyway`, and `RunConfirmed` | Own dialog actions for a plan | One path keeps the checks of a run: config, busy, and unknown transaction |
+| Tree | Built when the result ends | Build inside the connector | The connector stays the same, and a read that fails keeps the text |
+| Sessions tab | `Scope::Sessions` in `Structure` | New tab type | The tab keeps deadline, stop, pool queue, budget, password, and pages |
+| Signal | `PageKind::Signal` through the task of the tab | A temporary connection | The tab already has the path, and the database reports the error there |
+| MySQL list | `information_schema.PROCESSLIST` | `SHOW PROCESSLIST`; `performance_schema.processlist` | `SHOW` refuses `LIMIT`, and `performance_schema` needs a grant |
+| Reload key | `R` serves each tab with `filters = false` | Only the sessions tab | A structure tab had only the mouse |
+
+### Known limitations of the plan and the sessions
+
+- MariaDB has no `FORMAT=TREE`, so the error of the server appears. A manual `EXPLAIN` still works.
+- `FORMAT=TREE` needs MySQL 8.0.16 or newer.
+- On MySQL 8.4, a plan of a write on one table gives only `<not executable by iterator executor>`, as one node.
+- On MySQL 8.4, `EXPLAIN ANALYZE` of an `UPDATE` with a `JOIN` kept no change in a test. PostgreSQL keeps the change. The question says that a change can stay.
+- A column of a plan can pass the width of the grid. `r` shows the row, and `Enter` shows the value.
+- `information_schema.PROCESSLIST` is deprecated on MySQL 8.4. `tests/servers.rs` proves that it answers.
+- After `K`, a session can stay in the list for an instant. `R` reads it again.
+- A `KILL` can use the session that it ends, if the pool gives that session. The tab shows a closed connection, and the pool opens another.
+- Without `pg_read_all_stats` or `PROCESS`, the database hides the query text of other users.
+- Without `pg_signal_backend` or `CONNECTION_ADMIN`, the database refuses the action, and the tab shows the error.
+
 ## MySQL client key — 2026-11-02
 
 `mysql_async` 0.37 reads client keys in PKCS#1, PKCS#8, and SEC1 form. The user removed the SQLN check that accepted only PKCS#1.

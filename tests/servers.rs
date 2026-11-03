@@ -29,11 +29,13 @@ use sqln::exec::{
 };
 use sqln::export::{ExportOptions, ExportWriter};
 use sqln::form::Field;
-use sqln::grid::{Budget, Row, Value};
+use sqln::grid::{Budget, ResultTable, Row, Value};
 use sqln::import::statement::{Target, TargetColumn};
 use sqln::import::{ImportFormat, ImportJob, ImportMode, ImportProgress, ReadOptions, log_path};
+use sqln::plan::{Explain, PlanView, plan_view};
 use sqln::sql::Dialect;
-use sqln::structure::{Scope, Section, structure_sql};
+use sqln::structure::{Scope, Section, SessionSignal, signal_sql, structure_sql};
+use sqln::ui::text;
 use sqln::ui::theme::Theme;
 use tokio::sync::mpsc::Receiver;
 
@@ -3128,5 +3130,341 @@ fn the_dialog_reads_the_binary_type_of_each_server() {
         let run = h.run_ok(&[&server.import_read(table)]);
         assert_eq!(run.text(0, 2), "00FF", "{:?}", server.kind);
         h.run_ok(&[&format!("DROP TABLE {table}")]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The plan of a statement.
+
+/// Creates the tables of one test. The tests run together on one server, so each test
+/// uses its own names.
+fn create_plan_tables(h: &mut Harness, name: &str) {
+    h.run_ok(&[
+        &format!("DROP TABLE IF EXISTS p_child_{name}"),
+        &format!("DROP TABLE IF EXISTS p_parent_{name}"),
+        &format!("CREATE TABLE p_parent_{name} (id int PRIMARY KEY, label varchar(20))"),
+        &format!("CREATE TABLE p_child_{name} (id int PRIMARY KEY, parent_id int)"),
+        &format!("INSERT INTO p_parent_{name} VALUES (1, 'a'), (2, 'b')"),
+        &format!("INSERT INTO p_child_{name} VALUES (1, 1), (2, 1), (3, 2)"),
+    ]);
+}
+
+fn plan_statement(name: &str) -> String {
+    format!(
+        "SELECT p.label, count(*) FROM p_parent_{name} p \
+         JOIN p_child_{name} c ON c.parent_id = p.id GROUP BY p.label ORDER BY 2 LIMIT 1"
+    )
+}
+
+fn plan_of(dialect: Dialect, run: Run) -> PlanView {
+    let mut table = ResultTable::new(run.columns[0].clone());
+    table.append(run.rows, run.bytes);
+    plan_view(dialect, &table).unwrap_or_else(|| panic!("{table:?}"))
+}
+
+fn plan_cells(view: &PlanView, title: &str) -> Vec<String> {
+    let column = view.columns.iter().position(|item| item == title).unwrap();
+    view.rows
+        .iter()
+        .map(|row| row.get(column).unwrap().full_text())
+        .collect()
+}
+
+#[test]
+fn each_server_gives_a_plan_that_reads_as_a_tree() {
+    for server in servers() {
+        let dialect = server.dialect();
+        let mut h = Harness::open(&server, Settings::default());
+        create_plan_tables(&mut h, "tree");
+        let statement = plan_statement("tree");
+        let estimate = Explain::new(dialect, false).unwrap();
+        let view = plan_of(dialect, h.run_ok(&[&estimate.wrap(&statement)]));
+        let nodes = plan_cells(&view, text::PLAN_NODE);
+        assert!(nodes.len() > 2, "{nodes:?}");
+        assert!(nodes[0].starts_with("Limit"), "{nodes:?}");
+        assert!(nodes[1].starts_with("└─ "), "{nodes:?}");
+        assert!(view.columns.iter().any(|item| item == text::PLAN_COST));
+        assert!(!view.columns.iter().any(|item| item == text::PLAN_TIME));
+        assert!(view.summary.contains("most:"), "{}", view.summary);
+
+        let real = Explain::new(dialect, true).unwrap();
+        let view = plan_of(dialect, h.run_ok(&[&real.wrap(&statement)]));
+        assert!(view.columns.iter().any(|item| item == text::PLAN_TIME));
+        assert!(view.columns.iter().any(|item| item == text::PLAN_LOOPS));
+        assert!(view.summary.contains(" ms "), "{}", view.summary);
+        let actual = plan_cells(&view, text::PLAN_ACTUAL_ROWS);
+        assert_eq!(actual[0], "1", "the limit reads one row");
+    }
+}
+
+#[test]
+fn an_error_in_a_plan_points_after_the_prefix() {
+    for server in servers() {
+        let connector = connector(&server);
+        let runtime = runtime();
+        runtime.block_on(async {
+            let mut session = connector.connect().await.unwrap();
+            let explain = Explain::new(server.dialect(), false).unwrap();
+            let sql = explain.wrap("SELECT 1 FROM");
+            let error = session.run(&sql, sink()).await.unwrap_err();
+            assert_eq!(
+                error.offset,
+                Some(explain.prefix_len() + 13),
+                "{:?}",
+                server.kind
+            );
+        });
+    }
+}
+
+#[test]
+fn a_plan_without_a_real_run_changes_nothing() {
+    for server in servers() {
+        let dialect = server.dialect();
+        let mut h = Harness::open(&server, Settings::default());
+        create_plan_tables(&mut h, "estimate");
+        let explain = Explain::new(dialect, false).unwrap();
+        h.run_ok(&[&explain.wrap("UPDATE p_child_estimate SET parent_id = 9")]);
+        assert_eq!(h.count("p_child_estimate WHERE parent_id = 9"), "0");
+    }
+}
+
+#[test]
+fn a_real_plan_of_postgres_keeps_its_change() {
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let mut h = Harness::open(&server, Settings::default());
+    create_plan_tables(&mut h, "real");
+    let explain = Explain::new(Dialect::Postgres, true).unwrap();
+    h.run_ok(&[&explain.wrap("UPDATE p_child_real SET parent_id = 9")]);
+    assert_eq!(h.count("p_child_real WHERE parent_id = 9"), "3");
+}
+
+#[test]
+fn the_answer_of_mysql_for_a_write_is_a_plan_with_one_node() {
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
+    let mut h = Harness::open(&server, Settings::default());
+    create_plan_tables(&mut h, "write");
+    let explain = Explain::new(Dialect::MySql, false).unwrap();
+    let run = h.run_ok(&[&explain.wrap("UPDATE p_child_write SET parent_id = 9")]);
+    let view = plan_of(Dialect::MySql, run);
+    assert_eq!(view.rows.len(), 1);
+}
+
+#[test]
+fn the_keys_of_a_console_show_the_plan_of_each_server() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        create_plan_tables(&mut h, "keys");
+        let mut s = Screen::with_definition(&server);
+        s.prefix('h');
+        s.code(KeyCode::Enter);
+        s.wait_until(|s| !s.app.console().is_busy() && s.app.console().connection.is_some());
+        s.app.on_event(Event::Paste(plan_statement("keys")));
+        s.press(ctrl('w'));
+        s.press(KeyEvent::new(KeyCode::Char('E'), KeyModifiers::SHIFT));
+        s.wait_until(|s| {
+            let console = s.app.console();
+            !console.is_busy() && console.results.first().is_some_and(|result| result.plan)
+        });
+        let screen = s.screen();
+        assert!(screen.contains("Plan"), "{screen}");
+        assert!(screen.contains("Share"), "{screen}");
+
+        s.press(ctrl('w'));
+        s.press(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT));
+        s.wait_until(|s| {
+            let console = s.app.console();
+            let columns = console.results.first().map(|item| &item.table.columns);
+            columns.is_some_and(|columns| columns.iter().any(|name| name == text::PLAN_TIME))
+        });
+        s.app.shutdown();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The sessions of a server.
+
+fn session_list(h: &mut Harness, dialect: Dialect) -> Run {
+    let nothing = RelationRef::default();
+    let sql = structure_sql(dialect, Scope::Sessions, &nothing, Section::Columns).unwrap();
+    h.run_ok(&[&sql])
+}
+
+fn session_ids(run: &Run) -> Vec<String> {
+    run.rows
+        .iter()
+        .map(|row| row.get(0).unwrap().full_text())
+        .collect()
+}
+
+/// Starts a long statement in a session of its own. It returns the number of the
+/// session and the execution.
+fn start_busy_session(server: &Server, busy: &mut Harness) -> (String, u64) {
+    let id = busy.run_ok(&[server.backend_id()]).text(0, 0);
+    let execution = busy.start(&[&server.sleep(30)], false);
+    busy.wait_started();
+    (id, execution)
+}
+
+/// Waits until the list shows the long statement of a session.
+fn wait_for_session(server: &Server, reader: &mut Harness, id: &str) -> Run {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let run = session_list(reader, server.dialect());
+        let row = session_ids(&run).iter().position(|item| item == id);
+        let shows_query = row.is_some_and(|row| {
+            let last = run.rows[row].columns() - 1;
+            let query = run.rows[row].get(last).unwrap().full_text();
+            query.to_lowercase().contains("sleep")
+        });
+        if shows_query {
+            return run;
+        }
+        assert!(Instant::now() < deadline, "{run:?}");
+        // This list takes a global lock on MySQL, so a slow pace leaves the other tests free.
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+#[test]
+fn the_list_shows_another_session_and_hides_its_reader() {
+    for server in servers() {
+        let mut busy = Harness::open(&server, sessions(1));
+        let (id, execution) = start_busy_session(&server, &mut busy);
+        let mut reader = Harness::open(&server, sessions(1));
+        let own = reader.run_ok(&[server.backend_id()]).text(0, 0);
+        let run = wait_for_session(&server, &mut reader, &id);
+        assert!(!session_ids(&run).contains(&own), "{:?}", server.kind);
+
+        let signal = signal_sql(
+            server.dialect(),
+            SessionSignal::EndSession,
+            id.parse().unwrap(),
+        );
+        reader.run_ok(&[&signal.unwrap()]);
+        busy.collect(execution);
+    }
+}
+
+#[test]
+fn a_cancel_stops_the_query_and_keeps_the_session() {
+    for server in servers() {
+        let mut busy = Harness::open(&server, sessions(1));
+        let (id, execution) = start_busy_session(&server, &mut busy);
+        let mut reader = Harness::open(&server, sessions(1));
+        wait_for_session(&server, &mut reader, &id);
+        let start = Instant::now();
+        let signal = signal_sql(
+            server.dialect(),
+            SessionSignal::CancelQuery,
+            id.parse().unwrap(),
+        );
+        reader.run_ok(&[&signal.unwrap()]);
+        busy.collect(execution);
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            server.kind
+        );
+        let next = busy.run_ok(&[server.backend_id()]);
+        assert_eq!(next.text(0, 0), id, "{:?}", server.kind);
+    }
+}
+
+#[test]
+fn an_end_closes_the_other_session() {
+    for server in servers() {
+        let mut busy = Harness::open(&server, sessions(1));
+        let (id, execution) = start_busy_session(&server, &mut busy);
+        let mut reader = Harness::open(&server, sessions(1));
+        wait_for_session(&server, &mut reader, &id);
+        let signal = signal_sql(
+            server.dialect(),
+            SessionSignal::EndSession,
+            id.parse().unwrap(),
+        );
+        reader.run_ok(&[&signal.unwrap()]);
+        let ended = busy.collect(execution);
+        assert_ne!(
+            ended.end,
+            Some(ExecutionEnd::Completed),
+            "{:?}",
+            server.kind
+        );
+        std::thread::sleep(Duration::from_millis(200));
+        let next = busy.run_ok(&[server.backend_id()]);
+        assert_ne!(next.text(0, 0), id, "{:?}", server.kind);
+    }
+}
+
+#[test]
+fn a_signal_to_a_missing_session_reaches_the_tab_of_each_server() {
+    let missing = 2_147_483_647;
+    if let Some(server) = only(Kind::Postgres) {
+        let mut h = Harness::open(&server, Settings::default());
+        let sql = signal_sql(Dialect::Postgres, SessionSignal::CancelQuery, missing);
+        let run = h.run_ok(&[&sql.unwrap()]);
+        assert_eq!(run.rows[0].get(0).unwrap().full_text(), "f");
+    }
+    if let Some(server) = only(Kind::MySql) {
+        let mut h = Harness::open(&server, Settings::default());
+        let sql = signal_sql(Dialect::MySql, SessionSignal::EndSession, missing);
+        let run = h.run(&[&sql.unwrap()]);
+        assert_eq!(run.end, Some(ExecutionEnd::Failed));
+        assert!(run.error().contains("Unknown thread id"), "{run:?}");
+    }
+}
+
+#[test]
+fn the_keys_of_a_tab_end_a_session_of_each_server() {
+    for server in servers() {
+        let mut busy = Harness::open(&server, sessions(1));
+        let (id, execution) = start_busy_session(&server, &mut busy);
+        let mut reader = Harness::open(&server, sessions(1));
+        wait_for_session(&server, &mut reader, &id);
+
+        let mut s = Screen::with_definition(&server);
+        s.prefix('h');
+        s.press(KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT));
+        s.wait_until(|s| {
+            let done = s
+                .app
+                .table()
+                .is_some_and(|tab| tab.loaded() > 0 && !tab.is_busy());
+            done && s.screen().contains("(sessions)")
+        });
+        // The active sessions come first, and the long statement can have company.
+        let row = {
+            let tab = s.app.table().unwrap();
+            let rows = &tab.result.table.rows;
+            rows.iter()
+                .position(|row| row.get(0).unwrap().full_text() == id)
+                .unwrap()
+        };
+        for _ in 0..row {
+            s.code(KeyCode::Down);
+        }
+        s.press(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT));
+        s.wait_until(|s| s.screen().contains(&format!("Session {id} of")));
+        s.code(KeyCode::Right);
+        s.code(KeyCode::Enter);
+        let ended = busy.collect(execution);
+        assert_ne!(
+            ended.end,
+            Some(ExecutionEnd::Completed),
+            "{:?}",
+            server.kind
+        );
+        s.wait_until(|s| {
+            s.app
+                .table()
+                .is_some_and(|tab| !tab.is_busy() && tab.signal_note.is_none())
+                && s.screen().contains(text::SESSION_SIGNAL_SENT)
+        });
+        s.app.shutdown();
     }
 }

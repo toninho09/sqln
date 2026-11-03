@@ -110,10 +110,8 @@ impl App {
     }
 
     fn connection_can_import(&self, id: ConnectionId) -> bool {
-        self.connection(id).is_some_and(|item| {
-            let read_only = item.definition.as_ref().is_some_and(|item| item.read_only);
-            item.dialect != Dialect::Redis && !read_only && !self.settings.read_only
-        })
+        self.connection(id)
+            .is_some_and(|item| item.dialect != Dialect::Redis && !self.is_read_only(id))
     }
 
     /// Opens the table of a row, and then its dialog. The first page uses the tab, so

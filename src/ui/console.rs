@@ -404,7 +404,13 @@ fn tab_labels(console: &Console, area: Rect) -> Vec<String> {
         .results
         .iter()
         .take(usize::from(area.width))
-        .map(|result| text::result_tab(result.number))
+        .map(|result| {
+            if result.plan {
+                text::PLAN_TAB.to_owned()
+            } else {
+                text::result_tab(result.number)
+            }
+        })
         .collect();
     labels.push(text::messages_tab(console.warnings()));
     labels

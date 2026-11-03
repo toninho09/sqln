@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::keys::RunTarget;
 use crate::clipboard::MemoryClipboard;
 use crate::connector::TransactionState;
 use crate::editor::RunScope;
@@ -90,8 +91,8 @@ fn assert_association_blocks_runs(app: &mut App) {
     }
     let id = app.console().id;
     for action in [
-        DialogAction::RunConfirmed(id, RunScope::Script),
-        DialogAction::RunAnyway(id, RunScope::Script),
+        DialogAction::RunConfirmed(id, RunTarget::Statements(RunScope::Script)),
+        DialogAction::RunAnyway(id, RunTarget::Statements(RunScope::Script)),
     ] {
         app.on_dialog_action(action);
         assert_eq!(app.status.as_deref(), Some(text::CONNECTION_CHANGE_PENDING));
@@ -118,7 +119,7 @@ fn association_blocks_runs_until_the_move_completes_in_either_scope() {
         assert_eq!(app.console().connection, Some(target));
         assert!(app.command_available(Action::Run));
         assert!(app.command_available(Action::RunScript));
-        app.start_run(0, RunScope::Script);
+        app.start_run(0, RunTarget::Statements(RunScope::Script));
         assert!(app.console().is_busy());
     }
 }
@@ -162,7 +163,7 @@ fn association_in_the_queue_blocks_only_its_console() {
     assert_association_blocks_runs(&mut app);
     app.select_console(1);
     assert!(app.command_available(Action::Run));
-    app.start_run(1, RunScope::Script);
+    app.start_run(1, RunTarget::Statements(RunScope::Script));
     assert!(app.console().is_busy());
     release.now();
     pump(&mut app, Instant::now());
@@ -193,7 +194,7 @@ fn association_failure_allows_runs_on_the_source_connection_again() {
         Some(Trouble::Failed(_))
     ));
     assert!(app.command_available(Action::Run));
-    app.start_run(0, RunScope::Script);
+    app.start_run(0, RunTarget::Statements(RunScope::Script));
     assert!(app.console().is_busy());
 }
 

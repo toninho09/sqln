@@ -354,6 +354,7 @@ impl App {
             Action::NavigatorOpen => self.toggle(&row),
             Action::NavigatorNewConsole => self.request_console(id),
             Action::NavigatorStructure => self.open_row_structure(&row),
+            Action::NavigatorSessions => self.open_row_sessions(&row),
             Action::NavigatorGenerate => self.open_templates(&row),
             Action::NavigatorImport => self.import_row(&row),
             Action::NavigatorCopyName => {

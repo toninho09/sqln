@@ -12,6 +12,7 @@ use crate::exec::{
 };
 use crate::grid::{Budget, Row};
 use crate::input::Action;
+use crate::plan::{Explain, plan_view};
 pub use crate::result::{GridAction, ResultTab};
 use crate::script_file::ScriptFile;
 use crate::ui::text;
@@ -175,6 +176,8 @@ pub struct Console {
     results_made: usize,
     /// True when a statement already reported the stop.
     stop_reported: bool,
+    /// The plan that the current execution shows, in place of its statement.
+    pub explain: Option<Explain>,
     first_not_executed: Option<usize>,
     statements: Vec<String>,
     transaction_before: TransactionState,
@@ -189,7 +192,7 @@ fn read_summary(rows: usize, limit: ReadLimit) -> String {
     }
 }
 
-fn first_word(sql: &str) -> &str {
+pub(crate) fn first_word(sql: &str) -> &str {
     sql.split(|c: char| !c.is_ascii_alphabetic())
         .find(|word| !word.is_empty())
         .unwrap_or("")
@@ -225,6 +228,7 @@ impl Console {
             reading: false,
             results_made: 0,
             stop_reported: false,
+            explain: None,
             first_not_executed: None,
             statements: Vec::new(),
             transaction_before: TransactionState::None,
@@ -260,6 +264,9 @@ impl Console {
 
     /// Returns the statement of a result, for a new read of its rows.
     pub fn statement_of(&self, result: &ResultTab) -> Option<&str> {
+        if self.explain.is_some() {
+            return None;
+        }
         self.statements.get(result.statement).map(String::as_str)
     }
 
@@ -377,6 +384,7 @@ impl Console {
                     // The list can hold room for twice its rows, and no more rows arrive.
                     result.table.rows.shrink_to_fit();
                 }
+                self.show_plan(limit, budget);
             }
             ExecEvent::Notice { key, text } if self.is_current(key.execution) => {
                 let message = text::statement_error(key.index, &text);
@@ -390,7 +398,9 @@ impl Console {
             } if self.is_current(key.execution) => {
                 self.on_statement_finished(key.index, status, end);
                 if let Some(offset) = error_offset {
-                    self.editor.set_error_offset(key.index, offset);
+                    let prefix = self.explain.map_or(0, |explain| explain.prefix_len());
+                    self.editor
+                        .set_error_offset(key.index, offset.saturating_sub(prefix));
                 }
             }
             ExecEvent::ConfirmClose { execution, .. } if self.is_current(execution) => {
@@ -416,6 +426,18 @@ impl Console {
             _ => {}
         }
         None
+    }
+
+    /// Shows the rows of a plan as a tree. The text of the database stays after a read
+    /// that stopped at a limit, a text that SQLN cannot read, or a full budget.
+    fn show_plan(&mut self, limit: ReadLimit, budget: &Budget) {
+        let (Some(explain), Some(result)) = (self.explain, self.results.last_mut()) else {
+            return;
+        };
+        let view = plan_view(explain.dialect, &result.table).filter(|_| limit == ReadLimit::None);
+        if !view.is_some_and(|view| result.show_plan(view, budget)) {
+            self.push_message(MessageLevel::Warning, text::PLAN_UNREADABLE.to_owned());
+        }
     }
 
     fn on_rows(&mut self, key: StatementKey, rows: Vec<Row>, bytes: usize, budget: &Budget) {

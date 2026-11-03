@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use common::sample_catalog;
-use common::{ctrl, key, temp_db};
+use common::{ctrl, key, shift, temp_db};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -209,6 +209,8 @@ struct Recorder {
     mid_rows: usize,
     /// True makes the source a Redis server.
     redis: bool,
+    /// The answer of the database to a signal. `f` means that the session is gone.
+    signal_answer: Option<&'static str>,
 }
 
 impl Recorder {
@@ -305,6 +307,19 @@ impl Session for RecordingSession {
             sink.set_columns(vec!["count".to_owned()]).await;
             let total = Value::Number(&self.0.rows.to_string());
             sink.push(vec![total].into_iter().collect()).await;
+            let (rows, limit) = sink.finish().await;
+            return Ok(StatementEnd {
+                rows,
+                has_columns: true,
+                changed: None,
+                limit,
+            });
+        }
+        if sql.contains("_backend(") && !sql.contains("pg_stat_activity") {
+            sink.set_columns(vec!["signal".to_owned()]).await;
+            let answer = self.0.signal_answer.unwrap_or("t");
+            sink.push(vec![Value::Text(answer)].into_iter().collect())
+                .await;
             let (rows, limit) = sink.finish().await;
             return Ok(StatementEnd {
                 rows,
@@ -1108,6 +1123,264 @@ fn a_key_of_redis_refuses_the_structure_in_its_grid() {
     f.code(KeyCode::Char('i'));
     assert_eq!(f.app.tables().len(), 1);
     f.assert_sees(sqln::ui::text::STRUCTURE_REFUSED);
+}
+
+// ---------------------------------------------------------------------------
+// The sessions of a server.
+
+impl Fixture {
+    fn open_sessions(&mut self) {
+        common::select_row(&mut self.app, 0, &[RowKind::Schema], "public");
+        self.press(shift(KeyCode::Char('S')));
+        self.loaded();
+    }
+
+    /// Answers the question with its second option.
+    fn confirm(&mut self) {
+        self.code(KeyCode::Right);
+        self.code(KeyCode::Enter);
+    }
+}
+
+fn signals(recorder: &Recorder) -> Vec<String> {
+    let statements = recorder.statements();
+    statements
+        .into_iter()
+        .filter(|sql| sql.contains("_backend(") && !sql.contains("pg_stat_activity"))
+        .collect()
+}
+
+fn session_reads(recorder: &Recorder) -> usize {
+    let statements = recorder.statements();
+    statements
+        .iter()
+        .filter(|sql| sql.contains("pg_stat_activity"))
+        .count()
+}
+
+fn two_sessions() -> Recorder {
+    Recorder {
+        rows: 2,
+        ..Recorder::default()
+    }
+}
+
+#[test]
+fn the_key_opens_a_tab_with_the_sessions_of_the_server() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    assert_eq!(session_reads(&recorder), 1);
+    let screen = f.screen();
+    assert!(screen.contains("server (sessions)"), "{screen}");
+    assert!(screen.contains("name1"), "{screen}");
+}
+
+#[test]
+fn a_second_key_gives_the_focus_to_the_open_tab() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    f.open_sessions();
+    assert_eq!(f.app.tables().len(), 1);
+    assert_eq!(session_reads(&recorder), 1);
+}
+
+#[test]
+fn a_source_without_sessions_refuses_with_a_reason() {
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        redis: true,
+        ..Recorder::default()
+    });
+    common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
+    f.press(shift(KeyCode::Char('S')));
+    assert!(f.app.tables().is_empty());
+    assert_eq!(recorder.count(), 0);
+    f.assert_sees(sqln::ui::text::SESSIONS_REFUSED);
+}
+
+#[test]
+fn sqlite_refuses_the_sessions_with_a_reason() {
+    let mut f = Fixture::sqlite(
+        "sessions-sqlite.db",
+        "CREATE TABLE users (id INT);",
+        Settings::default(),
+    );
+    f.press(ctrl('w'));
+    f.code(KeyCode::Char('h'));
+    f.press(shift(KeyCode::Char('S')));
+    assert!(f.app.tables().is_empty());
+    f.assert_sees(sqln::ui::text::SESSIONS_REFUSED);
+}
+
+#[test]
+fn a_cancel_asks_first_and_then_reads_the_sessions_again() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    f.code(KeyCode::Char('q'));
+    let screen = f.screen();
+    assert!(screen.contains("Session 0 of name0."), "{screen}");
+    assert!(screen.contains("The query stops"), "{screen}");
+    assert!(signals(&recorder).is_empty(), "the question comes first");
+
+    f.confirm();
+    f.loaded();
+    assert_eq!(
+        signals(&recorder),
+        ["SELECT pg_catalog.pg_cancel_backend(0)"]
+    );
+    assert_eq!(session_reads(&recorder), 2);
+    f.assert_sees(sqln::ui::text::SESSION_SIGNAL_SENT);
+}
+
+#[test]
+fn the_end_of_a_session_uses_the_row_of_the_cursor() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    f.code(KeyCode::Down);
+    f.press(shift(KeyCode::Char('K')));
+    let screen = f.screen();
+    assert!(screen.contains("Session 1 of name1."), "{screen}");
+    assert!(screen.contains("The session closes"), "{screen}");
+    f.confirm();
+    f.loaded();
+    assert_eq!(
+        signals(&recorder),
+        ["SELECT pg_catalog.pg_terminate_backend(1)"]
+    );
+}
+
+#[test]
+fn the_cancel_option_of_the_question_sends_nothing() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    f.press(shift(KeyCode::Char('K')));
+    f.code(KeyCode::Enter);
+    f.loaded();
+    assert!(signals(&recorder).is_empty());
+    assert_eq!(session_reads(&recorder), 1);
+}
+
+#[test]
+fn a_session_that_ended_first_gives_a_note() {
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 1,
+        signal_answer: Some("f"),
+        ..Recorder::default()
+    });
+    f.open_sessions();
+    f.press(shift(KeyCode::Char('K')));
+    f.confirm();
+    f.loaded();
+    assert_eq!(signals(&recorder).len(), 1);
+    assert_eq!(session_reads(&recorder), 2);
+    f.assert_sees(sqln::ui::text::SESSION_GONE);
+}
+
+#[test]
+fn a_refused_signal_shows_the_error_and_keeps_the_rows() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    *recorder.fail_when.lock().unwrap() = Some("pg_terminate_backend(".to_owned());
+    f.press(shift(KeyCode::Char('K')));
+    f.confirm();
+    f.loaded();
+    assert_eq!(session_reads(&recorder), 1, "an error reads nothing");
+    let screen = f.screen();
+    assert!(screen.contains("syntax error near the filter"), "{screen}");
+    assert!(screen.contains("name1"), "{screen}");
+}
+
+#[test]
+fn a_busy_tab_refuses_a_signal_before_the_question() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.press(shift(KeyCode::Char('R')));
+    f.press(shift(KeyCode::Char('K')));
+    f.assert_not_sees("Session 0");
+    f.assert_sees(sqln::ui::text::TABLE_BUSY);
+    recorder.hold.store(false, Ordering::SeqCst);
+    recorder.release.notify_one();
+    f.loaded();
+    assert!(signals(&recorder).is_empty());
+}
+
+#[test]
+fn a_tab_out_of_sight_reads_the_sessions_when_it_comes_back() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.press(shift(KeyCode::Char('K')));
+    f.confirm();
+    f.prefix('n');
+    recorder.hold.store(false, Ordering::SeqCst);
+    recorder.release.notify_one();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !f.app.tables()[0].pending {
+        f.app.drain_events();
+        assert!(Instant::now() < deadline, "the signal did not end");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(session_reads(&recorder), 1);
+    f.prefix('n');
+    f.loaded();
+    assert_eq!(session_reads(&recorder), 2);
+}
+
+#[test]
+fn a_read_only_connection_refuses_the_signals() {
+    let settings = Settings {
+        read_only: true,
+        ..Settings::default()
+    };
+    let (mut f, recorder) = Fixture::recorded_with(two_sessions(), settings);
+    f.open_sessions();
+    let screen = f.screen();
+    assert!(!screen.contains("end session"), "{screen}");
+    f.press(shift(KeyCode::Char('K')));
+    f.code(KeyCode::Char('q'));
+    assert!(signals(&recorder).is_empty());
+    f.assert_sees(sqln::ui::text::SESSIONS_READ_ONLY);
+}
+
+#[test]
+fn the_keys_of_a_session_do_nothing_in_a_table() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_table("users");
+    f.press(shift(KeyCode::Char('K')));
+    f.code(KeyCode::Char('q'));
+    f.assert_not_sees("Session 0");
+    assert!(signals(&recorder).is_empty());
+}
+
+#[test]
+fn the_hints_of_a_sessions_tab_name_its_keys() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    let hint = f.app.hint();
+    assert!(hint.contains("cancel query"), "{hint}");
+    assert!(hint.contains("end session"), "{hint}");
+    assert!(hint.contains("reload"), "{hint}");
+    assert!(!hint.contains("struct"), "{hint}");
+}
+
+#[test]
+fn the_reload_key_reads_a_tab_without_a_filter_again() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    f.press(shift(KeyCode::Char('R')));
+    f.loaded();
+    assert_eq!(session_reads(&recorder), 2);
+}
+
+#[test]
+fn the_reload_key_does_nothing_in_a_table_with_a_filter() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_table("users");
+    let before = recorder.count();
+    f.press(shift(KeyCode::Char('R')));
+    f.loaded();
+    assert_eq!(recorder.count(), before);
+    assert!(!f.app.hint().contains("reload"));
 }
 
 // ---------------------------------------------------------------------------
@@ -3508,7 +3781,7 @@ fn the_count_returns_its_bytes_to_the_budget_and_keeps_a_limit_of_the_page() {
     let budget = Budget::new(1 << 20);
     let mut tab = TableTab::new(7, 1, relation(), false, 2);
     tab.limit = ReadLimit::Budget;
-    tab.started_count(5);
+    tab.started_side_request(5, sqln::table::PageKind::Count);
     assert!(tab.is_counting());
     assert_eq!(tab.limit, ReadLimit::Budget);
     let key = StatementKey {

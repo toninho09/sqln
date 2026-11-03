@@ -35,6 +35,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Paragraph};
 use tokio::sync::mpsc::Receiver;
 
+use self::keys::RunTarget;
 use self::mouse::Drag;
 use crate::browser::FileBrowser;
 use crate::catalog::{Catalog, RelationRef};
@@ -43,7 +44,7 @@ use crate::connection::{Connection, Definition};
 use crate::connector::{Connector, Namespace, TransactionCommand};
 use crate::console::{AfterTransaction, Console, Focus};
 use crate::creds::{Identity, PlainFile};
-use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode, RunScope, SqlEditor};
+use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, Settings};
 use crate::export::ExportChoices;
 use crate::export::form::ExportForm;
@@ -61,6 +62,7 @@ use crate::sql::Dialect;
 use crate::store::config::{IconName, ThemeName};
 use crate::store::scripts::ScriptEntry;
 use crate::store::{Scope, Store};
+use crate::structure::SessionSignal;
 use crate::table::{TableFocus, TableTab};
 use crate::terminal::Session;
 use crate::terminal::{ring_bell, watch_terminal};
@@ -175,9 +177,9 @@ enum DialogAction {
     Transaction(ConsoleId, TransactionCommand, AfterTransaction),
     KeepWaiting(ConsoleId),
     CloseConnection(ConsoleId),
-    RunAnyway(ConsoleId, RunScope),
+    RunAnyway(ConsoleId, RunTarget),
     /// Run the statements that the question of `run_warning` showed.
-    RunConfirmed(ConsoleId, RunScope),
+    RunConfirmed(ConsoleId, RunTarget),
     RemoveConnection(ConnectionId),
     CreateProject,
     ReloadConfig,
@@ -198,6 +200,8 @@ enum DialogAction {
     ExportReplace,
     /// Start the import that the question of production showed.
     ImportConfirmed,
+    /// Send the signal that the question of a sessions tab showed.
+    SessionSignal(ConsoleId, SessionSignal, u64),
     /// Give the incomplete file of a tab its final name.
     ExportKeep(ConsoleId),
     ExportDelete(ConsoleId),
@@ -903,8 +907,9 @@ impl App {
         }
         let Some(id) = event.console() else { return };
         let budget = self.budget.clone();
-        if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
-            tab.on_event(event, &budget);
+        if let Some(index) = self.tables.iter().position(|tab| tab.id == id) {
+            self.tables[index].on_event(event, &budget);
+            self.finish_session_signal(index);
             self.continue_wanted_import();
             return;
         }

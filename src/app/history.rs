@@ -42,7 +42,12 @@ impl App {
             StatementStatus::NotExecuted | StatementStatus::Running => return,
             _ => false,
         };
-        let Some(console) = self.consoles.iter().find(|item| item.id == key.console) else {
+        let Some(console) = self
+            .consoles
+            .iter()
+            .find(|item| item.id == key.console)
+            .filter(|console| console.explain.is_none())
+        else {
             return;
         };
         let connection = console.connection.and_then(|id| self.connection(id));

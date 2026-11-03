@@ -5,6 +5,7 @@ use crate::generate::Template;
 use crate::import::ImportFormat;
 use crate::import::form::Section;
 use crate::input::{Action, SuggestionKeys};
+use crate::structure::SessionSignal;
 
 /// One command of the hint bar: a key and its effect. A note has an empty key.
 pub type HintPart = (&'static str, &'static str);
@@ -266,6 +267,8 @@ pub const MENU_RENAME: &str = "Rename the tab";
 pub const MENU_CLOSE_TAB: &str = "Close the tab";
 pub const MENU_RUN: &str = "Run the statement";
 pub const MENU_SCRIPT: &str = "Run the script";
+pub const MENU_EXPLAIN: &str = "Show the plan";
+pub const MENU_EXPLAIN_ANALYZE: &str = "Plan with a run";
 pub const MENU_STOP: &str = "Stop";
 pub const MENU_MODE: &str = "Auto or manual";
 pub const MENU_COMMIT: &str = "Commit";
@@ -820,6 +823,24 @@ pub const DATABASE_LABEL: &str = "Database";
 pub const NO_DATABASE_LABEL: &str = "No database";
 pub const CURSOR_OUTSIDE: &str = "The cursor is outside a statement.";
 pub const NO_STATEMENT: &str = "The text has no statement to run.";
+pub const PLAN_REFUSED: &str = "This source has no query plan.";
+pub const PLAN_ANALYZE_REFUSED: &str = "SQLite cannot run a statement inside a plan.";
+pub const PLAN_ONE_STATEMENT: &str = "A plan needs one statement. Select only one.";
+pub const PLAN_HAS_EXPLAIN: &str = "The statement has EXPLAIN already. Use Run, or remove it.";
+pub const PLAN_UNREADABLE: &str =
+    "SQLN cannot show this plan as a tree. The grid shows the text of the database.";
+pub const PLAN_ANALYZE_RUNS: &str =
+    "The database runs this statement to measure it. Its changes can stay.";
+pub const PLAN_TAB: &str = "Plan";
+pub const PLAN_NODE: &str = "Node";
+pub const PLAN_OBJECT: &str = "Object";
+pub const PLAN_SHARE: &str = "Share";
+pub const PLAN_COST: &str = "Cost";
+pub const PLAN_ROWS: &str = "Rows";
+pub const PLAN_TIME: &str = "Time (ms)";
+pub const PLAN_ACTUAL_ROWS: &str = "Actual rows";
+pub const PLAN_LOOPS: &str = "Loops";
+pub const PLAN_DETAIL: &str = "Detail";
 pub const EXECUTION_ACTIVE: &str = "The console has an execution in progress.";
 pub const NO_TRANSACTION: &str = "No transaction is open.";
 pub const RESULT_READING: &str = "This result receives rows. Ctrl+W x stops the script.";
@@ -841,6 +862,14 @@ pub const SECTION_INDEXES: &str = "Indexes";
 pub const SECTION_FOREIGN_KEYS: &str = "Foreign keys";
 pub const ALL_SCHEMAS: &str = "all schemas";
 pub const STRUCTURE_REFUSED: &str = "This source has no structure. Keys have no columns.";
+pub const SESSIONS_REFUSED: &str = "SQLN lists sessions only on PostgreSQL and MySQL.";
+pub const SESSIONS_READ_ONLY: &str = "A read-only connection cannot change a session.";
+pub const SESSION_SIGNAL_SENT: &str = "The database accepted the request.";
+pub const SESSION_GONE: &str = "The session ended before the request.";
+pub const TITLE_CANCEL_QUERY: &str = "Cancel the query";
+pub const TITLE_END_SESSION: &str = "End the session";
+pub const OPTION_CANCEL_QUERY: &str = "Cancel the query";
+pub const OPTION_END_SESSION: &str = "End the session";
 
 pub const LABEL_WHERE: &str = "WHERE";
 pub const LABEL_ORDER_BY: &str = "ORDER BY";
@@ -982,6 +1011,8 @@ pub fn action_text(action: Action) -> &'static str {
     match action {
         Action::Run => "Run the selection or the statement",
         Action::RunScript => "Run the script",
+        Action::Explain => "Show the plan of the statement",
+        Action::ExplainAnalyze => "Run the statement and show its plan",
         Action::Stop => "Stop the script",
         Action::ToggleMode => "Autocommit or manual",
         Action::Commit => "Commit",
@@ -1021,11 +1052,15 @@ pub fn action_text(action: Action) -> &'static str {
         Action::NavigatorScripts => "Scripts without a connection",
         Action::NavigatorDeletePassword => "Delete the saved password",
         Action::NavigatorStructure => "Show the structure of the row",
+        Action::NavigatorSessions => "Show the sessions of the server",
         Action::NavigatorFilter => "Filter the tables of the explorer",
         Action::NavigatorClearFilter => "Clear the filter of the explorer",
         Action::NavigatorGenerate => "Generate SQL for the table",
         Action::NavigatorCopyName => "Copy the name of the row",
         Action::GridStructure => "Show the structure of the table",
+        Action::GridReload => "Read the grid again",
+        Action::GridCancelQuery => "Cancel the query of the session",
+        Action::GridEndSession => "End the session",
         Action::ReloadConfig => "Load the configuration again",
         Action::GridUp => "Up",
         Action::GridDown => "Down",
@@ -1124,6 +1159,20 @@ pub fn result_tab(number: usize) -> String {
     format!("Result {number}")
 }
 
+/// Writes the row under the grid of a plan. `top` is the node with the largest share.
+pub fn plan_summary(
+    nodes: usize,
+    cost: Option<&str>,
+    time: Option<&str>,
+    top: Option<(&str, f64)>,
+) -> String {
+    let mut parts = vec![plural(nodes, "node")];
+    parts.extend(cost.map(|cost| format!("cost {cost}")));
+    parts.extend(time.map(|time| format!("{time} ms")));
+    parts.extend(top.map(|(name, share)| format!("most: {name} {:.0}%", share * 100.0)));
+    parts.join(" · ")
+}
+
 pub fn rows_loaded(rows: usize) -> String {
     format!("{} loaded", plural(rows, "row"))
 }
@@ -1142,6 +1191,21 @@ pub fn table_title(connection: &str, schema: &str, relation: &str, kind: &str) -
 
 pub fn structure_title(connection: &str, name: &str) -> String {
     format!("{connection} · {name} · structure")
+}
+
+pub fn sessions_title(connection: &str) -> String {
+    format!("{connection} · sessions")
+}
+
+/// Writes the question before a signal. An open transaction of that session rolls back.
+pub fn session_signal_body(signal: SessionSignal, session: u64, user: &str, query: &str) -> String {
+    let effect = match signal {
+        SessionSignal::CancelQuery => "The query stops, and the session stays open.",
+        SessionSignal::EndSession => {
+            "The session closes, and the database undoes its open transaction."
+        }
+    };
+    format!("Session {session} of {user}.\n{effect}\n\n{query}")
 }
 
 pub fn redis_unknown_type(kind: &str) -> String {

@@ -66,6 +66,8 @@ The window uses the effective keys of the `keymap`, and the hint bar shows `Ctrl
 | `b` | Collapse or show the navigator |
 | `e` | Run |
 | `s` | Whole script |
+| `E` | Show the plan of the statement |
+| `A` | Run the statement and show its plan |
 | `x` | Stop the script or the table query |
 | `f` | Format the SQL |
 | `/` | Comment or uncomment the lines |
@@ -80,6 +82,7 @@ The window uses the effective keys of the `keymap`, and the hint bar shows `Ctrl
 `Ctrl+W C` and `Ctrl+W R` do not ask for confirmation, like the commit and rollback buttons.
 `Ctrl+W N` uses uppercase `N` and does not replace `Ctrl+W n`.
 `Ctrl+W H` uses uppercase `H` and does not replace `Ctrl+W h`.
+`Ctrl+W E` and `Ctrl+W A` use uppercase keys and do not replace `Ctrl+W e` and `Ctrl+W a`.
 The console list offers the rename action with `r`.
 The connection change asks for confirmation and does not run SQL. The rules are in section 12 of the plan.
 The main tabs follow the opening order, without groups by type.
@@ -94,6 +97,8 @@ The prefix is the common path to both modes, and the terminal delivers that key.
 |---|---|---|
 | Run | `Ctrl+Enter` | `F5` or `Ctrl+W e` |
 | Whole script | `Shift+Enter` | `Shift+F5` or `Ctrl+W s` |
+| Show the plan of the statement | `Ctrl+W E` | Command palette |
+| Run the statement and show its plan | `Ctrl+W A` | Command palette |
 | Stop script | `Ctrl+W x` | **Stop script** button |
 | Format the SQL | `Ctrl+W f` | Command palette |
 | Comment or uncomment the lines | `Ctrl+W /` | `Ctrl+/` or command palette |
@@ -172,6 +177,7 @@ On macOS, the terminal handles `Cmd+C` and `Cmd+V`.
 | Delete, with confirmation | `Delete` | `x` |
 | Scripts without connection | `s` | `s` |
 | Show the structure | `i` | `i` |
+| Show the sessions of the server | `S` | `S` |
 | Generate SQL | `g` | `g` |
 | Import a file to the table of the row | `I` | `I` |
 | Copy the row name | `y` or `Ctrl+C` | `y` or `Ctrl+C` |
@@ -188,6 +194,7 @@ On a table or a view, `Enter` opens the table view, or selects its tab when it a
 `i` opens the structure of the row: table, view, column, schema, or connection.
 In the grid of a table, `i` opens the structure of that table.
 In the structure tab of a table, `[` and `]` switch the section. In the other table tabs, those keys change the page.
+`S` opens the sessions of the server of the row. SQLite, Redis, and Valkey refuse it with a reason.
 The hint line changes with the cursor line. The connection commands appear on the connection line, but the keys act on any line of it.
 The labels say the object of the command, such as `n new console` and `a add connection`.
 A command that does not fit leaves the line, and the key keeps acting.
@@ -276,7 +283,12 @@ If the vault fails, the session option does not offer global storage in plain te
 | Automatic column width | `=` | `=` |
 | Close the result | `x` or `Delete` | `x` or `Delete` |
 | Previous and next result | `[` and `]` | `[` and `]` |
+| Read a tab without a filter again | `R` | `R` |
+| Cancel the query, in a sessions tab | `q` | `q` |
+| End the session, in a sessions tab | `K` | `K` |
 
+`q` and `K` act on the session under the cursor, and they ask first. A read-only connection refuses them.
+`R` serves a structure, a key, and a sessions tab. A table tab uses **Apply**.
 Without a selection, `Ctrl+C` copies the current cell.
 The result that still receives rows does not close, and the **Messages** tab does not either.
 
@@ -377,7 +389,7 @@ In the table view, the grid also offers:
 
 `Ctrl+W k` goes to the `WHERE` field, and `Ctrl+W j` returns to the grid.
 In the table view, the script and transaction actions have no effect, because the table has no script and no transaction.
-Those actions are `F5`, `Shift+F5`, `Ctrl+W e`, `Ctrl+W s`, `Ctrl+W m`, `Ctrl+W C`, `Ctrl+W R`, and `Ctrl+W d`.
+Those actions are `F5`, `Shift+F5`, `Ctrl+W e`, `Ctrl+W s`, `Ctrl+W E`, `Ctrl+W A`, `Ctrl+W m`, `Ctrl+W C`, `Ctrl+W R`, and `Ctrl+W d`.
 In the table grid, `x` and `Delete` also have no effect.
 `Ctrl+W c` closes the table tab and frees its data.
 

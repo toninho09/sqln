@@ -2,16 +2,18 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::guard::short;
 use super::{App, DialogAction, Overlay};
 use crate::connector::{Namespace, TransactionCommand, TransactionState};
-use crate::console::{AfterTransaction, Focus, GridAction, Phase};
-use crate::editor::{FormatOutcome, KeyboardMode, RunRefusal, RunScope};
+use crate::console::{AfterTransaction, Focus, GridAction, Phase, first_word};
+use crate::editor::{FormatOutcome, KeyboardMode, RunPlan, RunRefusal, RunScope};
 use crate::exec::{ConnectionId, RunOptions};
 use crate::form::FormRequest;
 use crate::input::{Action, Chord, Lookup, Region};
 use crate::palette::{Command, Palette, PaletteRequest};
+use crate::plan::Explain;
 use crate::settings::SettingsRequest;
-use crate::sql::Dialect;
+use crate::sql::{Dialect, is_plain_read};
 use crate::table::TableFocus;
 use crate::ui::name::NameAction;
 use crate::ui::text;
@@ -23,6 +25,16 @@ use crate::ui::wrap::WrappedText;
 type MenuRow = (&'static [Action], &'static str);
 /// The title of one group of the `Ctrl+W` menu, with its rows.
 type MenuGroup = (&'static str, &'static [MenuRow]);
+
+/// What a run starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RunTarget {
+    Statements(RunScope),
+    /// The plan of one statement. With `analyze`, the database also runs it.
+    Plan {
+        analyze: bool,
+    },
+}
 
 impl App {
     pub(super) fn vim(&self) -> bool {
@@ -216,8 +228,10 @@ impl App {
             return;
         }
         match action {
-            Action::Run => self.run(RunScope::Default),
-            Action::RunScript => self.run(RunScope::Script),
+            Action::Run => self.run(RunTarget::Statements(RunScope::Default)),
+            Action::RunScript => self.run(RunTarget::Statements(RunScope::Script)),
+            Action::Explain => self.run(RunTarget::Plan { analyze: false }),
+            Action::ExplainAnalyze => self.run(RunTarget::Plan { analyze: true }),
             Action::FormatSql => self.format_console(),
             Action::ToggleComment => self.comment_console(),
             Action::OpenHistory => self.open_history(),
@@ -257,6 +271,7 @@ impl App {
             | Action::NavigatorScripts
             | Action::NavigatorDeletePassword
             | Action::NavigatorStructure
+            | Action::NavigatorSessions
             | Action::NavigatorGenerate
             | Action::NavigatorImport
             | Action::NavigatorCopyName
@@ -457,7 +472,7 @@ impl App {
             .collect()
     }
 
-    fn run(&mut self, scope: RunScope) {
+    fn run(&mut self, target: RunTarget) {
         let console = self.console();
         if console.connection.is_none() {
             if console.file.is_some() {
@@ -483,38 +498,103 @@ impl App {
                 text::BODY_UNKNOWN.to_owned(),
                 vec![
                     (text::OPTION_CANCEL, DialogAction::Dismiss),
-                    (text::OPTION_CONTINUE, DialogAction::RunAnyway(id, scope)),
+                    (text::OPTION_CONTINUE, DialogAction::RunAnyway(id, target)),
                 ],
             );
             return;
         }
-        self.start_run(self.active, scope);
+        self.start_run(self.active, target);
     }
 
-    pub(super) fn start_run(&mut self, index: usize, scope: RunScope) {
-        self.plan_and_run(index, scope, true);
+    pub(super) fn start_run(&mut self, index: usize, target: RunTarget) {
+        self.plan_and_run(index, target, true);
     }
 
-    /// Runs after the answer to the question of `run_warning`.
-    pub(super) fn run_confirmed(&mut self, index: usize, scope: RunScope) {
-        self.plan_and_run(index, scope, false);
+    /// Runs after the answer to the question of `run_question`.
+    pub(super) fn run_confirmed(&mut self, index: usize, target: RunTarget) {
+        self.plan_and_run(index, target, false);
     }
 
-    fn plan_and_run(&mut self, index: usize, scope: RunScope, ask: bool) {
+    /// Returns the plan that a target asks for. A plan needs a source with plans and one
+    /// statement, and the error is the reason for the status line.
+    fn explain_of(
+        &self,
+        connection: ConnectionId,
+        target: RunTarget,
+        plan: &RunPlan,
+    ) -> Result<Option<Explain>, &'static str> {
+        let RunTarget::Plan { analyze } = target else {
+            return Ok(None);
+        };
+        let dialect = self.connection(connection).map(|item| item.dialect);
+        let explain = dialect.and_then(|dialect| Explain::new(dialect, analyze));
+        let Some(explain) = explain else {
+            let sqlite = analyze && dialect == Some(Dialect::Sqlite);
+            return Err(if sqlite {
+                text::PLAN_ANALYZE_REFUSED
+            } else {
+                text::PLAN_REFUSED
+            });
+        };
+        match plan.statements.as_slice() {
+            [statement] if first_word(statement).eq_ignore_ascii_case("EXPLAIN") => {
+                Err(text::PLAN_HAS_EXPLAIN)
+            }
+            [_] => Ok(Some(explain)),
+            _ => Err(text::PLAN_ONE_STATEMENT),
+        }
+    }
+
+    /// Returns the question before a run. A plan does not run its statement, so it needs
+    /// no question. A real run of a statement that can write always asks.
+    fn run_question(
+        &self,
+        connection: ConnectionId,
+        target: RunTarget,
+        plan: &RunPlan,
+    ) -> Option<String> {
+        if target == (RunTarget::Plan { analyze: false }) {
+            return None;
+        }
+        let warning = self.run_warning(connection, plan);
+        let dialect = self.connection(connection)?.dialect;
+        let statement = plan.statements.first()?;
+        let writes = matches!(target, RunTarget::Plan { .. })
+            && !is_plain_read(statement, dialect)
+            && !self.is_read_only(connection);
+        if !writes {
+            return warning;
+        }
+        let details = warning.unwrap_or_else(|| short(statement));
+        Some(format!("{}\n\n{details}", text::PLAN_ANALYZE_RUNS))
+    }
+
+    fn plan_and_run(&mut self, index: usize, target: RunTarget, ask: bool) {
+        let scope = match target {
+            RunTarget::Statements(scope) => scope,
+            RunTarget::Plan { .. } => RunScope::Default,
+        };
         let console = &mut self.consoles[index];
         match console.editor.plan_run(scope) {
             Ok(plan) => {
                 let Some(connection) = console.connection else {
                     return;
                 };
-                if ask && let Some(body) = self.run_warning(connection, &plan) {
+                let explain = match self.explain_of(connection, target, &plan) {
+                    Ok(explain) => explain,
+                    Err(reason) => {
+                        self.status = Some(reason.to_owned());
+                        return;
+                    }
+                };
+                if ask && let Some(body) = self.run_question(connection, target, &plan) {
                     let id = self.consoles[index].id;
                     self.show_dialog(
                         text::TITLE_CONFIRM_RUN,
                         body,
                         vec![
                             (text::OPTION_CANCEL, DialogAction::Dismiss),
-                            (text::OPTION_RUN, DialogAction::RunConfirmed(id, scope)),
+                            (text::OPTION_RUN, DialogAction::RunConfirmed(id, target)),
                         ],
                     );
                     return;
@@ -540,6 +620,7 @@ impl App {
                         plan,
                         options,
                         revision,
+                        explain,
                     },
                 );
             }
@@ -817,6 +898,8 @@ impl App {
                 &[
                     (&[Run], text::MENU_RUN),
                     (&[RunScript], text::MENU_SCRIPT),
+                    (&[Explain], text::MENU_EXPLAIN),
+                    (&[ExplainAnalyze], text::MENU_EXPLAIN_ANALYZE),
                     (&[Stop], text::MENU_STOP),
                     (&[FormatSql], text::MENU_FORMAT),
                     (&[ToggleComment], text::MENU_COMMENT),
@@ -883,6 +966,12 @@ impl App {
             Action::Run | Action::RunScript => {
                 !in_table && idle && !self.association_pending(console.id)
             }
+            Action::Explain | Action::ExplainAnalyze => {
+                let analyze = action == Action::ExplainAnalyze;
+                let plans =
+                    connection.is_some_and(|item| Explain::new(item.dialect, analyze).is_some());
+                !in_table && idle && plans
+            }
             Action::Stop => self.table().map_or(!idle, |tab| tab.is_busy()),
             Action::ToggleMode => !in_table && idle && transactions,
             Action::Commit | Action::Rollback => !in_table && idle && console.in_transaction(),
@@ -891,6 +980,11 @@ impl App {
                 self.table().is_none_or(|tab| tab.filters)
             }
             Action::GridStructure => self.table().is_some_and(|tab| tab.filters),
+            Action::GridReload => self
+                .table()
+                .is_some_and(|tab| !tab.filters && !tab.is_busy()),
+            Action::GridCancelQuery | Action::GridEndSession => self.can_signal_session(),
+            Action::NavigatorSessions => self.can_open_sessions(),
             Action::GridExport => self.can_export(),
             Action::GridImport => self.can_import(),
             Action::NavigatorImport => self.can_import_row(),
@@ -924,6 +1018,7 @@ impl App {
             Action::NavigatorAdd,
             Action::NavigatorScripts,
             Action::NavigatorStructure,
+            Action::NavigatorSessions,
             Action::NavigatorGenerate,
             Action::NavigatorImport,
             Action::NavigatorCopyName,
@@ -936,6 +1031,9 @@ impl App {
             Action::GridExport,
             Action::GridImport,
             Action::GridStructure,
+            Action::GridReload,
+            Action::GridCancelQuery,
+            Action::GridEndSession,
         ]
         .map(|action| {
             let key_works = self.panel() == Some(Region::Grid);

@@ -17,12 +17,14 @@ The file paths are relative to `src/`.
 | 5 | Database connectors | `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/redis.rs`, `connector/tls.rs` |
 | 6 | Connection pool | `pool.rs` |
 | 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs` |
+| 7a | Query plan | `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs` |
 | 8 | Run protection | `app/guard.rs`, `sql/classify.rs` |
 | 9 | Transactions | `exec/runner.rs`, `ui/statusline.rs` |
 | 10 | SQL editor | `editor/mod.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
 | 11 | SQL analysis and formatter | `sql/lexer.rs`, `sql/statement.rs`, `sql/classify.rs`, `sql/format.rs` |
 | 12 | Autocomplete | `complete/mod.rs`, `complete/context.rs`, `complete/keywords.rs`, `catalog.rs` |
 | 13 | Catalog and structure tab | `catalog.rs`, `structure.rs` |
+| 13a | Server sessions | `structure.rs`, `table.rs`, `app/tables.rs` |
 | 14 | Results grid | `result.rs`, `grid/mod.rs`, `grid/row.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs` |
 | 15 | Table view | `table.rs`, `app/tables.rs`, `ui/table.rs` |
 | 16 | Export and file explorer | `export/mod.rs`, `export/form.rs`, `ui/export.rs`, `app/export.rs`, `browser.rs`, `ui/browser.rs`, `app/browse.rs` |
@@ -80,6 +82,16 @@ The console sends a copy of the text and receives an `ExecutionId`. `sql` separa
 
 Stop triggers the `Canceller` and starts a 5 s deadline. The task keeps reading and discards the rows. Without an answer and without a transaction, `exec` closes the connection. With an open transaction, the interface asks for confirmation. The application drops an event whose `ExecutionId` is not current, so an old response never refills a grid.
 
+## 7a. Query plan
+
+Files: `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs`.
+
+`Ctrl+W E` and `Ctrl+W A` follow the path of a run with a `RunTarget::Plan`. `plan::Explain` adds the prefix of the dialect, and the editor marks keep the text of the user. A plan needs one statement, and a statement with `EXPLAIN` is refused.
+
+`Console::explain` marks the execution. When the result ends, `plan_view` reads the text of the database and `ResultTab::show_plan` replaces the grid with the tree. PostgreSQL gives JSON, MySQL gives the tree text, and SQLite gives rows with a parent. The text stays after a limit, a text that the reader refuses, or a full budget, and **Messages** explains the reason. The `Share` column subtracts the children of each node, because a database reports a value with the nodes under it. It uses the real time when the plan has it, and the cost when it does not.
+
+A plan has no statement for a new read, so an export uses the loaded rows. The query history does not record a plan.
+
 ## 8. Run protection
 
 Files: `app/guard.rs`, `sql/classify.rs`.
@@ -115,6 +127,14 @@ Files: `complete/mod.rs`, `complete/context.rs`, `complete/keywords.rs`, `catalo
 Files: `catalog.rs`, `structure.rs`.
 
 The catalog is a cache in memory, outside the disk. Schemas and tables load first; columns and foreign keys load on demand. A key failure does not fail the columns. The structure tab runs the catalog queries of `structure`, per database, scope, and section.
+
+## 13a. Server sessions
+
+Files: `structure.rs`, `table.rs`, `app/tables.rs`.
+
+`S` in the navigator opens a structure tab with `Scope::Sessions`, so the tab reuses the pages, stop, budget, search, copy, and export. PostgreSQL reads `pg_stat_activity`, and MySQL reads `information_schema.PROCESSLIST`. The query leaves out the session that reads the list. The first column is the number of a session, the second is its user, and the last is its query.
+
+`q` and `K` read the row of the cursor and ask first. The answer sends a `PageKind::Signal` request through the task of the tab. `signal_sql` receives a `u64`, so no text of a cell reaches the SQL. A signal that the database accepts marks the tab as `pending`: the tab on screen reads the sessions again at once, and another tab reads them when it comes back. An error of the database stays in the tab, and the rows stay.
 
 ## 14. Results grid
 

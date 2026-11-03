@@ -127,6 +127,8 @@ pub enum Region {
 pub enum Action {
     Run,
     RunScript,
+    Explain,
+    ExplainAnalyze,
     FormatSql,
     ToggleComment,
     OpenHistory,
@@ -164,6 +166,7 @@ pub enum Action {
     NavigatorScripts,
     NavigatorDeletePassword,
     NavigatorStructure,
+    NavigatorSessions,
     NavigatorGenerate,
     NavigatorImport,
     NavigatorCopyName,
@@ -200,6 +203,9 @@ pub enum Action {
     GridExport,
     GridImport,
     GridStructure,
+    GridReload,
+    GridCancelQuery,
+    GridEndSession,
 }
 
 impl Action {
@@ -213,6 +219,9 @@ impl Action {
                 | Action::GridLoadMore
                 | Action::GridCountRows
                 | Action::GridStructure
+                | Action::GridReload
+                | Action::GridCancelQuery
+                | Action::GridEndSession
         )
     }
 
@@ -306,6 +315,20 @@ const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(Action::Stop, Region::Global, "stop", &["ctrl+w x"], &[]),
+    both(
+        Action::Explain,
+        Region::Global,
+        "explain",
+        &["ctrl+w E"],
+        &[],
+    ),
+    both(
+        Action::ExplainAnalyze,
+        Region::Global,
+        "explainAnalyze",
+        &["ctrl+w A"],
+        &[],
+    ),
     both(
         Action::ToggleMode,
         Region::Global,
@@ -527,6 +550,13 @@ const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(
+        Action::NavigatorSessions,
+        Region::Navigator,
+        "navigatorSessions",
+        &["S"],
+        &[],
+    ),
+    both(
         Action::NavigatorGenerate,
         Region::Navigator,
         "navigatorGenerate",
@@ -740,6 +770,21 @@ const DEFAULTS: &[Item] = &[
         Region::Grid,
         "gridStructure",
         &["i"],
+        &[],
+    ),
+    both(Action::GridReload, Region::Grid, "gridReload", &["R"], &[]),
+    both(
+        Action::GridCancelQuery,
+        Region::Grid,
+        "gridCancelQuery",
+        &["q"],
+        &[],
+    ),
+    both(
+        Action::GridEndSession,
+        Region::Grid,
+        "gridEndSession",
+        &["K"],
         &[],
     ),
 ];

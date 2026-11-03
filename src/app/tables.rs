@@ -2,13 +2,14 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{App, FRAMES_PER_PICTURE};
+use super::guard::short;
+use super::{App, DialogAction, FRAMES_PER_PICTURE};
 use crate::catalog::RelationRef;
 use crate::exec::{ConnectionId, ConsoleId};
 use crate::input::Action;
 use crate::navigator::{Row, RowKind};
 use crate::sql::Dialect;
-use crate::structure::{Scope, Section, Structure, structure_sql};
+use crate::structure::{Scope, Section, SessionSignal, Structure, structure_sql};
 use crate::table::{PageRequest, TableFocus, TableTab};
 use crate::ui::text;
 use crate::ui::{TabView, main_tab_label, run_badge, table};
@@ -191,6 +192,101 @@ impl App {
         self.open_structure(connection, scope, relation, name);
     }
 
+    /// Opens the sessions of the server of a navigator row.
+    pub(super) fn open_row_sessions(&mut self, row: &Row) {
+        let item = &self.connections[row.connection];
+        let (connection, name) = (item.id, item.name.clone());
+        self.open_structure(connection, Scope::Sessions, RelationRef::default(), name);
+    }
+
+    /// Returns true when the navigator row belongs to a source with sessions.
+    pub(super) fn can_open_sessions(&self) -> bool {
+        self.navigator
+            .current(&self.connections)
+            .is_some_and(|row| {
+                let dialect = self.connections[row.connection].dialect;
+                matches!(dialect, Dialect::Postgres | Dialect::MySql)
+            })
+    }
+
+    /// Returns true when a key can send a signal to the session under the cursor.
+    pub(super) fn can_signal_session(&self) -> bool {
+        self.table().is_some_and(|tab| {
+            tab.shows_sessions()
+                && tab.loaded() > 0
+                && !tab.is_busy()
+                && !self.is_read_only(tab.connection)
+        })
+    }
+
+    /// Asks before a signal to the session under the cursor.
+    fn ask_session_signal(&mut self, signal: SessionSignal) {
+        let Some(tab) = self.table().filter(|tab| tab.shows_sessions()) else {
+            return;
+        };
+        if self.is_read_only(tab.connection) {
+            self.status = Some(text::SESSIONS_READ_ONLY.to_owned());
+            return;
+        }
+        if tab.is_busy() {
+            self.status = Some(text::TABLE_BUSY.to_owned());
+            return;
+        }
+        let console = tab.id;
+        let Some(row) = tab.result.table.rows.get(tab.result.view.row) else {
+            return;
+        };
+        let cell = |column: usize| row.get(column).map(|value| value.full_text());
+        let Some(session) = cell(0).and_then(|text| text.parse::<u64>().ok()) else {
+            return;
+        };
+        let user = cell(1).unwrap_or_default();
+        let query = cell(row.columns().saturating_sub(1)).unwrap_or_default();
+        let body = text::session_signal_body(signal, session, &user, &short(&query));
+        let (title, option) = match signal {
+            SessionSignal::CancelQuery => (text::TITLE_CANCEL_QUERY, text::OPTION_CANCEL_QUERY),
+            SessionSignal::EndSession => (text::TITLE_END_SESSION, text::OPTION_END_SESSION),
+        };
+        self.show_dialog(
+            title,
+            body,
+            vec![
+                (text::OPTION_CANCEL, DialogAction::Dismiss),
+                (
+                    option,
+                    DialogAction::SessionSignal(console, signal, session),
+                ),
+            ],
+        );
+    }
+
+    /// Sends the signal that the user confirmed. The tab must still be on screen.
+    pub(super) fn send_session_signal(
+        &mut self,
+        console: ConsoleId,
+        signal: SessionSignal,
+        session: u64,
+    ) {
+        if self.table().is_none_or(|tab| tab.id != console) {
+            return;
+        }
+        let Some(dialect) = self.ready_table() else {
+            return;
+        };
+        self.run_page(TableTab::signal_request(dialect, signal, session));
+    }
+
+    /// Shows the end of a signal and reads the sessions again. A tab that is not on
+    /// screen reads them when it comes back.
+    pub(super) fn finish_session_signal(&mut self, index: usize) {
+        if let Some(note) = self.tables[index].signal_note.take() {
+            self.status = Some(note.to_owned());
+            if self.table_active == Some(index) {
+                self.apply_table();
+            }
+        }
+    }
+
     /// Opens the structure of the table tab on screen.
     fn open_table_structure(&mut self) {
         if let Some(tab) = self.table().filter(|tab| tab.structure.is_none()) {
@@ -216,7 +312,11 @@ impl App {
             return;
         };
         if structure_sql(dialect, scope, &relation, Section::Columns).is_none() {
-            self.status = Some(text::STRUCTURE_REFUSED.to_owned());
+            let reason = match scope {
+                Scope::Sessions => text::SESSIONS_REFUSED,
+                _ => text::STRUCTURE_REFUSED,
+            };
+            self.status = Some(reason.to_owned());
             return;
         }
         if let Some(index) = self
@@ -461,6 +561,8 @@ impl App {
             // A table has no script, no transaction, and no schema choice.
             Action::Run
             | Action::RunScript
+            | Action::Explain
+            | Action::ExplainAnalyze
             | Action::ToggleMode
             | Action::Commit
             | Action::Rollback
@@ -471,6 +573,11 @@ impl App {
             Action::GridPreviousResult => self.step_table(false),
             Action::GridNextResult => self.step_table(true),
             Action::GridStructure => self.open_table_structure(),
+            Action::GridReload if self.table().is_some_and(|tab| !tab.filters) => {
+                self.apply_table();
+            }
+            Action::GridCancelQuery => self.ask_session_signal(SessionSignal::CancelQuery),
+            Action::GridEndSession => self.ask_session_signal(SessionSignal::EndSession),
             Action::Stop => self.stop_table(),
             Action::CloseTab => {
                 if let Some(index) = self.table_active {

@@ -254,15 +254,15 @@ impl App {
             }
             DialogAction::KeepWaiting(id) => self.confirm_close(id, false),
             DialogAction::CloseConnection(id) => self.confirm_close(id, true),
-            DialogAction::RunAnyway(id, scope) => {
+            DialogAction::RunAnyway(id, target) => {
                 if let Some(index) = self.console_index(id) {
                     self.consoles[index].set_transaction(TransactionState::None);
-                    self.start_run(index, scope);
+                    self.start_run(index, target);
                 }
             }
-            DialogAction::RunConfirmed(id, scope) => {
+            DialogAction::RunConfirmed(id, target) => {
                 if let Some(index) = self.console_index(id) {
-                    self.run_confirmed(index, scope);
+                    self.run_confirmed(index, target);
                 }
             }
             DialogAction::RemoveConnection(connection) => self.remove_connection(connection),
@@ -280,6 +280,9 @@ impl App {
             DialogAction::DeletePassword(identity) => self.delete_password(identity),
             DialogAction::ExportReplace => self.start_export(),
             DialogAction::ImportConfirmed => self.start_import(),
+            DialogAction::SessionSignal(id, signal, session) => {
+                self.send_session_signal(id, signal, session);
+            }
             DialogAction::ExportKeep(id) => self.keep_export(id),
             DialogAction::ExportDelete(id) => self.delete_export(id),
             action @ (DialogAction::AuthCancel(_)

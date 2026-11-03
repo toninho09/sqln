@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use rusqlite::types::ValueRef;
 use sqln::catalog::RelationRef;
 use sqln::sql::Dialect;
-use sqln::structure::{Scope, Section, Structure, structure_sql};
+use sqln::structure::{Scope, Section, SessionSignal, Structure, signal_sql, structure_sql};
 
 const SETUP: &str = "
     CREATE TABLE pairs (x INT, y INT, PRIMARY KEY (x, y));
@@ -269,4 +269,64 @@ fn only_a_relation_has_sections() {
     assert!(Structure::new(Scope::Relation, name.clone()).has_sections());
     assert!(!Structure::new(Scope::Schema, name.clone()).has_sections());
     assert!(!Structure::new(Scope::Connection, name).has_sections());
+}
+
+// ---------------------------------------------------------------------------
+// The sessions of a server. `tests/servers.rs` runs these queries.
+
+fn sessions_sql(dialect: Dialect) -> Option<String> {
+    let nothing = RelationRef::default();
+    structure_sql(dialect, Scope::Sessions, &nothing, Section::Columns)
+}
+
+#[test]
+fn postgres_and_mysql_list_their_sessions_without_the_reader() {
+    let postgres = sessions_sql(Dialect::Postgres).unwrap();
+    assert!(
+        postgres.starts_with("SELECT a.pid, a.usename"),
+        "{postgres}"
+    );
+    assert!(postgres.contains("pg_backend_pid()"), "{postgres}");
+    let mysql = sessions_sql(Dialect::MySql).unwrap();
+    assert!(
+        mysql.starts_with("SELECT ID AS id, USER AS `user`"),
+        "{mysql}"
+    );
+    assert!(mysql.contains("CONNECTION_ID()"), "{mysql}");
+}
+
+#[test]
+fn sqlite_and_redis_have_no_sessions() {
+    assert_eq!(sessions_sql(Dialect::Sqlite), None);
+    assert_eq!(sessions_sql(Dialect::Redis), None);
+}
+
+#[test]
+fn each_signal_has_its_statement() {
+    let sql = |dialect, signal| signal_sql(dialect, signal, 42).unwrap();
+    assert_eq!(
+        sql(Dialect::Postgres, SessionSignal::CancelQuery),
+        "SELECT pg_catalog.pg_cancel_backend(42)"
+    );
+    assert_eq!(
+        sql(Dialect::Postgres, SessionSignal::EndSession),
+        "SELECT pg_catalog.pg_terminate_backend(42)"
+    );
+    assert_eq!(
+        sql(Dialect::MySql, SessionSignal::CancelQuery),
+        "KILL QUERY 42"
+    );
+    assert_eq!(sql(Dialect::MySql, SessionSignal::EndSession), "KILL 42");
+}
+
+#[test]
+fn a_source_without_sessions_has_no_signal() {
+    assert_eq!(
+        signal_sql(Dialect::Sqlite, SessionSignal::EndSession, 1),
+        None
+    );
+    assert_eq!(
+        signal_sql(Dialect::Redis, SessionSignal::CancelQuery, 1),
+        None
+    );
 }

@@ -211,6 +211,11 @@ impl App {
             (Action::FocusLeft, "navigator", !can_run),
             (Action::FocusDown, "results", !console.results.is_empty()),
             (
+                Action::Explain,
+                "plan",
+                !console.editor.is_blank() && self.command_available(Action::Explain),
+            ),
+            (
                 Action::FormatSql,
                 "format",
                 !console.editor.is_blank() && self.command_available(Action::FormatSql),
@@ -273,6 +278,16 @@ impl App {
         self.hints_when(&[
             (Action::Stop, "stop", busy),
             (Action::GridOpenValue, "load", tab.pending),
+            (
+                Action::GridCancelQuery,
+                "cancel query",
+                self.can_signal_session(),
+            ),
+            (
+                Action::GridEndSession,
+                "end session",
+                self.can_signal_session(),
+            ),
             (Action::GridFocusFilter, "where", tab.filters),
             (Action::GridFocusOrder, "order by", tab.filters),
             (Action::GridSortColumn, "sort", tab.filters && rows && !busy),
@@ -285,6 +300,11 @@ impl App {
                 Action::GridNextResult,
                 next,
                 !busy && (sections || tab.has_pages()),
+            ),
+            (
+                Action::GridReload,
+                "reload",
+                self.command_available(Action::GridReload),
             ),
             (Action::GridStructure, "struct", tab.filters),
             (
@@ -370,6 +390,11 @@ impl App {
                 Action::NavigatorStructure,
                 "struct",
                 item.dialect != Dialect::Redis,
+            ),
+            (
+                Action::NavigatorSessions,
+                "sessions",
+                connection && self.can_open_sessions(),
             ),
             (
                 Action::NavigatorGenerate,
