@@ -5,10 +5,12 @@ mod browse;
 mod close;
 mod conflicts;
 mod connections;
+mod diagram;
 mod export;
 mod guard;
 mod hints;
 mod history;
+mod import;
 mod keys;
 mod mouse;
 mod persist;
@@ -34,23 +36,28 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Paragraph};
 use tokio::sync::mpsc::Receiver;
 
+use self::keys::RunTarget;
 use self::mouse::Drag;
 use crate::browser::FileBrowser;
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{SharedClipboard, SystemClipboard};
 use crate::connection::{Connection, Definition};
 use crate::connector::{Connector, Namespace, TransactionCommand};
-use crate::console::{AfterTransaction, Console, Focus};
+use crate::console::{AfterTransaction, Console, Focus, Phase};
 use crate::creds::{Identity, PlainFile};
-use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode, RunScope, SqlEditor};
+use crate::diagram::tab::DiagramTab;
+use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, Settings};
 use crate::export::ExportChoices;
 use crate::export::form::ExportForm;
 use crate::form::ConnectionForm;
 use crate::generate::Template;
 use crate::grid::Budget;
+use crate::help::Help;
 use crate::history::HistoryList;
-use crate::input::{Chord, Keymap, SuggestionKeys};
+use crate::import::ImportChoices;
+use crate::import::form::ImportForm;
+use crate::input::{Chord, Keymap, Region, SuggestionKeys};
 use crate::navigator::Navigator;
 use crate::palette::Palette;
 use crate::settings::SettingsForm;
@@ -58,14 +65,18 @@ use crate::sql::Dialect;
 use crate::store::config::{IconName, ThemeName};
 use crate::store::scripts::ScriptEntry;
 use crate::store::{Scope, Store};
+use crate::structure::SessionSignal;
 use crate::table::{TableFocus, TableTab};
 use crate::terminal::Session;
 use crate::terminal::{ring_bell, watch_terminal};
 use crate::ui::browser::draw_browser;
 use crate::ui::console::BarData;
+use crate::ui::diagram::{DiagramBar, draw_diagram};
 use crate::ui::export::{ExportLayout, draw_export};
 use crate::ui::form::{FormLayout, draw_form};
+use crate::ui::help::draw_help;
 use crate::ui::history::draw_history;
+use crate::ui::import::{ImportLayout, draw_import};
 use crate::ui::name::{NamePrompt, draw_name};
 use crate::ui::navigator::draw_navigator;
 use crate::ui::palette::draw_palette;
@@ -74,6 +85,7 @@ use crate::ui::statusline::{
     StatusData, StatusPanel, draw_statusline, fit_hints, hint_line, run_time,
 };
 use crate::ui::theme::{ColorEnv, Theme};
+use crate::ui::welcome::draw_welcome;
 use crate::ui::which_key::draw_which_key;
 use crate::ui::wrap::WrappedText;
 use crate::ui::{
@@ -117,6 +129,10 @@ pub struct Options {
     /// True when the command line names the database. The tabs of the last session
     /// stay closed and stay in their file, and the start offers no project.
     pub session_target: bool,
+    /// True when a start without a connection and without a tab of the last session
+    /// shows the home screen. `main` sets it. Without it, the start keeps an empty
+    /// console, as a test that types SQL with no connection needs.
+    pub start_home: bool,
     /// A ready connector. It has priority over `database`.
     pub connector: Option<Arc<dyn Connector>>,
     /// The name of `connector` in the interface.
@@ -133,6 +149,7 @@ pub struct Options {
     /// The keys that accept a suggestion.
     pub suggestion_keys: SuggestionKeys,
     pub export_choices: ExportChoices,
+    pub import_choices: ImportChoices,
 }
 
 impl Default for Options {
@@ -146,6 +163,7 @@ impl Default for Options {
             database: None,
             connections: Vec::new(),
             session_target: false,
+            start_home: false,
             connector: None,
             label: None,
             settings: Settings::default(),
@@ -155,6 +173,7 @@ impl Default for Options {
             appearance: (None, None),
             suggestion_keys: SuggestionKeys::default(),
             export_choices: ExportChoices::default(),
+            import_choices: ImportChoices::default(),
         }
     }
 }
@@ -169,9 +188,9 @@ enum DialogAction {
     Transaction(ConsoleId, TransactionCommand, AfterTransaction),
     KeepWaiting(ConsoleId),
     CloseConnection(ConsoleId),
-    RunAnyway(ConsoleId, RunScope),
+    RunAnyway(ConsoleId, RunTarget),
     /// Run the statements that the question of `run_warning` showed.
-    RunConfirmed(ConsoleId, RunScope),
+    RunConfirmed(ConsoleId, RunTarget),
     RemoveConnection(ConnectionId),
     CreateProject,
     ReloadConfig,
@@ -190,6 +209,10 @@ enum DialogAction {
     DeletePassword(Identity),
     /// Replace the file of the export dialog.
     ExportReplace,
+    /// Start the import that the question of production showed.
+    ImportConfirmed,
+    /// Send the signal that the question of a sessions tab showed.
+    SessionSignal(ConsoleId, SessionSignal, u64),
     /// Give the incomplete file of a tab its final name.
     ExportKeep(ConsoleId),
     ExportDelete(ConsoleId),
@@ -278,9 +301,12 @@ struct ScreenLayout {
     body: Rect,
     console: ConsoleLayout,
     table: TableLayout,
+    /// The picture of the diagram on screen.
+    diagram: Rect,
     form: FormLayout,
     settings: SettingsLayout,
     export: ExportLayout,
+    import: ImportLayout,
     conflicts: ConflictLayout,
     password: Vec<(usize, Rect)>,
     /// The options of the open dialog, with the row of those options.
@@ -305,6 +331,10 @@ pub struct App {
     tabs_opened: u64,
     /// The table tab on screen, or `None` when the active console is on screen.
     table_active: Option<usize>,
+    /// The diagram tabs. The tab row mixes them with the other tabs in the order of opening.
+    diagrams: Vec<DiagramTab>,
+    /// The diagram tab on screen. At most one of `table_active` and this has a value.
+    diagram_active: Option<usize>,
     connections: Vec<Connection>,
     navigator: Navigator,
     navigator_focused: bool,
@@ -339,6 +369,7 @@ pub struct App {
     history: Option<HistoryList>,
     form: Option<ConnectionForm>,
     overlay: Option<Overlay>,
+    help: Option<Help>,
     status: Option<String>,
     /// The message on the clock, with the time of its first frame.
     status_shown: Option<(String, Instant)>,
@@ -355,16 +386,28 @@ pub struct App {
     events_flow: bool,
     /// A SQL template that waits for the columns of its relation.
     pending_sql: Option<(SqlRequest, Template)>,
+    /// The connections whose diagrams wait for their catalogs, which give the current
+    /// schemas.
+    pending_diagrams: Vec<ConnectionId>,
     /// The request for a new name of a console.
     rename: Option<NamePrompt>,
     settings_form: Option<SettingsForm>,
     export_form: Option<ExportForm>,
-    /// The file browser of the focused path field in the export dialog or in the form.
+    import_form: Option<ImportForm>,
+    /// The file browser of the focused path field in a dialog or in the form.
     browser: Option<FileBrowser>,
     /// The first choices of the next export dialog.
     export_choices: ExportChoices,
     /// The exports in progress, with at most one for each tab.
     exports: Vec<export::ExportRun>,
+    /// The first choices of the next import dialog.
+    import_choices: ImportChoices,
+    /// The imports in progress, with at most one for each tab.
+    imports: Vec<import::ImportRun>,
+    /// The answers of the file reads of the import dialog.
+    import_probes: import::ProbeChannel,
+    /// A table tab that opens the import dialog after its first page.
+    import_wanted: Option<ConsoleId>,
     /// The files of the application. It is `None` when nothing loads or saves.
     persist: Option<persist::Persist>,
     auth: auth::Auth,
@@ -372,8 +415,10 @@ pub struct App {
     conflicts: Option<conflicts::Conflicts>,
     /// The SQL rules of a console that has no connection.
     fallback_dialect: Dialect,
-    /// The first key of a sequence such as `Ctrl+W e`.
-    pending_key: Option<Chord>,
+    /// The region and keys of a sequence that needs more keys.
+    pending_key: Option<(Region, Vec<Chord>)>,
+    /// True while the explorer page of the `Ctrl+W` menu waits for its key.
+    explorer_page: bool,
     drag: Option<Drag>,
     /// The time and the place of the last click in the navigator.
     last_click: Option<(Instant, u16, u16)>,
@@ -418,6 +463,8 @@ impl App {
             tables: Vec::new(),
             tabs_opened: 0,
             table_active: None,
+            diagrams: Vec::new(),
+            diagram_active: None,
             connections: Vec::new(),
             navigator: Navigator::default(),
             navigator_focused: false,
@@ -445,12 +492,18 @@ impl App {
             history: None,
             form: None,
             overlay: None,
+            help: None,
             rename: None,
             settings_form: None,
             export_form: None,
+            import_form: None,
             browser: None,
             export_choices: options.export_choices.clone(),
             exports: Vec::new(),
+            import_choices: options.import_choices.clone(),
+            imports: Vec::new(),
+            import_probes: import::ProbeChannel::default(),
+            import_wanted: None,
             status: None,
             status_shown: None,
             started: Instant::now(),
@@ -460,11 +513,13 @@ impl App {
             bell: false,
             events_flow: false,
             pending_sql: None,
+            pending_diagrams: Vec::new(),
             persist,
             auth: auth::Auth::new(options.vault.take(), plain),
             conflicts: None,
             fallback_dialect: options.dialect,
             pending_key: None,
+            explorer_page: false,
             drag: None,
             last_click: None,
             next_console_number: 1,
@@ -474,7 +529,9 @@ impl App {
             quit: false,
         };
         let console = app.unbound_console(dialect);
+        let first = console.id;
         app.consoles.push(console);
+        let start_home = options.start_home && !options.session_target;
         if let Some(connector) = options.connector {
             let name = options
                 .label
@@ -497,6 +554,15 @@ impl App {
             app.bind_console(0, connection);
         }
         app.finish_start();
+        // The empty console of the start stays only when no tab of the last session came
+        // back. Without a connection, it gives its place to the home screen.
+        if start_home
+            && app.connections.is_empty()
+            && let Some(index) = app.console_index(first)
+        {
+            app.consoles[index].hidden = true;
+            app.focus_navigator();
+        }
         app
     }
 
@@ -591,6 +657,9 @@ impl App {
 
     /// Returns the connection of the open tab.
     fn tab_connection(&self) -> Option<&Connection> {
+        if let Some(tab) = self.diagram() {
+            return self.connection(tab.connection);
+        }
         match self.table() {
             Some(tab) => self.connection(tab.connection),
             None => self.active_connection(),
@@ -647,8 +716,9 @@ impl App {
         self.clock = now;
         let time = now.saturating_duration_since(self.started);
         let frame = usize::try_from(time.as_millis() / RUN_FRAME.as_millis()).unwrap_or(0);
-        let running =
-            self.consoles.iter().any(Console::is_busy) || self.tables.iter().any(TableTab::is_busy);
+        let running = self.consoles.iter().any(Console::is_busy)
+            || self.tables.iter().any(TableTab::is_busy)
+            || self.diagrams.iter().any(DiagramTab::is_busy);
         let changed = running && frame != self.run_frame;
         self.run_frame = frame;
         let minute = self
@@ -691,12 +761,14 @@ impl App {
         let blocked = !self.dialogs.is_empty()
             || self.conflicts.is_some()
             || self.overlay.is_some()
+            || self.help.is_some()
             || self.picker.is_some()
             || self.palette.is_some()
             || self.history.is_some()
             || self.rename.is_some()
             || self.settings_form.is_some()
             || self.export_form.is_some()
+            || self.import_form.is_some()
             || self.browser.is_some()
             || self.auth.prompt.is_some();
         match event {
@@ -726,6 +798,11 @@ impl App {
                     form.paste(&text);
                 }
             }
+            Event::Paste(text) if self.dialogs.is_empty() && self.import_form.is_some() => {
+                if let Some(form) = &mut self.import_form {
+                    form.paste(&text);
+                }
+            }
             Event::Paste(text) if self.dialogs.is_empty() && self.palette.is_some() => {
                 if let Some(palette) = &mut self.palette {
                     palette.paste(&text);
@@ -734,6 +811,11 @@ impl App {
             Event::Paste(text) if self.dialogs.is_empty() && self.history.is_some() => {
                 if let Some(list) = &mut self.history {
                     list.paste(&text);
+                }
+            }
+            Event::Paste(text) if self.dialogs.is_empty() && self.help.is_some() => {
+                if let Some(help) = &mut self.help {
+                    help.paste(&text);
                 }
             }
             Event::Paste(text) if !blocked => self.on_paste(&text),
@@ -746,6 +828,16 @@ impl App {
             Event::Mouse(mouse) if self.history.is_some() => self.on_history_mouse(mouse),
             Event::Mouse(mouse) if self.settings_form.is_some() => self.on_settings_mouse(mouse),
             Event::Mouse(mouse) if self.export_form.is_some() => self.on_export_mouse(mouse),
+            Event::Mouse(mouse) if self.import_form.is_some() => self.on_import_mouse(mouse),
+            Event::Mouse(mouse) if self.help.is_some() => {
+                if let Some(help) = &mut self.help {
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => help.scroll = help.scroll.saturating_sub(3),
+                        MouseEventKind::ScrollDown => help.scroll = help.scroll.saturating_add(3),
+                        _ => {}
+                    }
+                }
+            }
             Event::Mouse(mouse) if !blocked => self.on_mouse(mouse),
             _ => {}
         }
@@ -760,6 +852,10 @@ impl App {
             if self.navigator.filter_is_editing() {
                 self.navigator.paste_in_filter(text, &self.connections);
             }
+            return;
+        }
+        // A diagram and the home screen have no text field.
+        if self.diagram_active.is_some() || self.home() {
             return;
         }
         if let Some(tab) = self.table_mut() {
@@ -807,7 +903,8 @@ impl App {
     pub fn drain_events(&mut self) -> bool {
         let ticked = self.tick();
         let authorized = self.poll_auth();
-        let changed = self.has_work() || ticked || authorized;
+        let probed = self.poll_probes();
+        let changed = self.has_work() || ticked || authorized || probed;
         if changed {
             let deadline = Instant::now() + WORK_SLICE;
             match self.table_active {
@@ -853,6 +950,7 @@ impl App {
             }
             ExecEvent::ConnectionTested { test, result } => self.on_connection_tested(test, result),
             ExecEvent::Disconnected { connection } => self.on_disconnected(connection),
+            ExecEvent::IdleClosed { connection } => self.on_idle_closed(connection),
             ExecEvent::PasswordRefused { connection, pool } => {
                 crate::log::event("password refused");
                 self.on_password_refused(connection, pool);
@@ -866,14 +964,20 @@ impl App {
         }
     }
 
-    fn on_console_event(&mut self, event: ExecEvent) {
-        if self.on_export_event(&event) {
+    fn on_console_event(&mut self, mut event: ExecEvent) {
+        if self.on_export_event(&event) || self.on_import_event(&mut event) {
             return;
         }
         let Some(id) = event.console() else { return };
         let budget = self.budget.clone();
-        if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
+        if let Some(tab) = self.diagrams.iter_mut().find(|tab| tab.id == id) {
             tab.on_event(event, &budget);
+            return;
+        }
+        if let Some(index) = self.tables.iter().position(|tab| tab.id == id) {
+            self.tables[index].on_event(event, &budget);
+            self.finish_session_signal(index);
+            self.continue_wanted_import();
             return;
         }
         if let ExecEvent::StatementFinished { key, status, .. } = &event {
@@ -918,8 +1022,12 @@ impl App {
             draw_rule(frame, rule, &self.theme);
         }
         let main = self.draw_side(frame, body);
-        if self.table_active.is_some() {
+        if self.diagram_active.is_some() {
+            self.draw_active_diagram(frame, main, tall);
+        } else if self.table_active.is_some() {
             self.draw_active_table(frame, main, tall);
+        } else if self.home() {
+            self.draw_home(frame, main);
         } else {
             self.draw_active_console(frame, main, tall);
         }
@@ -1008,6 +1116,13 @@ impl App {
         self.layout.console = draw_console(frame, area, console, &bar, ratio, focused, &self.theme);
     }
 
+    /// Draws the screen without a tab. The console areas stay empty, so the mouse finds
+    /// no editor.
+    fn draw_home(&mut self, frame: &mut Frame, area: Rect) {
+        self.layout.console = ConsoleLayout::default();
+        draw_welcome(frame, area, &self.home_screen(), &self.theme);
+    }
+
     fn draw_active_table(&mut self, frame: &mut Frame, area: Rect, tall: bool) {
         let Some(index) = self.table_active else {
             return;
@@ -1032,6 +1147,29 @@ impl App {
         );
     }
 
+    fn draw_active_diagram(&mut self, frame: &mut Frame, area: Rect, tall: bool) {
+        let Some(index) = self.diagram_active else {
+            return;
+        };
+        let connection = self.diagrams[index].connection;
+        let name = self
+            .connection(connection)
+            .map_or_else(String::new, |item| item.name.clone());
+        let bar = DiagramBar {
+            connection: &name,
+            title: tall,
+        };
+        let focused = !self.navigator_focused;
+        self.layout.diagram = draw_diagram(
+            frame,
+            area,
+            &mut self.diagrams[index],
+            &bar,
+            focused,
+            &self.theme,
+        );
+    }
+
     /// Returns the name of the place that receives keys, for the status line.
     fn status_panel(&self) -> StatusPanel {
         if self.navigator_focused {
@@ -1040,6 +1178,12 @@ impl App {
             } else {
                 StatusPanel::Explorer
             };
+        }
+        if self.diagram_active.is_some() {
+            return StatusPanel::Diagram;
+        }
+        if self.home() {
+            return StatusPanel::Home;
         }
         if let Some(tab) = self.table() {
             return if tab.focus == TableFocus::Grid {
@@ -1065,6 +1209,27 @@ impl App {
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
         let panel = self.status_panel();
         let data = (self.budget.used(), self.budget.limit());
+        if let Some(tab) = self.diagram() {
+            let item = self.connection(tab.connection);
+            let status = StatusData {
+                panel,
+                connection: item.map_or("", |item| item.name.as_str()),
+                production: item.is_some_and(Connection::is_production),
+                schema: Some(tab.focus.schema()),
+                session: None,
+                transaction_age: None,
+                phase: tab.phase,
+                run_time: run_time(tab.phase, &tab.run, self.clock),
+                pool: self
+                    .manager
+                    .as_ref()
+                    .map(|manager| manager.usage(tab.connection)),
+                data,
+                position: None,
+            };
+            draw_statusline(frame, area, &status, &self.theme);
+            return;
+        }
         if let Some(tab) = self.table() {
             let view = tab.result.view;
             let position =
@@ -1085,6 +1250,23 @@ impl App {
                     .map(|manager| manager.usage(tab.connection)),
                 data,
                 position,
+            };
+            draw_statusline(frame, area, &status, &self.theme);
+            return;
+        }
+        if self.home() {
+            let status = StatusData {
+                panel,
+                connection: "",
+                production: false,
+                schema: None,
+                session: None,
+                transaction_age: None,
+                phase: Phase::Idle,
+                run_time: None,
+                pool: None,
+                data,
+                position: None,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1131,6 +1313,7 @@ impl App {
             .status
             .clone()
             .or_else(|| self.export_progress())
+            .or_else(|| self.import_progress())
             .or_else(|| self.auth_wait().map(str::to_owned));
         // The row starts one column after the edge, as the status line does.
         let area = Rect {
@@ -1150,8 +1333,12 @@ impl App {
 
     /// Draws the windows above the panels. `bounds` holds the rows above the status line.
     fn draw_layers(&mut self, frame: &mut Frame, bounds: Rect) {
-        if self.pending_key.is_some_and(Chord::is_prefix) {
-            draw_which_key(frame, bounds, &self.prefix_menu(), &self.theme);
+        if self.explorer_page {
+            let title = self.explorer_menu_title();
+            draw_which_key(frame, bounds, &title, &self.explorer_menu(), &self.theme);
+        } else if self.pending_prefix() {
+            let title = text::TITLE_PREFIX;
+            draw_which_key(frame, bounds, title, &self.prefix_menu(), &self.theme);
         }
         if let Some(form) = &self.form {
             self.layout.form = draw_form(frame, form, &self.theme);
@@ -1190,6 +1377,9 @@ impl App {
             } = overlay;
             *scroll = draw_overlay(frame, title, contents, footer, *scroll, &self.theme);
         }
+        if let Some(help) = &mut self.help {
+            draw_help(frame, help, &self.theme);
+        }
         if let Some(palette) = &self.palette {
             self.layout.palette = draw_palette(frame, palette, &self.theme);
         }
@@ -1201,6 +1391,9 @@ impl App {
         }
         if let Some(form) = &self.export_form {
             self.layout.export = draw_export(frame, form, &self.theme);
+        }
+        if let Some(form) = &self.import_form {
+            self.layout.import = draw_import(frame, form, &self.theme);
         }
         if let Some(browser) = &self.browser {
             self.layout.browser = draw_browser(frame, browser, &self.theme);

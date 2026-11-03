@@ -4,8 +4,8 @@ mod runner;
 mod sink;
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use tokio::runtime::Runtime;
@@ -13,12 +13,15 @@ use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedSender};
 
 pub use self::sink::{Flow, ReadLimit, ResultSink};
 use crate::catalog::{Catalog, ForeignKey, RelationRef};
+use crate::connection::DEFAULT_IDLE_SECONDS;
 use crate::connector::{
     ConnectError, Connector, SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
 use crate::export::ExportWriter;
 use crate::grid::{Budget, DEFAULT_LIMIT, Row};
+use crate::import::ImportJob;
 use crate::pool::Pool;
+use crate::store::config::DEFAULT_CAP_IN_SQL;
 
 const EVENT_CAPACITY: usize = 256;
 const CONNECT_LIMIT_ENDED: &str = "The connection time limit ended.";
@@ -43,12 +46,16 @@ pub struct Settings {
     pub page_size: usize,
     /// `None` runs without a time limit.
     pub sql_timeout: Option<Duration>,
+    /// An idle session of the pool closes after this time. `None` keeps it open.
+    pub idle_timeout: Option<Duration>,
     pub connect_timeout: Duration,
     /// The time that a statement has to answer after a cancellation.
     pub stop_grace: Duration,
     pub max_connections: usize,
     pub budget_bytes: usize,
     pub read_only: bool,
+    /// True adds `LIMIT` with the row cap to a plain read without its own limit.
+    pub cap_in_sql: bool,
 }
 
 impl Default for Settings {
@@ -57,11 +64,13 @@ impl Default for Settings {
             row_cap: 1_000,
             page_size: 100,
             sql_timeout: Some(Duration::from_secs(30)),
+            idle_timeout: Some(Duration::from_secs(DEFAULT_IDLE_SECONDS)),
             connect_timeout: Duration::from_secs(30),
             stop_grace: Duration::from_secs(5),
             max_connections: 5,
             budget_bytes: DEFAULT_LIMIT,
             read_only: false,
+            cap_in_sql: DEFAULT_CAP_IN_SQL,
         }
     }
 }
@@ -124,6 +133,11 @@ pub enum ExecEvent {
         key: StatementKey,
         text: String,
     },
+    /// The database received the statement with `LIMIT rows` at its end.
+    LimitAdded {
+        key: StatementKey,
+        rows: usize,
+    },
     StatementFinished {
         key: StatementKey,
         status: StatementStatus,
@@ -176,6 +190,10 @@ pub enum ExecEvent {
     Disconnected {
         connection: ConnectionId,
     },
+    /// Idle sessions of a connection reached the idle limit and closed.
+    IdleClosed {
+        connection: ConnectionId,
+    },
 }
 
 impl ExecEvent {
@@ -193,12 +211,14 @@ impl ExecEvent {
             | ExecEvent::Rows { key, .. }
             | ExecEvent::ResultDone { key, .. }
             | ExecEvent::Notice { key, .. }
+            | ExecEvent::LimitAdded { key, .. }
             | ExecEvent::StatementFinished { key, .. } => Some(key.console),
             ExecEvent::CatalogLoaded { .. }
             | ExecEvent::PasswordRefused { .. }
             | ExecEvent::ColumnsLoaded { .. }
             | ExecEvent::ConnectionTested { .. }
-            | ExecEvent::Disconnected { .. } => None,
+            | ExecEvent::Disconnected { .. }
+            | ExecEvent::IdleClosed { .. } => None,
         }
     }
 }
@@ -216,6 +236,7 @@ impl ExecEvent {
             | ExecEvent::Rows { key, .. }
             | ExecEvent::ResultDone { key, .. }
             | ExecEvent::Notice { key, .. }
+            | ExecEvent::LimitAdded { key, .. }
             | ExecEvent::StatementFinished { key, .. } => Some(key.execution),
             _ => None,
         }
@@ -241,6 +262,11 @@ pub struct RunRequest {
     pub options: RunOptions,
 }
 
+pub struct ImportRequest {
+    pub execution: ExecutionId,
+    pub job: ImportJob,
+}
+
 /// The pool and the limits that a console uses.
 #[derive(Clone)]
 struct Binding {
@@ -248,10 +274,16 @@ struct Binding {
     /// A refusal from an older pool says nothing about the password of this pool.
     serial: u64,
     pool: Pool,
-    settings: Settings,
+    /// The consoles of the connection share these values, so a saved change reaches them.
+    settings: Arc<Mutex<Settings>>,
 }
 
 impl Binding {
+    /// Do not keep the guard across an `await`.
+    fn settings(&self) -> MutexGuard<'_, Settings> {
+        self.settings.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn refusal(&self, error: &ConnectError) -> Option<ExecEvent> {
         error
             .password_refused
@@ -264,6 +296,7 @@ impl Binding {
 
 enum Command {
     Run(RunRequest),
+    Import(ImportRequest),
     Stop,
     ConfirmClose(bool),
     Transaction(TransactionCommand),
@@ -354,12 +387,46 @@ impl Manager {
             settings.max_connections,
             settings.connect_timeout,
         );
+        if let Some(limit) = settings.idle_timeout {
+            self.close_idle_sessions(connection, &pool, limit);
+        }
         Binding {
             connection,
             serial,
             pool,
-            settings,
+            settings: Arc::new(Mutex::new(settings)),
         }
+    }
+
+    /// Changes the limits of a connection. Each execution reads them at its start, so a
+    /// running script keeps its values. The pool keeps its size, its connect time limit,
+    /// and its idle limit: a change of these values needs `replace_connection`.
+    pub fn update_settings(&self, connection: ConnectionId, settings: Settings) {
+        if let Some(binding) = self.connections.get(&connection) {
+            *binding.settings() = settings;
+        }
+    }
+
+    /// Closes each idle session of the pool after `limit`. A session in use stays, also
+    /// the session of an open transaction. The task ends after the end of the pool.
+    fn close_idle_sessions(&self, connection: ConnectionId, pool: &Pool, limit: Duration) {
+        let pool = pool.downgrade();
+        let events = self.events.clone();
+        self.runtime.spawn(async move {
+            let mut wait = limit;
+            loop {
+                tokio::time::sleep(wait).await;
+                let Some(pool) = pool.upgrade() else {
+                    return;
+                };
+                let (closed, next) = pool.close_expired(limit);
+                drop(pool);
+                wait = next;
+                if closed > 0 {
+                    let _ = events.send(ExecEvent::IdleClosed { connection }).await;
+                }
+            }
+        });
     }
 
     /// Returns the serial of the pool that a connection uses now.
@@ -456,6 +523,13 @@ impl Manager {
         execution
     }
 
+    /// Accepts an import and returns its identity.
+    pub fn import(&self, console: ConsoleId, job: ImportJob) -> ExecutionId {
+        let execution = self.next_execution.fetch_add(1, Ordering::Relaxed);
+        self.send(console, Command::Import(ImportRequest { execution, job }));
+        execution
+    }
+
     pub fn stop(&self, console: ConsoleId) {
         self.send(console, Command::Stop);
     }
@@ -549,7 +623,7 @@ impl Manager {
             return;
         };
         let pool = binding.pool.clone();
-        let limit = binding.settings.stop_grace;
+        let limit = binding.settings().stop_grace;
         let events = self.events.clone();
         self.runtime.spawn(async move {
             pool.close_idle();

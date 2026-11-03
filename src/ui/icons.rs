@@ -44,6 +44,12 @@ pub struct Icons {
     pub mysql: &'static str,
     pub sqlite: &'static str,
     pub redis: &'static str,
+    /// The marks of a key column in a diagram box. A column in both keys shows the first.
+    pub primary_key: &'static str,
+    pub foreign_key: &'static str,
+    /// The ends of a line of a diagram, at the table that the key reads.
+    pub arrow_left: &'static str,
+    pub arrow_right: &'static str,
 }
 
 /// Returns the symbol of a connection icon. These symbols do not depend on the set of
@@ -103,6 +109,10 @@ impl Icons {
             mysql: "my",
             sqlite: "sq",
             redis: "rd",
+            primary_key: "PK",
+            foreign_key: "FK",
+            arrow_left: "<",
+            arrow_right: ">",
         }
     }
 
@@ -140,6 +150,10 @@ impl Icons {
             mysql: "my",
             sqlite: "sq",
             redis: "rd",
+            primary_key: "◆",
+            foreign_key: "◇",
+            arrow_left: "◀",
+            arrow_right: "▶",
         }
     }
 
@@ -177,6 +191,10 @@ impl Icons {
             mysql: "\u{e704}",
             sqlite: "\u{e7c4}",
             redis: "\u{e76d}",
+            primary_key: "\u{f084}",
+            foreign_key: "\u{f0c1}",
+            arrow_left: "◀",
+            arrow_right: "▶",
         }
     }
 
@@ -191,7 +209,7 @@ impl Icons {
     }
 
     /// Returns each symbol of the set, for the checks of the column width.
-    pub fn all(&self) -> [&'static str; 33] {
+    pub fn all(&self) -> [&'static str; 37] {
         [
             self.run,
             self.script,
@@ -226,6 +244,10 @@ impl Icons {
             self.mysql,
             self.sqlite,
             self.redis,
+            self.primary_key,
+            self.foreign_key,
+            self.arrow_left,
+            self.arrow_right,
         ]
     }
 }

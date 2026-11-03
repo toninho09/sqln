@@ -13,7 +13,7 @@ use crate::form::FormRequest;
 use crate::input::Action;
 use crate::navigator::{MIN_WIDTH, Navigator, RowKind};
 use crate::result::ResultTab;
-use crate::settings::SettingsRequest;
+use crate::settings::{Field as SettingsField, SettingsRequest};
 use crate::table::TableFocus;
 use crate::ui::console::Control;
 use crate::ui::navigator::TREE_PAD;
@@ -24,6 +24,8 @@ use crate::ui::{
 /// The console keeps this width when the user drags the divider of the navigator.
 pub(super) const MIN_MAIN_WIDTH: u16 = 40;
 const WHEEL_ROWS: isize = 3;
+/// One gesture of a touchpad sends many events, so one event moves one column.
+const WHEEL_COLUMNS: isize = 1;
 /// Two clicks on the same cell in this time open a table.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
@@ -37,6 +39,11 @@ pub(super) enum Drag {
     },
     Navigator,
     Editor,
+    /// The picture of a diagram, with the last place of the pointer.
+    Diagram {
+        column: u16,
+        row: u16,
+    },
 }
 
 impl App {
@@ -53,7 +60,10 @@ impl App {
             MouseEventKind::Drag(MouseButton::Left) if self.grid_has_focus() => {
                 self.point_at_cell(mouse, true);
             }
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => self.on_wheel(mouse, position),
+            MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight => self.on_wheel(mouse, position),
             _ if self.layout.console.editor.contains(position) && self.editor_has_focus() => {
                 self.console_mut().editor.on_mouse(mouse);
             }
@@ -62,13 +72,14 @@ impl App {
     }
 
     fn editor_has_focus(&self) -> bool {
-        !self.navigator_focused
-            && self.table_active.is_none()
-            && self.console().focus == Focus::Editor
+        !self.navigator_focused && self.console_on_screen() && self.console().focus == Focus::Editor
     }
 
     /// Returns the result grid that the mouse acts on, with its area on the screen.
     fn active_grid(&mut self) -> Option<(&mut ResultTab, Rect)> {
+        if self.diagram_active.is_some() {
+            return None;
+        }
         if let Some(index) = self.table_active {
             return Some((&mut self.tables[index].result, self.layout.table.grid));
         }
@@ -95,6 +106,8 @@ impl App {
             self.on_navigator_press(mouse);
         } else if layout.navigator_title.contains(position) {
             self.focus_navigator();
+        } else if self.diagram_active.is_some() {
+            self.on_diagram_press(mouse, position);
         } else if self.table_active.is_some() {
             self.on_table_press(mouse, position);
         } else {
@@ -216,9 +229,12 @@ impl App {
         let mark = usize::from(area.x + TREE_PAD) + row.depth() * 2;
         if usize::from(mouse.column) == mark && Navigator::is_branch(&row) {
             self.toggle(&row);
-        } else if self.is_double_click(mouse) && matches!(row.kind, RowKind::Table | RowKind::View)
-        {
-            self.open_table(&row);
+        } else if self.is_double_click(mouse) {
+            match row.kind {
+                RowKind::Table | RowKind::View => self.open_table(&row),
+                RowKind::Console => self.open_tree_console(&row),
+                _ => {}
+            }
         }
     }
 
@@ -245,18 +261,28 @@ impl App {
     }
 
     fn on_wheel(&mut self, mouse: MouseEvent, position: Position) {
-        let rows = if mouse.kind == MouseEventKind::ScrollUp {
-            -WHEEL_ROWS
-        } else {
-            WHEEL_ROWS
+        if self.diagram_active.is_some() && self.on_diagram_wheel(mouse, position) {
+            return;
+        }
+        let (rows, columns) = match mouse.kind {
+            MouseEventKind::ScrollUp => (-WHEEL_ROWS, 0),
+            MouseEventKind::ScrollDown => (WHEEL_ROWS, 0),
+            MouseEventKind::ScrollLeft => (0, -WHEEL_COLUMNS),
+            MouseEventKind::ScrollRight => (0, WHEEL_COLUMNS),
+            _ => return,
         };
-        if self.layout.navigator.contains(position) {
+        // Only the grid moves to the side.
+        let vertical = columns == 0;
+        if vertical && self.layout.navigator.contains(position) {
             self.navigator.move_by(rows, &self.connections);
         } else if let Some((result, area)) = self.active_grid()
             && area.contains(position)
         {
-            result.view.move_by(rows, 0, &result.table, false);
-        } else if self.layout.console.editor.contains(position) && self.editor_has_focus() {
+            result.view.move_by(rows, columns, &result.table, false);
+        } else if vertical
+            && self.layout.console.editor.contains(position)
+            && self.editor_has_focus()
+        {
             self.console_mut().editor.on_mouse(mouse);
         }
     }
@@ -270,6 +296,7 @@ impl App {
                 let width = mouse.column.saturating_sub(start);
                 self.navigator.width = width.clamp(MIN_WIDTH.min(limit), limit);
             }
+            Some(Drag::Diagram { .. }) => self.drag_diagram(mouse),
             Some(Drag::Editor) => {
                 let area = self.layout.console.split;
                 if area.height > 0 {
@@ -437,6 +464,17 @@ impl App {
         let position = Position::new(mouse.column, mouse.row);
         let layout = &self.layout.form;
         let inside = |(_, area): &&(_, Rect)| area.contains(position);
+        let section = layout
+            .sections
+            .iter()
+            .find(|(_, area)| area.contains(position));
+        if let Some((section, _)) = section {
+            let section = *section;
+            if let Some(form) = &mut self.form {
+                form.select_section(section);
+            }
+            return;
+        }
         let button = layout.browse.iter().find(inside);
         let Some((chosen, _)) = button.or(layout.fields.iter().find(inside)) else {
             return;
@@ -460,10 +498,39 @@ impl App {
     }
 
     pub(super) fn on_settings_mouse(&mut self, mouse: MouseEvent) {
+        let position = Position::new(mouse.column, mouse.row);
+        if matches!(
+            mouse.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        ) {
+            let inside = self.layout.settings.fields.iter().any(|(field, area)| {
+                *field == SettingsField::ShortcutCommands && area.contains(position)
+            });
+            if inside && let Some(form) = &mut self.settings_form {
+                let delta = if mouse.kind == MouseEventKind::ScrollUp {
+                    -WHEEL_ROWS
+                } else {
+                    WHEEL_ROWS
+                };
+                form.move_shortcut_command(delta);
+            }
+            return;
+        }
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
             return;
         }
-        let position = Position::new(mouse.column, mouse.row);
+        if let Some((action, _)) = self
+            .layout
+            .settings
+            .command_rows
+            .iter()
+            .find(|(_, area)| area.contains(position))
+        {
+            if let Some(form) = &mut self.settings_form {
+                form.edit_shortcut(*action);
+            }
+            return;
+        }
         let sections = &self.layout.settings.sections;
         if let Some(section) = sections.iter().position(|area| area.contains(position)) {
             if let Some(form) = &mut self.settings_form {
@@ -522,6 +589,47 @@ impl App {
             let request = form.press();
             self.on_export_request(request);
         }
+    }
+}
+
+impl App {
+    pub(super) fn on_import_mouse(&mut self, mouse: MouseEvent) {
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+        let position = Position::new(mouse.column, mouse.row);
+        let layout = &self.layout.import;
+        let browse = layout.browse.filter(|(_, area)| area.contains(position));
+        let section = layout
+            .sections
+            .iter()
+            .position(|area| area.contains(position));
+        let column = layout
+            .columns
+            .iter()
+            .find(|(_, area)| area.contains(position))
+            .map(|(column, _)| *column);
+        let field = layout
+            .fields
+            .iter()
+            .find(|(_, area)| area.contains(position))
+            .map(|(field, _)| *field);
+        let Some(form) = &mut self.import_form else {
+            return;
+        };
+        if let Some((path, _)) = browse {
+            form.focus_on(path);
+            self.open_browser();
+        } else if let Some(section) = section {
+            form.open_section(section);
+        } else if let Some(column) = column {
+            form.select_column(column);
+        } else if let Some(field) = field {
+            form.focus_on(field);
+            let action = form.press();
+            self.on_import_action(action);
+        }
+        self.request_probe();
     }
 }
 

@@ -35,7 +35,7 @@ The rules are in "Driver decision" of the [plan](INITIAL_PLAN.md) and "Libraries
 | TLS of MySQL | The default does not use TLS | Always set `ssl_opts` on remote hosts |
 | Verification | With `rustls`, a wrong CA and a wrong name refused the connection, without an insecure alternative | Verification by default, off only on local addresses |
 | Client certificate | Worked on both databases | Fields for CA and client certificate |
-| Client key on MySQL | `mysql_async` accepts only RSA in PKCS#1 | The form reports that limit |
+| Client key on MySQL | `mysql_async` 0.36 accepted only RSA in PKCS#1. Version 0.37 also accepts PKCS#8 and SEC1 | The driver reports a bad key; `docs/DECISIONS.md` holds the change |
 | Connection deadline | `connect_timeout` did not cover a silent server | Wrap the whole connection in `timeout` of 30 s |
 | Connection loss | Both network drivers reported the loss on an idle connection, in a transaction, and during an execution | Replace idle connections; fail the statement without repeating SQL |
 | Types on PostgreSQL | The simple protocol does not inform the types | `prepare` before the statement, on the same connection |

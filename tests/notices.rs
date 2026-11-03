@@ -182,6 +182,19 @@ fn a_notice_before_an_error_stays() {
 }
 
 #[test]
+fn an_added_limit_goes_to_messages_and_the_tab_counts_no_warning() {
+    let mut app = app();
+    run(&mut app, "SELECT 1");
+    let messages = &app.console().messages;
+    assert_eq!(messages[0].level, MessageLevel::Info);
+    assert_eq!(
+        messages[0].text,
+        "Statement 1: SQLN added LIMIT 1001 to this statement."
+    );
+    assert_eq!(app.console().warnings(), 0);
+}
+
+#[test]
 fn a_new_run_clears_the_number_of_the_tab() {
     let mut app = app();
     run(&mut app, "read");

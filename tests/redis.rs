@@ -223,7 +223,8 @@ fn the_form_refuses_a_database_name() {
     form.focus_on(Field::Database);
     form.on_paste("sales");
     let error = form.definition().unwrap_err();
-    assert!(error.contains("must be a number"), "{error}");
+    assert!(error.message.contains("must be a number"), "{error:?}");
+    assert_eq!(error.field, Field::Database);
 }
 
 #[test]

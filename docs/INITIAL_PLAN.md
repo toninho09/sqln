@@ -1046,7 +1046,7 @@ That avoids presenting an old execution as the result of the current text.
 - **`DELIMITER`:** accept on MySQL, handling the command in the client.
 - **`COPY FROM STDIN`:** refuse with a clear message.
 - **`CALL` with several results:** show one tab per result.
-- **`EXPLAIN`:** show in the common grid.
+- **`EXPLAIN`:** show in the common grid. A plan from `Ctrl+W E` shows as a tree; see `docs/DECISIONS.md`.
 
 ### Technical points to validate
 
@@ -2647,7 +2647,7 @@ Section 1 shows what is already done in that order and what is missing.
 - Extractor editor. The user reopened the export to file on 2026-10-31; see `docs/DECISIONS.md`.
 - Integrated SSH tunnel.
 - `COPY FROM STDIN`.
-- Own view for `EXPLAIN`.
+- Own view for `EXPLAIN`. The user reopened it on 2026-11-02; see `docs/DECISIONS.md`.
 - Session preservation between executions, outside a script or transaction.
 - IAM and Kerberos authentication.
 - Detection of definitions that point to the same physical database.

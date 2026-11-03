@@ -1,14 +1,17 @@
 //! The saved consoles: the list that opens them again, the scripts without a
 //! connection, the removal of a script, and the association with a connection.
 
+use std::collections::HashMap;
 use std::time::SystemTime;
 
 use edtui::Index2;
 
 use super::{App, DialogAction, Picker, PickerKind};
-use crate::connection::Connection;
+use crate::connection::{Connection, ConnectionKey, TreeConsole};
+use crate::console::Console;
 use crate::editor::SqlEditor;
 use crate::exec::{ConnectionId, ConsoleId};
+use crate::navigator::Row;
 use crate::script_file::ScriptFile;
 use crate::store::file::Expect;
 use crate::store::scripts::{self, ScriptEntry};
@@ -40,13 +43,28 @@ fn scope_word(scope: Scope) -> &'static str {
     }
 }
 
+/// Keeps the saved consoles of one connection.
+fn saved_of(entries: &[ScriptEntry], key: &ConnectionKey) -> Vec<ScriptEntry> {
+    entries
+        .iter()
+        .filter(|entry| entry.meta.connection_id == key.id)
+        .cloned()
+        .collect()
+}
+
+/// Returns true when a console shows a script.
+fn shows_script(console: &Console, entry: &ScriptEntry) -> bool {
+    console
+        .file
+        .as_ref()
+        .is_some_and(|file| file.scope == entry.scope && file.meta.id == entry.meta.id)
+}
+
 impl App {
-    fn is_script_open(&self, scope: Scope, id: &str) -> bool {
-        self.consoles.iter().any(|c| {
-            c.file
-                .as_ref()
-                .is_some_and(|file| file.scope == scope && file.meta.id == id)
-        })
+    fn is_script_open(&self, entry: &ScriptEntry) -> bool {
+        self.consoles
+            .iter()
+            .any(|console| shows_script(console, entry))
     }
 
     fn script_row(&self, entry: &ScriptEntry, show_scope: bool) -> String {
@@ -54,26 +72,125 @@ impl App {
         if show_scope {
             row = format!("{row} · {}", scope_word(entry.scope));
         }
-        if self.is_script_open(entry.scope, &entry.meta.id) {
+        if self.is_script_open(entry) {
             row.push_str(text::MARK_OPEN);
         }
         row
+    }
+
+    /// Lists the saved consoles of a scope, the newest first. This reads the disk.
+    fn saved_consoles(&self, scope: Scope) -> Vec<ScriptEntry> {
+        self.persist_root(scope)
+            .map_or_else(Vec::new, |root| scripts::list(&root, scope))
     }
 
     /// Lists the saved consoles of a connection, the newest first.
     pub(super) fn consoles_of(&self, connection: ConnectionId) -> Vec<ScriptEntry> {
         let Some(key) = self
             .connection(connection)
-            .and_then(|item| item.key.clone())
+            .and_then(|item| item.key.as_ref())
         else {
             return Vec::new();
         };
-        let Some(root) = self.persist_root(key.scope) else {
-            return Vec::new();
+        saved_of(&self.saved_consoles(key.scope), key)
+    }
+
+    /// Lists the consoles of a connection for the navigator: the saved consoles, the
+    /// newest first, and then the open consoles without a file.
+    fn tree_consoles(&self, connection: ConnectionId, saved: Vec<ScriptEntry>) -> Vec<TreeConsole> {
+        let mut rows: Vec<TreeConsole> = saved
+            .into_iter()
+            .map(|entry| {
+                let tab = self.consoles.iter().find(|c| shows_script(c, &entry));
+                TreeConsole {
+                    name: tab.map_or_else(|| entry.meta.name.clone(), |c| c.name.clone()),
+                    tab: tab.map(|c| c.id),
+                    script: Some(entry),
+                }
+            })
+            .collect();
+        let listed: Vec<ConsoleId> = rows.iter().filter_map(|row| row.tab).collect();
+        let others = self
+            .consoles
+            .iter()
+            .filter(|c| c.connection == Some(connection) && !c.hidden && !listed.contains(&c.id));
+        rows.extend(others.map(|c| TreeConsole {
+            name: c.name.clone(),
+            tab: Some(c.id),
+            script: None,
+        }));
+        rows
+    }
+
+    /// Rebuilds the console rows of the connections that the tree shows open. The other
+    /// connections wait for their first open, so a change of a console reads less.
+    /// The open connections of one scope share one read of its folder.
+    pub(super) fn refresh_tree_consoles(&mut self) {
+        let mut folders: HashMap<Scope, Vec<ScriptEntry>> = HashMap::new();
+        for index in 0..self.connections.len() {
+            let id = self.connections[index].id;
+            if !self.navigator.is_connection_open(id) {
+                continue;
+            }
+            let saved = self.connections[index]
+                .key
+                .as_ref()
+                .map_or_else(Vec::new, |key| {
+                    let folder = folders
+                        .entry(key.scope)
+                        .or_insert_with(|| self.saved_consoles(key.scope));
+                    saved_of(folder, key)
+                });
+            self.connections[index].consoles = self.tree_consoles(id, saved);
+        }
+    }
+
+    fn tree_console(&self, row: &Row) -> Option<TreeConsole> {
+        let consoles = &self.connections[row.connection].consoles;
+        consoles.get(row.relation).cloned()
+    }
+
+    /// Opens the console of a navigator row, or it selects the tab that shows it.
+    pub(super) fn open_tree_console(&mut self, row: &Row) {
+        if self.config_blocked() {
+            return;
+        }
+        let Some(item) = self.tree_console(row) else {
+            return;
         };
-        let mut entries = scripts::list(&root, key.scope);
-        entries.retain(|entry| entry.meta.connection_id == key.id);
-        entries
+        match (item.tab.and_then(|id| self.console_index(id)), item.script) {
+            (Some(index), _) => {
+                self.select_console(index);
+                self.leave_navigator();
+            }
+            (None, Some(entry)) => self.open_script(&entry),
+            (None, None) => {}
+        }
+    }
+
+    /// The key that names the console of a navigator row again. An open console renames
+    /// its tab.
+    pub(super) fn rename_tree_console(&mut self, row: &Row) {
+        let Some(item) = self.tree_console(row) else {
+            return;
+        };
+        let target = match (item.tab, item.script) {
+            (Some(id), _) => NameTarget::Console(id),
+            (None, Some(entry)) => NameTarget::Script(entry),
+            (None, None) => return,
+        };
+        self.rename = Some(NamePrompt::new(target, &item.name));
+    }
+
+    /// The key that removes the script of a navigator row. The connection stays.
+    pub(super) fn delete_tree_console(&mut self, row: &Row) {
+        let Some(item) = self.tree_console(row) else {
+            return;
+        };
+        match item.script.filter(|_| item.tab.is_none()) {
+            Some(entry) => self.ask_script_removal(entry),
+            None => self.status = Some(text::SCRIPT_OPEN.to_owned()),
+        }
     }
 
     /// The request for a console. The list offers the saved consoles of the
@@ -143,11 +260,7 @@ impl App {
 
     /// Opens a saved console in a tab, or it selects the tab that already shows it.
     pub(super) fn open_script(&mut self, entry: &ScriptEntry) {
-        let open = self.consoles.iter().position(|c| {
-            c.file
-                .as_ref()
-                .is_some_and(|file| file.scope == entry.scope && file.meta.id == entry.meta.id)
-        });
+        let open = self.consoles.iter().position(|c| shows_script(c, entry));
         let index = match open.map_or_else(|| self.load_script(entry), Ok) {
             Ok(index) => index,
             Err(message) => {
@@ -218,10 +331,14 @@ impl App {
 
     /// The key that removes the script under the cursor of the list.
     pub(super) fn picker_delete(&mut self) {
-        let Some(entry) = self.picker_script() else {
-            return;
-        };
-        if self.is_script_open(entry.scope, &entry.meta.id) {
+        if let Some(entry) = self.picker_script() {
+            self.ask_script_removal(entry);
+        }
+    }
+
+    /// Asks before the removal of a script. An open console refuses.
+    fn ask_script_removal(&mut self, entry: ScriptEntry) {
+        if self.is_script_open(&entry) {
             self.status = Some(text::SCRIPT_OPEN.to_owned());
             return;
         }
@@ -268,6 +385,7 @@ impl App {
             workspace.consoles.remove(id);
         });
         self.status = Some(text::SCRIPT_REMOVED.to_owned());
+        self.refresh_tree_consoles();
     }
 
     // ---- rename ----
@@ -286,12 +404,7 @@ impl App {
         let Some(entry) = self.picker_script() else {
             return;
         };
-        let open = self.consoles.iter().find(|console| {
-            console
-                .file
-                .as_ref()
-                .is_some_and(|file| file.scope == entry.scope && file.meta.id == entry.meta.id)
-        });
+        let open = self.consoles.iter().find(|c| shows_script(c, &entry));
         let target = open.map_or_else(
             || NameTarget::Script(entry.clone()),
             |console| NameTarget::Console(console.id),
@@ -367,10 +480,22 @@ impl App {
         let Some(prompt) = self.rename.take() else {
             return;
         };
+        let old = match &prompt.target {
+            NameTarget::Console(console) => self
+                .console_index(*console)
+                .map(|index| self.consoles[index].name.clone()),
+            NameTarget::Script(entry) => Some(entry.meta.name.clone()),
+        };
         let result = match prompt.target {
             NameTarget::Console(console) => self.rename_console(console, &name),
             NameTarget::Script(entry) => self.rename_script(&entry, &name).map(|_| false),
         };
+        if result.is_ok()
+            && let Some(old) = old
+        {
+            self.navigator.rename_console(&old, &name);
+        }
+        self.refresh_tree_consoles();
         match result {
             Ok(true) => {}
             Ok(false) => self.status = Some(text::CONSOLE_RENAMED.to_owned()),
@@ -486,6 +611,7 @@ impl App {
         console.editor.set_dialect(dialect);
         self.bind_console(index, connection);
         self.consoles[index].name = name;
+        self.refresh_tree_consoles();
     }
 
     // ---- association ----

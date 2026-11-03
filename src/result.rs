@@ -6,8 +6,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::exec::ReadLimit;
 use crate::grid::json::pretty;
-use crate::grid::{GridView, ResultTable, RowSearch, Value, printable};
+use crate::grid::{Budget, GridView, Reservation, ResultTable, RowSearch, Value, printable};
 use crate::input::Action;
+use crate::plan::PlanView;
 use crate::ui::console::fit;
 use crate::ui::text;
 
@@ -32,6 +33,8 @@ pub struct ResultTab {
     pub limit: ReadLimit,
     /// True when the execution ended before the last row: a stop, an error, or the time.
     pub cut_short: bool,
+    /// True when the grid shows the tree of a plan.
+    pub plan: bool,
 }
 
 /// The action of a key in the results panel.
@@ -72,7 +75,31 @@ impl ResultTab {
             statement: 0,
             limit: ReadLimit::None,
             cut_short: false,
+            plan: false,
         }
+    }
+
+    /// Replaces the text of the database with the tree of a plan. The new rows take a
+    /// place in the budget first, so a full budget keeps the text.
+    pub fn show_plan(&mut self, view: PlanView, budget: &Budget) -> bool {
+        let mut bytes = 0;
+        for row in &view.rows {
+            match budget.reserve(row) {
+                Reservation::Accepted(cost) => bytes += cost,
+                Reservation::BudgetReached | Reservation::ValueTooLarge => {
+                    budget.release(bytes);
+                    return false;
+                }
+            }
+        }
+        budget.release(self.table.bytes);
+        self.table = ResultTable::new(view.columns);
+        self.table.append(view.rows, bytes);
+        self.table.set_width(0, view.tree_width);
+        self.view = GridView::default();
+        self.summary = view.summary;
+        self.plan = true;
+        true
     }
 
     /// Returns true when the grid holds each row of the result.

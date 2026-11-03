@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures_util::FutureExt;
@@ -9,9 +9,11 @@ use sqln::connector::{
     Canceller, ConnectError, Connector, ExecError, ResetOutcome, Session, SessionContext,
     StatementEnd, TransactionCommand, TransactionState,
 };
-use sqln::exec::ResultSink;
+use sqln::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, ResultSink, RunOptions, Settings};
+use sqln::grid::Budget;
 use sqln::pool::{Lease, Pool};
 use sqln::sql::Dialect;
+use tokio::sync::mpsc::Receiver;
 use tokio::time::{sleep, timeout};
 
 const SHORT: Duration = Duration::from_millis(50);
@@ -50,7 +52,10 @@ impl Connector for Fake {
         match behavior {
             Behavior::Works => {
                 self.opened.fetch_add(1, Ordering::SeqCst);
-                Ok(Box::new(FakeSession { reset: self.reset }))
+                Ok(Box::new(FakeSession {
+                    reset: self.reset,
+                    transaction: TransactionState::None,
+                }))
             }
             Behavior::Refuses => Err(ConnectError::new("refused".to_owned())),
             Behavior::Hangs => std::future::pending().await,
@@ -60,6 +65,7 @@ impl Connector for Fake {
 
 struct FakeSession {
     reset: ResetOutcome,
+    transaction: TransactionState,
 }
 
 struct NoCancel;
@@ -83,9 +89,13 @@ impl Session for FakeSession {
         Ok(StatementEnd::default())
     }
     async fn transaction_state(&mut self) -> TransactionState {
-        TransactionState::None
+        self.transaction
     }
-    async fn control(&mut self, _: TransactionCommand) -> Result<(), ExecError> {
+    async fn control(&mut self, command: TransactionCommand) -> Result<(), ExecError> {
+        self.transaction = match command {
+            TransactionCommand::Begin => TransactionState::Open,
+            TransactionCommand::Commit | TransactionCommand::Rollback => TransactionState::None,
+        };
         Ok(())
     }
     async fn reset(&mut self) -> ResetOutcome {
@@ -350,6 +360,41 @@ async fn a_waiter_opens_a_new_session_after_a_failed_opening() {
 }
 
 #[tokio::test]
+async fn an_idle_session_closes_at_the_idle_limit_and_a_session_in_use_stays() {
+    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let pool = pool(&fake, 2);
+    let in_use = take(&pool).await;
+    take(&pool).await.release().await;
+    let (closed, next) = pool.close_expired(SHORT);
+    assert_eq!(closed, 0, "the session is younger than the limit");
+    assert!(next > Duration::ZERO && next <= SHORT, "{next:?}");
+    sleep(SHORT * 2).await;
+    assert_eq!(pool.close_expired(SHORT), (1, SHORT));
+    assert_eq!(pool.usage(), (1, 2));
+    in_use.release().await;
+    assert_eq!(pool.close_expired(SHORT).0, 0);
+    assert!(pool.has_sessions());
+}
+
+#[tokio::test]
+async fn the_older_idle_session_closes_and_the_newer_one_stays() {
+    let limit = Duration::from_millis(200);
+    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let pool = pool(&fake, 2);
+    let (first, second) = (take(&pool).await, take(&pool).await);
+    first.release().await;
+    sleep(Duration::from_millis(120)).await;
+    second.release().await;
+    sleep(Duration::from_millis(120)).await;
+    let (closed, next) = pool.close_expired(limit);
+    assert_eq!(closed, 1);
+    assert!(next < Duration::from_millis(100), "{next:?}");
+    // The newer session serves the next use.
+    take(&pool).await.release().await;
+    assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
 async fn close_idle_ends_the_idle_sessions_and_a_later_use_opens_one() {
     let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
     let pool = pool(&fake, 2);
@@ -417,4 +462,93 @@ async fn close_idle_between_the_grant_and_its_read_closes_the_session() {
         "the session of the old generation closes"
     );
     assert_eq!(pool.usage().0, 0);
+}
+
+/// A manager with the fake source. The manager owns a runtime, so these tests are not async.
+struct Watched {
+    manager: Manager,
+    events: Receiver<ExecEvent>,
+    connection: ConnectionId,
+    console: ConsoleId,
+}
+
+impl Watched {
+    fn open(idle_timeout: Duration) -> Self {
+        let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+        let settings = Settings {
+            idle_timeout: Some(idle_timeout),
+            ..Settings::default()
+        };
+        let (mut manager, events) = Manager::new(Arc::new(Budget::new(1 << 20))).unwrap();
+        let connection = manager.add_connection(fake, settings);
+        let console = manager.open_console(connection).unwrap();
+        Self {
+            manager,
+            events,
+            connection,
+            console,
+        }
+    }
+
+    /// Waits for an event of the kind, and returns false at the deadline.
+    fn wait(&mut self, wanted: fn(&ExecEvent) -> bool, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline {
+            if let Ok(event) = self.events.try_recv()
+                && wanted(&event)
+            {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        false
+    }
+
+    fn run(&mut self, manual: bool) {
+        let options = RunOptions {
+            manual,
+            ..RunOptions::default()
+        };
+        self.manager
+            .run(self.console, vec!["SELECT 1".to_owned()], options);
+        let finished = |event: &ExecEvent| matches!(event, ExecEvent::ExecutionFinished { .. });
+        assert!(
+            self.wait(finished, Duration::from_secs(5)),
+            "the run did not end"
+        );
+    }
+}
+
+fn idle_closed(event: &ExecEvent) -> bool {
+    matches!(event, ExecEvent::IdleClosed { .. })
+}
+
+#[test]
+fn the_manager_closes_an_idle_session_at_the_idle_limit_and_the_next_run_opens_one() {
+    let mut w = Watched::open(Duration::from_millis(100));
+    w.run(false);
+    assert!(w.manager.is_connected(w.connection));
+    assert!(w.wait(idle_closed, Duration::from_secs(5)));
+    assert!(!w.manager.is_connected(w.connection));
+    w.run(false);
+    assert!(w.manager.is_connected(w.connection));
+    w.manager.shutdown();
+}
+
+#[test]
+fn an_open_transaction_keeps_its_session_after_the_idle_limit() {
+    let limit = Duration::from_millis(100);
+    let mut w = Watched::open(limit);
+    w.run(true);
+    assert!(
+        !w.wait(idle_closed, limit * 4),
+        "the transaction keeps its session"
+    );
+    assert!(w.manager.is_connected(w.connection));
+    // The end of the transaction returns the session, and the idle limit applies.
+    w.manager
+        .transaction(w.console, TransactionCommand::Rollback);
+    assert!(w.wait(idle_closed, Duration::from_secs(5)));
+    assert!(!w.manager.is_connected(w.connection));
+    w.manager.shutdown();
 }

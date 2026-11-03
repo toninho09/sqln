@@ -273,13 +273,7 @@ impl Fixture {
         target.password.as_ref().map(Secret::expose)
     }
     fn focus(&mut self, field: Field) {
-        for _ in 0..40 {
-            if self.app.form().unwrap().focus == field {
-                return;
-            }
-            self.code(KeyCode::Tab);
-        }
-        panic!("Field is not available");
+        common::focus_form_field(&mut self.app, field);
     }
     fn edit(&mut self) {
         self.prefix('h');

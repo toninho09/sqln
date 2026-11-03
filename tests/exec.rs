@@ -36,6 +36,9 @@ struct Run {
     statuses: Vec<StatementStatus>,
     limits: Vec<ReadLimit>,
     changed: Vec<Option<u64>>,
+    /// The `LIMIT` that each statement received from SQLN.
+    added_limits: Vec<usize>,
+    error_offsets: Vec<Option<usize>>,
     end: Option<ExecutionEnd>,
     message: Option<String>,
     transaction: Option<TransactionState>,
@@ -85,7 +88,14 @@ impl Harness {
                     run.rows.extend(rows);
                     run.bytes += bytes;
                 }
-                ExecEvent::StatementFinished { status, end, .. } => {
+                ExecEvent::LimitAdded { rows, .. } => run.added_limits.push(rows),
+                ExecEvent::StatementFinished {
+                    status,
+                    end,
+                    error_offset,
+                    ..
+                } => {
+                    run.error_offsets.push(error_offset);
                     run.statuses.push(status);
                     run.limits
                         .push(end.map_or(ReadLimit::None, |end| end.limit));
@@ -244,6 +254,82 @@ fn a_result_with_exactly_the_cap_has_no_limit_mark() {
     let run = h.run(&["SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3"]);
     assert_eq!(run.rows.len(), 3);
     assert_eq!(run.limits, [ReadLimit::None]);
+}
+
+const FIVE_ROWS: &str =
+    "SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5";
+
+fn capped(row_cap: usize, cap_in_sql: bool) -> Settings {
+    Settings {
+        row_cap,
+        cap_in_sql,
+        ..Settings::default()
+    }
+}
+
+#[test]
+fn a_plain_read_receives_the_cap_and_one_row_as_its_limit() {
+    let mut h = Harness::open("cap-in-sql", capped(3, true));
+    let run = h.run(&[FIVE_ROWS]);
+    assert_eq!(run.added_limits, [4]);
+    assert_eq!(run.rows.len(), 3);
+    assert_eq!(run.limits, [ReadLimit::RowCap]);
+}
+
+#[test]
+fn without_the_setting_the_database_receives_the_text_of_the_user() {
+    let mut h = Harness::open("cap-in-sql-off", capped(3, false));
+    let run = h.run(&[FIVE_ROWS, "SELECT * FROM"]);
+    assert!(run.added_limits.is_empty());
+    assert_eq!(run.rows.len(), 3);
+    assert_eq!(run.limits[0], ReadLimit::RowCap);
+    let StatementStatus::Error(message) = &run.statuses[1] else {
+        panic!("{run:?}");
+    };
+    assert!(!message.contains("LIMIT"), "{message}");
+}
+
+#[test]
+fn a_read_with_its_own_limit_keeps_its_text() {
+    let mut h = Harness::open("cap-in-sql-own", capped(3, true));
+    let run = h.run(&[&format!("{FIVE_ROWS} LIMIT 4")]);
+    assert!(run.added_limits.is_empty());
+    assert_eq!(run.rows.len(), 3);
+    assert_eq!(run.limits, [ReadLimit::RowCap]);
+}
+
+#[test]
+fn an_error_in_the_added_limit_points_inside_the_text_of_the_user() {
+    let mut h = Harness::open("cap-in-sql-error", capped(3, true));
+    let sql = "SELECT * FROM";
+    let run = h.run(&[sql]);
+    assert_eq!(run.added_limits, [4]);
+    let StatementStatus::Error(message) = &run.statuses[0] else {
+        panic!("{run:?}");
+    };
+    assert!(
+        message.contains("LIMIT"),
+        "the database read the clause: {message}"
+    );
+    assert_eq!(run.error_offsets, [Some(sql.len())]);
+}
+
+#[test]
+fn a_change_of_the_settings_acts_from_the_next_execution() {
+    let mut h = Harness::open("settings-change", capped(3, true));
+    let statements = vec![FIVE_ROWS.to_owned(), FIVE_ROWS.to_owned()];
+    let execution = h.manager.run(h.console, statements, RunOptions::default());
+    // The execution reads the settings before this event.
+    while !matches!(h.next(), ExecEvent::Queued { .. }) {}
+    h.manager.update_settings(h.connection, capped(1, false));
+    let running = h.collect(execution);
+    assert_eq!(running.rows.len(), 6, "each statement keeps the cap of 3");
+    assert_eq!(running.added_limits, [4, 4]);
+
+    let next = h.run(&[FIVE_ROWS]);
+    assert_eq!(next.rows.len(), 1);
+    assert_eq!(next.limits, [ReadLimit::RowCap]);
+    assert!(next.added_limits.is_empty());
 }
 
 #[test]
@@ -760,6 +846,7 @@ fn an_export_passes_the_row_cap_the_budget_and_the_time_limit() {
     let run = h.collect(execution);
     assert_eq!(run.end, Some(ExecutionEnd::Completed), "{run:?}");
     assert_eq!(run.statuses, [StatementStatus::Success]);
+    assert!(run.added_limits.is_empty(), "an export reads every row");
     assert!(run.columns.is_empty(), "the grid gets no columns");
     assert!(run.rows.is_empty(), "the grid gets no rows");
     assert_eq!(h.budget.used(), 0);

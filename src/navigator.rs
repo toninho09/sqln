@@ -1,7 +1,8 @@
-//! The tree of connections, schemas, relations, and columns.
+//! The tree of connections, consoles, schemas, relations, and columns.
 //!
 //! The rows hold positions in the catalog, so a read of the tree copies no name.
 //! The cursor holds names, so it stays on its item when the catalog changes.
+//! A connection keeps its console rows, so a read of the tree does not read the disk.
 
 use std::collections::{HashMap, HashSet};
 
@@ -12,6 +13,7 @@ use crate::connection::{CatalogState, Connection};
 use crate::exec::ConnectionId;
 use crate::filter_list::{holds_words, words_of};
 use crate::line_input::{Edit, LineInput};
+use crate::ui::text;
 
 pub const DEFAULT_WIDTH: u16 = 24;
 pub const MIN_WIDTH: u16 = 12;
@@ -20,6 +22,10 @@ const PAGE_ROWS: isize = 20;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowKind {
     Connection,
+    /// The node above the consoles of a connection.
+    Consoles,
+    /// `Row::relation` is the position in the consoles of the connection.
+    Console,
     Schema,
     Table,
     View,
@@ -40,13 +46,21 @@ impl Row {
     pub fn depth(&self) -> usize {
         match self.kind {
             RowKind::Connection => 0,
-            RowKind::Schema => 1,
-            RowKind::Table | RowKind::View => 2,
+            RowKind::Consoles | RowKind::Schema => 1,
+            RowKind::Console | RowKind::Table | RowKind::View => 2,
             RowKind::Column => 3,
         }
     }
 
+    /// Returns true for a row without a place in the catalog.
+    fn in_consoles(&self) -> bool {
+        matches!(self.kind, RowKind::Consoles | RowKind::Console)
+    }
+
     fn catalog_schema<'a>(&self, connections: &'a [Connection]) -> Option<&'a Schema> {
+        if self.in_consoles() {
+            return None;
+        }
         connections[self.connection]
             .catalog
             .as_ref()?
@@ -60,6 +74,11 @@ impl Row {
         let relation = schema.and_then(|schema| schema.relations.get(self.relation));
         match self.kind {
             RowKind::Connection => &connections[self.connection].name,
+            RowKind::Consoles => text::NODE_CONSOLES,
+            RowKind::Console => connections[self.connection]
+                .consoles
+                .get(self.relation)
+                .map_or("", |console| &console.name),
             RowKind::Schema => schema.map_or("", |schema| &schema.name),
             RowKind::Table | RowKind::View => relation.map_or("", |relation| &relation.name),
             RowKind::Column => match relation.map(|relation| &relation.columns) {
@@ -81,11 +100,21 @@ impl Row {
     }
 
     fn key(&self, connections: &[Connection]) -> Key {
+        if self.in_consoles() {
+            return Key {
+                connection: connections[self.connection].id,
+                consoles: true,
+                relation: (self.kind == RowKind::Console)
+                    .then(|| self.name(connections).to_owned()),
+                ..Key::default()
+            };
+        }
         let schema = self.catalog_schema(connections);
         let relation = schema.and_then(|schema| schema.relations.get(self.relation));
         let name = || Some(self.name(connections).to_owned());
         Key {
             connection: connections[self.connection].id,
+            consoles: false,
             schema: (self.kind != RowKind::Connection)
                 .then(|| schema.map(|schema| schema.name.clone()))
                 .flatten(),
@@ -104,6 +133,8 @@ impl Row {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Key {
     connection: ConnectionId,
+    /// True on the `Consoles` node and below it. There, `relation` is the console name.
+    consoles: bool,
     schema: Option<String>,
     relation: Option<String>,
     column: Option<String>,
@@ -111,6 +142,9 @@ struct Key {
 
 impl Key {
     fn depth(&self) -> usize {
+        if self.consoles {
+            return 1 + usize::from(self.relation.is_some());
+        }
         match (&self.schema, &self.relation, &self.column) {
             (None, ..) => 0,
             (_, None, _) => 1,
@@ -121,6 +155,14 @@ impl Key {
 
     /// Returns how many levels of the row match this key. It copies no name.
     fn matching_levels(&self, row: &Row, connections: &[Connection]) -> usize {
+        if self.consoles != row.in_consoles() {
+            return 1;
+        }
+        if self.consoles {
+            let named = row.kind == RowKind::Console
+                && self.relation.as_deref() == Some(row.name(connections));
+            return 2 + usize::from(named);
+        }
         let schema = row.catalog_schema(connections);
         let relation = schema.and_then(|schema| schema.relations.get(row.relation));
         let names = [
@@ -143,6 +185,7 @@ impl Key {
 #[derive(Debug, Default)]
 struct Expansion {
     open: bool,
+    consoles: bool,
     schemas: HashMap<String, HashSet<String>>,
 }
 
@@ -264,6 +307,19 @@ impl Navigator {
             let Some(open) = self.expansion.get(&item.id).filter(|open| open.open) else {
                 continue;
             };
+            if !item.consoles.is_empty() {
+                rows.push(Row {
+                    kind: RowKind::Consoles,
+                    ..row
+                });
+            }
+            if open.consoles {
+                rows.extend((0..item.consoles.len()).map(|relation| Row {
+                    kind: RowKind::Console,
+                    relation,
+                    ..row
+                }));
+            }
             let Some(catalog) = &item.catalog else {
                 continue;
             };
@@ -478,6 +534,7 @@ impl Navigator {
         };
         match row.kind {
             RowKind::Connection => open.open,
+            RowKind::Consoles => open.consoles,
             RowKind::Schema => open.schemas.contains_key(row.name(connections)),
             RowKind::Table | RowKind::View => {
                 let Some(relation) = row.relation_ref(connections) else {
@@ -487,7 +544,7 @@ impl Navigator {
                     .get(&relation.schema)
                     .is_some_and(|relations| relations.contains(&relation.relation))
             }
-            RowKind::Column => false,
+            RowKind::Console | RowKind::Column => false,
         }
     }
 
@@ -499,6 +556,7 @@ impl Navigator {
             .or_default();
         match row.kind {
             RowKind::Connection => open.open = true,
+            RowKind::Consoles => open.consoles = true,
             RowKind::Schema => {
                 open.schemas
                     .entry(row.name(connections).to_owned())
@@ -512,7 +570,7 @@ impl Navigator {
                         .insert(relation.relation);
                 }
             }
-            RowKind::Column => {}
+            RowKind::Console | RowKind::Column => {}
         }
     }
 
@@ -522,6 +580,7 @@ impl Navigator {
         };
         match row.kind {
             RowKind::Connection => open.open = false,
+            RowKind::Consoles => open.consoles = false,
             RowKind::Schema => {
                 open.schemas.remove(row.name(connections));
             }
@@ -532,7 +591,7 @@ impl Navigator {
                     relations.remove(&relation.relation);
                 }
             }
-            RowKind::Column => {}
+            RowKind::Console | RowKind::Column => {}
         }
     }
 
@@ -541,11 +600,26 @@ impl Navigator {
         let mut key = row.key(connections);
         match row.kind {
             RowKind::Connection => {}
+            RowKind::Consoles => key.consoles = false,
             RowKind::Schema => key.schema = None,
-            RowKind::Table | RowKind::View => key.relation = None,
+            RowKind::Console | RowKind::Table | RowKind::View => key.relation = None,
             RowKind::Column => key.column = None,
         }
         self.cursor = key;
+    }
+
+    /// Returns true when the tree shows the rows below a connection.
+    pub fn is_connection_open(&self, connection: ConnectionId) -> bool {
+        self.expansion
+            .get(&connection)
+            .is_some_and(|open| open.open)
+    }
+
+    /// Keeps the cursor on a console after a new name.
+    pub fn rename_console(&mut self, old: &str, new: &str) {
+        if self.cursor.consoles && self.cursor.relation.as_deref() == Some(old) {
+            self.cursor.relation = Some(new.to_owned());
+        }
     }
 
     /// Lists the open relations of a connection. A new catalog needs their columns.
@@ -587,13 +661,18 @@ impl Navigator {
                     .contains(&relation)
                     .then_some(RowNote::Loading)
             }
+            RowKind::Console => connections[row.connection]
+                .consoles
+                .get(row.relation)?
+                .tab
+                .map(|_| RowNote::Open),
             _ => None,
         }
     }
 
     /// Returns true when the row can hold children.
     pub fn is_branch(row: &Row) -> bool {
-        row.kind != RowKind::Column
+        !matches!(row.kind, RowKind::Console | RowKind::Column)
     }
 }
 
@@ -603,4 +682,6 @@ pub enum RowNote {
     Failed,
     /// The list of a schema holds only a part of its relations.
     Partial,
+    /// A tab shows the console of the row.
+    Open,
 }

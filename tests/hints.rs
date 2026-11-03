@@ -68,6 +68,10 @@ impl Screen {
     fn run(&mut self, sql: &str) {
         self.write(sql);
         self.code(KeyCode::F(5));
+        self.wait_for_run();
+    }
+
+    fn wait_for_run(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             self.app.drain_events();
@@ -259,23 +263,34 @@ fn a_navigator_without_connections_shows_how_to_add_one() {
 }
 
 #[test]
-fn a_connection_row_shows_the_commands_of_a_connection() {
+fn a_connection_row_keeps_only_the_main_commands() {
     let mut s = Screen::conventional("connection");
     s.prefix('h');
-    let row = s.hints_at(200);
-    for text in [
-        "Enter console",
-        "n new console",
-        "s scripts",
-        "r refresh",
-        "e edit connection",
-        "a add connection",
-        "Del remove connection",
-        "Right expand",
-        "i struct",
-    ] {
-        assert!(row.contains(text), "{text:?} is not in {row:?}");
-    }
+    assert_eq!(
+        s.hints_at(200),
+        "Enter console  n new console  Right expand  d diagram  Ctrl+W commands  F1 keys"
+    );
+}
+
+#[test]
+fn the_explorer_page_lists_the_commands_of_a_connection() {
+    let mut s = Screen::conventional("connection-page");
+    s.prefix('h');
+    assert_eq!(
+        common::explorer_page(&s.app),
+        [
+            "n New console",
+            "s Scripts",
+            "r Read the catalog",
+            "e Edit connection",
+            "a Add a connection",
+            "Del Remove connection",
+            "i Show the structure",
+            "d ER diagram",
+            "y Copy the name",
+            "/ Filter the tables",
+        ]
+    );
 }
 
 #[test]
@@ -283,14 +298,14 @@ fn a_sqlite_file_keeps_no_session_to_disconnect() {
     let mut s = Screen::conventional("disconnect");
     s.run("SELECT 1;");
     s.prefix('h');
-    s.assert_hides(&["D disconnect"]);
+    assert!(!common::explorer_page(&s.app).contains(&"D Disconnect".to_owned()));
 }
 
 #[test]
 fn a_sqlite_file_has_no_saved_password_to_delete() {
     let mut s = Screen::conventional("password");
     s.prefix('h');
-    s.assert_hides(&["p delete password"]);
+    assert!(!common::explorer_page(&s.app).contains(&"p Delete the password".to_owned()));
 }
 
 #[test]
@@ -304,31 +319,48 @@ fn an_open_row_shows_the_key_that_closes_it() {
 }
 
 #[test]
-fn a_schema_row_shows_the_commands_of_its_tree() {
+fn a_schema_row_keeps_only_the_commands_of_its_tree() {
     let mut s = Screen::conventional("schema");
     s.select(RowKind::Schema, "main");
-    s.assert_shows(&["i struct", "n new console", "r refresh"]);
-    s.assert_hides(&["Enter open", "e edit", "remove", "add", "scripts"]);
+    assert_eq!(
+        s.hints_at(200),
+        "n new console  Right expand  d diagram  Ctrl+W commands  F1 keys"
+    );
+    let page = common::explorer_page(&s.app);
+    for row in ["i Show the structure", "r Read the catalog"] {
+        assert!(page.contains(&row.to_owned()), "{page:?}");
+    }
+    assert!(!page.contains(&"e Edit connection".to_owned()), "{page:?}");
+    assert!(
+        !page.contains(&"Del Remove connection".to_owned()),
+        "{page:?}"
+    );
 }
 
 #[test]
-fn a_table_row_shows_the_commands_of_a_table() {
+fn a_table_row_keeps_only_the_commands_of_a_table() {
     let mut s = Screen::conventional("table");
     s.select(RowKind::Table, "items");
-    s.assert_shows(&[
-        "Enter open table",
-        "Right columns",
-        "i struct",
-        "n new console",
-    ]);
-    s.assert_hides(&["e edit", "remove", "disc", "add", "scripts"]);
+    assert_eq!(
+        s.hints_at(200),
+        "Enter open table  Right columns  d diagram  Ctrl+W commands  F1 keys"
+    );
+    let page = common::explorer_page(&s.app);
+    for row in ["g Generate SQL", "I Import a file", "n New console"] {
+        assert!(page.contains(&row.to_owned()), "{page:?}");
+    }
+    assert!(!page.contains(&"e Edit connection".to_owned()), "{page:?}");
+    assert!(
+        !page.contains(&"Del Remove connection".to_owned()),
+        "{page:?}"
+    );
 }
 
 #[test]
 fn a_view_row_shows_that_enter_opens_a_view() {
     let mut s = Screen::conventional("view");
     s.select(RowKind::View, "first_items");
-    s.assert_shows(&["Enter open view", "n new console"]);
+    s.assert_shows(&["Enter open view", "Ctrl+W commands"]);
 }
 
 #[test]
@@ -347,8 +379,157 @@ fn a_column_row_shows_its_parent_and_opens_nothing() {
         std::thread::sleep(Duration::from_millis(1));
     }
     s.code(KeyCode::Down);
-    s.assert_shows(&["Left parent", "i struct"]);
+    s.assert_shows(&["Left parent", "Ctrl+W commands"]);
     s.assert_hides(&["Enter open", "expand"]);
+    assert!(common::explorer_page(&s.app).contains(&"i Show the structure".to_owned()));
+}
+
+// ---------------------------------------------------------------------------
+// The `Ctrl+W` menu. `tests/table.rs` covers the table tabs and the sessions.
+
+const EDITOR_ROWS: &[&str] = &[
+    "e Run the statement",
+    "s Run the script",
+    "E Show the plan",
+    "f Format the SQL",
+    "/ Comment the rows",
+];
+const CONSOLE_ROWS: &[&str] = &[
+    "N Rename the tab",
+    "m Auto or manual",
+    "a Change connection",
+];
+
+impl Screen {
+    #[track_caller]
+    fn menu_shows(&self, wanted: &[&str]) {
+        let rows = common::prefix_page(&self.app);
+        for text in wanted {
+            let found = rows.iter().any(|row| row == text);
+            assert!(found, "{text:?} is not in {rows:?}");
+        }
+    }
+
+    #[track_caller]
+    fn menu_hides(&self, unwanted: &[&str]) {
+        let rows = common::prefix_page(&self.app);
+        for text in unwanted {
+            let found = rows.iter().any(|row| row == text);
+            assert!(!found, "{text:?} is in {rows:?}");
+        }
+    }
+}
+
+#[test]
+fn the_menu_of_the_editor_lists_the_commands_of_the_console() {
+    let mut s = Screen::conventional("menu-editor");
+    s.write("SELECT 1;");
+    s.menu_shows(EDITOR_ROWS);
+    s.menu_shows(CONSOLE_ROWS);
+}
+
+#[test]
+fn the_menu_of_the_results_leaves_out_the_commands_of_the_editor() {
+    let mut s = Screen::conventional("menu-results");
+    s.run("SELECT 1;");
+    s.prefix('j');
+    s.menu_hides(EDITOR_ROWS);
+    s.menu_shows(CONSOLE_ROWS);
+}
+
+#[test]
+fn the_menu_of_the_explorer_leaves_out_the_commands_of_the_console() {
+    let mut s = Screen::conventional("menu-explorer");
+    s.write("SELECT 1;");
+    s.prefix('h');
+    s.menu_hides(EDITOR_ROWS);
+    s.menu_hides(CONSOLE_ROWS);
+    s.menu_shows(&[
+        "c Close the tab",
+        "b Toggle the explorer",
+        "Tab Explorer commands",
+        ": Commands",
+        "? All keys",
+        "q Quit",
+    ]);
+}
+
+#[test]
+fn a_blank_editor_leaves_the_commands_of_a_text_out_of_the_menu() {
+    let s = Screen::conventional("menu-blank");
+    s.menu_shows(&["e Run the statement", "s Run the script"]);
+    s.menu_hides(&["E Show the plan", "f Format the SQL", "/ Comment the rows"]);
+}
+
+#[test]
+fn a_console_without_a_connection_has_nothing_to_run_in_the_menu() {
+    let s = Screen::start(Options::default());
+    s.menu_hides(&[
+        "e Run the statement",
+        "s Run the script",
+        "a Change connection",
+    ]);
+}
+
+#[test]
+fn the_menu_names_the_end_of_a_transaction_only_during_the_transaction() {
+    let mut s = Screen::conventional("menu-transaction");
+    let ending = ["C Commit", "R Rollback"];
+    s.menu_hides(&ending);
+    s.prefix('m');
+    s.run("INSERT INTO items VALUES (2, 'b');");
+    s.menu_shows(&ending);
+    s.menu_hides(&["a Change connection"]);
+    s.prefix('j');
+    s.menu_shows(&ending);
+    s.prefix('h');
+    s.menu_shows(&ending);
+}
+
+#[test]
+fn a_failed_transaction_leaves_only_the_rollback_in_the_menu() {
+    let mut s = Screen::conventional("menu-transaction-failed");
+    s.prefix('m');
+    s.run("INSERT INTO items VALUES (2, 'b');");
+    s.app.console_mut().transaction = TransactionState::Failed;
+    s.menu_shows(&["R Rollback"]);
+    s.menu_hides(&["C Commit"]);
+}
+
+#[test]
+fn the_menu_names_the_other_tabs_only_with_a_second_tab() {
+    let mut s = Screen::conventional("menu-tabs");
+    let rows = ["n Next tab", "p Previous tab"];
+    s.menu_hides(&rows);
+    s.prefix('h');
+    s.code(KeyCode::Char('n'));
+    assert_eq!(s.app.consoles().len(), 2);
+    s.menu_shows(&rows);
+}
+
+#[test]
+fn the_focus_row_lists_only_the_keys_that_move_the_focus() {
+    let mut s = Screen::conventional("menu-focus");
+    s.menu_shows(&["h Move the focus"]);
+    s.run("SELECT 1;");
+    s.menu_shows(&["hj Move the focus"]);
+    s.prefix('j');
+    s.menu_shows(&["hk Move the focus"]);
+    s.prefix('h');
+    s.menu_shows(&["l Move the focus"]);
+    s.prefix('b');
+    s.menu_shows(&["k Move the focus"]);
+}
+
+#[test]
+fn a_command_outside_the_menu_keeps_its_key() {
+    let mut s = Screen::conventional("menu-hidden-key");
+    s.write("SELECT 1;");
+    s.prefix('h');
+    s.menu_hides(&["e Run the statement"]);
+    s.prefix('e');
+    s.wait_for_run();
+    assert!(!s.app.console().results.is_empty());
 }
 
 // ---------------------------------------------------------------------------

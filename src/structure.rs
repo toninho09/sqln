@@ -2,7 +2,7 @@
 //! structure tab. Each query has a stable order, so the pages repeat no row.
 
 use crate::catalog::RelationRef;
-use crate::sql::{Dialect, quote_literal};
+use crate::sql::{Dialect, escape_literal, quote_literal};
 
 /// What a structure tab shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10,6 +10,17 @@ pub enum Scope {
     Relation,
     Schema,
     Connection,
+    /// The sessions of the server, not an object of the catalog.
+    Sessions,
+}
+
+/// What a sessions tab asks the database to do to one session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionSignal {
+    /// Stops the statement in progress. The session stays open.
+    CancelQuery,
+    /// Closes the session.
+    EndSession,
 }
 
 /// One grid of a structure tab. Only the scope `Relation` has more than `Columns`.
@@ -63,18 +74,33 @@ impl Structure {
     }
 }
 
-/// Writes a name of the catalog as a literal. The `E` form of PostgreSQL does not change
-/// with `standard_conforming_strings`, so a name cannot end the literal early.
-fn name_literal(name: &str, dialect: Dialect) -> String {
+/// Writes a name of the catalog as a literal.
+pub(crate) fn name_literal(name: &str, dialect: Dialect) -> String {
     if dialect == Dialect::Postgres {
-        format!("E{}", quote_literal(&name.replace('\\', "\\\\"), dialect))
+        escape_literal(name)
     } else {
         quote_literal(name, dialect)
     }
 }
 
+/// Returns the statement of a signal. The number of a session is a `u64`, so no text of
+/// a cell reaches the SQL.
+pub fn signal_sql(dialect: Dialect, signal: SessionSignal, session: u64) -> Option<String> {
+    match (dialect, signal) {
+        (Dialect::Postgres, SessionSignal::CancelQuery) => {
+            Some(format!("SELECT pg_catalog.pg_cancel_backend({session})"))
+        }
+        (Dialect::Postgres, SessionSignal::EndSession) => {
+            Some(format!("SELECT pg_catalog.pg_terminate_backend({session})"))
+        }
+        (Dialect::MySql, SessionSignal::CancelQuery) => Some(format!("KILL QUERY {session}")),
+        (Dialect::MySql, SessionSignal::EndSession) => Some(format!("KILL {session}")),
+        _ => None,
+    }
+}
+
 /// Returns the query of a section. Redis has no structure, so it returns `None`. A schema
-/// and a connection read only their columns.
+/// and a connection read only their columns. SQLite has no sessions to list.
 pub fn structure_sql(
     dialect: Dialect,
     scope: Scope,
@@ -101,6 +127,9 @@ pub fn structure_sql(
         }
         (Dialect::MySql, Scope::Schema, _) => mysql_all_columns(Some(&schema)),
         (Dialect::MySql, Scope::Connection, _) => mysql_all_columns(None),
+        (Dialect::Postgres, Scope::Sessions, _) => POSTGRES_SESSIONS.to_owned(),
+        (Dialect::MySql, Scope::Sessions, _) => MYSQL_SESSIONS.to_owned(),
+        (_, Scope::Sessions, _) => return None,
         (_, Scope::Relation, Section::Columns) => sqlite_columns(&schema, &table),
         (_, Scope::Relation, Section::Indexes) => sqlite_indexes(&schema, &table),
         (_, Scope::Relation, Section::ForeignKeys) => sqlite_foreign_keys(&schema, &table),
@@ -108,6 +137,28 @@ pub fn structure_sql(
         (_, Scope::Connection, _) => sqlite_all_columns(None),
     })
 }
+
+/// The sessions of each client, without the session that reads them. The active ones come
+/// first, with the oldest at the top. The first column is the number that a signal needs,
+/// the second is the user, and the last is the text of the query.
+const POSTGRES_SESSIONS: &str = "\
+    SELECT a.pid, a.usename::text AS \"user\", a.datname::text AS database, \
+    a.application_name AS application, a.client_addr::text AS client, a.state, \
+    a.wait_event_type || ': ' || a.wait_event AS wait, \
+    pg_catalog.date_trunc('second', pg_catalog.now() - a.xact_start)::text AS transaction_age, \
+    pg_catalog.date_trunc('second', pg_catalog.now() - a.query_start)::text AS query_age, \
+    a.query \
+    FROM pg_catalog.pg_stat_activity a \
+    WHERE a.backend_type = 'client backend' AND a.pid <> pg_catalog.pg_backend_pid() \
+    ORDER BY a.state = 'active' DESC NULLS LAST, a.query_start, a.pid";
+
+/// `SHOW PROCESSLIST` does not accept the `LIMIT` of a page, and this table does.
+const MYSQL_SESSIONS: &str = "\
+    SELECT ID AS id, USER AS `user`, HOST AS host, DB AS `database`, COMMAND AS command, \
+    TIME AS age, STATE AS state, INFO AS query \
+    FROM information_schema.PROCESSLIST \
+    WHERE ID <> CONNECTION_ID() AND COMMAND <> 'Daemon' \
+    ORDER BY COMMAND = 'Sleep', TIME DESC, ID";
 
 /// The columns that a table and a schema share, after the name.
 const POSTGRES_COLUMN_DATA: &str = "\

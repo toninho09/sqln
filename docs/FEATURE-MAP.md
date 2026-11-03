@@ -17,15 +17,19 @@ The file paths are relative to `src/`.
 | 5 | Database connectors | `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/redis.rs`, `connector/tls.rs` |
 | 6 | Connection pool | `pool.rs` |
 | 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs` |
+| 7a | Query plan | `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs` |
 | 8 | Run protection | `app/guard.rs`, `sql/classify.rs` |
 | 9 | Transactions | `exec/runner.rs`, `ui/statusline.rs` |
 | 10 | SQL editor | `editor/mod.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
 | 11 | SQL analysis and formatter | `sql/lexer.rs`, `sql/statement.rs`, `sql/classify.rs`, `sql/format.rs` |
 | 12 | Autocomplete | `complete/mod.rs`, `complete/context.rs`, `complete/keywords.rs`, `catalog.rs` |
 | 13 | Catalog and structure tab | `catalog.rs`, `structure.rs` |
+| 13a | Server sessions | `structure.rs`, `table.rs`, `app/tables.rs` |
+| 13b | ER diagram | `diagram/mod.rs`, `diagram/sql.rs`, `diagram/layout.rs`, `diagram/mermaid.rs`, `diagram/tab.rs`, `ui/diagram.rs`, `app/diagram.rs` |
 | 14 | Results grid | `result.rs`, `grid/mod.rs`, `grid/row.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs` |
 | 15 | Table view | `table.rs`, `app/tables.rs`, `ui/table.rs` |
 | 16 | Export and file explorer | `export/mod.rs`, `export/form.rs`, `ui/export.rs`, `app/export.rs`, `browser.rs`, `ui/browser.rs`, `app/browse.rs` |
+| 16a | Import | `import/mod.rs`, `import/delimited.rs`, `import/json.rs`, `import/statement.rs`, `import/feed.rs`, `import/form.rs`, `exec/runner/import.rs`, `app/import.rs`, `ui/import.rs` |
 | 17 | Query history | `history.rs`, `store/history.rs`, `app/history.rs`, `ui/history.rs` |
 | 18 | Folders and configuration | `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `settings.rs`, `ui/settings.rs` |
 | 19 | Console saving and saved consoles | `script_file.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs` |
@@ -43,13 +47,13 @@ Files: `app.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, 
 
 Files: `input.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `ui/text.rs`.
 
-`input` maps each key to an action in each focus region. It supports two-key sequences and reads the user `keymap` rules from `config.json`. `Ctrl+W` opens the prefix menu (`ui/which_key`) with the second keys in groups. `Ctrl+P` opens the command palette; `filter_list` filters by words, and the same core serves the history window. `ui/text` keeps all interface text in one file. A new console without text shows the first screen (`ui/welcome`), with the main keys, and the first character ends it.
+`input` maps each key to an action in each focus region. It supports two-key sequences and reads the user `keymap` rules from `config.json`. `Ctrl+W` opens the prefix menu (`ui/which_key`) with the second keys in groups. `fits_cursor` keeps the commands that have an effect now and belong to the panel of the cursor, and the keys of the other commands keep their action. `Ctrl+W Tab` opens its explorer page: `explorer_commands` lists what acts on the current row, and a key of the page goes through the `Navigator` region of the key map, so the page needs no bindings of its own. `Ctrl+P` opens the command palette; `filter_list` filters by words, and the same core serves the history window. `ui/text` keeps all interface text in one file. A new console without text shows the first screen (`ui/welcome`), with the main keys, and the first character ends it. Without a tab, the same widget draws the home screen with a logo: the active console is then the hidden console, `App::home` is true, and `home_allows` keeps only the explorer commands and the commands that need no tab.
 
 ## 3. Navigator and tree filter
 
 Files: `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs`.
 
-The navigator shows the tree of connections, schemas, relations, and columns. `/` filters the tree in memory, from the loaded catalogs, and opens no connection. `g` lists the SQL templates of a relation, and the application inserts the generated text. `y` copies the qualified name.
+The navigator shows the tree of connections, consoles, schemas, relations, and columns. `Connection::consoles` holds the console rows, so a read of the tree does not read the disk. `refresh_tree_consoles` rebuilds them after a change of a console, only for the connections open in the tree. `/` filters the tree in memory, from the loaded catalogs, and opens no connection. `g` lists the SQL templates of a relation, and the application inserts the generated text. `y` copies the qualified name.
 
 ## 4. Connections and connection form
 
@@ -75,9 +79,19 @@ Each connection definition has one pool. The default limit is five. The pool ser
 
 Files: `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs`.
 
-The console sends a copy of the text and receives an `ExecutionId`. `sql` separates the statements, and the pool delivers a reservation or queues the request. Each console has one task (`exec/runner`) that owns the reserved session. The task runs one statement at a time, applies the row cap plus one row, and asks the transaction state after each statement. On error, timeout, or stop, the sequence ends. `exec/sink` batches 200 rows, applies the cap and the budget, and sends notices before the end of the statement; a cap cancellation is not a statement error.
+The console sends a copy of the text and receives an `ExecutionId`. `sql` separates the statements, and the pool delivers a reservation or queues the request. Each console has one task (`exec/runner`) that owns the reserved session. The task runs one statement at a time, applies the row cap plus one row, and asks the transaction state after each statement. With `cap_in_sql`, `sql::with_row_limit` adds that number as `LIMIT` to a plain read without its own limit, and `ExecEvent::LimitAdded` reports it. On error, timeout, or stop, the sequence ends. `exec/sink` batches 200 rows, applies the cap and the budget, and sends notices before the end of the statement; a cap cancellation is not a statement error.
 
 Stop triggers the `Canceller` and starts a 5 s deadline. The task keeps reading and discards the rows. Without an answer and without a transaction, `exec` closes the connection. With an open transaction, the interface asks for confirmation. The application drops an event whose `ExecutionId` is not current, so an old response never refills a grid.
+
+## 7a. Query plan
+
+Files: `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs`.
+
+`Ctrl+W E` and `Ctrl+W A` follow the path of a run with a `RunTarget::Plan`. `plan::Explain` adds the prefix of the dialect, and the editor marks keep the text of the user. A plan needs one statement, and a statement with `EXPLAIN` is refused.
+
+`Console::explain` marks the execution. When the result ends, `plan_view` reads the text of the database and `ResultTab::show_plan` replaces the grid with the tree. PostgreSQL gives JSON, MySQL gives the tree text, and SQLite gives rows with a parent. The text stays after a limit, a text that the reader refuses, or a full budget, and **Messages** explains the reason. The `Share` column subtracts the children of each node, because a database reports a value with the nodes under it. It uses the real time when the plan has it, and the cost when it does not.
+
+A plan has no statement for a new read, so an export uses the loaded rows. The query history does not record a plan.
 
 ## 8. Run protection
 
@@ -114,6 +128,24 @@ Files: `complete/mod.rs`, `complete/context.rs`, `complete/keywords.rs`, `catalo
 Files: `catalog.rs`, `structure.rs`.
 
 The catalog is a cache in memory, outside the disk. Schemas and tables load first; columns and foreign keys load on demand. A key failure does not fail the columns. The structure tab runs the catalog queries of `structure`, per database, scope, and section.
+
+## 13a. Server sessions
+
+Files: `structure.rs`, `table.rs`, `app/tables.rs`.
+
+`S` in the navigator opens a structure tab with `Scope::Sessions`, so the tab reuses the pages, stop, budget, search, copy, and export. PostgreSQL reads `pg_stat_activity`, and MySQL reads `information_schema.PROCESSLIST`. The query leaves out the session that reads the list. The first column is the number of a session, the second is its user, and the last is its query.
+
+`q` and `K` read the row of the cursor and ask first. The answer sends a `PageKind::Signal` request through the task of the tab. `signal_sql` receives a `u64`, so no text of a cell reaches the SQL. A signal that the database accepts marks the tab as `pending`: the tab on screen reads the sessions again at once, and another tab reads them when it comes back. An error of the database stays in the tab, and the rows stay.
+
+## 13b. ER diagram
+
+Files: `diagram/mod.rs`, `diagram/sql.rs`, `diagram/layout.rs`, `diagram/mermaid.rs`, `diagram/tab.rs`, `ui/diagram.rs`, `app/diagram.rs`.
+
+`d` in the navigator, or `Ctrl+W D`, opens a `Tab::Diagram`, a third kind of main tab. `row_diagram` and `diagram_target` give the target and the reason of a refusal, so the key, the hint row, and the menu agree. A connection without its catalog waits in `pending_diagrams`, and the catalog read opens the diagram of the current schema. Each connection keeps its place in the list, so a second request does not cancel the first. The tab has its own executor task, so the read has the time limit, `Ctrl+W x`, the pool queue, the password, and the budget of a page. `diagram/sql` writes two queries per database: the columns of each table of a schema with their place in the primary key, and each pair of columns of the foreign keys that leave or reach the schema. One execution runs both, with no row cap, and the tab parses the rows only at the end. `Model::build` joins the pairs of each key by table and name, gives a SQLite key without target columns the primary key of its target, and makes a stub of each table of another schema. A table focus keeps the table and the tables that its keys join.
+
+`diagram/layout` is pure and gives the same picture for the same model. The parent of a key stands on the left of its child: a depth search turns the keys of a cycle, and the longest path gives the layers. A key that crosses layers passes one row of each layer between. Four sweeps order each layer by the mean place of its neighbors. Each gutter gives each vertical part of a line its own track, from the left, and a line that meets the left layer on a row where another line meets the right layer takes a track on the left of it. The pieces of the lines stay in one list per row, and the glyph of a cell joins the arms of each piece. The tables without keys stand in rows under the layers. An arrow selects the nearest box that starts past the edge of the selected box.
+
+`diagram/mermaid` writes the `erDiagram` text of the boxes on screen. Each entity uses an `e<n>` id and its name as an alias, because a database name can hold any character. A type or a column name keeps only the characters that Mermaid accepts, and a changed name keeps the original name as a comment.
 
 ## 14. Results grid
 

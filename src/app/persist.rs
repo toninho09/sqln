@@ -11,6 +11,7 @@ use crate::connection::{Connection, ConnectionKey, Definition, refresh_labels};
 use crate::editor::{KeyboardMode, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId};
 use crate::export::ExportChoices;
+use crate::import::ImportChoices;
 use crate::script_file::{SaveWorker, Trouble};
 use crate::settings::SettingsForm;
 use crate::store::config::{self, Change, Config, ConfigError, CredentialName, Loaded, Stored};
@@ -112,6 +113,7 @@ impl Persist {
         let settings = &mut options.settings;
         settings.page_size = config.page_size.unwrap_or(settings.page_size);
         settings.row_cap = config.row_cap.unwrap_or(settings.row_cap);
+        settings.cap_in_sql = config.cap_in_sql;
         settings.budget_bytes = config.budget_bytes.unwrap_or(settings.budget_bytes);
         options.keyboard = config.keyboard;
         options.undo_limit = config.undo_limit_bytes;
@@ -119,6 +121,7 @@ impl Persist {
         options.appearance = (config.theme, config.icons);
         options.suggestion_keys = config.suggestion_keys;
         options.export_choices = config.export;
+        options.import_choices = config.import;
         config.connections
     }
 }
@@ -259,6 +262,7 @@ impl App {
     fn apply_config(&mut self, config: Config) {
         self.settings.page_size = config.page_size.unwrap_or(self.settings.page_size);
         self.settings.row_cap = config.row_cap.unwrap_or(self.settings.row_cap);
+        self.settings.cap_in_sql = config.cap_in_sql;
         if let Some(bytes) = config.budget_bytes {
             self.settings.budget_bytes = bytes;
             self.budget.set_limit(bytes);
@@ -267,6 +271,8 @@ impl App {
         for console in &mut self.consoles {
             console.editor.set_undo_limit(config.undo_limit_bytes);
         }
+        self.pending_key = None;
+        self.explorer_page = false;
         self.keymap = config.keymap;
         self.suggestion_keys = config.suggestion_keys;
         if let Some(persist) = &mut self.persist {
@@ -275,11 +281,13 @@ impl App {
             persist.bell_after_seconds = config.bell_after_seconds;
         }
         self.export_choices = config.export;
+        self.import_choices = config.import;
         self.appearance = (config.theme, config.icons);
         if config.keyboard != self.keyboard {
             self.set_keyboard(config.keyboard);
         }
         self.apply_connections(config.connections);
+        self.update_connection_settings();
     }
 
     fn set_keyboard(&mut self, keyboard: KeyboardMode) {
@@ -345,6 +353,7 @@ impl App {
             }
         }
         refresh_labels(&mut self.connections);
+        self.refresh_tree_consoles();
     }
 
     fn is_in_use(&self, id: ConnectionId) -> bool {
@@ -449,6 +458,22 @@ impl App {
         let Some(persist) = &mut self.persist else {
             return;
         };
+        // Use the current files for the other scope, not only the dialog snapshot.
+        let validation = match scope {
+            Scope::Global => persist
+                .store
+                .project
+                .as_ref()
+                .map(|root| config::preferences(root, Scope::Project))
+                .transpose()
+                .and_then(|project| config::validate_keymaps(&preferences, project.as_ref())),
+            Scope::Project => config::preferences(&persist.store.global, Scope::Global)
+                .and_then(|global| config::validate_keymaps(&global, Some(&preferences))),
+        };
+        if let Err(message) = validation {
+            form.note = Some(message);
+            return;
+        }
         let Some(root) = persist.store.root(scope) else {
             return;
         };
@@ -479,13 +504,27 @@ impl App {
             return;
         }
         self.export_choices = choices.clone();
+        self.change_global(|root| config::change_export(root, choices));
+    }
+
+    /// Keeps the choices of the import dialog, as `save_export_choices` does.
+    pub(super) fn save_import_choices(&mut self, choices: ImportChoices) {
+        if self.import_choices == choices {
+            return;
+        }
+        self.import_choices = choices.clone();
+        self.change_global(|root| config::change_import(root, choices));
+    }
+
+    /// Writes a change to the global file, and keeps its new hash.
+    fn change_global(&mut self, change: impl FnOnce(&Root) -> Result<u64, String>) {
         let Some(persist) = &mut self.persist else {
             return;
         };
         let Some(root) = persist.store.root(Scope::Global) else {
             return;
         };
-        match config::change_export(root, choices) {
+        match change(root) {
             Ok(hash) => {
                 let global = persist.hashes.iter_mut();
                 if let Some((_, known)) =
@@ -712,6 +751,7 @@ impl App {
                         file.meta.name.clone_from(previous);
                     }
                     self.status = Some(text::script_failed(requested, &format!("{problem:?}")));
+                    self.refresh_tree_consoles();
                 }
                 if intent.close {
                     self.show_unsaved(index, problem);

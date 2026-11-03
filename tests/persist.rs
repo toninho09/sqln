@@ -23,9 +23,11 @@ use sqln::connection::Source;
 use sqln::editor::DEFAULT_UNDO_LIMIT;
 use sqln::export::{Delimiter, ExportChoices, ExportFormat};
 use sqln::form::{Field, FormNote};
+use sqln::import::{Encoding, ImportChoices};
 use sqln::input::SuggestionKeys;
 use sqln::navigator::RowKind;
 use sqln::script_file::Trouble;
+use sqln::settings::shortcuts::Shortcuts;
 use sqln::settings::{Field as SettingsField, SECTIONS, SettingsForm};
 use sqln::store::config::{self, ConnectionIcon, Preferences, ThemeName};
 use sqln::store::scripts::{self, ScriptMeta};
@@ -288,13 +290,7 @@ impl Session {
     }
 
     fn focus_form(&mut self, field: Field) {
-        for _ in 0..32 {
-            if self.app.form().unwrap().focus == field {
-                return;
-            }
-            self.code(KeyCode::Tab);
-        }
-        panic!("{field:?} is not in the form");
+        common::focus_form_field(&mut self.app, field);
     }
 
     fn press_form_button(&mut self, field: Field) {
@@ -727,10 +723,9 @@ fn a_new_connection_goes_to_the_project_file_by_default_without_a_password() {
     session.assert_sees("Project");
     session.code(KeyCode::Right);
     session.code(KeyCode::Right);
-    session.code(KeyCode::Tab);
+    session.focus_form(Field::Name);
     session.write("saved");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    session.focus_form(Field::File);
     session.write(&db.display().to_string());
     session.press_form_button(Field::Save);
     assert!(session.app.form().is_none(), "{}", session.screen());
@@ -748,17 +743,13 @@ fn a_form_for_a_network_connection_saves_no_password_in_the_file() {
     session.press(ctrl('w'));
     session.code(KeyCode::Char('h'));
     session.code(KeyCode::Char('a'));
-    // The fields without a project: Kind, Name, Entry, Host, Port, Database, User, Password.
-    session.code(KeyCode::Tab);
+    session.focus_form(Field::Name);
     session.write("remote");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    session.focus_form(Field::Host);
     session.write("db.example.test");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
+    session.focus_form(Field::User);
     session.write("me");
-    session.code(KeyCode::Tab);
+    session.focus_form(Field::Password);
     session.write("hunter2");
     session.press_form_button(Field::Save);
     assert!(session.app.form().is_none(), "{}", session.screen());
@@ -789,13 +780,13 @@ fn two_scopes_can_use_the_same_name_and_one_scope_cannot() {
         session.code(KeyCode::Char('a'));
         session.code(KeyCode::Right);
         session.code(KeyCode::Right);
-        session.code(KeyCode::Tab);
+        session.focus_form(Field::Name);
         session.write("SAME");
-        session.code(KeyCode::Tab);
+        session.focus_form(Field::Scope);
         if scope_to_global {
             session.code(KeyCode::Right);
         }
-        session.code(KeyCode::Tab);
+        session.focus_form(Field::File);
         session.write(&path);
         session.press_form_button(Field::Save);
     };
@@ -893,9 +884,7 @@ fn the_sql_limit_of_a_connection_saves_and_zero_means_no_limit() {
     let mut session = Session::start(&store);
     session.go_to_connection("one");
     session.code(KeyCode::Char('e'));
-    for _ in 0..7 {
-        session.code(KeyCode::Tab);
-    }
+    session.focus_form(Field::SqlTimeout);
     session.assert_sees("SQL limit");
     erase_field(&mut session, 2);
     session.write("0");
@@ -905,6 +894,31 @@ fn the_sql_limit_of_a_connection_saves_and_zero_means_no_limit() {
     session.prefix('r');
     let definition = session.app.connections()[0].definition.as_ref().unwrap();
     assert_eq!(definition.sql_timeout, None);
+}
+
+#[test]
+fn the_idle_limit_of_a_connection_starts_at_300_and_zero_keeps_the_sessions() {
+    let (store, base) = global_only("p-idle-limit");
+    let db = database(&base, "e", "");
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "one", &db.display().to_string())],
+    );
+    let mut session = Session::start(&store);
+    session.go_to_connection("one");
+    session.code(KeyCode::Char('e'));
+    session.focus_form(Field::IdleTimeout);
+    session.assert_sees("Idle limit (s, 0 = none)");
+    session.assert_sees("300");
+    erase_field(&mut session, 3);
+    session.write("0");
+    session.press_form_button(Field::Save);
+    let text = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(text.contains("\"idleTimeoutSeconds\": null"), "{text}");
+    session.prefix('r');
+    let definition = session.app.connections()[0].definition.as_ref().unwrap();
+    assert_eq!(definition.idle_timeout, None);
 }
 
 #[test]
@@ -919,16 +933,14 @@ fn a_bad_sql_limit_keeps_the_form_open() {
     let mut session = Session::start(&store);
     session.go_to_connection("one");
     session.code(KeyCode::Char('e'));
-    for _ in 0..6 {
-        session.code(KeyCode::Tab);
-    }
+    session.focus_form(Field::SqlTimeout);
     erase_field(&mut session, 2);
     session.write("abc");
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Tab);
-    session.code(KeyCode::Enter);
-    assert!(session.app.form().is_some());
-    session.assert_sees("SQL limit");
+    session.press_form_button(Field::Save);
+    // The error opens the section of the field and puts the focus on it.
+    let form = session.app.form().expect("the form stays open");
+    assert_eq!(form.focus, Field::SqlTimeout);
+    session.assert_sees("SQL limit (s, 0 = none) needs a number.");
     // The file did not change.
     assert!(
         !fs::read_to_string(store.global.config_file())
@@ -1279,7 +1291,7 @@ fn an_empty_unbound_console_closes_without_a_question() {
     let (store, _) = global_only("p-unbound-empty");
     let mut session = Session::start(&store);
     session.prefix('c');
-    assert!(session.app.should_quit());
+    assert!(session.app.home());
 }
 
 #[test]
@@ -2394,7 +2406,7 @@ fn the_settings_write_only_the_scope_of_the_dialog() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("77");
-    for _ in 0..4 {
+    for _ in 0..5 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2429,7 +2441,7 @@ fn an_empty_field_removes_the_project_value_and_shows_the_global_value() {
     session.code(KeyCode::Backspace);
     session.code(KeyCode::Backspace);
     session.assert_sees("from global: 10");
-    for _ in 0..4 {
+    for _ in 0..5 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2444,7 +2456,7 @@ fn a_settings_value_of_zero_stays_in_the_dialog_with_a_note() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("0");
-    for _ in 0..4 {
+    for _ in 0..5 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2797,6 +2809,22 @@ fn a_structure_tab_does_not_reopen() {
 }
 
 #[test]
+fn a_diagram_tab_does_not_reopen() {
+    let (store, _) = reopening_store("p-reopen-diagram", "{}");
+    let mut first = Session::start(&store);
+    first.type_and_save("SELECT 1;");
+    common::select_row(&mut first.app, 0, &[RowKind::Table], "items");
+    first.code(KeyCode::Char('d'));
+    first.pump_sees("items (diagram)");
+    first.quit();
+    drop(first);
+
+    let mut second = Session::start(&store);
+    assert!(second.app.diagrams().is_empty());
+    assert!(!second.top_row().contains("diagram"));
+}
+
+#[test]
 fn an_export_of_all_rows_reads_the_whole_structure() {
     let (store, base) = global_only("p-export-structure");
     let db = database(&base, "s", "CREATE TABLE wide(a INT, b INT, c INT, d INT);");
@@ -2929,6 +2957,204 @@ fn the_settings_choose_the_reopening_of_the_tabs() {
     assert!(text.contains("\"reopenTabs\": false"), "{text}");
 }
 
+fn open_shortcut_settings(session: &mut Session, action: &str) {
+    session.prefix(',');
+    session.click_text("Shortcuts");
+    // Scope, key mode, and the command list.
+    for _ in 0..3 {
+        session.code(KeyCode::Tab);
+    }
+    let index = Shortcuts::actions()
+        .position(|item| item.name() == action)
+        .unwrap();
+    for _ in 0..index {
+        session.code(KeyCode::Down);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("[Record]");
+}
+
+#[test]
+fn shortcut_commands_open_from_a_list_and_keep_the_draft_when_returning() {
+    let (store, _) = two_connections("p-shortcut-command-list");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.click_text("Shortcuts");
+    session.assert_sees("Run the selection or the statement");
+    let command = sqln::ui::text::command_text(sqln::input::Action::RunScript);
+    session.assert_sees(command);
+    session.assert_sees("Ctrl+Enter");
+    session.assert_not_sees("[Record]");
+    session.click_text(command);
+    session.assert_sees("SHORTCUTS · runScript");
+    session.click_text("[Record]");
+    session.code(KeyCode::F(8));
+    session.code(KeyCode::Enter);
+    session.click_text("[Back to commands]");
+    session.assert_sees("Commands 2/");
+    session.assert_sees("F8");
+    session.click_text("[Save]");
+    let project = config::preferences(store.project.as_ref().unwrap(), Scope::Project).unwrap();
+    assert_eq!(project.keymap.unwrap().conventional["runScript"][0], "f8");
+}
+
+#[test]
+fn shortcut_commands_scroll_with_the_mouse_wheel_and_open_the_selected_row() {
+    let (store, _) = two_connections("p-shortcut-command-wheel");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.click_text("Shortcuts");
+    let (column, row) = session.locate("Run the selection or the statement");
+    session.mouse(MouseEventKind::ScrollDown, column, row);
+    session.assert_sees("Commands 4/");
+    session.code(KeyCode::Enter);
+    let action = Shortcuts::actions().nth(3).unwrap();
+    session.assert_sees(&format!("SHORTCUTS · {}", action.name()));
+    session.click_text("[Record]");
+    session.code(KeyCode::F(8));
+    session.code(KeyCode::Enter);
+    session.click_text("[Save]");
+    let project = config::preferences(store.project.as_ref().unwrap(), Scope::Project).unwrap();
+    assert_eq!(project.keymap.unwrap().conventional[action.name()][0], "f8");
+}
+
+#[test]
+fn shortcut_recording_saves_only_the_global_scope_and_works_after_restart() {
+    let (store, _) = two_connections("p-shortcut-global");
+    let project = store.project.as_ref().unwrap();
+    let project_before = fs::read(project.config_file()).unwrap();
+    let global_before = fs::read(store.global.config_file()).unwrap();
+    let mut session = Session::start(&store);
+    open_shortcut_settings(&mut session, "help");
+    session.click_text("< Project >");
+    session.click_text("[Record]");
+    for code in [
+        KeyCode::F(8),
+        KeyCode::Char('a'),
+        KeyCode::Char('b'),
+        KeyCode::Char('c'),
+    ] {
+        session.code(code);
+    }
+    session.code(KeyCode::Enter);
+    assert_eq!(fs::read(store.global.config_file()).unwrap(), global_before);
+    session.click_text("[Save]");
+    session.assert_sees("settings are saved");
+    assert_eq!(fs::read(project.config_file()).unwrap(), project_before);
+    let preferences = config::preferences(&store.global, Scope::Global).unwrap();
+    assert_eq!(
+        preferences.keymap.unwrap().conventional["help"][0],
+        "f8 a b c"
+    );
+    for code in [
+        KeyCode::F(8),
+        KeyCode::Char('a'),
+        KeyCode::Char('b'),
+        KeyCode::Char('c'),
+    ] {
+        session.code(code);
+    }
+    session.assert_sees("Keys · Conventional");
+    let mut restarted = Session::start(&store);
+    for code in [
+        KeyCode::F(8),
+        KeyCode::Char('a'),
+        KeyCode::Char('b'),
+        KeyCode::Char('c'),
+    ] {
+        restarted.code(code);
+    }
+    restarted.assert_sees("Keys · Conventional");
+}
+
+#[test]
+fn shortcut_recording_with_mouse_confirmation_saves_enter_in_the_project() {
+    let (store, _) = two_connections("p-shortcut-enter");
+    let global_before = fs::read(store.global.config_file()).unwrap();
+    let mut session = Session::start(&store);
+    open_shortcut_settings(&mut session, "help");
+    session.click_text("Finish with");
+    session.click_text("[Record]");
+    for code in [KeyCode::F(8), KeyCode::Enter, KeyCode::Char('a')] {
+        session.code(code);
+    }
+    session.assert_sees("F8 Enter a");
+    session.click_text("[OK]");
+    session.click_text("[Save]");
+    session.assert_sees("settings are saved");
+    assert_eq!(fs::read(store.global.config_file()).unwrap(), global_before);
+    let project = config::preferences(store.project.as_ref().unwrap(), Scope::Project).unwrap();
+    assert_eq!(
+        project.keymap.unwrap().conventional["help"][0],
+        "f8 enter a"
+    );
+    let mut restarted = Session::start(&store);
+    for code in [KeyCode::F(8), KeyCode::Enter, KeyCode::Char('a')] {
+        restarted.code(code);
+    }
+    restarted.assert_sees("Keys · Conventional");
+}
+
+#[test]
+fn shortcut_conflicts_keep_the_settings_open_and_write_no_file() {
+    let (store, _) = two_connections("p-shortcut-conflict");
+    let global_before = fs::read(store.global.config_file()).unwrap();
+    let project = store.project.as_ref().unwrap();
+    let project_before = fs::read(project.config_file()).unwrap();
+    let mut session = Session::start(&store);
+    open_shortcut_settings(&mut session, "run");
+    session.click_text("[Record]");
+    session.code(KeyCode::F(1));
+    session.code(KeyCode::Enter);
+    session.assert_sees("conflicts");
+    session.click_text("[Save]");
+    session.assert_sees("SHORTCUTS");
+    session.assert_sees("conflicts");
+    assert_eq!(fs::read(store.global.config_file()).unwrap(), global_before);
+    assert_eq!(fs::read(project.config_file()).unwrap(), project_before);
+    session.click_text("[Restore action]");
+    session.click_text("[Save]");
+    session.assert_sees("settings are saved");
+    assert!(config::load(&store).config.is_ok());
+}
+
+#[test]
+fn shortcut_settings_cancel_discards_the_recording_without_a_write() {
+    let (store, _) = two_connections("p-shortcut-cancel");
+    let project = store.project.as_ref().unwrap();
+    let before = fs::read(project.config_file()).unwrap();
+    let mut session = Session::start(&store);
+    open_shortcut_settings(&mut session, "run");
+    session.click_text("[Record]");
+    session.code(KeyCode::F(8));
+    session.click_text("[Cancel recording]");
+    session.assert_sees("[Record]");
+    session.click_text("[Record]");
+    session.code(KeyCode::F(9));
+    session.code(KeyCode::Enter);
+    session.click_text("[Cancel]");
+    assert_eq!(fs::read(project.config_file()).unwrap(), before);
+}
+
+#[test]
+fn shortcut_save_checks_changes_in_the_other_scope_before_writing() {
+    let (store, _) = two_connections("p-shortcut-external-conflict");
+    let project = store.project.as_ref().unwrap();
+    let before = fs::read(project.config_file()).unwrap();
+    let mut session = Session::start(&store);
+    open_shortcut_settings(&mut session, "run");
+    session.click_text("[Record]");
+    session.code(KeyCode::F(8));
+    session.code(KeyCode::Enter);
+    let mut preferences = config::preferences(&store.global, Scope::Global).unwrap();
+    preferences.keymap = Some(serde_json::from_str(r#"{"conventional":{"quit":["f8"]}}"#).unwrap());
+    config::change_preferences(&store.global, Scope::Global, preferences).unwrap();
+    session.click_text("[Save]");
+    session.assert_sees("conflicts");
+    session.assert_sees("SHORTCUTS");
+    assert_eq!(fs::read(project.config_file()).unwrap(), before);
+}
+
 #[test]
 fn the_settings_work_with_the_mouse() {
     let (store, _) = two_connections("p-settings-mouse");
@@ -2964,9 +3190,14 @@ fn the_sidebar_shows_the_fields_of_one_section() {
     session.code(KeyCode::Down);
     session.assert_sees("Default theme");
     session.assert_not_sees("Page size");
+    session.code(KeyCode::Down);
+    session.assert_sees("Commands 1/");
+    session.assert_not_sees("Default theme");
     // The last section goes back to the first section.
     session.code(KeyCode::Down);
     session.assert_sees("Reopen tabs");
+    session.code(KeyCode::Up);
+    session.assert_sees("Commands 1/");
     session.code(KeyCode::Up);
     session.assert_sees("Default theme");
     // The scope stays in all sections.
@@ -3003,7 +3234,13 @@ impl Session {
     /// The store has no project, so the scope is not a place of the focus.
     fn open_theme_settings(&mut self) {
         self.prefix(',');
-        self.code(KeyCode::Up);
+        let section = SECTIONS
+            .iter()
+            .position(|section| section.fields.contains(&SettingsField::Theme))
+            .unwrap();
+        for _ in 0..section {
+            self.code(KeyCode::Down);
+        }
         self.code(KeyCode::Tab);
     }
 
@@ -3386,8 +3623,9 @@ fn a_save_writes_the_changes_of_all_sections() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("77");
-    // Back to the sidebar: Row cap, Data, Format JSON, Save, Cancel, and the sidebar.
-    for _ in 0..6 {
+    // Back to the sidebar: Row cap, Limit in SQL, Data, Format JSON, Save, Cancel,
+    // and the sidebar.
+    for _ in 0..7 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Up);
@@ -3411,7 +3649,7 @@ fn a_bad_value_of_a_closed_section_shows_the_note() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("0");
-    for _ in 0..6 {
+    for _ in 0..7 {
         session.code(KeyCode::Tab);
     }
     // The sidebar opens the first section. Then the focus goes to Save.
@@ -3452,6 +3690,113 @@ fn the_project_value_of_the_reopening_comes_before_the_global_value() {
     assert!(!reopen(&store));
     write_config(&project, r#"{"reopenTabs":true}"#, &[]);
     assert!(reopen(&store));
+}
+
+#[test]
+fn the_project_value_of_the_limit_in_sql_comes_before_the_global_value() {
+    let (store, base) = store("p-cap-in-sql-scopes");
+    let db = database(&base, "s", "").display().to_string();
+    let project = store.project.clone().unwrap();
+    let limited = |store: &Store| sqln::store::config::load(store).config.unwrap().cap_in_sql;
+    write_config(&store.global, "{}", &[sqlite_entry("g1", "s", &db)]);
+    assert!(limited(&store), "the default adds the limit");
+    write_config(
+        &store.global,
+        r#"{"capInSql":false}"#,
+        &[sqlite_entry("g1", "s", &db)],
+    );
+    assert!(!limited(&store));
+    write_config(&project, r#"{"capInSql":true}"#, &[]);
+    assert!(limited(&store));
+}
+
+#[test]
+fn the_limit_in_sql_of_the_file_reaches_the_console() {
+    let (store, base) = global_only("p-cap-in-sql-run");
+    let db = database(&base, "r", "CREATE TABLE t (v INTEGER);");
+    write_config(
+        &store.global,
+        r#"{"capInSql":false}"#,
+        &[sqlite_entry("g1", "r", &db.display().to_string())],
+    );
+    let mut session = Session::start(&store);
+    session.write("SELECT v FROM t;");
+    run_and_wait(&mut session);
+    let console = session.app.console();
+    assert!(!console.results.is_empty());
+    assert!(
+        !console
+            .messages
+            .iter()
+            .any(|message| message.text.contains("LIMIT")),
+        "{:?}",
+        console.messages
+    );
+}
+
+#[test]
+fn a_saved_row_cap_and_limit_in_sql_reach_a_console_that_already_ran() {
+    let (store, _) = two_connections("p-settings-live");
+    let mut session = Session::start(&store);
+    session.write("SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3;");
+    run_and_wait(&mut session);
+    let added = |session: &Session| {
+        session
+            .app
+            .console()
+            .messages
+            .iter()
+            .any(|message| message.text.contains("SQLN added LIMIT"))
+    };
+    assert!(added(&session), "{:?}", session.app.console().messages);
+    assert_eq!(session.app.console().results[0].table.rows.len(), 3);
+
+    session.open_results_settings();
+    // Row cap 2, then Limit in SQL Off.
+    session.code(KeyCode::Tab);
+    session.write("2");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Right);
+    session.code(KeyCode::Right);
+    // Data, Format JSON, and Save.
+    for _ in 0..3 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+
+    run_and_wait(&mut session);
+    let result = &session.app.console().results[0];
+    assert_eq!(
+        result.table.rows.len(),
+        2,
+        "the new cap acts without a restart"
+    );
+    assert_eq!(result.limit, sqln::exec::ReadLimit::RowCap);
+    assert!(!added(&session), "{:?}", session.app.console().messages);
+}
+
+#[test]
+fn a_save_of_the_limit_in_sql_writes_the_file() {
+    let (store, _) = two_connections("p-cap-in-sql-save");
+    let project = store.project.clone().unwrap();
+    let mut session = Session::start(&store);
+    session.open_results_settings();
+    // Row cap, then Limit in SQL.
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.assert_sees("Limit in SQL");
+    session.assert_sees("< Default: On >");
+    session.code(KeyCode::Right);
+    session.code(KeyCode::Right);
+    // Data, Format JSON, and Save.
+    for _ in 0..3 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+    let text = fs::read_to_string(project.config_file()).unwrap();
+    assert!(text.contains("\"capInSql\": false"), "{text}");
 }
 
 #[test]
@@ -3537,18 +3882,20 @@ fn a_signal_or_a_panic_also_keeps_the_list_of_tabs() {
 }
 
 #[test]
-fn the_last_tab_ends_the_application_and_comes_back_at_the_next_start() {
+fn a_closed_last_tab_stays_closed_at_the_next_start() {
     let (store, _) = reopening_store("p-reopen-last", "{}");
     let mut first = Session::start(&store);
     first.type_and_save("SELECT 1;");
     first.prefix('c');
+    assert!(first.app.home());
+    first.quit();
     assert!(first.app.should_quit());
-    first.app.shutdown();
     drop(first);
 
+    // The connection gives the start a new empty console.
     let second = Session::start(&store);
-    assert_eq!(second.names(), ["console-1"]);
-    assert_eq!(second.text(), "SELECT 1;");
+    assert_eq!(second.text(), "");
+    assert_eq!(second.names(), ["console-2"]);
 }
 
 #[test]
@@ -3831,6 +4178,72 @@ fn an_unknown_choice_of_keys_is_a_configuration_error() {
 }
 
 #[test]
+fn the_import_choices_stay_in_the_global_file_only() {
+    let (store, _) = two_connections("p-import-global");
+    let project = fs::read_to_string(store.project.as_ref().unwrap().config_file()).unwrap();
+    let choices = ImportChoices {
+        encoding: Encoding::Windows1252,
+        header: false,
+        delimiter: Delimiter::Semicolon,
+        batch: 50,
+        folder: Some(PathBuf::from("/data/in")),
+        ..ImportChoices::default()
+    };
+    config::change_import(&store.global, choices.clone()).unwrap();
+    assert_eq!(
+        fs::read_to_string(store.project.as_ref().unwrap().config_file()).unwrap(),
+        project
+    );
+    let text = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(text.contains("\"import\""), "{text}");
+    assert!(text.contains("first"), "the connections stay: {text}");
+    assert_eq!(config::load(&store).config.unwrap().import, choices);
+}
+
+#[test]
+fn a_file_without_import_choices_gives_the_defaults() {
+    let (store, _) = two_connections("p-import-default");
+    assert_eq!(
+        config::load(&store).config.unwrap().import,
+        ImportChoices::default()
+    );
+}
+
+#[test]
+fn import_in_a_project_file_is_a_configuration_error() {
+    let (store, _) = two_connections("p-import-project");
+    write_config(
+        store.project.as_ref().unwrap(),
+        r#"{"import":{"header":false}}"#,
+        &[],
+    );
+    let error = config::load(&store).config.unwrap_err().to_string();
+    assert!(error.contains("import"), "{error}");
+}
+
+#[test]
+fn an_import_batch_of_zero_is_a_configuration_error() {
+    let (store, _) = two_connections("p-import-batch");
+    write_config(&store.global, r#"{"import":{"batch":0}}"#, &[]);
+    let error = config::load(&store).config.unwrap_err().to_string();
+    assert!(error.contains("batch"), "{error}");
+}
+
+#[test]
+fn the_settings_keep_the_import_choices() {
+    let choices = ImportChoices {
+        header: false,
+        ..ImportChoices::default()
+    };
+    let preferences = Preferences {
+        import: Some(choices.clone()),
+        ..Preferences::default()
+    };
+    let form = SettingsForm::new(preferences, None);
+    assert_eq!(form.preferences().unwrap().import, Some(choices));
+}
+
+#[test]
 fn the_export_choices_stay_in_the_global_file_only() {
     let (store, _) = two_connections("p-export-global");
     let project = fs::read_to_string(store.project.as_ref().unwrap().config_file()).unwrap();
@@ -3933,4 +4346,225 @@ fn an_export_saves_its_choices_without_the_change_question() {
     session.now += Duration::from_secs(10);
     session.app.tick_at(session.now);
     session.assert_not_sees("Reload");
+}
+
+// ---------------------------------------------------------------------------
+// The consoles in the tree of the navigator.
+
+/// One connection with one saved console. The first console stays open, without text.
+fn session_with_tree_consoles(name: &str) -> (Session, Store) {
+    let (store, base) = global_only(name);
+    let db = database(&base, "s", "CREATE TABLE t (v INTEGER);");
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "s", &db.display().to_string())],
+    );
+    write_script(&store, "investigate", "a");
+    (Session::start(&store), store)
+}
+
+fn write_script(store: &Store, name: &str, id: &str) {
+    let meta = ScriptMeta::new(id.into(), name.into(), "g1".into(), Scope::Global);
+    scripts::create(&store.global, &meta, "SELECT 1;").unwrap();
+}
+
+impl Session {
+    fn tree(&self) -> Vec<String> {
+        let connections = self.app.connections();
+        let rows = self.app.navigator().rows(connections);
+        rows.iter()
+            .map(|row| row.name(connections).to_owned())
+            .collect()
+    }
+
+    fn open_consoles_node(&mut self) {
+        common::select_row(&mut self.app, 0, &[RowKind::Consoles], "Consoles");
+        self.code(KeyCode::Right);
+    }
+
+    /// Moves the cursor to a console row. The node opens first.
+    fn select_tree_console(&mut self, name: &str) {
+        self.open_consoles_node();
+        common::select_row(&mut self.app, 0, &[RowKind::Console], name);
+    }
+
+    fn tree_row_name(&self) -> String {
+        let connections = self.app.connections();
+        let row = self.app.navigator().current(connections).unwrap();
+        row.name(connections).to_owned()
+    }
+
+    /// Reads the row and not the screen, because the panel can cut a long row.
+    fn tree_console_is_open(&self, name: &str) -> bool {
+        let consoles = &self.app.connections()[0].consoles;
+        let row = consoles.iter().find(|item| item.name == name).unwrap();
+        row.tab.is_some()
+    }
+}
+
+#[test]
+fn the_tree_lists_the_saved_and_the_open_consoles_under_a_closed_node() {
+    let (mut session, _store) = session_with_tree_consoles("tree-list");
+    common::select_row(&mut session.app, 0, &[RowKind::Consoles], "Consoles");
+    assert_eq!(session.tree(), ["s", "Consoles", "main"]);
+    session.code(KeyCode::Right);
+    assert_eq!(
+        session.tree(),
+        ["s", "Consoles", "investigate", "console-1", "main"]
+    );
+    session.assert_sees("console-1 (open)");
+    assert!(!session.tree_console_is_open("investigate"));
+}
+
+#[test]
+fn a_connection_without_consoles_has_no_node() {
+    let (store, base) = global_only("tree-no-node");
+    let one = database(&base, "one", "").display().to_string();
+    let two = database(&base, "two", "").display().to_string();
+    write_config(
+        &store.global,
+        "{}",
+        &[
+            sqlite_entry("g1", "first", &one),
+            sqlite_entry("g2", "second", &two),
+        ],
+    );
+    let mut session = Session::start(&store);
+    common::select_row(&mut session.app, 1, &[RowKind::Connection], "second");
+    session.code(KeyCode::Right);
+    let connections = session.app.connections();
+    let rows = session.app.navigator().rows(connections);
+    assert!(rows.iter().all(|row| row.kind != RowKind::Consoles));
+}
+
+#[test]
+fn enter_opens_a_saved_console_and_selects_an_open_console() {
+    let (mut session, _store) = session_with_tree_consoles("tree-enter");
+    session.select_tree_console("investigate");
+    session.code(KeyCode::Enter);
+    assert_eq!(session.app.consoles().len(), 2);
+    assert_eq!(session.app.console().name, "investigate");
+    assert!(!session.app.navigator_focused());
+    assert!(session.tree_console_is_open("investigate"));
+    common::select_row(&mut session.app, 0, &[RowKind::Console], "console-1");
+    session.code(KeyCode::Enter);
+    assert_eq!(session.app.consoles().len(), 2);
+    assert_eq!(session.app.console().name, "console-1");
+}
+
+#[test]
+fn a_closed_console_loses_its_mark_and_stays_in_the_tree() {
+    let (mut session, _store) = session_with_tree_consoles("tree-close");
+    session.select_tree_console("investigate");
+    session.code(KeyCode::Enter);
+    session.prefix('c');
+    assert_eq!(session.app.consoles().len(), 1);
+    assert!(!session.tree_console_is_open("investigate"));
+}
+
+#[test]
+fn delete_on_a_console_row_removes_its_script_and_keeps_the_connection() {
+    let (mut session, store) = session_with_tree_consoles("tree-delete");
+    session.select_tree_console("investigate");
+    session.code(KeyCode::Delete);
+    session.assert_sees("Remove console");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    assert!(consoles_in(&store.global, Scope::Global).is_empty());
+    assert_eq!(session.app.connections().len(), 1);
+    assert_eq!(session.tree(), ["s", "Consoles", "console-1", "main"]);
+}
+
+#[test]
+fn delete_on_an_open_console_row_refuses() {
+    let (mut session, _store) = session_with_tree_consoles("tree-delete-open");
+    session.select_tree_console("console-1");
+    session.code(KeyCode::Delete);
+    session.assert_sees(sqln::ui::text::SCRIPT_OPEN);
+    session.assert_not_sees("Remove console");
+    assert_eq!(session.app.consoles().len(), 1);
+}
+
+#[test]
+fn r_on_a_saved_console_row_renames_its_script_and_the_cursor_stays() {
+    let (mut session, store) = session_with_tree_consoles("tree-rename");
+    session.select_tree_console("investigate");
+    session.code(KeyCode::Char('r'));
+    erase_name(&mut session);
+    session.write("audit");
+    session.code(KeyCode::Enter);
+    let saved = consoles_in(&store.global, Scope::Global);
+    assert_eq!(saved[0].meta.name, "audit");
+    assert_eq!(session.tree_row_name(), "audit");
+}
+
+#[test]
+fn r_on_an_open_console_row_renames_its_tab() {
+    let (mut session, _store) = session_with_tree_consoles("tree-rename-open");
+    session.select_tree_console("console-1");
+    session.code(KeyCode::Char('r'));
+    erase_name(&mut session);
+    session.write("audit");
+    session.code(KeyCode::Enter);
+    assert_eq!(session.app.console().name, "audit");
+    assert_eq!(session.tree_row_name(), "audit");
+}
+
+#[test]
+fn r_on_another_row_reads_the_scripts_and_opens_no_name_window() {
+    let (mut session, store) = session_with_tree_consoles("tree-refresh");
+    session.open_consoles_node();
+    write_script(&store, "another", "b");
+    session.code(KeyCode::Char('r'));
+    assert!(session.tree().contains(&"another".to_owned()));
+    session.assert_not_sees("Rename console");
+}
+
+#[test]
+fn the_tree_filter_leaves_the_consoles_out() {
+    let (mut session, _store) = session_with_tree_consoles("tree-filter");
+    session.open_consoles_node();
+    session.code(KeyCode::Char('/'));
+    session.write("investigate");
+    assert!(session.tree().is_empty());
+}
+
+#[test]
+fn a_console_row_names_its_own_commands() {
+    let (mut session, _store) = session_with_tree_consoles("tree-commands");
+    session.select_tree_console("investigate");
+    let hint = session.app.hint();
+    for text in ["Enter open console", "r rename", "Del remove console"] {
+        assert!(hint.contains(text), "{hint}");
+    }
+    let page = common::explorer_page(&session.app);
+    for row in ["r Rename the console", "Del Remove the console"] {
+        assert!(page.contains(&row.to_owned()), "{page:?}");
+    }
+    for row in ["i Show the structure", "r Read the catalog"] {
+        assert!(!page.contains(&row.to_owned()), "{page:?}");
+    }
+}
+
+#[test]
+fn a_double_click_on_a_console_row_opens_it() {
+    let (mut session, _store) = session_with_tree_consoles("tree-click");
+    session.open_consoles_node();
+    let shown = session.screen();
+    let (row, line) = shown
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("investigate"))
+        .unwrap();
+    let column = line.chars().position(|c| c == 'i').unwrap();
+    let press = Event::Mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: u16::try_from(column).unwrap(),
+        row: u16::try_from(row).unwrap(),
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    });
+    session.app.on_event(press.clone());
+    session.app.on_event(press);
+    assert_eq!(session.app.console().name, "investigate");
 }

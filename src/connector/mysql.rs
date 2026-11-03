@@ -1,6 +1,5 @@
 //! MySQL connector. The text protocol keeps the text of the database in each value.
 
-use std::path::Path;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -24,13 +23,12 @@ use crate::catalog::{
 use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, RowWriter, Value};
 use crate::sql::{Dialect, counts_rows, is_plain_read};
-use crate::ui::text;
 
 /// `ER_QUERY_INTERRUPTED`: `KILL QUERY` stopped the statement.
 const QUERY_INTERRUPTED: u16 = 1317;
 /// The value of a binary column in the character set field of the protocol.
 const BINARY_CHARSET: u16 = 63;
-const TCP_KEEPALIVE_MS: u32 = 30_000;
+const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
 /// A statement with no effect. Its answer has the state of the transaction.
 const STATUS_REQUEST: &str = "DO 0";
 const CATALOG_SQL: &str = "\
@@ -70,22 +68,11 @@ fn ssl_options(tls_mode: &Tls) -> Result<Option<SslOpts>, ConnectError> {
         ),
     };
     if let Some(client) = &files.client {
-        check_client_key(&client.key)?;
         let identity =
             ClientIdentity::new(client.certificate.clone().into(), client.key.clone().into());
         options = options.with_client_identity(Some(identity));
     }
     Ok(Some(options))
-}
-
-/// The driver reads only RSA keys in PKCS#1 form, and its error does not say that.
-fn check_client_key(path: &Path) -> Result<(), ConnectError> {
-    let key = std::fs::read(path).map_err(|error| ConnectError::new(error.to_string()))?;
-    let contains = |part: &[u8]| key.windows(part.len()).any(|window| window == part);
-    if contains(b"-----BEGIN ") && !contains(b"-----BEGIN RSA PRIVATE KEY-----") {
-        return Err(ConnectError::new(text::MYSQL_CLIENT_KEY.to_owned()));
-    }
-    Ok(())
 }
 
 /// Do not write this value in a log: its debug text shows the password.
@@ -109,7 +96,7 @@ fn driver_options(target: &NetworkTarget) -> Result<Opts, ConnectError> {
                 .map(|password| password.expose().to_owned()),
         )
         .db_name(target.database.clone())
-        .tcp_keepalive(Some(TCP_KEEPALIVE_MS))
+        .tcp_keepalive(Some(TCP_KEEPALIVE))
         // The driver can move to a local socket that the user did not ask for.
         .prefer_socket(false)
         .ssl_opts(ssl_options(&target.tls)?);

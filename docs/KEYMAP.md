@@ -26,10 +26,11 @@ Terminal.app and Linux terminals were also not tested.
 | Region | Role |
 |---|---|
 | Navigator | Connections, objects, and Scripts without connection |
-| Main tabs | Open consoles and tables |
+| Main tabs | Open consoles, tables, and diagrams |
 | Editor | SQL text of the console |
 | Filter bar | `WHERE` and `ORDER BY` fields of the table view |
 | Grid | Rows of the result or of the table |
+| Diagram | Boxes and lines of an ER diagram |
 | Result tabs | Results and **Messages** of the console |
 | Dialog | Question that blocks the other regions |
 
@@ -54,6 +55,26 @@ After `Ctrl+W`, press one key. `Esc` cancels the prefix.
 A window shows the options, in groups, while the prefix is active.
 The window uses the effective keys of the `keymap`, and the hint bar shows `Ctrl+W …  Esc cancel`.
 
+The window lists a command only when the command has an effect now and belongs to the panel of the cursor. A group without commands leaves the window.
+The key of a command outside the window keeps its action, so the table below lists each key.
+
+| Panel of the cursor | Commands of that panel only |
+|---|---|
+| Editor | Run, whole script, plan, format, comment, history, and the commands of the next row |
+| Results | Rename, mode, database or schema, and connection change |
+| Table and filter bar | None |
+| Diagram | None |
+| Navigator | None |
+
+Each panel also lists these commands:
+
+- The keys that move the focus from that panel.
+- Next tab and previous tab, with a second tab.
+- Close the tab, toggle the explorer, the explorer page, sessions of a source with sessions, the ER diagram of a source with tables, palette, help, Settings, reload, and quit.
+- `x` during a run, `C` and `R` during a transaction, and only `R` in a failed transaction. These stay in the navigator, because the session stays occupied until the user acts.
+
+A table tab and a diagram tab have no script and no transaction, so `C` and `R` do not appear there.
+
 | Key | Action |
 |---|---|
 | `h`, `j`, `k`, `l`, or arrows | Change panel |
@@ -64,8 +85,13 @@ The window uses the effective keys of the `keymap`, and the hint bar shows `Ctrl
 | `c` | Close the tab |
 | `q` | Quit the application |
 | `b` | Collapse or show the navigator |
+| `Tab` | Open the page with the commands of the explorer |
+| `S` | Show the sessions of the connection of the tab |
+| `D` | Show the ER diagram of the tab or of the row |
 | `e` | Run |
 | `s` | Whole script |
+| `E` | Show the plan of the statement |
+| `A` | Run the statement and show its plan |
 | `x` | Stop the script or the table query |
 | `f` | Format the SQL |
 | `/` | Comment or uncomment the lines |
@@ -80,10 +106,19 @@ The window uses the effective keys of the `keymap`, and the hint bar shows `Ctrl
 `Ctrl+W C` and `Ctrl+W R` do not ask for confirmation, like the commit and rollback buttons.
 `Ctrl+W N` uses uppercase `N` and does not replace `Ctrl+W n`.
 `Ctrl+W H` uses uppercase `H` and does not replace `Ctrl+W h`.
+`Ctrl+W E` and `Ctrl+W A` use uppercase keys and do not replace `Ctrl+W e` and `Ctrl+W a`.
+`Ctrl+W S` uses uppercase `S` and does not replace `Ctrl+W s`. With the focus in the navigator, it uses the connection of the row.
+`Ctrl+W D` uses uppercase `D` and does not replace `Ctrl+W d`. With the focus in the navigator, it uses the row, as `d` does. A table tab shows the diagram of its table, and a console shows its current schema.
+
+`Ctrl+W Tab` opens a second page of the menu. The page lists the commands of the navigator that act on the current row, with the keys of the navigator, so `Ctrl+W Tab n` is the `n` of the navigator.
+The page works from any panel, and its title names the row that the commands act on. `Esc` closes it, and a key without a command closes it too.
+The keys of the page do not change `Ctrl+W n` or any other key of the prefix.
 The console list offers the rename action with `r`.
 The connection change asks for confirmation and does not run SQL. The rules are in section 12 of the plan.
 The main tabs follow the opening order, without groups by type.
 Closing the last console with an open table does not create another console tab.
+Closing the last tab shows the home screen. Only `Ctrl+W q` ends the application.
+On the home screen, the commands of a tab have no effect, and the `Ctrl+W` menu and the palette hide them.
 
 In the conventional mode, `Ctrl+W` does not close the tab, unlike many IDEs.
 The prefix is the common path to both modes, and the terminal delivers that key.
@@ -94,13 +129,15 @@ The prefix is the common path to both modes, and the terminal delivers that key.
 |---|---|---|
 | Run | `Ctrl+Enter` | `F5` or `Ctrl+W e` |
 | Whole script | `Shift+Enter` | `Shift+F5` or `Ctrl+W s` |
+| Show the plan of the statement | `Ctrl+W E` | Command palette |
+| Run the statement and show its plan | `Ctrl+W A` | Command palette |
 | Stop script | `Ctrl+W x` | **Stop script** button |
 | Format the SQL | `Ctrl+W f` | Command palette |
 | Comment or uncomment the lines | `Ctrl+W /` | `Ctrl+/` or command palette |
 | Query history | `Ctrl+W H` | Command palette |
 | Help | `F1` | `Ctrl+W ?` |
 | Command palette | `Ctrl+P` | `Ctrl+W :` |
-| Quit | `Ctrl+W q` | Close the last tab |
+| Quit | `Ctrl+W q` | Command palette |
 
 `Ctrl+Enter` and `Shift+Enter` need keyboard enhancement in the terminal.
 At startup, the application detects that feature and shows the available path in the hint bar.
@@ -172,7 +209,10 @@ On macOS, the terminal handles `Cmd+C` and `Cmd+V`.
 | Delete, with confirmation | `Delete` | `x` |
 | Scripts without connection | `s` | `s` |
 | Show the structure | `i` | `i` |
+| Show the ER diagram | `d` | `d` |
+| Show the sessions of the server | `S` | `S` |
 | Generate SQL | `g` | `g` |
+| Import a file to the table of the row | `I` | `I` |
 | Copy the row name | `y` or `Ctrl+C` | `y` or `Ctrl+C` |
 | Filter the tables | `/` or `Ctrl+F` | `/` or `Ctrl+F` |
 | Clear the filter | `Esc` | `Esc` |
@@ -181,13 +221,21 @@ On macOS, the terminal handles `Cmd+C` and `Cmd+V`.
 `n` opens the console list of the connection, with **+ New console** on the first line. Without saved consoles, `n` creates a console.
 In the list, `Enter` picks the row, `Delete` (or `x` in the Vim mode) removes the script of the row, and `Esc` cancels.
 `s` opens the list of scripts without connection, with the same keys.
+A connection with consoles shows a **Consoles** node above its schemas. The node starts closed, and `Right` opens it.
+The node lists the saved consoles, the newest first, and then the open consoles without a file. A console with a tab shows the `(open)` mark.
+On a console row, `Enter` opens the console or selects its tab, and a double click does the same.
+On a console row, `r` renames the console. An open console renames its tab.
+On a console row, `Delete` (or `x` in the Vim mode) removes the script, after a question. An open console refuses, and the connection stays.
+The **Consoles** node needs no session, so a failed catalog does not hide it. `r` on another row also reads the list of consoles again.
 On a schema, `Enter` opens or closes the row.
 On a table or a view, `Enter` opens the table view, or selects its tab when it already exists.
 `Right` and `Left` open and close the columns of a table.
 `i` opens the structure of the row: table, view, column, schema, or connection.
 In the grid of a table, `i` opens the structure of that table.
 In the structure tab of a table, `[` and `]` switch the section. In the other table tabs, those keys change the page.
-The hint line changes with the cursor line. The connection commands appear on the connection line, but the keys act on any line of it.
+`S` opens the sessions of the server of the row. SQLite, Redis, and Valkey refuse it with a reason.
+`d` opens the ER diagram of the row. A schema shows all its tables. A table shows the table and the tables that its foreign keys join, one step away. A column shows the diagram of its table. A connection shows its current schema: before its catalog, `d` reads the catalog, and the diagram opens when it arrives. A view, and Redis or Valkey, refuse it with a reason.
+The hint line changes with the cursor line, and it shows only the main commands: open, new console, expand or collapse, the ER diagram, `Ctrl+W commands`, and `F1 keys`. `Ctrl+W Tab` lists the others, and their keys keep acting. The connection commands appear on the connection line, but the keys act on any line of it, except `r` and `Delete` on a console row.
 The labels say the object of the command, such as `n new console` and `a add connection`.
 A command that does not fit leaves the line, and the key keeps acting.
 
@@ -197,7 +245,7 @@ A command that does not fit leaves the line, and the key keeps acting.
 
 ### Tree filter
 
-The filter lists the tables and the views that match each word, by the relation name or the schema name. It reads only the in-memory catalogs and does not open connections.
+The filter lists the tables and the views that match each word, by the relation name or the schema name. It leaves out the consoles. It reads only the in-memory catalogs and does not open connections.
 
 | Action | Key in the field |
 |---|---|
@@ -211,14 +259,19 @@ The filter stays after you open a table. In the filtered tree, the navigator key
 
 ## Connection form
 
+The form has a sidebar with the sections General, Address, Credentials, Security, and Options. A section without fields stays out of the sidebar. `Tab` walks the sidebar, the fields of the open section, and the buttons. Each section shows the buttons.
+
 | Action | Key |
 |---|---|
-| Next field | `Tab`, `Down`, or `Enter` in a field |
-| Previous field | `Shift+Tab` or `Up` |
+| Change section, in the sidebar | `Up` and `Down`; in the Vim mode, also `j` and `k`; or a click on the section |
+| Next field | `Tab`, or `Enter` in a field; outside the sidebar, also `Down` |
+| Previous field | `Shift+Tab`; outside the sidebar, also `Up` |
 | Change an option | `Left` and `Right`; in the Vim mode, also `h` and `l` |
 | Toggle **Read only** | `Space`, `Left`, or `Right` |
 | Press a button | `Enter` |
 | Cancel | `Esc` |
+
+A save or a test with a bad value opens the section of that field and puts the focus on it.
 
 In a text field, every letter becomes text.
 In the Vim mode, `j` and `k` change field only outside text fields.
@@ -266,6 +319,7 @@ If the vault fails, the session option does not offer global storage in plain te
 | Select all | `Ctrl+A` | `ggVG` |
 | Copy as TSV | `Ctrl+C` | `y` |
 | Export to a file | `e` | `e` |
+| Import a file, in a table tab | `I` | `I` |
 | Clear the selection | `Esc` | `Esc` |
 | Open value | `Enter` | `Enter` |
 | Open the row vertically | `r` | `r` |
@@ -274,7 +328,12 @@ If the vault fails, the session option does not offer global storage in plain te
 | Automatic column width | `=` | `=` |
 | Close the result | `x` or `Delete` | `x` or `Delete` |
 | Previous and next result | `[` and `]` | `[` and `]` |
+| Read a tab without a filter again | `R` | `R` |
+| Cancel the query, in a sessions tab | `q` | `q` |
+| End the session, in a sessions tab | `K` | `K` |
 
+`q` and `K` act on the session under the cursor, and they ask first. A read-only connection refuses them.
+`R` serves a structure, a key, and a sessions tab. A table tab uses **Apply**.
 Without a selection, `Ctrl+C` copies the current cell.
 The result that still receives rows does not close, and the **Messages** tab does not either.
 
@@ -305,6 +364,26 @@ In the export:
 | Cancel | `Esc` |
 
 Only the **Export** button exports.
+
+`I` opens the import of the table. In the navigator, it first opens the table of the row.
+A view, a read-only connection, Redis, a structure tab, or a busy tab has no import, and the key does nothing.
+
+In the import:
+
+| Action | Key |
+|---|---|
+| Next field | `Tab` or `Enter` |
+| Open another section, in the sidebar | `Up` and `Down` |
+| Change a choice | `Left` and `Right` |
+| Open the file explorer, in the **File** and **Log file** fields | `Ctrl+O` |
+| Select a table column, in **Columns** | `Up` and `Down` |
+| Change its file column, in **Columns** | `Left` and `Right` |
+| Scroll the rows and the columns, in **Preview** | Arrows |
+| Press **Import** or **Cancel** | `Enter` on the button |
+| Cancel | `Esc` |
+
+The file field reads the file when the focus leaves it.
+Only the **Import** button imports.
 
 `Ctrl+O` also opens the explorer in the path fields of the connection form.
 
@@ -355,9 +434,27 @@ In the table view, the grid also offers:
 
 `Ctrl+W k` goes to the `WHERE` field, and `Ctrl+W j` returns to the grid.
 In the table view, the script and transaction actions have no effect, because the table has no script and no transaction.
-Those actions are `F5`, `Shift+F5`, `Ctrl+W e`, `Ctrl+W s`, `Ctrl+W m`, `Ctrl+W C`, `Ctrl+W R`, and `Ctrl+W d`.
+Those actions are `F5`, `Shift+F5`, `Ctrl+W e`, `Ctrl+W s`, `Ctrl+W E`, `Ctrl+W A`, `Ctrl+W m`, `Ctrl+W C`, `Ctrl+W R`, and `Ctrl+W d`.
 In the table grid, `x` and `Delete` also have no effect.
 `Ctrl+W c` closes the table tab and frees its data.
+
+## Diagram
+
+| Action | Conventional | Vim |
+|---|---|---|
+| Select the nearest table in a direction | Arrows | `h`, `j`, `k`, and `l` |
+| Move the view | `Shift`+arrows | `Shift`+arrows |
+| Move the view by one page | `PageUp` and `PageDown` | `PageUp` and `PageDown` |
+| Open the data of the selected table | `Enter` | `Enter` |
+| Show the structure of the selected table | `i` | `i` |
+| Show only the key columns, or all the columns | `K` | `K` |
+| Copy the diagram as Mermaid text | `y` | `y` |
+| Read the diagram again | `R` | `R` |
+
+An arrow selects the nearest box that starts past the edge of the selected box in that direction. The view follows the selection.
+A key column is a column of the primary key, of a foreign key, or that a foreign key reads.
+`y` copies the `erDiagram` text of the boxes on screen, so with **keys only** the text has only the key columns.
+`Ctrl+W x` stops a read. `Ctrl+W c` closes the diagram tab. The script and transaction actions have no effect.
 
 ## Question about changed scripts
 
@@ -392,13 +489,18 @@ The initial focus always stays on the option with no effect on the database or t
 | Click on the `EXPLORER` title | Give focus to the navigator |
 | Click on the table header | Apply sorting: ascending, descending, and no order |
 | Double click on a table | Open the table view, with two clicks on the same cell within 400 ms |
+| Double click on a console row | Open the console, or select its tab |
 | Click on a bar field or button | Give focus to the field, or press the button |
 | Click on **Previous** or **Next** | Change page in the table grid |
 | Click on a row of the script question | Change the action of the row, or press the button |
 | Wheel | Scroll lists, editor, and grid |
+| Horizontal wheel or touchpad on the grid | Move the cursor one column for each event. The terminal must send horizontal wheel events |
 | Drag on a divider | Resize the panels |
 | Drag on a header border | Resize the column width |
 | Drag on the grid | Select cells |
+| Click on a diagram box | Select the table |
+| Drag on a diagram | Move the view |
+| Wheel on a diagram | Move the view up and down, or to the side with a horizontal wheel |
 
 A click also answers a dialog and presses the console bar buttons.
 A click anywhere also removes the hint line message.
@@ -415,19 +517,61 @@ With mouse capture active, the native terminal selection needs `Option` in iTerm
 
 ## Configuration
 
-The `keymap` field of `config.json` maps an action to a list of keys, per mode.
+### Edit shortcuts in Settings
+
+1. Open Settings with `Ctrl+W ,`.
+2. Select **Shortcuts**.
+3. Select the **Global** or **Project** scope.
+4. Select the keyboard mode.
+5. Select a command from the list with `Up`/`Down` and `Enter`, or click its row.
+6. Select an existing shortcut or **+ Add shortcut** with the side keys.
+7. Select **Finish with: Enter** or **Mouse OK**.
+8. Select **Record**.
+9. Press the keys in order.
+10. Press `Enter` or click **OK** to confirm the recording.
+11. Select **Save** to write the selected scope and apply its shortcuts.
+
+The list shows every configurable command and its shortcuts, including commands without assigned keys.
+Use `Tab` to focus the list. Use the mouse wheel, `PageUp`/`PageDown`, or `Home`/`End` to move through it.
+The note below the list shows the selected command's panel and full description.
+**Back to commands** or `Esc` returns from the command editor without discarding its changes.
+
+With **Mouse OK**, the recording includes `Enter`. Click **OK** to finish.
+`Esc` or **Cancel recording** discards the recording and keeps Settings open.
+**Cancel** closes Settings without a write.
+The recorder accepts only key press events. It ignores key repeats and key releases.
+
+**Remove shortcut** removes the selected shortcut. Removing the last shortcut disables the action.
+**Restore action** removes the action's override from the selected scope.
+A project then uses the global keys. The global scope then uses the default keys.
+Neither command changes the other scope or keyboard mode.
+
+Settings shows conflicts and blocks **Save** until you correct them.
+The message names the key and both actions.
+The check includes sequence prefixes, both keyboard modes, and the combined global and project keys.
+A panel can use a global key, because panel shortcuts have priority.
+The editor's internal Vim commands do not appear in this section.
+
+### File format
+
+The `preferences.keymap` field of `config.json` maps an action to a list of keys, per mode.
 
 ```json
 {
-  "keymap": {
-    "conventional": { "run": ["ctrl+enter", "f5", "ctrl+w e"], "stop": [] },
-    "vim": { "run": ["ctrl+enter", "f5"] }
+  "version": 1,
+  "preferences": {
+    "keymap": {
+      "conventional": { "run": ["ctrl+enter", "f5", "ctrl+w e"], "stop": [] },
+      "vim": { "run": ["ctrl+enter", "f5", "f8 r s q"] }
+    }
   }
 }
 ```
 
 A list replaces the default keys of the action, and an empty list removes the shortcut.
-A key can have two parts separated by a space, such as `ctrl+w e` and `g g`.
+A sequence can have any number of keys separated by spaces, such as `ctrl+w e` and `f8 a b c`.
+The application waits for the complete sequence. `Esc` or an unmatched key cancels it.
+A plain character stays text when a text field has focus.
 Two actions with the same key, in the same region, invalidate the configuration.
 A key and a sequence that starts with it also invalidate the configuration.
 An unknown action or key name also invalidates the configuration.

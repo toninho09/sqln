@@ -7,11 +7,12 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
-use super::console::{centered, modal_width};
+use super::console::{centered, fit, modal_width};
 use super::float_block;
 use super::theme::Theme;
 use super::{input_spans, text};
 use crate::grid::printable;
+use crate::input::Action;
 use crate::settings::{Field, SECTIONS, SettingsForm};
 use crate::store::Scope;
 
@@ -42,6 +43,7 @@ pub struct SettingsLayout {
     /// One area for each row of `SECTIONS`, in the same order.
     pub sections: Vec<Rect>,
     pub fields: Vec<(Field, Rect)>,
+    pub command_rows: Vec<(Action, Rect)>,
 }
 
 /// The window has the height of the largest section, and all sections keep the same size.
@@ -57,6 +59,7 @@ fn label(field: Field) -> &'static str {
         Field::Keyboard => text::FIELD_KEYBOARD,
         Field::PageSize => text::FIELD_PAGE_SIZE,
         Field::RowCap => text::FIELD_ROW_CAP,
+        Field::CapInSql => text::FIELD_CAP_IN_SQL,
         Field::Budget => text::FIELD_BUDGET,
         Field::ReopenTabs => text::FIELD_REOPEN_TABS,
         Field::QueryHistory => text::FIELD_QUERY_HISTORY,
@@ -65,7 +68,10 @@ fn label(field: Field) -> &'static str {
         Field::SuggestionKeys => text::FIELD_SUGGESTION_KEYS,
         Field::UndoLimit => text::FIELD_UNDO_LIMIT,
         Field::Theme => text::FIELD_THEME,
-        Field::Sections | Field::Save | Field::Cancel => "",
+        Field::ShortcutMode => text::FIELD_SHORTCUT_MODE,
+        Field::ShortcutBinding => text::FIELD_SHORTCUT_BINDING,
+        Field::ShortcutFinish => text::FIELD_SHORTCUT_FINISH,
+        _ => "",
     }
 }
 
@@ -89,6 +95,10 @@ fn choice(form: &SettingsForm, field: Field) -> String {
             || form.inherited(field),
             |value| text::on_off(value).to_owned(),
         ),
+        Field::CapInSql => form.cap_in_sql().map_or_else(
+            || form.inherited(field),
+            |value| text::on_off(value).to_owned(),
+        ),
         Field::SuggestionKeys => form.suggestion_keys().map_or_else(
             || form.inherited(field),
             |keys| text::suggestion_keys_name(keys).to_owned(),
@@ -97,7 +107,7 @@ fn choice(form: &SettingsForm, field: Field) -> String {
             || form.inherited(field),
             |name| text::theme_name(name).to_owned(),
         ),
-        _ => String::new(),
+        field => form.shortcut_value(field),
     }
 }
 
@@ -112,6 +122,20 @@ fn value<'a>(form: &SettingsForm, field: Field, theme: &Theme) -> Line<'a> {
         return Line::from(spans);
     }
     let name = choice(form, field);
+    if matches!(
+        field,
+        Field::ShortcutRecord
+            | Field::ShortcutRemove
+            | Field::ShortcutRestore
+            | Field::ShortcutBack
+    ) {
+        let style = if focused {
+            theme.dialog_focus
+        } else {
+            theme.dialog_option
+        };
+        return Line::from(Span::styled(theme.button(&name), style));
+    }
     // Without a project, the scope has one value, so it is not a choice.
     if field == Field::Scope && !form.has_project() {
         return Line::raw(name);
@@ -338,9 +362,176 @@ pub(super) fn draw_buttons<T: Copy + PartialEq>(
     areas
 }
 
+fn draw_command_list(
+    frame: &mut Frame,
+    pane: Rect,
+    content: Rect,
+    form: &SettingsForm,
+    theme: &Theme,
+    layout: &mut SettingsLayout,
+) {
+    let mode = Rect {
+        y: pane.y + FIRST_FIELD_ROW,
+        height: 1,
+        ..pane
+    };
+    draw_field_row(frame, mode, form, Field::ShortcutMode, theme);
+    layout.fields.push((Field::ShortcutMode, mode));
+    let header = Rect {
+        y: mode.y + 2,
+        ..content
+    };
+    let key_width = content.width * 2 / 5;
+    let command_width = content.width.saturating_sub(key_width + 2);
+    let commands = form.shortcut_commands();
+    let selected = commands
+        .iter()
+        .position(|(action, _)| *action == form.shortcuts.action)
+        .unwrap_or(0);
+    let heading = format!(
+        "{} {}/{}",
+        text::SHORTCUT_COMMANDS,
+        selected + 1,
+        commands.len()
+    );
+    frame.render_widget(
+        Paragraph::new(heading).style(theme.panel_title),
+        Rect {
+            width: command_width,
+            ..header
+        },
+    );
+    let keys_x = header.x + command_width + 2;
+    frame.render_widget(
+        Paragraph::new(text::SHORTCUT_KEYS).style(theme.panel_title),
+        Rect {
+            x: keys_x,
+            width: key_width,
+            ..header
+        },
+    );
+    let start = header.y + 1;
+    let end = pane.bottom().saturating_sub(2 + NOTE_ROWS + 1);
+    let rows = usize::from(end.saturating_sub(start));
+    let first = selected
+        .saturating_sub(rows / 2)
+        .min(commands.len().saturating_sub(rows));
+    let list = Rect {
+        y: start,
+        height: u16::try_from(rows).unwrap_or(0),
+        ..content
+    };
+    layout.fields.push((Field::ShortcutCommands, list));
+    for (offset, (action, keys)) in commands.iter().skip(first).take(rows).enumerate() {
+        let row = Rect {
+            y: start + u16::try_from(offset).unwrap_or(0),
+            height: 1,
+            ..content
+        };
+        layout.command_rows.push((*action, row));
+        if *action == form.shortcuts.action {
+            let style = if form.focus == Field::ShortcutCommands {
+                theme.tree_selected
+            } else {
+                theme.tree_cursor
+            };
+            frame.buffer_mut().set_style(row, style);
+            frame.render_widget(
+                Paragraph::new(theme.icons.focus_mark).style(style),
+                Rect {
+                    x: row.x.saturating_sub(2),
+                    width: 1,
+                    ..row
+                },
+            );
+        }
+        let name = fit(text::command_text(*action), usize::from(command_width)).0;
+        frame.render_widget(
+            Paragraph::new(name),
+            Rect {
+                width: command_width,
+                ..row
+            },
+        );
+        let keys = if keys.is_empty() {
+            text::SHORTCUT_UNASSIGNED.to_owned()
+        } else {
+            keys.iter()
+                .map(|key| text::key_label(key))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        frame.render_widget(
+            Paragraph::new(fit(&keys, usize::from(key_width)).0),
+            Rect {
+                x: keys_x,
+                width: key_width,
+                ..row
+            },
+        );
+    }
+}
+
+fn draw_recording(
+    frame: &mut Frame,
+    pane: Rect,
+    content: Rect,
+    form: &SettingsForm,
+    theme: &Theme,
+    layout: &mut SettingsLayout,
+) {
+    let message = if form.shortcuts.mouse_confirm {
+        text::SHORTCUT_RECORD_MOUSE
+    } else {
+        text::SHORTCUT_RECORD_KEYS
+    };
+    let sequence = text::key_label(&form.shortcuts.recorded());
+    let lines = vec![
+        Line::raw(text::action_text(form.shortcuts.action)),
+        Line::raw(""),
+        Line::styled(message, theme.hint),
+        Line::raw(""),
+        Line::styled(sequence, theme.dialog_focus),
+    ];
+    let button_row = pane.bottom().saturating_sub(2);
+    let body = Rect {
+        y: content.y + 1,
+        height: button_row.saturating_sub(content.y + 1 + NOTE_ROWS),
+        ..content
+    };
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), body);
+    if let Some(note) = &form.note {
+        draw_note(frame, content, button_row, note, theme.error);
+    }
+    // During recording, only these buttons receive mouse clicks.
+    layout.fields.clear();
+    let buttons = [
+        (Field::ShortcutOk, text::SHORTCUT_OK),
+        (Field::ShortcutCancel, text::SHORTCUT_CANCEL),
+    ];
+    layout.fields.extend(draw_buttons(
+        frame,
+        content,
+        button_row,
+        (&buttons, form.focus),
+        theme,
+    ));
+}
+
 pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> SettingsLayout {
     let width = modal_width(frame.area().width, WIDTH);
-    let area = centered(frame.area(), width, window_height());
+    let section = &SECTIONS[form.section];
+    let shortcuts = section.fields.contains(&Field::ShortcutCommands);
+    let height = if shortcuts && !form.shortcuts.is_editing() {
+        frame
+            .area()
+            .height
+            .saturating_sub(4)
+            .clamp(window_height(), 30)
+    } else {
+        window_height()
+    };
+    let area = centered(frame.area(), width, height);
     frame.render_widget(Clear, area);
     let block = float_block(text::TITLE_SETTINGS, theme);
     let inner = block.inner(area);
@@ -363,6 +554,7 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
     let mut layout = SettingsLayout {
         sections: draw_sidebar_rows(frame, sidebar, &titles, open, theme),
         fields: Vec::new(),
+        command_rows: Vec::new(),
     };
 
     let scope = Rect {
@@ -375,30 +567,56 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
         layout.fields.push((Field::Scope, scope));
     }
 
-    let section = &SECTIONS[form.section];
     let content = Rect {
         x: pane.x + LEFT,
         y: pane.y + TITLE_ROW,
         width: pane.width.saturating_sub(LEFT + RIGHT),
         height: 1,
     };
-    frame.render_widget(
-        Paragraph::new(section.title.to_uppercase()).style(theme.panel_title),
-        content,
-    );
-    for (y, field) in (pane.y + FIRST_FIELD_ROW..).zip(section.fields) {
-        let row = Rect {
-            y,
-            height: 1,
-            ..pane
+    let title = if shortcuts && form.shortcuts.is_editing() {
+        format!(
+            "{} · {}",
+            section.title.to_uppercase(),
+            form.shortcuts.action.name()
+        )
+    } else {
+        section.title.to_uppercase()
+    };
+    frame.render_widget(Paragraph::new(title).style(theme.panel_title), content);
+    if form.shortcuts.is_recording() {
+        draw_recording(frame, pane, content, form, theme, &mut layout);
+        return layout;
+    }
+    if shortcuts && !form.shortcuts.is_editing() {
+        draw_command_list(frame, pane, content, form, theme, &mut layout);
+    } else {
+        let fields = if shortcuts {
+            form.shortcut_stops()
+        } else {
+            section.fields
         };
-        draw_field_row(frame, row, form, *field, theme);
-        layout.fields.push((*field, row));
+        for (y, field) in (pane.y + FIRST_FIELD_ROW..).zip(fields) {
+            let row = Rect {
+                y,
+                height: 1,
+                ..pane
+            };
+            draw_field_row(frame, row, form, *field, theme);
+            layout.fields.push((*field, row));
+        }
     }
 
     let button_row = pane.bottom().saturating_sub(2);
     if let Some(note) = &form.note {
         draw_note(frame, content, button_row, note, theme.error);
+    } else if shortcuts {
+        let action = form.shortcuts.action;
+        let note = format!(
+            "{} · {}",
+            text::shortcut_region(action.region()),
+            text::command_text(action)
+        );
+        draw_note(frame, content, button_row, &note, theme.hint);
     }
     let buttons = [
         (Field::Save, text::BUTTON_SAVE),

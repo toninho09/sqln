@@ -278,6 +278,9 @@ pub fn draw_table(
             Some(structure) if structure.scope == Scope::Connection => {
                 text::structure_title(bar.connection, text::ALL_SCHEMAS)
             }
+            Some(structure) if structure.scope == Scope::Sessions => {
+                text::sessions_title(bar.connection)
+            }
             Some(structure) => text::structure_title(bar.connection, &structure.name),
             None => text::table_title(
                 bar.connection,

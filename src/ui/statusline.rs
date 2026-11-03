@@ -35,6 +35,8 @@ pub enum StatusPanel {
     Explorer,
     Filter,
     Table,
+    Diagram,
+    Home,
 }
 
 pub struct StatusData<'a> {
@@ -66,6 +68,8 @@ fn panel_label(panel: StatusPanel, theme: &Theme) -> (&'static str, Style) {
         StatusPanel::Explorer => (text::STATUS_EXPLORER, theme.label_explorer),
         StatusPanel::Filter => (text::STATUS_FILTER, theme.label_insert),
         StatusPanel::Table => (text::STATUS_TABLE, theme.label_results),
+        StatusPanel::Diagram => (text::STATUS_DIAGRAM, theme.label_results),
+        StatusPanel::Home => (text::STATUS_HOME, theme.label_explorer),
     }
 }
 

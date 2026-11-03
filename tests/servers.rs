@@ -22,6 +22,9 @@ use sqln::connector::target::parse_uri;
 use sqln::connector::{
     Connector, Session, TransactionCommand, TransactionState, network_connector,
 };
+use sqln::diagram::mermaid::to_mermaid;
+use sqln::diagram::sql::{diagram_sql, parse_column, parse_key};
+use sqln::diagram::{Focus, Model};
 use sqln::editor::KeyboardMode;
 use sqln::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, Manager, ReadLimit, ResultSink, RunOptions,
@@ -29,9 +32,13 @@ use sqln::exec::{
 };
 use sqln::export::{ExportOptions, ExportWriter};
 use sqln::form::Field;
-use sqln::grid::{Budget, Row, Value};
+use sqln::grid::{Budget, ResultTable, Row, Value};
+use sqln::import::statement::{Target, TargetColumn};
+use sqln::import::{ImportFormat, ImportJob, ImportMode, ImportProgress, ReadOptions, log_path};
+use sqln::plan::{Explain, PlanView, plan_view};
 use sqln::sql::Dialect;
-use sqln::structure::{Scope, Section, structure_sql};
+use sqln::structure::{Scope, Section, SessionSignal, signal_sql, structure_sql};
+use sqln::ui::text;
 use sqln::ui::theme::Theme;
 use tokio::sync::mpsc::Receiver;
 
@@ -445,6 +452,60 @@ fn the_row_cap_ends_a_large_read_soon_and_the_session_stays_usable() {
             server.kind
         );
         println!("{:?}: row cap in {elapsed:?}", server.kind);
+    }
+}
+
+#[test]
+fn an_idle_session_closes_at_the_idle_limit_and_the_next_run_opens_one() {
+    for server in servers() {
+        let settings = Settings {
+            idle_timeout: Some(Duration::from_millis(200)),
+            ..Settings::default()
+        };
+        let mut h = Harness::open(&server, settings);
+        h.run_ok(&["SELECT 1"]);
+        assert!(h.manager.is_connected(h.connection), "{:?}", server.kind);
+        while !matches!(h.next(), ExecEvent::IdleClosed { .. }) {}
+        assert!(!h.manager.is_connected(h.connection), "{:?}", server.kind);
+        assert_eq!(h.run_ok(&["SELECT 7"]).text(0, 0), "7");
+    }
+}
+
+/// Without the added `LIMIT`, a transaction reads every row of this result, because a
+/// cancellation would end the transaction.
+#[test]
+fn the_added_limit_ends_a_large_read_in_a_transaction_soon_and_keeps_the_transaction() {
+    for server in servers() {
+        let settings = Settings {
+            row_cap: 100,
+            max_connections: 1,
+            ..Settings::default()
+        };
+        let mut h = Harness::open(&server, settings);
+        server.prepare_huge_read(&mut h);
+        let started = Instant::now();
+        let execution = h.start(&[server.huge_read()], true);
+        let run = h.collect(execution);
+        let elapsed = started.elapsed();
+        assert_eq!(
+            run.end,
+            Some(ExecutionEnd::Completed),
+            "{:?}: {run:?}",
+            server.kind
+        );
+        assert_eq!(run.limits, [ReadLimit::RowCap]);
+        assert_eq!(run.rows.len(), 100);
+        assert_eq!(run.transaction, Some(TransactionState::Open));
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "{:?} {elapsed:?}",
+            server.kind
+        );
+        assert_eq!(
+            h.control(TransactionCommand::Rollback),
+            TransactionState::None
+        );
+        println!("{:?}: added limit in {elapsed:?}", server.kind);
     }
 }
 
@@ -1536,21 +1597,35 @@ fn tls_refuses_a_server_without_tls() {
     }
 }
 
+/// The text of a connection of `certuser`. A full path in `key` replaces the folder.
+fn client_uri(
+    server: &TlsServer,
+    folder: &std::path::Path,
+    certificate: &str,
+    key: &str,
+) -> String {
+    format!(
+        "{}://certuser@localhost:{}/spike?sslmode=verify-full&sslrootcert={}&sslcert={}&sslkey={}",
+        server.scheme,
+        server.port,
+        folder.join("ca.crt").display(),
+        folder.join(certificate).display(),
+        folder.join(key).display(),
+    )
+}
+
+fn mysql_tls_servers() -> Vec<TlsServer> {
+    let mut found = tls_servers();
+    found.retain(|server| server.scheme == "mysql");
+    found
+}
+
 #[test]
 fn tls_accepts_a_client_certificate() {
     let Some(folder) = certs() else { return };
     for server in tls_servers() {
-        let TlsServer {
-            scheme,
-            port,
-            user_key,
-        } = server;
-        let uri = format!(
-            "{scheme}://certuser@localhost:{port}/spike?sslmode=verify-full&sslrootcert={}&sslcert={}&sslkey={}",
-            folder.join("ca.crt").display(),
-            folder.join("client.crt").display(),
-            folder.join(user_key).display(),
-        );
+        let uri = client_uri(&server, &folder, "client.crt", server.user_key);
+        let TlsServer { scheme, port, .. } = server;
         assert!(try_connect(&uri).is_ok(), "{scheme}");
         let without = format!(
             "{scheme}://certuser@localhost:{port}/spike?sslmode=verify-full&sslrootcert={}",
@@ -1558,6 +1633,49 @@ fn tls_accepts_a_client_certificate() {
         );
         assert!(try_connect(&without).is_err(), "{scheme}");
     }
+}
+
+#[test]
+fn tls_accepts_each_form_of_a_client_key_on_mysql() {
+    let Some(folder) = certs() else { return };
+    let forms = [
+        ("client.crt", "client.rsa.key", "RSA PRIVATE KEY"),
+        ("client.crt", "client.pk8.key", "PRIVATE KEY"),
+        ("client-ec.crt", "client-ec.key", "EC PRIVATE KEY"),
+    ];
+    for server in mysql_tls_servers() {
+        for (certificate, key, form) in forms {
+            let text = std::fs::read_to_string(folder.join(key)).unwrap();
+            assert!(text.contains(&format!("-----BEGIN {form}-----")), "{key}");
+            let uri = client_uri(&server, &folder, certificate, key);
+            assert_eq!(try_connect(&uri).err(), None, "{key}");
+        }
+    }
+}
+
+#[test]
+fn a_bad_client_key_on_mysql_is_a_connection_error() {
+    let Some(folder) = certs() else { return };
+    let bad = std::env::temp_dir().join(format!("sqln-key-{}.pem", std::process::id()));
+    let files = [
+        ("no key", "no key in this file\n"),
+        (
+            "bad key",
+            "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
+        ),
+    ];
+    for server in mysql_tls_servers() {
+        for (name, text) in files {
+            std::fs::write(&bad, text).unwrap();
+            let uri = client_uri(&server, &folder, "client.crt", &bad.display().to_string());
+            let error = try_connect(&uri).err().unwrap();
+            println!("{name}: {error}");
+        }
+        let uri = client_uri(&server, &folder, "client.crt", "missing.key");
+        let error = try_connect(&uri).err().unwrap();
+        println!("missing key: {error}");
+    }
+    let _ = std::fs::remove_file(bad);
 }
 
 #[test]
@@ -1618,13 +1736,7 @@ impl Screen {
     }
 
     fn focus_form(&mut self, field: Field) {
-        for _ in 0..32 {
-            if self.app.form().unwrap().focus == field {
-                return;
-            }
-            self.code(KeyCode::Tab);
-        }
-        panic!("{field:?} is not in the form");
+        common::focus_form_field(&mut self.app, field);
     }
 
     fn choose_schema(&mut self, name: Option<&str>) {
@@ -1916,6 +2028,169 @@ fn the_structure_queries_read_the_catalog_of_each_server() {
             "DROP VIEW s_view",
             "DROP TABLE s_child",
             "DROP TABLE s_parent",
+        ]);
+    }
+}
+
+/// Reads the diagram of a schema, with only the tables whose names start with `prefix`.
+/// The tests share each server, so the schema holds the tables of other tests.
+fn er_model(h: &mut Harness, dialect: Dialect, schema: &str, prefix: &str) -> Model {
+    let [columns, keys] = diagram_sql(dialect, schema).unwrap();
+    let ours = |name: &str| name.starts_with(prefix);
+    let (column_rows, key_rows) = (h.run_ok(&[&columns]).rows, h.run_ok(&[&keys]).rows);
+    let columns = column_rows.iter().filter_map(parse_column);
+    let columns = columns.filter(|row| ours(&row.relation.relation)).collect();
+    let keys = key_rows.iter().filter_map(parse_key);
+    let keys = keys
+        .filter(|row| ours(&row.relation.relation) || ours(&row.target.relation))
+        .collect();
+    Model::build(columns, keys, &Focus::Schema(schema.to_owned()))
+}
+
+/// Describes each link as `child(columns) -> schema.parent(columns)`.
+fn er_links(model: &Model) -> Vec<String> {
+    model
+        .links
+        .iter()
+        .map(|link| {
+            let (child, parent) = (&model.entities[link.child], &model.entities[link.parent]);
+            let from: Vec<&str> = link
+                .child_columns
+                .iter()
+                .map(|&column| child.columns[column].name.as_str())
+                .collect();
+            let to: Vec<&str> = link
+                .parent_columns
+                .iter()
+                .map(|column| column.map_or("?", |column| parent.columns[column].name.as_str()))
+                .collect();
+            format!(
+                "{}({}) -> {}.{}({})",
+                child.relation.relation,
+                from.join(","),
+                parent.relation.schema,
+                parent.relation.relation,
+                to.join(",")
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_diagram_queries_read_tables_keys_and_other_schemas_of_each_server() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let (dialect, other) = match server.kind {
+            Kind::Postgres => (Dialect::Postgres, "CREATE SCHEMA IF NOT EXISTS erk_other"),
+            Kind::MySql => (Dialect::MySql, "CREATE DATABASE IF NOT EXISTS erk_other"),
+        };
+        h.manager.load_catalog(h.connection, 0);
+        let schema = loop {
+            if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
+                break catalog.unwrap().current_schema.unwrap();
+            }
+        };
+        let audit = format!(
+            "CREATE TABLE erk_other.erk_audit (id int PRIMARY KEY, child int, \
+             CONSTRAINT erk_audit_child FOREIGN KEY (child) REFERENCES {schema}.erk_child (id))"
+        );
+        h.run_ok(&[
+            other,
+            "DROP TABLE IF EXISTS erk_other.erk_audit",
+            "DROP VIEW IF EXISTS erk_view",
+            "DROP TABLE IF EXISTS erk_child",
+            "DROP TABLE IF EXISTS erk_parent",
+            "DROP TABLE IF EXISTS erk_other.erk_users",
+            "CREATE TABLE erk_other.erk_users (id int PRIMARY KEY)",
+            "CREATE TABLE erk_parent (a int, b int, PRIMARY KEY (a, b))",
+            "CREATE TABLE erk_child (id int PRIMARY KEY, pa int NOT NULL, pb int NOT NULL, \
+               owner int, \
+               CONSTRAINT erk_fk FOREIGN KEY (pa, pb) REFERENCES erk_parent (a, b), \
+               CONSTRAINT erk_owner FOREIGN KEY (owner) REFERENCES erk_other.erk_users (id))",
+            &audit,
+            "CREATE VIEW erk_view AS SELECT id FROM erk_child",
+        ]);
+        let model = er_model(&mut h, dialect, &schema, "erk_");
+        let entities: Vec<(String, bool)> = model
+            .entities
+            .iter()
+            .map(|entity| (entity.relation.relation.clone(), entity.stub))
+            .collect();
+        // The view stays out, and the tables of the other schema are stubs.
+        assert_eq!(
+            entities,
+            [
+                ("erk_child".to_owned(), false),
+                ("erk_parent".to_owned(), false),
+                ("erk_audit".to_owned(), true),
+                ("erk_users".to_owned(), true),
+            ],
+            "{:?}",
+            server.kind
+        );
+        assert_eq!(
+            er_links(&model),
+            [
+                format!("erk_child(pa,pb) -> {schema}.erk_parent(a,b)"),
+                "erk_child(owner) -> erk_other.erk_users(?)".to_owned(),
+                format!("erk_audit() -> {schema}.erk_child(id)"),
+            ],
+            "{:?}",
+            server.kind
+        );
+        let parent = &model.entities[1];
+        assert_eq!(parent.columns[1].primary, Some(2), "{:?}", server.kind);
+        assert!(parent.columns[0].ty.contains("int"), "{:?}", server.kind);
+        let text = to_mermaid(&model, false);
+        assert!(text.contains("e2 ||..o{ e1 : \"pa, pb\""), "{text}");
+        assert!(text.contains("e4 |o..o{ e1 : \"owner\""), "{text}");
+        h.run_ok(&[
+            "DROP TABLE erk_other.erk_audit",
+            "DROP VIEW erk_view",
+            "DROP TABLE erk_child",
+            "DROP TABLE erk_parent",
+            "DROP TABLE erk_other.erk_users",
+        ]);
+    }
+}
+
+#[test]
+fn a_partitioned_table_appears_once_with_its_keys() {
+    for server in servers()
+        .into_iter()
+        .filter(|server| server.kind == Kind::Postgres)
+    {
+        let mut h = Harness::open(&server, Settings::default());
+        h.run_ok(&[
+            "DROP TABLE IF EXISTS erp_part_ref",
+            "DROP TABLE IF EXISTS erp_part",
+            "DROP TABLE IF EXISTS erp_part_parent",
+            "CREATE TABLE erp_part_parent (id int PRIMARY KEY)",
+            "CREATE TABLE erp_part (id int, k int, owner int REFERENCES erp_part_parent, \
+               PRIMARY KEY (id, k)) PARTITION BY RANGE (k)",
+            "CREATE TABLE erp_part_1 PARTITION OF erp_part FOR VALUES FROM (0) TO (10)",
+            "CREATE TABLE erp_part_2 PARTITION OF erp_part FOR VALUES FROM (10) TO (20)",
+            "CREATE TABLE erp_part_ref (id int PRIMARY KEY, pid int, pk int, \
+               FOREIGN KEY (pid, pk) REFERENCES erp_part (id, k))",
+        ]);
+        let model = er_model(&mut h, Dialect::Postgres, "public", "erp_");
+        let names: Vec<&str> = model
+            .entities
+            .iter()
+            .map(|entity| entity.relation.relation.as_str())
+            .collect();
+        assert_eq!(names, ["erp_part", "erp_part_parent", "erp_part_ref"]);
+        assert_eq!(
+            er_links(&model),
+            [
+                "erp_part(owner) -> public.erp_part_parent(id)",
+                "erp_part_ref(pid,pk) -> public.erp_part(id,k)",
+            ]
+        );
+        h.run_ok(&[
+            "DROP TABLE erp_part_ref",
+            "DROP TABLE erp_part",
+            "DROP TABLE erp_part_parent",
         ]);
     }
 }
@@ -2381,25 +2656,6 @@ fn the_form_tests_a_real_server_and_a_wrong_password_stays_hidden() {
 }
 
 #[test]
-fn a_client_key_in_another_form_gets_a_clear_message() {
-    let path = std::env::temp_dir().join(format!("sqln-key-{}.pem", std::process::id()));
-    std::fs::write(
-        &path,
-        "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
-    )
-    .unwrap();
-    let uri = format!(
-        "mysql://reader@127.0.0.1:1/app?sslmode=verify-full&sslcert={0}&sslkey={0}",
-        path.display(),
-    );
-    let connector = network_connector(parse_uri(&uri).unwrap());
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let error = runtime.block_on(connector.connect()).err().unwrap();
-    assert!(error.message.contains("PKCS#1"), "{error:?}");
-    std::fs::remove_file(path).unwrap();
-}
-
-#[test]
 fn a_change_of_schema_by_sql_ends_with_its_execution() {
     for server in servers() {
         let settings = Settings {
@@ -2689,4 +2945,740 @@ fn a_foreign_key_to_another_schema_names_that_schema_in_postgres() {
     assert_eq!(keys.len(), 1, "{keys:?}");
     assert_eq!(keys[0].target.schema, "s_fk");
     h.run_ok(&["DROP SCHEMA s_fk CASCADE"]);
+}
+
+// ---------------------------------------------------------------------------
+// The import.
+
+impl Server {
+    fn dialect(&self) -> Dialect {
+        match self.kind {
+            Kind::Postgres => Dialect::Postgres,
+            Kind::MySql => Dialect::MySql,
+        }
+    }
+
+    /// Returns a table with one column of each kind.
+    fn import_table(&self, name: &str) -> String {
+        match self.kind {
+            Kind::Postgres => format!(
+                "CREATE TABLE {name} (id integer PRIMARY KEY, name text, data bytea, \
+                 flag boolean, amount numeric(30, 5), doc jsonb)"
+            ),
+            Kind::MySql => format!(
+                "CREATE TABLE {name} (id int PRIMARY KEY, name text, data blob, \
+                 flag tinyint, amount decimal(30, 5), doc json)"
+            ),
+        }
+    }
+
+    /// Returns a read of the columns of `import_table`, as text.
+    fn import_read(&self, name: &str) -> String {
+        match self.kind {
+            Kind::Postgres => format!(
+                "SELECT id::text, name, upper(encode(data, 'hex')), flag::text, \
+                 amount::text, doc::text FROM {name} ORDER BY id"
+            ),
+            Kind::MySql => format!(
+                "SELECT CAST(id AS CHAR), name, HEX(data), CAST(flag AS CHAR), \
+                 CAST(amount AS CHAR), CAST(doc AS CHAR) FROM {name} ORDER BY id"
+            ),
+        }
+    }
+
+    /// Returns the table in the text of a statement.
+    fn table_name(&self, name: &str) -> String {
+        match self.kind {
+            Kind::Postgres => format!("\"public\".\"{name}\""),
+            Kind::MySql => format!("`spike`.`{name}`"),
+        }
+    }
+
+    fn import_target(&self, name: &str, columns: &[&str], base64: bool) -> Target {
+        Target {
+            table: self.table_name(name),
+            columns: columns
+                .iter()
+                .enumerate()
+                .map(|(source, column)| TargetColumn {
+                    name: (*column).to_owned(),
+                    binary: *column == "data",
+                    source,
+                })
+                .collect(),
+            dialect: self.dialect(),
+            base64,
+        }
+    }
+}
+
+fn import_file(name: &str, text: &str) -> std::path::PathBuf {
+    let path = common::temp_dir(name).join("data.txt");
+    std::fs::write(&path, text).unwrap();
+    path
+}
+
+fn import_job(
+    server: &Server,
+    path: &std::path::Path,
+    table: &str,
+    format: ImportFormat,
+    columns: &[&str],
+    mode: ImportMode,
+) -> ImportJob {
+    ImportJob {
+        path: path.to_owned(),
+        read: ReadOptions {
+            format,
+            dialect: server.dialect(),
+            ..ReadOptions::default()
+        },
+        columns: columns.iter().map(|name| (*name).to_owned()).collect(),
+        target: server.import_target(table, columns, !format.is_delimited()),
+        mode,
+        batch: 2,
+        error_limit: 1000,
+        log: log_path(path, "x"),
+        progress: Arc::new(ImportProgress::default()),
+    }
+}
+
+impl Harness {
+    fn import(&mut self, job: ImportJob) -> (ExecutionEnd, Option<String>) {
+        let execution = self.manager.import(self.console, job);
+        loop {
+            if let ExecEvent::ExecutionFinished {
+                execution: finished,
+                end,
+                message,
+                ..
+            } = self.next()
+                && finished == execution
+            {
+                return (end, message);
+            }
+        }
+    }
+}
+
+const ALL_COLUMNS: [&str; 6] = ["id", "name", "data", "flag", "amount", "doc"];
+
+#[test]
+fn an_import_keeps_the_value_of_each_type() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let table = "t_import_types";
+        h.run(&[&format!("DROP TABLE IF EXISTS {table}")]);
+        h.run_ok(&[&server.import_table(table)]);
+        let file = concat!(
+            r#"{"id": 1, "name": "a'b\\c\"d", "data": "AAEC/w==", "flag": true, "#,
+            r#""amount": 1234567890123456789012.12345, "doc": {"k": [1, 2]}}"#,
+            "\n",
+            r#"{"id": 2, "name": null, "data": null, "flag": false, "amount": 0.5, "doc": null}"#,
+            "\n",
+            r#"{"id": 3, "name": "ação 日本語"}"#,
+            "\n",
+        );
+        let path = import_file(&format!("server-types-{:?}", server.kind), file);
+        let job = import_job(
+            &server,
+            &path,
+            table,
+            ImportFormat::JsonLines,
+            &ALL_COLUMNS,
+            ImportMode::AllOrNothing,
+        );
+        let (end, message) = h.import(job);
+        assert_eq!(
+            end,
+            ExecutionEnd::Completed,
+            "{:?}: {message:?}",
+            server.kind
+        );
+        let run = h.run_ok(&[&server.import_read(table)]);
+        assert_eq!(run.text(0, 1), r#"a'b\c"d"#, "{:?}", server.kind);
+        assert_eq!(run.text(0, 2), "000102FF", "{:?}", server.kind);
+        assert_eq!(
+            run.text(0, 4),
+            "1234567890123456789012.12345",
+            "{:?}",
+            server.kind
+        );
+        assert!(run.text(0, 5).contains("\"k\""), "{:?}", server.kind);
+        assert_eq!(run.rows[1].get(1), Some(Value::Null), "{:?}", server.kind);
+        assert_eq!(run.text(2, 1), "ação 日本語", "{:?}", server.kind);
+        let flag = run.text(0, 3);
+        assert!(flag == "true" || flag == "1", "{flag}");
+        h.run_ok(&[&format!("DROP TABLE {table}")]);
+    }
+}
+
+#[test]
+fn a_file_of_an_export_returns_the_same_rows_on_each_server() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let (from, to) = ("t_import_from", "t_import_to");
+        h.run(&[&format!("DROP TABLE IF EXISTS {from}, {to}")]);
+        h.run_ok(&[&server.import_table(from), &server.import_table(to)]);
+        let binary = match server.kind {
+            Kind::Postgres => "'\\x00ff41'",
+            Kind::MySql => "X'00ff41'",
+        };
+        let text = "A plain back slash \\\\ and a quote ''";
+        let flag = if server.kind == Kind::Postgres {
+            "true"
+        } else {
+            "1"
+        };
+        h.run_ok(&[&format!(
+            "INSERT INTO {from} (id, name, data, flag, amount, doc) VALUES \
+             (1, '{text}', {binary}, {flag}, 1.5, '{{\"a\": 1}}'), \
+             (2, '', NULL, NULL, NULL, NULL)"
+        )]);
+        for (export, format, base64) in [
+            (ExportFormatOf::Csv, ImportFormat::Csv, false),
+            (ExportFormatOf::Json, ImportFormat::Json, true),
+        ] {
+            h.run_ok(&[&format!("DELETE FROM {to}")]);
+            let path = common::temp_dir(&format!("server-trip-{:?}-{format:?}", server.kind))
+                .join("data.txt");
+            let options = ExportOptions {
+                format: export.format(),
+                ..ExportOptions::default()
+            };
+            let writer = ExportWriter::create(&path, options).unwrap();
+            let select =
+                format!("SELECT id, name, data, flag, amount, doc FROM {from} ORDER BY id");
+            let run = RunOptions {
+                export: Some(writer.clone()),
+                ..RunOptions::default()
+            };
+            let execution = h.manager.run(h.console, vec![select], run);
+            assert_eq!(h.collect(execution).end, Some(ExecutionEnd::Completed));
+            writer.promote(&path).unwrap();
+            let mut job = import_job(
+                &server,
+                &path,
+                to,
+                format,
+                &ALL_COLUMNS,
+                ImportMode::AllOrNothing,
+            );
+            job.target.base64 = base64;
+            let (end, message) = h.import(job);
+            assert_eq!(
+                end,
+                ExecutionEnd::Completed,
+                "{:?}: {message:?}",
+                server.kind
+            );
+            let read = |h: &mut Harness, name: &str| {
+                let run = h.run_ok(&[&server.import_read(name)]);
+                run.rows
+                    .iter()
+                    .map(|row| row.cells().map(Value::display).collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                read(&mut h, from),
+                read(&mut h, to),
+                "{:?} {format:?}",
+                server.kind
+            );
+        }
+        h.run_ok(&[&format!("DROP TABLE {from}"), &format!("DROP TABLE {to}")]);
+    }
+}
+
+/// The formats of the export that return to a table on a server.
+#[derive(Clone, Copy)]
+enum ExportFormatOf {
+    Csv,
+    Json,
+}
+
+impl ExportFormatOf {
+    fn format(self) -> sqln::export::ExportFormat {
+        match self {
+            Self::Csv => sqln::export::ExportFormat::Csv,
+            Self::Json => sqln::export::ExportFormat::Json,
+        }
+    }
+}
+
+#[test]
+fn each_import_mode_does_its_work_on_each_server() {
+    const FILE: &str = "id,name\n1,a\n2,b\n3,c\n1,again\n5,e\n";
+    for server in servers() {
+        for mode in ImportMode::ALL {
+            let mut h = Harness::open(&server, Settings::default());
+            let table = "t_import_modes";
+            h.run(&[&format!("DROP TABLE IF EXISTS {table}")]);
+            h.run_ok(&[&server.import_table(table)]);
+            let path = import_file(&format!("server-modes-{:?}-{mode:?}", server.kind), FILE);
+            let job = import_job(
+                &server,
+                &path,
+                table,
+                ImportFormat::Csv,
+                &["id", "name"],
+                mode,
+            );
+            let (log, progress) = (job.log.clone(), job.progress.clone());
+            let (end, message) = h.import(job);
+            let (expected_end, rows) = match mode {
+                ImportMode::AllOrNothing => (ExecutionEnd::Failed, "0"),
+                ImportMode::ByBatch => (ExecutionEnd::Failed, "2"),
+                ImportMode::LogErrors => (ExecutionEnd::Completed, "4"),
+            };
+            let tag = format!("{:?} {mode:?}: {message:?}", server.kind);
+            assert_eq!(end, expected_end, "{tag}");
+            assert_eq!(h.count(table), rows, "{tag}");
+            assert_eq!(progress.rows().to_string(), rows, "{tag}");
+            if mode == ImportMode::LogErrors {
+                let text = std::fs::read_to_string(log).unwrap();
+                assert!(text.contains("Line 5:"), "{tag}: {text}");
+                assert!(text.contains("1,again"), "{tag}: {text}");
+            } else {
+                assert!(message.unwrap().contains("lines 4 to 5"), "{tag}");
+            }
+            h.run_ok(&[&format!("DROP TABLE {table}")]);
+        }
+    }
+}
+
+#[test]
+fn stop_undoes_all_or_nothing_on_each_server() {
+    let mut file = String::from("id,name\n");
+    for row in 0..200_000 {
+        file.push_str(&format!("{row},x\n"));
+    }
+    for server in servers() {
+        let settings = Settings {
+            // A debug build needs time to end a statement in transit.
+            stop_grace: Duration::from_secs(50),
+            ..Settings::default()
+        };
+        let mut h = Harness::open(&server, settings);
+        let table = "t_import_stop";
+        h.run(&[&format!("DROP TABLE IF EXISTS {table}")]);
+        h.run_ok(&[&server.import_table(table)]);
+        let path = import_file(&format!("server-stop-{:?}", server.kind), &file);
+        let job = import_job(
+            &server,
+            &path,
+            table,
+            ImportFormat::Csv,
+            &["id", "name"],
+            ImportMode::AllOrNothing,
+        );
+        let progress = job.progress.clone();
+        let execution = h.manager.import(h.console, job);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while progress.rows() < 100 {
+            assert!(Instant::now() < deadline, "{:?}", server.kind);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        h.manager.stop(h.console);
+        let run = h.collect(execution);
+        assert_eq!(run.end, Some(ExecutionEnd::Stopped), "{:?}", server.kind);
+        assert_eq!(progress.rows(), 0, "{:?}", server.kind);
+        assert_eq!(h.count(table), "0", "{:?}", server.kind);
+        h.run_ok(&[&format!("DROP TABLE {table}")]);
+    }
+}
+
+#[test]
+fn a_literal_of_an_import_ignores_the_settings_of_the_session() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let table = "t_import_literal";
+        h.run(&[&format!("DROP TABLE IF EXISTS {table}")]);
+        h.run_ok(&[&server.import_table(table)]);
+        let setting = match server.kind {
+            Kind::Postgres => "SET standard_conforming_strings = off",
+            Kind::MySql => "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'",
+        };
+        let target = server.import_target(table, &["id", "name", "data"], false);
+        let hostile = "a\\'); DROP TABLE x; --\\";
+        let cells = [
+            Some("1".to_owned()),
+            Some(hostile.to_owned()),
+            Some("b\\c".to_owned()),
+        ];
+        let insert = format!("{}{}", target.head(), target.values(&cells).unwrap());
+        // One execution keeps one session, so the setting reaches the `INSERT`.
+        h.run_ok(&[setting, &insert]);
+        let run = h.run_ok(&[&server.import_read(table)]);
+        assert_eq!(run.text(0, 1), hostile, "{:?}", server.kind);
+        assert_eq!(run.text(0, 2), "625C63", "{:?}", server.kind);
+        h.run_ok(&[&format!("DROP TABLE {table}")]);
+    }
+}
+
+#[test]
+fn the_dialog_reads_the_binary_type_of_each_server() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let table = "t_import_dialog";
+        h.run(&[&format!("DROP TABLE IF EXISTS {table}")]);
+        h.run_ok(&[&server.import_table(table)]);
+
+        let path = import_file(
+            &format!("server-dialog-{:?}", server.kind),
+            "id,name,data\n7,Ana,0x00FF\n",
+        );
+        let mut s = Screen::with_definition(&server);
+        s.open_table(table);
+        s.prefix('j');
+        s.press(KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT));
+        s.wait_until(|s| s.screen().contains("Import to"));
+        s.type_text(&path.display().to_string());
+        s.code(KeyCode::Tab);
+        s.wait_until(|s| s.screen().contains("3 file columns"));
+        s.code(KeyCode::Tab);
+        s.code(KeyCode::Enter);
+        s.wait_until(|s| s.screen().contains("Import complete"));
+        s.app.shutdown();
+
+        let run = h.run_ok(&[&server.import_read(table)]);
+        assert_eq!(run.text(0, 2), "00FF", "{:?}", server.kind);
+        h.run_ok(&[&format!("DROP TABLE {table}")]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The plan of a statement.
+
+/// Creates the tables of one test. The tests run together on one server, so each test
+/// uses its own names.
+fn create_plan_tables(h: &mut Harness, name: &str) {
+    h.run_ok(&[
+        &format!("DROP TABLE IF EXISTS p_child_{name}"),
+        &format!("DROP TABLE IF EXISTS p_parent_{name}"),
+        &format!("CREATE TABLE p_parent_{name} (id int PRIMARY KEY, label varchar(20))"),
+        &format!("CREATE TABLE p_child_{name} (id int PRIMARY KEY, parent_id int)"),
+        &format!("INSERT INTO p_parent_{name} VALUES (1, 'a'), (2, 'b')"),
+        &format!("INSERT INTO p_child_{name} VALUES (1, 1), (2, 1), (3, 2)"),
+    ]);
+}
+
+fn plan_statement(name: &str) -> String {
+    format!(
+        "SELECT p.label, count(*) FROM p_parent_{name} p \
+         JOIN p_child_{name} c ON c.parent_id = p.id GROUP BY p.label ORDER BY 2 LIMIT 1"
+    )
+}
+
+fn plan_of(dialect: Dialect, run: Run) -> PlanView {
+    let mut table = ResultTable::new(run.columns[0].clone());
+    table.append(run.rows, run.bytes);
+    plan_view(dialect, &table).unwrap_or_else(|| panic!("{table:?}"))
+}
+
+fn plan_cells(view: &PlanView, title: &str) -> Vec<String> {
+    let column = view.columns.iter().position(|item| item == title).unwrap();
+    view.rows
+        .iter()
+        .map(|row| row.get(column).unwrap().full_text())
+        .collect()
+}
+
+#[test]
+fn each_server_gives_a_plan_that_reads_as_a_tree() {
+    for server in servers() {
+        let dialect = server.dialect();
+        let mut h = Harness::open(&server, Settings::default());
+        create_plan_tables(&mut h, "tree");
+        let statement = plan_statement("tree");
+        let estimate = Explain::new(dialect, false).unwrap();
+        let view = plan_of(dialect, h.run_ok(&[&estimate.wrap(&statement)]));
+        let nodes = plan_cells(&view, text::PLAN_NODE);
+        assert!(nodes.len() > 2, "{nodes:?}");
+        assert!(nodes[0].starts_with("Limit"), "{nodes:?}");
+        assert!(nodes[1].starts_with("└─ "), "{nodes:?}");
+        assert!(view.columns.iter().any(|item| item == text::PLAN_COST));
+        assert!(!view.columns.iter().any(|item| item == text::PLAN_TIME));
+        assert!(view.summary.contains("most:"), "{}", view.summary);
+
+        let real = Explain::new(dialect, true).unwrap();
+        let view = plan_of(dialect, h.run_ok(&[&real.wrap(&statement)]));
+        assert!(view.columns.iter().any(|item| item == text::PLAN_TIME));
+        assert!(view.columns.iter().any(|item| item == text::PLAN_LOOPS));
+        assert!(view.summary.contains(" ms "), "{}", view.summary);
+        let actual = plan_cells(&view, text::PLAN_ACTUAL_ROWS);
+        assert_eq!(actual[0], "1", "the limit reads one row");
+    }
+}
+
+#[test]
+fn an_error_in_a_plan_points_after_the_prefix() {
+    for server in servers() {
+        let connector = connector(&server);
+        let runtime = runtime();
+        runtime.block_on(async {
+            let mut session = connector.connect().await.unwrap();
+            let explain = Explain::new(server.dialect(), false).unwrap();
+            let sql = explain.wrap("SELECT 1 FROM");
+            let error = session.run(&sql, sink()).await.unwrap_err();
+            assert_eq!(
+                error.offset,
+                Some(explain.prefix_len() + 13),
+                "{:?}",
+                server.kind
+            );
+        });
+    }
+}
+
+#[test]
+fn a_plan_without_a_real_run_changes_nothing() {
+    for server in servers() {
+        let dialect = server.dialect();
+        let mut h = Harness::open(&server, Settings::default());
+        create_plan_tables(&mut h, "estimate");
+        let explain = Explain::new(dialect, false).unwrap();
+        h.run_ok(&[&explain.wrap("UPDATE p_child_estimate SET parent_id = 9")]);
+        assert_eq!(h.count("p_child_estimate WHERE parent_id = 9"), "0");
+    }
+}
+
+#[test]
+fn a_real_plan_of_postgres_keeps_its_change() {
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let mut h = Harness::open(&server, Settings::default());
+    create_plan_tables(&mut h, "real");
+    let explain = Explain::new(Dialect::Postgres, true).unwrap();
+    h.run_ok(&[&explain.wrap("UPDATE p_child_real SET parent_id = 9")]);
+    assert_eq!(h.count("p_child_real WHERE parent_id = 9"), "3");
+}
+
+#[test]
+fn the_answer_of_mysql_for_a_write_is_a_plan_with_one_node() {
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
+    let mut h = Harness::open(&server, Settings::default());
+    create_plan_tables(&mut h, "write");
+    let explain = Explain::new(Dialect::MySql, false).unwrap();
+    let run = h.run_ok(&[&explain.wrap("UPDATE p_child_write SET parent_id = 9")]);
+    let view = plan_of(Dialect::MySql, run);
+    assert_eq!(view.rows.len(), 1);
+}
+
+#[test]
+fn the_keys_of_a_console_show_the_plan_of_each_server() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        create_plan_tables(&mut h, "keys");
+        let mut s = Screen::with_definition(&server);
+        s.prefix('h');
+        s.code(KeyCode::Enter);
+        s.wait_until(|s| !s.app.console().is_busy() && s.app.console().connection.is_some());
+        s.app.on_event(Event::Paste(plan_statement("keys")));
+        s.press(ctrl('w'));
+        s.press(KeyEvent::new(KeyCode::Char('E'), KeyModifiers::SHIFT));
+        s.wait_until(|s| {
+            let console = s.app.console();
+            !console.is_busy() && console.results.first().is_some_and(|result| result.plan)
+        });
+        let screen = s.screen();
+        assert!(screen.contains("Plan"), "{screen}");
+        assert!(screen.contains("Share"), "{screen}");
+
+        s.press(ctrl('w'));
+        s.press(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT));
+        s.wait_until(|s| {
+            let console = s.app.console();
+            let columns = console.results.first().map(|item| &item.table.columns);
+            columns.is_some_and(|columns| columns.iter().any(|name| name == text::PLAN_TIME))
+        });
+        s.app.shutdown();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The sessions of a server.
+
+fn session_list(h: &mut Harness, dialect: Dialect) -> Run {
+    let nothing = RelationRef::default();
+    let sql = structure_sql(dialect, Scope::Sessions, &nothing, Section::Columns).unwrap();
+    h.run_ok(&[&sql])
+}
+
+fn session_ids(run: &Run) -> Vec<String> {
+    run.rows
+        .iter()
+        .map(|row| row.get(0).unwrap().full_text())
+        .collect()
+}
+
+/// Starts a long statement in a session of its own. It returns the number of the
+/// session and the execution.
+fn start_busy_session(server: &Server, busy: &mut Harness) -> (String, u64) {
+    let id = busy.run_ok(&[server.backend_id()]).text(0, 0);
+    let execution = busy.start(&[&server.sleep(30)], false);
+    busy.wait_started();
+    (id, execution)
+}
+
+/// Waits until the list shows the long statement of a session.
+fn wait_for_session(server: &Server, reader: &mut Harness, id: &str) -> Run {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let run = session_list(reader, server.dialect());
+        let row = session_ids(&run).iter().position(|item| item == id);
+        let shows_query = row.is_some_and(|row| {
+            let last = run.rows[row].columns() - 1;
+            let query = run.rows[row].get(last).unwrap().full_text();
+            query.to_lowercase().contains("sleep")
+        });
+        if shows_query {
+            return run;
+        }
+        assert!(Instant::now() < deadline, "{run:?}");
+        // This list takes a global lock on MySQL, so a slow pace leaves the other tests free.
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+#[test]
+fn the_list_shows_another_session_and_hides_its_reader() {
+    for server in servers() {
+        let mut busy = Harness::open(&server, sessions(1));
+        let (id, execution) = start_busy_session(&server, &mut busy);
+        let mut reader = Harness::open(&server, sessions(1));
+        let own = reader.run_ok(&[server.backend_id()]).text(0, 0);
+        let run = wait_for_session(&server, &mut reader, &id);
+        assert!(!session_ids(&run).contains(&own), "{:?}", server.kind);
+
+        let signal = signal_sql(
+            server.dialect(),
+            SessionSignal::EndSession,
+            id.parse().unwrap(),
+        );
+        reader.run_ok(&[&signal.unwrap()]);
+        busy.collect(execution);
+    }
+}
+
+#[test]
+fn a_cancel_stops_the_query_and_keeps_the_session() {
+    for server in servers() {
+        let mut busy = Harness::open(&server, sessions(1));
+        let (id, execution) = start_busy_session(&server, &mut busy);
+        let mut reader = Harness::open(&server, sessions(1));
+        wait_for_session(&server, &mut reader, &id);
+        let start = Instant::now();
+        let signal = signal_sql(
+            server.dialect(),
+            SessionSignal::CancelQuery,
+            id.parse().unwrap(),
+        );
+        reader.run_ok(&[&signal.unwrap()]);
+        busy.collect(execution);
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            server.kind
+        );
+        let next = busy.run_ok(&[server.backend_id()]);
+        assert_eq!(next.text(0, 0), id, "{:?}", server.kind);
+    }
+}
+
+#[test]
+fn an_end_closes_the_other_session() {
+    for server in servers() {
+        let mut busy = Harness::open(&server, sessions(1));
+        let (id, execution) = start_busy_session(&server, &mut busy);
+        let mut reader = Harness::open(&server, sessions(1));
+        wait_for_session(&server, &mut reader, &id);
+        let signal = signal_sql(
+            server.dialect(),
+            SessionSignal::EndSession,
+            id.parse().unwrap(),
+        );
+        reader.run_ok(&[&signal.unwrap()]);
+        let ended = busy.collect(execution);
+        assert_ne!(
+            ended.end,
+            Some(ExecutionEnd::Completed),
+            "{:?}",
+            server.kind
+        );
+        std::thread::sleep(Duration::from_millis(200));
+        let next = busy.run_ok(&[server.backend_id()]);
+        assert_ne!(next.text(0, 0), id, "{:?}", server.kind);
+    }
+}
+
+#[test]
+fn a_signal_to_a_missing_session_reaches_the_tab_of_each_server() {
+    let missing = 2_147_483_647;
+    if let Some(server) = only(Kind::Postgres) {
+        let mut h = Harness::open(&server, Settings::default());
+        let sql = signal_sql(Dialect::Postgres, SessionSignal::CancelQuery, missing);
+        let run = h.run_ok(&[&sql.unwrap()]);
+        assert_eq!(run.rows[0].get(0).unwrap().full_text(), "f");
+    }
+    if let Some(server) = only(Kind::MySql) {
+        let mut h = Harness::open(&server, Settings::default());
+        let sql = signal_sql(Dialect::MySql, SessionSignal::EndSession, missing);
+        let run = h.run(&[&sql.unwrap()]);
+        assert_eq!(run.end, Some(ExecutionEnd::Failed));
+        assert!(run.error().contains("Unknown thread id"), "{run:?}");
+    }
+}
+
+#[test]
+fn the_keys_of_a_tab_end_a_session_of_each_server() {
+    for server in servers() {
+        let mut busy = Harness::open(&server, sessions(1));
+        let (id, execution) = start_busy_session(&server, &mut busy);
+        let mut reader = Harness::open(&server, sessions(1));
+        wait_for_session(&server, &mut reader, &id);
+
+        let mut s = Screen::with_definition(&server);
+        s.prefix('h');
+        s.press(KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT));
+        s.wait_until(|s| {
+            let done = s
+                .app
+                .table()
+                .is_some_and(|tab| tab.loaded() > 0 && !tab.is_busy());
+            done && s.screen().contains("(sessions)")
+        });
+        // The active sessions come first, and the long statement can have company.
+        let row = {
+            let tab = s.app.table().unwrap();
+            let rows = &tab.result.table.rows;
+            rows.iter()
+                .position(|row| row.get(0).unwrap().full_text() == id)
+                .unwrap()
+        };
+        for _ in 0..row {
+            s.code(KeyCode::Down);
+        }
+        s.press(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT));
+        s.wait_until(|s| s.screen().contains(&format!("Session {id} of")));
+        s.code(KeyCode::Right);
+        s.code(KeyCode::Enter);
+        let ended = busy.collect(execution);
+        assert_ne!(
+            ended.end,
+            Some(ExecutionEnd::Completed),
+            "{:?}",
+            server.kind
+        );
+        s.wait_until(|s| {
+            s.app
+                .table()
+                .is_some_and(|tab| !tab.is_busy() && tab.signal_note.is_none())
+                && s.screen().contains(text::SESSION_SIGNAL_SENT)
+        });
+        s.app.shutdown();
+    }
 }

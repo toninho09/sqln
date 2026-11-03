@@ -2,7 +2,10 @@
 
 use crate::export::ExportFormat;
 use crate::generate::Template;
+use crate::import::ImportFormat;
+use crate::import::form::Section;
 use crate::input::{Action, SuggestionKeys};
+use crate::structure::SessionSignal;
 
 /// One command of the hint bar: a key and its effect. A note has an empty key.
 pub type HintPart = (&'static str, &'static str);
@@ -151,11 +154,41 @@ pub const HINT_EXPORT_FORMATS: &[HintPart] = &[
     ("Enter", "next"),
     ("Esc", "cancel"),
 ];
+pub const HINT_IMPORT_SECTIONS: &[HintPart] = &[
+    ("Up/Down", "section"),
+    ("Tab", "next"),
+    ("Enter", "next"),
+    ("Esc", "cancel"),
+];
+pub const HINT_IMPORT_COLUMNS: &[HintPart] = &[
+    ("Up/Down", "column"),
+    ("Left/Right", "file column"),
+    ("Tab", "next"),
+    ("Esc", "cancel"),
+];
+pub const HINT_IMPORT_PREVIEW: &[HintPart] = &[
+    ("Up/Down", "rows"),
+    ("Left/Right", "columns"),
+    ("Tab", "next"),
+    ("Esc", "cancel"),
+];
 pub const HINT_DIALOG: &[HintPart] = &[
     ("Tab", "next option"),
     ("Enter", "confirm"),
     ("Esc", "cancel"),
 ];
+pub const HINT_HELP: &[HintPart] = &[
+    ("Type", "search"),
+    ("Tab", "group"),
+    ("Up/Down", "scroll"),
+    ("PgUp/PgDn", "page"),
+    ("Esc", "close"),
+];
+pub const HELP_SEARCH: &str = "Type a command or shortcut to filter";
+pub const HELP_ALL: &str = "All";
+pub const HELP_GROUP: &str = "Group";
+pub const HELP_GROUP_KEYS: &str = "Tab / Shift+Tab";
+
 pub const HINT_OVERLAY: &[HintPart] =
     &[("Up/Down", "scroll"), ("Ctrl+C", "copy"), ("Esc", "close")];
 pub const HINT_OVERLAY_ROW: &[HintPart] = &[
@@ -198,7 +231,16 @@ pub fn key_label(key: &str) -> String {
         .join(" ")
 }
 
-pub const HINT_PREFIX: &[HintPart] = &[("Ctrl+W", "…"), ("Esc", "cancel")];
+pub const HINT_PREFIX: &[HintPart] = &[("Ctrl+W", "…"), ("Tab", "explorer"), ("Esc", "cancel")];
+pub const HINT_SEQUENCE: &[HintPart] = &[("", "Press the next key"), ("Esc", "cancel")];
+pub const HINT_RECORD_KEYS: &[HintPart] = &[
+    ("Enter", "confirm"),
+    ("OK", "confirm"),
+    ("Esc", "cancel recording"),
+];
+pub const HINT_RECORD_MOUSE: &[HintPart] = &[("OK", "confirm"), ("Esc", "cancel recording")];
+pub const HINT_EXPLORER_MENU: &[HintPart] = &[("Ctrl+W Tab", "…"), ("Esc", "cancel")];
+pub const HINT_COMMANDS: &[HintPart] = &[("Ctrl+W", "commands")];
 pub const HINT_PALETTE: &[HintPart] = &[
     ("", "Write to filter"),
     ("Up/Down", "move"),
@@ -214,13 +256,14 @@ pub const HINT_HISTORY: &[HintPart] = &[
 ];
 
 pub const TITLE_EXPLORER: &str = "EXPLORER";
-pub const FORM_GENERAL: &str = "GENERAL";
-pub const FORM_ADDRESS: &str = "ADDRESS";
-pub const FORM_CREDENTIALS: &str = "CREDENTIALS";
-pub const FORM_SECURITY: &str = "SECURITY";
-pub const FORM_OPTIONS: &str = "OPTIONS";
+pub const FORM_GENERAL: &str = "General";
+pub const FORM_ADDRESS: &str = "Address";
+pub const FORM_CREDENTIALS: &str = "Credentials";
+pub const FORM_SECURITY: &str = "Security";
+pub const FORM_OPTIONS: &str = "Options";
 pub const TITLE_PALETTE: &str = "Commands";
 pub const TITLE_PREFIX: &str = "Ctrl+W";
+pub const TITLE_EXPLORER_MENU: &str = "Ctrl+W · Explorer";
 pub const NO_COMMANDS: &str = "No command matches";
 
 pub const STATUS_EDITOR: &str = "EDITOR";
@@ -231,6 +274,8 @@ pub const STATUS_RESULTS: &str = "RESULTS";
 pub const STATUS_EXPLORER: &str = "EXPLORER";
 pub const STATUS_FILTER: &str = "FILTER";
 pub const STATUS_TABLE: &str = "TABLE";
+pub const STATUS_DIAGRAM: &str = "DIAGRAM";
+pub const STATUS_HOME: &str = "HOME";
 
 pub const GROUP_PANELS: &str = "Panels";
 pub const GROUP_TABS: &str = "Tabs";
@@ -238,6 +283,8 @@ pub const GROUP_RUN: &str = "Run";
 pub const GROUP_TRANSACTION: &str = "Transaction";
 pub const GROUP_CONNECTION: &str = "Connection";
 pub const GROUP_APPLICATION: &str = "Application";
+pub const GROUP_CONSOLE: &str = "Console";
+pub const GROUP_ROW: &str = "Row";
 pub const MENU_FOCUS: &str = "Move the focus";
 pub const MENU_NAVIGATOR: &str = "Toggle the explorer";
 pub const MENU_NEXT_TAB: &str = "Next tab";
@@ -246,6 +293,26 @@ pub const MENU_RENAME: &str = "Rename the tab";
 pub const MENU_CLOSE_TAB: &str = "Close the tab";
 pub const MENU_RUN: &str = "Run the statement";
 pub const MENU_SCRIPT: &str = "Run the script";
+pub const MENU_EXPLORER: &str = "Explorer commands";
+pub const MENU_SESSIONS: &str = "Sessions";
+pub const MENU_NEW_CONSOLE: &str = "New console";
+pub const MENU_SCRIPTS: &str = "Scripts";
+pub const MENU_REFRESH: &str = "Read the catalog";
+pub const MENU_RENAME_CONSOLE: &str = "Rename the console";
+pub const MENU_REMOVE_CONSOLE: &str = "Remove the console";
+pub const MENU_EDIT_CONNECTION: &str = "Edit connection";
+pub const MENU_ADD_CONNECTION: &str = "Add a connection";
+pub const MENU_REMOVE_CONNECTION: &str = "Remove connection";
+pub const MENU_DISCONNECT: &str = "Disconnect";
+pub const MENU_DELETE_PASSWORD: &str = "Delete the password";
+pub const MENU_STRUCTURE: &str = "Show the structure";
+pub const MENU_DIAGRAM: &str = "ER diagram";
+pub const MENU_GENERATE: &str = "Generate SQL";
+pub const MENU_IMPORT: &str = "Import a file";
+pub const MENU_COPY_NAME: &str = "Copy the name";
+pub const MENU_FILTER: &str = "Filter the tables";
+pub const MENU_EXPLAIN: &str = "Show the plan";
+pub const MENU_EXPLAIN_ANALYZE: &str = "Plan with a run";
 pub const MENU_STOP: &str = "Stop";
 pub const MENU_MODE: &str = "Auto or manual";
 pub const MENU_COMMIT: &str = "Commit";
@@ -270,6 +337,24 @@ pub const WELCOME_SUGGESTIONS: &str = "Show suggestions";
 pub const WELCOME_SUGGESTIONS_KEY: &str = "Ctrl+Space";
 pub const WELCOME_COMMANDS: &str = "Show all commands";
 pub const WELCOME_KEYS: &str = "Show all keys";
+
+pub const HOME_NO_CONSOLE: &str = "No console is open";
+pub const HOME_EXPLORER: &str = "Show the explorer";
+pub const HOME_CONSOLE: &str = "Open a console";
+pub const HOME_SCRIPTS: &str = "Scripts without a connection";
+pub const HOME_SETTINGS: &str = "Open the settings";
+pub const HOME_QUIT: &str = "Quit SQLN";
+/// The version under the logo of the home screen.
+pub const HOME_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The name of the application in large letters, for the home screen. Only ASCII, so
+/// each terminal shows it.
+pub const HOME_LOGO: [&str; 5] = [
+    r"  ____   ___  _     _   _ ",
+    r" / ___| / _ \| |   | \ | |",
+    r" \___ \| | | | |   |  \| |",
+    r"  ___) | |_| | |___| |\  |",
+    r" |____/ \__\_\_____|_| \_|",
+];
 
 /// Writes the name and the version for the first screen.
 pub fn welcome_title() -> String {
@@ -343,8 +428,6 @@ pub const FORM_CLIENT_PAIR: &str = "A client certificate needs its file and its 
 pub const FORM_TLS_FILES: &str = "TLS files need a connection with TLS.";
 pub const FORM_CONNECTED: &str =
     "This connection is connected. Disconnect it to change access, TLS, or the pool.";
-pub const MYSQL_CLIENT_KEY: &str =
-    "MySQL needs an RSA client key in PKCS#1 form (BEGIN RSA PRIVATE KEY).";
 pub const FIELD_KIND: &str = "Type";
 pub const FIELD_NAME: &str = "Name";
 pub const FIELD_SCOPE: &str = "Scope";
@@ -422,6 +505,7 @@ pub const FIELD_READ_ONLY: &str = "Read only";
 pub const FIELD_PRODUCTION: &str = "Production";
 pub const FIELD_CONNECT: &str = "Connect limit (seconds)";
 pub const FIELD_SQL_TIMEOUT: &str = "SQL limit (s, 0 = none)";
+pub const FIELD_IDLE_TIMEOUT: &str = "Idle limit (s, 0 = none)";
 pub const BUTTON_TEST: &str = "Test connection";
 pub const BUTTON_SAVE: &str = "Save";
 pub const BUTTON_DISCONNECT: &str = "Disconnect";
@@ -503,10 +587,88 @@ pub const EXPORT_ALL_SOURCE: &str =
 pub const EXPORT_RESULT_CLOSED: &str = "The result closed before the end of the export.";
 pub const EXPORT_DELETED: &str = "The incomplete file is deleted.";
 pub const EXPORT_STOPPED: &str = "The export stopped before the first row.";
+pub const TITLE_IMPORT: &str = "Import";
+pub const TITLE_IMPORT_DONE: &str = "Import complete";
+pub const TITLE_IMPORT_FAILED: &str = "Import not complete";
+pub const TITLE_IMPORT_PRODUCTION: &str = "Import to production";
+pub const BUTTON_IMPORT: &str = "Import";
+pub const FIELD_IMPORT_FORMAT: &str = "Format";
+pub const FIELD_IMPORT_ENCODING: &str = "Encoding";
+pub const FIELD_IMPORT_MODE: &str = "On failure";
+pub const FIELD_IMPORT_BATCH: &str = "Rows per batch";
+pub const FIELD_IMPORT_LOG: &str = "Log file";
+pub const FIELD_IMPORT_LIMIT: &str = "Error limit";
+pub const VALUE_IMPORT_UTF8: &str = "UTF-8";
+pub const VALUE_IMPORT_WINDOWS_1252: &str = "Windows-1252";
+pub const VALUE_IMPORT_ALL: &str = "All or nothing";
+pub const VALUE_IMPORT_BATCH: &str = "By batch";
+pub const VALUE_IMPORT_LOG: &str = "Log errors";
+pub const VALUE_IMPORT_IGNORE: &str = "ignore";
+pub const VALUE_IMPORT_NULL: &str = "NULL";
+pub const IMPORT_HEAD_COLUMN: &str = "Column";
+pub const IMPORT_HEAD_TYPE: &str = "Type";
+pub const IMPORT_HEAD_SOURCE: &str = "File column";
+pub const IMPORT_NO_FILE: &str = "Write the path of the file.";
+pub const IMPORT_READING: &str = "The dialog still reads the file.";
+pub const IMPORT_READING_LINE: &str = "Reading the file.";
+pub const IMPORT_CHOOSE_FILE: &str = "Choose a file. Press Tab to read the path.";
+pub const IMPORT_NO_COLUMNS: &str = "The file has no columns.";
+pub const IMPORT_NO_MAPPING: &str = "Choose a file column for one table column or more.";
+pub const IMPORT_JSON_FORMAT: &str = "JSON files have no format options.";
+pub const IMPORT_STOPPED: &str = "The import stopped.";
+pub const IMPORT_NOT_UTF8: &str = "This row is not valid UTF-8. Try Windows-1252.";
+pub const IMPORT_NOT_OBJECT: &str = "This value is not a JSON object.";
+pub const IMPORT_NOT_ARRAY: &str = "A JSON file must hold an array of objects.";
+pub const IMPORT_JSON_OPEN: &str = "The JSON file ends before its array ends.";
+pub const IMPORT_LOST: &str = "The connection stopped. The last batch has an unknown state.";
+pub const IMPORT_TASK_FAILED: &str = "The import task stopped.";
 pub const SECTION_GENERAL: &str = "General";
 pub const SECTION_EDITOR: &str = "Editor";
 pub const SECTION_RESULTS: &str = "Results";
 pub const SECTION_APPEARANCE: &str = "Appearance";
+pub const SECTION_SHORTCUTS: &str = "Shortcuts";
+pub const FIELD_SHORTCUT_MODE: &str = "Key mode";
+pub const SHORTCUT_COMMANDS: &str = "Commands";
+pub const SHORTCUT_KEYS: &str = "Shortcuts";
+pub const SHORTCUT_UNASSIGNED: &str = "Not assigned";
+pub const SHORTCUT_BACK: &str = "Back to commands";
+pub const HINT_SHORTCUT_COMMANDS: &[HintPart] = &[
+    ("Up/Down", "command"),
+    ("Enter", "edit"),
+    ("Tab", "next"),
+    ("Esc", "cancel"),
+];
+pub const HINT_SHORTCUT_EDIT: &[HintPart] = &[
+    ("Tab", "next"),
+    ("Left/Right", "change"),
+    ("Enter", "choose"),
+    ("Esc", "back to commands"),
+];
+pub const FIELD_SHORTCUT_BINDING: &str = "Shortcut";
+pub const FIELD_SHORTCUT_FINISH: &str = "Finish with";
+pub const SHORTCUT_ADD: &str = "+ Add shortcut";
+pub const SHORTCUT_MOUSE_OK: &str = "Mouse OK";
+pub const SHORTCUT_RECORD: &str = "Record";
+pub const SHORTCUT_REMOVE: &str = "Remove shortcut";
+pub const SHORTCUT_RESTORE: &str = "Restore action";
+pub const SHORTCUT_OK: &str = "OK";
+pub const SHORTCUT_CANCEL: &str = "Cancel recording";
+pub const SHORTCUT_EMPTY: &str = "Press at least one key.";
+pub const SHORTCUT_FINISH_FIRST: &str = "Confirm or cancel the recording first.";
+pub const SHORTCUT_RECORD_KEYS: &str =
+    "Press the keys. Enter or a click on OK confirms. Esc cancels.";
+pub const SHORTCUT_RECORD_MOUSE: &str =
+    "Press the keys, including Enter. Click OK to confirm. Esc cancels.";
+pub const SHORTCUT_RESTORED: &str = "The action uses its inherited keys. Save to apply.";
+
+pub fn shortcut_region(region: crate::input::Region) -> &'static str {
+    match region {
+        crate::input::Region::Global => VALUE_SCOPE_GLOBAL,
+        crate::input::Region::Navigator => REGION_NAVIGATOR,
+        crate::input::Region::Grid => REGION_GRID,
+        crate::input::Region::Diagram => REGION_DIAGRAM,
+    }
+}
 pub const FIELD_KEYBOARD: &str = "Keyboard";
 pub const FIELD_REOPEN_TABS: &str = "Reopen tabs";
 pub const FIELD_QUERY_HISTORY: &str = "Query history";
@@ -528,6 +690,7 @@ pub const FIELD_SUGGESTION_KEYS: &str = "Autocomplete";
 pub const FIELD_UNDO_LIMIT: &str = "Undo (MiB)";
 pub const FIELD_PAGE_SIZE: &str = "Page size";
 pub const FIELD_ROW_CAP: &str = "Row cap";
+pub const FIELD_CAP_IN_SQL: &str = "Limit in SQL";
 pub const FIELD_BUDGET: &str = "Data (MiB)";
 pub const FIELD_THEME: &str = "Default theme";
 pub const FIELD_CONNECTION_THEME: &str = "Theme";
@@ -569,6 +732,124 @@ pub fn export_progress(rows: usize, path: &str, stop: Option<&str>) -> String {
 
 pub fn export_done(rows: usize, path: &str) -> String {
     format!("Exported {rows} rows to {path}.")
+}
+
+pub fn import_format_name(format: ImportFormat) -> &'static str {
+    match format {
+        ImportFormat::Csv => "CSV",
+        ImportFormat::Tsv => "TSV",
+        ImportFormat::Json => "JSON",
+        ImportFormat::JsonLines => "JSON Lines",
+    }
+}
+
+pub fn import_section_name(section: Section) -> &'static str {
+    match section {
+        Section::File => "File",
+        Section::Format => "Format",
+        Section::Columns => "Columns",
+        Section::Options => "Options",
+        Section::Preview => "Preview",
+    }
+}
+
+pub fn import_title(table: &str) -> String {
+    format!("Import to {table}")
+}
+
+pub fn import_summary(columns: usize, mapped: usize, table: usize) -> String {
+    format!("{columns} file columns. {mapped} of {table} table columns get values.")
+}
+
+pub fn import_failed(reason: &str) -> String {
+    format!("The import failed: {reason}")
+}
+
+pub fn import_closed(rows: usize) -> String {
+    format!("The tab closed. The import saved {rows} rows.")
+}
+
+pub fn import_progress(rows: usize, errors: usize, percent: u64, stop: Option<&str>) -> String {
+    let stop = stop.map_or_else(String::new, |key| format!(" {key} stops."));
+    format!("Importing: {rows} rows, {errors} errors, {percent}% of the file.{stop}")
+}
+
+pub fn import_production(path: &str, table: &str, connection: &str) -> String {
+    format!("Import {path} to the table {table} of the production connection {connection}?")
+}
+
+/// The end of an import.
+pub struct ImportReport<'a> {
+    pub rows: usize,
+    pub errors: usize,
+    pub ignored: u64,
+    pub log: Option<&'a str>,
+    pub failure: Option<&'a str>,
+}
+
+pub fn import_report(report: &ImportReport<'_>) -> String {
+    let mut body = format!("Rows inserted: {}.", report.rows);
+    if report.errors > 0 {
+        body.push_str(&format!("\nRows with errors: {}.", report.errors));
+    }
+    if report.ignored > 0 {
+        let ignored = report.ignored;
+        body.push_str(&format!(
+            "\n{ignored} objects had keys that are not columns."
+        ));
+    }
+    if let Some(log) = report.log {
+        body.push_str(&format!("\nLog: {log}"));
+    }
+    if let Some(failure) = report.failure {
+        body.push_str(&format!("\n{failure}"));
+    }
+    body
+}
+
+pub fn import_open_quote(line: u64) -> String {
+    format!("The quotes that start at line {line} have no end.")
+}
+
+pub fn import_field_count(count: usize, width: usize) -> String {
+    format!("This row has {count} fields. The file has {width} columns.")
+}
+
+/// Returns the name of a column of a file without a header.
+pub fn import_column(number: usize) -> String {
+    format!("column_{number}")
+}
+
+pub fn import_json_after(line: u64) -> String {
+    format!("Line {line} has text after the end of the JSON array.")
+}
+
+pub fn import_json_syntax(line: u64) -> String {
+    format!("Line {line} does not continue the JSON array.")
+}
+
+pub fn import_nul(column: &str) -> String {
+    format!("The value of {column} holds a NUL byte.")
+}
+
+pub fn import_base64(column: &str) -> String {
+    format!("The value of {column} is not valid Base64.")
+}
+
+pub fn import_bad_row(line: u64, reason: &str) -> String {
+    format!("Line {line}: {reason}")
+}
+
+pub fn import_bad_lot(first: u64, last: u64, reason: &str) -> String {
+    format!("The batch of lines {first} to {last} failed: {reason}")
+}
+
+pub fn import_error_limit(limit: usize) -> String {
+    format!("The import stopped after {limit} errors.")
+}
+
+pub fn import_log_failed(reason: &str) -> String {
+    format!("The log was not written: {reason}")
 }
 
 pub fn export_failed(reason: &str) -> String {
@@ -649,6 +930,24 @@ pub const DATABASE_LABEL: &str = "Database";
 pub const NO_DATABASE_LABEL: &str = "No database";
 pub const CURSOR_OUTSIDE: &str = "The cursor is outside a statement.";
 pub const NO_STATEMENT: &str = "The text has no statement to run.";
+pub const PLAN_REFUSED: &str = "This source has no query plan.";
+pub const PLAN_ANALYZE_REFUSED: &str = "SQLite cannot run a statement inside a plan.";
+pub const PLAN_ONE_STATEMENT: &str = "A plan needs one statement. Select only one.";
+pub const PLAN_HAS_EXPLAIN: &str = "The statement has EXPLAIN already. Use Run, or remove it.";
+pub const PLAN_UNREADABLE: &str =
+    "SQLN cannot show this plan as a tree. The grid shows the text of the database.";
+pub const PLAN_ANALYZE_RUNS: &str =
+    "The database runs this statement to measure it. Its changes can stay.";
+pub const PLAN_TAB: &str = "Plan";
+pub const PLAN_NODE: &str = "Node";
+pub const PLAN_OBJECT: &str = "Object";
+pub const PLAN_SHARE: &str = "Share";
+pub const PLAN_COST: &str = "Cost";
+pub const PLAN_ROWS: &str = "Rows";
+pub const PLAN_TIME: &str = "Time (ms)";
+pub const PLAN_ACTUAL_ROWS: &str = "Actual rows";
+pub const PLAN_LOOPS: &str = "Loops";
+pub const PLAN_DETAIL: &str = "Detail";
 pub const EXECUTION_ACTIVE: &str = "The console has an execution in progress.";
 pub const NO_TRANSACTION: &str = "No transaction is open.";
 pub const RESULT_READING: &str = "This result receives rows. Ctrl+W x stops the script.";
@@ -665,11 +964,31 @@ pub fn messages_tab(warnings: usize) -> String {
 pub fn more_notices(count: usize) -> String {
     format!("{count} more notices.")
 }
+pub fn limit_added(rows: usize) -> String {
+    format!("SQLN added LIMIT {rows} to this statement.")
+}
 pub const SECTION_COLUMNS: &str = "Columns";
 pub const SECTION_INDEXES: &str = "Indexes";
 pub const SECTION_FOREIGN_KEYS: &str = "Foreign keys";
 pub const ALL_SCHEMAS: &str = "all schemas";
 pub const STRUCTURE_REFUSED: &str = "This source has no structure. Keys have no columns.";
+pub const SESSIONS_REFUSED: &str = "SQLN lists sessions only on PostgreSQL and MySQL.";
+pub const DIAGRAM_REFUSED: &str = "This source has no diagram. Keys have no columns.";
+pub const DIAGRAM_NO_SCHEMA: &str =
+    "The connection has no current schema. Use the row of a schema.";
+pub const DIAGRAM_VIEW: &str = "A view has no keys. Use the row of its schema.";
+pub const DIAGRAM_CONSOLE: &str = "A console has no tables. Use the row of a schema or a table.";
+pub const DIAGRAM_EMPTY: &str = "This schema has no tables.";
+pub const DIAGRAM_STOPPED: &str = "The read stopped. The diagram did not change.";
+pub const DIAGRAM_PARTIAL: &str = "partial: a limit stopped the read";
+pub const DIAGRAM_KEYS_ONLY: &str = "keys only";
+pub const SESSIONS_READ_ONLY: &str = "A read-only connection cannot change a session.";
+pub const SESSION_SIGNAL_SENT: &str = "The database accepted the request.";
+pub const SESSION_GONE: &str = "The session ended before the request.";
+pub const TITLE_CANCEL_QUERY: &str = "Cancel the query";
+pub const TITLE_END_SESSION: &str = "End the session";
+pub const OPTION_CANCEL_QUERY: &str = "Cancel the query";
+pub const OPTION_END_SESSION: &str = "End the session";
 
 pub const LABEL_WHERE: &str = "WHERE";
 pub const LABEL_ORDER_BY: &str = "ORDER BY";
@@ -709,6 +1028,7 @@ pub const TABLE_NO_ORDER: &str = "No ORDER BY: pages can repeat or skip rows.";
 pub const BUTTON_RELOAD: &str = "Reload";
 pub const NOTE_PARTIAL_KEYS: &str = "(partial list)";
 pub const REGION_TABLE: &str = "Table";
+pub const REGION_DIAGRAM: &str = "Diagram";
 pub const REGION_FILTER: &str = "Filter";
 
 pub const MARK_PRODUCTION: &str = "PROD";
@@ -793,24 +1113,28 @@ pub const OPTION_CONTINUE: &str = "Run";
 pub const OPTION_RETRY: &str = "Try again";
 pub const OPTION_REMOVE: &str = "Remove";
 
-pub const FILTER_KEYS: &str = "\
-Enter                 Apply the fields
-Tab                   Accept the suggestion, or the next field
-Shift+Tab             Next field
-Ctrl+Space            Suggestions
-Esc                   Close the list, or go to the grid";
+pub const FILTER_KEYS: &[(&str, &str)] = &[
+    ("Enter", "Apply the fields"),
+    ("Tab", "Accept the suggestion, or the next field"),
+    ("Shift+Tab", "Next field"),
+    ("Ctrl+Space", "Suggestions"),
+    ("Esc", "Close the list, or go to the grid"),
+];
 
-pub const EDITOR_KEYS: &str = "\
-Ctrl+Space            Suggestions
-Ctrl+F                Find and replace
-Ctrl+Z, Ctrl+Y        Undo, redo
-Tab                   Accept the suggestion
-Esc                   Close the list";
+pub const EDITOR_KEYS: &[(&str, &str)] = &[
+    ("Ctrl+Space", "Suggestions"),
+    ("Ctrl+F", "Find and replace"),
+    ("Ctrl+Z, Ctrl+Y", "Undo, redo"),
+    ("Tab", "Accept the suggestion"),
+    ("Esc", "Close the list"),
+];
 
 pub fn action_text(action: Action) -> &'static str {
     match action {
         Action::Run => "Run the selection or the statement",
         Action::RunScript => "Run the script",
+        Action::Explain => "Show the plan of the statement",
+        Action::ExplainAnalyze => "Run the statement and show its plan",
         Action::Stop => "Stop the script",
         Action::ToggleMode => "Autocommit or manual",
         Action::Commit => "Commit",
@@ -818,6 +1142,8 @@ pub fn action_text(action: Action) -> &'static str {
         Action::FormatSql => "Format the SQL",
         Action::ToggleComment => "Comment or uncomment the rows",
         Action::OpenHistory => "Open the query history",
+        Action::OpenSessions => "Show the sessions of the server",
+        Action::ExplorerCommands => "Show the commands of the explorer",
         Action::Help => "Open this screen",
         Action::OpenPalette => "Open the commands",
         Action::CloseTab => "Close the tab",
@@ -845,14 +1171,20 @@ pub fn action_text(action: Action) -> &'static str {
         Action::ChangeConnection => "Change the connection of the console",
         Action::OpenSettings => "Open the settings",
         Action::GridExport => "Export the result to a file",
+        Action::GridImport => "Import a file to this table",
+        Action::NavigatorImport => "Import a file to the table of the row",
         Action::NavigatorScripts => "Scripts without a connection",
         Action::NavigatorDeletePassword => "Delete the saved password",
         Action::NavigatorStructure => "Show the structure of the row",
+        Action::NavigatorSessions => "Show the sessions of the server",
         Action::NavigatorFilter => "Filter the tables of the explorer",
         Action::NavigatorClearFilter => "Clear the filter of the explorer",
         Action::NavigatorGenerate => "Generate SQL for the table",
         Action::NavigatorCopyName => "Copy the name of the row",
         Action::GridStructure => "Show the structure of the table",
+        Action::GridReload => "Read the grid again",
+        Action::GridCancelQuery => "Cancel the query of the session",
+        Action::GridEndSession => "End the session",
         Action::ReloadConfig => "Load the configuration again",
         Action::GridUp => "Up",
         Action::GridDown => "Down",
@@ -882,6 +1214,23 @@ pub fn action_text(action: Action) -> &'static str {
         Action::GridFocusOrder => "Edit the ORDER BY text",
         Action::GridSortColumn => "Sort by the column",
         Action::GridLoadMore => "Load more rows",
+        Action::NavigatorDiagram => "Show the ER diagram of the row",
+        Action::OpenDiagram => "Show the ER diagram of the tab or the row",
+        Action::DiagramUp => "Select the table above",
+        Action::DiagramDown => "Select the table below",
+        Action::DiagramLeft => "Select the table on the left",
+        Action::DiagramRight => "Select the table on the right",
+        Action::DiagramPanUp => "Move the view up",
+        Action::DiagramPanDown => "Move the view down",
+        Action::DiagramPanLeft => "Move the view to the left",
+        Action::DiagramPanRight => "Move the view to the right",
+        Action::DiagramPageUp => "Move the view up one page",
+        Action::DiagramPageDown => "Move the view down one page",
+        Action::DiagramOpen => "Open the data of the table",
+        Action::DiagramStructure => "Show the structure of the table",
+        Action::DiagramCopy => "Copy the diagram as Mermaid text",
+        Action::DiagramReload => "Read the diagram again",
+        Action::DiagramKeysOnly => "Show only the key columns, or all",
     }
 }
 
@@ -897,6 +1246,10 @@ pub fn keys_title(mode: &str, region: &str) -> String {
     format!(" {TITLE_KEYS} · {mode} · {region} ")
 }
 
+pub fn help_footer(commands: usize, first: usize, last: usize, total: usize) -> String {
+    format!(" {} · {first}–{last}/{total} ", plural(commands, "command"))
+}
+
 /// Writes one row of the help screen.
 pub fn keys_row(keys: &str, action: Action) -> String {
     format!("{keys:<24}{}", action_text(action))
@@ -905,20 +1258,23 @@ pub fn keys_row(keys: &str, action: Action) -> String {
 /// Writes a row of the list of keys of a table. The result keys move between the
 /// pages of the table.
 pub fn table_keys_row(keys: &str, action: Action) -> String {
-    match action {
-        Action::GridPreviousResult => format!("{keys:<24}Previous page of rows"),
-        Action::GridNextResult => format!("{keys:<24}Next page of rows"),
-        _ => keys_row(keys, action),
-    }
+    format!("{keys:<24}{}", grid_action_text(action, true, false))
 }
 
 /// Writes a row of the list of keys of a structure with sections. The result keys
 /// move between the sections.
 pub fn section_keys_row(keys: &str, action: Action) -> String {
-    match action {
-        Action::GridPreviousResult => format!("{keys:<24}Previous section"),
-        Action::GridNextResult => format!("{keys:<24}Next section"),
-        _ => keys_row(keys, action),
+    format!("{keys:<24}{}", grid_action_text(action, true, true))
+}
+
+/// Names the page keys for the grid that receives them.
+pub fn grid_action_text(action: Action, table: bool, sections: bool) -> &'static str {
+    match (table, sections, action) {
+        (true, true, Action::GridPreviousResult) => "Previous section",
+        (true, true, Action::GridNextResult) => "Next section",
+        (true, false, Action::GridPreviousResult) => "Previous page of rows",
+        (true, false, Action::GridNextResult) => "Next page of rows",
+        _ => action_text(action),
     }
 }
 
@@ -951,6 +1307,20 @@ pub fn result_tab(number: usize) -> String {
     format!("Result {number}")
 }
 
+/// Writes the row under the grid of a plan. `top` is the node with the largest share.
+pub fn plan_summary(
+    nodes: usize,
+    cost: Option<&str>,
+    time: Option<&str>,
+    top: Option<(&str, f64)>,
+) -> String {
+    let mut parts = vec![plural(nodes, "node")];
+    parts.extend(cost.map(|cost| format!("cost {cost}")));
+    parts.extend(time.map(|time| format!("{time} ms")));
+    parts.extend(top.map(|(name, share)| format!("most: {name} {:.0}%", share * 100.0)));
+    parts.join(" · ")
+}
+
 pub fn rows_loaded(rows: usize) -> String {
     format!("{} loaded", plural(rows, "row"))
 }
@@ -969,6 +1339,42 @@ pub fn table_title(connection: &str, schema: &str, relation: &str, kind: &str) -
 
 pub fn structure_title(connection: &str, name: &str) -> String {
     format!("{connection} · {name} · structure")
+}
+
+pub fn diagram_label(name: &str) -> String {
+    format!("{name} (diagram)")
+}
+
+pub fn diagram_title(connection: &str, name: &str) -> String {
+    format!("{connection} · {name} · diagram")
+}
+
+/// Writes the row under a diagram.
+pub fn diagram_summary(tables: usize, keys: usize) -> String {
+    format!("{} · {}", plural(tables, "table"), plural(keys, "key"))
+}
+
+/// Writes the title of the explorer page, with the row that its commands act on.
+pub fn explorer_menu_title(row: Option<&str>) -> String {
+    match row {
+        Some(row) => format!("{TITLE_EXPLORER_MENU} · {row}"),
+        None => TITLE_EXPLORER_MENU.to_owned(),
+    }
+}
+
+pub fn sessions_title(connection: &str) -> String {
+    format!("{connection} · sessions")
+}
+
+/// Writes the question before a signal. An open transaction of that session rolls back.
+pub fn session_signal_body(signal: SessionSignal, session: u64, user: &str, query: &str) -> String {
+    let effect = match signal {
+        SessionSignal::CancelQuery => "The query stops, and the session stays open.",
+        SessionSignal::EndSession => {
+            "The session closes, and the database undoes its open transaction."
+        }
+    };
+    format!("Session {session} of {user}.\n{effect}\n\n{query}")
 }
 
 pub fn redis_unknown_type(kind: &str) -> String {
@@ -1204,6 +1610,8 @@ pub const WORKSPACE_UNREADABLE: &str =
     "SQLN cannot read workspace.json. The layout and the cursors start again.";
 pub const AGE_NOW: &str = "just now";
 pub const MARK_OPEN: &str = " (open)";
+/// The node above the consoles of a connection in the navigator.
+pub const NODE_CONSOLES: &str = "Consoles";
 pub const NEW_CONSOLE_ROW: &str = "+ New console";
 pub const NO_ORPHANS: &str = "No scripts without a connection.";
 pub const TITLE_ORPHANS: &str = "Scripts without a connection";

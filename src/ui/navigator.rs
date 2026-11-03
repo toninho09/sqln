@@ -99,7 +99,10 @@ pub fn draw_navigator(
             RowKind::Connection => {
                 spans.push(Span::styled(Theme::icon(icons.disconnected), detail))
             }
-            RowKind::Schema => spans.push(Span::styled(Theme::icon(icons.schema), detail)),
+            RowKind::Consoles | RowKind::Schema => {
+                spans.push(Span::styled(Theme::icon(icons.schema), detail));
+            }
+            RowKind::Console => spans.push(Span::styled(Theme::icon(icons.console), detail)),
             RowKind::Table => spans.push(Span::styled(Theme::icon(icons.table), detail)),
             RowKind::View => spans.push(Span::styled(Theme::icon(icons.view), detail)),
             RowKind::Column => spans.push(Span::styled(Theme::icon(icons.column), detail)),
@@ -128,6 +131,7 @@ pub fn draw_navigator(
                 format!(" {}", text::NOTE_PARTIAL_KEYS),
                 detail,
             )),
+            Some(RowNote::Open) => spans.push(Span::styled(text::MARK_OPEN, detail)),
             None => {}
         }
         if offset == cursor {

@@ -78,8 +78,10 @@ pub fn write_osc52(output: &mut impl Write, text: &str) -> CopyOutcome {
     }
 }
 
+const BASE64_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
 pub fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let value = chunk
@@ -88,13 +90,37 @@ pub fn base64(bytes: &[u8]) -> String {
             << (8 * (3 - chunk.len()));
         for index in 0..4 {
             if index <= chunk.len() {
-                encoded.push(ALPHABET[(value >> (18 - 6 * index)) as usize & 63] as char);
+                encoded.push(BASE64_ALPHABET[(value >> (18 - 6 * index)) as usize & 63] as char);
             } else {
                 encoded.push('=');
             }
         }
     }
     encoded
+}
+
+/// Reads the text of `base64`. It returns `None` for text that `base64` cannot write.
+pub fn base64_bytes(text: &str) -> Option<Vec<u8>> {
+    let bytes = text.as_bytes();
+    if !bytes.len().is_multiple_of(4) {
+        return None;
+    }
+    let body = text.trim_end_matches('=').as_bytes();
+    if bytes.len() - body.len() > 2 {
+        return None;
+    }
+    let mut decoded = Vec::with_capacity(body.len() / 4 * 3 + 2);
+    for chunk in body.chunks(4) {
+        let mut value = 0u32;
+        for byte in chunk {
+            let digit = BASE64_ALPHABET.iter().position(|item| item == byte)?;
+            value = (value << 6) | digit as u32;
+        }
+        let bits = value << (6 * (4 - chunk.len()));
+        let count = chunk.len() - 1;
+        decoded.extend_from_slice(&bits.to_be_bytes()[1..=count]);
+    }
+    Some(decoded)
 }
 
 /// Connects the Vim commands of EdTUI to the clipboard of the application.

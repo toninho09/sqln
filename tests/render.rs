@@ -507,12 +507,13 @@ fn each_hint_fits_the_minimum_terminal_width() {
 }
 
 #[test]
-fn the_prefix_closes_the_tab_and_the_application() {
+fn the_prefix_closes_the_last_tab_and_shows_the_home_screen() {
     let mut app = app(KeyboardMode::Conventional);
     send(&mut app, ctrl('w'));
     assert!(screen(&draw_app(&mut app, 80, 24)).contains("Close the tab"));
     send(&mut app, key(KeyCode::Char('c')));
-    assert!(app.should_quit());
+    assert!(app.home());
+    assert!(!app.should_quit());
 }
 
 #[test]
@@ -530,7 +531,7 @@ fn the_prefix_works_in_vim_normal_mode() {
     let mut app = app(KeyboardMode::Vim);
     send(&mut app, ctrl('w'));
     send(&mut app, key(KeyCode::Char('c')));
-    assert!(app.should_quit());
+    assert!(app.home());
 }
 
 #[test]
@@ -736,6 +737,23 @@ fn the_keys_of_the_hint_bar_fit_the_minimum_width() {
 }
 
 #[test]
+fn the_explorer_page_shows_the_keys_of_the_key_map() {
+    let overrides = HashMap::from([("navigatorStructure".to_owned(), vec!["u".to_owned()])]);
+    let keymap = Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap();
+    let database = common::temp_db("explorer-key-map");
+    rusqlite::Connection::open(&database)
+        .unwrap()
+        .execute_batch("CREATE TABLE t(a);")
+        .unwrap();
+    let app = hint_app_on(KeyboardMode::Conventional, Some(keymap), Some(database));
+    let page = common::explorer_page(&app);
+    assert!(
+        page.contains(&"u Show the structure".to_owned()),
+        "{page:?}"
+    );
+}
+
+#[test]
 fn the_hint_bar_shows_the_keys_of_the_key_map() {
     let overrides = HashMap::from([
         ("run".to_owned(), vec!["f6".to_owned()]),
@@ -748,11 +766,14 @@ fn the_hint_bar_shows_the_keys_of_the_key_map() {
         .unwrap()
         .execute_batch("CREATE TABLE t(a);")
         .unwrap();
-    let app = hint_app_on(KeyboardMode::Conventional, Some(keymap), Some(database));
+    let mut app = hint_app_on(KeyboardMode::Conventional, Some(keymap), Some(database));
     let hint = app.hint();
     assert!(hint.contains("F6 run"), "{hint}");
     assert!(!hint.starts_with("F5"), "{hint}");
     assert!(!hint.contains("keys"), "{hint}");
+    // The menu names the next tab only with a second tab.
+    press_prefix(&mut app, 'h');
+    app.on_event(Event::Key(key(KeyCode::Char('n'))));
     let keys: Vec<String> = app
         .prefix_menu()
         .into_iter()

@@ -120,7 +120,7 @@ The time starts with the execution, so the wait for a password does not count.
 
 **Tabs:** each tab has `×` at the end. `NO_COLOR` shows `X`, and Nerd Font shows its symbol.
 A click on `×` or on the column after it closes the tab, with the questions of `Ctrl+W c`.
-Closing another tab does not change the tab on screen. Closing the last tab ends the application.
+Closing another tab does not change the tab on screen. Closing the last tab shows the home screen.
 A tab cut by the line does not show `×`. A click on it opens the whole tab.
 
 **Hint line:** each key uses the style of the keys of the `Ctrl+W` menu, and the effect uses the hint color.
@@ -137,6 +137,8 @@ A command that does not fit leaves the line whole, so the screen never shows a c
 | **Messages** | Return to the editor and switch tab |
 | Grid of a table | Stop, load, `WHERE`, `ORDER BY`, sort, more rows, and page or section |
 | Connection line | Open, expand, structure, new console, refresh, edit, disconnect, password, remove, and add |
+| **Consoles** line | Expand or collapse, and new console |
+| Console line | Open, rename, remove, and return to the **Consoles** line |
 | Schema line | Expand, structure, new console, and refresh |
 | Table or view line | Open, columns, structure, new console, and refresh |
 | Column line | Return to the table, structure, new console, and refresh |
@@ -148,6 +150,7 @@ A command that does not fit leaves the line whole, so the screen never shows a c
 - In the forms, the line changes with the field: text, option, path, or button.
 - In the console list, `rename` and `remove` appear only on a script row.
 - During an export, the line shows the stop key before the progress.
+- During an import, the line shows the rows, the errors, the part of the file, and the stop key.
 
 **Tree filter:** the field takes the first line of the navigator, and the status line shows `FILTER` during typing.
 Without a result, the tree shows `No match` and `Loaded catalogs only`.
@@ -222,6 +225,7 @@ Control rules:
 - Accepting a new run clears the result tabs of that console, without erasing the text or resolving the transaction.
 - The clearing happens even when the new run needs to wait for a connection; a blocked attempt does not clear the results.
 - Each result reads rows up to the cap, without waiting for a user action.
+- With **Limit in SQL** on (the default, in Settings > Results), a plain read without its own limit goes to the database with `LIMIT` with the cap and one row. **Messages** shows `Statement n: SQLN added LIMIT <rows> to this statement.` as information, and `Messages (n)` does not count it.
 - A result without rows shows the columns and the zero-row indication.
 - At the cap, report that the result may have more rows.
 - To see more rows, raise the cap and run the command again.
@@ -348,6 +352,43 @@ The table tab and the structure tab stay open together.
 - The tab does not come back in the next session.
 - Redis and Valkey have no structure. `i` shows the reason in the status bar.
 
+### Diagram tab
+
+`d` on a navigator row, or `Ctrl+W D` in any panel, opens the ER diagram tab. `Ctrl+W D` uses the row with the focus in the navigator, the table of a table tab, or the current schema of a console. The tab label is `name (diagram)`. Opening the same diagram again selects the tab.
+
+```text
+│ [console-1] [main (diagram)]                                                           │
+│ shop.db · main · diagram                                                               │
+│┌ customers ───────┐           ┌ orders ────────────────┐                               │
+││ ◆ id     INTEGER │◀──────┐   │ ◆ id           INTEGER │◀─┐                            │
+││   name   TEXT    │       └───┤ ◇ customer_id  INTEGER │  │    ┌ order_items ────────┐ │
+│└──────────────────┘           │   total        NUMERIC │  └────┤ ◆ order_id  INTEGER │ │
+│                               └────────────────────────┘       └─────────────────────┘ │
+│┌ employees ────────────┐                                                               │
+││ ◆ id          INTEGER │◀─┐                                                            │
+││ ◇ manager_id  INTEGER ├──┘                                                            │
+│└───────────────────────┘                                                               │
+│ 4 tables · 3 keys                                                                      │
+```
+
+| Navigator row | Content |
+|---|---|
+| Schema | All the tables of the schema |
+| Table or column | The table, and the tables that its foreign keys join, one step away |
+| Connection | The tables of the current schema |
+
+- A box has the table name on its top border and one row per column: the key mark, the name, and the type. `◆` marks the primary key and `◇` marks a foreign key. Without color, the marks are `PK` and `FK`.
+- A line joins the row of the foreign key column to the row of the column that it reads. The arrow stands at the table that the key reads.
+- The parent of a key stands on the left of its child. A cycle turns one key to the other side. A key to the same table makes a loop on the right border.
+- The tables without keys stand in rows under the others.
+- A table of another schema is a box with `schema.table` only, in a dim style.
+- The selected box has the color of the focus, and so do its lines.
+- Views, and the partitions of a PostgreSQL table, stay out.
+- The row under the picture shows the count of tables and keys, `keys only`, and `partial` when a limit stopped the read.
+- **Reload** (`R`) reads the diagram again. DDL does not update the tab on its own.
+- The tab does not come back in the next session.
+- Redis and Valkey have no diagram. `d` shows the reason in the status bar.
+
 ### Export
 
 `e` in the grid, or **Export the result to a file** in the palette, opens the modal. The export covers the active result and generates a file.
@@ -392,6 +433,34 @@ After **Export**, the modal closes, the tab becomes busy, and the hint line show
 **All rows** has no time limit, and **Stop** cancels. The grid keeps the result.
 The write uses `<name>.tmp` and renames at the end. After **Stop** or an error, a window offers **Delete** and **Keep**. Without written rows, the temporary file disappears without a question.
 
+### Import
+
+`I` in the navigator or in a table grid, or the import action of the palette, opens the modal. The navigator first opens the table. The modal reads the columns of the table first, so the rows of the grid stay.
+
+```text
+╭ Import ────────┬──────────────────────────────────────────────────────────╮
+│                │   Import to people                                       │
+│   File         │   Column                Type              File column    │
+│   Format       │   id                    INTEGER           < ID >         │
+│ > Columns      │   name                  TEXT              < Name >       │
+│   Options      │   age                   INTEGER           < age >        │
+│   Preview      │   photo                 BLOB              < ignore >     │
+│                │                                                          │
+│                │   [Import]  [Cancel]                                     │
+╰────────────────┴──────────────────────────────────────────────────────────╯
+```
+
+The modal has 78 columns and grows to 140 on a larger screen, with 8 free columns.
+The sections are **File**, **Format**, **Columns**, **Options**, and **Preview**.
+**File** reads the path when the focus leaves the field. The name of the file and its first line choose the format and the delimiter, and the user can change them.
+**Columns** starts with a mapping by name, or by position in a file without a header. A table column with **ignore** keeps its default.
+**Options** starts with **All or nothing** in each dialog. **Log errors** adds the log path, with the `...` button and `Ctrl+O`, and the error limit.
+**Preview** shows the first 50 rows with the current choices, and a row with a problem shows its reason.
+
+After **Import**, the modal closes, the tab becomes busy, and the hint line shows the progress. **Stop** ends the import.
+At the end, a window shows the inserted rows, the rows with errors, and the path of the log. The tab then reads the table again.
+A connection marked as production asks before the import, with the file, the table, and the connection.
+
 ### File explorer
 
 The path fields have a `...` button. The button and `Ctrl+O` open this window above the modal:
@@ -410,12 +479,12 @@ The path fields have a `...` button. The button and `Ctrl+O` open this window ab
 ```
 
 The window stays 8 columns narrower than the modal, and the list shows 14 to 35 rows, according to the screen height.
-The fields are **File** of Export, **File** of SQLite, **CA file**, **Client certificate**, and **Client key**.
+The fields are **File** of Export, **File** and **Log file** of Import, **File** of SQLite, **CA file**, **Client certificate**, and **Client key**.
 The window opens in the folder of the field path. Without it, it opens in the closest existing folder, and with an empty field it opens in the current folder.
 Folders come first, and the order ignores case. All files appear, except the hidden ones. A filter that starts with `.` shows the hidden ones.
 `Enter` on a folder enters it. `Enter` on a file fills the field with the absolute path and closes the window. `Esc` closes the window, and the field does not change.
 
-**Use this folder** appears only in Export and SQLite, because those fields accept a new file. The row changes the folder and keeps the name of the field. With an empty field, it receives the folder, and the user types the name.
+**Use this folder** appears only in Export, **Log file** of Import, and SQLite, because those fields accept a new file. The row changes the folder and keeps the name of the field. With an empty field, it receives the folder, and the user types the name.
 In Export, the extension keeps following the format after **Use this folder**, and stops following after picking a file.
 Closing the tab or exiting erases the temporary file.
 
@@ -435,44 +504,37 @@ Without an active project, offer only global.
 The example below considers an active project.
 
 ```text
-┌─ Connection ───────────────────────────────────────────┐
-│ Type:       [PostgreSQL]                               │
-│ Name:       [app]                                      │
-│ Scope:      [Project]  (can change to Global)          │
-│ Input:      [Fields / URI]                             │
-│                                                        │
-│ Host:       [db.example.test]                          │
-│ Port:       [5432]                                     │
-│ Database:   [app_db]                                   │
-│ User:       [app_user]                                 │
-│ Credential: [Session only]                             │
-│ TLS:        [Verify certificate]                       │
-│ CA:         [From the system]                          │
-│ Client certificate: [None]                             │
-│ Pool:       [5]                                        │
-│ Read only:  [ ]                                        │
-│ Production: [ ]                                        │
-│ Connect:    deadline [30] seconds                      │
-│ Theme:      [Default]                                  │
-│ Icon:       [Default]                                  │
-│                                                        │
-│ [Test connection]  [Save]  [Cancel]                    │
-└────────────────────────────────────────────────────────┘
+╭ New connection ┬──────────────────────────────────────────────────────────╮
+│                │                                                          │
+│ > General      │   GENERAL                                                │
+│   Address      │                                                          │
+│   Credentials  │ > Type                     < PostgreSQL >                │
+│   Security     │   Name                     app                           │
+│   Options      │   Scope                    < Project >                   │
+│                │   Entry                    < Fields >                    │
+│                │                                                          │
+│                │   [Test connection]  [Save]  [Cancel]                    │
+╰────────────────┴──────────────────────────────────────────────────────────╯
 ```
 
 The fields change according to the type. SQLite uses a file, not an in-memory database.
 
-Current implementation: the form groups the fields in **General**, **Address**, **Credentials**, **Security**, and **Options**.
-The form picks the first arrangement that fits the screen, with 2 rows and 2 columns of slack:
+The form has a sidebar, as the Settings dialog has. Each section shows its own fields:
 
-| Arrangement | Height with PostgreSQL | Width |
-|---|---|---|
-| One column, with titles and space between the groups | 33 | 72 |
-| Two columns, with titles and space between the groups | 22 | 116 |
-| One column, with space between the groups | 28 | 72 |
-| One column, without space | 22 | 72 |
+| Section | Fields |
+|---|---|
+| General | Type, Name, Scope of a new connection with a project, Entry of a network source |
+| Address | Host, Port, and Database; or the URI; or the SQLite file |
+| Credentials | User, Password, and Credential |
+| Security | TLS, CA file, client certificate, and client key |
+| Options | SQLite foreign keys and busy limit, Pool, Read only, Production, Connect limit, SQL limit, Idle limit, Theme, and Icon |
 
-On a larger screen, the width grows to 140 columns and leaves 8 columns free. The arrangement does not change, because the width grows after the choice.
+A section without fields stays out of the sidebar, so SQLite has no Credentials and no Security.
+The buttons stay at the bottom of each section.
+All sections keep the height of the largest section, so the window does not move. The width starts at 76 columns, grows to 140 columns on a larger screen, and leaves 8 columns free.
+The form of a connected connection also has the sidebar: General holds the name, and Options holds the theme, the icon, and the production mark.
+A save or a test with a bad value opens the section of the field and puts the focus on it.
+**Idle limit** closes a session that waits in the pool for that time, with 300 seconds as the default and 0 for no limit. A console with an open transaction keeps its session.
 
 The focused field has a mark at the start of the line, a highlighted label, and its own background.
 Without color, the mark is `>`, and the label is bold.
@@ -898,24 +960,38 @@ The JSON stays compact in this window.
 
 ### Help screen
 
-The screen shows the shortcuts of the active mode and the focused panel.
+`F1` shows the effective shortcuts of the active mode and the focused panel.
+The reference groups the panel keys, execution, transactions, connections, tabs, panels, and application commands.
+Empty groups do not appear. The key column has a separate style. Long keys and descriptions wrap without cuts.
+
+Type words to filter by group, command, or shortcut. Each word must match, without case sensitivity.
+`Tab` and `Shift+Tab` select a group, or **All**. The filter stays when the group changes.
+`Up` and `Down` scroll one row. `PageUp` and `PageDown` scroll one page. The mouse wheel also scrolls.
+`Ctrl+Home` and `Ctrl+End` go to the start and end. `Home` and `End` move the search cursor.
+`Ctrl+U` clears the filter. `Ctrl+C` copies the reference. `Esc`, `Enter`, and `F1` close it without running commands.
+The footer shows the matching command count and the visible row range. A scrollbar shows the position.
 
 ```text
-┌─ Help · Conventional · Editor ───────────────────────────┐
-│ Ctrl+Enter or F5   Run                                   │
-│ Shift+Enter        Whole script                          │
-│ Ctrl+W x           Stop script                           │
-│ Ctrl+Space         Suggestions                           │
-│ Ctrl+F             Search and replace                    │
-│ Ctrl+W h/j/k/l     Change panel                          │
-│                                                          │
-│ Esc  Close                                               │
-└──────────────────────────────────────────────────────────┘
+╭─ Keys · Conventional · Editor ──────────────────────────╮
+│ > Type a command or shortcut to filter                  │
+│ Group: All · Tab / Shift+Tab                            │
+│ Editor (5)                                             │
+│ Ctrl+Space                Suggestions                  │
+│ Ctrl+F                    Find and replace             │
+│ Ctrl+Z, Ctrl+Y            Undo, redo                    │
+│ Tab                       Accept the suggestion        │
+│ Esc                       Close the list               │
+│                                                        │
+│ Run (8)                                                │
+│ ctrl+enter, f5, ctrl+w e   Run the selection or the     │
+│                           statement                    │
+╰───────────────────────────── 42 commands · 1–10/56 ─────╯
 ```
 
 ### Prefix menu
 
 `Ctrl+W` opens this window above the status bar. The window shows the effective keys of the `keymap`.
+The rows change with the panel of the cursor, and a group without rows leaves the window. `docs/KEYMAP.md` has the rule.
 
 ```text
 ╭─ Ctrl+W ─────────────────────────────────────────────────────────╮
@@ -944,6 +1020,37 @@ The window has 64 columns and 12 list rows, and grows to 100 columns and 30 rows
 │ Scripts without a connection                         │
 ╰──────────────────────────────────────────────────────╯
 ```
+
+### Home screen
+
+The screen appears when no tab is open: after the close of the last tab, and at a start
+without a connection, without a tab of the last session, and without a database on the
+command line. With a connection, the start opens a console of the first connection.
+The explorer gets the focus, so `a`, `n`, `s`, and `Enter` act at once.
+The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` quits.
+
+```text
+ EXPLORER               │
+ ▸ one  sq              │                          ____   ___  _     _   _
+                        │                         / ___| / _ \| |   | \ | |
+                        │                         \___ \| | | | |   |  \| |
+                        │                          ___) | |_| | |___| |\  |
+                        │                         |____/ \__\_\_____|_| \_|
+                        │                                   0.1.2
+                        │                            No console is open
+                        │
+                        │                 Ctrl+W h a  Add a connection
+                        │                 Ctrl+W h n  Open a console
+                        │                 Ctrl+W h s  Scripts without a connection
+                        │                   Ctrl+W ,  Open the settings
+                        │                     Ctrl+P  Show all commands
+                        │                         F1  Show all keys
+                        │                   Ctrl+W q  Quit SQLN
+```
+
+Without a connection, the screen shows **No connection yet**, without the **Open a console** row.
+With the explorer hidden, the first row is `Ctrl+W b` **Show the explorer**, the status line shows `HOME`,
+and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.1.2` instead.
 
 ### Welcome screen
 

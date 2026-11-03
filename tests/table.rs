@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use common::sample_catalog;
-use common::{ctrl, key, temp_db};
+use common::{ctrl, key, shift, temp_db};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -209,6 +209,8 @@ struct Recorder {
     mid_rows: usize,
     /// True makes the source a Redis server.
     redis: bool,
+    /// The answer of the database to a signal. `f` means that the session is gone.
+    signal_answer: Option<&'static str>,
 }
 
 impl Recorder {
@@ -305,6 +307,19 @@ impl Session for RecordingSession {
             sink.set_columns(vec!["count".to_owned()]).await;
             let total = Value::Number(&self.0.rows.to_string());
             sink.push(vec![total].into_iter().collect()).await;
+            let (rows, limit) = sink.finish().await;
+            return Ok(StatementEnd {
+                rows,
+                has_columns: true,
+                changed: None,
+                limit,
+            });
+        }
+        if sql.contains("_backend(") && !sql.contains("pg_stat_activity") {
+            sink.set_columns(vec!["signal".to_owned()]).await;
+            let answer = self.0.signal_answer.unwrap_or("t");
+            sink.push(vec![Value::Text(answer)].into_iter().collect())
+                .await;
             let (rows, limit) = sink.finish().await;
             return Ok(StatementEnd {
                 rows,
@@ -877,7 +892,7 @@ fn the_hints_of_a_table_show_the_structure_key_at_the_minimum_width() {
     let hints = f.hints_at(80);
     assert!(hints.contains("s sort  i struct  Ctrl+C copy"), "{hints}");
     let hints = f.hints_at(120);
-    assert!(hints.ends_with("e export  F1 keys"), "{hints}");
+    assert!(hints.ends_with("e export  I import  F1 keys"), "{hints}");
 }
 
 #[test]
@@ -1010,12 +1025,11 @@ fn a_structure_tab_hides_the_load_key_without_more_rows() {
 fn a_connection_shows_the_disconnect_key_only_with_sessions() {
     let (mut f, _) = Fixture::recorded(Recorder::default());
     common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
-    let row = f.hints_at(120);
-    assert!(!row.contains("D disc"), "{row}");
+    let disconnect = "D Disconnect".to_owned();
+    assert!(!common::explorer_page(&f.app).contains(&disconnect));
     f.open_table("users");
     common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
-    let row = f.hints_at(120);
-    assert!(row.contains("D disc"), "{row}");
+    assert!(common::explorer_page(&f.app).contains(&disconnect));
 }
 
 #[test]
@@ -1025,8 +1039,18 @@ fn a_redis_row_hides_the_structure_key() {
         ..Recorder::default()
     });
     common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
-    let row = f.hints_at(100);
-    assert!(!row.contains("i struct"), "{row}");
+    let page = common::explorer_page(&f.app);
+    assert!(
+        !page.contains(&"i Show the structure".to_owned()),
+        "{page:?}"
+    );
+    assert!(!page.contains(&"S Sessions".to_owned()), "{page:?}");
+    assert!(!page.contains(&"d ER diagram".to_owned()), "{page:?}");
+    assert!(!f.menu_has("D ER diagram"));
+    // The key keeps its action, and the status line gives the reason.
+    f.code(KeyCode::Char('d'));
+    assert!(f.app.diagrams().is_empty());
+    f.assert_sees("This source has no diagram");
 }
 
 #[test]
@@ -1108,6 +1132,506 @@ fn a_key_of_redis_refuses_the_structure_in_its_grid() {
     f.code(KeyCode::Char('i'));
     assert_eq!(f.app.tables().len(), 1);
     f.assert_sees(sqln::ui::text::STRUCTURE_REFUSED);
+}
+
+// ---------------------------------------------------------------------------
+// The sessions of a server.
+
+impl Fixture {
+    fn open_sessions(&mut self) {
+        common::select_row(&mut self.app, 0, &[RowKind::Schema], "public");
+        self.press(shift(KeyCode::Char('S')));
+        self.loaded();
+    }
+
+    /// Answers the question with its second option.
+    fn confirm(&mut self) {
+        self.code(KeyCode::Right);
+        self.code(KeyCode::Enter);
+    }
+}
+
+fn signals(recorder: &Recorder) -> Vec<String> {
+    let statements = recorder.statements();
+    statements
+        .into_iter()
+        .filter(|sql| sql.contains("_backend(") && !sql.contains("pg_stat_activity"))
+        .collect()
+}
+
+fn session_reads(recorder: &Recorder) -> usize {
+    let statements = recorder.statements();
+    statements
+        .iter()
+        .filter(|sql| sql.contains("pg_stat_activity"))
+        .count()
+}
+
+fn two_sessions() -> Recorder {
+    Recorder {
+        rows: 2,
+        ..Recorder::default()
+    }
+}
+
+#[test]
+fn the_key_opens_a_tab_with_the_sessions_of_the_server() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    assert_eq!(session_reads(&recorder), 1);
+    let screen = f.screen();
+    assert!(screen.contains("server (sessions)"), "{screen}");
+    assert!(screen.contains("name1"), "{screen}");
+}
+
+#[test]
+fn a_second_key_gives_the_focus_to_the_open_tab() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    f.open_sessions();
+    assert_eq!(f.app.tables().len(), 1);
+    assert_eq!(session_reads(&recorder), 1);
+}
+
+#[test]
+fn a_source_without_sessions_refuses_with_a_reason() {
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        redis: true,
+        ..Recorder::default()
+    });
+    common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
+    f.press(shift(KeyCode::Char('S')));
+    assert!(f.app.tables().is_empty());
+    assert_eq!(recorder.count(), 0);
+    f.assert_sees(sqln::ui::text::SESSIONS_REFUSED);
+}
+
+#[test]
+fn sqlite_refuses_the_sessions_with_a_reason() {
+    let mut f = Fixture::sqlite(
+        "sessions-sqlite.db",
+        "CREATE TABLE users (id INT);",
+        Settings::default(),
+    );
+    f.press(ctrl('w'));
+    f.code(KeyCode::Char('h'));
+    f.press(shift(KeyCode::Char('S')));
+    assert!(f.app.tables().is_empty());
+    f.assert_sees(sqln::ui::text::SESSIONS_REFUSED);
+}
+
+#[test]
+fn a_cancel_asks_first_and_then_reads_the_sessions_again() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    f.code(KeyCode::Char('q'));
+    let screen = f.screen();
+    assert!(screen.contains("Session 0 of name0."), "{screen}");
+    assert!(screen.contains("The query stops"), "{screen}");
+    assert!(signals(&recorder).is_empty(), "the question comes first");
+
+    f.confirm();
+    f.loaded();
+    assert_eq!(
+        signals(&recorder),
+        ["SELECT pg_catalog.pg_cancel_backend(0)"]
+    );
+    assert_eq!(session_reads(&recorder), 2);
+    f.assert_sees(sqln::ui::text::SESSION_SIGNAL_SENT);
+}
+
+#[test]
+fn the_end_of_a_session_uses_the_row_of_the_cursor() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    f.code(KeyCode::Down);
+    f.press(shift(KeyCode::Char('K')));
+    let screen = f.screen();
+    assert!(screen.contains("Session 1 of name1."), "{screen}");
+    assert!(screen.contains("The session closes"), "{screen}");
+    f.confirm();
+    f.loaded();
+    assert_eq!(
+        signals(&recorder),
+        ["SELECT pg_catalog.pg_terminate_backend(1)"]
+    );
+}
+
+#[test]
+fn the_cancel_option_of_the_question_sends_nothing() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    f.press(shift(KeyCode::Char('K')));
+    f.code(KeyCode::Enter);
+    f.loaded();
+    assert!(signals(&recorder).is_empty());
+    assert_eq!(session_reads(&recorder), 1);
+}
+
+#[test]
+fn a_session_that_ended_first_gives_a_note() {
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 1,
+        signal_answer: Some("f"),
+        ..Recorder::default()
+    });
+    f.open_sessions();
+    f.press(shift(KeyCode::Char('K')));
+    f.confirm();
+    f.loaded();
+    assert_eq!(signals(&recorder).len(), 1);
+    assert_eq!(session_reads(&recorder), 2);
+    f.assert_sees(sqln::ui::text::SESSION_GONE);
+}
+
+#[test]
+fn a_refused_signal_shows_the_error_and_keeps_the_rows() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    *recorder.fail_when.lock().unwrap() = Some("pg_terminate_backend(".to_owned());
+    f.press(shift(KeyCode::Char('K')));
+    f.confirm();
+    f.loaded();
+    assert_eq!(session_reads(&recorder), 1, "an error reads nothing");
+    let screen = f.screen();
+    assert!(screen.contains("syntax error near the filter"), "{screen}");
+    assert!(screen.contains("name1"), "{screen}");
+}
+
+#[test]
+fn a_busy_tab_refuses_a_signal_before_the_question() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.press(shift(KeyCode::Char('R')));
+    f.press(shift(KeyCode::Char('K')));
+    f.assert_not_sees("Session 0");
+    f.assert_sees(sqln::ui::text::TABLE_BUSY);
+    recorder.hold.store(false, Ordering::SeqCst);
+    recorder.release.notify_one();
+    f.loaded();
+    assert!(signals(&recorder).is_empty());
+}
+
+#[test]
+fn a_tab_out_of_sight_reads_the_sessions_when_it_comes_back() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.press(shift(KeyCode::Char('K')));
+    f.confirm();
+    f.prefix('n');
+    recorder.hold.store(false, Ordering::SeqCst);
+    recorder.release.notify_one();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !f.app.tables()[0].pending {
+        f.app.drain_events();
+        assert!(Instant::now() < deadline, "the signal did not end");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(session_reads(&recorder), 1);
+    f.prefix('n');
+    f.loaded();
+    assert_eq!(session_reads(&recorder), 2);
+}
+
+#[test]
+fn a_read_only_connection_refuses_the_signals() {
+    let settings = Settings {
+        read_only: true,
+        ..Settings::default()
+    };
+    let (mut f, recorder) = Fixture::recorded_with(two_sessions(), settings);
+    f.open_sessions();
+    let screen = f.screen();
+    assert!(!screen.contains("end session"), "{screen}");
+    f.press(shift(KeyCode::Char('K')));
+    f.code(KeyCode::Char('q'));
+    assert!(signals(&recorder).is_empty());
+    f.assert_sees(sqln::ui::text::SESSIONS_READ_ONLY);
+}
+
+#[test]
+fn the_keys_of_a_session_do_nothing_in_a_table() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_table("users");
+    f.press(shift(KeyCode::Char('K')));
+    f.code(KeyCode::Char('q'));
+    f.assert_not_sees("Session 0");
+    assert!(signals(&recorder).is_empty());
+}
+
+#[test]
+fn the_hints_of_a_sessions_tab_name_its_keys() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    let hint = f.app.hint();
+    assert!(hint.contains("cancel query"), "{hint}");
+    assert!(hint.contains("end session"), "{hint}");
+    assert!(hint.contains("reload"), "{hint}");
+    assert!(!hint.contains("struct"), "{hint}");
+}
+
+#[test]
+fn the_reload_key_reads_a_tab_without_a_filter_again() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_sessions();
+    f.press(shift(KeyCode::Char('R')));
+    f.loaded();
+    assert_eq!(session_reads(&recorder), 2);
+}
+
+#[test]
+fn the_reload_key_does_nothing_in_a_table_with_a_filter() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_table("users");
+    let before = recorder.count();
+    f.press(shift(KeyCode::Char('R')));
+    f.loaded();
+    assert_eq!(recorder.count(), before);
+    assert!(!f.app.hint().contains("reload"));
+}
+
+// ---------------------------------------------------------------------------
+// The `Ctrl+W` menu and its explorer page.
+
+impl Fixture {
+    /// Presses `Ctrl+W Tab`, which opens the explorer page.
+    fn open_explorer_page(&mut self) {
+        self.press(ctrl('w'));
+        self.code(KeyCode::Tab);
+    }
+
+    fn session_tabs(&self) -> usize {
+        let tabs = self.app.tables().iter();
+        tabs.filter(|tab| tab.shows_sessions()).count()
+    }
+
+    fn menu_has(&self, row: &str) -> bool {
+        let rows = common::prefix_page(&self.app);
+        rows.iter().any(|item| item == row)
+    }
+}
+
+/// The rows of the first page that act only on a console.
+const CONSOLE_ROWS: &[&str] = &[
+    "e Run the statement",
+    "s Run the script",
+    "E Show the plan",
+    "A Plan with a run",
+    "f Format the SQL",
+    "/ Comment the rows",
+    "N Rename the tab",
+    "m Auto or manual",
+    "d Schema or database",
+    "a Change connection",
+];
+
+#[test]
+fn the_menu_of_a_console_of_a_server_lists_its_commands() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.app.on_event(Event::Paste("SELECT 1;".to_owned()));
+    for row in CONSOLE_ROWS.iter().chain(&["S Sessions"]) {
+        assert!(f.menu_has(row), "{row}");
+    }
+}
+
+#[test]
+fn the_menu_of_a_table_leaves_out_the_commands_of_a_console() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.open_table("users");
+    for row in CONSOLE_ROWS {
+        assert!(!f.menu_has(row), "{row}");
+    }
+    for row in [
+        "hk Move the focus",
+        "n Next tab",
+        "c Close the tab",
+        "S Sessions",
+    ] {
+        assert!(f.menu_has(row), "{row}");
+    }
+    f.press(ctrl('w'));
+    f.assert_sees("Application");
+    f.assert_not_sees("Transaction");
+    f.code(KeyCode::Esc);
+    f.focus_filter();
+    for row in CONSOLE_ROWS {
+        assert!(!f.menu_has(row), "{row}");
+    }
+    assert!(f.menu_has("hj Move the focus"));
+}
+
+#[test]
+fn a_tab_without_filters_has_no_key_up_in_the_menu() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.press(ctrl('w'));
+    f.press(shift(KeyCode::Char('S')));
+    f.loaded();
+    assert!(f.menu_has("h Move the focus"));
+}
+
+#[test]
+fn the_menu_of_the_explorer_keeps_the_sessions_of_the_row() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.prefix('h');
+    assert!(f.menu_has("S Sessions"));
+    assert!(!f.menu_has("d Schema or database"));
+}
+
+#[test]
+fn a_source_without_sessions_has_no_sessions_row() {
+    let f = Fixture::sqlite(
+        "menu-no-sessions.db",
+        "CREATE TABLE users (id INT);",
+        Settings::default(),
+    );
+    assert!(!f.menu_has("S Sessions"));
+}
+
+#[test]
+fn the_stop_row_needs_a_run_and_replaces_the_run_rows() {
+    let (mut f, recorder) = Fixture::recorded(Recorder::default());
+    f.app
+        .on_event(Event::Paste("SELECT 1 LIMIT 1 OFFSET 0;".to_owned()));
+    assert!(!f.menu_has("x Stop"));
+    assert!(f.menu_has("e Run the statement"));
+    recorder.hold.store(true, Ordering::SeqCst);
+    f.code(KeyCode::F(5));
+    f.pump_until(|f| f.app.console_mut().is_busy());
+    assert!(f.menu_has("x Stop"));
+    assert!(!f.menu_has("e Run the statement"));
+    f.prefix('h');
+    assert!(f.menu_has("x Stop"), "the session stays occupied");
+    recorder.hold.store(false, Ordering::SeqCst);
+    recorder.release.notify_one();
+    f.pump_until(|f| !f.app.console_mut().is_busy());
+}
+
+#[test]
+fn ctrl_w_s_opens_the_sessions_of_the_connection_of_the_console() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.press(ctrl('w'));
+    f.press(shift(KeyCode::Char('S')));
+    f.loaded();
+    assert_eq!(f.session_tabs(), 1);
+    assert_eq!(session_reads(&recorder), 1);
+}
+
+#[test]
+fn ctrl_w_s_uses_the_connection_of_a_table_tab() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_table("users");
+    f.press(ctrl('w'));
+    f.press(shift(KeyCode::Char('S')));
+    f.loaded();
+    assert_eq!(f.session_tabs(), 1);
+    assert_eq!(session_reads(&recorder), 1);
+}
+
+#[test]
+fn ctrl_w_s_refuses_a_source_without_sessions() {
+    let mut f = Fixture::sqlite(
+        "menu-sessions-sqlite.db",
+        "CREATE TABLE users (id INT);",
+        Settings::default(),
+    );
+    f.press(ctrl('w'));
+    f.press(shift(KeyCode::Char('S')));
+    assert!(f.app.tables().is_empty());
+    f.assert_sees(sqln::ui::text::SESSIONS_REFUSED);
+}
+
+#[test]
+fn the_page_runs_a_command_from_any_focus_on_the_row_of_the_explorer() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    f.prefix('l');
+    assert!(!f.app.hint().contains("Ctrl+W commands"), "the focus left");
+    f.open_explorer_page();
+    f.assert_sees("Ctrl+W · Explorer · server");
+    f.press(shift(KeyCode::Char('S')));
+    f.loaded();
+    assert_eq!(f.session_tabs(), 1);
+    assert_eq!(session_reads(&recorder), 1);
+}
+
+#[test]
+fn the_page_keeps_the_keys_of_the_explorer() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    let consoles = f.app.consoles().len();
+    f.open_explorer_page();
+    f.code(KeyCode::Char('n'));
+    f.assert_not_sees("Ctrl+W · Explorer");
+    assert_eq!(f.app.consoles().len(), consoles + 1);
+}
+
+#[test]
+fn the_delete_key_of_the_page_asks_first() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    f.open_explorer_page();
+    f.code(KeyCode::Delete);
+    f.assert_sees("Remove");
+    assert_eq!(f.app.connections().len(), 1);
+}
+
+#[test]
+fn esc_closes_the_page_and_runs_nothing() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_explorer_page();
+    f.assert_sees("Ctrl+W · Explorer");
+    f.code(KeyCode::Esc);
+    f.assert_not_sees("Ctrl+W · Explorer");
+    assert!(f.app.tables().is_empty());
+    assert_eq!(recorder.count(), 0);
+}
+
+#[test]
+fn a_key_without_a_command_on_the_row_closes_the_page() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    let before = recorder.count();
+    f.open_explorer_page();
+    // `g` acts only on a table or a view.
+    f.code(KeyCode::Char('g'));
+    f.assert_not_sees("Ctrl+W · Explorer");
+    assert_eq!(recorder.count(), before);
+}
+
+#[test]
+fn the_next_key_after_the_page_is_a_normal_key() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.open_explorer_page();
+    f.code(KeyCode::Esc);
+    f.press(ctrl('w'));
+    f.assert_sees("Tab explorer");
+}
+
+#[test]
+fn the_keys_of_ctrl_w_keep_their_meaning_with_the_focus_in_the_explorer() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.open_table("users");
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    let consoles = f.app.consoles().len();
+    let before = f.app.tables()[0].opened;
+    // `Ctrl+W n` is the next tab, and not the new console of the key `n`.
+    f.prefix('n');
+    f.app.drain_events();
+    assert_eq!(f.app.consoles().len(), consoles);
+    assert_eq!(f.app.tables()[0].opened, before);
+    assert!(f.app.table().is_none(), "the next tab is the console");
+}
+
+#[test]
+fn the_vim_mode_uses_its_own_key_in_the_page() {
+    let (mut f, _) = Fixture::recorded_in(two_sessions(), Settings::default(), KeyboardMode::Vim);
+    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    assert!(common::explorer_page(&f.app).contains(&"x Remove connection".to_owned()));
+    f.open_explorer_page();
+    f.code(KeyCode::Char('x'));
+    f.assert_sees("Remove");
 }
 
 // ---------------------------------------------------------------------------
@@ -1215,6 +1739,7 @@ fn a_double_click_opens_a_table_and_one_click_does_not() {
     f.code(KeyCode::Right);
     f.pump_until(|f| f.app.connections()[0].catalog.is_some());
     f.code(KeyCode::Down);
+    f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.assert_sees("▸ t");
     // The mark of a row opens its columns, so the clicks hit the name.
@@ -1237,6 +1762,7 @@ fn right_still_opens_the_columns_of_a_table_in_the_navigator() {
     f.prefix('h');
     f.code(KeyCode::Right);
     f.pump_until(|f| f.app.connections()[0].catalog.is_some());
+    f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.code(KeyCode::Down);
@@ -1449,6 +1975,7 @@ fn two_clicks_far_apart_in_time_do_not_open_a_table() {
     f.prefix('h');
     f.code(KeyCode::Right);
     f.pump_until(|f| f.app.connections()[0].catalog.is_some());
+    f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     let screen = f.screen();
@@ -1979,6 +2506,7 @@ fn the_help_of_a_table_lists_its_own_keys() {
     f.grid();
     f.code(KeyCode::F(1));
     f.assert_sees("Keys · Conventional · Table");
+    f.code(KeyCode::Down);
     f.assert_sees("Sort by the column");
     f.assert_not_sees("Close the result");
     for _ in 0..4 {
@@ -2049,6 +2577,7 @@ fn a_database_name_cannot_send_terminal_sequences_through_a_table_tab() {
     f.prefix('h');
     f.code(KeyCode::Right);
     f.pump_until(|f| f.app.connections()[0].catalog.is_some());
+    f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
     f.code(KeyCode::Down);
@@ -2164,6 +2693,29 @@ fn a_load_in_progress_blocks_disconnect_and_removal() {
     f.loaded();
     f.code(KeyCode::Delete);
     f.assert_sees("[Remove]");
+}
+
+#[test]
+fn a_horizontal_wheel_moves_the_cursor_one_column_and_stops_at_each_edge() {
+    let (mut f, _) = Fixture::recorded(Recorder {
+        rows: 10,
+        ..Recorder::default()
+    });
+    f.open_table("users");
+    let (column, row) = f.locate_below("[Apply]", "name0");
+    let col = |f: &Fixture| f.app.table().unwrap().result.view.col;
+    f.app
+        .on_event(mouse(MouseEventKind::ScrollRight, column, row));
+    assert_eq!(col(&f), 1);
+    f.app
+        .on_event(mouse(MouseEventKind::ScrollRight, column, row));
+    assert_eq!(col(&f), 1, "the last column stops the cursor");
+    f.app
+        .on_event(mouse(MouseEventKind::ScrollLeft, column, row));
+    f.app
+        .on_event(mouse(MouseEventKind::ScrollLeft, column, row));
+    assert_eq!(col(&f), 0, "the first column stops the cursor");
+    assert_eq!(f.app.table().unwrap().result.view.row, 0, "the row stays");
 }
 
 #[test]
@@ -2599,9 +3151,10 @@ fn closing_the_last_console_while_a_table_is_open_keeps_the_table() {
     assert!(!f.app.should_quit());
     assert!(f.app.table().is_some(), "the table is on screen");
     f.assert_not_sees("console-");
-    // The last tab ends the application.
+    // The close of the last tab shows the home screen.
     f.prefix('c');
-    assert!(f.app.should_quit());
+    assert!(f.app.home());
+    assert!(!f.app.should_quit());
 }
 
 #[test]
@@ -2754,12 +3307,13 @@ fn the_close_mark_of_a_console_keeps_the_table_on_screen() {
 }
 
 #[test]
-fn the_close_mark_of_the_last_table_ends_the_application() {
+fn the_close_mark_of_the_last_table_shows_the_home_screen() {
     let mut f = Fixture::sqlite("close-last-table", &numbered(3), Settings::default());
     f.open_table("t");
     f.close_tab("console-1");
     f.close_tab("t (table)");
-    assert!(f.app.should_quit());
+    assert!(f.app.home());
+    assert!(!f.app.should_quit());
 }
 
 // ---- the state of a run in the tab row ----
@@ -3481,7 +4035,8 @@ fn the_count_key_shows_the_total_and_keeps_the_pages() {
     f.loaded();
     assert_eq!(
         recorder.statements().last().unwrap(),
-        "SELECT COUNT(*) FROM \"public\".\"users\""
+        "SELECT COUNT(*) FROM \"public\".\"users\"\nLIMIT 2",
+        "the count is a plain read, so it receives the row cap of its request"
     );
     f.assert_sees("100 of 1,250 rows loaded");
     assert!(!f.hints_at(200).contains("c count"));
@@ -3508,7 +4063,7 @@ fn the_count_returns_its_bytes_to_the_budget_and_keeps_a_limit_of_the_page() {
     let budget = Budget::new(1 << 20);
     let mut tab = TableTab::new(7, 1, relation(), false, 2);
     tab.limit = ReadLimit::Budget;
-    tab.started_count(5);
+    tab.started_side_request(5, sqln::table::PageKind::Count);
     assert!(tab.is_counting());
     assert_eq!(tab.limit, ReadLimit::Budget);
     let key = StatementKey {
@@ -3563,7 +4118,7 @@ fn a_count_reads_the_applied_filter_and_a_new_filter_clears_it() {
     f.loaded();
     assert_eq!(
         recorder.statements().last().unwrap(),
-        "SELECT COUNT(*) FROM \"public\".\"users\"\nWHERE id > 5"
+        "SELECT COUNT(*) FROM \"public\".\"users\"\nWHERE id > 5\nLIMIT 2"
     );
     assert_eq!(f.app.table().unwrap().total, Some(250));
 

@@ -20,7 +20,7 @@ use crate::input::SuggestionKeys;
 use crate::line_input::{Edit, LineInput};
 use crate::result::ResultTab;
 use crate::sql::{Dialect, TokenKind, quote_identifier, split, tokenize};
-use crate::structure::{Scope, Section, Structure, structure_sql};
+use crate::structure::{Scope, Section, SessionSignal, Structure, signal_sql, structure_sql};
 use crate::ui::text;
 
 /// The part of a table tab that receives the keys.
@@ -30,6 +30,18 @@ pub enum TableFocus {
     Grid,
     Filter,
     Order,
+}
+
+/// What one request of a table tab reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PageKind {
+    /// A page of rows.
+    #[default]
+    Rows,
+    /// The query of the total, which reads one number and no page.
+    Count,
+    /// A signal to a session. It changes no state of the pages.
+    Signal,
 }
 
 /// One page that the application must ask the database for.
@@ -42,8 +54,7 @@ pub struct PageRequest {
     pub row_cap: usize,
     /// The page to show when this page ends.
     pub show: Option<usize>,
-    /// True for the query of the total, which reads one number and no page.
-    pub count: bool,
+    pub kind: PageKind,
 }
 
 /// The page in progress.
@@ -58,8 +69,9 @@ struct Load {
     done: bool,
     /// The page to show at the end of this load.
     show: Option<usize>,
-    /// True for the query of the total. It changes no state of the pages.
-    count: bool,
+    kind: PageKind,
+    /// True when the database reported that the session of a signal does not exist.
+    session_gone: bool,
 }
 
 pub struct TableTab {
@@ -97,8 +109,12 @@ pub struct TableTab {
     blocked_at: usize,
     /// True when the list waits for columns that the catalog does not hold yet.
     list_waits: bool,
-    /// True for a tab of the last session that read no rows yet.
+    /// True for a tab of the last session that read no rows yet, or a tab of sessions
+    /// that must read them again after a signal.
     pub pending: bool,
+    /// The note of a signal that the database accepted. The application shows it, and
+    /// then the tab reads the sessions again.
+    pub signal_note: Option<&'static str>,
 }
 
 /// Returns the relation as the `FROM` clause writes it.
@@ -236,6 +252,7 @@ impl TableTab {
             blocked_at: 0,
             list_waits: false,
             pending: false,
+            signal_note: None,
         }
     }
 
@@ -309,6 +326,7 @@ impl TableTab {
     /// Returns the word that names what this tab shows.
     pub fn kind(&self) -> &'static str {
         match (&self.structure, self.filters, self.is_view) {
+            _ if self.shows_sessions() => "sessions",
             (Some(_), ..) => "structure",
             (None, false, _) => "key",
             (None, true, true) => "view",
@@ -334,6 +352,13 @@ impl TableTab {
                 .structure
                 .as_ref()
                 .is_some_and(|item| item.scope == scope)
+    }
+
+    /// Returns true for the tab of the sessions of a server.
+    pub fn shows_sessions(&self) -> bool {
+        self.structure
+            .as_ref()
+            .is_some_and(|item| item.scope == Scope::Sessions)
     }
 
     /// Returns the section on screen, for a tab with sections.
@@ -442,7 +467,7 @@ impl TableTab {
                 first: true,
                 row_cap: self.page_size.saturating_add(1),
                 show: None,
-                count: false,
+                kind: PageKind::Rows,
             }),
             Err(reason) => {
                 self.message = Some(Message {
@@ -478,7 +503,7 @@ impl TableTab {
             first: false,
             row_cap: self.page_size.saturating_add(1),
             show: None,
-            count: false,
+            kind: PageKind::Rows,
         })
     }
 
@@ -489,27 +514,44 @@ impl TableTab {
             first: false,
             row_cap: 1,
             show: None,
-            count: true,
+            kind: PageKind::Count,
+        })
+    }
+
+    /// Returns the statement of a signal to a session.
+    pub fn signal_request(
+        dialect: Dialect,
+        signal: SessionSignal,
+        session: u64,
+    ) -> Option<PageRequest> {
+        Some(PageRequest {
+            sql: signal_sql(dialect, signal, session)?,
+            first: false,
+            row_cap: 1,
+            show: None,
+            kind: PageKind::Signal,
         })
     }
 
     /// Returns true while the tab reads its total.
     pub fn is_counting(&self) -> bool {
-        self.load.as_ref().is_some_and(|load| load.count)
+        self.load
+            .as_ref()
+            .is_some_and(|load| load.kind == PageKind::Count)
     }
 
     /// Records the execution that the manager accepted for a page.
     pub fn started(&mut self, execution: ExecutionId, first: bool, show: Option<usize>) {
         self.limit = ReadLimit::None;
-        self.begin(execution, first, show, false);
+        self.begin(execution, first, show, PageKind::Rows);
     }
 
-    /// Records the execution that the manager accepted for the total.
-    pub fn started_count(&mut self, execution: ExecutionId) {
-        self.begin(execution, false, None, true);
+    /// Records the execution that the manager accepted for a request without a page.
+    pub fn started_side_request(&mut self, execution: ExecutionId, kind: PageKind) {
+        self.begin(execution, false, None, kind);
     }
 
-    fn begin(&mut self, execution: ExecutionId, first: bool, show: Option<usize>, count: bool) {
+    fn begin(&mut self, execution: ExecutionId, first: bool, show: Option<usize>, kind: PageKind) {
         self.load = Some(Load {
             execution,
             first,
@@ -517,7 +559,8 @@ impl TableTab {
             extra: false,
             done: false,
             show,
-            count,
+            kind,
+            session_gone: false,
         });
         self.phase = Phase::Waiting;
         self.run.start();
@@ -585,11 +628,20 @@ impl TableTab {
             budget.release(bytes);
             return;
         };
-        if load.count {
-            budget.release(bytes);
-            let number = rows.first().and_then(|row| row.get(0));
-            self.total = number.and_then(|value| value.full_text().parse().ok());
-            return;
+        let first_value = rows.first().and_then(|row| row.get(0));
+        match load.kind {
+            PageKind::Rows => {}
+            PageKind::Count => {
+                self.total = first_value.and_then(|value| value.full_text().parse().ok());
+                budget.release(bytes);
+                return;
+            }
+            PageKind::Signal => {
+                // PostgreSQL answers `f` for a session that does not exist.
+                load.session_gone = first_value.is_some_and(|value| value.full_text() == "f");
+                budget.release(bytes);
+                return;
+            }
         }
         let room = self.page_size.saturating_sub(load.received);
         if rows.len() > room {
@@ -606,7 +658,7 @@ impl TableTab {
     fn on_page_done(&mut self, limit: ReadLimit, budget: &Budget) {
         let Some(load) = &mut self.load else { return };
         load.done = true;
-        if load.count {
+        if load.kind != PageKind::Rows {
             return;
         }
         self.has_more = load.extra || limit != ReadLimit::None;
@@ -617,7 +669,17 @@ impl TableTab {
     fn on_finished(&mut self, end: ExecutionEnd, message: Option<String>) {
         let load = self.load.take();
         let done = load.as_ref().is_some_and(|load| load.done);
-        let page = !load.as_ref().is_some_and(|load| load.count);
+        let kind = load.as_ref().map_or(PageKind::Rows, |load| load.kind);
+        let page = kind == PageKind::Rows;
+        if kind == PageKind::Signal && end == ExecutionEnd::Completed {
+            let gone = load.as_ref().is_some_and(|load| load.session_gone);
+            self.signal_note = Some(if gone {
+                text::SESSION_GONE
+            } else {
+                text::SESSION_SIGNAL_SENT
+            });
+            self.pending = true;
+        }
         self.phase = Phase::Idle;
         self.run.finish(end);
         self.result.cut_short |= page && end != ExecutionEnd::Completed;

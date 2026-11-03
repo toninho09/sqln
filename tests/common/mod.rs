@@ -9,6 +9,7 @@ use sqln::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
 use sqln::clipboard::MemoryClipboard;
 use sqln::editor::{KeyboardMode, SqlEditor};
 use sqln::sql::Dialect;
+use sqln::ui::which_key::KeyGroup;
 
 /// A fixed catalog for a test without a database.
 pub fn sample_catalog() -> Catalog {
@@ -146,6 +147,25 @@ impl Fixture {
     }
 }
 
+/// Lists the rows of a page of the `Ctrl+W` menu, as `key label`.
+fn menu_rows(groups: Vec<KeyGroup>) -> Vec<String> {
+    let groups = groups.into_iter();
+    groups
+        .flat_map(|group| group.keys)
+        .map(|(key, label)| format!("{key} {label}"))
+        .collect()
+}
+
+/// Lists the rows of the explorer page of the `Ctrl+W` menu, as `key label`.
+pub fn explorer_page(app: &App) -> Vec<String> {
+    menu_rows(app.explorer_menu())
+}
+
+/// Lists the rows of the first page of the `Ctrl+W` menu, as `key label`.
+pub fn prefix_page(app: &App) -> Vec<String> {
+    menu_rows(app.prefix_menu())
+}
+
 /// Returns a path for a database of one test. The file does not exist.
 pub fn temp_db(name: &str) -> std::path::PathBuf {
     let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}.db"));
@@ -229,4 +249,38 @@ pub fn temp_dir(name: &str) -> std::path::PathBuf {
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
     path
+}
+
+/// Moves the focus of the connection form to a field with the keys of a user. A field of
+/// another section first opens that section from the sidebar.
+pub fn focus_form_field(app: &mut App, field: sqln::form::Field) {
+    use sqln::form::{Field, FieldStyle};
+    let press = |app: &mut App, code| {
+        app.on_event(Event::Key(key(code)));
+    };
+    let form = |app: &App| {
+        let form = app.form().expect("the form is open");
+        (form.focus, form.shown_section())
+    };
+    if field.style() != FieldStyle::Button && form(app).1 != field.group() {
+        for _ in 0..40 {
+            if form(app).0 == Field::Sections {
+                break;
+            }
+            press(app, KeyCode::BackTab);
+        }
+        for _ in 0..8 {
+            if form(app).1 == field.group() {
+                break;
+            }
+            press(app, KeyCode::Down);
+        }
+    }
+    for _ in 0..40 {
+        if form(app).0 == field {
+            return;
+        }
+        press(app, KeyCode::Tab);
+    }
+    panic!("{field:?} is not in the form");
 }

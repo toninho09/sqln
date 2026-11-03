@@ -2,7 +2,7 @@
 
 use sqln::sql::{
     Dialect, TokenKind, counts_rows, is_plain_read, reads_or_writes_stdio, split, split_tokens,
-    statement_at, tokenize,
+    statement_at, tokenize, with_row_limit,
 };
 
 fn texts(sql: &str, dialect: Dialect) -> Vec<&str> {
@@ -368,6 +368,70 @@ fn a_statement_with_a_possible_effect_consumes_its_rows() {
     ] {
         assert!(!is_plain_read(sql, Dialect::Postgres), "{sql}");
     }
+}
+
+#[test]
+fn a_plain_read_without_its_own_limit_receives_the_limit_on_a_new_line() {
+    for dialect in [Dialect::Postgres, Dialect::MySql, Dialect::Sqlite] {
+        for sql in [
+            "SELECT * FROM t",
+            "select a, count(*) from t group by a order by a",
+            "WITH c AS (SELECT 1 LIMIT 1) SELECT * FROM c",
+            "SELECT 1 UNION ALL SELECT 2",
+            "VALUES (1), (2)",
+            "TABLE t",
+            "SELECT * FROM (SELECT * FROM t LIMIT 5) s",
+            "SELECT * FROM t WHERE a IN (SELECT b FROM u OFFSET 1)",
+            "-- comment\nSELECT 1",
+            "SELECT 'LIMIT 1' AS \"limit\" FROM t",
+        ] {
+            let expected = format!("{sql}\nLIMIT 1001");
+            assert_eq!(
+                with_row_limit(sql, dialect, 1001).as_deref(),
+                Some(expected.as_str()),
+                "{sql} ({dialect:?})"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_line_comment_at_the_end_stays_before_the_added_limit() {
+    let sql = "SELECT * FROM t -- note  ";
+    assert_eq!(
+        with_row_limit(sql, Dialect::Postgres, 3).as_deref(),
+        Some("SELECT * FROM t -- note\nLIMIT 3")
+    );
+}
+
+#[test]
+fn a_statement_with_its_own_limit_or_a_possible_effect_keeps_its_text() {
+    for sql in [
+        "SELECT * FROM t LIMIT 100000",
+        "select * from t limit 5 offset 10",
+        "SELECT * FROM t OFFSET 10",
+        "SELECT * FROM t FETCH FIRST 5 ROWS ONLY",
+        "SELECT * FROM t FOR SHARE",
+        "SELECT * FROM t FOR UPDATE",
+        "SELECT * FROM t LOCK IN SHARE MODE",
+        "SELECT * INTO copy_of_t FROM t",
+        "SHOW TABLES",
+        "DESCRIBE t",
+        "EXPLAIN SELECT * FROM t",
+        "SELECT write_row(id) FROM t",
+        "SELECT nextval('s')",
+        "INSERT INTO t SELECT * FROM u",
+        "(SELECT 1)",
+        "",
+        "-- only a comment",
+    ] {
+        assert_eq!(with_row_limit(sql, Dialect::Postgres, 1001), None, "{sql}");
+    }
+}
+
+#[test]
+fn a_redis_command_never_receives_a_limit() {
+    assert_eq!(with_row_limit("SCAN 0", Dialect::Redis, 1001), None);
 }
 
 #[test]

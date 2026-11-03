@@ -41,7 +41,11 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Table browsing.** Apply SQL filters, sort columns, move between pages, and count rows on request.
 - **Results inspection.** Select cells, search loaded rows, inspect a row vertically, and format JSON values.
 - **Export.** Write CSV, TSV, JSON, JSON Lines, or SQL inserts from the export dialog.
+- **Import.** Load CSV, TSV, JSON, or JSON Lines into a table, with column mapping and a preview.
 - **Execution controls.** Run a statement, a selection, or a script, with row limits, deadlines, and cancellation.
+- **Query plans.** See the plan of a statement as a tree, with the share of each node.
+- **Server sessions.** List the sessions of PostgreSQL or MySQL, cancel a query, or end a session.
+- **ER diagrams.** Draw the tables and foreign keys of a schema or a table, and copy the diagram as Mermaid text.
 - **Transactions.** Use autocommit or manual mode, with transaction state and age on screen.
 - **Saved work.** Save consoles automatically and reopen tabs with their cursor, scroll, and layout.
 - **Credential storage.** Use session passwords, macOS Keychain, or Linux Secret Service.
@@ -212,6 +216,11 @@ Uppercase keys matter: `Ctrl+W C` and `Ctrl+W c` are different actions.
 | Next / previous main tab | `Ctrl+W n` / `Ctrl+W p` |
 | Run selection or current statement | `F5` or `Ctrl+W e` |
 | Run the whole script | `Shift+F5` or `Ctrl+W s` |
+| Show the sessions of the server | `Ctrl+W S` |
+| Show the ER diagram of the tab or the row | `Ctrl+W D` |
+| Open the commands of the explorer | `Ctrl+W Tab` |
+| Show the plan of a statement | `Ctrl+W E` |
+| Run a statement and show its plan | `Ctrl+W A` |
 | Stop execution | `Ctrl+W x` |
 | Save console now | `Ctrl+S` |
 | Rename console | `Ctrl+W N` |
@@ -256,12 +265,17 @@ Change **Autocomplete** in Settings if you prefer `Enter` or both keys to accept
 | Refresh catalog | `r` |
 | Filter loaded tables and views | `/` |
 | Inspect structure | `i` |
+| Show the ER diagram | `d` |
+| Show server sessions | `S` |
 | Generate SQL templates | `g` |
 | Copy object name | `y` |
 | Disconnect | `D` |
 | Remove saved password, with confirmation | `p` |
 
 The tree filter searches loaded catalogs only. It does not open a connection to find more objects.
+
+The hint row of the navigator shows only the main commands and the ER diagram. Press `Ctrl+W`, then `Tab`, to list each command of the current row.
+That page uses the same keys as the table above, and it works from any panel. Its title names the row that the commands act on.
 
 The [full key map](docs/KEYMAP.md) covers forms, dialogs, export, mouse controls, and custom shortcuts.
 
@@ -297,6 +311,72 @@ Export supports CSV, TSV, JSON, JSON Lines, and SQL inserts.
 Choose a selection, loaded rows, or all rows. An all-rows export can run a new read and observe newer data.
 Only the **Export** button writes the file. `Esc` cancels the dialog.
 
+### Import a file
+
+Press `I` on a table in the navigator, or in the grid of a table tab.
+
+1. Choose a file. The dialog detects the format and the delimiter.
+2. Check the mapping in **Columns**. A column without a file column keeps its default.
+3. Choose what a failure does in **Options**.
+4. Check the first rows in **Preview**, and press **Import**.
+
+| Mode | On a failed row |
+|---|---|
+| All or nothing | The first error undoes the whole import. This mode is the start of each dialog |
+| By batch | The first error stops the import. The saved batches stay |
+| Log errors | The bad row goes to a log file, and the import continues. It stops after the error limit |
+
+The import only adds rows to an existing table.
+The log holds the rows of the file in plain text.
+A connection marked as production asks before the import.
+
+### Query plans
+
+Press `Ctrl+W E` to see the plan of the selection or of the statement at the cursor.
+The **Plan** tab shows a tree. The **Share** column shows the part of the work of each node.
+The database does not run the statement for this plan.
+
+Press `Ctrl+W A` to run the statement and see the real time and rows of each node.
+SQLN asks first when the statement can write. On PostgreSQL, the change stays.
+
+| Database | `Ctrl+W E` | `Ctrl+W A` |
+|---|---|---|
+| PostgreSQL | Cost and rows | Cost, rows, time, and loops |
+| MySQL 8.0.16 or newer | Cost and rows | Cost, rows, time, and loops |
+| SQLite | Steps only | Not available |
+
+A plan uses one statement. The query history does not record plans.
+
+### Server sessions
+
+Press `S` in the navigator to open the sessions of a PostgreSQL or MySQL server.
+Press `Ctrl+W S` in any panel to open the sessions of the connection of the current tab.
+The list shows each session that the database user can see, except the session that reads the list.
+
+- Press `q` to cancel the query of the session under the cursor. The session stays open.
+- Press `K` to end the session. The database undoes its open transaction.
+- Press `R` to read the list again.
+
+SQLN asks before `q` and `K`. A read-only connection refuses both keys.
+The database user needs the right to act on the sessions of other users.
+
+### ER diagrams
+
+Press `d` in the navigator to draw the tables and the foreign keys of the row.
+Press `Ctrl+W D` in any panel to draw the table of the current tab, or the current schema of the console.
+A schema shows all its tables. A table shows the table and the tables that its keys join, one step away. A connection shows its current schema.
+Each box shows the columns, their types, and the key marks. A line goes from the foreign key column to the column that it reads, and the arrow points to that table.
+
+- Press the arrows, or `h`, `j`, `k`, and `l` in the Vim mode, to select the nearest table in a direction.
+- Press `Shift` and an arrow, `PageUp`, or `PageDown` to move the view. The wheel and a drag also move it.
+- Press `Enter` to open the data of the selected table, or `i` to open its structure.
+- Press `K` to show only the key columns, and press it again to show all the columns.
+- Press `y` to copy the diagram as Mermaid `erDiagram` text. GitHub and GitLab show that text as a diagram.
+- Press `R` to read the diagram again after a schema change.
+
+Views and the partitions of a PostgreSQL table stay out. A table of another schema shows only its name.
+Redis and Valkey have no diagram.
+
 ## Transactions and execution
 
 Consoles start in autocommit mode. Each console runs one statement at a time within its script.
@@ -313,10 +393,12 @@ The status line shows transaction state and the age of an open transaction.
 Closing a console with an open transaction requires a decision.
 
 SQLN uses a connection pool. Do not rely on temporary tables or session settings surviving between separate executions.
+A session that waits in the pool for the **Idle limit** of the connection form closes, with 300 seconds as the default. The next use opens a new session. A console with an open transaction keeps its session.
 Keep dependent statements in one script or an open transaction.
 Redis and Valkey do not offer the SQL manual-transaction controls.
 
 Row caps and the result-memory budget limit how much data SQLN loads. A capped result is not the full result set.
+By default, SQLN adds `LIMIT` with the row cap and one row to a plain read without its own limit, so the database does not scan the whole table. **Messages** shows each added `LIMIT`. Turn off **Limit in SQL** in Settings > Results to send the text unchanged.
 Change limits in Settings and statement deadlines in the connection form.
 Cancellation depends on the database response; **Stop** is not a rollback guarantee.
 
@@ -347,6 +429,11 @@ Preferences apply in this order: built-in defaults, global settings, then projec
 Project settings override only the values they declare. Both scopes contribute saved connections.
 
 Use `Ctrl+W ,` for Settings. The dialog shows scopes and inherited values.
+Select **Shortcuts** to see the list of all configurable commands and their assigned shortcuts.
+Select a command to record key sequences, remove shortcuts, or restore its inherited keys.
+Select **Mouse OK** to include `Enter` in a recording.
+Settings blocks conflicting shortcuts before saving them to the selected scope's `config.json`.
+See [shortcut configuration](docs/KEYMAP.md#configuration) for the complete steps.
 
 ### Files
 
@@ -427,7 +514,7 @@ sqln 'valkeys://valkey.example.com/0'
 
 The form also accepts CA files and client certificates.
 URI parameters include `sslrootcert`, `sslcert`, and `sslkey`; a client certificate requires both certificate and key.
-MySQL client keys need RSA PKCS#1 format. PostgreSQL client keys use PKCS#8 in the test setup.
+MySQL client keys can use PKCS#1, PKCS#8, or SEC1 format. PostgreSQL client keys use PKCS#8 in the test setup.
 
 SQLN does not use an unverified TLS fallback. Even `sslmode=require` and `verify-ca` use full verification.
 An explicit `sslmode=disable` removes TLS; use it only when the connection environment permits unencrypted traffic.
@@ -485,8 +572,11 @@ A `.sql` path is not a script-opening argument; file targets are SQLite database
 - Grid cells are not editable. Use SQL for data changes.
 - Arbitrary external `.sql` files cannot open directly as consoles.
 - There is no integrated SSH tunnel, IAM authentication, or Kerberos authentication.
+- MariaDB has no tree plan, so `Ctrl+W E` shows the error of the server. MySQL has no tree plan for a write on one table.
 - PostgreSQL `COPY FROM STDIN` and `COPY TO STDOUT` are not supported.
+- An ER diagram has no search, no zoom, and no export to an image file. The Mermaid copy holds the boxes on screen.
 - Search in results covers loaded rows only. Exporting all rows can issue a new read.
+- Import cannot create a table, update rows, or read SQL files. A MyISAM table cannot undo an import.
 - Undo and redo have entry limits but no memory budget. Large scripts and repeated edits can use substantial memory.
 - Native terminals, clipboard behavior, network disks, real network failures, and desktop vault prompts need further manual validation.
 - Workflow builds do not provide signing, notarization, or a dependency audit.

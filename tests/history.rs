@@ -250,6 +250,21 @@ fn trim_leaves_a_small_file() {
 }
 
 #[test]
+fn a_plan_stays_out_of_the_history() {
+    let mut session = Session::new("history-plan", "{}");
+    session.write("SELECT a FROM t");
+    session.send(ctrl('w'));
+    session.send(KeyEvent::new(KeyCode::Char('E'), KeyModifiers::SHIFT));
+    session.idle();
+    assert!(session.app.console().results[0].plan);
+    // The next run proves that the history works and holds only that statement.
+    session.run("SELECT 1");
+    let entries = session.entries();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0].sql, "SELECT 1");
+}
+
+#[test]
 fn a_run_notes_each_statement_with_its_result() {
     let mut session = Session::new("history-run", "{}");
     session.send(ctrl('a'));

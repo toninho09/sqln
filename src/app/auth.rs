@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
 use super::export::ExportRead;
+use super::import::ImportStep;
 use super::{App, DialogAction};
 use crate::catalog::RelationRef;
 use crate::connection::{CatalogState, ConnectionKey, Definition, Source};
@@ -18,9 +19,10 @@ use crate::creds::{Credentials, Identity, Lookup, PlainFile, SystemVault, Vault,
 use crate::editor::RunPlan;
 use crate::exec::{ConnectionId, ConsoleId, RunOptions};
 use crate::grid::printable;
+use crate::plan::Explain;
 use crate::store::config::CredentialName;
 use crate::store::{Scope, Store};
-use crate::table::PageRequest;
+use crate::table::{PageKind, PageRequest};
 use crate::trust::{Required, Trust, TrustError};
 use crate::ui::auth::{PasswordAction, PasswordPrompt};
 use crate::ui::text;
@@ -35,15 +37,27 @@ pub(super) enum Use {
         plan: RunPlan,
         options: RunOptions,
         revision: u64,
+        /// The plan to show, in place of the run of the statements.
+        explain: Option<Explain>,
     },
     Page {
         console: ConsoleId,
         connection: ConnectionId,
         request: PageRequest,
     },
+    /// The catalog queries of a diagram tab.
+    Diagram {
+        console: ConsoleId,
+        connection: ConnectionId,
+        statements: Vec<String>,
+    },
     Export {
         console: ConsoleId,
         read: ExportRead,
+    },
+    Import {
+        console: ConsoleId,
+        step: ImportStep,
     },
     Test(u64),
     Save,
@@ -56,7 +70,9 @@ impl Use {
         match self {
             Self::Run { console, .. }
             | Self::Page { console, .. }
-            | Self::Export { console, .. } => Some(*console),
+            | Self::Diagram { console, .. }
+            | Self::Export { console, .. }
+            | Self::Import { console, .. } => Some(*console),
             _ => None,
         }
     }
@@ -823,6 +839,7 @@ impl App {
                 plan,
                 options,
                 revision,
+                explain,
             } => {
                 let Some(index) = self
                     .console_index(console)
@@ -830,8 +847,18 @@ impl App {
                 else {
                     return;
                 };
-                let execution = manager.run(console, plan.statements.clone(), options);
+                // The marks of the editor keep the text of the user.
+                let statements = match &explain {
+                    Some(explain) => plan
+                        .statements
+                        .iter()
+                        .map(|sql| explain.wrap(sql))
+                        .collect(),
+                    None => plan.statements.clone(),
+                };
+                let execution = manager.run(console, statements, options);
                 self.consoles[index].begin_execution(execution, &plan, &self.budget);
+                self.consoles[index].explain = explain;
                 if self.consoles[index].editor.revision() != revision {
                     self.consoles[index]
                         .editor
@@ -856,15 +883,20 @@ impl App {
                     row_cap: Some(request.row_cap),
                     export: None,
                 };
-                let (first, show, count) = (request.first, request.show, request.count);
+                let (first, show, kind) = (request.first, request.show, request.kind);
                 let execution = manager.run(console, vec![request.sql], options);
-                if count {
-                    tab.started_count(execution);
-                } else {
-                    tab.started(execution, first, show);
+                match kind {
+                    PageKind::Rows => tab.started(execution, first, show),
+                    kind => tab.started_side_request(execution, kind),
                 }
             }
+            Use::Diagram {
+                console,
+                connection,
+                statements,
+            } => self.start_diagram_read(console, connection, statements),
             Use::Export { console, read } => self.start_read(console, read),
+            Use::Import { console, step } => self.start_import_step(console, step),
             Use::Test(test) => {
                 let Some(definition) = definition else { return };
                 manager.test_connection(test, definition.connector(), definition.connect_timeout);
@@ -876,10 +908,14 @@ impl App {
 
     fn cancel_auth_use(&mut self, action: &Use) {
         if let Some(id) = action.console() {
+            self.clear_wanted_import(id);
             if let Some(console) = self.console_by_id(id) {
                 console.phase = Phase::Idle;
             }
             if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
+                tab.phase = Phase::Idle;
+            }
+            if let Some(tab) = self.diagrams.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Idle;
             }
         }

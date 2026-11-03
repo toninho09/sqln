@@ -4,14 +4,14 @@
 //! screen shows. A command stays out of a list when its key does nothing in that state.
 
 use super::App;
-use crate::connector::TransactionState;
 use crate::console::Focus;
+use crate::diagram::tab::DiagramTab;
 use crate::export::form as export_form;
 use crate::form::FieldStyle;
-use crate::input::{Action, Chord};
+use crate::import::form as import_form;
+use crate::input::Action;
 use crate::navigator::{Navigator, RowKind};
 use crate::settings;
-use crate::sql::Dialect;
 use crate::table::{TableFocus, TableTab};
 use crate::ui::statusline::{HintItem, hint_text};
 use crate::ui::text;
@@ -30,8 +30,14 @@ impl App {
         if let Some(parts) = self.window_hint() {
             return HintItem::of(parts);
         }
-        if self.pending_key.is_some_and(Chord::is_prefix) {
+        if self.explorer_page {
+            return HintItem::of(text::HINT_EXPLORER_MENU);
+        }
+        if self.pending_prefix() {
             return HintItem::of(text::HINT_PREFIX);
+        }
+        if self.pending_key.is_some() {
+            return HintItem::of(text::HINT_SEQUENCE);
         }
         if self
             .persist
@@ -47,6 +53,23 @@ impl App {
         }
         if self.navigator_focused {
             return self.navigator_hint();
+        }
+        // Without the focus in the explorer, the row names the way to it.
+        if self.home() {
+            let explorer = if self.navigator.collapsed {
+                Action::ToggleNavigator
+            } else {
+                Action::FocusLeft
+            };
+            return self.hint_parts(&[
+                (explorer, "explorer"),
+                (Action::OpenPalette, "commands"),
+                (Action::Help, "keys"),
+                (Action::Quit, "quit"),
+            ]);
+        }
+        if let Some(tab) = self.diagram() {
+            return self.diagram_hint(tab);
         }
         if let Some(tab) = self.table() {
             return self.table_hint(tab);
@@ -79,7 +102,22 @@ impl App {
             return Some(text::HINT_BROWSER);
         }
         if let Some(form) = &self.settings_form {
+            if form.shortcuts.is_recording() {
+                return Some(if form.shortcuts.mouse_confirm {
+                    text::HINT_RECORD_MOUSE
+                } else {
+                    text::HINT_RECORD_KEYS
+                });
+            }
+            if form.shortcuts.is_editing()
+                && settings::SECTIONS[form.section]
+                    .fields
+                    .contains(&settings::Field::ShortcutCommands)
+            {
+                return Some(text::HINT_SHORTCUT_EDIT);
+            }
             return Some(match form.focus {
+                settings::Field::ShortcutCommands => text::HINT_SHORTCUT_COMMANDS,
                 settings::Field::Sections => text::HINT_SETTINGS_SECTIONS,
                 settings::Field::Save | settings::Field::Cancel => text::HINT_FORM_BUTTON,
                 field if form.input(field).is_some() => text::HINT_SETTINGS_TEXT,
@@ -95,6 +133,17 @@ impl App {
                 _ => text::HINT_FORM,
             });
         }
+        if let Some(form) = &self.import_form {
+            return Some(match form.focus {
+                import_form::Field::Sections => text::HINT_IMPORT_SECTIONS,
+                field if field.is_path() => text::HINT_FORM_PATH,
+                import_form::Field::Columns => text::HINT_IMPORT_COLUMNS,
+                import_form::Field::Preview => text::HINT_IMPORT_PREVIEW,
+                import_form::Field::Import | import_form::Field::Cancel => text::HINT_FORM_BUTTON,
+                field if form.input(field).is_some() => text::HINT_FORM_TEXT,
+                _ => text::HINT_FORM,
+            });
+        }
         if self.picker.is_some() {
             let on_script = self.picker_script().is_some();
             return Some(if on_script {
@@ -102,6 +151,9 @@ impl App {
             } else {
                 text::HINT_CHOOSE
             });
+        }
+        if self.help.is_some() {
+            return Some(text::HINT_HELP);
         }
         if let Some(overlay) = &self.overlay {
             return Some(if overlay.other.is_some() {
@@ -147,15 +199,10 @@ impl App {
     /// The commands that end a run or a transaction. They lead the row of a console,
     /// because the session stays occupied until the user acts.
     fn ending_commands(&self) -> [Candidate; 3] {
-        let healthy = self.console().transaction != TransactionState::Failed;
         let available = |action| self.command_available(action);
         [
             (Action::Stop, "stop", available(Action::Stop)),
-            (
-                Action::Commit,
-                "commit",
-                available(Action::Commit) && healthy,
-            ),
+            (Action::Commit, "commit", self.fits_cursor(Action::Commit)),
             (Action::Rollback, "rollback", available(Action::Rollback)),
         ]
     }
@@ -183,10 +230,9 @@ impl App {
         self.editor_hint()
     }
 
-    /// A console without a connection and without a file has nothing to run.
     fn editor_hint(&self) -> Vec<HintItem> {
         let console = self.console();
-        let can_run = console.connection.is_some() || console.file.is_some();
+        let can_run = console.can_run();
         let mut commands = self.ending_commands().to_vec();
         commands.extend([
             (Action::Run, "run", can_run),
@@ -198,6 +244,11 @@ impl App {
             ),
             (Action::FocusLeft, "navigator", !can_run),
             (Action::FocusDown, "results", !console.results.is_empty()),
+            (
+                Action::Explain,
+                "plan",
+                !console.editor.is_blank() && self.command_available(Action::Explain),
+            ),
             (
                 Action::FormatSql,
                 "format",
@@ -242,6 +293,25 @@ impl App {
         self.hints_when(&commands)
     }
 
+    fn diagram_hint(&self, tab: &DiagramTab) -> Vec<HintItem> {
+        let boxes = !tab.model.entities.is_empty();
+        let chosen = tab.selected.is_some();
+        let keys = if tab.keys_only {
+            "all columns"
+        } else {
+            "keys only"
+        };
+        self.hints_when(&[
+            (Action::Stop, "stop", tab.is_busy()),
+            (Action::DiagramOpen, "data", chosen),
+            (Action::DiagramStructure, "struct", chosen),
+            (Action::DiagramKeysOnly, keys, boxes),
+            (Action::DiagramCopy, "mermaid", boxes),
+            (Action::DiagramReload, "reload", !tab.is_busy()),
+            (Action::Help, "keys", true),
+        ])
+    }
+
     fn table_hint(&self, tab: &TableTab) -> Vec<HintItem> {
         if tab.list.is_some() {
             return self.list_hint(text::LIST_FILTER_KEYS);
@@ -261,6 +331,16 @@ impl App {
         self.hints_when(&[
             (Action::Stop, "stop", busy),
             (Action::GridOpenValue, "load", tab.pending),
+            (
+                Action::GridCancelQuery,
+                "cancel query",
+                self.can_signal_session(),
+            ),
+            (
+                Action::GridEndSession,
+                "end session",
+                self.can_signal_session(),
+            ),
             (Action::GridFocusFilter, "where", tab.filters),
             (Action::GridFocusOrder, "order by", tab.filters),
             (Action::GridSortColumn, "sort", tab.filters && rows && !busy),
@@ -273,6 +353,11 @@ impl App {
                 Action::GridNextResult,
                 next,
                 !busy && (sections || tab.has_pages()),
+            ),
+            (
+                Action::GridReload,
+                "reload",
+                self.command_available(Action::GridReload),
             ),
             (Action::GridStructure, "struct", tab.filters),
             (
@@ -289,12 +374,18 @@ impl App {
                 "export",
                 self.command_available(Action::GridExport),
             ),
+            (
+                Action::GridImport,
+                "import",
+                self.command_available(Action::GridImport),
+            ),
             (Action::Help, "keys", true),
         ])
     }
 
-    /// Lists the commands of the row under the cursor. The commands of a connection
-    /// stay on its row, because their keys never act on a table or on a schema alone.
+    /// Lists the commands of the moment for the row under the cursor. The explorer has
+    /// many commands, so this row keeps the main ones. `Ctrl+W` lists the others, and
+    /// `explorer_commands` is the full list.
     fn navigator_hint(&self) -> Vec<HintItem> {
         let filtered = self.navigator.is_filtered();
         let Some(row) = self.navigator.current(&self.connections) else {
@@ -306,39 +397,31 @@ impl App {
                 (Action::Help, "keys", true),
             ]);
         };
-        let item = &self.connections[row.connection];
         let open = self.navigator.is_open(&row, &self.connections);
         let branch = Navigator::is_branch(&row);
         let connection = row.kind == RowKind::Connection;
         let relation = matches!(row.kind, RowKind::Table | RowKind::View);
-        let connected = self
-            .manager
-            .as_ref()
-            .is_some_and(|manager| manager.is_connected(item.id));
+        let console = row.kind == RowKind::Console;
         let enter = match row.kind {
             RowKind::Connection => "console",
+            RowKind::Console => "open console",
             RowKind::View => "open view",
             _ => "open table",
         };
-        self.hints_when(&[
+        let mut items = self.hints_when(&[
             (Action::NavigatorClearFilter, "clear filter", filtered),
-            (Action::NavigatorOpen, enter, connection || relation),
-            (Action::NavigatorNewConsole, "new console", true),
-            (Action::NavigatorScripts, "scripts", connection),
-            (Action::NavigatorRefresh, "refresh", true),
-            (Action::NavigatorEdit, "edit connection", connection),
             (
-                Action::NavigatorDisconnect,
-                "disconnect",
-                connection && connected,
+                Action::NavigatorOpen,
+                enter,
+                connection || relation || console,
             ),
+            (Action::NavigatorRefresh, "rename", console),
+            (Action::NavigatorDelete, "remove console", console),
             (
-                Action::NavigatorDeletePassword,
-                "delete password",
-                connection && self.saved_identity(item).is_some(),
+                Action::NavigatorNewConsole,
+                "new console",
+                connection || matches!(row.kind, RowKind::Consoles | RowKind::Schema),
             ),
-            (Action::NavigatorAdd, "add connection", connection),
-            (Action::NavigatorDelete, "remove connection", connection),
             (
                 Action::NavigatorExpand,
                 if relation { "columns" } else { "expand" },
@@ -349,19 +432,10 @@ impl App {
                 if branch { "collapse" } else { "parent" },
                 (open || !branch) && !filtered,
             ),
-            (
-                Action::NavigatorStructure,
-                "struct",
-                item.dialect != Dialect::Redis,
-            ),
-            (
-                Action::NavigatorGenerate,
-                "generate SQL",
-                self.can_generate(),
-            ),
-            (Action::NavigatorCopyName, "copy name", true),
-            (Action::NavigatorFilter, "filter", true),
-            (Action::Help, "keys", true),
-        ])
+            (Action::NavigatorDiagram, "diagram", self.can_open_diagram()),
+        ]);
+        items.extend(HintItem::of(text::HINT_COMMANDS));
+        items.extend(self.hint_parts(&[(Action::Help, "keys")]));
+        items
     }
 }

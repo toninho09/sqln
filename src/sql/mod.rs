@@ -6,7 +6,8 @@ mod lexer;
 mod statement;
 
 pub use classify::{
-    changes_state, counts_rows, is_plain_read, is_secret, lacks_where, reads_or_writes_stdio,
+    changes_state, counts_rows, first_keyword, is_plain_read, is_secret, lacks_where,
+    reads_or_writes_stdio, with_row_limit,
 };
 pub use format::format_statement;
 pub use lexer::{Lexer, Token, TokenKind, tokenize};
@@ -39,6 +40,12 @@ pub fn quote_with(name: &str, open: char) -> String {
 /// Writes a name with the identifier quotes of the dialect. It always quotes.
 pub fn quote_identifier(name: &str, dialect: Dialect) -> String {
     quote_with(name, if dialect == Dialect::MySql { '`' } else { '"' })
+}
+
+/// Writes a PostgreSQL literal in the `E` form, which does not change with
+/// `standard_conforming_strings`. Other text cannot end this literal early.
+pub fn escape_literal(text: &str) -> String {
+    format!("E{}", quote_with(&text.replace('\\', "\\\\"), '\''))
 }
 
 /// Writes text as a string literal of the dialect. MySQL also reads a backslash as an escape.
