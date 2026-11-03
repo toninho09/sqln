@@ -269,6 +269,8 @@ impl App {
         for console in &mut self.consoles {
             console.editor.set_undo_limit(config.undo_limit_bytes);
         }
+        self.pending_key = None;
+        self.explorer_page = false;
         self.keymap = config.keymap;
         self.suggestion_keys = config.suggestion_keys;
         if let Some(persist) = &mut self.persist {
@@ -453,6 +455,22 @@ impl App {
         let Some(persist) = &mut self.persist else {
             return;
         };
+        // Use the current files for the other scope, not only the dialog snapshot.
+        let validation = match scope {
+            Scope::Global => persist
+                .store
+                .project
+                .as_ref()
+                .map(|root| config::preferences(root, Scope::Project))
+                .transpose()
+                .and_then(|project| config::validate_keymaps(&preferences, project.as_ref())),
+            Scope::Project => config::preferences(&persist.store.global, Scope::Global)
+                .and_then(|global| config::validate_keymaps(&global, Some(&preferences))),
+        };
+        if let Err(message) = validation {
+            form.note = Some(message);
+            return;
+        }
         let Some(root) = persist.store.root(scope) else {
             return;
         };

@@ -482,19 +482,61 @@ With mouse capture active, the native terminal selection needs `Option` in iTerm
 
 ## Configuration
 
-The `keymap` field of `config.json` maps an action to a list of keys, per mode.
+### Edit shortcuts in Settings
+
+1. Open Settings with `Ctrl+W ,`.
+2. Select **Shortcuts**.
+3. Select the **Global** or **Project** scope.
+4. Select the keyboard mode.
+5. Select a command from the list with `Up`/`Down` and `Enter`, or click its row.
+6. Select an existing shortcut or **+ Add shortcut** with the side keys.
+7. Select **Finish with: Enter** or **Mouse OK**.
+8. Select **Record**.
+9. Press the keys in order.
+10. Press `Enter` or click **OK** to confirm the recording.
+11. Select **Save** to write the selected scope and apply its shortcuts.
+
+The list shows every configurable command and its shortcuts, including commands without assigned keys.
+Use `Tab` to focus the list. Use the mouse wheel, `PageUp`/`PageDown`, or `Home`/`End` to move through it.
+The note below the list shows the selected command's panel and full description.
+**Back to commands** or `Esc` returns from the command editor without discarding its changes.
+
+With **Mouse OK**, the recording includes `Enter`. Click **OK** to finish.
+`Esc` or **Cancel recording** discards the recording and keeps Settings open.
+**Cancel** closes Settings without a write.
+The recorder accepts only key press events. It ignores key repeats and key releases.
+
+**Remove shortcut** removes the selected shortcut. Removing the last shortcut disables the action.
+**Restore action** removes the action's override from the selected scope.
+A project then uses the global keys. The global scope then uses the default keys.
+Neither command changes the other scope or keyboard mode.
+
+Settings shows conflicts and blocks **Save** until you correct them.
+The message names the key and both actions.
+The check includes sequence prefixes, both keyboard modes, and the combined global and project keys.
+A panel can use a global key, because panel shortcuts have priority.
+The editor's internal Vim commands do not appear in this section.
+
+### File format
+
+The `preferences.keymap` field of `config.json` maps an action to a list of keys, per mode.
 
 ```json
 {
-  "keymap": {
-    "conventional": { "run": ["ctrl+enter", "f5", "ctrl+w e"], "stop": [] },
-    "vim": { "run": ["ctrl+enter", "f5"] }
+  "version": 1,
+  "preferences": {
+    "keymap": {
+      "conventional": { "run": ["ctrl+enter", "f5", "ctrl+w e"], "stop": [] },
+      "vim": { "run": ["ctrl+enter", "f5", "f8 r s q"] }
+    }
   }
 }
 ```
 
 A list replaces the default keys of the action, and an empty list removes the shortcut.
-A key can have two parts separated by a space, such as `ctrl+w e` and `g g`.
+A sequence can have any number of keys separated by spaces, such as `ctrl+w e` and `f8 a b c`.
+The application waits for the complete sequence. `Esc` or an unmatched key cancels it.
+A plain character stays text when a text field has focus.
 Two actions with the same key, in the same region, invalidate the configuration.
 A key and a sequence that starts with it also invalidate the configuration.
 An unknown action or key name also invalidates the configuration.

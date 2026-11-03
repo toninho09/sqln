@@ -232,6 +232,13 @@ pub fn key_label(key: &str) -> String {
 }
 
 pub const HINT_PREFIX: &[HintPart] = &[("Ctrl+W", "…"), ("Tab", "explorer"), ("Esc", "cancel")];
+pub const HINT_SEQUENCE: &[HintPart] = &[("", "Press the next key"), ("Esc", "cancel")];
+pub const HINT_RECORD_KEYS: &[HintPart] = &[
+    ("Enter", "confirm"),
+    ("OK", "confirm"),
+    ("Esc", "cancel recording"),
+];
+pub const HINT_RECORD_MOUSE: &[HintPart] = &[("OK", "confirm"), ("Esc", "cancel recording")];
 pub const HINT_EXPLORER_MENU: &[HintPart] = &[("Ctrl+W Tab", "…"), ("Esc", "cancel")];
 pub const HINT_COMMANDS: &[HintPart] = &[("Ctrl+W", "commands")];
 pub const HINT_PALETTE: &[HintPart] = &[
@@ -597,6 +604,48 @@ pub const SECTION_GENERAL: &str = "General";
 pub const SECTION_EDITOR: &str = "Editor";
 pub const SECTION_RESULTS: &str = "Results";
 pub const SECTION_APPEARANCE: &str = "Appearance";
+pub const SECTION_SHORTCUTS: &str = "Shortcuts";
+pub const FIELD_SHORTCUT_MODE: &str = "Key mode";
+pub const SHORTCUT_COMMANDS: &str = "Commands";
+pub const SHORTCUT_KEYS: &str = "Shortcuts";
+pub const SHORTCUT_UNASSIGNED: &str = "Not assigned";
+pub const SHORTCUT_BACK: &str = "Back to commands";
+pub const HINT_SHORTCUT_COMMANDS: &[HintPart] = &[
+    ("Up/Down", "command"),
+    ("Enter", "edit"),
+    ("Tab", "next"),
+    ("Esc", "cancel"),
+];
+pub const HINT_SHORTCUT_EDIT: &[HintPart] = &[
+    ("Tab", "next"),
+    ("Left/Right", "change"),
+    ("Enter", "choose"),
+    ("Esc", "back to commands"),
+];
+pub const FIELD_SHORTCUT_BINDING: &str = "Shortcut";
+pub const FIELD_SHORTCUT_FINISH: &str = "Finish with";
+pub const SHORTCUT_ADD: &str = "+ Add shortcut";
+pub const SHORTCUT_MOUSE_OK: &str = "Mouse OK";
+pub const SHORTCUT_RECORD: &str = "Record";
+pub const SHORTCUT_REMOVE: &str = "Remove shortcut";
+pub const SHORTCUT_RESTORE: &str = "Restore action";
+pub const SHORTCUT_OK: &str = "OK";
+pub const SHORTCUT_CANCEL: &str = "Cancel recording";
+pub const SHORTCUT_EMPTY: &str = "Press at least one key.";
+pub const SHORTCUT_FINISH_FIRST: &str = "Confirm or cancel the recording first.";
+pub const SHORTCUT_RECORD_KEYS: &str =
+    "Press the keys. Enter or a click on OK confirms. Esc cancels.";
+pub const SHORTCUT_RECORD_MOUSE: &str =
+    "Press the keys, including Enter. Click OK to confirm. Esc cancels.";
+pub const SHORTCUT_RESTORED: &str = "The action uses its inherited keys. Save to apply.";
+
+pub fn shortcut_region(region: crate::input::Region) -> &'static str {
+    match region {
+        crate::input::Region::Global => VALUE_SCOPE_GLOBAL,
+        crate::input::Region::Navigator => REGION_NAVIGATOR,
+        crate::input::Region::Grid => REGION_GRID,
+    }
+}
 pub const FIELD_KEYBOARD: &str = "Keyboard";
 pub const FIELD_REOPEN_TABS: &str = "Reopen tabs";
 pub const FIELD_QUERY_HISTORY: &str = "Query history";

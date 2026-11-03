@@ -27,6 +27,7 @@ use sqln::import::{Encoding, ImportChoices};
 use sqln::input::SuggestionKeys;
 use sqln::navigator::RowKind;
 use sqln::script_file::Trouble;
+use sqln::settings::shortcuts::Shortcuts;
 use sqln::settings::{Field as SettingsField, SECTIONS, SettingsForm};
 use sqln::store::config::{self, ConnectionIcon, Preferences, ThemeName};
 use sqln::store::scripts::{self, ScriptMeta};
@@ -2930,6 +2931,204 @@ fn the_settings_choose_the_reopening_of_the_tabs() {
     assert!(text.contains("\"reopenTabs\": false"), "{text}");
 }
 
+fn open_shortcut_settings(session: &mut Session, action: &str) {
+    session.prefix(',');
+    session.click_text("Shortcuts");
+    // Scope, key mode, and the command list.
+    for _ in 0..3 {
+        session.code(KeyCode::Tab);
+    }
+    let index = Shortcuts::actions()
+        .position(|item| item.name() == action)
+        .unwrap();
+    for _ in 0..index {
+        session.code(KeyCode::Down);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("[Record]");
+}
+
+#[test]
+fn shortcut_commands_open_from_a_list_and_keep_the_draft_when_returning() {
+    let (store, _) = two_connections("p-shortcut-command-list");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.click_text("Shortcuts");
+    session.assert_sees("Run the selection or the statement");
+    let command = sqln::ui::text::command_text(sqln::input::Action::RunScript);
+    session.assert_sees(command);
+    session.assert_sees("Ctrl+Enter");
+    session.assert_not_sees("[Record]");
+    session.click_text(command);
+    session.assert_sees("SHORTCUTS · runScript");
+    session.click_text("[Record]");
+    session.code(KeyCode::F(8));
+    session.code(KeyCode::Enter);
+    session.click_text("[Back to commands]");
+    session.assert_sees("Commands 2/");
+    session.assert_sees("F8");
+    session.click_text("[Save]");
+    let project = config::preferences(store.project.as_ref().unwrap(), Scope::Project).unwrap();
+    assert_eq!(project.keymap.unwrap().conventional["runScript"][0], "f8");
+}
+
+#[test]
+fn shortcut_commands_scroll_with_the_mouse_wheel_and_open_the_selected_row() {
+    let (store, _) = two_connections("p-shortcut-command-wheel");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.click_text("Shortcuts");
+    let (column, row) = session.locate("Run the selection or the statement");
+    session.mouse(MouseEventKind::ScrollDown, column, row);
+    session.assert_sees("Commands 4/");
+    session.code(KeyCode::Enter);
+    let action = Shortcuts::actions().nth(3).unwrap();
+    session.assert_sees(&format!("SHORTCUTS · {}", action.name()));
+    session.click_text("[Record]");
+    session.code(KeyCode::F(8));
+    session.code(KeyCode::Enter);
+    session.click_text("[Save]");
+    let project = config::preferences(store.project.as_ref().unwrap(), Scope::Project).unwrap();
+    assert_eq!(project.keymap.unwrap().conventional[action.name()][0], "f8");
+}
+
+#[test]
+fn shortcut_recording_saves_only_the_global_scope_and_works_after_restart() {
+    let (store, _) = two_connections("p-shortcut-global");
+    let project = store.project.as_ref().unwrap();
+    let project_before = fs::read(project.config_file()).unwrap();
+    let global_before = fs::read(store.global.config_file()).unwrap();
+    let mut session = Session::start(&store);
+    open_shortcut_settings(&mut session, "help");
+    session.click_text("< Project >");
+    session.click_text("[Record]");
+    for code in [
+        KeyCode::F(8),
+        KeyCode::Char('a'),
+        KeyCode::Char('b'),
+        KeyCode::Char('c'),
+    ] {
+        session.code(code);
+    }
+    session.code(KeyCode::Enter);
+    assert_eq!(fs::read(store.global.config_file()).unwrap(), global_before);
+    session.click_text("[Save]");
+    session.assert_sees("settings are saved");
+    assert_eq!(fs::read(project.config_file()).unwrap(), project_before);
+    let preferences = config::preferences(&store.global, Scope::Global).unwrap();
+    assert_eq!(
+        preferences.keymap.unwrap().conventional["help"][0],
+        "f8 a b c"
+    );
+    for code in [
+        KeyCode::F(8),
+        KeyCode::Char('a'),
+        KeyCode::Char('b'),
+        KeyCode::Char('c'),
+    ] {
+        session.code(code);
+    }
+    session.assert_sees("Keys · Conventional");
+    let mut restarted = Session::start(&store);
+    for code in [
+        KeyCode::F(8),
+        KeyCode::Char('a'),
+        KeyCode::Char('b'),
+        KeyCode::Char('c'),
+    ] {
+        restarted.code(code);
+    }
+    restarted.assert_sees("Keys · Conventional");
+}
+
+#[test]
+fn shortcut_recording_with_mouse_confirmation_saves_enter_in_the_project() {
+    let (store, _) = two_connections("p-shortcut-enter");
+    let global_before = fs::read(store.global.config_file()).unwrap();
+    let mut session = Session::start(&store);
+    open_shortcut_settings(&mut session, "help");
+    session.click_text("Finish with");
+    session.click_text("[Record]");
+    for code in [KeyCode::F(8), KeyCode::Enter, KeyCode::Char('a')] {
+        session.code(code);
+    }
+    session.assert_sees("F8 Enter a");
+    session.click_text("[OK]");
+    session.click_text("[Save]");
+    session.assert_sees("settings are saved");
+    assert_eq!(fs::read(store.global.config_file()).unwrap(), global_before);
+    let project = config::preferences(store.project.as_ref().unwrap(), Scope::Project).unwrap();
+    assert_eq!(
+        project.keymap.unwrap().conventional["help"][0],
+        "f8 enter a"
+    );
+    let mut restarted = Session::start(&store);
+    for code in [KeyCode::F(8), KeyCode::Enter, KeyCode::Char('a')] {
+        restarted.code(code);
+    }
+    restarted.assert_sees("Keys · Conventional");
+}
+
+#[test]
+fn shortcut_conflicts_keep_the_settings_open_and_write_no_file() {
+    let (store, _) = two_connections("p-shortcut-conflict");
+    let global_before = fs::read(store.global.config_file()).unwrap();
+    let project = store.project.as_ref().unwrap();
+    let project_before = fs::read(project.config_file()).unwrap();
+    let mut session = Session::start(&store);
+    open_shortcut_settings(&mut session, "run");
+    session.click_text("[Record]");
+    session.code(KeyCode::F(1));
+    session.code(KeyCode::Enter);
+    session.assert_sees("conflicts");
+    session.click_text("[Save]");
+    session.assert_sees("SHORTCUTS");
+    session.assert_sees("conflicts");
+    assert_eq!(fs::read(store.global.config_file()).unwrap(), global_before);
+    assert_eq!(fs::read(project.config_file()).unwrap(), project_before);
+    session.click_text("[Restore action]");
+    session.click_text("[Save]");
+    session.assert_sees("settings are saved");
+    assert!(config::load(&store).config.is_ok());
+}
+
+#[test]
+fn shortcut_settings_cancel_discards_the_recording_without_a_write() {
+    let (store, _) = two_connections("p-shortcut-cancel");
+    let project = store.project.as_ref().unwrap();
+    let before = fs::read(project.config_file()).unwrap();
+    let mut session = Session::start(&store);
+    open_shortcut_settings(&mut session, "run");
+    session.click_text("[Record]");
+    session.code(KeyCode::F(8));
+    session.click_text("[Cancel recording]");
+    session.assert_sees("[Record]");
+    session.click_text("[Record]");
+    session.code(KeyCode::F(9));
+    session.code(KeyCode::Enter);
+    session.click_text("[Cancel]");
+    assert_eq!(fs::read(project.config_file()).unwrap(), before);
+}
+
+#[test]
+fn shortcut_save_checks_changes_in_the_other_scope_before_writing() {
+    let (store, _) = two_connections("p-shortcut-external-conflict");
+    let project = store.project.as_ref().unwrap();
+    let before = fs::read(project.config_file()).unwrap();
+    let mut session = Session::start(&store);
+    open_shortcut_settings(&mut session, "run");
+    session.click_text("[Record]");
+    session.code(KeyCode::F(8));
+    session.code(KeyCode::Enter);
+    let mut preferences = config::preferences(&store.global, Scope::Global).unwrap();
+    preferences.keymap = Some(serde_json::from_str(r#"{"conventional":{"quit":["f8"]}}"#).unwrap());
+    config::change_preferences(&store.global, Scope::Global, preferences).unwrap();
+    session.click_text("[Save]");
+    session.assert_sees("conflicts");
+    session.assert_sees("SHORTCUTS");
+    assert_eq!(fs::read(project.config_file()).unwrap(), before);
+}
+
 #[test]
 fn the_settings_work_with_the_mouse() {
     let (store, _) = two_connections("p-settings-mouse");
@@ -2965,9 +3164,14 @@ fn the_sidebar_shows_the_fields_of_one_section() {
     session.code(KeyCode::Down);
     session.assert_sees("Default theme");
     session.assert_not_sees("Page size");
+    session.code(KeyCode::Down);
+    session.assert_sees("Commands 1/");
+    session.assert_not_sees("Default theme");
     // The last section goes back to the first section.
     session.code(KeyCode::Down);
     session.assert_sees("Reopen tabs");
+    session.code(KeyCode::Up);
+    session.assert_sees("Commands 1/");
     session.code(KeyCode::Up);
     session.assert_sees("Default theme");
     // The scope stays in all sections.
@@ -3004,7 +3208,13 @@ impl Session {
     /// The store has no project, so the scope is not a place of the focus.
     fn open_theme_settings(&mut self) {
         self.prefix(',');
-        self.code(KeyCode::Up);
+        let section = SECTIONS
+            .iter()
+            .position(|section| section.fields.contains(&SettingsField::Theme))
+            .unwrap();
+        for _ in 0..section {
+            self.code(KeyCode::Down);
+        }
         self.code(KeyCode::Tab);
     }
 

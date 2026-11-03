@@ -55,7 +55,7 @@ use crate::help::Help;
 use crate::history::HistoryList;
 use crate::import::ImportChoices;
 use crate::import::form::ImportForm;
-use crate::input::{Chord, Keymap, SuggestionKeys};
+use crate::input::{Chord, Keymap, Region, SuggestionKeys};
 use crate::navigator::Navigator;
 use crate::palette::Palette;
 use crate::settings::SettingsForm;
@@ -397,8 +397,8 @@ pub struct App {
     conflicts: Option<conflicts::Conflicts>,
     /// The SQL rules of a console that has no connection.
     fallback_dialect: Dialect,
-    /// The first key of a sequence such as `Ctrl+W e`.
-    pending_key: Option<Chord>,
+    /// The region and keys of a sequence that needs more keys.
+    pending_key: Option<(Region, Vec<Chord>)>,
     /// True while the explorer page of the `Ctrl+W` menu waits for its key.
     explorer_page: bool,
     drag: Option<Drag>,
@@ -1213,7 +1213,7 @@ impl App {
         if self.explorer_page {
             let title = self.explorer_menu_title();
             draw_which_key(frame, bounds, &title, &self.explorer_menu(), &self.theme);
-        } else if self.pending_key.is_some_and(Chord::is_prefix) {
+        } else if self.pending_prefix() {
             let title = text::TITLE_PREFIX;
             draw_which_key(frame, bounds, title, &self.prefix_menu(), &self.theme);
         }

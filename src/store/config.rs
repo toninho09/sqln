@@ -648,6 +648,39 @@ fn keymap_overrides(preferences: &Preferences, mode: KeyboardMode) -> HashMap<St
     section.into_iter().collect()
 }
 
+fn combined_overrides(
+    global: &Preferences,
+    project: Option<&Preferences>,
+    mode: KeyboardMode,
+) -> HashMap<String, Vec<String>> {
+    let mut overrides = keymap_overrides(global, mode);
+    if let Some(project) = project {
+        overrides.extend(keymap_overrides(project, mode));
+    }
+    overrides
+}
+
+/// Checks both modes before the settings dialog writes a file.
+pub(crate) fn validate_keymaps(
+    global: &Preferences,
+    project: Option<&Preferences>,
+) -> Result<(), String> {
+    for (mode, name) in [
+        (KeyboardMode::Conventional, "Conventional"),
+        (KeyboardMode::Vim, "Vim"),
+    ] {
+        for (scope, preferences) in [("Global", Some(global)), ("Project", project)] {
+            if let Some(preferences) = preferences {
+                Keymap::with_overrides(mode, &keymap_overrides(preferences, mode))
+                    .map_err(|message| format!("{name} {scope}: {message}"))?;
+            }
+        }
+        Keymap::with_overrides(mode, &combined_overrides(global, project, mode))
+            .map_err(|message| format!("{name} Global + Project: {message}"))?;
+    }
+    Ok(())
+}
+
 fn keyboard_of(preferences: &Preferences) -> Option<KeyboardMode> {
     preferences.keyboard_mode.map(|name| match name {
         KeyboardName::Conventional => KeyboardMode::Conventional,
@@ -693,10 +726,7 @@ fn combine(
             },
         )?;
     }
-    let mut overrides = keymap_overrides(global, keyboard);
-    if let Some(project) = project {
-        overrides.extend(keymap_overrides(project, keyboard));
-    }
+    let overrides = combined_overrides(global, project, keyboard);
     let last_file = parsed
         .last()
         .map(|(_, root, _)| root.config_file())

@@ -118,6 +118,87 @@ fn the_grid_has_the_keys_of_the_table_view_in_both_modes() {
 }
 
 #[test]
+fn long_sequences_can_share_partial_prefixes() {
+    let items = overrides(&[("run", &["f8 a b c"]), ("stop", &["f8 a d"])]);
+    let map = Keymap::with_overrides(KeyboardMode::Conventional, &items).unwrap();
+    let keys = |text: &str| text.split_whitespace().map(chord).collect::<Vec<_>>();
+    for prefix in ["f8", "f8 a", "f8 a b"] {
+        assert_eq!(
+            map.sequence(Region::Global, &keys(prefix)),
+            Lookup::Sequence
+        );
+    }
+    assert_eq!(
+        map.sequence(Region::Global, &keys("f8 a b c")),
+        Lookup::Action(Action::Run)
+    );
+    assert_eq!(
+        map.sequence(Region::Global, &keys("f8 a d")),
+        Lookup::Action(Action::Stop)
+    );
+    assert_eq!(map.sequence(Region::Global, &keys("f8 a x")), Lookup::None);
+}
+
+#[test]
+fn a_complete_sequence_cannot_be_another_sequences_prefix_in_either_order() {
+    for (run, stop) in [("f8 a b", "f8 a"), ("f8 a", "f8 a b"), ("f8 a b", "f8 a b")] {
+        let items = overrides(&[("run", &[run]), ("stop", &[stop])]);
+        let error = Keymap::with_overrides(KeyboardMode::Conventional, &items).unwrap_err();
+        assert!(error.contains("run") && error.contains("stop"), "{error}");
+    }
+}
+
+fn app_with_keys(items: &[(&str, &[&str])]) -> App {
+    let map = Keymap::with_overrides(KeyboardMode::Conventional, &overrides(items)).unwrap();
+    App::new(
+        Options {
+            keymap: Some(map),
+            ..Options::default()
+        },
+        Rc::new(RefCell::new(MemoryClipboard::default())),
+        Theme::plain(),
+    )
+}
+
+#[test]
+fn the_application_waits_for_every_key_of_a_long_sequence() {
+    let mut app = app_with_keys(&[("closeTab", &["f8 a b c"])]);
+    for code in [KeyCode::F(8), KeyCode::Char('a'), KeyCode::Char('b')] {
+        app.on_event(Event::Key(key(code)));
+        assert!(!app.should_quit());
+        assert!(app.hint().contains("next key"));
+        assert_eq!(app.console().editor.text(), "");
+    }
+    app.on_event(Event::Key(key(KeyCode::Char('c'))));
+    assert!(app.should_quit());
+}
+
+#[test]
+fn escape_and_an_unmatched_key_cancel_a_sequence_without_entering_text() {
+    let mut app = app_with_keys(&[("closeTab", &["f8 a b c"])]);
+    for end in [KeyCode::Esc, KeyCode::Char('x')] {
+        for code in [KeyCode::F(8), KeyCode::Char('a'), end] {
+            app.on_event(Event::Key(key(code)));
+        }
+        assert!(!app.should_quit());
+        assert_eq!(app.console().editor.text(), "");
+    }
+    app.on_event(Event::Key(key(KeyCode::Char('z'))));
+    assert_eq!(app.console().editor.text(), "z");
+}
+
+#[test]
+fn a_long_global_sequence_still_works_after_a_shared_panel_prefix() {
+    let mut app = app_with_keys(&[("newConsole", &["f8 n n"]), ("closeTab", &["f8 c c"])]);
+    app.on_event(Event::Key(ctrl('w')));
+    app.on_event(Event::Key(key(KeyCode::Char('h'))));
+    for code in [KeyCode::F(8), KeyCode::Char('c'), KeyCode::Char('c')] {
+        app.on_event(Event::Key(key(code)));
+    }
+    assert!(app.should_quit());
+}
+
+#[test]
 fn the_grid_opens_the_export_in_both_modes() {
     for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
         assert_eq!(

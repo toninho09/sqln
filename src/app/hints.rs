@@ -8,7 +8,7 @@ use crate::console::Focus;
 use crate::export::form as export_form;
 use crate::form::FieldStyle;
 use crate::import::form as import_form;
-use crate::input::{Action, Chord};
+use crate::input::Action;
 use crate::navigator::{Navigator, RowKind};
 use crate::settings;
 use crate::table::{TableFocus, TableTab};
@@ -32,8 +32,11 @@ impl App {
         if self.explorer_page {
             return HintItem::of(text::HINT_EXPLORER_MENU);
         }
-        if self.pending_key.is_some_and(Chord::is_prefix) {
+        if self.pending_prefix() {
             return HintItem::of(text::HINT_PREFIX);
+        }
+        if self.pending_key.is_some() {
+            return HintItem::of(text::HINT_SEQUENCE);
         }
         if self
             .persist
@@ -81,7 +84,22 @@ impl App {
             return Some(text::HINT_BROWSER);
         }
         if let Some(form) = &self.settings_form {
+            if form.shortcuts.is_recording() {
+                return Some(if form.shortcuts.mouse_confirm {
+                    text::HINT_RECORD_MOUSE
+                } else {
+                    text::HINT_RECORD_KEYS
+                });
+            }
+            if form.shortcuts.is_editing()
+                && settings::SECTIONS[form.section]
+                    .fields
+                    .contains(&settings::Field::ShortcutCommands)
+            {
+                return Some(text::HINT_SHORTCUT_EDIT);
+            }
             return Some(match form.focus {
+                settings::Field::ShortcutCommands => text::HINT_SHORTCUT_COMMANDS,
                 settings::Field::Sections => text::HINT_SETTINGS_SECTIONS,
                 settings::Field::Save | settings::Field::Cancel => text::HINT_FORM_BUTTON,
                 field if form.input(field).is_some() => text::HINT_SETTINGS_TEXT,

@@ -150,8 +150,9 @@ impl App {
             self.on_explorer_page_key(chord);
             return;
         }
-        if let Some(first) = self.pending_key.take() {
-            self.on_second_key(first, chord);
+        if let Some((region, mut keys)) = self.pending_key.take() {
+            keys.push(chord);
+            self.on_sequence(region, keys);
             return;
         }
         let panel = self.panel();
@@ -187,7 +188,7 @@ impl App {
                 true
             }
             Lookup::Sequence => {
-                self.pending_key = Some(chord);
+                self.pending_key = Some((region, vec![chord]));
                 true
             }
             Lookup::None => false,
@@ -203,14 +204,25 @@ impl App {
         }
     }
 
-    fn on_second_key(&mut self, first: Chord, second: Chord) {
-        let panel = self.panel();
-        let action = panel
-            .and_then(|region| self.keymap.after(region, first, second))
-            .or_else(|| self.keymap.after(Region::Global, first, second));
-        if let Some(action) = action {
-            self.perform(action, false);
+    fn on_sequence(&mut self, region: Region, keys: Vec<Chord>) {
+        if keys.last() == Some(&Chord::parse("esc").unwrap()) {
+            return;
         }
+        let mut found = self.keymap.sequence(region, &keys);
+        if found == Lookup::None && region != Region::Global {
+            found = self.keymap.sequence(Region::Global, &keys);
+        }
+        match found {
+            Lookup::Action(action) => self.perform(action, false),
+            Lookup::Sequence => self.pending_key = Some((region, keys)),
+            Lookup::None => {}
+        }
+    }
+
+    pub(super) fn pending_prefix(&self) -> bool {
+        self.pending_key
+            .as_ref()
+            .is_some_and(|(_, keys)| keys.len() == 1 && keys[0].is_prefix())
     }
 
     /// Shift changes a move of the grid into a selection.

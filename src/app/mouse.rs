@@ -13,7 +13,7 @@ use crate::form::FormRequest;
 use crate::input::Action;
 use crate::navigator::{MIN_WIDTH, Navigator, RowKind};
 use crate::result::ResultTab;
-use crate::settings::SettingsRequest;
+use crate::settings::{Field as SettingsField, SettingsRequest};
 use crate::table::TableFocus;
 use crate::ui::console::Control;
 use crate::ui::navigator::TREE_PAD;
@@ -463,10 +463,39 @@ impl App {
     }
 
     pub(super) fn on_settings_mouse(&mut self, mouse: MouseEvent) {
+        let position = Position::new(mouse.column, mouse.row);
+        if matches!(
+            mouse.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        ) {
+            let inside = self.layout.settings.fields.iter().any(|(field, area)| {
+                *field == SettingsField::ShortcutCommands && area.contains(position)
+            });
+            if inside && let Some(form) = &mut self.settings_form {
+                let delta = if mouse.kind == MouseEventKind::ScrollUp {
+                    -WHEEL_ROWS
+                } else {
+                    WHEEL_ROWS
+                };
+                form.move_shortcut_command(delta);
+            }
+            return;
+        }
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
             return;
         }
-        let position = Position::new(mouse.column, mouse.row);
+        if let Some((action, _)) = self
+            .layout
+            .settings
+            .command_rows
+            .iter()
+            .find(|(_, area)| area.contains(position))
+        {
+            if let Some(form) = &mut self.settings_form {
+                form.edit_shortcut(*action);
+            }
+            return;
+        }
         let sections = &self.layout.settings.sections;
         if let Some(section) = sections.iter().position(|area| area.contains(position)) {
             if let Some(form) = &mut self.settings_form {

@@ -407,6 +407,11 @@ Preferences apply in this order: built-in defaults, global settings, then projec
 Project settings override only the values they declare. Both scopes contribute saved connections.
 
 Use `Ctrl+W ,` for Settings. The dialog shows scopes and inherited values.
+Select **Shortcuts** to see the list of all configurable commands and their assigned shortcuts.
+Select a command to record key sequences, remove shortcuts, or restore its inherited keys.
+Select **Mouse OK** to include `Enter` in a recording.
+Settings blocks conflicting shortcuts before saving them to the selected scope's `config.json`.
+See [shortcut configuration](docs/KEYMAP.md#configuration) for the complete steps.
 
 ### Files
 

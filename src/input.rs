@@ -1,6 +1,6 @@
 //! The key map: the action of each key in each region.
 //!
-//! A binding is one key, or two keys in sequence, such as `ctrl+w e`. The editor keys
+//! A binding is one key or a sequence of keys, such as `ctrl+w e`. The editor keys
 //! stay in `editor`, because the EdTUI handler owns the Vim mode.
 
 use std::collections::HashMap;
@@ -46,10 +46,49 @@ impl Chord {
         if matches!(key.code, KeyCode::Char(_)) {
             modifiers -= KeyModifiers::SHIFT;
         }
-        Self {
-            code: key.code,
-            modifiers,
+        let code = if key.code == KeyCode::BackTab {
+            modifiers |= KeyModifiers::SHIFT;
+            KeyCode::Tab
+        } else {
+            key.code
+        };
+        Self { code, modifiers }
+    }
+
+    /// Returns the configuration text of a key.
+    pub fn text(self) -> Result<String, String> {
+        let name = match self.code {
+            KeyCode::Char(' ') => "space".to_owned(),
+            KeyCode::Char(c) if !c.is_control() && !c.is_whitespace() => c.to_string(),
+            KeyCode::F(n) if n > 0 => format!("f{n}"),
+            KeyCode::Enter => "enter".to_owned(),
+            KeyCode::Esc => "esc".to_owned(),
+            KeyCode::Tab => "tab".to_owned(),
+            KeyCode::Backspace => "backspace".to_owned(),
+            KeyCode::Delete => "delete".to_owned(),
+            KeyCode::Insert => "insert".to_owned(),
+            KeyCode::Home => "home".to_owned(),
+            KeyCode::End => "end".to_owned(),
+            KeyCode::PageUp => "pageup".to_owned(),
+            KeyCode::PageDown => "pagedown".to_owned(),
+            KeyCode::Up => "up".to_owned(),
+            KeyCode::Down => "down".to_owned(),
+            KeyCode::Left => "left".to_owned(),
+            KeyCode::Right => "right".to_owned(),
+            _ => return Err("This key cannot be recorded.".to_owned()),
+        };
+        let mut parts = Vec::new();
+        if self.modifiers.contains(KeyModifiers::CONTROL) {
+            parts.push("ctrl");
         }
+        if self.modifiers.contains(KeyModifiers::ALT) {
+            parts.push("alt");
+        }
+        if self.modifiers.contains(KeyModifiers::SHIFT) {
+            parts.push("shift");
+        }
+        parts.push(&name);
+        Ok(parts.join("+"))
     }
 
     /// Returns true for `Ctrl+W`, the key before the commands of the application.
@@ -211,6 +250,31 @@ pub enum Action {
 }
 
 impl Action {
+    /// Returns the name that `config.json` uses.
+    pub fn name(self) -> &'static str {
+        DEFAULTS
+            .iter()
+            .find(|item| item.action == self)
+            .unwrap()
+            .name
+    }
+
+    pub fn region(self) -> Region {
+        DEFAULTS
+            .iter()
+            .find(|item| item.action == self)
+            .unwrap()
+            .region
+    }
+
+    /// Lists the actions of a region in the order of the help screen.
+    pub fn in_region(region: Region) -> impl Iterator<Item = Self> {
+        DEFAULTS
+            .iter()
+            .filter(move |item| item.region == region)
+            .map(|item| item.action)
+    }
+
     /// Returns true for an action that only the grid of a table has.
     pub fn is_table_only(self) -> bool {
         matches!(
@@ -809,17 +873,21 @@ const DEFAULTS: &[Item] = &[
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lookup {
     Action(Action),
-    /// The key starts a sequence, and the next key completes it.
+    /// The keys start a sequence that needs more keys.
     Sequence,
     None,
 }
 
 #[derive(Debug)]
 pub struct Keymap {
-    single: HashMap<(Region, Chord), Action>,
-    double: HashMap<(Region, Chord, Chord), Action>,
-    starts: HashMap<(Region, Chord), Action>,
+    regions: HashMap<Region, Bindings>,
     keys: HashMap<Action, Vec<String>>,
+}
+
+#[derive(Debug, Default)]
+struct Bindings {
+    complete: HashMap<Vec<Chord>, Action>,
+    prefixes: HashMap<Vec<Chord>, Action>,
 }
 
 impl Keymap {
@@ -840,9 +908,7 @@ impl Keymap {
             return Err(format!("Unknown action: {name}"));
         }
         let mut map = Self {
-            single: HashMap::new(),
-            double: HashMap::new(),
-            starts: HashMap::new(),
+            regions: HashMap::new(),
             keys: HashMap::new(),
         };
         for item in DEFAULTS {
@@ -865,51 +931,54 @@ impl Keymap {
         name: &str,
         text: &str,
     ) -> Result<(), String> {
-        let conflict = || format!("Two actions use the key {text}. One of them is {name}.");
+        let conflict = |other: Action| format!("{} conflicts with {name}: {text}.", other.name());
         let chords = text
             .split_whitespace()
             .map(Chord::parse)
             .collect::<Result<Vec<_>, _>>()?;
-        match chords.as_slice() {
-            [key] => {
-                if self.starts.contains_key(&(region, *key)) {
-                    return Err(conflict());
-                }
-                if self.single.insert((region, *key), action).is_some() {
-                    return Err(conflict());
-                }
-            }
-            [first, second] => {
-                if self.single.contains_key(&(region, *first)) {
-                    return Err(conflict());
-                }
-                if self
-                    .double
-                    .insert((region, *first, *second), action)
-                    .is_some()
-                {
-                    return Err(conflict());
-                }
-                self.starts.insert((region, *first), action);
-            }
-            _ => return Err(format!("Unknown key: {text}")),
+        if chords.is_empty() {
+            return Err(format!("Unknown key: {text}"));
         }
+        let bindings = self.regions.entry(region).or_default();
+        for end in 1..=chords.len() {
+            if let Some(other) = bindings.complete.get(&chords[..end]) {
+                return Err(conflict(*other));
+            }
+        }
+        if let Some(other) = bindings.prefixes.get(chords.as_slice()) {
+            return Err(conflict(*other));
+        }
+        for end in 1..chords.len() {
+            bindings.prefixes.insert(chords[..end].to_vec(), action);
+        }
+        bindings.complete.insert(chords, action);
         Ok(())
     }
 
     pub fn lookup(&self, region: Region, key: Chord) -> Lookup {
-        if let Some(action) = self.single.get(&(region, key)) {
+        self.sequence(region, &[key])
+    }
+
+    /// Returns the action or prefix of a sequence of any length.
+    pub fn sequence(&self, region: Region, keys: &[Chord]) -> Lookup {
+        let Some(bindings) = self.regions.get(&region) else {
+            return Lookup::None;
+        };
+        if let Some(action) = bindings.complete.get(keys) {
             return Lookup::Action(*action);
         }
-        if self.starts.contains_key(&(region, key)) {
+        if bindings.prefixes.contains_key(keys) {
             return Lookup::Sequence;
         }
         Lookup::None
     }
 
-    /// Returns the action of the second key of a sequence.
+    /// Returns the action of a sequence with two keys.
     pub fn after(&self, region: Region, first: Chord, second: Chord) -> Option<Action> {
-        self.double.get(&(region, first, second)).copied()
+        match self.sequence(region, &[first, second]) {
+            Lookup::Action(action) => Some(action),
+            _ => None,
+        }
     }
 
     /// Returns the keys of an action, as the user writes them.
@@ -919,10 +988,7 @@ impl Keymap {
 
     /// Lists the actions of a region in the order of the help screen.
     pub fn actions(&self, region: Region) -> impl Iterator<Item = Action> + '_ {
-        DEFAULTS
-            .iter()
-            .filter(move |item| item.region == region)
-            .map(|item| item.action)
+        Action::in_region(region)
     }
 }
 

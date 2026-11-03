@@ -5,13 +5,16 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::editor::DEFAULT_UNDO_LIMIT;
 use crate::input::SuggestionKeys;
+
+pub mod shortcuts;
 use crate::line_input::LineInput;
 use crate::store::Scope;
 use crate::store::config::{
     DEFAULT_BELL_AFTER_SECONDS, DEFAULT_FORMAT_JSON, DEFAULT_QUERY_HISTORY, DEFAULT_REOPEN_TABS,
-    KeyboardName, Preferences, ThemeName,
+    KeyboardName, Keymaps, Preferences, ThemeName,
 };
 use crate::ui::text;
+use shortcuts::Shortcuts;
 
 const MEBIBYTE: usize = 1024 * 1024;
 /// The defaults of `Settings`, for the note of a field without a value.
@@ -33,6 +36,16 @@ pub enum Field {
     SuggestionKeys,
     UndoLimit,
     Theme,
+    ShortcutMode,
+    ShortcutCommands,
+    ShortcutBack,
+    ShortcutBinding,
+    ShortcutFinish,
+    ShortcutRecord,
+    ShortcutRemove,
+    ShortcutRestore,
+    ShortcutOk,
+    ShortcutCancel,
     Save,
     Cancel,
 }
@@ -44,7 +57,7 @@ pub struct Section {
 }
 
 /// The sidebar. To add a group, add a row here.
-pub const SECTIONS: [Section; 4] = [
+pub const SECTIONS: [Section; 5] = [
     Section {
         title: text::SECTION_GENERAL,
         fields: &[
@@ -71,6 +84,10 @@ pub const SECTIONS: [Section; 4] = [
         title: text::SECTION_APPEARANCE,
         fields: &[Field::Theme],
     },
+    Section {
+        title: text::SECTION_SHORTCUTS,
+        fields: shortcuts::FIELDS,
+    },
 ];
 
 pub enum SettingsRequest {
@@ -93,6 +110,7 @@ struct Draft {
     format_json: Option<bool>,
     suggestion_keys: Option<SuggestionKeys>,
     theme: Option<ThemeName>,
+    keymap: Option<Keymaps>,
 }
 
 /// Returns a size as the whole MiB of a field.
@@ -120,6 +138,7 @@ impl Draft {
             format_json: preferences.format_json,
             suggestion_keys: preferences.suggestion_keys,
             theme: preferences.theme,
+            keymap: preferences.keymap.clone(),
         }
     }
 }
@@ -130,6 +149,7 @@ pub struct SettingsForm {
     pub section: usize,
     pub scope: Scope,
     pub note: Option<String>,
+    pub shortcuts: Shortcuts,
     global: Preferences,
     project: Option<Preferences>,
     global_draft: Draft,
@@ -211,6 +231,12 @@ impl SettingsForm {
             section: 0,
             scope,
             note: None,
+            shortcuts: Shortcuts::new(
+                project
+                    .as_ref()
+                    .and_then(|p| p.keyboard_mode)
+                    .or(global.keyboard_mode),
+            ),
             global_draft: Draft::of(&global),
             project_draft: project.as_ref().map(Draft::of),
             global,
@@ -357,7 +383,12 @@ impl SettingsForm {
         if self.has_project() {
             stops.push(Field::Scope);
         }
-        stops.extend_from_slice(SECTIONS[self.section].fields);
+        let fields = SECTIONS[self.section].fields;
+        stops.extend_from_slice(if fields.contains(&Field::ShortcutCommands) {
+            self.shortcut_stops()
+        } else {
+            fields
+        });
         stops.extend([Field::Save, Field::Cancel]);
         stops
     }
@@ -371,6 +402,7 @@ impl SettingsForm {
         if self.focus == Field::Sections {
             let order: Vec<usize> = (0..SECTIONS.len()).collect();
             self.section = next_choice(&order, self.section, forward);
+            self.shortcuts.editing = false;
         } else {
             self.move_focus(forward);
         }
@@ -435,17 +467,28 @@ impl SettingsForm {
 
     /// Puts the focus on one field. The mouse uses this.
     pub fn focus_on(&mut self, field: Field) {
-        self.focus = field;
+        if !self.shortcuts.is_recording()
+            || matches!(field, Field::ShortcutOk | Field::ShortcutCancel)
+        {
+            self.focus = field;
+        }
     }
 
     /// Opens one section and puts the focus on the sidebar. The mouse uses this.
     pub fn open_section(&mut self, section: usize) {
+        if self.shortcuts.is_recording() {
+            return;
+        }
         self.section = section;
+        self.shortcuts.editing = false;
         self.focus = Field::Sections;
     }
 
     /// Acts on a click: a choice changes, a button runs.
     pub fn press(&mut self) -> SettingsRequest {
+        if self.shortcut_press() {
+            return SettingsRequest::None;
+        }
         match self.focus {
             Field::Save => SettingsRequest::Save,
             Field::Cancel => SettingsRequest::Cancel,
@@ -458,7 +501,14 @@ impl SettingsForm {
     }
 
     pub fn on_key(&mut self, key: KeyEvent, vim: bool) -> SettingsRequest {
+        if self.shortcuts.is_recording() {
+            self.record_shortcut(key);
+            return SettingsRequest::None;
+        }
         self.note = None;
+        if self.shortcut_key(key, vim) {
+            return SettingsRequest::None;
+        }
         match key.code {
             KeyCode::Esc => return SettingsRequest::Cancel,
             KeyCode::Tab => self.move_focus(true),
@@ -484,8 +534,7 @@ impl SettingsForm {
         SettingsRequest::None
     }
 
-    /// Returns the preferences of the scope. The other values of the file, such as the
-    /// `keymap`, stay.
+    /// Returns the preferences of the scope. The other values of the file stay.
     pub fn preferences(&self) -> Result<Preferences, String> {
         let draft = self.draft();
         let base = match (self.scope, &self.project) {
@@ -499,6 +548,8 @@ impl SettingsForm {
         preferences.format_json = draft.format_json;
         preferences.suggestion_keys = draft.suggestion_keys;
         preferences.theme = draft.theme;
+        preferences.keymap = draft.keymap.clone();
+        self.validate_shortcuts(&preferences)?;
         preferences.page_size = parse(&draft.page_size, text::FIELD_PAGE_SIZE)?;
         preferences.row_cap = parse(&draft.row_cap, text::FIELD_ROW_CAP)?;
         preferences.bell_after_seconds = parse_seconds(&draft.bell_after, text::FIELD_BELL_AFTER)?;
