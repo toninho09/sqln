@@ -35,12 +35,21 @@ use crate::catalog::{
 };
 use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, RowWriter, Value};
-use crate::sql::{Dialect, counts_rows, is_plain_read, reads_or_writes_stdio};
+use crate::sql::{
+    Dialect, counts_rows, is_plain_read, reads_or_writes_stdio, removes_prepared_statements,
+};
 use crate::ui::text;
 
 /// The two clocks differ only inside a transaction. The simple protocol gives each
 /// call its own statement time, and a failed transaction refuses this call.
 const TRANSACTION_PROBE: &str = "SELECT transaction_timestamp() <> statement_timestamp()";
+/// The steps of `DISCARD ALL` without `DEALLOCATE ALL`. The driver keeps the statements
+/// of its type lookup in a cache, and `DEALLOCATE ALL` removes them from the server.
+const CLEANUP_SQL: &str = "CLOSE ALL; SET SESSION AUTHORIZATION DEFAULT; RESET ALL; \
+    UNLISTEN *; SELECT pg_advisory_unlock_all(); DISCARD PLANS; DISCARD TEMP; \
+    DISCARD SEQUENCES;";
+/// The statements of `PREPARE`. The statements of the driver are not in this list.
+const USER_STATEMENTS_SQL: &str = "SELECT name FROM pg_prepared_statements WHERE from_sql";
 const CATALOG_SQL: &str = "\
     SELECT n.nspname, c.relname, c.relkind \
     FROM pg_catalog.pg_namespace n \
@@ -187,6 +196,7 @@ impl Connector for PostgresConnector {
             canceller,
             transaction: TransactionState::None,
             notices,
+            statements_lost: false,
         }))
     }
 }
@@ -421,6 +431,9 @@ struct PostgresSession {
     canceller: Arc<PostgresCanceller>,
     transaction: TransactionState,
     notices: Arc<Mutex<Notices>>,
+    /// True after a statement that can remove the prepared statements of the driver.
+    /// The driver cache then names statements that the server does not have.
+    statements_lost: bool,
 }
 
 impl PostgresSession {
@@ -435,9 +448,10 @@ impl PostgresSession {
 
     /// Asks for the column types before the statement runs. A statement that fails
     /// here fails in the same way in the simple protocol, and it must not run twice:
-    /// the second error would hide the first one in a transaction.
+    /// the second error would hide the first one in a transaction. After a loss of the
+    /// driver statements, the type lookup fails, so all columns are text.
     async fn column_kinds(&self, sql: &str) -> Result<Vec<ColumnKind>, ExecError> {
-        if self.transaction == TransactionState::Failed {
+        if self.transaction == TransactionState::Failed || self.statements_lost {
             return Ok(Vec::new());
         }
         match self.client.prepare(sql).await {
@@ -578,6 +592,7 @@ impl Session for PostgresSession {
         }
         self.canceller.requested.store(false, Ordering::SeqCst);
         self.take_notices();
+        self.statements_lost |= removes_prepared_statements(sql, Dialect::Postgres);
         let kinds = self.column_kinds(sql).await?;
         if self.canceller.requested.load(Ordering::SeqCst) {
             return Err(ExecError::new(text::STOPPED_BEFORE_SEND));
@@ -620,12 +635,21 @@ impl Session for PostgresSession {
     }
 
     async fn reset(&mut self) -> ResetOutcome {
-        match timeout(SESSION_LIMIT, self.client.batch_execute("DISCARD ALL")).await {
-            Ok(Ok(())) => {
-                // `DISCARD ALL` removes the statement of the driver cache.
-                self.client.clear_type_cache();
-                ResetOutcome::Clean
-            }
+        if self.statements_lost {
+            return ResetOutcome::Discard;
+        }
+        let cleanup = async {
+            let names = self.text_rows(USER_STATEMENTS_SQL).await.ok()?;
+            let mut sql: String = names
+                .into_iter()
+                .filter_map(|row| row.into_iter().next().flatten())
+                .map(|name| format!("DEALLOCATE {};", quoted(&name)))
+                .collect();
+            sql.push_str(CLEANUP_SQL);
+            self.client.batch_execute(&sql).await.ok()
+        };
+        match timeout(SESSION_LIMIT, cleanup).await {
+            Ok(Some(())) => ResetOutcome::Clean,
             _ => ResetOutcome::Discard,
         }
     }

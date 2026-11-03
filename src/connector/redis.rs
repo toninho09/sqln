@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use redis::aio::MultiplexedConnection;
 use redis::{
     AsyncConnectionConfig, Cmd, ErrorKind, ProtocolVersion, RedisConnectionInfo, RedisError,
-    Value as Reply,
+    RedisResult, Value as Reply,
 };
 use rustls::pki_types::ServerName;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -533,13 +533,18 @@ impl RedisSession {
             .any(|flag| reply_text(flag).eq_ignore_ascii_case("readonly"))
     }
 
-    async fn check(&mut self, name: &[u8]) -> Result<(), ExecError> {
+    async fn check(&mut self, name: &[u8], argument: Option<&[u8]>) -> Result<(), ExecError> {
         let upper = String::from_utf8_lossy(name).to_ascii_uppercase();
         if CONTINUOUS.contains(&upper.as_str()) {
             return Err(ExecError::new(text::REDIS_CONTINUOUS));
         }
         if IDENTITY.contains(&upper.as_str()) {
             return Err(ExecError::new(text::REDIS_IDENTITY));
+        }
+        // The session waits for each answer, so a command without an answer has no end.
+        let reply = argument.is_some_and(|argument| argument.eq_ignore_ascii_case(b"REPLY"));
+        if upper == "CLIENT" && reply {
+            return Err(ExecError::new(text::REDIS_NO_REPLY));
         }
         if self.read_only && !self.is_read(name).await {
             return Err(ExecError::new(text::REDIS_READ_ONLY));
@@ -555,7 +560,7 @@ impl RedisSession {
         if name.as_slice() == VALUE_PAGE.as_bytes() {
             return self.read_value(&words, sink).await;
         }
-        self.check(name).await?;
+        self.check(name, words.get(1).map(Vec::as_slice)).await?;
         let words: Vec<&[u8]> = words.iter().map(Vec::as_slice).collect();
         let reply = self.ask(&words).await?;
         Ok(show(&reply, sink).await)
@@ -756,12 +761,30 @@ impl RedisSession {
         Ok((relations, partial))
     }
 
-    /// Removes what a statement left in the session. `DISCARD` fails outside `MULTI`,
-    /// and that answer is normal.
+    /// Removes what a statement left in the session, in one round trip. `DISCARD` fails
+    /// outside `MULTI`, and an old server does not know each `CLIENT` subcommand. Those
+    /// answers are normal, so only `UNWATCH` and `SELECT` give the result.
     async fn clean(&mut self) -> bool {
-        let _ = self.ask(&[b"DISCARD"]).await;
-        let database = self.database.clone();
-        self.ask(&[b"UNWATCH"]).await.is_ok() && self.select(&database).await.is_ok()
+        let mut pipe = redis::pipe();
+        pipe.ignore_errors()
+            .cmd("DISCARD")
+            .cmd("CLIENT")
+            .arg("SETNAME")
+            .arg("")
+            .cmd("CLIENT")
+            .arg("TRACKING")
+            .arg("OFF")
+            .cmd("CLIENT")
+            .arg("NO-EVICT")
+            .arg("OFF")
+            .cmd("CLIENT")
+            .arg("NO-TOUCH")
+            .arg("OFF")
+            .cmd("UNWATCH")
+            .cmd("SELECT")
+            .arg(&self.database);
+        let replies: Result<Vec<RedisResult<Reply>>, _> = pipe.query_async(&mut self.conn).await;
+        matches!(replies.as_deref(), Ok([.., Ok(_), Ok(_)]))
     }
 }
 

@@ -302,10 +302,10 @@ Closing the connection is the only case that abandons that future.
 
 | Database | Cancellation | Cleaning | Transaction state |
 |---|---|---|---|
-| PostgreSQL | `CancelToken` | `DISCARD ALL` | Clock probe, through the simple protocol |
+| PostgreSQL | `CancelToken` | The steps of `DISCARD ALL` without `DEALLOCATE ALL`, and `DEALLOCATE` of each `PREPARE`; after a `DISCARD ALL` or `DEALLOCATE` of the user, close the session | Clock probe, through the simple protocol |
 | MySQL | `KILL QUERY` on a temporary connection | `Conn::reset` and back to the database of the connection | `SERVER_STATUS_IN_TRANS` of the last response; `DO 0` after an error |
 | SQLite | `InterruptHandle` | Drop the connection | `is_autocommit` |
-| Redis/Valkey | `CLIENT UNBLOCK` on a temporary connection; no effect, close the session | `DISCARD`, `UNWATCH`, and back to the database of the connection | Always `None`: the source has no manual transaction |
+| Redis/Valkey | `CLIENT UNBLOCK` on a temporary connection; no effect, close the session | `DISCARD`, the `CLIENT` name and modes, `UNWATCH`, and back to the database of the connection, in one round trip | Always `None`: the source has no manual transaction |
 
 `run` sends one statement, delivers the rows to `ResultSink`, and obeys the `Flow::Stop` return.
 One statement may deliver several results, such as `CALL` in MySQL, and the cap applies to each one.

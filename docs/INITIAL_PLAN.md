@@ -2018,7 +2018,7 @@ The accepted cost is keeping three APIs, the own pool, and the TLS configuration
 
 | Database | Session cleaning | Transaction state |
 |---|---|---|
-| PostgreSQL | `DISCARD ALL` | Clock probe, through the simple protocol |
+| PostgreSQL | The steps of `DISCARD ALL` without `DEALLOCATE ALL`, and `DEALLOCATE` of each `PREPARE` | Clock probe, through the simple protocol |
 | MySQL | `Conn::reset` and back to the database of the connection; without a database, close the session | `SERVER_STATUS_IN_TRANS` indicator of the response; after an error, `DO 0` |
 | SQLite | Drop the connection | `is_autocommit` |
 

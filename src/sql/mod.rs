@@ -7,7 +7,7 @@ mod statement;
 
 pub use classify::{
     changes_state, counts_rows, first_keyword, is_plain_read, is_secret, lacks_where,
-    reads_or_writes_stdio, with_row_limit,
+    reads_or_writes_stdio, removes_prepared_statements, with_row_limit,
 };
 pub use format::format_statement;
 pub use lexer::{Lexer, Token, TokenKind, tokenize};

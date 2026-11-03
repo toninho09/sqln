@@ -416,6 +416,8 @@ pub const REDIS_CONTINUOUS: &str =
     "SQLN cannot show a continuous stream, so it refuses this command.";
 pub const REDIS_IDENTITY: &str =
     "This command changes the login of a shared session, so SQLN refuses it.";
+pub const REDIS_NO_REPLY: &str =
+    "This command stops the answers of the server, so SQLN refuses it.";
 pub const REDIS_COLUMN_VALUE: &str = "value";
 pub const REDIS_COLUMN_FIELD: &str = "field";
 pub const REDIS_COLUMN_MEMBER: &str = "member";

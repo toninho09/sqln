@@ -537,6 +537,48 @@ fn a_shared_session_keeps_its_login() {
 }
 
 #[test]
+fn a_command_without_an_answer_is_refused() {
+    for uri in uris() {
+        let mut h = open(&uri);
+        for command in ["CLIENT REPLY OFF", "client reply skip"] {
+            let run = h.run(&[command]);
+            assert!(run.error().contains("answers"), "{command}: {run:?}");
+        }
+        assert_eq!(h.run_ok(&["PING"]).grid(), [["PONG"]]);
+    }
+}
+
+#[test]
+fn the_cleanup_removes_the_client_state_between_executions() {
+    for uri in uris() {
+        let settings = Settings {
+            max_connections: 1,
+            ..Settings::default()
+        };
+        let mut h = Harness::open(&uri, settings);
+        let first = h.run_ok(&[
+            "CLIENT ID",
+            "CLIENT SETNAME dirty",
+            "CLIENT TRACKING ON",
+            "CLIENT NO-EVICT ON",
+            "CLIENT NO-TOUCH ON",
+        ]);
+        let second = h.run_ok(&["CLIENT ID", "CLIENT INFO"]);
+        let grid = second.grid();
+        assert_eq!(first.grid()[0], grid[0], "the same session: {uri}");
+        let info = &grid[1][0];
+        let field = |name: &str| {
+            info.split_whitespace()
+                .find_map(|pair| pair.strip_prefix(name))
+                .unwrap_or_else(|| panic!("no {name}: {info}"))
+                .to_owned()
+        };
+        assert_eq!(field("name="), "", "{info}");
+        assert!(!field("flags=").contains(['t', 'e', 'T']), "{info}");
+    }
+}
+
+#[test]
 fn stop_ends_a_blocking_command_and_the_session_stays() {
     for uri in uris() {
         let mut h = open(&uri);

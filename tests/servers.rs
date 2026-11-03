@@ -911,6 +911,57 @@ fn the_cleanup_removes_session_state_between_executions() {
 }
 
 #[test]
+fn the_postgres_cleanup_keeps_the_statements_of_the_driver() {
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let mut h = Harness::open(&server, sessions(1));
+    h.run_ok(&[
+        "DROP TYPE IF EXISTS t_mood",
+        "CREATE TYPE t_mood AS ENUM ('calm')",
+        "PREPARE p_dirty AS SELECT 1",
+    ]);
+    let run = h.run(&["EXECUTE p_dirty"]);
+    assert!(run.error().contains("26000"), "{run:?}");
+    // The first read of an enum makes the driver keep a statement for the type lookup.
+    // The next session uses that statement again.
+    for _ in 0..2 {
+        h.run_ok(&["SELECT 'calm'::t_mood"]);
+    }
+    h.run_ok(&["DROP TYPE t_mood"]);
+}
+
+#[test]
+fn a_user_removal_of_the_prepared_statements_keeps_the_types_readable() {
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let names = ["t_lost_a", "t_lost_b", "t_lost_c", "t_lost_d", "t_lost_e"];
+    let mut h = Harness::open(&server, sessions(1));
+    for name in names {
+        h.run_ok(&[
+            format!("DROP TYPE IF EXISTS {name}").as_str(),
+            format!("CREATE TYPE {name} AS ENUM ('calm')").as_str(),
+        ]);
+    }
+    // Each new type needs the type lookup of the driver after the removal.
+    h.run_ok(&["SELECT 'calm'::t_lost_a"]);
+    h.run_ok(&["DISCARD ALL", "SELECT 'calm'::t_lost_b"]);
+    h.run_ok(&["SELECT 'calm'::t_lost_c"]);
+    // In a transaction, a failed lookup would also stop the transaction.
+    h.run_ok(&[
+        "BEGIN",
+        "DEALLOCATE ALL",
+        "SELECT 'calm'::t_lost_d",
+        "COMMIT",
+    ]);
+    h.run_ok(&["SELECT 'calm'::t_lost_e"]);
+    for name in names {
+        h.run_ok(&[format!("DROP TYPE {name}").as_str()]);
+    }
+}
+
+#[test]
 fn a_script_keeps_one_session_for_its_statements() {
     for server in servers() {
         let mut h = Harness::open(&server, sessions(3));

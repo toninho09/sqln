@@ -763,7 +763,6 @@ These choices follow the rules above on the points the rules left open.
 | Value pages | `HSCAN`, `SSCAN`, and `XRANGE` have no offset, so each page repeats the previous read, with the SQL `OFFSET` cost. A hash or set that changes can repeat or skip items |
 | Module types | A module type, such as JSON, does not open in a tab. Use the console |
 | `MULTI` | Valid only inside the same execution. Running `MULTI` alone discards the queue at the end of the execution |
-| `CLIENT REPLY OFF` | SQLN does not refuse that command. The session stays without a response until the deadline or the Stop |
 | Topology | No Cluster and no Sentinel. A `MOVED` response appears as an error |
 | Version | RESP3 needs Redis 6 or newer. An older server fails to connect |
 | Autocomplete | The command list is fixed, without module commands and without keys |
@@ -950,6 +949,10 @@ The new tab order and the close without a replacement console still need code ch
 | Read only | Field per connection, applied by the database | Confirm `DELETE` without `WHERE` | The database applies the rule |
 | Table filter | A single statement | Accept any text | The drivers accept several statements |
 | Cleaning on MySQL | `Conn::reset` and back to the database of the connection; without a database, close the session | Only `Conn::reset` | `COM_RESET_CONNECTION` keeps the database, and a `USE` would pass to the next console |
+| Cleaning on PostgreSQL | The steps of `DISCARD ALL` without `DEALLOCATE ALL`, and `DEALLOCATE` of each `PREPARE` of the user | `DISCARD ALL` | `DISCARD ALL` removes the type lookup that `tokio-postgres` keeps in its cache, and the next enum read failed with `26000` |
+| `DISCARD ALL` and `DEALLOCATE` of the user on PostgreSQL | Run them; then the columns are text, and the cleaning closes the session | Refuse them; handle `26000` in the `prepare` | In a transaction, the failed lookup already stops the transaction |
+| `CLIENT REPLY` on Redis | Refuse | Accept | The session waits for each answer, and the execution had no end before Stop |
+| Cleaning on Redis | `DISCARD`, `CLIENT SETNAME ""`, `TRACKING`, `NO-EVICT`, and `NO-TOUCH` `OFF`, `UNWATCH`, and `SELECT`, in one round trip | Refuse those `CLIENT` commands | The name and the modes passed to the next console |
 | Selector with an open transaction | Refuse the change | Change with `SET` or `USE` | A reserved session does not receive the context, and a transaction with an error refuses `SET` |
 | Disconnect with open work | Refuse and name the console | Ask and stop the console | Fewer states; the user resolves the transaction with the existing controls |
 | Disconnect with a catalog read | Wait for the session for up to 5 seconds | Report the end right after closing the idle ones | The message would be false, and the form stayed stuck in the rename mode |
