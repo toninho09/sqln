@@ -17,6 +17,10 @@ use ratatui::backend::TestBackend;
 use sqln::app::{App, Options};
 use sqln::catalog::{Columns, RelationKind, RelationRef};
 use sqln::clipboard::MemoryClipboard;
+use sqln::compare::data::{DataCompare, Plan, RowChange, plan as data_plan};
+use sqln::compare::ddl::script;
+use sqln::compare::schema::{Change, SchemaModel, Table, build, diff};
+use sqln::compare::sql::{compare_sql, rows_sql, table_columns_sql};
 use sqln::connection::{Definition, Source};
 use sqln::connector::target::parse_uri;
 use sqln::connector::{
@@ -36,7 +40,7 @@ use sqln::grid::{Budget, ResultTable, Row, Value};
 use sqln::import::statement::{Target, TargetColumn};
 use sqln::import::{ImportFormat, ImportJob, ImportMode, ImportProgress, ReadOptions, log_path};
 use sqln::plan::{Explain, PlanView, plan_view};
-use sqln::sql::Dialect;
+use sqln::sql::{Dialect, split};
 use sqln::structure::{Scope, Section, SessionSignal, signal_sql, structure_sql};
 use sqln::ui::text;
 use sqln::ui::theme::Theme;
@@ -141,6 +145,7 @@ struct Run {
     end: Option<ExecutionEnd>,
     transaction: Option<TransactionState>,
     notices: Vec<String>,
+    commands: Vec<String>,
 }
 
 impl Run {
@@ -192,6 +197,10 @@ impl Harness {
         let mut run = Run::default();
         loop {
             match self.next() {
+                ExecEvent::CommandLog {
+                    event: sqln::command_log::LogEvent::Started { text, .. },
+                    ..
+                } => run.commands.push(text),
                 ExecEvent::Columns { columns, .. } => run.columns.push(columns),
                 ExecEvent::Rows { rows, bytes, .. } => {
                     run.rows.extend(rows);
@@ -276,6 +285,57 @@ fn sessions(limit: usize) -> Settings {
     Settings {
         max_connections: limit,
         ..Settings::default()
+    }
+}
+
+#[test]
+fn command_history_captures_effective_sql_cleanup_and_session_reuse() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        h.manager
+            .set_console_history(h.console, 1, "test database".to_owned());
+        let run = h.run_ok(&["SELECT 123 AS history_value"]);
+        let commands = run.commands.join("\n");
+        assert!(
+            commands.contains("SELECT 123 AS history_value\nLIMIT 1001"),
+            "{commands}"
+        );
+        assert!(commands.contains("Internal"));
+        match server.kind {
+            Kind::Postgres => {
+                assert!(commands.contains("Parse/Describe"));
+                assert!(commands.contains("transaction_timestamp()"));
+                assert!(commands.contains("DISCARD TEMP"));
+            }
+            Kind::MySql => assert!(commands.contains("COM_RESET_CONNECTION")),
+        }
+        let run = h.run_ok(&["SELECT 456 AS history_value"]);
+        let commands = run.commands.join("\n");
+        assert!(commands.contains("SELECT 456 AS history_value\nLIMIT 1001"));
+        if server.kind == Kind::MySql {
+            assert!(commands.contains("COM_PING"));
+        }
+    }
+}
+
+#[test]
+fn command_history_captures_internal_cancellation_requests() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        h.manager
+            .set_console_history(h.console, 1, "test database".to_owned());
+        let execution = h.start(&[&server.sleep(10)], false);
+        h.wait_started();
+        // Let the driver enter the command before asking for cancellation.
+        std::thread::sleep(Duration::from_millis(100));
+        h.manager.stop(h.console);
+        let run = h.collect(execution);
+        let commands = run.commands.join("\n");
+        let expected = match server.kind {
+            Kind::Postgres => "PostgreSQL CancelRequest",
+            Kind::MySql => "KILL QUERY",
+        };
+        assert!(commands.contains(expected), "{commands}");
     }
 }
 
@@ -907,6 +967,57 @@ fn the_cleanup_removes_session_state_between_executions() {
             "{:?}: {second:?}",
             server.kind
         );
+    }
+}
+
+#[test]
+fn the_postgres_cleanup_keeps_the_statements_of_the_driver() {
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let mut h = Harness::open(&server, sessions(1));
+    h.run_ok(&[
+        "DROP TYPE IF EXISTS t_mood",
+        "CREATE TYPE t_mood AS ENUM ('calm')",
+        "PREPARE p_dirty AS SELECT 1",
+    ]);
+    let run = h.run(&["EXECUTE p_dirty"]);
+    assert!(run.error().contains("26000"), "{run:?}");
+    // The first read of an enum makes the driver keep a statement for the type lookup.
+    // The next session uses that statement again.
+    for _ in 0..2 {
+        h.run_ok(&["SELECT 'calm'::t_mood"]);
+    }
+    h.run_ok(&["DROP TYPE t_mood"]);
+}
+
+#[test]
+fn a_user_removal_of_the_prepared_statements_keeps_the_types_readable() {
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let names = ["t_lost_a", "t_lost_b", "t_lost_c", "t_lost_d", "t_lost_e"];
+    let mut h = Harness::open(&server, sessions(1));
+    for name in names {
+        h.run_ok(&[
+            format!("DROP TYPE IF EXISTS {name}").as_str(),
+            format!("CREATE TYPE {name} AS ENUM ('calm')").as_str(),
+        ]);
+    }
+    // Each new type needs the type lookup of the driver after the removal.
+    h.run_ok(&["SELECT 'calm'::t_lost_a"]);
+    h.run_ok(&["DISCARD ALL", "SELECT 'calm'::t_lost_b"]);
+    h.run_ok(&["SELECT 'calm'::t_lost_c"]);
+    // In a transaction, a failed lookup would also stop the transaction.
+    h.run_ok(&[
+        "BEGIN",
+        "DEALLOCATE ALL",
+        "SELECT 'calm'::t_lost_d",
+        "COMMIT",
+    ]);
+    h.run_ok(&["SELECT 'calm'::t_lost_e"]);
+    for name in names {
+        h.run_ok(&[format!("DROP TYPE {name}").as_str()]);
     }
 }
 
@@ -2253,7 +2364,13 @@ fn a_table_view_pages_filters_and_orders_rows_of_each_server() {
         s.run_script(&format!(
             "DROP TABLE IF EXISTS app_pages;\nCREATE TABLE app_pages (id int, label varchar(30));\n{fill}"
         ));
-        s.wait_for("changed");
+        assert!(
+            s.app
+                .console()
+                .messages
+                .iter()
+                .any(|message| message.text.contains("changed"))
+        );
 
         s.open_table("app_pages");
         assert_eq!(s.table_ids().len(), 100);
@@ -2360,7 +2477,13 @@ fn a_table_view_quotes_the_names_of_each_server() {
         };
         let drop_first = drop.replace("DROP TABLE", "DROP TABLE IF EXISTS");
         s.run_script(&format!("{drop_first};\n{create};\n{insert};"));
-        s.wait_for("changed");
+        assert!(
+            s.app
+                .console()
+                .messages
+                .iter()
+                .any(|message| message.text.contains("changed"))
+        );
         s.open_table("App Items");
         assert_eq!(s.table_ids(), ["1", "2"]);
         s.wait_for("Mixed Case");
@@ -3681,4 +3804,319 @@ fn the_keys_of_a_tab_end_a_session_of_each_server() {
         });
         s.app.shutdown();
     }
+}
+
+/// Reads the compare model of a schema, one statement per execution, with the schema in
+/// the context of the session, as the compare tab does.
+fn compare_model(h: &mut Harness, dialect: Dialect, schema: &str) -> SchemaModel {
+    let results: Vec<Vec<Row>> = compare_sql(dialect, schema)
+        .unwrap()
+        .into_iter()
+        .map(|sql| {
+            let options = RunOptions {
+                schema: Some(schema.to_owned()),
+                row_cap: Some(usize::MAX),
+                ..RunOptions::default()
+            };
+            let execution = h.manager.run(h.console, vec![sql.clone()], options);
+            let run = h.collect(execution);
+            assert_eq!(run.end, Some(ExecutionEnd::Completed), "{sql}: {run:?}");
+            run.rows
+        })
+        .collect();
+    build(dialect, schema, &results)
+}
+
+/// Runs a script statement by statement in one execution.
+fn run_script(h: &mut Harness, dialect: Dialect, script: &str) {
+    let statements: Vec<&str> = split(script, dialect)
+        .iter()
+        .map(|statement| &script[statement.start..statement.end])
+        .collect();
+    h.run_ok(&statements);
+}
+
+#[test]
+fn the_structure_script_makes_the_target_schema_equal_on_each_server() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let (dialect, schemas, source, target) = match server.kind {
+            Kind::Postgres => (
+                Dialect::Postgres,
+                [
+                    "DROP SCHEMA IF EXISTS cmp_src CASCADE",
+                    "DROP SCHEMA IF EXISTS cmp_dst CASCADE",
+                    "CREATE SCHEMA cmp_src",
+                    "CREATE SCHEMA cmp_dst",
+                ],
+                vec![
+                    "CREATE TABLE cmp_src.owners (id serial PRIMARY KEY, \
+                       name text NOT NULL DEFAULT 'x', code varchar(10) UNIQUE, \
+                       CONSTRAINT owners_name_check CHECK (length(name) > 0))",
+                    "CREATE TABLE cmp_src.items (\
+                       id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, \
+                       owner int REFERENCES cmp_src.owners (id) ON DELETE CASCADE, \
+                       price numeric(10, 2) DEFAULT 0, label text)",
+                    "CREATE INDEX items_label ON cmp_src.items (lower(label))",
+                ],
+                vec![
+                    "CREATE TABLE cmp_dst.owners (id serial PRIMARY KEY, name varchar(5), \
+                       code varchar(10))",
+                    "CREATE TABLE cmp_dst.old (id int)",
+                    "INSERT INTO cmp_dst.owners (name, code) VALUES ('one', 'a')",
+                ],
+            ),
+            Kind::MySql => (
+                Dialect::MySql,
+                [
+                    "DROP DATABASE IF EXISTS cmp_src",
+                    "DROP DATABASE IF EXISTS cmp_dst",
+                    "CREATE DATABASE cmp_src",
+                    "CREATE DATABASE cmp_dst",
+                ],
+                vec![
+                    "CREATE TABLE cmp_src.owners (id int AUTO_INCREMENT PRIMARY KEY, \
+                       name varchar(20) NOT NULL DEFAULT 'x', code varchar(10), \
+                       UNIQUE KEY owners_code (code), \
+                       CONSTRAINT owners_name_check CHECK (char_length(name) > 0))",
+                    "CREATE TABLE cmp_src.items (id bigint AUTO_INCREMENT PRIMARY KEY, \
+                       owner int, price decimal(10, 2) DEFAULT 0, label varchar(40), \
+                       created timestamp NULL DEFAULT CURRENT_TIMESTAMP \
+                         ON UPDATE CURRENT_TIMESTAMP, \
+                       KEY items_label (label), \
+                       CONSTRAINT items_owner FOREIGN KEY (owner) \
+                         REFERENCES cmp_src.owners (id) ON DELETE CASCADE)",
+                ],
+                vec![
+                    "CREATE TABLE cmp_dst.owners (id int AUTO_INCREMENT PRIMARY KEY, \
+                       name varchar(5), code varchar(10))",
+                    "CREATE TABLE cmp_dst.old (id int)",
+                    "INSERT INTO cmp_dst.owners (name, code) VALUES ('one', 'a')",
+                ],
+            ),
+        };
+        h.run_ok(&schemas);
+        h.run_ok(&source);
+        h.run_ok(&target);
+        let from = compare_model(&mut h, dialect, "cmp_src");
+        let to = compare_model(&mut h, dialect, "cmp_dst");
+        let differences = diff(&from, &to);
+        let changes: Vec<(Change, String, String)> = differences
+            .iter()
+            .map(|difference| {
+                let name = difference.object().name().to_owned();
+                (difference.change, difference.table.clone(), name)
+            })
+            .collect();
+        assert!(
+            changes.contains(&(Change::Create, "items".to_owned(), "items".to_owned())),
+            "{:?}: {changes:?}",
+            server.kind
+        );
+        assert!(
+            changes.contains(&(Change::Alter, "owners".to_owned(), "name".to_owned())),
+            "{:?}: {changes:?}",
+            server.kind
+        );
+        assert!(
+            changes.contains(&(Change::Drop, "old".to_owned(), "old".to_owned())),
+            "{:?}: {changes:?}",
+            server.kind
+        );
+        let script = script(&from, &to, &differences, true);
+        run_script(&mut h, dialect, &script);
+        let after = diff(&from, &compare_model(&mut h, dialect, "cmp_dst"));
+        assert!(after.is_empty(), "{:?}: {after:?}\n{script}", server.kind);
+        let name = h.run_ok(&["SELECT name FROM cmp_dst.owners"]);
+        assert_eq!(name.text(0, 0), "one", "{:?}", server.kind);
+        h.run_ok(&schemas[..2]);
+    }
+}
+
+#[test]
+fn a_structure_compare_between_two_dialects_counts_only_names_nulls_and_keys() {
+    let (Some(postgres), Some(mysql)) = (only(Kind::Postgres), only(Kind::MySql)) else {
+        return;
+    };
+    let mut pg = Harness::open(&postgres, Settings::default());
+    let mut my = Harness::open(&mysql, Settings::default());
+    pg.run_ok(&[
+        "DROP SCHEMA IF EXISTS cmp_cross CASCADE",
+        "CREATE SCHEMA cmp_cross",
+        "CREATE TABLE cmp_cross.t (id int PRIMARY KEY, name text NOT NULL, code text UNIQUE)",
+    ]);
+    my.run_ok(&[
+        "DROP DATABASE IF EXISTS cmp_cross",
+        "CREATE DATABASE cmp_cross",
+        "CREATE TABLE cmp_cross.t (id bigint PRIMARY KEY, name varchar(9), \
+           code varchar(9), UNIQUE KEY t_code (code))",
+    ]);
+    let from = compare_model(&mut pg, Dialect::Postgres, "cmp_cross");
+    let to = compare_model(&mut my, Dialect::MySql, "cmp_cross");
+    let differences = diff(&from, &to);
+    let names: Vec<&str> = differences
+        .iter()
+        .map(|difference| difference.object().name())
+        .collect();
+    // Only the `NULL` rule of `name` differs. The types and the key names do not count.
+    assert_eq!(names, ["name"], "{differences:?}");
+    pg.run_ok(&["DROP SCHEMA cmp_cross CASCADE"]);
+    my.run_ok(&["DROP DATABASE cmp_cross"]);
+}
+
+/// One table of a data compare: its model, its columns, and its rows.
+struct DataSide {
+    table: Table,
+    columns: Vec<String>,
+    rows: Vec<Row>,
+}
+
+/// Reads a table as the compare tab does: the column query, and then each row.
+fn data_side(h: &mut Harness, dialect: Dialect, schema: &str, table: &str) -> DataSide {
+    let options = RunOptions {
+        schema: Some(schema.to_owned()),
+        row_cap: Some(usize::MAX),
+        ..RunOptions::default()
+    };
+    let sql = table_columns_sql(dialect, schema, table).unwrap();
+    let execution = h.manager.run(h.console, vec![sql], options);
+    let run = h.collect(execution);
+    assert_eq!(run.end, Some(ExecutionEnd::Completed), "{run:?}");
+    let model = build(dialect, schema, &[run.rows]);
+    let read = h.run_ok(&[&rows_sql(dialect, schema, table)]);
+    DataSide {
+        table: model.tables[table].clone(),
+        columns: read.columns[0].clone(),
+        rows: read.rows,
+    }
+}
+
+fn data_compare(source: DataSide, target: DataSide, dialect: Dialect) -> (DataCompare, Plan) {
+    let plan = data_plan(&source.table, &target.table, dialect).unwrap();
+    let mut data = DataCompare::new(source.columns, &plan.key).unwrap();
+    data.add_source(source.rows);
+    data.set_target_columns(&target.columns, &plan.skipped)
+        .unwrap();
+    data.add_target(target.rows, &Budget::new(usize::MAX));
+    data.finish();
+    (data, plan)
+}
+
+#[test]
+fn the_data_script_makes_the_target_rows_equal_on_each_server() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let (dialect, setup) = match server.kind {
+            Kind::Postgres => (
+                Dialect::Postgres,
+                [
+                    "DROP SCHEMA IF EXISTS cmp_dsrc CASCADE",
+                    "DROP SCHEMA IF EXISTS cmp_ddst CASCADE",
+                    "CREATE SCHEMA cmp_dsrc",
+                    "CREATE SCHEMA cmp_ddst",
+                    "CREATE TABLE cmp_dsrc.t (id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY, \
+                       name text, price numeric(10, 2), flag boolean, data bytea, \
+                       at timestamp, total numeric GENERATED ALWAYS AS (price * 2) STORED)",
+                    "CREATE TABLE cmp_ddst.t (id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY, \
+                       name text, price numeric(10, 2), flag boolean, data bytea, \
+                       at timestamp, total numeric GENERATED ALWAYS AS (price * 2) STORED)",
+                    "INSERT INTO cmp_dsrc.t (name, price, flag, data, at) VALUES \
+                       ('same', 10.5, true, '\\x00ff', '2024-01-02 03:04:05'), \
+                       ('it''s', 2, false, NULL, NULL), ('new', 3, NULL, '\\x5c', NULL)",
+                    "INSERT INTO cmp_ddst.t (name, price, flag, data, at) VALUES \
+                       ('same', 10.50, true, '\\x00ff', '2024-01-02 03:04:05'), \
+                       ('old', 2, true, NULL, NULL)",
+                ],
+            ),
+            Kind::MySql => (
+                Dialect::MySql,
+                [
+                    "DROP DATABASE IF EXISTS cmp_dsrc",
+                    "DROP DATABASE IF EXISTS cmp_ddst",
+                    "CREATE DATABASE cmp_dsrc",
+                    "CREATE DATABASE cmp_ddst",
+                    "CREATE TABLE cmp_dsrc.t (id int AUTO_INCREMENT PRIMARY KEY, \
+                       name varchar(20), price decimal(10, 2), flag tinyint(1), \
+                       data varbinary(4), at datetime, \
+                       total decimal(12, 2) AS (price * 2) STORED)",
+                    "CREATE TABLE cmp_ddst.t (id int AUTO_INCREMENT PRIMARY KEY, \
+                       name varchar(20), price decimal(10, 2), flag tinyint(1), \
+                       data varbinary(4), at datetime, \
+                       total decimal(12, 2) AS (price * 2) STORED)",
+                    "INSERT INTO cmp_dsrc.t (name, price, flag, data, at) VALUES \
+                       ('same', 10.5, 1, X'00FF', '2024-01-02 03:04:05'), \
+                       ('it''s', 2, 0, NULL, NULL), ('new\\\\', 3, NULL, X'5C', NULL)",
+                    "INSERT INTO cmp_ddst.t (id, name, price, flag, data, at) VALUES \
+                       (1, 'same', 10.50, 1, X'00FF', '2024-01-02 03:04:05'), \
+                       (2, 'old', 2, 1, NULL, NULL), (4, 'gone', 4, 0, NULL, NULL)",
+                ],
+            ),
+        };
+        h.run_ok(&setup);
+        let source = data_side(&mut h, dialect, "cmp_dsrc", "t");
+        let target = data_side(&mut h, dialect, "cmp_ddst", "t");
+        let (data, plan) = data_compare(source, target, dialect);
+        assert_eq!(plan.skipped, ["total"], "{:?}", server.kind);
+        assert_eq!(plan.overriding, dialect == Dialect::Postgres);
+        let kinds: Vec<&str> = data
+            .changes
+            .iter()
+            .map(|change| match change {
+                RowChange::Insert(_) => "insert",
+                RowChange::Update { .. } => "update",
+                RowChange::Delete(_) => "delete",
+            })
+            .collect();
+        let expected: &[&str] = match server.kind {
+            Kind::Postgres => &["update", "insert"],
+            Kind::MySql => &["update", "delete", "insert"],
+        };
+        assert_eq!(kinds, expected, "{:?}", server.kind);
+        let table = "cmp_ddst.t";
+        let script = data.script(table, dialect, true, plan.overriding);
+        run_script(&mut h, dialect, &script);
+        let source = data_side(&mut h, dialect, "cmp_dsrc", "t");
+        let target = data_side(&mut h, dialect, "cmp_ddst", "t");
+        let (after, _) = data_compare(source, target, dialect);
+        assert!(
+            after.changes.is_empty(),
+            "{:?}: {:?}\n{script}",
+            server.kind,
+            after.changes
+        );
+        h.run_ok(&setup[..2]);
+    }
+}
+
+#[test]
+fn a_data_compare_between_two_dialects_writes_the_script_of_the_target() {
+    let (Some(postgres), Some(mysql)) = (only(Kind::Postgres), only(Kind::MySql)) else {
+        return;
+    };
+    let mut pg = Harness::open(&postgres, Settings::default());
+    let mut my = Harness::open(&mysql, Settings::default());
+    pg.run_ok(&[
+        "DROP SCHEMA IF EXISTS cmp_dcross CASCADE",
+        "CREATE SCHEMA cmp_dcross",
+        "CREATE TABLE cmp_dcross.x (id bigint PRIMARY KEY, name text, price numeric(10, 2))",
+        "INSERT INTO cmp_dcross.x VALUES (1, 'a', 1.5), (2, 'b\\c', 2)",
+    ]);
+    my.run_ok(&[
+        "DROP DATABASE IF EXISTS cmp_dcross",
+        "CREATE DATABASE cmp_dcross",
+        "CREATE TABLE cmp_dcross.x (id int PRIMARY KEY, name varchar(9), price decimal(10, 2))",
+        "INSERT INTO cmp_dcross.x VALUES (1, 'a', 1.50), (3, 'c', 3)",
+    ]);
+    let source = data_side(&mut pg, Dialect::Postgres, "cmp_dcross", "x");
+    let target = data_side(&mut my, Dialect::MySql, "cmp_dcross", "x");
+    let (data, plan) = data_compare(source, target, Dialect::MySql);
+    assert_eq!(data.changes.len(), 2, "{:?}", data.changes);
+    let script = data.script("cmp_dcross.x", Dialect::MySql, true, plan.overriding);
+    run_script(&mut my, Dialect::MySql, &script);
+    let source = data_side(&mut pg, Dialect::Postgres, "cmp_dcross", "x");
+    let target = data_side(&mut my, Dialect::MySql, "cmp_dcross", "x");
+    let (after, _) = data_compare(source, target, Dialect::MySql);
+    assert!(after.changes.is_empty(), "{:?}\n{script}", after.changes);
+    pg.run_ok(&["DROP SCHEMA cmp_dcross CASCADE"]);
+    my.run_ok(&["DROP DATABASE cmp_dcross"]);
 }

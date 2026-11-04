@@ -644,7 +644,11 @@ Suggest the names of the CTEs available in the current statement and their colum
 Respect aliases and the scope of the subqueries.
 Do not query the database to discover columns of a CTE.
 Do not suggest columns when the analysis cannot determine them.
-Autocomplete of functions and their signatures does not enter that initial scope.
+**Expanded coverage:** suggest built-in types in `CREATE TABLE`, `ALTER TABLE`, and `CAST`, according to the connection dialect.
+Suggest column options, functions with parameter signatures, and query clauses according to the cursor context.
+Accept a function as `COUNT()` and put the cursor inside the parentheses.
+Keep existing parentheses and arguments when the function name already has them.
+Use local lists for built-in types and functions. Do not query the database for each key.
 
 **Defined:** the object navigator shows the same coverage: schemas, tables, views, and columns.
 
@@ -2018,7 +2022,7 @@ The accepted cost is keeping three APIs, the own pool, and the TLS configuration
 
 | Database | Session cleaning | Transaction state |
 |---|---|---|
-| PostgreSQL | `DISCARD ALL` | Clock probe, through the simple protocol |
+| PostgreSQL | The steps of `DISCARD ALL` without `DEALLOCATE ALL`, and `DEALLOCATE` of each `PREPARE` | Clock probe, through the simple protocol |
 | MySQL | `Conn::reset` and back to the database of the connection; without a database, close the session | `SERVER_STATUS_IN_TRANS` indicator of the response; after an error, `DO 0` |
 | SQLite | Drop the connection | `is_autocommit` |
 

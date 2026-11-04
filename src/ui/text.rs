@@ -132,6 +132,12 @@ pub const HINT_FORM: &[HintPart] = &[
     ("Esc", "cancel"),
 ];
 pub const HINT_FORM_TEXT: &[HintPart] = &[("Tab", "next"), ("Enter", "next"), ("Esc", "cancel")];
+pub const HINT_FORM_LIST: &[HintPart] = &[
+    ("", "Write to filter"),
+    ("Up/Down", "move"),
+    ("Enter", "choose"),
+    ("Esc", "close list"),
+];
 pub const HINT_FORM_BUTTON: &[HintPart] = &[("Tab", "next"), ("Enter", "press"), ("Esc", "cancel")];
 pub const HINT_FORM_PATH: &[HintPart] = &[
     ("Tab", "next"),
@@ -307,6 +313,7 @@ pub const MENU_DISCONNECT: &str = "Disconnect";
 pub const MENU_DELETE_PASSWORD: &str = "Delete the password";
 pub const MENU_STRUCTURE: &str = "Show the structure";
 pub const MENU_DIAGRAM: &str = "ER diagram";
+pub const MENU_COMPARE: &str = "Compare";
 pub const MENU_GENERATE: &str = "Generate SQL";
 pub const MENU_IMPORT: &str = "Import a file";
 pub const MENU_COPY_NAME: &str = "Copy the name";
@@ -416,6 +423,8 @@ pub const REDIS_CONTINUOUS: &str =
     "SQLN cannot show a continuous stream, so it refuses this command.";
 pub const REDIS_IDENTITY: &str =
     "This command changes the login of a shared session, so SQLN refuses it.";
+pub const REDIS_NO_REPLY: &str =
+    "This command stops the answers of the server, so SQLN refuses it.";
 pub const REDIS_COLUMN_VALUE: &str = "value";
 pub const REDIS_COLUMN_FIELD: &str = "field";
 pub const REDIS_COLUMN_MEMBER: &str = "member";
@@ -685,6 +694,7 @@ pub fn template_name(template: Template) -> &'static str {
     }
 }
 pub const FIELD_FORMAT_JSON: &str = "Format JSON";
+pub const FIELD_SHOW_SYSTEM_COMMANDS: &str = "System commands";
 pub const FIELD_BELL_AFTER: &str = "Bell seconds";
 pub const FIELD_SUGGESTION_KEYS: &str = "Autocomplete";
 pub const FIELD_UNDO_LIMIT: &str = "Undo (MiB)";
@@ -907,7 +917,7 @@ pub fn change_connection(
     format!(
         "Move {name} from {current} to {target}?\n\n{files} {folder}.\n\
          SQLN saves the text first, and it runs no SQL.\n\
-         The results, the messages, and the schema choice of the console end."
+         The results and the schema choice end. The Messages history stays."
     )
 }
 pub const TITLE_SCHEMA: &str = "Schema";
@@ -982,6 +992,57 @@ pub const DIAGRAM_EMPTY: &str = "This schema has no tables.";
 pub const DIAGRAM_STOPPED: &str = "The read stopped. The diagram did not change.";
 pub const DIAGRAM_PARTIAL: &str = "partial: a limit stopped the read";
 pub const DIAGRAM_KEYS_ONLY: &str = "keys only";
+pub const COMPARE_REFUSED: &str = "This source has no tables to compare.";
+pub const COMPARE_CONSOLE: &str = "A console has no tables. Use the row of a schema or a table.";
+pub const COMPARE_VIEW: &str = "A view has no keys to compare. Use the row of a table.";
+pub const COMPARE_NO_CONNECTION: &str = "Add a database connection first.";
+pub const COMPARE_TABLE_ON_BOTH: &str = "Write the source table too, or clear the target table.";
+pub const COMPARE_SAME_SIDES: &str = "The target is the source. Choose another target.";
+pub const COMPARE_LIMITED: &str =
+    "A limit stopped the read. The compare needs each row, so it shows nothing.";
+pub const COMPARE_STOPPED: &str = "The read stopped. The compare did not change.";
+pub const COMPARE_BUDGET: &str = "The data budget is full. Close a result and read again.";
+pub const COMPARE_EQUAL: &str = "No differences. The target is equal to the source.";
+pub const COMPARE_NO_SCRIPT: &str = "No script: the target has no differences.";
+pub const COMPARE_NO_SCRIPT_DIALECTS: &str = "No script: the two sources have different dialects.";
+pub const COMPARE_NOT_READ: &str = "The compare has no result yet.";
+pub const COMPARE_LOADING: &str = "loading…";
+pub const COMPARE_TWO_DIALECTS: &str = "no script: two dialects";
+pub const COMPARE_COLUMNS: [&str; 6] = ["Change", "Object", "Table", "Name", "Source", "Target"];
+pub const COMPARE_CREATE: &str = "create";
+pub const COMPARE_DROP: &str = "drop";
+pub const COMPARE_ALTER: &str = "alter";
+pub const COMPARE_TABLE: &str = "table";
+pub const COMPARE_COLUMN: &str = "column";
+pub const COMPARE_PRIMARY_KEY: &str = "primary key";
+pub const COMPARE_UNIQUE: &str = "unique key";
+pub const COMPARE_FOREIGN_KEY: &str = "foreign key";
+pub const COMPARE_CHECK: &str = "check";
+pub const COMPARE_INDEX: &str = "index";
+pub const COMPARE_NO_KEY: &str = "The source table has no primary key, so its rows have no match.";
+pub const COMPARE_DATA_BUDGET: &str =
+    "The source table does not fit in the data budget. The compare shows nothing.";
+pub const COMPARE_DATA_TABLE: &str = "A data compare needs a source table.";
+pub const COMPARE_CHANGE: &str = "Change";
+pub const COMPARE_INSERT: &str = "insert";
+pub const COMPARE_DELETE: &str = "delete";
+pub const COMPARE_TARGET_ROW: &str = "  target";
+pub const KIND_STRUCTURE: &str = "Structure";
+pub const KIND_DATA: &str = "Data";
+pub const FIELD_COMPARE_KIND: &str = "Compare";
+pub const COMPARE_DATA_HINT: &str =
+    "The script makes the rows of the target table equal to the rows of the source table.";
+pub const TITLE_COMPARE: &str = "Compare";
+pub const BUTTON_COMPARE: &str = "Compare";
+pub const FIELD_COMPARE_SOURCE: &str = "Source connection";
+pub const FIELD_COMPARE_SOURCE_SCHEMA: &str = "Source schema";
+pub const FIELD_COMPARE_SOURCE_TABLE: &str = "Source table";
+pub const FIELD_COMPARE_TARGET: &str = "Target connection";
+pub const FIELD_COMPARE_TARGET_SCHEMA: &str = "Target schema";
+pub const FIELD_COMPARE_TARGET_TABLE: &str = "Target table";
+pub const FIELD_COMPARE_REMOVALS: &str = "Removals as statements";
+pub const COMPARE_HINT: &str =
+    "The script makes the target equal to the source. An empty table compares the schema.";
 pub const SESSIONS_READ_ONLY: &str = "A read-only connection cannot change a session.";
 pub const SESSION_SIGNAL_SENT: &str = "The database accepted the request.";
 pub const SESSION_GONE: &str = "The session ended before the request.";
@@ -1029,6 +1090,7 @@ pub const BUTTON_RELOAD: &str = "Reload";
 pub const NOTE_PARTIAL_KEYS: &str = "(partial list)";
 pub const REGION_TABLE: &str = "Table";
 pub const REGION_DIAGRAM: &str = "Diagram";
+pub const REGION_COMPARE: &str = "Compare";
 pub const REGION_FILTER: &str = "Filter";
 
 pub const MARK_PRODUCTION: &str = "PROD";
@@ -1216,6 +1278,7 @@ pub fn action_text(action: Action) -> &'static str {
         Action::GridLoadMore => "Load more rows",
         Action::NavigatorDiagram => "Show the ER diagram of the row",
         Action::OpenDiagram => "Show the ER diagram of the tab or the row",
+        Action::OpenCompare => "Compare the tab or the row with another source",
         Action::DiagramUp => "Select the table above",
         Action::DiagramDown => "Select the table below",
         Action::DiagramLeft => "Select the table on the left",
@@ -1231,6 +1294,11 @@ pub fn action_text(action: Action) -> &'static str {
         Action::DiagramCopy => "Copy the diagram as Mermaid text",
         Action::DiagramReload => "Read the diagram again",
         Action::DiagramKeysOnly => "Show only the key columns, or all",
+        Action::NavigatorCompare => {
+            "Compare the structure or the data of the row with another source"
+        }
+        Action::CompareScript => "Open the sync script in a new console",
+        Action::CompareCopy => "Copy the sync script",
     }
 }
 
@@ -1339,6 +1407,64 @@ pub fn table_title(connection: &str, schema: &str, relation: &str, kind: &str) -
 
 pub fn structure_title(connection: &str, name: &str) -> String {
     format!("{connection} · {name} · structure")
+}
+
+pub fn compare_columns(count: usize) -> String {
+    plural(count, "column")
+}
+
+pub fn compare_label(name: &str) -> String {
+    format!("{name} (compare)")
+}
+
+pub fn compare_title(source: &str, target: &str) -> String {
+    format!("{source} → {target} · compare")
+}
+
+pub fn compare_summary(differences: usize) -> String {
+    plural(differences, "difference")
+}
+
+pub fn data_compare_label(name: &str) -> String {
+    format!("{name} (data)")
+}
+
+pub fn data_compare_title(source: &str, target: &str) -> String {
+    format!("{source} → {target} · data compare")
+}
+
+pub fn compare_no_target_table(table: &str) -> String {
+    format!("The target has no table {table}. Compare the structure first.")
+}
+
+pub fn compare_missing_column(column: &str) -> String {
+    format!("The target has no column {column}. Compare the structure first.")
+}
+
+pub fn compare_update(columns: &str) -> String {
+    format!("update {columns}")
+}
+
+pub fn data_compare_header(source: &str, target: &str, differences: usize) -> String {
+    format!(
+        "-- SQLN data compare\n-- Source: {source}\n-- Target: {target}\n-- {}",
+        plural(differences, "difference")
+    )
+}
+
+pub fn compare_wait_catalog(connection: &str) -> String {
+    format!("Wait for the schemas of {connection}.")
+}
+
+pub fn compare_no_table(table: &str) -> String {
+    format!("The source has no table {table}.")
+}
+
+pub fn compare_script_header(source: &str, target: &str, differences: usize) -> String {
+    format!(
+        "-- SQLN structure compare\n-- Source: {source}\n-- Target: {target}\n-- {}",
+        plural(differences, "difference")
+    )
 }
 
 pub fn diagram_label(name: &str) -> String {

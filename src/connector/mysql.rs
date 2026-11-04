@@ -147,6 +147,7 @@ impl Connector for MySqlConnector {
             transaction: TransactionState::None,
             running: false,
             status_is_current: true,
+            trace: None,
         }))
     }
 }
@@ -157,10 +158,13 @@ struct MySqlCanceller {
 }
 
 impl MySqlCanceller {
-    async fn kill_query(&self) -> Result<(), DriverError> {
+    async fn kill_query(
+        &self,
+        trace: Option<crate::command_log::TraceContext>,
+    ) -> Result<(), DriverError> {
         let mut conn = Conn::new(self.options.clone()).await?;
-        conn.query_drop(format!("KILL QUERY {}", self.connection))
-            .await?;
+        let sql = format!("KILL QUERY {}", self.connection);
+        crate::command_log::observe(trace, &sql, conn.query_drop(&sql)).await?;
         conn.disconnect().await
     }
 }
@@ -168,7 +172,14 @@ impl MySqlCanceller {
 #[async_trait]
 impl Canceller for MySqlCanceller {
     async fn cancel(&self) -> Result<(), String> {
-        match timeout(SESSION_LIMIT, self.kill_query()).await {
+        self.cancel_traced(None).await
+    }
+
+    async fn cancel_traced(
+        &self,
+        trace: Option<crate::command_log::TraceContext>,
+    ) -> Result<(), String> {
+        match timeout(SESSION_LIMIT, self.kill_query(trace)).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(error)) => Err(describe(&error)),
             Err(_) => Err("The cancel request got no answer.".to_owned()),
@@ -275,6 +286,7 @@ struct Outcome {
 }
 
 struct MySqlSession {
+    trace: Option<crate::command_log::TraceContext>,
     /// `Drop` takes this value. All other code finds it here.
     conn: Option<Conn>,
     canceller: Arc<MySqlCanceller>,
@@ -291,14 +303,27 @@ impl MySqlSession {
     /// The reset of the server keeps the current database, so a `USE` needs this step.
     /// MySQL cannot leave a database, so a session without a database closes.
     async fn clean(&mut self) -> bool {
-        if !matches!(self.conn().reset().await, Ok(true)) {
+        if !matches!(
+            crate::command_log::observe(
+                self.trace.clone(),
+                "COM_RESET_CONNECTION",
+                self.conn().reset()
+            )
+            .await,
+            Ok(true)
+        ) {
             return false;
         }
-        let current: Option<Option<String>> =
-            match self.conn().query_first("SELECT DATABASE()").await {
-                Ok(current) => current,
-                Err(_) => return false,
-            };
+        let current: Option<Option<String>> = match crate::command_log::observe(
+            self.trace.clone(),
+            "SELECT DATABASE()",
+            self.conn().query_first("SELECT DATABASE()"),
+        )
+        .await
+        {
+            Ok(current) => current,
+            Err(_) => return false,
+        };
         let current = current.flatten();
         if current == self.database {
             return true;
@@ -307,7 +332,9 @@ impl MySqlSession {
             return false;
         };
         let sql = format!("USE {}", quoted(database));
-        self.conn().query_drop(sql).await.is_ok()
+        crate::command_log::observe(self.trace.clone(), &sql, self.conn().query_drop(&sql))
+            .await
+            .is_ok()
     }
 }
 
@@ -331,8 +358,16 @@ impl MySqlSession {
     }
 
     async fn read(&mut self, sql: &str, sink: &mut ResultSink) -> Result<Outcome, ExecError> {
+        crate::command_log::observe(self.trace.clone(), sql, self.read_untraced(sql, sink)).await
+    }
+
+    async fn read_untraced(
+        &mut self,
+        sql: &str,
+        sink: &mut ResultSink,
+    ) -> Result<Outcome, ExecError> {
         let free = self.transaction == TransactionState::None;
-        let canceller = self.canceller.clone();
+        let canceller = self.canceller();
         let mut result = self
             .conn()
             .query_iter(sql)
@@ -396,7 +431,17 @@ impl MySqlSession {
             return;
         }
         let request = format!("SHOW WARNINGS LIMIT {MAX_NOTICES}");
-        let rows = timeout(SESSION_LIMIT, self.conn().query(request)).await;
+        let rows = timeout(
+            SESSION_LIMIT,
+            crate::command_log::observe(
+                self.trace
+                    .as_ref()
+                    .map(crate::command_log::TraceContext::internal),
+                &request,
+                self.conn().query(&request),
+            ),
+        )
+        .await;
         let Ok(Ok(rows)) = rows else { return };
         let rows: Vec<(String, u32, String)> = rows;
         if rows.is_empty() {
@@ -415,7 +460,18 @@ impl MySqlSession {
     /// and `SET TRANSACTION` still applies to the next transaction.
     async fn observed_state(&mut self) -> TransactionState {
         if !self.status_is_current {
-            match timeout(SESSION_LIMIT, self.conn().query_drop(STATUS_REQUEST)).await {
+            match timeout(
+                SESSION_LIMIT,
+                crate::command_log::observe(
+                    self.trace
+                        .as_ref()
+                        .map(crate::command_log::TraceContext::internal),
+                    STATUS_REQUEST,
+                    self.conn().query_drop(STATUS_REQUEST),
+                ),
+            )
+            .await
+            {
                 Ok(Ok(())) => self.status_is_current = true,
                 _ => return TransactionState::Unknown,
             }
@@ -435,22 +491,24 @@ impl MySqlSession {
 
 #[async_trait]
 impl Session for MySqlSession {
+    fn set_trace_context(&mut self, trace: Option<crate::command_log::TraceContext>) {
+        self.trace = trace;
+    }
+
     fn canceller(&self) -> Arc<dyn Canceller> {
-        self.canceller.clone()
+        crate::command_log::canceller(self.canceller.clone(), &self.trace)
     }
 
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError> {
         if context.read_only {
             let sql = "SET SESSION TRANSACTION READ ONLY";
-            self.conn()
-                .query_drop(sql)
+            crate::command_log::observe(self.trace.clone(), sql, self.conn().query_drop(sql))
                 .await
                 .map_err(|error| exec_error(&error, sql))?;
         }
         if let Some(schema) = &context.schema {
             let sql = format!("USE {}", quoted(schema));
-            self.conn()
-                .query_drop(&sql)
+            crate::command_log::observe(self.trace.clone(), &sql, self.conn().query_drop(&sql))
                 .await
                 .map_err(|error| exec_error(&error, &sql))?;
         }
@@ -485,7 +543,8 @@ impl Session for MySqlSession {
             TransactionCommand::Commit => "COMMIT",
             TransactionCommand::Rollback => "ROLLBACK",
         };
-        let done = self.conn().query_drop(sql).await;
+        let done =
+            crate::command_log::observe(self.trace.clone(), sql, self.conn().query_drop(sql)).await;
         self.status_is_current = done.is_ok();
         done.map_err(|error| exec_error(&error, sql))?;
         if command == TransactionCommand::Begin {
@@ -502,15 +561,24 @@ impl Session for MySqlSession {
     }
 
     async fn is_alive(&mut self) -> bool {
-        matches!(timeout(SESSION_LIMIT, self.conn().ping()).await, Ok(Ok(())))
+        matches!(
+            timeout(
+                SESSION_LIMIT,
+                crate::command_log::observe(self.trace.clone(), "COM_PING", self.conn().ping())
+            )
+            .await,
+            Ok(Ok(()))
+        )
     }
 
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError> {
-        let rows: Vec<(String, Option<String>, Option<String>)> = self
-            .conn()
-            .query(CATALOG_SQL)
-            .await
-            .map_err(|error| exec_error(&error, CATALOG_SQL))?;
+        let rows: Vec<(String, Option<String>, Option<String>)> = crate::command_log::observe(
+            self.trace.clone(),
+            CATALOG_SQL,
+            self.conn().query(CATALOG_SQL),
+        )
+        .await
+        .map_err(|error| exec_error(&error, CATALOG_SQL))?;
         let mut schemas: Vec<Schema> = Vec::new();
         for (name, relation, kind) in rows {
             if schemas.last().is_none_or(|schema| schema.name != name) {
@@ -533,11 +601,10 @@ impl Session for MySqlSession {
             }
         }
         let sql = "SELECT DATABASE()";
-        let current: Option<Option<String>> = self
-            .conn()
-            .query_first(sql)
-            .await
-            .map_err(|error| exec_error(&error, sql))?;
+        let current: Option<Option<String>> =
+            crate::command_log::observe(self.trace.clone(), sql, self.conn().query_first(sql))
+                .await
+                .map_err(|error| exec_error(&error, sql))?;
         Ok(Catalog {
             schemas,
             current_schema: current.flatten(),
@@ -549,10 +616,16 @@ impl Session for MySqlSession {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<String>, ExecError> {
-        self.conn()
-            .exec(COLUMNS_SQL, (schema, relation))
-            .await
-            .map_err(|error| exec_error(&error, COLUMNS_SQL))
+        let command = crate::command_log::limited(format_args!(
+            "{COLUMNS_SQL}\nParameters: schema={schema:?}, relation={relation:?}"
+        ));
+        crate::command_log::observe(
+            self.trace.clone(),
+            command,
+            self.conn().exec(COLUMNS_SQL, (schema, relation)),
+        )
+        .await
+        .map_err(|error| exec_error(&error, COLUMNS_SQL))
     }
 
     async fn read_foreign_keys(
@@ -560,11 +633,16 @@ impl Session for MySqlSession {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<ForeignKey>, ExecError> {
-        let rows: Vec<(String, String, String, String, String)> = self
-            .conn()
-            .exec(FOREIGN_KEYS_SQL, (schema, relation))
-            .await
-            .map_err(|error| exec_error(&error, FOREIGN_KEYS_SQL))?;
+        let command = crate::command_log::limited(format_args!(
+            "{FOREIGN_KEYS_SQL}\nParameters: schema={schema:?}, relation={relation:?}"
+        ));
+        let rows: Vec<(String, String, String, String, String)> = crate::command_log::observe(
+            self.trace.clone(),
+            command,
+            self.conn().exec(FOREIGN_KEYS_SQL, (schema, relation)),
+        )
+        .await
+        .map_err(|error| exec_error(&error, FOREIGN_KEYS_SQL))?;
         let pairs = rows.into_iter().map(|row| KeyColumn {
             key: row.0,
             target: RelationRef {

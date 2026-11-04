@@ -19,7 +19,7 @@ use crate::store::Scope;
 pub(super) const WIDTH: u16 = 72;
 /// The columns of the sidebar, without the divider.
 pub(super) const SIDEBAR_WIDTH: u16 = 16;
-const LABEL_WIDTH: u16 = 14;
+const LABEL_WIDTH: u16 = 16;
 /// The value columns of a number field.
 const NUMBER_WIDTH: usize = 12;
 /// The rows of the note above the buttons.
@@ -65,6 +65,7 @@ fn label(field: Field) -> &'static str {
         Field::QueryHistory => text::FIELD_QUERY_HISTORY,
         Field::BellAfter => text::FIELD_BELL_AFTER,
         Field::FormatJson => text::FIELD_FORMAT_JSON,
+        Field::ShowSystemCommands => text::FIELD_SHOW_SYSTEM_COMMANDS,
         Field::SuggestionKeys => text::FIELD_SUGGESTION_KEYS,
         Field::UndoLimit => text::FIELD_UNDO_LIMIT,
         Field::Theme => text::FIELD_THEME,
@@ -88,6 +89,10 @@ fn choice(form: &SettingsForm, field: Field) -> String {
             |value| text::on_off(value).to_owned(),
         ),
         Field::QueryHistory => form.query_history().map_or_else(
+            || form.inherited(field),
+            |value| text::on_off(value).to_owned(),
+        ),
+        Field::ShowSystemCommands => form.show_system_commands().map_or_else(
             || form.inherited(field),
             |value| text::on_off(value).to_owned(),
         ),

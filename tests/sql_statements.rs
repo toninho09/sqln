@@ -1,8 +1,8 @@
 // These tests keep the rules that `spikes/tests/splitter.rs` approved.
 
 use sqln::sql::{
-    Dialect, TokenKind, counts_rows, is_plain_read, reads_or_writes_stdio, split, split_tokens,
-    statement_at, tokenize, with_row_limit,
+    Dialect, TokenKind, counts_rows, is_plain_read, reads_or_writes_stdio,
+    removes_prepared_statements, split, split_tokens, statement_at, tokenize, with_row_limit,
 };
 
 fn texts(sql: &str, dialect: Dialect) -> Vec<&str> {
@@ -472,5 +472,30 @@ fn copy_with_a_client_stream_is_found() {
         "",
     ] {
         assert!(!reads_or_writes_stdio(sql, Dialect::Postgres), "{sql}");
+    }
+}
+
+#[test]
+fn the_removal_of_prepared_statements_is_found() {
+    for sql in [
+        "DEALLOCATE ALL",
+        "deallocate prepare all",
+        "DEALLOCATE s7",
+        "/* x */ DISCARD ALL",
+        "discard all",
+    ] {
+        assert!(removes_prepared_statements(sql, Dialect::Postgres), "{sql}");
+    }
+    for sql in [
+        "DISCARD PLANS",
+        "DISCARD TEMP",
+        "SELECT 'DEALLOCATE ALL'",
+        "-- DISCARD ALL\nSELECT 1",
+        "",
+    ] {
+        assert!(
+            !removes_prepared_statements(sql, Dialect::Postgres),
+            "{sql}"
+        );
     }
 }

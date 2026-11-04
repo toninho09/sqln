@@ -2159,6 +2159,40 @@ fn the_list_offers_the_columns_of_the_table_and_tab_accepts_without_a_query() {
 }
 
 #[test]
+fn a_function_in_a_filter_keeps_the_cursor_inside_without_a_query() {
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
+    f.open_table("users");
+    f.type_filter("LOW");
+    f.code(KeyCode::Tab);
+    assert_eq!(f.app.table().unwrap().filter.text(), "LOWER()");
+    assert_eq!(f.app.table().unwrap().filter.byte_cursor(), 6);
+    f.code(KeyCode::Char('n'));
+    assert_eq!(f.app.table().unwrap().filter.text(), "LOWER(n)");
+    assert_eq!(recorder.count(), 1);
+}
+
+#[test]
+fn a_function_in_an_order_field_reuses_its_parentheses() {
+    let (mut f, recorder) = Fixture::recorded(Recorder {
+        rows: 5,
+        ..Recorder::default()
+    });
+    f.open_table("users");
+    f.type_order("(name)");
+    f.code(KeyCode::Home);
+    for c in "LOW".chars() {
+        f.code(KeyCode::Char(c));
+    }
+    f.code(KeyCode::Tab);
+    assert_eq!(f.app.table().unwrap().order.text(), "LOWER(name)");
+    assert_eq!(f.app.table().unwrap().order.byte_cursor(), 6);
+    assert_eq!(recorder.count(), 1);
+}
+
+#[test]
 fn enter_applies_the_typed_text_and_does_not_accept_the_highlighted_suggestion() {
     let (mut f, recorder) = Fixture::recorded(Recorder {
         rows: 5,

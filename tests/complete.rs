@@ -176,10 +176,7 @@ fn keywords_follow_an_operand() {
     assert_eq!(labels("SELECT id fr| users"), ["from"]);
     assert_eq!(labels("SELECT * fr|"), ["from"]);
     let found = labels("SELECT * FROM users wh|");
-    assert!(
-        found.contains(&"when".to_owned()) && found.contains(&"where".to_owned()),
-        "{found:?}"
-    );
+    assert_eq!(found, ["where"]);
     assert!(
         !found.contains(&"wh".to_owned()),
         "the partial word is not an alias"
@@ -210,7 +207,7 @@ fn each_dialect_has_its_own_keywords() {
     assert_eq!(with("SELECT 1 ILI|", Dialect::Postgres), ["ILIKE"]);
     assert!(with("SELECT 1 ILI|", Dialect::MySql).is_empty());
     assert_eq!(
-        with("SELECT 1 STRAIGHT|", Dialect::MySql),
+        with("SELECT * FROM users STRAIGHT|", Dialect::MySql),
         ["STRAIGHT_JOIN"]
     );
 }
@@ -388,6 +385,13 @@ fn update_and_delete_expressions_use_the_target() {
 fn new_names_have_no_suggestions() {
     assert!(labels("SELECT id AS |").is_empty());
     assert!(labels("CREATE TABLE |").is_empty());
+    assert!(labels("CREATE TABLE public.|").is_empty());
+}
+
+#[test]
+fn function_arguments_and_references_use_the_catalog() {
+    assert_eq!(labels("SELECT LOWER(na|) FROM users"), ["name"]);
+    assert!(labels("CREATE TABLE t (id INTEGER REFERENCES us|)").contains(&"users".to_owned()));
 }
 
 #[test]

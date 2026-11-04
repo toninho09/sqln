@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEvent;
 
+use crate::command_log::{CommandState, History};
 use crate::connector::{StatementEnd, TransactionCommand, TransactionState};
 use crate::editor::{KeyboardMode, MarkState, RunPlan, SqlEditor};
 use crate::exec::{
@@ -154,7 +155,7 @@ pub struct Console {
     /// The application needs one console, and the tab row does not show this one.
     pub hidden: bool,
     pub results: Vec<ResultTab>,
-    pub messages: Vec<Message>,
+    pub messages: History,
     /// The index of a result. The value `results.len()` selects **Messages**.
     pub active: usize,
     pub focus: Focus,
@@ -166,7 +167,8 @@ pub struct Console {
     pub manual: bool,
     /// The warnings in `messages`. Each frame needs this number.
     warnings: usize,
-    pub messages_scroll: u16,
+    pub messages_scroll: usize,
+    message_key: Option<StatementKey>,
     /// True while the close of this console waits for a step.
     pub closing: bool,
     pub pending_transaction: Option<(TransactionCommand, AfterTransaction)>,
@@ -212,7 +214,7 @@ impl Console {
             opened: 0,
             hidden: false,
             results: Vec::new(),
-            messages: Vec::new(),
+            messages: History::default(),
             active: 0,
             focus: Focus::Editor,
             phase: Phase::Idle,
@@ -222,6 +224,7 @@ impl Console {
             manual: false,
             warnings: 0,
             messages_scroll: 0,
+            message_key: None,
             closing: false,
             pending_transaction: None,
             execution: None,
@@ -318,7 +321,7 @@ impl Console {
         for result in self.results.drain(..) {
             budget.release(result.table.bytes);
         }
-        self.clear_messages();
+        self.reset_message_context();
         self.active = 0;
         self.results_made = 0;
         self.stop_reported = false;
@@ -335,7 +338,7 @@ impl Console {
         for result in self.results.drain(..) {
             budget.release(result.table.bytes);
         }
-        self.clear_messages();
+        self.reset_message_context();
         self.active = 0;
         self.results_made = 0;
         self.editor.clear_marks();
@@ -349,13 +352,17 @@ impl Console {
 
     fn push_message(&mut self, level: MessageLevel, text: String) {
         self.warnings += usize::from(level == MessageLevel::Warning);
-        self.messages.push(Message { level, text });
+        self.messages.note(level, &text, self.message_key);
     }
 
-    fn clear_messages(&mut self) {
-        self.messages.clear();
+    fn push_statement_message(&mut self, level: MessageLevel, text: String, state: CommandState) {
+        self.messages
+            .summarize(level, &text, self.message_key, state);
+    }
+
+    fn reset_message_context(&mut self) {
         self.warnings = 0;
-        self.messages_scroll = 0;
+        self.message_key = None;
     }
 
     fn is_current(&self, execution: ExecutionId) -> bool {
@@ -371,6 +378,7 @@ impl Console {
                 }
             }
             ExecEvent::StatementStarted { key } if self.is_current(key.execution) => {
+                self.message_key = Some(key);
                 self.transaction_before = self.transaction;
                 self.editor.set_mark_state(key.index, MarkState::Running);
             }
@@ -393,10 +401,12 @@ impl Console {
                 self.show_plan(limit, budget);
             }
             ExecEvent::Notice { key, text } if self.is_current(key.execution) => {
+                self.message_key = Some(key);
                 let message = text::statement_error(key.index, &text);
                 self.push_message(MessageLevel::Warning, message);
             }
             ExecEvent::LimitAdded { key, rows } if self.is_current(key.execution) => {
+                self.message_key = Some(key);
                 let message = text::statement_error(key.index, &text::limit_added(rows));
                 self.push_message(MessageLevel::Info, message);
             }
@@ -406,6 +416,7 @@ impl Console {
                 end,
                 error_offset,
             } if self.is_current(key.execution) => {
+                self.message_key = Some(key);
                 self.on_statement_finished(key.index, status, end);
                 if let Some(offset) = error_offset {
                     let prefix = self.explain.map_or(0, |explain| explain.prefix_len());
@@ -422,6 +433,7 @@ impl Console {
                 message,
                 ..
             } if self.is_current(execution) => {
+                self.message_key = None;
                 return Some(self.on_execution_finished(end, message));
             }
             ExecEvent::TransactionChanged { state, .. } => {
@@ -429,6 +441,7 @@ impl Console {
                 return Some(Signal::TransactionChanged);
             }
             ExecEvent::TransactionFailed { message, .. } => {
+                self.message_key = None;
                 self.push_message(MessageLevel::Error, text::transaction_failed(&message));
                 self.active = self.results.len();
                 return Some(Signal::TransactionFailed(message));
@@ -472,7 +485,11 @@ impl Console {
             StatementStatus::Success => self.on_statement_success(index, end.unwrap_or_default()),
             StatementStatus::Error(message) => {
                 self.editor.set_mark_state(index, MarkState::Error);
-                self.push_message(MessageLevel::Error, text::statement_error(index, &message));
+                self.push_statement_message(
+                    MessageLevel::Error,
+                    text::statement_error(index, &message),
+                    CommandState::Failed,
+                );
             }
             StatementStatus::NotExecuted => {
                 self.editor.set_mark_state(index, MarkState::NotExecuted);
@@ -481,15 +498,27 @@ impl Console {
             StatementStatus::Stopped => {
                 self.stop_reported = true;
                 self.editor.set_mark_state(index, MarkState::Stopped);
-                self.push_message(MessageLevel::Info, text::statement_stopped(index));
+                self.push_statement_message(
+                    MessageLevel::Info,
+                    text::statement_stopped(index),
+                    CommandState::Stopped,
+                );
             }
             StatementStatus::Timeout => {
                 self.editor.set_mark_state(index, MarkState::Timeout);
-                self.push_message(MessageLevel::Error, text::statement_timeout(index));
+                self.push_statement_message(
+                    MessageLevel::Error,
+                    text::statement_timeout(index),
+                    CommandState::TimedOut,
+                );
             }
             StatementStatus::Unknown => {
                 self.editor.set_mark_state(index, MarkState::Unknown);
-                self.push_message(MessageLevel::Error, text::statement_unknown(index));
+                self.push_statement_message(
+                    MessageLevel::Error,
+                    text::statement_unknown(index),
+                    CommandState::Unknown,
+                );
             }
         }
         let word = first_word(self.statements.get(index).map_or("", String::as_str)).to_owned();
@@ -515,13 +544,12 @@ impl Console {
         self.editor.set_mark_state(index, state);
 
         if end.has_columns {
-            if end.limit != ReadLimit::None {
-                let summary = read_summary(end.rows, end.limit);
-                self.push_message(
-                    MessageLevel::Info,
-                    format!("Statement {}: {summary}", index + 1),
-                );
-            }
+            let summary = read_summary(end.rows, end.limit);
+            self.push_statement_message(
+                MessageLevel::Info,
+                format!("Statement {}: {summary}", index + 1),
+                CommandState::Completed,
+            );
             return;
         }
         let mut message = match end.changed {
@@ -531,7 +559,7 @@ impl Console {
         if self.in_transaction() && end.changed.is_some() {
             message = format!("{message} {}", text::NOT_COMMITTED);
         }
-        self.push_message(MessageLevel::Info, message);
+        self.push_statement_message(MessageLevel::Info, message, CommandState::Completed);
     }
 
     fn on_execution_finished(&mut self, end: ExecutionEnd, message: Option<String>) -> Signal {
@@ -649,10 +677,14 @@ impl Console {
         GridAction::None
     }
 
+    pub fn scroll_messages(&mut self, rows: isize) {
+        self.messages.scroll_by(&mut self.messages_scroll, rows);
+    }
+
     fn on_messages_action(&mut self, action: Action) {
         match action {
-            Action::GridUp => self.messages_scroll = self.messages_scroll.saturating_sub(1),
-            Action::GridDown => self.messages_scroll = self.messages_scroll.saturating_add(1),
+            Action::GridUp => self.scroll_messages(-1),
+            Action::GridDown => self.scroll_messages(1),
             _ => {}
         }
     }

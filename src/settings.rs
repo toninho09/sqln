@@ -11,7 +11,8 @@ use crate::line_input::LineInput;
 use crate::store::Scope;
 use crate::store::config::{
     DEFAULT_BELL_AFTER_SECONDS, DEFAULT_CAP_IN_SQL, DEFAULT_FORMAT_JSON, DEFAULT_QUERY_HISTORY,
-    DEFAULT_REOPEN_TABS, KeyboardName, Keymaps, Preferences, ThemeName,
+    DEFAULT_REOPEN_TABS, DEFAULT_SHOW_SYSTEM_COMMANDS, KeyboardName, Keymaps, Preferences,
+    ThemeName,
 };
 use crate::ui::text;
 use shortcuts::Shortcuts;
@@ -34,6 +35,7 @@ pub enum Field {
     QueryHistory,
     BellAfter,
     FormatJson,
+    ShowSystemCommands,
     SuggestionKeys,
     UndoLimit,
     Theme,
@@ -80,6 +82,7 @@ pub const SECTIONS: [Section; 5] = [
             Field::CapInSql,
             Field::Budget,
             Field::FormatJson,
+            Field::ShowSystemCommands,
         ],
     },
     Section {
@@ -111,6 +114,7 @@ struct Draft {
     reopen_tabs: Option<bool>,
     query_history: Option<bool>,
     format_json: Option<bool>,
+    show_system_commands: Option<bool>,
     suggestion_keys: Option<SuggestionKeys>,
     theme: Option<ThemeName>,
     keymap: Option<Keymaps>,
@@ -140,6 +144,7 @@ impl Draft {
             reopen_tabs: preferences.reopen_tabs,
             query_history: preferences.query_history,
             format_json: preferences.format_json,
+            show_system_commands: preferences.show_system_commands,
             suggestion_keys: preferences.suggestion_keys,
             theme: preferences.theme,
             keymap: preferences.keymap.clone(),
@@ -282,6 +287,10 @@ impl SettingsForm {
         self.draft().format_json
     }
 
+    pub fn show_system_commands(&self) -> Option<bool> {
+        self.draft().show_system_commands
+    }
+
     pub fn cap_in_sql(&self) -> Option<bool> {
         self.draft().cap_in_sql
     }
@@ -351,6 +360,9 @@ impl SettingsForm {
             Field::QueryHistory => global
                 .query_history
                 .map(|value| text::on_off(value).to_owned()),
+            Field::ShowSystemCommands => global
+                .show_system_commands
+                .map(|value| text::on_off(value).to_owned()),
             Field::FormatJson => global
                 .format_json
                 .map(|value| text::on_off(value).to_owned()),
@@ -367,6 +379,9 @@ impl SettingsForm {
             }
             _ if field == Field::QueryHistory => {
                 text::default_value(text::on_off(DEFAULT_QUERY_HISTORY))
+            }
+            _ if field == Field::ShowSystemCommands => {
+                text::default_value(text::on_off(DEFAULT_SHOW_SYSTEM_COMMANDS))
             }
             _ if field == Field::FormatJson => {
                 text::default_value(text::on_off(DEFAULT_FORMAT_JSON))
@@ -446,6 +461,11 @@ impl SettingsForm {
                 let order = [None, Some(true), Some(false)];
                 self.draft_mut().query_history =
                     next_choice(&order, self.draft().query_history, forward);
+            }
+            Field::ShowSystemCommands => {
+                let order = [None, Some(true), Some(false)];
+                self.draft_mut().show_system_commands =
+                    next_choice(&order, self.draft().show_system_commands, forward);
             }
             Field::FormatJson => {
                 let order = [None, Some(true), Some(false)];
@@ -562,6 +582,7 @@ impl SettingsForm {
         preferences.reopen_tabs = draft.reopen_tabs;
         preferences.query_history = draft.query_history;
         preferences.format_json = draft.format_json;
+        preferences.show_system_commands = draft.show_system_commands;
         preferences.cap_in_sql = draft.cap_in_sql;
         preferences.suggestion_keys = draft.suggestion_keys;
         preferences.theme = draft.theme;

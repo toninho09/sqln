@@ -16,6 +16,7 @@ use self::postgres::PostgresConnector;
 use self::redis::RedisConnector;
 use self::target::{Engine, NetworkTarget};
 use crate::catalog::{Catalog, ForeignKey};
+use crate::command_log::TraceContext;
 use crate::exec::{ReadLimit, ResultSink};
 use crate::sql::Dialect;
 
@@ -115,6 +116,12 @@ pub struct ExecError {
     pub offset: Option<usize>,
 }
 
+impl std::fmt::Display for ExecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 impl ExecError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
@@ -141,6 +148,9 @@ pub struct StatementEnd {
 #[async_trait]
 pub trait Canceller: Send + Sync {
     async fn cancel(&self) -> Result<(), String>;
+    async fn cancel_traced(&self, _trace: Option<TraceContext>) -> Result<(), String> {
+        self.cancel().await
+    }
 }
 
 /// Writes an error with its causes. The display text of a driver error is often only
@@ -175,10 +185,19 @@ pub trait Connector: Send + Sync {
         Capabilities::default()
     }
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError>;
+    async fn connect_traced(
+        &self,
+        trace: Option<TraceContext>,
+    ) -> Result<Box<dyn Session>, ConnectError> {
+        let mut session = self.connect().await?;
+        session.set_trace_context(trace);
+        Ok(session)
+    }
 }
 
 #[async_trait]
 pub trait Session: Send {
+    fn set_trace_context(&mut self, _trace: Option<TraceContext>) {}
     fn canceller(&self) -> Arc<dyn Canceller>;
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError>;
     /// Runs one statement. The future must stay active after a cancellation,

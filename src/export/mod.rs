@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::clipboard::base64;
 use crate::grid::{Value, delimited_text, hex, push_cell};
+use crate::sql::literal::is_number;
 use crate::sql::{Dialect, quote_identifier, quote_literal};
 use crate::store::file;
 
@@ -158,10 +159,6 @@ fn json_string(text: &str) -> String {
 }
 
 /// Returns true for text that JSON and SQL can both read as a number.
-fn is_number(text: &str) -> bool {
-    serde_json::from_str::<serde_json::Number>(text).is_ok()
-}
-
 fn write_json_value(out: &mut impl Write, value: Value<'_>) -> io::Result<()> {
     match value {
         Value::Null => out.write_all(b"null"),

@@ -184,6 +184,8 @@ impl App {
                 self.table_active = Some(0);
             } else if !self.diagrams.is_empty() {
                 self.diagram_active = Some(0);
+            } else if !self.compares.is_empty() {
+                self.compare_active = Some(0);
             } else {
                 self.focus_navigator();
             }

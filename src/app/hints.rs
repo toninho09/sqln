@@ -4,6 +4,8 @@
 //! screen shows. A command stays out of a list when its key does nothing in that state.
 
 use super::App;
+use crate::compare::form as compare_form;
+use crate::compare::tab::CompareTab;
 use crate::console::Focus;
 use crate::diagram::tab::DiagramTab;
 use crate::export::form as export_form;
@@ -71,6 +73,9 @@ impl App {
         if let Some(tab) = self.diagram() {
             return self.diagram_hint(tab);
         }
+        if let Some(tab) = self.compare() {
+            return self.compare_hint(tab);
+        }
         if let Some(tab) = self.table() {
             return self.table_hint(tab);
         }
@@ -130,6 +135,18 @@ impl App {
                 export_form::Field::File => text::HINT_FORM_PATH,
                 export_form::Field::Export | export_form::Field::Cancel => text::HINT_FORM_BUTTON,
                 field if form.input(field).is_some() => text::HINT_FORM_TEXT,
+                _ => text::HINT_FORM,
+            });
+        }
+        if let Some(form) = &self.compare_form {
+            return Some(match form.focus {
+                _ if form.list_shown() => text::HINT_FORM_LIST,
+                compare_form::Field::Compare | compare_form::Field::Cancel => {
+                    text::HINT_FORM_BUTTON
+                }
+                compare_form::Field::SourceTable | compare_form::Field::TargetTable => {
+                    text::HINT_FORM_TEXT
+                }
                 _ => text::HINT_FORM,
             });
         }
@@ -312,6 +329,30 @@ impl App {
         ])
     }
 
+    fn compare_hint(&self, tab: &CompareTab) -> Vec<HintItem> {
+        if tab.result.search.is_some() {
+            return HintItem::of(text::HINT_GRID_SEARCH);
+        }
+        let rows = tab.done && !tab.result.table.rows.is_empty();
+        self.hints_when(&[
+            (Action::Stop, "stop", tab.is_busy()),
+            (
+                Action::CompareScript,
+                "script",
+                self.command_available(Action::CompareScript),
+            ),
+            (
+                Action::CompareCopy,
+                "copy script",
+                self.command_available(Action::CompareCopy),
+            ),
+            (Action::GridOpenRow, "row", rows),
+            (Action::GridReload, "reload", !tab.is_busy()),
+            (Action::GridFind, "find", rows),
+            (Action::Help, "keys", true),
+        ])
+    }
+
     fn table_hint(&self, tab: &TableTab) -> Vec<HintItem> {
         if tab.list.is_some() {
             return self.list_hint(text::LIST_FILTER_KEYS);
@@ -433,6 +474,12 @@ impl App {
                 (open || !branch) && !filtered,
             ),
             (Action::NavigatorDiagram, "diagram", self.can_open_diagram()),
+            // The connection row has no space for it at 80 columns.
+            (
+                Action::NavigatorCompare,
+                "compare",
+                !connection && self.can_compare_row(),
+            ),
         ]);
         items.extend(HintItem::of(text::HINT_COMMANDS));
         items.extend(self.hint_parts(&[(Action::Help, "keys")]));

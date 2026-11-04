@@ -765,7 +765,7 @@ fn results(bench: &mut Bench) {
             let console = run.app.console_mut();
             assert!(console.messages.len() >= STATEMENTS);
             console.active = console.results.len();
-            console.messages_scroll = STATEMENTS as u16;
+            console.messages_scroll = STATEMENTS;
             run
         },
         Run::frame,

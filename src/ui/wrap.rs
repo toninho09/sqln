@@ -21,7 +21,7 @@ pub struct WrappedText {
 
 /// Returns the end of the row that starts at `start`, and the start of the next row.
 /// A row breaks after a space when it can, so that a word stays in one piece.
-fn row_end(text: &str, start: usize, width: usize) -> (usize, Option<(usize, bool)>) {
+pub(crate) fn row_end(text: &str, start: usize, width: usize) -> (usize, Option<(usize, bool)>) {
     let mut used = 0;
     let mut after_space = None;
     for (offset, c) in text[start..].char_indices() {

@@ -70,7 +70,7 @@ Each panel also lists these commands:
 
 - The keys that move the focus from that panel.
 - Next tab and previous tab, with a second tab.
-- Close the tab, toggle the explorer, the explorer page, sessions of a source with sessions, the ER diagram of a source with tables, palette, help, Settings, reload, and quit.
+- Close the tab, toggle the explorer, the explorer page, sessions of a source with sessions, the ER diagram and the compare of a source with tables, palette, help, Settings, reload, and quit.
 - `x` during a run, `C` and `R` during a transaction, and only `R` in a failed transaction. These stay in the navigator, because the session stays occupied until the user acts.
 
 A table tab and a diagram tab have no script and no transaction, so `C` and `R` do not appear there.
@@ -88,6 +88,7 @@ A table tab and a diagram tab have no script and no transaction, so `C` and `R` 
 | `Tab` | Open the page with the commands of the explorer |
 | `S` | Show the sessions of the connection of the tab |
 | `D` | Show the ER diagram of the tab or of the row |
+| `v` | Compare the tab or the row with another source |
 | `e` | Run |
 | `s` | Whole script |
 | `E` | Show the plan of the statement |
@@ -109,6 +110,7 @@ A table tab and a diagram tab have no script and no transaction, so `C` and `R` 
 `Ctrl+W E` and `Ctrl+W A` use uppercase keys and do not replace `Ctrl+W e` and `Ctrl+W a`.
 `Ctrl+W S` uses uppercase `S` and does not replace `Ctrl+W s`. With the focus in the navigator, it uses the connection of the row.
 `Ctrl+W D` uses uppercase `D` and does not replace `Ctrl+W d`. With the focus in the navigator, it uses the row, as `d` does. A table tab shows the diagram of its table, and a console shows its current schema.
+`Ctrl+W v` opens the dialog of a compare. With the focus in the navigator, it uses the row, as `c` does. A table tab gives its table (**Data**), a console gives its current schema (**Structure**), a diagram gives its focus, and a compare tab opens the dialog with its own sides.
 
 `Ctrl+W Tab` opens a second page of the menu. The page lists the commands of the navigator that act on the current row, with the keys of the navigator, so `Ctrl+W Tab n` is the `n` of the navigator.
 The page works from any panel, and its title names the row that the commands act on. `Esc` closes it, and a key without a command closes it too.
@@ -210,6 +212,7 @@ On macOS, the terminal handles `Cmd+C` and `Cmd+V`.
 | Scripts without connection | `s` | `s` |
 | Show the structure | `i` | `i` |
 | Show the ER diagram | `d` | `d` |
+| Compare the structure or the data with another source | `c` | `c` |
 | Show the sessions of the server | `S` | `S` |
 | Generate SQL | `g` | `g` |
 | Import a file to the table of the row | `I` | `I` |
@@ -235,7 +238,8 @@ In the grid of a table, `i` opens the structure of that table.
 In the structure tab of a table, `[` and `]` switch the section. In the other table tabs, those keys change the page.
 `S` opens the sessions of the server of the row. SQLite, Redis, and Valkey refuse it with a reason.
 `d` opens the ER diagram of the row. A schema shows all its tables. A table shows the table and the tables that its foreign keys join, one step away. A column shows the diagram of its table. A connection shows its current schema: before its catalog, `d` reads the catalog, and the diagram opens when it arrives. A view, and Redis or Valkey, refuse it with a reason.
-The hint line changes with the cursor line, and it shows only the main commands: open, new console, expand or collapse, the ER diagram, `Ctrl+W commands`, and `F1 keys`. `Ctrl+W Tab` lists the others, and their keys keep acting. The connection commands appear on the connection line, but the keys act on any line of it, except `r` and `Delete` on a console row.
+`c` opens the dialog of a compare, with the row as the source: a connection gives its current schema, and a table or a column gives its table. A table starts a data compare, and a connection or a schema starts a structure compare. A view, a console row, and Redis or Valkey refuse it with a reason. The hint line shows `c compare` on a schema, a table, and a column row. The connection row leaves it out, so that row fits in 80 columns. The key is also in the `Ctrl+W Tab` page, and `Ctrl+W v` acts from any panel.
+The hint line changes with the cursor line, and it shows only the main commands: open, new console, expand or collapse, the ER diagram, the compare (not on a connection row), `Ctrl+W commands`, and `F1 keys`. `Ctrl+W Tab` lists the others, and their keys keep acting. The connection commands appear on the connection line, but the keys act on any line of it, except `r` and `Delete` on a console row.
 The labels say the object of the command, such as `n new console` and `a add connection`.
 A command that does not fit leaves the line, and the key keeps acting.
 
@@ -455,6 +459,23 @@ An arrow selects the nearest box that starts past the edge of the selected box i
 A key column is a column of the primary key, of a foreign key, or that a foreign key reads.
 `y` copies the `erDiagram` text of the boxes on screen, so with **keys only** the text has only the key columns.
 `Ctrl+W x` stops a read. `Ctrl+W c` closes the diagram tab. The script and transaction actions have no effect.
+
+## Compare
+
+The compare tab uses the keys of the grid, except the keys of a table view, of the import, and of the list of results.
+
+| Action | Conventional | Vim |
+|---|---|---|
+| Open the sync script in a new console | `S` | `S` |
+| Copy the sync script | `Y` | `Y` |
+| Read both sides again | `R` | `R` |
+
+`S` and `Y` act only when the compare has differences. A structure compare also needs the same dialect on both sides. `Y` is uppercase, because `y` copies a cell in the grid of the Vim mode.
+`Ctrl+W x` stops the reads. `Ctrl+W c` closes the compare tab. The script and transaction actions have no effect.
+
+In the dialog, `Tab` and the arrows move between the fields, `Left`, `Right`, and `Space` change a choice, and `Enter` on **Compare** opens the tab. `Esc` cancels.
+
+A connection, a schema, and a table field open a list of names with the focus. Text filters the list, also `Space` and the Vim keys. `Up` and `Down` move the mark, and `Enter` or `Tab` choose the marked name and move to the next field. `Left` and `Right` still change a connection or a schema. `Esc` closes the list and keeps the value, and a second `Esc` cancels. A field without a name to show uses the keys of a plain field.
 
 ## Question about changed scripts
 

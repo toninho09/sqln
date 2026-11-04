@@ -46,10 +46,12 @@ impl App {
         self.diagram_active.map(|index| &mut self.diagrams[index])
     }
 
-    /// Returns true when the console on screen receives the keys of a console: no table
-    /// and no diagram is on screen.
+    /// Returns true when the console on screen receives the keys of a console: no table,
+    /// no diagram, and no compare is on screen.
     pub(super) fn console_on_screen(&self) -> bool {
-        self.table_active.is_none() && self.diagram_active.is_none()
+        self.table_active.is_none()
+            && self.diagram_active.is_none()
+            && self.compare_active.is_none()
     }
 
     /// Returns true when the home screen is on screen: no tab is open, and the active
@@ -263,6 +265,7 @@ impl App {
                 self.leave_tab();
             }
             self.table_active = None;
+            self.compare_active = None;
             self.diagram_active = Some(index);
         }
     }

@@ -4,6 +4,164 @@ This document records the choices and the rejected alternatives.
 The complete rules are in the [plan](INITIAL_PLAN.md).
 Do not reopen a decision without a new fact.
 
+## Lists with a search in the compare dialog — 2026-11-03
+
+The user asked for a dialog that fills step by step: a connection shows its schemas, and a schema shows its tables, with a search. The user chose point 5 and approved the other points as recommended.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Form | A list below the field, filtered while the user writes, as in the filter of a table tab | A separate window with a filter, as the palette | User choice |
+| 2. Fields | Connection, schema, and table, with the same list | Only schema and table; only table | User choice |
+| 3. Open | The list opens when the field gets the focus. It shows all names and marks the current one. `Enter` chooses and moves to the next field, so a connection leads to its schemas and a schema to its tables | Only when the user writes or presses `Ctrl+Space` | User choice |
+| 4. `Left`/`Right` on a connection or a schema | They change the choice, as before. `Space` and the Vim keys `h`, `j`, `k`, `l` write in the search | A plain text field | User choice. A connection list keeps its old keys |
+| 5. Accept | `Enter` or `Tab` choose the marked name in the three fields. `Esc` closes the list and keeps the value. A table keeps a free text: `Esc`, then `Tab` | `Enter` and `Tab` on a connection or a schema, and `suggestionKeys` on a table | User choice |
+| 6. Table list | Only tables | Tables and views | The dialog refuses a view |
+| 7. New schema with a table text | The text stays | Clear it; keep it only when the new schema has the table | User choice |
+| 8. Search | Each word in any part of the name, with no case, as in the palette | Only the start of the name | User choice |
+| 9. Mouse | A click on a row of the list chooses it | Only the keyboard | User choice |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Mark | The name equal to the text, or, without a text, the current choice. A text without an equal name marks the first name. An empty table marks nothing | Always the first name | `Tab` on an empty table keeps the whole schema, and on an empty target keeps the source table |
+| Click on a field with a list | Opens its list | Change the choice, as on **Kind** | The list shows the choices |
+| Empty list | A field without a name to show acts as a field without a list: `Up`/`Down` move the focus, and `Esc` closes the dialog | `Esc` closes an empty list first | An empty list is not on the screen |
+| Drawing | `draw_anchored_list` draws the list of the dialog and the suggestions of the editor | A second copy | One rule for the place, the scroll, and the mark |
+
+## Compare in the hint row and the `Ctrl+W` menu — 2026-11-03
+
+The user did not find the compare in the `Ctrl+W` menu or in the hint row. This request reopens point 17 of the compare (below), as the ER diagram reopened the rule of 2026-11-02.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Hint row of the explorer | `c compare` after `d diagram` on the rows of a schema, a table, and a column. The connection row stays as it was | Also on the connection row, which loses `Ctrl+W commands` at 80 columns; at the end of the row, which hides it at 80 columns | User choice. Each of these rows fits in 80 columns |
+| 2. First page of `Ctrl+W` | `v Compare` in the **Connection** group, as `D ER diagram` and `S Sessions`. With the focus in the explorer, the row decides. A table tab uses its table (**Data**), a console uses its current schema (**Structure**), a diagram uses its focus, and a compare tab opens the dialog with its own sides | `Ctrl+W V`; `Ctrl+W o` | User choice. `Ctrl+W c` closes the tab, and `Ctrl+W C` commits |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Palette | `Ctrl+W v` replaces the explorer entry | Both entries | The rule of the ER diagram: one entry acts on the row in the explorer |
+| Structure tab | A structure of a table uses its table. Other structures and the sessions use their schema | Refuse | The rule of the ER diagram |
+
+## Schema compare and data compare — 2026-11-03
+
+The user asked for two features of DataGrip: a schema compare between two databases, with a generated sync DDL, and a data compare between tables of different databases. The comparison with DataGrip of 2026-11-02 listed the schema compare as an open gap. The user chose points 1 to 9, and approved points 10 to 27 with the plan.
+
+New fact: the sync script needs DDL that SQLN writes. The structure tab rejected a DDL text because "a text assembled by the tool could differ from the real one" (Structure tab — 2026-10-31, point 2). That rule of the structure tab stays.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Pairs | Any pair of SQL sources. A schema compare between two dialects shows the differences, but only two sources of the same dialect get a DDL script. A data compare works between any SQL sources. Redis and Valkey refuse | Same dialect only; a data compare between dialects only | User choice |
+| 2. Result | A **Compare** main tab lists the differences. A key opens the sync script in a new console of the target. Nothing runs by itself, and the run protection acts when the user runs the console | A console with the report as comments; a tab that runs the script | User choice |
+| 3. Objects | Tables and columns (type, null, default), primary key, foreign keys, unique keys, indexes, and `CHECK` where the database shows it | Also views; also sequences, triggers, and functions | User choice |
+| 4. Removals | `DROP` and `DELETE` go into the script as marked comments. A dialog option makes them statements | Always statements; never in the script | User choice |
+| 5. Data key | The primary key of the source. The target needs the same key columns. A table without a primary key refuses with the reason | A choice of key columns; the whole row as the key | User choice |
+| 6. Data size | The source rows stay in memory, and the memory budget counts them. The target rows arrive as a stream. Above the budget, the compare stops with no partial result | Both sides sorted by the key, with no limit | User choice. Two collations can give two orders |
+| 7. SQLite | A change that `ALTER TABLE` cannot do rebuilds the table with the SQLite procedure. The triggers of that table are lost | A comment for a manual step | User choice |
+| 8. Types between dialects | Type and default show side by side and do not count as a difference | Type families; exact text | User choice |
+| 9. PostgreSQL 10 and older | Out of scope | Support | The ER diagram rule (`conparentid`) |
+| 10. Column order | Ignored | A difference | PostgreSQL and MySQL cannot move a column without a rebuild |
+| 11. Data column only in the source | Refuse, with "compare the structure first" | Compare the common columns | The script would not make the target equal. A column only in the target stays out of `INSERT` |
+| 12. Identity of indexes and constraints | By name on PostgreSQL and MySQL. A SQLite foreign key by its definition, because it has no name. The same name with another definition is a removal and a creation | By definition on all databases | The DataGrip model, and the DDL uses the name |
+| 13. Booleans and dates between dialects | They count as a change (known limit) | Normalize booleans | Without the column type, `t` and `1` have no safe rule |
+| 14. Value equality | `NULL` equals only `NULL`. Two numbers compare by their decimal value in text (`10.50` equals `10.5`, no `f64`). Text and binary compare by bytes | Exact text | Large integers stay exact, and the scale of `NUMERIC` gives no false change |
+| 15. Type change on PostgreSQL | `ALTER COLUMN ... TYPE t USING c::t` | No `USING` | Without `USING`, many changes always fail |
+| 16. Key | `c` in the explorer | `C` | It opens the dialog on a connection, schema, or table row |
+| 17. Discovery | The `Ctrl+W Tab` page, the palette, and `F1` (rule of 2026-11-02) | Also the hint row and the first `Ctrl+W` page | The hint row at 80 columns is full |
+| 18. First kind in the dialog | A connection or schema row opens **Structure**. A table row opens **Data** | Always **Structure** | The likely use of each row |
+| 19. Structure on a table row | Only that table, against the table with the same name in the target. The field can change | The whole schema | The DataGrip model |
+| 20. Choice of items | No choice. The user edits the script in the console | `Space` marks items | Not asked. The console already edits |
+| 21. Data view | Wide: a `Change` column and the columns of the table. An update takes two rows (source, then target), and `Change` names the changed columns | One row per changed value | A copy and an export give real rows. The grid has no color per cell |
+| 22. Keys of the tab | `S` opens the script in a new console, `y` copies the script, `R` reads again, and `Ctrl+W x` stops | `Enter` opens the script | `Enter` opens a value in the grid. `S` and `y` are free in the grid region |
+| 23. Transaction in the script | PostgreSQL and SQLite: `BEGIN` and `COMMIT` around the script. MySQL: no transaction for DDL, because DDL commits; `BEGIN` and `COMMIT` for data | No transaction | All or nothing where the database allows it |
+| 24. Data script | One statement per row | Batches of `INSERT` | An error names the row |
+| 25. Time limit of a data read | None, as in the export. `Ctrl+W x` stops | The SQL time limit, as in the diagram | A large table needs more than 30 s |
+| 26. Restart | The tab does not come back | Save it in `OpenTabs` | The rule of the structure tab and the diagram |
+| 27. Delivery | Two parts: **Structure** first, then **Data**. Each part has its tests, its documents, and `make check` | One delivery | The data part reuses the tab, the dialog, and the literals |
+
+Implementation decisions of the structure part:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Tab | `Tab::Compare` with its own `CompareTab` and one executor task per side | `TableTab` with a new scope | One task binds one connection, and a compare reads two |
+| Read | The queries of `compare::sql` through `Manager::run`, in one execution per side, with no row cap and the schema in the context of the session | A new `Session` method in each connector | The diagram rule: no connector change, and the read keeps the time limit, the stop, the pool queue, the password, and the budget |
+| Names on PostgreSQL | The read sets `search_path` to the schema, so the definitions name the objects of that schema without the schema. The script starts with `SET LOCAL search_path` to the target schema | Replace the schema text in each definition | The database writes the names |
+| Defaults on MySQL | `QUOTE()` makes a literal of a text default. An expression keeps its parentheses, and `CURRENT_TIMESTAMP` stays as it is | The raw `COLUMN_DEFAULT` | Each side gives text that a DDL statement accepts |
+| `serial` on PostgreSQL | A column with its own sequence and no identity is `serial`. Its default does not count, and a new table writes `serial`, `bigserial`, or `smallserial` | Compare the `nextval` text | The name of the sequence follows the table, and a new table needs a sequence |
+| Unique key on MySQL | An index | A constraint | MySQL keeps a unique key as an index |
+| Index of a foreign key on MySQL | The index with the name of a foreign key stays out | Compare it | MySQL makes it for the key |
+| Primary key | Compares by its columns. The name does not count | By name | A rename of a key does not change the table |
+| Between two dialects | Keys and indexes compare by their columns, a unique key matches a unique index, and the checks stay out | By name | Each database names a key by its own rules |
+| Copy key | `Y` | `y` of point 22 | In the Vim mode, `y` copies a cell in the grid |
+| Table focus | The source table takes the name of the target table, so the script acts on the target table | A map of names in the script | One rule for the grid and the script |
+| SQLite rebuild without removals | The columns and the indexes of the target stay. A kept column without a default loses `NOT NULL`, and a note lists the keys of the target that the rebuild leaves out | Refuse the rebuild | The source text holds only the source columns |
+| Script console | Always a new console of the target, with the schema of the target | `write_sql` | `write_sql` writes in the console of the connection, which can hold the work of the user |
+| Dialog | One page with seven fields | A sidebar | The fields fit in 80 × 24 |
+| PostgreSQL version | 12 or later | 11 | The read uses `attgenerated`. PostgreSQL 11 has had no support since 2023 |
+
+Implementation decisions of the data part:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Steps | Three executions in order: the columns of both tables, then each row of the source, then each row of the target | One execution for each side | The check of the key and the columns comes before the read of the rows, and the target meets a complete index |
+| Column read | The column query of the structure compare, with a filter of the table | A new query | One reader of the key, the identities, and the generated columns |
+| Gate | Each step passes the password gate (`Use::Compare`) | One gate for the compare | Each read can find a new password request |
+| Time limit | `RunOptions::untimed` for the reads of rows | The flag of the export | Decision 25, without an export file |
+| Match | A hash of the key cells in a map, and a check of each key cell | A sort by the key | Decision 6 |
+| Form of a value | `NULL` has no form, a number has its decimal form, and another value has its bytes. Equality and the hash read the same form | Two rules for the hash and the equality | A key must find its row with the same rule that compares it. `5` as text equals the number `5` |
+| Budget of the target | An equal row leaves the budget in its batch, and a changed row stays for the grid | Keep each target row | Two equal tables hold only the source rows |
+| Columns the target makes | A generated column and, on PostgreSQL, a column with `GENERATED ALWAYS AS IDENTITY` outside the key stay out of the compare and of the script | Compare them | The target refuses their values |
+| Identity key | `OVERRIDING SYSTEM VALUE` in each `INSERT` when a key column of PostgreSQL has `GENERATED ALWAYS AS IDENTITY` | Leave the key out | The key must keep the value of the source |
+| Literals | `sql::literal`: the import form of text and bytes, and the export rule of numbers. The import and the export use the same functions | A third writer | One writer for each form, and the export keeps its own output |
+| Script console | The paste path of the templates | A new editor | A paste of 100,000 lines takes 32 ms in a release build |
+| Grid | Built at the end, in the budget, as a plan is | Rows as they arrive | The inserts are known only at the end |
+
+### Known limitations of the data compare
+
+- The source table must fit in the data budget, and the index of the keys stays out of the budget.
+- The two tables are read at different times, so a change between the reads appears as a difference.
+- Between two dialects, booleans (`t` and `1`), dates, and times of other formats count as changes. A literal of the source can also refuse its column in the target.
+- A text `5.0` does not equal a number `5`, because only two numbers compare by value.
+- A target column outside the source stays out of `INSERT`, so it takes its default.
+- A large script makes a large console, and the script is outside the budget.
+- The `UPDATE` and `DELETE` of a target with another key than the source can change more than one row.
+
+### Known limitations of the structure compare
+
+- The compare leaves out views, sequences, triggers, functions, partitions, grants, comments, column order, and table options. On MySQL the DDL keeps the character set and the collation of a column, but they do not count as a difference.
+- SQLite gives no check through a pragma, so a check does not count. A rebuild copies the checks of the source text.
+- A rename appears as a removal and a creation.
+- A SQLite rebuild loses the triggers of the table.
+- On PostgreSQL, a change of an identity or of a generated column gets a note in the script, not a statement. A `USING` cast can fail at run time. A primary key that a foreign key of another table needs refuses its removal. `SET NOT NULL` fails on a column with `NULL` rows.
+- On MySQL, DDL commits at once, so an error leaves the statements before it applied. `int(11)` and `int` of two versions count as a difference. A `bit` default such as `b'1'` gets a wrong literal.
+- The two sides are read at different times, so a change between the reads appears as a difference.
+- A foreign key of a table to itself, in a table focus with another target name, keeps the source name.
+
+## Messages command history — 2026-11-03
+
+The user requests a DataGrip-like command history, separate for each console.
+This replaces the previous clearing of Messages on execution or connection change.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| Lifetime | Accumulate in memory until the console closes | Persist the history; clear at each execution | User choice |
+| Scope | User commands, transaction control, internal and shared commands | Only editor SQL | User choice |
+| Imports | Exclude the entire import operation, including session setup and cleanup | Record generated inserts | User choice; preserves the import exclusion |
+| Shared commands | Capture the active SQL console of the same connection at operation start; discard without a match | All consoles; last console of the connection | User choice |
+| Text | The effective SQL and separate bound parameters; safe byte escapes for Redis | Original editor text; interpolated SQL | The record must describe the request that reaches the driver |
+| Protocol commands | Technical operation names, without invented SQL | Exclude commands without SQL | User choice |
+| Driver boundary | Application calls only; exclude authentication and hidden driver operations | Raw protocol capture | Keeps credentials outside the history and needs no driver changes |
+| Budget | 10 MiB per console; remove oldest records as whole blocks | Unlimited memory; a fixed command count | User choice |
+| Oversized record | Truncate with an explicit marker, without changing the database request | Exceed the budget; omit all text | User choice |
+| System command visibility | Settings > Results > System commands, Off by default; hide Internal and Shared records without deleting them | Stop capture; show by default | User choice |
+| Messages layout | Compact blocks with a separator heading, SQL syntax colors, and one result line with rows and time | Bordered boxes; a flat message list | User approval |
+| Messages colors | Use the editor token styles and the recorded dialect; color the result, not all SQL, on an error | Parse status text from SQL; remove syntax colors after an error | Keeps SQL, notices, and results distinct |
+| Command time | Measure each driver operation with a monotonic clock; show milliseconds on completion or interruption | Total script time only; include pool waiting | User request |
+| Scroll | Follow only at the end; preserve the current record while reading older records | Always follow; never follow | User choice |
+| Compatibility | Keep result selection and the warning count of the current execution | Let internal records select Messages or count as warnings | History does not change execution controls |
+
 ## Home screen — 2026-11-03
 
 The user asked for a screen for the cases without a console. Before this change, a start without a connection opened a console that could not run, and the close of the last tab ended the application. This reopens two rules: "Closing the last tab ends the application" (`docs/UI.md`) and "End of the last table | End the application" (Implementation — 2026-10-31).
@@ -763,7 +921,6 @@ These choices follow the rules above on the points the rules left open.
 | Value pages | `HSCAN`, `SSCAN`, and `XRANGE` have no offset, so each page repeats the previous read, with the SQL `OFFSET` cost. A hash or set that changes can repeat or skip items |
 | Module types | A module type, such as JSON, does not open in a tab. Use the console |
 | `MULTI` | Valid only inside the same execution. Running `MULTI` alone discards the queue at the end of the execution |
-| `CLIENT REPLY OFF` | SQLN does not refuse that command. The session stays without a response until the deadline or the Stop |
 | Topology | No Cluster and no Sentinel. A `MOVED` response appears as an error |
 | Version | RESP3 needs Redis 6 or newer. An older server fails to connect |
 | Autocomplete | The command list is fixed, without module commands and without keys |
@@ -950,6 +1107,10 @@ The new tab order and the close without a replacement console still need code ch
 | Read only | Field per connection, applied by the database | Confirm `DELETE` without `WHERE` | The database applies the rule |
 | Table filter | A single statement | Accept any text | The drivers accept several statements |
 | Cleaning on MySQL | `Conn::reset` and back to the database of the connection; without a database, close the session | Only `Conn::reset` | `COM_RESET_CONNECTION` keeps the database, and a `USE` would pass to the next console |
+| Cleaning on PostgreSQL | The steps of `DISCARD ALL` without `DEALLOCATE ALL`, and `DEALLOCATE` of each `PREPARE` of the user | `DISCARD ALL` | `DISCARD ALL` removes the type lookup that `tokio-postgres` keeps in its cache, and the next enum read failed with `26000` |
+| `DISCARD ALL` and `DEALLOCATE` of the user on PostgreSQL | Run them; then the columns are text, and the cleaning closes the session | Refuse them; handle `26000` in the `prepare` | In a transaction, the failed lookup already stops the transaction |
+| `CLIENT REPLY` on Redis | Refuse | Accept | The session waits for each answer, and the execution had no end before Stop |
+| Cleaning on Redis | `DISCARD`, `CLIENT SETNAME ""`, `TRACKING`, `NO-EVICT`, and `NO-TOUCH` `OFF`, `UNWATCH`, and `SELECT`, in one round trip | Refuse those `CLIENT` commands | The name and the modes passed to the next console |
 | Selector with an open transaction | Refuse the change | Change with `SET` or `USE` | A reserved session does not receive the context, and a transaction with an error refuses `SET` |
 | Disconnect with open work | Refuse and name the console | Ask and stop the console | Fewer states; the user resolves the transaction with the existing controls |
 | Disconnect with a catalog read | Wait for the session for up to 5 seconds | Report the end right after closing the idle ones | The message would be false, and the form stayed stuck in the rename mode |

@@ -70,7 +70,7 @@ Refuse empty or repeated names in the same connection, without changing identity
 Block during an execution or an open transaction.
 Show the current connection, the new connection, and the destination folder before the confirmation.
 Save before the change; a failure cancels the change.
-Keep text, name, cursor, and scroll; clear results, messages, and database or schema selection.
+Keep text, name, cursor, scroll, and the Messages history; clear results and database or schema selection.
 Do not run or convert the SQL automatically.
 
 ## 2. Console view
@@ -389,6 +389,67 @@ The table tab and the structure tab stay open together.
 - The tab does not come back in the next session.
 - Redis and Valkey have no diagram. `d` shows the reason in the status bar.
 
+### Compare tab
+
+`c` on a navigator row, or `Ctrl+W v` in any panel, opens the **Compare** dialog. `Ctrl+W v` uses the row with the focus in the navigator, the table of a table tab, the focus of a diagram, the current schema of a console, or the sides of a compare tab. The source comes from the row, and the target is the next connection with the same schema and table. The first field chooses **Structure** or **Data**: a table row starts with **Data**, and a connection or a schema row starts with **Structure**. An empty table compares the whole schema. A data compare needs a table. The script makes the target equal to the source.
+
+A connection, a schema, and a table field show a list below the field when they get the focus. The text filters the list: each word must be in the name, with no case. A connection or a schema has a search text. A table field filters with its own text, and the table list holds only tables. `Enter` or `Tab` choose the marked name and move to the next field, so a connection leads to its schemas, and a schema to its tables. A click on a row also chooses it. `Esc` closes the list and keeps the value. A table can keep a name that the list does not hold: `Esc`, then `Tab`.
+
+```text
+╭─ Compare ────────────────────────────────────────────────────────────╮
+│                                                                      │
+│   Compare                < Structure >                               │
+│ > Source connection      < shop >                                    │
+│   Source schema          < public >                                  │
+│   Source table                                                       │
+│   Target connection      < shop-staging >                            │
+│   Target schema          < public >                                  │
+│   Target table                                                       │
+│   Removals as statements [ ]                                         │
+│                                                                      │
+│   The script makes the target equal to the source. An empty table    │
+│   compares the schema.                                               │
+│   [ Compare ]  [ Cancel ]                                            │
+╰──────────────────────────────────────────────────────────────────────╯
+```
+
+The tab label is `name (compare)`. Opening the same compare again selects the tab and reads both sides again.
+
+```text
+│ [console-1] [public (compare)]                                                         │
+│ shop · public → shop-staging · public · compare                                        │
+│ Change │ Object  │ Table  │ Name  │ Source             │ Target                         │
+│ create │ table   │ items  │ items │ 3 columns          │ NULL                           │
+│ drop   │ table   │ old    │ old   │ NULL               │ 1 column                       │
+│ alter  │ column  │ owners │ name  │ text NOT NULL      │ character varying(5)           │
+│ 3 differences                                                                          │
+```
+
+- The grid has the search, the copy, the row window, and the export of the other grids. It holds each difference, so **All rows** reads nothing.
+- `S` opens the script in a new console of the target and does not run it. `Y` copies it.
+- A removal stays a comment unless **Removals as statements** is on.
+- Between two dialects, the grid shows the differences of names, `NULL` rules, keys, and indexes, and the row under the grid says `no script: two dialects`.
+- **Reload** (`R`) reads both sides again.
+- The tab does not come back in the next session.
+
+A data compare has the label `name (data)`. The grid has a `Change` column and the columns of the source table.
+
+```text
+│ shop · public.prices → shop-staging · public.prices · data compare                      │
+│ Change            │ id │ name     │ price │ note                                       │
+│ update name, note │ 2  │ old name │ 3.00  │ x                                          │
+│   target          │ 2  │ name     │ 3.00  │ NULL                                       │
+│ delete            │ 4  │ gone     │ 9.00  │ NULL                                       │
+│ insert            │ 3  │ new      │ 1.00  │ it's                                       │
+│ 3 differences                                                                          │
+```
+
+- The rows match by the primary key of the source. A table without a primary key, a target without the table, and a target without a column of the source refuse with the reason.
+- An update takes two rows: the source row with the names of the changed columns, and the target row under it.
+- The script has one statement per row in one transaction. A `DELETE` stays a comment unless **Removals as statements** is on.
+- A source table that does not fit in the data budget ends the compare with the reason, and no result.
+- The script uses the literals of the target, so a data compare also works between two dialects.
+
 ### Export
 
 `e` in the grid, or **Export the result to a file** in the palette, opens the modal. The export covers the active result and generates a file.
@@ -680,7 +741,60 @@ If another instance uses it, block its opening in this instance.
 
 ### Open manual transaction
 
-The **Messages** tab shows notices, errors, and commands without rows.
+The **Messages** tab keeps the command history of each open console in memory.
+It shows the commands sent to the database, their results, notices, and errors.
+A new execution replaces result grids, but it keeps this history.
+A disconnect or a connection change also keeps the history and its connection labels.
+Closing the console or the application discards it. SQLN does not save this history.
+
+Commands include the effective SQL, with added limits and EXPLAIN prefixes, and parameters shown separately.
+Internal commands include metadata reads, context, transaction control, cleanup, and health checks.
+Operations without SQL show their technical names. Redis arguments use safe byte escapes.
+Authentication and operations hidden inside drivers do not enter the history.
+Import operations do not enter the history, including their setup and cleanup.
+
+Commands of a console stay in that console, even while another tab is active.
+Shared operations go only to the active SQL console of the same connection.
+The destination stays fixed from the start of the operation. Without a matching console, SQLN discards the shared record.
+Settings > Results > **System commands** (`showSystemCommands`) controls the visibility of Internal and Shared records.
+The default is Off. The setting applies to existing records after Save, without deleting them or stopping capture.
+Hidden records still use the history budget. The global and project scopes use the same precedence as other settings.
+SQL from the editor and its errors stay visible.
+
+Messages shows each command as a compact block, without a box.
+The heading shows the command number, connection, and origin, with a separator rule.
+SQL uses the same syntax styles as the editor, with the dialect of the recorded command.
+Blank rows separate the heading, SQL, and result.
+The result line combines the status, row count when available, and execution time in milliseconds.
+Success, warning, error, and interrupted results have different marks and styles.
+Notices and other details stay below the result. SQL keeps its syntax colors after an error.
+Plain themes use text marks, and narrow views wrap the blocks without changing the SQL.
+
+```text
+── #24 · app_db · User ─────────────────
+
+SELECT id, name
+FROM users;
+
+✓ Completed · 12 rows · 8.420 ms
+```
+
+Each completed or interrupted command keeps its execution time, including after text truncation.
+The clock starts after the start record enters the event queue and stops before the completion record enters it.
+Pool waiting and delivery of those history events do not enter the command time.
+
+Internal records do not select the Messages tab or increase its warning count.
+The warning count continues to describe the current execution.
+
+Each console has a 10 MiB history budget, including stored text and record structures.
+SQLN removes the oldest complete records when needed and shows a removal marker.
+A command too large for one record has an explicit truncation marker; the database still receives its full text.
+The view follows new records only while the scroll is at the end.
+Reading older records keeps the current position, unless those records leave the budget.
+With the pointer over Messages, the mouse wheel or touchpad scrolls three rows per event, without a click first.
+This does not move the editor or change keyboard focus. Horizontal wheel events do not move Messages.
+The scroll stops at each edge, and reversing the wheel moves it immediately.
+Returning to the end resumes following new records.
 
 ```text
 ┌─ console-1 ──────────────────────────────────────────────┐
@@ -846,7 +960,7 @@ Open with `Ctrl+W ,`.
 The window has 72 columns and grows to 140 on a larger screen, with 8 free columns. The height does not change.
 The lists, the conflicts, **Rename console**, the password, and the questions grow to 100 columns. The lists and the conflicts also grow to 30 rows. The cell detail and the help grow to 140 columns.
 The project writes only the values it declares.
-Offer the global or project scope and the ten fields below.
+Offer the global or project scope and the fields below.
 Show the values inherited from global and allow removing a project definition to use the global one.
 **Save** writes the changes of all sections. **Cancel** changes nothing.
 The sidebar groups the fields in the **General**, **Editor**, **Results**, and **Appearance** sections. The panel shows one section at a time.
@@ -873,6 +987,8 @@ The switch happens in the editor itself, so the selection and the history contin
 │                │                                                     │
 ╰────────────────┴─────────────────────────────────────────────────────╯
 ```
+
+The **Results** section includes **System commands**, which starts Off and only filters the Messages view.
 
 The **Appearance** section has the **Default theme** field.
 The choice changes the colors at once, before saving. `Esc` and **Cancel** bring back the saved theme.

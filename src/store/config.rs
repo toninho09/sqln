@@ -60,6 +60,7 @@ pub const DEFAULT_QUERY_HISTORY: bool = true;
 pub const DEFAULT_FORMAT_JSON: bool = true;
 /// A plain read without its own limit receives `LIMIT` with the row cap.
 pub const DEFAULT_CAP_IN_SQL: bool = true;
+pub const DEFAULT_SHOW_SYSTEM_COMMANDS: bool = false;
 /// A run of this time or more rings the bell at its end. The value 0 stops the bell.
 pub const DEFAULT_BELL_AFTER_SECONDS: u64 = 10;
 
@@ -179,6 +180,8 @@ pub struct Preferences {
     pub query_history: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format_json: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_system_commands: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bell_after_seconds: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -350,6 +353,8 @@ pub struct Config {
     pub query_history: bool,
     /// True when the value window opens a JSON value in its formatted form.
     pub format_json: bool,
+    /// True when Messages shows internal and shared commands.
+    pub show_system_commands: bool,
     /// A run of this time or more rings the bell at its end. The value 0 stops the bell.
     pub bell_after_seconds: u64,
     /// The keys that accept a suggestion.
@@ -798,6 +803,10 @@ fn combine(
             .and_then(|preferences| preferences.format_json)
             .or(global.format_json)
             .unwrap_or(DEFAULT_FORMAT_JSON),
+        show_system_commands: project
+            .and_then(|preferences| preferences.show_system_commands)
+            .or(global.show_system_commands)
+            .unwrap_or(DEFAULT_SHOW_SYSTEM_COMMANDS),
         bell_after_seconds: project
             .and_then(|preferences| preferences.bell_after_seconds)
             .or(global.bell_after_seconds)

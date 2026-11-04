@@ -765,8 +765,12 @@ impl TableTab {
         };
         let range = list.completion.replace.clone();
         let insert = item.insert.clone();
+        let cursor = item.cursor_offset.map(|offset| range.start + offset);
         if let Some(field) = self.focused_field() {
             field.replace(range, &insert);
+            if let Some(cursor) = cursor {
+                field.set_byte_cursor(cursor);
+            }
         }
     }
 

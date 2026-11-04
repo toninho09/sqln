@@ -437,6 +437,23 @@ pub fn counts_rows(sql: &str, dialect: Dialect) -> bool {
     })
 }
 
+/// Returns true for `DEALLOCATE` and `DISCARD ALL`. These statements can remove the
+/// prepared statements of the driver from the server.
+pub fn removes_prepared_statements(sql: &str, dialect: Dialect) -> bool {
+    let tokens = tokenize(sql, dialect);
+    let mut words = tokens
+        .iter()
+        .filter(|token| token.kind == TokenKind::Word)
+        .map(|token| &sql[token.start()..token.end()]);
+    match words.next() {
+        Some(word) if word.eq_ignore_ascii_case("DEALLOCATE") => true,
+        Some(word) if word.eq_ignore_ascii_case("DISCARD") => words
+            .next()
+            .is_some_and(|word| word.eq_ignore_ascii_case("ALL")),
+        _ => false,
+    }
+}
+
 /// Returns true for `COPY` that reads `STDIN` or writes `STDOUT`.
 /// The protocol of these statements has no place in a grid.
 pub fn reads_or_writes_stdio(sql: &str, dialect: Dialect) -> bool {

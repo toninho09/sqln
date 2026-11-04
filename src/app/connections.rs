@@ -261,6 +261,7 @@ impl App {
         };
         self.open_pending_diagram(id, schemas.is_some());
         self.update_picker(id, schemas);
+        self.sync_compare_form();
     }
 
     pub(super) fn on_columns_loaded(
@@ -376,6 +377,7 @@ impl App {
             Action::NavigatorNewConsole => self.request_console(id),
             Action::NavigatorStructure => self.open_row_structure(&row),
             Action::NavigatorDiagram => self.open_row_diagram(&row),
+            Action::NavigatorCompare => self.open_row_compare(&row),
             Action::NavigatorSessions => self.open_row_sessions(&row),
             Action::NavigatorGenerate => self.open_templates(&row),
             Action::NavigatorImport => self.import_row(&row),
@@ -841,6 +843,7 @@ impl App {
         }
         self.close_tables_of(id);
         self.close_diagrams_of(id);
+        self.close_compares_of(id);
         if let Some(manager) = &mut self.manager {
             manager.remove_connection(id);
         }

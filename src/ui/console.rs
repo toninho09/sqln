@@ -57,6 +57,7 @@ pub struct ConsoleLayout {
 }
 
 pub struct BarData<'a> {
+    pub show_system_commands: bool,
     pub connection: &'a str,
     pub namespace: Namespace,
     /// The schema that a session reads without a selection, when the catalog gives it.
@@ -345,6 +346,9 @@ pub fn draw_console(
     draw_tabs(frame, tabs, &labels, active, focused, theme);
 
     if console.showing_messages() {
+        console
+            .messages
+            .set_show_system_commands(bar.show_system_commands);
         draw_messages(frame, results, console, theme);
     } else if let Some(result) = console.results.get_mut(console.active) {
         draw_grid(frame.buffer_mut(), results, result, focused, theme);
@@ -472,28 +476,25 @@ pub fn tab_at(console: &Console, area: Rect, column: u16) -> Option<usize> {
     label_at(&tab_labels(console, area), area, column)
 }
 
-fn draw_messages(frame: &mut Frame, area: Rect, console: &Console, theme: &Theme) {
+fn draw_messages(frame: &mut Frame, area: Rect, console: &mut Console, theme: &Theme) {
     let area = Rect {
         x: area.x + 1,
         width: area.width.saturating_sub(1),
         ..area
     };
-    if console.messages.is_empty() {
+    let rows = super::messages::viewport(
+        &mut console.messages,
+        &mut console.messages_scroll,
+        usize::from(area.width),
+        usize::from(area.height),
+        theme,
+    );
+    if rows.is_empty() {
         let line = Span::styled(text::NO_MESSAGES, theme.hint);
         frame.render_widget(Paragraph::new(Line::from(line)), area);
         return;
     }
-    // A message takes one row or more, so the next messages stay out of sight.
-    let shown = usize::from(console.messages_scroll) + usize::from(area.height);
-    let lines: Vec<Line> = console
-        .messages
-        .iter()
-        .take(shown)
-        .map(|message| Line::styled(printable(&message.text), message_style(message, theme)))
-        .collect();
-    let paragraph = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .scroll((console.messages_scroll, 0));
+    let paragraph = Paragraph::new(rows);
     frame.render_widget(paragraph, area);
 }
 

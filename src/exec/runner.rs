@@ -16,6 +16,7 @@ use super::{
     Binding, Command, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, ResultSink,
     RunRequest, Settings, StatementKey, StatementStatus, context,
 };
+use crate::command_log::TraceContext;
 use crate::connector::{ExecError, StatementEnd, TransactionCommand, TransactionState};
 use crate::export::ExportWriter;
 use crate::grid::Budget;
@@ -71,6 +72,7 @@ pub struct ConsoleTask {
     events: Sender<ExecEvent>,
     held: Option<Lease>,
     transaction: TransactionState,
+    trace: Option<TraceContext>,
 }
 
 impl ConsoleTask {
@@ -89,6 +91,7 @@ impl ConsoleTask {
             events,
             held: None,
             transaction: TransactionState::None,
+            trace: None,
         }
     }
 
@@ -97,8 +100,20 @@ impl ConsoleTask {
             self.settings = self.binding.settings().clone();
             match command {
                 Command::Run(request) => self.run_script(request, &mut commands).await,
-                Command::Import(request) => self.run_import(request, &mut commands).await,
-                Command::Transaction(command) => self.control(command).await,
+                Command::Import(request) => {
+                    self.trace = None;
+                    if let Some(lease) = &mut self.held {
+                        lease.session().set_trace_context(None);
+                    }
+                    self.run_import(request, &mut commands).await;
+                }
+                Command::Transaction(command, trace) => {
+                    self.trace = trace;
+                    if let Some(lease) = &mut self.held {
+                        lease.session().set_trace_context(self.trace.clone());
+                    }
+                    self.control(command).await;
+                }
                 Command::Rebind(binding) => self.binding = binding,
                 Command::Stop | Command::ConfirmClose(_) => {}
                 Command::Close => break,
@@ -143,11 +158,12 @@ impl ConsoleTask {
         execution: ExecutionId,
         commands: &mut UnboundedReceiver<Command>,
     ) -> Option<Lease> {
-        if let Some(lease) = self.held.take() {
+        if let Some(mut lease) = self.held.take() {
+            lease.session().set_trace_context(self.trace.clone());
             return Some(lease);
         }
         let pool = self.binding.pool.clone();
-        let mut acquire = pin!(pool.acquire());
+        let mut acquire = pin!(pool.acquire_traced(self.trace.clone()));
         loop {
             tokio::select! {
                 result = &mut acquire => match result {
@@ -173,10 +189,12 @@ impl ConsoleTask {
 
     async fn run_script(&mut self, request: RunRequest, commands: &mut UnboundedReceiver<Command>) {
         let RunRequest {
+            trace,
             execution,
             statements,
             options,
         } = request;
+        self.trace = trace;
         let console = self.console;
         self.emit(ExecEvent::Queued { console, execution }).await;
         // The state of a closed session does not apply to the next session.
@@ -193,6 +211,7 @@ impl ConsoleTask {
         let context = context(&self.settings, options.schema);
         let cap = options.row_cap.unwrap_or(self.settings.row_cap);
         let export = options.export;
+        let untimed = options.untimed;
         if !reserved && let Err(error) = lease.session().apply_context(&context).await {
             self.finish(execution, ExecutionEnd::Failed, Some(error.message))
                 .await;
@@ -234,7 +253,7 @@ impl ConsoleTask {
                 cap,
                 export: export.clone(),
                 // An export ends with the user. It has no time limit.
-                timed: export.is_none(),
+                timed: export.is_none() && !untimed,
             };
             let (waited, reason) = self
                 .run_statement(key, active, sql, delivery, commands)
@@ -253,6 +272,7 @@ impl ConsoleTask {
                     self.set_transaction(TransactionState::Unknown).await;
                 }
             } else if let Some(active) = lease.as_mut() {
+                active.session().set_trace_context(self.trace.clone());
                 let state = active.session().transaction_state().await;
                 self.observe_transaction(state).await;
                 if state == TransactionState::Unknown {
@@ -314,7 +334,7 @@ impl ConsoleTask {
                 self.finish(request.execution, ExecutionEnd::Refused, Some(message))
                     .await;
             }
-            Command::Transaction(_) => {
+            Command::Transaction(..) => {
                 let message = "The console has an execution in progress.".to_owned();
                 self.emit(ExecEvent::TransactionFailed { console, message })
                     .await;
@@ -363,6 +383,13 @@ impl ConsoleTask {
         let sql = limited.as_deref().unwrap_or(sql);
         let stopping = sink.stop_flag();
         let session = lease.session();
+        let trace = self.trace.as_ref().map(|trace| {
+            let mut trace = trace.clone();
+            trace.key = Some(key);
+            trace.user = true;
+            trace
+        });
+        session.set_trace_context(trace);
         let canceller = session.canceller();
         let cancel = || {
             stopping.store(true, Ordering::SeqCst);

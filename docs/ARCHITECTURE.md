@@ -47,6 +47,7 @@ Main thread                        Tokio runtime
 | `table` | Table tab: pages, fields, sorting, suggestions, and query |
 | `structure` | Catalog queries of the structure tab, per database, scope, and section |
 | `diagram` | ER diagram: catalog queries, model, layout of boxes and lines, Mermaid text, and the state of a diagram tab |
+| `compare` | Structure and data compare: catalog queries, model of a schema, differences, sync DDL, rows by key, the dialog, and the state of a compare tab |
 | `line_input` | Single-line text field, used by the filter bar fields |
 | `exec` | Executions, scripts, cap, and cancellation |
 | `pool` | Limit, queue, reservation, and cleaning |
@@ -234,6 +235,8 @@ That check took a third of the time of a copy or of an export, and each text in 
 The budget counts the block of each row, so the same limit holds about twice the rows.
 The limit in memory stays the same.
 
+A row can keep its place in the budget after the end of its execution. A data compare keeps each source row until the compare ends, because the target rows meet them in a later execution. A target row that equals its source row leaves the budget at once. The index of the keys stays out of the budget.
+
 ## 3. Concurrency
 
 ### Rules
@@ -302,10 +305,10 @@ Closing the connection is the only case that abandons that future.
 
 | Database | Cancellation | Cleaning | Transaction state |
 |---|---|---|---|
-| PostgreSQL | `CancelToken` | `DISCARD ALL` | Clock probe, through the simple protocol |
+| PostgreSQL | `CancelToken` | The steps of `DISCARD ALL` without `DEALLOCATE ALL`, and `DEALLOCATE` of each `PREPARE`; after a `DISCARD ALL` or `DEALLOCATE` of the user, close the session | Clock probe, through the simple protocol |
 | MySQL | `KILL QUERY` on a temporary connection | `Conn::reset` and back to the database of the connection | `SERVER_STATUS_IN_TRANS` of the last response; `DO 0` after an error |
 | SQLite | `InterruptHandle` | Drop the connection | `is_autocommit` |
-| Redis/Valkey | `CLIENT UNBLOCK` on a temporary connection; no effect, close the session | `DISCARD`, `UNWATCH`, and back to the database of the connection | Always `None`: the source has no manual transaction |
+| Redis/Valkey | `CLIENT UNBLOCK` on a temporary connection; no effect, close the session | `DISCARD`, the `CLIENT` name and modes, `UNWATCH`, and back to the database of the connection, in one round trip | Always `None`: the source has no manual transaction |
 
 `run` sends one statement, delivers the rows to `ResultSink`, and obeys the `Flow::Stop` return.
 One statement may deliver several results, such as `CALL` in MySQL, and the cap applies to each one.
@@ -436,6 +439,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
     "reopenTabs": true,
     "queryHistory": true,
     "formatJson": true,
+    "showSystemCommands": false,
     "bellAfterSeconds": 10,
     "suggestionKeys": "tab"
   },

@@ -124,6 +124,29 @@ impl Fixture {
         }
     }
 
+    fn tree_screen(&mut self) -> String {
+        self.screen()
+            .lines()
+            .skip(2)
+            .take(usize::from(HEIGHT - 4))
+            .map(|line| line.split('│').next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn pump_tree(&mut self, text: &str) {
+        self.pump_until(|f| f.tree_screen().contains(text));
+    }
+
+    #[track_caller]
+    fn assert_not_tree(&mut self, text: &str) {
+        assert!(
+            !self.tree_screen().contains(text),
+            "{text:?} remains in the explorer:\n{}",
+            self.screen()
+        );
+    }
+
     fn pump_sees(&mut self, text: &str) {
         let text = text.to_owned();
         self.pump_until(move |f| f.sees(&text));
@@ -274,6 +297,23 @@ fn consoles_keep_their_own_text_and_results() {
     f.assert_sees("second console");
     f.prefix('n');
     assert_eq!(f.app.console().name, "console-1", "the tabs wrap");
+    let histories: Vec<String> = f
+        .app
+        .consoles()
+        .iter()
+        .map(|console| {
+            console
+                .messages
+                .iter()
+                .map(|message| message.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect();
+    assert!(histories[0].contains("first console"));
+    assert!(!histories[0].contains("second console"));
+    assert!(histories[1].contains("second console"));
+    assert!(!histories[1].contains("first console"));
 }
 
 #[test]
@@ -324,6 +364,7 @@ fn closing_a_console_frees_its_rows_and_the_last_tab_shows_the_home_screen() {
     assert!(!f.app.home());
     f.prefix('c');
     assert!(f.app.home());
+    assert!(f.app.console().messages.is_empty());
     assert!(!f.app.should_quit());
 }
 
@@ -491,7 +532,7 @@ fn the_navigator_opens_each_level_of_the_catalog() {
     f.assert_sees("Pool 0/5");
     f.navigator();
     f.code(KeyCode::Right);
-    f.pump_sees("main");
+    f.pump_tree("main");
     f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
@@ -501,7 +542,7 @@ fn the_navigator_opens_each_level_of_the_catalog() {
     f.code(KeyCode::Down);
     f.assert_sees("users");
     f.code(KeyCode::Right);
-    f.pump_sees("id");
+    f.pump_tree("id");
     f.assert_sees("name");
 
     // Left closes an open row, and then it moves to the parent.
@@ -509,7 +550,7 @@ fn the_navigator_opens_each_level_of_the_catalog() {
     f.assert_sees("▸ users");
     f.code(KeyCode::Left);
     f.code(KeyCode::Left);
-    f.assert_not_sees("users");
+    f.assert_not_tree("users");
 }
 
 #[test]
@@ -518,7 +559,7 @@ fn vim_keys_move_in_the_navigator_and_stay_text_in_the_editor() {
     let mut f = Fixture::open(vec![path], KeyboardMode::Vim);
     f.navigator();
     f.code(KeyCode::Char('l'));
-    f.pump_sees("main");
+    f.pump_tree("main");
     f.code(KeyCode::Char('j'));
     f.code(KeyCode::Char('j'));
     f.code(KeyCode::Char('l'));
@@ -526,7 +567,7 @@ fn vim_keys_move_in_the_navigator_and_stay_text_in_the_editor() {
     f.code(KeyCode::Char('k'));
     f.code(KeyCode::Char('h'));
     f.code(KeyCode::Char('h'));
-    f.assert_not_sees("main");
+    f.assert_not_tree("main");
 
     f.prefix('l');
     f.code(KeyCode::Char('i'));
@@ -540,11 +581,11 @@ fn a_click_in_the_navigator_selects_and_its_mark_opens() {
     let (column, row) = f.locate("▸ tree-click");
     f.click(column + 4, row);
     assert!(f.app.navigator_focused());
-    f.assert_not_sees("main");
+    f.assert_not_tree("main");
     f.click(column, row);
-    f.pump_sees("main");
+    f.pump_tree("main");
     f.click(column, row);
-    f.assert_not_sees("main");
+    f.assert_not_tree("main");
 }
 
 #[test]
@@ -555,7 +596,7 @@ fn the_wheel_moves_the_navigator() {
     let mut f = Fixture::new("tree-wheel", &setup);
     f.navigator();
     f.code(KeyCode::Right);
-    f.pump_sees("main");
+    f.pump_tree("main");
     f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
@@ -578,7 +619,7 @@ fn a_catalog_read_keeps_the_cursor_and_the_open_columns() {
     );
     f.navigator();
     f.code(KeyCode::Right);
-    f.pump_sees("main");
+    f.pump_tree("main");
     f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
@@ -601,7 +642,7 @@ fn a_removed_item_moves_the_cursor_to_its_parent() {
     let mut f = Fixture::new("tree-removed", "CREATE TABLE a(x); CREATE TABLE gone(y);");
     f.navigator();
     f.code(KeyCode::Right);
-    f.pump_sees("main");
+    f.pump_tree("main");
     f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
@@ -619,7 +660,7 @@ fn r_reads_the_catalog_again() {
     let mut f = Fixture::new("tree-refresh", "CREATE TABLE before_change(a);");
     f.navigator();
     f.code(KeyCode::Right);
-    f.pump_sees("main");
+    f.pump_tree("main");
     f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);
@@ -1197,7 +1238,7 @@ fn a_name_from_the_database_cannot_send_terminal_sequences() {
     let mut f = Fixture::new("tree-escape", "CREATE TABLE \"bad\x1b[31mname\"(a);");
     f.navigator();
     f.code(KeyCode::Right);
-    f.pump_sees("main");
+    f.pump_tree("main");
     f.code(KeyCode::Down);
     f.code(KeyCode::Down);
     f.code(KeyCode::Right);

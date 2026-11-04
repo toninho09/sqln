@@ -298,6 +298,7 @@ struct Run {
     rows: Vec<Row>,
     statuses: Vec<StatementStatus>,
     end: Option<ExecutionEnd>,
+    commands: Vec<String>,
 }
 
 impl Run {
@@ -357,6 +358,10 @@ impl Harness {
         let mut run = Run::default();
         loop {
             match self.next() {
+                ExecEvent::CommandLog {
+                    event: sqln::command_log::LogEvent::Started { text, .. },
+                    ..
+                } => run.commands.push(text),
                 ExecEvent::Columns { columns, .. } => run.columns.push(columns),
                 ExecEvent::Rows { rows, .. } => run.rows.extend(rows),
                 ExecEvent::StatementFinished { status, .. } => run.statuses.push(status),
@@ -390,6 +395,25 @@ impl Harness {
 
     fn wait_started(&mut self) {
         while !matches!(self.next(), ExecEvent::StatementStarted { .. }) {}
+    }
+}
+
+#[test]
+fn redis_command_history_keeps_actual_arguments_and_internal_cleanup() {
+    for uri in uris() {
+        let mut h = Harness::open(&uri, Settings::default());
+        h.manager
+            .set_console_history(h.console, 1, "cache".to_owned());
+        let run = h.run_ok(&[r#"ECHO "\xff\x00quoted\"value""#]);
+        let commands = run.commands.join("\n");
+        assert!(commands.contains("CLIENT ID"), "{commands}");
+        assert!(
+            commands.contains(r#""ECHO" "\xff\x00quoted\"value""#),
+            "{commands}"
+        );
+        assert!(commands.contains("UNWATCH"));
+        let commands = h.run_ok(&["PING"]).commands.join("\n");
+        assert!(commands.matches("\"PING\"").count() >= 2, "{commands}");
     }
 }
 
@@ -533,6 +557,48 @@ fn a_shared_session_keeps_its_login() {
             let run = h.run(&[command]);
             assert!(run.error().contains("login"), "{command}: {run:?}");
         }
+    }
+}
+
+#[test]
+fn a_command_without_an_answer_is_refused() {
+    for uri in uris() {
+        let mut h = open(&uri);
+        for command in ["CLIENT REPLY OFF", "client reply skip"] {
+            let run = h.run(&[command]);
+            assert!(run.error().contains("answers"), "{command}: {run:?}");
+        }
+        assert_eq!(h.run_ok(&["PING"]).grid(), [["PONG"]]);
+    }
+}
+
+#[test]
+fn the_cleanup_removes_the_client_state_between_executions() {
+    for uri in uris() {
+        let settings = Settings {
+            max_connections: 1,
+            ..Settings::default()
+        };
+        let mut h = Harness::open(&uri, settings);
+        let first = h.run_ok(&[
+            "CLIENT ID",
+            "CLIENT SETNAME dirty",
+            "CLIENT TRACKING ON",
+            "CLIENT NO-EVICT ON",
+            "CLIENT NO-TOUCH ON",
+        ]);
+        let second = h.run_ok(&["CLIENT ID", "CLIENT INFO"]);
+        let grid = second.grid();
+        assert_eq!(first.grid()[0], grid[0], "the same session: {uri}");
+        let info = &grid[1][0];
+        let field = |name: &str| {
+            info.split_whitespace()
+                .find_map(|pair| pair.strip_prefix(name))
+                .unwrap_or_else(|| panic!("no {name}: {info}"))
+                .to_owned()
+        };
+        assert_eq!(field("name="), "", "{info}");
+        assert!(!field("flags=").contains(['t', 'e', 'T']), "{info}");
     }
 }
 

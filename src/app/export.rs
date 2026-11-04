@@ -97,12 +97,18 @@ fn result_in<'a>(
 
 impl App {
     fn active_tab_id(&self) -> ConsoleId {
+        if let Some(tab) = self.compare() {
+            return tab.sides[0].id;
+        }
         self.table().map_or(self.console().id, |tab| tab.id)
     }
 
     pub(super) fn active_result(&self) -> Option<&ResultTab> {
         if self.diagram_active.is_some() {
             return None;
+        }
+        if let Some(tab) = self.compare() {
+            return tab.done.then_some(&tab.result);
         }
         let result = match self.table() {
             Some(tab) => Some(&tab.result),
@@ -117,9 +123,11 @@ impl App {
     /// Returns true when the tab on screen can open the export dialog.
     pub(super) fn can_export(&self) -> bool {
         let id = self.active_tab_id();
-        let busy = self
-            .table()
-            .map_or(self.console().is_busy(), TableTab::is_busy);
+        let busy = match (self.compare(), self.table()) {
+            (Some(tab), _) => tab.is_busy(),
+            (None, Some(tab)) => tab.is_busy(),
+            (None, None) => self.console().is_busy(),
+        };
         !busy && self.active_result().is_some() && !self.has_export(id)
     }
 
@@ -133,11 +141,19 @@ impl App {
             let tab = &mut self.tables[index];
             return Some((&mut tab.phase, &mut tab.run));
         }
+        if let Some(index) = self.compares.iter().position(|tab| tab.owns(id)) {
+            let tab = &mut self.compares[index];
+            return Some((&mut tab.phase, &mut tab.run));
+        }
         let console = self.console_by_id(id)?;
         Some((&mut console.phase, &mut console.run))
     }
 
     fn all_rows(&self, result: &ResultTab, dialect: Dialect) -> AllRows {
+        // A compare holds each difference in its grid.
+        if self.compare().is_some() {
+            return AllRows::Complete;
+        }
         let table = self.table();
         let complete = match table {
             Some(tab) => !tab.has_more && tab.limit == ReadLimit::None && result.is_complete(),
@@ -157,15 +173,16 @@ impl App {
     fn export_source(&self) -> Option<ExportSource> {
         let result = self.active_result()?;
         let dialect = self.tab_connection()?.dialect;
-        let (name, table) = match self.table() {
-            Some(tab) => match &tab.structure {
+        let (name, table) = match (self.compare(), self.table()) {
+            (Some(tab), _) => (tab.label(), String::new()),
+            (None, Some(tab)) => match &tab.structure {
                 Some(structure) => (structure.name.clone(), String::new()),
                 None => (
                     tab.relation.relation.clone(),
                     from_clause(&tab.relation, dialect),
                 ),
             },
-            None => (self.console().name.clone(), String::new()),
+            (None, None) => (self.console().name.clone(), String::new()),
         };
         let selection = result
             .view
@@ -311,6 +328,7 @@ impl App {
             schema,
             row_cap: None,
             export: Some(writer.clone()),
+            untimed: false,
         };
         let execution = manager.run(id, vec![sql], run);
         if let Some((phase, clock)) = self.tab_run(id) {
