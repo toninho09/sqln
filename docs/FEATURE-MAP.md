@@ -120,9 +120,11 @@ The lexer tokenizes per dialect. The statement splitter keeps the positions and 
 
 ## 12. Autocomplete
 
-Files: `complete/mod.rs`, `complete/context.rs`, `complete/keywords.rs`, `catalog.rs`.
+Files: `complete/mod.rs`, `complete/context.rs`, `complete/grammar.rs`, `complete/keywords.rs`, `complete/vocabulary.rs`, `catalog.rs`.
 
 `complete/context` reads the text around the cursor and finds the expected kind of name. The suggestions come from the catalog: schemas, tables, views, and columns read on demand, with aliases, quotes, and the keywords of the dialect. After `ON`, the suggestion uses the foreign keys that the application reads together with the columns. The `suggestionKeys` preference chooses the key.
+
+`complete/grammar` selects built-in types for `CREATE TABLE`, `ALTER TABLE`, and `CAST` per dialect. Column options and query clauses use the cursor context. Functions show parameter signatures in the list. Acceptance inserts empty parentheses and puts the cursor inside. Existing parentheses and arguments stay unchanged. The console and table fields use the same rules. These suggestions use local lists, with no database request.
 
 ## 13. Catalog and structure tab
 

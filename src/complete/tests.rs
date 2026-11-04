@@ -26,6 +26,7 @@ fn partial_selection_matches_the_stable_sort_with_duplicates_and_ties() {
                         SuggestionKind::Column
                     },
                     detail: (index % 4 == 0).then(|| format!("owner_{}", index % 9)),
+                    cursor_offset: None,
                 },
             );
         }

@@ -2,9 +2,11 @@
 //! This module reads only the cache, so it never queries the database.
 
 mod context;
+mod grammar;
 pub mod keywords;
 #[cfg(test)]
 mod tests;
+mod vocabulary;
 
 use std::ops::Range;
 
@@ -25,6 +27,8 @@ pub enum SuggestionKind {
     Table,
     View,
     Schema,
+    Function,
+    DataType,
     Keyword,
 }
 
@@ -34,6 +38,8 @@ pub struct Suggestion {
     pub insert: String,
     pub kind: SuggestionKind,
     pub detail: Option<String>,
+    /// Byte offset from the replacement start. None puts the cursor after the insert.
+    pub cursor_offset: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -74,7 +80,21 @@ pub fn suggest_in(
     let typed = sql[analysis.replace.clone()].to_owned();
     let mut builder = Builder::new(&analysis.prefix, analysis.quote, dialect);
     builder.fill(&analysis, catalog);
-    builder.finish(analysis.replace, &typed)
+    let mut completion = builder.finish(analysis.replace, &typed);
+    let tail = &sql[completion.replace.end..];
+    let next = crate::sql::Lexer::new(tail, dialect)
+        .find(|token| token.kind != crate::sql::TokenKind::Comment);
+    if let Some(open) = next.filter(|token| {
+        token.kind == crate::sql::TokenKind::Punctuation && tail.as_bytes()[token.start()] == b'('
+    }) {
+        for item in &mut completion.items {
+            if item.kind == SuggestionKind::Function {
+                item.insert.truncate(item.insert.len() - 2);
+                item.cursor_offset = Some(item.insert.len() + open.end());
+            }
+        }
+    }
+    completion
 }
 
 /// Suggests a command at the start of a line. The arguments have no suggestions.
@@ -124,7 +144,13 @@ impl Builder {
     }
 
     fn fill(&mut self, analysis: &Analysis, catalog: Option<&Catalog>) {
+        if matches!(analysis.position, Position::NewName) {
+            return;
+        }
         if !analysis.qualifiers.is_empty() {
+            if matches!(analysis.position, Position::DataType { .. }) {
+                return;
+            }
             self.add_qualified(analysis, catalog);
             return;
         }
@@ -145,10 +171,28 @@ impl Builder {
                     self.add_join_conditions(join, &analysis.ctes, catalog);
                 }
                 self.add_scope(analysis, catalog);
-                keywords::all(self.dialect).for_each(|word| self.add_keyword(word));
+                if self.quote.is_none() {
+                    vocabulary::functions(self.dialect)
+                        .for_each(|(name, signature)| self.add_function(name, signature));
+                    vocabulary::EXPRESSION_WORDS
+                        .iter()
+                        .for_each(|word| self.add_keyword(word));
+                }
             }
             Position::AfterOperand => {
                 keywords::all(self.dialect).for_each(|word| self.add_keyword(word));
+            }
+            Position::DataType { cast } => {
+                if self.quote.is_none() {
+                    for word in vocabulary::available_types(self.dialect, *cast) {
+                        self.add_word(word, SuggestionKind::DataType);
+                    }
+                }
+            }
+            Position::Keywords(words) => {
+                if self.quote.is_none() {
+                    words.iter().for_each(|word| self.add_keyword(word));
+                }
             }
             Position::ColumnList(target) => {
                 if let Some(catalog) = catalog {
@@ -174,6 +218,10 @@ impl Builder {
     }
 
     fn add_keyword(&mut self, word: &str) {
+        self.add_word(word, SuggestionKind::Keyword);
+    }
+
+    fn add_word(&mut self, word: &str, kind: SuggestionKind) {
         let Some(rank) = self.rank(word, false) else {
             return;
         };
@@ -187,8 +235,30 @@ impl Builder {
             Suggestion {
                 label: text.clone(),
                 insert: text,
-                kind: SuggestionKind::Keyword,
+                kind,
                 detail: None,
+                cursor_offset: None,
+            },
+        );
+    }
+
+    fn add_function(&mut self, name: &str, signature: &str) {
+        let Some(rank) = self.rank(name, false) else {
+            return;
+        };
+        let name = if self.uppercase_keywords {
+            name.to_owned()
+        } else {
+            name.to_lowercase()
+        };
+        self.push(
+            rank,
+            Suggestion {
+                label: name.clone(),
+                insert: format!("{name}()"),
+                kind: SuggestionKind::Function,
+                detail: Some(signature.to_owned()),
+                cursor_offset: Some(name.len() + 1),
             },
         );
     }
@@ -204,6 +274,7 @@ impl Builder {
                 insert: quote_name(name, self.dialect, self.quote),
                 kind,
                 detail: detail.map(str::to_owned),
+                cursor_offset: None,
             },
         );
     }
@@ -242,6 +313,7 @@ impl Builder {
                 insert,
                 kind: relation_kind(relation),
                 detail: None,
+                cursor_offset: None,
             },
         );
     }
@@ -311,6 +383,7 @@ impl Builder {
                     insert: condition,
                     kind: SuggestionKind::Join,
                     detail: None,
+                    cursor_offset: None,
                 };
                 self.push(rank, suggestion);
             }

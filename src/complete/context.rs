@@ -5,7 +5,7 @@ use std::ops::Range;
 use super::keywords::is_reserved;
 use crate::sql::{Dialect, Statement, Token, TokenKind, tokenize};
 
-const RELATION_WORDS: &[&str] = &["FROM", "JOIN", "UPDATE", "INTO", "TABLE"];
+const RELATION_WORDS: &[&str] = &["FROM", "JOIN", "UPDATE", "INTO", "TABLE", "REFERENCES"];
 const EXPRESSION_WORDS: &[&str] = &[
     "SELECT",
     "DISTINCT",
@@ -67,6 +67,10 @@ pub enum Position {
     Expression,
     /// An operand ends before the cursor, so the text expects a keyword.
     AfterOperand,
+    DataType {
+        cast: bool,
+    },
+    Keywords(Vec<&'static str>),
     /// The column list of `INSERT INTO relation (...)`.
     ColumnList(Reference),
     /// The text expects a new name, and no suggestion applies.
@@ -108,11 +112,11 @@ fn raw(text: &str, token: Token) -> &str {
     &text[token.start()..token.end()]
 }
 
-fn is_punctuation(text: &str, token: Token, value: u8) -> bool {
+pub(super) fn is_punctuation(text: &str, token: Token, value: u8) -> bool {
     token.kind == TokenKind::Punctuation && text.as_bytes()[token.start()] == value
 }
 
-fn is_word(text: &str, token: Option<&Token>, words: &[&str]) -> bool {
+pub(super) fn is_word(text: &str, token: Option<&Token>, words: &[&str]) -> bool {
     token.is_some_and(|token| {
         token.kind == TokenKind::Word
             && words
@@ -121,7 +125,7 @@ fn is_word(text: &str, token: Option<&Token>, words: &[&str]) -> bool {
     })
 }
 
-fn is_identifier(text: &str, token: Token) -> bool {
+pub(super) fn is_identifier(text: &str, token: Token) -> bool {
     match token.kind {
         TokenKind::Word => !is_reserved(raw(text, token)),
         TokenKind::QuotedIdentifier => true,
@@ -242,7 +246,12 @@ pub fn analyze(
         prefix,
         quote,
         qualifiers,
-        position: position(&tokens[..head], text),
+        position: super::grammar::position(
+            &tokens[..head],
+            text,
+            dialect,
+            position(&tokens[..head], text),
+        ),
         scope: visible_references(&tokens, text, head, partial),
         ctes: visible_ctes(&tokens, text, head, partial),
         join_on: join_on(&tokens[..head], text),

@@ -317,6 +317,8 @@ fn kind_tag(kind: SuggestionKind) -> &'static str {
         SuggestionKind::Table => "tbl",
         SuggestionKind::View => "vw ",
         SuggestionKind::Schema => "sch",
+        SuggestionKind::Function => "fn ",
+        SuggestionKind::DataType => "typ",
         SuggestionKind::Keyword => "kw ",
     }
 }

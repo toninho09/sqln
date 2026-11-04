@@ -644,7 +644,11 @@ Suggest the names of the CTEs available in the current statement and their colum
 Respect aliases and the scope of the subqueries.
 Do not query the database to discover columns of a CTE.
 Do not suggest columns when the analysis cannot determine them.
-Autocomplete of functions and their signatures does not enter that initial scope.
+**Expanded coverage:** suggest built-in types in `CREATE TABLE`, `ALTER TABLE`, and `CAST`, according to the connection dialect.
+Suggest column options, functions with parameter signatures, and query clauses according to the cursor context.
+Accept a function as `COUNT()` and put the cursor inside the parentheses.
+Keep existing parentheses and arguments when the function name already has them.
+Use local lists for built-in types and functions. Do not query the database for each key.
 
 **Defined:** the object navigator shows the same coverage: schemas, tables, views, and columns.
 

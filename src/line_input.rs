@@ -51,6 +51,13 @@ impl LineInput {
         self.byte_at(self.cursor)
     }
 
+    /// Moves the cursor to a byte offset on a character boundary.
+    pub fn set_byte_cursor(&mut self, byte: usize) {
+        if self.text.is_char_boundary(byte) {
+            self.cursor = self.text[..byte].chars().count();
+        }
+    }
+
     fn byte_at(&self, chars: usize) -> usize {
         self.text
             .char_indices()

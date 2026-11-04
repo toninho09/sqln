@@ -409,6 +409,12 @@ impl SqlEditor {
         let end = snapshot.position(list.completion.replace.end);
         self.break_undo_group();
         self.edit(start, end, &item.insert, EditKind::Other);
+        if let Some(offset) = item.cursor_offset {
+            let cursor = self
+                .snapshot()
+                .position(list.completion.replace.start + offset);
+            self.set_cursor(cursor);
+        }
     }
 
     pub fn on_key(&mut self, key: KeyEvent, catalog: Option<&Catalog>) {
