@@ -50,6 +50,7 @@ Main thread                        Tokio runtime
 | `mark_list` | Searchable list with a mark for each selected name |
 | `result` | Grid of one result with cursor and search, used by consoles and tables |
 | `table` | Table tab: pages, fields, sorting, suggestions, and query |
+| `data_edit` | Pending rows, budgeted snapshots, key predicates, update SQL, review, and cursor restoration |
 | `structure` | Catalog queries of the structure tab, per database, scope, and section |
 | `diagram` | ER diagram: catalog queries, model, layout of boxes and lines, Mermaid text, and the state of a diagram tab |
 | `compare` | Structure and data compare: catalog queries, model of a schema, differences, sync DDL, rows by key, the dialog, and the state of a compare tab |
@@ -153,7 +154,8 @@ A password refusal clears the session and opens a new prompt. The new password p
 
 ### Table tab
 
-Each table tab has a console task of the execution manager, but without an editor and without a transaction.
+Each table tab has a console task of the execution manager, without a console editor or a manual transaction.
+Grid Apply owns a short transaction on that task. It releases no session between validation and commit.
 The tab requests a page with `Run`, and receives the same events as a console.
 Thus, the deadline, the stop, the cancellation, the pool queue, and the budget apply without new code.
 The task keeps the connection only during the query, because a table query never leaves a transaction open.
@@ -175,7 +177,32 @@ A Redis key tab uses the same path, without SQL:
 1. `table::page_sql` builds `SQLN.VALUE <database> <key> <offset> <amount>` per `connector::redis::value_page`. That text is not a server command.
 2. The session reads `TYPE` on each page, because the key may change between two pages.
 3. The session uses the command of the type: `GET`, `LRANGE`, `HSCAN`, `SSCAN`, `ZRANGE`, or `XRANGE`.
-4. A false `Capabilities::table_filters` removes `WHERE`, `ORDER BY`, **Clear**, and sorting from the tab. **Apply** becomes **Reload**.
+4. A false `Capabilities::table_filters` removes `WHERE`, `ORDER BY`, **Clear filters**, and sorting from the tab. **Apply** becomes **Reload**.
+
+### Grid editing
+
+`ResultTab::edits` keeps the original and current row snapshots for pending table changes.
+The displayed result holds the proposed row, so search and value inspection use the same values.
+Reference-counted `SavedRow` objects own budget reservations and release them on their last drop.
+Discard transfers the original reservation back to the grid without requiring free memory.
+
+`app/data_edit` coordinates editing, review, authorization, submission, and close.
+`data_edit/form` holds modal state; `ui/data_edit` draws it.
+The cell editor reuses `SqlEditor` without SQL suggestions and never dispatches global commands.
+`Action` and `app/commands` control command discovery and effective shortcuts.
+
+`Manager::edit` sends inspection, review, or apply jobs to the table task.
+Review formatting uses a blocking task and acquires no database session.
+Apply passes the normal credential and trust gate, then reserves one session for the whole operation.
+`exec/runner/data_edit` owns begin, locking reads, original-row checks, metadata verification, updates, and commit.
+Private `ResultSink` capture keeps validation rows away from the visible grid and inside the budget.
+PostgreSQL and MySQL lock rows with `FOR UPDATE`; SQLite begins with `BEGIN IMMEDIATE`.
+Any known failure rolls back. A failed cleanup drops the session.
+A failed commit response reports uncertainty and never starts an automatic retry.
+
+`EditFinished` carries the operation outcome. The application rejects stale execution identities.
+A successful apply reloads applied filters and order; draft fields stay unchanged.
+Cursor and selection restoration matches primary keys among the reloaded rows.
 
 ### Undo history
 

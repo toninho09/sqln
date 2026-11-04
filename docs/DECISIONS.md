@@ -6,6 +6,87 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Query parameters — 2026-11-04
+
+The user requests named scalar parameters with a panel under the editor, as the approved plan describes. The detection uses the shared lexer, and the values reach the database as native driver bindings. Values never become SQL source text.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| Syntax | `:name` with ASCII letters, digits, and underscore, first character not a digit. Names compare with case sensitivity | `?`, `$n`, `@name`, auto-numbered names | One syntax for the three SQL sources; the panel needs stable names |
+| Detection | The whole editor text, off the interface thread, 200 ms after the last edit; quotes, comments, dollar quotes, and casts stay opaque | Only the statement at the cursor; detection on each key | The panel shows every parameter before the user chooses a scope |
+| Scope | A run binds only the names of the chosen statements or script | Bind every field of the panel | A field without a use must not block a run |
+| Types | Text, Number, Boolean, and NULL, chosen per field. Numbers validate by syntax without a float conversion; booleans accept `true` and `false`. On PostgreSQL, a Text or NULL parameter arrives as an unknown type, so the query infers it: uuid, date, timestamp, and jsonb columns accept the value without a cast. A Number stays `numeric`, because inference in arithmetic can pick an integer type | Dates, lists, identifiers, and SQL fragments; declare Text as `text` on PostgreSQL | Scalars cover the reuse case; identifiers would need catalog checks; a forced `text` type made the server refuse `uuid = text` |
+| Empty text | `Enter` marks an empty text as set. Unset fields block the run and put the focus on the first one | Treat empty as set; treat empty as NULL | Empty text and SQL NULL stay distinct, as in the grid editor |
+| Values | One value per name per execution, reused in every occurrence. Values stay in memory, per console, and never enter saved files | Persist values; share values between consoles | The saved work and the workspace formats stay without secrets |
+| Editor text | The editor keeps `:name`; the markers are written only for the driver | Replace the editor text with markers | The text of the user stays readable and reusable |
+| Bindings | PostgreSQL: extended protocol with prepared types and text parameter format. MySQL: prepared statements. SQLite: `raw_bind_parameter`. Decimal text binds as a string with a typed cast | Interpolate literals into the SQL | Native bindings separate values from SQL and keep injection out |
+| Number casting | MySQL: `CAST(? AS DECIMAL(p,s))` with the scale of the text, range-checked to 65/30. SQLite: `CAST(? AS NUMERIC)`. PostgreSQL: `numeric` parameter type | A driver float or int type | A float conversion loses digits; SQLite compares by type |
+| Result values | PostgreSQL keeps the text of the database, also for types without a decoder, through a transport adapter that requests text results for marked statements only | Binary results with per-type decoders | Preserves the decision "Grid values: database text", including extension types |
+| Mixing | `:name` cannot combine with native markers in one statement. The PostgreSQL `?' operator and array slices stay valid | Rewrite native markers | One binding path; rewriting risks changing the meaning |
+| Errors | The driver offset maps back to the editor text through the replacement ranges | Show the offset of the rewritten SQL | The editor underlines the place in the text of the user |
+| Added `LIMIT` | Applied before the rewrite, so the driver receives the limit | Bind without the limit | The row-cap decision keeps its effect |
+| Messages | The record shows the original SQL and the separate values, as the command-history decision requires; the driver never sees the values in SQL | Record only the original SQL | The record must describe the request that reaches the driver |
+| Query history | `history.jsonl` keeps the `:name` text only | Save values | The file holds user text, not values |
+| Export reread | The captured bindings of the last execution serve a full export reread; closing results clears them | Ask again; interpolate | The reread must return the same rows without another question |
+| Connectors | SQLite, PostgreSQL, and MySQL through `Capabilities::parameters`. Redis and Valkey show no panel | Offer fields everywhere | Redis commands take values, not named parameters |
+| Keys | `Ctrl+W P` focuses the panel; a click on the title or the command collapses it. `Tab` walks type, value, and Set; `Enter` sets; `Esc` returns to the editor; plain keys edit the value | A modal dialog | The panel follows the Databricks model that the user chose |
+| Persistence | No change to configuration, workspace, or script formats | Save fields or collapse state in the workspace | YAGNI; the panel state is session-only |
+
+Implementation notes:
+
+- The PostgreSQL transport adapter (`connector/postgres/text_io`) parses the frame stream: a `Parse` that starts with a marker names a statement, and only the marked `Bind` sends text result formats. Driver-internal queries keep binary results. A `Close` of the statement clears the name.
+- The plain-path PostgreSQL connections moved to `connect_raw` to wrap the socket; TCP sets `nodelay` and keepalive as the driver did.
+- MySQL binary-protocol rows reuse the text-cell rules; quoted values strip the protocol quotes only in that path.
+- Without query context, an inferred parameter resolves to `text`, as in `SELECT :value`.
+- Detection runs on a blocking task of the executor; the panel keeps only the newest revision answer.
+- The panel keeps the value of a name across edits and drops it when the name leaves the text.
+
+## Grid row selection — 2026-11-04
+
+The user requests whole-row selection by a click on the row number, as in Excel.
+Result and table grids use the existing cell selection and copy paths.
+The selection includes every column of the loaded row, including hidden columns.
+The behavior applies in conventional and Vim modes. It does not execute SQL.
+
+## Grid editing — 2026-11-04
+
+The user approves the grid editing plan and requests implementation.
+This replaces the initial plan's read-only table grid and cell-editing exclusion.
+It also replaces unconditional close for table tabs with pending edits or an active edit operation.
+
+| Point | Approved rule |
+|---|---|
+| Scope | Updates in SQLite, PostgreSQL, and transactional MySQL table tabs; no views or console results |
+| Identity | Require the complete original primary key, without NULL values |
+| Protected columns | Keys, identities, generated columns, and binary values remain non-editable |
+| Values | Preserve database text and precision; distinguish NULL, empty text, and the text NULL |
+| Local work | Keep pending values in memory; no database write before explicit Apply |
+| Review | Show original values, proposed values, and the generated SQL before execution |
+| Apply | Use one short transaction per tab; no manual transaction between edits |
+| Conflict | Reject changed or missing original rows; never overwrite them silently |
+| Failure | Preserve local values; roll back on a known failure; never retry writes automatically |
+| Unknown commit | Mark the result unknown and block another Apply until verification and local discard |
+| Navigation | Keep edits across tab switches; require resolution before page changes, reload, filter, sort, copy, export, and import |
+| Close | Apply, Discard, or Cancel; no immediate close during an edit operation |
+| Persistence | No configuration or workspace format change; pending values do not survive shutdown |
+
+Implementation notes:
+
+- MySQL currently accepts InnoDB only. It refuses storage whose row-locking and rollback contracts are not verified.
+- The table column reader of compare supplies key order, type, nullability, identity, and generated-column metadata.
+- PostgreSQL and MySQL use locking reads; SQLite uses `BEGIN IMMEDIATE`.
+- The executor validates every row before writes and checks each row again immediately before its update.
+- The second check detects changes from an earlier trigger on the same session.
+- A fresh metadata read after row locks detects schema changes.
+- MySQL may report zero changed rows for equivalent values; the locked original row proves identity.
+- The result grid holds the local row. Budgeted, reference-counted snapshots hold the original and the submitted row.
+- Review formatting runs on a blocking task, without database access.
+- Successful apply reloads the first page using applied filters and order, not drafts.
+- Cursor and selection restoration uses primary keys, not old visual row positions.
+- Ordinary execution limits, cancellation, credentials, trust, production, pool cleanup, and stale-event checks still apply.
+- Generated review text stays outside the row budget, as generated console SQL does. Pending row snapshots use the data budget.
+- Database rollback does not reverse external effects or writes to nontransactional storage from triggers.
+
 ## Command discovery and width-dependent hints — 2026-11-04
 
 The user approved a complete functional command palette, panel command pages, and a one-line hint row with width-dependent content.
@@ -806,14 +887,14 @@ The row count does not reopen the pagination rule: a page keeps asking for one e
 | Comment | Rule | Without a selection, the cursor line. Blank lines stay the same. All commented lose the comment; in the other cases, the comment enters at the smallest indent | Comment each line at its own indent | It is the IDE habit, and the text keeps its shape |
 | Count | Shape | `c` key, with exact `COUNT(*)` and the applied filter | Automatic estimate; automatic `COUNT(*)` | `COUNT(*)` on a big table holds a connection, the estimate errs with a filter, and it does not exist on SQLite |
 | Count | Path | The same as a page | New method in the manager | Deadline, Stop, pool, password, and budget apply without new code |
-| Count | Validity | **Apply** and **Clear** clear the total, and sorting keeps it | Clear always | The order does not change the count |
+| Count | Validity | **Apply filters** and **Clear filters** clear the total, and sorting keeps it | Clear always | The order does not change the count |
 | Count | Available | Only with more rows to load, in a table or view tab | Every tab | Without more rows, the grid already has the total. Redis key and structure have no count SQL |
 
 ### Known limitations
 
 - The comment reads lines, not tokens. A line inside a string or a block comment receives the prefix.
 - `--x` on MySQL is not a comment, but the removal treats it as a comment.
-- The count gets old when another session changes the table, until the next **Apply**.
+- The count gets old when another session changes the table, until the next **Apply filters**.
 - A JSON column without an object or array shape, such as a number or a string, does not switch shape.
 
 ## Command-line target, run protection, formatter, and history — 2026-11-01
@@ -1111,7 +1192,7 @@ These choices follow the rules above on the points the rules left open.
 | End of the result badge | The badge leaves when the user leaves the tab, or with the next execution | Keep until the next execution; leave when entering the tab | A tab with a badge means a result the user has not seen yet |
 | Start of the time | When the execution starts, without the password wait | From the run key | The time measures the database, not the password typing |
 | Tabs of the last session | Reopen at startup, with the `reopenTabs` option and default on | Manual list only, as in the original plan; ask at startup | Reopened by the user on 2026-10-31: the text is already saved, and the reopening runs no SQL |
-| Table of the last session | Load on the first selection; a tab that starts on screen waits for `Enter` or **Apply** | Load at startup | The connect-on-first-use rule stays: the opening does not connect and does not ask for a password |
+| Table of the last session | Load on the first selection; a tab that starts on screen waits for `Enter` or **Apply filters** | Load at startup | The connect-on-first-use rule stays: the opening does not connect and does not ask for a password |
 | Tab list after a failure | Invalid configuration or a locked console keeps the file list | Write the list of the current session | A session that could not reopen the tabs cannot erase that list |
 | Close tab with the mouse | `×` at the end of each tab, with the questions of `Ctrl+W c` | Close without questions; show `×` only on the active tab | A click cannot discard a transaction or a text; the `×` on each tab closes another tab without changing the screen |
 | Hint line commands | Key with the menu key style, effect with the hint color, and two spaces between the commands | Separate with ` · ` | The color marks the start of each command; ` · ` passes 80 columns in the navigator, and two spaces fit in 80 |

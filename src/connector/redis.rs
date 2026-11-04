@@ -172,6 +172,8 @@ impl Connector for RedisConnector {
             namespace: Namespace::Database,
             transactions: false,
             table_filters: false,
+            data_edit: false,
+            parameters: false,
         }
     }
 

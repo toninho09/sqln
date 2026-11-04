@@ -710,10 +710,10 @@ impl App {
             .find(|console| console.is_busy() || console.in_transaction())
             .map(|console| console.name.clone());
         console.or_else(|| {
-            let table = self
-                .tables
-                .iter()
-                .find(|tab| tab.connection == id && tab.is_busy());
+            let table = self.tables.iter().find(|tab| {
+                tab.connection == id
+                    && (tab.is_busy() || !tab.result.edits.is_empty() || tab.edit_uncertain)
+            });
             table.map(TableTab::label)
         })
     }

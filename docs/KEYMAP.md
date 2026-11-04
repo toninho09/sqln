@@ -73,7 +73,8 @@ Each panel also lists these commands:
 - Close the tab, toggle the explorer, the explorer page, sessions of a source with sessions, the ER diagram and the compare of a source with tables, palette, help, Settings, reload, and quit.
 - `x` during a run, `C` and `R` during a transaction, and only `R` in a failed transaction. These stay in the navigator, because the session stays occupied until the user acts.
 
-A table tab and a diagram tab have no script and no transaction, so `C` and `R` do not appear there.
+Table and diagram tabs have no script or manual transaction, so `C` and `R` do not appear there.
+Grid Apply controls its own short transaction.
 
 | Key | Action |
 |---|---|
@@ -102,7 +103,7 @@ A table tab and a diagram tab have no script and no transaction, so `C` and `R` 
 | `C` | Commit |
 | `R` | Rollback |
 | `d` | Choose database or schema |
-| `H` | Open query history |
+| `P` | Focus the parameters panel |
 | `r` | Read the configuration again |
 | `?` | Open help |
 | `:` | Open the command palette |
@@ -113,6 +114,7 @@ A table tab and a diagram tab have no script and no transaction, so `C` and `R` 
 `Ctrl+W E` and `Ctrl+W A` use uppercase keys and do not replace `Ctrl+W e` and `Ctrl+W a`.
 `Ctrl+W S` uses uppercase `S` and does not replace `Ctrl+W s`. With the focus in the navigator, it uses the connection of the row.
 `Ctrl+W D` uses uppercase `D` and does not replace `Ctrl+W d`. With the focus in the navigator, it uses the row, as `d` does. A table tab shows the diagram of its table, and a console shows its current schema.
+`Ctrl+W P` uses uppercase `P` and does not replace `Ctrl+W p`. It focuses the parameters panel when the editor text has parameters.
 `Ctrl+W F` uses uppercase `F`. It acts as `F` in the grid of a table tab, and it gives the reason in another tab.
 `Ctrl+W v` opens the dialog of a compare. With the focus in the navigator, it uses the row, as `c` does. A table tab gives its table (**Data**), a console gives its current schema (**Structure**), a diagram gives its focus, and a compare tab opens the dialog with its own sides.
 
@@ -165,7 +167,7 @@ Type to filter by words in the name, shortcut, action name, or technical aliases
 An action without a key stays in the list. A panel key appears only where it works.
 Navigator row commands appear only with focus in the navigator, and name their target.
 Add connection and scripts without a connection remain global. `Ctrl+W Tab` remains the explicit cross-panel explorer path.
-Apply and clear table filters also appear in the palette, without default shortcuts.
+Apply filters and Clear filters also appear in the palette, without default shortcuts.
 `Ctrl+P` has priority over the `MoveUp` of EdTUI during input in the Vim mode.
 
 The comment action acts on the selection or on the cursor line, with `-- ` in SQL and `# ` in Redis.
@@ -234,6 +236,25 @@ In the search bar:
 On macOS, the terminal handles `Cmd+C` and `Cmd+V`.
 `Cmd+V` reaches the application as a paste.
 `Cmd+C` copies the terminal selection, not the editor selection.
+
+## Parameters panel
+
+The panel appears under the editor when the SQL holds `:name` parameters.
+
+| Action | Key |
+|---|---|
+| Focus the panel | `Ctrl+W P` |
+| Next and previous field | `Down` and `Up` |
+| Next and previous column | `Tab` and `Shift+Tab` |
+| Change the type | `Enter` or `Space` on the type |
+| Mark empty text as set | `Enter` on the value |
+| Toggle Set and Unset | `Enter` or `Space` on the state |
+| Edit the value | Type on the value column |
+| Return to the editor | `Esc` |
+| Collapse and expand | Click on the title, or `Ctrl+W P` again after collapse |
+
+A run asks for the fields without a value: the focus moves to the first one.
+The type chooses Text, Number, Boolean, or NULL. Values stay in the panel and never change the editor text.
 
 ## Navigator
 
@@ -368,6 +389,11 @@ If the vault fails, the session option does not offer global storage in plain te
 | Copy as TSV | `Ctrl+C` | `y` |
 | Export to a file | `e` | `e` |
 | Import a file, in a table tab | `I` | `I` |
+| Edit a table cell | `F2` | `F2` |
+| Set a table cell to NULL | `Ctrl+N` | `Ctrl+N` |
+| Review pending changes | `Ctrl+R` | `Ctrl+R` |
+| Review and apply pending changes | `Ctrl+S` | `Ctrl+S` |
+| Discard pending changes, with confirmation | `Ctrl+D` | `Ctrl+D` |
 | Clear the selection | `Esc` | `Esc` |
 | Open value | `Enter` | `Enter` |
 | Open the row vertically | `r` | `r` |
@@ -381,7 +407,7 @@ If the vault fails, the session option does not offer global storage in plain te
 | End the session, in a sessions tab | `K` | `K` |
 
 `q` and `K` act on the session under the cursor, and they ask first. A read-only connection refuses them.
-`R` serves a structure, a key, and a sessions tab. A table tab uses **Apply**.
+`R` serves a structure, a key, and a sessions tab. A table tab uses **Apply filters**.
 Without a selection, `Ctrl+C` copies the current cell.
 The result that still receives rows does not close, and the **Messages** tab does not either.
 
@@ -394,6 +420,18 @@ In the value window and the row window, the keys are the same in both maps:
 | Change row, in the row window | `Left` and `Right`, or `h` and `l` |
 | Copy the visible text | `Ctrl+C` |
 | Close | `Esc` or `Enter` |
+
+Grid editing requires a writable table with a primary key. Key, identity, generated, and binary columns remain protected.
+The action names are `gridEditCell`, `gridSetNull`, `gridReviewEdits`, `gridSaveEdits`, and `gridDiscardEdits`.
+The palette and panel menu show their effective shortcuts.
+Pending changes disable copy, export, import, filters, sorting, reload, key navigation, and page changes.
+
+In the cell editor, `F2` or `Ctrl+S` keeps the value locally, without a database write.
+`Tab` selects the editor or buttons; the mouse selects and activates buttons.
+Conventional `Esc` cancels. In Vim insert mode, `Esc` first selects normal mode.
+The editor respects configured editor commands. Global application commands do not leave the modal.
+In the review, arrows and PageUp/PageDown scroll; `F2` or `Ctrl+S` applies; `Esc` cancels.
+Production asks for confirmation after review.
 
 In the **Messages** tab, the arrows walk the text.
 
@@ -496,7 +534,7 @@ With one key, `F` goes there at once. A key with `NULL` in the row stays out. A 
 | Return to the grid | `Esc`, with the suggestions closed |
 
 `Ctrl+W k` goes to the `WHERE` field, and `Ctrl+W j` returns to the grid.
-In the table view, the script and transaction actions have no effect, because the table has no script and no transaction.
+In table tabs, script and manual transaction actions have no effect. Grid Apply owns its short transaction.
 Those actions are `F5`, `Shift+F5`, `Ctrl+W e`, `Ctrl+W s`, `Ctrl+W E`, `Ctrl+W A`, `Ctrl+W m`, `Ctrl+W C`, `Ctrl+W R`, and `Ctrl+W d`.
 In the table grid, `x` and `Delete` also have no effect.
 `Ctrl+W c` closes the table tab and frees its data.
@@ -569,6 +607,7 @@ The initial focus always stays on the option with no effect on the database or t
 | Click on **Quit** | Quit, with the questions of `Ctrl+W q` |
 | Click on the `EXPLORER` title | Give focus to the navigator |
 | Click on the table header | Apply sorting: ascending, descending, and no order |
+| Click on a row number in a result or table grid | Select all columns of that loaded row, including hidden columns |
 | Double click on a table | Open the table view, with two clicks on the same cell within 400 ms |
 | Double click on a console row | Open the console, or select its tab |
 | Click on a bar field or button | Give focus to the field, or press the button |

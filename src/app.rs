@@ -7,6 +7,7 @@ mod commands;
 mod compare;
 mod conflicts;
 mod connections;
+mod data_edit;
 mod definition;
 mod diagram;
 mod export;
@@ -219,6 +220,10 @@ enum DialogAction {
     ExportReplace,
     /// Start the import that the question of production showed.
     ImportConfirmed,
+    ApplyEdits(ConsoleId),
+    ReviewEdits(ConsoleId),
+    DiscardEdits(ConsoleId),
+    CancelEdits(ConsoleId),
     /// Send the signal that the question of a sessions tab showed.
     SessionSignal(ConsoleId, SessionSignal, u64),
     /// Give the incomplete file of a tab its final name.
@@ -330,6 +335,7 @@ struct ScreenLayout {
     settings: SettingsLayout,
     export: ExportLayout,
     import: ImportLayout,
+    edit: crate::ui::data_edit::EditLayout,
     conflicts: ConflictLayout,
     password: Vec<(usize, Rect)>,
     /// The options of the open dialog, with the row of those options.
@@ -423,6 +429,7 @@ pub struct App {
     settings_form: Option<SettingsForm>,
     export_form: Option<ExportForm>,
     import_form: Option<ImportForm>,
+    edit_form: Option<crate::data_edit::form::EditForm>,
     compare_form: Option<CompareForm>,
     /// The file browser of the focused path field in a dialog or in the form.
     browser: Option<FileBrowser>,
@@ -534,6 +541,7 @@ impl App {
             settings_form: None,
             export_form: None,
             import_form: None,
+            edit_form: None,
             compare_form: None,
             browser: None,
             export_choices: options.export_choices.clone(),
@@ -825,8 +833,8 @@ impl App {
         }
     }
 
-    fn route_event(&mut self, event: Event) {
-        let blocked = !self.dialogs.is_empty()
+    fn modal_is_open(&self) -> bool {
+        !self.dialogs.is_empty()
             || self.conflicts.is_some()
             || self.overlay.is_some()
             || self.help.is_some()
@@ -837,9 +845,14 @@ impl App {
             || self.settings_form.is_some()
             || self.export_form.is_some()
             || self.import_form.is_some()
+            || self.edit_form.is_some()
             || self.compare_form.is_some()
             || self.browser.is_some()
-            || self.auth.prompt.is_some();
+            || self.auth.prompt.is_some()
+    }
+
+    fn route_event(&mut self, event: Event) {
+        let blocked = self.modal_is_open();
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
             Event::Paste(text) if self.dialogs.is_empty() && self.auth.prompt.is_some() => {
@@ -865,6 +878,15 @@ impl App {
             Event::Paste(text) if self.dialogs.is_empty() && self.export_form.is_some() => {
                 if let Some(form) = &mut self.export_form {
                     form.paste(&text);
+                }
+            }
+            Event::Paste(text) if self.dialogs.is_empty() && self.edit_form.is_some() => {
+                if let Some(crate::data_edit::form::EditForm {
+                    body: crate::data_edit::form::Body::Cell { editor, .. },
+                    ..
+                }) = &mut self.edit_form
+                {
+                    editor.on_paste(&text);
                 }
             }
             Event::Paste(text) if self.dialogs.is_empty() && self.import_form.is_some() => {
@@ -902,6 +924,7 @@ impl App {
             Event::Mouse(mouse) if self.history.is_some() => self.on_history_mouse(mouse),
             Event::Mouse(mouse) if self.settings_form.is_some() => self.on_settings_mouse(mouse),
             Event::Mouse(mouse) if self.export_form.is_some() => self.on_export_mouse(mouse),
+            Event::Mouse(mouse) if self.edit_form.is_some() => self.on_edit_mouse(mouse),
             Event::Mouse(mouse) if self.import_form.is_some() => self.on_import_mouse(mouse),
             Event::Mouse(mouse) if self.compare_form.is_some() => self.on_compare_mouse(mouse),
             Event::Mouse(mouse) if self.help.is_some() => {
@@ -946,6 +969,10 @@ impl App {
             return;
         }
         let console = self.console_mut();
+        if console.focus == Focus::Parameters {
+            console.parameters.paste(text);
+            return;
+        }
         if !console.paste_in_search(text) {
             console.focus = Focus::Editor;
             console.editor.on_paste(text);
@@ -1057,7 +1084,8 @@ impl App {
     }
 
     fn on_console_event(&mut self, mut event: ExecEvent) {
-        if self.on_export_event(&event)
+        if self.on_edit_event(&mut event)
+            || self.on_export_event(&event)
             || self.on_import_event(&mut event)
             || self.on_definition_event(&mut event)
         {
@@ -1075,7 +1103,15 @@ impl App {
             return;
         }
         if let Some(index) = self.tables.iter().position(|tab| tab.id == id) {
+            let finished = matches!(event, ExecEvent::ExecutionFinished { .. });
             self.tables[index].on_event(event, &budget);
+            if finished
+                && !self.tables[index].is_busy()
+                && let Some(restore) = self.tables[index].edit_restore.take()
+                && let Some(view) = restore.view_in(&self.tables[index].result.table)
+            {
+                self.tables[index].result.view = view;
+            }
             self.finish_session_signal(index);
             self.continue_wanted_import();
             return;
@@ -1205,7 +1241,12 @@ impl App {
         let namespace = connection.map_or(Namespace::None, |item| item.capabilities.namespace);
         let transactions = connection.is_none_or(|item| item.capabilities.transactions);
         let default_schema = connection.and_then(|item| item.default_schema.clone());
+        let parameters_shortcut = self
+            .keymap
+            .keys(crate::input::Action::FocusParameters)
+            .join(", ");
         let bar = BarData {
+            parameters_shortcut: &parameters_shortcut,
             connection: &name,
             namespace,
             default_schema: default_schema.as_deref(),
@@ -1317,6 +1358,9 @@ impl App {
         let console = self.console();
         if console.focus == Focus::Results {
             return StatusPanel::Results;
+        }
+        if console.focus == Focus::Parameters {
+            return StatusPanel::Filter;
         }
         if !self.vim() {
             return StatusPanel::Editor;
@@ -1547,6 +1591,9 @@ impl App {
         }
         if let Some(form) = &self.export_form {
             self.layout.export = draw_export(frame, form, &self.theme);
+        }
+        if let Some(form) = &mut self.edit_form {
+            self.layout.edit = crate::ui::data_edit::draw_edit(frame, form, &self.theme);
         }
         if let Some(form) = &self.import_form {
             self.layout.import = draw_import(frame, form, &self.theme);

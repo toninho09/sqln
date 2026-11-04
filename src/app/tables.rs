@@ -156,7 +156,11 @@ impl App {
             self.compare_active = None;
             self.table_active = Some(index);
             if self.tables[index].pending {
-                self.apply_table();
+                if self.tables[index].edit_reload {
+                    self.reload_saved_table();
+                } else {
+                    self.apply_table();
+                }
             }
         }
     }
@@ -236,7 +240,12 @@ impl App {
         let Some(tab) = self.table() else {
             return false;
         };
-        if !tab.filters || tab.is_view || tab.structure.is_some() {
+        if !tab.filters
+            || tab.is_view
+            || tab.structure.is_some()
+            || !tab.result.edits.is_empty()
+            || tab.edit_uncertain
+        {
             return false;
         }
         match self.tab_relation(tab) {
@@ -621,6 +630,10 @@ impl App {
             self.status = Some(text::TABLE_BUSY.to_owned());
             return None;
         }
+        if self.pending_edit_guard() {
+            return None;
+        }
+        let tab = self.table()?;
         self.dialect_of(tab.connection)
     }
 
@@ -631,6 +644,18 @@ impl App {
         };
         let budget = self.budget.clone();
         let request = self.table_mut().and_then(|tab| tab.apply(dialect, &budget));
+        self.run_page(request);
+    }
+
+    pub(super) fn reload_saved_table(&mut self) {
+        let Some(dialect) = self.ready_table() else {
+            return;
+        };
+        let budget = self.budget.clone();
+        let request = self.table_mut().and_then(|tab| {
+            tab.edit_reload = false;
+            tab.reload(dialect, &budget)
+        });
         self.run_page(request);
     }
 
@@ -686,6 +711,9 @@ impl App {
 
     /// Shows the page before the cursor. Its rows are on the grid.
     pub(super) fn previous_table_page(&mut self) {
+        if self.pending_edit_guard() {
+            return;
+        }
         if let Some(tab) = self.table_mut() {
             tab.show_page(tab.page().saturating_sub(1));
         }
@@ -693,6 +721,9 @@ impl App {
 
     /// Shows the page after the cursor. A page that is not on the grid loads first.
     pub(super) fn next_table_page(&mut self) {
+        if self.pending_edit_guard() {
+            return;
+        }
         let Some(tab) = self.table_mut() else { return };
         let page = tab.page() + 1;
         if page < tab.loaded_pages() {
@@ -725,6 +756,9 @@ impl App {
     /// Closes a table tab, and its rows leave the budget. The load in progress stops.
     pub(super) fn close_table(&mut self, index: usize) {
         if index >= self.tables.len() {
+            return;
+        }
+        if self.edit_close_guard(index) {
             return;
         }
         self.cancel_auth_console(self.tables[index].id);
@@ -781,6 +815,10 @@ impl App {
             | Action::RenameConsole
             | Action::ChangeConnection
             | Action::GridCloseResult => {}
+            Action::GridEditCell => self.edit_cell(false),
+            Action::GridSetNull => self.edit_cell(true),
+            Action::GridReviewEdits | Action::GridSaveEdits => self.review_edits(),
+            Action::GridDiscardEdits => self.confirm_discard_edits(),
             Action::GridApply => self.apply_table(),
             Action::GridClearFilters => self.clear_table(),
             Action::GridPreviousResult => self.step_table(false),

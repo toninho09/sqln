@@ -45,6 +45,7 @@ pub(super) struct ExportRun {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ExportRead {
     pub sql: String,
+    pub parameters: Vec<crate::sql::parameters::Parameter>,
     pub schema: Option<String>,
     pub destination: PathBuf,
     pub options: ExportOptions,
@@ -199,6 +200,9 @@ impl App {
     }
 
     pub(super) fn open_export(&mut self) {
+        if self.pending_edit_guard() {
+            return;
+        }
         if !self.can_export() || self.config_blocked() {
             return;
         }
@@ -291,8 +295,14 @@ impl App {
         let Some((sql, schema, Some(connection))) = source else {
             return;
         };
+        let parameters = if self.table().is_none() {
+            self.console().ran_parameters.clone()
+        } else {
+            Vec::new()
+        };
         let read = ExportRead {
             sql,
+            parameters,
             schema,
             destination,
             options,
@@ -305,6 +315,7 @@ impl App {
     pub(super) fn start_read(&mut self, id: ConsoleId, read: ExportRead) {
         let ExportRead {
             sql,
+            parameters,
             schema,
             destination,
             options,
@@ -330,6 +341,7 @@ impl App {
             row_cap: None,
             export: Some(writer.clone()),
             untimed: false,
+            parameters,
         };
         let execution = manager.run(id, vec![sql], run);
         if let Some((phase, clock)) = self.tab_run(id) {

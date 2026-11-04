@@ -5,6 +5,7 @@ pub mod browser;
 pub mod compare;
 pub mod conflicts;
 pub mod console;
+pub mod data_edit;
 pub mod diagram;
 pub mod export;
 pub mod form;
@@ -16,6 +17,7 @@ pub mod messages;
 pub mod name;
 pub mod navigator;
 pub mod palette;
+pub mod parameters;
 pub mod schemes;
 pub mod settings;
 pub mod statusline;
@@ -41,7 +43,7 @@ pub use self::conflicts::{ConflictLayout, ConflictRowView, draw_conflicts};
 pub use self::console::{
     ConsoleLayout, MainTab, TabView, column_edge_at, draw_console, draw_dialog, draw_main_tabs,
     draw_overlay, draw_panel_title, draw_picker, draw_rule, draw_small_terminal, grid_cell_at,
-    header_column_at, main_tab_label, run_badge, tab_at,
+    grid_row_number_at, header_column_at, main_tab_label, run_badge, tab_at,
 };
 pub use self::table::{TableBar, TableControl, TableLayout, draw_table, section_at};
 use self::theme::Theme;

@@ -36,6 +36,9 @@ impl App {
         {
             return None;
         }
+        if self.console_on_screen() && self.console().focus == Focus::Parameters {
+            return None;
+        }
         Some(Region::Grid)
     }
 
@@ -112,7 +115,31 @@ impl App {
         let rows = result.is_some_and(|result| !result.table.rows.is_empty());
         let columns = result.is_some_and(|result| !result.table.columns.is_empty());
         let tab = self.table();
+        let pending = tab.is_some_and(|tab| !tab.result.edits.is_empty() || tab.edit_uncertain);
+        if pending
+            && matches!(
+                action,
+                GridCopy
+                    | GridExport
+                    | GridImport
+                    | GridApply
+                    | GridClearFilters
+                    | GridSortColumn
+                    | GridLoadMore
+                    | GridPreviousResult
+                    | GridNextResult
+                    | GridReload
+                    | GridFollowKey
+            )
+        {
+            return false;
+        }
         match action {
+            GridEditCell | GridSetNull => self.can_edit_cell(),
+            GridReviewEdits | GridSaveEdits => {
+                pending && tab.is_some_and(|tab| !tab.is_busy() && !tab.edit_uncertain)
+            }
+            GridDiscardEdits => pending && tab.is_some_and(|tab| !tab.is_busy()),
             GridExport => self.can_export(),
             GridImport => self.can_import(),
             GridOpenValue if tab.is_some_and(|tab| tab.pending) => {
@@ -365,6 +392,8 @@ fn command_priority(action: Action) -> u8 {
         NavigatorClearFilter | GridClearSelection => 3,
         Run | NavigatorOpen | DiagramOpen | CompareScript => 4,
         RunScript | NavigatorNewConsole | DiagramStructure | CompareCopy => 5,
+        GridEditCell => 5,
+        GridSaveEdits | GridReviewEdits | GridDiscardEdits => 3,
         GridCopy => 6,
         GridOpenValue => 7,
         GridFind => 8,

@@ -38,7 +38,9 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Two editor modes.** Use conventional keys or Vim, with search, replace, undo, and SQL highlighting.
 - **Catalog autocomplete.** Complete schemas, tables, views, columns, aliases, SQL keywords, built-in types, and functions with signatures.
 - **SQL tools.** Format statements, toggle comments, and generate SQL templates from the navigator.
+- **Query parameters.** Write `:name` values, fill the panel under the editor, and run with native bindings that keep values out of the SQL text.
 - **Table browsing.** Apply SQL filters, sort columns, move between pages, and count rows on request.
+- **Grid editing.** Change table values locally, review the SQL, and apply checked updates in one transaction.
 - **Key navigation.** Go from a row to the row that its foreign key reads, or to the rows of other tables that read it.
 - **Database objects.** See routines, sequences, triggers, and types in the navigator, and open the DDL of an object in a new console.
 - **Results inspection.** Select cells, search loaded rows, inspect a row vertically, and format JSON values.
@@ -311,6 +313,37 @@ With one key, SQLN goes there at once; with more keys, it shows a list. A key wi
 Use an explicit, unique `ORDER BY` when stable page order matters.
 Pages use offsets; concurrent database changes can still move rows between pages.
 Redis and Valkey use key-value views instead of SQL filter fields.
+
+### Edit table values
+
+Grid editing supports SQLite, PostgreSQL, and MySQL InnoDB tables with a primary key.
+Views, console results, binary values, key columns, identities, and generated columns stay protected.
+Read-only connections do not offer editing.
+
+1. Select a non-key cell in a table tab.
+2. Press `F2` to open its value editor.
+3. Change the value.
+4. Press `F2` or `Ctrl+S` to keep the value locally.
+5. Press `Ctrl+S` in the grid to review the pending values and SQL.
+6. Press `F2` in the review to apply the changes.
+
+Production connections ask for another confirmation.
+`Alt+N` sets a cell to SQL `NULL`; empty text and the text `NULL` remain different.
+`Alt+R` opens the review. `Alt+D` asks before discarding pending changes.
+Use the palette if your terminal does not send an Alt shortcut.
+
+A `*` and underline mark each changed cell. The summary shows pending row and cell counts.
+Typing and keeping a value do not write to the database.
+Copy, export, import, filtering, sorting, and page changes require resolving pending changes first.
+Closing a dirty table offers Apply, Discard, and Cancel. Pending changes stay in memory only.
+
+Apply checks the original rows under database locks and updates all pending rows in one transaction.
+A conflict or error keeps the local values and rolls back the transaction.
+A confirmed commit reloads the first page, including trigger changes, without applying draft filter text.
+The cursor and selection return by primary key when their rows remain on that page.
+An unknown commit result blocks another apply. Verify the database, then discard the local changes and reload.
+SQLN never retries a write automatically.
+Triggers and functions with external or nontransactional effects cannot provide an all-or-nothing guarantee.
 
 ### Inspect, copy, and export
 
@@ -588,7 +621,7 @@ A `.sql` path is not a script-opening argument; file targets are SQLite database
 
 - Windows support is not part of the current CI or binary matrix.
 - SQLite needs an on-disk file. In-memory databases are not supported.
-- Grid cells are not editable. Use SQL for data changes.
+- Grid editing supports updates only, in keyed table tabs. Use SQL for inserts, deletes, binary values, or other grids.
 - Arbitrary external `.sql` files cannot open directly as consoles.
 - There is no integrated SSH tunnel, IAM authentication, or Kerberos authentication.
 - MariaDB has no tree plan, so `Ctrl+W E` shows the error of the server. MySQL has no tree plan for a write on one table.
@@ -596,6 +629,7 @@ A `.sql` path is not a script-opening argument; file targets are SQLite database
 - An ER diagram has no search, no zoom, and no export to an image file. The Mermaid copy holds the boxes on screen.
 - The DDL of a PostgreSQL table that SQLN writes leaves out partitions, inheritance, comments, grants, the owner, storage options, policies, and triggers. MySQL gives the DDL of a routine or a trigger only with the privilege to see it.
 - Key navigation acts only in a table tab. A console result does not tell the table of a column.
+- Query parameters support SQLite, PostgreSQL, and MySQL consoles with scalar values. Table filters, Redis, and Valkey have none.
 - Search in results covers loaded rows only. Exporting all rows can issue a new read.
 - Import cannot create a table, update rows, or read SQL files. A MyISAM table cannot undo an import.
 - Conventional undo uses `undoLimitBytes`, with 64 MiB per console by default. The newest undo and redo steps stay even above that limit.

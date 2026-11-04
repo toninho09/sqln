@@ -103,6 +103,11 @@ pub enum ExecutionEnd {
 
 #[derive(Debug)]
 pub enum ExecEvent {
+    EditFinished {
+        console: ConsoleId,
+        execution: ExecutionId,
+        result: Result<crate::data_edit::Outcome, crate::data_edit::Failure>,
+    },
     CommandLog {
         target: u64,
         event: LogEvent,
@@ -207,7 +212,8 @@ impl ExecEvent {
     /// Returns the console of the event.
     pub fn console(&self) -> Option<ConsoleId> {
         match self {
-            ExecEvent::Queued { console, .. }
+            ExecEvent::EditFinished { console, .. }
+            | ExecEvent::Queued { console, .. }
             | ExecEvent::Started { console, .. }
             | ExecEvent::ConfirmClose { console, .. }
             | ExecEvent::ExecutionFinished { console, .. }
@@ -235,7 +241,8 @@ impl ExecEvent {
     /// Returns the execution of the event.
     pub fn execution(&self) -> Option<ExecutionId> {
         match self {
-            ExecEvent::Queued { execution, .. }
+            ExecEvent::EditFinished { execution, .. }
+            | ExecEvent::Queued { execution, .. }
             | ExecEvent::Started { execution, .. }
             | ExecEvent::ConfirmClose { execution, .. }
             | ExecEvent::ExecutionFinished { execution, .. } => Some(*execution),
@@ -268,6 +275,8 @@ pub struct RunOptions {
     /// True for a read that ends with the user, as an export does: the time limit does
     /// not apply.
     pub untimed: bool,
+    /// Values captured when the user requests this execution.
+    pub parameters: Vec<crate::sql::parameters::Parameter>,
 }
 
 pub struct RunRequest {
@@ -310,6 +319,11 @@ impl Binding {
 }
 
 enum Command {
+    Edit {
+        execution: ExecutionId,
+        job: crate::data_edit::Job,
+        trace: Option<TraceContext>,
+    },
     Run(RunRequest),
     Import(ImportRequest),
     Stop,
@@ -573,6 +587,19 @@ impl Manager {
                 statements,
                 options,
             }),
+        );
+        execution
+    }
+
+    pub fn edit(&self, console: ConsoleId, job: crate::data_edit::Job) -> ExecutionId {
+        let execution = self.next_execution.fetch_add(1, Ordering::Relaxed);
+        self.send(
+            console,
+            Command::Edit {
+                execution,
+                job,
+                trace: self.console_trace(console),
+            },
         );
         execution
     }

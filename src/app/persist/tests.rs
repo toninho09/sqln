@@ -220,6 +220,7 @@ fn association_blocks_export_reads_before_they_create_a_file() {
             console: app.console().id,
             read: super::super::export::ExportRead {
                 sql: "SELECT 1;".into(),
+                parameters: Vec::new(),
                 schema: None,
                 destination: destination.clone(),
                 options: crate::export::ExportOptions::default(),

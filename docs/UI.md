@@ -118,6 +118,12 @@ The next execution changes the badge. Consoles and tables use the same badges.
 The time has three decimal places, and the screen updates every 100 ms only during an execution. Long times use `1m 05.123s` and `1h 02m 05.123s`.
 The time starts with the execution, so the wait for a password does not count.
 
+**Parameters panel:** when the editor text holds `:name` parameters, a panel appears between the editor and the result tabs, up to five field rows plus a title and an error row.
+Each row shows the name, the type (`Text`, `Number`, `Boolean`, `NULL`), the value input, and `Set` or `Unset`.
+The title holds the collapse state, the count, and the effective `Ctrl+W P` shortcut; a click on the title collapses the panel to one row.
+The wheel moves the selected field. A field without a value at a run shows the error style and takes the focus.
+The panel needs no rows when the connection offers no parameters, as Redis and Valkey.
+
 **Tabs:** each tab has `×` at the end. `NO_COLOR` shows `X`, and Nerd Font shows its symbol.
 A click on `×` or on the column after it closes the tab, with the questions of `Ctrl+W c`.
 Closing another tab does not change the tab on screen. Closing the last tab shows the home screen.
@@ -216,6 +222,8 @@ Without space, the bar removes in this order: position, data, pool, and schema. 
 An open transaction uses the warning color. A failed or unknown transaction uses the error color.
 
 **Grid:** the row number counts the loaded rows.
+Click a row number in a result or table grid to select the whole row, including hidden columns.
+Copy uses the selected row. A cell click replaces the selection; `Esc` clears it.
 The border of a header accepts the drag on the three columns between two grid columns.
 
 **Scroll bars:** the editor and the grid reserve the last column.
@@ -279,7 +287,7 @@ Opening the same table again selects that tab, without duplicating.
 │ app (local)        │ app_db.public.users                                                │
 │   public           │ WHERE    [active = true                                          ] │
 │     users          │ ORDER BY [                                                       ] │
-│     orders         │ [✓ Apply]  [✕ Clear]  [↓ Load more]  [■ Stop]                      │
+│     orders         │ [✓ Apply filters]  [✕ Clear filters]  [↓ Load more]  [■ Stop]            │
 │ app (global)       ├─────┬──────────┬───────────────────────────────────────────────────│
 │ warehouse          │ id  │ name     │ active                                            │
 │                    │ 101 │ Ana      │ true                                              │
@@ -296,7 +304,7 @@ The example shows a filter that the user already applied.
 Keep filters and sorting only while that tab stays open.
 Closing the tab discards those values; reopening starts without filters or sorting.
 A table tab of the last session comes back without rows, without a filter, and without sorting.
-The first selection of the tab loads the rows. A tab that already starts on screen shows `Enter loads the rows.` and waits for `Enter` or **Apply**, so the opening does not connect or ask for a password.
+The first selection of the tab loads the rows. A tab that already starts on screen shows `Enter loads the rows.` and waits for `Enter` or **Apply filters**, so the opening does not connect or ask for a password.
 A new table does not receive automatic sorting, not even by primary key.
 
 Bar rules:
@@ -306,14 +314,15 @@ Bar rules:
 - `Ctrl+W x` stops a table query in progress.
 - `Tab` accepts an autocomplete suggestion. The **Autocomplete** option changes that key to `Enter` or to both.
 - `Enter` applies the fields unless **Autocomplete** uses `enter` or `both`. Then it accepts a suggestion first.
-- `[Apply]` has the same effect as `Enter`.
-- `[Clear]` clears the fields and applies the query without a filter or sorting.
+- `[Apply filters]` has the same effect as `Enter`.
+- `[Clear filters]` clears the fields and applies the query without a filter or sorting.
+- With pending cell edits, the bar adds **Apply changes**, **Review**, and **Discard**. A narrow bar hides the last buttons; the keys still work.
 - A click on the header applies sorting at once, keeping the `WHERE` already applied.
 - Do not apply a `WHERE` draft as an effect of the header click.
 - Invalid filter or sorting leave the grid empty, with the error and the fields available for correction.
 
 Current implementation, from top to bottom: title, `WHERE` field, `ORDER BY` field, buttons
-**Apply**, **Clear**, **Load more**, and **Stop**, grid, summary, and one warning line.
+**Apply filters**, **Clear filters**, the pending-edit buttons, **Load more**, and **Stop**, grid, summary, and one warning line.
 The title appears only with 30 lines or more. The pool and data use stays in the status bar.
 The tab label is `name (table)` or `name (view)`.
 The strip mixes consoles, tables, diagrams, and compares in opening order.
@@ -333,7 +342,7 @@ The `F` key follows a foreign key of the row of the cursor. With one key, it goe
 The choice opens the tab of the other table with a filter such as `"customer_id" = 1`. An open tab of that table gets the focus and the new filter, keeps its `ORDER BY`, and reads the first page. A busy tab refuses.
 The keys of a table arrive with its columns. When they are not in memory, `F` reads them first and then acts.
 The `c` key counts the rows of the applied filter, and the summary starts to show `100 of 12,345 rows loaded`. The key only acts when more rows exist to load.
-The count uses the deadline, Stop, the pool queue, and the password of a page, and does not change the grid. **Apply** and **Clear** clear the total, and sorting keeps the total.
+The count uses the deadline, Stop, the pool queue, and the password of a page, and does not change the grid. **Apply filters** and **Clear filters** clear the total, and sorting keeps the total.
 The warning line shows the risk of the unstable order, or the message of the last query.
 The error of a first page takes the grid area.
 A click on the header sorts in ascending order, then descending, and then removes the order.
@@ -353,6 +362,28 @@ Show that warning when no sorting is applied.
 The global cap of 256 MiB can suspend new loads, without erasing the existing rows.
 If a value goes above the limit, report the reason without representing it as null, empty, or truncated content without a warning.
 The copy follows the TSV format confirmed in section 10 of the plan, without headers.
+
+### Grid editing
+
+Only keyed, writable SQL table tabs offer cell editing.
+`F2` opens a modal value editor; `Enter` still opens the read-only value window.
+The modal uses the selected keyboard mode. Global navigation and run shortcuts do not reach the application.
+`Tab` walks the editor and the Keep value, Set NULL, and Cancel buttons.
+`F2` or `Ctrl+S` keeps the value locally. In Vim insert mode, `Esc` first enters normal mode.
+Changed cells show a `*`, a different style, and underline. The summary names pending rows and cells.
+
+`Ctrl+S` or `Ctrl+R` opens a read-only, scrollable review of old values, new values, and SQL.
+The review has Apply and Cancel buttons. `F2` or `Ctrl+S` applies; production asks for confirmation.
+Errors keep local values visible. Conflicts require discard and reload before a new edit.
+A commit without a confirmed response shows Commit result unknown and blocks submission.
+Discard does not claim to undo a commit.
+
+Tab switches preserve edits. Page changes, reload, filters, sorting, copy, export, and import require resolution.
+Closing a dirty tab or exiting offers Apply, Discard, and Cancel.
+An active edit operation blocks immediate close.
+After a confirmed commit, the first page reloads with applied fields; draft text stays unchanged.
+Cursor and selection return by primary key when their rows remain on that page.
+All modal controls fit an 80 × 24 terminal and support the mouse.
 
 ### Structure tab
 
@@ -595,7 +626,7 @@ Closing the tab or exiting erases the temporary file.
 
 In the navigator, each numbered database shows up to 1,000 keys. `(partial list)` beside the database marks an incomplete list.
 `Enter` on a key opens the value in a tab with the label `<key> (key)`.
-The tab uses the grid, the pages, and **Load more**, without `WHERE`, `ORDER BY`, **Clear**, and sorting.
+The tab uses the grid, the pages, and **Load more**, without `WHERE`, `ORDER BY`, **Clear filters**, and sorting.
 **Reload** reads the value again.
 In the console, each line is one command, as in `redis-cli`. A `#` at the start of the line makes a comment.
 
@@ -1182,7 +1213,7 @@ The list includes available functional editor, grid, diagram, compare, and appli
 Stop and transaction actions take priority, then panel actions. Unavailable actions stay out of the list.
 Navigator row actions require navigator focus. Add connection and scripts without a connection remain global.
 Actions name their target where needed. A panel shortcut appears only where that shortcut works.
-The palette includes Apply and Clear for table filters without adding default shortcuts.
+The palette includes Apply filters and Clear filters for table filters without adding default shortcuts.
 The window has 64 columns and 12 list rows, and grows to 100 columns and 30 rows on a larger screen. It stays on top.
 
 ```text

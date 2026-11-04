@@ -74,6 +74,10 @@ pub(super) enum Use {
         console: ConsoleId,
         step: ImportStep,
     },
+    Edit {
+        console: ConsoleId,
+        job: crate::data_edit::Job,
+    },
     /// A test of the form. With `names`, it also reads the names of the schemas.
     Test {
         test: u64,
@@ -93,6 +97,7 @@ impl Use {
             | Self::Compare { console, .. }
             | Self::Definition { console, .. }
             | Self::Export { console, .. }
+            | Self::Edit { console, .. }
             | Self::Import { console, .. } => Some(*console),
             _ => None,
         }
@@ -888,6 +893,9 @@ impl App {
                         .collect(),
                     None => plan.statements.clone(),
                 };
+                self.consoles[index]
+                    .ran_parameters
+                    .clone_from(&options.parameters);
                 let execution = manager.run(console, statements, options);
                 self.consoles[index].begin_execution(execution, &plan, &self.budget);
                 self.consoles[index].explain = explain;
@@ -916,6 +924,7 @@ impl App {
                     row_cap: Some(request.row_cap),
                     export: None,
                     untimed: false,
+                    parameters: Vec::new(),
                 };
                 let (first, show, kind) = (request.first, request.show, request.kind);
                 let execution = manager.run(console, vec![request.sql], options);
@@ -943,6 +952,7 @@ impl App {
                 schema,
             } => self.start_definition_read(console, connection, statements, schema),
             Use::Export { console, read } => self.start_read(console, read),
+            Use::Edit { console, job } => self.start_edit_job(console, job),
             Use::Import { console, step } => self.start_import_step(console, step),
             Use::Test { test, names } => {
                 let Some(definition) = definition else { return };
@@ -955,6 +965,9 @@ impl App {
     }
 
     fn cancel_auth_use(&mut self, action: &Use) {
+        if matches!(action, Use::Edit { .. }) {
+            self.exiting = false;
+        }
         if let Some(id) = action.console() {
             self.clear_wanted_import(id);
             if let Some(console) = self.console_by_id(id) {
@@ -962,6 +975,9 @@ impl App {
             }
             if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Idle;
+                tab.edit_after = None;
+                tab.edit_close = false;
+                tab.edit_restore = None;
             }
             if let Some(tab) = self.diagrams.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Idle;

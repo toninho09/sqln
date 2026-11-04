@@ -210,6 +210,10 @@ impl Pool {
         }
     }
 
+    pub fn capabilities(&self) -> crate::connector::Capabilities {
+        self.inner.connector.capabilities()
+    }
+
     pub fn dialect(&self) -> Dialect {
         self.inner.connector.dialect()
     }

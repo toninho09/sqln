@@ -51,6 +51,10 @@ pub struct Capabilities {
     pub transactions: bool,
     /// True when a table tab can filter and sort with SQL text.
     pub table_filters: bool,
+    /// True when a table tab can submit pending updates.
+    pub data_edit: bool,
+    /// True when consoles accept named scalar parameters.
+    pub parameters: bool,
 }
 
 impl Default for Capabilities {
@@ -59,6 +63,8 @@ impl Default for Capabilities {
             namespace: Namespace::None,
             transactions: true,
             table_filters: true,
+            data_edit: true,
+            parameters: false,
         }
     }
 }
@@ -206,6 +212,21 @@ pub trait Session: Send {
     /// Runs one statement. The future must stay active after a cancellation,
     /// so that the session reads the answer of the database.
     async fn run(&mut self, sql: &str, sink: ResultSink) -> Result<StatementEnd, ExecError>;
+    /// Runs native scalar bindings. A source must explicitly implement this path.
+    async fn run_parameters(
+        &mut self,
+        sql: &str,
+        parameters: &[crate::sql::parameters::Parameter],
+        sink: ResultSink,
+    ) -> Result<StatementEnd, ExecError> {
+        if parameters.is_empty() {
+            self.run(sql, sink).await
+        } else {
+            Err(ExecError::new(
+                "This connector does not support query parameters.",
+            ))
+        }
+    }
     async fn transaction_state(&mut self) -> TransactionState;
     async fn control(&mut self, command: TransactionCommand) -> Result<(), ExecError>;
     async fn reset(&mut self) -> ResetOutcome;

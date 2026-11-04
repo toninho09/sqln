@@ -1,6 +1,7 @@
 //! The task of one console. It runs scripts one statement at a time, and it keeps
 //! the session between executions while a transaction stays open.
 
+mod data_edit;
 mod import;
 
 use std::pin::pin;
@@ -61,6 +62,8 @@ struct Delivery {
     cap: usize,
     export: Option<ExportWriter>,
     timed: bool,
+    capture: Option<super::sink::Capture>,
+    parameters: Vec<crate::sql::parameters::Parameter>,
 }
 
 pub struct ConsoleTask {
@@ -99,6 +102,14 @@ impl ConsoleTask {
         while let Some(command) = commands.recv().await {
             self.settings = self.binding.settings().clone();
             match command {
+                Command::Edit {
+                    execution,
+                    job,
+                    trace,
+                } => {
+                    self.trace = trace;
+                    self.run_edit(execution, job, &mut commands).await;
+                }
                 Command::Run(request) => self.run_script(request, &mut commands).await,
                 Command::Import(request) => {
                     self.trace = None;
@@ -254,6 +265,8 @@ impl ConsoleTask {
                 export: export.clone(),
                 // An export ends with the user. It has no time limit.
                 timed: export.is_none() && !untimed,
+                capture: None,
+                parameters: options.parameters.clone(),
             };
             let (waited, reason) = self
                 .run_statement(key, active, sql, delivery, commands)
@@ -329,6 +342,14 @@ impl ConsoleTask {
                 self.finish(execution, ExecutionEnd::Refused, Some(message))
                     .await;
             }
+            Command::Edit { execution, .. } => {
+                self.finish(
+                    execution,
+                    ExecutionEnd::Refused,
+                    Some(crate::ui::text::TABLE_BUSY.to_owned()),
+                )
+                .await;
+            }
             Command::Import(request) => {
                 let message = "The console already has an execution.".to_owned();
                 self.finish(request.execution, ExecutionEnd::Refused, Some(message))
@@ -364,14 +385,24 @@ impl ConsoleTask {
         delivery: Delivery,
         commands: &mut UnboundedReceiver<Command>,
     ) -> (Waited, Option<StopReason>) {
-        let Delivery { cap, export, timed } = delivery;
+        let Delivery {
+            cap,
+            export,
+            timed,
+            capture,
+            parameters,
+        } = delivery;
         let mut sink = ResultSink::new(key, self.events.clone(), self.budget.clone(), cap);
         let time_limit = self.settings.sql_timeout.filter(|_| timed);
         // The row after the cap proves that the result has more rows. An export has no cap.
         let rows = cap.saturating_add(1);
-        let limited = (self.settings.cap_in_sql && export.is_none() && cap < usize::MAX)
-            .then(|| with_row_limit(sql, self.binding.pool.dialect(), rows))
-            .flatten();
+        let limited =
+            (capture.is_none() && self.settings.cap_in_sql && export.is_none() && cap < usize::MAX)
+                .then(|| with_row_limit(sql, self.binding.pool.dialect(), rows))
+                .flatten();
+        if let Some(capture) = capture {
+            sink.capture_to(capture);
+        }
         if let Some(export) = export {
             sink.export_to(export);
         }
@@ -381,6 +412,22 @@ impl ConsoleTask {
         // An error in the added clause points to the end of the text of the user.
         let user_end = sql.len();
         let sql = limited.as_deref().unwrap_or(sql);
+        let bound = if parameters.is_empty() {
+            None
+        } else {
+            match crate::sql::parameters::bind(sql, self.binding.pool.dialect(), &parameters) {
+                Ok(bound) => Some(bound),
+                Err(message) => {
+                    return (
+                        Waited::Finished {
+                            result: Err(ExecError::new(message)),
+                            reusable: true,
+                        },
+                        None,
+                    );
+                }
+            }
+        };
         let stopping = sink.stop_flag();
         let session = lease.session();
         let trace = self.trace.as_ref().map(|trace| {
@@ -397,7 +444,11 @@ impl ConsoleTask {
             tokio::spawn(async move { canceller.cancel().await })
         };
 
-        let mut run = session.run(sql, sink);
+        let mut run = if let Some(bound) = &bound {
+            session.run_parameters(&bound.sql, &bound.parameters, sink)
+        } else {
+            session.run(sql, sink)
+        };
         let settings = self.settings.clone();
         let mut limit = pin!(sleep(time_limit.unwrap_or(NO_LIMIT)));
         let mut grace = pin!(sleep(NO_LIMIT));
@@ -411,7 +462,9 @@ impl ConsoleTask {
                 result = &mut run => {
                     let reusable = settle(request, settings.stop_grace).await;
                     let result = result.map_err(|mut error| {
-                        error.offset = error.offset.map(|offset| offset.min(user_end));
+                        error.offset = error.offset.map(|offset| {
+                            bound.as_ref().map_or(offset, |bound| bound.source_offset(offset)).min(user_end)
+                        });
                         error
                     });
                     return (Waited::Finished { result, reusable }, reason);

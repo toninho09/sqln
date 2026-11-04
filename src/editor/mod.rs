@@ -145,6 +145,8 @@ enum ListAction {
 pub struct SqlEditor {
     pub state: EditorState,
     keyboard: KeyboardMode,
+    suggestions_enabled: bool,
+    literal_text: bool,
     handler: EditorEventHandler,
     dialect: Dialect,
     clipboard: SharedClipboard,
@@ -195,6 +197,8 @@ impl SqlEditor {
         Self {
             state,
             keyboard,
+            suggestions_enabled: true,
+            literal_text: false,
             handler: EditorEventHandler::vim_mode(),
             dialect,
             clipboard,
@@ -478,7 +482,29 @@ impl SqlEditor {
         }
     }
 
+    /// Keeps database value bytes, including CRLF, instead of normalizing script line endings.
+    pub fn use_literal_text(&mut self, text: &str) {
+        self.literal_text = true;
+        self.state.lines = Lines::new(
+            text.split('\n')
+                .map(|line| line.chars().collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
+        );
+        self.snapshot = None;
+        self.sync_vim_shadow();
+        self.disable_suggestions();
+    }
+
+    pub fn disable_suggestions(&mut self) {
+        self.suggestions_enabled = false;
+        self.close_suggestions();
+    }
+
     fn update_list(&mut self, action: ListAction, catalog: Option<&Catalog>) {
+        if !self.suggestions_enabled {
+            self.list = None;
+            return;
+        }
         if action == ListAction::Close || (action == ListAction::Refresh && self.list.is_none()) {
             self.list = None;
             return;
@@ -861,7 +887,11 @@ impl SqlEditor {
     pub fn on_paste(&mut self, text: &str) {
         self.list = None;
         self.status = None;
-        let text = normalize_newlines(text);
+        let text = if self.literal_text {
+            std::borrow::Cow::Borrowed(text)
+        } else {
+            std::borrow::Cow::Owned(normalize_newlines(text))
+        };
         if let Some(search) = &mut self.search {
             let line = text.lines().next().unwrap_or_default();
             search.focused_text().push_str(line);
@@ -874,7 +904,14 @@ impl SqlEditor {
     fn paste_from_clipboard(&mut self) {
         let text = self.clipboard.borrow_mut().paste();
         match text {
-            Some(text) => self.insert_at_cursor(&normalize_newlines(&text)),
+            Some(text) => {
+                let text = if self.literal_text {
+                    text
+                } else {
+                    normalize_newlines(&text)
+                };
+                self.insert_at_cursor(&text);
+            }
             None => self.status = Some(text::CLIPBOARD_UNAVAILABLE),
         }
     }

@@ -121,6 +121,10 @@ impl App {
             self.on_export_key(key);
             return;
         }
+        if self.edit_form.is_some() {
+            self.on_edit_key(key);
+            return;
+        }
         if self.import_form.is_some() {
             self.on_import_key(key);
             return;
@@ -168,6 +172,43 @@ impl App {
         if let Some((region, mut keys)) = self.pending_key.take() {
             keys.push(chord);
             self.on_sequence(region, keys);
+            return;
+        }
+        if !self.navigator_focused
+            && self.console_on_screen()
+            && self.console().focus == Focus::Parameters
+        {
+            let plain = (key.modifiers - KeyModifiers::SHIFT).is_empty();
+            if key.code == KeyCode::Esc {
+                self.console_mut().focus = Focus::Editor;
+                return;
+            }
+            // Field navigation and plain text must not trigger global navigation bindings.
+            if plain
+                && matches!(
+                    key.code,
+                    KeyCode::Char(_)
+                        | KeyCode::Tab
+                        | KeyCode::Enter
+                        | KeyCode::Left
+                        | KeyCode::Right
+                        | KeyCode::Up
+                        | KeyCode::Down
+                        | KeyCode::Home
+                        | KeyCode::End
+                        | KeyCode::PageUp
+                        | KeyCode::PageDown
+                        | KeyCode::Backspace
+                        | KeyCode::Delete
+                )
+                || key.code == KeyCode::BackTab
+            {
+                self.console_mut().parameters.on_key(key);
+                return;
+            }
+            if !self.on_chord(Region::Global, chord) {
+                self.console_mut().parameters.on_key(key);
+            }
             return;
         }
         let panel = self.panel();
@@ -380,6 +421,28 @@ impl App {
     }
 
     pub(super) fn perform(&mut self, action: Action, extend: bool) {
+        if self
+            .table()
+            .is_some_and(|tab| !tab.result.edits.is_empty() || tab.edit_uncertain)
+            && matches!(
+                action,
+                Action::GridCopy
+                    | Action::GridExport
+                    | Action::GridImport
+                    | Action::GridApply
+                    | Action::GridClearFilters
+                    | Action::GridSortColumn
+                    | Action::GridLoadMore
+                    | Action::GridPreviousResult
+                    | Action::GridNextResult
+                    | Action::GridReload
+                    | Action::GridFollowKey
+                    | Action::FollowKey
+            )
+            && self.pending_edit_guard()
+        {
+            return;
+        }
         if self.home() && !home_allows(action) {
             return;
         }
@@ -398,6 +461,20 @@ impl App {
             Action::Explain => self.run(RunTarget::Plan { analyze: false }),
             Action::ExplainAnalyze => self.run(RunTarget::Plan { analyze: true }),
             Action::FormatSql => self.format_console(),
+            Action::FocusParameters => {
+                self.navigator_focused = false;
+                let console = self.console_mut();
+                console.parameters.collapsed = false;
+                console.editor.close_suggestions();
+                console.focus = Focus::Parameters;
+            }
+            Action::ToggleParameters => {
+                let console = self.console_mut();
+                console.parameters.collapsed = !console.parameters.collapsed;
+                if console.parameters.collapsed && console.focus == Focus::Parameters {
+                    console.focus = Focus::Editor;
+                }
+            }
             Action::ToggleComment => self.comment_console(),
             Action::OpenHistory => self.open_history(),
             Action::OpenSessions => self.open_sessions(),
@@ -814,6 +891,32 @@ impl App {
                 let Some(connection) = console.connection else {
                     return;
                 };
+                let dialect = self.consoles[index].editor.dialect();
+                let full_text = self.consoles[index].editor.text();
+                self.consoles[index]
+                    .parameters
+                    .update_names(crate::sql::parameters::names(&full_text, dialect));
+                let parameters = match self.consoles[index]
+                    .parameters
+                    .values(&plan.statements, dialect)
+                {
+                    Ok(parameters) => parameters,
+                    Err(reason) => {
+                        self.navigator_focused = false;
+                        self.consoles[index].focus = Focus::Parameters;
+                        self.status = Some(reason);
+                        return;
+                    }
+                };
+                if !parameters.is_empty()
+                    && !self
+                        .connection(connection)
+                        .is_some_and(|item| item.capabilities.parameters)
+                {
+                    self.status =
+                        Some("This connector does not support query parameters.".to_owned());
+                    return;
+                }
                 let explain = match self.explain_of(connection, target, &plan) {
                     Ok(explain) => explain,
                     Err(reason) => {
@@ -844,6 +947,7 @@ impl App {
                     row_cap: None,
                     export: None,
                     untimed: false,
+                    parameters,
                 };
                 let console = &self.consoles[index];
                 let revision = console.editor.revision();
@@ -1052,6 +1156,9 @@ impl App {
 
     fn on_overlay_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if ctrl && key.code == KeyCode::Char('c') && self.pending_edit_guard() {
+            return;
+        }
         let Some(overlay) = &mut self.overlay else {
             return;
         };
@@ -1207,7 +1314,9 @@ impl App {
         match action {
             // Only the palette leaves itself out of its list.
             OpenPalette => true,
-            Run | RunScript => in_editor && available && console.can_run(),
+            Run | RunScript => {
+                in_console && console.focus != Focus::Results && available && console.can_run()
+            }
             Explain | ExplainAnalyze | FormatSql | ToggleComment => {
                 in_editor && available && !console.editor.is_blank()
             }
@@ -1242,6 +1351,8 @@ impl App {
                         text::MENU_FOCUS,
                     ),
                     (&[ToggleNavigator], text::MENU_NAVIGATOR),
+                    (&[FocusParameters], text::PARAMETERS_TITLE),
+                    (&[ToggleParameters], text::PARAMETERS_TOGGLE),
                     (&[ExplorerCommands], text::MENU_EXPLORER),
                     (&[ContextCommands], text::MENU_CONTEXT),
                 ],
@@ -1376,6 +1487,9 @@ impl App {
                 dialect.is_some_and(has_sessions)
             }),
             Action::RenameConsole | Action::ChangeConnection => !in_table,
+            Action::FocusParameters | Action::ToggleParameters => {
+                self.console_on_screen() && !console.parameters.fields.is_empty()
+            }
             Action::FormatSql => !in_table && console.editor.dialect() != Dialect::Redis,
             Action::ToggleComment => !in_table,
             Action::OpenHistory => !in_table && self.history_is_open_to(connection),

@@ -1079,9 +1079,8 @@ That avoids presenting an old execution as the result of the current text.
 ### Defined
 
 The grid allows consulting and copying data.
-The first version does not allow editing cells directly.
-
-That restriction applies to the grid, not to the SQL.
+The user reopens direct cell editing on 2026-11-04; see the Grid editing decision in `docs/DECISIONS.md`.
+Only eligible table tabs allow updates. Other grids stay read-only.
 The user can still run change commands in the editor.
 
 Use separate tabs per result.
@@ -1223,7 +1222,7 @@ Show only the table data in this phase.
 The structure stays in an own tab. The user reopened that rule on 2026-10-31; see `docs/DECISIONS.md`.
 Allow opening views in that view, with a label that identifies them.
 The catalog read for autocomplete stays needed.
-The table grid follows the read-only rule of this section and its own pagination.
+The table grid follows its own pagination and the approved Grid editing rules in `docs/DECISIONS.md`.
 It also respects the pool and its connection limit, without a hidden extra connection.
 
 Tables and consoles share the same main tab strip.
@@ -2405,7 +2404,7 @@ The results of the technical tests are in [docs/RESULTS.md](RESULTS.md), and the
 - Open a view in the table view, with a label that identifies it.
 - Show notices, errors, and commands without rows in the Messages tab.
 - Show a result without rows with the columns and the zero-row indication.
-- Prevent cell editing in the grid.
+- Allow checked cell updates only in eligible table tabs; preserve read-only behavior in other grids.
 - Allow change commands through the editor.
 - Load 100 rows per page in the table view, by default.
 - Respect the configured page size.
@@ -2657,7 +2656,7 @@ Section 1 shows what is already done in that order and what is missing.
 
 - MongoDB and Kafka. The user reopened Redis and Valkey on 2026-10-31; see `docs/DECISIONS.md`. The user reopened the query history on 2026-11-01.
 - In-memory SQLite databases.
-- Cell editing in the grid.
+- Grid inserts, deletes, binary editing, and edits without a primary key. Checked table updates replace the earlier exclusion on 2026-11-04.
 - User-defined function and signature autocomplete. Built-in functions and signatures already have local completion.
 - Extractor editor. The user reopened the export to file on 2026-10-31; see `docs/DECISIONS.md`.
 - Integrated SSH tunnel.

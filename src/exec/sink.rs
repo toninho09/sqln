@@ -1,6 +1,19 @@
 //! Receives rows from a connector and sends batches to the interface.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use crate::data_edit::SavedRow;
+
+#[derive(Debug, Default)]
+pub(super) struct Captured {
+    pub columns: Vec<String>,
+    pub rows: Vec<Arc<SavedRow>>,
+    pub incomplete: bool,
+    pub limit: ReadLimit,
+    pub changed: Option<u64>,
+}
+
+pub(super) type Capture = Arc<Mutex<Captured>>;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::mpsc::Sender;
@@ -50,6 +63,7 @@ pub struct ResultSink {
     stopping: Arc<AtomicBool>,
     /// The rows go to this file, and the grid receives nothing.
     export: Option<ExportWriter>,
+    capture: Option<Capture>,
 }
 
 /// The rows of a batch that nobody received leave the budget.
@@ -80,7 +94,12 @@ impl ResultSink {
             first_limit: ReadLimit::None,
             stopping: Arc::new(AtomicBool::new(false)),
             export: None,
+            capture: None,
         }
+    }
+
+    pub(super) fn capture_to(&mut self, capture: Capture) {
+        self.capture = Some(capture);
     }
 
     /// Sends the rows to a file. They skip the row cap and the budget of the grid.
@@ -96,6 +115,30 @@ impl ResultSink {
     fn store(&mut self, row: Row) -> Flow {
         if self.stopping.load(Ordering::SeqCst) {
             return Flow::Discard;
+        }
+        if let Some(capture) = &self.capture {
+            let mut captured = capture
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if captured.rows.len() >= self.cap {
+                captured.incomplete = true;
+                captured.limit = ReadLimit::RowCap;
+                self.limit = ReadLimit::RowCap;
+                return Flow::Stop;
+            }
+            match SavedRow::reserve(row, &self.budget) {
+                Ok(row) => {
+                    captured.rows.push(row);
+                    self.stored += 1;
+                    return Flow::Continue;
+                }
+                Err(_) => {
+                    captured.incomplete = true;
+                    captured.limit = ReadLimit::Budget;
+                    self.limit = ReadLimit::Budget;
+                    return Flow::Stop;
+                }
+            }
         }
         if let Some(export) = &self.export {
             if !export.write_row(row.cells()) {
@@ -143,6 +186,13 @@ impl ResultSink {
 
     fn start_result(&mut self, columns: Vec<String>) -> Option<ExecEvent> {
         self.open = true;
+        if let Some(capture) = &self.capture {
+            capture
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .columns = columns;
+            return None;
+        }
         if let Some(export) = &self.export {
             export.start(&columns);
             return None;
@@ -165,7 +215,7 @@ impl ResultSink {
         if self.first_limit == ReadLimit::None {
             self.first_limit = limit;
         }
-        self.export.is_none().then_some(ExecEvent::ResultDone {
+        (self.export.is_none() && self.capture.is_none()).then_some(ExecEvent::ResultDone {
             key: self.key,
             rows,
             limit,

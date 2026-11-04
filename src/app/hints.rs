@@ -87,6 +87,7 @@ impl App {
             .is_some_and(|tab| tab.result.search.is_some())
             || (self.console_on_screen()
                 && match self.console().focus {
+                    Focus::Parameters => true,
                     Focus::Results => self.console().search_is_open(),
                     Focus::Editor => {
                         self.console().editor.search().is_some()
@@ -295,6 +296,15 @@ impl App {
 
     fn console_hint(&self) -> Vec<HintItem> {
         let console = self.console();
+        if console.focus == Focus::Parameters {
+            let mut items = self.hint_parts(&[
+                (Action::Run, "run"),
+                (Action::FocusUp, "editor"),
+                (Action::OpenPalette, "commands"),
+            ]);
+            items.extend(HintItem::of(text::HINT_PARAMETERS));
+            return items;
+        }
         if console.focus == Focus::Results {
             return if console.search_is_open() {
                 HintItem::of(text::HINT_GRID_SEARCH)
@@ -329,6 +339,11 @@ impl App {
             ),
             (Action::FocusLeft, "navigator", !console.can_run()),
             (Action::FocusDown, "results", !console.results.is_empty()),
+            (
+                Action::FocusParameters,
+                "parameters",
+                !console.parameters.fields.is_empty(),
+            ),
             (Action::EditorFind, "find", true),
             (
                 Action::EditorSuggestions,
@@ -439,6 +454,9 @@ impl App {
             (Action::Stop, "stop", true),
             (Action::GridClearSelection, "clear selection", true),
             (Action::GridOpenValue, "load", tab.pending),
+            (Action::GridSaveEdits, "apply changes", true),
+            (Action::GridReviewEdits, "review", true),
+            (Action::GridDiscardEdits, "discard", true),
             (Action::GridReload, "reload", tab.shows_sessions()),
             (Action::GridCopy, "copy", true),
             (Action::GridOpenValue, "value", !tab.pending),
@@ -459,6 +477,7 @@ impl App {
             (Action::GridFocusOrder, "order by", true),
             (Action::GridCountRows, "count", tab.total.is_none()),
             (Action::GridImport, "import", true),
+            (Action::GridEditCell, "edit", true),
             (Action::GridReload, "reload", !tab.shows_sessions()),
             (Action::GridSelectAll, "select all", true),
             (Action::GridToggleSelection, "select", true),

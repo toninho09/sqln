@@ -695,6 +695,55 @@ fn a_click_selects_a_cell_and_a_tab() {
 }
 
 #[test]
+fn clicking_a_result_row_number_selects_and_copies_the_whole_row() {
+    for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let mut f = Fixture::with(
+            &format!("result-row-number-{keyboard:?}"),
+            keyboard,
+            Settings::default(),
+            "",
+        );
+        f.run_script(
+            "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 40)
+             SELECT x AS id, printf('%040d', x) AS wide, x * 10 AS amount FROM c;",
+        );
+        f.prefix('b');
+        f.prefix('k');
+        for (width, height) in [(80, 24), (100, 30)] {
+            let result = &mut f.app.console_mut().results[0];
+            result.table.set_width(1, 80);
+            result.view.move_to(20, 1, &result.table, false);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| f.app.draw(frame)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let (column, row) = (0..height)
+                .flat_map(|y| (0..width.saturating_sub(5)).map(move |x| (x, y)))
+                .find(|(x, y)| {
+                    (0..5)
+                        .map(|offset| buffer[(*x + offset, *y)].symbol())
+                        .collect::<String>()
+                        == "21 │ "
+                })
+                .expect("row 21 is visible");
+            assert!(f.app.console().results[0].view.top > 0);
+            f.wheel(MouseEventKind::Down(MouseButton::Left), column, row);
+            let result = &f.app.console().results[0];
+            let range = result.view.selection().expect("the row is selected");
+            assert_eq!(
+                (range.top, range.bottom, range.left, range.right),
+                (20, 20, 0, 2)
+            );
+            assert_eq!(f.app.console().focus, Focus::Results);
+            terminal.draw(|frame| f.app.draw(frame)).unwrap();
+            f.press(ctrl('c'));
+            assert_eq!(f.clipboard.borrow().text, format!("21\t{:040}\t210\n", 21));
+            f.press(key(KeyCode::Esc));
+            assert!(f.app.console().results[0].view.selection().is_none());
+        }
+    }
+}
+
+#[test]
 fn the_wheel_scrolls_messages_under_the_pointer_without_moving_the_editor() {
     let mut f = Fixture::message_history("messages-wheel");
     let before = f.app.console().messages_scroll;

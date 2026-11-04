@@ -208,6 +208,8 @@ pub enum Action {
     OpenSettings,
     FocusLeft,
     FocusRight,
+    FocusParameters,
+    ToggleParameters,
     FocusUp,
     FocusDown,
     NavigatorUp,
@@ -264,6 +266,11 @@ pub enum Action {
     GridCountRows,
     GridExport,
     GridImport,
+    GridEditCell,
+    GridSetNull,
+    GridReviewEdits,
+    GridSaveEdits,
+    GridDiscardEdits,
     GridStructure,
     GridReload,
     GridCancelQuery,
@@ -339,7 +346,12 @@ impl Action {
     pub fn is_table_only(self) -> bool {
         matches!(
             self,
-            Action::GridApply
+            Action::GridEditCell
+                | Action::GridSetNull
+                | Action::GridReviewEdits
+                | Action::GridSaveEdits
+                | Action::GridDiscardEdits
+                | Action::GridApply
                 | Action::GridClearFilters
                 | Action::GridFocusFilter
                 | Action::GridFocusOrder
@@ -566,6 +578,20 @@ const DEFAULTS: &[Item] = &[
         vim_keys: &["p"],
         conventional_only: true,
     },
+    both(
+        Action::FocusParameters,
+        Region::Global,
+        "focusParameters",
+        &["ctrl+w P"],
+        &[],
+    ),
+    both(
+        Action::ToggleParameters,
+        Region::Global,
+        "toggleParameters",
+        &[],
+        &[],
+    ),
     both(Action::Stop, Region::Global, "stop", &["ctrl+w x"], &[]),
     both(
         Action::Explain,
@@ -1039,6 +1065,41 @@ const DEFAULTS: &[Item] = &[
     ),
     both(Action::GridExport, Region::Grid, "gridExport", &["e"], &[]),
     both(Action::GridImport, Region::Grid, "gridImport", &["I"], &[]),
+    both(
+        Action::GridEditCell,
+        Region::Grid,
+        "gridEditCell",
+        &["f2"],
+        &[],
+    ),
+    both(
+        Action::GridSetNull,
+        Region::Grid,
+        "gridSetNull",
+        &["ctrl+n"],
+        &[],
+    ),
+    both(
+        Action::GridReviewEdits,
+        Region::Grid,
+        "gridReviewEdits",
+        &["ctrl+r"],
+        &[],
+    ),
+    both(
+        Action::GridSaveEdits,
+        Region::Grid,
+        "gridSaveEdits",
+        &["ctrl+s"],
+        &[],
+    ),
+    both(
+        Action::GridDiscardEdits,
+        Region::Grid,
+        "gridDiscardEdits",
+        &["ctrl+d"],
+        &[],
+    ),
     both(
         Action::GridStructure,
         Region::Grid,

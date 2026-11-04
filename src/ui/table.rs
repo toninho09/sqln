@@ -30,6 +30,9 @@ type Pager = Vec<(TableControl, String, bool)>;
 pub enum TableControl {
     Apply,
     Clear,
+    ApplyEdits,
+    ReviewEdits,
+    DiscardEdits,
     LoadMore,
     Stop,
     PreviousPage,
@@ -88,7 +91,7 @@ pub fn tab_label(tab: &TableTab, theme: &Theme) -> String {
     } else {
         theme.icons.table
     };
-    super::main_tab_label(icon, &tab.label(), false)
+    super::main_tab_label(icon, &tab.label(), !tab.result.edits.is_empty())
 }
 
 fn control_items(
@@ -99,7 +102,7 @@ fn control_items(
     let idle = !tab.is_busy();
     let icons = &theme.icons;
     let apply = if tab.filters {
-        text::BUTTON_APPLY
+        text::BUTTON_APPLY_FILTERS
     } else {
         text::BUTTON_RELOAD
     };
@@ -107,9 +110,29 @@ fn control_items(
     if tab.filters {
         items.push((
             TableControl::Clear,
-            theme.tool(icons.clear, text::BUTTON_CLEAR),
+            theme.tool(icons.clear, text::BUTTON_CLEAR_FILTERS),
             idle,
         ));
+    }
+    if !tab.result.edits.is_empty() {
+        let certain = idle && !tab.edit_uncertain;
+        items.extend([
+            (
+                TableControl::ApplyEdits,
+                theme.button(text::EDIT_APPLY),
+                certain,
+            ),
+            (
+                TableControl::ReviewEdits,
+                theme.button(text::BUTTON_REVIEW),
+                certain,
+            ),
+            (
+                TableControl::DiscardEdits,
+                theme.button(text::BUTTON_DISCARD),
+                idle,
+            ),
+        ]);
     }
     items.extend([
         (
@@ -226,6 +249,15 @@ fn summary_parts(tab: &TableTab) -> (String, Option<&'static str>) {
         |total| text::rows_of_total(tab.loaded(), total),
     );
     let mut parts = vec![rows];
+    if !tab.result.edits.is_empty() {
+        parts.push(text::edit_pending(
+            tab.result.edits.rows.len(),
+            tab.result.edits.cells(),
+        ));
+    }
+    if tab.edit_uncertain {
+        parts.push(text::EDIT_UNCERTAIN_LABEL.to_owned());
+    }
     let mut note = None;
     match tab.phase {
         Phase::Waiting => parts.push(text::TABLE_WAITING.to_owned()),

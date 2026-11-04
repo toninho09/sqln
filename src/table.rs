@@ -88,6 +88,13 @@ pub struct TableTab {
     /// The catalog grid of a structure tab. `None` means a tab of rows.
     pub structure: Option<Structure>,
     pub result: ResultTab,
+    pub edit_metadata: Option<crate::data_edit::Metadata>,
+    pub edit_execution: Option<ExecutionId>,
+    pub edit_uncertain: bool,
+    pub edit_after: Option<(usize, usize, bool)>,
+    pub edit_close: bool,
+    pub edit_reload: bool,
+    pub edit_restore: Option<crate::data_edit::Restore>,
     pub focus: TableFocus,
     pub filter: LineInput,
     pub order: LineInput,
@@ -301,6 +308,13 @@ impl TableTab {
             filters: true,
             structure: None,
             result: ResultTab::new(0, Vec::new()),
+            edit_metadata: None,
+            edit_execution: None,
+            edit_uncertain: false,
+            edit_after: None,
+            edit_close: false,
+            edit_reload: false,
+            edit_restore: None,
             focus: TableFocus::Grid,
             filter: LineInput::default(),
             order: LineInput::default(),
@@ -486,6 +500,16 @@ impl TableTab {
         self.restart(filter, order, dialect, budget)
     }
 
+    pub fn reload(&mut self, dialect: Dialect, budget: &Budget) -> Option<PageRequest> {
+        self.total = None;
+        self.restart(
+            self.applied_filter.clone(),
+            self.applied_order.clone(),
+            dialect,
+            budget,
+        )
+    }
+
     /// Clears both fields, and it starts a query without a filter and an order.
     pub fn clear(&mut self, dialect: Dialect, budget: &Budget) -> Option<PageRequest> {
         self.filter.set("");
@@ -518,7 +542,11 @@ impl TableTab {
         dialect: Dialect,
         budget: &Budget,
     ) -> Option<PageRequest> {
+        if !self.result.edits.is_empty() {
+            return None;
+        }
         self.clear_rows(budget);
+        self.edit_metadata = None;
         self.pending = false;
         self.applied_filter = filter;
         self.applied_order = order;
@@ -553,6 +581,9 @@ impl TableTab {
     ) -> Result<PageRequest, &'static str> {
         if self.is_busy() {
             return Err(text::TABLE_BUSY);
+        }
+        if !self.result.edits.is_empty() {
+            return Err(text::EDIT_RESOLVE);
         }
         if !self.has_more {
             return Err(text::TABLE_NO_MORE);

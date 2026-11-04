@@ -11,6 +11,55 @@ use crate::structure::SessionSignal;
 /// One command of the hint bar: a key and its effect. A note has an empty key.
 pub type HintPart = (&'static str, &'static str);
 
+pub const EDIT_TITLE: &str = "Edit cell";
+pub const EDIT_REVIEW: &str = "Review table changes";
+pub const EDIT_REVIEW_AGAIN: &str =
+    "Pending changes stay in their table. Select that table and open Review again.";
+pub const EDIT_APPLY: &str = "Apply changes";
+pub const EDIT_KEEP: &str = "Keep value";
+pub const EDIT_SET_NULL: &str = "Set NULL";
+pub const EDIT_DISCARD: &str = "Discard changes";
+pub const EDIT_BEFORE: &str = "Before";
+pub const EDIT_AFTER: &str = "After";
+pub const EDIT_UNCERTAIN_LABEL: &str = "Commit result unknown";
+pub const EDIT_NO_CELL: &str = "No cell is selected. Open a table and select a value.";
+pub const EDIT_UNAVAILABLE: &str = "This table does not support editing, or the connection is read-only. Use SQL on a writable table.";
+pub const EDIT_MANUAL_TRANSACTION: &str = "Resolve the open transaction before editing table data.";
+pub const EDIT_NO_KEY: &str =
+    "Editing needs a primary key with non-NULL values. Use SQL for this table.";
+pub const EDIT_PROTECTED: &str =
+    "This column cannot be edited. Select a non-key, non-generated column.";
+pub const EDIT_BINARY: &str = "Binary values do not support editing. Use SQL for this column.";
+pub const EDIT_NOT_NULL: &str = "This column does not accept NULL. Enter a value.";
+pub const EDIT_SCHEMA_CHANGED: &str =
+    "The table definition changed. Discard changes and reload the table.";
+pub const EDIT_CONFLICT: &str =
+    "A row changed or no longer exists. Discard changes and reload the table.";
+pub const EDIT_ENGINE: &str =
+    "Grid editing requires an InnoDB table on MySQL. Use SQL for this table.";
+pub const EDIT_BUDGET: &str =
+    "The changes exceed the data budget. Free another result or discard changes.";
+pub const EDIT_NO_CHANGES: &str = "No changes can be applied. Edit a value first.";
+pub const EDIT_STOPPED: &str =
+    "The operation stops before a confirmed commit. Check the connection and retry.";
+pub const EDIT_COMMIT_UNKNOWN: &str = "The commit result is unknown. Verify the database before any new write. Do not repeat this operation.";
+pub const EDIT_KEEP_PENDING: &str = "Pending values stay in the grid.";
+pub const EDIT_RESOLVE: &str = "Apply or discard pending changes before this operation.";
+pub const EDIT_SAVED: &str = "Changes saved. The table reloads the current database values.";
+pub const EDIT_CLOSE_QUESTION: &str = "Apply or discard pending changes before closing this table?";
+pub const EDIT_DISCARD_QUESTION: &str =
+    "Discard all pending changes? This does not undo a database commit.";
+pub const EDIT_CELL_HINT: &str = "F2/Ctrl+S keep locally · Tab buttons · Esc cancel";
+pub const EDIT_REVIEW_HINT: &str = "F2/Ctrl+S apply · Up/Down scroll · Tab buttons · Esc cancel";
+
+pub fn edit_pending(rows: usize, cells: usize) -> String {
+    format!("Pending: {rows} rows, {cells} cells")
+}
+
+pub fn edit_production(table: &str, connection: &str) -> String {
+    format!("Apply the reviewed changes to {table} on the production connection {connection}?")
+}
+
 pub const CLIPBOARD_UNAVAILABLE: &str = "Clipboard unavailable. Paste with the terminal.";
 pub const COPY_SENT_TO_TERMINAL: &str = "Copy request sent to the terminal. No confirmation.";
 pub const COPY_FAILED: &str = "Copy failed.";
@@ -1117,6 +1166,10 @@ pub const LABEL_WHERE: &str = "WHERE";
 pub const LABEL_ORDER_BY: &str = "ORDER BY";
 pub const BUTTON_APPLY: &str = "Apply";
 pub const BUTTON_CLEAR: &str = "Clear";
+pub const BUTTON_APPLY_FILTERS: &str = "Apply filters";
+pub const BUTTON_CLEAR_FILTERS: &str = "Clear filters";
+pub const BUTTON_REVIEW: &str = "Review";
+pub const BUTTON_DISCARD: &str = "Discard";
 pub const BUTTON_LOAD_MORE: &str = "Load more";
 pub const BUTTON_PREVIOUS: &str = "Previous";
 pub const BUTTON_NEXT: &str = "Next";
@@ -1240,7 +1293,7 @@ pub const OPTION_RETRY: &str = "Try again";
 pub const OPTION_REMOVE: &str = "Remove";
 
 pub const FILTER_KEYS: &[(&str, &str)] = &[
-    ("Enter", "Apply the fields"),
+    ("Enter", "Apply the filters"),
     ("Tab", "Accept the suggestion, or the next field"),
     ("Shift+Tab", "Next field"),
     ("Ctrl+Space", "Suggestions"),
@@ -1249,6 +1302,18 @@ pub const FILTER_KEYS: &[(&str, &str)] = &[
 
 pub const EDITOR_KEYS: &[(&str, &str)] =
     &[("Tab", "Accept the suggestion"), ("Esc", "Close the list")];
+
+pub const PARAMETERS_TITLE: &str = "Parameters";
+pub const PARAMETERS_TOGGLE: &str = "Collapse or expand parameters";
+pub const HINT_PARAMETERS: &[HintPart] = &[
+    ("Tab", "field"),
+    ("↑/↓", "parameter"),
+    ("Enter", "set"),
+    ("Esc", "editor"),
+];
+pub const PARAMETER_SET: &str = "Set";
+pub const PARAMETER_UNSET: &str = "Unset";
+pub const PARAMETER_TYPES: [&str; 4] = ["Text", "Number", "Boolean", "NULL"];
 
 pub fn action_text(action: Action) -> &'static str {
     match action {
@@ -1261,6 +1326,8 @@ pub fn action_text(action: Action) -> &'static str {
         Action::Commit => "Commit",
         Action::Rollback => "Rollback",
         Action::FormatSql => "Format the SQL",
+        Action::FocusParameters => "Focus query parameters",
+        Action::ToggleParameters => "Collapse or expand query parameters",
         Action::ToggleComment => "Comment or uncomment the rows",
         Action::OpenHistory => "Open the query history",
         Action::OpenSessions => "Show the sessions of the server",
@@ -1304,6 +1371,11 @@ pub fn action_text(action: Action) -> &'static str {
         Action::OpenSettings => "Open the settings",
         Action::GridExport => "Export the result to a file",
         Action::GridImport => "Import a file to this table",
+        Action::GridEditCell => "Edit the selected cell",
+        Action::GridSetNull => "Set the selected cell to NULL",
+        Action::GridReviewEdits => "Review pending table changes",
+        Action::GridSaveEdits => "Review and apply pending table changes",
+        Action::GridDiscardEdits => "Discard pending table changes",
         Action::NavigatorImport => "Import a file to the table of the row",
         Action::NavigatorScripts => "Scripts without a connection",
         Action::NavigatorDeletePassword => "Delete the saved password",
@@ -1408,7 +1480,7 @@ pub fn panel_command_text(action: Action) -> &'static str {
         GridCloseResult => "Close result",
         GridPreviousResult => "Previous",
         GridNextResult => "Next",
-        GridApply => "Apply fields",
+        GridApply => "Apply filters",
         GridClearFilters => "Clear filters",
         GridFocusFilter => "WHERE filter",
         GridFocusOrder => "ORDER BY",
@@ -1417,6 +1489,11 @@ pub fn panel_command_text(action: Action) -> &'static str {
         GridCountRows => "Count rows",
         GridExport => "Export",
         GridImport => "Import",
+        GridEditCell => "Edit cell",
+        GridSetNull => "Set NULL",
+        GridReviewEdits => "Review changes",
+        GridSaveEdits => "Apply changes",
+        GridDiscardEdits => "Discard changes",
         GridStructure => "Structure",
         GridReload | DiagramReload => "Reload",
         GridFollowKey => "Follow key",
@@ -1958,7 +2035,7 @@ pub fn consoles_title(connection: &str, scope: &str) -> String {
 /// Tells how to load a table tab of the last session. A key that the user removed
 /// leaves the button.
 pub fn table_pending(key: Option<&str>) -> String {
-    format!("{} loads the rows.", key.unwrap_or(BUTTON_APPLY))
+    format!("{} loads the rows.", key.unwrap_or(BUTTON_RELOAD))
 }
 
 pub fn script_in_use(name: &str) -> String {

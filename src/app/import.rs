@@ -155,6 +155,9 @@ impl App {
 
     /// Reads the columns of the table. The dialog opens with their types.
     pub(super) fn open_import(&mut self) {
+        if self.pending_edit_guard() {
+            return;
+        }
         if !self.can_import() || self.config_blocked() {
             return;
         }

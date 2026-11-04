@@ -143,6 +143,7 @@ impl Connector for MySqlConnector {
         Capabilities {
             namespace: Namespace::Database,
             transactions: true,
+            parameters: true,
             ..Capabilities::default()
         }
     }
@@ -240,8 +241,14 @@ fn write_cell(row: &mut RowWriter, cell: Option<&mysql_async::Value>, column: &C
     let bytes = match cell {
         None | Some(mysql_async::Value::NULL) => return row.push(Value::Null),
         Some(mysql_async::Value::Bytes(bytes)) => bytes.as_slice(),
-        // The text protocol sends bytes. This line keeps any other form readable.
-        Some(other) => return row.push(Value::Text(&other.as_sql(true))),
+        Some(other) => {
+            let text = other.as_sql(true);
+            return row.push(if is_number(column) {
+                Value::Number(&text)
+            } else {
+                Value::Text(text.trim_matches('\''))
+            });
+        }
     };
     row.push(match std::str::from_utf8(bytes) {
         Ok(text) if !is_binary(column) && is_number(column) => Value::Number(text),
@@ -384,11 +391,21 @@ impl MySqlSession {
     ) -> Result<Outcome, ExecError> {
         let free = self.transaction == TransactionState::None;
         let canceller = self.canceller();
-        let mut result = self
+        let result = self
             .conn()
             .query_iter(sql)
             .await
             .map_err(|error| exec_error(&error, sql))?;
+        Self::consume(result, sql, sink, free, canceller).await
+    }
+
+    async fn consume<P: mysql_async::prelude::Protocol>(
+        mut result: mysql_async::QueryResult<'_, '_, P>,
+        sql: &str,
+        sink: &mut ResultSink,
+        free: bool,
+        canceller: Arc<dyn Canceller>,
+    ) -> Result<Outcome, ExecError> {
         let mut outcome = Outcome::default();
         let mut stopped_at_cap = false;
         loop {
@@ -534,6 +551,50 @@ impl Session for MySqlSession {
     async fn run(&mut self, sql: &str, mut sink: ResultSink) -> Result<StatementEnd, ExecError> {
         self.running = true;
         let read = self.read(sql, &mut sink).await;
+        if read.is_ok() {
+            self.send_warnings(sql, &mut sink).await;
+        }
+        let (rows, limit) = sink.finish().await;
+        self.running = false;
+        self.status_is_current = read.is_ok();
+        read.map(|outcome| StatementEnd {
+            rows,
+            has_columns: outcome.has_columns,
+            changed: outcome.changed,
+            limit,
+        })
+    }
+
+    async fn run_parameters(
+        &mut self,
+        sql: &str,
+        parameters: &[crate::sql::parameters::Parameter],
+        mut sink: ResultSink,
+    ) -> Result<StatementEnd, ExecError> {
+        use crate::sql::parameters::Kind;
+        let values: Vec<_> = parameters
+            .iter()
+            .map(|parameter| match parameter.kind {
+                Kind::Null => mysql_async::Value::NULL,
+                Kind::Boolean => mysql_async::Value::Int(i64::from(parameter.value == "true")),
+                Kind::Text | Kind::Number => {
+                    mysql_async::Value::Bytes(parameter.value.as_bytes().to_vec())
+                }
+            })
+            .collect();
+        self.running = true;
+        let command = crate::sql::parameters::command(sql, parameters);
+        let read = crate::command_log::observe(self.trace.clone(), command, async {
+            let free = self.transaction == TransactionState::None;
+            let canceller = self.canceller();
+            let result = self
+                .conn()
+                .exec_iter(sql, values)
+                .await
+                .map_err(|error| exec_error(&error, sql))?;
+            Self::consume(result, sql, &mut sink, free, canceller).await
+        })
+        .await;
         if read.is_ok() {
             self.send_warnings(sql, &mut sink).await;
         }

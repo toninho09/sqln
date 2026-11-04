@@ -22,6 +22,7 @@ The file paths are relative to `src/`.
 | 8 | Run protection | `app/guard.rs`, `sql/classify.rs` |
 | 9 | Transactions | `exec/runner.rs`, `ui/statusline.rs` |
 | 10 | SQL editor | `editor/mod.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
+| 10a | Query parameters | `parameters.rs`, `sql/parameters.rs`, `ui/parameters.rs`, `connector/postgres/text_io.rs`, `connector/postgres/parameters.rs`, `exec/runner.rs` |
 | 11 | SQL analysis and formatter | `sql/lexer.rs`, `sql/statement.rs`, `sql/classify.rs`, `sql/format.rs` |
 | 12 | Autocomplete | `complete/mod.rs`, `complete/context.rs`, `complete/grammar.rs`, `complete/vocabulary.rs`, `complete/keywords.rs`, `catalog.rs` |
 | 13 | Catalog and structure tab | `catalog.rs`, `structure.rs` |
@@ -127,6 +128,16 @@ Files: `editor/mod.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buff
 
 EdTUI holds the text. In the conventional mode, `editor/conventional` owns the selection with IDE keys, and EdTUI stays in insert mode. The Vim mode is the alternative; both modes share the run actions. `editor/buffer` holds the text operations on `Lines`. Search is literal and without case (`find.rs`), with one shared bar for both modes and replace support. `editor/undo` holds the history of the conventional mode, and `undoLimitBytes` limits its size. The Vim mode uses the stacks of EdTUI, which have no memory cap, and [ARCHITECTURE](ARCHITECTURE.md) lists that debt.
 
+## 10a. Query parameters
+
+Files: `parameters.rs`, `sql/parameters.rs`, `ui/parameters.rs`, `connector/postgres/text_io.rs`, `connector/postgres/parameters.rs`, `exec/runner.rs`.
+
+`sql/parameters` finds `:name` occurrences with the shared lexer, outside quotes and comments, and `bind` rewrites each statement to the markers of the dialect with the values kept separate. Numbers keep their text and take a typed cast; PostgreSQL binds through the extended protocol, MySQL through prepared statements, and SQLite through `raw_bind_parameter`. The rewrite records each replacement range, so a database error offset maps back to the editor text.
+
+`parameters` at the root holds the panel of one console: fields by name, type, value, and Set state. The `tick` of `app/persist` polls detection on a blocking task 200 ms after the last edit; a run validates only the names of the chosen statements and focuses the first missing field. `ui/parameters` draws the panel between the editor and the result tabs, with the collapse title, up to five rows, and the error row. `Capabilities::parameters` controls which sources offer the panel.
+
+`connector/postgres/text_io` wraps the socket or the TLS stream and changes the result-format words of marked `Bind` frames to text, so results keep the database text without per-type decoders. The executor binds each statement after the added `LIMIT`, and **Messages** records the original SQL with the separate values; `history.jsonl` keeps the `:name` text. The captured bindings serve a full export reread and clear with the results.
+
 ## 11. SQL analysis and formatter
 
 Files: `sql/lexer.rs`, `sql/statement.rs`, `sql/classify.rs`, `sql/format.rs`.
@@ -197,9 +208,23 @@ A console result and a table page share `result::ResultTab`: one grid with curso
 
 Files: `table.rs`, `app/tables.rs`, `ui/table.rs`.
 
-`table::page_sql` builds `SELECT *` with `WHERE`, `ORDER BY`, and `LIMIT n+1 OFFSET k`, each clause on one line. The extra row proves that a next page exists, and **Load more** uses the loaded rows as the offset. `c` counts the rows with `COUNT(*)` on the same path. The header sorts, and the filter bar accepts SQL with autocomplete. A source without `Capabilities::table_filters` hides `WHERE`, `ORDER BY`, **Clear**, and sorting, and turns **Apply** into **Reload**.
+`table::page_sql` builds `SELECT *` with `WHERE`, `ORDER BY`, and `LIMIT n+1 OFFSET k`, each clause on one line. The extra row proves that a next page exists, and **Load more** uses the loaded rows as the offset. `c` counts the rows with `COUNT(*)` on the same path. The header sorts, and the filter bar accepts SQL with autocomplete. A source without `Capabilities::table_filters` hides `WHERE`, `ORDER BY`, **Clear filters**, and sorting, and turns **Apply filters** into **Reload**.
 
 `F` and `Ctrl+W F` follow a foreign key of the row of the cursor. `Relation::foreign_keys` holds the keys that leave the table, and `Relation::referencing` the keys of other tables that reach it; both arrive with the columns (`Manager::load_columns`, `Session::read_referencing_keys`). `table::follow_choices` writes one `Follow` for each key without `NULL` in the row, with a filter of `quote_identifier` and `value_literal`. `open_relation` with a filter gives the filter to an open tab of the target, or opens a tab with it. Keys that are not in memory make `F` wait in `pending_follow` for `ColumnsLoaded`. A Redis key tab pages values by type, with the internal `SQLN.VALUE` text of `connector::redis::value_page`; that text is not a server command.
+
+## 15a. Grid editing
+
+Files: `data_edit.rs`, `data_edit/form.rs`, `app/data_edit.rs`, `exec/runner/data_edit.rs`, `ui/data_edit.rs`.
+
+Table tabs offer local updates through `Action`, gated by connector capabilities and table metadata.
+The compare column reader supplies the primary key and protected-column information.
+`Edits` keeps budgeted original and submitted snapshots while the grid shows pending values.
+The modal editor reuses conventional and Vim editing. A separate read-only review shows values and SQL.
+Review formatting runs off the interface thread, without database access.
+Apply uses one reserved session and a short transaction, with row locks and original-value checks.
+A confirmed commit reloads the first page; failures keep pending values.
+An unknown commit blocks another submission. Close and exit ask before discarding pending values.
+No pending value reaches a workspace file.
 
 ## 16. Export
 

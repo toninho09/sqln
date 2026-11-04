@@ -99,6 +99,8 @@ impl ConsoleTask {
             cap: self.settings.row_cap,
             export: None,
             timed: false,
+            capture: None,
+            parameters: Vec::new(),
         };
         let (waited, reason) = self
             .run_statement(key, active, sql, delivery, commands)

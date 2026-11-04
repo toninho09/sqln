@@ -1,6 +1,9 @@
 //! PostgreSQL connector. It reads through the simple protocol, so each value keeps
 //! the text of the database.
 
+mod parameters;
+mod text_io;
+
 use std::future::poll_fn;
 use std::io;
 use std::pin::{Pin, pin};
@@ -207,36 +210,70 @@ impl Connector for PostgresConnector {
         Capabilities {
             namespace: Namespace::Schema,
             transactions: true,
+            parameters: true,
             ..Capabilities::default()
         }
     }
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
         let tls = self.tls()?;
-        let (client, connection) = self
-            .config()
-            .connect(tls.clone())
-            .await
-            .map_err(|error| connect_error(&error))?;
+        let enabled = Arc::new(AtomicBool::new(false));
         let notices = Arc::new(Mutex::new(Notices::default()));
-        let written = notices.clone();
-        tokio::spawn(async move {
-            let mut connection = connection;
-            while let Some(message) = poll_fn(|context| connection.poll_message(context)).await {
-                match message {
-                    Ok(AsyncMessage::Notice(notice)) => {
-                        if let Ok(mut notices) = written.lock() {
-                            notices.push(with_detail(
-                                format!("{}: {}", notice.severity(), notice.message()),
-                                &notice,
-                            ));
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(_) => break,
+        let config = self.config();
+        let client = if matches!(self.target.tls, Tls::Disabled) {
+            match &self.target.address {
+                Address::Tcp { host, port } => {
+                    let socket = TcpStream::connect((host.as_str(), *port))
+                        .await
+                        .map_err(|error| ConnectError::new(error.to_string()))?;
+                    socket
+                        .set_nodelay(true)
+                        .map_err(|error| ConnectError::new(error.to_string()))?;
+                    let keepalive = socket2::TcpKeepalive::new()
+                        .with_time(Duration::from_secs(30))
+                        .with_interval(Duration::from_secs(10))
+                        .with_retries(3);
+                    socket2::SockRef::from(&socket)
+                        .set_tcp_keepalive(&keepalive)
+                        .map_err(|error| ConnectError::new(error.to_string()))?;
+                    let (client, connection) = config
+                        .connect_raw(
+                            text_io::TextIo::new(socket, enabled.clone()),
+                            tokio_postgres::NoTls,
+                        )
+                        .await
+                        .map_err(|error| connect_error(&error))?;
+                    drive(connection, notices.clone());
+                    client
+                }
+                Address::Socket(folder) => {
+                    let socket =
+                        UnixStream::connect(folder.join(format!(".s.PGSQL.{DEFAULT_PORT}")))
+                            .await
+                            .map_err(|error| ConnectError::new(error.to_string()))?;
+                    let (client, connection) = config
+                        .connect_raw(
+                            text_io::TextIo::new(socket, enabled.clone()),
+                            tokio_postgres::NoTls,
+                        )
+                        .await
+                        .map_err(|error| connect_error(&error))?;
+                    drive(connection, notices.clone());
+                    client
                 }
             }
-        });
+        } else {
+            let (client, connection) = config
+                .connect(text_io::TextTls {
+                    inner: tls.clone(),
+                    enabled: enabled.clone(),
+                })
+                .await
+                .map_err(|error| connect_error(&error))?;
+            drive(connection, notices.clone());
+            client
+        };
+        enabled.store(true, Ordering::SeqCst);
         let canceller = Arc::new(PostgresCanceller {
             token: client.cancel_token(),
             address: self.target.address.clone(),
@@ -252,6 +289,29 @@ impl Connector for PostgresConnector {
             trace: None,
         }))
     }
+}
+
+fn drive<S, T>(mut connection: tokio_postgres::Connection<S, T>, notices: Arc<Mutex<Notices>>)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        while let Some(message) = poll_fn(|context| connection.poll_message(context)).await {
+            match message {
+                Ok(AsyncMessage::Notice(notice)) => {
+                    if let Ok(mut notices) = notices.lock() {
+                        notices.push(with_detail(
+                            format!("{}: {}", notice.severity(), notice.message()),
+                            &notice,
+                        ));
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    });
 }
 
 /// Reads to the end of the connection after its shutdown. The driver returns after
@@ -734,6 +794,15 @@ impl Session for PostgresSession {
             changed: outcome.changed,
             limit,
         })
+    }
+
+    async fn run_parameters(
+        &mut self,
+        sql: &str,
+        parameters: &[crate::sql::parameters::Parameter],
+        sink: ResultSink,
+    ) -> Result<StatementEnd, ExecError> {
+        self.run_bound(sql, parameters, sink).await
     }
 
     async fn transaction_state(&mut self) -> TransactionState {

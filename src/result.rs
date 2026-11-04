@@ -24,6 +24,7 @@ pub struct ResultTab {
     /// The number of the tab. It stays the same when the user closes another tab.
     pub number: usize,
     pub table: ResultTable,
+    pub edits: crate::data_edit::Edits,
     pub view: GridView,
     pub summary: String,
     pub search: Option<RowSearch>,
@@ -69,6 +70,7 @@ impl ResultTab {
         Self {
             number,
             table: ResultTable::new(columns),
+            edits: crate::data_edit::Edits::default(),
             view: GridView::default(),
             summary: String::new(),
             search: None,

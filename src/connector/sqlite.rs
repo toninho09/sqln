@@ -96,6 +96,13 @@ impl Connector for SqliteConnector {
         Dialect::Sqlite
     }
 
+    fn capabilities(&self) -> super::Capabilities {
+        super::Capabilities {
+            parameters: true,
+            ..super::Capabilities::default()
+        }
+    }
+
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
         self.connect_traced(None).await
     }
@@ -137,7 +144,12 @@ type Reply<T> = oneshot::Sender<Result<T, ExecError>>;
 enum Request {
     Trace(Option<TraceContext>),
     Context(SessionContext, Reply<()>),
-    Run(String, ResultSink, Reply<StatementEnd>),
+    Run(
+        String,
+        Vec<crate::sql::parameters::Parameter>,
+        ResultSink,
+        Reply<StatementEnd>,
+    ),
     TransactionOpen(oneshot::Sender<bool>),
     Control(TransactionCommand, Reply<()>),
     Catalog(Reply<Catalog>),
@@ -172,9 +184,10 @@ fn serve(conn: &Connection, inbox: &Receiver<Request>, mut trace: Option<TraceCo
                         .map_err(exec_error),
                 );
             }
-            Request::Run(sql, sink, reply) => {
-                let _ = reply.send(command_log::observe_blocking(&trace, &sql, || {
-                    run(conn, &sql, sink)
+            Request::Run(sql, parameters, sink, reply) => {
+                let command = crate::sql::parameters::command(&sql, &parameters);
+                let _ = reply.send(command_log::observe_blocking(&trace, command, || {
+                    run(conn, &sql, &parameters, sink)
                 }));
             }
             Request::TransactionOpen(reply) => {
@@ -253,8 +266,24 @@ fn read_rows(
     Ok(())
 }
 
-fn run(conn: &Connection, sql: &str, mut sink: ResultSink) -> Result<StatementEnd, ExecError> {
+fn run(
+    conn: &Connection,
+    sql: &str,
+    parameters: &[crate::sql::parameters::Parameter],
+    mut sink: ResultSink,
+) -> Result<StatementEnd, ExecError> {
+    use crate::sql::parameters::Kind;
     let mut statement = conn.prepare(sql).map_err(exec_error)?;
+    for (index, parameter) in parameters.iter().enumerate() {
+        let value = match parameter.kind {
+            Kind::Null => rusqlite::types::Value::Null,
+            Kind::Boolean => rusqlite::types::Value::Integer(i64::from(parameter.value == "true")),
+            Kind::Text | Kind::Number => rusqlite::types::Value::Text(parameter.value.clone()),
+        };
+        statement
+            .raw_bind_parameter(index + 1, value)
+            .map_err(exec_error)?;
+    }
     let read_only = statement.readonly();
     let has_columns = statement.column_count() > 0;
     if has_columns {
@@ -468,8 +497,25 @@ impl Session for SqliteSession {
 
     async fn run(&mut self, sql: &str, sink: ResultSink) -> Result<StatementEnd, ExecError> {
         let (reply, answer) = oneshot::channel();
-        self.ask(Request::Run(sql.to_owned(), sink, reply), answer)
-            .await
+        self.ask(
+            Request::Run(sql.to_owned(), Vec::new(), sink, reply),
+            answer,
+        )
+        .await
+    }
+
+    async fn run_parameters(
+        &mut self,
+        sql: &str,
+        parameters: &[crate::sql::parameters::Parameter],
+        sink: ResultSink,
+    ) -> Result<StatementEnd, ExecError> {
+        let (reply, answer) = oneshot::channel();
+        self.ask(
+            Request::Run(sql.to_owned(), parameters.to_vec(), sink, reply),
+            answer,
+        )
+        .await
     }
 
     async fn transaction_state(&mut self) -> TransactionState {
