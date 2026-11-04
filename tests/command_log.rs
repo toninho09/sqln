@@ -538,7 +538,7 @@ fn the_manager_records_the_connector_dialect_for_history_highlighting() {
 fn shared_commands_keep_the_active_destination_from_the_start() {
     let mut h = Harness::new("command-log-shared");
     h.manager.set_active_history(Some(h.first));
-    h.manager.load_catalog(h.connection, 1);
+    h.manager.load_catalog(h.connection, 1, Vec::new());
     h.manager.set_active_history(Some(h.second));
     h.until(|event| matches!(event, ExecEvent::CatalogLoaded { read: 1, .. }));
     assert!(texts(&h.histories[&h.first_history]).contains("Shared"));
@@ -549,7 +549,7 @@ fn shared_commands_keep_the_active_destination_from_the_start() {
 #[test]
 fn a_shared_command_without_an_active_console_has_no_history() {
     let mut h = Harness::new("command-log-no-active");
-    h.manager.load_catalog(h.connection, 1);
+    h.manager.load_catalog(h.connection, 1, Vec::new());
     h.until(|event| matches!(event, ExecEvent::CatalogLoaded { read: 1, .. }));
     assert!(h.histories.values().all(History::is_empty));
 }
@@ -593,7 +593,7 @@ fn metadata_keeps_the_parameterized_sql_and_separate_values() {
 fn a_closed_history_does_not_redirect_shared_events_to_another_console() {
     let mut h = Harness::new("command-log-closed");
     h.manager.set_active_history(Some(h.first));
-    h.manager.load_catalog(h.connection, 1);
+    h.manager.load_catalog(h.connection, 1, Vec::new());
     h.manager.close_console(h.first);
     h.histories.remove(&h.first_history);
     h.manager.set_active_history(Some(h.second));
@@ -659,7 +659,7 @@ fn shared_commands_do_not_enter_an_active_console_of_another_connection() {
     h.manager
         .set_console_history(console, h.second_history, "other".to_owned());
     h.manager.set_active_history(Some(console));
-    h.manager.load_catalog(h.connection, 1);
+    h.manager.load_catalog(h.connection, 1, Vec::new());
     h.until(|event| matches!(event, ExecEvent::CatalogLoaded { .. }));
     assert!(h.histories.values().all(History::is_empty));
 }

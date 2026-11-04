@@ -273,7 +273,7 @@ impl App {
             console.editor.set_undo_limit(config.undo_limit_bytes);
         }
         self.pending_key = None;
-        self.explorer_page = false;
+        self.command_page = None;
         self.keymap = config.keymap;
         self.suggestion_keys = config.suggestion_keys;
         self.show_system_commands = config.show_system_commands;

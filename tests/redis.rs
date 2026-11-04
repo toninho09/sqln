@@ -772,6 +772,38 @@ fn the_catalog_lists_the_databases_and_their_keys() {
 }
 
 #[test]
+fn a_list_reads_its_databases_and_the_current_one_and_the_names_need_no_keys() {
+    for uri in uris() {
+        let mut h = open(&uri);
+        h.run_ok(&[
+            "SELECT 12",
+            "FLUSHDB",
+            "SELECT 11",
+            "FLUSHDB",
+            "SET listed:a 1",
+        ]);
+        let connector = network_connector(parse_uri(&uri).unwrap());
+        let (catalog, names) = runtime().block_on(async {
+            let mut session = connector.connect().await.unwrap();
+            let catalog = session.read_catalog_of(&["12".to_owned()]).await.unwrap();
+            let names = session.read_schema_names().await.unwrap();
+            (catalog, names)
+        });
+        let found: Vec<&str> = catalog
+            .schemas
+            .iter()
+            .map(|schema| schema.name.as_str())
+            .collect();
+        // A database of the list appears also when it is empty.
+        assert_eq!(found, ["0", "12"]);
+        assert!(names.contains(&"0".to_owned()), "{names:?}");
+        assert!(names.contains(&"11".to_owned()), "{names:?}");
+        assert!(!names.contains(&"12".to_owned()), "{names:?}");
+        h.run_ok(&["SELECT 11", "FLUSHDB"]);
+    }
+}
+
+#[test]
 fn a_large_database_gives_a_partial_list() {
     for uri in uris() {
         let mut h = open(&uri);
@@ -845,6 +877,93 @@ impl Screen {
             assert!(Instant::now() < deadline, "{wanted} is not here:\n{screen}");
             std::thread::sleep(Duration::from_millis(2));
         }
+    }
+}
+
+/// Runs a command in the console of the screen, and waits for its end.
+fn run_on_screen(screen: &mut Screen, command: &str) {
+    let app = &mut screen.app;
+    app.on_event(Event::Key(ctrl('a')));
+    app.on_event(Event::Paste(command.to_owned()));
+    app.on_event(Event::Key(common::key(KeyCode::F(5))));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    app.drain_events();
+    while app.console().is_busy() {
+        app.drain_events();
+        assert!(Instant::now() < deadline, "the run did not end");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn catalog_names(app: &App) -> Vec<String> {
+    let connection = &app.connections()[0];
+    let catalog = connection.catalog.as_ref().expect("a catalog");
+    catalog
+        .schemas
+        .iter()
+        .map(|schema| schema.name.clone())
+        .collect()
+}
+
+fn wait_for_catalog(app: &mut App) {
+    use sqln::connection::CatalogState;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while app.connections()[0].catalog_state != CatalogState::Loaded {
+        app.drain_events();
+        assert!(Instant::now() < deadline, "the catalog did not arrive");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn the_form_of_an_open_connection_marks_a_database_and_the_tree_follows() {
+    use sqln::navigator::{RowKind, RowNote};
+    for uri in uris() {
+        let mut h = open(&uri);
+        h.run_ok(&[
+            "SELECT 13",
+            "FLUSHDB",
+            "SET marked:a 1",
+            "EXPIRE marked:a 120",
+        ]);
+        let mut screen = Screen::open(&uri);
+        run_on_screen(&mut screen, "PING");
+        let app = &mut screen.app;
+        common::select_row(app, 0, &[RowKind::Connection], "cache");
+        app.on_event(Event::Key(common::key(KeyCode::Char('e'))));
+        assert!(app.form().unwrap().display_only);
+        common::focus_form_field(app, Field::Schemas);
+        app.on_event(Event::Key(ctrl('o')));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while app.form().unwrap().test.is_some() {
+            app.drain_events();
+            assert!(Instant::now() < deadline, "the names did not arrive");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let open = app.form().unwrap().schema_list.as_ref().expect("the list");
+        assert!(open.list.list().items().contains(&"13".to_owned()));
+        for code in [KeyCode::Char('1'), KeyCode::Char('3'), KeyCode::Char(' ')] {
+            app.on_event(Event::Key(common::key(code)));
+        }
+        app.on_event(Event::Key(common::key(KeyCode::Enter)));
+        assert_eq!(app.form().unwrap().text(Field::Schemas), "13");
+        common::focus_form_field(app, Field::Save);
+        app.on_event(Event::Key(common::key(KeyCode::Enter)));
+        assert!(app.form().is_none());
+        let definition = app.connections()[0].definition.as_ref().unwrap();
+        assert_eq!(definition.schemas, ["13"]);
+        wait_for_catalog(app);
+        assert_eq!(catalog_names(app), ["0", "13"]);
+        let rows = app.navigator().rows(app.connections());
+        let row = rows
+            .iter()
+            .find(|row| row.kind == RowKind::Connection)
+            .unwrap();
+        assert_eq!(
+            app.navigator().suffix(row, app.connections()),
+            Some(RowNote::Filtered)
+        );
+        h.run_ok(&["SELECT 13", "FLUSHDB"]);
     }
 }
 

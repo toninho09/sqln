@@ -24,7 +24,7 @@ use self::undo::UndoHistory;
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{CopyOutcome, EditorClipboard, SharedClipboard};
 use crate::complete::{Completion, suggest_in};
-use crate::input::SuggestionKeys;
+use crate::input::{Action, SuggestionKeys};
 use crate::sql::{Dialect, format_statement, split, split_tokens, statement_at};
 use crate::ui::text;
 use crate::ui::theme::Theme;
@@ -322,6 +322,17 @@ impl SqlEditor {
         self.sync_selection();
     }
 
+    pub fn command_available(&self, action: Action) -> bool {
+        match action {
+            Action::EditorCopy | Action::EditorCut => self.selection_range().is_some(),
+            Action::EditorSelectAll => !self.is_blank(),
+            Action::EditorSuggestions => self.is_inserting(),
+            Action::EditorUndo => self.revision > 0,
+            Action::EditorRedo => self.redo_depth > 0 || self.history.has_redo(),
+            _ => true,
+        }
+    }
+
     pub fn selected_text(&self) -> Option<String> {
         match self.keyboard {
             KeyboardMode::Conventional => self.selected_text_conventional(),
@@ -488,6 +499,62 @@ impl SqlEditor {
             completion,
             selected: 0,
         });
+    }
+
+    /// Applies an editor command without key simulation.
+    pub fn on_command(&mut self, action: Action, catalog: Option<&Catalog>) {
+        self.status = None;
+        self.close_suggestions();
+        let mode = self.state.mode;
+        match action {
+            Action::EditorFind | Action::EditorReplace => {
+                self.open_search();
+                if action == Action::EditorReplace
+                    && let Some(search) = &mut self.search
+                {
+                    search.field = SearchField::Replace;
+                }
+            }
+            Action::EditorSuggestions if self.is_inserting() => {
+                self.update_list(ListAction::Open, catalog)
+            }
+            Action::EditorUndo => self.undo(),
+            Action::EditorRedo => self.redo(),
+            Action::EditorCopy => self.copy_selection(),
+            Action::EditorCut => {
+                self.cut_selection();
+                self.leave_visual_mode();
+            }
+            Action::EditorPaste => self.paste_from_clipboard(),
+            Action::EditorSelectAll => {
+                let start = Index2::new(0, 0);
+                let end = buffer::document_end(&self.state.lines);
+                if self.keyboard == KeyboardMode::Conventional {
+                    self.anchor = Some(start);
+                    self.state.cursor = end;
+                    self.break_undo_group();
+                    self.sync_selection();
+                } else {
+                    self.state.execute(SwitchMode(EditorMode::Visual));
+                    if let Some(selection) = &mut self.state.selection {
+                        selection.start = start;
+                        selection.end = buffer::previous_position(&self.state.lines, end);
+                        self.state.cursor = selection.end;
+                    }
+                }
+            }
+            _ => {}
+        }
+        if self.keyboard == KeyboardMode::Vim
+            && matches!(action, Action::EditorUndo | Action::EditorRedo)
+        {
+            self.state.mode = if mode == EditorMode::Insert {
+                mode
+            } else {
+                EditorMode::Normal
+            };
+            self.sync_vim_shadow();
+        }
     }
 
     pub fn close_suggestions(&mut self) {
@@ -825,7 +892,7 @@ impl SqlEditor {
     }
 
     fn cut_selection(&mut self) {
-        let Some((start, end)) = self.selected_range() else {
+        let Some((start, end)) = self.selection_range() else {
             return;
         };
         self.copy_selection();

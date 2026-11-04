@@ -71,10 +71,6 @@ impl App {
         }
     }
 
-    fn editor_has_focus(&self) -> bool {
-        !self.navigator_focused && self.console_on_screen() && self.console().focus == Focus::Editor
-    }
-
     /// Returns the result grid that the mouse acts on, with its area on the screen.
     fn active_grid(&mut self) -> Option<(&mut ResultTab, Rect)> {
         if self.diagram_active.is_some() {
@@ -97,6 +93,8 @@ impl App {
         let layout = &self.layout;
         if layout.divider == Some(mouse.column) && layout.body.contains(position) {
             self.drag = Some(Drag::Navigator);
+        } else if layout.quit.contains(position) {
+            self.request_exit();
         } else if let Some(tab) = main_tab_at(&layout.main_tabs, position) {
             if tab.close.is_some_and(|close| mouse.column >= close) {
                 self.close_tab(tab.index);
@@ -251,6 +249,7 @@ impl App {
             match row.kind {
                 RowKind::Table | RowKind::View => self.open_table(&row),
                 RowKind::Console => self.open_tree_console(&row),
+                RowKind::Object(_) => self.open_row_definition(&row),
                 _ => {}
             }
         }
@@ -482,6 +481,14 @@ impl App {
     }
 
     fn on_form_mouse(&mut self, mouse: MouseEvent) {
+        if self
+            .form
+            .as_ref()
+            .is_some_and(|form| form.schema_list.is_some())
+        {
+            self.on_schema_list_mouse(mouse);
+            return;
+        }
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
             return;
         }
@@ -507,7 +514,7 @@ impl App {
         let Some(form) = &mut self.form else { return };
         form.focus_on(chosen);
         if browse {
-            self.open_browser();
+            self.open_form_window();
             return;
         }
         let request = form.press();
@@ -516,8 +523,29 @@ impl App {
             FormRequest::Save => self.save_form(),
             FormRequest::Disconnect => self.disconnect_form(),
             FormRequest::Cancel => self.form = None,
-            FormRequest::Browse => self.open_browser(),
+            FormRequest::Browse => self.open_form_window(),
             FormRequest::None => {}
+        }
+    }
+
+    /// A click adds or removes the mark of a row. The wheel moves the cursor.
+    fn on_schema_list_mouse(&mut self, mouse: MouseEvent) {
+        let (area, first) = self.layout.form.list;
+        let inside = area.contains(Position::new(mouse.column, mouse.row));
+        let Some(open) = self
+            .form
+            .as_mut()
+            .and_then(|form| form.schema_list.as_mut())
+        else {
+            return;
+        };
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) if inside && !open.loading => {
+                open.list.toggle(first + usize::from(mouse.row - area.y));
+            }
+            MouseEventKind::ScrollUp => open.list.move_by(-1),
+            MouseEventKind::ScrollDown => open.list.move_by(1),
+            _ => {}
         }
     }
 

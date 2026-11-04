@@ -326,6 +326,7 @@ impl App {
         let run = RunOptions {
             manual: false,
             schema,
+            only_schema: false,
             row_cap: None,
             export: Some(writer.clone()),
             untimed: false,

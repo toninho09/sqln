@@ -30,6 +30,9 @@ pub const MAX_NOTICES: usize = 100;
 pub struct SessionContext {
     pub read_only: bool,
     pub schema: Option<String>,
+    /// True keeps only `schema` in the `search_path` of PostgreSQL. Without it, the
+    /// default path of the session stays after the schema.
+    pub only_schema: bool,
 }
 
 /// What the console can choose at each execution.
@@ -212,6 +215,22 @@ pub trait Session: Send {
     }
     /// Reads schemas and relations, without their columns.
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError>;
+    /// Reads the catalog of the schemas of the list and of the current schema. An empty
+    /// list reads all schemas.
+    async fn read_catalog_of(&mut self, schemas: &[String]) -> Result<Catalog, ExecError> {
+        let mut catalog = self.read_catalog().await?;
+        catalog.keep_schemas(schemas);
+        Ok(catalog)
+    }
+    /// Reads the names of all schemas, for the choice of the visible schemas.
+    async fn read_schema_names(&mut self) -> Result<Vec<String>, ExecError> {
+        let catalog = self.read_catalog().await?;
+        Ok(catalog
+            .schemas
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect())
+    }
     async fn read_columns(
         &mut self,
         schema: &str,
@@ -219,6 +238,15 @@ pub trait Session: Send {
     ) -> Result<Vec<String>, ExecError>;
     /// Reads the keys that leave a relation. A source without keys keeps this default.
     async fn read_foreign_keys(
+        &mut self,
+        _schema: &str,
+        _relation: &str,
+    ) -> Result<Vec<ForeignKey>, ExecError> {
+        Ok(Vec::new())
+    }
+    /// Reads the keys of other tables that reach a relation. A source without keys keeps
+    /// this default.
+    async fn read_referencing_keys(
         &mut self,
         _schema: &str,
         _relation: &str,

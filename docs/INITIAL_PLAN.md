@@ -2,7 +2,9 @@
 
 ## 1. State of this document
 
-This document records the exploration of the project so far.
+This document records the exploration and current functional rules.
+Later approved decisions in [DECISIONS.md](DECISIONS.md) replace earlier rules on the same subject.
+Dated test results below remain historical records, not results for the current working tree.
 
 - **Defined:** decision confirmed in the conversation.
 - **Proposed:** technical or functional recommendation not yet confirmed.
@@ -29,17 +31,17 @@ This document records the exploration of the project so far.
 | Area | Content | Rules |
 |---|---|---|
 | Editor | Conventional and Vim modes, selection, undo, search, replace, ANSI highlight, and `NO_COLOR` | Section 5 |
-| Autocomplete | Schemas, tables, views, columns on demand, aliases, quotes, and keywords | Section 6 |
+| Autocomplete | Schemas, tables, views, columns on demand, aliases, CTEs, built-in types, functions with signatures, and keywords | Section 6 |
 | SQL analysis | Tokenizer per dialect, statement separation, `DELIMITER`, and statement classes | Sections 9 and 14 |
 | Connectors | SQLite, PostgreSQL, MySQL, and Redis/Valkey, with URI, verified TLS, and client certificate; PostgreSQL and MySQL also have keepalive | Sections 3 and 14 |
-| Pool | Limit, queue, wait cancellation, cleaning, discard, and lost connection replacement | Section 7 |
+| Pool | Limit, queue, wait cancellation, cleaning, idle expiry, discard, and lost connection replacement | Section 7 |
 | Execution | Statement, selection, script, cap, deadline, stop, indicators, and error position | Sections 7 and 9 |
 | Transactions | Autocommit, manual mode, commit, rollback, confirmations, SQL control, and unknown state | Section 8 |
 | Grid | Tabs, **Messages**, selection, TSV, detail, budget, search, width, and tab close | Section 10 |
 | Terminal | Restore at exit and on panic, mouse, paste, and small terminal warning | Section 5 |
 | Interface | Several consoles in tabs, navigator, dividers, bar buttons, database or schema selector, and help per panel | Sections 5, 6, and 7 |
 | Exit | Questions in order for each console, with each answer applied at once | Section 8 |
-| Key map | Actions per region, two-key sequences, and the `keymap` rules, read from `config.json` | `docs/KEYMAP.md` |
+| Key map | Actions per region, multi-key sequences, Settings recorder, and `keymap` rules from `config.json` | `docs/KEYMAP.md` |
 | Table view | Table or view tab, **Load more**, `WHERE` and `ORDER BY` bar with autocomplete, header sorting, stop, budget, and pool | Section 10 |
 | Connection form | Form and URI, test, edit, removal, names per scope, global or project scope, SQL limit, TLS suggestion, and `foreign_keys` | Sections 3 and 11 |
 | Folders and configuration | Global folder and project `.sqln/` folder, `--project`, creation question, `config.json`, precedence, error with file and position, **Reload**, and external change warning | Section 11 |
@@ -70,6 +72,15 @@ This document records the exploration of the project so far.
 | SQL generation | `g` lists templates in the navigator, and `y` copies the name | `docs/DECISIONS.md` and `docs/KEYMAP.md` |
 | File explorer | `Ctrl+O` or the `...` button in the path fields, with filter, hidden files, and **Use this folder** | `docs/DECISIONS.md` |
 | `JOIN` by key | Suggestion after `ON`, with the keys read together with the columns | `docs/DECISIONS.md` |
+| Objects and DDL | Groups for routines, sequences, triggers, and types; DDL in a new console without execution | `docs/DECISIONS.md` |
+| Key navigation | `F` follows outgoing and incoming foreign keys from a table row | `docs/DECISIONS.md` |
+| Query plans and sessions | Plan tree, server sessions, and confirmed query cancellation or session termination | `docs/DECISIONS.md` |
+| Compare | Structure and data compare across SQL connections, with a sync script that does not run automatically | `docs/DECISIONS.md` |
+| Import | CSV, TSV, JSON, and JSON Lines into existing tables, with mapping, preview, and failure modes | `docs/DECISIONS.md` |
+| Export | CSV, TSV, JSON, JSON Lines, and SQL inserts, with explicit file confirmation | `docs/DECISIONS.md` |
+| Command history | Per-console Messages history in memory, separate from query history and diagnostic logs | `docs/DECISIONS.md` |
+| Visible schemas | Connection field with a searchable server list; the current schema always stays visible | `docs/DECISIONS.md` |
+| Home | Closing the last tab shows the home screen; the Quit button uses the normal exit questions | `docs/DECISIONS.md` |
 
 ### Implemented credential base
 
@@ -119,8 +130,8 @@ All items below depend on third parties, a real environment, or user credentials
 | Item | Situation |
 |---|---|
 | Secret Service on a real desktop | The container does not cover a desktop session nor the real unlock dialog |
-| Publishing | `publish = false` left the `Cargo.toml`. The name is missing on crates.io and GitHub |
-| Binaries | The macOS and Linux binaries still need to be generated, and the macOS ones signed and notarized |
+| Publishing | `Cargo.toml` permits publishing. Package availability and name checks need external confirmation |
+| Binaries | The workflow builds Linux and macOS archives, and publishes a GitHub Release on `v*` tags. Signing and notarization remain absent |
 | Audit | The security and license audit of the dependencies is missing |
 | Manual checks | The section "Checks without a result" lists the tests on real terminals and networks |
 
@@ -130,7 +141,7 @@ The items below do not block the release.
 
 | Item | Situation | Details |
 |---|---|---|
-| Undo memory | The undo history has no memory cap. By estimate, a 50,000-line script can take about 3 GB per console | `docs/ARCHITECTURE.md`, section "Known editor limit" |
+| Vim undo memory | EdTUI keeps full-text entries without a memory cap. Conventional undo uses `undoLimitBytes`, 64 MiB by default | `docs/ARCHITECTURE.md`, section "Known editor limit" |
 
 ### Checks without a result
 
@@ -551,9 +562,10 @@ The execution uses a copy of the text taken when the request was accepted.
 - The search compares the literal text, case-insensitive.
 - `Tab` without suggestions inserts four spaces. With a selection, it has no effect.
 
-**Defined for the undo history:** use the stack of the official `edtui` version, with up to 100 entries in `undo` and 100 in `redo` per console.
-Do not limit the text size.
-The history has no memory cap. Section 1 records that technical debt.
+**Defined for conventional undo:** keep replaced text in `editor::undo`, with `undoLimitBytes` per console, 64 MiB by default.
+There is no step-count limit. The newest undo and redo steps stay even above the byte limit.
+Vim uses official EdTUI stacks, with up to 100 full-text entries each and no memory cap.
+Section 1 records the Vim memory debt. Neither mode limits the editor text size.
 
 ### Technical points to validate
 
@@ -616,7 +628,7 @@ On macOS, part of those combinations does not work, and many keyboards lack thos
 - Use the `astrodark` theme, in RGB, when `COLORTERM` declares `truecolor` or `24bit`.
 - In the other cases, use the ANSI colors of the terminal.
 - Respect `NO_COLOR`, with priority over the environment and the configuration.
-- Choose the theme through the `theme` field of `config.json`: `auto`, `astrodark`, or `ansi`.
+- Choose `theme`: `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-latte`, `gruvbox`, or `nord`.
 - Choose the symbols through the `icons` field: `unicode` (default) or `nerd`.
 - Show a hint bar and a help screen.
 - Show the effective keys of the `keymap` in the bar, the `F1` help, and the `Ctrl+W` prefix options.
@@ -629,7 +641,7 @@ On macOS, part of those combinations does not work, and many keyboards lack thos
 **Defined:**
 
 - On a small terminal, show a message, without losing the state.
-- `Ctrl+C` copies when there is a selection; without a selection, it does nothing.
+- In the editor, `Ctrl+C` copies a selection. In a grid, it copies a selection or the current cell.
 - On a panic, restore the terminal, write the pending texts, and generate a report.
 - Do not include SQL, values, or passwords in that report.
 - On a shutdown signal, write the pending texts and exit.
@@ -650,7 +662,8 @@ Accept a function as `COUNT()` and put the cursor inside the parentheses.
 Keep existing parentheses and arguments when the function name already has them.
 Use local lists for built-in types and functions. Do not query the database for each key.
 
-**Defined:** the object navigator shows the same coverage: schemas, tables, views, and columns.
+**Defined:** the navigator shows schemas, tables, views, columns, and groups of supported routines, sequences, triggers, and types.
+These extra objects open their DDL. They do not add user-defined function completion.
 
 **Defined:** update the catalog by manual action and after DDL run in the application.
 
@@ -1323,12 +1336,12 @@ The layout and the identification of the table tabs follow the subsection "Appro
 #### Approved table view design
 
 **Defined:** the user approves this design on 2026-10-31.
-The code already implements the points below, except the tab order and the close of the last console, noted next.
+The code implements the points below.
 
 - `Enter` on a table or view of the navigator opens the table view. The double click within 400 ms on the same cell does the same.
 - `Right` and `Left`, and the click on the row mark, open and close the columns in the navigator.
 - The tab label is `name (table)` or `name (view)`, and a tab with a query in progress shows `●`.
-- The tab strip shows consoles and tables together in the opening order, without separation by type. The code still groups consoles before tables.
+- The tab strip shows consoles and tables together in opening order, without separation by type. Diagrams and compares share that order.
 - The view has, from top to bottom: the title, the `WHERE` and `ORDER BY` fields, the buttons, the grid, the summary, and one warning line.
 - The title shows the connection, the schema, the relation, and the type. The pool and data use stays at the right.
 - The buttons are `[Apply]`, `[Clear]`, `[Load more]`, and `[Stop]`. A button without effect at the moment appears dimmed.
@@ -1343,7 +1356,7 @@ The code already implements the points below, except the tab order and the close
 - `Ctrl+Space` opens the suggestions in a field. The field keeps one line, and pasted text loses its line breaks.
 - Closing a table tab with a query in progress stops the query and frees the data that arrive later.
 - Removing a connection closes its table tabs. A table query in progress blocks **Disconnect** and the removal.
-- Closing the last console with an open table tab selects a table and does not create an empty console. The code still creates that console.
+- Closing the last console with another tab open selects a remaining tab and does not create an empty console.
 - Closing the table tab on screen selects the tab at the right or, at the end of the strip, the tab at the left.
 - The page size comes from `preferences.pageSize` in `config.json`, with 100 as default.
 
@@ -1353,7 +1366,9 @@ The code already implements the points below, except the tab order and the close
 Do not keep a read open waiting for the user.
 Keep the read rows in the grid and allow walking them without a new query.
 Do not offer **Load more** in the consoles.
-Do not repeat the command or add `LIMIT` to the user text.
+Do not repeat the command to obtain more rows.
+With **Limit in SQL** on, the runner adds `LIMIT` with the cap plus one to eligible plain reads.
+The editor text stays unchanged. **Messages** records the added limit. See the 2026-11-03 decision.
 
 Allow configuring the cap.
 **Defined:** use 1,000 rows as default.
@@ -1488,7 +1503,7 @@ Each console references the identity and the scope of the connection, not only i
 ### Global path and format
 
 **Defined:** use `~/.config/sqln/` as the default global folder on macOS and Linux.
-Respect `XDG_CONFIG_HOME`: when set, use the `sqln/` subfolder in that directory.
+Respect `XDG_CONFIG_HOME` when it is absolute: use its `sqln/` subfolder. Ignore a relative value.
 
 Use **JSON** for the settings, both global and project.
 The SQL console scripts stay in `.sql` files.
@@ -1589,7 +1604,7 @@ Configure the page size and the row cap at the global and project levels.
 
 ### Configuration write and reload
 
-**Defined:** when writing `config.json`, reread the file, lock it briefly, and write atomically.
+**Defined:** when writing `config.json`, take the lock, reread the file, and write atomically.
 On an external change of the configuration, ask before reloading.
 Do not change active connections because of that reload.
 
@@ -1610,7 +1625,8 @@ Offer the global or project scope and the keyboard, page size, row cap, and data
 Show when a value comes from the global scope.
 Allow removing a project definition to use the global value.
 Write only after **Save**. **Cancel** changes nothing.
-Keep `config.json` for advanced options, such as the `keymap`.
+Use **Shortcuts** to record, remove, and restore bindings per keyboard mode and scope.
+Settings checks conflicts before Save. Direct edits of `preferences.keymap` remain supported.
 
 **Defined for the keyboard mode change:** keep text, cursor, and scroll.
 If the change erases a selection or the history, warn before applying it.
@@ -1656,7 +1672,7 @@ Use `Ctrl+W a` to open the selector, including in a console without a connection
 Show the current connection, the new connection, and the destination folder before the confirmation.
 If the scope changes, report the new file location before finishing.
 Keep text, name, cursor, and scroll.
-Clear results, messages, and database or schema selection of the previous connection.
+Clear result grids and database or schema selection. Keep the Messages command history with its recorded connection labels.
 Save the text before the change. Cancel the change if that save fails.
 Do not run or convert the SQL automatically because of that change.
 
@@ -1702,7 +1718,7 @@ Do not recreate the file without the corresponding choice.
 
 **Defined for batch changes:** present a single dialog, with a choice per file.
 
-**Defined for detection:** watch the console folder and compare the file hash before writing.
+**Defined for detection:** poll file size and modification time each second, then compare the hash. Check the hash before writing.
 
 ### Opening and reopening
 
@@ -1783,7 +1799,7 @@ Keep that state as local interface information, separate from the versionable sc
 #### Approved design of the files and the lists
 
 **Defined:** the user approves this design on 2026-10-31.
-The code already implements the points below, except the discard action text and the unreadable local state warning.
+The code implements the points below, including the discard label and the unreadable local state warning.
 
 - The console creates its files at the first edit. An empty console creates no file.
 - The automatic name is the smallest `console-N` that no console of the connection uses, open or saved.
@@ -1792,7 +1808,7 @@ The code already implements the points below, except the discard action text and
 - A write refused because the file changed or disappeared pauses the saving of that console. The user decision resumes the saving.
 - The **Save now** action (`Ctrl+S`) works in the editor, in both modes. In a console with a pending decision, `Ctrl+S` opens the question again.
 - The question about scripts changed outside SQLN lists all the scripts, one per line. `Left` and `Right` choose the action, **Apply** requires a choice per line, and **Decide later** (or `Esc`) closes the question and keeps the saving paused.
-- The **Recreate** action, for a removed script, writes the editor text and the identity file. The **Close and discard text** action closes the console and discards the text. The code still uses the label **Close**.
+- The **Recreate** action, for a removed script, writes the editor text and the identity file. The **Close and discard the text** action closes the console and discards the text.
 - Closing a console, or exiting, writes the text first. If the write fails, or the file is in conflict, or the console has text and no connection, the **Unsaved text** question offers **Cancel** and **Close without saving**.
 - A console without a connection and without a file (the case of the initial console without a database) saves nothing.
 - `n` in the navigator opens a list with **+ New console** and the saved consoles of the connection, the newest first. Without saved consoles, `n` creates a console without a list.
@@ -1942,21 +1958,16 @@ The architecture defines the absence, missing access, and error criteria.
 Treat an unknown failure as an error, never as an absence.
 Confirm those criteria in real tests before releasing plain text as an alternative.
 
-### Pending implementation and validation
+### Implementation and pending validation
 
-The matrix "Credential phase close", in section 1, records the state and the completion criteria.
-
-- Finish the migration and separate deletion dialogs. The password, vault failure, and trust dialogs already exist.
-- Implement the authorized global exception, including for credentials of project connections without carrying the secret through the project.
-- Integrate the full migration; `save_verified` already offers write with check, but does not remove the global source.
-- Tell an authentication refusal apart from the other errors before asking for another password.
-- Ask for a new password after a refusal and suspend new attempts after the second failure, without repeating SQL already sent.
-- Repeat the Secret Service tests on a real Linux desktop. The Keychain and container tests are in section 1.
+The code implements password and trust prompts, vault recovery, authorized global plain text, migration, and separate deletion.
+It classifies password refusal and suspends automatic attempts after the second refusal, without repeating SQL already sent.
+Repeat Secret Service tests on a real Linux desktop. The recorded Keychain and container results are in section 1.
 
 ## 14. Technical proposal in Rust
 
 The application uses the libraries of this table, including the vault adapters.
-The real Keychain and Secret Service tests stay pending.
+Section 1 records Keychain and container Secret Service tests. Real Linux desktop validation stays pending.
 
 | Responsibility | Library | Note |
 |---|---|---|
@@ -1979,13 +1990,13 @@ An editing library does not deliver contextual SQL autocomplete automatically.
 **Defined:** use EdTUI as the editor base.
 The `ratatui-textarea` offers no syntax highlight and no Vim mode.
 
-The application needs to implement:
+The application implements:
 
 - The conventional mode layer, with `Shift`+arrows, IDE shortcuts, and selection without the character under the cursor.
 - Typing over a selection, without writing to the clipboard.
 - Text replacement.
 - The autocomplete suggestion list, positioned by `cursor_screen_position`.
-- The syntax highlight, through the own tokenizer and `Highlight`.
+- Syntax highlighting through the project tokenizer and `editor::frame`, after EdTUI draws the visible text.
 
 **Defined:** do not use `syntect`, because EdTUI generates RGB colors and resets the state on each line.
 The application requires the ANSI theme, `NO_COLOR`, and multi-line comments.
@@ -2055,7 +2066,7 @@ These rules apply to the connectors:
 - **MySQL:** always set `ssl_opts` on remote hosts, because the default does not use TLS.
 - **Verification:** with `rustls`, a wrong CA and a wrong name refused the connection, without an insecure alternative.
 - **Client certificate:** worked on both databases.
-- **Client key on MySQL:** `mysql_async` accepts only RSA in PKCS#1. Report that limit to the user.
+- **Client key on MySQL:** `mysql_async` 0.37 accepts PKCS#1, PKCS#8, and SEC1. The driver reports invalid keys.
 - **Connection deadline:** wrap the whole connection in `timeout`, because `connect_timeout` did not cover a silent server.
 - **`rustls`:** build only the `ring` provider. The `mysql_async` uses the default provider of the process, and two providers would need to install one of them at startup.
 - **Passwords:** the dedicated drivers do not read environment variables or password files.
@@ -2219,7 +2230,7 @@ The results of the technical tests are in [docs/RESULTS.md](RESULTS.md), and the
 - Resize the panel division by drag and collapse the side navigator.
 - Keep editor and results visible together after resizing or collapsing the navigator.
 - Get suggestions of schemas, tables, views, and columns without querying the database on each key.
-- Not require function or signature autocomplete in the first version.
+- Suggest built-in functions with signatures from local lists; preserve existing parentheses and arguments.
 - Not run SQL when the cursor is outside a statement.
 - Keep the execution running while editing the text of the same console.
 - With suggestions open in the editor, accept with `Tab` and break the line with `Enter`, according to `suggestionKeys`.
@@ -2378,7 +2389,7 @@ The results of the technical tests are in [docs/RESULTS.md](RESULTS.md), and the
 - Not apply an automatic sort when opening a table, even with a primary key.
 - Keep filters and sorting while the tab is open and discard them at close.
 - Reopen a table without recovering the filters or the sorting of the previous tab.
-- Not restore table tabs automatically at application restart.
+- Restore table tabs when `reopenTabs` is on, without rows, filters, sorting, or a database read at startup.
 - Verify filter, sorting, and pagination together.
 - Fetch each page of the table view with a new query.
 - Return the connection to the pool between the pages of the table view.
@@ -2415,7 +2426,7 @@ The results of the technical tests are in [docs/RESULTS.md](RESULTS.md), and the
 - Read each console result up to the configured cap, without waiting for a user action.
 - End the read at the cap and report that the result may have more rows.
 - Not offer Load more in the consoles.
-- Not add `LIMIT` to the user text or repeat the command to get more rows.
+- Keep editor text unchanged; add `LIMIT` only to eligible sent SQL when `capInSql` is on. Never repeat SQL automatically for more rows.
 - Allow walking the read rows without a new query.
 - Use 1,000 rows as the default cap.
 - Cancel a read query at the cap only without an open transaction.
@@ -2463,7 +2474,7 @@ The results of the technical tests are in [docs/RESULTS.md](RESULTS.md), and the
 - Not run SQL or modify an execution already started just by reloading the file.
 - Block the opening of the same console in a second instance while it is in use.
 - Release that lock when the console closes and after an unexpected process end.
-- Present a list to reopen, without automatic restoration.
+- Offer the console list and restore saved tabs at startup when `reopenTabs` is on, without running SQL.
 - Show in that list only the consoles of the selected connection.
 - Select the existing tab when picking an already open console, without duplicating the tab.
 - Allow several different consoles for the same connection.
@@ -2647,7 +2658,7 @@ Section 1 shows what is already done in that order and what is missing.
 - MongoDB and Kafka. The user reopened Redis and Valkey on 2026-10-31; see `docs/DECISIONS.md`. The user reopened the query history on 2026-11-01.
 - In-memory SQLite databases.
 - Cell editing in the grid.
-- Function and signature autocomplete.
+- User-defined function and signature autocomplete. Built-in functions and signatures already have local completion.
 - Extractor editor. The user reopened the export to file on 2026-10-31; see `docs/DECISIONS.md`.
 - Integrated SSH tunnel.
 - `COPY FROM STDIN`.
@@ -2684,7 +2695,7 @@ Use [compose.test.yaml](../compose.test.yaml) and the scripts of `scripts/`.
 - Result without rows in the TSV format.
 - Security and license audit of the dependencies.
 - Signing and notarization of the binaries on macOS.
-- Name `sqln` on GitHub and trademarks; it is free on crates.io and Homebrew.
+- Confirm package-name and trademark availability through external checks. The repository alone does not establish availability.
 
 ## 18. Consulted references
 
@@ -2713,4 +2724,4 @@ Use [compose.test.yaml](../compose.test.yaml) and the scripts of `scripts/`.
 - [Keyring — Interface to the system vaults](https://docs.rs/keyring/latest/keyring/v1/)
 
 The references support the initial technical assessment.
-Versions and compatibility of the dependencies still need validation before the implementation.
+`Cargo.toml` and `Cargo.lock` define the current dependencies. Historical driver results do not validate every later version.

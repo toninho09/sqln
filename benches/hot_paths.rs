@@ -224,6 +224,7 @@ fn large_catalog(tables: usize, columns: usize) -> Catalog {
             kind: RelationKind::Table,
             columns: Columns::Loaded(names.clone()),
             foreign_keys: Vec::new(),
+            referencing: Vec::new(),
         })
         .collect();
     Catalog {
@@ -231,6 +232,7 @@ fn large_catalog(tables: usize, columns: usize) -> Catalog {
             name: "public".to_owned(),
             relations,
             partial: false,
+            objects: Vec::new(),
         }],
         current_schema: Some("public".to_owned()),
     }

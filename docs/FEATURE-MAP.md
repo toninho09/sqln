@@ -11,24 +11,26 @@ The file paths are relative to `src/`.
 | # | Feature | Main files |
 |---|---|---|
 | 1 | Application shell and main loop | `app.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs` |
-| 2 | Key map and discovery | `input.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `ui/text.rs` |
+| 2 | Key map and discovery | `input.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `ui/text.rs` |
 | 3 | Navigator and tree filter | `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs` |
 | 4 | Connections and connection form | `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs` |
 | 5 | Database connectors | `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/redis.rs`, `connector/tls.rs` |
 | 6 | Connection pool | `pool.rs` |
 | 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs` |
 | 7a | Query plan | `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs` |
+| 7b | Messages command history | `command_log.rs`, `console.rs`, `ui/messages.rs`, `exec/runner.rs` |
 | 8 | Run protection | `app/guard.rs`, `sql/classify.rs` |
 | 9 | Transactions | `exec/runner.rs`, `ui/statusline.rs` |
 | 10 | SQL editor | `editor/mod.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
 | 11 | SQL analysis and formatter | `sql/lexer.rs`, `sql/statement.rs`, `sql/classify.rs`, `sql/format.rs` |
-| 12 | Autocomplete | `complete/mod.rs`, `complete/context.rs`, `complete/keywords.rs`, `catalog.rs` |
+| 12 | Autocomplete | `complete/mod.rs`, `complete/context.rs`, `complete/grammar.rs`, `complete/vocabulary.rs`, `complete/keywords.rs`, `catalog.rs` |
 | 13 | Catalog and structure tab | `catalog.rs`, `structure.rs` |
+| 13d | DDL of an object | `definition.rs`, `app/definition.rs`, `compare/ddl.rs`, `compare/sql.rs` |
 | 13a | Server sessions | `structure.rs`, `table.rs`, `app/tables.rs` |
 | 13b | ER diagram | `diagram/mod.rs`, `diagram/sql.rs`, `diagram/layout.rs`, `diagram/mermaid.rs`, `diagram/tab.rs`, `ui/diagram.rs`, `app/diagram.rs` |
 | 13c | Structure and data compare | `compare/mod.rs`, `compare/sql.rs`, `compare/schema.rs`, `compare/ddl.rs`, `compare/data.rs`, `compare/form.rs`, `compare/tab.rs`, `ui/compare.rs`, `app/compare.rs` |
 | 14 | Results grid | `result.rs`, `grid/mod.rs`, `grid/row.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs` |
-| 15 | Table view | `table.rs`, `app/tables.rs`, `ui/table.rs` |
+| 15 | Table view and key navigation | `table.rs`, `app/tables.rs`, `ui/table.rs` |
 | 16 | Export and file explorer | `export/mod.rs`, `export/form.rs`, `ui/export.rs`, `app/export.rs`, `browser.rs`, `ui/browser.rs`, `app/browse.rs` |
 | 16a | Import | `import/mod.rs`, `import/delimited.rs`, `import/json.rs`, `import/statement.rs`, `import/feed.rs`, `import/form.rs`, `exec/runner/import.rs`, `app/import.rs`, `ui/import.rs` |
 | 17 | Query history | `history.rs`, `store/history.rs`, `app/history.rs`, `ui/history.rs` |
@@ -42,25 +44,28 @@ The file paths are relative to `src/`.
 
 Files: `app.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs`.
 
-`run` owns the application state and the screen. The main loop waits for a key for up to 20 ms, and then reads at most 64 execution events per frame. A state update does no input or output. The application draws only after a change. `app/keys` applies the key priority of [KEYMAP](KEYMAP.md), and `app/mouse` handles clicks, the wheel, and the drag of dividers and columns. `app/hints` builds the hint row from the state on screen. `app/close` asks the exit questions in order, one console at a time, and applies each answer at once. `terminal` sets up the terminal and restores it at exit and on panic.
+`run` owns the application state and the screen. The main loop waits for a key for up to 20 ms, and then drains execution events for up to 8 ms per frame. The application draws only after a change. `app/keys` applies the key priority of [KEYMAP](KEYMAP.md), and `app/mouse` handles clicks, the wheel, and the drag of dividers and columns. `app/hints` builds the hint row from the state on screen. `app/close` asks the exit questions in order, one console at a time, and applies each answer at once. `terminal` sets up the terminal and restores it at exit and on panic.
 
 ## 2. Key map and discovery
 
-Files: `input.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `ui/text.rs`.
+Files: `input.rs`, `app/commands.rs`, `app/keys.rs`, `app/hints.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `ui/text.rs`.
 
-`input` maps each key to an action in each focus region. It supports two-key sequences and reads the user `keymap` rules from `config.json`. `Ctrl+W` opens the prefix menu (`ui/which_key`) with the second keys in groups. `fits_cursor` keeps the commands that have an effect now and belong to the panel of the cursor, and the keys of the other commands keep their action. `Ctrl+W Tab` opens its explorer page: `explorer_commands` lists what acts on the current row, and a key of the page goes through the `Navigator` region of the key map, so the page needs no bindings of its own. `Ctrl+P` opens the command palette; `filter_list` filters by words, and the same core serves the history window. `ui/text` keeps all interface text in one file. A new console without text shows the first screen (`ui/welcome`), with the main keys, and the first character ends it. Without a tab, the same widget draws the home screen with a logo: the active console is then the hidden console, `App::home` is true, and `home_allows` keeps only the explorer commands and the commands that need no tab.
+`input` maps each key to an action in each focus region. It supports multi-key sequences and reads the user `keymap` rules from `config.json`. `Ctrl+W` opens the prefix menu (`ui/which_key`) with the second keys in groups. `fits_cursor` keeps the commands that have an effect now and belong to the panel of the cursor, and the keys of the other commands keep their action. `Ctrl+W Tab` opens its explorer page: `explorer_commands` lists what acts on the current row, and a key of the page goes through the `Navigator` region of the key map, so the page needs no bindings of its own. `Ctrl+W Space` opens the functional commands of the current panel with effective local shortcuts. `app/commands` shares availability, ordering, and target labels between discovery paths; `Action` remains the catalog. The palette includes editor and grid commands and keeps actions without shortcuts. Explorer row actions require explorer focus; add connection and scripts remain global. `filter_list` matches label, key, action name, and technical aliases. The normal hint row reserves the palette shortcut and fits more whole commands as width grows. The same list filter core serves the history window. `ui/text` keeps all interface text in one file. A new console without text shows the first screen (`ui/welcome`), with the main keys, and the first character ends it. Without a tab, the same widget draws the home screen with a logo: the active console is then the hidden console, `App::home` is true, and `home_allows` keeps only the explorer commands and the commands that need no tab.
 
 ## 3. Navigator and tree filter
 
 Files: `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs`.
 
-The navigator shows the tree of connections, consoles, schemas, relations, and columns. `Connection::consoles` holds the console rows, so a read of the tree does not read the disk. `refresh_tree_consoles` rebuilds them after a change of a console, only for the connections open in the tree. `/` filters the tree in memory, from the loaded catalogs, and opens no connection. `g` lists the SQL templates of a relation, and the application inserts the generated text. `y` copies the qualified name.
+The navigator shows the tree of connections, consoles, schemas, relations, columns, and the groups of the other objects of a schema. `Connection::consoles` holds the console rows, so a read of the tree does not read the disk. `refresh_tree_consoles` rebuilds them after a change of a console, only for the connections open in the tree. `/` filters the tree in memory, from the loaded catalogs, and opens no connection. `g` lists the SQL templates of a relation and the **DDL** entry, and the application inserts the generated text. `y` copies the row name without quotes. An object copy omits routine arguments and the table of a trigger.
+
+`RowKind::Group` is a group of one kind (`catalog::Group`) under a schema, and `RowKind::Object` is one object of `Schema::objects`, with `Row::relation` as its place. `push_groups` adds the groups after the relations, and a group without objects stays out. The cursor key keeps the group and the label of the object, which is unique in its group (`Object::label`), so the cursor stays on an overload after a new read.
 
 ## 4. Connections and connection form
 
 Files: `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs`.
 
-`Definition` holds one saved connection, and `Source` tells the global scope from the project scope. The form holds text only and builds a definition on request. `app/connections` owns the catalogs and the actions of the navigator and the form. A file or a URI from the command line enters `connector/target`; that connection lives for the session only and writes no file. `p` in the navigator erases the saved password, and the removal of a connection offers that deletion separately.
+`Definition` holds the connection settings, and `Source` selects a SQLite file or a network target.
+`ConnectionKey` holds the saved connection ID and its global or project scope. The form holds text only and builds a definition on request. `app/connections` owns the catalogs and the actions of the navigator and the form. A file or a URI from the command line enters `connector/target`; that connection lives for the session only and writes no file. `p` in the navigator erases the saved password, and the removal of a connection offers that deletion separately.
 
 ## 5. Database connectors
 
@@ -83,6 +88,16 @@ Files: `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs`.
 The console sends a copy of the text and receives an `ExecutionId`. `sql` separates the statements, and the pool delivers a reservation or queues the request. Each console has one task (`exec/runner`) that owns the reserved session. The task runs one statement at a time, applies the row cap plus one row, and asks the transaction state after each statement. With `cap_in_sql`, `sql::with_row_limit` adds that number as `LIMIT` to a plain read without its own limit, and `ExecEvent::LimitAdded` reports it. On error, timeout, or stop, the sequence ends. `exec/sink` batches 200 rows, applies the cap and the budget, and sends notices before the end of the statement; a cap cancellation is not a statement error.
 
 Stop triggers the `Canceller` and starts a 5 s deadline. The task keeps reading and discards the rows. Without an answer and without a transaction, `exec` closes the connection. With an open transaction, the interface asks for confirmation. The application drops an event whose `ExecutionId` is not current, so an old response never refills a grid.
+
+## 7b. Messages command history
+
+Files: `command_log.rs`, `console.rs`, `ui/messages.rs`, `exec/runner.rs`.
+
+Each console keeps a 10 MiB in-memory command history. New runs and connection changes keep it; closing the console discards it.
+Records show effective commands, separate parameters, results, and elapsed time. Oversized text has an explicit truncation marker.
+Internal and shared records stay hidden until **System commands** is on in Settings > Results. Hidden records still use the budget.
+Shared operations capture the active console of the same connection at operation start. Import, authentication, and hidden driver operations stay out.
+The view follows new records only at the end. This history is separate from diagnostic logs and `history.jsonl`.
 
 ## 7a. Query plan
 
@@ -132,6 +147,14 @@ Files: `catalog.rs`, `structure.rs`.
 
 The catalog is a cache in memory, outside the disk. Schemas and tables load first; columns and foreign keys load on demand. A key failure does not fail the columns. The structure tab runs the catalog queries of `structure`, per database, scope, and section.
 
+## 13d. DDL of an object
+
+Files: `definition.rs`, `app/definition.rs`, `compare/ddl.rs`, `compare/sql.rs`.
+
+`definition::definition_sql` gives the queries of the DDL of a `Target`: a table, a view, or an object of `Schema::objects`. A database function gives the text where the database has one: `pg_get_functiondef`, `pg_get_triggerdef`, and `pg_get_viewdef` on PostgreSQL, `SHOW CREATE` on MySQL, and `sqlite_schema.sql` on SQLite. For a PostgreSQL table, `compare::sql::postgres_table_sql` reads the model of the compare for one table, and `compare::ddl::create_text` writes the table, its indexes, and its foreign keys. SQLN also writes a sequence, an enum, and a domain of PostgreSQL. `definition_text` adds the header and ends each statement with one semicolon.
+
+`app/definition` opens a task of the pool for the read only (`Manager::open_console`), and the password gate passes it as `Use::Definition`. The read runs with only the schema in the path of PostgreSQL, as the compare does, so the names of that schema have no schema. `on_definition_event` takes the events of that task before the tabs. At the end, the task closes, and `open_text_console` opens a new console of the connection with the text, as the script of a compare does.
+
 ## 13a. Server sessions
 
 Files: `structure.rs`, `table.rs`, `app/tables.rs`.
@@ -174,7 +197,9 @@ A console result and a table page share `result::ResultTab`: one grid with curso
 
 Files: `table.rs`, `app/tables.rs`, `ui/table.rs`.
 
-`table::page_sql` builds `SELECT *` with `WHERE`, `ORDER BY`, and `LIMIT n+1 OFFSET k`, each clause on one line. The extra row proves that a next page exists, and **Load more** uses the loaded rows as the offset. `c` counts the rows with `COUNT(*)` on the same path. The header sorts, and the filter bar accepts SQL with autocomplete. A source without `Capabilities::table_filters` hides `WHERE`, `ORDER BY`, **Clear**, and sorting, and turns **Apply** into **Reload**. A Redis key tab pages values by type, with the internal `SQLN.VALUE` text of `connector::redis::value_page`; that text is not a server command.
+`table::page_sql` builds `SELECT *` with `WHERE`, `ORDER BY`, and `LIMIT n+1 OFFSET k`, each clause on one line. The extra row proves that a next page exists, and **Load more** uses the loaded rows as the offset. `c` counts the rows with `COUNT(*)` on the same path. The header sorts, and the filter bar accepts SQL with autocomplete. A source without `Capabilities::table_filters` hides `WHERE`, `ORDER BY`, **Clear**, and sorting, and turns **Apply** into **Reload**.
+
+`F` and `Ctrl+W F` follow a foreign key of the row of the cursor. `Relation::foreign_keys` holds the keys that leave the table, and `Relation::referencing` the keys of other tables that reach it; both arrive with the columns (`Manager::load_columns`, `Session::read_referencing_keys`). `table::follow_choices` writes one `Follow` for each key without `NULL` in the row, with a filter of `quote_identifier` and `value_literal`. `open_relation` with a filter gives the filter to an open tab of the target, or opens a tab with it. Keys that are not in memory make `F` wait in `pending_follow` for `ColumnsLoaded`. A Redis key tab pages values by type, with the internal `SQLN.VALUE` text of `connector::redis::value_page`; that text is not a server command.
 
 ## 16. Export
 
@@ -182,11 +207,22 @@ Files: `export/mod.rs`, `export/form.rs`, `ui/export.rs`, `app/export.rs`, `brow
 
 The dialog holds the choices and writes nothing. The formats are CSV, TSV, JSON, JSON Lines, and SQL inserts. The rows come from the selection, the loaded rows, or all rows; a full read of all rows needs a new read only when the grid does not hold each row. The options cover header, delimiter, null text, BOM, grouping, and batch. A confirmation writes the choices to `preferences.export` in the global file. `app/export` runs the flow: dialog, questions, rows, and the end of the file. The file explorer of `browser` serves the path fields of the export and of the connection form; `Ctrl+O` or the `...` button opens it.
 
+## 16a. Import
+
+Files: `import/mod.rs`, `import/delimited.rs`, `import/json.rs`, `import/statement.rs`, `import/feed.rs`, `import/form.rs`, `exec/runner/import.rs`, `app/import.rs`, `ui/import.rs`.
+
+`I` opens the import dialog for an existing writable SQL table. CSV, TSV, JSON, and JSON Lines use column mapping and a preview.
+The executor writes batches with no SQL time limit. All or nothing rolls back on failure; By batch keeps completed batches.
+Log errors retries a failed batch row by row and writes failed rows to the chosen log, up to the error limit.
+Only the Import button starts writes. Production asks first. Completion shows the result and reloads the table.
+The global `preferences.import` stores format choices, not the failure mode. Each dialog starts with All or nothing.
+
 ## 17. Query history
 
 Files: `history.rs`, `store/history.rs`, `app/history.rs`, `ui/history.rs`.
 
-Each statement appends one JSON line to the global `history.jsonl`, with `at`, `connection`, `ok`, and `sql`. `app/history` writes the note of each statement. `Ctrl+W H` opens the window, and the filter uses the same core as the palette. Secrets stay out of the file. The `queryHistory` option turns the feature off.
+Eligible user statements from saved connections append a JSON line to global `history.jsonl`, with `at`, `connection`, `ok`, and `sql`.
+Plans, imports, internal reads, oversized statements, and immediate repeats stay out. `app/history` writes the note of each statement. `Ctrl+W H` opens the window, and the filter uses the same core as the palette. The secret filter excludes recognized secret-bearing statements. It does not remove sensitive values inside arbitrary SQL literals. The `queryHistory` option turns the feature off.
 
 ## 18. Folders and configuration
 
@@ -198,7 +234,7 @@ The store has the global folder and, when it exists, the project `.sqln/` folder
 
 Files: `script_file.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs`.
 
-Each console has a `consoles/<id>.sql` file and a `consoles/<id>.json` file; the UUID is the `id` and the base of both names. The autosave waits 500 ms after the last edit and retries for 5 s on failure; `Ctrl+S` saves at once. The write is atomic, and a failure keeps the text and shows the alert. A `locks/<id>.lock` file with `flock` keeps one instance per console. `ScriptFile::poll` rereads the file only when the size or the date changed, and then compares the hash; one question lists the scripts that another program changed or removed. `workspace.json` keeps cursor, scroll, layout, and open tabs; at startup, the application reopens the tabs of the last session when `reopenTabs` is on. `app/scripts` lists the consoles, opens them, and manages the scripts without a connection; the rename prompt of `ui/name` serves the tab and the rows of the lists. The attach flow copies both files, verifies them, removes the originals, and runs no SQL.
+Each console has a `consoles/<id>.sql` file and a `consoles/<id>.json` file; the UUID is the `id` and the base of both names. The autosave waits 500 ms after the last edit and retries after 5 s on failure; `Ctrl+S` saves at once. The write is atomic, and a failure keeps the text and shows the alert. A `locks/<id>.lock` file with `flock` keeps one instance per console. `ScriptFile::poll` rereads the file only when the size or the date changed, and then compares the hash; one question lists the scripts that another program changed or removed. `workspace.json` keeps cursor, scroll, layout, and open tabs; at startup, the application reopens the tabs of the last session when `reopenTabs` is on. `app/scripts` lists the consoles, opens them, and manages the scripts without a connection; the rename prompt of `ui/name` serves the tab and the rows of the lists. The attach flow copies both files, verifies them, removes the originals, and runs no SQL.
 
 ## 20. Credentials and trust
 
@@ -218,4 +254,4 @@ The themes are `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `
 
 Files: `main.rs`, `terminal.rs`, `log.rs`.
 
-The command line accepts `--project`, `--dialect`, `--log`, `--help`, and `--version`, and one target: a SQLite file or a connection URI. The setup covers mouse, paste, and the small terminal warning. The restore runs at exit and on panic, with a panic report. Shutdown signals enter the exit questions. `--log` records kinds of events, never SQL, values, or passwords. The BEL sounds after `bellAfterSeconds`, with a default of 10 s.
+The command line accepts `--project`, `--dialect`, `--log`, `--help`, and `--version`, and one target: a SQLite file or a connection URI. The setup covers mouse, paste, and the small terminal warning. The restore runs at exit and on panic, with a panic report. Shutdown signals save pending text and exit without questions. Interface quit uses the close and transaction questions. `--log` records kinds of events, never SQL, values, or passwords. The BEL sounds after `bellAfterSeconds`, with a default of 10 s.

@@ -31,10 +31,11 @@ use super::{
 };
 use crate::catalog::{
     Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
-    group_foreign_keys,
+    add_objects, group_foreign_keys,
 };
 use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, RowWriter, Value};
+use crate::sql::literal::text_literal;
 use crate::sql::{
     Dialect, counts_rows, is_plain_read, reads_or_writes_stdio, removes_prepared_statements,
 };
@@ -57,6 +58,36 @@ const CATALOG_SQL: &str = "\
       ON c.relnamespace = n.oid AND c.relkind IN ('r', 'p', 'f', 'v', 'm') \
     WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' \
     ORDER BY 1, 2";
+/// The routines, sequences, triggers, and types of each schema of `CATALOG_SQL`. A member
+/// of an extension stays out, and so do aggregates, window functions, and the internal
+/// triggers of the keys: `pg_get_functiondef` refuses an aggregate.
+const OBJECTS_SQL: &str = "\
+    SELECT n.nspname::text, o.name, o.kind, o.detail \
+    FROM ( \
+      SELECT p.pronamespace AS space, p.proname::text AS name, \
+        CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END AS kind, \
+        pg_catalog.pg_get_function_identity_arguments(p.oid) AS detail, \
+        'pg_catalog.pg_proc'::pg_catalog.regclass AS class, p.oid \
+      FROM pg_catalog.pg_proc p WHERE p.prokind IN ('f', 'p') \
+      UNION ALL \
+      SELECT c.relnamespace, c.relname::text, 'sequence', '', \
+        'pg_catalog.pg_class'::pg_catalog.regclass, c.oid \
+      FROM pg_catalog.pg_class c WHERE c.relkind = 'S' \
+      UNION ALL \
+      SELECT c.relnamespace, t.tgname::text, 'trigger', c.relname::text, \
+        'pg_catalog.pg_trigger'::pg_catalog.regclass, t.oid \
+      FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid \
+      WHERE NOT t.tgisinternal \
+      UNION ALL \
+      SELECT t.typnamespace, t.typname::text, \
+        CASE t.typtype WHEN 'e' THEN 'enum' ELSE 'domain' END, '', \
+        'pg_catalog.pg_type'::pg_catalog.regclass, t.oid \
+      FROM pg_catalog.pg_type t WHERE t.typtype IN ('e', 'd') \
+    ) o \
+    JOIN pg_catalog.pg_namespace n ON n.oid = o.space \
+    WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' \
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d \
+      WHERE d.classid = o.class AND d.objid = o.oid AND d.deptype = 'e')";
 const COLUMNS_SQL: &str = "\
     SELECT a.attname::text \
     FROM pg_catalog.pg_attribute a \
@@ -77,6 +108,21 @@ const FOREIGN_KEYS_SQL: &str = "\
     JOIN pg_catalog.pg_attribute t ON t.attrelid = k.confrelid AND t.attnum = u.target \
     WHERE k.contype = 'f' AND n.nspname = $1::text AND c.relname = $2::text \
     ORDER BY k.conname, u.place";
+/// The keys of other tables that reach a relation, with the shape of `FOREIGN_KEYS_SQL`:
+/// the column of the relation comes before the column of the other table. A key that a
+/// partition copies from its parent stays out.
+const REFERENCING_KEYS_SQL: &str = "\
+    SELECT k.conname::text, n.nspname::text, c.relname::text, t.attname::text, a.attname::text \
+    FROM pg_catalog.pg_constraint k \
+    JOIN pg_catalog.pg_class c ON c.oid = k.conrelid \
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+    JOIN pg_catalog.pg_class r ON r.oid = k.confrelid \
+    JOIN pg_catalog.pg_namespace rn ON rn.oid = r.relnamespace \
+    CROSS JOIN LATERAL unnest(k.confkey, k.conkey) WITH ORDINALITY AS u(target, source, place) \
+    JOIN pg_catalog.pg_attribute t ON t.attrelid = k.confrelid AND t.attnum = u.target \
+    JOIN pg_catalog.pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = u.source \
+    WHERE k.contype = 'f' AND k.conparentid = 0 AND rn.nspname = $1::text AND r.relname = $2::text \
+    ORDER BY n.nspname, c.relname, k.conname, u.place";
 /// A session call that gets no answer in this time counts as lost.
 const SESSION_LIMIT: Duration = Duration::from_secs(5);
 /// The port in the name of a Unix socket file.
@@ -130,6 +176,12 @@ impl PostgresConnector {
         };
         Ok(MakeRustlsConnect::new(files))
     }
+}
+
+/// Reads one row of `OBJECTS_SQL`. A missing cell gives an empty text.
+fn object_row(row: Vec<Option<String>>) -> [String; 4] {
+    let mut cells = row.into_iter().map(Option::unwrap_or_default);
+    std::array::from_fn(|_| cells.next().unwrap_or_default())
 }
 
 fn connect_error(error: &tokio_postgres::Error) -> ConnectError {
@@ -422,6 +474,22 @@ fn quoted(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
+/// Writes the `search_path` of a console schema. The schema comes first, and the default
+/// path of the session stays after it, so the types and functions of an extension stay
+/// visible, such as `geography` of PostGIS in `public`. With `only`, the path holds only
+/// the schema. The cleanup of the session restores the default path.
+fn schema_path_sql(schema: &str, only: bool) -> String {
+    let first = quoted(schema);
+    if only {
+        return format!("SET search_path TO {first};");
+    }
+    let first = text_literal(&first, Dialect::Postgres);
+    format!(
+        "SELECT pg_catalog.set_config('search_path', pg_catalog.concat_ws(', ', {first}, \
+         NULLIF(pg_catalog.current_setting('search_path'), '')), false);"
+    )
+}
+
 /// The notices of the statement in progress. The task of the connection writes them.
 /// The server sends a notice before the end of its statement, and that task handles the
 /// messages in order, so `run` finds each notice when the statement ends.
@@ -635,7 +703,7 @@ impl Session for PostgresSession {
             sql.push_str("SET default_transaction_read_only = on;");
         }
         if let Some(schema) = &context.schema {
-            sql.push_str(&format!("SET search_path TO {};", quoted(schema)));
+            sql.push_str(&schema_path_sql(schema, context.only_schema));
         }
         if sql.is_empty() {
             return Ok(());
@@ -728,8 +796,7 @@ impl Session for PostgresSession {
             if schemas.last().is_none_or(|schema| schema.name != name) {
                 schemas.push(Schema {
                     name,
-                    relations: Vec::new(),
-                    partial: false,
+                    ..Schema::default()
                 });
             }
             if let (Some(schema), Some(relation)) = (schemas.last_mut(), relation) {
@@ -741,9 +808,12 @@ impl Session for PostgresSession {
                     },
                     columns: Columns::NotLoaded,
                     foreign_keys: Vec::new(),
+                    referencing: Vec::new(),
                 });
             }
         }
+        let objects = self.text_rows(OBJECTS_SQL).await?;
+        add_objects(&mut schemas, objects.into_iter().map(object_row));
         let current = self.text_rows("SELECT current_schema()").await?;
         let current_schema = current
             .into_iter()
@@ -784,16 +854,37 @@ impl Session for PostgresSession {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<ForeignKey>, ExecError> {
+        self.read_keys(FOREIGN_KEYS_SQL, schema, relation).await
+    }
+
+    async fn read_referencing_keys(
+        &mut self,
+        schema: &str,
+        relation: &str,
+    ) -> Result<Vec<ForeignKey>, ExecError> {
+        self.read_keys(REFERENCING_KEYS_SQL, schema, relation).await
+    }
+}
+
+impl PostgresSession {
+    /// Reads the keys of a key query: the name, the schema and the name of the other
+    /// table, the column of the relation, and the column of the other table.
+    async fn read_keys(
+        &self,
+        sql: &str,
+        schema: &str,
+        relation: &str,
+    ) -> Result<Vec<ForeignKey>, ExecError> {
         let command = crate::command_log::limited(format_args!(
-            "{FOREIGN_KEYS_SQL}\nParameters: schema={schema:?}, relation={relation:?}"
+            "{sql}\nParameters: schema={schema:?}, relation={relation:?}"
         ));
         let rows = crate::command_log::observe(
             self.trace.clone(),
             command,
-            self.client.query(FOREIGN_KEYS_SQL, &[&schema, &relation]),
+            self.client.query(sql, &[&schema, &relation]),
         )
         .await
-        .map_err(|error| exec_error(&error, FOREIGN_KEYS_SQL))?;
+        .map_err(|error| exec_error(&error, sql))?;
         let pairs = rows.iter().map(|row| {
             Ok(KeyColumn {
                 key: row.try_get(0)?,

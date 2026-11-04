@@ -25,6 +25,7 @@ fn table(name: &str, columns: &[&str], foreign_keys: Vec<ForeignKey>) -> Relatio
         kind: RelationKind::Table,
         columns: Columns::Loaded(columns.iter().map(|column| (*column).to_owned()).collect()),
         foreign_keys,
+        referencing: Vec::new(),
     }
 }
 
@@ -65,9 +66,11 @@ fn catalog() -> Catalog {
                         kind: RelationKind::Table,
                         columns: Columns::NotLoaded,
                         foreign_keys: Vec::new(),
+                        referencing: Vec::new(),
                     },
                 ],
                 partial: false,
+                objects: Vec::new(),
             },
             Schema {
                 name: "audit".to_owned(),
@@ -80,6 +83,7 @@ fn catalog() -> Catalog {
                     table("customers", &["id"], Vec::new()),
                 ],
                 partial: false,
+                objects: Vec::new(),
             },
         ],
         current_schema: Some("public".to_owned()),

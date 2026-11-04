@@ -7,7 +7,7 @@ use std::ops::Range;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::catalog::{Catalog, RelationRef};
+use crate::catalog::{Catalog, Relation, RelationRef};
 use crate::complete::{quote_name, suggest};
 use crate::connector::redis::value_page;
 use crate::console::{Message, MessageLevel, Phase, RunClock};
@@ -15,10 +15,11 @@ use crate::editor::SuggestionList;
 use crate::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, StatementStatus,
 };
-use crate::grid::{Budget, Row, row_cost};
+use crate::grid::{Budget, Row, Value, row_cost};
 use crate::input::SuggestionKeys;
 use crate::line_input::{Edit, LineInput};
 use crate::result::ResultTab;
+use crate::sql::literal::value_literal;
 use crate::sql::{Dialect, TokenKind, quote_identifier, split, tokenize};
 use crate::structure::{Scope, Section, SessionSignal, Structure, signal_sql, structure_sql};
 use crate::ui::text;
@@ -191,6 +192,71 @@ pub fn page_sql(
     } else {
         Err(text::TABLE_TEXT_REFUSED.to_owned())
     }
+}
+
+/// One way from a row of a table tab to the rows that a key joins to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Follow {
+    pub target: RelationRef,
+    /// The `WHERE` text of the tab of the target.
+    pub filter: String,
+    /// The text of the list: a mark of the direction, the table, and its columns.
+    pub label: String,
+}
+
+/// Lists the keys of a row of a table: the keys that leave the table, then the keys of
+/// other tables that reach it. The keys of the column of the cursor come first. A key
+/// with `NULL` in the row, or with a column that the grid does not show, stays out.
+/// `columns` are the columns of the grid, and `schema` is the schema of the table.
+pub fn follow_choices(
+    schema: &str,
+    relation: &Relation,
+    columns: &[String],
+    row: &Row,
+    cursor: usize,
+    dialect: Dialect,
+) -> Vec<Follow> {
+    let leaving = relation
+        .foreign_keys
+        .iter()
+        .map(|key| (text::FOLLOW_LEAVING, key));
+    let reaching = relation
+        .referencing
+        .iter()
+        .map(|key| (text::FOLLOW_REACHING, key));
+    let at_cursor = columns.get(cursor);
+    let mut choices: Vec<(bool, Follow)> = Vec::new();
+    for (mark, key) in leaving.chain(reaching) {
+        let parts: Option<Vec<String>> = key
+            .columns
+            .iter()
+            .zip(&key.target_columns)
+            .map(|(column, target)| {
+                let place = columns.iter().position(|name| name == column)?;
+                let value = row.get(place).filter(|value| *value != Value::Null)?;
+                let name = quote_identifier(target, dialect);
+                Some(format!("{name} = {}", value_literal(value, dialect)))
+            })
+            .collect();
+        let Some(parts) = parts else {
+            continue;
+        };
+        let table = if key.target.schema == schema {
+            key.target.relation.clone()
+        } else {
+            format!("{}.{}", key.target.schema, key.target.relation)
+        };
+        let label = format!("{mark} {table} ({})", key.target_columns.join(", "));
+        let first = at_cursor.is_some_and(|column| key.columns.contains(column));
+        let follow = Follow {
+            target: key.target.clone(),
+            filter: parts.join(" AND "),
+            label,
+        };
+        choices.push((first, follow));
+    }
+    choices.sort_by_key(|(first, _)| !first);
+    choices.into_iter().map(|(_, follow)| follow).collect()
 }
 
 /// Compares two `ORDER BY` texts without case and without extra blanks.

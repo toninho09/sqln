@@ -57,6 +57,7 @@ impl Shortcuts {
     pub fn actions() -> impl Iterator<Item = Action> {
         [
             Region::Global,
+            Region::Editor,
             Region::Navigator,
             Region::Grid,
             Region::Diagram,

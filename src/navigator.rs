@@ -1,4 +1,5 @@
-//! The tree of connections, consoles, schemas, relations, and columns.
+//! The tree of connections, consoles, schemas, relations, columns, and the groups of the
+//! other objects of a schema.
 //!
 //! The rows hold positions in the catalog, so a read of the tree copies no name.
 //! The cursor holds names, so it stays on its item when the catalog changes.
@@ -8,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use crossterm::event::KeyEvent;
 
-use crate::catalog::{Columns, RelationKind, RelationRef, Schema};
+use crate::catalog::{Columns, Group, Object, RelationKind, RelationRef, Schema};
 use crate::connection::{CatalogState, Connection};
 use crate::exec::ConnectionId;
 use crate::filter_list::{holds_words, words_of};
@@ -30,6 +31,10 @@ pub enum RowKind {
     Table,
     View,
     Column,
+    /// The node above the objects of one group of a schema.
+    Group(Group),
+    /// `Row::relation` is the position in the objects of the schema.
+    Object(Group),
 }
 
 /// One visible row. The positions index the connection list and its catalog.
@@ -47,9 +52,34 @@ impl Row {
         match self.kind {
             RowKind::Connection => 0,
             RowKind::Consoles | RowKind::Schema => 1,
-            RowKind::Console | RowKind::Table | RowKind::View => 2,
-            RowKind::Column => 3,
+            RowKind::Console | RowKind::Table | RowKind::View | RowKind::Group(_) => 2,
+            RowKind::Column | RowKind::Object(_) => 3,
         }
+    }
+
+    /// Returns the group of a group row or of an object row.
+    fn group(&self) -> Option<Group> {
+        match self.kind {
+            RowKind::Group(group) | RowKind::Object(group) => Some(group),
+            _ => None,
+        }
+    }
+
+    /// Returns the name of the schema of a row of the catalog.
+    pub fn schema_name<'a>(&self, connections: &'a [Connection]) -> Option<&'a str> {
+        if self.kind == RowKind::Connection {
+            return None;
+        }
+        self.catalog_schema(connections)
+            .map(|schema| schema.name.as_str())
+    }
+
+    /// Returns the object of an object row.
+    pub fn object<'a>(&self, connections: &'a [Connection]) -> Option<&'a Object> {
+        if !matches!(self.kind, RowKind::Object(_)) {
+            return None;
+        }
+        self.catalog_schema(connections)?.objects.get(self.relation)
     }
 
     /// Returns true for a row without a place in the catalog.
@@ -81,6 +111,10 @@ impl Row {
                 .map_or("", |console| &console.name),
             RowKind::Schema => schema.map_or("", |schema| &schema.name),
             RowKind::Table | RowKind::View => relation.map_or("", |relation| &relation.name),
+            RowKind::Group(group) => text::group_name(group),
+            RowKind::Object(_) => self
+                .object(connections)
+                .map_or("", |object| object.label.as_str()),
             RowKind::Column => match relation.map(|relation| &relation.columns) {
                 Some(Columns::Loaded(columns)) => {
                     columns.get(self.column).map_or("", String::as_str)
@@ -91,6 +125,9 @@ impl Row {
     }
 
     pub fn relation_ref(&self, connections: &[Connection]) -> Option<RelationRef> {
+        if self.group().is_some() {
+            return None;
+        }
         let schema = self.catalog_schema(connections)?;
         let relation = schema.relations.get(self.relation)?;
         Some(RelationRef {
@@ -110,14 +147,26 @@ impl Row {
             };
         }
         let schema = self.catalog_schema(connections);
+        let schema_name = (self.kind != RowKind::Connection)
+            .then(|| schema.map(|schema| schema.name.clone()))
+            .flatten();
+        if let Some(group) = self.group() {
+            return Key {
+                connection: connections[self.connection].id,
+                schema: schema_name,
+                group: Some(group),
+                relation: matches!(self.kind, RowKind::Object(_))
+                    .then(|| self.name(connections).to_owned()),
+                ..Key::default()
+            };
+        }
         let relation = schema.and_then(|schema| schema.relations.get(self.relation));
         let name = || Some(self.name(connections).to_owned());
         Key {
             connection: connections[self.connection].id,
             consoles: false,
-            schema: (self.kind != RowKind::Connection)
-                .then(|| schema.map(|schema| schema.name.clone()))
-                .flatten(),
+            schema: schema_name,
+            group: None,
             relation: (self.depth() >= 2)
                 .then(|| relation.map(|relation| relation.name.clone()))
                 .flatten(),
@@ -136,6 +185,9 @@ struct Key {
     /// True on the `Consoles` node and below it. There, `relation` is the console name.
     consoles: bool,
     schema: Option<String>,
+    /// The group of a group row and of an object row. There, `relation` is the label of
+    /// the object.
+    group: Option<Group>,
     relation: Option<String>,
     column: Option<String>,
 }
@@ -145,10 +197,12 @@ impl Key {
         if self.consoles {
             return 1 + usize::from(self.relation.is_some());
         }
-        match (&self.schema, &self.relation, &self.column) {
+        match (&self.schema, self.group, &self.relation, &self.column) {
             (None, ..) => 0,
-            (_, None, _) => 1,
-            (_, _, None) => 2,
+            (_, None, None, _) => 1,
+            (_, Some(_), None, _) => 2,
+            (_, Some(_), Some(_), _) => 3,
+            (_, None, Some(_), None) => 2,
             _ => 3,
         }
     }
@@ -164,29 +218,32 @@ impl Key {
             return 2 + usize::from(named);
         }
         let schema = row.catalog_schema(connections);
-        let relation = schema.and_then(|schema| schema.relations.get(row.relation));
-        let names = [
-            schema.map(|schema| schema.name.as_str()),
-            relation.map(|relation| relation.name.as_str()),
-            (row.kind == RowKind::Column).then(|| row.name(connections)),
-        ];
-        let wanted = [
-            self.schema.as_deref(),
-            self.relation.as_deref(),
-            self.column.as_deref(),
-        ];
-        let matching = (0..row.depth()).take_while(|level| names[*level] == wanted[*level]);
+        let schema_name = schema.map(|schema| schema.name.as_str());
+        let level_matches = |level: usize| match (level, row.group()) {
+            (0, _) => schema_name == self.schema.as_deref(),
+            (1, Some(group)) => self.group == Some(group),
+            (1, None) => {
+                let relation = schema.and_then(|schema| schema.relations.get(row.relation));
+                self.group.is_none()
+                    && relation.map(|relation| relation.name.as_str()) == self.relation.as_deref()
+            }
+            (_, Some(_)) => Some(row.name(connections)) == self.relation.as_deref(),
+            (_, None) => Some(row.name(connections)) == self.column.as_deref(),
+        };
+        let matching = (0..row.depth()).take_while(|level| level_matches(*level));
         1 + matching.count()
     }
 }
 
 /// The open items of one connection. A key of `schemas` is an open schema, and its
-/// value holds the open relations of that schema.
+/// value holds the open relations of that schema. `groups` holds the open groups of each
+/// schema.
 #[derive(Debug, Default)]
 struct Expansion {
     open: bool,
     consoles: bool,
     schemas: HashMap<String, HashSet<String>>,
+    groups: HashMap<String, HashSet<Group>>,
 }
 
 /// The filter of the tree. With text, the tree lists only the relations that match, from
@@ -228,8 +285,45 @@ pub fn is_relation(row: &Row) -> bool {
     matches!(row.kind, RowKind::Table | RowKind::View)
 }
 
-/// Lists the relations that match, under their connections and schemas. It ignores the
-/// open items, because a match can stand under a closed schema.
+/// Returns true for a row that the filter of the tree can find: a relation or an object.
+fn is_match(row: &Row) -> bool {
+    is_relation(row) || matches!(row.kind, RowKind::Object(_))
+}
+
+/// Adds the rows of the groups of a schema. A group holds the objects for which `keep` is
+/// true, and it lists them when `open` is true for it. A group without such objects stays
+/// out.
+fn push_groups(
+    rows: &mut Vec<Row>,
+    parent: Row,
+    schema: &Schema,
+    open: impl Fn(Group) -> bool,
+    keep: impl Fn(&Object) -> bool,
+) {
+    for group in Group::ALL {
+        let mut objects = schema
+            .objects_of(group)
+            .filter(|(_, object)| keep(object))
+            .peekable();
+        if objects.peek().is_none() {
+            continue;
+        }
+        rows.push(Row {
+            kind: RowKind::Group(group),
+            ..parent
+        });
+        if open(group) {
+            rows.extend(objects.map(|(relation, _)| Row {
+                kind: RowKind::Object(group),
+                relation,
+                ..parent
+            }));
+        }
+    }
+}
+
+/// Lists the relations and the objects that match, under their connections, schemas, and
+/// groups. It ignores the open items, because a match can stand under a closed schema.
 fn filtered_rows(connections: &[Connection], words: &[String]) -> Vec<Row> {
     let mut rows = Vec::new();
     for (connection, item) in connections.iter().enumerate() {
@@ -246,32 +340,29 @@ fn filtered_rows(connections: &[Connection], words: &[String]) -> Vec<Row> {
         let first = rows.len();
         for (schema, schema_item) in catalog.schemas.iter().enumerate() {
             let schema_name = schema_item.name.to_lowercase();
+            let holds = |name: &str| holds_words(&[&name.to_lowercase(), &schema_name], words);
             let matches = schema_item
                 .relations
                 .iter()
                 .enumerate()
-                .filter(|(_, relation)| {
-                    holds_words(&[&relation.name.to_lowercase(), &schema_name], words)
-                });
+                .filter(|(_, relation)| holds(&relation.name));
             let start = rows.len();
+            let schema_row = Row {
+                kind: RowKind::Schema,
+                schema,
+                ..parent
+            };
             for (relation, relation_item) in matches {
-                if rows.len() == start {
-                    rows.push(Row {
-                        kind: RowKind::Schema,
-                        schema,
-                        ..parent
-                    });
-                }
-                let kind = match relation_item.kind {
-                    RelationKind::Table => RowKind::Table,
-                    RelationKind::View => RowKind::View,
-                };
                 rows.push(Row {
-                    kind,
-                    schema,
+                    kind: row_kind(relation_item.kind),
                     relation,
-                    ..parent
+                    ..schema_row
                 });
+            }
+            let keep = |object: &Object| holds(&object.name);
+            push_groups(&mut rows, schema_row, schema_item, |_| true, keep);
+            if rows.len() > start {
+                rows.insert(start, schema_row);
             }
         }
         if rows.len() > first {
@@ -279,6 +370,13 @@ fn filtered_rows(connections: &[Connection], words: &[String]) -> Vec<Row> {
         }
     }
     rows
+}
+
+fn row_kind(kind: RelationKind) -> RowKind {
+    match kind {
+        RelationKind::Table => RowKind::Table,
+        RelationKind::View => RowKind::View,
+    }
 }
 
 impl Navigator {
@@ -333,12 +431,8 @@ impl Navigator {
                     continue;
                 };
                 for (relation, relation_item) in schema_item.relations.iter().enumerate() {
-                    let kind = match relation_item.kind {
-                        RelationKind::Table => RowKind::Table,
-                        RelationKind::View => RowKind::View,
-                    };
                     rows.push(Row {
-                        kind,
+                        kind: row_kind(relation_item.kind),
                         schema,
                         relation,
                         ..row
@@ -358,6 +452,10 @@ impl Navigator {
                         }
                     }
                 }
+                let groups = open.groups.get(&schema_item.name);
+                let parent = Row { schema, ..row };
+                let open_group = |group| groups.is_some_and(|groups| groups.contains(&group));
+                push_groups(&mut rows, parent, schema_item, open_group, |_| true);
             }
         }
         rows
@@ -447,7 +545,7 @@ impl Navigator {
         self.top = 0;
         if self.is_filtered() {
             let rows = self.rows(connections);
-            if let Some(row) = rows.iter().find(|row| is_relation(row)) {
+            if let Some(row) = rows.iter().find(|row| is_match(row)) {
                 self.cursor = row.key(connections);
             }
         } else if let Some(filter) = &self.filter {
@@ -472,7 +570,7 @@ impl Navigator {
         }
     }
 
-    /// Moves the cursor between the relations of the filtered tree.
+    /// Moves the cursor between the relations and the objects of the filtered tree.
     pub fn step_relation(&mut self, forward: bool, connections: &[Connection]) {
         let rows = self.rows(connections);
         if rows.is_empty() {
@@ -480,9 +578,9 @@ impl Navigator {
         }
         let index = self.cursor_index(&rows, connections);
         let next = if forward {
-            rows[index + 1..].iter().find(|row| is_relation(row))
+            rows[index + 1..].iter().find(|row| is_match(row))
         } else {
-            rows[..index].iter().rev().find(|row| is_relation(row))
+            rows[..index].iter().rev().find(|row| is_match(row))
         };
         if let Some(row) = next {
             self.cursor = row.key(connections);
@@ -522,12 +620,21 @@ impl Navigator {
                 .or_default();
             open.open = true;
             open.schemas.entry(schema.name.clone()).or_default();
+            if let RowKind::Object(group) = row.kind {
+                open.groups
+                    .entry(schema.name.clone())
+                    .or_default()
+                    .insert(group);
+            }
         }
     }
 
     pub fn is_open(&self, row: &Row, connections: &[Connection]) -> bool {
         if self.is_filtered() {
-            return matches!(row.kind, RowKind::Connection | RowKind::Schema);
+            return matches!(
+                row.kind,
+                RowKind::Connection | RowKind::Schema | RowKind::Group(_)
+            );
         }
         let Some(open) = self.expansion.get(&connections[row.connection].id) else {
             return false;
@@ -544,7 +651,12 @@ impl Navigator {
                     .get(&relation.schema)
                     .is_some_and(|relations| relations.contains(&relation.relation))
             }
-            RowKind::Console | RowKind::Column => false,
+            RowKind::Group(group) => row.catalog_schema(connections).is_some_and(|schema| {
+                open.groups
+                    .get(&schema.name)
+                    .is_some_and(|groups| groups.contains(&group))
+            }),
+            RowKind::Console | RowKind::Column | RowKind::Object(_) => false,
         }
     }
 
@@ -570,7 +682,15 @@ impl Navigator {
                         .insert(relation.relation);
                 }
             }
-            RowKind::Console | RowKind::Column => {}
+            RowKind::Group(group) => {
+                if let Some(schema) = row.catalog_schema(connections) {
+                    open.groups
+                        .entry(schema.name.clone())
+                        .or_default()
+                        .insert(group);
+                }
+            }
+            RowKind::Console | RowKind::Column | RowKind::Object(_) => {}
         }
     }
 
@@ -583,6 +703,7 @@ impl Navigator {
             RowKind::Consoles => open.consoles = false,
             RowKind::Schema => {
                 open.schemas.remove(row.name(connections));
+                open.groups.remove(row.name(connections));
             }
             RowKind::Table | RowKind::View => {
                 if let Some(relation) = row.relation_ref(connections)
@@ -591,7 +712,14 @@ impl Navigator {
                     relations.remove(&relation.relation);
                 }
             }
-            RowKind::Console | RowKind::Column => {}
+            RowKind::Group(group) => {
+                if let Some(schema) = row.catalog_schema(connections)
+                    && let Some(groups) = open.groups.get_mut(&schema.name)
+                {
+                    groups.remove(&group);
+                }
+            }
+            RowKind::Console | RowKind::Column | RowKind::Object(_) => {}
         }
     }
 
@@ -602,7 +730,10 @@ impl Navigator {
             RowKind::Connection => {}
             RowKind::Consoles => key.consoles = false,
             RowKind::Schema => key.schema = None,
-            RowKind::Console | RowKind::Table | RowKind::View => key.relation = None,
+            RowKind::Group(_) => key.group = None,
+            RowKind::Console | RowKind::Table | RowKind::View | RowKind::Object(_) => {
+                key.relation = None;
+            }
             RowKind::Column => key.column = None,
         }
         self.cursor = key;
@@ -645,11 +776,18 @@ impl Navigator {
     /// Writes the state of a row after its name.
     pub fn suffix(&self, row: &Row, connections: &[Connection]) -> Option<RowNote> {
         match row.kind {
-            RowKind::Connection => match connections[row.connection].catalog_state {
-                CatalogState::Loading => Some(RowNote::Loading),
-                CatalogState::Failed => Some(RowNote::Failed),
-                _ => None,
-            },
+            RowKind::Connection => {
+                let connection = &connections[row.connection];
+                match connection.catalog_state {
+                    CatalogState::Loading => Some(RowNote::Loading),
+                    CatalogState::Failed => Some(RowNote::Failed),
+                    _ => connection
+                        .definition
+                        .as_ref()
+                        .is_some_and(|definition| !definition.schemas.is_empty())
+                        .then_some(RowNote::Filtered),
+                }
+            }
             RowKind::Schema => row
                 .catalog_schema(connections)?
                 .partial
@@ -666,13 +804,20 @@ impl Navigator {
                 .get(row.relation)?
                 .tab
                 .map(|_| RowNote::Open),
+            RowKind::Group(group) => {
+                let schema = row.catalog_schema(connections)?;
+                Some(RowNote::Count(schema.objects_of(group).count()))
+            }
             _ => None,
         }
     }
 
     /// Returns true when the row can hold children.
     pub fn is_branch(row: &Row) -> bool {
-        !matches!(row.kind, RowKind::Console | RowKind::Column)
+        !matches!(
+            row.kind,
+            RowKind::Console | RowKind::Column | RowKind::Object(_)
+        )
     }
 }
 
@@ -684,4 +829,8 @@ pub enum RowNote {
     Partial,
     /// A tab shows the console of the row.
     Open,
+    /// The connection shows only the schemas of its list.
+    Filtered,
+    /// The objects of a group.
+    Count(usize),
 }

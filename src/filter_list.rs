@@ -58,6 +58,11 @@ impl<T> FilterList<T> {
         self.cursor
     }
 
+    /// Lists all items, also the items that the filter hides.
+    pub fn items(&self) -> &[T] {
+        &self.items
+    }
+
     /// Lists the items that the filter keeps.
     pub fn shown(&self) -> impl ExactSizeIterator<Item = &T> {
         self.shown.iter().map(|index| &self.items[*index])

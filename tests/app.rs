@@ -896,6 +896,49 @@ fn manual_mode_needs_a_commit() {
     assert_eq!(f.file_query("SELECT count(*) FROM t"), 1);
 }
 
+/// Returns the first column of the **Quit** button in the row of the main tabs.
+fn quit_column(f: &mut Fixture) -> u16 {
+    let screen = f.screen();
+    let row = screen.lines().next().unwrap();
+    let byte = row
+        .find("[Quit]")
+        .unwrap_or_else(|| panic!("no button: {row}"));
+    u16::try_from(row[..byte].chars().count()).unwrap()
+}
+
+fn click(f: &mut Fixture, column: u16, row: u16) {
+    f.wheel(MouseEventKind::Down(MouseButton::Left), column, row);
+}
+
+#[test]
+fn the_quit_button_quits_as_ctrl_w_q() {
+    let mut f = Fixture::new("quit-button");
+    let column = quit_column(&mut f);
+    assert!(f.screen().lines().next().unwrap().ends_with("[Quit]"));
+    // The column before the button does nothing.
+    click(&mut f, column - 1, 0);
+    assert!(!f.app.should_quit());
+    click(&mut f, column + 5, 0);
+    assert!(f.app.should_quit());
+}
+
+#[test]
+fn the_quit_button_asks_first_with_an_open_transaction() {
+    let mut f = Fixture::with(
+        "quit-button-transaction",
+        KeyboardMode::Conventional,
+        Settings::default(),
+        "CREATE TABLE t(a);",
+    );
+    f.prefix('m');
+    f.run_script("INSERT INTO t VALUES (1);");
+    f.assert_sees("Transaction open");
+    let column = quit_column(&mut f);
+    click(&mut f, column, 0);
+    assert!(!f.app.should_quit());
+    f.assert_sees("Open transaction");
+}
+
 #[test]
 fn the_change_to_autocommit_asks_with_an_open_transaction() {
     let mut f = Fixture::with(

@@ -1,9 +1,10 @@
 //! Data compare: the equality of values, the match of rows by key, the budget, and the
 //! script of rows.
 
-use sqln::compare::data::{DataCompare, RowChange, decimal, same, value_literal};
+use sqln::compare::data::{DataCompare, RowChange, decimal, same};
 use sqln::grid::{Binary, Budget, Reservation, Row, Value};
 use sqln::sql::Dialect;
+use sqln::sql::literal::value_literal;
 
 fn names(list: &[&str]) -> Vec<String> {
     list.iter().map(|name| (*name).to_owned()).collect()

@@ -7,6 +7,20 @@ use crate::form::Field;
 impl App {
     /// Only the export path, the import log, and the SQLite file can name a file that
     /// does not exist.
+    /// Opens the window of the focused field of the connection form: the list of the
+    /// schemas or the file browser.
+    pub(super) fn open_form_window(&mut self) {
+        if self
+            .form
+            .as_ref()
+            .is_some_and(|form| form.focus == Field::Schemas)
+        {
+            self.open_schema_list();
+        } else {
+            self.open_browser();
+        }
+    }
+
     pub(super) fn open_browser(&mut self) {
         let (path, new_file) = if let Some(form) = &self.export_form {
             (form.path_text(), true)

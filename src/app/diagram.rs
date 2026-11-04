@@ -96,6 +96,7 @@ impl App {
             }
             RowKind::View => return Err(text::DIAGRAM_VIEW),
             RowKind::Consoles | RowKind::Console => return Err(text::DIAGRAM_CONSOLE),
+            RowKind::Group(_) | RowKind::Object(_) => return Err(text::NOT_FOR_OBJECT),
         };
         self.focus_target(item.id, focus)
     }
@@ -417,7 +418,7 @@ impl App {
                     return true;
                 };
                 if action == Action::DiagramOpen {
-                    self.open_relation(connection, relation, false);
+                    self.open_relation(connection, relation, false, None);
                 } else {
                     let name = relation.relation.clone();
                     self.open_structure(connection, Scope::Relation, relation, name);

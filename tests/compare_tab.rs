@@ -342,14 +342,15 @@ fn the_explorer_page_and_the_palette_offer_the_compare() {
     common::select_row(&mut f.app, 0, &[RowKind::Table], "owners");
     assert!(common::explorer_page(&f.app).contains(&"c Compare".to_owned()));
     f.press(ctrl('p'));
-    f.app.on_event(Event::Paste("compare the tab".to_owned()));
+    f.app.on_event(Event::Paste("compare".to_owned()));
     let screen = f.screen();
-    // `Ctrl+W v` replaces the explorer entry, as `Ctrl+W D` does for the diagram.
+    // The focused explorer uses its selected row, without a duplicate global entry.
     assert!(
-        screen.contains(text::command_text(sqln::input::Action::OpenCompare)),
+        screen.contains(text::command_text(sqln::input::Action::NavigatorCompare)),
         "{screen}"
     );
-    assert!(screen.contains("Ctrl+W v"), "{screen}");
+    assert!(screen.contains("owners"), "{screen}");
+    assert!(!screen.contains("Ctrl+W v"), "{screen}");
 }
 
 #[test]
@@ -523,18 +524,41 @@ fn hints_at(f: &mut Fixture, width: u16) -> String {
 }
 
 #[test]
-fn the_hint_row_shows_the_compare_on_a_schema_and_a_table_but_not_on_a_connection() {
+fn the_hint_row_adds_compare_for_each_supported_row_on_a_wide_screen() {
     let mut f = Fixture::new("compare-hints", SOURCE, TARGET);
     common::select_row(&mut f.app, 0, &[RowKind::Table], "owners");
     let row = hints_at(&mut f, 80);
-    assert!(row.contains("c compare"), "{row}");
-    assert!(row.contains("F1 keys"), "{row}");
+    assert!(row.contains("Ctrl+P commands"), "{row}");
+    assert!(hints_at(&mut f, 200).contains("c compare"));
     common::select_row(&mut f.app, 0, &[RowKind::Schema], "main");
-    assert!(hints_at(&mut f, 80).contains("c compare"));
+    assert!(hints_at(&mut f, 200).contains("c compare"));
     common::select_row(&mut f.app, 0, &[RowKind::Connection], "source");
     let row = hints_at(&mut f, 200);
-    assert!(!row.contains("compare"), "{row}");
-    assert!(row.contains("Ctrl+W commands"), "{row}");
+    assert!(row.contains("c compare"), "{row}");
+    assert!(row.contains("Ctrl+P commands"), "{row}");
+}
+
+#[test]
+fn the_compare_panel_page_fits_and_copies_its_sync_script() {
+    let mut f = Fixture::new("compare-panel-page", SOURCE, TARGET);
+    f.dialog(&[RowKind::Connection], "source");
+    f.compare();
+    let groups = f.app.context_menu();
+    f.press(ctrl('w'));
+    f.char(' ');
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|frame| f.app.draw(frame)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let screen = (0..24)
+        .map(|y| (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for (_, label) in groups.iter().flat_map(|group| &group.keys) {
+        assert!(screen.contains(label), "{label}: {screen}");
+    }
+    f.char('Y');
+    assert!(!f.clipboard.borrow().text.is_empty());
+    assert!(f.clipboard.borrow().text.contains("CREATE TABLE"));
 }
 
 #[test]

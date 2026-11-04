@@ -208,7 +208,7 @@ impl ConsoleTask {
         self.emit(ExecEvent::Started { console, execution }).await;
 
         // A reserved session has this context, and a failed transaction refuses `SET`.
-        let context = context(&self.settings, options.schema);
+        let context = context(&self.settings, options.schema, options.only_schema);
         let cap = options.row_cap.unwrap_or(self.settings.row_cap);
         let export = options.export;
         let untimed = options.untimed;

@@ -245,7 +245,7 @@ impl SqlEditor {
         self.mark_changed();
     }
 
-    fn undo(&mut self) {
+    pub(super) fn undo(&mut self) {
         let state = &mut self.state;
         let changed =
             self.history.undo(&mut state.lines, &mut state.cursor) || self.undo_vim_step();
@@ -267,7 +267,7 @@ impl SqlEditor {
 
     /// The steps of EdTUI are older, so they come back first. EdTUI keeps old redo entries
     /// after a new edit, so a depth counter hides them.
-    fn redo(&mut self) {
+    pub(super) fn redo(&mut self) {
         let state = &mut self.state;
         if self.redo_depth > 0 {
             self.redo_depth -= 1;

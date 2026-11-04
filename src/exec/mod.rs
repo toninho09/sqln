@@ -180,11 +180,13 @@ pub enum ExecEvent {
         relation: RelationRef,
         columns: Result<Vec<String>, String>,
         foreign_keys: Vec<ForeignKey>,
+        /// The keys of other tables that reach the relation.
+        referencing: Vec<ForeignKey>,
     },
-    /// A test of a connection ended.
+    /// A test of a connection ended. A test that reads the schema names holds them.
     ConnectionTested {
         test: u64,
-        result: Result<(), ConnectError>,
+        result: Result<Option<Vec<String>>, ConnectError>,
     },
     /// The database refused the password of a new session of this pool.
     PasswordRefused {
@@ -256,6 +258,9 @@ pub struct RunOptions {
     pub manual: bool,
     /// The schema or database that the console selected.
     pub schema: Option<String>,
+    /// True keeps only `schema` in the `search_path` of PostgreSQL. The compare needs it,
+    /// so the database writes the names of other schemas with their schema.
+    pub only_schema: bool,
     /// A row cap for this execution. Without a value, the setting of the connection applies.
     pub row_cap: Option<usize>,
     /// The file of an export. The rows go there, and the time limit does not apply.
@@ -608,9 +613,10 @@ impl Manager {
         }
     }
 
-    /// Reads the catalog through the pool, so it respects the connection limit.
-    /// Two reads can overlap and end in any order, so the answer carries `read`.
-    pub fn load_catalog(&self, connection: ConnectionId, read: u64) {
+    /// Reads the catalog of `schemas` through the pool, so it respects the connection
+    /// limit. An empty list reads all schemas. Two reads can overlap and end in any
+    /// order, so the answer carries `read`.
+    pub fn load_catalog(&self, connection: ConnectionId, read: u64, schemas: Vec<String>) {
         let Some(binding) = self.connections.get(&connection).cloned() else {
             return;
         };
@@ -619,7 +625,7 @@ impl Manager {
         self.runtime.spawn(async move {
             let catalog = match binding.pool.acquire_traced(trace).await {
                 Ok(mut lease) => {
-                    let result = lease.session().read_catalog().await;
+                    let result = lease.session().read_catalog_of(&schemas).await;
                     lease.release().await;
                     result.map_err(|error| error.message)
                 }
@@ -647,33 +653,43 @@ impl Manager {
         let events = self.events.clone();
         let trace = self.shared_trace(connection);
         self.runtime.spawn(async move {
-            let (columns, foreign_keys) = match binding.pool.acquire_traced(trace).await {
-                Ok(mut lease) => {
-                    let session = lease.session();
-                    let (schema, name) = (&relation.schema, &relation.relation);
-                    let columns = session.read_columns(schema, name).await;
-                    // A failure here only costs the suggestions of `JOIN`.
-                    let keys = match &columns {
-                        Ok(_) => session.read_foreign_keys(schema, name).await,
-                        Err(_) => Ok(Vec::new()),
-                    };
-                    lease.release().await;
-                    let columns = columns.map_err(|error| error.message);
-                    (columns, keys.unwrap_or_default())
-                }
-                Err(error) => {
-                    if let Some(refusal) = binding.refusal(&error) {
-                        let _ = events.send(refusal).await;
+            let (columns, foreign_keys, referencing) =
+                match binding.pool.acquire_traced(trace).await {
+                    Ok(mut lease) => {
+                        let session = lease.session();
+                        let (schema, name) = (&relation.schema, &relation.relation);
+                        let columns = session.read_columns(schema, name).await;
+                        // A failure here only costs the suggestions of `JOIN` and the key
+                        // navigation.
+                        let (keys, referencing) = match &columns {
+                            Ok(_) => (
+                                session.read_foreign_keys(schema, name).await,
+                                session.read_referencing_keys(schema, name).await,
+                            ),
+                            Err(_) => (Ok(Vec::new()), Ok(Vec::new())),
+                        };
+                        lease.release().await;
+                        let columns = columns.map_err(|error| error.message);
+                        (
+                            columns,
+                            keys.unwrap_or_default(),
+                            referencing.unwrap_or_default(),
+                        )
                     }
-                    (Err(error.message), Vec::new())
-                }
-            };
+                    Err(error) => {
+                        if let Some(refusal) = binding.refusal(&error) {
+                            let _ = events.send(refusal).await;
+                        }
+                        (Err(error.message), Vec::new(), Vec::new())
+                    }
+                };
             let _ = events
                 .send(ExecEvent::ColumnsLoaded {
                     connection,
                     relation,
                     columns,
                     foreign_keys,
+                    referencing,
                 })
                 .await;
         });
@@ -698,13 +714,29 @@ impl Manager {
         });
     }
 
-    /// Opens one session with the rules of a saved connection, and closes it.
-    pub fn test_connection(&self, test: u64, connector: Arc<dyn Connector>, limit: Duration) {
+    /// Opens one session with the rules of a saved connection, and closes it. With
+    /// `names`, the session also reads the names of the schemas inside the same limit.
+    pub fn test_connection(
+        &self,
+        test: u64,
+        connector: Arc<dyn Connector>,
+        limit: Duration,
+        names: bool,
+    ) {
         let events = self.events.clone();
         self.runtime.spawn(async move {
-            let result = match tokio::time::timeout(limit, connector.connect()).await {
-                Ok(Ok(_session)) => Ok(()),
-                Ok(Err(error)) => Err(error),
+            let probe = async {
+                let mut session = connector.connect().await?;
+                if !names {
+                    return Ok(None);
+                }
+                let names = session.read_schema_names().await;
+                names
+                    .map(Some)
+                    .map_err(|error| ConnectError::new(error.message))
+            };
+            let result = match tokio::time::timeout(limit, probe).await {
+                Ok(result) => result,
                 Err(_) => Err(ConnectError::new(CONNECT_LIMIT_ENDED)),
             };
             let _ = events
@@ -719,9 +751,10 @@ impl Manager {
     }
 }
 
-fn context(settings: &Settings, schema: Option<String>) -> SessionContext {
+fn context(settings: &Settings, schema: Option<String>, only_schema: bool) -> SessionContext {
     SessionContext {
         read_only: settings.read_only,
         schema,
+        only_schema,
     }
 }

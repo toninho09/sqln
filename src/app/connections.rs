@@ -269,7 +269,7 @@ impl App {
         id: ConnectionId,
         relation: &RelationRef,
         columns: Result<Vec<String>, String>,
-        foreign_keys: Vec<ForeignKey>,
+        (foreign_keys, referencing): (Vec<ForeignKey>, Vec<ForeignKey>),
     ) {
         let Some(connection) = self.connection_mut(id) else {
             return;
@@ -280,15 +280,17 @@ impl App {
         match columns {
             Ok(columns) => {
                 if let Some(catalog) = &mut connection.catalog {
-                    catalog.set_columns(relation, columns, foreign_keys);
+                    catalog.set_columns(relation, columns, foreign_keys, referencing);
                 }
                 self.refresh_consoles(id);
             }
             Err(message) => {
                 self.status = Some(message);
                 self.pending_sql = None;
+                self.pending_follow = None;
             }
         }
+        self.continue_follow(id, relation);
         let same = |(request, _): &mut (SqlRequest, Template)| {
             request.connection == id && request.relation == *relation
         };
@@ -373,6 +375,9 @@ impl App {
             Action::NavigatorOpen if row.kind == RowKind::Connection => self.open_console(id),
             Action::NavigatorOpen if row.kind == RowKind::Console => self.open_tree_console(&row),
             Action::NavigatorOpen if is_relation(&row) => self.open_table(&row),
+            Action::NavigatorOpen if matches!(row.kind, RowKind::Object(_)) => {
+                self.open_row_definition(&row);
+            }
             Action::NavigatorOpen => self.toggle(&row),
             Action::NavigatorNewConsole => self.request_console(id),
             Action::NavigatorStructure => self.open_row_structure(&row),
@@ -382,7 +387,9 @@ impl App {
             Action::NavigatorGenerate => self.open_templates(&row),
             Action::NavigatorImport => self.import_row(&row),
             Action::NavigatorCopyName => {
-                let name = row.name(&self.connections).to_owned();
+                let object = row.object(&self.connections);
+                let name = object.map_or_else(|| row.name(&self.connections), |item| &item.name);
+                let name = name.to_owned();
                 self.copy(&name);
             }
             Action::NavigatorRefresh if row.kind == RowKind::Console => {
@@ -405,26 +412,16 @@ impl App {
         }
     }
 
-    /// Returns true when the row of the navigator has a relation with SQL text.
-    pub(super) fn can_generate(&self) -> bool {
-        self.navigator
-            .current(&self.connections)
-            .is_some_and(|row| {
-                self.connections[row.connection].dialect != Dialect::Redis
-                    && row.relation_ref(&self.connections).is_some()
-                    && !matches!(row.kind, RowKind::Connection | RowKind::Schema)
-            })
-    }
-
-    /// Opens the list of SQL templates of a table, of a view, or of the table of a column.
-    fn open_templates(&mut self, row: &Row) {
-        if !self.can_generate() || self.config_blocked() {
-            return;
-        }
-        let Some(relation) = row.relation_ref(&self.connections) else {
-            return;
-        };
+    /// Returns the request of the templates of a row: a table, a view, or the table of a
+    /// column, with SQL text.
+    fn row_templates(&self, row: &Row) -> Option<(SqlRequest, &'static [Template])> {
         let item = &self.connections[row.connection];
+        if item.dialect == Dialect::Redis
+            || matches!(row.kind, RowKind::Connection | RowKind::Schema)
+        {
+            return None;
+        }
+        let relation = row.relation_ref(&self.connections)?;
         let found = item
             .catalog
             .as_ref()
@@ -439,13 +436,44 @@ impl App {
             connection: item.id,
             relation,
         };
+        Some((request, templates))
+    }
+
+    /// Returns true when the row of the navigator has templates or a DDL.
+    pub(super) fn can_generate(&self) -> bool {
+        self.navigator
+            .current(&self.connections)
+            .is_some_and(|row| {
+                self.row_templates(&row).is_some() || self.row_definition(&row).is_some()
+            })
+    }
+
+    /// Opens the list of SQL templates of a table, of a view, or of the table of a column,
+    /// with the DDL entry last. An object has only the DDL entry.
+    fn open_templates(&mut self, row: &Row) {
+        if !self.can_generate() || self.config_blocked() {
+            return;
+        }
+        let (request, templates) = match self.row_templates(row) {
+            Some((request, templates)) => (Some(request), templates.to_vec()),
+            None => (None, Vec::new()),
+        };
+        let definition = self.row_definition(row);
+        let mut items: Vec<String> = templates
+            .iter()
+            .map(|template| text::template_name(*template).to_owned())
+            .collect();
+        if definition.is_some() {
+            items.push(text::TEMPLATE_DDL.to_owned());
+        }
         self.picker = Some(Picker {
-            kind: PickerKind::Generate(request, templates.to_vec()),
+            kind: PickerKind::Generate {
+                request,
+                templates,
+                definition,
+            },
             title: text::TITLE_GENERATE.to_owned(),
-            items: templates
-                .iter()
-                .map(|template| text::template_name(*template).to_owned())
-                .collect(),
+            items,
             cursor: 0,
             loading: false,
         });
@@ -541,10 +569,15 @@ impl App {
     /// Opens the table of the cursor. The filter stays, so the next table is near.
     fn accept_tree_filter(&mut self) {
         let row = self.navigator.current(&self.connections);
-        match row.filter(is_relation) {
+        let object = |row: &Row| matches!(row.kind, RowKind::Object(_));
+        match row.filter(|row| is_relation(row) || object(row)) {
             Some(row) if self.navigator.is_filtered() => {
                 self.navigator.leave_filter_field();
-                self.open_table(&row);
+                if object(&row) {
+                    self.open_row_definition(&row);
+                } else {
+                    self.open_table(&row);
+                }
             }
             _ if !self.navigator.is_filtered() => self.navigator.leave_filter_field(),
             _ => {}
@@ -649,6 +682,23 @@ impl App {
         self.console_mut().editor.set_dialect(dialect);
         self.bind_console(self.active, id);
         self.leave_navigator();
+    }
+
+    /// Opens a new console of a connection with a text, and with a schema when the
+    /// connection has a schema choice. Nothing runs.
+    pub(super) fn open_text_console(&mut self, id: ConnectionId, schema: String, text: &str) {
+        let namespace = self
+            .connection(id)
+            .is_some_and(|item| item.capabilities.namespace != Namespace::None);
+        // A new console never takes the text of a console of the user.
+        self.new_console(id);
+        if namespace {
+            self.console_mut().schema = Some(schema);
+            self.save_console_meta(self.active);
+        }
+        let console = self.console_mut();
+        console.focus = Focus::Editor;
+        console.editor.on_paste(text);
     }
 
     /// Returns the name of a console or a table that must end its work first.
@@ -844,6 +894,7 @@ impl App {
         self.close_tables_of(id);
         self.close_diagrams_of(id);
         self.close_compares_of(id);
+        self.cancel_definitions_of(id);
         if let Some(manager) = &mut self.manager {
             manager.remove_connection(id);
         }
@@ -981,11 +1032,25 @@ impl App {
                     self.confirm_association(console, *connection);
                 }
             }
-            PickerKind::Generate(request, templates) => {
-                if let Some(template) = templates.get(cursor) {
-                    self.start_template(request, *template);
+            PickerKind::Follow {
+                connection,
+                mut choices,
+            } => {
+                if cursor < choices.len() {
+                    self.go_follow(connection, choices.swap_remove(cursor));
                 }
             }
+            PickerKind::Generate {
+                request,
+                templates,
+                definition,
+            } => match (request, templates.get(cursor), definition) {
+                (Some(request), Some(template), _) => self.start_template(request, *template),
+                (_, None, Some((connection, target))) => {
+                    self.start_definition(connection, target);
+                }
+                _ => {}
+            },
         }
     }
 
@@ -1019,10 +1084,41 @@ impl App {
             form.test = Some(test);
             form.note = Some(FormNote::Info(text::FORM_TESTING.to_owned()));
         }
-        self.authorize_test(definition, test);
+        self.authorize_test(definition, test, false);
     }
 
-    pub(super) fn on_connection_tested(&mut self, test: u64, result: Result<(), ConnectError>) {
+    /// Opens the list of the schemas, and it reads their names with the definition of the
+    /// form, as a test does.
+    pub(super) fn open_schema_list(&mut self) {
+        if self.config_blocked() {
+            return;
+        }
+        let definition = match self.form_definition() {
+            Some(Ok(definition)) => definition,
+            Some(Err(invalid)) => {
+                self.show_invalid(invalid);
+                return;
+            }
+            None => return,
+        };
+        if !self.ensure_manager() {
+            return;
+        }
+        let test = self.next_test;
+        self.next_test += 1;
+        if let Some(form) = &mut self.form {
+            form.test = Some(test);
+            form.note = None;
+            form.open_schema_list();
+        }
+        self.authorize_test(definition, test, true);
+    }
+
+    pub(super) fn on_connection_tested(
+        &mut self,
+        test: u64,
+        result: Result<Option<Vec<String>>, ConnectError>,
+    ) {
         if self.on_password_verified(test, &result) {
             return;
         }
@@ -1030,10 +1126,17 @@ impl App {
             return;
         };
         form.test = None;
-        form.note = Some(match result {
-            Ok(()) => FormNote::Success(text::FORM_TEST_OK.to_owned()),
-            Err(error) => FormNote::Error(error.message),
-        });
+        form.note = match result {
+            Ok(Some(names)) => {
+                form.fill_schema_list(names);
+                None
+            }
+            Ok(None) => Some(FormNote::Success(text::FORM_TEST_OK.to_owned())),
+            Err(error) => {
+                form.close_schema_list();
+                Some(FormNote::Error(error.message))
+            }
+        };
     }
 
     pub(super) fn disconnect_form(&mut self) {
@@ -1058,7 +1161,10 @@ impl App {
         if form.display_only {
             let name = form.text(Field::Name).trim().to_owned();
             let (theme, icon, production) = (form.theme, form.icon, form.production);
-            self.save_display(name, theme, icon, production);
+            match form.schemas() {
+                Ok(schemas) => self.save_display(name, theme, icon, production, schemas),
+                Err(invalid) => self.show_invalid(invalid),
+            }
             return;
         }
         let definition = match self.form_definition() {
@@ -1144,13 +1250,15 @@ impl App {
         }
     }
 
-    /// Saves the values that need no new session. The sessions stay open.
+    /// Saves the values that need no new session. The sessions stay open. A change of
+    /// the visible schemas reads the catalog again.
     fn save_display(
         &mut self,
         name: String,
         theme: Option<ThemeName>,
         icon: Option<ConnectionIcon>,
         production: bool,
+        schemas: Vec<String>,
     ) {
         let Some(id) = self.form.as_ref().and_then(|form| form.editing) else {
             return;
@@ -1172,11 +1280,15 @@ impl App {
         let key = connection.key.clone();
         let credential = connection.credential;
         let mut renamed = connection.definition.clone();
+        let schemas_changed = renamed
+            .as_ref()
+            .is_some_and(|definition| definition.schemas != schemas);
         if let Some(definition) = &mut renamed {
             definition.name.clone_from(&name);
             definition.theme = theme;
             definition.icon = icon;
             definition.production = production;
+            definition.schemas = schemas;
             if let Some(key) = &key
                 && let Err(message) = self.save_connection(key, definition, credential)
             {
@@ -1190,6 +1302,9 @@ impl App {
         }
         refresh_labels(&mut self.connections);
         self.form = None;
+        if schemas_changed {
+            self.reload_catalog(id);
+        }
     }
 
     fn apply_definition(&mut self, mut definition: Definition) {

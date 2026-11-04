@@ -9,14 +9,15 @@ use crate::compare::tab::CompareTab;
 use crate::console::Focus;
 use crate::diagram::tab::DiagramTab;
 use crate::export::form as export_form;
-use crate::form::FieldStyle;
+use crate::form::{Field, FieldStyle};
 use crate::import::form as import_form;
-use crate::input::Action;
+use crate::input::{Action, Chord, Lookup, Region};
 use crate::navigator::{Navigator, RowKind};
 use crate::settings;
 use crate::table::{TableFocus, TableTab};
-use crate::ui::statusline::{HintItem, hint_text};
+use crate::ui::statusline::{HintItem, fit_hints, hint_text};
 use crate::ui::text;
+use unicode_width::UnicodeWidthStr;
 
 /// A command, its label, and the fact that makes it act now.
 type Candidate = (Action, &'static str, bool);
@@ -32,8 +33,8 @@ impl App {
         if let Some(parts) = self.window_hint() {
             return HintItem::of(parts);
         }
-        if self.explorer_page {
-            return HintItem::of(text::HINT_EXPLORER_MENU);
+        if self.command_page.is_some() {
+            return HintItem::of(text::HINT_PREFIX);
         }
         if self.pending_prefix() {
             return HintItem::of(text::HINT_PREFIX);
@@ -54,7 +55,7 @@ impl App {
             return HintItem::of(text::HINT_TREE_FILTER);
         }
         if self.navigator_focused {
-            return self.navigator_hint();
+            return self.with_commands(self.navigator_hint());
         }
         // Without the focus in the explorer, the row names the way to it.
         if self.home() {
@@ -70,16 +71,33 @@ impl App {
                 (Action::Quit, "quit"),
             ]);
         }
-        if let Some(tab) = self.diagram() {
-            return self.diagram_hint(tab);
+        let items = if let Some(tab) = self.diagram() {
+            self.diagram_hint(tab)
+        } else if let Some(tab) = self.compare() {
+            self.compare_hint(tab)
+        } else if let Some(tab) = self.table() {
+            self.table_hint(tab)
+        } else {
+            self.console_hint()
+        };
+        let local_input = self.table().is_some_and(|tab| {
+            tab.list.is_some() || tab.result.search.is_some() || tab.focus != TableFocus::Grid
+        }) || self
+            .compare()
+            .is_some_and(|tab| tab.result.search.is_some())
+            || (self.console_on_screen()
+                && match self.console().focus {
+                    Focus::Results => self.console().search_is_open(),
+                    Focus::Editor => {
+                        self.console().editor.search().is_some()
+                            || self.console().editor.suggestions().is_some()
+                    }
+                });
+        if local_input {
+            items
+        } else {
+            self.with_commands(items)
         }
-        if let Some(tab) = self.compare() {
-            return self.compare_hint(tab);
-        }
-        if let Some(tab) = self.table() {
-            return self.table_hint(tab);
-        }
-        self.console_hint()
     }
 
     /// Returns the commands of the window that receives the keys. The order of the
@@ -182,11 +200,62 @@ impl App {
             });
         }
         self.form.as_ref().map(|form| match form.focus.style() {
+            _ if form.schema_list.is_some() => text::HINT_MARK_LIST,
             _ if form.focus.is_path() => text::HINT_FORM_PATH,
+            _ if form.focus == Field::Schemas => text::HINT_FORM_SCHEMAS,
             FieldStyle::Text | FieldStyle::Secret => text::HINT_FORM_TEXT,
             FieldStyle::Button => text::HINT_FORM_BUTTON,
             FieldStyle::Choice | FieldStyle::Flag => text::HINT_FORM,
         })
+    }
+
+    fn with_commands(&self, mut items: Vec<HintItem>) -> Vec<HintItem> {
+        let extras = [
+            (Action::ContextCommands, "panel"),
+            (Action::NextTab, "next tab"),
+            (Action::PreviousTab, "previous tab"),
+            (Action::CloseTab, "close tab"),
+            (Action::OpenSettings, "settings"),
+            (Action::Help, "keys"),
+        ];
+        for (action, label) in extras {
+            if self.fits_cursor(action) {
+                for item in self.hint_parts(&[(action, label)]) {
+                    if !items.contains(&item) {
+                        items.push(item);
+                    }
+                }
+            }
+        }
+        if self
+            .keymap
+            .lookup(Region::Global, Chord::parse("ctrl+w").unwrap())
+            == Lookup::Sequence
+        {
+            items.extend(HintItem::of(text::HINT_PREFIX_MENU));
+        }
+        items.extend(self.hint_parts(&[(Action::OpenPalette, "commands")]));
+        items
+    }
+
+    /// Reserves the palette command before fitting the other whole commands.
+    pub(super) fn fitted_hints(&self, width: usize) -> Vec<HintItem> {
+        let mut items = self.hint_items();
+        let palette = self.shown_key(Action::OpenPalette);
+        let reserved = items
+            .iter()
+            .position(|item| item.label == "commands" && Some(&item.key) == palette.as_ref());
+        let Some(index) = reserved else {
+            return fit_hints(&items, width);
+        };
+        let item = items.remove(index);
+        let cost = hint_text(std::slice::from_ref(&item)).width();
+        if cost > width {
+            return fit_hints(&items, width);
+        }
+        let mut kept = fit_hints(&items, width.saturating_sub(cost + 2));
+        kept.push(item);
+        kept
     }
 
     fn hint_parts(&self, items: &[(Action, &'static str)]) -> Vec<HintItem> {
@@ -203,7 +272,7 @@ impl App {
     fn hints_when(&self, items: &[Candidate]) -> Vec<HintItem> {
         let acting: Vec<_> = items
             .iter()
-            .filter(|item| item.2)
+            .filter(|item| item.2 && self.fits_cursor(item.0))
             .map(|item| (item.0, item.1))
             .collect();
         self.hint_parts(&acting)
@@ -249,63 +318,59 @@ impl App {
 
     fn editor_hint(&self) -> Vec<HintItem> {
         let console = self.console();
-        let can_run = console.can_run();
         let mut commands = self.ending_commands().to_vec();
         commands.extend([
-            (Action::Run, "run", can_run),
-            (Action::RunScript, "script", can_run),
+            (Action::Run, "run", console.can_run()),
+            (Action::RunScript, "script", console.can_run()),
             (
                 Action::ChangeConnection,
                 "connection",
-                !can_run && !self.connections.is_empty(),
+                !console.can_run() && !self.connections.is_empty(),
             ),
-            (Action::FocusLeft, "navigator", !can_run),
+            (Action::FocusLeft, "navigator", !console.can_run()),
             (Action::FocusDown, "results", !console.results.is_empty()),
+            (Action::EditorFind, "find", true),
             (
-                Action::Explain,
-                "plan",
-                !console.editor.is_blank() && self.command_available(Action::Explain),
+                Action::EditorSuggestions,
+                "suggestions",
+                console.editor.is_inserting(),
             ),
+            (Action::FormatSql, "format", !console.editor.is_blank()),
+            (Action::OpenHistory, "history", true),
+            (Action::Explain, "plan", !console.editor.is_blank()),
+            (Action::ToggleComment, "comment", !console.editor.is_blank()),
+            (Action::EditorSave, "save", true),
+            (Action::EditorReplace, "replace", true),
             (
-                Action::FormatSql,
-                "format",
-                !console.editor.is_blank() && self.command_available(Action::FormatSql),
+                Action::ExplainAnalyze,
+                "analyze",
+                !console.editor.is_blank(),
             ),
-            (
-                Action::ToggleComment,
-                "comment",
-                !console.editor.is_blank() && self.command_available(Action::ToggleComment),
-            ),
+            (Action::ToggleMode, "mode", true),
+            (Action::ChooseSchema, "schema", true),
+            (Action::RenameConsole, "rename", true),
         ]);
-        let mut items = self.hints_when(&commands);
-        if console.editor.is_inserting() {
-            items.extend(HintItem::of(text::HINT_SUGGESTIONS));
-        }
-        items.extend(HintItem::of(text::HINT_FIND));
-        items.extend(self.hint_parts(&[(Action::Help, "keys")]));
-        items
+        self.hints_when(&commands)
     }
 
     fn results_hint(&self) -> Vec<HintItem> {
-        let console = self.console();
-        let rows = console
-            .results
-            .get(console.active)
-            .is_some_and(|result| !result.table.rows.is_empty());
         let mut commands = self.ending_commands().to_vec();
         commands.extend([
+            (Action::GridClearSelection, "clear selection", true),
+            (Action::GridCopy, "copy", true),
+            (Action::GridOpenValue, "value", true),
+            (Action::GridFind, "find", true),
+            (Action::GridOpenRow, "row", true),
             (Action::FocusUp, "editor", true),
-            (Action::GridCopy, "copy", rows),
-            (
-                Action::GridExport,
-                "export",
-                !console.showing_messages() && self.command_available(Action::GridExport),
-            ),
-            (Action::GridOpenValue, "value", rows),
-            (Action::GridOpenRow, "row", rows),
-            (Action::GridFind, "find", rows),
-            (Action::GridNextResult, "tab", !console.results.is_empty()),
-            (Action::Help, "keys", true),
+            (Action::GridExport, "export", true),
+            (Action::GridNextResult, "tab", true),
+            (Action::GridPreviousResult, "previous", true),
+            (Action::GridSelectAll, "select all", true),
+            (Action::GridToggleSelection, "select", true),
+            (Action::GridNarrow, "narrow", true),
+            (Action::GridWiden, "widen", true),
+            (Action::GridAutoWidth, "auto width", true),
+            (Action::GridCloseResult, "close result", true),
         ]);
         self.hints_when(&commands)
     }
@@ -346,9 +411,13 @@ impl App {
                 "copy script",
                 self.command_available(Action::CompareCopy),
             ),
+            (Action::GridClearSelection, "clear selection", true),
             (Action::GridOpenRow, "row", rows),
-            (Action::GridReload, "reload", !tab.is_busy()),
             (Action::GridFind, "find", rows),
+            (Action::GridCopy, "copy", rows),
+            (Action::GridOpenValue, "value", rows),
+            (Action::GridReload, "reload", !tab.is_busy()),
+            (Action::GridExport, "export", true),
             (Action::Help, "keys", true),
         ])
     }
@@ -357,132 +426,131 @@ impl App {
         if tab.list.is_some() {
             return self.list_hint(text::LIST_FILTER_KEYS);
         }
-        let busy = tab.is_busy();
         if tab.focus != TableFocus::Grid {
-            let mut items = self.hints_when(&[(Action::Stop, "stop", busy)]);
+            let mut items = self.hints_when(&[(Action::Stop, "stop", tab.is_busy())]);
             items.extend(HintItem::of(text::HINT_FILTER));
             return items;
         }
         if tab.result.search.is_some() {
             return HintItem::of(text::HINT_GRID_SEARCH);
         }
-        let rows = tab.loaded() > 0;
-        let sections = tab.section().is_some();
-        let next = if sections { "section" } else { "page" };
+        let section = tab.section().is_some();
         self.hints_when(&[
-            (Action::Stop, "stop", busy),
+            (Action::Stop, "stop", true),
+            (Action::GridClearSelection, "clear selection", true),
             (Action::GridOpenValue, "load", tab.pending),
-            (
-                Action::GridCancelQuery,
-                "cancel query",
-                self.can_signal_session(),
-            ),
-            (
-                Action::GridEndSession,
-                "end session",
-                self.can_signal_session(),
-            ),
-            (Action::GridFocusFilter, "where", tab.filters),
-            (Action::GridFocusOrder, "order by", tab.filters),
-            (Action::GridSortColumn, "sort", tab.filters && rows && !busy),
-            (
-                Action::GridLoadMore,
-                "more",
-                tab.has_more && !busy && !tab.is_blocked(&self.budget),
-            ),
+            (Action::GridReload, "reload", tab.shows_sessions()),
+            (Action::GridCopy, "copy", true),
+            (Action::GridOpenValue, "value", !tab.pending),
+            (Action::GridFind, "find", true),
+            (Action::GridFocusFilter, "where", true),
+            (Action::GridSortColumn, "sort", true),
+            (Action::GridOpenRow, "row", true),
+            (Action::GridFollowKey, "follow", true),
+            (Action::GridLoadMore, "more", true),
             (
                 Action::GridNextResult,
-                next,
-                !busy && (sections || tab.has_pages()),
+                if section { "section" } else { "page" },
+                true,
             ),
-            (
-                Action::GridReload,
-                "reload",
-                self.command_available(Action::GridReload),
-            ),
-            (Action::GridStructure, "struct", tab.filters),
-            (
-                Action::GridCountRows,
-                "count",
-                tab.total.is_none() && self.command_available(Action::GridCountRows),
-            ),
-            (Action::GridCopy, "copy", rows),
-            (Action::GridOpenValue, "value", rows),
-            (Action::GridOpenRow, "row", rows),
-            (Action::GridFind, "find", rows),
-            (
-                Action::GridExport,
-                "export",
-                self.command_available(Action::GridExport),
-            ),
-            (
-                Action::GridImport,
-                "import",
-                self.command_available(Action::GridImport),
-            ),
-            (Action::Help, "keys", true),
+            (Action::GridPreviousResult, "previous", true),
+            (Action::GridExport, "export", true),
+            (Action::GridStructure, "struct", true),
+            (Action::GridFocusOrder, "order by", true),
+            (Action::GridCountRows, "count", tab.total.is_none()),
+            (Action::GridImport, "import", true),
+            (Action::GridReload, "reload", !tab.shows_sessions()),
+            (Action::GridSelectAll, "select all", true),
+            (Action::GridToggleSelection, "select", true),
+            (Action::GridNarrow, "narrow", true),
+            (Action::GridWiden, "widen", true),
+            (Action::GridAutoWidth, "auto width", true),
+            (Action::GridCancelQuery, "cancel query", true),
+            (Action::GridEndSession, "end session", true),
         ])
     }
 
+    /// Lists the useful commands of the current explorer row.
     /// Lists the commands of the moment for the row under the cursor. The explorer has
     /// many commands, so this row keeps the main ones. `Ctrl+W` lists the others, and
     /// `explorer_commands` is the full list.
     fn navigator_hint(&self) -> Vec<HintItem> {
-        let filtered = self.navigator.is_filtered();
-        let Some(row) = self.navigator.current(&self.connections) else {
-            return self.hints_when(&[
-                (Action::NavigatorClearFilter, "clear filter", filtered),
-                (Action::NavigatorFilter, "edit filter", filtered),
-                (Action::NavigatorAdd, "add connection", !filtered),
-                (Action::NavigatorScripts, "scripts", !filtered),
-                (Action::Help, "keys", true),
-            ]);
-        };
-        let open = self.navigator.is_open(&row, &self.connections);
-        let branch = Navigator::is_branch(&row);
-        let connection = row.kind == RowKind::Connection;
-        let relation = matches!(row.kind, RowKind::Table | RowKind::View);
-        let console = row.kind == RowKind::Console;
-        let enter = match row.kind {
-            RowKind::Connection => "console",
-            RowKind::Console => "open console",
-            RowKind::View => "open view",
+        let row = self.navigator.current(&self.connections);
+        let kind = row.as_ref().map(|row| row.kind);
+        let console = kind == Some(RowKind::Console);
+        let connection = kind == Some(RowKind::Connection);
+        let relation = matches!(kind, Some(RowKind::Table | RowKind::View));
+        let enter = match kind {
+            Some(RowKind::Connection) => "console",
+            Some(RowKind::Console) => "open console",
+            Some(RowKind::View) => "open view",
+            Some(RowKind::Object(_)) => "ddl",
+            Some(RowKind::Schema | RowKind::Consoles | RowKind::Group(_)) => "open",
             _ => "open table",
         };
-        let mut items = self.hints_when(&[
-            (Action::NavigatorClearFilter, "clear filter", filtered),
+        let mut commands = if self.console_on_screen() {
+            self.ending_commands().to_vec()
+        } else {
+            Vec::new()
+        };
+        commands.extend([
+            (Action::NavigatorClearFilter, "clear filter", true),
             (
                 Action::NavigatorOpen,
                 enter,
-                connection || relation || console,
+                !matches!(kind, Some(RowKind::Column)),
             ),
-            (Action::NavigatorRefresh, "rename", console),
-            (Action::NavigatorDelete, "remove console", console),
             (
                 Action::NavigatorNewConsole,
                 "new console",
-                connection || matches!(row.kind, RowKind::Consoles | RowKind::Schema),
+                connection || matches!(kind, Some(RowKind::Consoles | RowKind::Schema)),
             ),
+            (Action::NavigatorRefresh, "rename", console),
+            (Action::NavigatorStructure, "struct", relation),
             (
                 Action::NavigatorExpand,
                 if relation { "columns" } else { "expand" },
-                branch && !open && !filtered,
+                true,
             ),
             (
                 Action::NavigatorCollapse,
-                if branch { "collapse" } else { "parent" },
-                (open || !branch) && !filtered,
+                "collapse",
+                row.as_ref().is_some_and(Navigator::is_branch),
             ),
-            (Action::NavigatorDiagram, "diagram", self.can_open_diagram()),
-            // The connection row has no space for it at 80 columns.
             (
-                Action::NavigatorCompare,
-                "compare",
-                !connection && self.can_compare_row(),
+                Action::NavigatorCollapse,
+                "parent",
+                row.as_ref().is_some_and(|row| !Navigator::is_branch(row)),
+            ),
+            (Action::NavigatorRefresh, "refresh", !console),
+            (Action::NavigatorEdit, "edit", true),
+            (
+                Action::NavigatorFilter,
+                "filter",
+                row.is_some() || self.navigator.is_filtered(),
+            ),
+            (Action::NavigatorStructure, "struct", !relation),
+            (Action::NavigatorSessions, "sessions", true),
+            (Action::NavigatorCopyName, "copy name", true),
+            (Action::NavigatorGenerate, "sql/ddl", true),
+            (Action::NavigatorDiagram, "diagram", true),
+            (Action::NavigatorCompare, "compare", true),
+            (Action::NavigatorImport, "import", true),
+            (Action::NavigatorNewConsole, "new console", relation),
+            (Action::NavigatorAdd, "add connection", true),
+            (Action::NavigatorScripts, "scripts", true),
+            (Action::NavigatorDisconnect, "disconnect", true),
+            (Action::NavigatorDeletePassword, "delete password", true),
+            (
+                Action::NavigatorDelete,
+                if console {
+                    "remove console"
+                } else {
+                    "remove connection"
+                },
+                true,
             ),
         ]);
-        items.extend(HintItem::of(text::HINT_COMMANDS));
-        items.extend(self.hint_parts(&[(Action::Help, "keys")]));
-        items
+        self.hints_when(&commands)
     }
 }

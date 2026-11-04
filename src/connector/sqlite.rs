@@ -17,7 +17,7 @@ use super::{
 };
 use crate::catalog::{
     Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
-    group_foreign_keys,
+    add_objects, group_foreign_keys,
 };
 use crate::command_log::{self, TraceContext};
 use crate::exec::{Flow, ResultSink};
@@ -143,6 +143,7 @@ enum Request {
     Catalog(Reply<Catalog>),
     Columns(String, String, Reply<Vec<String>>),
     ForeignKeys(String, String, Reply<Vec<ForeignKey>>),
+    ReferencingKeys(String, String, Reply<Vec<ForeignKey>>),
 }
 
 fn exec_error(error: rusqlite::Error) -> ExecError {
@@ -198,7 +199,11 @@ fn serve(conn: &Connection, inbox: &Receiver<Request>, mut trace: Option<TraceCo
                     reply.send(read_columns(conn, &schema, &relation, &trace).map_err(exec_error));
             }
             Request::ForeignKeys(schema, relation, reply) => {
-                let keys = read_foreign_keys(conn, &schema, &relation, &trace);
+                let keys = read_keys(conn, FOREIGN_KEYS_SQL, &schema, &relation, &trace);
+                let _ = reply.send(keys.map_err(exec_error));
+            }
+            Request::ReferencingKeys(schema, relation, reply) => {
+                let keys = read_keys(conn, REFERENCING_KEYS_SQL, &schema, &relation, &trace);
                 let _ = reply.send(keys.map_err(exec_error));
             }
         }
@@ -282,6 +287,7 @@ fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> rusqlite::Re
     })?;
 
     let mut schemas = Vec::with_capacity(names.len());
+    let mut objects = Vec::new();
     for name in names {
         let sql = format!(
             "SELECT name, type FROM {}.sqlite_schema \
@@ -303,16 +309,31 @@ fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> rusqlite::Re
                         },
                         columns: Columns::NotLoaded,
                         foreign_keys: Vec::new(),
+                        referencing: Vec::new(),
                     })
+                })?
+                .collect::<rusqlite::Result<_>>()
+        })?;
+        let sql = format!(
+            "SELECT name, tbl_name FROM {}.sqlite_schema WHERE type = 'trigger'",
+            quoted(&name),
+        );
+        let triggers: Vec<[String; 4]> = command_log::observe_blocking(trace, &sql, || {
+            let mut statement = conn.prepare(&sql)?;
+            statement
+                .query_map([], |row| {
+                    Ok([name.clone(), row.get(0)?, "trigger".to_owned(), row.get(1)?])
                 })?
                 .collect::<rusqlite::Result<_>>()
         })?;
         schemas.push(Schema {
             name,
             relations,
-            partial: false,
+            ..Schema::default()
         });
+        objects.extend(triggers);
     }
+    add_objects(&mut schemas, objects);
     Ok(Catalog {
         schemas,
         current_schema: Some(MAIN_SCHEMA.to_owned()),
@@ -340,14 +361,35 @@ fn read_columns(
 
 /// Reads the keys of a relation. A key without target columns points to the primary key
 /// of its table, and it stays out of the list.
-fn read_foreign_keys(
+/// The keys that leave a relation. A key without target columns reads the primary key of
+/// its target.
+const FOREIGN_KEYS_SQL: &str = "\
+    SELECT f.id, f.\"table\", f.\"from\", coalesce(f.\"to\", p.name) \
+    FROM pragma_foreign_key_list(?1, ?2) f \
+    LEFT JOIN pragma_table_info(f.\"table\", ?2) p ON f.\"to\" IS NULL AND p.pk = f.seq + 1 \
+    WHERE coalesce(f.\"to\", p.name) IS NOT NULL \
+    ORDER BY f.id, f.seq";
+
+/// The keys of other tables that reach a relation, with the shape of `FOREIGN_KEYS_SQL`:
+/// the column of the relation comes before the column of the other table.
+const REFERENCING_KEYS_SQL: &str = "\
+    SELECT f.id, t.name, coalesce(f.\"to\", p.name), f.\"from\" \
+    FROM pragma_table_list t \
+    JOIN pragma_foreign_key_list(t.name, t.schema) f \
+    LEFT JOIN pragma_table_info(?1, ?2) p ON f.\"to\" IS NULL AND p.pk = f.seq + 1 \
+    WHERE t.schema = ?2 AND t.type = 'table' AND f.\"table\" = ?1 COLLATE NOCASE \
+      AND coalesce(f.\"to\", p.name) IS NOT NULL \
+    ORDER BY t.name, f.id, f.seq";
+
+/// Reads the keys of a key query: the number, the other table, the column of the
+/// relation, and the column of the other table. A key stays in its schema.
+fn read_keys(
     conn: &Connection,
+    sql: &str,
     schema: &str,
     relation: &str,
     trace: &Option<TraceContext>,
 ) -> rusqlite::Result<Vec<ForeignKey>> {
-    let sql = "SELECT id, \"table\", \"from\", \"to\" FROM pragma_foreign_key_list(?1, ?2) \
-               WHERE \"to\" IS NOT NULL ORDER BY id, seq";
     command_log::observe_blocking(
         trace,
         format_args!("{sql}\nParameters: ?1={relation:?}, ?2={schema:?}"),
@@ -474,6 +516,16 @@ impl Session for SqliteSession {
     ) -> Result<Vec<ForeignKey>, ExecError> {
         let (reply, answer) = oneshot::channel();
         let request = Request::ForeignKeys(schema.to_owned(), relation.to_owned(), reply);
+        self.ask(request, answer).await
+    }
+
+    async fn read_referencing_keys(
+        &mut self,
+        schema: &str,
+        relation: &str,
+    ) -> Result<Vec<ForeignKey>, ExecError> {
+        let (reply, answer) = oneshot::channel();
+        let request = Request::ReferencingKeys(schema.to_owned(), relation.to_owned(), reply);
         self.ask(request, answer).await
     }
 }

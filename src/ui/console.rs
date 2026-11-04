@@ -219,16 +219,23 @@ pub struct MainTab {
     pub index: usize,
 }
 
-/// Draws the main tabs. It returns the columns of each tab, and it starts
-/// the row at a later tab when the active tab does not fit.
+/// Draws the main tabs and the **Quit** button at the right end. It returns the columns
+/// of each tab and the area of the button. The row starts at a later tab when the active
+/// tab does not fit.
 pub fn draw_main_tabs(
     frame: &mut Frame,
     area: Rect,
     views: Vec<TabView>,
     active: usize,
     theme: &Theme,
-) -> Vec<MainTab> {
+) -> (Vec<MainTab>, Rect) {
     frame.buffer_mut().set_style(area, theme.tabline);
+    let quit = draw_quit_button(frame, area, theme);
+    // One column stays free before the button.
+    let area = Rect {
+        width: area.width.saturating_sub(quit.width + 2),
+        ..area
+    };
     // A tab is one column, the badge with a column after it, its label, one column,
     // the close mark, and one column.
     let width_of = |view: &TabView| {
@@ -286,7 +293,23 @@ pub fn draw_main_tabs(
         }
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
-    tabs
+    (tabs, quit)
+}
+
+/// Draws the **Quit** button at the right end of the row, with one column after it, as
+/// the buttons of a console. It returns the area of the button.
+fn draw_quit_button(frame: &mut Frame, area: Rect, theme: &Theme) -> Rect {
+    let label = theme.button(text::CONTROL_QUIT);
+    let width = u16::try_from(label.width())
+        .unwrap_or(u16::MAX)
+        .min(area.width.saturating_sub(1));
+    let button = Rect {
+        x: area.right().saturating_sub(width + 1),
+        width,
+        ..area
+    };
+    frame.render_widget(Paragraph::new(Span::styled(label, theme.control)), button);
+    button
 }
 
 /// Draws the row under the main tabs.

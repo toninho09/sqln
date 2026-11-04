@@ -170,6 +170,24 @@ fn a_start_with_a_file_of_the_command_line_keeps_its_console() {
 }
 
 #[test]
+fn the_quit_button_stays_on_the_home_screen() {
+    let mut f = Fixture::start();
+    assert!(f.app.home());
+    let row = f.tab_row();
+    let byte = row
+        .find("[Quit]")
+        .unwrap_or_else(|| panic!("no button: {row}"));
+    let column = u16::try_from(row[..byte].chars().count()).unwrap();
+    f.app.on_event(Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    }));
+    assert!(f.app.should_quit());
+}
+
+#[test]
 fn a_start_without_the_option_keeps_the_empty_console() {
     let f = Fixture::with(Options::default());
     assert!(!f.app.home());

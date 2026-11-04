@@ -100,11 +100,16 @@ The product tests in `tests/` now cover the same rules against real servers: `te
 
 1. Start the databases: `docker compose -f compose.test.yaml up -d --wait`.
 2. Load the environment: `. scripts/test-env.sh`.
-3. Run the suite: `make test-integration` starts the databases, runs the tests, and stops them.
-4. Generate the TLS material with `scripts/test-certs.sh`, and start the compose with `--profile tls` for full TLS.
-5. Run the vault probe on macOS: `sh scripts/test-vault-macos.sh`. Add `--dialogs` for the steps that need a person.
-6. Run the vault probe on Linux: `sh scripts/test-vault-linux.sh`. It uses a throwaway container.
-7. Run the performance targets: `make bench`, in release mode.
+3. Run `make test` against that stack, then stop it with `docker compose -f compose.test.yaml down`.
+4. For the full TLS sequence, use [Database integration](../README.md#database-integration). It sets `SQLN_TEST_TLS=1`.
+
+Alternatively, `make test-integration` starts the plain stack, loads its environment, runs tests, and stops it.
+
+Additional checks:
+
+1. Run the vault probe on macOS: `sh scripts/test-vault-macos.sh`. Add `--dialogs` for the steps that need a person.
+2. Run the vault probe on Linux: `sh scripts/test-vault-linux.sh`. It uses a throwaway container.
+3. Run the performance targets: `make bench`, in release mode.
 
 ## References
 

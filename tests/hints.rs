@@ -266,10 +266,13 @@ fn a_navigator_without_connections_shows_how_to_add_one() {
 fn a_connection_row_keeps_only_the_main_commands() {
     let mut s = Screen::conventional("connection");
     s.prefix('h');
-    assert_eq!(
-        s.hints_at(200),
-        "Enter console  n new console  Right expand  d diagram  Ctrl+W commands  F1 keys"
+    let row = s.hints_at(200);
+    assert!(
+        row.starts_with("Enter console  n new console  Right expand  r refresh  e edit"),
+        "{row}"
     );
+    assert!(row.contains("c compare"), "{row}");
+    assert!(row.ends_with("Ctrl+P commands"), "{row}");
 }
 
 #[test]
@@ -285,6 +288,8 @@ fn the_explorer_page_lists_the_commands_of_a_connection() {
             "e Edit connection",
             "a Add a connection",
             "Del Remove connection",
+            "Enter Open",
+            "Right Expand",
             "i Show the structure",
             "d ER diagram",
             "c Compare",
@@ -323,10 +328,13 @@ fn an_open_row_shows_the_key_that_closes_it() {
 fn a_schema_row_keeps_only_the_commands_of_its_tree() {
     let mut s = Screen::conventional("schema");
     s.select(RowKind::Schema, "main");
-    assert_eq!(
-        s.hints_at(200),
-        "n new console  Right expand  d diagram  c compare  Ctrl+W commands  F1 keys"
+    let row = s.hints_at(200);
+    assert!(
+        row.starts_with("Enter open  n new console  Right expand  r refresh"),
+        "{row}"
     );
+    assert!(row.contains("c compare"), "{row}");
+    assert!(row.ends_with("Ctrl+P commands"), "{row}");
     let page = common::explorer_page(&s.app);
     for row in ["i Show the structure", "r Read the catalog"] {
         assert!(page.contains(&row.to_owned()), "{page:?}");
@@ -342,10 +350,14 @@ fn a_schema_row_keeps_only_the_commands_of_its_tree() {
 fn a_table_row_keeps_only_the_commands_of_a_table() {
     let mut s = Screen::conventional("table");
     s.select(RowKind::Table, "items");
-    assert_eq!(
-        s.hints_at(200),
-        "Enter open table  Right columns  d diagram  c compare  Ctrl+W commands  F1 keys"
+    let row = s.hints_at(200);
+    assert!(
+        row.starts_with("Enter open table  i struct  Right columns"),
+        "{row}"
     );
+    assert!(row.contains("g sql/ddl"), "{row}");
+    assert!(row.contains("c compare"), "{row}");
+    assert!(row.ends_with("Ctrl+P commands"), "{row}");
     let page = common::explorer_page(&s.app);
     for row in ["g Generate SQL", "I Import a file", "n New console"] {
         assert!(page.contains(&row.to_owned()), "{page:?}");
@@ -361,7 +373,7 @@ fn a_table_row_keeps_only_the_commands_of_a_table() {
 fn a_view_row_shows_that_enter_opens_a_view() {
     let mut s = Screen::conventional("view");
     s.select(RowKind::View, "first_items");
-    s.assert_shows(&["Enter open view", "Ctrl+W commands"]);
+    s.assert_shows(&["Enter open view", "Ctrl+P commands"]);
 }
 
 #[test]
@@ -380,7 +392,7 @@ fn a_column_row_shows_its_parent_and_opens_nothing() {
         std::thread::sleep(Duration::from_millis(1));
     }
     s.code(KeyCode::Down);
-    s.assert_shows(&["Left parent", "Ctrl+W commands"]);
+    s.assert_shows(&["Left parent", "Ctrl+P commands"]);
     s.assert_hides(&["Enter open", "expand"]);
     assert!(common::explorer_page(&s.app).contains(&"i Show the structure".to_owned()));
 }

@@ -2,6 +2,7 @@
 
 use std::backtrace::Backtrace;
 use std::io::{self, IsTerminal, Stdin, Stdout, Write, stderr, stdout};
+use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -55,23 +56,16 @@ enum TerminalProbe {
 /// from the event reader.
 #[cfg(unix)]
 fn watch_tty() {
-    use rustix::event::{PollFd, PollFlags, Timespec, poll};
     use std::os::fd::AsFd;
 
     let stdin = std::io::stdin();
     let probe = if stdin.is_terminal() {
         TerminalProbe::Stdin(stdin)
     } else {
-        // `poll` cannot watch `/dev/tty` on macOS, so the watchdog stops there.
-        // The event reader fails by itself on that path.
         let Ok(tty) = std::fs::File::open("/dev/tty") else {
             return;
         };
         TerminalProbe::Tty(tty)
-    };
-    let zero = Timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
     };
     loop {
         std::thread::sleep(TERMINAL_CHECK);
@@ -79,27 +73,42 @@ fn watch_tty() {
             TerminalProbe::Stdin(stdin) => stdin.as_fd(),
             TerminalProbe::Tty(tty) => tty.as_fd(),
         };
-        let mut fds = [PollFd::new(&fd, PollFlags::HUP | PollFlags::ERR)];
-        if poll(&mut fds, Some(&zero)).is_err() {
-            continue;
-        }
-        let events = fds[0].revents();
-        if events.intersects(PollFlags::HUP | PollFlags::ERR) {
+        if terminal_closed(fd) {
             crate::log::event("terminal closed");
             // The write can fail, because the terminal is gone. A failed write must not
             // stop this thread before `exit`, so it stays without an error.
             let _ = writeln!(stderr(), "sqln: the terminal closed.");
             std::process::exit(1);
         }
-        if events.contains(PollFlags::NVAL) {
-            return;
-        }
     }
+}
+
+/// Returns true when the terminal of `fd` is gone. A closed terminal window gives
+/// `HUP`. On macOS, the exit of the shell revokes the terminal: then `fd` is not a
+/// terminal, and `poll` gives only `NVAL`. `poll` also gives `NVAL` for `/dev/tty`
+/// on macOS, so `NVAL` alone is not a closed terminal.
+#[cfg(unix)]
+fn terminal_closed(fd: std::os::fd::BorrowedFd<'_>) -> bool {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+
+    if !fd.is_terminal() {
+        return true;
+    }
+    let zero = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let mut fds = [PollFd::new(&fd, PollFlags::HUP | PollFlags::ERR)];
+    poll(&mut fds, Some(&zero)).is_ok()
+        && fds[0].revents().intersects(PollFlags::HUP | PollFlags::ERR)
 }
 
 /// Holds the terminal in application mode. Its drop restores the terminal.
 pub struct Session {
-    pub screen: Screen,
+    /// The drop of `Terminal` shows the cursor. When the write fails, it calls
+    /// `eprintln!`, which panics without a terminal. `restore` shows the cursor
+    /// and ignores the error, so the drop of `Terminal` does not run.
+    pub screen: ManuallyDrop<Screen>,
     _guard: Guard,
 }
 
@@ -132,7 +141,7 @@ impl Session {
             )?;
             KEYBOARD_ENHANCED.store(true, Ordering::Relaxed);
         }
-        let screen = Terminal::new(CrosstermBackend::new(output))?;
+        let screen = ManuallyDrop::new(Terminal::new(CrosstermBackend::new(output))?);
         Ok(Self {
             screen,
             _guard: guard,

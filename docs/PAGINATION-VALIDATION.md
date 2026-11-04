@@ -4,6 +4,11 @@ The buttons live only in table tabs.
 The decisions in `docs/DECISIONS.md` remain in force.
 The sketch in `docs/UI.md` shows the buttons and the load bar.
 
+## Scope of the record
+
+This report preserves a previous pagination validation. Its test counts, timings, and local LSP state are historical.
+They do not describe a new run against the current working tree. `tests/table.rs` and `tests/servers.rs` hold current tests.
+
 ## Results
 
 | Check | Result |

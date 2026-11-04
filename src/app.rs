@@ -3,9 +3,11 @@
 mod auth;
 mod browse;
 mod close;
+mod commands;
 mod compare;
 mod conflicts;
 mod connections;
+mod definition;
 mod diagram;
 mod export;
 mod guard;
@@ -48,6 +50,7 @@ use crate::connection::{Connection, Definition};
 use crate::connector::{Connector, Namespace, TransactionCommand};
 use crate::console::{AfterTransaction, Console, Focus, Phase};
 use crate::creds::{Identity, PlainFile};
+use crate::definition::Target;
 use crate::diagram::tab::DiagramTab;
 use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, Settings};
@@ -69,7 +72,7 @@ use crate::store::config::{IconName, ThemeName};
 use crate::store::scripts::ScriptEntry;
 use crate::store::{Scope, Store};
 use crate::structure::SessionSignal;
-use crate::table::{TableFocus, TableTab};
+use crate::table::{Follow, TableFocus, TableTab};
 use crate::terminal::Session;
 use crate::terminal::{ring_bell, watch_terminal};
 use crate::ui::browser::draw_browser;
@@ -85,9 +88,7 @@ use crate::ui::name::{NamePrompt, draw_name};
 use crate::ui::navigator::draw_navigator;
 use crate::ui::palette::draw_palette;
 use crate::ui::settings::{SettingsLayout, draw_settings};
-use crate::ui::statusline::{
-    StatusData, StatusPanel, draw_statusline, fit_hints, hint_line, run_time,
-};
+use crate::ui::statusline::{StatusData, StatusPanel, draw_statusline, hint_line, run_time};
 use crate::ui::theme::{ColorEnv, Theme};
 use crate::ui::welcome::draw_welcome;
 use crate::ui::which_key::draw_which_key;
@@ -276,7 +277,17 @@ enum PickerKind {
         connections: Vec<ConnectionId>,
     },
     /// The rows are the SQL templates of a relation.
-    Generate(SqlRequest, Vec<Template>),
+    /// The keys of a row of a table tab, after the key `F`.
+    Follow {
+        connection: ConnectionId,
+        choices: Vec<Follow>,
+    },
+    /// The templates of a relation, then the DDL entry of a relation or an object.
+    Generate {
+        request: Option<SqlRequest>,
+        templates: Vec<Template>,
+        definition: Option<(ConnectionId, Target)>,
+    },
 }
 
 /// The relation of a SQL template.
@@ -305,6 +316,8 @@ struct ScreenLayout {
     navigator: Rect,
     divider: Option<u16>,
     main_tabs: Vec<MainTab>,
+    /// The **Quit** button at the right end of the main tabs.
+    quit: Rect,
     body: Rect,
     console: ConsoleLayout,
     table: TableLayout,
@@ -421,6 +434,10 @@ pub struct App {
     import_choices: ImportChoices,
     /// The imports in progress, with at most one for each tab.
     imports: Vec<import::ImportRun>,
+    /// The reads of a DDL in progress.
+    definitions: Vec<definition::DefinitionRead>,
+    /// A table tab whose key `F` waits for the keys of its table.
+    pending_follow: Option<ConsoleId>,
     /// The answers of the file reads of the import dialog.
     import_probes: import::ProbeChannel,
     /// A table tab that opens the import dialog after its first page.
@@ -434,8 +451,8 @@ pub struct App {
     fallback_dialect: Dialect,
     /// The region and keys of a sequence that needs more keys.
     pending_key: Option<(Region, Vec<Chord>)>,
-    /// True while the explorer page of the `Ctrl+W` menu waits for its key.
-    explorer_page: bool,
+    /// The region of the command page that waits for its next key.
+    command_page: Option<Region>,
     drag: Option<Drag>,
     /// The time and the place of the last click in the navigator.
     last_click: Option<(Instant, u16, u16)>,
@@ -523,6 +540,8 @@ impl App {
             exports: Vec::new(),
             import_choices: options.import_choices.clone(),
             imports: Vec::new(),
+            definitions: Vec::new(),
+            pending_follow: None,
             import_probes: import::ProbeChannel::default(),
             import_wanted: None,
             status: None,
@@ -540,7 +559,7 @@ impl App {
             conflicts: None,
             fallback_dialect: options.dialect,
             pending_key: None,
-            explorer_page: false,
+            command_page: None,
             drag: None,
             last_click: None,
             next_console_number: 1,
@@ -1017,8 +1036,9 @@ impl App {
                 relation,
                 columns,
                 foreign_keys,
+                referencing,
             } => {
-                self.on_columns_loaded(connection, &relation, columns, foreign_keys);
+                self.on_columns_loaded(connection, &relation, columns, (foreign_keys, referencing));
             }
             ExecEvent::ConnectionTested { test, result } => self.on_connection_tested(test, result),
             ExecEvent::Disconnected { connection } => self.on_disconnected(connection),
@@ -1037,7 +1057,10 @@ impl App {
     }
 
     fn on_console_event(&mut self, mut event: ExecEvent) {
-        if self.on_export_event(&event) || self.on_import_event(&mut event) {
+        if self.on_export_event(&event)
+            || self.on_import_event(&mut event)
+            || self.on_definition_event(&mut event)
+        {
             return;
         }
         let Some(id) = event.console() else { return };
@@ -1094,7 +1117,8 @@ impl App {
         .areas(area);
         self.layout.body = body;
         let views = self.tab_views();
-        self.layout.main_tabs = draw_main_tabs(frame, tabs, views, self.active_tab(), &self.theme);
+        (self.layout.main_tabs, self.layout.quit) =
+            draw_main_tabs(frame, tabs, views, self.active_tab(), &self.theme);
         if tall {
             draw_rule(frame, rule, &self.theme);
         }
@@ -1447,7 +1471,7 @@ impl App {
         let line = match message {
             Some(status) => Line::styled(status, self.theme.status),
             None => {
-                let items = fit_hints(&self.hint_items(), usize::from(area.width));
+                let items = self.fitted_hints(usize::from(area.width));
                 hint_line(&items, &self.theme)
             }
         };
@@ -1456,9 +1480,18 @@ impl App {
 
     /// Draws the windows above the panels. `bounds` holds the rows above the status line.
     fn draw_layers(&mut self, frame: &mut Frame, bounds: Rect) {
-        if self.explorer_page {
-            let title = self.explorer_menu_title();
-            draw_which_key(frame, bounds, &title, &self.explorer_menu(), &self.theme);
+        if self.command_page.is_some_and(|region| {
+            region != Region::Navigator && self.context_region() != Some(region)
+        }) {
+            self.command_page = None;
+        }
+        if let Some(region) = self.command_page {
+            let (title, menu) = if region == Region::Navigator {
+                (self.explorer_menu_title(), self.explorer_menu())
+            } else {
+                (self.context_menu_title(), self.context_menu())
+            };
+            draw_which_key(frame, bounds, &title, &menu, &self.theme);
         } else if self.pending_prefix() {
             let title = text::TITLE_PREFIX;
             draw_which_key(frame, bounds, title, &self.prefix_menu(), &self.theme);

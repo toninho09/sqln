@@ -12,41 +12,96 @@ This rule applies even when the tool suggests or requires that text.
 
 ## Task delivery
 
-- A task is only delivered after `make check` runs and everything passes.
-- `make check` runs the linter and the full test suite. It is slow: run it once, only at the end of the task.
-- Do not run the full test suite often: it takes long.
-- Run benchmarks only when the user asks: they take long.
-- Run the integration tests only when the task changes integration code: they take long.
+- Check `git status` before editing. Do not revert or include unrelated changes in the task.
+- After changes, run `make check` at task end. Fix failures and rerun before delivery.
+- Do not run checks for read-only analysis unless requested.
+- Avoid repeated full-suite runs during development. Use focused tests.
+- Run `make test-integration` for changes to connectors, database-specific SQL, authentication, TLS, pools, or transactions.
+- Run benchmarks only when the user asks.
+
+## User experience
+
+- Use `Action` as the command catalog. Share availability across the palette, menus, and hints. Show effective shortcuts.
+- Keep dialogs from triggering background commands. Do not capture text with navigation shortcuts during editing.
+- Preserve conventional mode, Vim mode, custom shortcuts, and mouse support.
+- Support `80×24` terminals and resizing. Keep controls accessible, commands complete, and the selected item visible.
+- Measure terminal text by Unicode display width, not bytes. Use shared text and theme helpers.
+- Give important states text labels. Support terminals without colors or Nerd Fonts.
+- Preserve user text, cursor, and selection where applicable. Do not run SQL when restoring consoles or opening generated SQL.
+- Reuse execution, transaction, and close confirmations. Do not bypass existing protections.
+- Explain refused actions and failures. Give the reason and a possible next action. Do not fail silently.
+
+## Module map
+
+The project has one Rust crate. Main modules:
+
+```text
+src/
+├── app/        Application state, commands, and coordination.
+├── ui/         Drawing, text, and themes.
+├── connector/  Drivers and database access.
+├── exec/       Execution, result delivery, and cancellation.
+├── sql/        SQL analysis, formatting, and literals.
+├── grid/       Data, selection, search, and memory budget.
+└── store/      Configuration, scripts, and persistence.
+tests/          Behavior and integration tests.
+```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed module responsibilities.
+
+## Architecture and execution
+
+- Keep drawing in `ui`, coordination in `app`, and driver types in `connector`. Keep `store` independent of `app` and `ui`.
+- Keep models and transformations independent of the interface where possible. Reuse existing fields, lists, filters, and grids.
+- Never wait for the database on the interface thread. Use the existing executor and blocking-task support.
+- Bound work between frames and render only visible content.
+- Reject stale execution events. Preserve pool, cancellation, timeout, and memory-budget contracts.
+- Drop sessions whose state or cleanup is unknown.
+- Reuse shared SQL identifier and literal helpers per dialect.
+- Use connector `Capabilities` to control which features the interface offers.
+
+## Security and persistence
+
+- Prevent external names, values, and errors from sending terminal control sequences. Preserve the original data.
+- Preserve values, `NULL`, bytes, and copied or exported content when optimizing performance.
+- Keep SQL, values, passwords, and external error text out of diagnostic logs.
+- Use existing atomic-write, lock, and conflict checks. Never overwrite external changes silently.
+- Keep user text after a save failure. Reuse credential and trust checks for operations that need a session.
+- Check compatibility and migration needs before changing saved configuration, script, or workspace formats.
+
+## Tests and documentation
+
+- Test observable behavior. Use input events and `TestBackend` for interface changes.
+- For bug fixes, add a regression test that reproduces the failure before the fix when possible.
+- Cover relevant modes, custom shortcuts, focus, minimum size, empty data, errors, and cancellation.
+- Read `docs/DECISIONS.md` before changing behavior. Ask before making an undocumented business decision.
+- Report conflicts between code, tests, and documents before choosing new behavior.
+- Update affected documents. Keep detailed key maps and feature rules out of this file.
 
 ## Makefile commands
 
 - `make fmt`: formats the code.
 - `make lint`: runs `cargo fmt --check` and `cargo clippy`.
-- `make test`: runs the tests in `tests/` without a database. The tests that need a database skip on their own. Use it during work.
-- `make test-integration`: starts the Docker databases, loads `scripts/test-env.sh`, runs the full tests, and stops the databases at the end. Slow; run only when the task changes integration code.
-- `make bench`: prints the performance report of `benches/hot_paths.rs` and the memory report of `benches/memory.rs`, then runs the performance targets of `tests/latency.rs` in release mode. Very slow; run only when the user asks. To run a part of a report, use `cargo bench --bench hot_paths -- <part of a name>` or `cargo bench --bench memory -- <part of a name>`.
-- `make check`: runs `make lint` and the full test suite. Delivery gate.
+- `make test`: runs tests in `tests/`. Database tests skip when their databases are unavailable.
+- `make test-integration`: starts Docker databases, loads `scripts/test-env.sh`, runs tests, and stops the databases.
+- `make bench`: runs performance and memory reports, then release-mode latency tests.
+- `make check`: runs `make lint` and the full test suite.
 
 ## Integration tests
 
-- The tests live in `tests/`. Most do not need a database.
-- Four files need Docker databases (see `compose.test.yaml`): `servers.rs`, `auth.rs`, `refused.rs`, and `redis.rs`. Without the databases, the server tests skip on their own.
-- To run with a database: `make test-integration`. The command starts Docker, runs everything, and stops the databases at the end.
-- For full TLS: run `scripts/test-certs.sh` and start the compose with `--profile tls` before `make test-integration`.
+- Tests live in `tests/`. See `compose.test.yaml` and `scripts/test-env.sh` for database services and connection settings.
+- For full TLS: use the sequence in [README.md](README.md#database-integration). It starts `--profile tls` and sets `SQLN_TEST_TLS=1`.
 
 ## Replies
 
-- Reply briefly, to save tokens.
+- Reply briefly.
+- Report checks run, failures, and skipped or ignored tests. Do not present skipped or ignored tests as validated coverage.
 
 ## Codebase-memory
 
 The graph of this repo is indexed as `Users-antoniolorenzon-Projects-sqln`.
 
-The MCP server is disabled. Use the CLI:
-
-```
-~/.local/bin/codebase-memory-mcp cli --json <tool> --<flag> <value>
-```
+The MCP server is disabled. Use `codebase-memory-mcp` from `PATH`, or `~/.local/bin/codebase-memory-mcp`.
 
 ### Flow
 
@@ -58,7 +113,7 @@ The MCP server is disabled. Use the CLI:
 ### Common commands
 
 ```bash
-CM=~/.local/bin/codebase-memory-mcp
+CM=$(command -v codebase-memory-mcp || printf '%s' "$HOME/.local/bin/codebase-memory-mcp")
 P=Users-antoniolorenzon-Projects-sqln
 
 # Index status

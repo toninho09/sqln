@@ -883,27 +883,36 @@ fn the_hints_of_a_structure_tab_name_the_section() {
 }
 
 #[test]
-fn the_hints_of_a_table_show_the_structure_key_at_the_minimum_width() {
+fn the_hints_of_a_table_put_common_grid_actions_first() {
     let (mut f, _) = Fixture::recorded(Recorder {
         rows: 3,
         ..Recorder::default()
     });
     f.open_table("users");
     let hints = f.hints_at(80);
-    assert!(hints.contains("s sort  i struct  Ctrl+C copy"), "{hints}");
-    let hints = f.hints_at(120);
-    assert!(hints.ends_with("e export  I import  F1 keys"), "{hints}");
+    assert!(
+        hints.starts_with("Ctrl+C copy  Enter value  Ctrl+F find  f where  s sort"),
+        "{hints}"
+    );
+    assert!(hints.ends_with("Ctrl+P commands"), "{hints}");
+    let hints = f.hints_at(160);
+    assert!(hints.contains("i struct"), "{hints}");
+    assert!(hints.contains("I import"), "{hints}");
 }
 
 #[test]
-fn a_table_of_many_rows_keeps_the_structure_key_at_the_minimum_width() {
+fn a_table_of_many_rows_keeps_copy_and_find_at_the_minimum_width() {
     let (mut f, _) = Fixture::recorded(Recorder {
         rows: 250,
         ..Recorder::default()
     });
     f.open_table("users");
     let hints = f.hints_at(80);
-    assert!(hints.contains("] page  i struct"), "{hints}");
+    assert!(
+        hints.starts_with("Ctrl+C copy  Enter value  Ctrl+F find"),
+        "{hints}"
+    );
+    assert!(hints.ends_with("Ctrl+P commands"), "{hints}");
 }
 
 impl Fixture {
@@ -984,7 +993,8 @@ fn a_table_with_more_rows_shows_the_commands_of_more_rows() {
     });
     f.open_table("users");
     let row = f.hints_at(100);
-    assert!(row.contains("m more  ] page  i struct"), "{row}");
+    assert!(row.contains("m more  ] page"), "{row}");
+    assert!(f.hints_at(160).contains("i struct"));
 }
 
 #[test]
@@ -1018,7 +1028,8 @@ fn a_structure_tab_hides_the_load_key_without_more_rows() {
     f.structure_of_table("users");
     let row = f.hints_at(100);
     assert!(!row.contains("m more"), "{row}");
-    assert!(row.starts_with("] section"), "{row}");
+    assert!(row.starts_with("Ctrl+C copy"), "{row}");
+    assert!(row.contains("] section"), "{row}");
 }
 
 #[test]
@@ -2546,7 +2557,7 @@ fn the_help_of_a_table_lists_its_own_keys() {
     for _ in 0..4 {
         f.code(KeyCode::Down);
     }
-    f.assert_sees("Load more rows");
+    f.assert_not_sees("Load more rows");
     f.code(KeyCode::Esc);
     f.focus_filter();
     f.code(KeyCode::F(1));
@@ -2575,7 +2586,7 @@ fn the_hint_follows_the_part_of_the_table_in_focus() {
     });
     f.open_table("users");
     f.grid();
-    f.assert_sees("f where  o order by");
+    f.assert_sees("Ctrl+C copy  Enter value  Ctrl+F find  f where");
     f.focus_filter();
     f.assert_sees("Enter apply");
 }

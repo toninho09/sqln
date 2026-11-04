@@ -622,13 +622,17 @@ impl Console {
         self.active = (active + if forward { 1 } else { count - 1 }) % count;
     }
 
+    pub fn can_close_result(&self) -> bool {
+        self.active < self.results.len() && !(self.reading && self.active + 1 == self.results.len())
+    }
+
     /// Closes the active result and frees its budget. It returns false while the
     /// result receives rows.
     pub fn close_result(&mut self, budget: &Budget) -> bool {
         if self.active >= self.results.len() {
             return true;
         }
-        if self.reading && self.active + 1 == self.results.len() {
+        if !self.can_close_result() {
             return false;
         }
         let result = self.results.remove(self.active);

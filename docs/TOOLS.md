@@ -3,6 +3,8 @@
 This research was done on 2026-10-30.
 It comes from public documentation and does not replace the tests in [RESULTS](RESULTS.md).
 Some sources are old, and the current behavior may differ.
+This is historical external research, not a description of SQLN code or a current compatibility guarantee.
+Use [FEATURE-MAP.md](FEATURE-MAP.md) for the SQLN implementation.
 
 ## Console results
 

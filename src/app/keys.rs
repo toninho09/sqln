@@ -161,8 +161,8 @@ impl App {
             return;
         }
         let chord = Chord::from_event(key);
-        if std::mem::take(&mut self.explorer_page) {
-            self.on_explorer_page_key(chord);
+        if let Some(region) = self.command_page.take() {
+            self.on_command_page_key(region, chord);
             return;
         }
         if let Some((region, mut keys)) = self.pending_key.take() {
@@ -171,12 +171,39 @@ impl App {
             return;
         }
         let panel = self.panel();
+        let editor_chord = if !self.vim()
+            && matches!(key.code, KeyCode::Char('z' | 'Z'))
+            && key
+                .modifiers
+                .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        {
+            Chord::parse("ctrl+y").unwrap()
+        } else {
+            chord
+        };
+        let editor_key = self.editor_has_focus()
+            && !self.is_text_key(key, panel)
+            && self.console().editor.search().is_none();
+        if editor_key && self.on_chord(Region::Editor, editor_chord) {
+            return;
+        }
         if let Some(region) = panel
             && self.on_chord(region, chord)
         {
             return;
         }
         if !self.is_text_key(key, panel) && self.on_chord(Region::Global, chord) {
+            return;
+        }
+        // Do not send a removed application binding to the editor's built-in key handler.
+        if editor_key
+            && Action::in_region(Region::Editor).any(|action| {
+                action
+                    .default_keys(self.keyboard)
+                    .iter()
+                    .any(|key| Chord::parse(key).ok() == Some(editor_chord))
+            })
+        {
             return;
         }
         match panel {
@@ -206,7 +233,15 @@ impl App {
     fn on_chord(&mut self, region: Region, chord: Chord) -> bool {
         match self.keymap.lookup(region, chord) {
             Lookup::Action(action) => {
-                self.perform(action, false);
+                if region == Region::Editor
+                    && self.vim()
+                    && self.console().editor.is_inserting()
+                    && action == Action::EditorRedo
+                {
+                    self.console_mut().editor.close_suggestions();
+                } else {
+                    self.perform(action, false);
+                }
                 true
             }
             Lookup::Sequence => {
@@ -217,16 +252,40 @@ impl App {
         }
     }
 
-    /// Runs the command of a key of the explorer page. Any other key closes the page.
-    fn on_explorer_page_key(&mut self, chord: Chord) {
-        if let Lookup::Action(action) = self.keymap.lookup(Region::Navigator, chord)
-            && self.explorer_commands().contains(&action)
-        {
-            self.perform(action, false);
+    /// Runs a panel command. A key without a command closes the page.
+    fn on_command_page_key(&mut self, region: Region, chord: Chord) {
+        if region != Region::Navigator && self.context_region() != Some(region) {
+            return;
+        }
+        if chord == Chord::parse("esc").unwrap() {
+            return;
+        }
+        match self.keymap.lookup(region, chord) {
+            Lookup::Action(action) if self.context_commands(region).contains(&action) => {
+                self.perform(action, false)
+            }
+            Lookup::Sequence
+                if self.context_commands(region).iter().any(|action| {
+                    self.keymap.keys(*action).iter().any(|key| {
+                        key.split_whitespace()
+                            .next()
+                            .and_then(|key| Chord::parse(key).ok())
+                            == Some(chord)
+                    })
+                }) =>
+            {
+                self.pending_key = Some((region, vec![chord]))
+            }
+            _ => {}
         }
     }
 
     fn on_sequence(&mut self, region: Region, keys: Vec<Chord>) {
+        if !matches!(region, Region::Global | Region::Navigator)
+            && self.context_region() != Some(region)
+        {
+            return;
+        }
         if keys.last() == Some(&Chord::parse("esc").unwrap()) {
             return;
         }
@@ -235,7 +294,12 @@ impl App {
             found = self.keymap.sequence(Region::Global, &keys);
         }
         match found {
-            Lookup::Action(action) => self.perform(action, false),
+            Lookup::Action(action)
+                if region == Region::Global || self.command_available(action) =>
+            {
+                self.perform(action, false)
+            }
+            Lookup::Action(_) => {}
             Lookup::Sequence => self.pending_key = Some((region, keys)),
             Lookup::None => {}
         }
@@ -245,6 +309,39 @@ impl App {
         self.pending_key
             .as_ref()
             .is_some_and(|(_, keys)| keys.len() == 1 && keys[0].is_prefix())
+    }
+
+    fn open_command_page(&mut self, region: Option<Region>) {
+        self.console_mut().editor.close_suggestions();
+        if let Some(tab) = self.table_mut() {
+            tab.list = None;
+        }
+        self.command_page = region;
+    }
+
+    fn perform_editor_command(&mut self, action: Action) {
+        if !self.editor_has_focus() {
+            return;
+        }
+        self.ensure_active_catalog();
+        let index = self.active;
+        let connection = self.catalog_for(index);
+        let App {
+            consoles,
+            connections,
+            fallback_catalog,
+            ..
+        } = self;
+        let catalog = match connection {
+            Some(id) => connections
+                .iter()
+                .find(|item| item.id == id)
+                .and_then(|item| item.catalog.as_ref()),
+            None if consoles[index].connection.is_none() => fallback_catalog.as_ref(),
+            None => None,
+        };
+        consoles[index].editor.on_command(action, catalog);
+        self.request_missing_columns(index);
     }
 
     /// Shift changes a move of the grid into a selection.
@@ -260,11 +357,6 @@ impl App {
     }
 
     fn on_editor_key(&mut self, key: KeyEvent) {
-        // `Ctrl+S` writes the text at once, in both keyboard modes.
-        if key.code == KeyCode::Char('s') && key.modifiers == KeyModifiers::CONTROL {
-            self.save_now();
-            return;
-        }
         self.ensure_active_catalog();
         let index = self.active;
         let connection = self.catalog_for(index);
@@ -311,7 +403,12 @@ impl App {
             Action::OpenSessions => self.open_sessions(),
             Action::OpenDiagram => self.open_diagram_here(),
             Action::OpenCompare => self.open_compare_here(),
-            Action::ExplorerCommands => self.explorer_page = true,
+            // A table tab follows the key before this match.
+            Action::FollowKey => self.status = Some(text::FOLLOW_REFUSED.to_owned()),
+            Action::ExplorerCommands => self.open_command_page(Some(Region::Navigator)),
+            Action::ContextCommands => self.open_command_page(self.context_region()),
+            Action::EditorSave => self.save_now(),
+            action if action.region() == Region::Editor => self.perform_editor_command(action),
             Action::Stop => self.stop(self.active),
             Action::ToggleMode => self.toggle_mode(),
             Action::Commit => self.transaction(TransactionCommand::Commit),
@@ -534,6 +631,10 @@ impl App {
                     .collect()
             }
         };
+        let mut keys = keys;
+        if region.is_none() && !in_table {
+            keys.splice(0..0, self.help_keys(Region::Editor));
+        }
         let mut groups = vec![KeyGroup { title: name, keys }];
         for (action, keys, label) in self.help_actions(Region::Global) {
             use Action::*;
@@ -541,12 +642,11 @@ impl App {
                 Run | RunScript | Explain | ExplainAnalyze | Stop | FormatSql | ToggleComment
                 | OpenHistory => text::GROUP_RUN,
                 ToggleMode | Commit | Rollback => text::GROUP_TRANSACTION,
-                ChooseSchema | ChangeConnection | OpenSessions | OpenDiagram | OpenCompare => {
-                    text::GROUP_CONNECTION
-                }
+                ChooseSchema | ChangeConnection | OpenSessions | OpenDiagram | OpenCompare
+                | FollowKey => text::GROUP_CONNECTION,
                 NextTab | PreviousTab | CloseTab | RenameConsole => text::GROUP_TABS,
                 FocusLeft | FocusRight | FocusUp | FocusDown | ToggleNavigator
-                | ExplorerCommands => text::GROUP_PANELS,
+                | ExplorerCommands | ContextCommands => text::GROUP_PANELS,
                 _ => text::GROUP_APPLICATION,
             };
             if let Some(group) = groups.iter_mut().find(|group| group.title == title) {
@@ -740,6 +840,7 @@ impl App {
                 let options = RunOptions {
                     manual: manual && self.has_transactions(connection),
                     schema,
+                    only_schema: false,
                     row_cap: None,
                     export: None,
                     untimed: false,
@@ -945,7 +1046,7 @@ impl App {
             FormRequest::Test => self.test_form(),
             FormRequest::Save => self.save_form(),
             FormRequest::Disconnect => self.disconnect_form(),
-            FormRequest::Browse => self.open_browser(),
+            FormRequest::Browse => self.open_form_window(),
         }
     }
 
@@ -1003,45 +1104,6 @@ impl App {
         actions.iter().filter_map(second).collect()
     }
 
-    /// Lists the commands of the explorer that act on the row under its cursor.
-    pub(super) fn explorer_commands(&self) -> Vec<Action> {
-        use Action::*;
-        let row = self.navigator.current(&self.connections);
-        let item = row.as_ref().map(|row| &self.connections[row.connection]);
-        let on_kind = |kind| row.as_ref().is_some_and(|row| row.kind == kind);
-        let on_connection = on_kind(RowKind::Connection);
-        let on_console = on_kind(RowKind::Console);
-        let on_consoles = on_console || on_kind(RowKind::Consoles);
-        let connected = item.is_some_and(|item| {
-            let manager = self.manager.as_ref();
-            manager.is_some_and(|manager| manager.is_connected(item.id))
-        });
-        let saved = item.is_some_and(|item| self.saved_identity(item).is_some());
-        let commands = [
-            (NavigatorNewConsole, row.is_some()),
-            (NavigatorScripts, true),
-            (NavigatorRefresh, row.is_some()),
-            (NavigatorEdit, on_connection),
-            (NavigatorAdd, true),
-            (NavigatorDelete, on_connection || on_console),
-            (NavigatorDisconnect, on_connection && connected),
-            (NavigatorDeletePassword, on_connection && saved),
-            (NavigatorSessions, self.can_open_sessions()),
-            (
-                NavigatorStructure,
-                !on_consoles && item.is_some_and(|item| item.dialect != Dialect::Redis),
-            ),
-            (NavigatorDiagram, self.can_open_diagram()),
-            (NavigatorCompare, self.can_compare_row()),
-            (NavigatorGenerate, self.can_generate()),
-            (NavigatorImport, self.can_import_row()),
-            (NavigatorCopyName, row.is_some()),
-            (NavigatorFilter, self.command_available(NavigatorFilter)),
-        ];
-        let acting = commands.into_iter().filter(|command| command.1);
-        acting.map(|command| command.0).collect()
-    }
-
     /// Returns the title of the explorer page, with the row that its commands act on.
     pub(super) fn explorer_menu_title(&self) -> String {
         let row = self.navigator.current(&self.connections);
@@ -1078,6 +1140,9 @@ impl App {
             (
                 text::GROUP_ROW,
                 &[
+                    (&[NavigatorOpen], text::MENU_OPEN),
+                    (&[NavigatorExpand], text::MENU_EXPAND),
+                    (&[NavigatorCollapse], text::MENU_COLLAPSE),
                     (&[NavigatorStructure], text::MENU_STRUCTURE),
                     (&[NavigatorDiagram], text::MENU_DIAGRAM),
                     (&[NavigatorCompare], text::MENU_COMPARE),
@@ -1085,6 +1150,7 @@ impl App {
                     (&[NavigatorImport], text::MENU_IMPORT),
                     (&[NavigatorCopyName], text::MENU_COPY_NAME),
                     (&[NavigatorFilter], text::MENU_FILTER),
+                    (&[NavigatorClearFilter], text::MENU_CLEAR_FILTER),
                 ],
             ),
         ];
@@ -1156,7 +1222,7 @@ impl App {
             }
             // A failed transaction can only end with a rollback.
             Commit => available && console.transaction != TransactionState::Failed,
-            NextTab | PreviousTab => self.tab_order().len() > 1,
+            NextTab | PreviousTab => available && self.tab_order().len() > 1,
             FocusUp => self.focus_moves(true),
             FocusDown => self.focus_moves(false),
             _ => available,
@@ -1177,6 +1243,7 @@ impl App {
                     ),
                     (&[ToggleNavigator], text::MENU_NAVIGATOR),
                     (&[ExplorerCommands], text::MENU_EXPLORER),
+                    (&[ContextCommands], text::MENU_CONTEXT),
                 ],
             ),
             (
@@ -1217,6 +1284,7 @@ impl App {
                     (&[OpenSessions], text::MENU_SESSIONS),
                     (&[OpenDiagram], text::MENU_DIAGRAM),
                     (&[OpenCompare], text::MENU_COMPARE),
+                    (&[FollowKey], text::MENU_FOLLOW),
                 ],
             ),
             (
@@ -1257,18 +1325,14 @@ impl App {
         if self.home() && !home_allows(action) {
             return false;
         }
-        // The results of the console stay out of reach behind a diagram.
-        if self.diagram_active.is_some() && action.region() == Region::Grid {
-            return false;
-        }
-        if action.region() == Region::Diagram {
-            return self.diagram_command_available(action);
-        }
-        if self.compare_active.is_some() && action.region() == Region::Grid {
-            return self.compare_command_available(action);
-        }
-        if action.is_compare_only() {
-            return false;
+        match action.region() {
+            Region::Navigator => return self.navigator_command_available(action),
+            Region::Grid => return self.grid_command_available(action),
+            Region::Editor => {
+                return self.editor_has_focus() && self.console().editor.command_available(action);
+            }
+            Region::Diagram => return self.diagram_command_available(action),
+            _ => {}
         }
         let console = self.console();
         let in_table = !self.console_on_screen();
@@ -1279,6 +1343,7 @@ impl App {
             connection.is_some_and(|item| item.capabilities.namespace != Namespace::None);
         match action {
             Action::OpenPalette => false,
+            Action::ContextCommands => self.context_region().is_some(),
             Action::Run | Action::RunScript => {
                 !in_table && idle && !self.association_pending(console.id)
             }
@@ -1295,102 +1360,53 @@ impl App {
                 (None, None, None) => !idle,
             },
             Action::ToggleMode => !in_table && idle && transactions,
-            Action::Commit | Action::Rollback => !in_table && idle && console.in_transaction(),
-            Action::ChooseSchema => !in_table && idle && namespace && !console.in_transaction(),
-            Action::GridFocusFilter | Action::GridFocusOrder | Action::GridSortColumn => {
-                self.table().is_none_or(|tab| tab.filters)
+            Action::Commit => {
+                !in_table
+                    && idle
+                    && console.in_transaction()
+                    && console.transaction != TransactionState::Failed
             }
-            Action::GridStructure => self.table().is_some_and(|tab| tab.filters),
-            Action::GridReload => self
-                .table()
-                .is_some_and(|tab| !tab.filters && !tab.is_busy()),
-            Action::GridCancelQuery | Action::GridEndSession => self.can_signal_session(),
-            Action::NavigatorSessions => self.can_open_sessions(),
-            Action::NavigatorDiagram => self.can_open_diagram(),
-            Action::NavigatorCompare => self.can_compare_row(),
+            Action::Rollback => !in_table && idle && console.in_transaction(),
+            Action::ChooseSchema => !in_table && idle && namespace && !console.in_transaction(),
             Action::OpenDiagram => self.can_open_diagram_here(),
             Action::OpenCompare => self.can_open_compare_here(),
+            Action::FollowKey => self.can_follow_key(),
             Action::OpenSessions => self.sessions_connection().is_some_and(|id| {
                 let dialect = self.connection(id).map(|item| item.dialect);
                 dialect.is_some_and(has_sessions)
             }),
-            Action::GridExport => self.can_export(),
-            Action::GridImport => self.can_import(),
-            Action::NavigatorImport => self.can_import_row(),
-            Action::GridCountRows => self
-                .table()
-                .is_some_and(|tab| tab.filters && tab.has_more && !tab.is_busy()),
-            Action::GridOpenRow => self
-                .active_result()
-                .is_some_and(|item| !item.table.rows.is_empty()),
             Action::RenameConsole | Action::ChangeConnection => !in_table,
             Action::FormatSql => !in_table && console.editor.dialect() != Dialect::Redis,
             Action::ToggleComment => !in_table,
             Action::OpenHistory => !in_table && self.history_is_open_to(connection),
             Action::FocusLeft => !self.navigator.collapsed && !self.navigator_focused,
             Action::FocusRight => self.navigator_focused,
-            Action::NavigatorFilter => !self.navigator.collapsed,
-            Action::NavigatorClearFilter => self.navigator.filter_input().is_some(),
-            Action::NavigatorGenerate => self.can_generate(),
-            Action::NavigatorCopyName => self.navigator.current(&self.connections).is_some(),
             _ => true,
         }
     }
 
     fn open_palette(&mut self) {
         self.console_mut().editor.close_suggestions();
-        let global = self
-            .keymap
-            .actions(Region::Global)
-            .map(|action| (action, true));
-        let explorer = [
-            Action::NavigatorAdd,
-            Action::NavigatorScripts,
-            Action::NavigatorStructure,
-            Action::NavigatorGenerate,
-            Action::NavigatorImport,
-            Action::NavigatorCopyName,
-            Action::NavigatorFilter,
-        ]
-        .map(|action| (action, self.navigator_focused));
-        let diagram = [
-            Action::DiagramOpen,
-            Action::DiagramStructure,
-            Action::DiagramCopy,
-            Action::DiagramKeysOnly,
-            Action::DiagramReload,
-        ]
-        .map(|action| (action, self.panel() == Some(Region::Diagram)));
-        let results = [
-            Action::GridOpenRow,
-            Action::GridCountRows,
-            Action::GridExport,
-            Action::GridImport,
-            Action::GridStructure,
-            Action::GridReload,
-            Action::GridCancelQuery,
-            Action::GridEndSession,
-            Action::CompareScript,
-            Action::CompareCopy,
-        ]
-        .map(|action| {
-            let key_works = self.panel() == Some(Region::Grid);
-            (action, key_works)
-        });
-        let commands = global
-            .chain(explorer)
-            .chain(results)
-            .chain(diagram)
-            .filter(|(action, _)| self.command_available(*action))
-            .map(|(action, key_works)| Command {
-                action,
-                label: text::command_text(action),
-                // A key of the explorer works only there, so another panel does not show it.
-                key: if key_works {
-                    self.shown_key(action)
-                } else {
-                    None
-                },
+        let commands = self
+            .palette_actions()
+            .into_iter()
+            .map(|action| {
+                let label = self.command_label(action);
+                let label = match self.command_target(action) {
+                    Some(target) => format!("{label} — {target}"),
+                    None => label.to_owned(),
+                };
+                let key_works = action.region() == Region::Global
+                    || Some(action.region()) == self.context_region();
+                Command {
+                    action,
+                    label,
+                    key: if key_works {
+                        self.shown_key(action)
+                    } else {
+                        None
+                    },
+                }
             })
             .collect();
         self.palette = Some(Palette::new(commands));
@@ -1410,7 +1426,9 @@ impl App {
             PaletteRequest::Cancel => self.palette = None,
             PaletteRequest::Run(action) => {
                 self.palette = None;
-                self.perform(action, false);
+                if self.command_available(action) {
+                    self.perform(action, false);
+                }
             }
         }
     }
@@ -1492,6 +1510,7 @@ fn home_allows(action: Action) -> bool {
                 | OpenSettings
                 | FocusLeft
                 | ExplorerCommands
+                | ContextCommands
                 | OpenSessions
                 | OpenDiagram
                 | OpenCompare

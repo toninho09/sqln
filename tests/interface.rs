@@ -453,7 +453,12 @@ fn a_set_with_logos_shows_only_the_logo_before_the_name() {
     assert!(!shown.contains(&format!("orders  {logo}")), "{shown}");
 }
 
-/// Draws the main tabs on one row, and returns the row with the places of the tabs.
+/// The columns of the **Quit** button at the right end of the row: one column before it,
+/// the label, and one column after it.
+const QUIT: u16 = 8;
+
+/// Draws the main tabs on one row, and returns the part of the row with the tabs and the
+/// places of the tabs. `width` is the part of the tabs, without the button.
 fn main_tabs(width: u16, labels: &[&str], active: usize, theme: &Theme) -> (String, Vec<MainTab>) {
     let views = labels
         .iter()
@@ -471,13 +476,41 @@ fn draw_views(
     active: usize,
     theme: &Theme,
 ) -> (String, Vec<MainTab>) {
-    let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(width + QUIT, 1)).unwrap();
     let mut tabs = Vec::new();
     terminal
-        .draw(|frame| tabs = draw_main_tabs(frame, frame.area(), views, active, theme))
+        .draw(|frame| (tabs, _) = draw_main_tabs(frame, frame.area(), views, active, theme))
         .unwrap();
     let buffer = terminal.backend().buffer();
-    (rows(buffer).remove(0), tabs)
+    let row: String = rows(buffer)
+        .remove(0)
+        .chars()
+        .take(usize::from(width))
+        .collect();
+    (row, tabs)
+}
+
+#[test]
+fn the_quit_button_stands_at_the_right_end_and_the_tabs_stop_before_it() {
+    let theme = Theme::plain();
+    let views: Vec<TabView> = (0..9)
+        .map(|index| TabView {
+            label: format!("console-{index}"),
+            badge: None,
+        })
+        .collect();
+    let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
+    let mut drawn = (Vec::new(), ratatui::layout::Rect::default());
+    terminal
+        .draw(|frame| drawn = draw_main_tabs(frame, frame.area(), views, 8, &theme))
+        .unwrap();
+    let (tabs, quit) = drawn;
+    let row = rows(terminal.backend().buffer()).remove(0);
+    assert!(row.ends_with(" [Quit] "), "{row}");
+    assert_eq!((quit.x, quit.width), (73, 6));
+    assert!(tabs.iter().all(|tab| tab.end <= 72), "{tabs:?}");
+    // The active tab stays on the row.
+    assert_eq!(tabs.last().unwrap().index, 8);
 }
 
 #[test]
@@ -549,7 +582,7 @@ fn the_hint_bar_gives_the_keys_and_their_effects_two_styles() {
     let mut screen = Screen::new("hint-styles", theme, KeyboardMode::Conventional);
     screen.prefix('h');
     let buffer = screen.buffer(100, 30);
-    for key in ["Enter", "n new", "Right", "Ctrl+W"] {
+    for key in ["Enter", "n new", "Right", "Ctrl+P"] {
         assert_eq!(hint_cell(&buffer, key).fg, theme.key.fg.unwrap(), "{key}");
     }
     for effect in ["console", "new", "expand", "commands"] {
@@ -602,7 +635,7 @@ fn the_explorer_shows_the_first_commands_of_a_connection_at_the_minimum_width() 
         assert_eq!(row.chars().count(), 80);
         assert!(
             row.contains(
-                "Enter console  n new console  Right expand  d diagram  Ctrl+W commands  F1 keys"
+                "Enter console  n new console  Right expand  r refresh  e edit  Ctrl+P commands"
             ),
             "{row}"
         );
@@ -1762,6 +1795,7 @@ fn a_reload_changes_the_theme_at_once() {
 #[test]
 fn the_focus_stays_in_the_console_after_a_command() {
     let mut screen = Screen::new("palette-focus", Theme::plain(), KeyboardMode::Conventional);
+    screen.run("SELECT 1;");
     screen.palette();
     screen.write("results");
     screen.code(KeyCode::Enter);

@@ -122,8 +122,10 @@ fn the_selected_row_stays_visible_in_a_long_list() {
                 kind: RelationKind::Table,
                 columns: Columns::Loaded(columns),
                 foreign_keys: Vec::new(),
+                referencing: Vec::new(),
             }],
             partial: false,
+            objects: Vec::new(),
         }],
         current_schema: None,
     };
@@ -212,8 +214,10 @@ fn external_names_cannot_send_terminal_sequences() {
                 kind: RelationKind::Table,
                 columns: Columns::NotLoaded,
                 foreign_keys: Vec::new(),
+                referencing: Vec::new(),
             }],
             partial: false,
+            objects: Vec::new(),
         }],
         current_schema: None,
     };
@@ -721,14 +725,19 @@ fn press_prefix(app: &mut App, c: char) {
 fn the_keys_of_the_hint_bar_fit_the_minimum_width() {
     for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
         let mut app = hint_app(keyboard, None);
-        let mut hints = vec![app.hint()];
+        let hint = |app: &mut App| {
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            line(terminal.backend().buffer(), 23).trim().to_owned()
+        };
+        let mut hints = vec![hint(&mut app)];
         app.on_event(Event::Key(ctrl('w')));
-        hints.push(app.hint());
+        hints.push(hint(&mut app));
         app.on_event(Event::Key(key(KeyCode::Esc)));
         press_prefix(&mut app, 'j');
-        hints.push(app.hint());
+        hints.push(hint(&mut app));
         press_prefix(&mut app, 'h');
-        hints.push(app.hint());
+        hints.push(hint(&mut app));
         for hint in hints {
             assert!(!hint.is_empty());
             assert!(hint.chars().count() <= 80, "{hint}");
