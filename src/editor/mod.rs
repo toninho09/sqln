@@ -24,7 +24,7 @@ use self::undo::UndoHistory;
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{CopyOutcome, EditorClipboard, SharedClipboard};
 use crate::complete::{Completion, suggest_in};
-use crate::input::SuggestionKeys;
+use crate::input::{Action, SuggestionKeys};
 use crate::sql::{Dialect, format_statement, split, split_tokens, statement_at};
 use crate::ui::text;
 use crate::ui::theme::Theme;
@@ -145,6 +145,8 @@ enum ListAction {
 pub struct SqlEditor {
     pub state: EditorState,
     keyboard: KeyboardMode,
+    suggestions_enabled: bool,
+    literal_text: bool,
     handler: EditorEventHandler,
     dialect: Dialect,
     clipboard: SharedClipboard,
@@ -195,6 +197,8 @@ impl SqlEditor {
         Self {
             state,
             keyboard,
+            suggestions_enabled: true,
+            literal_text: false,
             handler: EditorEventHandler::vim_mode(),
             dialect,
             clipboard,
@@ -320,6 +324,17 @@ impl SqlEditor {
         self.anchor = None;
         self.break_undo_group();
         self.sync_selection();
+    }
+
+    pub fn command_available(&self, action: Action) -> bool {
+        match action {
+            Action::EditorCopy | Action::EditorCut => self.selection_range().is_some(),
+            Action::EditorSelectAll => !self.is_blank(),
+            Action::EditorSuggestions => self.is_inserting(),
+            Action::EditorUndo => self.revision > 0,
+            Action::EditorRedo => self.redo_depth > 0 || self.history.has_redo(),
+            _ => true,
+        }
     }
 
     pub fn selected_text(&self) -> Option<String> {
@@ -467,7 +482,29 @@ impl SqlEditor {
         }
     }
 
+    /// Keeps database value bytes, including CRLF, instead of normalizing script line endings.
+    pub fn use_literal_text(&mut self, text: &str) {
+        self.literal_text = true;
+        self.state.lines = Lines::new(
+            text.split('\n')
+                .map(|line| line.chars().collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
+        );
+        self.snapshot = None;
+        self.sync_vim_shadow();
+        self.disable_suggestions();
+    }
+
+    pub fn disable_suggestions(&mut self) {
+        self.suggestions_enabled = false;
+        self.close_suggestions();
+    }
+
     fn update_list(&mut self, action: ListAction, catalog: Option<&Catalog>) {
+        if !self.suggestions_enabled {
+            self.list = None;
+            return;
+        }
         if action == ListAction::Close || (action == ListAction::Refresh && self.list.is_none()) {
             self.list = None;
             return;
@@ -488,6 +525,62 @@ impl SqlEditor {
             completion,
             selected: 0,
         });
+    }
+
+    /// Applies an editor command without key simulation.
+    pub fn on_command(&mut self, action: Action, catalog: Option<&Catalog>) {
+        self.status = None;
+        self.close_suggestions();
+        let mode = self.state.mode;
+        match action {
+            Action::EditorFind | Action::EditorReplace => {
+                self.open_search();
+                if action == Action::EditorReplace
+                    && let Some(search) = &mut self.search
+                {
+                    search.field = SearchField::Replace;
+                }
+            }
+            Action::EditorSuggestions if self.is_inserting() => {
+                self.update_list(ListAction::Open, catalog)
+            }
+            Action::EditorUndo => self.undo(),
+            Action::EditorRedo => self.redo(),
+            Action::EditorCopy => self.copy_selection(),
+            Action::EditorCut => {
+                self.cut_selection();
+                self.leave_visual_mode();
+            }
+            Action::EditorPaste => self.paste_from_clipboard(),
+            Action::EditorSelectAll => {
+                let start = Index2::new(0, 0);
+                let end = buffer::document_end(&self.state.lines);
+                if self.keyboard == KeyboardMode::Conventional {
+                    self.anchor = Some(start);
+                    self.state.cursor = end;
+                    self.break_undo_group();
+                    self.sync_selection();
+                } else {
+                    self.state.execute(SwitchMode(EditorMode::Visual));
+                    if let Some(selection) = &mut self.state.selection {
+                        selection.start = start;
+                        selection.end = buffer::previous_position(&self.state.lines, end);
+                        self.state.cursor = selection.end;
+                    }
+                }
+            }
+            _ => {}
+        }
+        if self.keyboard == KeyboardMode::Vim
+            && matches!(action, Action::EditorUndo | Action::EditorRedo)
+        {
+            self.state.mode = if mode == EditorMode::Insert {
+                mode
+            } else {
+                EditorMode::Normal
+            };
+            self.sync_vim_shadow();
+        }
     }
 
     pub fn close_suggestions(&mut self) {
@@ -794,7 +887,11 @@ impl SqlEditor {
     pub fn on_paste(&mut self, text: &str) {
         self.list = None;
         self.status = None;
-        let text = normalize_newlines(text);
+        let text = if self.literal_text {
+            std::borrow::Cow::Borrowed(text)
+        } else {
+            std::borrow::Cow::Owned(normalize_newlines(text))
+        };
         if let Some(search) = &mut self.search {
             let line = text.lines().next().unwrap_or_default();
             search.focused_text().push_str(line);
@@ -807,7 +904,14 @@ impl SqlEditor {
     fn paste_from_clipboard(&mut self) {
         let text = self.clipboard.borrow_mut().paste();
         match text {
-            Some(text) => self.insert_at_cursor(&normalize_newlines(&text)),
+            Some(text) => {
+                let text = if self.literal_text {
+                    text
+                } else {
+                    normalize_newlines(&text)
+                };
+                self.insert_at_cursor(&text);
+            }
             None => self.status = Some(text::CLIPBOARD_UNAVAILABLE),
         }
     }
@@ -825,7 +929,7 @@ impl SqlEditor {
     }
 
     fn cut_selection(&mut self) {
-        let Some((start, end)) = self.selected_range() else {
+        let Some((start, end)) = self.selection_range() else {
             return;
         };
         self.copy_selection();

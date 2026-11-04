@@ -273,7 +273,7 @@ impl App {
             console.editor.set_undo_limit(config.undo_limit_bytes);
         }
         self.pending_key = None;
-        self.explorer_page = false;
+        self.command_page = None;
         self.keymap = config.keymap;
         self.suggestion_keys = config.suggestion_keys;
         self.show_system_commands = config.show_system_commands;
@@ -865,6 +865,36 @@ impl App {
     pub fn tick_at(&mut self, now: Instant) -> bool {
         let mut changed = self.advance_clock(now);
         changed |= self.expire_status(now);
+        if self.console_on_screen() {
+            let console = &mut self.consoles[self.active];
+            let revision = console.editor.revision();
+            let dialect = console.editor.dialect();
+            let supported = console
+                .connection
+                .and_then(|id| self.connections.iter().find(|item| item.id == id))
+                .is_none_or(|item| item.capabilities.parameters);
+            let dialect = if supported {
+                dialect
+            } else {
+                crate::sql::Dialect::Redis
+            };
+            changed |= console.parameters.poll(
+                revision,
+                dialect,
+                now,
+                || console.editor.text(),
+                |operation| {
+                    if let Some(manager) = &self.manager {
+                        manager.spawn_blocking(operation);
+                    }
+                },
+            );
+            if console.parameters.fields.is_empty()
+                && console.focus == crate::console::Focus::Parameters
+            {
+                console.focus = crate::console::Focus::Editor;
+            }
+        }
         if self.persist.is_none() {
             return changed;
         }

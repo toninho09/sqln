@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use sqln::exec::{ExecEvent, Flow, ResultSink, StatementKey};
 use sqln::grid::json::{FORMAT_LIMIT, pretty};
-use sqln::grid::{Budget, Reservation, ResultTable, Row, RowSearch, RowWriter, Value};
+use sqln::grid::{Budget, GridView, Reservation, ResultTable, Row, RowSearch, RowWriter, Value};
 use sqln::result::ResultTab;
 use sqln::ui::wrap::WrappedText;
 
@@ -40,6 +40,60 @@ fn search(
     search.push_str(query);
     let first = search.scan(table, later());
     (search, first)
+}
+
+#[test]
+fn row_selection_replaces_the_previous_range_and_includes_every_column() {
+    let table = table(&[&["a", "b", "c"], &["d", "e", "f"]]);
+    let mut view = GridView::default();
+    view.select_all(&table);
+    view.select_row(1, &table);
+    let range = view.selection().unwrap();
+    assert_eq!(
+        (range.top, range.bottom, range.left, range.right),
+        (1, 1, 0, 2)
+    );
+    assert_eq!(view.copy(&table).as_deref(), Some("d\te\tf\n"));
+    let before = view;
+    view.select_row(2, &table);
+    assert_eq!(view, before);
+    view.select_row(0, &ResultTable::new(vec!["a".into()]));
+    assert_eq!(view, before);
+    view.select_row(0, &ResultTable::new(Vec::new()));
+    assert_eq!(view, before);
+
+    let table = self::table(&[&["only"]]);
+    view.select_row(0, &table);
+    assert!(view.selection().is_some());
+    assert_eq!(view.copy(&table).as_deref(), Some("only\n"));
+}
+
+#[test]
+fn row_number_targets_use_the_visible_rows_and_ignore_headers_and_empty_space() {
+    use ratatui::layout::Rect;
+    use sqln::ui::{grid_cell_at, grid_row_number_at};
+
+    let mut result = ResultTab::new(1, vec!["a".into(), "b".into()]);
+    result
+        .table
+        .append((0..12).map(|_| row(&["a", "b"])).collect(), 0);
+    result.view.top = 10;
+    result.view.left = 1;
+    let area = Rect::new(7, 3, 40, 8);
+    assert_eq!(grid_row_number_at(&result, area, 7, 4), Some(10));
+    assert_eq!(grid_row_number_at(&result, area, 8, 5), Some(11));
+    assert_eq!(grid_cell_at(&result, area, 12, 4), Some((10, 1)));
+    for (column, row) in [(6, 4), (9, 4), (10, 4), (12, 4), (7, 3), (7, 6), (7, 11)] {
+        assert_eq!(grid_row_number_at(&result, area, column, row), None);
+    }
+    for width in 0..=3 {
+        assert_eq!(
+            grid_row_number_at(&result, Rect { width, ..area }, 7, 4),
+            None
+        );
+    }
+    result.table.rows.clear();
+    assert_eq!(grid_row_number_at(&result, area, 7, 4), None);
 }
 
 #[test]

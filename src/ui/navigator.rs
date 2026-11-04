@@ -106,6 +106,10 @@ pub fn draw_navigator(
             RowKind::Table => spans.push(Span::styled(Theme::icon(icons.table), detail)),
             RowKind::View => spans.push(Span::styled(Theme::icon(icons.view), detail)),
             RowKind::Column => spans.push(Span::styled(Theme::icon(icons.column), detail)),
+            RowKind::Group(_) => spans.push(Span::styled(Theme::icon(icons.schema), detail)),
+            RowKind::Object(group) => {
+                spans.push(Span::styled(Theme::icon(icons.object(group)), detail));
+            }
         }
         let (before_name, after_name) = if row.kind == RowKind::Connection {
             connection_marks(icons, &connections[row.connection])
@@ -132,6 +136,12 @@ pub fn draw_navigator(
                 detail,
             )),
             Some(RowNote::Open) => spans.push(Span::styled(text::MARK_OPEN, detail)),
+            Some(RowNote::Filtered) => {
+                spans.push(Span::styled(format!(" {}", text::NOTE_FILTERED), detail))
+            }
+            Some(RowNote::Count(count)) => {
+                spans.push(Span::styled(format!(" ({count})"), detail));
+            }
             None => {}
         }
         if offset == cursor {

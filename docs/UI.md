@@ -118,30 +118,42 @@ The next execution changes the badge. Consoles and tables use the same badges.
 The time has three decimal places, and the screen updates every 100 ms only during an execution. Long times use `1m 05.123s` and `1h 02m 05.123s`.
 The time starts with the execution, so the wait for a password does not count.
 
+**Parameters panel:** when the editor text holds `:name` parameters, a panel appears between the editor and the result tabs, up to five field rows plus a title and an error row.
+Each row shows the name, the type (`Text`, `Number`, `Boolean`, `NULL`), the value input, and `Set` or `Unset`.
+The title holds the collapse state, the count, and the effective `Ctrl+W P` shortcut; a click on the title collapses the panel to one row.
+The wheel moves the selected field. A field without a value at a run shows the error style and takes the focus.
+The panel needs no rows when the connection offers no parameters, as Redis and Valkey.
+
 **Tabs:** each tab has `×` at the end. `NO_COLOR` shows `X`, and Nerd Font shows its symbol.
 A click on `×` or on the column after it closes the tab, with the questions of `Ctrl+W c`.
 Closing another tab does not change the tab on screen. Closing the last tab shows the home screen.
 A tab cut by the line does not show `×`. A click on it opens the whole tab.
+**Quit:** the right end of the tab row holds the `Quit` button, in the style of the console buttons (`[Quit]` without color). A click quits as `Ctrl+W q`: a running statement or an open transaction asks first. The button is also on the home screen, and the tabs stop one column before it.
 
 **Hint line:** each key uses the style of the keys of the `Ctrl+W` menu, and the effect uses the hint color.
 Two spaces separate the commands. Without color, the key is bold and the effect is dim.
 The line lists only the commands that act on the screen state, from the most relevant to the least.
 A command that does not fit leaves the line whole, so the screen never shows a cut key. `F1` lists all keys.
+The normal hint row reserves the effective palette shortcut. It adds more commands as the terminal gets wider.
+The line stays one row high. Its order does not depend on usage history.
+`Ctrl+W Space` opens the bound commands of the current panel; `Ctrl+W Tab` opens the explorer page.
 
 | State | First commands |
 |---|---|
-| Editor | End the transaction, run, go to the results, and suggestions |
+| Editor | End the transaction, run, script, results, find, suggestions, format, and history |
 | Editor without connection | Choose the connection and go to the navigator |
 | Editor running | Stop |
-| Results | Stop, end the transaction, return to the editor, copy, export, and open the value |
+| Results | Stop, end the transaction, clear selection, copy, value, find, row, editor, and export |
 | **Messages** | Return to the editor and switch tab |
-| Grid of a table | Stop, load, `WHERE`, `ORDER BY`, sort, more rows, and page or section |
-| Connection line | Open, expand, structure, new console, refresh, edit, disconnect, password, remove, and add |
+| Grid of a table | Stop, clear selection, load, copy, value, find, `WHERE`, sort, row, follow, more, and pages |
+| Connection line | Open console, new console, expand/collapse, refresh, edit, and filter |
 | **Consoles** line | Expand or collapse, and new console |
 | Console line | Open, rename, remove, and return to the **Consoles** line |
 | Schema line | Expand, structure, new console, and refresh |
-| Table or view line | Open, columns, structure, new console, and refresh |
+| Table or view line | Open data, structure, columns, refresh, filter, copy name, and SQL/DDL |
 | Column line | Return to the table, structure, new console, and refresh |
+| Group line | Expand or collapse |
+| Object line | DDL, and return to the group |
 
 - `commit` and `rollback` appear only with an open transaction. After an error in the transaction, only `rollback` appears.
 - `disc` appears only with an open session. `pwd` appears only on a connection that uses a password.
@@ -152,7 +164,31 @@ A command that does not fit leaves the line whole, so the screen never shows a c
 - During an export, the line shows the stop key before the progress.
 - During an import, the line shows the rows, the errors, the part of the file, and the stop key.
 
+**Objects:** under a schema, the tree shows a group for each kind of object after the tables and views: `Routines (n)`, `Sequences (n)`, `Triggers (n)`, and `Types (n)`. An empty group does not appear, and each group starts closed.
+A routine of PostgreSQL shows its arguments, such as `total(x integer)`, so two overloads have two lines. A trigger shows its table, such as `audit (orders)`.
+
+```text
+  ▾ public
+    ▦ customers
+    ▦ orders
+    ▾ Routines (2)
+      ƒ total(x integer)
+      ƒ total(x text)
+    ▸ Triggers (1)
+```
+
+**DDL:** the text goes to a new console of the connection, with the schema of the object, and nothing runs. The first line names the kind, the object, and the connection:
+
+```text
+-- Function public.total(x integer) · shop
+CREATE OR REPLACE FUNCTION public.total(x integer)
+...;
+```
+
+A text that SQLN writes from the catalog has a second line: `-- SQLN wrote this text from the catalog. The text of the server can differ.` An error of the read goes to the status line, and no console opens.
+
 **Tree filter:** the field takes the first line of the navigator, and the status line shows `FILTER` during typing.
+The filter also finds objects by name, under their schema and group. `Enter` on an object in the filtered tree opens its DDL.
 Without a result, the tree shows `No match` and `Loaded catalogs only`.
 
 **Database notices:** a PostgreSQL `NOTICE` or a MySQL warning enters **Messages** with the statement number. The tab shows `Messages (n)`, and the active tab does not change.
@@ -186,6 +222,8 @@ Without space, the bar removes in this order: position, data, pool, and schema. 
 An open transaction uses the warning color. A failed or unknown transaction uses the error color.
 
 **Grid:** the row number counts the loaded rows.
+Click a row number in a result or table grid to select the whole row, including hidden columns.
+Copy uses the selected row. A cell click replaces the selection; `Esc` clears it.
 The border of a header accepts the drag on the three columns between two grid columns.
 
 **Scroll bars:** the editor and the grid reserve the last column.
@@ -221,7 +259,7 @@ Control rules:
 - Stopping an active statement sends the cancellation and waits 5 seconds for the response.
 - Without a response, close the connection; with an open transaction, ask for confirmation before closing.
 - After closing, indicate that the result of the statement is unknown.
-- The database or schema selector applies to each execution, even with another physical connection.
+- The database or schema selector applies to each execution, even with another physical connection. In PostgreSQL, the chosen schema comes first in `search_path`, and the default path of the session stays after it.
 - Accepting a new run clears the result tabs of that console, without erasing the text or resolving the transaction.
 - The clearing happens even when the new run needs to wait for a connection; a blocked attempt does not clear the results.
 - Each result reads rows up to the cap, without waiting for a user action.
@@ -249,7 +287,7 @@ Opening the same table again selects that tab, without duplicating.
 │ app (local)        │ app_db.public.users                                                │
 │   public           │ WHERE    [active = true                                          ] │
 │     users          │ ORDER BY [                                                       ] │
-│     orders         │ [✓ Apply]  [✕ Clear]  [↓ Load more]  [■ Stop]                      │
+│     orders         │ [✓ Apply filters]  [✕ Clear filters]  [↓ Load more]  [■ Stop]            │
 │ app (global)       ├─────┬──────────┬───────────────────────────────────────────────────│
 │ warehouse          │ id  │ name     │ active                                            │
 │                    │ 101 │ Ana      │ true                                              │
@@ -266,7 +304,7 @@ The example shows a filter that the user already applied.
 Keep filters and sorting only while that tab stays open.
 Closing the tab discards those values; reopening starts without filters or sorting.
 A table tab of the last session comes back without rows, without a filter, and without sorting.
-The first selection of the tab loads the rows. A tab that already starts on screen shows `Enter loads the rows.` and waits for `Enter` or **Apply**, so the opening does not connect or ask for a password.
+The first selection of the tab loads the rows. A tab that already starts on screen shows `Enter loads the rows.` and waits for `Enter` or **Apply filters**, so the opening does not connect or ask for a password.
 A new table does not receive automatic sorting, not even by primary key.
 
 Bar rules:
@@ -275,23 +313,36 @@ Bar rules:
 - Refuse a filter with another statement.
 - `Ctrl+W x` stops a table query in progress.
 - `Tab` accepts an autocomplete suggestion. The **Autocomplete** option changes that key to `Enter` or to both.
-- `Enter` applies the content of the fields, even with autocomplete open.
-- `[Apply]` has the same effect as `Enter`.
-- `[Clear]` clears the fields and applies the query without a filter or sorting.
+- `Enter` applies the fields unless **Autocomplete** uses `enter` or `both`. Then it accepts a suggestion first.
+- `[Apply filters]` has the same effect as `Enter`.
+- `[Clear filters]` clears the fields and applies the query without a filter or sorting.
+- With pending cell edits, the bar adds **Apply changes**, **Review**, and **Discard**. A narrow bar hides the last buttons; the keys still work.
 - A click on the header applies sorting at once, keeping the `WHERE` already applied.
 - Do not apply a `WHERE` draft as an effect of the header click.
 - Invalid filter or sorting leave the grid empty, with the error and the fields available for correction.
 
 Current implementation, from top to bottom: title, `WHERE` field, `ORDER BY` field, buttons
-**Apply**, **Clear**, **Load more**, and **Stop**, grid, summary, and one warning line.
+**Apply filters**, **Clear filters**, the pending-edit buttons, **Load more**, and **Stop**, grid, summary, and one warning line.
 The title appears only with 30 lines or more. The pool and data use stays in the status bar.
 The tab label is `name (table)` or `name (view)`.
-**Defined:** the strip mixes consoles and tables in the opening order.
-Closing the last console with an open table selects a table, without creating an empty console.
-The code still groups consoles before tables and creates an empty console when the last one closes.
+The strip mixes consoles, tables, diagrams, and compares in opening order.
+Closing the last console with another tab open selects a remaining tab, without creating an empty console.
 The summary shows the loaded rows and the state.
+The `F` key follows a foreign key of the row of the cursor. With one key, it goes there at once. With more keys, a list opens:
+
+```text
+┌ Follow a key ──────────────┐
+│ → customers (id)           │
+│ ← items (order_id)         │
+│ ← payments (order_id)      │
+└────────────────────────────┘
+```
+
+`→` marks a key that leaves the table, and `←` marks a key of another table that reads the row. The keys of the column of the cursor come first, and a key with `NULL` in the row stays out.
+The choice opens the tab of the other table with a filter such as `"customer_id" = 1`. An open tab of that table gets the focus and the new filter, keeps its `ORDER BY`, and reads the first page. A busy tab refuses.
+The keys of a table arrive with its columns. When they are not in memory, `F` reads them first and then acts.
 The `c` key counts the rows of the applied filter, and the summary starts to show `100 of 12,345 rows loaded`. The key only acts when more rows exist to load.
-The count uses the deadline, Stop, the pool queue, and the password of a page, and does not change the grid. **Apply** and **Clear** clear the total, and sorting keeps the total.
+The count uses the deadline, Stop, the pool queue, and the password of a page, and does not change the grid. **Apply filters** and **Clear filters** clear the total, and sorting keeps the total.
 The warning line shows the risk of the unstable order, or the message of the last query.
 The error of a first page takes the grid area.
 A click on the header sorts in ascending order, then descending, and then removes the order.
@@ -311,6 +362,28 @@ Show that warning when no sorting is applied.
 The global cap of 256 MiB can suspend new loads, without erasing the existing rows.
 If a value goes above the limit, report the reason without representing it as null, empty, or truncated content without a warning.
 The copy follows the TSV format confirmed in section 10 of the plan, without headers.
+
+### Grid editing
+
+Only keyed, writable SQL table tabs offer cell editing.
+`F2` opens a modal value editor; `Enter` still opens the read-only value window.
+The modal uses the selected keyboard mode. Global navigation and run shortcuts do not reach the application.
+`Tab` walks the editor and the Keep value, Set NULL, and Cancel buttons.
+`F2` or `Ctrl+S` keeps the value locally. In Vim insert mode, `Esc` first enters normal mode.
+Changed cells show a `*`, a different style, and underline. The summary names pending rows and cells.
+
+`Ctrl+S` or `Ctrl+R` opens a read-only, scrollable review of old values, new values, and SQL.
+The review has Apply and Cancel buttons. `F2` or `Ctrl+S` applies; production asks for confirmation.
+Errors keep local values visible. Conflicts require discard and reload before a new edit.
+A commit without a confirmed response shows Commit result unknown and blocks submission.
+Discard does not claim to undo a commit.
+
+Tab switches preserve edits. Page changes, reload, filters, sorting, copy, export, and import require resolution.
+Closing a dirty tab or exiting offers Apply, Discard, and Cancel.
+An active edit operation blocks immediate close.
+After a confirmed commit, the first page reloads with applied fields; draft text stays unchanged.
+Cursor and selection return by primary key when their rows remain on that page.
+All modal controls fit an 80 × 24 terminal and support the mouse.
 
 ### Structure tab
 
@@ -553,7 +626,7 @@ Closing the tab or exiting erases the temporary file.
 
 In the navigator, each numbered database shows up to 1,000 keys. `(partial list)` beside the database marks an incomplete list.
 `Enter` on a key opens the value in a tab with the label `<key> (key)`.
-The tab uses the grid, the pages, and **Load more**, without `WHERE`, `ORDER BY`, **Clear**, and sorting.
+The tab uses the grid, the pages, and **Load more**, without `WHERE`, `ORDER BY`, **Clear filters**, and sorting.
 **Reload** reads the value again.
 In the console, each line is one command, as in `redis-cli`. A `#` at the start of the line makes a comment.
 
@@ -588,14 +661,15 @@ The form has a sidebar, as the Settings dialog has. Each section shows its own f
 | Address | Host, Port, and Database; or the URI; or the SQLite file |
 | Credentials | User, Password, and Credential |
 | Security | TLS, CA file, client certificate, and client key |
-| Options | SQLite foreign keys and busy limit, Pool, Read only, Production, Connect limit, SQL limit, Idle limit, Theme, and Icon |
+| Options | Schemas (Databases in MySQL and Redis), SQLite foreign keys and busy limit, Pool, Read only, Production, Connect limit, SQL limit, Idle limit, Theme, and Icon |
 
 A section without fields stays out of the sidebar, so SQLite has no Credentials and no Security.
 The buttons stay at the bottom of each section.
 All sections keep the height of the largest section, so the window does not move. The width starts at 76 columns, grows to 140 columns on a larger screen, and leaves 8 columns free.
-The form of a connected connection also has the sidebar: General holds the name, and Options holds the theme, the icon, and the production mark.
+The form of a connected connection also has the sidebar: General holds the name, and Options holds the schemas, the theme, the icon, and the production mark.
 A save or a test with a bad value opens the section of the field and puts the focus on it.
 **Idle limit** closes a session that waits in the pool for that time, with 300 seconds as the default and 0 for no limit. A console with an open transaction keeps its session.
+**Schemas** holds the schemas, or the databases, that the connection shows, with commas between them. Empty shows all. `Ctrl+O` or the `...` button reads the names from the server and opens a list with a mark on each row. The current schema always appears. A connection with a list shows `(filtered)` in the explorer.
 
 The focused field has a mark at the start of the line, a highlighted label, and its own background.
 Without color, the mark is `>`, and the label is bold.
@@ -665,7 +739,7 @@ During exit, resolve the current failure before asking about another console.
 - An invalid JSON configuration shows file and error position, without unlocking database operations until the fix.
 - The user fixes that file outside the application and uses **Reload**.
 - An unreadable `workspace.json` uses the initial state and shows a non-blocking warning.
-- The action for a removed script uses the label **Close and discard text**.
+- The action for a removed script uses the label **Close and discard the text**.
 
 ### Credentials
 
@@ -706,7 +780,7 @@ These flows follow approved rules.
 | Credential deletion | Separate confirmation, with the connection identified and a warning about other project copies | Removing the connection does not authorize erasing the secret |
 
 The current screen tests do not validate the native dialogs of Keychain or Secret Service.
-The [plan matrix](INITIAL_PLAN.md#credential-phase-close) separates implementation and pending validation.
+The [vault validation](INITIAL_PLAN.md#validation-of-the-real-vaults) separates recorded checks from pending desktop validation.
 
 ## 6. Navigation and focus
 
@@ -724,7 +798,9 @@ Contexts that need separate handling:
 | Results | Select and copy data; navigate only in the loaded rows |
 | Dialog | Resolve the question without triggering execution commands in the background |
 
-The initial autocomplete offers schemas, tables, views, and columns; functions and signatures stay outside that scope.
+Autocomplete offers schemas, tables, views, columns, aliases, CTEs, and dialect keywords.
+Local lists also provide built-in types, functions with signatures, column options, and query clauses.
+User-defined function completion stays out of scope.
 Without a catalog available, suggest the keywords of the dialect.
 The focus, tab, and execution shortcuts are defined in [KEYMAP.md](KEYMAP.md).
 Navigation shortcuts do not capture characters during text input.
@@ -957,17 +1033,19 @@ The execution stays blocked until the choice and confirmation of a connection.
 ### Settings
 
 Open with `Ctrl+W ,`.
-The window has 72 columns and grows to 140 on a larger screen, with 8 free columns. The height does not change.
+The window has 72 columns and grows to 140 on a larger screen, with 8 free columns.
+The command list in **Shortcuts** grows to 30 rows. Other sections keep a fixed height.
 The lists, the conflicts, **Rename console**, the password, and the questions grow to 100 columns. The lists and the conflicts also grow to 30 rows. The cell detail and the help grow to 140 columns.
 The project writes only the values it declares.
 Offer the global or project scope and the fields below.
 Show the values inherited from global and allow removing a project definition to use the global one.
 **Save** writes the changes of all sections. **Cancel** changes nothing.
-The sidebar groups the fields in the **General**, **Editor**, **Results**, and **Appearance** sections. The panel shows one section at a time.
+The sidebar groups fields in **General**, **Editor**, **Results**, **Appearance**, and **Shortcuts**. The panel shows one section at a time.
 The scope and the buttons stay outside the sections, and appear in all of them.
 An error note appears above the buttons, even when the field is in another section.
 A new section needs a row in the `SECTIONS` table, and the window grows with the largest section.
-Keep `config.json` for advanced options, such as the `keymap`.
+Use **Shortcuts** to record, remove, or restore command bindings per keyboard mode and scope.
+Settings checks conflicts before saving. Hand edits of `preferences.keymap` remain supported.
 When the keyboard mode changes, keep text, cursor, and scroll.
 The switch happens in the editor itself, so the selection and the history continue, including on reload.
 
@@ -988,7 +1066,9 @@ The switch happens in the editor itself, so the selection and the history contin
 ╰────────────────┴─────────────────────────────────────────────────────╯
 ```
 
-The **Results** section includes **System commands**, which starts Off and only filters the Messages view.
+The **Editor** section includes **Autocomplete** and **Undo limit**, with 64 MiB per console as the conventional undo default.
+The **Results** section includes **Limit in SQL**, on by default, and **System commands**, off by default.
+**System commands** only filters the Messages view.
 
 The **Appearance** section has the **Default theme** field.
 The choice changes the colors at once, before saving. `Esc` and **Cancel** bring back the saved theme.
@@ -1072,7 +1152,7 @@ The **Format JSON** option of the Settings dialog chooses the initial shape. The
 `Left` and `Right` change row, without reading another page, and the grid cursor follows the row.
 The window keeps the scroll, so the same columns stay in view when comparing two rows.
 Each value shows up to 4,096 columns and ends with `…` at the cut. `Enter` in the grid shows the whole value.
-The JSON stays compact in this window.
+The JSON stays compact in this window. `f` toggles formatting only in the cell value window.
 
 ### Help screen
 
@@ -1108,6 +1188,9 @@ The footer shows the matching command count and the visible row range. A scrollb
 
 `Ctrl+W` opens this window above the status bar. The window shows the effective keys of the `keymap`.
 The rows change with the panel of the cursor, and a group without rows leaves the window. `docs/KEYMAP.md` has the rule.
+`Space` opens the functional commands of the current panel, with its effective shortcuts.
+The title names the panel and, when applicable, the console or table. `Tab` keeps the explicit explorer page.
+An unmatched key or `Esc` closes the page without editing text. Unassigned commands remain available in the palette.
 
 ```text
 ╭─ Ctrl+W ─────────────────────────────────────────────────────────╮
@@ -1125,7 +1208,12 @@ Each row shows success or failure, the age, and the start of the SQL. The typed 
 
 ### Command palette
 
-`Ctrl+P` opens this window. Each word of the filter needs to appear in the name or the key.
+`Ctrl+P` opens this window. Each word can appear in the label, shortcut, action name, or technical aliases.
+The list includes available functional editor, grid, diagram, compare, and application commands, without duplicate actions.
+Stop and transaction actions take priority, then panel actions. Unavailable actions stay out of the list.
+Navigator row actions require navigator focus. Add connection and scripts without a connection remain global.
+Actions name their target where needed. A panel shortcut appears only where that shortcut works.
+The palette includes Apply filters and Clear filters for table filters without adding default shortcuts.
 The window has 64 columns and 12 list rows, and grows to 100 columns and 30 rows on a larger screen. It stays on top.
 
 ```text

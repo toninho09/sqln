@@ -7,8 +7,8 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 
 **Databases:** SQLite, PostgreSQL, MySQL, Redis, and Valkey.
 
-> SQLN is in development. Public packages and signed release binaries are not available yet.
-> Start with the source installation below. Review the [known limitations](#known-limitations) before use with important data.
+> SQLN is in development. This repository supports source installation and unsigned workflow binaries.
+> Review the [known limitations](#known-limitations) before use with important data.
 
 ![SQLN SQL console with a highlighted query, database navigator, and results grid](docs/images/query-console.png)
 
@@ -36,9 +36,13 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 
 - **Several connections and consoles.** Keep independent scripts and table tabs open together.
 - **Two editor modes.** Use conventional keys or Vim, with search, replace, undo, and SQL highlighting.
-- **Catalog autocomplete.** Complete schemas, tables, views, columns, aliases, and SQL keywords.
+- **Catalog autocomplete.** Complete schemas, tables, views, columns, aliases, SQL keywords, built-in types, and functions with signatures.
 - **SQL tools.** Format statements, toggle comments, and generate SQL templates from the navigator.
+- **Query parameters.** Write `:name` values, fill the panel under the editor, and run with native bindings that keep values out of the SQL text.
 - **Table browsing.** Apply SQL filters, sort columns, move between pages, and count rows on request.
+- **Grid editing.** Change table values locally, review the SQL, and apply checked updates in one transaction.
+- **Key navigation.** Go from a row to the row that its foreign key reads, or to the rows of other tables that read it.
+- **Database objects.** See routines, sequences, triggers, and types in the navigator, and open the DDL of an object in a new console.
 - **Results inspection.** Select cells, search loaded rows, inspect a row vertically, and format JSON values.
 - **Export.** Write CSV, TSV, JSON, JSON Lines, or SQL inserts from the export dialog.
 - **Import.** Load CSV, TSV, JSON, or JSON Lines into a table, with column mapping and a preview.
@@ -46,6 +50,7 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Query plans.** See the plan of a statement as a tree, with the share of each node.
 - **Server sessions.** List the sessions of PostgreSQL or MySQL, cancel a query, or end a session.
 - **ER diagrams.** Draw the tables and foreign keys of a schema or a table, and copy the diagram as Mermaid text.
+- **Compare.** Compare table structures or data across SQL connections, and open a sync script without running it.
 - **Transactions.** Use autocommit or manual mode, with transaction state and age on screen.
 - **Saved work.** Save consoles automatically and reopen tabs with their cursor, scroll, and layout.
 - **Credential storage.** Use session passwords, macOS Keychain, or Linux Secret Service.
@@ -78,8 +83,7 @@ Choose the output format, rows, file, and formatting options before writing an e
 - A current stable Rust toolchain, with Cargo, for source installation.
 - A native compiler and linker. SQLite is bundled and needs a C compiler.
 
-The local development toolchain is Rust 1.98.0. The project does not declare a minimum Rust version.
-CI checks the current stable toolchain.
+The project does not declare a minimum Rust version. CI checks the current stable toolchain.
 
 On macOS, install the command-line development tools if you do not have them:
 
@@ -122,7 +126,7 @@ To pass an application argument through Cargo:
 cargo run --release --locked -- ./existing.db
 ```
 
-The database file must already exist. SQLN does not create a missing SQLite database from a command-line target.
+For a missing SQLite file, SQLN asks before allowing creation. Cancel leaves the console without that database.
 
 ### Workflow build artifacts
 
@@ -198,7 +202,7 @@ PING
 
 Each Redis command occupies one line. Redis consoles do not run SQL.
 
-Press `Ctrl+P` for the command palette or `F1` for help at any time.
+Press `Ctrl+P` for the command palette or `F1` for help in the main panels.
 
 ## Keyboard guide
 
@@ -218,7 +222,10 @@ Uppercase keys matter: `Ctrl+W C` and `Ctrl+W c` are different actions.
 | Run the whole script | `Shift+F5` or `Ctrl+W s` |
 | Show the sessions of the server | `Ctrl+W S` |
 | Show the ER diagram of the tab or the row | `Ctrl+W D` |
+| Compare the tab or the row | `Ctrl+W v` |
+| Follow a key of the row of a table tab | `Ctrl+W F` |
 | Open the commands of the explorer | `Ctrl+W Tab` |
+| Open the commands of the current panel | `Ctrl+W Space` |
 | Show the plan of a statement | `Ctrl+W E` |
 | Run a statement and show its plan | `Ctrl+W A` |
 | Stop execution | `Ctrl+W x` |
@@ -260,22 +267,30 @@ Change **Autocomplete** in Settings if you prefer `Enter` or both keys to accept
 | Action | Key |
 |---|---|
 | Open connection, table, or view | `Enter` |
+| Open the DDL of a routine, sequence, trigger, or type | `Enter` |
 | Open console list / create console | `n` |
 | Add / edit connection | `a` / `e` |
 | Refresh catalog | `r` |
-| Filter loaded tables and views | `/` |
+| Filter loaded tables, views, and other objects | `/` |
 | Inspect structure | `i` |
 | Show the ER diagram | `d` |
+| Compare structure or data | `c` |
 | Show server sessions | `S` |
-| Generate SQL templates | `g` |
+| Generate SQL templates or the DDL | `g` |
 | Copy object name | `y` |
 | Disconnect | `D` |
 | Remove saved password, with confirmation | `p` |
 
 The tree filter searches loaded catalogs only. It does not open a connection to find more objects.
 
-The hint row of the navigator shows only the main commands and the ER diagram. Press `Ctrl+W`, then `Tab`, to list each command of the current row.
-That page uses the same keys as the table above, and it works from any panel. Its title names the row that the commands act on.
+Under each schema, the navigator shows a group for each kind of object after the tables and views: **Routines**, **Sequences**, **Triggers**, and **Types**. An empty group does not appear.
+The **DDL** entry of the `g` list, or `Enter` on an object, reads the DDL and opens it in a new console of the connection. Nothing runs.
+PostgreSQL has no function that gives the DDL of a table, a sequence, or a type, so SQLN writes that text from the catalog, and a comment at the top says so.
+
+The hint row puts common commands first and shows more commands on wider terminals. It keeps the command palette shortcut visible.
+Press `Ctrl+W Space` for the current panel commands. Press `Ctrl+W Tab` for the commands of the selected explorer row.
+The explorer page uses the same keys as the table above and works from any panel. Its title names the target row.
+The palette offers explorer row actions only with explorer focus. Add connection and scripts without a connection stay global.
 
 The [full key map](docs/KEYMAP.md) covers forms, dialogs, export, mouse controls, and custom shortcuts.
 
@@ -290,17 +305,52 @@ Press `Enter` on a table or view to open its table tab.
 - Press `[` and `]` for previous and next pages.
 - Press `m` to load more rows.
 - Press `c` to count rows for the applied filter. SQLN does not count automatically.
+- Press `F` to follow a foreign key of the current row. `→` marks a key that leaves the table, and `←` marks a key of another table that reads the row.
+
+`F` opens the tab of the other table with a `WHERE` filter of the key values. An open tab of that table keeps its `ORDER BY` and gets the new filter.
+With one key, SQLN goes there at once; with more keys, it shows a list. A key with `NULL` in the row stays out of the list.
 
 Use an explicit, unique `ORDER BY` when stable page order matters.
 Pages use offsets; concurrent database changes can still move rows between pages.
 Redis and Valkey use key-value views instead of SQL filter fields.
+
+### Edit table values
+
+Grid editing supports SQLite, PostgreSQL, and MySQL InnoDB tables with a primary key.
+Views, console results, binary values, key columns, identities, and generated columns stay protected.
+Read-only connections do not offer editing.
+
+1. Select a non-key cell in a table tab.
+2. Press `F2` to open its value editor.
+3. Change the value.
+4. Press `F2` or `Ctrl+S` to keep the value locally.
+5. Press `Ctrl+S` in the grid to review the pending values and SQL.
+6. Press `F2` in the review to apply the changes.
+
+Production connections ask for another confirmation.
+`Alt+N` sets a cell to SQL `NULL`; empty text and the text `NULL` remain different.
+`Alt+R` opens the review. `Alt+D` asks before discarding pending changes.
+Use the palette if your terminal does not send an Alt shortcut.
+
+A `*` and underline mark each changed cell. The summary shows pending row and cell counts.
+Typing and keeping a value do not write to the database.
+Copy, export, import, filtering, sorting, and page changes require resolving pending changes first.
+Closing a dirty table offers Apply, Discard, and Cancel. Pending changes stay in memory only.
+
+Apply checks the original rows under database locks and updates all pending rows in one transaction.
+A conflict or error keeps the local values and rolls back the transaction.
+A confirmed commit reloads the first page, including trigger changes, without applying draft filter text.
+The cursor and selection return by primary key when their rows remain on that page.
+An unknown commit result blocks another apply. Verify the database, then discard the local changes and reload.
+SQLN never retries a write automatically.
+Triggers and functions with external or nontransactional effects cannot provide an all-or-nothing guarantee.
 
 ### Inspect, copy, and export
 
 In a results grid:
 
 - Press `Enter` to inspect a cell, or `r` to inspect a row vertically.
-- Press `f` in a value or row window to toggle JSON formatting.
+- Press `f` in a value window to toggle JSON formatting. Row windows keep JSON compact.
 - Press `Ctrl+F` in conventional mode, or `/` in Vim mode, to search loaded rows.
 - Copy a selection as TSV with `Ctrl+C`, or `y` in Vim mode.
 - Press `e` to open the export dialog.
@@ -394,11 +444,13 @@ Closing a console with an open transaction requires a decision.
 
 SQLN uses a connection pool. Do not rely on temporary tables or session settings surviving between separate executions.
 A session that waits in the pool for the **Idle limit** of the connection form closes, with 300 seconds as the default. The next use opens a new session. A console with an open transaction keeps its session.
+The **Schemas** field of the connection form (**Databases** in MySQL and Redis) limits the schemas that the explorer, the schema selector, the compare dialog, and completion show. `Ctrl+O` opens a list of the server to mark them. The current schema always appears.
 Keep dependent statements in one script or an open transaction.
 Redis and Valkey do not offer the SQL manual-transaction controls.
 
 Row caps and the result-memory budget limit how much data SQLN loads. A capped result is not the full result set.
-By default, SQLN adds `LIMIT` with the row cap and one row to a plain read without its own limit, so the database does not scan the whole table. **Messages** shows each added `LIMIT`. Turn off **Limit in SQL** in Settings > Results to send the text unchanged.
+By default, SQLN adds `LIMIT` with the row cap and one row to eligible plain reads without their own limit.
+This can reduce database work. Sorting without an index can still require a full scan. **Messages** shows each added `LIMIT`. Turn off **Limit in SQL** in Settings > Results to send the text unchanged.
 Change limits in Settings and statement deadlines in the connection form.
 Cancellation depends on the database response; **Stop** is not a rollback guarantee.
 
@@ -534,7 +586,7 @@ Before sharing any diagnostic file, inspect it for private paths and connection 
 sqln [options] [target]
 ```
 
-`target` is one existing SQLite file or one connection URI.
+`target` is one SQLite file path or one connection URI. SQLN asks before creating a missing SQLite file.
 Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, and `valkeys`.
 
 | Option | Purpose |
@@ -569,15 +621,19 @@ A `.sql` path is not a script-opening argument; file targets are SQLite database
 
 - Windows support is not part of the current CI or binary matrix.
 - SQLite needs an on-disk file. In-memory databases are not supported.
-- Grid cells are not editable. Use SQL for data changes.
+- Grid editing supports updates only, in keyed table tabs. Use SQL for inserts, deletes, binary values, or other grids.
 - Arbitrary external `.sql` files cannot open directly as consoles.
 - There is no integrated SSH tunnel, IAM authentication, or Kerberos authentication.
 - MariaDB has no tree plan, so `Ctrl+W E` shows the error of the server. MySQL has no tree plan for a write on one table.
 - PostgreSQL `COPY FROM STDIN` and `COPY TO STDOUT` are not supported.
 - An ER diagram has no search, no zoom, and no export to an image file. The Mermaid copy holds the boxes on screen.
+- The DDL of a PostgreSQL table that SQLN writes leaves out partitions, inheritance, comments, grants, the owner, storage options, policies, and triggers. MySQL gives the DDL of a routine or a trigger only with the privilege to see it.
+- Key navigation acts only in a table tab. A console result does not tell the table of a column.
+- Query parameters support SQLite, PostgreSQL, and MySQL consoles with scalar values. Table filters, Redis, and Valkey have none.
 - Search in results covers loaded rows only. Exporting all rows can issue a new read.
 - Import cannot create a table, update rows, or read SQL files. A MyISAM table cannot undo an import.
-- Undo and redo have entry limits but no memory budget. Large scripts and repeated edits can use substantial memory.
+- Conventional undo uses `undoLimitBytes`, with 64 MiB per console by default. The newest undo and redo steps stay even above that limit.
+- Vim undo and redo keep up to 100 full-text entries each, without a memory budget. Large scripts can use substantial memory.
 - Native terminals, clipboard behavior, network disks, real network failures, and desktop vault prompts need further manual validation.
 - Workflow builds do not provide signing, notarization, or a dependency audit.
 

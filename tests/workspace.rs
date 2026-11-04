@@ -1185,13 +1185,13 @@ fn the_help_screen_follows_the_panel_and_the_mode() {
     let mut f = Fixture::open(vec![path], KeyboardMode::Vim);
     f.code(KeyCode::F(1));
     f.assert_sees("Keys · Vim · Editor");
-    f.assert_sees("Suggestions");
+    f.assert_sees("Open the suggestions");
     f.code(KeyCode::Esc);
     f.navigator();
     f.code(KeyCode::F(1));
     f.assert_sees("Keys · Vim · Navigator");
     f.assert_sees("Add a connection");
-    f.assert_not_sees("Suggestions");
+    f.assert_not_sees("Open the suggestions");
     f.code(KeyCode::Esc);
     f.prefix('j');
     f.prefix('?');

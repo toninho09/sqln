@@ -18,7 +18,7 @@ use super::{
 };
 use crate::catalog::{
     Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
-    group_foreign_keys,
+    add_objects, group_foreign_keys,
 };
 use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, RowWriter, Value};
@@ -37,6 +37,15 @@ const CATALOG_SQL: &str = "\
     LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = s.SCHEMA_NAME \
     WHERE s.SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') \
     ORDER BY 1, 2";
+/// The routines and triggers of each schema of `CATALOG_SQL`.
+const OBJECTS_SQL: &str = "\
+    SELECT ROUTINE_SCHEMA, ROUTINE_NAME, LOWER(ROUTINE_TYPE), '' \
+    FROM information_schema.ROUTINES \
+    WHERE ROUTINE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') \
+    UNION ALL \
+    SELECT TRIGGER_SCHEMA, TRIGGER_NAME, 'trigger', EVENT_OBJECT_TABLE \
+    FROM information_schema.TRIGGERS \
+    WHERE TRIGGER_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')";
 const COLUMNS_SQL: &str = "\
     SELECT COLUMN_NAME FROM information_schema.COLUMNS \
     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION";
@@ -45,6 +54,13 @@ const FOREIGN_KEYS_SQL: &str = "\
     REFERENCED_COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE \
     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND REFERENCED_TABLE_NAME IS NOT NULL \
     ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION";
+/// The keys of other tables that reach a relation, with the shape of `FOREIGN_KEYS_SQL`:
+/// the column of the relation comes before the column of the other table.
+const REFERENCING_KEYS_SQL: &str = "\
+    SELECT CONSTRAINT_NAME, TABLE_SCHEMA, TABLE_NAME, REFERENCED_COLUMN_NAME, COLUMN_NAME \
+    FROM information_schema.KEY_COLUMN_USAGE \
+    WHERE REFERENCED_TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME = ? \
+    ORDER BY TABLE_SCHEMA, TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION";
 /// A session call that gets no answer in this time counts as lost.
 const SESSION_LIMIT: Duration = Duration::from_secs(5);
 
@@ -127,6 +143,7 @@ impl Connector for MySqlConnector {
         Capabilities {
             namespace: Namespace::Database,
             transactions: true,
+            parameters: true,
             ..Capabilities::default()
         }
     }
@@ -224,8 +241,14 @@ fn write_cell(row: &mut RowWriter, cell: Option<&mysql_async::Value>, column: &C
     let bytes = match cell {
         None | Some(mysql_async::Value::NULL) => return row.push(Value::Null),
         Some(mysql_async::Value::Bytes(bytes)) => bytes.as_slice(),
-        // The text protocol sends bytes. This line keeps any other form readable.
-        Some(other) => return row.push(Value::Text(&other.as_sql(true))),
+        Some(other) => {
+            let text = other.as_sql(true);
+            return row.push(if is_number(column) {
+                Value::Number(&text)
+            } else {
+                Value::Text(text.trim_matches('\''))
+            });
+        }
     };
     row.push(match std::str::from_utf8(bytes) {
         Ok(text) if !is_binary(column) && is_number(column) => Value::Number(text),
@@ -368,11 +391,21 @@ impl MySqlSession {
     ) -> Result<Outcome, ExecError> {
         let free = self.transaction == TransactionState::None;
         let canceller = self.canceller();
-        let mut result = self
+        let result = self
             .conn()
             .query_iter(sql)
             .await
             .map_err(|error| exec_error(&error, sql))?;
+        Self::consume(result, sql, sink, free, canceller).await
+    }
+
+    async fn consume<P: mysql_async::prelude::Protocol>(
+        mut result: mysql_async::QueryResult<'_, '_, P>,
+        sql: &str,
+        sink: &mut ResultSink,
+        free: bool,
+        canceller: Arc<dyn Canceller>,
+    ) -> Result<Outcome, ExecError> {
         let mut outcome = Outcome::default();
         let mut stopped_at_cap = false;
         loop {
@@ -532,6 +565,50 @@ impl Session for MySqlSession {
         })
     }
 
+    async fn run_parameters(
+        &mut self,
+        sql: &str,
+        parameters: &[crate::sql::parameters::Parameter],
+        mut sink: ResultSink,
+    ) -> Result<StatementEnd, ExecError> {
+        use crate::sql::parameters::Kind;
+        let values: Vec<_> = parameters
+            .iter()
+            .map(|parameter| match parameter.kind {
+                Kind::Null => mysql_async::Value::NULL,
+                Kind::Boolean => mysql_async::Value::Int(i64::from(parameter.value == "true")),
+                Kind::Text | Kind::Number => {
+                    mysql_async::Value::Bytes(parameter.value.as_bytes().to_vec())
+                }
+            })
+            .collect();
+        self.running = true;
+        let command = crate::sql::parameters::command(sql, parameters);
+        let read = crate::command_log::observe(self.trace.clone(), command, async {
+            let free = self.transaction == TransactionState::None;
+            let canceller = self.canceller();
+            let result = self
+                .conn()
+                .exec_iter(sql, values)
+                .await
+                .map_err(|error| exec_error(&error, sql))?;
+            Self::consume(result, sql, &mut sink, free, canceller).await
+        })
+        .await;
+        if read.is_ok() {
+            self.send_warnings(sql, &mut sink).await;
+        }
+        let (rows, limit) = sink.finish().await;
+        self.running = false;
+        self.status_is_current = read.is_ok();
+        read.map(|outcome| StatementEnd {
+            rows,
+            has_columns: outcome.has_columns,
+            changed: outcome.changed,
+            limit,
+        })
+    }
+
     async fn transaction_state(&mut self) -> TransactionState {
         self.transaction = self.observed_state().await;
         self.transaction
@@ -584,8 +661,7 @@ impl Session for MySqlSession {
             if schemas.last().is_none_or(|schema| schema.name != name) {
                 schemas.push(Schema {
                     name,
-                    relations: Vec::new(),
-                    partial: false,
+                    ..Schema::default()
                 });
             }
             if let (Some(schema), Some(relation)) = (schemas.last_mut(), relation) {
@@ -597,9 +673,21 @@ impl Session for MySqlSession {
                     },
                     columns: Columns::NotLoaded,
                     foreign_keys: Vec::new(),
+                    referencing: Vec::new(),
                 });
             }
         }
+        let objects: Vec<(String, String, String, String)> = crate::command_log::observe(
+            self.trace.clone(),
+            OBJECTS_SQL,
+            self.conn().query(OBJECTS_SQL),
+        )
+        .await
+        .map_err(|error| exec_error(&error, OBJECTS_SQL))?;
+        let objects = objects
+            .into_iter()
+            .map(|(schema, name, kind, detail)| [schema, name, kind, detail]);
+        add_objects(&mut schemas, objects);
         let sql = "SELECT DATABASE()";
         let current: Option<Option<String>> =
             crate::command_log::observe(self.trace.clone(), sql, self.conn().query_first(sql))
@@ -633,16 +721,37 @@ impl Session for MySqlSession {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<ForeignKey>, ExecError> {
+        self.read_keys(FOREIGN_KEYS_SQL, schema, relation).await
+    }
+
+    async fn read_referencing_keys(
+        &mut self,
+        schema: &str,
+        relation: &str,
+    ) -> Result<Vec<ForeignKey>, ExecError> {
+        self.read_keys(REFERENCING_KEYS_SQL, schema, relation).await
+    }
+}
+
+impl MySqlSession {
+    /// Reads the keys of a key query: the name, the schema and the name of the other
+    /// table, the column of the relation, and the column of the other table.
+    async fn read_keys(
+        &mut self,
+        sql: &str,
+        schema: &str,
+        relation: &str,
+    ) -> Result<Vec<ForeignKey>, ExecError> {
         let command = crate::command_log::limited(format_args!(
-            "{FOREIGN_KEYS_SQL}\nParameters: schema={schema:?}, relation={relation:?}"
+            "{sql}\nParameters: schema={schema:?}, relation={relation:?}"
         ));
         let rows: Vec<(String, String, String, String, String)> = crate::command_log::observe(
             self.trace.clone(),
             command,
-            self.conn().exec(FOREIGN_KEYS_SQL, (schema, relation)),
+            self.conn().exec(sql, (schema, relation)),
         )
         .await
-        .map_err(|error| exec_error(&error, FOREIGN_KEYS_SQL))?;
+        .map_err(|error| exec_error(&error, sql))?;
         let pairs = rows.into_iter().map(|row| KeyColumn {
             key: row.0,
             target: RelationRef {

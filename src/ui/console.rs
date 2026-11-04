@@ -50,6 +50,7 @@ pub struct ConsoleLayout {
     /// Each button, with its first column and the column after its end.
     pub control_buttons: Vec<(u16, u16, Control)>,
     pub editor: Rect,
+    pub parameters: super::parameters::ParameterLayout,
     pub tabs: Rect,
     pub results: Rect,
     /// The rows that the editor and the results share.
@@ -58,6 +59,7 @@ pub struct ConsoleLayout {
 
 pub struct BarData<'a> {
     pub show_system_commands: bool,
+    pub parameters_shortcut: &'a str,
     pub connection: &'a str,
     pub namespace: Namespace,
     /// The schema that a session reads without a selection, when the catalog gives it.
@@ -219,16 +221,23 @@ pub struct MainTab {
     pub index: usize,
 }
 
-/// Draws the main tabs. It returns the columns of each tab, and it starts
-/// the row at a later tab when the active tab does not fit.
+/// Draws the main tabs and the **Quit** button at the right end. It returns the columns
+/// of each tab and the area of the button. The row starts at a later tab when the active
+/// tab does not fit.
 pub fn draw_main_tabs(
     frame: &mut Frame,
     area: Rect,
     views: Vec<TabView>,
     active: usize,
     theme: &Theme,
-) -> Vec<MainTab> {
+) -> (Vec<MainTab>, Rect) {
     frame.buffer_mut().set_style(area, theme.tabline);
+    let quit = draw_quit_button(frame, area, theme);
+    // One column stays free before the button.
+    let area = Rect {
+        width: area.width.saturating_sub(quit.width + 2),
+        ..area
+    };
     // A tab is one column, the badge with a column after it, its label, one column,
     // the close mark, and one column.
     let width_of = |view: &TabView| {
@@ -286,7 +295,23 @@ pub fn draw_main_tabs(
         }
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
-    tabs
+    (tabs, quit)
+}
+
+/// Draws the **Quit** button at the right end of the row, with one column after it, as
+/// the buttons of a console. It returns the area of the button.
+fn draw_quit_button(frame: &mut Frame, area: Rect, theme: &Theme) -> Rect {
+    let label = theme.button(text::CONTROL_QUIT);
+    let width = u16::try_from(label.width())
+        .unwrap_or(u16::MAX)
+        .min(area.width.saturating_sub(1));
+    let button = Rect {
+        x: area.right().saturating_sub(width + 1),
+        width,
+        ..area
+    };
+    frame.render_widget(Paragraph::new(Span::styled(label, theme.control)), button);
+    button
 }
 
 /// Draws the row under the main tabs.
@@ -309,11 +334,16 @@ pub fn draw_console(
     const BAR_ROWS: u16 = 3;
     let title_rows = u16::from(bar.title);
     let shared = area.height.saturating_sub(BAR_ROWS + title_rows);
-    let editor_rows = u16::try_from(u32::from(shared) * u32::from(editor_ratio) / 100).unwrap_or(0);
-    let [title, controls, editor, tabs, results, summary] = Layout::vertical([
+    let parameter_rows = super::parameters::height(&console.parameters, shared);
+    let editor_rows = u16::try_from(
+        u32::from(shared.saturating_sub(parameter_rows)) * u32::from(editor_ratio) / 100,
+    )
+    .unwrap_or(0);
+    let [title, controls, editor, parameters, tabs, results, summary] = Layout::vertical([
         Constraint::Length(title_rows),
         Constraint::Length(1),
         Constraint::Length(editor_rows.max(1)),
+        Constraint::Length(parameter_rows),
         Constraint::Length(1),
         Constraint::Min(0),
         Constraint::Length(1),
@@ -340,6 +370,14 @@ pub fn draw_console(
     {
         draw_welcome(frame, editor, welcome, theme);
     }
+    let parameters = super::parameters::draw(
+        frame,
+        parameters,
+        &mut console.parameters,
+        focused && console.focus == Focus::Parameters,
+        bar.parameters_shortcut,
+        theme,
+    );
     let focused = focused && console.focus == Focus::Results;
     let active = console.active.min(console.results.len());
     let labels = tab_labels(console, tabs);
@@ -370,6 +408,7 @@ pub fn draw_console(
         controls,
         control_buttons,
         editor,
+        parameters,
         tabs,
         results,
         split,
@@ -649,7 +688,20 @@ pub fn draw_grid(
             } else {
                 Style::new()
             };
-            draw_cell(buffer, *x, y, *width, value, style);
+            let changed = result.edits.changed(row_index, *column);
+            let style = if changed {
+                style
+                    .patch(theme.hint)
+                    .add_modifier(ratatui::style::Modifier::UNDERLINED)
+            } else {
+                style
+            };
+            if changed && *width > 0 {
+                draw_cell(buffer, x + 1, y, width.saturating_sub(1), value, style);
+                buffer.set_stringn(*x, y, "*", 1, style);
+            } else {
+                draw_cell(buffer, *x, y, *width, value, style);
+            }
         }
     }
     let track = Rect {
@@ -682,6 +734,23 @@ pub fn header_column_at(result: &ResultTab, area: Rect, column: u16, row: u16) -
         .map(|(index, _, _)| index)
 }
 
+fn grid_row_at(result: &ResultTab, area: Rect, row: u16) -> Option<usize> {
+    if row <= area.y || row >= area.bottom() {
+        return None;
+    }
+    let index = result.view.top + usize::from(row - area.y - 1);
+    (index < result.table.rows.len()).then_some(index)
+}
+
+/// Returns the row at a screen cell of a row number.
+pub fn grid_row_number_at(result: &ResultTab, area: Rect, column: u16, row: u16) -> Option<usize> {
+    let end = grid_body(area, &result.table).x.saturating_sub(NUMBER_END);
+    if column < area.x || column >= end {
+        return None;
+    }
+    grid_row_at(result, area, row)
+}
+
 /// Returns the row and the column at a screen cell.
 pub fn grid_cell_at(
     result: &ResultTab,
@@ -689,13 +758,7 @@ pub fn grid_cell_at(
     column: u16,
     row: u16,
 ) -> Option<(usize, usize)> {
-    if row <= area.y || row >= area.bottom() {
-        return None;
-    }
-    let row_index = result.view.top + usize::from(row - area.y - 1);
-    if row_index >= result.table.rows.len() {
-        return None;
-    }
+    let row_index = grid_row_at(result, area, row)?;
     visible_columns(&result.table, &result.view, grid_body(area, &result.table))
         .into_iter()
         .find(|(_, x, width)| column >= *x && column <= x + width)

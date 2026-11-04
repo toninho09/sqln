@@ -158,6 +158,7 @@ fn key_code(name: &str) -> Option<KeyCode> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Region {
     Global,
+    Editor,
     Navigator,
     Grid,
     Diagram,
@@ -175,7 +176,20 @@ pub enum Action {
     OpenSessions,
     OpenDiagram,
     OpenCompare,
+    /// Follows a key of the row of the cursor of a table tab.
+    FollowKey,
     ExplorerCommands,
+    ContextCommands,
+    EditorSave,
+    EditorFind,
+    EditorReplace,
+    EditorSuggestions,
+    EditorUndo,
+    EditorRedo,
+    EditorSelectAll,
+    EditorCopy,
+    EditorCut,
+    EditorPaste,
     Stop,
     ToggleMode,
     Commit,
@@ -194,6 +208,8 @@ pub enum Action {
     OpenSettings,
     FocusLeft,
     FocusRight,
+    FocusParameters,
+    ToggleParameters,
     FocusUp,
     FocusDown,
     NavigatorUp,
@@ -241,6 +257,8 @@ pub enum Action {
     GridCloseResult,
     GridPreviousResult,
     GridNextResult,
+    GridApply,
+    GridClearFilters,
     GridFocusFilter,
     GridFocusOrder,
     GridSortColumn,
@@ -248,10 +266,16 @@ pub enum Action {
     GridCountRows,
     GridExport,
     GridImport,
+    GridEditCell,
+    GridSetNull,
+    GridReviewEdits,
+    GridSaveEdits,
+    GridDiscardEdits,
     GridStructure,
     GridReload,
     GridCancelQuery,
     GridEndSession,
+    GridFollowKey,
     CompareScript,
     CompareCopy,
     DiagramUp,
@@ -298,11 +322,38 @@ impl Action {
             .map(|item| item.action)
     }
 
+    /// Returns true for a command, without basic cursor or view movement.
+    pub fn is_command(self) -> bool {
+        !self.extends_selection()
+            && !matches!(
+                self,
+                Self::NavigatorUp
+                    | Self::NavigatorDown
+                    | Self::DiagramUp
+                    | Self::DiagramDown
+                    | Self::DiagramLeft
+                    | Self::DiagramRight
+                    | Self::DiagramPanUp
+                    | Self::DiagramPanDown
+                    | Self::DiagramPanLeft
+                    | Self::DiagramPanRight
+                    | Self::DiagramPageUp
+                    | Self::DiagramPageDown
+            )
+    }
+
     /// Returns true for an action that only the grid of a table has.
     pub fn is_table_only(self) -> bool {
         matches!(
             self,
-            Action::GridFocusFilter
+            Action::GridEditCell
+                | Action::GridSetNull
+                | Action::GridReviewEdits
+                | Action::GridSaveEdits
+                | Action::GridDiscardEdits
+                | Action::GridApply
+                | Action::GridClearFilters
+                | Action::GridFocusFilter
                 | Action::GridFocusOrder
                 | Action::GridSortColumn
                 | Action::GridLoadMore
@@ -311,6 +362,7 @@ impl Action {
                 | Action::GridReload
                 | Action::GridCancelQuery
                 | Action::GridEndSession
+                | Action::GridFollowKey
         )
     }
 
@@ -430,10 +482,114 @@ const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(
+        Action::FollowKey,
+        Region::Global,
+        "followKey",
+        &["ctrl+w F"],
+        &[],
+    ),
+    both(
         Action::ExplorerCommands,
         Region::Global,
         "explorerCommands",
         &["ctrl+w tab"],
+        &[],
+    ),
+    both(
+        Action::ContextCommands,
+        Region::Global,
+        "contextCommands",
+        &["ctrl+w space"],
+        &[],
+    ),
+    both(
+        Action::EditorSave,
+        Region::Editor,
+        "editorSave",
+        &["ctrl+s"],
+        &[],
+    ),
+    both(
+        Action::EditorFind,
+        Region::Editor,
+        "editorFind",
+        &["ctrl+f"],
+        &["/"],
+    ),
+    both(
+        Action::EditorReplace,
+        Region::Editor,
+        "editorReplace",
+        &[],
+        &[],
+    ),
+    both(
+        Action::EditorSuggestions,
+        Region::Editor,
+        "editorSuggestions",
+        &["ctrl+space"],
+        &[],
+    ),
+    Item {
+        action: Action::EditorUndo,
+        region: Region::Editor,
+        name: "editorUndo",
+        keys: &["ctrl+z"],
+        vim_keys: &["u"],
+        conventional_only: true,
+    },
+    Item {
+        action: Action::EditorRedo,
+        region: Region::Editor,
+        name: "editorRedo",
+        keys: &["ctrl+y"],
+        vim_keys: &["ctrl+r"],
+        conventional_only: true,
+    },
+    Item {
+        action: Action::EditorSelectAll,
+        region: Region::Editor,
+        name: "editorSelectAll",
+        keys: &["ctrl+a"],
+        vim_keys: &["g g V G"],
+        conventional_only: true,
+    },
+    Item {
+        action: Action::EditorCopy,
+        region: Region::Editor,
+        name: "editorCopy",
+        keys: &["ctrl+c"],
+        vim_keys: &["y"],
+        conventional_only: true,
+    },
+    Item {
+        action: Action::EditorCut,
+        region: Region::Editor,
+        name: "editorCut",
+        keys: &["ctrl+x"],
+        vim_keys: &["d"],
+        conventional_only: true,
+    },
+    Item {
+        action: Action::EditorPaste,
+        region: Region::Editor,
+        name: "editorPaste",
+        keys: &["ctrl+v"],
+        vim_keys: &["p"],
+        conventional_only: true,
+    },
+    both(
+        Action::FocusParameters,
+        Region::Global,
+        "focusParameters",
+        &["ctrl+w P"],
+        &[],
+    ),
+    both(
+        Action::ToggleParameters,
+        Region::Global,
+        "toggleParameters",
+        &[],
         &[],
     ),
     both(Action::Stop, Region::Global, "stop", &["ctrl+w x"], &[]),
@@ -870,6 +1026,14 @@ const DEFAULTS: &[Item] = &[
         &["]"],
         &[],
     ),
+    both(Action::GridApply, Region::Grid, "gridApply", &[], &[]),
+    both(
+        Action::GridClearFilters,
+        Region::Grid,
+        "gridClearFilters",
+        &[],
+        &[],
+    ),
     both(
         Action::GridFocusFilter,
         Region::Grid,
@@ -902,6 +1066,41 @@ const DEFAULTS: &[Item] = &[
     both(Action::GridExport, Region::Grid, "gridExport", &["e"], &[]),
     both(Action::GridImport, Region::Grid, "gridImport", &["I"], &[]),
     both(
+        Action::GridEditCell,
+        Region::Grid,
+        "gridEditCell",
+        &["f2"],
+        &[],
+    ),
+    both(
+        Action::GridSetNull,
+        Region::Grid,
+        "gridSetNull",
+        &["ctrl+n"],
+        &[],
+    ),
+    both(
+        Action::GridReviewEdits,
+        Region::Grid,
+        "gridReviewEdits",
+        &["ctrl+r"],
+        &[],
+    ),
+    both(
+        Action::GridSaveEdits,
+        Region::Grid,
+        "gridSaveEdits",
+        &["ctrl+s"],
+        &[],
+    ),
+    both(
+        Action::GridDiscardEdits,
+        Region::Grid,
+        "gridDiscardEdits",
+        &["ctrl+d"],
+        &[],
+    ),
+    both(
         Action::GridStructure,
         Region::Grid,
         "gridStructure",
@@ -909,6 +1108,13 @@ const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(Action::GridReload, Region::Grid, "gridReload", &["R"], &[]),
+    both(
+        Action::GridFollowKey,
+        Region::Grid,
+        "gridFollowKey",
+        &["F"],
+        &[],
+    ),
     both(
         Action::GridCancelQuery,
         Region::Grid,

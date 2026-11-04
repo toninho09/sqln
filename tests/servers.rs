@@ -15,7 +15,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use sqln::app::{App, Options};
-use sqln::catalog::{Columns, RelationKind, RelationRef};
+use sqln::catalog::{Catalog, Columns, Object, RelationKind, RelationRef};
 use sqln::clipboard::MemoryClipboard;
 use sqln::compare::data::{DataCompare, Plan, RowChange, plan as data_plan};
 use sqln::compare::ddl::script;
@@ -26,6 +26,7 @@ use sqln::connector::target::parse_uri;
 use sqln::connector::{
     Connector, Session, TransactionCommand, TransactionState, network_connector,
 };
+use sqln::definition::{Target as DdlTarget, definition_sql, definition_text};
 use sqln::diagram::mermaid::to_mermaid;
 use sqln::diagram::sql::{diagram_sql, parse_column, parse_key};
 use sqln::diagram::{Focus, Model};
@@ -1202,7 +1203,7 @@ fn the_catalog_lists_relations_and_the_current_schema() {
             "CREATE TABLE t_catalog (id int, full_name text)",
             "CREATE VIEW v_catalog AS SELECT id FROM t_catalog",
         ]);
-        h.manager.load_catalog(h.connection, 0);
+        h.manager.load_catalog(h.connection, 0, Vec::new());
         let catalog = loop {
             if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
                 break catalog.unwrap();
@@ -1234,6 +1235,387 @@ fn the_catalog_lists_relations_and_the_current_schema() {
         assert_eq!(columns, ["id", "full_name"], "{:?}", server.kind);
         h.run_ok(&["DROP VIEW v_catalog", "DROP TABLE t_catalog"]);
     }
+}
+
+#[test]
+fn a_list_of_schemas_keeps_its_schemas_and_the_current_one() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let create = match server.kind {
+            Kind::Postgres => "CREATE SCHEMA IF NOT EXISTS",
+            Kind::MySql => "CREATE DATABASE IF NOT EXISTS",
+        };
+        h.run_ok(&[
+            &format!("{create} vis_shown"),
+            &format!("{create} vis_hidden"),
+        ]);
+        h.manager
+            .load_catalog(h.connection, 0, vec!["vis_shown".to_owned()]);
+        let catalog = loop {
+            if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
+                break catalog.unwrap();
+            }
+        };
+        let current = catalog.current_schema.clone().unwrap();
+        let mut found: Vec<&str> = catalog
+            .schemas
+            .iter()
+            .map(|schema| schema.name.as_str())
+            .collect();
+        found.sort_unstable();
+        let mut wanted = vec![current.as_str(), "vis_shown"];
+        wanted.sort_unstable();
+        assert_eq!(found, wanted, "{:?}", server.kind);
+
+        h.manager
+            .test_connection(9, connector(&server), Duration::from_secs(20), true);
+        let names = loop {
+            if let ExecEvent::ConnectionTested { test: 9, result } = h.next() {
+                break result.unwrap().unwrap();
+            }
+        };
+        assert!(names.contains(&"vis_hidden".to_owned()), "{names:?}");
+        assert!(names.contains(&current), "{names:?}");
+        assert!(
+            !names
+                .iter()
+                .any(|name| name == "pg_catalog" || name.eq_ignore_ascii_case("information_schema")),
+            "{names:?}"
+        );
+    }
+}
+
+/// PostGIS puts `geography` in `public`. A console with another schema still finds it.
+#[test]
+fn a_console_schema_keeps_the_types_of_the_default_path() {
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let mut h = Harness::open(&server, Settings::default());
+    h.run_ok(&[
+        "CREATE SCHEMA IF NOT EXISTS path_other",
+        "DROP TABLE IF EXISTS path_other.path_t",
+        "CREATE TABLE path_other.path_t (v int)",
+        "DROP TABLE IF EXISTS public.path_t",
+        "CREATE TABLE public.path_t (v int)",
+        "INSERT INTO public.path_t VALUES (1)",
+        "DROP TYPE IF EXISTS public.path_point",
+        "CREATE TYPE public.path_point AS (x int)",
+    ]);
+    let in_schema = |h: &mut Harness, sql: &str, only_schema: bool| {
+        let options = RunOptions {
+            schema: Some("path_other".to_owned()),
+            only_schema,
+            ..RunOptions::default()
+        };
+        let execution = h.manager.run(h.console, vec![sql.to_owned()], options);
+        h.collect(execution)
+    };
+    let run = in_schema(&mut h, "SELECT NULL::path_point AS v", false);
+    assert_eq!(run.end, Some(ExecutionEnd::Completed), "{run:?}");
+    // The schema of the console comes first.
+    let run = in_schema(&mut h, "SELECT current_schema()", false);
+    assert_eq!(run.text(0, 0), "path_other");
+    let run = in_schema(&mut h, "SELECT count(*) FROM path_t", false);
+    assert_eq!(run.text(0, 0), "0");
+    // The compare keeps only its schema in the path.
+    let run = in_schema(&mut h, "SELECT NULL::path_point AS v", true);
+    assert!(run.error().contains("path_point"), "{run:?}");
+    // The cleanup of the session restores the default path.
+    assert_eq!(h.count("path_t"), "1");
+    h.run_ok(&[
+        "DROP TABLE path_other.path_t",
+        "DROP TABLE public.path_t",
+        "DROP TYPE public.path_point",
+    ]);
+}
+
+fn load_catalog(h: &mut Harness) -> Catalog {
+    h.manager.load_catalog(h.connection, 0, Vec::new());
+    loop {
+        if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
+            break catalog.unwrap();
+        }
+    }
+}
+
+/// Returns the labels of the objects of a schema, in the order of the tree.
+fn object_labels(catalog: &Catalog, schema: &str) -> Vec<String> {
+    let schema = catalog.schema(schema).expect("the schema");
+    schema
+        .objects
+        .iter()
+        .map(|object| object.label.clone())
+        .collect()
+}
+
+fn find_object<'a>(catalog: &'a Catalog, schema: &str, label: &str) -> &'a Object {
+    let schema = catalog.schema(schema).expect("the schema");
+    let found = schema.objects.iter().find(|object| object.label == label);
+    found.unwrap_or_else(|| panic!("{label} is not in {:?}", schema.objects))
+}
+
+/// Reads a DDL as the application does: one execution, with only the schema in the path.
+fn read_ddl(h: &mut Harness, dialect: Dialect, target: &DdlTarget) -> String {
+    let statements = definition_sql(dialect, target).expect("a DDL query");
+    let options = RunOptions {
+        row_cap: Some(usize::MAX),
+        schema: Some(target.schema.clone()),
+        only_schema: true,
+        ..RunOptions::default()
+    };
+    let execution = h.manager.run(h.console, statements, options);
+    let mut results: Vec<Vec<Row>> = Vec::new();
+    loop {
+        match h.next() {
+            ExecEvent::Rows { key, rows, bytes } if key.execution == execution => {
+                h.budget.release(bytes);
+                if results.len() <= key.index {
+                    results.resize_with(key.index + 1, Vec::new);
+                }
+                results[key.index].extend(rows);
+            }
+            ExecEvent::StatementFinished {
+                key,
+                status: StatementStatus::Error(message),
+                ..
+            } if key.execution == execution => panic!("{message}"),
+            ExecEvent::ExecutionFinished {
+                execution: finished,
+                ..
+            } if finished == execution => break,
+            _ => {}
+        }
+    }
+    definition_text(dialect, target, "test", &results).unwrap_or_else(|reason| panic!("{reason}"))
+}
+
+fn relation_target(schema: &str, table: &str, kind: RelationKind) -> DdlTarget {
+    let relation = RelationRef {
+        schema: schema.into(),
+        relation: table.into(),
+    };
+    DdlTarget::relation(&relation, kind)
+}
+
+/// Returns the keys that reach a table, as `columns > table (columns)`.
+fn referencing_keys(h: &mut Harness, schema: &str, table: &str) -> Vec<String> {
+    let relation = RelationRef {
+        schema: schema.into(),
+        relation: table.into(),
+    };
+    h.manager.load_columns(h.connection, relation);
+    let keys = loop {
+        if let ExecEvent::ColumnsLoaded { referencing, .. } = h.next() {
+            break referencing;
+        }
+    };
+    keys.iter()
+        .map(|key| {
+            format!(
+                "{} > {} ({})",
+                key.columns.join(", "),
+                key.target.relation,
+                key.target_columns.join(", ")
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn postgres_lists_the_objects_of_a_schema_and_reads_their_ddl() {
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let mut h = Harness::open(&server, Settings::default());
+    h.run_ok(&[
+        "DROP SCHEMA IF EXISTS obj_pg CASCADE",
+        "DROP SCHEMA IF EXISTS obj_ext CASCADE",
+        "CREATE SCHEMA obj_pg",
+        "CREATE SCHEMA obj_ext",
+        "CREATE EXTENSION IF NOT EXISTS citext SCHEMA obj_ext",
+        "CREATE TYPE obj_pg.mood AS ENUM ('sad', 'it''s ok')",
+        "CREATE DOMAIN obj_pg.amount AS integer DEFAULT 0 NOT NULL \
+         CONSTRAINT positive CHECK (VALUE >= 0)",
+        "CREATE SEQUENCE obj_pg.counter START 5 INCREMENT 2",
+        "CREATE TABLE obj_pg.customers (id int PRIMARY KEY, name text UNIQUE)",
+        "CREATE TABLE obj_pg.orders (id serial PRIMARY KEY, total obj_pg.amount, \
+         mood obj_pg.mood, customer_id int, \
+         CONSTRAINT orders_customer FOREIGN KEY (customer_id) REFERENCES obj_pg.customers (id))",
+        "CREATE INDEX orders_total ON obj_pg.orders (total)",
+        "CREATE VIEW obj_pg.v_orders AS SELECT id FROM obj_pg.orders",
+        "CREATE FUNCTION obj_pg.twice(x integer) RETURNS integer LANGUAGE sql AS 'SELECT x * 2'",
+        "CREATE FUNCTION obj_pg.twice(x text) RETURNS text LANGUAGE sql AS 'SELECT x || x'",
+        "CREATE PROCEDURE obj_pg.touch() LANGUAGE sql AS 'SELECT 1'",
+        "CREATE FUNCTION obj_pg.stamp() RETURNS trigger LANGUAGE plpgsql \
+         AS 'BEGIN RETURN NEW; END'",
+        "CREATE TRIGGER orders_stamp BEFORE INSERT ON obj_pg.orders \
+         FOR EACH ROW EXECUTE FUNCTION obj_pg.stamp()",
+        "CREATE AGGREGATE obj_pg.total_of(integer) (SFUNC = int4pl, STYPE = integer)",
+    ]);
+    let catalog = load_catalog(&mut h);
+    assert_eq!(
+        object_labels(&catalog, "obj_pg"),
+        [
+            "stamp",
+            "touch",
+            "twice(x integer)",
+            "twice(x text)",
+            "counter",
+            "orders_id_seq",
+            "orders_stamp (orders)",
+            "amount",
+            "mood"
+        ]
+    );
+    // The functions of an extension stay out.
+    assert!(object_labels(&catalog, "obj_ext").is_empty());
+
+    let ddl = |h: &mut Harness, label: &str| {
+        let target = DdlTarget::object("obj_pg", find_object(&catalog, "obj_pg", label));
+        read_ddl(h, Dialect::Postgres, &target)
+    };
+    let text = ddl(&mut h, "twice(x integer)");
+    assert!(
+        text.contains("CREATE OR REPLACE FUNCTION obj_pg.twice(x integer)"),
+        "{text}"
+    );
+    assert!(text.contains("x * 2"), "{text}");
+    let text = ddl(&mut h, "touch");
+    assert!(text.contains("PROCEDURE obj_pg.touch()"), "{text}");
+    let text = ddl(&mut h, "orders_stamp (orders)");
+    assert!(
+        text.contains("CREATE TRIGGER orders_stamp BEFORE INSERT ON "),
+        "{text}"
+    );
+    let text = ddl(&mut h, "counter");
+    assert!(text.contains("INCREMENT BY 2"), "{text}");
+    assert!(text.contains("START WITH 5"), "{text}");
+    assert!(!text.contains("OWNED BY"), "{text}");
+    let text = ddl(&mut h, "orders_id_seq");
+    assert!(text.contains("OWNED BY obj_pg.orders.id;"), "{text}");
+    let text = ddl(&mut h, "mood");
+    assert!(
+        text.contains("AS ENUM (\n    E'sad',\n    E'it''s ok'\n);"),
+        "{text}"
+    );
+    let text = ddl(&mut h, "amount");
+    assert!(
+        text.contains("AS integer\n    DEFAULT 0\n    NOT NULL\n"),
+        "{text}"
+    );
+    assert!(text.contains("CONSTRAINT \"positive\" CHECK"), "{text}");
+    let view = relation_target("obj_pg", "v_orders", RelationKind::View);
+    let text = read_ddl(&mut h, Dialect::Postgres, &view);
+    assert!(
+        text.contains("CREATE OR REPLACE VIEW obj_pg.v_orders AS\n"),
+        "{text}"
+    );
+
+    // The text of each table makes the same tables again.
+    let tables =
+        ["customers", "orders"].map(|table| relation_target("obj_pg", table, RelationKind::Table));
+    let first: Vec<String> = tables
+        .iter()
+        .map(|table| read_ddl(&mut h, Dialect::Postgres, table))
+        .collect();
+    assert!(first[1].contains(text::DEFINITION_WRITTEN), "{}", first[1]);
+    assert!(
+        first[1].contains("CREATE INDEX \"orders_total\""),
+        "{}",
+        first[1]
+    );
+    h.run_ok(&["DROP TABLE obj_pg.orders, obj_pg.customers CASCADE"]);
+    for text in &first {
+        let statements: Vec<String> = split(text, Dialect::Postgres)
+            .iter()
+            .map(|statement| text[statement.start..statement.end].to_owned())
+            .collect();
+        let options = RunOptions {
+            schema: Some("obj_pg".to_owned()),
+            ..RunOptions::default()
+        };
+        let execution = h.manager.run(h.console, statements, options);
+        let run = h.collect(execution);
+        assert_eq!(run.end, Some(ExecutionEnd::Completed), "{text}: {run:?}");
+    }
+    let again: Vec<String> = tables
+        .iter()
+        .map(|table| read_ddl(&mut h, Dialect::Postgres, table))
+        .collect();
+    assert_eq!(again, first);
+    assert_eq!(
+        referencing_keys(&mut h, "obj_pg", "customers"),
+        ["id > orders (customer_id)"]
+    );
+    h.run_ok(&["DROP SCHEMA obj_pg CASCADE", "DROP SCHEMA obj_ext CASCADE"]);
+}
+
+#[test]
+fn mysql_lists_the_objects_of_a_schema_and_reads_their_ddl() {
+    let Some(server) = only(Kind::MySql) else {
+        return;
+    };
+    let mut h = Harness::open(&server, Settings::default());
+    h.run_ok(&[
+        "DROP TRIGGER IF EXISTS obj_my_stamp",
+        "DROP PROCEDURE IF EXISTS obj_my_touch",
+        "DROP FUNCTION IF EXISTS obj_my_twice",
+        "DROP TABLE IF EXISTS obj_my_orders",
+        "DROP TABLE IF EXISTS obj_my_customers",
+        "CREATE TABLE obj_my_customers (id INT PRIMARY KEY)",
+        "CREATE TABLE obj_my_orders (id INT PRIMARY KEY, customer_id INT, \
+         CONSTRAINT obj_my_customer FOREIGN KEY (customer_id) REFERENCES obj_my_customers (id))",
+        "CREATE FUNCTION obj_my_twice(x INT) RETURNS INT DETERMINISTIC RETURN x * 2",
+        "CREATE PROCEDURE obj_my_touch() BEGIN SELECT 1; SELECT 2; END",
+        "CREATE TRIGGER obj_my_stamp BEFORE INSERT ON obj_my_orders \
+         FOR EACH ROW SET NEW.id = NEW.id",
+    ]);
+    let catalog = load_catalog(&mut h);
+    let schema = catalog.current_schema.clone().unwrap();
+    let labels = object_labels(&catalog, &schema);
+    let mine: Vec<&str> = labels
+        .iter()
+        .map(String::as_str)
+        .filter(|label| label.starts_with("obj_my_"))
+        .collect();
+    assert_eq!(
+        mine,
+        [
+            "obj_my_touch",
+            "obj_my_twice",
+            "obj_my_stamp (obj_my_orders)"
+        ]
+    );
+    let ddl = |h: &mut Harness, label: &str| {
+        let target = DdlTarget::object(&schema, find_object(&catalog, &schema, label));
+        read_ddl(h, Dialect::MySql, &target)
+    };
+    let text = ddl(&mut h, "obj_my_twice");
+    assert!(text.contains("FUNCTION `obj_my_twice`"), "{text}");
+    let text = ddl(&mut h, "obj_my_touch");
+    assert!(text.contains("PROCEDURE `obj_my_touch`"), "{text}");
+    assert!(text.ends_with("END;\n"), "{text}");
+    let statements = split(&text, Dialect::MySql);
+    assert_eq!(statements.len(), 1, "{text}");
+    let text = ddl(&mut h, "obj_my_stamp (obj_my_orders)");
+    assert!(text.contains("TRIGGER `obj_my_stamp`"), "{text}");
+    let table = relation_target(&schema, "obj_my_orders", RelationKind::Table);
+    let text = read_ddl(&mut h, Dialect::MySql, &table);
+    assert!(text.contains("CREATE TABLE `obj_my_orders`"), "{text}");
+    assert!(text.contains("FOREIGN KEY (`customer_id`)"), "{text}");
+    assert!(!text.contains(text::DEFINITION_WRITTEN), "{text}");
+    assert_eq!(
+        referencing_keys(&mut h, &schema, "obj_my_customers"),
+        ["id > obj_my_orders (customer_id)"]
+    );
+    h.run_ok(&[
+        "DROP TRIGGER obj_my_stamp",
+        "DROP PROCEDURE obj_my_touch",
+        "DROP FUNCTION obj_my_twice",
+        "DROP TABLE obj_my_orders",
+        "DROP TABLE obj_my_customers",
+    ]);
 }
 
 #[test]
@@ -2037,7 +2419,7 @@ fn the_structure_queries_read_the_catalog_of_each_server() {
             "CREATE INDEX s_idx ON s_child (label, pa)",
             "CREATE VIEW s_view AS SELECT id FROM s_child",
         ]);
-        h.manager.load_catalog(h.connection, 0);
+        h.manager.load_catalog(h.connection, 0, Vec::new());
         let catalog = loop {
             if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
                 break catalog.unwrap();
@@ -2195,7 +2577,7 @@ fn the_diagram_queries_read_tables_keys_and_other_schemas_of_each_server() {
             Kind::Postgres => (Dialect::Postgres, "CREATE SCHEMA IF NOT EXISTS erk_other"),
             Kind::MySql => (Dialect::MySql, "CREATE DATABASE IF NOT EXISTS erk_other"),
         };
-        h.manager.load_catalog(h.connection, 0);
+        h.manager.load_catalog(h.connection, 0, Vec::new());
         let schema = loop {
             if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
                 break catalog.unwrap().current_schema.unwrap();
@@ -2326,7 +2708,7 @@ fn a_hostile_name_stays_a_name_in_the_structure_queries() {
             &drop_table,
             &create,
         ]);
-        h.manager.load_catalog(h.connection, 0);
+        h.manager.load_catalog(h.connection, 0, Vec::new());
         let schema = loop {
             if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
                 break catalog.unwrap().current_schema.unwrap();
@@ -3011,7 +3393,7 @@ fn the_columns_bring_the_foreign_keys_of_the_relation() {
              CONSTRAINT fk_one FOREIGN KEY (y, x) REFERENCES t_fk_parent (a, b), \
              CONSTRAINT fk_two FOREIGN KEY (z) REFERENCES t_fk_parent (c))",
         ]);
-        h.manager.load_catalog(h.connection, 0);
+        h.manager.load_catalog(h.connection, 0, Vec::new());
         let catalog = loop {
             if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
                 break catalog.unwrap();
@@ -3815,6 +4197,7 @@ fn compare_model(h: &mut Harness, dialect: Dialect, schema: &str) -> SchemaModel
         .map(|sql| {
             let options = RunOptions {
                 schema: Some(schema.to_owned()),
+                only_schema: true,
                 row_cap: Some(usize::MAX),
                 ..RunOptions::default()
             };
@@ -3975,6 +4358,7 @@ struct DataSide {
 fn data_side(h: &mut Harness, dialect: Dialect, schema: &str, table: &str) -> DataSide {
     let options = RunOptions {
         schema: Some(schema.to_owned()),
+        only_schema: true,
         row_cap: Some(usize::MAX),
         ..RunOptions::default()
     };

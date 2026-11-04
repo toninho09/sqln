@@ -210,7 +210,20 @@ impl App {
         self.exit_step();
     }
 
+    pub(super) fn continue_exit(&mut self) {
+        self.exit_step();
+    }
+
     fn exit_step(&mut self) {
+        if let Some(index) = self
+            .tables
+            .iter()
+            .position(|tab| !tab.result.edits.is_empty() || tab.edit_execution.is_some())
+        {
+            self.select_table(index);
+            self.edit_close_guard(index);
+            return;
+        }
         let next = self
             .consoles
             .iter()
@@ -284,6 +297,15 @@ impl App {
             DialogAction::DeletePassword(identity) => self.delete_password(identity),
             DialogAction::ExportReplace => self.start_export(),
             DialogAction::ImportConfirmed => self.start_import(),
+            DialogAction::ApplyEdits(id) => self.apply_edits(id),
+            DialogAction::ReviewEdits(id) => {
+                if let Some(index) = self.tables.iter().position(|tab| tab.id == id) {
+                    self.select_table(index);
+                    self.review_edits();
+                }
+            }
+            DialogAction::DiscardEdits(id) => self.discard_edits(id),
+            DialogAction::CancelEdits(id) => self.cancel_edits(id),
             DialogAction::SessionSignal(id, signal, session) => {
                 self.send_session_signal(id, signal, session);
             }

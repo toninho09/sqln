@@ -172,6 +172,8 @@ impl Connector for RedisConnector {
             namespace: Namespace::Database,
             transactions: false,
             table_filters: false,
+            data_edit: false,
+            parameters: false,
         }
     }
 
@@ -477,6 +479,14 @@ pub fn keyspace_databases(info: &str) -> Vec<u32> {
         .collect()
 }
 
+/// Sorts the names of databases by number, without repeats.
+fn sorted_numbers(names: impl Iterator<Item = String>) -> Vec<String> {
+    let mut numbers: Vec<String> = names.collect();
+    numbers.sort_by_key(|number| number.parse::<u32>().unwrap_or(u32::MAX));
+    numbers.dedup();
+    numbers
+}
+
 /// Sends rows to the sink. It returns false when the sink accepts no more rows.
 async fn push_rows(rows: Vec<Row>, sink: &mut ResultSink) -> bool {
     for row in rows {
@@ -572,6 +582,15 @@ impl RedisSession {
 
     async fn select(&mut self, database: &str) -> Result<(), ExecError> {
         self.ask(&[b"SELECT", database.as_bytes()]).await.map(drop)
+    }
+
+    /// Returns the databases with keys and the current database, in order.
+    async fn database_numbers(&mut self) -> Result<Vec<String>, ExecError> {
+        let info = reply_text(&self.ask(&[b"INFO", b"keyspace"]).await?);
+        let numbers = keyspace_databases(&info)
+            .into_iter()
+            .map(|number| number.to_string());
+        Ok(sorted_numbers(numbers.chain([self.database.clone()])))
     }
 
     /// Returns true when the server marks a command as a read. Any other answer returns
@@ -820,6 +839,7 @@ impl RedisSession {
                 kind: RelationKind::Table,
                 columns: Columns::NotLoaded,
                 foreign_keys: Vec::new(),
+                referencing: Vec::new(),
             })
             .collect();
         Ok((relations, partial))
@@ -913,15 +933,19 @@ impl Session for RedisSession {
     }
 
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError> {
-        let info = reply_text(&self.ask(&[b"INFO", b"keyspace"]).await?);
-        let mut numbers: Vec<String> = keyspace_databases(&info)
-            .iter()
-            .map(u32::to_string)
-            .collect();
+        self.read_catalog_of(&[]).await
+    }
+
+    /// Without a list, it reads the databases with keys and the current database. With a
+    /// list, it reads the databases of the list and the current database, also when they
+    /// are empty.
+    async fn read_catalog_of(&mut self, databases: &[String]) -> Result<Catalog, ExecError> {
         let current = self.database.clone();
-        numbers.push(current.clone());
-        numbers.sort_by_key(|number| number.parse::<u32>().unwrap_or(u32::MAX));
-        numbers.dedup();
+        let numbers = if databases.is_empty() {
+            self.database_numbers().await?
+        } else {
+            sorted_numbers(databases.iter().cloned().chain([current.clone()]))
+        };
         let mut schemas = Vec::with_capacity(numbers.len());
         for name in numbers {
             self.select(&name).await?;
@@ -930,6 +954,7 @@ impl Session for RedisSession {
                 name,
                 relations,
                 partial,
+                ..Schema::default()
             });
         }
         self.select(&current).await?;
@@ -937,6 +962,11 @@ impl Session for RedisSession {
             schemas,
             current_schema: Some(current),
         })
+    }
+
+    /// Reads no keys: `INFO keyspace` gives the names.
+    async fn read_schema_names(&mut self) -> Result<Vec<String>, ExecError> {
+        self.database_numbers().await
     }
 
     /// A key has no columns.

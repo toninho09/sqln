@@ -46,6 +46,9 @@ pub struct Definition {
     pub theme: Option<crate::store::config::ThemeName>,
     /// The icon in the list of connections. `None` uses the icon of the database.
     pub icon: Option<crate::store::config::ConnectionIcon>,
+    /// The schemas, or the Redis databases, that the catalog keeps. An empty list keeps
+    /// all. The current schema always stays.
+    pub schemas: Vec<String>,
 }
 
 impl Definition {
@@ -62,6 +65,7 @@ impl Definition {
             base: None,
             theme: None,
             icon: None,
+            schemas: Vec::new(),
         }
     }
 

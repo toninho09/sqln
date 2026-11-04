@@ -99,6 +99,8 @@ impl ConsoleTask {
             cap: self.settings.row_cap,
             export: None,
             timed: false,
+            capture: None,
+            parameters: Vec::new(),
         };
         let (waited, reason) = self
             .run_statement(key, active, sql, delivery, commands)
@@ -261,7 +263,7 @@ impl ConsoleTask {
     ) -> Result<(SharedFeed, ImportMode), String> {
         let job = request.job;
         let mode = job.mode;
-        let context = context(&self.settings, None);
+        let context = context(&self.settings, None, false);
         let session = lease.session();
         session
             .apply_context(&context)

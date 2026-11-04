@@ -3,6 +3,237 @@
 This document records the choices and the rejected alternatives.
 The complete rules are in the [plan](INITIAL_PLAN.md).
 Do not reopen a decision without a new fact.
+Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
+Implementation notes describe their recorded stage unless a current-state note says otherwise.
+
+## Query parameters — 2026-11-04
+
+The user requests named scalar parameters with a panel under the editor, as the approved plan describes. The detection uses the shared lexer, and the values reach the database as native driver bindings. Values never become SQL source text.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| Syntax | `:name` with ASCII letters, digits, and underscore, first character not a digit. Names compare with case sensitivity | `?`, `$n`, `@name`, auto-numbered names | One syntax for the three SQL sources; the panel needs stable names |
+| Detection | The whole editor text, off the interface thread, 200 ms after the last edit; quotes, comments, dollar quotes, and casts stay opaque | Only the statement at the cursor; detection on each key | The panel shows every parameter before the user chooses a scope |
+| Scope | A run binds only the names of the chosen statements or script | Bind every field of the panel | A field without a use must not block a run |
+| Types | Text, Number, Boolean, and NULL, chosen per field. Numbers validate by syntax without a float conversion; booleans accept `true` and `false`. On PostgreSQL, a Text or NULL parameter arrives as an unknown type, so the query infers it: uuid, date, timestamp, and jsonb columns accept the value without a cast. A Number stays `numeric`, because inference in arithmetic can pick an integer type | Dates, lists, identifiers, and SQL fragments; declare Text as `text` on PostgreSQL | Scalars cover the reuse case; identifiers would need catalog checks; a forced `text` type made the server refuse `uuid = text` |
+| Empty text | `Enter` marks an empty text as set. Unset fields block the run and put the focus on the first one | Treat empty as set; treat empty as NULL | Empty text and SQL NULL stay distinct, as in the grid editor |
+| Values | One value per name per execution, reused in every occurrence. Values stay in memory, per console, and never enter saved files | Persist values; share values between consoles | The saved work and the workspace formats stay without secrets |
+| Editor text | The editor keeps `:name`; the markers are written only for the driver | Replace the editor text with markers | The text of the user stays readable and reusable |
+| Bindings | PostgreSQL: extended protocol with prepared types and text parameter format. MySQL: prepared statements. SQLite: `raw_bind_parameter`. Decimal text binds as a string with a typed cast | Interpolate literals into the SQL | Native bindings separate values from SQL and keep injection out |
+| Number casting | MySQL: `CAST(? AS DECIMAL(p,s))` with the scale of the text, range-checked to 65/30. SQLite: `CAST(? AS NUMERIC)`. PostgreSQL: `numeric` parameter type | A driver float or int type | A float conversion loses digits; SQLite compares by type |
+| Result values | PostgreSQL keeps the text of the database, also for types without a decoder, through a transport adapter that requests text results for marked statements only | Binary results with per-type decoders | Preserves the decision "Grid values: database text", including extension types |
+| Mixing | `:name` cannot combine with native markers in one statement. The PostgreSQL `?' operator and array slices stay valid | Rewrite native markers | One binding path; rewriting risks changing the meaning |
+| Errors | The driver offset maps back to the editor text through the replacement ranges | Show the offset of the rewritten SQL | The editor underlines the place in the text of the user |
+| Added `LIMIT` | Applied before the rewrite, so the driver receives the limit | Bind without the limit | The row-cap decision keeps its effect |
+| Messages | The record shows the original SQL and the separate values, as the command-history decision requires; the driver never sees the values in SQL | Record only the original SQL | The record must describe the request that reaches the driver |
+| Query history | `history.jsonl` keeps the `:name` text only | Save values | The file holds user text, not values |
+| Export reread | The captured bindings of the last execution serve a full export reread; closing results clears them | Ask again; interpolate | The reread must return the same rows without another question |
+| Connectors | SQLite, PostgreSQL, and MySQL through `Capabilities::parameters`. Redis and Valkey show no panel | Offer fields everywhere | Redis commands take values, not named parameters |
+| Keys | `Ctrl+W P` focuses the panel; a click on the title or the command collapses it. `Tab` walks type, value, and Set; `Enter` sets; `Esc` returns to the editor; plain keys edit the value | A modal dialog | The panel follows the Databricks model that the user chose |
+| Persistence | No change to configuration, workspace, or script formats | Save fields or collapse state in the workspace | YAGNI; the panel state is session-only |
+
+Implementation notes:
+
+- The PostgreSQL transport adapter (`connector/postgres/text_io`) parses the frame stream: a `Parse` that starts with a marker names a statement, and only the marked `Bind` sends text result formats. Driver-internal queries keep binary results. A `Close` of the statement clears the name.
+- The plain-path PostgreSQL connections moved to `connect_raw` to wrap the socket; TCP sets `nodelay` and keepalive as the driver did.
+- MySQL binary-protocol rows reuse the text-cell rules; quoted values strip the protocol quotes only in that path.
+- Without query context, an inferred parameter resolves to `text`, as in `SELECT :value`.
+- Detection runs on a blocking task of the executor; the panel keeps only the newest revision answer.
+- The panel keeps the value of a name across edits and drops it when the name leaves the text.
+
+## Grid row selection — 2026-11-04
+
+The user requests whole-row selection by a click on the row number, as in Excel.
+Result and table grids use the existing cell selection and copy paths.
+The selection includes every column of the loaded row, including hidden columns.
+The behavior applies in conventional and Vim modes. It does not execute SQL.
+
+## Grid editing — 2026-11-04
+
+The user approves the grid editing plan and requests implementation.
+This replaces the initial plan's read-only table grid and cell-editing exclusion.
+It also replaces unconditional close for table tabs with pending edits or an active edit operation.
+
+| Point | Approved rule |
+|---|---|
+| Scope | Updates in SQLite, PostgreSQL, and transactional MySQL table tabs; no views or console results |
+| Identity | Require the complete original primary key, without NULL values |
+| Protected columns | Keys, identities, generated columns, and binary values remain non-editable |
+| Values | Preserve database text and precision; distinguish NULL, empty text, and the text NULL |
+| Local work | Keep pending values in memory; no database write before explicit Apply |
+| Review | Show original values, proposed values, and the generated SQL before execution |
+| Apply | Use one short transaction per tab; no manual transaction between edits |
+| Conflict | Reject changed or missing original rows; never overwrite them silently |
+| Failure | Preserve local values; roll back on a known failure; never retry writes automatically |
+| Unknown commit | Mark the result unknown and block another Apply until verification and local discard |
+| Navigation | Keep edits across tab switches; require resolution before page changes, reload, filter, sort, copy, export, and import |
+| Close | Apply, Discard, or Cancel; no immediate close during an edit operation |
+| Persistence | No configuration or workspace format change; pending values do not survive shutdown |
+
+Implementation notes:
+
+- MySQL currently accepts InnoDB only. It refuses storage whose row-locking and rollback contracts are not verified.
+- The table column reader of compare supplies key order, type, nullability, identity, and generated-column metadata.
+- PostgreSQL and MySQL use locking reads; SQLite uses `BEGIN IMMEDIATE`.
+- The executor validates every row before writes and checks each row again immediately before its update.
+- The second check detects changes from an earlier trigger on the same session.
+- A fresh metadata read after row locks detects schema changes.
+- MySQL may report zero changed rows for equivalent values; the locked original row proves identity.
+- The result grid holds the local row. Budgeted, reference-counted snapshots hold the original and the submitted row.
+- Review formatting runs on a blocking task, without database access.
+- Successful apply reloads the first page using applied filters and order, not drafts.
+- Cursor and selection restoration uses primary keys, not old visual row positions.
+- Ordinary execution limits, cancellation, credentials, trust, production, pool cleanup, and stale-event checks still apply.
+- Generated review text stays outside the row budget, as generated console SQL does. Pending row snapshots use the data budget.
+- Database rollback does not reverse external effects or writes to nontransactional storage from triggers.
+
+## Command discovery and width-dependent hints — 2026-11-04
+
+The user approved a complete functional command palette, panel command pages, and a one-line hint row with width-dependent content.
+The user chose `Ctrl+W Space` for the panel page and option A for explorer scope.
+
+- `Action` remains the command catalog. Discovery paths share command availability and use the effective shortcuts.
+- `Ctrl+W Space` lists the bound commands of the current panel. Existing prefix shortcuts keep their meaning.
+- `Ctrl+W Tab` remains the explicit path to explorer row commands from another panel.
+- The palette offers explorer row actions only with explorer focus. Add connection and scripts without a connection remain global.
+- The palette includes functional editor and grid actions, including actions without shortcuts. Basic movements stay in help.
+- The normal hint row reserves the palette shortcut, then fits whole commands by context priority. Wider screens show more commands.
+- Stop and transaction actions take priority. A failed transaction offers rollback, not commit.
+- The order is fixed, not based on usage history. The hint row does not rotate and does not add a second row.
+- Existing confirmations and database execution rules stay unchanged.
+
+## Objects, DDL, and key navigation — 2026-11-04
+
+The user compared SQLN with DataGrip and chose three gaps: more objects in the explorer, the DDL of an object, and the navigation by foreign key from a cell. The user chose points 1 to 4 and approved points 5 to 27 with the plan.
+
+New fact: the DDL of an object needs text that SQLN writes when the server has no function for it. The structure tab rejected a DDL text (Structure tab — 2026-10-31, point 2), and that rule of the structure tab stays. The compare already writes DDL from the catalog.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Objects | Routines (functions and procedures), sequences, triggers, and types (enum and domain) | Routines, sequences, and triggers only | User choice |
+| 2. DDL output | A new console of the connection, as `S` of the compare | Insert at the cursor of the console of the connection, as `g`; a read-only window | User choice |
+| 3. Table and sequence of PostgreSQL | SQLN writes the text with the DDL writer of the compare. A comment at the top says so | Refuse with the reason | User choice. PostgreSQL has no `SHOW CREATE` |
+| 4. Key direction | Both: the row that the key reads, and the rows of other tables that read this row | Only the row that the key reads | User choice |
+| 5. Tree | One group per kind under the schema, after the tables and views: `Routines (n)`, `Sequences (n)`, `Triggers (n)`, `Types (n)`. An empty group does not appear. Tables and views stay where they are | Rows without groups; groups for all kinds, also for tables (DataGrip) | The current navigation does not change. Many functions do not hide the tables |
+| 6. Read | The objects come with the read of the catalog, in one more query per database. `r` reads them again | A read when a group opens | The tree filter finds them. One read, with a small cost |
+| 7. Extension objects (PostgreSQL) | Not shown (`pg_depend.deptype = 'e'`) | Show them | PostGIS puts hundreds of functions in `public`, and they hide the functions of the user |
+| 8. Aggregate and window functions (PostgreSQL) | Not shown (`prokind` `a` and `w`). Internal triggers are not shown either | Show them | `pg_get_functiondef` refuses an aggregate |
+| 9. Label | A routine shows `name(arguments)` on PostgreSQL (`pg_get_function_identity_arguments`) and `name` on MySQL. A trigger shows `name (table)`. Each overload has its own row | The name only | Two overloads need two rows and two DDL texts |
+| 10. Tree filter | `/` also finds objects by name, under their schema and group | Tables only | The user looks for a function by name |
+| 11. Keys on an object | `Enter` opens the DDL. `g` lists only **DDL**. `y` copies the name without the arguments. `i`, `d`, `c`, and `I` have no effect, and the hint row hides them. On a group, `Enter` and `Right` open it | An own key for the DDL | The keys that the user knows |
+| 12. DDL of a table and a view | A last entry **DDL** in the `g` list. No new key | An own key `G` | `g generate` is already in the hint row and on the `Ctrl+W Tab` page |
+| 13. Content of a table DDL | The table, its keys, and its indexes. Triggers stay separate objects | Include the triggers | The rule of `SHOW CREATE TABLE` of MySQL |
+| 14. Header | `-- <kind> <schema>.<name> · <connection>`. A text that SQLN writes also gets `-- SQLN wrote this text from the catalog. The text of the server can differ.` Each statement ends with `;` | No header | The user knows where the text comes from |
+| 15. DDL console | A new console of the connection, with the schema of the object, as `open_compare_script`. Nothing runs | — | Point 2. The run protection acts when the user runs the console |
+| 16. Read path | A temporary task of the pool, with the password gate, the SQL time limit, and the **Messages** record. On PostgreSQL, `search_path` holds only the schema, as in the compare. The task closes at the end. An error goes to the status line and opens no console | A new `Session` method | The rows arrive as grid rows, so the model of the compare serves. The text stays in a pure module that tests can check |
+| 17. MySQL without the privilege | `SHOW CREATE` gives a `NULL` text: the status line says "The server did not give the text. Check the privileges of the user." | An empty console | The reason is clear |
+| 18. Key navigation: place | Only the table tab of a table. Not a console result, a structure, a view, or Redis | Also a console result | The simple protocol of PostgreSQL does not give the table of a column |
+| 19. Key navigation: key and discovery | `F` in the grid of a table tab, in both modes. `Ctrl+W F` on the first page of the menu, in the table panel. `F follow` in the hint row. Palette and `F1` | Only `F1` and the palette | Lesson of 2026-11-03: the user looks for a new command in `Ctrl+W` and in the hint row |
+| 20. Key navigation: choice | A list with each key of the row: `→ customers (id)` for a key that leaves the table, and `← orders (customer_id)` for a key that reaches it. The keys of the column of the cursor come first. With one key, SQLN goes there at once. A key with `NULL` in the row stays out. Without a key, the status line gives the reason | Always the list | Fewer keys in the common case |
+| 21. Key navigation: target tab | The tab of the target table. An open tab gets the focus, its `WHERE` gets the new filter, its `ORDER BY` stays, and it reads the first page. A busy tab refuses with the current message | Always a new tab | The rule "A table that is open only gets the focus" |
+| 22. Key navigation: filter text | `"column" = literal`, with `AND` for a key with several columns, and the literals of the dialect | A hidden filter | The user sees and edits the filter |
+| 23. Key navigation: keys that reach a table | Read with the columns of the table, in one more query. A failure only turns off this use. They stay in `Relation::referencing`, with the shape of `foreign_keys` | A read at the press of `F` | The same path and event as the keys that leave |
+| 24. Key navigation: keys not read yet | `F` asks for the columns and acts when they arrive, as a template that waits | Ask the user to press the key again | One key is enough |
+| 25. Restart | Nothing new to save. The DDL console is a normal console | — | No new tab kind |
+| 26. Delivery | Three parts in order: the tree, the DDL, and the key navigation. Each part with tests and documents | One part | The DDL uses the objects of the tree. The key navigation does not depend on the others |
+| 27. Out of scope | Completion of user functions; DDL from a table tab or a structure tab; a return from a navigation; indexes in the tree (the structure tab lists them) | — | Not necessary now |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Model | `Schema::objects` holds `Object` rows of an `ObjectKind`, with `Group` for the tree. `relations` does not change | Objects as relations of a new kind | Completion, the table tab, and the filter of the tables read `relations` only |
+| Label | `Object::label` is `name(arguments)` for a routine with arguments, and `name (table)` for a trigger. A routine without arguments shows its name only | Always `name()` | MySQL gives no arguments, so the two databases look the same |
+| Arguments of PostgreSQL | `pg_get_function_identity_arguments`, which keeps the names of the arguments, such as `x integer` | Types only | The DDL query finds the routine by the same text |
+| Read path | A task of the pool for the DDL only, with `Use::Definition`, and the events go to `on_definition_event` before the tabs | A new `Session` method | The rows arrive as grid rows, so `compare::schema::build` and `ddl::create_text` serve the table of PostgreSQL |
+| Table of PostgreSQL | `compare::sql::postgres_table_sql` filters the three queries of the compare by the table. `compare_sql` gives the same queries as before | Read the whole schema | A large schema reads only one table |
+| Column of `SHOW CREATE` | A fixed place: the second for a table and a view, the third for a routine and a trigger | Find the column by its name | The grid rows have no column names. MySQL 8.4 and MariaDB give the same places |
+| Console | `open_text_console` serves the DDL and the script of the compare. The text goes into the editor of the new console | The paste path of the application | A dialog that opens during the read does not receive the text |
+| `F` without keys | A view, a structure, a sessions tab, and a table whose keys are known to be absent refuse with a reason. The hint row hides `follow` there | Hide the key only | The user knows why nothing happens |
+| SQLite key without target columns | Both directions read the primary key of the target, as the diagram does. The `JOIN` suggestions also get these keys | Leave the key out | `REFERENCES customers` is a common form of SQLite |
+| Grouping of keys | `group_foreign_keys` joins the pairs of one name and one table | One name only | Two tables can have keys with the same name that reach one table |
+| Shared literal | `value_literal` moved from `compare::data` to `sql::literal` | A copy | The compare and the key navigation write the same literals |
+| `Ctrl+W F` | In the **Connection** group of the first page, with the label `Follow a key` | A new group | The group already holds the diagram and the compare of the tab |
+
+### Known limitations of the objects, the DDL, and the key navigation
+
+- The DDL of a PostgreSQL table that SQLN writes has the limits of the compare: no partitions, inheritance, comments, grants, owner, storage options, policies, or triggers. The names of its schema have no schema, so the new console has that schema.
+- A sequence of an identity column of PostgreSQL gets its `CREATE SEQUENCE` text without the identity. Only the `OWNED BY` of a `serial` column enters the text.
+- MySQL gives the DDL of a routine or a trigger only with the privilege to see it. MariaDB sequences do not appear.
+- The objects of a schema hidden by the list of visible schemas do not appear, as its tables do not.
+- Key navigation acts only in a table tab. A console result does not tell the table of a column.
+- A table whose catalog SQLN does not hold, such as a table of a hidden schema, has no keys to follow.
+- The filter of a key compares text. A value that the database writes in another form, such as a float with many digits, can give no row.
+
+## Quit button in the tab row — 2026-11-04
+
+The user asked for a button that quits SQLN, at the right end of the tab row.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Look | The text `Quit` in the style of the console buttons: `[Quit]` without color | Only `×`; the power symbol `⏻` | User choice. `×` already closes each tab, and Monaco can show `⏻` as an empty box |
+| 2. Click | The same as `Ctrl+W q`: it quits at once, and it asks only for a running statement or an open transaction | Always ask | User choice. The scripts save, and the tabs reopen at the next start |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Place | One free column after the button and one before it. The tabs use the rest of the row, so the active tab still scrolls into view | The button over the last tab | A tab never hides the button |
+| Home screen | The button stays | Hide it without a tab | The tab row is always on screen |
+
+## Search path of a console schema in PostgreSQL — 2026-11-04
+
+The user reported `type geography does not exist (42704)` on a query that works in DataGrip. A console with a chosen schema sent `SET search_path TO "<schema>"`, so `public` left the path, and with it the types and functions of PostGIS. A console gets a schema from the selector, from a saved script, or from the compare.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| Console path | The chosen schema first, then the default path of the session (`"$user", public`, or the path of the role and the database) | `"<schema>", public`; only the schema | User choice. Extensions in `public` or in another schema of the default path stay visible. A name without a schema still looks in the chosen schema first, and `CREATE` without a schema still uses it |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Statement | `set_config('search_path', concat_ws(', ', <schema>, NULLIF(current_setting('search_path'), '')), false)` | A fixed text of the default path | The default path can change by role or database. An empty default path gives only the schema |
+| Compare | `RunOptions::only_schema` keeps `SET search_path TO "<schema>"` for the reads of a compare | The same path as the console | The compare needs the names of other schemas with their schema, such as `public.geography`, for its sync script |
+| Repeats | The cleanup of the session restores the default path, and a reserved session does not receive the context again | Remove the schema from the default path first | The path does not grow. A repeated name in the path does no harm |
+
+## Visible schemas of a connection — 2026-11-04
+
+The user asked to mark, in the configuration of a connection, the schemas of PostgreSQL or the databases of Redis that the explorer shows. The user chose points 1 to 4 and approved points 5 to 13 with the plan.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Form | A field with a list that SQLN reads from the server, with a search and a mark on each row. The field keeps the names, and the user can also write them. An empty field shows all | A text field only | User choice |
+| 2. Effect | The whole connection: tree, tree filter, schema selector of the console, compare dialog, and completion see only the marked schemas. A statement can still use any schema | Only the tree | User choice. Redis also skips the `SCAN` of a hidden database |
+| 3. Current schema | Always visible: `current_schema()` of PostgreSQL, `DATABASE()` of MySQL, the database of a Redis connection | Visible only when marked | User choice. The console runs there, and completion reads it |
+| 4. Open connection | The field stays in the form of a connected connection. **Save** reads the catalog again and keeps the sessions | Change only after a disconnect | User choice |
+| 5. Databases | PostgreSQL, MySQL, and Redis. SQLite has no field | Only PostgreSQL and Redis | In MySQL a database is the schema |
+| 6. Marked empty Redis database | It appears. Without a list, the old rule stays: an empty database appears only when it is the current one | Only a database with keys | The user marked it |
+| 7. Redis list | The databases with keys, the current database, and the marked databases. Another number is written in the field | `0` to `N - 1` from `CONFIG GET databases` | A managed service often refuses `CONFIG` |
+| 8. Patterns | Exact names only, with case | `tenant_*` | Not necessary now |
+| 9. Tree note | `(filtered)` after the name of a connection with a list | No note | The user sees why a schema is not there. `Loading` and `Failed` come first |
+| 10. Place | First field of **Options**. The label is **Schemas** for PostgreSQL and **Databases** for MySQL and Redis. The `...` button and `Ctrl+O` open the list | Own section | The form of an open connection keeps two sections |
+| 11. List keys | Write to filter, `Up` and `Down`, `Space` marks, `Enter` writes the field, `Esc` cancels. A click marks a row | Other keys | Same keys as the other lists |
+| 12. Field text | Names with commas between them, such as `public, sales`. Spaces, empty names, and repeats go away. A Redis name must be a number | A list of lines | One line, as the other fields |
+| 13. `config.json` | `"schemas": ["public", "sales"]`. A missing or empty list shows all. `version` stays 1 | A new version | Same rule as `idleTimeoutSeconds` |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Read of the names | The path of **Test**: one short session with the definition of the form, also with the connection open. `ExecEvent::ConnectionTested` carries the names | The pool when the connection is open | One path. The password requests of **Test** stay as they are, and the list reads the server of the form |
+| Filter | `Session::read_catalog_of` reads the catalog and calls `Catalog::keep_schemas`. Redis replaces it and reads only the databases of the list | A `WHERE` in each catalog query | One rule for each database. The catalog of PostgreSQL and MySQL is one query |
+| Names | `Session::read_schema_names` reads the catalog. Redis reads only `INFO keyspace` | One query for each database | Only Redis has a cost in the full read: one `SCAN` for each database |
+| Window | `draw_list_window` of the palette, over the form | A list below the field | The list can hold many names |
+
+Known limits:
+
+- A name with a comma does not fit in the field.
+- PostgreSQL and MySQL still read the relations of each schema. The filter reduces the memory and the screen, not the query.
+- A new schema does not appear until the user marks it.
+- The list opens one more session, outside the pool limit, also with the connection open.
+- The list needs a valid form. A Redis field with a name that is not a number stops it.
+- An older SQLN refuses a file with `schemas`.
 
 ## Lists with a search in the compare dialog — 2026-11-03
 
@@ -656,14 +887,14 @@ The row count does not reopen the pagination rule: a page keeps asking for one e
 | Comment | Rule | Without a selection, the cursor line. Blank lines stay the same. All commented lose the comment; in the other cases, the comment enters at the smallest indent | Comment each line at its own indent | It is the IDE habit, and the text keeps its shape |
 | Count | Shape | `c` key, with exact `COUNT(*)` and the applied filter | Automatic estimate; automatic `COUNT(*)` | `COUNT(*)` on a big table holds a connection, the estimate errs with a filter, and it does not exist on SQLite |
 | Count | Path | The same as a page | New method in the manager | Deadline, Stop, pool, password, and budget apply without new code |
-| Count | Validity | **Apply** and **Clear** clear the total, and sorting keeps it | Clear always | The order does not change the count |
+| Count | Validity | **Apply filters** and **Clear filters** clear the total, and sorting keeps it | Clear always | The order does not change the count |
 | Count | Available | Only with more rows to load, in a table or view tab | Every tab | Without more rows, the grid already has the total. Redis key and structure have no count SQL |
 
 ### Known limitations
 
 - The comment reads lines, not tokens. A line inside a string or a block comment receives the prefix.
 - `--x` on MySQL is not a comment, but the removal treats it as a comment.
-- The count gets old when another session changes the table, until the next **Apply**.
+- The count gets old when another session changes the table, until the next **Apply filters**.
 - A JSON column without an object or array shape, such as a number or a string, does not switch shape.
 
 ## Command-line target, run protection, formatter, and history — 2026-11-01
@@ -917,7 +1148,7 @@ These choices follow the rules above on the points the rules left open.
 | Stop | Only for a command that waits, such as `BLPOP`. In another command, SQLN closes the connection, and the server ends the command |
 | Slow command | A long `KEYS *` holds the server, so the stop request may wait 5 seconds without a response |
 | Cap and budget | The driver reads the whole response before the row cap and the grid budget. A huge `LRANGE k 0 -1` uses memory before the cut |
-| Explorer | Shows up to 1,000 keys in the `SCAN` arrival order, sorted by name. Empty databases do not appear, except the current database. A key that is not UTF-8 does not appear and marks the list as partial. A command does not update the tree; use **Refresh** |
+| Explorer | Shows up to 1,000 keys in the `SCAN` arrival order, sorted by name. Empty databases do not appear, except the current database and the databases of the list of the connection (2026-11-04). A key that is not UTF-8 does not appear and marks the list as partial. A command does not update the tree; use **Refresh** |
 | Value pages | `HSCAN`, `SSCAN`, and `XRANGE` have no offset, so each page repeats the previous read, with the SQL `OFFSET` cost. A hash or set that changes can repeat or skip items |
 | Module types | A module type, such as JSON, does not open in a tab. Use the console |
 | `MULTI` | Valid only inside the same execution. Running `MULTI` alone discards the queue at the end of the execution |
@@ -961,7 +1192,7 @@ These choices follow the rules above on the points the rules left open.
 | End of the result badge | The badge leaves when the user leaves the tab, or with the next execution | Keep until the next execution; leave when entering the tab | A tab with a badge means a result the user has not seen yet |
 | Start of the time | When the execution starts, without the password wait | From the run key | The time measures the database, not the password typing |
 | Tabs of the last session | Reopen at startup, with the `reopenTabs` option and default on | Manual list only, as in the original plan; ask at startup | Reopened by the user on 2026-10-31: the text is already saved, and the reopening runs no SQL |
-| Table of the last session | Load on the first selection; a tab that starts on screen waits for `Enter` or **Apply** | Load at startup | The connect-on-first-use rule stays: the opening does not connect and does not ask for a password |
+| Table of the last session | Load on the first selection; a tab that starts on screen waits for `Enter` or **Apply filters** | Load at startup | The connect-on-first-use rule stays: the opening does not connect and does not ask for a password |
 | Tab list after a failure | Invalid configuration or a locked console keeps the file list | Write the list of the current session | A session that could not reopen the tabs cannot erase that list |
 | Close tab with the mouse | `×` at the end of each tab, with the questions of `Ctrl+W c` | Close without questions; show `×` only on the active tab | A click cannot discard a transaction or a text; the `×` on each tab closes another tab without changing the screen |
 | Hint line commands | Key with the menu key style, effect with the hint color, and two spaces between the commands | Separate with ` · ` | The color marks the start of each command; ` · ` passes 80 columns in the navigator, and two spaces fit in 80 |
@@ -1006,7 +1237,7 @@ Real terminal, mouse, network disk, certificates, and network failures stay as p
 
 The code implements the credential phase, with authorized plain text, migration, refused password, and separate deletion.
 Keychain and Secret Service in a container are validated; the Secret Service still needs a repeat on a real Linux desktop.
-The [plan matrix](INITIAL_PLAN.md#credential-phase-close) records the completion criteria.
+The [vault validation](INITIAL_PLAN.md#validation-of-the-real-vaults) records the native checks and pending desktop validation.
 The tests with an in-memory vault and real databases do not replace that native validation.
 The missing-vault criterion comes from the validation: only responses confirmed on Linux, never on macOS.
 
@@ -1075,7 +1306,7 @@ The code offers session, vault, and the authorized global plain-text exception, 
 ## Table view
 
 These choices are approved on 2026-10-31.
-The new tab order and the close without a replacement console still need code changes.
+Current state: tabs follow opening order. Closing the last console selects a remaining tab without creating a replacement console.
 
 | Subject | Choice | Rejected | Reason |
 |---|---|---|---|
@@ -1188,7 +1419,7 @@ These choices follow the plan rules on the points the rules left open.
 ## Themes — 2026-10-31
 
 The user asked for themes, runtime switching, and the default theme choice in Settings.
-The per-connection theme, to identify production, stays for later.
+The later subsection **Per-connection theme** records the implemented connection-specific theme.
 
 | Point | Decision | Rejected | Reason |
 |---|---|---|---|

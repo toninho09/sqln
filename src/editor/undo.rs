@@ -100,6 +100,10 @@ impl UndoHistory {
         self.trim();
     }
 
+    pub(super) fn has_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
     /// Reverses the last step. It returns false without a step.
     pub fn undo(&mut self, lines: &mut Lines, cursor: &mut Index2) -> bool {
         let Some(step) = self.undo.pop_back() else {

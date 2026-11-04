@@ -112,7 +112,14 @@ fn draw_command(frame: &mut Frame, row: Rect, command: &Command, selected: bool,
         theme.dialog
     };
     frame.buffer_mut().set_style(row, style);
-    frame.render_widget(Paragraph::new(format!(" {}", command.label)), row);
+    let key_room = command.key.as_ref().map_or(0, |key| key.width() + 2);
+    let label_area = Rect {
+        width: row
+            .width
+            .saturating_sub(u16::try_from(key_room).unwrap_or(row.width)),
+        ..row
+    };
+    frame.render_widget(Paragraph::new(format!(" {}", command.label)), label_area);
     if let Some(key) = &command.key {
         let key_width = u16::try_from(key.width() + 1)
             .unwrap_or(row.width)

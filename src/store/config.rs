@@ -308,6 +308,9 @@ pub struct ConnectionEntry {
     pub theme: Option<ThemeName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<ConnectionIcon>,
+    /// The schemas, or the Redis databases, that the explorer shows. Empty shows all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub schemas: Vec<String>,
 }
 
 /// The configuration of a scope that cannot load. The text names the file, and the
@@ -481,6 +484,13 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
             {
                 return Err("The Redis database must be a number.".to_owned());
             }
+            if entry
+                .schemas
+                .iter()
+                .any(|name| !engine.accepts_database(name))
+            {
+                return Err("Each Redis database in schemas must be a number.".to_owned());
+            }
             if let Some(tls) = &entry.tls
                 && tls.mode == TlsMode::Disabled
                 && (tls.ca_file.is_some() || tls.client_cert.is_some() || tls.client_key.is_some())
@@ -562,6 +572,7 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
     definition.base = Some(base);
     definition.theme = entry.theme;
     definition.icon = entry.icon;
+    definition.schemas.clone_from(&entry.schemas);
     definition
 }
 
@@ -594,6 +605,7 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
         idle_timeout_seconds: definition.idle_timeout.map(|time| time.as_secs()),
         theme: definition.theme,
         icon: definition.icon,
+        schemas: definition.schemas.clone(),
     };
     match &definition.source {
         Source::Sqlite(target) => {

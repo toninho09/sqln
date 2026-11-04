@@ -7,7 +7,7 @@ use std::ops::Range;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::catalog::{Catalog, RelationRef};
+use crate::catalog::{Catalog, Relation, RelationRef};
 use crate::complete::{quote_name, suggest};
 use crate::connector::redis::value_page;
 use crate::console::{Message, MessageLevel, Phase, RunClock};
@@ -15,10 +15,11 @@ use crate::editor::SuggestionList;
 use crate::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, StatementStatus,
 };
-use crate::grid::{Budget, Row, row_cost};
+use crate::grid::{Budget, Row, Value, row_cost};
 use crate::input::SuggestionKeys;
 use crate::line_input::{Edit, LineInput};
 use crate::result::ResultTab;
+use crate::sql::literal::value_literal;
 use crate::sql::{Dialect, TokenKind, quote_identifier, split, tokenize};
 use crate::structure::{Scope, Section, SessionSignal, Structure, signal_sql, structure_sql};
 use crate::ui::text;
@@ -87,6 +88,13 @@ pub struct TableTab {
     /// The catalog grid of a structure tab. `None` means a tab of rows.
     pub structure: Option<Structure>,
     pub result: ResultTab,
+    pub edit_metadata: Option<crate::data_edit::Metadata>,
+    pub edit_execution: Option<ExecutionId>,
+    pub edit_uncertain: bool,
+    pub edit_after: Option<(usize, usize, bool)>,
+    pub edit_close: bool,
+    pub edit_reload: bool,
+    pub edit_restore: Option<crate::data_edit::Restore>,
     pub focus: TableFocus,
     pub filter: LineInput,
     pub order: LineInput,
@@ -193,6 +201,71 @@ pub fn page_sql(
     }
 }
 
+/// One way from a row of a table tab to the rows that a key joins to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Follow {
+    pub target: RelationRef,
+    /// The `WHERE` text of the tab of the target.
+    pub filter: String,
+    /// The text of the list: a mark of the direction, the table, and its columns.
+    pub label: String,
+}
+
+/// Lists the keys of a row of a table: the keys that leave the table, then the keys of
+/// other tables that reach it. The keys of the column of the cursor come first. A key
+/// with `NULL` in the row, or with a column that the grid does not show, stays out.
+/// `columns` are the columns of the grid, and `schema` is the schema of the table.
+pub fn follow_choices(
+    schema: &str,
+    relation: &Relation,
+    columns: &[String],
+    row: &Row,
+    cursor: usize,
+    dialect: Dialect,
+) -> Vec<Follow> {
+    let leaving = relation
+        .foreign_keys
+        .iter()
+        .map(|key| (text::FOLLOW_LEAVING, key));
+    let reaching = relation
+        .referencing
+        .iter()
+        .map(|key| (text::FOLLOW_REACHING, key));
+    let at_cursor = columns.get(cursor);
+    let mut choices: Vec<(bool, Follow)> = Vec::new();
+    for (mark, key) in leaving.chain(reaching) {
+        let parts: Option<Vec<String>> = key
+            .columns
+            .iter()
+            .zip(&key.target_columns)
+            .map(|(column, target)| {
+                let place = columns.iter().position(|name| name == column)?;
+                let value = row.get(place).filter(|value| *value != Value::Null)?;
+                let name = quote_identifier(target, dialect);
+                Some(format!("{name} = {}", value_literal(value, dialect)))
+            })
+            .collect();
+        let Some(parts) = parts else {
+            continue;
+        };
+        let table = if key.target.schema == schema {
+            key.target.relation.clone()
+        } else {
+            format!("{}.{}", key.target.schema, key.target.relation)
+        };
+        let label = format!("{mark} {table} ({})", key.target_columns.join(", "));
+        let first = at_cursor.is_some_and(|column| key.columns.contains(column));
+        let follow = Follow {
+            target: key.target.clone(),
+            filter: parts.join(" AND "),
+            label,
+        };
+        choices.push((first, follow));
+    }
+    choices.sort_by_key(|(first, _)| !first);
+    choices.into_iter().map(|(_, follow)| follow).collect()
+}
+
 /// Compares two `ORDER BY` texts without case and without extra blanks.
 fn same_order(a: &str, b: &str) -> bool {
     let words = |text: &str| {
@@ -235,6 +308,13 @@ impl TableTab {
             filters: true,
             structure: None,
             result: ResultTab::new(0, Vec::new()),
+            edit_metadata: None,
+            edit_execution: None,
+            edit_uncertain: false,
+            edit_after: None,
+            edit_close: false,
+            edit_reload: false,
+            edit_restore: None,
             focus: TableFocus::Grid,
             filter: LineInput::default(),
             order: LineInput::default(),
@@ -420,6 +500,16 @@ impl TableTab {
         self.restart(filter, order, dialect, budget)
     }
 
+    pub fn reload(&mut self, dialect: Dialect, budget: &Budget) -> Option<PageRequest> {
+        self.total = None;
+        self.restart(
+            self.applied_filter.clone(),
+            self.applied_order.clone(),
+            dialect,
+            budget,
+        )
+    }
+
     /// Clears both fields, and it starts a query without a filter and an order.
     pub fn clear(&mut self, dialect: Dialect, budget: &Budget) -> Option<PageRequest> {
         self.filter.set("");
@@ -452,7 +542,11 @@ impl TableTab {
         dialect: Dialect,
         budget: &Budget,
     ) -> Option<PageRequest> {
+        if !self.result.edits.is_empty() {
+            return None;
+        }
         self.clear_rows(budget);
+        self.edit_metadata = None;
         self.pending = false;
         self.applied_filter = filter;
         self.applied_order = order;
@@ -487,6 +581,9 @@ impl TableTab {
     ) -> Result<PageRequest, &'static str> {
         if self.is_busy() {
             return Err(text::TABLE_BUSY);
+        }
+        if !self.result.edits.is_empty() {
+            return Err(text::EDIT_RESOLVE);
         }
         if !self.has_more {
             return Err(text::TABLE_NO_MORE);

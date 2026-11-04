@@ -253,6 +253,8 @@ impl Connector for RecordingConnector {
             namespace: Namespace::Schema,
             transactions: true,
             table_filters: !self.0.redis,
+            data_edit: !self.0.redis,
+            parameters: false,
         }
     }
 
@@ -883,27 +885,36 @@ fn the_hints_of_a_structure_tab_name_the_section() {
 }
 
 #[test]
-fn the_hints_of_a_table_show_the_structure_key_at_the_minimum_width() {
+fn the_hints_of_a_table_put_common_grid_actions_first() {
     let (mut f, _) = Fixture::recorded(Recorder {
         rows: 3,
         ..Recorder::default()
     });
     f.open_table("users");
     let hints = f.hints_at(80);
-    assert!(hints.contains("s sort  i struct  Ctrl+C copy"), "{hints}");
-    let hints = f.hints_at(120);
-    assert!(hints.ends_with("e export  I import  F1 keys"), "{hints}");
+    assert!(
+        hints.starts_with("Ctrl+C copy  Enter value  Ctrl+F find  f where  s sort"),
+        "{hints}"
+    );
+    assert!(hints.ends_with("Ctrl+P commands"), "{hints}");
+    let hints = f.hints_at(160);
+    assert!(hints.contains("i struct"), "{hints}");
+    assert!(hints.contains("I import"), "{hints}");
 }
 
 #[test]
-fn a_table_of_many_rows_keeps_the_structure_key_at_the_minimum_width() {
+fn a_table_of_many_rows_keeps_copy_and_find_at_the_minimum_width() {
     let (mut f, _) = Fixture::recorded(Recorder {
         rows: 250,
         ..Recorder::default()
     });
     f.open_table("users");
     let hints = f.hints_at(80);
-    assert!(hints.contains("] page  i struct"), "{hints}");
+    assert!(
+        hints.starts_with("Ctrl+C copy  Enter value  Ctrl+F find"),
+        "{hints}"
+    );
+    assert!(hints.ends_with("Ctrl+P commands"), "{hints}");
 }
 
 impl Fixture {
@@ -984,7 +995,8 @@ fn a_table_with_more_rows_shows_the_commands_of_more_rows() {
     });
     f.open_table("users");
     let row = f.hints_at(100);
-    assert!(row.contains("m more  ] page  i struct"), "{row}");
+    assert!(row.contains("m more  ] page"), "{row}");
+    assert!(f.hints_at(160).contains("i struct"));
 }
 
 #[test]
@@ -1018,7 +1030,8 @@ fn a_structure_tab_hides_the_load_key_without_more_rows() {
     f.structure_of_table("users");
     let row = f.hints_at(100);
     assert!(!row.contains("m more"), "{row}");
-    assert!(row.starts_with("] section"), "{row}");
+    assert!(row.starts_with("Ctrl+C copy"), "{row}");
+    assert!(row.contains("] section"), "{row}");
 }
 
 #[test]
@@ -1948,7 +1961,7 @@ fn a_button_that_has_no_effect_looks_disabled() {
         !f.modifier_of("[Load more]").contains(Modifier::DIM),
         "a next page exists"
     );
-    assert!(!f.modifier_of("[Apply]").contains(Modifier::DIM));
+    assert!(!f.modifier_of("[Apply filters]").contains(Modifier::DIM));
     assert!(
         f.modifier_of("[Stop]").contains(Modifier::DIM),
         "nothing runs"
@@ -1963,7 +1976,7 @@ fn a_button_that_has_no_effect_looks_disabled() {
     f.focus_filter();
     f.code(KeyCode::Enter);
     f.pump_until(|_| recorder.count() == 3);
-    assert!(f.modifier_of("[Apply]").contains(Modifier::DIM));
+    assert!(f.modifier_of("[Apply filters]").contains(Modifier::DIM));
     assert!(!f.modifier_of("[Stop]").contains(Modifier::DIM));
     recorder.release.notify_one();
     f.loaded();
@@ -1999,10 +2012,10 @@ fn the_apply_and_clear_buttons_work_with_the_mouse() {
     });
     f.open_table("users");
     f.type_filter("a = 1");
-    f.click_text("[Apply]");
+    f.click_text("[Apply filters]");
     f.loaded();
     assert!(recorder.statements()[1].contains("WHERE a = 1"));
-    f.click_text("[Clear]");
+    f.click_text("[Clear filters]");
     f.loaded();
     assert_eq!(
         recorder.statements()[2],
@@ -2024,7 +2037,7 @@ fn a_click_on_a_field_gives_it_the_focus() {
     assert_eq!(f.app.table().unwrap().focus, TableFocus::Filter);
     f.click_text("ORDER BY");
     assert_eq!(f.app.table().unwrap().focus, TableFocus::Order);
-    let (column, row) = f.locate_below("[Apply]", "id");
+    let (column, row) = f.locate_below("[Apply filters]", "id");
     f.click(column, row);
     assert_eq!(f.app.table().unwrap().focus, TableFocus::Grid);
 }
@@ -2259,7 +2272,7 @@ fn a_header_click_sorts_at_once_and_keeps_the_applied_filter_not_the_draft() {
     // A draft that nobody applied.
     f.focus_filter();
     f.type_text(" AND draft = 2");
-    let (column, row) = f.locate_below("[Apply]", "name");
+    let (column, row) = f.locate_below("[Apply filters]", "name");
     f.click(column, row);
     f.loaded();
     let statements = recorder.statements();
@@ -2286,7 +2299,7 @@ fn clicking_the_same_header_again_reverses_and_then_removes_the_order() {
     });
     f.open_table("users");
     for expected in ["ORDER BY name ASC", "ORDER BY name DESC"] {
-        let (column, row) = f.locate_below("[Apply]", "name");
+        let (column, row) = f.locate_below("[Apply filters]", "name");
         f.click(column, row);
         f.loaded();
         assert!(
@@ -2295,7 +2308,7 @@ fn clicking_the_same_header_again_reverses_and_then_removes_the_order() {
             recorder.statements()
         );
     }
-    let (column, row) = f.locate_below("[Apply]", "name");
+    let (column, row) = f.locate_below("[Apply filters]", "name");
     f.click(column, row);
     f.loaded();
     assert!(!recorder.statements().last().unwrap().contains("ORDER BY"));
@@ -2546,12 +2559,12 @@ fn the_help_of_a_table_lists_its_own_keys() {
     for _ in 0..4 {
         f.code(KeyCode::Down);
     }
-    f.assert_sees("Load more rows");
+    f.assert_not_sees("Load more rows");
     f.code(KeyCode::Esc);
     f.focus_filter();
     f.code(KeyCode::F(1));
     f.assert_sees("Keys · Conventional · Filter");
-    f.assert_sees("Apply the fields");
+    f.assert_sees("Apply the filters");
 }
 
 #[test]
@@ -2575,7 +2588,7 @@ fn the_hint_follows_the_part_of_the_table_in_focus() {
     });
     f.open_table("users");
     f.grid();
-    f.assert_sees("f where  o order by");
+    f.assert_sees("Ctrl+C copy  Enter value  Ctrl+F find  f where");
     f.focus_filter();
     f.assert_sees("Enter apply");
 }
@@ -2592,8 +2605,8 @@ fn the_table_view_fits_the_minimum_terminal() {
     for text in [
         "WHERE",
         "ORDER BY",
-        "[Apply]",
-        "[Clear]",
+        "[Apply filters]",
+        "[Clear filters]",
         "[Load more]",
         "[Stop]",
         "rows loaded",
@@ -2736,7 +2749,7 @@ fn a_horizontal_wheel_moves_the_cursor_one_column_and_stops_at_each_edge() {
         ..Recorder::default()
     });
     f.open_table("users");
-    let (column, row) = f.locate_below("[Apply]", "name0");
+    let (column, row) = f.locate_below("[Apply filters]", "name0");
     let col = |f: &Fixture| f.app.table().unwrap().result.view.col;
     f.app
         .on_event(mouse(MouseEventKind::ScrollRight, column, row));
@@ -2753,6 +2766,58 @@ fn a_horizontal_wheel_moves_the_cursor_one_column_and_stops_at_each_edge() {
 }
 
 #[test]
+fn clicking_a_table_row_number_selects_and_copies_the_whole_row() {
+    for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let (mut f, recorder) = Fixture::recorded_in(
+            Recorder {
+                rows: 100,
+                ..Recorder::default()
+            },
+            Settings::default(),
+            keyboard,
+        );
+        f.open_table("users");
+        f.focus_filter();
+        f.screen_at(80, 24);
+        let (column, row) = f.locate_below("[Apply filters]", "name0");
+        for _ in 0..8 {
+            f.app
+                .on_event(mouse(MouseEventKind::ScrollDown, column, row));
+        }
+        for (width, height) in [(80, 24), (100, 30)] {
+            let screen = f.screen_at(width, height);
+            let (row, line) = screen
+                .lines()
+                .enumerate()
+                .find(|(_, line)| line.contains("name24"))
+                .expect("row 25 is visible");
+            let byte = line.find("25 │").expect("the row number is visible");
+            let column = line[..byte].chars().count() as u16;
+            let before = recorder.count();
+            f.app.on_event(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                column,
+                row as u16,
+            ));
+            let tab = f.app.table().unwrap();
+            let range = tab.result.view.selection().expect("the row is selected");
+            assert_eq!(
+                (range.top, range.bottom, range.left, range.right),
+                (24, 24, 0, 1)
+            );
+            assert_eq!(tab.focus, TableFocus::Grid);
+            assert!(tab.result.view.top > 0);
+            f.screen_at(width, height);
+            f.press(ctrl('c'));
+            assert_eq!(f.clipboard.borrow().text, "24\tname24\n");
+            assert_eq!(recorder.count(), before, "selection does not run SQL");
+            f.code(KeyCode::Esc);
+            assert!(f.app.table().unwrap().result.view.selection().is_none());
+        }
+    }
+}
+
+#[test]
 fn the_mouse_scrolls_selects_and_resizes_in_the_grid_of_a_table() {
     let (mut f, _) = Fixture::recorded(Recorder {
         rows: 100,
@@ -2760,7 +2825,7 @@ fn the_mouse_scrolls_selects_and_resizes_in_the_grid_of_a_table() {
     });
     f.open_table("users");
     // The wheel moves the cursor by rows.
-    let (column, row) = f.locate_below("[Apply]", "name0");
+    let (column, row) = f.locate_below("[Apply filters]", "name0");
     f.app
         .on_event(mouse(MouseEventKind::ScrollDown, column, row));
     assert_eq!(f.app.table().unwrap().result.view.row, 3);
@@ -2777,7 +2842,7 @@ fn the_mouse_scrolls_selects_and_resizes_in_the_grid_of_a_table() {
         Some((0, 2))
     );
     // A drag on the edge of a header changes the width of the column.
-    let (edge, header) = f.locate_below("[Apply]", "id");
+    let (edge, header) = f.locate_below("[Apply filters]", "id");
     let before = f.app.table().unwrap().result.table.width(0);
     let edge = edge + before as u16;
     f.click(edge, header);
@@ -3136,12 +3201,12 @@ fn sqlite_keeps_a_comment_in_the_filter_from_removing_the_limit() {
 fn sqlite_sorts_by_a_click_on_the_header() {
     let mut f = Fixture::sqlite("real-click", &numbered(20), Settings::default());
     f.open_table("t");
-    let (column, row) = f.locate_below("[Apply]", "name");
+    let (column, row) = f.locate_below("[Apply filters]", "name");
     f.click(column, row);
     f.loaded();
     assert_eq!(ids(&f)[0], "1");
     assert_eq!(ids(&f)[1], "10", "text order");
-    let (column, row) = f.locate_below("[Apply]", "name");
+    let (column, row) = f.locate_below("[Apply filters]", "name");
     f.click(column, row);
     f.loaded();
     assert_eq!(ids(&f)[0], "9");

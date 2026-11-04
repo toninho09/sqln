@@ -160,6 +160,14 @@ impl ResultTable {
         self.bytes += bytes;
     }
 
+    pub fn refresh_row_width(&mut self, index: usize) {
+        if let Some(row) = self.rows.get(index) {
+            for (width, value) in self.natural.iter_mut().zip(row) {
+                *width = (*width).max(cell_width(value)).min(MAX_COLUMN_WIDTH);
+            }
+        }
+    }
+
     pub fn width(&self, column: usize) -> usize {
         self.manual[column].unwrap_or(self.natural[column])
     }
@@ -276,6 +284,13 @@ impl GridView {
         let row = self.row.saturating_add_signed(rows);
         let col = self.col.saturating_add_signed(cols);
         self.move_to(row, col, table, extend);
+    }
+
+    pub fn select_row(&mut self, row: usize, table: &ResultTable) {
+        if row < table.rows.len() && !table.columns.is_empty() {
+            self.move_to(row, 0, table, false);
+            self.anchor = Some((row, table.columns.len() - 1));
+        }
     }
 
     pub fn select_all(&mut self, table: &ResultTable) {

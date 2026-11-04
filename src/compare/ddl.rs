@@ -36,6 +36,34 @@ pub fn script(
     writer.lines.join("\n")
 }
 
+/// Returns the statements that create one table of a model: the table with its columns
+/// and keys, its indexes, and its foreign keys. The names in the definitions of the
+/// database have no schema, so the text runs with the schema of the model in the path.
+/// It returns `None` when the model has no such table.
+pub fn create_text(model: &SchemaModel, name: &str) -> Option<String> {
+    let table = model.tables.get(name)?;
+    let mut writer = Writer {
+        dialect: model.dialect,
+        schema: model.schema.clone(),
+        removals: false,
+        lines: Vec::new(),
+    };
+    create_table(&mut writer, table);
+    for index in &table.indexes {
+        add_object(&mut writer, &table.name, &Object::Index(index.clone()));
+    }
+    for constraint in &table.constraints {
+        if constraint.kind == ConstraintKind::Foreign {
+            add_object(
+                &mut writer,
+                &table.name,
+                &Object::Constraint(constraint.clone()),
+            );
+        }
+    }
+    Some(writer.lines.join("\n"))
+}
+
 struct Writer {
     dialect: Dialect,
     schema: String,

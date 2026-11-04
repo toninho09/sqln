@@ -1,5 +1,6 @@
 //! All interface text. This file keeps the text in one place for a later translation.
 
+use crate::catalog::Group;
 use crate::export::ExportFormat;
 use crate::generate::Template;
 use crate::import::ImportFormat;
@@ -9,6 +10,55 @@ use crate::structure::SessionSignal;
 
 /// One command of the hint bar: a key and its effect. A note has an empty key.
 pub type HintPart = (&'static str, &'static str);
+
+pub const EDIT_TITLE: &str = "Edit cell";
+pub const EDIT_REVIEW: &str = "Review table changes";
+pub const EDIT_REVIEW_AGAIN: &str =
+    "Pending changes stay in their table. Select that table and open Review again.";
+pub const EDIT_APPLY: &str = "Apply changes";
+pub const EDIT_KEEP: &str = "Keep value";
+pub const EDIT_SET_NULL: &str = "Set NULL";
+pub const EDIT_DISCARD: &str = "Discard changes";
+pub const EDIT_BEFORE: &str = "Before";
+pub const EDIT_AFTER: &str = "After";
+pub const EDIT_UNCERTAIN_LABEL: &str = "Commit result unknown";
+pub const EDIT_NO_CELL: &str = "No cell is selected. Open a table and select a value.";
+pub const EDIT_UNAVAILABLE: &str = "This table does not support editing, or the connection is read-only. Use SQL on a writable table.";
+pub const EDIT_MANUAL_TRANSACTION: &str = "Resolve the open transaction before editing table data.";
+pub const EDIT_NO_KEY: &str =
+    "Editing needs a primary key with non-NULL values. Use SQL for this table.";
+pub const EDIT_PROTECTED: &str =
+    "This column cannot be edited. Select a non-key, non-generated column.";
+pub const EDIT_BINARY: &str = "Binary values do not support editing. Use SQL for this column.";
+pub const EDIT_NOT_NULL: &str = "This column does not accept NULL. Enter a value.";
+pub const EDIT_SCHEMA_CHANGED: &str =
+    "The table definition changed. Discard changes and reload the table.";
+pub const EDIT_CONFLICT: &str =
+    "A row changed or no longer exists. Discard changes and reload the table.";
+pub const EDIT_ENGINE: &str =
+    "Grid editing requires an InnoDB table on MySQL. Use SQL for this table.";
+pub const EDIT_BUDGET: &str =
+    "The changes exceed the data budget. Free another result or discard changes.";
+pub const EDIT_NO_CHANGES: &str = "No changes can be applied. Edit a value first.";
+pub const EDIT_STOPPED: &str =
+    "The operation stops before a confirmed commit. Check the connection and retry.";
+pub const EDIT_COMMIT_UNKNOWN: &str = "The commit result is unknown. Verify the database before any new write. Do not repeat this operation.";
+pub const EDIT_KEEP_PENDING: &str = "Pending values stay in the grid.";
+pub const EDIT_RESOLVE: &str = "Apply or discard pending changes before this operation.";
+pub const EDIT_SAVED: &str = "Changes saved. The table reloads the current database values.";
+pub const EDIT_CLOSE_QUESTION: &str = "Apply or discard pending changes before closing this table?";
+pub const EDIT_DISCARD_QUESTION: &str =
+    "Discard all pending changes? This does not undo a database commit.";
+pub const EDIT_CELL_HINT: &str = "F2/Ctrl+S keep locally · Tab buttons · Esc cancel";
+pub const EDIT_REVIEW_HINT: &str = "F2/Ctrl+S apply · Up/Down scroll · Tab buttons · Esc cancel";
+
+pub fn edit_pending(rows: usize, cells: usize) -> String {
+    format!("Pending: {rows} rows, {cells} cells")
+}
+
+pub fn edit_production(table: &str, connection: &str) -> String {
+    format!("Apply the reviewed changes to {table} on the production connection {connection}?")
+}
 
 pub const CLIPBOARD_UNAVAILABLE: &str = "Clipboard unavailable. Paste with the terminal.";
 pub const COPY_SENT_TO_TERMINAL: &str = "Copy request sent to the terminal. No confirmation.";
@@ -139,6 +189,19 @@ pub const HINT_FORM_LIST: &[HintPart] = &[
     ("Esc", "close list"),
 ];
 pub const HINT_FORM_BUTTON: &[HintPart] = &[("Tab", "next"), ("Enter", "press"), ("Esc", "cancel")];
+pub const HINT_FORM_SCHEMAS: &[HintPart] = &[
+    ("Tab", "next"),
+    ("Ctrl+O", "list"),
+    ("Enter", "next"),
+    ("Esc", "cancel"),
+];
+pub const HINT_MARK_LIST: &[HintPart] = &[
+    ("", "Write to filter"),
+    ("Up/Down", "move"),
+    ("Space", "mark"),
+    ("Enter", "done"),
+    ("Esc", "cancel"),
+];
 pub const HINT_FORM_PATH: &[HintPart] = &[
     ("Tab", "next"),
     ("Ctrl+O", "browse"),
@@ -247,6 +310,7 @@ pub const HINT_RECORD_KEYS: &[HintPart] = &[
 pub const HINT_RECORD_MOUSE: &[HintPart] = &[("OK", "confirm"), ("Esc", "cancel recording")];
 pub const HINT_EXPLORER_MENU: &[HintPart] = &[("Ctrl+W Tab", "…"), ("Esc", "cancel")];
 pub const HINT_COMMANDS: &[HintPart] = &[("Ctrl+W", "commands")];
+pub const HINT_PREFIX_MENU: &[HintPart] = &[("Ctrl+W", "menu")];
 pub const HINT_PALETTE: &[HintPart] = &[
     ("", "Write to filter"),
     ("Up/Down", "move"),
@@ -300,6 +364,19 @@ pub const MENU_CLOSE_TAB: &str = "Close the tab";
 pub const MENU_RUN: &str = "Run the statement";
 pub const MENU_SCRIPT: &str = "Run the script";
 pub const MENU_EXPLORER: &str = "Explorer commands";
+pub const MENU_CONTEXT: &str = "Panel commands";
+pub const MENU_OPEN: &str = "Open";
+pub const MENU_EXPAND: &str = "Expand";
+pub const MENU_COLLAPSE: &str = "Collapse/parent";
+pub const MENU_CLEAR_FILTER: &str = "Clear filter";
+pub const MENU_LOAD_GRID: &str = "Load grid";
+pub const COMMAND_LOAD_GRID: &str = "Load the grid";
+pub const COMMAND_OPEN_CONSOLE: &str = "Open the console";
+pub const COMMAND_OPEN_DATA: &str = "Open the data";
+pub const COMMAND_OPEN_DDL: &str = "Open the DDL in a new console";
+pub const COMMAND_TOGGLE_ROW: &str = "Open or close the row";
+pub const GROUP_SELECTION_VIEW: &str = "Selection and view";
+pub const GROUP_TABLE_RESULTS: &str = "Table and results";
 pub const MENU_SESSIONS: &str = "Sessions";
 pub const MENU_NEW_CONSOLE: &str = "New console";
 pub const MENU_SCRIPTS: &str = "Scripts";
@@ -388,6 +465,23 @@ pub const ADD_CONNECTION_ROW: &str = "Press a to add one";
 pub const NOTE_LOADING: &str = "(loading)";
 pub const NOTE_FAILED: &str = "(failed)";
 pub const MARK_VIEW: &str = "(view)";
+/// Returns the name of a group of the explorer.
+pub fn group_name(group: Group) -> &'static str {
+    match group {
+        Group::Routines => "Routines",
+        Group::Sequences => "Sequences",
+        Group::Triggers => "Triggers",
+        Group::Types => "Types",
+    }
+}
+pub const NOT_FOR_OBJECT: &str = "This command does not act on this object.";
+pub const DEFINITION_MISSING: &str =
+    "The object is not in the database. Read the catalog again with r.";
+pub const DEFINITION_PRIVILEGE: &str =
+    "The server did not give the text. Check the privileges of the user.";
+pub const DEFINITION_STOPPED: &str = "The read of the DDL stopped.";
+pub const DEFINITION_WRITTEN: &str =
+    "-- SQLN wrote this text from the catalog. The text of the server can differ.";
 pub const NO_SCHEMA_CHOICE: &str = "This database has no schema or database choice.";
 pub const SCHEMA_BUSY: &str = "End the execution and the transaction before the change.";
 pub const NO_DEFINITION: &str = "This connection has no definition to edit.";
@@ -396,6 +490,8 @@ pub const DISCONNECTED: &str = "Disconnected.";
 pub const SESSION_IN_USE: &str = "A session is still in use. It closes at its end.";
 pub const NOT_CONNECTED: &str = "This connection has no open session.";
 pub const FORM_TESTING: &str = "Testing the connection.";
+pub const SCHEMA_LIST_READING: &str = "Reading the names.";
+pub const NO_SCHEMA_MATCH: &str = "No name has this text.";
 pub const FORM_TEST_OK: &str = "The connection works.";
 pub fn form_file_missing(path: &str) -> String {
     format!("The file does not exist. Save asks before it creates the file: {path}")
@@ -408,6 +504,7 @@ pub const FORM_NEEDS_HOST: &str = "The connection needs a host.";
 pub const FORM_NEEDS_USER: &str = "The connection needs a user.";
 pub const FORM_NEEDS_FILE: &str = "SQLite needs a file.";
 pub const FORM_REDIS_DATABASE: &str = "The Redis database must be a number.";
+pub const FORM_REDIS_SCHEMAS: &str = "Each Redis database must be a number.";
 pub const REDIS_SOCKET_TLS: &str = "A Unix socket does not use TLS. Turn off TLS.";
 pub const REDIS_NO_SOCKET: &str = "This system has no Unix sockets.";
 pub const REDIS_NO_STOP: &str = "The server cannot stop this command.";
@@ -445,6 +542,8 @@ pub const FIELD_URI: &str = "URI";
 pub const FIELD_HOST: &str = "Host or socket";
 pub const FIELD_PORT: &str = "Port";
 pub const FIELD_DATABASE: &str = "Database";
+pub const FIELD_SCHEMAS: &str = "Schemas";
+pub const FIELD_DATABASES: &str = "Databases";
 pub const FIELD_USER: &str = "User";
 pub const FIELD_PASSWORD: &str = "Password";
 pub const FIELD_CREDENTIAL: &str = "Credential";
@@ -673,6 +772,7 @@ pub const SHORTCUT_RESTORED: &str = "The action uses its inherited keys. Save to
 pub fn shortcut_region(region: crate::input::Region) -> &'static str {
     match region {
         crate::input::Region::Global => VALUE_SCOPE_GLOBAL,
+        crate::input::Region::Editor => REGION_EDITOR,
         crate::input::Region::Navigator => REGION_NAVIGATOR,
         crate::input::Region::Grid => REGION_GRID,
         crate::input::Region::Diagram => REGION_DIAGRAM,
@@ -693,6 +793,15 @@ pub fn template_name(template: Template) -> &'static str {
         Template::Delete => "DELETE",
     }
 }
+pub const TEMPLATE_DDL: &str = "DDL";
+pub const TITLE_FOLLOW: &str = "Follow a key";
+pub const MENU_FOLLOW: &str = "Follow a key";
+/// The marks of a key in the list of `F`: a key that leaves the table, and a key of
+/// another table that reaches it.
+pub const FOLLOW_LEAVING: &str = "→";
+pub const FOLLOW_REACHING: &str = "←";
+pub const FOLLOW_NONE: &str = "The row has no key with a value to follow.";
+pub const FOLLOW_REFUSED: &str = "Key navigation acts on the rows of a table.";
 pub const FIELD_FORMAT_JSON: &str = "Format JSON";
 pub const FIELD_SHOW_SYSTEM_COMMANDS: &str = "System commands";
 pub const FIELD_BELL_AFTER: &str = "Bell seconds";
@@ -927,6 +1036,8 @@ pub const SCHEMA_LOADING: &str = "Reading the catalog.";
 pub const CONTROL_RUN: &str = "Run";
 pub const CONTROL_SCRIPT: &str = "Script";
 pub const CONTROL_STOP: &str = "Stop";
+/// The button at the right end of the main tabs. It quits as `Ctrl+W q`.
+pub const CONTROL_QUIT: &str = "Quit";
 pub const CONTROL_COMMIT: &str = "Commit";
 pub const CONTROL_ROLLBACK: &str = "Rollback";
 pub const LABEL_SCHEMA: &str = "Schema";
@@ -1055,6 +1166,10 @@ pub const LABEL_WHERE: &str = "WHERE";
 pub const LABEL_ORDER_BY: &str = "ORDER BY";
 pub const BUTTON_APPLY: &str = "Apply";
 pub const BUTTON_CLEAR: &str = "Clear";
+pub const BUTTON_APPLY_FILTERS: &str = "Apply filters";
+pub const BUTTON_CLEAR_FILTERS: &str = "Clear filters";
+pub const BUTTON_REVIEW: &str = "Review";
+pub const BUTTON_DISCARD: &str = "Discard";
 pub const BUTTON_LOAD_MORE: &str = "Load more";
 pub const BUTTON_PREVIOUS: &str = "Previous";
 pub const BUTTON_NEXT: &str = "Next";
@@ -1088,6 +1203,8 @@ pub const TABLE_VALUE_TOO_LARGE: &str = "a value is larger than the data budget"
 pub const TABLE_NO_ORDER: &str = "No ORDER BY: pages can repeat or skip rows.";
 pub const BUTTON_RELOAD: &str = "Reload";
 pub const NOTE_PARTIAL_KEYS: &str = "(partial list)";
+/// The connection shows only the schemas of its list.
+pub const NOTE_FILTERED: &str = "(filtered)";
 pub const REGION_TABLE: &str = "Table";
 pub const REGION_DIAGRAM: &str = "Diagram";
 pub const REGION_COMPARE: &str = "Compare";
@@ -1176,20 +1293,27 @@ pub const OPTION_RETRY: &str = "Try again";
 pub const OPTION_REMOVE: &str = "Remove";
 
 pub const FILTER_KEYS: &[(&str, &str)] = &[
-    ("Enter", "Apply the fields"),
+    ("Enter", "Apply the filters"),
     ("Tab", "Accept the suggestion, or the next field"),
     ("Shift+Tab", "Next field"),
     ("Ctrl+Space", "Suggestions"),
     ("Esc", "Close the list, or go to the grid"),
 ];
 
-pub const EDITOR_KEYS: &[(&str, &str)] = &[
-    ("Ctrl+Space", "Suggestions"),
-    ("Ctrl+F", "Find and replace"),
-    ("Ctrl+Z, Ctrl+Y", "Undo, redo"),
-    ("Tab", "Accept the suggestion"),
-    ("Esc", "Close the list"),
+pub const EDITOR_KEYS: &[(&str, &str)] =
+    &[("Tab", "Accept the suggestion"), ("Esc", "Close the list")];
+
+pub const PARAMETERS_TITLE: &str = "Parameters";
+pub const PARAMETERS_TOGGLE: &str = "Collapse or expand parameters";
+pub const HINT_PARAMETERS: &[HintPart] = &[
+    ("Tab", "field"),
+    ("↑/↓", "parameter"),
+    ("Enter", "set"),
+    ("Esc", "editor"),
 ];
+pub const PARAMETER_SET: &str = "Set";
+pub const PARAMETER_UNSET: &str = "Unset";
+pub const PARAMETER_TYPES: [&str; 4] = ["Text", "Number", "Boolean", "NULL"];
 
 pub fn action_text(action: Action) -> &'static str {
     match action {
@@ -1202,10 +1326,23 @@ pub fn action_text(action: Action) -> &'static str {
         Action::Commit => "Commit",
         Action::Rollback => "Rollback",
         Action::FormatSql => "Format the SQL",
+        Action::FocusParameters => "Focus query parameters",
+        Action::ToggleParameters => "Collapse or expand query parameters",
         Action::ToggleComment => "Comment or uncomment the rows",
         Action::OpenHistory => "Open the query history",
         Action::OpenSessions => "Show the sessions of the server",
         Action::ExplorerCommands => "Show the commands of the explorer",
+        Action::ContextCommands => "Show the commands of the current panel",
+        Action::EditorSave => "Save the console now",
+        Action::EditorFind => "Find in the editor",
+        Action::EditorReplace => "Find and replace in the editor",
+        Action::EditorSuggestions => "Open the suggestions",
+        Action::EditorUndo => "Undo the last edit",
+        Action::EditorRedo => "Redo the last edit",
+        Action::EditorSelectAll => "Select all the text",
+        Action::EditorCopy => "Copy the selected text",
+        Action::EditorCut => "Cut the selected text",
+        Action::EditorPaste => "Paste into the editor",
         Action::Help => "Open this screen",
         Action::OpenPalette => "Open the commands",
         Action::CloseTab => "Close the tab",
@@ -1234,6 +1371,11 @@ pub fn action_text(action: Action) -> &'static str {
         Action::OpenSettings => "Open the settings",
         Action::GridExport => "Export the result to a file",
         Action::GridImport => "Import a file to this table",
+        Action::GridEditCell => "Edit the selected cell",
+        Action::GridSetNull => "Set the selected cell to NULL",
+        Action::GridReviewEdits => "Review pending table changes",
+        Action::GridSaveEdits => "Review and apply pending table changes",
+        Action::GridDiscardEdits => "Discard pending table changes",
         Action::NavigatorImport => "Import a file to the table of the row",
         Action::NavigatorScripts => "Scripts without a connection",
         Action::NavigatorDeletePassword => "Delete the saved password",
@@ -1241,12 +1383,13 @@ pub fn action_text(action: Action) -> &'static str {
         Action::NavigatorSessions => "Show the sessions of the server",
         Action::NavigatorFilter => "Filter the tables of the explorer",
         Action::NavigatorClearFilter => "Clear the filter of the explorer",
-        Action::NavigatorGenerate => "Generate SQL for the table",
+        Action::NavigatorGenerate => "Generate SQL or the DDL of the row",
         Action::NavigatorCopyName => "Copy the name of the row",
         Action::GridStructure => "Show the structure of the table",
         Action::GridReload => "Read the grid again",
         Action::GridCancelQuery => "Cancel the query of the session",
         Action::GridEndSession => "End the session",
+        Action::GridFollowKey | Action::FollowKey => "Follow a key of the row",
         Action::ReloadConfig => "Load the configuration again",
         Action::GridUp => "Up",
         Action::GridDown => "Down",
@@ -1272,6 +1415,8 @@ pub fn action_text(action: Action) -> &'static str {
         Action::GridCloseResult => "Close the result",
         Action::GridPreviousResult => "Previous result",
         Action::GridNextResult => "Next result",
+        Action::GridApply => "Apply the WHERE and ORDER BY fields",
+        Action::GridClearFilters => "Clear the filters and reload the table",
         Action::GridFocusFilter => "Edit the WHERE filter",
         Action::GridFocusOrder => "Edit the ORDER BY text",
         Action::GridSortColumn => "Sort by the column",
@@ -1308,6 +1453,81 @@ pub fn command_text(action: Action) -> &'static str {
         Action::Help => "Show the keys",
         action => action_text(action),
     }
+}
+
+/// Keeps panel command names short enough for the minimum terminal.
+pub fn panel_command_text(action: Action) -> &'static str {
+    use Action::*;
+    match action {
+        EditorSave => "Save now",
+        EditorFind => "Find",
+        EditorReplace => "Replace",
+        EditorSuggestions => "Suggestions",
+        EditorUndo => "Undo",
+        EditorRedo => "Redo",
+        EditorSelectAll | GridSelectAll => "Select all",
+        EditorCopy | GridCopy => "Copy",
+        EditorCut => "Cut",
+        EditorPaste => "Paste",
+        GridToggleSelection => "Start/end selection",
+        GridClearSelection => "Clear selection",
+        GridOpenValue => "Open value",
+        GridOpenRow => "Open row",
+        GridFind => "Find",
+        GridNarrow => "Narrow column",
+        GridWiden => "Widen column",
+        GridAutoWidth => "Automatic width",
+        GridCloseResult => "Close result",
+        GridPreviousResult => "Previous",
+        GridNextResult => "Next",
+        GridApply => "Apply filters",
+        GridClearFilters => "Clear filters",
+        GridFocusFilter => "WHERE filter",
+        GridFocusOrder => "ORDER BY",
+        GridSortColumn => "Sort column",
+        GridLoadMore => "Load more",
+        GridCountRows => "Count rows",
+        GridExport => "Export",
+        GridImport => "Import",
+        GridEditCell => "Edit cell",
+        GridSetNull => "Set NULL",
+        GridReviewEdits => "Review changes",
+        GridSaveEdits => "Apply changes",
+        GridDiscardEdits => "Discard changes",
+        GridStructure => "Structure",
+        GridReload | DiagramReload => "Reload",
+        GridFollowKey => "Follow key",
+        GridCancelQuery => "Cancel query",
+        GridEndSession => "End session",
+        CompareScript => "Open sync script",
+        CompareCopy => "Copy sync script",
+        DiagramOpen => "Open data",
+        DiagramStructure => "Structure",
+        DiagramCopy => "Copy Mermaid",
+        DiagramKeysOnly => "Key/all columns",
+        _ => action_text(action),
+    }
+}
+
+/// Adds technical search terms without changing the visible command name.
+pub fn command_aliases(action: Action) -> &'static str {
+    match action {
+        Action::Explain | Action::ExplainAnalyze => "explain query plan analyze",
+        Action::EditorFind | Action::EditorReplace | Action::GridFind => "search find replace",
+        Action::EditorSuggestions => "autocomplete completion suggestions",
+        Action::GridCopy => "copy cell selection clipboard tsv",
+        Action::NavigatorRefresh => "refresh reload catalog rename console",
+        Action::GridFocusFilter => "where filter",
+        Action::GridFocusOrder | Action::GridSortColumn => "order by sort",
+        Action::NavigatorGenerate => "sql ddl create select insert update delete",
+        Action::DiagramCopy => "mermaid diagram export",
+        Action::GridReload | Action::DiagramReload => "refresh reload",
+        _ => "",
+    }
+}
+
+pub fn command_result_target(console: &str, result: usize) -> String {
+    format!("{console} · result {result}")
 }
 
 pub fn keys_title(mode: &str, region: &str) -> String {
@@ -1815,7 +2035,7 @@ pub fn consoles_title(connection: &str, scope: &str) -> String {
 /// Tells how to load a table tab of the last session. A key that the user removed
 /// leaves the button.
 pub fn table_pending(key: Option<&str>) -> String {
-    format!("{} loads the rows.", key.unwrap_or(BUTTON_APPLY))
+    format!("{} loads the rows.", key.unwrap_or(BUTTON_RELOAD))
 }
 
 pub fn script_in_use(name: &str) -> String {

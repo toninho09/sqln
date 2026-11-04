@@ -4,6 +4,7 @@ mod classify;
 mod format;
 mod lexer;
 pub mod literal;
+pub mod parameters;
 mod statement;
 
 pub use classify::{

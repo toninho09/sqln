@@ -102,6 +102,7 @@ pub enum Phase {
 pub enum Focus {
     #[default]
     Editor,
+    Parameters,
     Results,
 }
 
@@ -145,6 +146,9 @@ pub struct Console {
     /// The schema of the last execution. A new read of its statements needs this schema.
     ran_schema: Option<String>,
     pub editor: SqlEditor,
+    pub parameters: crate::parameters::Panel,
+    /// Immutable bindings of the last execution, for a full export reread.
+    pub ran_parameters: Vec<crate::sql::parameters::Parameter>,
     /// The files of the console. A console without a file keeps its text in memory.
     pub file: Option<ScriptFile>,
     /// True after the user chose to close without the text that no file holds.
@@ -209,6 +213,8 @@ impl Console {
             schema: None,
             ran_schema: None,
             editor,
+            parameters: crate::parameters::Panel::default(),
+            ran_parameters: Vec::new(),
             file: None,
             discard_text: false,
             opened: 0,
@@ -335,6 +341,7 @@ impl Console {
 
     /// Ends the results of the last connection. The text stays.
     pub fn clear_results(&mut self, budget: &Budget) {
+        self.ran_parameters.clear();
         for result in self.results.drain(..) {
             budget.release(result.table.bytes);
         }
@@ -622,13 +629,17 @@ impl Console {
         self.active = (active + if forward { 1 } else { count - 1 }) % count;
     }
 
+    pub fn can_close_result(&self) -> bool {
+        self.active < self.results.len() && !(self.reading && self.active + 1 == self.results.len())
+    }
+
     /// Closes the active result and frees its budget. It returns false while the
     /// result receives rows.
     pub fn close_result(&mut self, budget: &Budget) -> bool {
         if self.active >= self.results.len() {
             return true;
         }
-        if self.reading && self.active + 1 == self.results.len() {
+        if !self.can_close_result() {
             return false;
         }
         let result = self.results.remove(self.active);

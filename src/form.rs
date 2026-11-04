@@ -16,6 +16,7 @@ use crate::connector::target::{
     Address, ClientCertificate, Engine, NetworkTarget, Secret, Tls, TlsFiles, parse_uri,
 };
 use crate::exec::ConnectionId;
+use crate::mark_list::{MarkList, MarkRequest};
 use crate::settings::{next_choice, next_optional};
 use crate::store::Scope;
 use crate::store::config::{ConnectionIcon, CredentialName, ThemeName};
@@ -43,6 +44,8 @@ pub enum Field {
     File,
     ForeignKeys,
     BusyTimeout,
+    /// The schemas, or the Redis databases, that the explorer shows.
+    Schemas,
     Pool,
     ReadOnly,
     Production,
@@ -106,6 +109,12 @@ impl Field {
             self,
             Field::File | Field::CaFile | Field::ClientCertificate | Field::ClientKey
         )
+    }
+
+    /// Returns true for a field with a button that opens a window: the file browser or
+    /// the list of the schemas.
+    pub fn opens_window(self) -> bool {
+        self.is_path() || self == Field::Schemas
     }
 }
 
@@ -172,6 +181,13 @@ pub enum FormNote {
     Error(String),
 }
 
+/// The window that chooses the visible schemas. It covers the form.
+pub struct SchemaList {
+    /// True until the names arrive. The number of the read is `ConnectionForm::test`.
+    pub loading: bool,
+    pub list: MarkList,
+}
+
 pub struct ConnectionForm {
     /// The connection that this form edits.
     pub editing: Option<ConnectionId>,
@@ -209,6 +225,23 @@ pub struct ConnectionForm {
     texts: HashMap<Field, Zeroizing<String>>,
     /// True after the user chose the TLS field. The form then stops its suggestion.
     tls_chosen: bool,
+    pub schema_list: Option<SchemaList>,
+}
+
+/// Splits the text of the schemas field at each comma. Spaces at the ends, empty parts,
+/// and repeats go away.
+pub fn schema_names(text: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for name in text
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        if !names.iter().any(|item| item == name) {
+            names.push(name.to_owned());
+        }
+    }
+    names
 }
 
 fn is_local_host(host: &str) -> bool {
@@ -257,6 +290,7 @@ impl ConnectionForm {
             cursor: 0,
             texts: HashMap::new(),
             tls_chosen: false,
+            schema_list: None,
         };
         form.set(Field::Pool, DEFAULT_POOL_LIMIT.to_string());
         form.set(Field::ConnectTimeout, DEFAULT_CONNECT_SECONDS.to_string());
@@ -297,6 +331,7 @@ impl ConnectionForm {
         form.set(Field::SqlTimeout, sql_seconds.to_string());
         let idle_seconds = definition.idle_timeout.map_or(0, |time| time.as_secs());
         form.set(Field::IdleTimeout, idle_seconds.to_string());
+        form.set(Field::Schemas, definition.schemas.join(", "));
         match &definition.source {
             Source::Sqlite(target) => {
                 form.kind = Kind::Sqlite;
@@ -371,15 +406,19 @@ impl ConnectionForm {
     /// Lists the visible fields, in order.
     pub fn fields(&self) -> Vec<Field> {
         if self.display_only {
-            return vec![
-                Field::Name,
+            let mut fields = vec![Field::Name];
+            if self.kind != Kind::Sqlite {
+                fields.push(Field::Schemas);
+            }
+            fields.extend([
                 Field::Theme,
                 Field::Icon,
                 Field::Production,
                 Field::Disconnect,
                 Field::Save,
                 Field::Cancel,
-            ];
+            ]);
+            return fields;
         }
         let mut fields = vec![Field::Kind, Field::Name];
         if self.project_available && self.editing.is_none() {
@@ -401,6 +440,9 @@ impl ConnectionForm {
                 Field::ClientCertificate,
                 Field::ClientKey,
             ]),
+        }
+        if self.kind != Kind::Sqlite {
+            fields.push(Field::Schemas);
         }
         fields.extend([Field::Pool, Field::ReadOnly, Field::Production]);
         if self.kind != Kind::Sqlite {
@@ -585,8 +627,62 @@ impl ConnectionForm {
         self.cursor = self.focused_len();
     }
 
+    /// Opens the list of the schemas. The names of the field are marked. The names of
+    /// the server arrive later.
+    pub fn open_schema_list(&mut self) {
+        let marked = schema_names(self.text(Field::Schemas));
+        self.schema_list = Some(SchemaList {
+            loading: true,
+            list: MarkList::new(Vec::new(), marked),
+        });
+    }
+
+    /// Shows the names of the server in the open list.
+    pub fn fill_schema_list(&mut self, names: Vec<String>) {
+        if let Some(open) = &mut self.schema_list {
+            open.list = MarkList::new(names, open.list.marked().to_vec());
+            open.loading = false;
+        }
+    }
+
+    pub fn close_schema_list(&mut self) {
+        self.schema_list = None;
+    }
+
+    /// Writes the marked names in the field, and it closes the list.
+    fn end_schema_list(&mut self, names: &[String]) {
+        self.set(Field::Schemas, names.join(", "));
+        self.focus_on(Field::Schemas);
+        self.cursor = self.focused_len();
+        self.close_schema_list();
+    }
+
+    fn on_schema_list_key(&mut self, key: KeyEvent) {
+        let Some(open) = &mut self.schema_list else {
+            return;
+        };
+        if open.loading {
+            if key.code == KeyCode::Esc {
+                self.test = None;
+                self.close_schema_list();
+            }
+            return;
+        }
+        match open.list.on_key(key) {
+            MarkRequest::None => {}
+            MarkRequest::Cancel => self.close_schema_list(),
+            MarkRequest::Done(names) => self.end_schema_list(&names),
+        }
+    }
+
     /// Writes pasted text in a text field. A form field holds one line.
     pub fn on_paste(&mut self, text: &str) {
+        if let Some(open) = &mut self.schema_list {
+            if !open.loading {
+                open.list.paste(text);
+            }
+            return;
+        }
         if matches!(self.focus.style(), FieldStyle::Text | FieldStyle::Secret) {
             let line = Zeroizing::new(
                 text.lines()
@@ -601,6 +697,10 @@ impl ConnectionForm {
     }
 
     pub fn on_key(&mut self, key: KeyEvent, vim: bool) -> FormRequest {
+        if self.schema_list.is_some() {
+            self.on_schema_list_key(key);
+            return FormRequest::None;
+        }
         let style = self.focus.style();
         let in_text = matches!(style, FieldStyle::Text | FieldStyle::Secret);
         match key.code {
@@ -611,7 +711,7 @@ impl ConnectionForm {
             KeyCode::Up => self.step(false),
             KeyCode::Enter => return self.on_enter(),
             KeyCode::Char('o')
-                if key.modifiers == KeyModifiers::CONTROL && self.focus.is_path() =>
+                if key.modifiers == KeyModifiers::CONTROL && self.focus.opens_window() =>
             {
                 return FormRequest::Browse;
             }
@@ -662,6 +762,16 @@ impl ConnectionForm {
                 FormRequest::None
             }
         }
+    }
+
+    /// Returns the visible schemas of the field. A Redis database must be a number.
+    pub fn schemas(&self) -> Result<Vec<String>, Invalid> {
+        let names = schema_names(self.text(Field::Schemas));
+        let engine = self.kind.engine();
+        if engine.is_some_and(|engine| !names.iter().all(|name| engine.accepts_database(name))) {
+            return Err(invalid(Field::Schemas, text::FORM_REDIS_SCHEMAS));
+        }
+        Ok(names)
     }
 
     fn number(&self, field: Field, label: &str) -> Result<u64, Invalid> {
@@ -801,6 +911,7 @@ impl ConnectionForm {
         definition.icon = self.icon;
         definition.max_connections = usize::try_from(limit).unwrap_or(usize::MAX);
         if self.kind != Kind::Sqlite {
+            definition.schemas = self.schemas()?;
             let seconds = self.number(Field::ConnectTimeout, text::FIELD_CONNECT)?;
             if seconds == 0 {
                 return Err(invalid(

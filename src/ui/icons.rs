@@ -1,5 +1,6 @@
 //! The symbols of the interface. Each character fills one terminal column.
 
+use crate::catalog::Group;
 use crate::sql::Dialect;
 use crate::store::config::ConnectionIcon;
 
@@ -21,6 +22,10 @@ pub struct Icons {
     pub table: &'static str,
     pub view: &'static str,
     pub column: &'static str,
+    pub routine: &'static str,
+    pub sequence: &'static str,
+    pub trigger: &'static str,
+    pub data_type: &'static str,
     pub console: &'static str,
     /// The mark at the start of the active tab.
     pub tab_mark: &'static str,
@@ -93,6 +98,10 @@ impl Icons {
             table: "",
             view: "",
             column: "",
+            routine: "",
+            sequence: "",
+            trigger: "",
+            data_type: "",
             console: "",
             tab_mark: " ",
             focus_mark: ">",
@@ -134,6 +143,10 @@ impl Icons {
             table: "▦",
             view: "◫",
             column: "·",
+            routine: "ƒ",
+            sequence: "#",
+            trigger: "↯",
+            data_type: "◈",
             console: "",
             tab_mark: "▎",
             focus_mark: "▌",
@@ -175,6 +188,10 @@ impl Icons {
             table: "\u{f0ce}",
             view: "\u{f06e}",
             column: "\u{f0db}",
+            routine: "\u{f121}",
+            sequence: "\u{f162}",
+            trigger: "\u{f0e7}",
+            data_type: "\u{f02b}",
             console: "\u{f120}",
             tab_mark: "▎",
             focus_mark: "▌",
@@ -198,6 +215,16 @@ impl Icons {
         }
     }
 
+    /// Returns the symbol of an object of a group.
+    pub fn object(&self, group: Group) -> &'static str {
+        match group {
+            Group::Routines => self.routine,
+            Group::Sequences => self.sequence,
+            Group::Triggers => self.trigger,
+            Group::Types => self.data_type,
+        }
+    }
+
     /// Returns the mark of a database engine.
     pub fn engine(&self, dialect: Dialect) -> &'static str {
         match dialect {
@@ -209,7 +236,7 @@ impl Icons {
     }
 
     /// Returns each symbol of the set, for the checks of the column width.
-    pub fn all(&self) -> [&'static str; 37] {
+    pub fn all(&self) -> [&'static str; 41] {
         [
             self.run,
             self.script,
@@ -226,6 +253,10 @@ impl Icons {
             self.table,
             self.view,
             self.column,
+            self.routine,
+            self.sequence,
+            self.trigger,
+            self.data_type,
             self.console,
             self.tab_mark,
             self.focus_mark,

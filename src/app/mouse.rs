@@ -18,7 +18,8 @@ use crate::table::TableFocus;
 use crate::ui::console::Control;
 use crate::ui::navigator::TREE_PAD;
 use crate::ui::{
-    MainTab, TableControl, column_edge_at, grid_cell_at, header_column_at, section_at, tab_at,
+    MainTab, TableControl, column_edge_at, grid_cell_at, grid_row_number_at, header_column_at,
+    section_at, tab_at,
 };
 
 /// The console keeps this width when the user drags the divider of the navigator.
@@ -71,10 +72,6 @@ impl App {
         }
     }
 
-    fn editor_has_focus(&self) -> bool {
-        !self.navigator_focused && self.console_on_screen() && self.console().focus == Focus::Editor
-    }
-
     /// Returns the result grid that the mouse acts on, with its area on the screen.
     fn active_grid(&mut self) -> Option<(&mut ResultTab, Rect)> {
         if self.diagram_active.is_some() {
@@ -97,6 +94,8 @@ impl App {
         let layout = &self.layout;
         if layout.divider == Some(mouse.column) && layout.body.contains(position) {
             self.drag = Some(Drag::Navigator);
+        } else if layout.quit.contains(position) {
+            self.request_exit();
         } else if let Some(tab) = main_tab_at(&layout.main_tabs, position) {
             if tab.close.is_some_and(|close| mouse.column >= close) {
                 self.close_tab(tab.index);
@@ -127,7 +126,58 @@ impl App {
         let in_results = layout.console.results.contains(position);
         let in_editor = layout.console.editor.contains(position);
         let in_controls = layout.console.controls.contains(position);
-        if in_controls {
+        if self.layout.console.parameters.header.contains(position) {
+            self.perform(Action::ToggleParameters, false);
+        } else if let Some((index, column, rect)) = self
+            .layout
+            .console
+            .parameters
+            .rows
+            .iter()
+            .find_map(|(index, areas)| {
+                areas
+                    .iter()
+                    .enumerate()
+                    .find(|(_, area)| area.contains(position))
+                    .map(|(column, rect)| (*index, column, *rect))
+            })
+        {
+            let was_editing = !self.navigator_focused
+                && self.console().focus == Focus::Parameters
+                && self.console().parameters.selected == index
+                && self.console().parameters.column == 1;
+            self.navigator_focused = false;
+            let console = self.console_mut();
+            console.focus = Focus::Parameters;
+            console.editor.close_suggestions();
+            console.parameters.selected = index;
+            console.parameters.column = column;
+            if column == 1 {
+                let field = &mut console.parameters.fields[index];
+                let visible = rect.width as usize;
+                let text = field.input.text();
+                let start = if was_editing {
+                    crate::ui::parameters::input_start(&field.input, visible)
+                } else {
+                    0
+                };
+                let mut width = 0;
+                let mut byte = start;
+                for (offset, c) in text[start..].char_indices() {
+                    if width >= usize::from(mouse.column.saturating_sub(rect.x)) {
+                        break;
+                    }
+                    width += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+                    byte = start + offset + c.len_utf8();
+                }
+                field.input.set_byte_cursor(byte);
+            } else {
+                console.parameters.on_key(crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Enter,
+                    crossterm::event::KeyModifiers::NONE,
+                ));
+            }
+        } else if in_controls {
             self.on_control_press(mouse.column);
         } else if in_tabs {
             match tab_at(self.console(), self.layout.console.tabs, mouse.column) {
@@ -212,6 +262,15 @@ impl App {
         match control.map(|button| button.2) {
             Some(TableControl::Apply) => self.apply_table(),
             Some(TableControl::Clear) => self.clear_table(),
+            Some(TableControl::ApplyEdits) => {
+                self.perform_on_table(Action::GridSaveEdits);
+            }
+            Some(TableControl::ReviewEdits) => {
+                self.perform_on_table(Action::GridReviewEdits);
+            }
+            Some(TableControl::DiscardEdits) => {
+                self.perform_on_table(Action::GridDiscardEdits);
+            }
             Some(TableControl::LoadMore) => self.load_more(),
             Some(TableControl::Stop) => self.stop_table(),
             _ => {}
@@ -251,6 +310,7 @@ impl App {
             match row.kind {
                 RowKind::Table | RowKind::View => self.open_table(&row),
                 RowKind::Console => self.open_tree_console(&row),
+                RowKind::Object(_) => self.open_row_definition(&row),
                 _ => {}
             }
         }
@@ -291,7 +351,16 @@ impl App {
         };
         // Only the grid moves to the side.
         let vertical = columns == 0;
-        if vertical && self.layout.navigator.contains(position) {
+        if vertical
+            && self.console_on_screen()
+            && self.layout.console.parameters.area.contains(position)
+        {
+            let panel = &mut self.console_mut().parameters;
+            panel.selected = panel
+                .selected
+                .saturating_add_signed(rows)
+                .min(panel.fields.len().saturating_sub(1));
+        } else if vertical && self.layout.navigator.contains(position) {
             self.navigator.move_by(rows, &self.connections);
         } else if vertical
             && self.console_on_screen()
@@ -370,7 +439,9 @@ impl App {
         let Some((result, area)) = self.active_grid() else {
             return;
         };
-        if let Some((row, col)) = grid_cell_at(result, area, mouse.column, mouse.row) {
+        if !extend && let Some(row) = grid_row_number_at(result, area, mouse.column, mouse.row) {
+            result.view.select_row(row, &result.table);
+        } else if let Some((row, col)) = grid_cell_at(result, area, mouse.column, mouse.row) {
             result.view.move_to(row, col, &result.table, extend);
         }
     }
@@ -482,6 +553,14 @@ impl App {
     }
 
     fn on_form_mouse(&mut self, mouse: MouseEvent) {
+        if self
+            .form
+            .as_ref()
+            .is_some_and(|form| form.schema_list.is_some())
+        {
+            self.on_schema_list_mouse(mouse);
+            return;
+        }
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
             return;
         }
@@ -507,7 +586,7 @@ impl App {
         let Some(form) = &mut self.form else { return };
         form.focus_on(chosen);
         if browse {
-            self.open_browser();
+            self.open_form_window();
             return;
         }
         let request = form.press();
@@ -516,8 +595,29 @@ impl App {
             FormRequest::Save => self.save_form(),
             FormRequest::Disconnect => self.disconnect_form(),
             FormRequest::Cancel => self.form = None,
-            FormRequest::Browse => self.open_browser(),
+            FormRequest::Browse => self.open_form_window(),
             FormRequest::None => {}
+        }
+    }
+
+    /// A click adds or removes the mark of a row. The wheel moves the cursor.
+    fn on_schema_list_mouse(&mut self, mouse: MouseEvent) {
+        let (area, first) = self.layout.form.list;
+        let inside = area.contains(Position::new(mouse.column, mouse.row));
+        let Some(open) = self
+            .form
+            .as_mut()
+            .and_then(|form| form.schema_list.as_mut())
+        else {
+            return;
+        };
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) if inside && !open.loading => {
+                open.list.toggle(first + usize::from(mouse.row - area.y));
+            }
+            MouseEventKind::ScrollUp => open.list.move_by(-1),
+            MouseEventKind::ScrollDown => open.list.move_by(1),
+            _ => {}
         }
     }
 

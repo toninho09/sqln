@@ -3,14 +3,14 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::guard::short;
-use super::{App, DialogAction, FRAMES_PER_PICTURE};
-use crate::catalog::RelationRef;
+use super::{App, DialogAction, FRAMES_PER_PICTURE, Picker, PickerKind};
+use crate::catalog::{Columns, Relation, RelationRef};
 use crate::exec::{ConnectionId, ConsoleId};
 use crate::input::Action;
 use crate::navigator::{Row, RowKind};
 use crate::sql::Dialect;
 use crate::structure::{Scope, Section, SessionSignal, Structure, structure_sql};
-use crate::table::{PageRequest, TableFocus, TableTab};
+use crate::table::{Follow, PageRequest, TableFocus, TableTab, follow_choices};
 use crate::ui::text;
 use crate::ui::{TabView, compare, diagram, main_tab_label, run_badge, table};
 
@@ -156,7 +156,11 @@ impl App {
             self.compare_active = None;
             self.table_active = Some(index);
             if self.tables[index].pending {
-                self.apply_table();
+                if self.tables[index].edit_reload {
+                    self.reload_saved_table();
+                } else {
+                    self.apply_table();
+                }
             }
         }
     }
@@ -180,15 +184,17 @@ impl App {
             return;
         };
         let connection = self.connections[row.connection].id;
-        self.open_relation(connection, relation, row.kind == RowKind::View);
+        self.open_relation(connection, relation, row.kind == RowKind::View, None);
     }
 
-    /// Opens the table tab of a relation. A table that is open only gets the focus.
+    /// Opens the table tab of a relation. A table that is open only gets the focus. With a
+    /// filter, the tab reads the rows of that filter; an open tab must be idle.
     pub(super) fn open_relation(
         &mut self,
         connection: ConnectionId,
         relation: RelationRef,
         view: bool,
+        filter: Option<String>,
     ) {
         if let Some(index) = self
             .tables
@@ -197,6 +203,17 @@ impl App {
         {
             self.select_table(index);
             self.navigator_focused = false;
+            let Some(filter) = filter else {
+                return;
+            };
+            if self.ready_table().is_none() {
+                return;
+            }
+            if let Some(tab) = self.table_mut() {
+                tab.filter.set(&filter);
+                tab.focus = TableFocus::Grid;
+            }
+            self.apply_table();
             return;
         }
         let Some(id) = self
@@ -206,12 +223,121 @@ impl App {
         else {
             return;
         };
-        let tab = self.new_table_tab(id, connection, relation, view);
+        let mut tab = self.new_table_tab(id, connection, relation, view);
+        if let Some(filter) = filter {
+            tab.filter.set(&filter);
+        }
         self.tables.push(tab);
         let index = self.tables.len() - 1;
         self.select_table(index);
         self.navigator_focused = false;
         self.apply_table();
+    }
+
+    /// Returns true when the tab on screen shows the rows of a table, and its keys are not
+    /// known to be absent.
+    pub(super) fn can_follow_key(&self) -> bool {
+        let Some(tab) = self.table() else {
+            return false;
+        };
+        if !tab.filters
+            || tab.is_view
+            || tab.structure.is_some()
+            || !tab.result.edits.is_empty()
+            || tab.edit_uncertain
+        {
+            return false;
+        }
+        match self.tab_relation(tab) {
+            Some(relation) => {
+                relation.columns == Columns::NotLoaded
+                    || !relation.foreign_keys.is_empty()
+                    || !relation.referencing.is_empty()
+            }
+            None => false,
+        }
+    }
+
+    fn tab_relation(&self, tab: &TableTab) -> Option<&Relation> {
+        let catalog = self.connection(tab.connection)?.catalog.as_ref()?;
+        let relation = &tab.relation;
+        let (_, found) = catalog.relation(Some(&relation.schema), &relation.relation)?;
+        Some(found)
+    }
+
+    /// Follows a key of the row of the cursor. The keys of the table arrive with its
+    /// columns, so a table without them reads them first.
+    pub(super) fn follow_key(&mut self) {
+        if !self.can_follow_key() {
+            self.status = Some(text::FOLLOW_REFUSED.to_owned());
+            return;
+        }
+        let Some(tab) = self.table() else { return };
+        let (id, connection) = (tab.id, tab.connection);
+        let Some(relation) = self.tab_relation(tab) else {
+            return;
+        };
+        if relation.columns == Columns::NotLoaded {
+            let relation = tab.relation.clone();
+            self.pending_follow = Some(id);
+            self.request_columns(connection, relation);
+            return;
+        }
+        let Some(dialect) = self.dialect_of(connection) else {
+            return;
+        };
+        let view = &tab.result.view;
+        let table = &tab.result.table;
+        let mut choices = match table.rows.get(view.row) {
+            Some(row) => follow_choices(
+                &tab.relation.schema,
+                relation,
+                &table.columns,
+                row,
+                view.col,
+                dialect,
+            ),
+            None => Vec::new(),
+        };
+        match choices.len() {
+            0 => self.status = Some(text::FOLLOW_NONE.to_owned()),
+            1 => self.go_follow(connection, choices.remove(0)),
+            _ => {
+                self.picker = Some(Picker {
+                    items: choices.iter().map(|choice| choice.label.clone()).collect(),
+                    kind: PickerKind::Follow {
+                        connection,
+                        choices,
+                    },
+                    title: text::TITLE_FOLLOW.to_owned(),
+                    cursor: 0,
+                    loading: false,
+                });
+            }
+        }
+    }
+
+    /// Opens the tab of the target of a key with the filter of the row.
+    pub(super) fn go_follow(&mut self, connection: ConnectionId, follow: Follow) {
+        self.open_relation(connection, follow.target, false, Some(follow.filter));
+    }
+
+    /// Follows the key of a tab that waited for the keys of its table.
+    pub(super) fn continue_follow(&mut self, connection: ConnectionId, relation: &RelationRef) {
+        let Some(id) = self.pending_follow else {
+            return;
+        };
+        let Some(tab) = self.tables.iter().find(|tab| tab.id == id) else {
+            self.pending_follow = None;
+            return;
+        };
+        if tab.connection != connection || tab.relation != *relation {
+            return;
+        }
+        self.pending_follow = None;
+        if self.table().is_some_and(|tab| tab.id == id) {
+            self.follow_key();
+        }
     }
 
     /// Opens the structure of a navigator row. A column shows the structure of its table.
@@ -236,6 +362,10 @@ impl App {
                 (Scope::Relation, relation, name)
             }
             RowKind::Consoles | RowKind::Console => return,
+            RowKind::Group(_) | RowKind::Object(_) => {
+                self.status = Some(text::NOT_FOR_OBJECT.to_owned());
+                return;
+            }
         };
         self.open_structure(connection, scope, relation, name);
     }
@@ -500,6 +630,10 @@ impl App {
             self.status = Some(text::TABLE_BUSY.to_owned());
             return None;
         }
+        if self.pending_edit_guard() {
+            return None;
+        }
+        let tab = self.table()?;
         self.dialect_of(tab.connection)
     }
 
@@ -510,6 +644,18 @@ impl App {
         };
         let budget = self.budget.clone();
         let request = self.table_mut().and_then(|tab| tab.apply(dialect, &budget));
+        self.run_page(request);
+    }
+
+    pub(super) fn reload_saved_table(&mut self) {
+        let Some(dialect) = self.ready_table() else {
+            return;
+        };
+        let budget = self.budget.clone();
+        let request = self.table_mut().and_then(|tab| {
+            tab.edit_reload = false;
+            tab.reload(dialect, &budget)
+        });
         self.run_page(request);
     }
 
@@ -565,6 +711,9 @@ impl App {
 
     /// Shows the page before the cursor. Its rows are on the grid.
     pub(super) fn previous_table_page(&mut self) {
+        if self.pending_edit_guard() {
+            return;
+        }
         if let Some(tab) = self.table_mut() {
             tab.show_page(tab.page().saturating_sub(1));
         }
@@ -572,6 +721,9 @@ impl App {
 
     /// Shows the page after the cursor. A page that is not on the grid loads first.
     pub(super) fn next_table_page(&mut self) {
+        if self.pending_edit_guard() {
+            return;
+        }
         let Some(tab) = self.table_mut() else { return };
         let page = tab.page() + 1;
         if page < tab.loaded_pages() {
@@ -604,6 +756,9 @@ impl App {
     /// Closes a table tab, and its rows leave the budget. The load in progress stops.
     pub(super) fn close_table(&mut self, index: usize) {
         if index >= self.tables.len() {
+            return;
+        }
+        if self.edit_close_guard(index) {
             return;
         }
         self.cancel_auth_console(self.tables[index].id);
@@ -660,12 +815,19 @@ impl App {
             | Action::RenameConsole
             | Action::ChangeConnection
             | Action::GridCloseResult => {}
+            Action::GridEditCell => self.edit_cell(false),
+            Action::GridSetNull => self.edit_cell(true),
+            Action::GridReviewEdits | Action::GridSaveEdits => self.review_edits(),
+            Action::GridDiscardEdits => self.confirm_discard_edits(),
+            Action::GridApply => self.apply_table(),
+            Action::GridClearFilters => self.clear_table(),
             Action::GridPreviousResult => self.step_table(false),
             Action::GridNextResult => self.step_table(true),
             Action::GridStructure => self.open_table_structure(),
             Action::GridReload if self.table().is_some_and(|tab| !tab.filters) => {
                 self.apply_table();
             }
+            Action::GridFollowKey | Action::FollowKey => self.follow_key(),
             Action::GridCancelQuery => self.ask_session_signal(SessionSignal::CancelQuery),
             Action::GridEndSession => self.ask_session_signal(SessionSignal::EndSession),
             Action::Stop => self.stop_table(),

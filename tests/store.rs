@@ -393,6 +393,33 @@ fn a_missing_idle_limit_is_300_seconds_and_null_keeps_the_sessions() {
     assert_eq!(limits, [Some(300), None, Some(7)]);
 }
 
+#[test]
+fn the_visible_schemas_load_and_a_missing_list_shows_all() {
+    let (store, _) = store_in("schemas");
+    write(
+        &store.global.config_file(),
+        r#"{"version":1,"connections":[
+            {"id":"a","name":"a","kind":"postgres","host":"h","username":"u"},
+            {"id":"b","name":"b","kind":"postgres","host":"h","username":"u",
+             "schemas":["public","sales"]},
+            {"id":"c","name":"c","kind":"redis","host":"h","schemas":["0","8"]}]}"#,
+    );
+    let config = loaded(&store);
+    let lists: Vec<_> = config
+        .connections
+        .iter()
+        .map(|item| item.definition.schemas.clone())
+        .collect();
+    assert_eq!(
+        lists,
+        [
+            vec![],
+            vec!["public".to_owned(), "sales".to_owned()],
+            vec!["0".to_owned(), "8".to_owned()]
+        ]
+    );
+}
+
 fn error_of(store: &Store) -> config::ConfigError {
     config::load(store).config.unwrap_err()
 }
@@ -471,6 +498,11 @@ fn the_rules_of_the_content_make_a_file_invalid() {
             r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"sqlite","file":"a",
             "credential":"globalPlainText"}]}"#,
             "globalPlainText",
+        ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"redis","host":"h",
+            "schemas":["0","sales"]}]}"#,
+            "schemas",
         ),
     ];
     for (index, (text, word)) in cases.into_iter().enumerate() {
@@ -661,12 +693,18 @@ fn a_definition_round_trips_through_an_entry_without_the_password() {
     let mut definition = Definition::new("remote", Source::Network(network));
     definition.sql_timeout = None;
     let entry = config::to_entry("id-2", &definition);
+    // An empty list of schemas stays out of the file.
+    assert!(!serde_json::to_string(&entry).unwrap().contains("schemas"));
+    definition.schemas = vec!["d".into(), "logs".into()];
+    let entry = config::to_entry("id-2", &definition);
     assert_eq!(entry.credential, CredentialName::Session);
     let text = serde_json::to_string(&entry).unwrap();
     assert!(!text.contains("hunter2"), "{text}");
     assert!(text.contains("\"sqlTimeoutSeconds\":null"), "{text}");
+    assert!(text.contains("\"schemas\":[\"d\",\"logs\"]"), "{text}");
     let back = config::to_definition(&entry, PathBuf::from("/base"));
     assert_eq!(back.sql_timeout, None);
+    assert_eq!(back.schemas, ["d", "logs"]);
     let Source::Network(target) = &back.source else {
         panic!("network")
     };

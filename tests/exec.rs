@@ -735,7 +735,7 @@ fn the_catalog_reads_relations_first_and_columns_on_demand() {
         "CREATE VIEW names AS SELECT id FROM users",
     ]);
 
-    h.manager.load_catalog(h.connection, 0);
+    h.manager.load_catalog(h.connection, 0, Vec::new());
     let catalog = loop {
         if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
             break catalog.unwrap();
@@ -801,15 +801,59 @@ fn the_columns_bring_the_foreign_keys_of_the_relation() {
             )
         })
         .collect();
-    // SQLite lists the last key first. The key without target columns stays out.
+    // SQLite lists the last key first. A key without target columns reads the primary
+    // key of its target, in the order of the key.
     assert_eq!(
         found,
         [
+            (vec!["w"], "parent", vec!["a"]),
             (vec!["z"], "parent", vec!["c"]),
             (vec!["y", "x"], "parent", vec!["a", "b"]),
         ]
     );
     assert!(keys.iter().all(|key| key.target.schema == "main"));
+}
+
+#[test]
+fn the_columns_bring_the_keys_that_reach_the_relation() {
+    let mut h = Harness::open("referencing-keys", Settings::default());
+    h.run(&[
+        "CREATE TABLE parent(a, b, c UNIQUE, PRIMARY KEY (a, b))",
+        "CREATE TABLE child(x, y, z, w,
+           FOREIGN KEY (y, x) REFERENCES parent (a, b),
+           FOREIGN KEY (z) REFERENCES parent (c),
+           FOREIGN KEY (w) REFERENCES parent)",
+        "CREATE TABLE other(v REFERENCES child (x))",
+    ]);
+    let relation = RelationRef {
+        schema: "main".to_owned(),
+        relation: "parent".to_owned(),
+    };
+    h.manager.load_columns(h.connection, relation);
+    let keys = loop {
+        if let ExecEvent::ColumnsLoaded { referencing, .. } = h.next() {
+            break referencing;
+        }
+    };
+    let found: Vec<(Vec<&str>, &str, Vec<&str>)> = keys
+        .iter()
+        .map(|key| {
+            (
+                names(&key.columns),
+                key.target.relation.as_str(),
+                names(&key.target_columns),
+            )
+        })
+        .collect();
+    // The columns of the relation come first, then the table and the columns of the key.
+    assert_eq!(
+        found,
+        [
+            (vec!["a"], "child", vec!["w"]),
+            (vec!["c"], "child", vec!["z"]),
+            (vec!["a", "b"], "child", vec!["y", "x"]),
+        ]
+    );
 }
 
 const PLAIN_ROWS: &str = "WITH RECURSIVE c AS (SELECT 1 AS x UNION ALL SELECT x + 1 FROM c WHERE x < 500000) SELECT x FROM c";

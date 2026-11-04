@@ -4,7 +4,7 @@
 
 **Defined:** this document is approved.
 It details the architecture of the [plan](INITIAL_PLAN.md).
-The names and the signatures are examples, not final contracts.
+The connector signature below is a summary, not the complete trait. See `src/connector/mod.rs` for the contract.
 The facts about the drivers come from [RESULTS](RESULTS.md).
 
 ## 1. Overview
@@ -31,20 +31,26 @@ Main thread                        Tokio runtime
 |---|---|
 | `app` | Application state, actions, and state updates |
 | `ui` | Drawing of the screens and the widgets, themes (`theme`), color schemes (`schemes`), symbols (`icons`), status bar (`statusline`), and prefix menu (`which_key`) |
-| `palette` | State and filter of the command palette; `app` builds the list, and `ui` draws it |
+| `app/commands` | Shared command availability, contextual lists, priority, and target labels; `Action` remains the catalog |
+| `palette` | State and word filter of functional commands, including action names and technical aliases; `ui` draws it |
 | `browser` | State of the file explorer of the path fields: folder, rows, and filter |
 | `input` | Key map: regions, actions, sequences, and `keymap` rules |
-| `navigator` | Tree of connections, schemas, relations, and columns |
+| `navigator` | Tree of connections, consoles, schemas, relations, columns, and other database objects |
 | `form` | Fields and validation of the connection form |
 | `connection` | Connection definitions and the state of each connection in the application |
 | `editor` | EdTUI, conventional layer, search, and replace |
 | `sql` | Tokenizer, statement separation, and statement classes |
 | `complete` | Autocomplete suggestions |
-| `catalog` | In-memory cache; schemas and tables first, columns and foreign keys on demand |
+| `catalog` | In-memory cache; schemas, tables, routines, sequences, triggers, and types first, columns and foreign keys on demand |
+| `definition` | DDL of one object: the queries per database and the text with its header |
 | `generate` | SQL templates of the navigator |
 | `console` | Editor, results, messages, and state of a console |
+| `command_log` | In-memory command history, bounded text, tracing, and the Messages viewport |
+| `plan` | Query plan commands, database output readers, and tree rows |
+| `mark_list` | Searchable list with a mark for each selected name |
 | `result` | Grid of one result with cursor and search, used by consoles and tables |
 | `table` | Table tab: pages, fields, sorting, suggestions, and query |
+| `data_edit` | Pending rows, budgeted snapshots, key predicates, update SQL, review, and cursor restoration |
 | `structure` | Catalog queries of the structure tab, per database, scope, and section |
 | `diagram` | ER diagram: catalog queries, model, layout of boxes and lines, Mermaid text, and the state of a diagram tab |
 | `compare` | Structure and data compare: catalog queries, model of a schema, differences, sync DDL, rows by key, the dialog, and the state of a compare tab |
@@ -65,15 +71,17 @@ Main thread                        Tokio runtime
 | `settings` | Form of the preferences per scope |
 | `log` | Optional event log, without SQL or values |
 
-`ui` and `input` do not depend on `connector`.
-Only `connector` knows driver types.
+`ui` uses driver-independent connector models, such as `Namespace` and `TransactionState`, plus target helpers.
+`store::config` uses SQLite and network target definitions. Neither layer uses native driver connections.
+Only `connector` knows native driver types.
 
 `app::auth` integrates `creds` and `trust` into first use, with the password and trust dialogs.
 `creds` offers identities, session passwords, and the vault adapters.
 `trust` offers the reading and the writing of global confirmations.
 The vault calls are synchronous, but `Manager::spawn_blocking` runs them off the interface thread.
 `app` applies the key priority and the mouse. `app/auth.rs`, `app/keys.rs`, `app/hints.rs`, `app/mouse.rs`, `app/close.rs`, `app/connections.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs`, `app/session.rs`, `app/conflicts.rs`, `app/history.rs`, `app/guard.rs`, `app/export.rs`, and `app/browse.rs` divide that code.
-`store` keeps the folders and the files. It knows nothing about `app`, `ui`, or `connector`.
+`store` keeps the folders and files. It does not depend on `app` or `ui`.
+Its configuration reader uses driver-independent connector target types.
 
 ### Files and saving
 
@@ -84,7 +92,7 @@ The vault calls are synchronous, but `Manager::spawn_blocking` runs them off the
 | `store::file` | `write_atomic`, `write_private_atomic` (exclusive temporary and permission `0600` on Unix), hash, locks, and cleanup of old `.tmp` files |
 | `store::config` | Reading with `serde`, validation, precedence, `Definition` of each entry, and `change_connections` (reread under lock, change, and write) |
 | `store::scripts` | `.sql` and `.json` files of a console, list, lock per console, copy between scopes, and line ending |
-| `store::workspace` | `workspace.json`, read without error and written under the `config.lock` lock |
+| `store::workspace` | `workspace.json`, optional state with invalid-file detection, written under `config.lock` |
 | `store::history` | `history.jsonl`: one JSON line per statement, appended at the end of the file, read per connection, and truncated at the start of the file |
 | `script_file::ScriptFile` | Hash, 500 ms wait, 5 s retry, pending write, and problem (`Failed`, `Changed`, or `Removed`) |
 | `script_file::worker` | One bounded worker for script text, metadata, and moves between scopes |
@@ -146,7 +154,8 @@ A password refusal clears the session and opens a new prompt. The new password p
 
 ### Table tab
 
-Each table tab has a console task of the execution manager, but without an editor and without a transaction.
+Each table tab has a console task of the execution manager, without a console editor or a manual transaction.
+Grid Apply owns a short transaction on that task. It releases no session between validation and commit.
 The tab requests a page with `Run`, and receives the same events as a console.
 Thus, the deadline, the stop, the cancellation, the pool queue, and the budget apply without new code.
 The task keeps the connection only during the query, because a table query never leaves a transaction open.
@@ -168,7 +177,32 @@ A Redis key tab uses the same path, without SQL:
 1. `table::page_sql` builds `SQLN.VALUE <database> <key> <offset> <amount>` per `connector::redis::value_page`. That text is not a server command.
 2. The session reads `TYPE` on each page, because the key may change between two pages.
 3. The session uses the command of the type: `GET`, `LRANGE`, `HSCAN`, `SSCAN`, `ZRANGE`, or `XRANGE`.
-4. A false `Capabilities::table_filters` removes `WHERE`, `ORDER BY`, **Clear**, and sorting from the tab. **Apply** becomes **Reload**.
+4. A false `Capabilities::table_filters` removes `WHERE`, `ORDER BY`, **Clear filters**, and sorting from the tab. **Apply** becomes **Reload**.
+
+### Grid editing
+
+`ResultTab::edits` keeps the original and current row snapshots for pending table changes.
+The displayed result holds the proposed row, so search and value inspection use the same values.
+Reference-counted `SavedRow` objects own budget reservations and release them on their last drop.
+Discard transfers the original reservation back to the grid without requiring free memory.
+
+`app/data_edit` coordinates editing, review, authorization, submission, and close.
+`data_edit/form` holds modal state; `ui/data_edit` draws it.
+The cell editor reuses `SqlEditor` without SQL suggestions and never dispatches global commands.
+`Action` and `app/commands` control command discovery and effective shortcuts.
+
+`Manager::edit` sends inspection, review, or apply jobs to the table task.
+Review formatting uses a blocking task and acquires no database session.
+Apply passes the normal credential and trust gate, then reserves one session for the whole operation.
+`exec/runner/data_edit` owns begin, locking reads, original-row checks, metadata verification, updates, and commit.
+Private `ResultSink` capture keeps validation rows away from the visible grid and inside the budget.
+PostgreSQL and MySQL lock rows with `FOR UPDATE`; SQLite begins with `BEGIN IMMEDIATE`.
+Any known failure rolls back. A failed cleanup drops the session.
+A failed commit response reports uncertainty and never starts an automatic retry.
+
+`EditFinished` carries the operation outcome. The application rejects stale execution identities.
+A successful apply reloads applied filters and order; draft fields stay unchanged.
+Cursor and selection restoration matches primary keys among the reloaded rows.
 
 ### Undo history
 
@@ -242,7 +276,7 @@ A row can keep its place in the budget after the end of its execution. A data co
 ### Rules
 
 1. The main thread receives terminal events and runtime events.
-2. The state update does no input or output.
+2. Database input and output stays off the interface thread. Some local file operations still run there; see the file explorer limitation in `DECISIONS.md`.
 3. Each console has an actor with a command channel, and that actor keeps the reserved session.
 4. Cancellation uses an object separate from the connection, because the actor may be busy.
 5. `rusqlite` runs on its own thread, because it is synchronous.
@@ -290,13 +324,20 @@ trait Session: Send {
     async fn reset(&mut self) -> ResetOutcome;
     async fn is_alive(&mut self) -> bool;
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError>;
+    async fn read_catalog_of(&mut self, schemas: &[String]) -> Result<Catalog, ExecError>;
+    async fn read_schema_names(&mut self) -> Result<Vec<String>, ExecError>;
     async fn read_columns(&mut self, schema: &str, relation: &str) -> Result<Vec<String>, ExecError>;
     async fn read_foreign_keys(&mut self, schema: &str, relation: &str) -> Result<Vec<ForeignKey>, ExecError>;
+    async fn read_referencing_keys(&mut self, schema: &str, relation: &str) -> Result<Vec<ForeignKey>, ExecError>;
 }
 ```
 
 The `async-trait` crate makes `Box<dyn Session>` possible.
-`read_foreign_keys` has an empty default, so a source without keys does not write the method. `Manager::load_columns` reads the keys together with the columns, and a key failure does not fail the columns.
+`read_foreign_keys` and `read_referencing_keys` have an empty default, so a source without keys does not write them. `Manager::load_columns` reads both lists together with the columns, and a key failure does not fail the columns. A key that reaches a relation has the shape of a key that leaves it: `columns` are the columns of the relation, and `target` is the other table.
+`read_catalog` also reads the supported routines, sequences, triggers, and types into `Schema::objects`.
+`read_catalog_of` keeps the configured schemas and the current schema. Redis skips reads of hidden databases.
+`read_schema_names` supplies the connection form list. Redis uses `INFO keyspace` without scanning keys. `catalog::add_objects` gives each row to its schema and puts the objects in the order of the tree.
+The DDL of an object runs in a task of the pool that only that read uses (`app/definition`). The task closes at the end of the read, and the text goes to a new console.
 `Capabilities` declares whether the source has transactions, whether the console chooses a schema or a database, and whether the table tab accepts filter and order in SQL.
 Cancellation and pagination enter that declaration when a source needs them, because the connectors use the same contract on those points.
 Each console has a Tokio task, which keeps the session between executions while the transaction stays open.
@@ -431,6 +472,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
     "keyboardMode": "conventional",
     "pageSize": 100,
     "rowCap": 1000,
+    "capInSql": true,
     "gridBudgetBytes": 268435456,
     "undoLimitBytes": 67108864,
     "keymap": {},
@@ -458,7 +500,9 @@ No scope receives `password`. The plain-text authorized password stays in `crede
       "pool": { "maxConnections": 5 },
       "connectTimeoutSeconds": 30,
       "sqlTimeoutSeconds": 30,
-      "theme": "nord"
+      "idleTimeoutSeconds": 300,
+      "theme": "nord",
+      "schemas": ["public", "sales"]
     },
     {
       "id": "6a1d4c12-7c0e-4f0b-9a55-0c2f4b6f7d10",
@@ -482,9 +526,11 @@ No scope receives `password`. The plain-text authorized password stays in `crede
 | `tls.mode` | `verify` or `disabled` |
 | `theme` | Optional. A value of `theme` of `preferences`. Without the field, the connection uses the default theme |
 | `icon` | Optional. `warning`, `skull`, `radiation`, `flag`, `crown`, `flask`, `star`, `diamond`, `tools`, `gear`, `home`, `heart`, `snowflake`, or `check`. Without the field, the connection uses the database icon |
+| `schemas` | Optional. The schemas, or the Redis databases, that the catalog keeps. The current schema always stays. Without the field, or with an empty list, the catalog keeps all |
 
 The `globalPlainText` value exists only in the global scope.
 The value `sqlTimeoutSeconds: null` runs without a deadline, and the absence of the field means 30 seconds.
+`idleTimeoutSeconds` defaults to 300. A value of 0 disables idle expiry. It does not close a reserved transaction session.
 
 Reading rules, according to the code:
 
@@ -517,8 +563,7 @@ Each console has `consoles/<id>.sql` and `consoles/<id>.json`:
 ### Local state
 
 `workspace.json` never enters Git.
-**Defined:** if the file is unreadable, use the initial state and show a non-blocking warning.
-The code still uses the initial state without a warning.
+If the file is unreadable, SQLN uses the initial state and shows a non-blocking warning.
 
 Example:
 

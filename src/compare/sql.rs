@@ -24,8 +24,8 @@ pub fn compare_sql(dialect: Dialect, schema: &str) -> Option<Vec<String>> {
     match dialect {
         Dialect::Postgres => Some(vec![
             postgres_columns(&literal, ""),
-            postgres_constraints(&literal),
-            postgres_indexes(&literal),
+            postgres_constraints(&literal, ""),
+            postgres_indexes(&literal, ""),
         ]),
         Dialect::MySql => Some(vec![
             mysql_columns(&literal, ""),
@@ -59,6 +59,21 @@ pub fn table_columns_sql(dialect: Dialect, schema: &str, table: &str) -> Option<
         Dialect::Sqlite => Some(sqlite_columns(&literal, &format!(" AND t.name = {name}"))),
         Dialect::Redis => None,
     }
+}
+
+/// Returns the queries of `compare_sql` for one table of PostgreSQL. The DDL of a table
+/// reads them, because PostgreSQL has no `SHOW CREATE TABLE`.
+pub fn postgres_table_sql(schema: &str, table: &str) -> Vec<String> {
+    let schema = name_literal(schema, Dialect::Postgres);
+    let filter = format!(
+        " AND c.relname = {}",
+        name_literal(table, Dialect::Postgres)
+    );
+    vec![
+        postgres_columns(&schema, &filter),
+        postgres_constraints(&schema, &filter),
+        postgres_indexes(&schema, &filter),
+    ]
 }
 
 /// Returns the read of each row of a table.
@@ -104,7 +119,7 @@ fn postgres_columns(schema: &str, filter: &str) -> String {
 }
 
 /// The constraint that a partition copies from its parent stays out.
-fn postgres_constraints(schema: &str) -> String {
+fn postgres_constraints(schema: &str, filter: &str) -> String {
     format!(
         "SELECT c.relname::text AS relation, k.conname::text AS name, k.contype::text AS kind, \
          pg_catalog.pg_get_constraintdef(k.oid) AS definition, u.place AS place, \
@@ -122,14 +137,14 @@ fn postgres_constraints(schema: &str) -> String {
          LEFT JOIN pg_catalog.pg_attribute ra \
            ON ra.attrelid = k.confrelid AND ra.attnum = u.target_attnum \
          WHERE k.contype IN ('p', 'u', 'f', 'c') AND k.conparentid = 0 AND {POSTGRES_TABLES} \
-           AND n.nspname = {schema} \
+           AND n.nspname = {schema}{filter} \
          ORDER BY c.relname, k.conname, u.place"
     )
 }
 
 /// An index of a primary key, a unique key, or an exclusion constraint stays out, because
 /// its constraint holds it.
-fn postgres_indexes(schema: &str) -> String {
+fn postgres_indexes(schema: &str, filter: &str) -> String {
     format!(
         "SELECT c.relname::text AS relation, ic.relname::text AS name, \
          CASE WHEN i.indisunique THEN 'yes' ELSE 'no' END AS \"unique\", k.place AS place, \
@@ -141,7 +156,7 @@ fn postgres_indexes(schema: &str) -> String {
          JOIN pg_catalog.pg_class c ON c.oid = i.indrelid \
          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
          CROSS JOIN LATERAL pg_catalog.generate_series(1, i.indnkeyatts::integer) AS k(place) \
-         WHERE {POSTGRES_TABLES} AND n.nspname = {schema} \
+         WHERE {POSTGRES_TABLES} AND n.nspname = {schema}{filter} \
            AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint x \
              WHERE x.conrelid = i.indrelid AND x.conindid = i.indexrelid \
                AND x.contype IN ('p', 'u', 'x')) \

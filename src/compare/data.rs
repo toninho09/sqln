@@ -8,7 +8,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use super::schema::{Column, Table};
 use crate::grid::{Budget, Row, Value, row_cost};
-use crate::sql::literal::{bytes_literal, is_number, text_literal};
+use crate::sql::literal::value_literal;
 use crate::sql::{Dialect, quote_identifier};
 use crate::ui::text;
 
@@ -358,14 +358,4 @@ pub fn decimal(text: &str) -> Option<String> {
         form.insert(0, '-');
     }
     Some(form)
-}
-
-/// Writes a value as a literal of the dialect of the target.
-pub fn value_literal(value: Value<'_>, dialect: Dialect) -> String {
-    match value {
-        Value::Null => "NULL".to_owned(),
-        Value::Number(text) if is_number(text) => text.to_owned(),
-        Value::Text(text) | Value::Number(text) => text_literal(text, dialect),
-        Value::Binary(bytes) => bytes_literal(bytes.bytes(), dialect),
-    }
 }

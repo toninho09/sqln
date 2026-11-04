@@ -5,11 +5,12 @@ use crossterm::event::KeyEvent;
 use crate::filter_list::{FilterList, ListRequest};
 use crate::input::Action;
 use crate::line_input::LineInput;
+use crate::ui::text;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Command {
     pub action: Action,
-    pub label: &'static str,
+    pub label: String,
     /// The key of the action. An action without a key stays in the list.
     pub key: Option<String>,
 }
@@ -29,7 +30,13 @@ pub struct Palette {
 
 /// A word of the filter can be in the label or in the key.
 fn filter_text(command: &Command) -> String {
-    format!("{} {}", command.label, command.key.as_deref().unwrap_or(""))
+    format!(
+        "{} {} {} {}",
+        command.label,
+        command.key.as_deref().unwrap_or(""),
+        command.action.name(),
+        text::command_aliases(command.action)
+    )
 }
 
 impl Palette {

@@ -1,6 +1,6 @@
 [package]
 name = "sqln"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 description = "Terminal database client with several SQL consoles"
 license = "MIT OR Apache-2.0"
@@ -9,6 +9,7 @@ exclude = ["spikes/", "scripts/", "compose.test.yaml"]
 [dependencies]
 arboard = { version = "3.7.0", default-features = false }
 async-trait = "0.1"
+bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 crossterm = "0.29.0"
 edtui = { version = "0.11.7", default-features = false, features = ["mouse-support"] }
@@ -22,6 +23,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-native-certs = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
+socket2 = "0.6"
 tokio = { version = "1.54", features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
 tokio-postgres = "0.7.18"
 tokio-postgres-rustls = { version = "0.14", default-features = false, features = ["ring"] }

@@ -3,9 +3,12 @@
 mod auth;
 mod browse;
 mod close;
+mod commands;
 mod compare;
 mod conflicts;
 mod connections;
+mod data_edit;
+mod definition;
 mod diagram;
 mod export;
 mod guard;
@@ -48,6 +51,7 @@ use crate::connection::{Connection, Definition};
 use crate::connector::{Connector, Namespace, TransactionCommand};
 use crate::console::{AfterTransaction, Console, Focus, Phase};
 use crate::creds::{Identity, PlainFile};
+use crate::definition::Target;
 use crate::diagram::tab::DiagramTab;
 use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, Settings};
@@ -69,7 +73,7 @@ use crate::store::config::{IconName, ThemeName};
 use crate::store::scripts::ScriptEntry;
 use crate::store::{Scope, Store};
 use crate::structure::SessionSignal;
-use crate::table::{TableFocus, TableTab};
+use crate::table::{Follow, TableFocus, TableTab};
 use crate::terminal::Session;
 use crate::terminal::{ring_bell, watch_terminal};
 use crate::ui::browser::draw_browser;
@@ -85,9 +89,7 @@ use crate::ui::name::{NamePrompt, draw_name};
 use crate::ui::navigator::draw_navigator;
 use crate::ui::palette::draw_palette;
 use crate::ui::settings::{SettingsLayout, draw_settings};
-use crate::ui::statusline::{
-    StatusData, StatusPanel, draw_statusline, fit_hints, hint_line, run_time,
-};
+use crate::ui::statusline::{StatusData, StatusPanel, draw_statusline, hint_line, run_time};
 use crate::ui::theme::{ColorEnv, Theme};
 use crate::ui::welcome::draw_welcome;
 use crate::ui::which_key::draw_which_key;
@@ -218,6 +220,10 @@ enum DialogAction {
     ExportReplace,
     /// Start the import that the question of production showed.
     ImportConfirmed,
+    ApplyEdits(ConsoleId),
+    ReviewEdits(ConsoleId),
+    DiscardEdits(ConsoleId),
+    CancelEdits(ConsoleId),
     /// Send the signal that the question of a sessions tab showed.
     SessionSignal(ConsoleId, SessionSignal, u64),
     /// Give the incomplete file of a tab its final name.
@@ -276,7 +282,17 @@ enum PickerKind {
         connections: Vec<ConnectionId>,
     },
     /// The rows are the SQL templates of a relation.
-    Generate(SqlRequest, Vec<Template>),
+    /// The keys of a row of a table tab, after the key `F`.
+    Follow {
+        connection: ConnectionId,
+        choices: Vec<Follow>,
+    },
+    /// The templates of a relation, then the DDL entry of a relation or an object.
+    Generate {
+        request: Option<SqlRequest>,
+        templates: Vec<Template>,
+        definition: Option<(ConnectionId, Target)>,
+    },
 }
 
 /// The relation of a SQL template.
@@ -305,6 +321,8 @@ struct ScreenLayout {
     navigator: Rect,
     divider: Option<u16>,
     main_tabs: Vec<MainTab>,
+    /// The **Quit** button at the right end of the main tabs.
+    quit: Rect,
     body: Rect,
     console: ConsoleLayout,
     table: TableLayout,
@@ -317,6 +335,7 @@ struct ScreenLayout {
     settings: SettingsLayout,
     export: ExportLayout,
     import: ImportLayout,
+    edit: crate::ui::data_edit::EditLayout,
     conflicts: ConflictLayout,
     password: Vec<(usize, Rect)>,
     /// The options of the open dialog, with the row of those options.
@@ -410,6 +429,7 @@ pub struct App {
     settings_form: Option<SettingsForm>,
     export_form: Option<ExportForm>,
     import_form: Option<ImportForm>,
+    edit_form: Option<crate::data_edit::form::EditForm>,
     compare_form: Option<CompareForm>,
     /// The file browser of the focused path field in a dialog or in the form.
     browser: Option<FileBrowser>,
@@ -421,6 +441,10 @@ pub struct App {
     import_choices: ImportChoices,
     /// The imports in progress, with at most one for each tab.
     imports: Vec<import::ImportRun>,
+    /// The reads of a DDL in progress.
+    definitions: Vec<definition::DefinitionRead>,
+    /// A table tab whose key `F` waits for the keys of its table.
+    pending_follow: Option<ConsoleId>,
     /// The answers of the file reads of the import dialog.
     import_probes: import::ProbeChannel,
     /// A table tab that opens the import dialog after its first page.
@@ -434,8 +458,8 @@ pub struct App {
     fallback_dialect: Dialect,
     /// The region and keys of a sequence that needs more keys.
     pending_key: Option<(Region, Vec<Chord>)>,
-    /// True while the explorer page of the `Ctrl+W` menu waits for its key.
-    explorer_page: bool,
+    /// The region of the command page that waits for its next key.
+    command_page: Option<Region>,
     drag: Option<Drag>,
     /// The time and the place of the last click in the navigator.
     last_click: Option<(Instant, u16, u16)>,
@@ -517,12 +541,15 @@ impl App {
             settings_form: None,
             export_form: None,
             import_form: None,
+            edit_form: None,
             compare_form: None,
             browser: None,
             export_choices: options.export_choices.clone(),
             exports: Vec::new(),
             import_choices: options.import_choices.clone(),
             imports: Vec::new(),
+            definitions: Vec::new(),
+            pending_follow: None,
             import_probes: import::ProbeChannel::default(),
             import_wanted: None,
             status: None,
@@ -540,7 +567,7 @@ impl App {
             conflicts: None,
             fallback_dialect: options.dialect,
             pending_key: None,
-            explorer_page: false,
+            command_page: None,
             drag: None,
             last_click: None,
             next_console_number: 1,
@@ -806,8 +833,8 @@ impl App {
         }
     }
 
-    fn route_event(&mut self, event: Event) {
-        let blocked = !self.dialogs.is_empty()
+    fn modal_is_open(&self) -> bool {
+        !self.dialogs.is_empty()
             || self.conflicts.is_some()
             || self.overlay.is_some()
             || self.help.is_some()
@@ -818,9 +845,14 @@ impl App {
             || self.settings_form.is_some()
             || self.export_form.is_some()
             || self.import_form.is_some()
+            || self.edit_form.is_some()
             || self.compare_form.is_some()
             || self.browser.is_some()
-            || self.auth.prompt.is_some();
+            || self.auth.prompt.is_some()
+    }
+
+    fn route_event(&mut self, event: Event) {
+        let blocked = self.modal_is_open();
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
             Event::Paste(text) if self.dialogs.is_empty() && self.auth.prompt.is_some() => {
@@ -846,6 +878,15 @@ impl App {
             Event::Paste(text) if self.dialogs.is_empty() && self.export_form.is_some() => {
                 if let Some(form) = &mut self.export_form {
                     form.paste(&text);
+                }
+            }
+            Event::Paste(text) if self.dialogs.is_empty() && self.edit_form.is_some() => {
+                if let Some(crate::data_edit::form::EditForm {
+                    body: crate::data_edit::form::Body::Cell { editor, .. },
+                    ..
+                }) = &mut self.edit_form
+                {
+                    editor.on_paste(&text);
                 }
             }
             Event::Paste(text) if self.dialogs.is_empty() && self.import_form.is_some() => {
@@ -883,6 +924,7 @@ impl App {
             Event::Mouse(mouse) if self.history.is_some() => self.on_history_mouse(mouse),
             Event::Mouse(mouse) if self.settings_form.is_some() => self.on_settings_mouse(mouse),
             Event::Mouse(mouse) if self.export_form.is_some() => self.on_export_mouse(mouse),
+            Event::Mouse(mouse) if self.edit_form.is_some() => self.on_edit_mouse(mouse),
             Event::Mouse(mouse) if self.import_form.is_some() => self.on_import_mouse(mouse),
             Event::Mouse(mouse) if self.compare_form.is_some() => self.on_compare_mouse(mouse),
             Event::Mouse(mouse) if self.help.is_some() => {
@@ -927,6 +969,10 @@ impl App {
             return;
         }
         let console = self.console_mut();
+        if console.focus == Focus::Parameters {
+            console.parameters.paste(text);
+            return;
+        }
         if !console.paste_in_search(text) {
             console.focus = Focus::Editor;
             console.editor.on_paste(text);
@@ -1017,8 +1063,9 @@ impl App {
                 relation,
                 columns,
                 foreign_keys,
+                referencing,
             } => {
-                self.on_columns_loaded(connection, &relation, columns, foreign_keys);
+                self.on_columns_loaded(connection, &relation, columns, (foreign_keys, referencing));
             }
             ExecEvent::ConnectionTested { test, result } => self.on_connection_tested(test, result),
             ExecEvent::Disconnected { connection } => self.on_disconnected(connection),
@@ -1037,7 +1084,11 @@ impl App {
     }
 
     fn on_console_event(&mut self, mut event: ExecEvent) {
-        if self.on_export_event(&event) || self.on_import_event(&mut event) {
+        if self.on_edit_event(&mut event)
+            || self.on_export_event(&event)
+            || self.on_import_event(&mut event)
+            || self.on_definition_event(&mut event)
+        {
             return;
         }
         let Some(id) = event.console() else { return };
@@ -1052,7 +1103,15 @@ impl App {
             return;
         }
         if let Some(index) = self.tables.iter().position(|tab| tab.id == id) {
+            let finished = matches!(event, ExecEvent::ExecutionFinished { .. });
             self.tables[index].on_event(event, &budget);
+            if finished
+                && !self.tables[index].is_busy()
+                && let Some(restore) = self.tables[index].edit_restore.take()
+                && let Some(view) = restore.view_in(&self.tables[index].result.table)
+            {
+                self.tables[index].result.view = view;
+            }
             self.finish_session_signal(index);
             self.continue_wanted_import();
             return;
@@ -1094,7 +1153,8 @@ impl App {
         .areas(area);
         self.layout.body = body;
         let views = self.tab_views();
-        self.layout.main_tabs = draw_main_tabs(frame, tabs, views, self.active_tab(), &self.theme);
+        (self.layout.main_tabs, self.layout.quit) =
+            draw_main_tabs(frame, tabs, views, self.active_tab(), &self.theme);
         if tall {
             draw_rule(frame, rule, &self.theme);
         }
@@ -1181,7 +1241,12 @@ impl App {
         let namespace = connection.map_or(Namespace::None, |item| item.capabilities.namespace);
         let transactions = connection.is_none_or(|item| item.capabilities.transactions);
         let default_schema = connection.and_then(|item| item.default_schema.clone());
+        let parameters_shortcut = self
+            .keymap
+            .keys(crate::input::Action::FocusParameters)
+            .join(", ");
         let bar = BarData {
+            parameters_shortcut: &parameters_shortcut,
             connection: &name,
             namespace,
             default_schema: default_schema.as_deref(),
@@ -1293,6 +1358,9 @@ impl App {
         let console = self.console();
         if console.focus == Focus::Results {
             return StatusPanel::Results;
+        }
+        if console.focus == Focus::Parameters {
+            return StatusPanel::Filter;
         }
         if !self.vim() {
             return StatusPanel::Editor;
@@ -1447,7 +1515,7 @@ impl App {
         let line = match message {
             Some(status) => Line::styled(status, self.theme.status),
             None => {
-                let items = fit_hints(&self.hint_items(), usize::from(area.width));
+                let items = self.fitted_hints(usize::from(area.width));
                 hint_line(&items, &self.theme)
             }
         };
@@ -1456,9 +1524,18 @@ impl App {
 
     /// Draws the windows above the panels. `bounds` holds the rows above the status line.
     fn draw_layers(&mut self, frame: &mut Frame, bounds: Rect) {
-        if self.explorer_page {
-            let title = self.explorer_menu_title();
-            draw_which_key(frame, bounds, &title, &self.explorer_menu(), &self.theme);
+        if self.command_page.is_some_and(|region| {
+            region != Region::Navigator && self.context_region() != Some(region)
+        }) {
+            self.command_page = None;
+        }
+        if let Some(region) = self.command_page {
+            let (title, menu) = if region == Region::Navigator {
+                (self.explorer_menu_title(), self.explorer_menu())
+            } else {
+                (self.context_menu_title(), self.context_menu())
+            };
+            draw_which_key(frame, bounds, &title, &menu, &self.theme);
         } else if self.pending_prefix() {
             let title = text::TITLE_PREFIX;
             draw_which_key(frame, bounds, title, &self.prefix_menu(), &self.theme);
@@ -1514,6 +1591,9 @@ impl App {
         }
         if let Some(form) = &self.export_form {
             self.layout.export = draw_export(frame, form, &self.theme);
+        }
+        if let Some(form) = &mut self.edit_form {
+            self.layout.edit = crate::ui::data_edit::draw_edit(frame, form, &self.theme);
         }
         if let Some(form) = &self.import_form {
             self.layout.import = draw_import(frame, form, &self.theme);

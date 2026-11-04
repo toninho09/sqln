@@ -26,7 +26,7 @@ Terminal.app and Linux terminals were also not tested.
 | Region | Role |
 |---|---|
 | Navigator | Connections, objects, and Scripts without connection |
-| Main tabs | Open consoles, tables, and diagrams |
+| Main tabs | Open consoles, tables, diagrams, and compares |
 | Editor | SQL text of the console |
 | Filter bar | `WHERE` and `ORDER BY` fields of the table view |
 | Grid | Rows of the result or of the table |
@@ -73,7 +73,8 @@ Each panel also lists these commands:
 - Close the tab, toggle the explorer, the explorer page, sessions of a source with sessions, the ER diagram and the compare of a source with tables, palette, help, Settings, reload, and quit.
 - `x` during a run, `C` and `R` during a transaction, and only `R` in a failed transaction. These stay in the navigator, because the session stays occupied until the user acts.
 
-A table tab and a diagram tab have no script and no transaction, so `C` and `R` do not appear there.
+Table and diagram tabs have no script or manual transaction, so `C` and `R` do not appear there.
+Grid Apply controls its own short transaction.
 
 | Key | Action |
 |---|---|
@@ -86,9 +87,11 @@ A table tab and a diagram tab have no script and no transaction, so `C` and `R` 
 | `q` | Quit the application |
 | `b` | Collapse or show the navigator |
 | `Tab` | Open the page with the commands of the explorer |
+| `Space` | Open the page with the commands of the current panel |
 | `S` | Show the sessions of the connection of the tab |
 | `D` | Show the ER diagram of the tab or of the row |
 | `v` | Compare the tab or the row with another source |
+| `F` | Follow a key of the row of a table tab |
 | `e` | Run |
 | `s` | Whole script |
 | `E` | Show the plan of the statement |
@@ -100,6 +103,7 @@ A table tab and a diagram tab have no script and no transaction, so `C` and `R` 
 | `C` | Commit |
 | `R` | Rollback |
 | `d` | Choose database or schema |
+| `P` | Focus the parameters panel |
 | `r` | Read the configuration again |
 | `?` | Open help |
 | `:` | Open the command palette |
@@ -110,11 +114,22 @@ A table tab and a diagram tab have no script and no transaction, so `C` and `R` 
 `Ctrl+W E` and `Ctrl+W A` use uppercase keys and do not replace `Ctrl+W e` and `Ctrl+W a`.
 `Ctrl+W S` uses uppercase `S` and does not replace `Ctrl+W s`. With the focus in the navigator, it uses the connection of the row.
 `Ctrl+W D` uses uppercase `D` and does not replace `Ctrl+W d`. With the focus in the navigator, it uses the row, as `d` does. A table tab shows the diagram of its table, and a console shows its current schema.
+`Ctrl+W P` uses uppercase `P` and does not replace `Ctrl+W p`. It focuses the parameters panel when the editor text has parameters.
+`Ctrl+W F` uses uppercase `F`. It acts as `F` in the grid of a table tab, and it gives the reason in another tab.
 `Ctrl+W v` opens the dialog of a compare. With the focus in the navigator, it uses the row, as `c` does. A table tab gives its table (**Data**), a console gives its current schema (**Structure**), a diagram gives its focus, and a compare tab opens the dialog with its own sides.
 
 `Ctrl+W Tab` opens a second page of the menu. The page lists the commands of the navigator that act on the current row, with the keys of the navigator, so `Ctrl+W Tab n` is the `n` of the navigator.
 The page works from any panel, and its title names the row that the commands act on. `Esc` closes it, and a key without a command closes it too.
 The keys of the page do not change `Ctrl+W n` or any other key of the prefix.
+
+`Ctrl+W Space` opens the commands of the current panel: editor, results, table, diagram, compare, or navigator.
+The page uses the effective panel shortcuts. For example, `Ctrl+W Space Ctrl+C` copies the current grid cell in conventional mode.
+In Vim mode, use `Ctrl+W Space y` for that action. A configured sequence works on the page too.
+`Esc` or an unmatched key closes the page without sending that key to the editor.
+The editor page includes save, find, suggestions, undo, redo, selection, and clipboard commands.
+The grid page includes filter, sort, load more, pages, column widths, selection, export, and import when available.
+A command without an assigned shortcut stays in the palette, but has no row on the panel page.
+The pages do not change the meaning of existing prefix keys, such as `Ctrl+W f` for format.
 The console list offers the rename action with `r`.
 The connection change asks for confirmation and does not run SQL. The rules are in section 12 of the plan.
 The main tabs follow the opening order, without groups by type.
@@ -144,9 +159,15 @@ The prefix is the common path to both modes, and the terminal delivers that key.
 `Ctrl+Enter` and `Shift+Enter` need keyboard enhancement in the terminal.
 At startup, the application detects that feature and shows the available path in the hint bar.
 
-The palette lists the actions available in the current state, with the key of each one.
-Type to filter. `Up` and `Down` move the line, `Enter` runs, `Esc` closes, and a click runs the line.
-An action without a key stays in the list. A navigator key appears only with the navigator in focus.
+The palette lists the functional actions available in the current state, including editor and grid commands.
+Basic cursor and view movements stay in `F1` help. The list has no duplicate local and global versions of an action.
+Stop and transaction commands come first when needed. Panel commands come before other application commands.
+Type to filter by words in the name, shortcut, action name, or technical aliases such as `EXPLAIN`, `DDL`, and `Mermaid`.
+`Up` and `Down` move the line, `Enter` runs, `Esc` closes, and a click runs the line.
+An action without a key stays in the list. A panel key appears only where it works.
+Navigator row commands appear only with focus in the navigator, and name their target.
+Add connection and scripts without a connection remain global. `Ctrl+W Tab` remains the explicit cross-panel explorer path.
+Apply filters and Clear filters also appear in the palette, without default shortcuts.
 `Ctrl+P` has priority over the `MoveUp` of EdTUI during input in the Vim mode.
 
 The comment action acts on the selection or on the cursor line, with `-- ` in SQL and `# ` in Redis.
@@ -155,7 +176,28 @@ A terminal without keyboard enhancement sends `Ctrl+/` as the byte of `Ctrl+7`, 
 `Ctrl+/` is not in the `keytest` record. Use `Ctrl+W /` if the terminal does not deliver that key.
 
 `Ctrl+C` does not end the application and does not stop the script.
-With a selection, it copies. Without a selection, it does nothing.
+In the editor, it copies a selection and does nothing without one.
+In a grid, it copies the selection or the current cell.
+
+## Hint row
+
+The hint row keeps one line and uses the current terminal width.
+It reserves the palette shortcut before fitting other whole commands. Wider screens show more available commands.
+The order is fixed by context, not by a usage history. Custom shortcuts use their actual display width.
+
+| Context | First commands, after Stop or transaction actions |
+|---|---|
+| Editor | Run, script, results, find, suggestions, format, history, plan, comment |
+| Results | Clear selection, copy, value, find, row, editor, export, result tabs |
+| Table | Clear selection, copy, value, find, filter, sort, row, follow key, more, pages, export, structure |
+| Connection | Open console, new console, expand/collapse, refresh, edit, filter |
+| Table in navigator | Open data, structure, columns, refresh, filter, copy name, SQL/DDL, diagram, compare |
+| Sessions | Reload, copy, value, find, row; cancel query and end session come later |
+| Compare | Open script, copy script, row, find, copy, value, reload |
+| Diagram | Data, structure, key columns, Mermaid, reload |
+
+Dialogs, forms, searches, and suggestion lists keep their own instructions.
+Status and progress messages can temporarily replace the hint row.
 
 ## Editor
 
@@ -195,6 +237,25 @@ On macOS, the terminal handles `Cmd+C` and `Cmd+V`.
 `Cmd+V` reaches the application as a paste.
 `Cmd+C` copies the terminal selection, not the editor selection.
 
+## Parameters panel
+
+The panel appears under the editor when the SQL holds `:name` parameters.
+
+| Action | Key |
+|---|---|
+| Focus the panel | `Ctrl+W P` |
+| Next and previous field | `Down` and `Up` |
+| Next and previous column | `Tab` and `Shift+Tab` |
+| Change the type | `Enter` or `Space` on the type |
+| Mark empty text as set | `Enter` on the value |
+| Toggle Set and Unset | `Enter` or `Space` on the state |
+| Edit the value | Type on the value column |
+| Return to the editor | `Esc` |
+| Collapse and expand | Click on the title, or `Ctrl+W P` again after collapse |
+
+A run asks for the fields without a value: the focus moves to the first one.
+The type chooses Text, Number, Boolean, or NULL. Values stay in the panel and never change the editor text.
+
 ## Navigator
 
 | Action | Conventional | Vim |
@@ -214,13 +275,16 @@ On macOS, the terminal handles `Cmd+C` and `Cmd+V`.
 | Show the ER diagram | `d` | `d` |
 | Compare the structure or the data with another source | `c` | `c` |
 | Show the sessions of the server | `S` | `S` |
-| Generate SQL | `g` | `g` |
+| Generate SQL or the DDL | `g` | `g` |
 | Import a file to the table of the row | `I` | `I` |
 | Copy the row name | `y` or `Ctrl+C` | `y` or `Ctrl+C` |
-| Filter the tables | `/` or `Ctrl+F` | `/` or `Ctrl+F` |
+| Filter tables, views, and other objects | `/` or `Ctrl+F` | `/` or `Ctrl+F` |
 | Clear the filter | `Esc` | `Esc` |
 
 `Enter` on a connection selects the first open console of it or creates a console.
+Under a schema, the groups **Routines**, **Sequences**, **Triggers**, and **Types** follow the tables and views. `Right` or `Enter` opens a group.
+`Enter` on an object, or a double click, reads its DDL and opens it in a new console. `g` on an object lists only **DDL**, and `g` on a table or a view lists **DDL** after the templates.
+`y` on an object copies its name without the arguments of a routine or the table of a trigger. `i`, `d`, `c`, and `I` do not act on an object.
 `n` opens the console list of the connection, with **+ New console** on the first line. Without saved consoles, `n` creates a console.
 In the list, `Enter` picks the row, `Delete` (or `x` in the Vim mode) removes the script of the row, and `Esc` cancels.
 `s` opens the list of scripts without connection, with the same keys.
@@ -238,8 +302,9 @@ In the grid of a table, `i` opens the structure of that table.
 In the structure tab of a table, `[` and `]` switch the section. In the other table tabs, those keys change the page.
 `S` opens the sessions of the server of the row. SQLite, Redis, and Valkey refuse it with a reason.
 `d` opens the ER diagram of the row. A schema shows all its tables. A table shows the table and the tables that its foreign keys join, one step away. A column shows the diagram of its table. A connection shows its current schema: before its catalog, `d` reads the catalog, and the diagram opens when it arrives. A view, and Redis or Valkey, refuse it with a reason.
-`c` opens the dialog of a compare, with the row as the source: a connection gives its current schema, and a table or a column gives its table. A table starts a data compare, and a connection or a schema starts a structure compare. A view, a console row, and Redis or Valkey refuse it with a reason. The hint line shows `c compare` on a schema, a table, and a column row. The connection row leaves it out, so that row fits in 80 columns. The key is also in the `Ctrl+W Tab` page, and `Ctrl+W v` acts from any panel.
-The hint line changes with the cursor line, and it shows only the main commands: open, new console, expand or collapse, the ER diagram, the compare (not on a connection row), `Ctrl+W commands`, and `F1 keys`. `Ctrl+W Tab` lists the others, and their keys keep acting. The connection commands appear on the connection line, but the keys act on any line of it, except `r` and `Delete` on a console row.
+`c` opens the dialog of a compare, with the row as the source: a connection gives its current schema, and a table or a column gives its table. A table starts a data compare, and a connection or a schema starts a structure compare. A view, a console row, and Redis or Valkey refuse it with a reason. The hint line can show `c compare` where the command is available, if the terminal has enough width. The key is also in the `Ctrl+W Tab` page, and `Ctrl+W v` acts from any panel.
+The hint line changes with the cursor row and terminal width. It reserves the palette shortcut and fits whole commands in priority order.
+`Ctrl+W Tab` lists the bound explorer commands, and `F1` shows the key reference. The connection commands appear on the connection line, but the keys act on any line of it, except `r` and `Delete` on a console row.
 The labels say the object of the command, such as `n new console` and `a add connection`.
 A command that does not fit leaves the line, and the key keeps acting.
 
@@ -249,16 +314,16 @@ A command that does not fit leaves the line, and the key keeps acting.
 
 ### Tree filter
 
-The filter lists the tables and the views that match each word, by the relation name or the schema name. It leaves out the consoles. It reads only the in-memory catalogs and does not open connections.
+The filter lists tables, views, and other objects that match each word, by their label or schema name. It leaves out consoles and columns. It reads only the in-memory catalogs and does not open connections.
 
 | Action | Key in the field |
 |---|---|
-| Open the table of the cursor | `Enter` |
-| Move between relations | `Up` and `Down` |
+| Open the table or the DDL of the object under the cursor | `Enter` |
+| Move between relations and other objects | `Up` and `Down` |
 | Go to the filtered tree | `Tab` |
 | Cancel and return the cursor | `Esc` |
 
-The filter stays after you open a table. In the filtered tree, the navigator keys act, except `Left` and `Right`. `/` returns to the field, and `Esc` clears the filter with the cursor on the same row.
+The filter stays after you open a table or object. In the filtered tree, the navigator keys act, except `Left` and `Right`. `/` returns to the field, and `Esc` clears the filter with the cursor on the same row.
 `Enter` or `Tab` with an empty field close the filter.
 
 ## Connection form
@@ -324,6 +389,11 @@ If the vault fails, the session option does not offer global storage in plain te
 | Copy as TSV | `Ctrl+C` | `y` |
 | Export to a file | `e` | `e` |
 | Import a file, in a table tab | `I` | `I` |
+| Edit a table cell | `F2` | `F2` |
+| Set a table cell to NULL | `Ctrl+N` | `Ctrl+N` |
+| Review pending changes | `Ctrl+R` | `Ctrl+R` |
+| Review and apply pending changes | `Ctrl+S` | `Ctrl+S` |
+| Discard pending changes, with confirmation | `Ctrl+D` | `Ctrl+D` |
 | Clear the selection | `Esc` | `Esc` |
 | Open value | `Enter` | `Enter` |
 | Open the row vertically | `r` | `r` |
@@ -337,7 +407,7 @@ If the vault fails, the session option does not offer global storage in plain te
 | End the session, in a sessions tab | `K` | `K` |
 
 `q` and `K` act on the session under the cursor, and they ask first. A read-only connection refuses them.
-`R` serves a structure, a key, and a sessions tab. A table tab uses **Apply**.
+`R` serves a structure, a key, and a sessions tab. A table tab uses **Apply filters**.
 Without a selection, `Ctrl+C` copies the current cell.
 The result that still receives rows does not close, and the **Messages** tab does not either.
 
@@ -346,10 +416,22 @@ In the value window and the row window, the keys are the same in both maps:
 | Action | Key |
 |---|---|
 | Scroll | `Up` and `Down`, or `j` and `k` |
-| Toggle the shape of a JSON value | `f` |
+| Toggle JSON formatting, in the value window only | `f` |
 | Change row, in the row window | `Left` and `Right`, or `h` and `l` |
 | Copy the visible text | `Ctrl+C` |
 | Close | `Esc` or `Enter` |
+
+Grid editing requires a writable table with a primary key. Key, identity, generated, and binary columns remain protected.
+The action names are `gridEditCell`, `gridSetNull`, `gridReviewEdits`, `gridSaveEdits`, and `gridDiscardEdits`.
+The palette and panel menu show their effective shortcuts.
+Pending changes disable copy, export, import, filters, sorting, reload, key navigation, and page changes.
+
+In the cell editor, `F2` or `Ctrl+S` keeps the value locally, without a database write.
+`Tab` selects the editor or buttons; the mouse selects and activates buttons.
+Conventional `Esc` cancels. In Vim insert mode, `Esc` first selects normal mode.
+The editor respects configured editor commands. Global application commands do not leave the modal.
+In the review, arrows and PageUp/PageDown scroll; `F2` or `Ctrl+S` applies; `Esc` cancels.
+Production asks for confirmation after review.
 
 In the **Messages** tab, the arrows walk the text.
 
@@ -390,6 +472,7 @@ The file field reads the file when the focus leaves it.
 Only the **Import** button imports.
 
 `Ctrl+O` also opens the explorer in the path fields of the connection form.
+The **Schemas** or **Databases** field opens a server list instead, as described below.
 
 In the file explorer, the keys are the same in both maps:
 
@@ -405,6 +488,16 @@ In the file explorer, the keys are the same in both maps:
 | Close without changing the field | `Esc` |
 
 With the mouse, a click moves the cursor, and a double click opens the row.
+
+In the **Schemas** field of the connection form (**Databases** in MySQL and Redis), `Ctrl+O` or the `...` button opens the list of the server:
+
+| Action | Key |
+|---|---|
+| Filter the names | Type the text |
+| Move the cursor | `Up` and `Down` |
+| Add or remove the mark | `Space`, or a click |
+| Write the marked names in the field | `Enter` |
+| Close without changing the field | `Esc` |
 
 In the grid search:
 
@@ -423,7 +516,11 @@ In the table view, the grid also offers:
 | Sort by the current column | `s` |
 | Load more | `m` |
 | Count the rows of the applied filter | `c` |
+| Follow a key of the current row | `F` |
 | Previous and next page | `[` and `]` |
+
+`F` lists the keys of the row: `→` for a key that leaves the table, and `←` for a key of another table that reads the row. The keys of the column of the cursor come first.
+With one key, `F` goes there at once. A key with `NULL` in the row stays out. A view, a structure, and a sessions tab have no key to follow.
 
 ## Filter bar
 
@@ -437,7 +534,7 @@ In the table view, the grid also offers:
 | Return to the grid | `Esc`, with the suggestions closed |
 
 `Ctrl+W k` goes to the `WHERE` field, and `Ctrl+W j` returns to the grid.
-In the table view, the script and transaction actions have no effect, because the table has no script and no transaction.
+In table tabs, script and manual transaction actions have no effect. Grid Apply owns its short transaction.
 Those actions are `F5`, `Shift+F5`, `Ctrl+W e`, `Ctrl+W s`, `Ctrl+W E`, `Ctrl+W A`, `Ctrl+W m`, `Ctrl+W C`, `Ctrl+W R`, and `Ctrl+W d`.
 In the table grid, `x` and `Delete` also have no effect.
 `Ctrl+W c` closes the table tab and frees its data.
@@ -507,8 +604,10 @@ The initial focus always stays on the option with no effect on the database or t
 | Click | Select an item and change focus |
 | Click on a tab | Switch tab |
 | Click on the `×` of a tab | Close the tab, with the questions of `Ctrl+W c` |
+| Click on **Quit** | Quit, with the questions of `Ctrl+W q` |
 | Click on the `EXPLORER` title | Give focus to the navigator |
 | Click on the table header | Apply sorting: ascending, descending, and no order |
+| Click on a row number in a result or table grid | Select all columns of that loaded row, including hidden columns |
 | Double click on a table | Open the table view, with two clicks on the same cell within 400 ms |
 | Double click on a console row | Open the console, or select its tab |
 | Click on a bar field or button | Give focus to the field, or press the button |
@@ -562,7 +661,8 @@ With **Mouse OK**, the recording includes `Enter`. Click **OK** to finish.
 **Cancel** closes Settings without a write.
 The recorder accepts only key press events. It ignores key repeats and key releases.
 
-**Remove shortcut** removes the selected shortcut. Removing the last shortcut disables the action.
+**Remove shortcut** removes the selected application shortcut. The palette keeps the action when it is available.
+Native Vim movements and operators keep their internal keys.
 **Restore action** removes the action's override from the selected scope.
 A project then uses the global keys. The global scope then uses the default keys.
 Neither command changes the other scope or keyboard mode.
@@ -571,7 +671,8 @@ Settings shows conflicts and blocks **Save** until you correct them.
 The message names the key and both actions.
 The check includes sequence prefixes, both keyboard modes, and the combined global and project keys.
 A panel can use a global key, because panel shortcuts have priority.
-The editor's internal Vim commands do not appear in this section.
+The editor region includes its application commands. Other internal Vim movements and operators stay in EdTUI.
+Plain Vim keys retain their native editing behavior. Panel pages and the palette provide explicit functional actions.
 
 ### File format
 

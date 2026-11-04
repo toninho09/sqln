@@ -8,6 +8,7 @@ fn relation(name: &str, kind: RelationKind, columns: &[&str]) -> Relation {
         kind,
         columns: Columns::Loaded(columns.iter().map(|column| (*column).to_owned()).collect()),
         foreign_keys: Vec::new(),
+        referencing: Vec::new(),
     }
 }
 
@@ -27,6 +28,7 @@ fn catalog() -> Catalog {
                     relation("Order Items", RelationKind::Table, &["sku", "order"]),
                 ],
                 partial: false,
+                objects: Vec::new(),
             },
             Schema {
                 name: "sales".to_owned(),
@@ -36,6 +38,7 @@ fn catalog() -> Catalog {
                     &["number", "due"],
                 )],
                 partial: false,
+                objects: Vec::new(),
             },
         ],
         current_schema: Some("public".to_owned()),

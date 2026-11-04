@@ -10,6 +10,7 @@ use super::console::{centered, modal_width};
 use super::float_block;
 use super::icons::connection_symbol;
 use super::input_spans;
+use super::palette::{ListWindow, draw_list_window};
 use super::settings::{
     BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, SIDEBAR_WIDTH, browse_width, draw_browse_button,
     draw_buttons, draw_divider, draw_note, draw_sidebar_rows,
@@ -17,7 +18,8 @@ use super::settings::{
 use super::text;
 use super::theme::Theme;
 use crate::connector::target::hide_uri_password;
-use crate::form::{ConnectionForm, Field, FieldStyle, FormNote, Group, Kind};
+use crate::filter_list::FilterList;
+use crate::form::{ConnectionForm, Field, FieldStyle, FormNote, Group, Kind, SchemaList};
 use crate::grid::printable;
 use crate::store::Scope;
 
@@ -28,6 +30,7 @@ const LABEL_WIDTH: u16 = 25;
 const TITLE_ROW: u16 = 1;
 const FIRST_FIELD_ROW: u16 = 3;
 const MASK: char = '•';
+const LIST_WIDTH: u16 = 60;
 
 fn section_title(section: Group) -> &'static str {
     match section {
@@ -44,12 +47,16 @@ fn section_title(section: Group) -> &'static str {
 pub struct FormLayout {
     pub sections: Vec<(Group, Rect)>,
     pub fields: Vec<(Field, Rect)>,
-    /// The buttons of the path fields.
+    /// The buttons of the fields that open a window.
     pub browse: Vec<(Field, Rect)>,
+    /// The rows of the list of the schemas and the index of its first row.
+    pub list: (Rect, usize),
 }
 
-fn label(field: Field) -> &'static str {
+fn label(kind: Kind, field: Field) -> &'static str {
     match field {
+        Field::Schemas if kind == Kind::Postgres => text::FIELD_SCHEMAS,
+        Field::Schemas => text::FIELD_DATABASES,
         Field::Kind => text::FIELD_KIND,
         Field::Name => text::FIELD_NAME,
         Field::Scope => text::FIELD_SCOPE,
@@ -160,7 +167,7 @@ fn value_spans(
 }
 
 /// Draws one row: the focus mark, the label, and the value. It returns the area of the
-/// button of a path field.
+/// button of a field that opens a window.
 fn draw_field_row(
     frame: &mut Frame,
     area: Rect,
@@ -190,7 +197,8 @@ fn draw_field_row(
         width: LABEL_WIDTH,
         ..area
     };
-    frame.render_widget(Paragraph::new(label(field)).style(label_style), label_area);
+    let name = label(form.kind, field);
+    frame.render_widget(Paragraph::new(name).style(label_style), label_area);
 
     let start = area.x + LEFT + LABEL_WIDTH;
     let value = Rect {
@@ -213,7 +221,7 @@ fn draw_field_row(
         ..value
     };
     let text = Rect {
-        width: text.width.saturating_sub(if field.is_path() {
+        width: text.width.saturating_sub(if field.opens_window() {
             browse_width(theme)
         } else {
             0
@@ -223,7 +231,7 @@ fn draw_field_row(
     let spans = value_spans(form, field, usize::from(text.width).max(1), theme);
     frame.render_widget(Paragraph::new(Line::from(spans)), text);
     field
-        .is_path()
+        .opens_window()
         .then(|| draw_browse_button(frame, area, focused, theme))
 }
 
@@ -310,7 +318,7 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
     let buttons: Vec<(Field, &str)> = form
         .buttons()
         .into_iter()
-        .map(|field| (field, label(field)))
+        .map(|field| (field, label(form.kind, field)))
         .collect();
     layout.fields.extend(draw_buttons(
         frame,
@@ -319,5 +327,55 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
         (&buttons, form.focus),
         theme,
     ));
+    if let Some(open) = &form.schema_list {
+        layout.list = draw_schema_list(frame, form.kind, open, theme);
+    }
     layout
+}
+
+/// Draws the list of the schemas over the form. It returns the area of the rows and the
+/// index of the first row.
+fn draw_schema_list(
+    frame: &mut Frame,
+    kind: Kind,
+    open: &SchemaList,
+    theme: &Theme,
+) -> (Rect, usize) {
+    let window = ListWindow {
+        title: label(kind, Field::Schemas),
+        empty: if open.loading {
+            text::SCHEMA_LIST_READING
+        } else {
+            text::NO_SCHEMA_MATCH
+        },
+        width: LIST_WIDTH,
+    };
+    // The marked names wait for the names of the server.
+    let waiting = FilterList::new(Vec::new(), String::clone);
+    let list = if open.loading {
+        &waiting
+    } else {
+        open.list.list()
+    };
+    draw_list_window(
+        frame,
+        &window,
+        list,
+        theme,
+        |frame, area, name, selected| {
+            let style = if selected {
+                theme.list_selected
+            } else {
+                theme.dialog
+            };
+            frame.buffer_mut().set_style(area, style);
+            let mark = if open.list.is_marked(name) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            let line = format!(" {mark} {}", printable(name));
+            frame.render_widget(Paragraph::new(line), area);
+        },
+    )
 }

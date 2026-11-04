@@ -30,6 +30,9 @@ pub const MAX_NOTICES: usize = 100;
 pub struct SessionContext {
     pub read_only: bool,
     pub schema: Option<String>,
+    /// True keeps only `schema` in the `search_path` of PostgreSQL. Without it, the
+    /// default path of the session stays after the schema.
+    pub only_schema: bool,
 }
 
 /// What the console can choose at each execution.
@@ -48,6 +51,10 @@ pub struct Capabilities {
     pub transactions: bool,
     /// True when a table tab can filter and sort with SQL text.
     pub table_filters: bool,
+    /// True when a table tab can submit pending updates.
+    pub data_edit: bool,
+    /// True when consoles accept named scalar parameters.
+    pub parameters: bool,
 }
 
 impl Default for Capabilities {
@@ -56,6 +63,8 @@ impl Default for Capabilities {
             namespace: Namespace::None,
             transactions: true,
             table_filters: true,
+            data_edit: true,
+            parameters: false,
         }
     }
 }
@@ -203,6 +212,21 @@ pub trait Session: Send {
     /// Runs one statement. The future must stay active after a cancellation,
     /// so that the session reads the answer of the database.
     async fn run(&mut self, sql: &str, sink: ResultSink) -> Result<StatementEnd, ExecError>;
+    /// Runs native scalar bindings. A source must explicitly implement this path.
+    async fn run_parameters(
+        &mut self,
+        sql: &str,
+        parameters: &[crate::sql::parameters::Parameter],
+        sink: ResultSink,
+    ) -> Result<StatementEnd, ExecError> {
+        if parameters.is_empty() {
+            self.run(sql, sink).await
+        } else {
+            Err(ExecError::new(
+                "This connector does not support query parameters.",
+            ))
+        }
+    }
     async fn transaction_state(&mut self) -> TransactionState;
     async fn control(&mut self, command: TransactionCommand) -> Result<(), ExecError>;
     async fn reset(&mut self) -> ResetOutcome;
@@ -212,6 +236,22 @@ pub trait Session: Send {
     }
     /// Reads schemas and relations, without their columns.
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError>;
+    /// Reads the catalog of the schemas of the list and of the current schema. An empty
+    /// list reads all schemas.
+    async fn read_catalog_of(&mut self, schemas: &[String]) -> Result<Catalog, ExecError> {
+        let mut catalog = self.read_catalog().await?;
+        catalog.keep_schemas(schemas);
+        Ok(catalog)
+    }
+    /// Reads the names of all schemas, for the choice of the visible schemas.
+    async fn read_schema_names(&mut self) -> Result<Vec<String>, ExecError> {
+        let catalog = self.read_catalog().await?;
+        Ok(catalog
+            .schemas
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect())
+    }
     async fn read_columns(
         &mut self,
         schema: &str,
@@ -219,6 +259,15 @@ pub trait Session: Send {
     ) -> Result<Vec<String>, ExecError>;
     /// Reads the keys that leave a relation. A source without keys keeps this default.
     async fn read_foreign_keys(
+        &mut self,
+        _schema: &str,
+        _relation: &str,
+    ) -> Result<Vec<ForeignKey>, ExecError> {
+        Ok(Vec::new())
+    }
+    /// Reads the keys of other tables that reach a relation. A source without keys keeps
+    /// this default.
+    async fn read_referencing_keys(
         &mut self,
         _schema: &str,
         _relation: &str,

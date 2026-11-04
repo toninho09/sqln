@@ -12,7 +12,6 @@ use crate::compare::form::{Choice, CompareForm, CompareRequest, SchemaChoice};
 use crate::compare::tab::{CompareTab, SideRead};
 use crate::compare::{Kind, Side};
 use crate::connection::CatalogState;
-use crate::connector::Namespace;
 use crate::console::Phase;
 use crate::diagram::Focus;
 use crate::exec::{ConnectionId, ConsoleId, RunOptions};
@@ -68,6 +67,7 @@ impl App {
             }
             RowKind::View => Err(text::COMPARE_VIEW),
             RowKind::Consoles | RowKind::Console => Err(text::COMPARE_CONSOLE),
+            RowKind::Group(_) | RowKind::Object(_) => Err(text::NOT_FOR_OBJECT),
         }
     }
 
@@ -449,10 +449,12 @@ impl App {
             return;
         }
         // The compare needs each row, so only the budget limits the read. On PostgreSQL,
-        // the schema in `search_path` keeps the names of the schema without the schema.
+        // a `search_path` with only the schema keeps the names of the schema without the
+        // schema, and the names of other schemas with their schema.
         let options = RunOptions {
             row_cap: Some(usize::MAX),
             schema: Some(schema),
+            only_schema: true,
             untimed,
             ..RunOptions::default()
         };
@@ -628,16 +630,7 @@ impl App {
         let Some(target) = self.compare().map(|tab| tab.sides[1].side.clone()) else {
             return;
         };
-        let namespace = self
-            .connection(target.connection)
-            .is_some_and(|item| item.capabilities.namespace != Namespace::None);
-        // A new console never takes the text of a console of the user.
-        self.new_console(target.connection);
-        if namespace {
-            self.console_mut().schema = Some(target.schema);
-            self.save_console_meta(self.active);
-        }
-        self.on_paste(&script);
+        self.open_text_console(target.connection, target.schema, &script);
     }
 }
 

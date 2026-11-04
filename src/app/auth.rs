@@ -59,6 +59,13 @@ pub(super) enum Use {
         schema: String,
         untimed: bool,
     },
+    /// The read of the DDL of an object, in a temporary task.
+    Definition {
+        console: ConsoleId,
+        connection: ConnectionId,
+        statements: Vec<String>,
+        schema: String,
+    },
     Export {
         console: ConsoleId,
         read: ExportRead,
@@ -67,7 +74,15 @@ pub(super) enum Use {
         console: ConsoleId,
         step: ImportStep,
     },
-    Test(u64),
+    Edit {
+        console: ConsoleId,
+        job: crate::data_edit::Job,
+    },
+    /// A test of the form. With `names`, it also reads the names of the schemas.
+    Test {
+        test: u64,
+        names: bool,
+    },
     Save,
     /// Asks for a new password after a refusal. It runs nothing.
     NewPassword,
@@ -80,7 +95,9 @@ impl Use {
             | Self::Page { console, .. }
             | Self::Diagram { console, .. }
             | Self::Compare { console, .. }
+            | Self::Definition { console, .. }
             | Self::Export { console, .. }
+            | Self::Edit { console, .. }
             | Self::Import { console, .. } => Some(*console),
             _ => None,
         }
@@ -279,10 +296,12 @@ impl App {
         self.enqueue_auth(target, action);
     }
 
-    pub(super) fn authorize_test(&mut self, mut definition: Definition, test: u64) {
+    /// Tests the definition of the form. With `names`, the test also reads the names of
+    /// the schemas.
+    pub(super) fn authorize_test(&mut self, mut definition: Definition, test: u64, names: bool) {
         let Some(form) = &self.form else { return };
         if self.persist.is_none() || !matches!(definition.source, Source::Network(_)) {
-            self.dispatch_authorized(Use::Test(test), Some(definition));
+            self.dispatch_authorized(Use::Test { test, names }, Some(definition));
             return;
         }
         let snapshot = definition.clone();
@@ -307,7 +326,7 @@ impl App {
             form_snapshot: Some(snapshot),
             refused: false,
         };
-        self.enqueue_auth(target, Use::Test(test));
+        self.enqueue_auth(target, Use::Test { test, names });
     }
 
     fn enqueue_auth(&mut self, target: Target, action: Use) {
@@ -359,7 +378,7 @@ impl App {
             });
         }
         match (&attempt.action, &attempt.target.form_snapshot, &self.form) {
-            (Use::Test(test), Some(snapshot), Some(form)) => {
+            (Use::Test { test, .. }, Some(snapshot), Some(form)) => {
                 form.test == Some(*test)
                     && form.connection_id == attempt.target.key.id
                     && self.form_scope() == Some(attempt.target.key.scope)
@@ -670,7 +689,7 @@ impl App {
 
     fn cache_auth_session(&mut self) {
         if let Some(attempt) = &self.auth.active
-            && matches!(attempt.action, Use::Test(_))
+            && matches!(attempt.action, Use::Test { .. })
         {
             let password = attempt.target.password();
             self.finish_auth(password);
@@ -836,7 +855,12 @@ impl App {
         let Some(manager) = &self.manager else { return };
         match action {
             Use::Catalog(id, read) => {
-                manager.load_catalog(id, read);
+                let schemas = self
+                    .connection(id)
+                    .and_then(|connection| connection.definition.as_ref())
+                    .map(|definition| definition.schemas.clone())
+                    .unwrap_or_default();
+                manager.load_catalog(id, read, schemas);
                 // The answer of an older read does not end the state, so it cannot start it.
                 if let Some(connection) = self
                     .connection_mut(id)
@@ -869,6 +893,9 @@ impl App {
                         .collect(),
                     None => plan.statements.clone(),
                 };
+                self.consoles[index]
+                    .ran_parameters
+                    .clone_from(&options.parameters);
                 let execution = manager.run(console, statements, options);
                 self.consoles[index].begin_execution(execution, &plan, &self.budget);
                 self.consoles[index].explain = explain;
@@ -893,9 +920,11 @@ impl App {
                 let options = RunOptions {
                     manual: false,
                     schema: None,
+                    only_schema: false,
                     row_cap: Some(request.row_cap),
                     export: None,
                     untimed: false,
+                    parameters: Vec::new(),
                 };
                 let (first, show, kind) = (request.first, request.show, request.kind);
                 let execution = manager.run(console, vec![request.sql], options);
@@ -916,11 +945,19 @@ impl App {
                 schema,
                 untimed,
             } => self.start_compare_read(console, connection, statements, (schema, untimed)),
+            Use::Definition {
+                console,
+                connection,
+                statements,
+                schema,
+            } => self.start_definition_read(console, connection, statements, schema),
             Use::Export { console, read } => self.start_read(console, read),
+            Use::Edit { console, job } => self.start_edit_job(console, job),
             Use::Import { console, step } => self.start_import_step(console, step),
-            Use::Test(test) => {
+            Use::Test { test, names } => {
                 let Some(definition) = definition else { return };
-                manager.test_connection(test, definition.connector(), definition.connect_timeout);
+                let (connector, limit) = (definition.connector(), definition.connect_timeout);
+                manager.test_connection(test, connector, limit, names);
             }
             Use::Save => {}
             Use::NewPassword => self.status = Some(text::AUTH_PASSWORD_ACCEPTED.to_owned()),
@@ -928,6 +965,9 @@ impl App {
     }
 
     fn cancel_auth_use(&mut self, action: &Use) {
+        if matches!(action, Use::Edit { .. }) {
+            self.exiting = false;
+        }
         if let Some(id) = action.console() {
             self.clear_wanted_import(id);
             if let Some(console) = self.console_by_id(id) {
@@ -935,11 +975,15 @@ impl App {
             }
             if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Idle;
+                tab.edit_after = None;
+                tab.edit_close = false;
+                tab.edit_restore = None;
             }
             if let Some(tab) = self.diagrams.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Idle;
             }
             self.cancel_compare_side(id);
+            self.cancel_definition(id);
         }
         match action {
             Use::Catalog(id, read) => {
@@ -955,9 +999,10 @@ impl App {
                     connection.requested_columns.retain(|item| item != relation);
                 }
             }
-            Use::Test(test) => {
+            Use::Test { test, .. } => {
                 if let Some(form) = self.form.as_mut().filter(|form| form.test == Some(*test)) {
                     form.test = None;
+                    form.close_schema_list();
                 }
             }
             _ => {}
@@ -1202,15 +1247,20 @@ impl App {
         attempt.verify = Some(test);
         let definition = attempt.target.definition.clone();
         if let Some(manager) = &self.manager {
-            manager.test_connection(test, definition.connector(), definition.connect_timeout);
+            manager.test_connection(
+                test,
+                definition.connector(),
+                definition.connect_timeout,
+                false,
+            );
         }
     }
 
     /// Takes the answer of `verify_password`. It returns false for a test of the form.
-    pub(super) fn on_password_verified(
+    pub(super) fn on_password_verified<T>(
         &mut self,
         test: u64,
-        result: &Result<(), ConnectError>,
+        result: &Result<T, ConnectError>,
     ) -> bool {
         let Some(attempt) = self
             .auth
@@ -1223,7 +1273,7 @@ impl App {
         attempt.verify = None;
         let id = attempt.target.connection;
         match result {
-            Ok(()) => {
+            Ok(_) => {
                 attempt.target.refused = false;
                 if let Some(id) = id {
                     self.auth.refused.remove(&id);

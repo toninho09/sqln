@@ -18,6 +18,7 @@ pub fn sample_catalog() -> Catalog {
         kind,
         columns: Columns::Loaded(columns.iter().map(|column| (*column).to_owned()).collect()),
         foreign_keys: Vec::new(),
+        referencing: Vec::new(),
     };
     Catalog {
         schemas: vec![
@@ -42,6 +43,7 @@ pub fn sample_catalog() -> Catalog {
                     ),
                 ],
                 partial: false,
+                objects: Vec::new(),
             },
             Schema {
                 name: "sales".to_owned(),
@@ -51,6 +53,7 @@ pub fn sample_catalog() -> Catalog {
                     &["number", "due_date"],
                 )],
                 partial: false,
+                objects: Vec::new(),
             },
         ],
         current_schema: Some("public".to_owned()),
