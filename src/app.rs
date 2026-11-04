@@ -3,6 +3,7 @@
 mod auth;
 mod browse;
 mod close;
+mod compare;
 mod conflicts;
 mod connections;
 mod diagram;
@@ -41,6 +42,8 @@ use self::mouse::Drag;
 use crate::browser::FileBrowser;
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{SharedClipboard, SystemClipboard};
+use crate::compare::form::CompareForm;
+use crate::compare::tab::CompareTab;
 use crate::connection::{Connection, Definition};
 use crate::connector::{Connector, Namespace, TransactionCommand};
 use crate::console::{AfterTransaction, Console, Focus, Phase};
@@ -70,6 +73,7 @@ use crate::table::{TableFocus, TableTab};
 use crate::terminal::Session;
 use crate::terminal::{ring_bell, watch_terminal};
 use crate::ui::browser::draw_browser;
+use crate::ui::compare::{CompareLayout, draw_compare, draw_compare_form};
 use crate::ui::console::BarData;
 use crate::ui::diagram::{DiagramBar, draw_diagram};
 use crate::ui::export::{ExportLayout, draw_export};
@@ -306,6 +310,9 @@ struct ScreenLayout {
     table: TableLayout,
     /// The picture of the diagram on screen.
     diagram: Rect,
+    /// The grid of the compare on screen.
+    compare: Rect,
+    compare_form: CompareLayout,
     form: FormLayout,
     settings: SettingsLayout,
     export: ExportLayout,
@@ -336,8 +343,13 @@ pub struct App {
     table_active: Option<usize>,
     /// The diagram tabs. The tab row mixes them with the other tabs in the order of opening.
     diagrams: Vec<DiagramTab>,
-    /// The diagram tab on screen. At most one of `table_active` and this has a value.
+    /// The diagram tab on screen. At most one of `table_active`, this, and
+    /// `compare_active` has a value.
     diagram_active: Option<usize>,
+    /// The compare tabs. The tab row mixes them with the other tabs in the order of opening.
+    compares: Vec<CompareTab>,
+    /// The compare tab on screen.
+    compare_active: Option<usize>,
     connections: Vec<Connection>,
     navigator: Navigator,
     navigator_focused: bool,
@@ -398,6 +410,7 @@ pub struct App {
     settings_form: Option<SettingsForm>,
     export_form: Option<ExportForm>,
     import_form: Option<ImportForm>,
+    compare_form: Option<CompareForm>,
     /// The file browser of the focused path field in a dialog or in the form.
     browser: Option<FileBrowser>,
     /// The first choices of the next export dialog.
@@ -469,6 +482,8 @@ impl App {
             table_active: None,
             diagrams: Vec::new(),
             diagram_active: None,
+            compares: Vec::new(),
+            compare_active: None,
             connections: Vec::new(),
             navigator: Navigator::default(),
             navigator_focused: false,
@@ -502,6 +517,7 @@ impl App {
             settings_form: None,
             export_form: None,
             import_form: None,
+            compare_form: None,
             browser: None,
             export_choices: options.export_choices.clone(),
             exports: Vec::new(),
@@ -662,6 +678,9 @@ impl App {
 
     /// Returns the connection of the open tab.
     fn tab_connection(&self) -> Option<&Connection> {
+        if let Some(tab) = self.compare() {
+            return self.connection(tab.sides[1].side.connection);
+        }
         if let Some(tab) = self.diagram() {
             return self.connection(tab.connection);
         }
@@ -705,6 +724,9 @@ impl App {
     }
 
     fn sync_command_history(&mut self) {
+        let active = self
+            .console_on_screen()
+            .then(|| self.consoles[self.active].id);
         let Some(manager) = &mut self.manager else {
             return;
         };
@@ -720,8 +742,6 @@ impl App {
                 );
             }
         }
-        let active = (self.table_active.is_none() && self.diagram_active.is_none())
-            .then(|| self.consoles[self.active].id);
         manager.set_active_history(active);
     }
 
@@ -746,7 +766,8 @@ impl App {
         let frame = usize::try_from(time.as_millis() / RUN_FRAME.as_millis()).unwrap_or(0);
         let running = self.consoles.iter().any(Console::is_busy)
             || self.tables.iter().any(TableTab::is_busy)
-            || self.diagrams.iter().any(DiagramTab::is_busy);
+            || self.diagrams.iter().any(DiagramTab::is_busy)
+            || self.compares.iter().any(CompareTab::is_busy);
         let changed = running && frame != self.run_frame;
         self.run_frame = frame;
         let minute = self
@@ -797,6 +818,7 @@ impl App {
             || self.settings_form.is_some()
             || self.export_form.is_some()
             || self.import_form.is_some()
+            || self.compare_form.is_some()
             || self.browser.is_some()
             || self.auth.prompt.is_some();
         match event {
@@ -831,6 +853,11 @@ impl App {
                     form.paste(&text);
                 }
             }
+            Event::Paste(text) if self.dialogs.is_empty() && self.compare_form.is_some() => {
+                if let Some(form) = &mut self.compare_form {
+                    form.paste(&text);
+                }
+            }
             Event::Paste(text) if self.dialogs.is_empty() && self.palette.is_some() => {
                 if let Some(palette) = &mut self.palette {
                     palette.paste(&text);
@@ -857,6 +884,7 @@ impl App {
             Event::Mouse(mouse) if self.settings_form.is_some() => self.on_settings_mouse(mouse),
             Event::Mouse(mouse) if self.export_form.is_some() => self.on_export_mouse(mouse),
             Event::Mouse(mouse) if self.import_form.is_some() => self.on_import_mouse(mouse),
+            Event::Mouse(mouse) if self.compare_form.is_some() => self.on_compare_mouse(mouse),
             Event::Mouse(mouse) if self.help.is_some() => {
                 if let Some(help) = &mut self.help {
                     match mouse.kind {
@@ -886,6 +914,10 @@ impl App {
         if self.diagram_active.is_some() || self.home() {
             return;
         }
+        if let Some(tab) = self.compare_mut() {
+            tab.result.paste_in_search(text);
+            return;
+        }
         if let Some(tab) = self.table_mut() {
             if tab.focus == TableFocus::Grid {
                 tab.result.paste_in_search(text);
@@ -909,9 +941,10 @@ impl App {
     }
 
     pub fn has_work(&self) -> bool {
-        let search = match self.table() {
-            Some(tab) => tab.result.search_has_work(),
-            None => self.console().search_has_work(),
+        let search = match (self.compare(), self.table()) {
+            (Some(tab), _) => tab.result.search_has_work(),
+            (None, Some(tab)) => tab.result.search_has_work(),
+            (None, None) => self.console().search_has_work(),
         };
         search || self.exports_have_work()
     }
@@ -936,9 +969,10 @@ impl App {
         let changed = self.has_work() || ticked || authorized || probed;
         if changed {
             let deadline = Instant::now() + WORK_SLICE;
-            match self.table_active {
-                Some(index) => self.tables[index].result.continue_search(deadline),
-                None => self.console_mut().continue_search(deadline),
+            match (self.compare_active, self.table_active) {
+                (Some(index), _) => self.compares[index].result.continue_search(deadline),
+                (None, Some(index)) => self.tables[index].result.continue_search(deadline),
+                (None, None) => self.console_mut().continue_search(deadline),
             }
             self.continue_exports(deadline);
         }
@@ -1008,6 +1042,11 @@ impl App {
         }
         let Some(id) = event.console() else { return };
         let budget = self.budget.clone();
+        if let Some(tab) = self.compares.iter_mut().find(|tab| tab.owns(id)) {
+            tab.on_event(event, &budget);
+            self.continue_compare(id);
+            return;
+        }
         if let Some(tab) = self.diagrams.iter_mut().find(|tab| tab.id == id) {
             tab.on_event(event, &budget);
             return;
@@ -1060,7 +1099,9 @@ impl App {
             draw_rule(frame, rule, &self.theme);
         }
         let main = self.draw_side(frame, body);
-        if self.diagram_active.is_some() {
+        if self.compare_active.is_some() {
+            self.draw_active_compare(frame, main, tall);
+        } else if self.diagram_active.is_some() {
             self.draw_active_diagram(frame, main, tall);
         } else if self.table_active.is_some() {
             self.draw_active_table(frame, main, tall);
@@ -1186,6 +1227,21 @@ impl App {
         );
     }
 
+    fn draw_active_compare(&mut self, frame: &mut Frame, area: Rect, tall: bool) {
+        let Some(index) = self.compare_active else {
+            return;
+        };
+        let focused = !self.navigator_focused;
+        self.layout.compare = draw_compare(
+            frame,
+            area,
+            &mut self.compares[index],
+            tall,
+            focused,
+            &self.theme,
+        );
+    }
+
     fn draw_active_diagram(&mut self, frame: &mut Frame, area: Rect, tall: bool) {
         let Some(index) = self.diagram_active else {
             return;
@@ -1221,6 +1277,9 @@ impl App {
         if self.diagram_active.is_some() {
             return StatusPanel::Diagram;
         }
+        if self.compare_active.is_some() {
+            return StatusPanel::Table;
+        }
         if self.home() {
             return StatusPanel::Home;
         }
@@ -1248,6 +1307,31 @@ impl App {
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
         let panel = self.status_panel();
         let data = (self.budget.used(), self.budget.limit());
+        if let Some(tab) = self.compare() {
+            let view = tab.result.view;
+            let position =
+                (!tab.result.table.rows.is_empty()).then_some((view.row + 1, view.col + 1));
+            let target = &tab.sides[1].side;
+            let item = self.connection(target.connection);
+            let status = StatusData {
+                panel,
+                connection: item.map_or("", |item| item.name.as_str()),
+                production: item.is_some_and(Connection::is_production),
+                schema: Some(&target.schema),
+                session: None,
+                transaction_age: None,
+                phase: tab.phase,
+                run_time: run_time(tab.phase, &tab.run, self.clock),
+                pool: self
+                    .manager
+                    .as_ref()
+                    .map(|manager| manager.usage(target.connection)),
+                data,
+                position,
+            };
+            draw_statusline(frame, area, &status, &self.theme);
+            return;
+        }
         if let Some(tab) = self.diagram() {
             let item = self.connection(tab.connection);
             let status = StatusData {
@@ -1433,6 +1517,9 @@ impl App {
         }
         if let Some(form) = &self.import_form {
             self.layout.import = draw_import(frame, form, &self.theme);
+        }
+        if let Some(form) = &self.compare_form {
+            self.layout.compare_form = draw_compare_form(frame, form, &self.theme);
         }
         if let Some(browser) = &self.browser {
             self.layout.browser = draw_browser(frame, browser, &self.theme);

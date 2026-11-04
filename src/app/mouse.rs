@@ -80,6 +80,10 @@ impl App {
         if self.diagram_active.is_some() {
             return None;
         }
+        if let Some(index) = self.compare_active {
+            let tab = &mut self.compares[index];
+            return tab.done.then_some((&mut tab.result, self.layout.compare));
+        }
         if let Some(index) = self.table_active {
             return Some((&mut self.tables[index].result, self.layout.table.grid));
         }
@@ -108,6 +112,8 @@ impl App {
             self.focus_navigator();
         } else if self.diagram_active.is_some() {
             self.on_diagram_press(mouse, position);
+        } else if self.compare_active.is_some() {
+            self.on_compare_press(mouse, position);
         } else if self.table_active.is_some() {
             self.on_table_press(mouse, position);
         } else {
@@ -183,6 +189,18 @@ impl App {
                 Some(column) => self.sort_table(column),
                 None => self.point_at_cell(mouse, false),
             }
+        }
+    }
+
+    /// Puts the focus on the grid of the compare and the cursor on the cell under the
+    /// pointer. A drag of a column edge changes its width.
+    fn on_compare_press(&mut self, mouse: MouseEvent, position: Position) {
+        if !self.layout.compare.contains(position) {
+            return;
+        }
+        self.navigator_focused = false;
+        if !self.start_column_drag(mouse) {
+            self.point_at_cell(mouse, false);
         }
     }
 

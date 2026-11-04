@@ -3,6 +3,7 @@ pub mod browser;
 pub mod catalog;
 pub mod clipboard;
 pub mod command_log;
+pub mod compare;
 pub mod complete;
 pub mod connection;
 pub mod connector;

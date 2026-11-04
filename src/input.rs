@@ -174,6 +174,7 @@ pub enum Action {
     OpenHistory,
     OpenSessions,
     OpenDiagram,
+    OpenCompare,
     ExplorerCommands,
     Stop,
     ToggleMode,
@@ -210,6 +211,7 @@ pub enum Action {
     NavigatorDeletePassword,
     NavigatorStructure,
     NavigatorDiagram,
+    NavigatorCompare,
     NavigatorSessions,
     NavigatorGenerate,
     NavigatorImport,
@@ -250,6 +252,8 @@ pub enum Action {
     GridReload,
     GridCancelQuery,
     GridEndSession,
+    CompareScript,
+    CompareCopy,
     DiagramUp,
     DiagramDown,
     DiagramLeft,
@@ -308,6 +312,11 @@ impl Action {
                 | Action::GridCancelQuery
                 | Action::GridEndSession
         )
+    }
+
+    /// Returns true for an action that only the grid of a compare has.
+    pub fn is_compare_only(self) -> bool {
+        matches!(self, Action::CompareScript | Action::CompareCopy)
     }
 
     /// Returns true for an action that only the results of a console have.
@@ -411,6 +420,13 @@ const DEFAULTS: &[Item] = &[
         Region::Global,
         "openDiagram",
         &["ctrl+w D"],
+        &[],
+    ),
+    both(
+        Action::OpenCompare,
+        Region::Global,
+        "openCompare",
+        &["ctrl+w v"],
         &[],
     ),
     both(
@@ -663,6 +679,13 @@ const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(
+        Action::NavigatorCompare,
+        Region::Navigator,
+        "navigatorCompare",
+        &["c"],
+        &[],
+    ),
+    both(
         Action::NavigatorSessions,
         Region::Navigator,
         "navigatorSessions",
@@ -898,6 +921,20 @@ const DEFAULTS: &[Item] = &[
         Region::Grid,
         "gridEndSession",
         &["K"],
+        &[],
+    ),
+    both(
+        Action::CompareScript,
+        Region::Grid,
+        "compareScript",
+        &["S"],
+        &[],
+    ),
+    both(
+        Action::CompareCopy,
+        Region::Grid,
+        "compareCopy",
+        &["Y"],
         &[],
     ),
     both(

@@ -260,6 +260,9 @@ pub struct RunOptions {
     pub row_cap: Option<usize>,
     /// The file of an export. The rows go there, and the time limit does not apply.
     pub export: Option<ExportWriter>,
+    /// True for a read that ends with the user, as an export does: the time limit does
+    /// not apply.
+    pub untimed: bool,
 }
 
 pub struct RunRequest {

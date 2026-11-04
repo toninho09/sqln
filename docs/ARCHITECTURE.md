@@ -47,6 +47,7 @@ Main thread                        Tokio runtime
 | `table` | Table tab: pages, fields, sorting, suggestions, and query |
 | `structure` | Catalog queries of the structure tab, per database, scope, and section |
 | `diagram` | ER diagram: catalog queries, model, layout of boxes and lines, Mermaid text, and the state of a diagram tab |
+| `compare` | Structure and data compare: catalog queries, model of a schema, differences, sync DDL, rows by key, the dialog, and the state of a compare tab |
 | `line_input` | Single-line text field, used by the filter bar fields |
 | `exec` | Executions, scripts, cap, and cancellation |
 | `pool` | Limit, queue, reservation, and cleaning |
@@ -233,6 +234,8 @@ That check took a third of the time of a copy or of an export, and each text in 
 
 The budget counts the block of each row, so the same limit holds about twice the rows.
 The limit in memory stays the same.
+
+A row can keep its place in the budget after the end of its execution. A data compare keeps each source row until the compare ends, because the target rows meet them in a later execution. A target row that equals its source row leaves the budget at once. The index of the keys stays out of the budget.
 
 ## 3. Concurrency
 

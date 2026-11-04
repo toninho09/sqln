@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod browser;
+pub mod compare;
 pub mod conflicts;
 pub mod console;
 pub mod diagram;
@@ -44,7 +45,7 @@ pub use self::console::{
 };
 pub use self::table::{TableBar, TableControl, TableLayout, draw_table, section_at};
 use self::theme::Theme;
-use crate::complete::SuggestionKind;
+use crate::complete::{Suggestion, SuggestionKind};
 use crate::editor::{MarkState, SearchBar, SearchField, SqlEditor, SuggestionList, TAB_WIDTH};
 
 /// The columns of the gutter, without the digits: a space before the number, a space
@@ -337,6 +338,42 @@ pub fn list_area(anchor: Position, bounds: Rect, width: u16, rows: u16) -> Rect 
     }
 }
 
+/// Draws a list below the anchor, with the marked row in view. `row` gives the spans of a
+/// row from its index and its mark. It returns the area of the list and its first row.
+pub(crate) fn draw_anchored_list<'a>(
+    frame: &mut Frame,
+    (bounds, anchor): (Rect, Position),
+    (count, selected, width): (usize, Option<usize>, usize),
+    theme: &Theme,
+    row: impl Fn(usize, bool) -> Vec<Span<'a>>,
+) -> (Rect, usize) {
+    let rows = count.min(MAX_LIST_ROWS) as u16;
+    let width = u16::try_from(width).unwrap_or(u16::MAX).max(MIN_LIST_WIDTH);
+    let area = list_area(anchor, bounds, width, rows);
+    let visible = usize::from(area.height);
+    let first = selected
+        .map_or(0, |place| place + 1)
+        .saturating_sub(visible)
+        .min(count.saturating_sub(visible));
+    frame.render_widget(Clear, area);
+    for (y, index) in (area.y..).zip((first..count).take(visible)) {
+        let marked = Some(index) == selected;
+        let style = if marked {
+            theme.list_selected
+        } else {
+            theme.list
+        };
+        let line = Line::from(row(index, marked));
+        let rect = Rect {
+            y,
+            height: 1,
+            ..area
+        };
+        frame.render_widget(Paragraph::new(line).style(style), rect);
+    }
+    (area, first)
+}
+
 pub(crate) fn draw_suggestions(
     frame: &mut Frame,
     bounds: Rect,
@@ -345,37 +382,21 @@ pub(crate) fn draw_suggestions(
     theme: &Theme,
 ) {
     let items = &list.completion.items;
-    let rows = items.len().min(MAX_LIST_ROWS);
-    let row_width = |index: usize| {
-        let item = &items[index];
+    let row_width = |item: &Suggestion| {
         let detail = item
             .detail
             .as_deref()
             .map_or(0, |text| Span::raw(text).width() + 2);
         Span::raw(item.label.as_str()).width() + detail + 6
     };
-    let content = (0..items.len()).map(row_width).max().unwrap_or_default();
-    let width = u16::try_from(content)
-        .unwrap_or(u16::MAX)
-        .max(MIN_LIST_WIDTH);
-    let area = list_area(anchor, bounds, width, rows as u16);
-
-    let visible = usize::from(area.height);
-    let first = (list.selected + 1)
-        .saturating_sub(visible)
-        .min(items.len().saturating_sub(visible));
-    frame.render_widget(Clear, area);
-    for (offset, item) in items.iter().enumerate().skip(first).take(visible) {
-        let selected = offset == list.selected;
-        let style = if selected {
-            theme.list_selected
+    let width = items.iter().map(row_width).max().unwrap_or_default();
+    let shape = (items.len(), Some(list.selected), width);
+    draw_anchored_list(frame, (bounds, anchor), shape, theme, |index, marked| {
+        let item = &items[index];
+        let (style, detail_style) = if marked {
+            (theme.list_selected, theme.list_selected)
         } else {
-            theme.list
-        };
-        let detail_style = if selected {
-            theme.list_selected
-        } else {
-            theme.list_detail
+            (theme.list, theme.list_detail)
         };
         let mut spans = vec![
             Span::styled(format!(" {} ", kind_tag(item.kind)), detail_style),
@@ -384,11 +405,6 @@ pub(crate) fn draw_suggestions(
         if let Some(detail) = &item.detail {
             spans.push(Span::styled(format!("  {detail}"), detail_style));
         }
-        let row = Rect {
-            y: area.y + (offset - first) as u16,
-            height: 1,
-            ..area
-        };
-        frame.render_widget(Paragraph::new(Line::from(spans)).style(style), row);
-    }
+        spans
+    });
 }

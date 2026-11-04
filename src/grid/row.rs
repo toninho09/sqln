@@ -51,6 +51,15 @@ impl Row {
     pub fn bytes(&self) -> usize {
         self.data.len()
     }
+
+    /// Returns the text of a value. `NULL` and binary data that is not text have no text.
+    pub fn text(&self, column: usize) -> Option<String> {
+        match self.get(column)? {
+            Value::Null => None,
+            Value::Text(text) | Value::Number(text) => Some(text.to_owned()),
+            Value::Binary(bytes) => bytes.text().map(str::to_owned),
+        }
+    }
 }
 
 impl fmt::Debug for Row {

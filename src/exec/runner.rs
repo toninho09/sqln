@@ -211,6 +211,7 @@ impl ConsoleTask {
         let context = context(&self.settings, options.schema);
         let cap = options.row_cap.unwrap_or(self.settings.row_cap);
         let export = options.export;
+        let untimed = options.untimed;
         if !reserved && let Err(error) = lease.session().apply_context(&context).await {
             self.finish(execution, ExecutionEnd::Failed, Some(error.message))
                 .await;
@@ -252,7 +253,7 @@ impl ConsoleTask {
                 cap,
                 export: export.clone(),
                 // An export ends with the user. It has no time limit.
-                timed: export.is_none(),
+                timed: export.is_none() && !untimed,
             };
             let (waited, reason) = self
                 .run_statement(key, active, sql, delivery, commands)

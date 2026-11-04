@@ -3,6 +3,7 @@
 mod classify;
 mod format;
 mod lexer;
+pub mod literal;
 mod statement;
 
 pub use classify::{

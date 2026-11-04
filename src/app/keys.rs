@@ -2,6 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::compare::compare_has;
 use super::guard::short;
 use super::tables::has_sessions;
 use super::{App, DialogAction, Overlay};
@@ -57,6 +58,9 @@ impl App {
         if self.diagram_active.is_some() {
             return Some(Region::Diagram);
         }
+        if let Some(tab) = self.compare() {
+            return tab.result.search.is_none().then_some(Region::Grid);
+        }
         if let Some(tab) = self.table() {
             let in_grid = tab.focus == TableFocus::Grid && tab.result.search.is_none();
             return in_grid.then_some(Region::Grid);
@@ -69,6 +73,9 @@ impl App {
     pub(super) fn grid_has_focus(&self) -> bool {
         if self.navigator_focused || self.diagram_active.is_some() {
             return false;
+        }
+        if self.compare_active.is_some() {
+            return true;
         }
         match self.table() {
             Some(tab) => tab.focus == TableFocus::Grid,
@@ -116,6 +123,10 @@ impl App {
         }
         if self.import_form.is_some() {
             self.on_import_key(key);
+            return;
+        }
+        if self.compare_form.is_some() {
+            self.on_compare_key(key);
             return;
         }
         if self.picker.is_some() {
@@ -174,6 +185,11 @@ impl App {
             None if self.navigator_focused => self.on_tree_filter_key(key),
             // The home screen has no text field.
             None if self.home() => {}
+            None if self.compare_active.is_some() => {
+                if let Some(tab) = self.compare_mut() {
+                    tab.result.on_search_key(key);
+                }
+            }
             None if self.table_active.is_some() => self.on_table_text_key(key),
             None if self.console().focus == Focus::Results => self.console_mut().on_search_key(key),
             None => self.on_editor_key(key),
@@ -278,6 +294,9 @@ impl App {
         if self.diagram_active.is_some() && self.perform_on_diagram(action) {
             return;
         }
+        if self.compare_active.is_some() && self.perform_on_compare(action) {
+            return;
+        }
         if self.table_active.is_some() && self.perform_on_table(action) {
             return;
         }
@@ -291,6 +310,7 @@ impl App {
             Action::OpenHistory => self.open_history(),
             Action::OpenSessions => self.open_sessions(),
             Action::OpenDiagram => self.open_diagram_here(),
+            Action::OpenCompare => self.open_compare_here(),
             Action::ExplorerCommands => self.explorer_page = true,
             Action::Stop => self.stop(self.active),
             Action::ToggleMode => self.toggle_mode(),
@@ -329,6 +349,7 @@ impl App {
             | Action::NavigatorDeletePassword
             | Action::NavigatorStructure
             | Action::NavigatorDiagram
+            | Action::NavigatorCompare
             | Action::NavigatorSessions
             | Action::NavigatorGenerate
             | Action::NavigatorImport
@@ -342,9 +363,10 @@ impl App {
     fn on_grid_action(&mut self, action: Action, extend: bool) {
         let budget = self.budget.clone();
         let vim = self.vim();
-        let outcome = match self.table_mut() {
-            Some(tab) => tab.result.on_action(action, extend, vim),
-            None => self.console_mut().on_results_action(action, extend),
+        let outcome = match (self.compare_active, self.table_active) {
+            (Some(index), _) => self.compares[index].result.on_action(action, extend, vim),
+            (None, Some(index)) => self.tables[index].result.on_action(action, extend, vim),
+            (None, None) => self.console_mut().on_results_action(action, extend),
         };
         match outcome {
             GridAction::None => {}
@@ -410,9 +432,10 @@ impl App {
         } else {
             row.saturating_sub(1)
         };
-        let result = match self.table_active {
-            Some(index) => Some(&mut self.tables[index].result),
-            None => {
+        let result = match (self.compare_active, self.table_active) {
+            (Some(index), _) => Some(&mut self.compares[index].result),
+            (None, Some(index)) => Some(&mut self.tables[index].result),
+            (None, None) => {
                 let console = &mut self.consoles[self.active];
                 console.results.get_mut(console.active)
             }
@@ -457,6 +480,10 @@ impl App {
             tab.run.seen();
             return;
         }
+        if let Some(tab) = self.compare_mut() {
+            tab.run.seen();
+            return;
+        }
         match self.table_mut() {
             Some(tab) => tab.run.seen(),
             None => self.console_mut().run.seen(),
@@ -472,12 +499,13 @@ impl App {
             self.active = index;
             self.table_active = None;
             self.diagram_active = None;
+            self.compare_active = None;
             self.sync_command_history();
         }
     }
 
     fn open_keys(&mut self) {
-        let in_table = self.table_active.is_some();
+        let in_table = self.table_active.is_some() || self.compare_active.is_some();
         // The explorer is the only panel of the home screen.
         let panel = if self.navigator_focused || self.home() {
             Some(Region::Navigator)
@@ -487,6 +515,7 @@ impl App {
         let (region, name) = match panel {
             Some(Region::Navigator) => (Some(Region::Navigator), text::REGION_NAVIGATOR),
             Some(Region::Diagram) => (Some(Region::Diagram), text::REGION_DIAGRAM),
+            Some(_) if self.compare_active.is_some() => (Some(Region::Grid), text::REGION_COMPARE),
             Some(_) if in_table => (Some(Region::Grid), text::REGION_TABLE),
             Some(_) => (Some(Region::Grid), text::REGION_GRID),
             None if in_table => (None, text::REGION_FILTER),
@@ -512,7 +541,7 @@ impl App {
                 Run | RunScript | Explain | ExplainAnalyze | Stop | FormatSql | ToggleComment
                 | OpenHistory => text::GROUP_RUN,
                 ToggleMode | Commit | Rollback => text::GROUP_TRANSACTION,
-                ChooseSchema | ChangeConnection | OpenSessions | OpenDiagram => {
+                ChooseSchema | ChangeConnection | OpenSessions | OpenDiagram | OpenCompare => {
                     text::GROUP_CONNECTION
                 }
                 NextTab | PreviousTab | CloseTab | RenameConsole => text::GROUP_TABS,
@@ -545,10 +574,19 @@ impl App {
     }
 
     fn help_actions(&self, region: Region) -> Vec<(Action, String, &'static str)> {
-        let in_table = self.table_active.is_some();
+        let in_table = self.table_active.is_some() || self.compare_active.is_some();
         let sections = self.table().is_some_and(|tab| tab.section().is_some());
+        let in_compare = self.compare_active.is_some();
         self.keymap
             .actions(region)
+            .filter(|action| {
+                // A compare shows only the grid keys that it has.
+                if in_compare && action.region() == Region::Grid {
+                    compare_has(*action)
+                } else {
+                    !action.is_compare_only()
+                }
+            })
             .filter(|action| {
                 if in_table {
                     !action.is_console_only()
@@ -704,6 +742,7 @@ impl App {
                     schema,
                     row_cap: None,
                     export: None,
+                    untimed: false,
                 };
                 let console = &self.consoles[index];
                 let revision = console.editor.revision();
@@ -993,6 +1032,7 @@ impl App {
                 !on_consoles && item.is_some_and(|item| item.dialect != Dialect::Redis),
             ),
             (NavigatorDiagram, self.can_open_diagram()),
+            (NavigatorCompare, self.can_compare_row()),
             (NavigatorGenerate, self.can_generate()),
             (NavigatorImport, self.can_import_row()),
             (NavigatorCopyName, row.is_some()),
@@ -1040,6 +1080,7 @@ impl App {
                 &[
                     (&[NavigatorStructure], text::MENU_STRUCTURE),
                     (&[NavigatorDiagram], text::MENU_DIAGRAM),
+                    (&[NavigatorCompare], text::MENU_COMPARE),
                     (&[NavigatorGenerate], text::MENU_GENERATE),
                     (&[NavigatorImport], text::MENU_IMPORT),
                     (&[NavigatorCopyName], text::MENU_COPY_NAME),
@@ -1076,7 +1117,8 @@ impl App {
     /// Returns true when `Ctrl+W k` or `Ctrl+W j` moves the focus from the panel of the
     /// cursor to another panel of the tab on screen.
     fn focus_moves(&self, up: bool) -> bool {
-        if self.navigator_focused || self.diagram_active.is_some() {
+        if self.navigator_focused || self.diagram_active.is_some() || self.compare_active.is_some()
+        {
             return false;
         }
         let console = self.console();
@@ -1174,6 +1216,7 @@ impl App {
                     (&[ChangeConnection], text::MENU_CHANGE),
                     (&[OpenSessions], text::MENU_SESSIONS),
                     (&[OpenDiagram], text::MENU_DIAGRAM),
+                    (&[OpenCompare], text::MENU_COMPARE),
                 ],
             ),
             (
@@ -1221,6 +1264,12 @@ impl App {
         if action.region() == Region::Diagram {
             return self.diagram_command_available(action);
         }
+        if self.compare_active.is_some() && action.region() == Region::Grid {
+            return self.compare_command_available(action);
+        }
+        if action.is_compare_only() {
+            return false;
+        }
         let console = self.console();
         let in_table = !self.console_on_screen();
         let idle = !console.is_busy();
@@ -1239,10 +1288,11 @@ impl App {
                     connection.is_some_and(|item| Explain::new(item.dialect, analyze).is_some());
                 !in_table && idle && plans
             }
-            Action::Stop => match (self.diagram(), self.table()) {
-                (Some(tab), _) => tab.is_busy(),
-                (None, Some(tab)) => tab.is_busy(),
-                (None, None) => !idle,
+            Action::Stop => match (self.compare(), self.diagram(), self.table()) {
+                (Some(tab), _, _) => tab.is_busy(),
+                (None, Some(tab), _) => tab.is_busy(),
+                (None, None, Some(tab)) => tab.is_busy(),
+                (None, None, None) => !idle,
             },
             Action::ToggleMode => !in_table && idle && transactions,
             Action::Commit | Action::Rollback => !in_table && idle && console.in_transaction(),
@@ -1257,7 +1307,9 @@ impl App {
             Action::GridCancelQuery | Action::GridEndSession => self.can_signal_session(),
             Action::NavigatorSessions => self.can_open_sessions(),
             Action::NavigatorDiagram => self.can_open_diagram(),
+            Action::NavigatorCompare => self.can_compare_row(),
             Action::OpenDiagram => self.can_open_diagram_here(),
+            Action::OpenCompare => self.can_open_compare_here(),
             Action::OpenSessions => self.sessions_connection().is_some_and(|id| {
                 let dialect = self.connection(id).map(|item| item.dialect);
                 dialect.is_some_and(has_sessions)
@@ -1318,6 +1370,8 @@ impl App {
             Action::GridReload,
             Action::GridCancelQuery,
             Action::GridEndSession,
+            Action::CompareScript,
+            Action::CompareCopy,
         ]
         .map(|action| {
             let key_works = self.panel() == Some(Region::Grid);
@@ -1440,5 +1494,6 @@ fn home_allows(action: Action) -> bool {
                 | ExplorerCommands
                 | OpenSessions
                 | OpenDiagram
+                | OpenCompare
         )
 }

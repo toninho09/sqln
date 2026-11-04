@@ -2,8 +2,8 @@
 //! its meaning under any setting of the session.
 
 use crate::clipboard::base64_bytes;
-use crate::grid::hex;
-use crate::sql::{Dialect, escape_literal, quote_identifier, quote_literal};
+use crate::sql::literal::{binary_literal, bytes_literal, text_literal};
+use crate::sql::{Dialect, quote_identifier};
 use crate::ui::text;
 
 /// The size of a statement, without its first row. MySQL refuses a statement above
@@ -33,30 +33,6 @@ pub struct Target {
 pub fn is_binary_type(name: &str) -> bool {
     let name = name.to_lowercase();
     name == "bytea" || name.contains("blob") || name.contains("binary")
-}
-
-fn text_literal(value: &str, dialect: Dialect) -> String {
-    match dialect {
-        Dialect::Postgres => escape_literal(value),
-        // The hexadecimal form does not change with `NO_BACKSLASH_ESCAPES`.
-        Dialect::MySql if value.contains('\\') => {
-            format!("_utf8mb4 {}", hex(value.as_bytes()))
-        }
-        _ => quote_literal(value, dialect),
-    }
-}
-
-fn binary_literal(digits: &str, dialect: Dialect) -> String {
-    if dialect == Dialect::Postgres {
-        escape_literal(&format!("\\x{digits}"))
-    } else {
-        format!("X'{digits}'")
-    }
-}
-
-fn bytes_literal(bytes: &[u8], dialect: Dialect) -> String {
-    let digits = hex(bytes);
-    binary_literal(digits.trim_start_matches("0x"), dialect)
 }
 
 /// Returns the digits of the text that a CSV export writes for binary.

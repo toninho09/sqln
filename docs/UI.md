@@ -389,6 +389,67 @@ The table tab and the structure tab stay open together.
 - The tab does not come back in the next session.
 - Redis and Valkey have no diagram. `d` shows the reason in the status bar.
 
+### Compare tab
+
+`c` on a navigator row, or `Ctrl+W v` in any panel, opens the **Compare** dialog. `Ctrl+W v` uses the row with the focus in the navigator, the table of a table tab, the focus of a diagram, the current schema of a console, or the sides of a compare tab. The source comes from the row, and the target is the next connection with the same schema and table. The first field chooses **Structure** or **Data**: a table row starts with **Data**, and a connection or a schema row starts with **Structure**. An empty table compares the whole schema. A data compare needs a table. The script makes the target equal to the source.
+
+A connection, a schema, and a table field show a list below the field when they get the focus. The text filters the list: each word must be in the name, with no case. A connection or a schema has a search text. A table field filters with its own text, and the table list holds only tables. `Enter` or `Tab` choose the marked name and move to the next field, so a connection leads to its schemas, and a schema to its tables. A click on a row also chooses it. `Esc` closes the list and keeps the value. A table can keep a name that the list does not hold: `Esc`, then `Tab`.
+
+```text
+╭─ Compare ────────────────────────────────────────────────────────────╮
+│                                                                      │
+│   Compare                < Structure >                               │
+│ > Source connection      < shop >                                    │
+│   Source schema          < public >                                  │
+│   Source table                                                       │
+│   Target connection      < shop-staging >                            │
+│   Target schema          < public >                                  │
+│   Target table                                                       │
+│   Removals as statements [ ]                                         │
+│                                                                      │
+│   The script makes the target equal to the source. An empty table    │
+│   compares the schema.                                               │
+│   [ Compare ]  [ Cancel ]                                            │
+╰──────────────────────────────────────────────────────────────────────╯
+```
+
+The tab label is `name (compare)`. Opening the same compare again selects the tab and reads both sides again.
+
+```text
+│ [console-1] [public (compare)]                                                         │
+│ shop · public → shop-staging · public · compare                                        │
+│ Change │ Object  │ Table  │ Name  │ Source             │ Target                         │
+│ create │ table   │ items  │ items │ 3 columns          │ NULL                           │
+│ drop   │ table   │ old    │ old   │ NULL               │ 1 column                       │
+│ alter  │ column  │ owners │ name  │ text NOT NULL      │ character varying(5)           │
+│ 3 differences                                                                          │
+```
+
+- The grid has the search, the copy, the row window, and the export of the other grids. It holds each difference, so **All rows** reads nothing.
+- `S` opens the script in a new console of the target and does not run it. `Y` copies it.
+- A removal stays a comment unless **Removals as statements** is on.
+- Between two dialects, the grid shows the differences of names, `NULL` rules, keys, and indexes, and the row under the grid says `no script: two dialects`.
+- **Reload** (`R`) reads both sides again.
+- The tab does not come back in the next session.
+
+A data compare has the label `name (data)`. The grid has a `Change` column and the columns of the source table.
+
+```text
+│ shop · public.prices → shop-staging · public.prices · data compare                      │
+│ Change            │ id │ name     │ price │ note                                       │
+│ update name, note │ 2  │ old name │ 3.00  │ x                                          │
+│   target          │ 2  │ name     │ 3.00  │ NULL                                       │
+│ delete            │ 4  │ gone     │ 9.00  │ NULL                                       │
+│ insert            │ 3  │ new      │ 1.00  │ it's                                       │
+│ 3 differences                                                                          │
+```
+
+- The rows match by the primary key of the source. A table without a primary key, a target without the table, and a target without a column of the source refuse with the reason.
+- An update takes two rows: the source row with the names of the changed columns, and the target row under it.
+- The script has one statement per row in one transaction. A `DELETE` stays a comment unless **Removals as statements** is on.
+- A source table that does not fit in the data budget ends the compare with the reason, and no result.
+- The script uses the literals of the target, so a data compare also works between two dialects.
+
 ### Export
 
 `e` in the grid, or **Export the result to a file** in the palette, opens the modal. The export covers the active result and generates a file.

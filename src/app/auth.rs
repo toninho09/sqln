@@ -51,6 +51,14 @@ pub(super) enum Use {
         connection: ConnectionId,
         statements: Vec<String>,
     },
+    /// A read of one side of a compare tab. A read of rows has no time limit.
+    Compare {
+        console: ConsoleId,
+        connection: ConnectionId,
+        statements: Vec<String>,
+        schema: String,
+        untimed: bool,
+    },
     Export {
         console: ConsoleId,
         read: ExportRead,
@@ -71,6 +79,7 @@ impl Use {
             Self::Run { console, .. }
             | Self::Page { console, .. }
             | Self::Diagram { console, .. }
+            | Self::Compare { console, .. }
             | Self::Export { console, .. }
             | Self::Import { console, .. } => Some(*console),
             _ => None,
@@ -315,6 +324,9 @@ impl App {
             if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Waiting;
                 tab.run.wait();
+            }
+            if let Some(tab) = self.compares.iter_mut().find(|tab| tab.owns(id)) {
+                tab.phase = Phase::Waiting;
             }
         }
         let token = self.auth.next;
@@ -883,6 +895,7 @@ impl App {
                     schema: None,
                     row_cap: Some(request.row_cap),
                     export: None,
+                    untimed: false,
                 };
                 let (first, show, kind) = (request.first, request.show, request.kind);
                 let execution = manager.run(console, vec![request.sql], options);
@@ -896,6 +909,13 @@ impl App {
                 connection,
                 statements,
             } => self.start_diagram_read(console, connection, statements),
+            Use::Compare {
+                console,
+                connection,
+                statements,
+                schema,
+                untimed,
+            } => self.start_compare_read(console, connection, statements, (schema, untimed)),
             Use::Export { console, read } => self.start_read(console, read),
             Use::Import { console, step } => self.start_import_step(console, step),
             Use::Test(test) => {
@@ -919,6 +939,7 @@ impl App {
             if let Some(tab) = self.diagrams.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Idle;
             }
+            self.cancel_compare_side(id);
         }
         match action {
             Use::Catalog(id, read) => {

@@ -52,9 +52,10 @@ impl App {
                     id: file.meta.id.clone(),
                 })
             }
-            // A structure or a diagram costs one key to open, so it does not come back.
+            // A structure, a diagram, or a compare costs one key to open, so it does not
+            // come back.
             Tab::Table(index) if self.tables[index].structure.is_some() => None,
-            Tab::Diagram(_) => None,
+            Tab::Diagram(_) | Tab::Compare(_) => None,
             Tab::Table(index) => {
                 let tab = &self.tables[index];
                 let key = self.connection(tab.connection)?.key.clone()?;

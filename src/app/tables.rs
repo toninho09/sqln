@@ -12,7 +12,7 @@ use crate::sql::Dialect;
 use crate::structure::{Scope, Section, SessionSignal, Structure, structure_sql};
 use crate::table::{PageRequest, TableFocus, TableTab};
 use crate::ui::text;
-use crate::ui::{TabView, diagram, main_tab_label, run_badge, table};
+use crate::ui::{TabView, compare, diagram, main_tab_label, run_badge, table};
 
 /// One tab of the tab row, with its index in the list of its kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,6 +20,7 @@ pub(super) enum Tab {
     Console(usize),
     Table(usize),
     Diagram(usize),
+    Compare(usize),
 }
 
 /// Returns true for a source with a list of sessions.
@@ -59,7 +60,16 @@ impl App {
             .iter()
             .enumerate()
             .map(|(index, tab)| (tab.opened, Tab::Diagram(index)));
-        let mut order: Vec<(u64, Tab)> = consoles.chain(tables).chain(diagrams).collect();
+        let compares = self
+            .compares
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| (tab.opened, Tab::Compare(index)));
+        let mut order: Vec<(u64, Tab)> = consoles
+            .chain(tables)
+            .chain(diagrams)
+            .chain(compares)
+            .collect();
         order.sort_by_key(|(opened, _)| *opened);
         order.into_iter().map(|(_, tab)| tab).collect()
     }
@@ -85,6 +95,10 @@ impl App {
                     let tab = &self.diagrams[index];
                     (diagram::tab_label(tab, &self.theme), tab.phase, &tab.run)
                 }
+                Tab::Compare(index) => {
+                    let tab = &self.compares[index];
+                    (compare::tab_label(tab, &self.theme), tab.phase, &tab.run)
+                }
             };
             let picture = self.run_frame / FRAMES_PER_PICTURE;
             TabView {
@@ -97,10 +111,11 @@ impl App {
 
     /// Returns the position of the tab on screen in the tab row.
     pub(super) fn active_tab(&self) -> usize {
-        let active = match (self.diagram_active, self.table_active) {
-            (Some(index), _) => Tab::Diagram(index),
-            (None, Some(index)) => Tab::Table(index),
-            (None, None) => Tab::Console(self.active),
+        let active = match (self.compare_active, self.diagram_active, self.table_active) {
+            (Some(index), _, _) => Tab::Compare(index),
+            (None, Some(index), _) => Tab::Diagram(index),
+            (None, None, Some(index)) => Tab::Table(index),
+            (None, None, None) => Tab::Console(self.active),
         };
         self.tab_order()
             .iter()
@@ -113,6 +128,7 @@ impl App {
             Some(Tab::Table(table)) => self.select_table(*table),
             Some(Tab::Console(console)) => self.select_console(*console),
             Some(Tab::Diagram(diagram)) => self.select_diagram(*diagram),
+            Some(Tab::Compare(compare)) => self.select_compare(*compare),
             None => {}
         }
     }
@@ -125,6 +141,7 @@ impl App {
             Some(Tab::Table(table)) => self.close_table(*table),
             Some(Tab::Console(console)) => self.close_step(self.consoles[*console].id),
             Some(Tab::Diagram(diagram)) => self.close_diagram(*diagram),
+            Some(Tab::Compare(compare)) => self.close_compare(*compare),
             None => {}
         }
     }
@@ -136,6 +153,7 @@ impl App {
                 self.leave_tab();
             }
             self.diagram_active = None;
+            self.compare_active = None;
             self.table_active = Some(index);
             if self.tables[index].pending {
                 self.apply_table();
@@ -607,10 +625,12 @@ impl App {
         // Behind the hidden console, a diagram takes the screen, or the home screen
         // appears.
         if self.home() {
-            if self.diagrams.is_empty() {
-                self.focus_navigator();
-            } else {
+            if !self.diagrams.is_empty() {
                 self.diagram_active = Some(0);
+            } else if !self.compares.is_empty() {
+                self.compare_active = Some(0);
+            } else {
+                self.focus_navigator();
             }
         }
     }

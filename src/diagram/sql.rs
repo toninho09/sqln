@@ -3,7 +3,7 @@
 //! of the foreign keys that leave or reach the schema.
 
 use crate::catalog::RelationRef;
-use crate::grid::{Row, Value};
+use crate::grid::Row;
 use crate::sql::Dialect;
 use crate::structure::name_literal;
 
@@ -119,26 +119,17 @@ fn sqlite_keys(schema: &str) -> String {
     )
 }
 
-/// Returns the text of a value. `NULL` has no text.
-fn text(row: &Row, column: usize) -> Option<String> {
-    match row.get(column)? {
-        Value::Null => None,
-        Value::Text(text) | Value::Number(text) => Some(text.to_owned()),
-        Value::Binary(bytes) => bytes.text().map(str::to_owned),
-    }
-}
-
 /// Reads a row of the column query. A row without a name returns `None`.
 pub fn parse_column(row: &Row) -> Option<ColumnRow> {
     Some(ColumnRow {
         relation: RelationRef {
-            schema: text(row, 0)?,
-            relation: text(row, 1)?,
+            schema: row.text(0)?,
+            relation: row.text(1)?,
         },
-        name: text(row, 2)?,
-        ty: text(row, 3).unwrap_or_default(),
-        nullable: text(row, 4).is_none_or(|nullable| nullable == "yes"),
-        primary: text(row, 5).and_then(|place| place.parse().ok()),
+        name: row.text(2)?,
+        ty: row.text(3).unwrap_or_default(),
+        nullable: row.text(4).is_none_or(|nullable| nullable == "yes"),
+        primary: row.text(5).and_then(|place| place.parse().ok()),
     })
 }
 
@@ -146,15 +137,15 @@ pub fn parse_column(row: &Row) -> Option<ColumnRow> {
 pub fn parse_key(row: &Row) -> Option<KeyRow> {
     Some(KeyRow {
         relation: RelationRef {
-            schema: text(row, 0)?,
-            relation: text(row, 1)?,
+            schema: row.text(0)?,
+            relation: row.text(1)?,
         },
-        key: text(row, 2)?,
-        column: text(row, 3)?,
+        key: row.text(2)?,
+        column: row.text(3)?,
         target: RelationRef {
-            schema: text(row, 4)?,
-            relation: text(row, 5)?,
+            schema: row.text(4)?,
+            relation: row.text(5)?,
         },
-        target_column: text(row, 6),
+        target_column: row.text(6),
     })
 }
