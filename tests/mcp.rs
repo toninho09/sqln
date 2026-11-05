@@ -86,6 +86,15 @@ async fn stdio_lists_typed_tools_routes_to_one_instance_and_waits_for_tasks() {
             .contains_key("method")
     );
     assert!(tool("get_context").input_schema["properties"]["wait_seconds"].is_null());
+    // Each tool schema stands alone: clients that do not resolve `$ref` still see the
+    // nested arguments, such as the sides of a comparison.
+    for tool in &tools {
+        let schema = serde_json::to_string(&tool.input_schema).unwrap();
+        assert!(!schema.contains("$ref"), "{}: {schema}", tool.name);
+    }
+    let side = &tool("compare").input_schema["properties"]["source"];
+    assert_eq!(side["type"], "object", "{side}");
+    assert!(side["properties"]["connection_id"].is_object(), "{side}");
     let list = client
         .call_tool(CallToolRequestParams::new("list_instances"))
         .await
@@ -182,6 +191,61 @@ async fn stdio_lists_typed_tools_routes_to_one_instance_and_waits_for_tasks() {
     )
     .await;
     assert_eq!(invalid["code"], "instance_gone");
+    // A structure comparison reaches SQLN, with and without a table on each side.
+    for table in [None, Some("player")] {
+        let side = |connection: &str| {
+            let mut side = json!({"connection_id":connection,"schema":"public"});
+            if let Some(table) = table {
+                side["table"] = json!(table);
+            }
+            side
+        };
+        let (compared, seen) = call(
+            &client,
+            "compare",
+            json!({"instance_id":id,"kind":"structure","source":side("1"),"target":side("2")}),
+            &second,
+            Some(&first),
+            |operation| match operation {
+                Operation::Compare {
+                    kind: agent::CompareKind::Structure,
+                    source,
+                    target,
+                    removals: false,
+                    rows: None,
+                } => {
+                    assert_eq!(
+                        (source.connection_id.as_str(), target.connection_id.as_str()),
+                        ("1", "2")
+                    );
+                    assert_eq!(source.table.as_deref(), table);
+                    assert_eq!(target.table.as_deref(), table);
+                    Ok(json!({"job_id":"c","kind":"Comparison","status":"completed"}))
+                }
+                other => panic!("unexpected {other:?}"),
+            },
+        )
+        .await;
+        assert_eq!(compared["status"], "completed", "{compared}");
+        assert_eq!(seen.len(), 1);
+    }
+    // A wrong argument names its cause, and nothing reaches SQLN.
+    let (wrong, _) = call(
+        &client,
+        "compare",
+        json!({"instance_id":id,"kind":"structure","source":"{\"connection_id\":\"1\"}","target":{"connection_id":"2","schema":"public"}}),
+        &second,
+        Some(&first),
+        |_| unreachable!(),
+    )
+    .await;
+    assert_eq!(wrong["code"], "invalid_request");
+    let message = wrong["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("Use the declared tool arguments"),
+        "{message}"
+    );
+    assert!(message.contains("invalid type"), "{message}");
     // One instance: a call without instance_id selects it.
     drop(first);
     let (context, mut seen) = call(&client, "get_context", json!({}), &second, None, |_| {

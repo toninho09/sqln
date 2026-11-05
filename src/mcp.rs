@@ -44,8 +44,13 @@ const ACCESS_WAIT: u64 = 120;
 const MAX_WAIT: u64 = 600;
 
 static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
-    let schema = serde_json::to_value(schemars::schema_for!(Operation))
-        .expect("the operation schema is JSON");
+    // Inline subschemas: many clients do not resolve `$ref`, and then send a nested
+    // argument, such as a compare side, as text.
+    let schema = schemars::generate::SchemaSettings::draft2020_12()
+        .with(|settings| settings.inline_subschemas = true)
+        .into_generator()
+        .into_root_schema_for::<Operation>();
+    let schema = serde_json::to_value(schema).expect("the operation schema is JSON");
     let mut tools = vec![Tool::new(
         "list_instances",
         "List open SQLN instances. Other tools select the only open instance when instance_id is absent.",
@@ -83,7 +88,6 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
             .as_array_mut()
             .expect("operation required fields")
             .retain(|field| field != "method");
-        input["$defs"] = schema["$defs"].clone();
         let mut tool = Tool::new(
             name,
             description,
@@ -99,6 +103,20 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
     }
     tools
 });
+
+/// The longest part of a decoding error in a reply.
+const ARGUMENT_ERROR_CHARS: usize = 300;
+
+/// Names the argument that the bridge cannot decode, so the agent can correct its call.
+/// The reason goes only to the agent that sent the arguments, never to a log.
+fn argument_error(error: &serde_json::Error) -> String {
+    let reason: String = error
+        .to_string()
+        .chars()
+        .take(ARGUMENT_ERROR_CHARS)
+        .collect();
+    format!("Use the declared tool arguments and valid field types: {reason}")
+}
 
 fn invalid_request(message: &str) -> Error {
     Error::new("invalid_request", message)
@@ -203,9 +221,8 @@ impl Bridge {
             return Err(invalid_request("The method field is not an argument."));
         }
         args.insert("method".into(), json!(name));
-        let operation: Operation = serde_json::from_value(Value::Object(args)).map_err(|_| {
-            invalid_request("Use the declared tool arguments and valid field types.")
-        })?;
+        let operation: Operation = serde_json::from_value(Value::Object(args))
+            .map_err(|error| invalid_request(&argument_error(&error)))?;
         if context.ct.is_cancelled() {
             return Err(Error::new("cancelled", "The request was cancelled."));
         }
