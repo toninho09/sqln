@@ -286,6 +286,7 @@ impl App {
         if self.config_blocked() {
             return;
         }
+        self.agent.release_retired(console);
         self.authorize(
             connection,
             Use::Diagram {
@@ -316,7 +317,7 @@ impl App {
             row_cap: Some(usize::MAX),
             ..RunOptions::default()
         };
-        let execution = manager.run(console, statements, options);
+        let execution = self.agent.run(manager, console, statements, options);
         tab.started(execution);
     }
 
@@ -324,6 +325,9 @@ impl App {
         let Some(index) = self.diagram_active else {
             return;
         };
+        if self.cancel_agent_console(self.diagrams[index].id) {
+            return;
+        }
         if self.cancel_auth_console(self.diagrams[index].id) {
             return;
         }
@@ -347,6 +351,8 @@ impl App {
             .tab_order()
             .iter()
             .position(|tab| *tab == Tab::Diagram(index));
+        self.cancel_agent_console(self.diagrams[index].id);
+        self.agent.forget_console(self.diagrams[index].id);
         self.cancel_auth_console(self.diagrams[index].id);
         let mut tab = self.diagrams.remove(index);
         tab.release(&self.budget);

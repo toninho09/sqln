@@ -543,7 +543,10 @@ impl App {
 
     /// Returns the script of the console, and it creates the script at the first edit.
     pub(super) fn ensure_file(&mut self, index: usize) {
-        if self.persist.is_none() || self.consoles[index].file.is_some() {
+        if self.persist.is_none()
+            || self.consoles[index].file.is_some()
+            || self.agent.owns(self.consoles[index].id)
+        {
             return;
         }
         let console = &self.consoles[index];
@@ -595,6 +598,10 @@ impl App {
 
     /// The save of the key `Ctrl+S`.
     pub(super) fn save_now(&mut self) {
+        if self.agent.owns(self.console().id) {
+            self.status = Some(text::AGENT_CONSOLE_TEMPORARY.to_owned());
+            return;
+        }
         if self.persist.is_none() {
             self.status = Some(text::NOTHING_TO_SAVE.to_owned());
             return;

@@ -18,6 +18,17 @@ Section 2 describes the current screen, in the style approved on 2026-10-31.
 The other sketches show the content of each screen, not its exact drawing.
 Windows have a rounded border, and buttons lose the brackets in themes with color.
 
+## Local assistant controls
+
+The palette offers **Agent sessions: allow or revoke access**, **Review agent changes**, and per-console direct editing.
+Access requests use a persistent row above the status line, without capturing editor input.
+The row shows the pending count, the effective shortcut, and a clickable **Review** control.
+It stays while requests remain pending, even after typing or temporary status messages. Access dialogs default to rejection.
+Edit review shows a scrollable comparison with Reject and Accept. Reject has the initial focus.
+The review supports keyboard, Vim navigation, mouse, 80×24, and resize. Tab labels identify agent-created consoles and analyses.
+A **Direct edits** label remains visible while that console permits direct changes.
+See [MCP](MCP.md) for the operation and persistence rules.
+
 ## 1. Startup and console opening
 
 If `.sqln/` is not found in the current directory or the upper ones, ask about its creation.

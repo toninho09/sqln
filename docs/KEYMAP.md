@@ -6,6 +6,14 @@
 It details the navigation and the shortcuts of the [plan](INITIAL_PLAN.md).
 The plan remains the reference for the functional rules.
 
+## Assistant commands
+
+The palette includes `agentSessions`, `agentReview`, and `agentDirect`. They have no default shortcut.
+Assign custom shortcuts through the existing key map. Availability and labels use the shared command catalog.
+An edit review uses Up/Down or `j`/`k` to scroll, PageUp/PageDown for larger steps, and Tab or Left/Right to select a button.
+Enter confirms the selected button. Reject starts selected. Esc closes the review without acceptance.
+Mouse buttons accept or reject; the wheel scrolls. These keys act only while review is open.
+
 ## Choice criteria
 
 1. Use keys that iTerm delivered in the `keytest` test.

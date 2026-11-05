@@ -29,6 +29,9 @@ Main thread                        Tokio runtime
 
 | Module | Responsibility |
 |---|---|
+| `agent` | Transport-independent assistant operations, read policy, private instance registry, and IPC |
+| `mcp` | MCP schemas and stdio bridge to authorized open instances |
+| `app/agent` | Access decisions, tasks, loaded-state reads, and edit proposals |
 | `app` | Application state, actions, and state updates |
 | `ui` | Drawing of the screens and the widgets, themes (`theme`), color schemes (`schemes`), symbols (`icons`), status bar (`statusline`), and prefix menu (`which_key`) |
 | `app/commands` | Shared command availability, contextual lists, priority, and target labels; `Action` remains the catalog |
@@ -82,6 +85,18 @@ The vault calls are synchronous, but `Manager::spawn_blocking` runs them off the
 `app` applies the key priority and the mouse. `app/auth.rs`, `app/keys.rs`, `app/hints.rs`, `app/mouse.rs`, `app/close.rs`, `app/connections.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs`, `app/session.rs`, `app/conflicts.rs`, `app/history.rs`, `app/guard.rs`, `app/export.rs`, and `app/browse.rs` divide that code.
 `store` keeps the folders and files. It does not depend on `app` or `ui`.
 Its configuration reader uses driver-independent connector target types.
+
+### Local assistant operations
+
+`sqln mcp` runs without a terminal. It discovers private Unix sockets and uses an explicit instance UUID for each call.
+The SQLN process owns authorization and application state. Its IPC thread sends typed requests through a bounded queue.
+The interface processes at most eight requests or 2 ms per frame. It never waits for a database operation.
+Assistant executions carry a cancellation token and an immutable read-only policy. They never inherit a user's reserved transaction.
+A parser policy checks submitted SQL; native connector read-only controls provide a second check.
+Catalog, DDL, diagrams, and comparisons reuse existing readers and transformations under the same credential gate.
+Edit proposals use editor revisions and one undo step. Only UI actions approve access, accept proposals, or enable direct editing.
+The shared data budget counts retained snapshots and text artifacts. Results use generation-checked pages without a reread.
+No assistant authorization or direct-edit setting enters saved files. See [MCP](MCP.md) for the complete contract.
 
 ### Files and saving
 

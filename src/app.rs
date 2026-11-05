@@ -1,5 +1,6 @@
 //! The application shell: the consoles, the connections, and the screen.
 
+mod agent;
 mod auth;
 mod browse;
 mod close;
@@ -122,6 +123,8 @@ const MIN_EDITOR_RATIO: u16 = 10;
 const MAX_EDITOR_RATIO: u16 = 90;
 
 pub struct Options {
+    /// Starts the local assistant endpoint. The command-line interface enables it.
+    pub agent_ipc: bool,
     pub keyboard: KeyboardMode,
     /// The limit of the undo history of one console, in the conventional mode.
     pub undo_limit: usize,
@@ -163,6 +166,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            agent_ipc: false,
             keyboard: KeyboardMode::Conventional,
             undo_limit: DEFAULT_UNDO_LIMIT,
             keymap: None,
@@ -189,6 +193,9 @@ impl Default for Options {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum DialogAction {
+    AgentAccess(String, bool),
+    AgentRevoke(String),
+    AgentDirect(ConsoleId),
     Dismiss,
     CreateDatabase,
     CreateFormFile,
@@ -264,6 +271,7 @@ impl Overlay {
 
 /// What a row of a list stands for.
 enum PickerKind {
+    Agent(Vec<agent::Choice>),
     /// The first row is the default of the connection, and the others are schemas.
     Schema {
         console: ConsoleId,
@@ -323,6 +331,7 @@ struct ScreenLayout {
     main_tabs: Vec<MainTab>,
     /// The **Quit** button at the right end of the main tabs.
     quit: Rect,
+    agent_access: Rect,
     body: Rect,
     console: ConsoleLayout,
     table: TableLayout,
@@ -452,6 +461,7 @@ pub struct App {
     /// The files of the application. It is `None` when nothing loads or saves.
     persist: Option<persist::Persist>,
     auth: auth::Auth,
+    agent: agent::State,
     /// The scripts that another program changed, and that wait for a choice.
     conflicts: Option<conflicts::Conflicts>,
     /// The SQL rules of a console that has no connection.
@@ -564,6 +574,7 @@ impl App {
             pending_diagrams: Vec::new(),
             persist,
             auth: auth::Auth::new(options.vault.take(), plain),
+            agent: agent::State::default(),
             conflicts: None,
             fallback_dialect: options.dialect,
             pending_key: None,
@@ -611,6 +622,19 @@ impl App {
             app.consoles[index].hidden = true;
             app.focus_navigator();
         }
+        if options.agent_ipc {
+            match crate::agent::ipc::runtime_dir()
+                .and_then(|directory| app.start_agent_at(directory))
+            {
+                Ok(_) => {}
+                Err(error) => {
+                    app.status = Some(format!(
+                        "Agent endpoint unavailable: {}. Check the private runtime directory.",
+                        crate::grid::printable(&error.to_string())
+                    ))
+                }
+            }
+        }
         app
     }
 
@@ -643,6 +667,8 @@ impl App {
 
     /// Ends the runtime without a wait for a statement that does not answer.
     pub fn shutdown(&mut self) {
+        self.agent.server.take();
+        self.drain_agent();
         self.auth.shutdown();
         self.save_session();
         if let Some(manager) = self.manager.take() {
@@ -835,6 +861,7 @@ impl App {
 
     fn modal_is_open(&self) -> bool {
         !self.dialogs.is_empty()
+            || self.agent.review.is_some()
             || self.conflicts.is_some()
             || self.overlay.is_some()
             || self.help.is_some()
@@ -917,6 +944,7 @@ impl App {
             Event::Paste(text) if !blocked => self.on_paste(&text),
             Event::Mouse(mouse) if !self.dialogs.is_empty() => self.on_dialog_mouse(mouse),
             Event::Mouse(mouse) if self.auth.prompt.is_some() => self.on_password_mouse(mouse),
+            Event::Mouse(mouse) if self.agent.review.is_some() => self.on_agent_review_mouse(mouse),
             Event::Mouse(mouse) if self.conflicts.is_some() => self.on_conflicts_mouse(mouse),
             Event::Mouse(mouse) if self.browser.is_some() => self.on_browser_mouse(mouse),
             Event::Mouse(mouse) if self.picker.is_some() => self.on_picker_mouse(mouse),
@@ -1008,11 +1036,13 @@ impl App {
     /// Reads waiting execution events and continues the row search.
     /// It returns true when the screen changed.
     pub fn drain_events(&mut self) -> bool {
+        let agent_changed = self.drain_agent();
+        self.continue_agent_jobs();
         self.sync_command_history();
         let ticked = self.tick();
         let authorized = self.poll_auth();
         let probed = self.poll_probes();
-        let changed = self.has_work() || ticked || authorized || probed;
+        let changed = self.has_work() || ticked || authorized || probed || agent_changed;
         if changed {
             let deadline = Instant::now() + WORK_SLICE;
             match (self.compare_active, self.table_active) {
@@ -1036,12 +1066,15 @@ impl App {
                 break;
             }
         }
+        self.poll_agent_jobs();
         self.flush_history();
         changed || self.events_flow
     }
 
     fn on_exec_event(&mut self, event: ExecEvent) {
+        self.note_agent_event(&event);
         match event {
+            ExecEvent::AgentMetadata { job, result } => self.on_agent_metadata(&job, result),
             ExecEvent::CommandLog { target, event } => {
                 if let Some(console) = self
                     .consoles
@@ -1137,16 +1170,19 @@ impl App {
     pub fn draw(&mut self, frame: &mut Frame) {
         self.choose_theme();
         let area = frame.area();
+        self.layout.agent_access = Rect::default();
         frame.render_widget(Block::new().style(self.theme.base), area);
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
             draw_small_terminal(frame, area, (MIN_WIDTH, MIN_HEIGHT), &self.theme);
             return;
         }
         let tall = area.height >= TALL_HEIGHT;
-        let [tabs, rule, body, status, hints] = Layout::vertical([
+        let pending_access = self.agent.pending_access();
+        let [tabs, rule, body, notice, status, hints] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(u16::from(tall)),
             Constraint::Min(0),
+            Constraint::Length(u16::from(pending_access != 0)),
             Constraint::Length(1),
             Constraint::Length(1),
         ])
@@ -1170,13 +1206,29 @@ impl App {
         } else {
             self.draw_active_console(frame, main, tall);
         }
+        if pending_access != 0 {
+            let shortcut = self
+                .shown_key(crate::input::Action::AgentSessions)
+                .map(|key| format!("{key}: review"))
+                .or_else(|| {
+                    self.shown_key(crate::input::Action::OpenPalette)
+                        .map(|key| format!("{key} > Agent sessions"))
+                });
+            self.layout.agent_access = crate::ui::agent::draw_access_notice(
+                frame,
+                notice,
+                pending_access,
+                shortcut.as_deref(),
+                &self.theme,
+            );
+        }
         self.draw_status(frame, status);
         self.draw_hint(frame, hints);
         self.draw_layers(
             frame,
             Rect {
                 y: 0,
-                height: status.y,
+                height: notice.y,
                 ..area
             },
         );
@@ -1566,6 +1618,9 @@ impl App {
                 .collect();
             self.layout.conflicts =
                 draw_conflicts(frame, &rows, conflicts.cursor, conflicts.note, &self.theme);
+        }
+        if let Some(review) = &mut self.agent.review {
+            crate::ui::agent::draw_review(frame, review, &self.theme);
         }
         if let Some(overlay) = &mut self.overlay {
             let Overlay {

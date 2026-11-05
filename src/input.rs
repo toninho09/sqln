@@ -166,6 +166,9 @@ pub enum Region {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
+    AgentSessions,
+    AgentReview,
+    AgentDirect,
     Run,
     RunScript,
     Explain,
@@ -1248,6 +1251,15 @@ const DEFAULTS: &[Item] = &[
         &["K"],
         &[],
     ),
+    both(
+        Action::AgentSessions,
+        Region::Global,
+        "agentSessions",
+        &[],
+        &[],
+    ),
+    both(Action::AgentReview, Region::Global, "agentReview", &[], &[]),
+    both(Action::AgentDirect, Region::Global, "agentDirect", &[], &[]),
 ];
 
 /// The answer of the map to one key.

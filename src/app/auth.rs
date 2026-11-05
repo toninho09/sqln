@@ -28,6 +28,10 @@ use crate::ui::auth::{PasswordAction, PasswordPrompt};
 use crate::ui::text;
 
 pub(super) enum Use {
+    Agent {
+        console: ConsoleId,
+        job: String,
+    },
     /// The connection and the number of the read.
     Catalog(ConnectionId, u64),
     Columns(ConnectionId, RelationRef),
@@ -91,7 +95,8 @@ pub(super) enum Use {
 impl Use {
     fn console(&self) -> Option<ConsoleId> {
         match self {
-            Self::Run { console, .. }
+            Self::Agent { console, .. }
+            | Self::Run { console, .. }
             | Self::Page { console, .. }
             | Self::Diagram { console, .. }
             | Self::Compare { console, .. }
@@ -854,6 +859,7 @@ impl App {
         self.sync_command_history();
         let Some(manager) = &self.manager else { return };
         match action {
+            Use::Agent { job, .. } => self.dispatch_agent_job(&job),
             Use::Catalog(id, read) => {
                 let schemas = self
                     .connection(id)
@@ -965,6 +971,12 @@ impl App {
     }
 
     fn cancel_auth_use(&mut self, action: &Use) {
+        if let Some(console) = action.console() {
+            self.cancel_agent_console(console);
+        }
+        if let Use::Agent { job, .. } = action {
+            self.fail_agent_job(job, "Credential preparation was cancelled. Resolve it in SQLN and submit the operation again.");
+        }
         if matches!(action, Use::Edit { .. }) {
             self.exiting = false;
         }
@@ -1035,6 +1047,37 @@ impl App {
         self.auth.prompt = None;
         self.status = Some(text::AUTH_CANCELLED.to_owned());
         self.next_auth();
+    }
+
+    /// Cancels only this assistant's request. Other consoles keep their credential requests.
+    pub(super) fn cancel_agent_auth_console(&mut self, id: ConsoleId) {
+        let mut queue = std::mem::take(&mut self.auth.queue);
+        while let Some(attempt) = queue.pop_front() {
+            if attempt.action.console() == Some(id) {
+                self.cancel_auth_use(&attempt.action);
+            } else {
+                self.auth.queue.push_back(attempt);
+            }
+        }
+        if self
+            .auth
+            .active
+            .as_ref()
+            .is_some_and(|attempt| attempt.action.console() == Some(id))
+        {
+            self.auth.job.store(0, Ordering::Release);
+            if let Some(attempt) = self.auth.active.take() {
+                self.dialogs.retain(|dialog| {
+                    !dialog
+                        .options
+                        .iter()
+                        .any(|(_, action)| action.auth_token() == Some(attempt.token))
+                });
+                self.auth.prompt = None;
+                self.cancel_auth_use(&attempt.action);
+            }
+            self.next_auth();
+        }
     }
 
     pub(super) fn cancel_auth_console(&mut self, id: ConsoleId) -> bool {

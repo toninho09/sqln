@@ -153,6 +153,8 @@ impl App {
     }
 
     pub(super) fn remove_console(&mut self, id: ConsoleId) {
+        self.cancel_agent_console(id);
+        self.agent.forget_console(id);
         let Some(index) = self.console_index(id) else {
             return;
         };
@@ -241,6 +243,11 @@ impl App {
 
     pub(super) fn on_dialog_action(&mut self, action: DialogAction) {
         match action {
+            DialogAction::AgentAccess(session, allow) => {
+                self.agent_access_decision(&session, allow)
+            }
+            DialogAction::AgentRevoke(session) => self.agent_revoke(&session),
+            DialogAction::AgentDirect(console) => self.allow_agent_direct(console),
             DialogAction::Dismiss => {}
             DialogAction::CancelClose(id) => {
                 self.cancel_save_close(id);

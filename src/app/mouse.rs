@@ -96,6 +96,12 @@ impl App {
             self.drag = Some(Drag::Navigator);
         } else if layout.quit.contains(position) {
             self.request_exit();
+        } else if layout.agent_access.contains(position) {
+            if self.command_available(Action::AgentSessions) {
+                self.pending_key = None;
+                self.command_page = None;
+                self.perform(Action::AgentSessions, false);
+            }
         } else if let Some(tab) = main_tab_at(&layout.main_tabs, position) {
             if tab.close.is_some_and(|close| mouse.column >= close) {
                 self.close_tab(tab.index);

@@ -6,6 +6,27 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Local MCP assistant
+
+The user approves a stdio assistant for SQLN instances that are already open.
+The implementation plan includes advanced read analysis in the first delivery.
+
+| Point | Approved decision |
+|---|---|
+| Target | A local stdio bridge discovers open instances. Each call identifies its instance. Global-only configuration works. |
+| Access | The user approves each MCP session in each SQLN instance. Client labels do not prove identity. |
+| Database | Read only. Reuse existing connections, credentials, trust checks, pools, limits, and cancellation. |
+| Agent console | A separate, identified console receives notifications. Background operations do not change focus. |
+| User console | The agent can edit and execute its current SQL. A checked revision and explicit script/range identify the request. Results replace that console's results. |
+| New SQL | Free SQL submitted through a tool executes only in that session's agent console. |
+| Transactions | Refuse execution in a console with an open, failed, or unknown transaction. Offer the agent console without rerouting. |
+| Edits | Show a proposal by default. Only the user accepts it. Direct editing is a user-enabled, per-console option until close or process exit. |
+| Disconnect | Cancel only that session's operations. Preserve available text/results and other sessions' work. |
+| Advanced analysis | Include catalog, DDL, SQL templates, plans, ER diagrams, and structure/data comparison. Generated scripts never execute automatically. |
+| Outside scope | No HTTP, remote access, connection/configuration management, imports/exports, database writes, user transaction controls, or ACP yet. |
+
+Implementation rules and limits are in [MCP](MCP.md). Configuration, script, and workspace formats do not change.
+
 ## Query parameters — 2026-11-04
 
 The user requests named scalar parameters with a panel under the editor, as the approved plan describes. The detection uses the shared lexer, and the values reach the database as native driver bindings. Values never become SQL source text.

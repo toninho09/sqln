@@ -1317,6 +1317,9 @@ pub const PARAMETER_TYPES: [&str; 4] = ["Text", "Number", "Boolean", "NULL"];
 
 pub fn action_text(action: Action) -> &'static str {
     match action {
+        Action::AgentSessions => "Agent sessions: allow or revoke access",
+        Action::AgentReview => "Review agent changes",
+        Action::AgentDirect => "Toggle agent direct editing for this console",
         Action::Run => "Run the selection or the statement",
         Action::RunScript => "Run the script",
         Action::Explain => "Show the plan of the statement",
@@ -1852,6 +1855,11 @@ pub const HELP: &str = "\
 sqln: terminal database client
 
 Usage: sqln [options] [target]
+       sqln mcp
+
+Assistant:
+  mcp                   Serve MCP over stdio for open SQLN instances. Select an
+                         instance and approve access in its terminal interface.
 
 Target:
   A SQLite file, or a URI such as postgres://user@host/name. Without a password
@@ -1873,6 +1881,8 @@ The settings and the connections are in config.json, in the global folder
 (~/.config/sqln, or $XDG_CONFIG_HOME/sqln) and in the .sqln folder of the project.
 ";
 
+pub const AGENT_CONSOLE_TEMPORARY: &str =
+    "Agent consoles are temporary. Copy SQL to a user console to save it.";
 pub const ONE_TARGET: &str = "Give one file or one URI.";
 
 pub const TITLE_HISTORY: &str = "Query history";

@@ -93,6 +93,10 @@ impl App {
             self.on_password_key(key);
             return;
         }
+        if self.agent.review.is_some() {
+            self.on_agent_review_key(key);
+            return;
+        }
         if self.conflicts.is_some() {
             self.on_conflicts_key(key);
             return;
@@ -456,6 +460,9 @@ impl App {
             return;
         }
         match action {
+            Action::AgentSessions => self.open_agent_sessions(),
+            Action::AgentReview => self.open_agent_proposals(),
+            Action::AgentDirect => self.toggle_agent_direct(),
             Action::Run => self.run(RunTarget::Statements(RunScope::Default)),
             Action::RunScript => self.run(RunTarget::Statements(RunScope::Script)),
             Action::Explain => self.run(RunTarget::Plan { analyze: false }),
@@ -993,6 +1000,12 @@ impl App {
 
     pub(super) fn stop(&mut self, index: usize) {
         let id = self.consoles[index].id;
+        if self.cancel_agent_console(id) {
+            if self.consoles[index].closing && !self.consoles[index].is_busy() {
+                self.close_step(id);
+            }
+            return;
+        }
         if self.stop_export(id) {
             return;
         }
@@ -1453,6 +1466,9 @@ impl App {
         let namespace =
             connection.is_some_and(|item| item.capabilities.namespace != Namespace::None);
         match action {
+            Action::AgentSessions => self.agent.has_sessions(),
+            Action::AgentReview => self.agent.has_proposals(),
+            Action::AgentDirect => !in_table && !self.home(),
             Action::OpenPalette => false,
             Action::ContextCommands => self.context_region().is_some(),
             Action::Run | Action::RunScript => {
@@ -1613,6 +1629,9 @@ impl App {
 /// Returns true for an action that acts on the home screen: a command of the explorer,
 /// or a command that needs no tab.
 fn home_allows(action: Action) -> bool {
+    if action == Action::AgentSessions {
+        return true;
+    }
     use Action::*;
     action.region() == Region::Navigator
         || matches!(

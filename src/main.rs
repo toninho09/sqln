@@ -11,6 +11,7 @@ use sqln::terminal::read_password;
 use sqln::ui::text::{self, HELP};
 
 enum Command {
+    Mcp,
     Run(Cli),
     Help,
     Version,
@@ -26,7 +27,18 @@ struct Cli {
 }
 
 fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
-    let mut args = args;
+    let mut args = args.peekable();
+    if args.peek().is_some_and(|arg| arg == "mcp") {
+        args.next();
+        let next = args.next();
+        return if next.is_none() {
+            Ok(Command::Mcp)
+        } else if matches!(next.as_deref(), Some("--help" | "-h")) && args.next().is_none() {
+            Ok(Command::Help)
+        } else {
+            Err("sqln mcp takes no arguments. Select the instance with list_instances.".into())
+        };
+    }
     let mut cli = Cli::default();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -84,6 +96,7 @@ fn options_of(cli: Cli) -> Result<Options, String> {
     let working = std::env::current_dir().map_err(|error| error.to_string())?;
     let located = store::locate_project(&working, cli.project.as_deref());
     let mut options = Options {
+        agent_ipc: true,
         store: Some(Store {
             global: Root::global(global),
             project: located.root.as_deref().map(Root::project),
@@ -103,6 +116,12 @@ fn options_of(cli: Cli) -> Result<Options, String> {
 
 fn main() -> ExitCode {
     match parse(std::env::args().skip(1)) {
+        Ok(Command::Mcp) => {
+            if let Err(error) = sqln::mcp::run() {
+                eprintln!("sqln: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
         Ok(Command::Help) => print!("{HELP}"),
         Ok(Command::Version) => println!("sqln {}", env!("CARGO_PKG_VERSION")),
         Ok(Command::Run(cli)) => {

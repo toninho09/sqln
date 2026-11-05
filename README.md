@@ -25,6 +25,7 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - [Transactions and execution](#transactions-and-execution)
 - [Configuration and saved work](#configuration-and-saved-work)
 - [Credentials and connection security](#credentials-and-connection-security)
+- [Local MCP assistant](#local-mcp-assistant)
 - [Command-line reference](#command-line-reference)
 - [Troubleshooting](#troubleshooting)
 - [Known limitations](#known-limitations)
@@ -55,6 +56,7 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Saved work.** Save consoles automatically and reopen tabs with their cursor, scroll, and layout.
 - **Credential storage.** Use session passwords, macOS Keychain, or Linux Secret Service.
 - **Appearance.** Choose themes, per-connection colors and icons, and optional Nerd Font symbols.
+- **Local MCP assistant.** Connect Claude Code or OpenCode to an open SQLN instance, approve read access, and review SQL edits.
 - **No telemetry.** SQLN does not send usage reports.
 
 ## Screenshots
@@ -580,10 +582,20 @@ Disable **Query history** when needed. This does not remove old history or saved
 `--log` records event kinds without SQL, result values, or passwords.
 Before sharing any diagnostic file, inspect it for private paths and connection details.
 
+## Local MCP assistant
+
+Keep SQLN open and configure your client to start `sqln mcp` through stdio.
+The bridge discovers instances, including instances without a project. Each session needs approval in SQLN.
+Agents can read loaded results, execute read-only queries, propose SQL edits, and use metadata and analysis tools.
+Direct editing requires a user option for that console. Generated SQL never executes automatically.
+
+See [MCP setup, tools, and security](docs/MCP.md) for global Claude Code and OpenCode configuration.
+
 ## Command-line reference
 
 ```text
 sqln [options] [target]
+sqln mcp
 ```
 
 `target` is one SQLite file path or one connection URI. SQLN asks before creating a missing SQLite file.
@@ -597,7 +609,8 @@ Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `red
 | `-V`, `--version` | Show the version |
 | `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, or `redis` for an unconnected console; development option |
 
-SQLN is an interactive application. It does not provide a batch SQL runner or read scripts from standard input.
+The terminal interface does not provide a batch SQL runner or read scripts from standard input.
+`sqln mcp` uses standard input and output only for MCP. It does not accept raw SQL.
 A `.sql` path is not a script-opening argument; file targets are SQLite databases.
 
 ## Troubleshooting

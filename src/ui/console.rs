@@ -911,6 +911,17 @@ fn printable_lines(text: &str) -> Text<'static> {
     )
 }
 
+/// Returns the box of a long-text overlay inside `area`.
+pub fn overlay_area(area: Rect) -> Rect {
+    centered(
+        area,
+        area.width
+            .saturating_sub(MODAL_FREE_COLUMNS)
+            .min(MODAL_WIDTH_LIMIT),
+        area.height.saturating_sub(MODAL_FREE_ROWS),
+    )
+}
+
 /// Draws a long text. It returns the first row, because the end of the text limits it.
 pub fn draw_overlay(
     frame: &mut Frame,
@@ -921,13 +932,7 @@ pub fn draw_overlay(
     theme: &Theme,
 ) -> usize {
     let area = frame.area();
-    let box_area = centered(
-        area,
-        area.width
-            .saturating_sub(MODAL_FREE_COLUMNS)
-            .min(MODAL_WIDTH_LIMIT),
-        area.height.saturating_sub(MODAL_FREE_ROWS),
-    );
+    let box_area = overlay_area(area);
     frame.render_widget(Clear, box_area);
     let block = float_block(printable(title).trim(), theme)
         .title_bottom(Line::from(printable(footer)).alignment(Alignment::Right));

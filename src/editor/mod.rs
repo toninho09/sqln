@@ -1,5 +1,6 @@
 //! The SQL editor: EdTUI, the conventional keys, suggestions, search, and highlights.
 
+mod agent;
 mod buffer;
 mod conventional;
 mod frame;
@@ -159,6 +160,7 @@ pub struct SqlEditor {
     redo_depth: usize,
     page_height: usize,
     text_area: Option<Rect>,
+    agent_page: std::cell::RefCell<agent::ReadCursor>,
     revision: u64,
     /// The last known text in Vim mode. EdTUI does not report its edits.
     vim_shadow: Option<Lines>,
@@ -209,6 +211,7 @@ impl SqlEditor {
             redo_depth: 0,
             page_height: 20,
             text_area: None,
+            agent_page: std::cell::RefCell::new(agent::ReadCursor::default()),
             revision: 0,
             vim_shadow,
             snapshot: None,

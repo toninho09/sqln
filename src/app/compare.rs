@@ -400,6 +400,9 @@ impl App {
         if self.config_blocked() {
             return;
         }
+        for read in &self.compares[index].sides {
+            self.agent.release_retired(read.id);
+        }
         let budget = self.budget.clone();
         self.compares[index].begin(&budget);
         for (connection, action) in uses {
@@ -411,6 +414,10 @@ impl App {
     /// rows of the source, and then the rows of the target. Each step passes the gate of
     /// the password, and a read of rows has no time limit.
     pub(super) fn continue_compare(&mut self, console: ConsoleId) {
+        if self.agent.task_retired(console) {
+            self.cancel_compare_side(console);
+            return;
+        }
         let Some(tab) = self.compares.iter_mut().find(|tab| tab.owns(console)) else {
             return;
         };
@@ -458,7 +465,7 @@ impl App {
             untimed,
             ..RunOptions::default()
         };
-        let execution = manager.run(console, statements, options);
+        let execution = self.agent.run(manager, console, statements, options);
         tab.started(console, execution);
     }
 
@@ -474,6 +481,9 @@ impl App {
         let Some(index) = self.compare_active else {
             return;
         };
+        if self.cancel_agent_console(self.compares[index].sides[0].id) {
+            return;
+        }
         let ids: Vec<ConsoleId> = self.compares[index]
             .sides
             .iter()
@@ -499,6 +509,10 @@ impl App {
     pub(super) fn close_compare(&mut self, index: usize) {
         if index >= self.compares.len() {
             return;
+        }
+        self.cancel_agent_console(self.compares[index].sides[0].id);
+        for read in &self.compares[index].sides {
+            self.agent.forget_console(read.id);
         }
         let place = self
             .tab_order()

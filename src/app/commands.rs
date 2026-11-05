@@ -206,6 +206,13 @@ impl App {
     }
 
     pub(super) fn command_label(&self, action: Action) -> &'static str {
+        if action == Action::AgentDirect {
+            return if self.agent.direct(self.console().id) {
+                "Disable agent direct editing for this console"
+            } else {
+                "Enable agent direct editing for this console"
+            };
+        }
         use Action::*;
         if action == GridOpenValue && self.table().is_some_and(|tab| tab.pending) {
             return text::COMMAND_LOAD_GRID;

@@ -18,6 +18,8 @@ const PAN_COLUMNS: i64 = 8;
 const PAN_ROWS: i64 = 4;
 
 pub struct DiagramTab {
+    /// True for a tab created by an assistant session.
+    pub agent: bool,
     /// The place of the tab in the order of opening.
     pub opened: u64,
     /// The identity of the task of this tab. It shares the numbers of the consoles.
@@ -51,6 +53,7 @@ pub struct DiagramTab {
 impl DiagramTab {
     pub fn new(id: ConsoleId, connection: ConnectionId, focus: Focus, opened: u64) -> Self {
         Self {
+            agent: false,
             opened,
             id,
             connection,
@@ -80,7 +83,12 @@ impl DiagramTab {
     }
 
     pub fn label(&self) -> String {
-        text::diagram_label(self.focus.name())
+        let label = text::diagram_label(self.focus.name());
+        if self.agent {
+            format!("Agent: {label}")
+        } else {
+            label
+        }
     }
 
     pub fn is_busy(&self) -> bool {

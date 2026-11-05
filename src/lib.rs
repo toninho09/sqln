@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod app;
 pub mod browser;
 pub mod catalog;
@@ -27,6 +28,7 @@ pub mod input;
 pub mod line_input;
 pub mod log;
 pub mod mark_list;
+pub mod mcp;
 pub mod navigator;
 pub mod palette;
 pub mod parameters;

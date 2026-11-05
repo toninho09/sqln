@@ -905,6 +905,8 @@ impl App {
 
     /// The console keeps its text and its results, and it cannot run.
     pub(super) fn unbind_console(&mut self, index: usize) {
+        self.cancel_agent_console(self.consoles[index].id);
+        self.agent.forget_console(self.consoles[index].id);
         let id = self.next_unbound_console;
         self.next_unbound_console -= 1;
         let console = &mut self.consoles[index];
@@ -1000,6 +1002,11 @@ impl App {
         };
         let cursor = picker.cursor;
         match picker.kind {
+            PickerKind::Agent(choices) => {
+                if let Some(choice) = choices.get(cursor) {
+                    self.accept_agent_choice(choice.clone());
+                }
+            }
             PickerKind::Schema { console, .. } => {
                 // The first row is the default of the connection, and it has no schema.
                 let schema = picker.items.get(cursor).filter(|_| cursor > 0).cloned();
