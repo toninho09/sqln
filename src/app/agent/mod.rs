@@ -12,15 +12,22 @@ use crate::connector::TransactionState;
 use crate::console::Phase;
 use crate::editor::RunPlan;
 use crate::exec::{ConnectionId, ConsoleId, ExecutionId, RunOptions};
+use crate::store::config::AgentSettings;
 use jobs::task_kind;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 pub(super) struct State {
     pub server: Option<Server>,
+    /// The MCP preferences of the configuration.
+    pub settings: AgentSettings,
+    /// The folder of the endpoint, or the reason that it has none. `None`: this
+    /// application has no endpoint.
+    pub directory: Option<Result<PathBuf, String>>,
     sessions: HashMap<String, Session>,
     jobs: HashMap<String, Job>,
     proposals: HashMap<String, Proposal>,
@@ -246,6 +253,8 @@ impl Default for State {
         let (sender, receiver) = mpsc::channel();
         Self {
             server: None,
+            settings: AgentSettings::default(),
+            directory: None,
             sessions: HashMap::new(),
             jobs: HashMap::new(),
             proposals: HashMap::new(),
@@ -272,32 +281,27 @@ struct Session {
 }
 
 /// What an authorized session can do. Each level includes the previous levels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Level {
-    /// Reads, read-only queries, and edit proposals.
-    Propose,
-    /// Also direct edits in all consoles.
-    Direct,
-    /// Also database writes, with the existing run confirmations.
-    Full,
+pub(super) use crate::store::config::AgentAccess as Level;
+
+/// The names of a level in the protocol and in the interface.
+trait LevelText {
+    fn protocol_name(self) -> &'static str;
+    /// The name of the option that gives this level.
+    fn choice(self) -> &'static str;
+    /// The mark of the status bar label.
+    fn mark(self) -> Option<&'static str>;
 }
-impl Level {
-    fn as_str(self) -> &'static str {
+impl LevelText for Level {
+    fn protocol_name(self) -> &'static str {
         match self {
             Self::Propose => "propose",
             Self::Direct => "direct",
             Self::Full => "full",
         }
     }
-    /// The name of the option that gives this level.
     fn choice(self) -> &'static str {
-        match self {
-            Self::Propose => crate::ui::text::AGENT_ALLOW,
-            Self::Direct => crate::ui::text::AGENT_ALLOW_ALL,
-            Self::Full => crate::ui::text::AGENT_FULL,
-        }
+        crate::ui::text::agent_access_name(self)
     }
-    /// The mark of the status bar label.
     fn mark(self) -> Option<&'static str> {
         match self {
             Self::Propose => None,
@@ -437,11 +441,16 @@ fn supported() -> Error {
 
 impl App {
     /// Enables the private local endpoint. Tests and embedded callers can supply a private directory.
-    pub fn start_agent_at(&mut self, directory: std::path::PathBuf) -> std::io::Result<String> {
+    /// With MCP off in the settings, the endpoint opens when the user turns it on.
+    pub fn start_agent_at(&mut self, directory: PathBuf) -> std::io::Result<String> {
         if self.agent.server.is_some() {
             return Err(std::io::Error::other(
                 "The assistant endpoint already runs.",
             ));
+        }
+        self.agent.directory = Some(Ok(directory.clone()));
+        if !self.agent.settings.enabled {
+            return Err(std::io::Error::other(crate::ui::text::AGENT_MCP_OFF));
         }
         let project = self
             .persist
@@ -452,6 +461,76 @@ impl App {
         let id = server.instance.instance_id.clone();
         self.agent.server = Some(server);
         Ok(id)
+    }
+
+    /// Opens the endpoint when MCP is on and the application has a folder for it.
+    /// A failure goes to the status bar.
+    pub(super) fn open_agent_endpoint(&mut self) {
+        if !self.agent.settings.enabled || self.agent.server.is_some() {
+            return;
+        }
+        let failure = match self.agent.directory.clone() {
+            None => return,
+            Some(Err(reason)) => reason,
+            Some(Ok(directory)) => match self.start_agent_at(directory) {
+                Ok(_) => return,
+                Err(error) => crate::ui::text::agent_endpoint(&error),
+            },
+        };
+        self.status = Some(failure);
+    }
+
+    /// Applies the MCP preferences of a load at once. MCP off revokes every session and
+    /// closes the endpoint. A lower maximum lowers the sessions and the remembered
+    /// clients above it.
+    pub(super) fn apply_agent_settings(&mut self, settings: AgentSettings) {
+        self.agent.settings = settings;
+        if !settings.enabled {
+            if self.agent.server.is_none() {
+                return;
+            }
+            let live: Vec<_> = self
+                .agent
+                .sessions
+                .iter()
+                .filter(|(_, session)| {
+                    matches!(session.state, "pending" | "authorized")
+                        && !session.alive.is_cancelled()
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in live {
+                self.agent_revoke(&id);
+            }
+            self.agent.remembered.clear();
+            self.agent.server = None;
+            self.status = Some(crate::ui::text::agent_mcp_closed());
+            return;
+        }
+        if !settings.remember_clients {
+            self.agent.remembered.clear();
+        }
+        let max = settings.max_access;
+        for level in self.agent.remembered.values_mut() {
+            *level = (*level).min(max);
+        }
+        let lowered: Vec<_> = self
+            .agent
+            .sessions
+            .iter_mut()
+            .filter(|(_, session)| session.state == "authorized" && session.level > max)
+            .map(|(id, session)| {
+                session.level = max;
+                id.clone()
+            })
+            .collect();
+        for id in lowered {
+            let notice =
+                crate::ui::text::agent_access_lowered(&self.agent.client(&id), max.choice());
+            self.agent_notice(&id, None, notice);
+        }
+        self.refresh_tree_consoles();
+        self.open_agent_endpoint();
     }
 
     pub(super) fn drain_agent(&mut self) -> bool {
@@ -571,27 +650,36 @@ impl App {
                         "Too many assistant sessions are pending. Review them in SQLN.",
                     ));
                 }
+                // A remembered client keeps the choice of the user. Other clients get the
+                // default access. Both stay at or below the maximum.
+                let settings = self.agent.settings;
                 let remembered = self.agent.remembered.get(&request.client).copied();
+                let default = settings.default_access.access();
+                let granted = remembered
+                    .or(default)
+                    .map(|level| level.min(settings.max_access));
                 self.agent.sessions.insert(
                     session.clone(),
                     Session {
                         client: request.client.clone(),
-                        state: if remembered.is_some() {
+                        state: if granted.is_some() {
                             "authorized"
                         } else {
                             "pending"
                         },
                         alive: request.alive.clone(),
                         requested: Instant::now(),
-                        level: remembered.unwrap_or(Level::Propose),
+                        level: granted.unwrap_or(Level::Propose),
                     },
                 );
-                if let Some(level) = remembered {
+                if let Some(level) = granted {
                     self.ensure_agent_tabs();
-                    let notice = crate::ui::text::agent_remembered(
-                        &self.agent.client(session),
-                        level.choice(),
-                    );
+                    let client = self.agent.client(session);
+                    let notice = if remembered.is_some() {
+                        crate::ui::text::agent_remembered(&client, level.choice())
+                    } else {
+                        crate::ui::text::agent_default_access(&client, level.choice())
+                    };
                     self.agent_notice(session, None, notice);
                     self.refresh_tree_consoles();
                 } else {
@@ -789,7 +877,7 @@ impl App {
             .collect();
         Ok(json!({
             "session_id": session,
-            "access": level.as_str(),
+            "access": level.protocol_name(),
             "database_access": if level == Level::Full { "read_write" } else { "read_only" },
             "interface_busy": self.modal_is_open(),
             "active_tab": tabs["active_tab"],
@@ -807,7 +895,7 @@ impl App {
         json!({
             "session_id": session,
             "status": item.map_or("not_requested", |session| session.state),
-            "access": item.filter(|item| item.state == "authorized").map(|item| item.level.as_str()),
+            "access": item.filter(|item| item.state == "authorized").map(|item| item.level.protocol_name()),
         })
     }
 

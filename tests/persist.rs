@@ -3198,15 +3198,18 @@ fn the_sidebar_shows_the_fields_of_one_section() {
     session.assert_sees("Default theme");
     session.assert_not_sees("Page size");
     session.code(KeyCode::Down);
-    session.assert_sees("Commands 1/");
+    session.assert_sees("Remember clients");
     session.assert_not_sees("Default theme");
+    session.code(KeyCode::Down);
+    session.assert_sees("Commands 1/");
+    session.assert_not_sees("Remember clients");
     // The last section goes back to the first section.
     session.code(KeyCode::Down);
     session.assert_sees("Reopen tabs");
     session.code(KeyCode::Up);
     session.assert_sees("Commands 1/");
     session.code(KeyCode::Up);
-    session.assert_sees("Default theme");
+    session.assert_sees("Remember clients");
     // The scope stays in all sections.
     session.assert_sees("< Project >");
 }
@@ -4731,4 +4734,66 @@ fn a_double_click_on_a_console_row_opens_it() {
     session.app.on_event(press.clone());
     session.app.on_event(press);
     assert_eq!(session.app.console().name, "investigate");
+}
+
+#[test]
+fn the_project_mcp_settings_replace_the_global_values_and_the_defaults_apply_without_them() {
+    use sqln::store::config::{AgentAccess, AgentDefault, AgentSettings};
+    let (store, _) = store("p-mcp-precedence");
+    assert_eq!(
+        config::load(&store).config.unwrap().agent,
+        AgentSettings::default()
+    );
+    write_config(
+        &store.global,
+        r#"{"mcp":false,"mcpDefaultAccess":"direct","mcpMaxAccess":"direct","mcpRememberClients":false}"#,
+        &[],
+    );
+    write_config(
+        store.project.as_ref().unwrap(),
+        r#"{"mcp":true,"mcpMaxAccess":"propose"}"#,
+        &[],
+    );
+    let agent = config::load(&store).config.unwrap().agent;
+    assert_eq!(
+        agent,
+        AgentSettings {
+            enabled: true,
+            default_access: AgentDefault::Direct,
+            max_access: AgentAccess::Propose,
+            remember_clients: false,
+        }
+    );
+}
+
+#[test]
+fn the_ia_settings_show_the_defaults_and_the_client_help_and_write_the_scope() {
+    let (store, _) = store("p-mcp-settings");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.click_text("IA");
+    session.assert_sees("MCP");
+    session.assert_sees("< Default: On >");
+    session.assert_sees("< Default: Ask >");
+    session.assert_sees("< Default: Full access >");
+    session.assert_sees("Remember clients");
+    session.assert_sees("Claude Code: claude mcp add --transport stdio --scope user");
+    session.assert_sees("sqln mcp");
+    session.assert_sees("docs/MCP.md");
+    // A click changes the choice. An explicit Ask can replace a global default.
+    session.click_text("Default access");
+    session.assert_sees("< Ask >");
+    session.code(KeyCode::Right);
+    session.assert_sees("< Allow >");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Right);
+    session.code(KeyCode::Right);
+    session.assert_sees("< Allow all >");
+    session.click_text("[Save]");
+    session.assert_sees("settings are saved");
+    let text = fs::read_to_string(store.project.as_ref().unwrap().config_file()).unwrap();
+    assert!(text.contains("\"mcpDefaultAccess\": \"propose\""), "{text}");
+    assert!(text.contains("\"mcpMaxAccess\": \"direct\""), "{text}");
+    assert!(!text.contains("\"mcp\":"), "{text}");
+    assert!(!store.global.config_file().exists());
 }

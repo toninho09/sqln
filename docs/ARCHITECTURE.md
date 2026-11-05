@@ -500,7 +500,11 @@ No scope receives `password`. The plain-text authorized password stays in `crede
     "formatJson": true,
     "showSystemCommands": false,
     "bellAfterSeconds": 10,
-    "suggestionKeys": "tab"
+    "suggestionKeys": "tab",
+    "mcp": true,
+    "mcpDefaultAccess": "ask",
+    "mcpMaxAccess": "full",
+    "mcpRememberClients": true
   },
   "connections": [
     {

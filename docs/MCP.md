@@ -49,6 +49,22 @@ Merge this entry into the global `~/.config/opencode/opencode.json` file:
 
 Do not replace unrelated client settings. No connection definition belongs in either MCP configuration.
 
+## MCP settings
+
+Open **Settings** with `Ctrl+W ,` and select **IA**. The fields have the global and the project scope, as the other settings.
+A save applies at once.
+
+| Field | Key | Default | Effect |
+|---|---|---|---|
+| **MCP** | `mcp` | On | Off closes the endpoint: `list_instances` does not find the instance. A save with Off revokes all sessions, cancels their tasks, and forgets the remembered clients. On opens a new endpoint with a new UUID. |
+| **Default access** | `mcpDefaultAccess` | Ask | `ask` shows the access request. `propose`, `direct`, or `full` gives that level to a new session without a question, with a notice in the status bar and in the agent Messages. |
+| **Max access** | `mcpMaxAccess` | Full access | The highest level of the access request, of the session dialog, of the default access, and of the remembered access. A save with a lower value lowers the sessions and the remembered clients above it, with a notice. |
+| **Remember clients** | `mcpRememberClients` | On | Off: each new session asks again. A save with Off forgets the remembered clients. |
+
+A remembered client gets its remembered level before the default access. Both stop at **Max access**.
+The run protections stay for each level: read-only connections, the `PROD` question, and the question for a write without `WHERE`.
+SQLN never writes the configuration of an MCP client. Configure the client as the next section shows.
+
 ## Select an instance and allow access
 
 1. Open SQLN as usual.
@@ -72,7 +88,7 @@ The client name is reported by the client. It does not prove the client's identi
 **Reject** has the initial focus, and `Esc` selects it. A notification never captures editor input.
 After a decision, the next pending request opens. The title shows its place, such as `(1 of 2)`.
 
-SQLN remembers the option for that client name until SQLN exits. A new session of the client, such as a restarted assistant, gets the same access without a question.
+SQLN remembers the option for that client name until SQLN exits, unless **Remember clients** is Off. A new session of the client, such as a restarted assistant, gets the same access without a question.
 The status bar names the client when this occurs. A rejection is not remembered.
 **Agent sessions** lists remembered clients without a live session. Select one and click **Forget** to make its next session ask again.
 Revoke also forgets the client. The memory never enters saved configuration.

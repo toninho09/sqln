@@ -10,9 +10,9 @@ pub mod shortcuts;
 use crate::line_input::LineInput;
 use crate::store::Scope;
 use crate::store::config::{
-    DEFAULT_BELL_AFTER_SECONDS, DEFAULT_CAP_IN_SQL, DEFAULT_FORMAT_JSON, DEFAULT_QUERY_HISTORY,
-    DEFAULT_REOPEN_TABS, DEFAULT_SHOW_SYSTEM_COMMANDS, KeyboardName, Keymaps, Preferences,
-    ThemeName,
+    AgentAccess, AgentDefault, DEFAULT_BELL_AFTER_SECONDS, DEFAULT_CAP_IN_SQL, DEFAULT_FORMAT_JSON,
+    DEFAULT_MCP, DEFAULT_MCP_REMEMBER_CLIENTS, DEFAULT_QUERY_HISTORY, DEFAULT_REOPEN_TABS,
+    DEFAULT_SHOW_SYSTEM_COMMANDS, KeyboardName, Keymaps, Preferences, ThemeName,
 };
 use crate::ui::text;
 use shortcuts::Shortcuts;
@@ -39,6 +39,10 @@ pub enum Field {
     SuggestionKeys,
     UndoLimit,
     Theme,
+    Mcp,
+    McpDefault,
+    McpMax,
+    McpRemember,
     ShortcutMode,
     ShortcutCommands,
     ShortcutBack,
@@ -57,10 +61,12 @@ pub enum Field {
 pub struct Section {
     pub title: &'static str,
     pub fields: &'static [Field],
+    /// Text below the fields. It takes no focus.
+    pub help: Option<&'static str>,
 }
 
 /// The sidebar. To add a group, add a row here.
-pub const SECTIONS: [Section; 5] = [
+pub const SECTIONS: [Section; 6] = [
     Section {
         title: text::SECTION_GENERAL,
         fields: &[
@@ -69,10 +75,12 @@ pub const SECTIONS: [Section; 5] = [
             Field::QueryHistory,
             Field::BellAfter,
         ],
+        help: None,
     },
     Section {
         title: text::SECTION_EDITOR,
         fields: &[Field::SuggestionKeys, Field::UndoLimit],
+        help: None,
     },
     Section {
         title: text::SECTION_RESULTS,
@@ -84,14 +92,27 @@ pub const SECTIONS: [Section; 5] = [
             Field::FormatJson,
             Field::ShowSystemCommands,
         ],
+        help: None,
     },
     Section {
         title: text::SECTION_APPEARANCE,
         fields: &[Field::Theme],
+        help: None,
+    },
+    Section {
+        title: text::SECTION_AI,
+        fields: &[
+            Field::Mcp,
+            Field::McpDefault,
+            Field::McpMax,
+            Field::McpRemember,
+        ],
+        help: Some(text::HELP_MCP),
     },
     Section {
         title: text::SECTION_SHORTCUTS,
         fields: shortcuts::FIELDS,
+        help: None,
     },
 ];
 
@@ -117,6 +138,10 @@ struct Draft {
     show_system_commands: Option<bool>,
     suggestion_keys: Option<SuggestionKeys>,
     theme: Option<ThemeName>,
+    mcp: Option<bool>,
+    mcp_default: Option<AgentDefault>,
+    mcp_max: Option<AgentAccess>,
+    mcp_remember: Option<bool>,
     keymap: Option<Keymaps>,
 }
 
@@ -147,6 +172,10 @@ impl Draft {
             show_system_commands: preferences.show_system_commands,
             suggestion_keys: preferences.suggestion_keys,
             theme: preferences.theme,
+            mcp: preferences.mcp,
+            mcp_default: preferences.mcp_default_access,
+            mcp_max: preferences.mcp_max_access,
+            mcp_remember: preferences.mcp_remember_clients,
             keymap: preferences.keymap.clone(),
         }
     }
@@ -303,6 +332,22 @@ impl SettingsForm {
         self.draft().theme
     }
 
+    pub fn mcp(&self) -> Option<bool> {
+        self.draft().mcp
+    }
+
+    pub fn mcp_default(&self) -> Option<AgentDefault> {
+        self.draft().mcp_default
+    }
+
+    pub fn mcp_max(&self) -> Option<AgentAccess> {
+        self.draft().mcp_max
+    }
+
+    pub fn mcp_remember(&self) -> Option<bool> {
+        self.draft().mcp_remember
+    }
+
     /// Returns the theme that a save of this scope gives. A project value has priority
     /// over a global value.
     pub fn saved_theme(&self) -> Option<ThemeName> {
@@ -370,6 +415,16 @@ impl SettingsForm {
                 .suggestion_keys
                 .map(|keys| text::suggestion_keys_name(keys).to_owned()),
             Field::Theme => global.theme.map(|name| text::theme_name(name).to_owned()),
+            Field::Mcp => global.mcp.map(|value| text::on_off(value).to_owned()),
+            Field::McpDefault => global
+                .mcp_default_access
+                .map(|value| text::agent_default_name(value).to_owned()),
+            Field::McpMax => global
+                .mcp_max_access
+                .map(|value| text::agent_access_name(value).to_owned()),
+            Field::McpRemember => global
+                .mcp_remember_clients
+                .map(|value| text::on_off(value).to_owned()),
             _ => None,
         };
         match (from_global, value) {
@@ -398,6 +453,16 @@ impl SettingsForm {
             }
             _ if field == Field::Theme => {
                 text::default_value(text::theme_name(ThemeName::default()))
+            }
+            _ if field == Field::Mcp => text::default_value(text::on_off(DEFAULT_MCP)),
+            _ if field == Field::McpDefault => {
+                text::default_value(text::agent_default_name(AgentDefault::default()))
+            }
+            _ if field == Field::McpMax => {
+                text::default_value(text::agent_access_name(AgentAccess::default()))
+            }
+            _ if field == Field::McpRemember => {
+                text::default_value(text::on_off(DEFAULT_MCP_REMEMBER_CLIENTS))
             }
             _ => text::VALUE_DEFAULT.to_owned(),
         }
@@ -489,6 +554,21 @@ impl SettingsForm {
             Field::Theme => {
                 self.draft_mut().theme =
                     next_optional(&ThemeName::ALL, self.draft().theme, forward);
+            }
+            Field::Mcp => {
+                self.draft_mut().mcp = next_optional(&[true, false], self.draft().mcp, forward);
+            }
+            Field::McpDefault => {
+                self.draft_mut().mcp_default =
+                    next_optional(&AgentDefault::ALL, self.draft().mcp_default, forward);
+            }
+            Field::McpMax => {
+                self.draft_mut().mcp_max =
+                    next_optional(&AgentAccess::ALL, self.draft().mcp_max, forward);
+            }
+            Field::McpRemember => {
+                self.draft_mut().mcp_remember =
+                    next_optional(&[true, false], self.draft().mcp_remember, forward);
             }
             _ => {}
         }
@@ -586,6 +666,10 @@ impl SettingsForm {
         preferences.cap_in_sql = draft.cap_in_sql;
         preferences.suggestion_keys = draft.suggestion_keys;
         preferences.theme = draft.theme;
+        preferences.mcp = draft.mcp;
+        preferences.mcp_default_access = draft.mcp_default;
+        preferences.mcp_max_access = draft.mcp_max;
+        preferences.mcp_remember_clients = draft.mcp_remember;
         preferences.keymap = draft.keymap.clone();
         self.validate_shortcuts(&preferences)?;
         preferences.page_size = parse(&draft.page_size, text::FIELD_PAGE_SIZE)?;

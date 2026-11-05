@@ -72,6 +72,10 @@ fn label(field: Field) -> &'static str {
         Field::ShortcutMode => text::FIELD_SHORTCUT_MODE,
         Field::ShortcutBinding => text::FIELD_SHORTCUT_BINDING,
         Field::ShortcutFinish => text::FIELD_SHORTCUT_FINISH,
+        Field::Mcp => text::FIELD_MCP,
+        Field::McpDefault => text::FIELD_MCP_DEFAULT,
+        Field::McpMax => text::FIELD_MCP_MAX,
+        Field::McpRemember => text::FIELD_MCP_REMEMBER,
         _ => "",
     }
 }
@@ -111,6 +115,22 @@ fn choice(form: &SettingsForm, field: Field) -> String {
         Field::Theme => form.theme().map_or_else(
             || form.inherited(field),
             |name| text::theme_name(name).to_owned(),
+        ),
+        Field::Mcp => form.mcp().map_or_else(
+            || form.inherited(field),
+            |value| text::on_off(value).to_owned(),
+        ),
+        Field::McpDefault => form.mcp_default().map_or_else(
+            || form.inherited(field),
+            |value| text::agent_default_name(value).to_owned(),
+        ),
+        Field::McpMax => form.mcp_max().map_or_else(
+            || form.inherited(field),
+            |value| text::agent_access_name(value).to_owned(),
+        ),
+        Field::McpRemember => form.mcp_remember().map_or_else(
+            || form.inherited(field),
+            |value| text::on_off(value).to_owned(),
         ),
         field => form.shortcut_value(field),
     }
@@ -612,6 +632,21 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
     }
 
     let button_row = pane.bottom().saturating_sub(2);
+    if let Some(help) = section.help {
+        // One empty row after the fields. The help ends before the note.
+        let top = pane.y + FIRST_FIELD_ROW + u16::try_from(section.fields.len()).unwrap_or(0) + 1;
+        let help_area = Rect {
+            y: top,
+            height: button_row.saturating_sub(top + NOTE_ROWS),
+            ..content
+        };
+        frame.render_widget(
+            Paragraph::new(help)
+                .style(theme.hint)
+                .wrap(Wrap { trim: false }),
+            help_area,
+        );
+    }
     if let Some(note) = &form.note {
         draw_note(frame, content, button_row, note, theme.error);
     } else if shortcuts {

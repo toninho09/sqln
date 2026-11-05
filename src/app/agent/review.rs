@@ -286,9 +286,10 @@ impl App {
             );
             // The other levels change the access in both directions. Keep stays first.
             let mut options = vec![(text::AGENT_KEEP, DialogAction::Dismiss)];
+            let max = self.agent.settings.max_access;
             for grant in [Grant::Allow, Grant::All, Grant::Full] {
                 let level = grant.level().expect("a grant with access");
-                if level != session.level {
+                if level != session.level && level <= max {
                     options.push((level.choice(), DialogAction::AgentAccess(id.into(), grant)));
                 }
             }
@@ -304,6 +305,16 @@ impl App {
             .iter()
             .position(|item| item == id)
             .map_or(1, |index| index + 1);
+        // Reject stays first. The other options stop at the maximum of the settings.
+        let max = self.agent.settings.max_access;
+        let options = [Grant::Reject, Grant::Allow, Grant::All, Grant::Full]
+            .into_iter()
+            .filter(|grant| grant.level().is_none_or(|level| level <= max))
+            .map(|grant| {
+                let name = grant.level().map_or(text::AGENT_REJECT, Level::choice);
+                (name, DialogAction::AgentAccess(id.into(), grant))
+            })
+            .collect();
         self.show_dialog(
             text::agent_queue_title(
                 text::AGENT_ACCESS_TITLE,
@@ -311,24 +322,7 @@ impl App {
                 pending.len().max(position),
             ),
             body,
-            vec![
-                (
-                    text::AGENT_REJECT,
-                    DialogAction::AgentAccess(id.into(), Grant::Reject),
-                ),
-                (
-                    text::AGENT_ALLOW,
-                    DialogAction::AgentAccess(id.into(), Grant::Allow),
-                ),
-                (
-                    text::AGENT_ALLOW_ALL,
-                    DialogAction::AgentAccess(id.into(), Grant::All),
-                ),
-                (
-                    text::AGENT_FULL,
-                    DialogAction::AgentAccess(id.into(), Grant::Full),
-                ),
-            ],
+            options,
         );
     }
 
@@ -402,7 +396,10 @@ impl App {
             .filter(|session| !session.alive.is_cancelled())
         {
             self.agent.later.remove(id);
-            let level = grant.level();
+            // A decision never goes above the maximum, also from an old dialog.
+            let level = grant
+                .level()
+                .map(|level| level.min(self.agent.settings.max_access));
             session.state = if level.is_some() {
                 "authorized"
             } else {
@@ -410,7 +407,9 @@ impl App {
             };
             session.level = level.unwrap_or(Level::Propose);
             let choice = level.map_or(text::AGENT_REJECT, Level::choice);
-            if let Some(level) = level {
+            if let Some(level) = level
+                && self.agent.settings.remember_clients
+            {
                 // A reconnection of this client uses the same level until SQLN exits.
                 self.agent.remembered.insert(session.client.clone(), level);
             }

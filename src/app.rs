@@ -159,6 +159,8 @@ pub struct Options {
     pub suggestion_keys: SuggestionKeys,
     /// True when Messages shows internal and shared commands.
     pub show_system_commands: bool,
+    /// The MCP preferences of the configuration.
+    pub agent: crate::store::config::AgentSettings,
     pub export_choices: ExportChoices,
     pub import_choices: ImportChoices,
 }
@@ -185,6 +187,7 @@ impl Default for Options {
             appearance: (None, None),
             suggestion_keys: SuggestionKeys::default(),
             show_system_commands: crate::store::config::DEFAULT_SHOW_SYSTEM_COMMANDS,
+            agent: crate::store::config::AgentSettings::default(),
             export_choices: ExportChoices::default(),
             import_choices: ImportChoices::default(),
         }
@@ -633,18 +636,12 @@ impl App {
             app.consoles[index].hidden = true;
             app.focus_navigator();
         }
+        app.agent.settings = options.agent;
         if options.agent_ipc {
-            match crate::agent::ipc::runtime_dir()
-                .and_then(|directory| app.start_agent_at(directory))
-            {
-                Ok(_) => {}
-                Err(error) => {
-                    app.status = Some(format!(
-                        "Agent endpoint unavailable: {}. Check the private runtime directory.",
-                        crate::grid::printable(&error.to_string())
-                    ))
-                }
-            }
+            let directory =
+                crate::agent::ipc::runtime_dir().map_err(|error| text::agent_endpoint(&error));
+            app.agent.directory = Some(directory);
+            app.open_agent_endpoint();
         }
         app
     }

@@ -13,6 +13,7 @@ use sqln::connector::sqlite::SqliteTarget;
 use sqln::editor::KeyboardMode;
 use sqln::input::{Action, Keymap};
 use sqln::sql::Dialect;
+use sqln::store::config::{AgentAccess, AgentDefault, AgentSettings};
 use sqln::ui::theme::Theme;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -2129,4 +2130,166 @@ fn a_revoked_agent_tab_stays_and_closes_without_a_question() {
     close_tab(&mut h);
     assert!(!h.draw(80, 24).contains("Close the agent tab"));
     assert!(agent_tabs(&h).is_empty());
+}
+
+/// Opens SQLN with MCP preferences, as the configuration gives them.
+fn with_settings(name: &str, agent: AgentSettings) -> Harness {
+    Harness::options(
+        Options {
+            database: Some(seeded_db(name)),
+            agent,
+            ..Default::default()
+        },
+        KeyboardMode::Conventional,
+    )
+}
+
+#[test]
+fn the_default_access_allows_a_new_session_without_a_question_up_to_the_maximum() {
+    let mut h = with_settings(
+        "default-access",
+        AgentSettings {
+            default_access: AgentDefault::Full,
+            max_access: AgentAccess::Direct,
+            ..Default::default()
+        },
+    );
+    let reply = h.access();
+    assert_eq!(reply["status"], "authorized");
+    assert_eq!(reply["access"], "direct");
+    let screen = h.draw(80, 24);
+    assert!(!screen.contains("MCP access request"), "{screen}");
+    assert!(screen.contains("MCP 1 all"), "{screen}");
+    let log = agent_log(&h);
+    assert!(log.contains("default access: Allow all"), "{log}");
+}
+
+#[test]
+fn the_maximum_access_hides_the_higher_options() {
+    let mut h = with_settings(
+        "max-access",
+        AgentSettings {
+            max_access: AgentAccess::Propose,
+            ..Default::default()
+        },
+    );
+    assert_eq!(h.access()["status"], "pending");
+    h.click_label("[Review]");
+    let screen = h.draw(80, 24);
+    assert!(screen.contains("[Allow]"), "{screen}");
+    assert!(!screen.contains("[Allow all]"), "{screen}");
+    assert!(!screen.contains("[Full access]"), "{screen}");
+    h.key(KeyCode::Right);
+    h.key(KeyCode::Enter);
+    assert_eq!(h.access()["access"], "propose");
+    // The session dialog offers no higher level.
+    h.key(KeyCode::F(8));
+    h.key(KeyCode::Enter);
+    let screen = h.draw(80, 24);
+    assert!(screen.contains("[Keep access]"), "{screen}");
+    assert!(!screen.contains("[Allow all]"), "{screen}");
+    assert!(!screen.contains("[Full access]"), "{screen}");
+}
+
+#[test]
+fn without_remembered_clients_a_reconnected_client_asks_again() {
+    let mut h = with_settings(
+        "no-remember",
+        AgentSettings {
+            remember_clients: false,
+            ..Default::default()
+        },
+    );
+    h.grant(3);
+    h.client = Some(
+        h.runtime
+            .block_on(Client::connect(&h.instance, "test agent\u{1b}[31m"))
+            .unwrap(),
+    );
+    assert_eq!(h.access()["status"], "pending");
+}
+
+/// Returns the Messages of the agent tabs, as one text.
+fn agent_log(h: &Harness) -> String {
+    h.app
+        .consoles()
+        .iter()
+        .filter(|console| console.name.starts_with("MCP · "))
+        .flat_map(|console| console.messages.iter().map(|message| message.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn saved_mcp_settings_lower_the_access_close_and_open_the_endpoint_at_once() {
+    use sqln::store::{Root, Store};
+    let base = common::temp_dir("agent-mcp-live");
+    let project = Root::project(&base.join("project"));
+    std::fs::create_dir_all(&project.dir).unwrap();
+    let store = Store {
+        global: Root::global(base.join("global")),
+        project: Some(project),
+    };
+    let mut h = Harness::options(
+        Options {
+            database: Some(seeded_db("mcp-live")),
+            store: Some(store),
+            ..Default::default()
+        },
+        KeyboardMode::Conventional,
+    );
+    h.grant(3);
+    h.own();
+    // Settings > IA at 80x24. Scope, MCP, Default access, then Max access.
+    let open_ia = |h: &mut Harness| {
+        h.app.on_event(Event::Key(common::ctrl('w')));
+        h.key(KeyCode::Char(','));
+        h.click_label("IA");
+        for _ in 0..2 {
+            h.key(KeyCode::Tab);
+        }
+    };
+    open_ia(&mut h);
+    let screen = h.draw(80, 24);
+    assert!(screen.contains("Remember clients"), "{screen}");
+    assert!(screen.contains("[Save]"), "{screen}");
+    for _ in 0..2 {
+        h.key(KeyCode::Tab);
+    }
+    h.key(KeyCode::Right);
+    assert!(h.draw(80, 24).contains("< Allow >"));
+    h.click_label("[Save]");
+    let reply = h.access();
+    assert_eq!(reply["status"], "authorized");
+    assert_eq!(reply["access"], "propose");
+    assert!(agent_log(&h).contains("access lowered to Allow"));
+    // MCP off revokes the session and removes the endpoint.
+    open_ia(&mut h);
+    h.key(KeyCode::Right);
+    h.key(KeyCode::Right);
+    assert!(h.draw(80, 24).contains("< Off >"));
+    h.click_label("[Save]");
+    let screen = h.draw(80, 24);
+    assert!(screen.contains("MCP off ·"), "{screen}");
+    assert!(!h.instance.socket.exists());
+    let descriptors = |h: &Harness| {
+        std::fs::read_dir(&h.directory)
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "json")
+            })
+            .count()
+    };
+    assert_eq!(descriptors(&h), 0);
+    // The default, MCP on, opens a new endpoint.
+    open_ia(&mut h);
+    h.key(KeyCode::Right);
+    assert!(h.draw(80, 24).contains("< Default: On >"));
+    h.click_label("[Save]");
+    assert_eq!(descriptors(&h), 1);
 }

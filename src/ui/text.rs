@@ -735,6 +735,13 @@ pub const SECTION_EDITOR: &str = "Editor";
 pub const SECTION_RESULTS: &str = "Results";
 pub const SECTION_APPEARANCE: &str = "Appearance";
 pub const SECTION_SHORTCUTS: &str = "Shortcuts";
+pub const SECTION_AI: &str = "IA";
+pub const FIELD_MCP: &str = "MCP";
+pub const FIELD_MCP_DEFAULT: &str = "Default access";
+pub const FIELD_MCP_MAX: &str = "Max access";
+pub const FIELD_MCP_REMEMBER: &str = "Remember clients";
+/// The help of the IA section. SQLN never changes the files of a client.
+pub const HELP_MCP: &str = "Claude Code: claude mcp add --transport stdio --scope user sqln -- sqln mcp\nOther clients: see docs/MCP.md.";
 pub const FIELD_SHORTCUT_MODE: &str = "Key mode";
 pub const SHORTCUT_COMMANDS: &str = "Commands";
 pub const SHORTCUT_KEYS: &str = "Shortcuts";
@@ -2127,6 +2134,37 @@ pub fn agent_remembered_body(client: &str, level: &str) -> String {
          Forget makes its next session ask you again.",
         agent_level_text(level)
     )
+}
+
+/// Returns the name of an access level, as the options of the access request show it.
+pub fn agent_access_name(access: crate::store::config::AgentAccess) -> &'static str {
+    use crate::store::config::AgentAccess;
+    match access {
+        AgentAccess::Propose => AGENT_ALLOW,
+        AgentAccess::Direct => AGENT_ALLOW_ALL,
+        AgentAccess::Full => AGENT_FULL,
+    }
+}
+pub const AGENT_ASK: &str = "Ask";
+/// Returns the name of a default access in the settings.
+pub fn agent_default_name(value: crate::store::config::AgentDefault) -> &'static str {
+    value.access().map_or(AGENT_ASK, agent_access_name)
+}
+pub const AGENT_MCP_OFF: &str = "MCP is off in Settings > IA.";
+pub fn agent_endpoint(error: &std::io::Error) -> String {
+    format!(
+        "Agent endpoint unavailable: {}. Check the private runtime directory.",
+        crate::grid::printable(&error.to_string())
+    )
+}
+pub fn agent_mcp_closed() -> String {
+    format!("{AGENT_MCP_OFF} SQLN revoked the MCP sessions and closed the endpoint.")
+}
+pub fn agent_access_lowered(client: &str, level: &str) -> String {
+    format!("MCP {client}: access lowered to {level}, the maximum in Settings > IA.")
+}
+pub fn agent_default_access(client: &str, level: &str) -> String {
+    format!("MCP {client} connected with the default access: {level}. Change it in Agent sessions.")
 }
 
 pub fn agent_remembered(client: &str, level: &str) -> String {

@@ -1126,7 +1126,7 @@ The project writes only the values it declares.
 Offer the global or project scope and the fields below.
 Show the values inherited from global and allow removing a project definition to use the global one.
 **Save** writes the changes of all sections. **Cancel** changes nothing.
-The sidebar groups fields in **General**, **Editor**, **Results**, **Appearance**, and **Shortcuts**. The panel shows one section at a time.
+The sidebar groups fields in **General**, **Editor**, **Results**, **Appearance**, **IA**, and **Shortcuts**. The panel shows one section at a time.
 The scope and the buttons stay outside the sections, and appear in all of them.
 An error note appears above the buttons, even when the field is in another section.
 A new section needs a row in the `SECTIONS` table, and the window grows with the largest section.
@@ -1155,6 +1155,9 @@ The switch happens in the editor itself, so the selection and the history contin
 The **Editor** section includes **Autocomplete** and **Undo limit**, with 64 MiB per console as the conventional undo default.
 The **Results** section includes **Limit in SQL**, on by default, and **System commands**, off by default.
 **System commands** only filters the Messages view.
+
+The **IA** section has the MCP fields. See [MCP settings](MCP.md#mcp-settings).
+Below the fields, a help text shows the Claude Code command and a reference to `docs/MCP.md`. SQLN never changes the files of an MCP client.
 
 The **Appearance** section has the **Default theme** field.
 The choice changes the colors at once, before saving. `Esc` and **Cancel** bring back the saved theme.

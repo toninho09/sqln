@@ -121,6 +121,7 @@ impl Persist {
         options.appearance = (config.theme, config.icons);
         options.suggestion_keys = config.suggestion_keys;
         options.show_system_commands = config.show_system_commands;
+        options.agent = config.agent;
         options.export_choices = config.export;
         options.import_choices = config.import;
         config.connections
@@ -290,6 +291,7 @@ impl App {
         }
         self.apply_connections(config.connections);
         self.update_connection_settings();
+        self.apply_agent_settings(config.agent);
     }
 
     fn set_keyboard(&mut self, keyboard: KeyboardMode) {

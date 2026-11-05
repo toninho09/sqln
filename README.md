@@ -591,6 +591,7 @@ Tools wait for their result, so one call returns the rows of a query.
 **Full access** also lets the agent write to the database. Production runs and writes without `WHERE` still ask you.
 
 See [MCP setup, tools, and security](docs/MCP.md) for global Claude Code and OpenCode configuration.
+**Settings > IA** turns MCP on or off and sets the default and the maximum access, per project or globally.
 
 ## Command-line reference
 

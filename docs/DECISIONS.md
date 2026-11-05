@@ -6,6 +6,27 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## MCP settings in the IA section — 2026-11-05
+
+The user asks for an **IA** section in Settings, to set the MCP behavior per project.
+This entry replaces the rule "Configuration, script, and workspace formats do not change" of the Local MCP assistant table for the four keys below, and row 2 of the MCP tools entry: a saved default access can give full access.
+The keys are optional, so older files stay valid without a migration.
+
+| # | Point | Approved decision | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Content | SQLN preferences for the agent, in `config.json` | Write the MCP client files of the project | User choice |
+| 2 | Help | A text below the fields with the Claude Code command and a reference to `docs/MCP.md`. SQLN does not configure the client | Configure the client from the dialog | User choice |
+| 3 | **MCP** (`mcp`) | Off: the instance has no socket, and `list_instances` does not find it. On by default | No field | A `PROD` project can turn off the agent |
+| 4 | Change of **MCP** | At once: a save opens or closes the socket. Off revokes the open sessions and cancels their tasks | At the next start | The user sees the effect of the save |
+| 5 | **Max access** (`mcpMaxAccess`) | The highest option of the access request and of the session dialog: Allow, Allow all, or Full access. Full access by default | No limit | The project limits the agent |
+| 6 | Lower maximum | Sessions and remembered clients above it go down to it at the save, with a notice in the status bar and the session Messages | Keep them until the end | User choice |
+| 7 | **Default access** (`mcpDefaultAccess`) | Ask (default), Allow, Allow all, or Full access. A value other than Ask gives that level without a question, card, or bell, with a notice, as the remembered access does. It never goes above **Max access** | Only the initial focus of the request | User choice |
+| 8 | Levels of the default | All levels, limited by **Max access**. The run protections stay | Up to Allow all | User choice |
+| 9 | **Remember clients** (`mcpRememberClients`) | Off: each new session asks again. On by default. The memory stays out of the file | No field | User choice |
+| 10 | Order | A remembered level comes before the default access | Default first | The remembered level is a choice of the user |
+| 11 | Scope | Global and Project, as the other sections | Global only | User choice |
+| 12 | Name | **IA** | **AI**, **Agent**, **MCP** | User choice |
+
 ## Agent tab lifetime and place — 2026-11-05
 
 The user asks for the agent tab to open when the agent connects, to stay open while the agent is connected, and to stand at the right of the tab row.
