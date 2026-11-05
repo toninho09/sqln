@@ -56,7 +56,7 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Saved work.** Save consoles automatically and reopen tabs with their cursor, scroll, and layout.
 - **Credential storage.** Use session passwords, macOS Keychain, or Linux Secret Service.
 - **Appearance.** Choose themes, per-connection colors and icons, and optional Nerd Font symbols.
-- **Local MCP assistant.** Connect Claude Code or OpenCode to an open SQLN instance, approve read access, and review SQL edits.
+- **Local MCP assistant.** Connect Claude Code or OpenCode to an open SQLN instance. Approve read access, review SQL edits, or give full access.
 - **No telemetry.** SQLN does not send usage reports.
 
 ## Screenshots
@@ -585,9 +585,10 @@ Before sharing any diagnostic file, inspect it for private paths and connection 
 ## Local MCP assistant
 
 Keep SQLN open and configure your client to start `sqln mcp` through stdio.
-The bridge discovers instances, including instances without a project. Each session needs approval in SQLN.
+The bridge discovers instances, including instances without a project. Each client needs approval in SQLN once per run of SQLN.
 Agents can read loaded results, execute read-only queries, propose SQL edits, and use metadata and analysis tools.
-Direct editing requires a user option for that console. Generated SQL never executes automatically.
+Tools wait for their result, so one call returns the rows of a query.
+**Full access** also lets the agent write to the database. Production runs and writes without `WHERE` still ask you.
 
 See [MCP setup, tools, and security](docs/MCP.md) for global Claude Code and OpenCode configuration.
 

@@ -212,7 +212,7 @@ impl App {
         if rows.is_empty() && offset < grid.table.rows.len() {
             return Err(Error::new(
                 "response_too_large",
-                "This row has too many values. Read its cells with read_result_cell.",
+                "This row has too many values. Read its cells with read_result, row, and column.",
             ));
         }
         let next = offset + rows.len();

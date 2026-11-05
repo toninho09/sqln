@@ -56,6 +56,8 @@ pub struct StatusData<'a> {
     pub data: (usize, usize),
     /// The row and the column of the cursor, from 1.
     pub position: Option<(usize, usize)>,
+    /// The label of the MCP sessions with access, such as `MCP 1 all`.
+    pub agent: Option<&'a str>,
 }
 
 fn panel_label(panel: StatusPanel, theme: &Theme) -> (&'static str, Style) {
@@ -144,6 +146,7 @@ struct Optional {
     data: Option<String>,
     pool: Option<String>,
     schema: Option<String>,
+    agent: Option<String>,
 }
 
 impl Optional {
@@ -156,6 +159,7 @@ impl Optional {
             )),
             pool: data.pool.map(|(busy, limit)| text::pool_usage(busy, limit)),
             schema: data.schema.map(printable),
+            agent: data.agent.map(str::to_owned),
         }
     }
 
@@ -170,7 +174,10 @@ impl Optional {
 
     fn width(&self) -> usize {
         let part = |text: Option<&String>| text.map_or(0, |text| text.width() + GAP.len());
-        part(self.position.as_ref()) + part(self.schema.as_ref()) + part(self.usage().as_ref())
+        part(self.position.as_ref())
+            + part(self.schema.as_ref())
+            + part(self.usage().as_ref())
+            + part(self.agent.as_ref())
     }
 
     /// Removes the next part. It returns false when no part remains.
@@ -180,6 +187,7 @@ impl Optional {
             &mut self.data,
             &mut self.pool,
             &mut self.schema,
+            &mut self.agent,
         ] {
             if part.take().is_some() {
                 return true;
@@ -298,6 +306,10 @@ pub fn draw_statusline(frame: &mut Frame, area: Rect, data: &StatusData, theme: 
     frame.render_widget(Paragraph::new(Line::from(left)), area);
 
     let mut right = Vec::new();
+    if let Some(agent) = optional.agent.take() {
+        right.push(Span::styled(agent, theme.status_warning));
+        right.push(Span::raw(GAP));
+    }
     if let Some(usage) = optional.usage() {
         right.push(Span::styled(usage, theme.status_detail));
     }

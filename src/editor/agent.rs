@@ -140,6 +140,19 @@ impl SqlEditor {
         Ok(())
     }
 
+    /// Returns the edit that replaces the whole text with `text`.
+    pub fn agent_replace_all(&self, text: &str) -> Edit {
+        let end = buffer::document_end(&self.state.lines);
+        Edit {
+            start: crate::agent::Position { line: 0, column: 0 },
+            end: crate::agent::Position {
+                line: end.row,
+                column: end.col,
+            },
+            text: text.to_owned(),
+        }
+    }
+
     /// Applies one undo step and restores positions relative to the changed text.
     pub fn apply_agent_edits(&mut self, revision: u64, edits: &[Edit]) -> Result<(), Error> {
         if revision != self.revision {

@@ -193,9 +193,17 @@ impl Default for Options {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum DialogAction {
-    AgentAccess(String, bool),
+    AgentAccess(String, agent::Grant),
     AgentRevoke(String),
     AgentDirect(ConsoleId),
+    /// Removes the remembered access of a client.
+    AgentForget(String),
+    /// The answer to the run question of an agent task.
+    AgentRun(String, bool),
+    /// Stops one agent task. Its session keeps its access.
+    AgentStopTask(String),
+    /// Revokes the session of its last agent tab, then closes the tab.
+    AgentCloseRevoke(ConsoleId),
     Dismiss,
     CreateDatabase,
     CreateFormFile,
@@ -331,7 +339,10 @@ struct ScreenLayout {
     main_tabs: Vec<MainTab>,
     /// The **Quit** button at the right end of the main tabs.
     quit: Rect,
-    agent_access: Rect,
+    agent_bar: crate::ui::agent::BarTargets,
+    agent_card: crate::ui::agent::CardTargets,
+    /// The item of the card in the last frame. A click acts on this item.
+    agent_notice: Option<agent::Notice>,
     body: Rect,
     console: ConsoleLayout,
     table: TableLayout,
@@ -803,12 +814,33 @@ impl App {
         if ends_status(&event) {
             self.clear_status();
         }
+        self.keep_agent_focus();
         self.route_event(event);
+        self.keep_agent_focus();
         self.sync_command_history();
         // The application keeps the message of the editor, so one clock serves both.
         if let Some(message) = self.console_mut().editor.take_status() {
             self.status = Some(message.to_owned());
         }
+    }
+
+    /// Keeps the focus of an agent tab without SQL on its results, because it shows no editor.
+    fn keep_agent_focus(&mut self) {
+        let Some(console) = self.consoles.get(self.active) else {
+            return;
+        };
+        if console.focus != Focus::Results && self.agent_tab_without_sql(console.id) {
+            self.consoles[self.active].focus = Focus::Results;
+        }
+        self.see_agent_sql();
+    }
+
+    /// Returns true for an agent tab that holds no SQL for the user. It shows no editor.
+    fn agent_tab_without_sql(&self, console: ConsoleId) -> bool {
+        self.agent.owns(console)
+            && self
+                .console_index(console)
+                .is_some_and(|index| self.consoles[index].editor.is_blank())
     }
 
     /// Moves the clock of the screen. It returns true when a run or the age of an open
@@ -817,7 +849,9 @@ impl App {
         self.clock = now;
         let time = now.saturating_duration_since(self.started);
         let frame = usize::try_from(time.as_millis() / RUN_FRAME.as_millis()).unwrap_or(0);
-        let running = self.consoles.iter().any(Console::is_busy)
+        // An agent task updates the time of its card, and the card appears after a delay.
+        let running = self.agent.active_tasks() != 0
+            || self.consoles.iter().any(Console::is_busy)
             || self.tables.iter().any(TableTab::is_busy)
             || self.diagrams.iter().any(DiagramTab::is_busy)
             || self.compares.iter().any(CompareTab::is_busy);
@@ -1001,10 +1035,16 @@ impl App {
             console.parameters.paste(text);
             return;
         }
-        if !console.paste_in_search(text) {
-            console.focus = Focus::Editor;
-            console.editor.on_paste(text);
+        if console.paste_in_search(text) {
+            return;
         }
+        if self.agent_tab_without_sql(self.console().id) {
+            self.status = Some(text::AGENT_NO_EDITOR.into());
+            return;
+        }
+        let console = self.console_mut();
+        console.focus = Focus::Editor;
+        console.editor.on_paste(text);
     }
 
     /// Returns true when the next step must not wait for a key.
@@ -1170,19 +1210,21 @@ impl App {
     pub fn draw(&mut self, frame: &mut Frame) {
         self.choose_theme();
         let area = frame.area();
-        self.layout.agent_access = Rect::default();
+        self.layout.agent_bar = Default::default();
+        self.layout.agent_card = Default::default();
+        self.layout.agent_notice = None;
         frame.render_widget(Block::new().style(self.theme.base), area);
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
             draw_small_terminal(frame, area, (MIN_WIDTH, MIN_HEIGHT), &self.theme);
             return;
         }
         let tall = area.height >= TALL_HEIGHT;
-        let pending_access = self.agent.pending_access();
+        let agent_bar = self.agent_bar();
         let [tabs, rule, body, notice, status, hints] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(u16::from(tall)),
             Constraint::Min(0),
-            Constraint::Length(u16::from(pending_access != 0)),
+            Constraint::Length(u16::from(agent_bar.is_some())),
             Constraint::Length(1),
             Constraint::Length(1),
         ])
@@ -1206,21 +1248,12 @@ impl App {
         } else {
             self.draw_active_console(frame, main, tall);
         }
-        if pending_access != 0 {
-            let shortcut = self
-                .shown_key(crate::input::Action::AgentSessions)
-                .map(|key| format!("{key}: review"))
-                .or_else(|| {
-                    self.shown_key(crate::input::Action::OpenPalette)
-                        .map(|key| format!("{key} > Agent sessions"))
-                });
-            self.layout.agent_access = crate::ui::agent::draw_access_notice(
-                frame,
-                notice,
-                pending_access,
-                shortcut.as_deref(),
-                &self.theme,
-            );
+        if let Some(bar) = agent_bar {
+            self.layout.agent_bar = crate::ui::agent::draw_bar(frame, notice, &bar, &self.theme);
+        }
+        if let Some((notice, card)) = self.agent_card() {
+            self.layout.agent_card = crate::ui::agent::draw_card(frame, main, &card, &self.theme);
+            self.layout.agent_notice = Some(notice);
         }
         self.draw_status(frame, status);
         self.draw_hint(frame, hints);
@@ -1306,6 +1339,10 @@ impl App {
             title: tall,
             welcome: self.welcome(),
             show_system_commands: self.show_system_commands,
+            agent: self.agent_tab_without_sql(self.consoles[self.active].id),
+            agent_sql: self.agent.owns(self.consoles[self.active].id),
+            agent_access: self.agent.tab_access(self.consoles[self.active].id),
+            agent_tasks: self.agent.tab_tasks(self.consoles[self.active].id),
         };
         let ratio = self.editor_ratio;
         let focused = !self.navigator_focused;
@@ -1424,9 +1461,56 @@ impl App {
         }
     }
 
+    /// Writes the effective key of an agent command, or its path in the palette.
+    pub(super) fn agent_shortcut(
+        &self,
+        action: crate::input::Action,
+        name: &str,
+        entry: &str,
+    ) -> Option<String> {
+        self.shown_key(action)
+            .map(|key| format!("{key}: {name}"))
+            .or_else(|| {
+                self.shown_key(crate::input::Action::OpenPalette)
+                    .map(|key| format!("{key} > {entry}"))
+            })
+    }
+
+    /// Returns the MCP row while an item waits for the user or an agent task runs.
+    fn agent_bar(&self) -> Option<crate::ui::agent::Bar> {
+        let access = self.agent.pending_access();
+        let proposals = self.agent.pending_proposals();
+        let tasks = self.agent.active_tasks();
+        if access + proposals + tasks == 0 {
+            return None;
+        }
+        let (action, name, entry) = if access != 0 {
+            (
+                crate::input::Action::AgentSessions,
+                "sessions",
+                "Agent sessions",
+            )
+        } else {
+            (
+                crate::input::Action::AgentReview,
+                "review",
+                "Review agent changes",
+            )
+        };
+        let shortcut = (access + proposals != 0).then(|| self.agent_shortcut(action, name, entry));
+        Some(crate::ui::agent::Bar {
+            items: text::agent_bar(access, proposals, tasks),
+            shortcut: shortcut.flatten(),
+            review: access + proposals != 0,
+            stop: tasks != 0,
+        })
+    }
+
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
         let panel = self.status_panel();
         let data = (self.budget.used(), self.budget.limit());
+        let agent = self.agent.status_label();
+        let agent = agent.as_deref();
         if let Some(tab) = self.compare() {
             let view = tab.result.view;
             let position =
@@ -1448,6 +1532,7 @@ impl App {
                     .map(|manager| manager.usage(target.connection)),
                 data,
                 position,
+                agent,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1469,6 +1554,7 @@ impl App {
                     .map(|manager| manager.usage(tab.connection)),
                 data,
                 position: None,
+                agent,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1493,6 +1579,7 @@ impl App {
                     .map(|manager| manager.usage(tab.connection)),
                 data,
                 position,
+                agent,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1510,6 +1597,7 @@ impl App {
                 pool: None,
                 data,
                 position: None,
+                agent,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1547,6 +1635,7 @@ impl App {
                 .map(|(id, manager)| manager.usage(id)),
             data,
             position,
+            agent,
         };
         draw_statusline(frame, area, &status, &self.theme);
     }

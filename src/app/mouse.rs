@@ -55,6 +55,12 @@ impl App {
         }
         let position = Position::new(mouse.column, mouse.row);
         match mouse.kind {
+            // The access card is above the panels, so it takes their clicks.
+            MouseEventKind::Down(MouseButton::Left)
+                if self.layout.agent_card.area.contains(position) =>
+            {
+                self.on_agent_card(position);
+            }
             MouseEventKind::Down(MouseButton::Left) => self.on_press(mouse, position),
             MouseEventKind::Drag(MouseButton::Left) if self.drag.is_some() => self.on_drag(mouse),
             MouseEventKind::Up(_) if self.drag.is_some() => self.drag = None,
@@ -96,11 +102,15 @@ impl App {
             self.drag = Some(Drag::Navigator);
         } else if layout.quit.contains(position) {
             self.request_exit();
-        } else if layout.agent_access.contains(position) {
-            if self.command_available(Action::AgentSessions) {
+        } else if layout.agent_bar.review.contains(position) {
+            self.pending_key = None;
+            self.command_page = None;
+            self.review_agent_next();
+        } else if layout.agent_bar.stop.contains(position) {
+            if self.command_available(Action::AgentStop) {
                 self.pending_key = None;
                 self.command_page = None;
-                self.perform(Action::AgentSessions, false);
+                self.perform(Action::AgentStop, false);
             }
         } else if let Some(tab) = main_tab_at(&layout.main_tabs, position) {
             if tab.close.is_some_and(|close| mouse.column >= close) {
@@ -340,6 +350,10 @@ impl App {
             Control::Commit => Action::Commit,
             Control::Rollback => Action::Rollback,
             Control::Schema => Action::ChooseSchema,
+            Control::NewConsole => Action::AgentSqlToConsole,
+            Control::Clear => Action::AgentSqlClear,
+            Control::Access => Action::AgentSession,
+            Control::Tasks => Action::AgentTasks,
         };
         self.perform(action, false);
     }

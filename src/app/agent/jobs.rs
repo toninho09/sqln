@@ -6,6 +6,7 @@ use crate::app::auth::Use;
 use crate::catalog::{ObjectKind, RelationRef};
 use crate::exec::{AgentMetadata, ExecEvent, ExecutionEnd, StatementStatus};
 use crate::sql::{Dialect, split};
+use crate::ui::text;
 use serde_json::{Value, json};
 
 impl State {
@@ -18,7 +19,7 @@ impl State {
         options: RunOptions,
     ) -> ExecutionId {
         if let Some(cancel) = self.retired.get(&console) {
-            return manager.run_agent(console, statements, options, cancel.clone(), true);
+            return manager.run_agent(console, statements, options, cancel.clone(), true, true);
         }
         if let Some(job) = self.jobs.values_mut().find(|job| {
             job.consoles.contains(&console)
@@ -27,7 +28,7 @@ impl State {
         }) {
             job.state = "running";
             let execution =
-                manager.run_agent(console, statements, options, job.cancel.clone(), true);
+                manager.run_agent(console, statements, options, job.cancel.clone(), true, true);
             job.executions.retain(|(id, _)| *id != console);
             job.executions.push((console, execution));
             job.ends.remove(&console);
@@ -76,7 +77,6 @@ impl App {
                 .map(|(id, _)| id.clone())
         {
             self.agent.jobs.remove(&old);
-            self.agent.relations.remove(&old);
         }
         let connections = connections
             .into_iter()
@@ -153,7 +153,10 @@ impl App {
                 output,
                 artifact: None,
                 results: Vec::new(),
+                statements: Vec::new(),
+                rows: rows_of(None),
                 serial: self.agent.serial,
+                created: Instant::now(),
                 _hold: Some(hold),
             },
         );
@@ -166,6 +169,7 @@ impl App {
         console: ConsoleId,
         draft: Draft,
         output: Output,
+        rows: usize,
     ) -> Reply {
         let index = self.agent_target(console)?;
         let connection = self.consoles[index].connection.ok_or_else(missing)?;
@@ -178,6 +182,7 @@ impl App {
             ));
         }
         let internal = draft.internal;
+        let read_only = draft.read_only;
         let raw = draft.split;
         // The split keeps a second copy of the text while it runs.
         let reserved = match (internal, raw) {
@@ -194,6 +199,7 @@ impl App {
             Some(draft),
             output,
         )?;
+        self.agent.jobs.get_mut(&job).expect("new job").rows = rows;
         if let Some(statements) = statements {
             self.agent.jobs.get_mut(&job).expect("new job").state = "validating";
             let sender = self.agent.sender.clone();
@@ -212,8 +218,13 @@ impl App {
                         }),
                         None => statements,
                     };
-                    let result = agent::policy::validate(&statements, dialect)
-                        .map(|()| raw.is_some().then_some(statements));
+                    // Full access keeps the split and leaves the checks to the database.
+                    let checked = if read_only {
+                        agent::policy::validate(&statements, dialect)
+                    } else {
+                        Ok(())
+                    };
+                    let result = checked.map(|()| raw.is_some().then_some(statements));
                     let _ = sender.send(Work::Validated(key, result));
                 });
         }
@@ -226,6 +237,8 @@ impl App {
         console: ConsoleId,
         sql: &str,
         parameters: &[agent::Binding],
+        explain: Option<agent::ExplainMode>,
+        rows: usize,
     ) -> Reply {
         if self
             .agent
@@ -241,6 +254,12 @@ impl App {
         let index = self.agent_target(console)?;
         let dialect = self.consoles[index].editor.dialect();
         let parameters = bindings(parameters)?;
+        let explain = explain
+            .map(|mode| {
+                crate::plan::Explain::new(dialect, mode == agent::ExplainMode::Analyze)
+                    .ok_or_else(supported)
+            })
+            .transpose()?;
         let options = RunOptions {
             schema: self.consoles[index].schema.clone(),
             parameters,
@@ -259,11 +278,14 @@ impl App {
                 plan,
                 options,
                 revision: None,
-                explain: None,
+                explain,
                 internal: false,
                 split: Some(dialect),
+                read_only: self.agent.level(session) != Some(Level::Full),
+                confirmed: false,
             },
             Output::Query,
+            rows,
         )
     }
 
@@ -273,7 +295,8 @@ impl App {
         console: ConsoleId,
         revision: u64,
         range: Option<&agent::Range>,
-        analyze: Option<bool>,
+        explain: Option<agent::ExplainMode>,
+        rows: usize,
     ) -> Reply {
         let index = self.agent_target(console)?;
         if self.consoles[index].editor.revision() != revision {
@@ -285,7 +308,7 @@ impl App {
             .parameters
             .values(&plan.statements, dialect)
             .map_err(|message| Error::new("parameters_required", &message))?;
-        let explain = if let Some(analyze) = analyze {
+        let explain = if let Some(mode) = explain {
             if plan.statements.len() != 1 {
                 return Err(Error::new(
                     "one_statement_required",
@@ -293,7 +316,7 @@ impl App {
                 ));
             }
             Some(
-                crate::plan::Explain::new(self.consoles[index].editor.dialect(), analyze)
+                crate::plan::Explain::new(dialect, mode == agent::ExplainMode::Analyze)
                     .ok_or_else(supported)?,
             )
         } else {
@@ -314,8 +337,11 @@ impl App {
                 explain,
                 internal: false,
                 split: None,
+                read_only: self.agent.level(session) != Some(Level::Full),
+                confirmed: false,
             },
             Output::Query,
+            rows,
         )
     }
 
@@ -334,10 +360,52 @@ impl App {
             let job = &self.agent.jobs[&id];
             (job.consoles[0], job.connections[0].0)
         };
+        // A write of a session with full access asks the questions of a user run.
+        let question = self.agent.jobs[&id]
+            .draft
+            .as_ref()
+            .filter(|draft| !draft.read_only && !draft.confirmed)
+            .and_then(|draft| self.run_warning(connection, &draft.plan));
+        if let Some(body) = question {
+            let session = self.agent.jobs[&id].session.clone();
+            self.agent.jobs.get_mut(&id).expect("ready job").state = "waiting_confirmation";
+            self.show_dialog(
+                text::TITLE_CONFIRM_RUN,
+                text::agent_run_question(&self.agent.client(&session), &body),
+                vec![
+                    (
+                        text::OPTION_CANCEL,
+                        DialogAction::AgentRun(id.clone(), false),
+                    ),
+                    (text::OPTION_RUN, DialogAction::AgentRun(id, true)),
+                ],
+            );
+            return;
+        }
         if let Some(job) = self.agent.jobs.get_mut(&id) {
             job.state = "waiting_credentials";
         }
         self.authorize(connection, Use::Agent { console, job: id });
+    }
+
+    /// Applies the user's answer to the run question of a session with full access.
+    pub(in crate::app) fn agent_run_decision(&mut self, id: &str, run: bool) {
+        let Some(job) = self
+            .agent
+            .jobs
+            .get_mut(id)
+            .filter(|job| job.state == "waiting_confirmation")
+        else {
+            return;
+        };
+        if !run {
+            self.terminate_agent_job(id, "cancelled", text::AGENT_RUN_REFUSED);
+            return;
+        }
+        if let Some(draft) = &mut job.draft {
+            draft.confirmed = true;
+        }
+        job.state = "ready";
     }
 
     /// The credential response must still match the original target and session.
@@ -395,9 +463,20 @@ impl App {
                 draft.options.clone(),
                 job.cancel.clone(),
                 draft.internal || draft.explain.is_some(),
+                draft.read_only,
             );
             job.executions.push((console, execution));
+            let session = job.session.clone();
             if let Some(index) = self.console_index(console) {
+                if !self.agent.owns(console) {
+                    let notice = text::agent_ran(
+                        &self.agent.client(&session),
+                        &crate::grid::printable(&self.consoles[index].name),
+                        draft.read_only,
+                    );
+                    let connection = self.consoles[index].connection;
+                    self.agent_notice(&session, connection, notice);
+                }
                 self.consoles[index]
                     .ran_parameters
                     .clone_from(&draft.options.parameters);
@@ -411,7 +490,6 @@ impl App {
             }
         } else {
             let connection = job.connections[0].0;
-            let relation = self.agent.relations.get(id).cloned();
             let schemas = self
                 .connections
                 .iter()
@@ -423,7 +501,6 @@ impl App {
                 console,
                 connection,
                 id.to_owned(),
-                relation,
                 schemas,
                 job.cancel.clone(),
             );
@@ -436,7 +513,7 @@ impl App {
     pub(in crate::app) fn fail_agent_job(&mut self, id: &str, message: &str) {
         self.terminate_agent_job(id, "failed", message);
     }
-    fn terminate_agent_job(&mut self, id: &str, state: &'static str, message: &str) {
+    pub(super) fn terminate_agent_job(&mut self, id: &str, state: &'static str, message: &str) {
         let Some(job) = self.agent.jobs.get_mut(id) else {
             return;
         };
@@ -467,11 +544,15 @@ impl App {
                 }
             }
         }
-        self.notify_agent(
+        let kind = task_kind(&self.agent.jobs[id].output);
+        self.agent_log(
             &session,
-            connection,
-            &format!("Agent task {id} {state}: {message}"),
+            Some(connection),
+            &text::agent_task_note(kind, short(id), state, Some(message)),
         );
+        if state == "failed" {
+            self.status = Some(text::agent_failed(&self.agent.client(&session), kind));
+        }
     }
 
     pub(in crate::app) fn cancel_agent_console(&mut self, console: ConsoleId) -> bool {
@@ -541,18 +622,29 @@ impl App {
                 {
                     match diff {
                         Ok(text) => {
+                            proposal.lines = crate::ui::agent::diff_counts(&text.value);
                             proposal.diff = Some(text);
                             proposal.state = "pending";
-                            self.status = Some(
-                                "Agent edit proposed. Open Review agent changes in the command palette.".into(),
-                            );
+                            let (session, console) = (proposal.session.clone(), proposal.console);
+                            let name = self
+                                .console_index(console)
+                                .map_or_else(String::new, |index| {
+                                    crate::grid::printable(&self.consoles[index].name)
+                                });
+                            let notice = text::agent_proposed(&self.agent.client(&session), &name);
+                            let connection = self.console_connection(console);
+                            self.agent_notice(&session, connection, notice);
                         }
                         Err(_) => {
                             proposal.state = "budget_reached";
                             proposal.edits.clear();
                             proposal._hold = None;
-                            self.status = Some(
-                                "Agent edit discarded: its diff exceeds the memory budget. Ask the agent for a smaller edit.".into(),
+                            let (session, console) = (proposal.session.clone(), proposal.console);
+                            let connection = self.console_connection(console);
+                            self.agent_notice(
+                                &session,
+                                connection,
+                                text::AGENT_DISCARDED_BUDGET.into(),
                             );
                         }
                     }
@@ -576,10 +668,18 @@ impl App {
         {
             match event {
                 ExecEvent::StatementFinished {
-                    status: StatementStatus::Error(message),
-                    ..
+                    key, status, end, ..
                 } => {
-                    job.message = Some(message.clone());
+                    if let StatementStatus::Error(message) = status {
+                        job.message = Some(message.clone());
+                    }
+                    if matches!(job.output, Output::Query)
+                        && *status != StatementStatus::NotExecuted
+                        && job.statements.len() < STATEMENTS
+                    {
+                        job.statements
+                            .push(statement_value(key.index, status, end.as_ref()));
+                    }
                 }
                 ExecEvent::ExecutionFinished { end, message, .. } => {
                     job.ends.insert(console, *end);
@@ -628,23 +728,57 @@ impl App {
                 }
             }
         }
-        self.notify_agent(&session, connection, &format!("Agent task {id} completed."));
+        let kind = task_kind(&self.agent.jobs[id].output);
+        self.agent_log(
+            &session,
+            Some(connection),
+            &text::agent_task_note(kind, short(id), "completed", None),
+        );
     }
 
-    fn notify_agent(&mut self, session: &str, connection: ConnectionId, message: &str) {
-        let own = self.consoles.iter().position(|console| {
-            console.connection == Some(connection)
-                && self
-                    .agent
-                    .owned
-                    .get(&console.id)
-                    .is_some_and(|owner| owner == session)
-        });
-        if let Some(index) = own {
+    /// Writes a note in the Messages of the session's agent tab for a connection. Without
+    /// that tab, it uses the last agent tab of the session. No tab opens for a note.
+    pub(super) fn agent_log(
+        &mut self,
+        session: &str,
+        connection: Option<ConnectionId>,
+        message: &str,
+    ) {
+        let owned = |console: &crate::console::Console| {
+            self.agent
+                .owned
+                .get(&console.id)
+                .is_some_and(|owner| owner == session)
+        };
+        let index = connection
+            .and_then(|connection| {
+                self.consoles
+                    .iter()
+                    .position(|console| console.connection == Some(connection) && owned(console))
+            })
+            .or_else(|| self.consoles.iter().rposition(owned));
+        if let Some(index) = index {
             self.consoles[index]
                 .messages
                 .note(crate::console::MessageLevel::Info, message, None);
         }
+    }
+
+    /// Shows a notice of an agent action in the status bar and in the session's Messages.
+    pub(super) fn agent_notice(
+        &mut self,
+        session: &str,
+        connection: Option<ConnectionId>,
+        message: String,
+    ) {
+        self.agent_log(session, connection, &message);
+        self.status = Some(message);
+    }
+
+    /// Returns the connection of a console, for the notices of its agent actions.
+    pub(super) fn console_connection(&self, console: ConsoleId) -> Option<ConnectionId> {
+        self.console_index(console)
+            .and_then(|index| self.consoles[index].connection)
     }
 
     pub(in crate::app) fn poll_agent_jobs(&mut self) {
@@ -678,6 +812,8 @@ impl App {
                     self.complete_agent_job(&id, None);
                     continue;
                 }
+                // A catalog read has no execution, so it never waits here.
+                Output::Catalog(..) => Ok(None),
                 Output::Ddl(target, name, dialect) => {
                     let (target, name, dialect) = (target.clone(), name.clone(), *dialect);
                     let console = job.consoles[0];
@@ -732,7 +868,6 @@ impl App {
                         }) as Box<dyn FnOnce() + Send>)
                     })
                 }
-                _ => Ok(None),
             };
             match result {
                 Ok(Some(work)) => {
@@ -851,15 +986,6 @@ impl App {
                 self.on_catalog_loaded(connection, read, Ok(catalog));
                 serde_json::to_string(&value).map_err(|_| "Cannot encode the catalog.".to_owned())
             }
-            Ok(AgentMetadata::Columns(columns)) => {
-                if let Output::Generate(template, qualified, dialect) = &job.output {
-                    Ok(crate::generate::generate(
-                        *template, *dialect, qualified, &columns,
-                    ))
-                } else {
-                    Err("The metadata response has the wrong type.".into())
-                }
-            }
             Err(message) => Err(message),
         };
         match text.and_then(|text| Text::new(text, &self.budget).map_err(|error| error.message)) {
@@ -917,55 +1043,12 @@ impl App {
                 explain: None,
                 internal: true,
                 split: None,
+                read_only: true,
+                confirmed: false,
             },
             Output::Ddl(target, label, dialect),
+            0,
         )
-    }
-
-    pub(in crate::app) fn agent_generate(
-        &mut self,
-        session: &str,
-        connection: ConnectionId,
-        schema: &str,
-        table: &str,
-        template: &str,
-    ) -> Reply {
-        let dialect = self.connection(connection).ok_or_else(missing)?.dialect;
-        if dialect == Dialect::Redis {
-            return Err(supported());
-        }
-        let template = match template {
-            "select_all" => crate::generate::Template::SelectAll,
-            "select_columns" => crate::generate::Template::SelectColumns,
-            "insert" => crate::generate::Template::Insert,
-            "update" => crate::generate::Template::Update,
-            "delete" => crate::generate::Template::Delete,
-            _ => return Err(supported()),
-        };
-        let qualified = crate::generate::qualified_name(Some(schema), table, dialect);
-        let console = self.agent_console(session, connection, None)?;
-        self.agent_target(console)?;
-        let job = self.new_agent_job(
-            session,
-            vec![console],
-            vec![connection],
-            None,
-            Output::Generate(template, qualified.clone(), dialect),
-        )?;
-        if template.needs_columns() {
-            self.agent.relations.insert(
-                job.clone(),
-                RelationRef {
-                    schema: schema.into(),
-                    relation: table.into(),
-                },
-            );
-        } else {
-            let text = crate::generate::generate(template, dialect, &qualified, &[]);
-            let artifact = Text::new(text, &self.budget)?;
-            self.complete_agent_job(&job, Some(artifact));
-        }
-        self.agent_job_reply(session, &job)
     }
 
     pub(in crate::app) fn agent_diagram(
@@ -1011,6 +1094,8 @@ impl App {
         };
         tab.phase = Phase::Waiting;
         tab.agent = true;
+        let notice = text::agent_opened(&self.agent.client(session), &tab.label());
+        self.agent_notice(session, Some(connection), notice);
         self.diagrams.push(tab);
         self.agent.jobs.get_mut(&job).expect("new job").state = "waiting_credentials";
         self.authorize(
@@ -1031,6 +1116,7 @@ impl App {
         target: &agent::Side,
         removals: bool,
         kind: crate::compare::Kind,
+        rows: usize,
     ) -> Reply {
         let sides = [source, target]
             .map(|side| {
@@ -1055,7 +1141,7 @@ impl App {
             let connection = side.connection;
             let read = self
                 .connection(connection)
-                .map(|item| (item.dialect, format!("Agent: {}", item.plain_name())))
+                .map(|item| (item.dialect, text::agent_tab_label(item.plain_name())))
                 .and_then(|(dialect, name)| {
                     let console = self.manager.as_mut()?.open_console(connection)?;
                     Some(crate::compare::tab::SideRead::new(
@@ -1108,8 +1194,13 @@ impl App {
         };
         tab.agent = true;
         tab.begin(&self.budget);
+        let notice = text::agent_opened(&self.agent.client(session), &tab.label());
+        let connection = tab.sides[0].side.connection;
+        self.agent_notice(session, Some(connection), notice);
         self.compares.push(tab);
-        self.agent.jobs.get_mut(&job).expect("new job").state = "waiting_credentials";
+        let item = self.agent.jobs.get_mut(&job).expect("new job");
+        item.state = "waiting_credentials";
+        item.rows = rows;
         for (console, connection, schema, statements) in requests {
             self.authorize(
                 connection,
@@ -1124,6 +1215,50 @@ impl App {
         }
         self.agent_job_reply(session, &job)
     }
+}
+
+/// Names the kind of a task in notices.
+pub(super) fn task_kind(output: &Output) -> &'static str {
+    match output {
+        Output::Query => "Query",
+        Output::Ddl(..) => "DDL read",
+        Output::Diagram(_) => "Diagram",
+        Output::Compare(_) => "Comparison",
+        Output::Catalog(..) => "Catalog read",
+    }
+}
+
+/// The statement ends that a task keeps for its reply.
+const STATEMENTS: usize = 100;
+
+/// Writes the end of one statement: its state, and its rows or changed rows.
+fn statement_value(
+    index: usize,
+    status: &StatementStatus,
+    end: Option<&crate::connector::StatementEnd>,
+) -> Value {
+    let state = match status {
+        StatementStatus::Running => "running",
+        StatementStatus::Success => "success",
+        StatementStatus::Error(_) => "error",
+        StatementStatus::NotExecuted => "not_executed",
+        StatementStatus::Stopped => "stopped",
+        StatementStatus::Timeout => "timeout",
+        StatementStatus::Unknown => "unknown",
+    };
+    let mut value = json!({"index": index, "status": state});
+    if let StatementStatus::Error(message) = status {
+        value["error"] = json!(crate::grid::printable(message));
+    }
+    if let Some(end) = end {
+        if end.has_columns {
+            value["rows"] = json!(end.rows);
+        }
+        if let Some(changed) = end.changed {
+            value["changed_rows"] = json!(changed);
+        }
+    }
+    value
 }
 
 fn bindings(values: &[agent::Binding]) -> Result<Vec<crate::sql::parameters::Parameter>, Error> {

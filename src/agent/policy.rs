@@ -10,7 +10,7 @@ use std::ops::ControlFlow;
 fn refused() -> Error {
     Error::new(
         "read_only_refused",
-        "This command is not a supported read. Use a known read query without session changes, locks, or unknown functions.",
+        "This command is not a supported read. Without full access, assistants run only known reads, without writes, session changes, locks, or unknown functions. Send other SQL with edit_console: the user reviews and runs it. The user can also give full access in SQLN.",
     )
 }
 

@@ -41,6 +41,14 @@ pub enum Control {
     Commit,
     Rollback,
     Schema,
+    /// Copies the SQL of an agent tab to a new user console.
+    NewConsole,
+    /// Empties the SQL of an agent tab.
+    Clear,
+    /// Opens the session dialog of an agent tab.
+    Access,
+    /// Lists the tasks of the session of an agent tab.
+    Tasks,
 }
 
 /// The screen areas of the last frame. The mouse uses them.
@@ -69,6 +77,14 @@ pub struct BarData<'a> {
     pub title: bool,
     /// The first screen, for a console without text.
     pub welcome: Option<Welcome>,
+    /// True for an agent console without SQL. It shows its messages and results, without an editor.
+    pub agent: bool,
+    /// True for an agent console. With SQL, its bar offers Run, New console, and Clear.
+    pub agent_sql: bool,
+    /// The access button of an agent console with a live session, such as `Access: Allow`.
+    pub agent_access: Option<String>,
+    /// The active tasks of the session of an agent console, on all its connections.
+    pub agent_tasks: usize,
 }
 
 /// Draws the title of a panel. The title of the panel with the focus has its own style.
@@ -91,6 +107,55 @@ fn control_items(console: &Console, bar: &BarData, theme: &Theme) -> Vec<(Contro
     } else {
         text::MODE_AUTO
     };
+    let stop = (
+        Control::Stop,
+        theme.tool(icons.stop, text::CONTROL_STOP),
+        !idle,
+    );
+    // The session buttons of an agent tab go last, so a narrow bar drops them first. Tasks
+    // goes before Access because a running task can need a stop. The palette keeps both.
+    let session = bar.agent_access.as_ref().map(|access| {
+        [
+            (
+                Control::Tasks,
+                theme.button(&text::agent_tasks_button(bar.agent_tasks)),
+                bar.agent_tasks != 0,
+            ),
+            (Control::Access, theme.button(access), true),
+        ]
+    });
+    if bar.agent {
+        let mut items = vec![stop];
+        items.extend(session.into_iter().flatten());
+        return items;
+    }
+    if bar.agent_sql {
+        // Auto mode only. Commit and Rollback stay for a transaction that the user opened.
+        let mut items = vec![
+            (Control::Run, theme.tool(icons.run, text::CONTROL_RUN), idle),
+            (
+                Control::NewConsole,
+                theme.button(text::CONTROL_NEW_CONSOLE),
+                true,
+            ),
+            (Control::Clear, theme.button(text::CONTROL_CLEAR), true),
+            stop,
+        ];
+        if bar.transactions && console.in_transaction() {
+            items.push((
+                Control::Commit,
+                theme.tool(icons.commit, text::CONTROL_COMMIT),
+                open,
+            ));
+            items.push((
+                Control::Rollback,
+                theme.tool(icons.rollback, text::CONTROL_ROLLBACK),
+                open,
+            ));
+        }
+        items.extend(session.into_iter().flatten());
+        return items;
+    }
     let mut items = vec![
         (Control::Run, theme.tool(icons.run, text::CONTROL_RUN), idle),
         (
@@ -98,11 +163,7 @@ fn control_items(console: &Console, bar: &BarData, theme: &Theme) -> Vec<(Contro
             theme.tool(icons.script, text::CONTROL_SCRIPT),
             idle,
         ),
-        (
-            Control::Stop,
-            theme.tool(icons.stop, text::CONTROL_STOP),
-            !idle,
-        ),
+        stop,
     ];
     if bar.transactions {
         items.push((Control::Mode, theme.tool(icons.mode, mode), idle));
@@ -183,6 +244,9 @@ pub fn main_tab_label(icon: &str, name: &str, unsaved: bool) -> String {
 pub struct TabView {
     pub label: String,
     pub badge: Option<(String, Style)>,
+    /// True for an agent tab. Agent tabs come last, at the right end of the row when it
+    /// has room, so they stay apart from the other tabs.
+    pub right: bool,
 }
 
 /// Returns the badge of a tab: the mark and the time of a run in progress, or the end
@@ -255,10 +319,17 @@ pub fn draw_main_tabs(
     {
         first += 1;
     }
+    let used: u32 = widths[first..].iter().map(|width| u32::from(*width)).sum();
+    let mut room = u16::try_from(u32::from(area.width).saturating_sub(used)).unwrap_or(0);
     let mut spans = Vec::new();
     let mut tabs = Vec::new();
     let mut x = area.x;
     for (index, view) in views.into_iter().enumerate().skip(first) {
+        if view.right && room > 0 {
+            spans.push(Span::raw(" ".repeat(usize::from(room))));
+            x = x.saturating_add(room);
+            room = 0;
+        }
         let end = x.saturating_add(widths[index]).min(area.right());
         // The close mark and the column after it close the tab, so a click has two columns.
         let close = x.saturating_add(widths[index].saturating_sub(2));
@@ -334,15 +405,24 @@ pub fn draw_console(
     const BAR_ROWS: u16 = 3;
     let title_rows = u16::from(bar.title);
     let shared = area.height.saturating_sub(BAR_ROWS + title_rows);
-    let parameter_rows = super::parameters::height(&console.parameters, shared);
-    let editor_rows = u16::try_from(
-        u32::from(shared.saturating_sub(parameter_rows)) * u32::from(editor_ratio) / 100,
-    )
-    .unwrap_or(0);
+    let parameter_rows = if bar.agent {
+        0
+    } else {
+        super::parameters::height(&console.parameters, shared)
+    };
+    let editor_rows = if bar.agent {
+        0
+    } else {
+        u16::try_from(
+            u32::from(shared.saturating_sub(parameter_rows)) * u32::from(editor_ratio) / 100,
+        )
+        .unwrap_or(0)
+        .max(1)
+    };
     let [title, controls, editor, parameters, tabs, results, summary] = Layout::vertical([
         Constraint::Length(title_rows),
         Constraint::Length(1),
-        Constraint::Length(editor_rows.max(1)),
+        Constraint::Length(editor_rows),
         Constraint::Length(parameter_rows),
         Constraint::Length(1),
         Constraint::Min(0),
@@ -354,19 +434,27 @@ pub fn draw_console(
     if bar.title {
         let chosen = console.schema.as_deref().or(bar.default_schema);
         let schema = chosen.filter(|_| bar.namespace != Namespace::None);
-        let parts: Vec<&str> = [Some(bar.connection), schema, Some(console.name.as_str())]
-            .into_iter()
-            .flatten()
-            .collect();
+        let sql = (bar.agent_sql && !bar.agent).then_some(text::AGENT_SQL_TITLE);
+        let parts: Vec<&str> = [
+            Some(bar.connection),
+            schema,
+            Some(console.name.as_str()),
+            sql,
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
         let path = printable(&parts.join(" › "));
         draw_panel_title(frame, title, &path, editor_focused, theme);
     }
     let control_buttons = draw_buttons(frame, controls, control_items(console, bar, theme), theme);
-    draw_editor(frame, editor, &mut console.editor, editor_focused, theme);
+    if !bar.agent {
+        draw_editor(frame, editor, &mut console.editor, editor_focused, theme);
+    }
     if let Some(welcome) = bar
         .welcome
         .as_ref()
-        .filter(|_| console.editor.search().is_none())
+        .filter(|_| console.editor.search().is_none() && !bar.agent)
     {
         draw_welcome(frame, editor, welcome, theme);
     }
@@ -931,6 +1019,21 @@ pub fn draw_overlay(
     scroll: usize,
     theme: &Theme,
 ) -> usize {
+    draw_overlay_styled(frame, title, contents, footer, scroll, theme, |_| {
+        Style::new()
+    })
+}
+
+/// Draws a long text. `style` takes the first characters of the line of each row.
+pub fn draw_overlay_styled(
+    frame: &mut Frame,
+    title: &str,
+    contents: &mut WrappedText,
+    footer: &str,
+    scroll: usize,
+    theme: &Theme,
+    style: impl Fn(&str) -> Style,
+) -> usize {
     let area = frame.area();
     let box_area = overlay_area(area);
     frame.render_widget(Clear, box_area);
@@ -943,7 +1046,8 @@ pub fn draw_overlay(
         .map_while(|index| {
             let row = printable(contents.row(index)?);
             let indent = contents.row_indent(index);
-            Some(Line::raw(format!("{:indent$}{row}", "")))
+            let row_style = style(&contents.line_head(index, 3));
+            Some(Line::styled(format!("{:indent$}{row}", ""), row_style))
         })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(rows).block(block), box_area);

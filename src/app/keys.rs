@@ -463,6 +463,11 @@ impl App {
             Action::AgentSessions => self.open_agent_sessions(),
             Action::AgentReview => self.open_agent_proposals(),
             Action::AgentDirect => self.toggle_agent_direct(),
+            Action::AgentStop => self.stop_agent_tasks(),
+            Action::AgentSqlToConsole => self.agent_sql_to_console(),
+            Action::AgentSqlClear => self.agent_sql_clear(),
+            Action::AgentSession => self.open_tab_agent_session(),
+            Action::AgentTasks => self.open_agent_tasks(),
             Action::Run => self.run(RunTarget::Statements(RunScope::Default)),
             Action::RunScript => self.run(RunTarget::Statements(RunScope::Script)),
             Action::Explain => self.run(RunTarget::Plan { analyze: false }),
@@ -944,7 +949,8 @@ impl App {
                     return;
                 }
                 let console = &self.consoles[index];
-                let manual = console.manual;
+                // An agent tab runs in Auto mode: an open transaction would block the agent.
+                let manual = console.manual && !self.agent.owns(console.id);
                 let schema = console.schema.clone();
                 // A console can keep its manual mode when it moves to another source.
                 let options = RunOptions {
@@ -1469,6 +1475,12 @@ impl App {
             Action::AgentSessions => self.agent.has_sessions(),
             Action::AgentReview => self.agent.has_proposals(),
             Action::AgentDirect => !in_table && !self.home(),
+            Action::AgentStop => self.agent.active_tasks() != 0,
+            Action::AgentSqlToConsole | Action::AgentSqlClear => {
+                !in_table && self.agent.owns(console.id) && !console.editor.is_blank()
+            }
+            Action::AgentSession => !in_table && self.agent.tab_session(console.id).is_some(),
+            Action::AgentTasks => !in_table && self.agent.tab_tasks(console.id) != 0,
             Action::OpenPalette => false,
             Action::ContextCommands => self.context_region().is_some(),
             Action::Run | Action::RunScript => {
@@ -1486,7 +1498,7 @@ impl App {
                 (None, None, Some(tab)) => tab.is_busy(),
                 (None, None, None) => !idle,
             },
-            Action::ToggleMode => !in_table && idle && transactions,
+            Action::ToggleMode => !in_table && idle && transactions && !self.agent.owns(console.id),
             Action::Commit => {
                 !in_table
                     && idle
@@ -1629,7 +1641,7 @@ impl App {
 /// Returns true for an action that acts on the home screen: a command of the explorer,
 /// or a command that needs no tab.
 fn home_allows(action: Action) -> bool {
-    if action == Action::AgentSessions {
+    if matches!(action, Action::AgentSessions | Action::AgentStop) {
         return true;
     }
     use Action::*;

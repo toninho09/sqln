@@ -88,15 +88,17 @@ Its configuration reader uses driver-independent connector target types.
 
 ### Local assistant operations
 
-`sqln mcp` runs without a terminal. It discovers private Unix sockets and uses an explicit instance UUID for each call.
+`sqln mcp` runs without a terminal. It discovers private Unix sockets. It uses the instance UUID of the call, or the only open instance.
+The bridge waits for task ends with repeated state reads. Each IPC request still gets one immediate answer.
 The SQLN process owns authorization and application state. Its IPC thread sends typed requests through a bounded queue.
 The interface processes at most eight requests or 2 ms per frame. It never waits for a database operation.
-Assistant executions carry a cancellation token and an immutable read-only policy. They never inherit a user's reserved transaction.
-A parser policy checks submitted SQL; native connector read-only controls provide a second check.
+Assistant executions carry a cancellation token and a read-only flag. They never inherit a user's reserved transaction, and never leave one open.
+Without full access, a parser policy checks submitted SQL; native connector read-only controls provide a second check.
+Full access removes both checks for executions only. A read-only connection and the run questions still apply.
 Catalog, DDL, diagrams, and comparisons reuse existing readers and transformations under the same credential gate.
 Edit proposals use editor revisions and one undo step. Only UI actions approve access, accept proposals, or enable direct editing.
 The shared data budget counts retained snapshots and text artifacts. Results use generation-checked pages without a reread.
-No assistant authorization or direct-edit setting enters saved files. See [MCP](MCP.md) for the complete contract.
+No assistant authorization, remembered access, or direct-edit setting enters saved files. See [MCP](MCP.md) for the complete contract.
 
 ### Files and saving
 

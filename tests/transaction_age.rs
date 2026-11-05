@@ -126,6 +126,7 @@ fn style_of_state(age: Option<Duration>, theme: &Theme) -> Style {
         pool: None,
         data: (0, 1),
         position: None,
+        agent: None,
     };
     let mut terminal = Terminal::new(TestBackend::new(100, 1)).unwrap();
     terminal

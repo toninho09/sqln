@@ -287,12 +287,13 @@ pub struct RunOptions {
 pub(crate) struct AgentRun {
     pub reservation: Result<crate::agent::Hold, crate::agent::Error>,
     pub cancel: tokio_util::sync::CancellationToken,
+    /// False only for a session with full access. A read-only connection stays read-only.
+    pub read_only: bool,
 }
 
 #[derive(Debug)]
 pub enum AgentMetadata {
     Catalog(Catalog),
-    Columns(Vec<String>),
 }
 
 pub struct RunRequest {
@@ -616,6 +617,7 @@ impl Manager {
         mut options: RunOptions,
         cancel: tokio_util::sync::CancellationToken,
         internal: bool,
+        read_only: bool,
     ) -> ExecutionId {
         options.manual = false;
         options.export = None;
@@ -633,6 +635,7 @@ impl Manager {
                         &self.budget,
                     ),
                     cancel,
+                    read_only,
                 }),
                 trace: self.console_trace(console),
                 execution,
@@ -668,7 +671,6 @@ impl Manager {
         console: ConsoleId,
         connection: ConnectionId,
         job: String,
-        relation: Option<RelationRef>,
         schemas: Vec<String>,
         cancel: tokio_util::sync::CancellationToken,
     ) {
@@ -692,10 +694,7 @@ impl Manager {
                 };
                 let metadata = async {
                     lease.session().apply_context(&SessionContext { read_only: true, ..Default::default() }).await.map_err(|error| error.message)?;
-                    match relation {
-                        Some(relation) => lease.session().read_columns(&relation.schema, &relation.relation).await.map(AgentMetadata::Columns),
-                        None => lease.session().read_catalog_of(&schemas).await.map(AgentMetadata::Catalog),
-                    }.map_err(|error| error.message)
+                    lease.session().read_catalog_of(&schemas).await.map(AgentMetadata::Catalog).map_err(|error| error.message)
                 };
                 let limit = binding.settings().sql_timeout;
                 let result = match limit {

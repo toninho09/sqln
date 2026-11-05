@@ -465,6 +465,7 @@ fn main_tabs(width: u16, labels: &[&str], active: usize, theme: &Theme) -> (Stri
         .map(|label| TabView {
             label: (*label).to_owned(),
             badge: None,
+            right: false,
         })
         .collect();
     draw_views(width, views, active, theme)
@@ -497,6 +498,7 @@ fn the_quit_button_stands_at_the_right_end_and_the_tabs_stop_before_it() {
         .map(|index| TabView {
             label: format!("console-{index}"),
             badge: None,
+            right: false,
         })
         .collect();
     let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
@@ -650,10 +652,12 @@ fn a_badge_stands_at_the_start_of_the_tab_and_the_close_mark_stays_at_the_end() 
         TabView {
             label: "one".to_owned(),
             badge,
+            right: false,
         },
         TabView {
             label: "two".to_owned(),
             badge: None,
+            right: false,
         },
     ];
     let (row, tabs) = draw_views(40, views, 0, &theme);
@@ -678,10 +682,12 @@ fn a_tab_with_a_badge_that_the_row_cuts_has_no_close_mark() {
         TabView {
             label: "one".to_owned(),
             badge: None,
+            right: false,
         },
         TabView {
             label: "two".to_owned(),
             badge,
+            right: false,
         },
     ];
     let (_, tabs) = draw_views(20, views, 0, &theme);

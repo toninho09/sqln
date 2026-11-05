@@ -644,7 +644,7 @@ impl App {
         let Some(target) = self.compare().map(|tab| tab.sides[1].side.clone()) else {
             return;
         };
-        self.open_text_console(target.connection, target.schema, &script);
+        self.open_text_console(target.connection, Some(target.schema), &script);
     }
 }
 

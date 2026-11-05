@@ -3,51 +3,126 @@
 use super::*;
 use crate::agent::{Edit, EditMode};
 use crate::grid::printable;
+use crate::ui::text;
 use crate::ui::wrap::WrappedText;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use serde_json::json;
 
 impl App {
+    /// Lists the sessions: the waiting sessions first, then the allowed sessions.
     pub(in crate::app) fn open_agent_sessions(&mut self) {
-        let mut choices: Vec<_> = self
+        let rank = |state: &str| match state {
+            "pending" => 0,
+            "authorized" => 1,
+            _ => 2,
+        };
+        let mut sessions: Vec<_> = self
             .agent
             .sessions
             .iter()
             .filter(|(_, session)| !session.alive.is_cancelled())
+            .collect();
+        sessions.sort_by_key(|(_, session)| (rank(session.state), session.requested));
+        let live: HashSet<_> = sessions
+            .iter()
+            .filter(|(_, session)| session.state == "authorized")
+            .map(|(_, session)| session.client.as_str())
+            .collect();
+        let mut remembered: Vec<_> = self
+            .agent
+            .remembered
+            .iter()
+            .filter(|(client, _)| !live.contains(client.as_str()))
+            .map(|(client, level)| {
+                (
+                    text::agent_remembered_row(&printable(client), level.choice()),
+                    Choice::Remembered(client.clone()),
+                )
+            })
+            .collect();
+        remembered.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut choices: Vec<_> = sessions
+            .into_iter()
             .map(|(id, session)| {
                 (
-                    format!(
-                        "{} [{}] — {}",
-                        printable(&session.client),
-                        &id[..8.min(id.len())],
-                        session.state
+                    text::agent_session_row(
+                        &printable(&session.client),
+                        short(id),
+                        session.state,
+                        session.level.choice(),
+                        self.agent.session_tasks(id),
                     ),
                     Choice::Session(id.clone()),
                 )
             })
             .collect();
-        choices.sort_by(|a, b| a.0.cmp(&b.0));
+        choices.extend(remembered);
         self.agent_picker("Agent sessions", choices);
     }
     pub(in crate::app) fn open_agent_proposals(&mut self) {
         let choices = self
             .agent
-            .proposals
-            .iter()
-            .filter(|(_, proposal)| proposal.state == "pending")
-            .map(|(id, proposal)| {
-                let name = self
-                    .consoles
-                    .iter()
-                    .find(|console| console.id == proposal.console)
-                    .map_or("Closed console", |console| console.name.as_str());
+            .pending_proposal_ids()
+            .into_iter()
+            .map(|id| {
+                let proposal = &self.agent.proposals[&id];
                 (
-                    format!("{} — revision {}", printable(name), proposal.revision),
-                    Choice::Proposal(id.clone()),
+                    text::agent_proposal_row(
+                        &printable(&self.proposal_console_name(proposal.console)),
+                        &self.agent.client(&proposal.session),
+                        proposal.revision,
+                    ),
+                    Choice::Proposal(id),
                 )
             })
             .collect();
         self.agent_picker("Review agent changes", choices);
+    }
+    /// Opens the session dialog of the active agent tab: change the access or revoke it.
+    pub(in crate::app) fn open_tab_agent_session(&mut self) {
+        match self.agent.tab_session(self.console().id).map(str::to_owned) {
+            Some(session) => self.open_agent_access(&session),
+            None => self.status = Some(text::AGENT_NO_SESSION.into()),
+        }
+    }
+    /// Lists the active tasks of the session of the active agent tab, on all connections.
+    pub(in crate::app) fn open_agent_tasks(&mut self) {
+        let Some(session) = self.agent.tab_session(self.console().id) else {
+            self.status = Some(text::AGENT_NO_SESSION.into());
+            return;
+        };
+        let choices = self
+            .agent
+            .session_task_ids(session)
+            .into_iter()
+            .map(|id| {
+                let job = &self.agent.jobs[&id];
+                (
+                    text::agent_task_row(
+                        jobs::task_kind(&job.output),
+                        short(&id),
+                        job.state,
+                        job.created.elapsed().as_secs(),
+                    ),
+                    Choice::Task(id),
+                )
+            })
+            .collect();
+        self.agent_picker(text::AGENT_TASKS_TITLE, choices);
+    }
+    /// Stops one agent task. The session keeps its access.
+    pub(in crate::app) fn stop_agent_task(&mut self, id: &str) {
+        if !self
+            .agent
+            .jobs
+            .get(id)
+            .is_some_and(|job| !finished(job.state))
+        {
+            self.status = Some(text::AGENT_TASK_GONE.into());
+            return;
+        }
+        self.terminate_agent_job(id, "cancelled", text::AGENT_STOP_REASON);
+        self.status = Some(text::agent_stopped(1));
     }
     fn agent_picker(&mut self, title: &str, choices: Vec<(String, Choice)>) {
         if choices.is_empty() {
@@ -65,97 +140,317 @@ impl App {
     }
     pub(in crate::app) fn accept_agent_choice(&mut self, choice: Choice) {
         match choice {
-            Choice::Session(id) => {
-                let Some(session) = self
-                    .agent
-                    .sessions
-                    .get(&id)
-                    .filter(|session| !session.alive.is_cancelled())
-                else {
+            Choice::Session(id) => self.open_agent_access(&id),
+            Choice::Proposal(id) => self.open_agent_review(&id),
+            Choice::Remembered(client) => {
+                let Some(level) = self.agent.remembered.get(&client) else {
                     return;
                 };
-                let authorized = session.state == "authorized";
-                let body = format!(
-                    "Client: {}\nSession: {}\n\nAccess permits reading consoles, loaded data, and catalog metadata. It permits read-only queries and edit proposals.\n\nThe client name is reported, not verified.",
-                    printable(&session.client),
-                    id
-                );
                 self.show_dialog(
-                    if authorized {
-                        "Revoke agent access"
-                    } else {
-                        "Allow agent access"
-                    },
-                    body,
-                    if authorized {
-                        vec![
-                            ("Keep access", DialogAction::Dismiss),
-                            ("Revoke", DialogAction::AgentRevoke(id)),
-                        ]
-                    } else {
-                        vec![
-                            ("Reject", DialogAction::AgentAccess(id.clone(), false)),
-                            ("Allow", DialogAction::AgentAccess(id, true)),
-                        ]
-                    },
+                    text::AGENT_REMEMBERED_TITLE,
+                    text::agent_remembered_body(&printable(&client), level.choice()),
+                    vec![
+                        (text::AGENT_KEEP, DialogAction::Dismiss),
+                        (text::AGENT_FORGET, DialogAction::AgentForget(client)),
+                    ],
                 );
             }
-            Choice::Proposal(id) => {
-                let Some(proposal) = self
-                    .agent
-                    .proposals
-                    .get(&id)
-                    .filter(|proposal| proposal.state == "pending")
-                else {
+            Choice::Task(id) => {
+                let Some(job) = self.agent.jobs.get(&id).filter(|job| !finished(job.state)) else {
+                    self.status = Some(text::AGENT_TASK_GONE.into());
                     return;
                 };
-                let Some(diff) = proposal.diff.as_ref() else {
-                    return;
-                };
-                let title = format!(
-                    "Agent edit — console {} — revision {}",
-                    proposal.console, proposal.revision
+                let body = text::agent_task_body(
+                    &self.agent.client(&job.session),
+                    jobs::task_kind(&job.output),
+                    short(&id),
+                    job.state,
+                    job.created.elapsed().as_secs(),
                 );
-                self.agent.review = Some(crate::ui::agent::Review {
-                    proposal: id,
-                    title,
-                    contents: WrappedText::new(diff.value.clone()),
-                    scroll: 0,
-                    accept: false,
-                    buttons: Default::default(),
-                    _hold: match agent::Hold::new(diff.value.capacity(), &self.budget) {
-                        Ok(hold) => hold,
-                        Err(error) => {
-                            self.status = Some(error.message);
-                            return;
-                        }
-                    },
-                });
+                // Keep has the initial focus, so Enter never stops a task by accident.
+                self.show_dialog(
+                    text::AGENT_TASKS_TITLE,
+                    body,
+                    vec![
+                        (text::AGENT_TASK_KEEP, DialogAction::Dismiss),
+                        (text::AGENT_STOP, DialogAction::AgentStopTask(id)),
+                    ],
+                );
             }
         }
     }
 
-    pub(in crate::app) fn agent_access_decision(&mut self, id: &str, allow: bool) {
+    /// Returns the card of the most urgent agent item that the user did not put off.
+    pub(in crate::app) fn agent_card(&self) -> Option<(Notice, crate::ui::agent::Card)> {
+        use crate::input::Action;
+        let (notice, position, total) = self.agent.notice()?;
+        let card = match &notice {
+            Notice::Access(session) => crate::ui::agent::Card {
+                title: text::AGENT_ACCESS_TITLE,
+                message: text::agent_card(&self.agent.client(session), position, total),
+                shortcut: self.agent_shortcut(Action::AgentSessions, "sessions", "Agent sessions"),
+                primary: text::AGENT_REVIEW,
+                secondary: text::AGENT_LATER,
+            },
+            Notice::Proposal(id) => {
+                let proposal = &self.agent.proposals[id];
+                crate::ui::agent::Card {
+                    title: text::AGENT_PROPOSAL_TITLE,
+                    message: text::agent_proposal_card(
+                        &self.agent.client(&proposal.session),
+                        &printable(&self.proposal_console_name(proposal.console)),
+                        proposal.lines,
+                        position,
+                        total,
+                    ),
+                    shortcut: self.agent_shortcut(
+                        Action::AgentReview,
+                        "review",
+                        "Review agent changes",
+                    ),
+                    primary: text::AGENT_REVIEW,
+                    secondary: text::AGENT_LATER,
+                }
+            }
+            Notice::Task(id) => {
+                let job = &self.agent.jobs[id];
+                crate::ui::agent::Card {
+                    title: text::AGENT_TASK_TITLE,
+                    message: text::agent_task_card(
+                        &self.agent.client(&job.session),
+                        jobs::task_kind(&job.output),
+                        short(id),
+                        job.created.elapsed().as_secs(),
+                        total,
+                    ),
+                    shortcut: None,
+                    primary: text::AGENT_STOP,
+                    secondary: text::AGENT_HIDE,
+                }
+            }
+        };
+        Some((notice, card))
+    }
+
+    /// Applies a click on the agent card. A click outside its buttons does nothing.
+    pub(in crate::app) fn on_agent_card(&mut self, position: ratatui::layout::Position) {
+        let targets = self.layout.agent_card;
+        let Some(notice) = self.layout.agent_notice.clone() else {
+            return;
+        };
+        if targets.secondary.contains(position) {
+            let (Notice::Access(id) | Notice::Proposal(id) | Notice::Task(id)) = notice;
+            self.agent.put_off(&id);
+            return;
+        }
+        if !targets.primary.contains(position) {
+            return;
+        }
+        self.pending_key = None;
+        self.command_page = None;
+        match notice {
+            Notice::Access(session) => self.open_agent_access(&session),
+            Notice::Proposal(id) => self.open_agent_review(&id),
+            Notice::Task(id) => self.stop_agent_task(&id),
+        }
+    }
+
+    /// Opens the most urgent item: the oldest access request, then the oldest proposal.
+    pub(in crate::app) fn review_agent_next(&mut self) {
+        if let Some(id) = self.agent.pending_session_ids().first() {
+            self.open_agent_access(&id.clone());
+        } else if let Some(id) = self.agent.pending_proposal_ids().first() {
+            self.open_agent_review(&id.clone());
+        } else {
+            self.status = Some(text::AGENT_NOTHING.into());
+        }
+    }
+
+    /// Opens the access question of a session. The first option never gives access.
+    fn open_agent_access(&mut self, id: &str) {
+        let Some(session) = self
+            .agent
+            .sessions
+            .get(id)
+            .filter(|session| !session.alive.is_cancelled())
+        else {
+            return;
+        };
+        let client = printable(&session.client);
+        if session.state == "authorized" {
+            let body = text::agent_revoke_body(
+                &client,
+                short(id),
+                session.level.choice(),
+                self.agent.session_tasks(id),
+            );
+            // The other levels change the access in both directions. Keep stays first.
+            let mut options = vec![(text::AGENT_KEEP, DialogAction::Dismiss)];
+            for grant in [Grant::Allow, Grant::All, Grant::Full] {
+                let level = grant.level().expect("a grant with access");
+                if level != session.level {
+                    options.push((level.choice(), DialogAction::AgentAccess(id.into(), grant)));
+                }
+            }
+            options.push((text::AGENT_REVOKE, DialogAction::AgentRevoke(id.into())));
+            self.show_dialog(text::AGENT_ACCESS_OPEN_TITLE, body, options);
+            return;
+        }
+        let age = session.requested.elapsed();
+        let age = text::transaction_age(age).unwrap_or_else(|| format!("{}s", age.as_secs()));
+        let body = text::agent_access_body(&client, short(id), &age);
+        let pending = self.agent.pending_session_ids();
+        let position = pending
+            .iter()
+            .position(|item| item == id)
+            .map_or(1, |index| index + 1);
+        self.show_dialog(
+            text::agent_queue_title(
+                text::AGENT_ACCESS_TITLE,
+                position,
+                pending.len().max(position),
+            ),
+            body,
+            vec![
+                (
+                    text::AGENT_REJECT,
+                    DialogAction::AgentAccess(id.into(), Grant::Reject),
+                ),
+                (
+                    text::AGENT_ALLOW,
+                    DialogAction::AgentAccess(id.into(), Grant::Allow),
+                ),
+                (
+                    text::AGENT_ALLOW_ALL,
+                    DialogAction::AgentAccess(id.into(), Grant::All),
+                ),
+                (
+                    text::AGENT_FULL,
+                    DialogAction::AgentAccess(id.into(), Grant::Full),
+                ),
+            ],
+        );
+    }
+
+    fn open_agent_review(&mut self, id: &str) {
+        let Some(proposal) = self
+            .agent
+            .proposals
+            .get(id)
+            .filter(|proposal| proposal.state == "pending")
+        else {
+            self.status = Some(text::AGENT_PROPOSAL_GONE.into());
+            return;
+        };
+        let Some(diff) = proposal.diff.as_ref() else {
+            return;
+        };
+        let pending = self.agent.pending_proposal_ids();
+        let position = pending
+            .iter()
+            .position(|item| item == id)
+            .map_or(1, |index| index + 1);
+        let title = text::agent_queue_title(
+            &format!(
+                "{} · {}",
+                text::AGENT_PROPOSAL_TITLE,
+                self.proposal_console_name(proposal.console)
+            ),
+            position,
+            pending.len(),
+        );
+        let (added, removed) = proposal.lines;
+        let header = text::agent_proposal_header(
+            &self.agent.client(&proposal.session),
+            short(&proposal.session),
+            proposal.revision,
+            added,
+            removed,
+        );
+        let contents = format!("{header}\n\n{}", diff.value);
+        let hold = match agent::Hold::new(contents.capacity(), &self.budget) {
+            Ok(hold) => hold,
+            Err(error) => {
+                self.status = Some(error.message);
+                return;
+            }
+        };
+        self.agent.review = Some(crate::ui::agent::Review {
+            proposal: id.into(),
+            title,
+            contents: WrappedText::new(contents),
+            scroll: 0,
+            accept: false,
+            buttons: Default::default(),
+            _hold: hold,
+        });
+    }
+
+    /// Returns the name of a console, or a mark for a closed console.
+    fn proposal_console_name(&self, console: ConsoleId) -> String {
+        self.consoles
+            .iter()
+            .find(|item| item.id == console)
+            .map_or_else(|| "Closed console".into(), |item| item.name.clone())
+    }
+
+    pub(in crate::app) fn agent_access_decision(&mut self, id: &str, grant: Grant) {
         if let Some(session) = self
             .agent
             .sessions
             .get_mut(id)
             .filter(|session| !session.alive.is_cancelled())
         {
-            session.state = if allow { "authorized" } else { "denied" };
-            self.status = Some(
-                if allow {
-                    "Agent access allowed."
-                } else {
-                    "Agent access rejected."
-                }
-                .into(),
-            );
+            self.agent.later.remove(id);
+            let level = grant.level();
+            session.state = if level.is_some() {
+                "authorized"
+            } else {
+                "denied"
+            };
+            session.level = level.unwrap_or(Level::Propose);
+            let choice = level.map_or(text::AGENT_REJECT, Level::choice);
+            if let Some(level) = level {
+                // A reconnection of this client uses the same level until SQLN exits.
+                self.agent.remembered.insert(session.client.clone(), level);
+            }
+            let notice = text::agent_access_done(&self.agent.client(id), choice);
+            self.ensure_agent_tabs();
+            self.agent_notice(id, None, notice);
+            self.refresh_tree_consoles();
+        }
+        if let Some(next) = self.agent.pending_session_ids().first() {
+            self.open_agent_access(&next.clone());
         }
     }
     pub(in crate::app) fn agent_revoke(&mut self, id: &str) {
+        let client = self.agent.client(id);
+        if let Some(session) = self.agent.sessions.get(id) {
+            self.agent.remembered.remove(&session.client);
+        }
         self.end_agent_session(id, "revoked");
-        self.status = Some("Agent access revoked. Its active queries are cancelling.".into());
+        self.agent_notice(id, None, text::agent_revoked(&client));
+    }
+    /// Removes the remembered access of a client. Its next session asks the user again.
+    pub(in crate::app) fn agent_forget(&mut self, client: &str) {
+        if self.agent.remembered.remove(client).is_some() {
+            self.status = Some(text::agent_forgotten(&printable(client)));
+        }
+    }
+
+    /// Cancels the tasks of all sessions. The sessions keep their access.
+    pub(in crate::app) fn stop_agent_tasks(&mut self) {
+        let jobs: Vec<_> = self
+            .agent
+            .jobs
+            .iter()
+            .filter(|(_, job)| !finished(job.state))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for job in &jobs {
+            self.terminate_agent_job(job, "cancelled", text::AGENT_STOP_REASON);
+        }
+        self.status = Some(text::agent_stopped(jobs.len()));
     }
 
     pub(in crate::app) fn toggle_agent_direct(&mut self) {
@@ -201,7 +496,11 @@ impl App {
             .collect();
         self.consoles[index].editor.agent_check_edits(&edits)?;
         if mode == EditMode::Direct {
-            if !self.agent.direct.contains(&console) {
+            let all = self
+                .agent
+                .level(session)
+                .is_some_and(|level| level >= Level::Direct);
+            if !all && !self.agent.direct.contains(&console) {
                 return Err(Error::new(
                     "direct_edit_not_allowed",
                     "Ask the user to enable Agent direct editing for this console, or submit a proposal.",
@@ -210,6 +509,16 @@ impl App {
             self.consoles[index]
                 .editor
                 .apply_agent_edits(revision, &edits)?;
+            if !self.agent.owns(console) {
+                let undo = self.shown_key(crate::input::Action::EditorUndo);
+                let notice = text::agent_edited(
+                    &self.agent.client(session),
+                    &printable(&self.consoles[index].name),
+                    undo.as_deref(),
+                );
+                let connection = self.consoles[index].connection;
+                self.agent_notice(session, connection, notice);
+            }
             return Ok(
                 json!({"status":"applied","revision":self.consoles[index].editor.revision()}),
             );
@@ -269,6 +578,8 @@ impl App {
                 edits,
                 state: "building",
                 diff: None,
+                lines: (0, 0),
+                created: std::time::Instant::now(),
                 _hold: Some(hold),
             },
         );
@@ -293,7 +604,7 @@ impl App {
                     .to_string();
                 let _ = sender.send(Work::Diff(key, Text::new(diff, &budget)));
             });
-        Ok(json!({"proposal_id":proposal,"status":"building"}))
+        Ok(json!({"job_id":proposal,"kind":"proposal","status":"building"}))
     }
 
     pub(in crate::app) fn on_agent_review_key(&mut self, key: KeyEvent) {
@@ -351,20 +662,24 @@ impl App {
             .get_mut(id)
             .filter(|proposal| proposal.state == "pending")
         else {
-            self.status =
-                Some("This agent proposal is no longer available. Request a new proposal.".into());
+            self.status = Some(text::AGENT_PROPOSAL_GONE.into());
             return;
         };
+        let (session, console) = (proposal.session.clone(), proposal.console);
+        let connection = self.console_connection(console);
+        let name = printable(&self.proposal_console_name(console));
         if !accept {
+            let proposal = self.agent.proposals.get_mut(id).expect("checked proposal");
             proposal.state = "rejected";
             proposal.edits.clear();
             proposal._hold = None;
             proposal.diff = None;
-            self.status = Some("Agent edit rejected.".into());
+            self.agent_notice(&session, connection, text::agent_rejected(&name));
+            self.review_next_proposal();
             return;
         }
-        let (console, revision, edits) =
-            (proposal.console, proposal.revision, proposal.edits.clone());
+        let proposal = &self.agent.proposals[id];
+        let (revision, edits) = (proposal.revision, proposal.edits.clone());
         let result = self
             .console_index(console)
             .ok_or_else(missing)
@@ -380,13 +695,22 @@ impl App {
         match result {
             Ok(()) => {
                 proposal.state = "applied";
-                self.status =
-                    Some("Agent edit applied. SQL does not execute automatically.".into());
+                // The console can be another tab, so the notice names it.
+                self.agent_notice(&session, connection, text::agent_applied(&name));
+                if self.agent.owns(console) {
+                    self.agent_sql_placed(console);
+                }
             }
             Err(error) => {
                 proposal.state = "revision_conflict";
                 self.status = Some(error.message);
             }
+        }
+        self.review_next_proposal();
+    }
+    fn review_next_proposal(&mut self) {
+        if let Some(next) = self.agent.pending_proposal_ids().first() {
+            self.open_agent_review(&next.clone());
         }
     }
 }

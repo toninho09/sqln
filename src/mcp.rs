@@ -16,12 +16,39 @@ pub struct Bridge {
     clients: Clients,
 }
 
+/// Tools that wait for the end of their task, or for the user's decision.
+const WAITING_TOOLS: [&str; 7] = [
+    "request_access",
+    "query",
+    "run_console",
+    "edit_console",
+    "describe",
+    "compare",
+    "job",
+];
+/// States that can still change without a new request.
+const WAITING_STATES: [&str; 8] = [
+    "pending",
+    "building",
+    "validating",
+    "ready",
+    "waiting_credentials",
+    "waiting_confirmation",
+    "running",
+    "building_artifact",
+];
+/// Most clients stop a tool call after 60 seconds.
+const TASK_WAIT: u64 = 50;
+/// The user needs time to read an access request.
+const ACCESS_WAIT: u64 = 120;
+const MAX_WAIT: u64 = 600;
+
 static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
     let schema = serde_json::to_value(schemars::schema_for!(Operation))
         .expect("the operation schema is JSON");
     let mut tools = vec![Tool::new(
         "list_instances",
-        "List open SQLN instances. Never guess a target when several instances match.",
+        "List open SQLN instances. Other tools select the only open instance when instance_id is absent.",
         Arc::new(
             serde_json::from_value(
                 json!({"type":"object", "properties":{}, "additionalProperties":false}),
@@ -43,16 +70,19 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
             .as_str()
             .unwrap_or("Operate on an authorized SQLN instance.")
             .to_owned();
-        input["properties"]
+        let properties = input["properties"]
             .as_object_mut()
-            .expect("operation properties")
-            .remove("method");
-        input["properties"]["instance_id"] = json!({"type":"string", "description":"The exact instance_id returned by list_instances."});
-        let required = input["required"]
+            .expect("operation properties");
+        properties.remove("method");
+        properties.insert("instance_id".into(), json!({"type":"string", "description":"The instance_id from list_instances. Optional when only one SQLN instance is open."}));
+        if WAITING_TOOLS.contains(&name.as_str()) {
+            properties.insert("wait_seconds".into(), json!({"type":"integer", "minimum":0, "maximum":MAX_WAIT,
+                "description":format!("Seconds to wait for the end. The default is {TASK_WAIT}, or {ACCESS_WAIT} for request_access. After this time, the reply holds the current state: call job to continue.")}));
+        }
+        input["required"]
             .as_array_mut()
-            .expect("operation required fields");
-        required.retain(|field| field != "method");
-        required.push(json!("instance_id"));
+            .expect("operation required fields")
+            .retain(|field| field != "method");
         input["$defs"] = schema["$defs"].clone();
         let mut tool = Tool::new(
             name,
@@ -62,23 +92,17 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
         // Executions also change visible results. These annotations are not access controls.
         let inspection = matches!(
             tool.name.as_ref(),
-            "get_access"
-                | "get_context"
-                | "list_connections"
-                | "list_tabs"
-                | "read_console"
-                | "read_messages"
-                | "read_result"
-                | "read_result_cell"
-                | "get_job"
-                | "get_proposal"
-                | "read_artifact"
+            "get_context" | "read_console" | "read_result"
         );
         tool.annotations = Some(ToolAnnotations::new().read_only(inspection));
         tools.push(tool);
     }
     tools
 });
+
+fn invalid_request(message: &str) -> Error {
+    Error::new("invalid_request", message)
+}
 
 impl Bridge {
     async fn instances() -> Result<Vec<Instance>, Error> {
@@ -95,6 +119,59 @@ impl Bridge {
             )
         })
     }
+
+    /// Returns the requested instance, or the only open instance.
+    async fn target(id: Option<Value>) -> Result<String, Error> {
+        if let Some(id) = id {
+            return id
+                .as_str()
+                .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    Error::new("invalid_target", "Use an instance_id from list_instances.")
+                });
+        }
+        let mut instances = Self::instances().await?;
+        match instances.len() {
+            0 => Err(Error::new(
+                "no_instance",
+                "No SQLN instance is open. Ask the user to open SQLN, then call this tool again.",
+            )),
+            1 => Ok(instances.remove(0).instance_id),
+            _ => Err(Error::new(
+                "ambiguous_instance",
+                "Several SQLN instances are open. Call list_instances and send instance_id. Ask the user if the target is not clear.",
+            )),
+        }
+    }
+
+    async fn connect(
+        &self,
+        id: &str,
+        context: &RequestContext<RoleServer>,
+    ) -> Result<Arc<Mutex<Client>>, Error> {
+        let mut clients = self.clients.lock().await;
+        if let Some(client) = clients.get(id) {
+            return Ok(client.clone());
+        }
+        let instance = Self::instances().await?.into_iter().find(|item| item.instance_id == id)
+            .ok_or_else(|| Error::new("instance_gone", "The selected instance is not open. List instances again; do not switch targets silently."))?;
+        let label = context.client_info().map_or_else(
+            || "MCP client".into(),
+            |info| info.name.chars().take(64).collect::<String>(),
+        );
+        let client = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            Client::connect(&instance, &label),
+        )
+        .await
+        .map_err(|_| Error::new("instance_gone", "The selected instance did not answer."))?
+        .map_err(|_| Error::new("instance_gone", "The selected instance disconnected."))?;
+        let client = Arc::new(Mutex::new(client));
+        clients.insert(id.to_owned(), client.clone());
+        Ok(client)
+    }
+
     async fn invoke(
         &self,
         request: CallToolRequestParams,
@@ -104,77 +181,42 @@ impl Bridge {
         let mut args = request.arguments.unwrap_or_default();
         if name == "list_instances" {
             if !args.is_empty() {
-                return Err(Error::new(
-                    "invalid_request",
-                    "list_instances takes no arguments.",
-                ));
+                return Err(invalid_request("list_instances takes no arguments."));
             }
             let instances: Vec<_> = Self::instances().await?.into_iter().map(|instance| json!({
                 "instance_id": instance.instance_id, "pid": instance.pid, "working_directory": instance.working_directory, "project": instance.project,
             })).collect();
             return Ok(json!({"instances": instances}));
         }
-        let id = args
-            .remove("instance_id")
-            .and_then(|id| id.as_str().map(str::to_owned))
-            .filter(|id| uuid::Uuid::parse_str(id).is_ok())
-            .ok_or_else(|| {
-                Error::new("invalid_target", "Use an instance_id from list_instances.")
-            })?;
+        let wait = match args.remove("wait_seconds") {
+            None => None,
+            Some(value) if WAITING_TOOLS.contains(&name) => Some(
+                value
+                    .as_u64()
+                    .ok_or_else(|| invalid_request("wait_seconds is a whole number of seconds."))?
+                    .min(MAX_WAIT),
+            ),
+            Some(_) => return Err(invalid_request("This tool does not wait.")),
+        };
+        let id = Self::target(args.remove("instance_id")).await?;
         if args.contains_key("method") {
-            return Err(Error::new(
-                "invalid_request",
-                "The method field is not an argument.",
-            ));
+            return Err(invalid_request("The method field is not an argument."));
         }
         args.insert("method".into(), json!(name));
         let operation: Operation = serde_json::from_value(Value::Object(args)).map_err(|_| {
-            Error::new(
-                "invalid_request",
-                "Use the declared tool arguments and valid field types.",
-            )
+            invalid_request("Use the declared tool arguments and valid field types.")
         })?;
         if context.ct.is_cancelled() {
             return Err(Error::new("cancelled", "The request was cancelled."));
         }
-        let connection = {
-            let mut clients = self.clients.lock().await;
-            if let Some(client) = clients.get(&id) {
-                client.clone()
-            } else {
-                let instance = Self::instances().await?.into_iter().find(|item| item.instance_id == id)
-                    .ok_or_else(|| Error::new("instance_gone", "The selected instance is not open. List instances again; do not switch targets silently."))?;
-                let label = context.client_info().map_or_else(
-                    || "MCP client".into(),
-                    |info| info.name.chars().take(64).collect::<String>(),
-                );
-                let client = tokio::time::timeout(
-                    std::time::Duration::from_secs(2),
-                    Client::connect(&instance, &label),
-                )
-                .await
-                .map_err(|_| Error::new("instance_gone", "The selected instance did not answer."))?
-                .map_err(|_| Error::new("instance_gone", "The selected instance disconnected."))?;
-                let client = Arc::new(Mutex::new(client));
-                clients.insert(id.clone(), client.clone());
-                client
-            }
-        };
-        let result = {
-            let mut client = connection.lock().await;
-            let result = client.call(&operation).await;
-            if context.ct.is_cancelled()
-                && let Ok(value) = &result
-                && let Some(job_id) = value["job_id"].as_str()
-            {
-                let _ = client
-                    .call(&Operation::CancelJob {
-                        job_id: job_id.into(),
-                    })
-                    .await;
-            }
-            result
-        };
+        let connection = self.connect(&id, context).await?;
+        let access = matches!(operation, Operation::RequestAccess {});
+        let wait = std::time::Duration::from_secs(wait.unwrap_or(if access {
+            ACCESS_WAIT
+        } else {
+            TASK_WAIT
+        }));
+        let result = Self::wait(&connection, operation, wait, context).await;
         if result
             .as_ref()
             .is_err_and(|error| error.code == "instance_gone")
@@ -182,6 +224,70 @@ impl Bridge {
             self.clients.lock().await.remove(&id);
         }
         result
+    }
+
+    /// Sends the operation, then repeats a state read until the state is final or the time ends.
+    /// The lock covers one request at a time, so parallel tool calls continue.
+    async fn wait(
+        connection: &Mutex<Client>,
+        operation: Operation,
+        wait: std::time::Duration,
+        context: &RequestContext<RoleServer>,
+    ) -> Reply {
+        let access = matches!(operation, Operation::RequestAccess {});
+        let deadline = tokio::time::Instant::now() + wait;
+        let mut delay = std::time::Duration::from_millis(50);
+        let mut value = connection.lock().await.call(&operation).await?;
+        loop {
+            let pending = value["status"]
+                .as_str()
+                .is_some_and(|status| WAITING_STATES.contains(&status));
+            let job = value["job_id"].as_str().map(str::to_owned);
+            let task = job.clone().filter(|_| value["kind"] != "proposal");
+            if context.ct.is_cancelled() {
+                if let Some(job) = task.filter(|_| pending) {
+                    let _ = connection
+                        .lock()
+                        .await
+                        .call(&Operation::Job {
+                            job_id: job,
+                            cancel: true,
+                            artifact_offset: 0,
+                            rows: None,
+                        })
+                        .await;
+                }
+                return Err(Error::new("cancelled", "The request was cancelled."));
+            }
+            if !pending || (!access && job.is_none()) {
+                return Ok(value);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                value["next_action"] = json!(if access {
+                    "The user did not decide yet. Call request_access again to keep waiting."
+                } else if task.is_some() {
+                    "The task continues. Call job with this job_id to keep waiting, or with cancel to stop it."
+                } else {
+                    "The proposal waits for the user's review. Call job with this job_id to keep waiting."
+                });
+                return Ok(value);
+            }
+            tokio::select! {
+                () = context.ct.cancelled() => continue,
+                () = tokio::time::sleep(delay.min(deadline - tokio::time::Instant::now())) => {}
+            }
+            delay = (delay * 2).min(std::time::Duration::from_millis(500));
+            let next = match job {
+                Some(job_id) if !access => Operation::Job {
+                    job_id,
+                    cancel: false,
+                    artifact_offset: 0,
+                    rows: None,
+                },
+                _ => Operation::RequestAccess {},
+            };
+            value = connection.lock().await.call(&next).await?;
+        }
     }
 }
 
@@ -191,7 +297,7 @@ impl ServerHandler for Bridge {
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.server_info.name = "sqln".into();
         info.server_info.version = env!("CARGO_PKG_VERSION").into();
-        info.instructions = Some("First list instances. Ask the user if the target is ambiguous. Request access in that exact instance and wait for user approval in SQLN. Use explicit IDs and revisions. Database operations are read-only. The user accepts edit proposals in SQLN. Never execute generated write SQL.".into());
+        info.instructions = Some("Call request_access first: it waits until the user decides in SQLN. instance_id is optional when one SQLN instance is open; with several, call list_instances and ask the user if the target is not clear. Then call get_context for connections and tabs. query runs SQL in your own console and returns its rows. Tools wait for the end of their task; call job when a reply says that the task continues. Without full access, only reads run: send other SQL with edit_console for the user to review and run. Use exact IDs and revisions.".into());
         info
     }
     fn get_tool(&self, name: &str) -> Option<Tool> {

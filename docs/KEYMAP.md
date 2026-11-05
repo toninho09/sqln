@@ -8,10 +8,13 @@ The plan remains the reference for the functional rules.
 
 ## Assistant commands
 
-The palette includes `agentSessions`, `agentReview`, and `agentDirect`. They have no default shortcut.
+The palette includes `agentSessions`, `agentReview`, `agentDirect`, `agentStop`, `agentSqlToConsole`, `agentSqlClear`, `agentSession`, and `agentTasks`. They have no default shortcut.
+`agentSqlToConsole` and `agentSqlClear` are available in an agent tab with placed SQL; its bar shows them as **New console** and **Clear**.
+`agentSession` and `agentTasks` are available in an agent tab of a connected session; its bar shows them as **Access: level** and **Tasks N**. `agentTasks` needs an active task.
+The MCP row shows the effective key of `agentSessions` or `agentReview`, and its **Stop** button runs `agentStop`.
 Assign custom shortcuts through the existing key map. Availability and labels use the shared command catalog.
 An edit review uses Up/Down or `j`/`k` to scroll, PageUp/PageDown for larger steps, and Tab or Left/Right to select a button.
-Enter confirms the selected button. Reject starts selected. Esc closes the review without acceptance.
+Enter confirms the selected button. Reject starts selected. Esc closes the review and keeps the proposal pending.
 Mouse buttons accept or reject; the wheel scrolls. These keys act only while review is open.
 
 ## Choice criteria

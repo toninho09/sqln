@@ -6,6 +6,101 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Agent tab lifetime and place — 2026-11-05
+
+The user asks for the agent tab to open when the agent connects, to stay open while the agent is connected, and to stand at the right of the tab row.
+This entry replaces the rule that the first query creates the agent tab.
+
+| # | Point | Approved decision | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Opening | At the access approval, or at once for a remembered client. A rejection opens no tab | At `request_access` | Before approval, the agent reads nothing |
+| 2 | Tab without a connection | One session tab without a connection. The first task or placed SQL binds it. Another connection opens another agent tab | One tab for each session; a tab on the active connection | Tasks keep running in parallel on different connections |
+| 3 | Close while connected | The last agent tab of a session with access asks: **Cancel** (initial focus) or **Revoke and close**. Other agent tabs of the session close as usual | Refuse the close; close and reopen on the next notice | The user keeps control, and the tab ends with the access |
+| 4 | After the session | The tab stays with `MCP off ·` and closes without a question | Close it automatically | Its Messages and results stay readable |
+| 5 | Place | Agent consoles come after the other tabs, at the right end of the row before **Quit** when the row has room. Agent diagram and comparison tabs keep the order of opening | Mixed with the consoles | The agent tab stays apart from the user's consoles |
+| 6 | Lost tab | A session with access that loses its last tab, for example when its connection is removed, gets a new session tab | No tab until the next task | The session keeps one tab |
+
+## Session controls in the agent tab — 2026-11-05
+
+The user reports that the agent tab does not show its session: the access, the tasks, and many notices are in the status bar, the cards, and the palette only.
+This entry replaces decision 11 of the MCP notifications entry for the items below. The global commands, the cards, and the MCP row stay.
+
+| # | Point | Approved decision | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Access in the tab | An **Access: level** button in the bar of each agent tab opens the session dialog: change the access or revoke it (`agentSession`) | The picker of all sessions only | The user sees the access of the agent in its tab |
+| 2 | Tasks in the tab | A **Tasks N** button opens a list of the session's tasks. A selected task opens **Keep running** (initial focus) and **Stop** (`agentTasks`) | A Tasks tab next to Messages; one row for each task above the results | One bar row. At 80×24 the results keep their room |
+| 3 | Scope | The button and the list cover the whole session, on all its connections. The console **Stop** still stops the tasks of that console only | The tasks of the tab's connection only | The access and the tasks belong to the session |
+| 4 | Log | Every notice of an agent action also goes to the session's Messages: runs and edits of user consoles, proposals and their decision, discarded proposals, opened tabs, access changes, and revocation | The status bar only | The Messages keep a complete record of the agent |
+| 5 | Log target | The session's agent tab for that connection. Without it, the last agent tab of the session. Without an agent tab, the status bar only | Open an agent tab for the note | No tab opens for a note |
+| 6 | Narrow bar | Tasks goes before Access. A narrow bar drops Access first; the palette and a custom key keep it | Shorter labels | A running task can need a stop |
+
+## Agent SQL in the agent tab — 2026-11-05
+
+The user reports that SQL from the agent opens a new console for each request, and that a lowered access cannot go up again. This entry replaces decisions 3, 4, and 13 of the MCP notifications entry.
+
+| # | Point | Approved decision | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Place of the SQL | An editor in the agent tab | SQL blocks in Messages; a new console next to the agent tab | The user changes the SQL before the run, and tabs do not multiply |
+| 2 | Editor visibility | Only while the tab holds SQL | Always | At 80×24, Messages and results keep their room |
+| 3 | New SQL, SQL not changed by the user | Replaces it, as one undo step | Appends it | The editor shows the current SQL. Undo and the query history keep the old SQL |
+| 4 | New SQL, SQL changed by the user | An edit proposal with a diff | Replace it | User text never disappears |
+| 5 | Agent run of that SQL | `run_console` with the rules of its access level | Never | No special case |
+| 6 | User run in the agent tab | A user run in Auto mode, with the current run confirmations. Commit and Rollback appear for a transaction that the user opened | A manual mode | An open transaction blocks the agent tasks of the tab |
+| 7 | Notice of new SQL | Status bar, agent Messages, and the `SQL ·` tab mark | The access card and the bell | The card is for decisions that only the user makes |
+| 8 | Save | **New console** copies the SQL to a user console | The agent tab saves as a script | The agent tab stays temporary |
+| 9 | Old behavior | Removed from the MCP | `new_console: true` | Fewer options for the agent |
+| 10 | Access changes after approval | The session dialog offers every other access option, to lower or raise the access | **Switch to proposals** only | The user could not raise the access again |
+
+## Visible MCP access requests — 2026-11-05
+
+The user reports that the MCP row hides access requests: a user can miss them. This entry adds to decision 7 of the MCP notifications entry.
+
+| # | Point | Approved decision | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Request notice | A card with the warning color, above the MCP row, with **Review** and **Later**. It takes no focus | Open the access dialog automatically; color the MCP row only | The request is visible, and typing never goes to a dialog |
+| 2 | Card place | Bottom right of the main area | Top right | At 80×24, the top covers the editor text and its cursor |
+| 3 | Bell | One terminal bell for each new request. A remembered client does not ring | No bell | The user sees a request in another window |
+| 4 | Other cards | Edit proposals (**Review**, **Later**) and tasks that run for more than 3 seconds (**Stop**, **Hide**) also use the card. Placed SQL and failed tasks do not | A card for every notice | The card is for items that wait for the user or can need a stop |
+| 5 | Several items | One card at a time: access, then proposals, then tasks, with the place in the queue | Stacked cards | At 80×24, stacked cards cover the results |
+| 6 | MCP row | Stays, with the counts and the items that the user put off | Remove it | A hidden item stays visible |
+
+## MCP tools, waiting, and full access — 2026-11-05
+
+The user reports a poor agent flow: too many tools, a task identifier to poll after each request, and a database that the user cannot open to the agent.
+The new facts are the user's request for full access and the number of calls per task.
+This entry replaces the **Database** row of the Local MCP assistant table, the **Target** rule that every call names its instance, and the reason of decision 1 of the MCP notifications entry for remembered access.
+
+| # | Point | Approved decision | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Full access | A **Full access** option executes any SQL without review. Read-only connections, the `PROD` question, and the question for a write without `WHERE` still apply; the task waits for the answer | Writes without exceptions; a question for each write; a read-only database | The agent becomes useful, and the existing protections stay |
+| 2 | Grant of full access | A fourth button in the access request, without the initial focus, for the session | A saved field per connection | No configuration format change |
+| 3 | Instance selection | `instance_id` is optional when one instance is open. Several instances give `ambiguous_instance` | An ID in every call | Fewer steps. The bridge never selects one of several instances |
+| 4 | Waiting | The bridge waits for the end of a task, 50 seconds by default, and `request_access` waits for the decision, 120 seconds by default. A late task continues with `job` | The agent polls each task | One call returns the rows |
+| 5 | Remembered access | SQLN remembers the option of a client name until it exits. **Forget** and **Revoke** remove it. A rejection is not remembered | A new question for each session | The user accepts that the client name is not verified, for less friction |
+| 6 | Tools | 11 tools. `generate_sql` leaves the MCP; the interface keeps its templates | 25 tools | The agent writes SQL from the catalog and the DDL |
+| 7 | Agent transaction | SQLN rolls back a transaction that agent SQL leaves open, and the task fails with the reason | Keep the transaction for the user | Nobody ends a transaction of an agent console |
+
+## MCP notifications and decisions — 2026-11-05
+
+The user asks for clearer MCP notices and decisions, an option that approves everything in the access request,
+an agent tab that shows only its messages, and commands that stop agent work. This entry replaces the **Edits** row of the Local MCP assistant table for sessions that use **Allow all**.
+
+| # | Point | Approved decision | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Scope of **Allow all** | Access and direct edits in all consoles, for this session only | Remember the client for later sessions | The client name is not verified |
+| 2 | Protection of **Allow all** | A dialog button without the initial focus, with a warning in the text | A second confirmation | The warning, undo, and the `MCP n all` label are sufficient |
+| 3 | Return to proposals | **Switch to proposals** in the session list, without revocation | Revocation only | Less friction |
+| 4 | Agent tab content | Messages and result grids, without the editor | Messages only | The user sees the data that the agent read |
+| 5 | **Stop all agent tasks** | Cancels tasks. Access stays | Also pause new tasks | Revocation already blocks new tasks |
+| 6 | MCP row during execution | Shows **Stop** while an agent task runs | Status bar label only | Safety visibility |
+| 7 | Access decision in the MCP row | The row has **Review** only | **Allow** and **Reject** in the row | An accidental click must not give access |
+| 8 | Decision queue | After a decision, open the next pending item, with `N of M` | Return to the editor | Fewer steps |
+| 9 | Notices of agent actions | Status bar and the agent Messages | Messages only | The user sees changes to their consoles |
+| 10 | Default key of `agentStop` | None. The MCP row and the palette offer it | A default key | No free key is necessary now |
+| 11 | MCP center | Keep separate commands | One panel for sessions, proposals, and tasks | Not necessary now |
+| 12 | **Reject all** | Not offered | A button when N > 1 | Not necessary now |
+| 13 | SQL that the user must run, such as `CREATE TABLE` | `open_user_console` opens a new user console with the SQL, without execution or a focus change. Agent consoles refuse edits | The agent asks the user to open a console | The write flow ends in a console that the user reviews and runs. The database stays read-only for the agent |
+
 ## Local MCP assistant
 
 The user approves a stdio assistant for SQLN instances that are already open.

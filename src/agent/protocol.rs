@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 pub const MAX_FRAME: usize = 8 * 1024 * 1024;
 pub const PAGE_BYTES: usize = 256 * 1024;
 pub const TEXT_BYTES: usize = 16 * 1024;
@@ -107,67 +107,62 @@ impl DdlKind {
         }
     }
 }
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum SqlTemplate {
-    SelectAll,
-    SelectColumns,
-    Insert,
-    Update,
-    Delete,
+pub enum ExplainMode {
+    /// Show the plan without execution.
+    Plan,
+    /// Execute the statement and show the measured plan.
+    Analyze,
 }
-impl SqlTemplate {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::SelectAll => "select_all",
-            Self::SelectColumns => "select_columns",
-            Self::Insert => "insert",
-            Self::Update => "update",
-            Self::Delete => "delete",
-        }
-    }
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompareKind {
+    Structure,
+    Data,
+}
+
+/// A database object for `describe`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Object {
+    pub name: String,
+    pub kind: DdlKind,
+    /// The arguments of a PostgreSQL routine, or the table of a trigger.
+    pub identity: Option<String>,
 }
 
 /// Each variant becomes one MCP tool. Fields are deliberately explicit.
+/// Tools that start a task wait for its end in the bridge, so the agent receives the result.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
-    /// Request access in the SQLN interface. The user must approve this session.
+    /// Request access in SQLN and wait for the user's decision. Call it again to read the state.
+    /// The level is `propose` (edits need review), `direct` (direct edits), or `full` (database writes).
     RequestAccess {},
-    /// Read the authorization state of this session.
-    GetAccess {},
-    /// Read the active tab and the available assistant capabilities.
-    GetContext {},
-    /// List existing connection labels, dialects, and capabilities. No secrets.
-    ListConnections {
-        #[serde(default)]
-        offset: usize,
-        #[serde(default = "page_rows")]
-        limit: usize,
-    },
-    /// List open consoles, grids, diagrams, and comparisons.
-    ListTabs {
+    /// Read the access level, the active tab, the connections, the open tabs, and pending proposals.
+    GetContext {
+        /// The first tab to list.
         #[serde(default)]
         offset: usize,
         #[serde(default = "page_rows")]
         limit: usize,
     },
     /// Read a console text page and its revision. Offsets count UTF-8 bytes.
+    /// Set `messages` to also read its Messages from record `message_offset`.
     ReadConsole {
         console_id: String,
         #[serde(default)]
         offset: usize,
         revision: Option<u64>,
-    },
-    /// Read a page of console messages. The offset counts records.
-    ReadMessages {
-        console_id: String,
         #[serde(default)]
-        offset: usize,
+        messages: bool,
         #[serde(default)]
-        text_offset: usize,
+        message_offset: usize,
     },
     /// Read loaded result rows without executing SQL. Reuse the returned generation for later pages.
+    /// With `row` and `column`, read one large cell in blocks from `offset` bytes. Binary blocks use base64.
     ReadResult {
         tab_id: String,
         #[serde(default)]
@@ -177,104 +172,79 @@ pub enum Operation {
         #[serde(default = "page_rows")]
         limit: usize,
         generation: Option<String>,
+        row: Option<usize>,
+        column: Option<usize>,
     },
-    /// Read one large cell in blocks. Binary blocks use base64.
-    ReadResultCell {
-        tab_id: String,
-        #[serde(default)]
-        result: usize,
-        row: usize,
-        column: usize,
-        generation: String,
-        #[serde(default)]
-        offset: usize,
-    },
-    /// Open an assistant console without changing focus. Reuses this session's console for the connection.
-    OpenAgentConsole {
+    /// Execute SQL on a connection in this session's agent console and return its results.
+    /// Without full access, only known reads run. Use `edit_console` for SQL that the user must run.
+    Query {
         connection_id: String,
         schema: Option<String>,
-    },
-    /// Execute new read-only SQL in this session's own console. Does not change editor text.
-    RunReadQuery {
-        console_id: String,
         sql: String,
         #[serde(default)]
         parameters: Vec<Binding>,
+        /// Explain one statement instead of running it as is.
+        explain: Option<ExplainMode>,
+        /// Rows of each result in the reply. The default is 100.
+        rows: Option<usize>,
     },
-    /// Execute the current script or an explicit range in a console. A matching revision is required.
+    /// Execute the current script or an explicit range of a user console and return its results.
+    /// A matching revision is required. Without full access, only known reads run.
     RunConsole {
         console_id: String,
         revision: u64,
         range: Option<Range>,
+        explain: Option<ExplainMode>,
+        rows: Option<usize>,
     },
-    /// Read this session's task state and result references.
-    GetJob { job_id: String },
-    /// Cancel this session's task, never another session's task.
-    CancelJob { job_id: String },
-    /// Propose edits, or apply them only if the user enabled direct editing for this console.
+    /// Place SQL for the user, or edit a console.
+    /// Without `console_id`, send `connection_id` and `sql`: SQLN shows the SQL in your agent tab,
+    /// where the user reviews, changes, and runs it. Nothing executes. If the user changed the
+    /// SQL of the tab, the new SQL waits for the user's review.
+    /// With `console_id`, send `revision` and `edits`. `propose` waits for the user's review.
+    /// `direct` applies the edits when the user allowed direct edits.
     EditConsole {
-        console_id: String,
-        revision: u64,
+        console_id: Option<String>,
+        revision: Option<u64>,
+        #[serde(default)]
         edits: Vec<Edit>,
         #[serde(default)]
         mode: EditMode,
+        connection_id: Option<String>,
+        schema: Option<String>,
+        sql: Option<String>,
     },
-    /// Read this session's edit proposal state. Only the user can accept it.
-    GetProposal { proposal_id: String },
-    /// Read the cached catalog or request an authorized read when refresh is true.
-    GetCatalog {
+    /// Read the catalog of a connection, or the DDL of one object.
+    /// Set `er_diagram` to read an ER diagram of `schema`, or of the `object` table.
+    Describe {
         connection_id: String,
+        schema: Option<String>,
+        object: Option<Object>,
+        #[serde(default)]
+        er_diagram: bool,
+        /// Read the catalog again instead of the cached catalog.
         #[serde(default)]
         refresh: bool,
     },
-    /// Read the database definition of a table, view, routine, sequence, trigger, or type.
-    GetObjectDdl {
-        connection_id: String,
-        schema: String,
-        name: String,
-        kind: DdlKind,
-        identity: Option<String>,
-    },
-    /// Generate SQL from the existing templates. This tool never executes the output.
-    GenerateSql {
-        connection_id: String,
-        schema: String,
-        table: String,
-        template: SqlTemplate,
-    },
-    /// Explain one statement from a console. Analyze executes only an approved read.
-    Explain {
-        console_id: String,
-        revision: u64,
-        range: Option<Range>,
-        #[serde(default)]
-        analyze: bool,
-    },
-    /// Read an ER diagram as a visible background tab and Mermaid text.
-    GetErDiagram {
-        connection_id: String,
-        schema: String,
-        table: Option<String>,
-    },
-    /// Compare structure within one SQLN instance. Never execute the sync script.
-    CompareSchema {
+    /// Compare structure or data within one SQLN instance. Never execute the sync script.
+    /// A data comparison needs a table on each side, with a compatible primary key.
+    Compare {
+        kind: CompareKind,
         source: Side,
         target: Side,
         #[serde(default)]
         removals: bool,
+        rows: Option<usize>,
     },
-    /// Compare data within one SQLN instance. Both tables must have a compatible primary key.
-    CompareData {
-        source: Side,
-        target: Side,
-        #[serde(default)]
-        removals: bool,
-    },
-    /// Read a text artifact in blocks. Offsets count UTF-8 bytes.
-    ReadArtifact {
+    /// Wait for a task or an edit proposal of this session, or cancel it.
+    /// `artifact_offset` reads the next page of a text artifact.
+    Job {
         job_id: String,
         #[serde(default)]
-        offset: usize,
+        cancel: bool,
+        #[serde(default)]
+        artifact_offset: usize,
+        rows: Option<usize>,
     },
 }
 fn page_rows() -> usize {
@@ -282,22 +252,15 @@ fn page_rows() -> usize {
 }
 
 impl Operation {
+    /// True for operations that only read the state of SQLN.
     pub fn is_inspection(&self) -> bool {
         matches!(
             self,
             Self::RequestAccess {}
-                | Self::GetAccess {}
-                | Self::GetContext {}
-                | Self::ListConnections { .. }
-                | Self::ListTabs { .. }
+                | Self::GetContext { .. }
                 | Self::ReadConsole { .. }
-                | Self::ReadMessages { .. }
                 | Self::ReadResult { .. }
-                | Self::ReadResultCell { .. }
-                | Self::GetJob { .. }
-                | Self::GetProposal { .. }
-                | Self::ReadArtifact { .. }
-                | Self::CancelJob { .. }
+                | Self::Job { .. }
         )
     }
 }

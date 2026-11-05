@@ -140,16 +140,20 @@ impl App {
         let Some(id) = manager.open_console(connection) else {
             return;
         };
-        // The name comes first, while the console has no connection to count.
-        let fresh = (self.persist.is_some() && self.consoles[index].file.is_none())
-            .then(|| self.fresh_console_name(connection));
+        // The name comes first, while the console has no connection to count. An agent tab
+        // keeps the name of its agent.
+        let previous = self.consoles[index].id;
+        let fresh = (self.persist.is_some()
+            && self.consoles[index].file.is_none()
+            && !self.agent.owns(previous))
+        .then(|| self.fresh_console_name(connection));
         let console = &mut self.consoles[index];
-        let previous = console.id;
         console.id = id;
         console.connection = Some(connection);
         if let Some(name) = fresh {
             console.name = name;
         }
+        self.agent.rekey_console(previous, id);
         self.rekey_saves(previous, id);
         self.refresh_tree_consoles();
     }
@@ -686,14 +690,19 @@ impl App {
 
     /// Opens a new console of a connection with a text, and with a schema when the
     /// connection has a schema choice. Nothing runs.
-    pub(super) fn open_text_console(&mut self, id: ConnectionId, schema: String, text: &str) {
+    pub(super) fn open_text_console(
+        &mut self,
+        id: ConnectionId,
+        schema: Option<String>,
+        text: &str,
+    ) {
         let namespace = self
             .connection(id)
             .is_some_and(|item| item.capabilities.namespace != Namespace::None);
         // A new console never takes the text of a console of the user.
         self.new_console(id);
-        if namespace {
-            self.console_mut().schema = Some(schema);
+        if namespace && schema.is_some() {
+            self.console_mut().schema = schema;
             self.save_console_meta(self.active);
         }
         let console = self.console_mut();

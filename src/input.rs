@@ -169,6 +169,11 @@ pub enum Action {
     AgentSessions,
     AgentReview,
     AgentDirect,
+    AgentStop,
+    AgentSqlToConsole,
+    AgentSqlClear,
+    AgentSession,
+    AgentTasks,
     Run,
     RunScript,
     Explain,
@@ -1260,6 +1265,29 @@ const DEFAULTS: &[Item] = &[
     ),
     both(Action::AgentReview, Region::Global, "agentReview", &[], &[]),
     both(Action::AgentDirect, Region::Global, "agentDirect", &[], &[]),
+    both(Action::AgentStop, Region::Global, "agentStop", &[], &[]),
+    both(
+        Action::AgentSqlToConsole,
+        Region::Global,
+        "agentSqlToConsole",
+        &[],
+        &[],
+    ),
+    both(
+        Action::AgentSqlClear,
+        Region::Global,
+        "agentSqlClear",
+        &[],
+        &[],
+    ),
+    both(
+        Action::AgentSession,
+        Region::Global,
+        "agentSession",
+        &[],
+        &[],
+    ),
+    both(Action::AgentTasks, Region::Global, "agentTasks", &[], &[]),
 ];
 
 /// The answer of the map to one key.

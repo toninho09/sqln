@@ -155,7 +155,7 @@ impl CompareTab {
             Kind::Data => text::data_compare_label(name),
         };
         if self.agent {
-            format!("Agent: {label}")
+            text::agent_tab_label(&label)
         } else {
             label
         }

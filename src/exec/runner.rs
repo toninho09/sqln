@@ -214,6 +214,7 @@ impl ConsoleTask {
             options,
         } = request;
         let _agent_hold;
+        let agent_run = agent.is_some();
         if let Some(agent) = agent {
             _agent_hold = match agent.reservation {
                 Ok(hold) => Some(hold),
@@ -237,7 +238,8 @@ impl ConsoleTask {
                 return;
             }
             // The application validates agent SQL on a blocking worker before it queues the run.
-            self.settings.read_only = true;
+            // Full access removes only this agent restriction, never the connection's own.
+            self.settings.read_only |= agent.read_only;
         } else {
             _agent_hold = None;
         }
@@ -347,6 +349,27 @@ impl ConsoleTask {
             self.emit(end_event).await;
         }
 
+        let mut message = None;
+        // An agent run never leaves a transaction open: nobody would end it.
+        if agent_run
+            && let Some(active) = lease.as_mut()
+            && active.session().transaction_state().await != TransactionState::None
+        {
+            message = Some(crate::ui::text::AGENT_ROLLED_BACK.to_owned());
+            if end == ExecutionEnd::Completed {
+                end = ExecutionEnd::Failed;
+            }
+            if active
+                .session()
+                .control(TransactionCommand::Rollback)
+                .await
+                .is_err()
+            {
+                // Closing the session ends its transaction.
+                lease = None;
+                self.observe_transaction(TransactionState::None).await;
+            }
+        }
         if let Some(lease) = lease {
             self.keep_or_release(lease).await;
         }
@@ -354,7 +377,7 @@ impl ConsoleTask {
             // The sync can take time, and this task shares its thread with other consoles.
             let _ = tokio::task::spawn_blocking(move || export.seal()).await;
         }
-        self.finish(execution, end, None).await;
+        self.finish(execution, end, message).await;
     }
 
     /// Reads the waiting commands. Each console accepts only one execution.

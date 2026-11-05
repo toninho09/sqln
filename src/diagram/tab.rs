@@ -85,7 +85,7 @@ impl DiagramTab {
     pub fn label(&self) -> String {
         let label = text::diagram_label(self.focus.name());
         if self.agent {
-            format!("Agent: {label}")
+            text::agent_tab_label(&label)
         } else {
             label
         }

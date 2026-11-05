@@ -70,8 +70,14 @@ impl App {
             .chain(diagrams)
             .chain(compares)
             .collect();
-        order.sort_by_key(|(opened, _)| *opened);
+        // Agent tabs come last, in the order of opening.
+        order.sort_by_key(|(opened, tab)| (self.agent_tab(*tab), *opened));
         order.into_iter().map(|(_, tab)| tab).collect()
+    }
+
+    /// Returns true for the console tab of an agent.
+    fn agent_tab(&self, tab: Tab) -> bool {
+        matches!(tab, Tab::Console(index) if self.agent.owns(self.consoles[index].id))
     }
 
     /// Lists the tabs of the tab row, with the state of their runs.
@@ -105,6 +111,7 @@ impl App {
             TabView {
                 label,
                 badge: run_badge(phase, run, self.clock, picture, &self.theme),
+                right: self.agent_tab(tab),
             }
         };
         self.tab_order().into_iter().map(view).collect()
