@@ -51,7 +51,7 @@ Do not replace unrelated client settings. No connection definition belongs in ei
 
 ## MCP settings
 
-Open **Settings** with `Ctrl+W ,` and select **IA**. The fields have the global and the project scope, as the other settings.
+Open **Settings** with `Ctrl+W ,` and select **MCP**. The fields have the global and the project scope, as the other settings.
 A save applies at once.
 
 | Field | Key | Default | Effect |

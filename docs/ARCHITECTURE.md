@@ -36,6 +36,8 @@ Main thread                        Tokio runtime
 | `ui` | Drawing of the screens and the widgets, themes (`theme`), color schemes (`schemes`), symbols (`icons`), status bar (`statusline`), and prefix menu (`which_key`) |
 | `app/commands` | Shared command availability, contextual lists, priority, and target labels; `Action` remains the catalog |
 | `palette` | State and word filter of functional commands, including action names and technical aliases; `ui` draws it |
+| `filter_list` | Filtered list core, used by the palette, the history window, and the compare dialog lists |
+| `help` | State of the `F1` key reference: groups, filter, and scroll |
 | `browser` | State of the file explorer of the path fields: folder, rows, and filter |
 | `input` | Key map: regions, actions, sequences, and `keymap` rules |
 | `navigator` | Tree of connections, consoles, schemas, relations, columns, and other database objects |
@@ -49,6 +51,7 @@ Main thread                        Tokio runtime
 | `definition` | DDL of one object: the queries per database and the text with its header |
 | `generate` | SQL templates of the navigator |
 | `console` | Editor, results, messages, and state of a console |
+| `parameters` | Panel of the query parameters of one console: fields, kinds, values, and Set state |
 | `command_log` | In-memory command history, bounded text, tracing, and the Messages viewport |
 | `plan` | Query plan commands, database output readers, and tree rows |
 | `mark_list` | Searchable list with a mark for each selected name |
