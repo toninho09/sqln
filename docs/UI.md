@@ -65,9 +65,48 @@ It also lists clients with remembered access and no live session, as `client  re
 A risky write of a session with **Full access** opens the run confirmation of a user run.
 Its text starts with `MCP client asks to run this SQL.` **Cancel** has the initial focus.
 
-Edit review shows a scrollable comparison with Reject and Accept. Reject has the initial focus.
-Its title holds the console name and the queue place. The first line holds the client, the revision, and `+N −M lines`.
-The review supports keyboard, Vim navigation, mouse, 80×24, and resize.
+An edit proposal opens as an [inline review](#inline-review) in its console. The tab of a console with a pending proposal starts with `± `.
+
+## Inline review
+
+AI responses and agent edit proposals show in the editor, as in an IDE.
+
+An AI insertion shows ghost text at the requested place, in the hint style. The text of the console does not change before acceptance. A dedicated row after each ghost text holds its buttons; a ghost has no bar. Several answers can wait at once, each on its own line.
+While an answer runs, the requested line shows an animated mark (`|`, `/`, `-`, `\`) in the first column of the gutter, so the user sees each anchor while editing other lines. The ghost replaces the mark when the answer shows.
+
+```text
+ 1   SELECT 42
+     [Tab Accept] [Esc Reject]
+ 2   FROM t
+     [Tab Accept] [Esc Reject]
+```
+
+`Tab` decides the ghost at the line of the cursor, at its anchor. `Esc` ends the request of that line, or rejects its ghost. Each ghost stays until the user decides: keys, clicks, commands, cursor movement, tab changes, and schema refreshes keep it, and the editor stays editable. An edit of the anchor line closes only the ghost of that line, in silence; an edit on another line moves the anchor with the text. Any undo takes every ghost. A new request on a line replaces the answer of that line, and a request on a free line adds one, within the configured limit. `Run` executes the text without the ghosts, and the ghosts stay. The tab of the console shows `±N` with the count of the ghosts that wait.
+
+An agent proposal shows an inline diff. During a diff, the AI requests of the console end and new requests refuse; the ghosts that wait stay hidden and return when the review closes. Removed lines have `-` and the error color. Added lines have `+` and the success color. Changed words are bold and underlined. The `-` and `+` marks stay in terminals without colors.
+
+```text
+ 12   SELECT id, name
+ 13 - FROM users
+ 14 - WHERE active
+    + FROM users u
+    + WHERE u.active = true
+      [a Accept] [r Reject]
+ 15   ORDER BY id;
+ 1/2 changes · MCP claude [A Accept all] [R Reject all] [Esc Later]
+```
+
+- Each pending change has its **Accept** and **Reject** buttons on the row after it, and they decide that change. The bar on the last row of the editor shows the place of the current change, the origin, and the buttons for all changes.
+- A narrow row or bar drops the labels of the last buttons first, then shortens the text before the buttons. The keys stay.
+- No button has the focus, and `Enter` decides nothing.
+- An accepted change goes into the text at once, as one undo step. **Accept all** is one undo step. After a decision, the next pending change becomes current.
+- The editor is read only during the review. A key that edits or runs the text shows the reason and the review keys in the status bar. Global keys, `Ctrl+W`, and the palette still work.
+- `Esc` is **Later**: the review closes, and the proposal and its decisions stay pending.
+- After the last decision, the editor stays. The card shows the next proposal.
+- Left/Right and the horizontal wheel move the view sideways; PageUp/PageDown and the wheel move it up and down.
+- A click on a change makes it current. A click on a button acts.
+- The `Ctrl+W` panel menu, the palette, the hint row, and `F1` list the review commands.
+- A change of the text from outside the review, such as a reload or a direct edit of an agent, closes the review with the reason.
 
 The status bar shows `MCP n`, `MCP n all` with **Allow all**, or `MCP n full` with **Full access**. It goes before the transaction and execution state.
 An agent tab opens when the user allows access, without a focus change, and stands at the right end of the tab row, before **Quit**.
@@ -1126,7 +1165,7 @@ The project writes only the values it declares.
 Offer the global or project scope and the fields below.
 Show the values inherited from global and allow removing a project definition to use the global one.
 **Save** writes the changes of all sections. **Cancel** changes nothing.
-The sidebar groups fields in **General**, **Editor**, **Results**, **Appearance**, **IA**, and **Shortcuts**. The panel shows one section at a time.
+The sidebar groups fields in **General**, **Editor**, **Results**, **Appearance**, **MCP**, **Autocomplete**, and **Shortcuts**. The panel shows one section at a time.
 The scope and the buttons stay outside the sections, and appear in all of them.
 An error note appears above the buttons, even when the field is in another section.
 A new section needs a row in the `SECTIONS` table, and the window grows with the largest section.
@@ -1156,7 +1195,7 @@ The **Editor** section includes **Autocomplete** and **Undo limit**, with 64 MiB
 The **Results** section includes **Limit in SQL**, on by default, and **System commands**, off by default.
 **System commands** only filters the Messages view.
 
-The **IA** section has the MCP fields. See [MCP settings](MCP.md#mcp-settings).
+The **MCP** section has the MCP fields. See [MCP settings](MCP.md#mcp-settings).
 Below the fields, a help text shows the Claude Code command and a reference to `docs/MCP.md`. SQLN never changes the files of an MCP client.
 
 The **Appearance** section has the **Default theme** field.

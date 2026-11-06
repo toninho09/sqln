@@ -1,5 +1,5 @@
 //! Bounded HTTP calls. External response bodies never enter error messages.
-use super::{Prepared, Protocol, Provider};
+use super::{Prepared, Provider};
 use crate::connector::target::Secret;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -73,13 +73,11 @@ pub async fn complete(
             .get("choices")
             .and_then(|c| c.get(0))
             .ok_or("The API returns no choice. Check the model and protocol.")?;
-        let value = match provider.protocol() {
-            Protocol::Fim => choice.get("text"),
-            Protocol::Chat => choice.get("message").and_then(|m| m.get("content")),
-        };
-        let value = value
+        let value = choice
+            .get("message")
+            .and_then(|m| m.get("content"))
             .and_then(serde_json::Value::as_str)
-            .ok_or("The API returns no SQL text. Choose a text completion model.")?;
+            .ok_or("The API returns no SQL text. Choose a chat model.")?;
         super::replacement(
             value,
             choice

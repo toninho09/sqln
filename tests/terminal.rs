@@ -280,13 +280,17 @@ fn paste(terminal: &mut Terminal, text: &str) {
 }
 
 #[test]
-#[ignore = "Requires explicit SQLN_TEST_DEEPSEEK_KEY_FILE and a paid DeepSeek API request."]
-fn deepseek_fim_completion_runs_through_the_real_terminal() {
-    let key_file = std::env::var_os("SQLN_TEST_DEEPSEEK_KEY_FILE")
+#[ignore = "Requires explicit SQLN_TEST_AI_KEY_FILE and SQLN_TEST_AI_MODEL, and a paid API request."]
+fn ai_chat_completion_runs_through_the_real_terminal() {
+    let key_file = std::env::var_os("SQLN_TEST_AI_KEY_FILE")
         .map(PathBuf::from)
-        .expect("Set SQLN_TEST_DEEPSEEK_KEY_FILE to a private key file outside the repository.");
+        .expect("Set SQLN_TEST_AI_KEY_FILE to a private key file outside the repository.");
     assert!(key_file.is_absolute() && key_file.is_file());
-    let home = home_with_connection("terminal-deepseek-live");
+    let model = std::env::var("SQLN_TEST_AI_MODEL")
+        .expect("Set SQLN_TEST_AI_MODEL to a chat model identifier of the endpoint.");
+    // An empty base uses the default OpenRouter endpoint.
+    let base = std::env::var("SQLN_TEST_AI_BASE_URL").unwrap_or_default();
+    let home = home_with_connection("terminal-ai-live");
     let db = home.join("one.db");
     rusqlite::Connection::open(&db)
         .unwrap()
@@ -296,7 +300,7 @@ fn deepseek_fim_completion_runs_through_the_real_terminal() {
     let mut config: serde_json::Value =
         serde_json::from_slice(&fs::read(root.config_file()).unwrap()).unwrap();
     config["preferences"] = serde_json::json!({"mcp":false,"queryHistory":false,"aiCompletion":{"enabled":true,"provider":{
-        "kind":"deepseek","model":"deepseek-flash","baseUrl":"https://api.deepseek.com/beta/completions",
+        "kind":"compatible","model":model,"baseUrl":base,
         "maxOutputTokens":128,"credential":{"source":"file","path":key_file}
     }}});
     fs::write(root.config_file(), serde_json::to_vec(&config).unwrap()).unwrap();

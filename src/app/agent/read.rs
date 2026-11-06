@@ -30,7 +30,7 @@ impl App {
 
     pub(super) fn agent_tabs(&self, offset: usize, limit: usize) -> Reply {
         let consoles = self.consoles.iter().filter(|console|!console.hidden).map(|console|json!({
-            "tab_id":console.id.to_string(),"console_id":console.id.to_string(),"kind":"console","name":self.agent.console_label(console.id,&console.name),
+            "tab_id":console.id.to_string(),"console_id":console.id.to_string(),"kind":"console","name":self.agent.console_label(&self.consoles,console.id,&console.name),
             "connection_id":console.connection.map(|id|id.to_string()),"schema":console.schema,
             "revision":console.editor.revision(),"phase":format!("{:?}",console.phase),"transaction":format!("{:?}",console.transaction),
             "result_count":console.results.len(),"selected_result":console.active,"agent_owned":self.agent.owned.contains_key(&console.id),"direct_edit":self.agent.direct.contains(&console.id),

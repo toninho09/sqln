@@ -1,6 +1,6 @@
 //! The MCP row, and the scrollable review of proposed SQL edits.
 
-use crate::ui::{console::draw_overlay_styled, text, theme::Theme, wrap::WrappedText};
+use crate::ui::{text, theme::Theme};
 use ratatui::{Frame, layout::Rect, style::Style, text::Span, widgets::Paragraph};
 use unicode_width::UnicodeWidthStr;
 
@@ -143,70 +143,4 @@ pub fn draw_bar(frame: &mut Frame, area: Rect, bar: &Bar, theme: &Theme) -> BarT
     };
     frame.render_widget(Paragraph::new(line), left);
     targets
-}
-
-pub struct Review {
-    pub proposal: String,
-    pub title: String,
-    pub contents: WrappedText,
-    pub scroll: usize,
-    pub accept: bool,
-    pub buttons: [Rect; 2],
-    pub(crate) _hold: crate::agent::Hold,
-}
-
-/// Counts the added and the removed lines of a unified diff.
-pub fn diff_counts(diff: &str) -> (usize, usize) {
-    diff.lines().fold((0, 0), |(added, removed), line| {
-        if line.starts_with('+') && !line.starts_with("+++") {
-            (added + 1, removed)
-        } else if line.starts_with('-') && !line.starts_with("---") {
-            (added, removed + 1)
-        } else {
-            (added, removed)
-        }
-    })
-}
-
-/// Returns the style of a diff line from its first characters.
-fn diff_style(head: &str, theme: &Theme) -> Style {
-    if head.starts_with("+++") || head.starts_with("---") || head.starts_with("@@") {
-        theme.hint
-    } else if head.starts_with('+') {
-        theme.mark_good
-    } else if head.starts_with('-') {
-        theme.mark_bad
-    } else {
-        Style::new()
-    }
-}
-
-pub fn draw_review(frame: &mut Frame, review: &mut Review, theme: &Theme) {
-    review.scroll = draw_overlay_styled(
-        frame,
-        &review.title,
-        &mut review.contents,
-        text::AGENT_REVIEW_FOOTER,
-        review.scroll,
-        theme,
-        |head| diff_style(head, theme),
-    );
-    let area = super::console::overlay_area(frame.area());
-    let y = area.bottom().saturating_sub(1);
-    let mut x = area.x.saturating_add(2);
-    for (index, label) in [text::AGENT_REJECT, text::AGENT_ACCEPT].iter().enumerate() {
-        let label = theme.button(label);
-        let width = u16::try_from(label.width()).unwrap_or(u16::MAX);
-        let selected = (index == 1) == review.accept;
-        review.buttons[index] = Rect::new(x, y, width, 1).intersection(area);
-        frame.render_widget(
-            Paragraph::new(label).style(if selected {
-                theme.dialog_focus
-            } else {
-                theme.dialog_option
-            }),
-            review.buttons[index],
-        );
-        x = x.saturating_add(width + 2);
-    }
 }

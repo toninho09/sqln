@@ -2,10 +2,9 @@
 
 use super::*;
 use crate::agent::{Edit, EditMode};
+use crate::editor::review::{Review, Source, diff_hunks};
 use crate::grid::printable;
 use crate::ui::text;
-use crate::ui::wrap::WrappedText;
-use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use serde_json::json;
 
 impl App {
@@ -326,6 +325,7 @@ impl App {
         );
     }
 
+    /// Selects the console of a proposal and shows its changes in the editor.
     fn open_agent_review(&mut self, id: &str) {
         let Some(proposal) = self
             .agent
@@ -336,48 +336,102 @@ impl App {
             self.status = Some(text::AGENT_PROPOSAL_GONE.into());
             return;
         };
-        let Some(diff) = proposal.diff.as_ref() else {
+        let (console, session) = (proposal.console, proposal.session.clone());
+        let Some(index) = self.console_index(console) else {
+            self.status = Some(text::AGENT_PROPOSAL_GONE.into());
             return;
         };
-        let pending = self.agent.pending_proposal_ids();
-        let position = pending
-            .iter()
-            .position(|item| item == id)
-            .map_or(1, |index| index + 1);
-        let title = text::agent_queue_title(
-            &format!(
-                "{} · {}",
-                text::AGENT_PROPOSAL_TITLE,
-                self.proposal_console_name(proposal.console)
-            ),
-            position,
-            pending.len(),
-        );
-        let (added, removed) = proposal.lines;
-        let header = text::agent_proposal_header(
-            &self.agent.client(&proposal.session),
-            short(&proposal.session),
-            proposal.revision,
-            added,
-            removed,
-        );
-        let contents = format!("{header}\n\n{}", diff.value);
-        let hold = match agent::Hold::new(contents.capacity(), &self.budget) {
-            Ok(hold) => hold,
-            Err(error) => {
-                self.status = Some(error.message);
-                return;
-            }
+        self.select_console(index);
+        self.navigator_focused = false;
+        self.consoles[index].focus = crate::console::Focus::Editor;
+        let open = self.consoles[index]
+            .editor
+            .review()
+            .map(|r| r.source.clone());
+        match open {
+            Some(Source::Agent(open)) if open == id => return,
+            Some(_) => self.close_review(),
+            None => {}
+        }
+        let Some(hunks) = self
+            .agent
+            .proposals
+            .get_mut(id)
+            .and_then(|proposal| proposal.hunks.take())
+        else {
+            return;
         };
-        self.agent.review = Some(crate::ui::agent::Review {
-            proposal: id.into(),
-            title,
-            contents: WrappedText::new(contents),
-            scroll: 0,
-            accept: false,
-            buttons: Default::default(),
-            _hold: hold,
-        });
+        let label = format!("MCP {}", self.agent.client(&session));
+        let mut review = Review::diff(Source::Agent(id.into()), label, hunks);
+        review.keys = self.review_keys(text::AGENT_LATER);
+        self.consoles[index].editor.start_review(review);
+        self.agent.reviewing.insert(id.into());
+    }
+
+    /// Closes the review of a proposal. The proposal and its decisions wait for later.
+    pub(in crate::app) fn agent_review_later(&mut self, id: &str) {
+        let Some(index) = self.review_console(id) else {
+            return;
+        };
+        let review = self.consoles[index].editor.take_review();
+        self.agent.reviewing.remove(id);
+        if let (Some(review), Some(proposal)) = (review, self.agent.proposals.get_mut(id)) {
+            proposal.hunks = Some(review.into_hunks());
+        }
+    }
+
+    /// Returns the console that shows the review of a proposal.
+    fn review_console(&self, id: &str) -> Option<usize> {
+        self.consoles.iter().position(|console| {
+            console
+                .editor
+                .review()
+                .is_some_and(|review| review.source == Source::Agent(id.into()))
+        })
+    }
+
+    /// Records a decision on a proposal. After the last change, the proposal ends with
+    /// `applied`, `rejected`, or `partial`, and the editor stays.
+    pub(in crate::app) fn agent_review_progress(&mut self, id: &str) {
+        let Some(index) = self.review_console(id) else {
+            return;
+        };
+        let revision = self.consoles[index].editor.revision();
+        let Some(proposal) = self.agent.proposals.get_mut(id) else {
+            return;
+        };
+        // The accepted changes give a new revision, so the proposal keeps its place.
+        proposal.revision = revision;
+        let editor = &mut self.consoles[index].editor;
+        if !editor.review().is_some_and(|review| review.finished()) {
+            return;
+        }
+        let outcome = editor
+            .take_review()
+            .map(|review| review.outcome())
+            .unwrap_or_default();
+        self.agent.reviewing.remove(id);
+        let (session, console) = (proposal.session.clone(), proposal.console);
+        proposal.state = match (outcome.accepted, outcome.rejected) {
+            (0, _) => "rejected",
+            (_, 0) => "applied",
+            _ => "partial",
+        };
+        proposal.decided = Some(outcome);
+        proposal.edits.clear();
+        proposal._hold = None;
+        let state = proposal.state;
+        let connection = self.console_connection(console);
+        let name = printable(&self.proposal_console_name(console));
+        let notice = match state {
+            "rejected" => text::agent_rejected(&name),
+            "applied" => text::agent_applied(&name),
+            _ => text::agent_partial(&name, outcome.accepted, outcome.rejected),
+        };
+        self.agent_notice(&session, connection, notice);
+        if outcome.accepted > 0 && self.agent.owns(console) {
+            self.agent_sql_placed(console);
+        }
     }
 
     /// Returns the name of a console, or a mark for a closed console.
@@ -576,7 +630,8 @@ impl App {
                 revision,
                 edits,
                 state: "building",
-                diff: None,
+                hunks: None,
+                decided: None,
                 lines: (0, 0),
                 created: std::time::Instant::now(),
                 _hold: Some(hold),
@@ -595,122 +650,17 @@ impl App {
             .spawn_blocking(move || {
                 let _scratch = scratch;
                 let after = edited(&before.value, &changes);
-                let diff = similar::TextDiff::configure()
-                    .timeout(std::time::Duration::from_millis(250))
-                    .diff_lines(&before.value, &after)
-                    .unified_diff()
-                    .header("Current SQL", "Proposed SQL")
-                    .to_string();
-                let _ = sender.send(Work::Diff(key, Text::new(diff, &budget)));
+                let hunks = diff_hunks(
+                    &before.value,
+                    &after,
+                    0,
+                    std::time::Duration::from_millis(250),
+                );
+                let bytes = hunks.iter().map(|hunk| hunk.bytes()).sum();
+                let result = agent::Hold::new(bytes, &budget).map(|hold| (hunks, hold));
+                let _ = sender.send(Work::Diff(key, result));
             });
         Ok(json!({"job_id":proposal,"kind":"proposal","status":"building"}))
-    }
-
-    pub(in crate::app) fn on_agent_review_key(&mut self, key: KeyEvent) {
-        let Some(review) = &mut self.agent.review else {
-            return;
-        };
-        match key.code {
-            KeyCode::Esc => {
-                self.agent.review = None;
-            }
-            KeyCode::Tab
-            | KeyCode::BackTab
-            | KeyCode::Left
-            | KeyCode::Right
-            | KeyCode::Char('h' | 'l') => review.accept = !review.accept,
-            KeyCode::Up | KeyCode::Char('k') => review.scroll = review.scroll.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => review.scroll = review.scroll.saturating_add(1),
-            KeyCode::PageUp => review.scroll = review.scroll.saturating_sub(10),
-            KeyCode::PageDown => review.scroll = review.scroll.saturating_add(10),
-            KeyCode::Enter => {
-                let id = review.proposal.clone();
-                let accept = review.accept;
-                self.agent.review = None;
-                self.decide_agent_proposal(&id, accept);
-            }
-            _ => {}
-        }
-    }
-    pub(in crate::app) fn on_agent_review_mouse(&mut self, event: MouseEvent) {
-        let Some(review) = &mut self.agent.review else {
-            return;
-        };
-        match event.kind {
-            MouseEventKind::ScrollUp => review.scroll = review.scroll.saturating_sub(3),
-            MouseEventKind::ScrollDown => review.scroll = review.scroll.saturating_add(3),
-            MouseEventKind::Down(MouseButton::Left) => {
-                let point = ratatui::layout::Position::new(event.column, event.row);
-                if let Some(index) = review
-                    .buttons
-                    .iter()
-                    .position(|button| button.contains(point))
-                {
-                    let id = review.proposal.clone();
-                    self.agent.review = None;
-                    self.decide_agent_proposal(&id, index == 1);
-                }
-            }
-            _ => {}
-        }
-    }
-    fn decide_agent_proposal(&mut self, id: &str, accept: bool) {
-        let Some(proposal) = self
-            .agent
-            .proposals
-            .get_mut(id)
-            .filter(|proposal| proposal.state == "pending")
-        else {
-            self.status = Some(text::AGENT_PROPOSAL_GONE.into());
-            return;
-        };
-        let (session, console) = (proposal.session.clone(), proposal.console);
-        let connection = self.console_connection(console);
-        let name = printable(&self.proposal_console_name(console));
-        if !accept {
-            let proposal = self.agent.proposals.get_mut(id).expect("checked proposal");
-            proposal.state = "rejected";
-            proposal.edits.clear();
-            proposal._hold = None;
-            proposal.diff = None;
-            self.agent_notice(&session, connection, text::agent_rejected(&name));
-            self.review_next_proposal();
-            return;
-        }
-        let proposal = &self.agent.proposals[id];
-        let (revision, edits) = (proposal.revision, proposal.edits.clone());
-        let result = self
-            .console_index(console)
-            .ok_or_else(missing)
-            .and_then(|index| {
-                self.consoles[index]
-                    .editor
-                    .apply_agent_edits(revision, &edits)
-            });
-        let proposal = self.agent.proposals.get_mut(id).expect("checked proposal");
-        proposal.diff = None;
-        proposal.edits.clear();
-        proposal._hold = None;
-        match result {
-            Ok(()) => {
-                proposal.state = "applied";
-                // The console can be another tab, so the notice names it.
-                self.agent_notice(&session, connection, text::agent_applied(&name));
-                if self.agent.owns(console) {
-                    self.agent_sql_placed(console);
-                }
-            }
-            Err(error) => {
-                proposal.state = "revision_conflict";
-                self.status = Some(error.message);
-            }
-        }
-        self.review_next_proposal();
-    }
-    fn review_next_proposal(&mut self) {
-        if let Some(next) = self.agent.pending_proposal_ids().first() {
-            self.open_agent_review(&next.clone());
-        }
     }
 }
 

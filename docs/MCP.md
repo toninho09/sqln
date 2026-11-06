@@ -244,19 +244,18 @@ Positions count Unicode characters, not UTF-8 bytes or terminal columns. Lines a
 An end position is exclusive. The operation rejects invalid or overlapping ranges before changing anything.
 
 The default mode, `propose`, leaves the editor unchanged and waits for your review.
-The reply has `kind: "proposal"` and a final `status`: `applied`, `rejected`, `revision_conflict`, or `budget_reached`.
+The reply has `kind: "proposal"` and a final `status`: `applied`, `rejected`, `partial`, `revision_conflict`, or `budget_reached`.
+`partial` means that the user accepted some changes and rejected others. `accepted_changes` and `rejected_changes` hold the counts after the user decides.
 The notice after **Accept** names the console that changed, because it can be another tab.
 A proposal that the console invalidates closes its open review, and the status bar gives the reason.
 `console_revision` holds the current revision after the decision.
-Click **Review** in the MCP row, or open **Review agent changes** in the palette and select a proposal.
-The review shows the console name, the client, the revision, and the added and removed line counts.
-Added lines use the success color and removed lines use the error color. The `+` and `-` marks stay without color.
-After a decision, the next pending proposal opens.
-Use the arrow keys or wheel to scroll. `Tab` or Left/Right selects Reject or Accept.
-`Enter` confirms the selected option. Reject is selected first. `Esc` closes the review and keeps the proposal pending.
-Click a button to accept or reject with the mouse.
+Click **Review** in the MCP row or the card, or open **Review agent changes** in the palette and select a proposal.
+SQLN selects the console tab and shows the changes in its editor, as an [inline review](UI.md#inline-review).
+The tab of a console with a pending proposal starts with `± `.
+Decide each change, or all changes. `Esc` (**Later**) closes the review; the proposal and its decisions stay pending.
+After the last decision, the editor stays, and the card shows the next proposal.
 
-Accepting changes applies one undo step in conventional and Vim modes.
+Each accepted change goes into the text at once, as one undo step, in conventional and Vim modes. **Accept all** is one undo step.
 The operation adjusts the cursor and selection relative to the changes.
 The existing script autosave and external-file conflict checks still apply.
 A changed revision invalidates the proposal. The assistant must read the console and propose again.

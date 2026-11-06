@@ -9,7 +9,7 @@ use super::{App, DialogAction, Picker, PickerKind};
 use crate::agent::ipc::{Envelope, Server};
 use crate::agent::{self, Error, Operation, Reply, Text};
 use crate::connector::TransactionState;
-use crate::console::Phase;
+use crate::console::{Console, Phase};
 use crate::editor::RunPlan;
 use crate::exec::{ConnectionId, ConsoleId, ExecutionId, RunOptions};
 use crate::store::config::AgentSettings;
@@ -44,7 +44,8 @@ pub(super) struct State {
     /// Agent tabs with placed SQL that the user did not see yet.
     fresh: HashSet<ConsoleId>,
     retired: HashMap<ConsoleId, CancellationToken>,
-    pub review: Option<crate::ui::agent::Review>,
+    /// Proposals that an editor shows for review. Their card does not show.
+    reviewing: HashSet<String>,
     sender: mpsc::Sender<Work>,
     receiver: mpsc::Receiver<Work>,
     serial: u64,
@@ -110,8 +111,13 @@ impl State {
                 .find(|(_, id)| !self.later.contains(id))
                 .map(|(index, id)| (kind(id), index + 1, total))
         };
+        let proposals = self
+            .pending_proposal_ids()
+            .into_iter()
+            .filter(|id| !self.reviewing.contains(id))
+            .collect();
         first(self.pending_session_ids(), Notice::Access)
-            .or_else(|| first(self.pending_proposal_ids(), Notice::Proposal))
+            .or_else(|| first(proposals, Notice::Proposal))
             .or_else(|| first(self.long_task_ids(), Notice::Task))
     }
     /// Lists the tasks that run for longer than the card delay, the oldest first.
@@ -193,7 +199,12 @@ impl State {
             |session| crate::grid::printable(&session.client),
         )
     }
-    pub(super) fn console_label(&self, console: ConsoleId, name: &str) -> String {
+    pub(super) fn console_label(
+        &self,
+        consoles: &[Console],
+        console: ConsoleId,
+        name: &str,
+    ) -> String {
         let mut label = name.to_owned();
         if let Some(owner) = self.owned.get(&console)
             && self
@@ -208,6 +219,19 @@ impl State {
         }
         if self.fresh.contains(&console) {
             label = format!("{}{label}", crate::ui::text::SQL_PREFIX);
+        }
+        let waiting = consoles
+            .iter()
+            .find(|c| c.id == console)
+            .map_or(0, |c| c.editor.ghosts().len());
+        if waiting > 0 {
+            label = format!("{label}±{waiting}");
+        } else if self
+            .proposals
+            .values()
+            .any(|proposal| proposal.console == console && proposal.state == "pending")
+        {
+            label = format!("{}{label}", crate::ui::text::PROPOSAL_PREFIX);
         }
         label
     }
@@ -265,7 +289,7 @@ impl Default for State {
             placed: HashMap::new(),
             fresh: HashSet::new(),
             retired: HashMap::new(),
-            review: None,
+            reviewing: HashSet::new(),
             sender,
             receiver,
             serial: 0,
@@ -357,7 +381,10 @@ struct Proposal {
     revision: u64,
     edits: Vec<agent::Edit>,
     state: &'static str,
-    diff: Option<Text>,
+    /// The changes. An open review holds them until it closes.
+    hunks: Option<Vec<crate::editor::review::Hunk>>,
+    /// The decisions of the user, after the review.
+    decided: Option<crate::editor::review::Outcome>,
     /// The added and the removed lines of the diff.
     lines: (usize, usize),
     created: Instant,
@@ -366,7 +393,10 @@ struct Proposal {
 enum Work {
     /// Holds the split statements when the draft held one raw text.
     Validated(String, Result<Option<Vec<String>>, Error>),
-    Diff(String, Result<Text, Error>),
+    Diff(
+        String,
+        Result<(Vec<crate::editor::review::Hunk>, agent::Hold), Error>,
+    ),
     Artifact(String, Result<Text, Error>),
 }
 
@@ -604,7 +634,7 @@ impl App {
                     .is_none_or(|console| console.editor.revision() != proposal.revision)
             {
                 proposal.state = "revision_conflict";
-                proposal.diff = None;
+                proposal.hunks = None;
                 proposal.edits.clear();
                 proposal._hold = None;
                 discarded.push((proposal.session.clone(), proposal.console));
@@ -623,15 +653,7 @@ impl App {
             );
         }
         if any {
-            // An open review of that proposal could accept nothing, so it closes.
-            if self.agent.review.as_ref().is_some_and(|review| {
-                self.agent
-                    .proposals
-                    .get(&review.proposal)
-                    .is_none_or(|proposal| proposal.state != "pending")
-            }) {
-                self.agent.review = None;
-            }
+            self.close_gone_reviews();
         }
         changed || any
     }
@@ -1181,6 +1203,8 @@ impl App {
             "console_id": proposal.console.to_string(),
             "revision": proposal.revision,
             "console_revision": revision,
+            "accepted_changes": proposal.decided.map(|outcome| outcome.accepted),
+            "rejected_changes": proposal.decided.map(|outcome| outcome.rejected),
         }))
     }
 
@@ -1270,18 +1294,30 @@ impl App {
         for id in removed {
             self.agent.jobs.remove(&id);
         }
-        if self.agent.review.as_ref().is_some_and(|review| {
-            self.agent
-                .proposals
-                .get(&review.proposal)
-                .is_some_and(|proposal| proposal.session == session)
-        }) {
-            self.agent.review = None;
-        }
         self.agent
             .proposals
             .retain(|_, proposal| proposal.session != session);
+        self.close_gone_reviews();
         self.refresh_tree_consoles();
+    }
+
+    /// Closes each review of a proposal that no longer waits: it could accept nothing.
+    fn close_gone_reviews(&mut self) {
+        let proposals = &self.agent.proposals;
+        let waiting = |id: &String| proposals.get(id).is_some_and(|p| p.state == "pending");
+        for console in &mut self.consoles {
+            let gone = console
+                .editor
+                .review()
+                .is_some_and(|review| match &review.source {
+                    crate::editor::review::Source::Agent(id) => !waiting(id),
+                    crate::editor::review::Source::Ai => false,
+                });
+            if gone {
+                console.editor.take_review();
+            }
+        }
+        self.agent.reviewing.retain(|id| waiting(id));
     }
 }
 /// Returns the first eight characters of an identifier, as the interface shows it.

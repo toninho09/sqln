@@ -20,6 +20,7 @@ mod import;
 mod keys;
 mod mouse;
 mod persist;
+mod review;
 mod scripts;
 mod session;
 mod tables;
@@ -909,7 +910,6 @@ impl App {
     fn modal_is_open(&self) -> bool {
         !self.dialogs.is_empty()
             || self.ai.modal()
-            || self.agent.review.is_some()
             || self.conflicts.is_some()
             || self.overlay.is_some()
             || self.help.is_some()
@@ -1004,7 +1004,6 @@ impl App {
             Event::Paste(text) if !blocked => self.on_paste(&text),
             Event::Mouse(mouse) if !self.dialogs.is_empty() => self.on_dialog_mouse(mouse),
             Event::Mouse(mouse) if self.auth.prompt.is_some() => self.on_password_mouse(mouse),
-            Event::Mouse(mouse) if self.agent.review.is_some() => self.on_agent_review_mouse(mouse),
             Event::Mouse(mouse) if self.conflicts.is_some() => self.on_conflicts_mouse(mouse),
             Event::Mouse(mouse) if self.browser.is_some() => self.on_browser_mouse(mouse),
             Event::Mouse(mouse) if self.picker.is_some() => self.on_picker_mouse(mouse),
@@ -1066,6 +1065,9 @@ impl App {
         }
         if self.agent_tab_without_sql(self.console().id) {
             self.status = Some(text::AGENT_NO_EDITOR.into());
+            return;
+        }
+        if self.review_paste() {
             return;
         }
         let console = self.console_mut();
@@ -1737,9 +1739,6 @@ impl App {
             self.layout.conflicts =
                 draw_conflicts(frame, &rows, conflicts.cursor, conflicts.note, &self.theme);
         }
-        if let Some(review) = &mut self.agent.review {
-            crate::ui::agent::draw_review(frame, review, &self.theme);
-        }
         if let Some(overlay) = &mut self.overlay {
             let Overlay {
                 title,
@@ -1783,7 +1782,7 @@ impl App {
         if let Some(prompt) = &self.auth.prompt {
             self.layout.password = crate::ui::auth::draw_password(frame, prompt, &self.theme);
         }
-        self.draw_ai_form(frame);
+        self.draw_ai_prompts(frame);
         if let Some(dialog) = self.dialogs.front() {
             let labels: Vec<&str> = dialog.options.iter().map(|(label, _)| *label).collect();
             self.layout.dialog = draw_dialog(

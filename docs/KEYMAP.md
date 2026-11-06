@@ -13,9 +13,7 @@ The palette includes `agentSessions`, `agentReview`, `agentDirect`, `agentStop`,
 `agentSession` and `agentTasks` are available in an agent tab of a connected session; its bar shows them as **Access: level** and **Tasks N**. `agentTasks` needs an active task.
 The MCP row shows the effective key of `agentSessions` or `agentReview`, and its **Stop** button runs `agentStop`.
 Assign custom shortcuts through the existing key map. Availability and labels use the shared command catalog.
-An edit review uses Up/Down or `j`/`k` to scroll, PageUp/PageDown for larger steps, and Tab or Left/Right to select a button.
-Enter confirms the selected button. Reject starts selected. Esc closes the review and keeps the proposal pending.
-Mouse buttons accept or reject; the wheel scrolls. These keys act only while review is open.
+An edit proposal opens as an inline review in the editor. See [Review](#review).
 
 ## Choice criteria
 
@@ -42,6 +40,7 @@ Terminal.app and Linux terminals were also not tested.
 | Filter bar | `WHERE` and `ORDER BY` fields of the table view |
 | Grid | Rows of the result or of the table |
 | Diagram | Boxes and lines of an ER diagram |
+| Review | Changes of an inline review in the editor |
 | Result tabs | Results and **Messages** of the console |
 | Dialog | Question that blocks the other regions |
 
@@ -75,6 +74,7 @@ The key of a command outside the window keeps its action, so the table below lis
 | Results | Rename, mode, database or schema, and connection change |
 | Table and filter bar | None |
 | Diagram | None |
+| Review | The review commands |
 | Navigator | None |
 
 Each panel also lists these commands:
@@ -206,6 +206,7 @@ The order is fixed by context, not by a usage history. Custom shortcuts use thei
 | Sessions | Reload, copy, value, find, row; cancel query and end session come later |
 | Compare | Open script, copy script, row, find, copy, value, reload |
 | Diagram | Data, structure, key columns, Mermaid, reload |
+| Review | Accept, reject, next, accept all, reject all, later or reject |
 
 Dialogs, forms, searches, and suggestion lists keep their own instructions.
 Status and progress messages can temporarily replace the hint row.
@@ -229,8 +230,7 @@ Status and progress messages can temporarily replace the hint row.
 | Save now | `Ctrl+S` | `Ctrl+S` |
 
 AI completion has no separate default shortcut. Configure `editorAiComplete`, `editorAiAccept`, `editorAiReject`, and `editorAiCancel` as needed.
-In AI review, `Tab` and `Shift+Tab` select Reject or Accept. `Enter` activates the selected button; `Esc` rejects.
-`PageUp`, `PageDown`, and the mouse wheel scroll the response. During a request, `Esc` or Cancel stops only AI work.
+An AI response opens an inline review. See [Review](#review). During a request, `Esc` or Cancel stops only AI work.
 See [AI completion](AI_COMPLETION.md).
 
 The list opens when you type a name or a dot, and `Ctrl+Space` opens the list without a prefix.
@@ -573,6 +573,26 @@ An arrow selects the nearest box that starts past the edge of the selected box i
 A key column is a column of the primary key, of a foreign key, or that a foreign key reads.
 `y` copies the `erDiagram` text of the boxes on screen, so with **keys only** the text has only the key columns.
 `Ctrl+W x` stops a read. `Ctrl+W c` closes the diagram tab. The script and transaction actions have no effect.
+
+## Review
+
+An inline review of an AI response or an agent proposal uses these keys while the editor has the focus. They are the same in both modes.
+
+| Action | Name | Key |
+|---|---|---|
+| Accept the current change | `reviewAccept` | `a` or `Tab` |
+| Reject the current change | `reviewReject` | `r` |
+| Accept all changes | `reviewAcceptAll` | `A` |
+| Reject all changes | `reviewRejectAll` | `R` |
+| Next change | `reviewNext` | `Down`, `j`, or `]` |
+| Previous change | `reviewPrevious` | `Up`, `k`, or `[` |
+| Close: **Later** for an agent proposal | `reviewClose` | `Esc` |
+| Move the view | — | `PageUp`, `PageDown`, `Left`, and `Right` |
+
+Ghost text takes only the keys of `reviewAccept` that are not characters, such as `Tab`, and `reviewClose`. Every other key goes to the editor and keeps the ghost text, so the editor stays editable around it. A character never decides: it is text, and an edit of the anchor line closes the ghost of that line.
+With several ghosts, the decide keys act on the ghost at the line of the cursor. `reviewClose` (`Esc`) ends the request of that line, or rejects its ghost; with several requests, the bar button **Cancel** ends them all.
+In a diff of an agent proposal, the editor is read only: the AI requests of the console end, and new requests refuse until the review closes.
+`editorAiAccept` and `editorAiReject` decide the ghost at the line of the cursor.
 
 ## Compare
 

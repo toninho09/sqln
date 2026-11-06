@@ -451,11 +451,9 @@ pub fn draw_console(
     if !bar.agent {
         draw_editor(frame, editor, &mut console.editor, editor_focused, theme);
     }
-    if let Some(welcome) = bar
-        .welcome
-        .as_ref()
-        .filter(|_| console.editor.search().is_none() && !bar.agent)
-    {
+    if let Some(welcome) = bar.welcome.as_ref().filter(|_| {
+        console.editor.search().is_none() && console.editor.review().is_none() && !bar.agent
+    }) {
         draw_welcome(frame, editor, welcome, theme);
     }
     let parameters = super::parameters::draw(

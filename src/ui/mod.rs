@@ -1,7 +1,6 @@
 //! Screen drawing.
 
 pub mod agent;
-pub mod ai;
 pub mod auth;
 pub mod browser;
 pub mod compare;
@@ -20,6 +19,7 @@ pub mod name;
 pub mod navigator;
 pub mod palette;
 pub mod parameters;
+pub mod review;
 pub mod schemes;
 pub mod settings;
 pub mod statusline;
@@ -116,6 +116,11 @@ pub fn draw_editor(
     let [text, scroll] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]).areas(text);
     // The application draws the line numbers, because EdTUI leaves no space around them.
+    if editor.review().is_some() || editor.has_ghosts() {
+        editor.set_text_area(gutterless(text, editor));
+        review::draw(frame.buffer_mut(), text, editor, theme);
+        return;
+    }
     let text_area = gutterless(text, editor);
     editor.set_text_area(text_area);
     let (width, height) = (text_area.width.into(), text_area.height.into());
@@ -139,6 +144,7 @@ pub fn draw_editor(
     }
     draw_gutter(frame.buffer_mut(), text, editor, focused, theme);
     draw_marks(frame, text, editor, theme);
+    draw_ai_anchor(frame.buffer_mut(), text, editor, theme);
     let (_, top) = editor.state.viewport_offset();
     draw_scrollbar(
         frame.buffer_mut(),
@@ -254,6 +260,36 @@ fn draw_gutter(buffer: &mut Buffer, area: Rect, editor: &SqlEditor, focused: boo
             style,
         );
     }
+}
+
+// Shows the anchor of a running completion: an animated mark in the first column of
+// the gutter of the requested line. The user edits other lines and still sees where
+// the answer will land.
+fn draw_ai_anchor(buffer: &mut Buffer, area: Rect, editor: &SqlEditor, theme: &Theme) {
+    let (_, top) = editor.state.viewport_offset();
+    for (at, since) in editor.ai_pending() {
+        let Some(offset) = at
+            .row
+            .checked_sub(top)
+            .filter(|offset| *offset < usize::from(area.height))
+        else {
+            continue;
+        };
+        if let Some(cell) = buffer.cell_mut((area.x, area.y + offset as u16)) {
+            let style = cell.style();
+            cell.set_symbol(spin_char(*since))
+                .set_style(style.patch(theme.hint));
+        }
+    }
+}
+
+/// Returns the animated mark of a request that runs since `since`.
+pub(crate) fn spin_char(since: std::time::Instant) -> &'static str {
+    const FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
+    const FRAME_TIME: u128 = 100;
+    let frame =
+        usize::try_from(since.elapsed().as_millis() / FRAME_TIME).unwrap_or(0) % FRAMES.len();
+    FRAMES[frame]
 }
 
 /// Writes the statement states in the free column of the line number gutter.

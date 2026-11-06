@@ -448,61 +448,6 @@ impl App {
         }
     }
 
-    /// Writes the scope of the dialog, and it applies the files as a reload does.
-    pub(super) fn save_settings(&mut self) {
-        let Some(form) = &mut self.settings_form else {
-            return;
-        };
-        let preferences = match form.preferences() {
-            Ok(preferences) => preferences,
-            Err(message) => {
-                form.note = Some(message);
-                return;
-            }
-        };
-        let scope = form.scope;
-        let Some(persist) = &mut self.persist else {
-            return;
-        };
-        // Use the current files for the other scope, not only the dialog snapshot.
-        let validation = match scope {
-            Scope::Global => persist
-                .store
-                .project
-                .as_ref()
-                .map(|root| config::preferences(root, Scope::Project))
-                .transpose()
-                .and_then(|project| config::validate_keymaps(&preferences, project.as_ref())),
-            Scope::Project => config::preferences(&persist.store.global, Scope::Global)
-                .and_then(|global| config::validate_keymaps(&global, Some(&preferences))),
-        };
-        if let Err(message) = validation {
-            form.note = Some(message);
-            return;
-        }
-        let Some(root) = persist.store.root(scope) else {
-            return;
-        };
-        match config::change_preferences(root, scope, preferences) {
-            Ok(hash) => {
-                if let Some((_, known)) = persist.hashes.iter_mut().find(|(item, _)| *item == scope)
-                {
-                    *known = Some(hash);
-                }
-                self.settings_form = None;
-                self.reload_config();
-                if self
-                    .persist
-                    .as_ref()
-                    .is_some_and(|persist| persist.error.is_none())
-                {
-                    self.status = Some(text::SETTINGS_SAVED.to_owned());
-                }
-            }
-            Err(message) => form.note = Some(message),
-        }
-    }
-
     /// Keeps the choices of the export dialog. A write that fails leaves a note, and
     /// the export goes on.
     pub(super) fn save_export_choices(&mut self, choices: ExportChoices) {

@@ -76,7 +76,19 @@ fn label(field: Field) -> &'static str {
         Field::McpDefault => text::FIELD_MCP_DEFAULT,
         Field::McpMax => text::FIELD_MCP_MAX,
         Field::McpRemember => text::FIELD_MCP_REMEMBER,
-        Field::AiCompletion => "Autocomplete",
+        Field::AiEnabled => text::FIELD_AI_ENABLED,
+        Field::AiProfile => text::FIELD_AI_PROVIDER,
+        Field::AiModel => text::FIELD_AI_MODEL,
+        Field::AiEndpoint => text::FIELD_AI_ENDPOINT,
+        Field::AiSource => text::FIELD_AI_SOURCE,
+        Field::AiPath => text::FIELD_AI_PATH,
+        Field::AiKey => text::FIELD_AI_KEY,
+        Field::AiContext => text::FIELD_AI_CONTEXT,
+        Field::AiOutput => text::FIELD_AI_OUTPUT,
+        Field::AiTimeout => text::FIELD_AI_TIMEOUT,
+        Field::AiReasoning => text::FIELD_AI_REASONING,
+        Field::AiSimultaneous => text::FIELD_AI_SIMULTANEOUS,
+        Field::AiTest => "Test",
         _ => "",
     }
 }
@@ -84,7 +96,28 @@ fn label(field: Field) -> &'static str {
 /// Returns the text of a choice.
 fn choice(form: &SettingsForm, field: Field) -> String {
     match field {
-        Field::AiCompletion => "Configure…".to_owned(),
+        Field::AiEnabled => form.ai_enabled().map_or_else(
+            || form.inherited(field),
+            |value| text::on_off(value).to_owned(),
+        ),
+        Field::AiProfile => if form.ai_inherit() {
+            "Inherited"
+        } else {
+            "Custom"
+        }
+        .into(),
+        Field::AiSource => ["None", "System vault", "Key file"][form.ai_source()].into(),
+        Field::AiReasoning => {
+            ["Disabled", "None", "Low", "Medium", "High"][form.ai_reasoning()].into()
+        }
+        Field::AiKey => form.ai_key(),
+        Field::AiTest => {
+            if form.ai_busy {
+                "Working…".to_owned()
+            } else {
+                text::BUTTON_TEST.to_owned()
+            }
+        }
         Field::Scope if form.scope == Scope::Project => text::VALUE_SCOPE_PROJECT.to_owned(),
         Field::Scope => text::VALUE_SCOPE_GLOBAL.to_owned(),
         Field::Keyboard => form
@@ -138,13 +171,35 @@ fn choice(form: &SettingsForm, field: Field) -> String {
     }
 }
 
-fn value<'a>(form: &SettingsForm, field: Field, theme: &Theme) -> Line<'a> {
+fn value<'a>(form: &SettingsForm, field: Field, theme: &Theme, width: usize) -> Line<'a> {
     let focused = form.focus == field;
     if let Some(input) = form.input(field) {
-        let chars: Vec<char> = input.text().chars().collect();
-        let mut spans = input_spans(&chars, input.cursor(), NUMBER_WIDTH, focused, theme).0;
-        if input.text().is_empty() {
-            spans.push(Span::styled(form.inherited(field), theme.hint));
+        let masked = field == Field::AiKey && !input.text().is_empty();
+        let chars: Vec<char> = if masked {
+            "*".repeat(input.text().chars().count().min(24))
+                .chars()
+                .collect()
+        } else {
+            input.text().chars().collect()
+        };
+        // A number keeps its short columns; a provider field takes the whole row.
+        let columns = if matches!(
+            field,
+            Field::AiModel | Field::AiEndpoint | Field::AiPath | Field::AiKey
+        ) {
+            width
+        } else {
+            NUMBER_WIDTH
+        };
+        let mut spans = input_spans(&chars, input.cursor(), columns, focused, theme).0;
+        if chars.is_empty() {
+            let hint = match field {
+                Field::AiKey => choice(form, field),
+                _ => form.inherited(field),
+            };
+            if !hint.is_empty() {
+                spans.push(Span::styled(hint, theme.hint));
+            }
         }
         return Line::from(spans);
     }
@@ -155,6 +210,7 @@ fn value<'a>(form: &SettingsForm, field: Field, theme: &Theme) -> Line<'a> {
             | Field::ShortcutRemove
             | Field::ShortcutRestore
             | Field::ShortcutBack
+            | Field::AiTest
     ) {
         let style = if focused {
             theme.dialog_focus
@@ -181,7 +237,7 @@ fn draw_field_row(frame: &mut Frame, area: Rect, form: &SettingsForm, field: Fie
         area,
         (label(field), LABEL_WIDTH),
         form.focus == field,
-        value(form, field, theme),
+        value(form, field, theme, value_width(area, LABEL_WIDTH)),
         theme,
     );
 }

@@ -105,7 +105,7 @@ impl App {
                 TreeConsole {
                     name: tab.map_or_else(
                         || entry.meta.name.clone(),
-                        |c| self.agent.console_label(c.id, &c.name),
+                        |c| self.agent.console_label(&self.consoles, c.id, &c.name),
                     ),
                     tab: tab.map(|c| c.id),
                     script: Some(entry),
@@ -118,7 +118,7 @@ impl App {
             .iter()
             .filter(|c| c.connection == Some(connection) && !c.hidden && !listed.contains(&c.id));
         rows.extend(others.map(|c| TreeConsole {
-            name: self.agent.console_label(c.id, &c.name),
+            name: self.agent.console_label(&self.consoles, c.id, &c.name),
             tab: Some(c.id),
             script: None,
         }));

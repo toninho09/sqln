@@ -3,6 +3,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 
+use crate::ai::{Credential, Provider, Reasoning};
 use crate::editor::DEFAULT_UNDO_LIMIT;
 use crate::input::SuggestionKeys;
 
@@ -43,7 +44,19 @@ pub enum Field {
     McpDefault,
     McpMax,
     McpRemember,
-    AiCompletion,
+    AiEnabled,
+    AiProfile,
+    AiModel,
+    AiEndpoint,
+    AiSource,
+    AiPath,
+    AiKey,
+    AiContext,
+    AiOutput,
+    AiTimeout,
+    AiReasoning,
+    AiSimultaneous,
+    AiTest,
     ShortcutMode,
     ShortcutCommands,
     ShortcutBack,
@@ -67,7 +80,7 @@ pub struct Section {
 }
 
 /// The sidebar. To add a group, add a row here.
-pub const SECTIONS: [Section; 6] = [
+pub const SECTIONS: [Section; 7] = [
     Section {
         title: text::SECTION_GENERAL,
         fields: &[
@@ -101,15 +114,33 @@ pub const SECTIONS: [Section; 6] = [
         help: None,
     },
     Section {
-        title: text::SECTION_AI,
+        title: text::SECTION_MCP,
         fields: &[
             Field::Mcp,
             Field::McpDefault,
             Field::McpMax,
             Field::McpRemember,
-            Field::AiCompletion,
         ],
         help: Some(text::HELP_MCP),
+    },
+    Section {
+        title: text::SECTION_AUTOCOMPLETE,
+        fields: &[
+            Field::AiEnabled,
+            Field::AiProfile,
+            Field::AiModel,
+            Field::AiEndpoint,
+            Field::AiSource,
+            Field::AiPath,
+            Field::AiKey,
+            Field::AiContext,
+            Field::AiOutput,
+            Field::AiTimeout,
+            Field::AiReasoning,
+            Field::AiSimultaneous,
+            Field::AiTest,
+        ],
+        help: None,
     },
     Section {
         title: text::SECTION_SHORTCUTS,
@@ -119,10 +150,110 @@ pub const SECTIONS: [Section; 6] = [
 ];
 
 pub enum SettingsRequest {
-    AiCompletion,
+    AiTest,
     None,
     Cancel,
     Save,
+}
+
+/// The autocomplete fields of one scope. The typed key stays in memory only.
+#[derive(Clone)]
+struct AiDraft {
+    /// True after an edit or when the scope already had a block. A save writes
+    /// the fields only then.
+    touched: bool,
+    saved: Option<crate::ai::Preferences>,
+    enabled: Option<bool>,
+    inherit: bool,
+    provider: Provider,
+    model: LineInput,
+    endpoint: LineInput,
+    path: LineInput,
+    key: LineInput,
+    context: LineInput,
+    output: LineInput,
+    timeout: LineInput,
+    simultaneous: LineInput,
+    source: usize,
+    /// The index of the reasoning effort in `Reasoning::ALL`.
+    reasoning: usize,
+}
+
+impl AiDraft {
+    /// Builds the fields of one scope. A scope without its own provider shows the
+    /// effective provider and inherits it.
+    fn of(
+        preferences: Option<&crate::ai::Preferences>,
+        effective: &crate::ai::Preferences,
+    ) -> Self {
+        let provider = preferences
+            .and_then(|p| p.provider.clone())
+            .or_else(|| effective.provider.clone())
+            .unwrap_or_default();
+        let source = match &provider.credential {
+            Credential::None => 0,
+            Credential::Vault { .. } => 1,
+            Credential::File { .. } => 2,
+        };
+        let path = match &provider.credential {
+            Credential::File { path } => path.as_str(),
+            _ => "",
+        };
+        let reasoning = Reasoning::ALL
+            .iter()
+            .position(|value| *value == provider.reasoning_effort)
+            .unwrap_or(0);
+        Self {
+            touched: preferences.is_some(),
+            saved: preferences.cloned(),
+            enabled: preferences.and_then(|p| p.enabled),
+            inherit: preferences.is_none_or(|p| p.provider.is_none()),
+            model: input(&provider.model),
+            endpoint: input(&provider.base_url),
+            path: input(path),
+            key: LineInput::default(),
+            context: input(&provider.context_window_tokens.to_string()),
+            output: input(&provider.max_output_tokens.to_string()),
+            timeout: input(&provider.timeout_seconds.to_string()),
+            simultaneous: input(&effective.max_simultaneous().to_string()),
+            provider,
+            source,
+            reasoning,
+        }
+    }
+}
+
+fn input(text: &str) -> LineInput {
+    let mut line = LineInput::default();
+    line.set(text);
+    line
+}
+
+/// True for every field of the Autocomplete section, except the test button.
+fn ai_owned(field: Field) -> bool {
+    matches!(
+        field,
+        Field::AiEnabled
+            | Field::AiProfile
+            | Field::AiModel
+            | Field::AiEndpoint
+            | Field::AiSource
+            | Field::AiPath
+            | Field::AiKey
+            | Field::AiContext
+            | Field::AiOutput
+            | Field::AiTimeout
+            | Field::AiReasoning
+            | Field::AiSimultaneous
+    )
+}
+
+/// True while the focus sits on a field that takes any text.
+fn ai_text(field: Field) -> bool {
+    matches!(
+        field,
+        Field::AiModel | Field::AiEndpoint | Field::AiPath | Field::AiKey
+    )
 }
 
 /// The fields of one scope. An empty field removes the definition from the scope.
@@ -145,7 +276,7 @@ struct Draft {
     mcp_default: Option<AgentDefault>,
     mcp_max: Option<AgentAccess>,
     mcp_remember: Option<bool>,
-    ai_completion: Option<crate::ai::Preferences>,
+    ai: AiDraft,
     keymap: Option<Keymaps>,
 }
 
@@ -161,7 +292,11 @@ fn number_text<T: ToString>(value: Option<T>) -> LineInput {
 }
 
 impl Draft {
-    fn of(preferences: &Preferences) -> Self {
+    fn of(preferences: &Preferences, global: &Preferences) -> Self {
+        let effective = crate::ai::Preferences::resolve(
+            global.ai_completion.as_ref(),
+            preferences.ai_completion.as_ref(),
+        );
         Self {
             keyboard: preferences.keyboard_mode,
             page_size: number_text(preferences.page_size),
@@ -180,7 +315,7 @@ impl Draft {
             mcp_default: preferences.mcp_default_access,
             mcp_max: preferences.mcp_max_access,
             mcp_remember: preferences.mcp_remember_clients,
-            ai_completion: preferences.ai_completion.clone(),
+            ai: AiDraft::of(preferences.ai_completion.as_ref(), &effective),
             keymap: preferences.keymap.clone(),
         }
     }
@@ -192,6 +327,8 @@ pub struct SettingsForm {
     pub section: usize,
     pub scope: Scope,
     pub note: Option<String>,
+    /// True while a vault write or a connection test runs.
+    pub ai_busy: bool,
     pub shortcuts: Shortcuts,
     global: Preferences,
     project: Option<Preferences>,
@@ -274,14 +411,15 @@ impl SettingsForm {
             section: 0,
             scope,
             note: None,
+            ai_busy: false,
             shortcuts: Shortcuts::new(
                 project
                     .as_ref()
                     .and_then(|p| p.keyboard_mode)
                     .or(global.keyboard_mode),
             ),
-            global_draft: Draft::of(&global),
-            project_draft: project.as_ref().map(Draft::of),
+            global_draft: Draft::of(&global, &global),
+            project_draft: project.as_ref().map(|p| Draft::of(p, &global)),
             global,
             project,
         }
@@ -373,6 +511,14 @@ impl SettingsForm {
             Field::Budget => Some(&draft.budget),
             Field::UndoLimit => Some(&draft.undo_limit),
             Field::BellAfter => Some(&draft.bell_after),
+            Field::AiModel => Some(&draft.ai.model),
+            Field::AiEndpoint => Some(&draft.ai.endpoint),
+            Field::AiPath => Some(&draft.ai.path),
+            Field::AiKey => Some(&draft.ai.key),
+            Field::AiContext => Some(&draft.ai.context),
+            Field::AiOutput => Some(&draft.ai.output),
+            Field::AiTimeout => Some(&draft.ai.timeout),
+            Field::AiSimultaneous => Some(&draft.ai.simultaneous),
             _ => None,
         }
     }
@@ -386,6 +532,14 @@ impl SettingsForm {
             Field::Budget => Some(&mut draft.budget),
             Field::UndoLimit => Some(&mut draft.undo_limit),
             Field::BellAfter => Some(&mut draft.bell_after),
+            Field::AiModel => Some(&mut draft.ai.model),
+            Field::AiEndpoint => Some(&mut draft.ai.endpoint),
+            Field::AiPath => Some(&mut draft.ai.path),
+            Field::AiKey => Some(&mut draft.ai.key),
+            Field::AiContext => Some(&mut draft.ai.context),
+            Field::AiOutput => Some(&mut draft.ai.output),
+            Field::AiTimeout => Some(&mut draft.ai.timeout),
+            Field::AiSimultaneous => Some(&mut draft.ai.simultaneous),
             _ => None,
         }
     }
@@ -430,6 +584,11 @@ impl SettingsForm {
             Field::McpRemember => global
                 .mcp_remember_clients
                 .map(|value| text::on_off(value).to_owned()),
+            Field::AiEnabled => global
+                .ai_completion
+                .as_ref()
+                .and_then(|p| p.enabled)
+                .map(|value| text::on_off(value).to_owned()),
             _ => None,
         };
         match (from_global, value) {
@@ -469,6 +628,7 @@ impl SettingsForm {
             _ if field == Field::McpRemember => {
                 text::default_value(text::on_off(DEFAULT_MCP_REMEMBER_CLIENTS))
             }
+            _ if field == Field::AiEnabled => text::default_value(text::on_off(false)),
             _ => text::VALUE_DEFAULT.to_owned(),
         }
     }
@@ -575,11 +735,45 @@ impl SettingsForm {
                 self.draft_mut().mcp_remember =
                     next_optional(&[true, false], self.draft().mcp_remember, forward);
             }
+            Field::AiEnabled => {
+                let order = [None, Some(true), Some(false)];
+                let value = self.draft().ai.enabled;
+                self.draft_mut().ai.enabled = next_choice(&order, value, forward);
+                self.draft_mut().ai.touched = true;
+            }
+            Field::AiProfile => {
+                let inherit = self.draft().ai.inherit;
+                self.draft_mut().ai.inherit = !inherit;
+                self.draft_mut().ai.touched = true;
+            }
+            Field::AiSource => {
+                let source = self.draft().ai.source;
+                self.draft_mut().ai.source = next_choice(&[0, 1, 2], source, forward);
+                self.draft_mut().ai.inherit = false;
+                self.draft_mut().ai.touched = true;
+            }
+            Field::AiReasoning => {
+                let reasoning = self.draft().ai.reasoning;
+                self.draft_mut().ai.reasoning = next_choice(&[0, 1, 2, 3, 4], reasoning, forward);
+                self.draft_mut().ai.inherit = false;
+                self.draft_mut().ai.touched = true;
+            }
             _ => {}
         }
     }
 
     pub fn paste(&mut self, value: &str) {
+        if self.ai_busy {
+            return;
+        }
+        if ai_text(self.focus) {
+            self.draft_mut().ai.inherit = false;
+            self.draft_mut().ai.touched = true;
+            if let Some(input) = self.input_mut() {
+                input.insert(value);
+            }
+            return;
+        }
         let digits: String = value.chars().filter(char::is_ascii_digit).collect();
         if let Some(input) = self.input_mut() {
             input.insert(&digits);
@@ -610,8 +804,11 @@ impl SettingsForm {
         if self.shortcut_press() {
             return SettingsRequest::None;
         }
+        if self.ai_busy {
+            return SettingsRequest::None;
+        }
         match self.focus {
-            Field::AiCompletion => SettingsRequest::AiCompletion,
+            Field::AiTest => SettingsRequest::AiTest,
             Field::Save => SettingsRequest::Save,
             Field::Cancel => SettingsRequest::Cancel,
             field if self.input(field).is_none() => {
@@ -631,17 +828,19 @@ impl SettingsForm {
         if self.shortcut_key(key, vim) {
             return SettingsRequest::None;
         }
+        // While a vault write or a test runs, only the close works.
+        if self.ai_busy && key.code != KeyCode::Esc {
+            return SettingsRequest::None;
+        }
         match key.code {
             KeyCode::Esc => return SettingsRequest::Cancel,
             KeyCode::Tab => self.move_focus(true),
             KeyCode::BackTab => self.move_focus(false),
             KeyCode::Down => self.step(true),
             KeyCode::Up => self.step(false),
-            KeyCode::Char('j') if vim => self.step(true),
-            KeyCode::Char('k') if vim => self.step(false),
-            KeyCode::Enter if self.focus == Field::AiCompletion => {
-                return SettingsRequest::AiCompletion;
-            }
+            KeyCode::Char('j') if vim && !ai_text(self.focus) => self.step(true),
+            KeyCode::Char('k') if vim && !ai_text(self.focus) => self.step(false),
+            KeyCode::Enter if self.focus == Field::AiTest => return SettingsRequest::AiTest,
             KeyCode::Enter if self.focus == Field::Save => return SettingsRequest::Save,
             KeyCode::Enter if self.focus == Field::Cancel => return SettingsRequest::Cancel,
             KeyCode::Enter => self.move_focus(true),
@@ -649,8 +848,15 @@ impl SettingsForm {
             KeyCode::Right if self.input(self.focus).is_none() => self.change(true),
             KeyCode::Char('h') if vim && self.input(self.focus).is_none() => self.change(false),
             KeyCode::Char('l') if vim && self.input(self.focus).is_none() => self.change(true),
-            KeyCode::Char(c) if !c.is_ascii_digit() => {}
+            KeyCode::Char(c) if !c.is_ascii_digit() && !ai_text(self.focus) => {}
             _ => {
+                // An edit of a provider field makes the block custom.
+                if ai_owned(self.focus) {
+                    self.draft_mut().ai.touched = true;
+                }
+                if ai_text(self.focus) {
+                    self.draft_mut().ai.inherit = false;
+                }
                 if let Some(input) = self.input_mut() {
                     input.on_key(key);
                 }
@@ -659,23 +865,136 @@ impl SettingsForm {
         SettingsRequest::None
     }
 
-    /// Returns the preferences of the scope. The other values of the file stay.
-    pub fn ai_preferences(
-        &self,
-    ) -> (
-        Scope,
-        Option<crate::ai::Preferences>,
-        Option<crate::ai::Preferences>,
-    ) {
-        (
-            self.scope,
-            self.draft().ai_completion.clone(),
-            self.global_draft.ai_completion.clone(),
-        )
+    pub fn ai_enabled(&self) -> Option<bool> {
+        self.draft().ai.enabled
     }
 
+    pub fn ai_inherit(&self) -> bool {
+        self.draft().ai.inherit
+    }
+
+    pub fn ai_source(&self) -> usize {
+        self.draft().ai.source
+    }
+
+    /// Returns the index of the reasoning effort in `Reasoning::ALL`.
+    pub fn ai_reasoning(&self) -> usize {
+        self.draft().ai.reasoning
+    }
+
+    /// Returns the masked key text, or the place of the saved key.
+    pub fn ai_key(&self) -> String {
+        let ai = &self.draft().ai;
+        if ai.key.text().is_empty() {
+            if matches!(ai.provider.credential, Credential::Vault { .. }) {
+                "(saved key)".into()
+            } else {
+                String::new()
+            }
+        } else {
+            "*".repeat(ai.key.text().chars().count().min(24))
+        }
+    }
+
+    /// Returns the typed key before it reaches the vault.
+    pub fn ai_key_text(&self) -> &str {
+        self.draft().ai.key.text()
+    }
+
+    /// Returns the typed key when a save must write it to the system vault.
+    pub fn ai_new_key(&self) -> Option<String> {
+        let ai = &self.draft().ai;
+        if ai.source == 1 && !ai.inherit && !ai.key.text().is_empty() {
+            Some(ai.key.text().to_owned())
+        } else {
+            None
+        }
+    }
+
+    /// Builds the autocomplete preferences of the draft. Editing contacts no provider.
+    pub fn ai_preferences(&self) -> Result<crate::ai::Preferences, String> {
+        let ai = &self.draft().ai;
+        if ai.key.text().len() > 65536 {
+            return Err("The API key exceeds 64 KiB. Supply only the key.".into());
+        }
+        let simultaneous: u8 = ai
+            .simultaneous
+            .text()
+            .parse()
+            .map_err(|_| "Set a count from 1 to 9.")?;
+        if !(1..=9).contains(&simultaneous) {
+            return Err("Set a count from 1 to 9.".into());
+        }
+        if ai.inherit {
+            return Ok(crate::ai::Preferences {
+                enabled: ai.enabled,
+                max_simultaneous: Some(simultaneous),
+                provider: None,
+            });
+        }
+        let mut provider = ai.provider.clone();
+        provider.model = ai.model.text().to_owned();
+        provider.base_url = ai.endpoint.text().to_owned();
+        provider.context_window_tokens = ai
+            .context
+            .text()
+            .parse()
+            .map_err(|_| "Set a valid context size.")?;
+        provider.max_output_tokens = ai
+            .output
+            .text()
+            .parse()
+            .map_err(|_| "Set a valid output size.")?;
+        provider.timeout_seconds = ai
+            .timeout
+            .text()
+            .parse()
+            .map_err(|_| "Set a valid timeout.")?;
+        provider.reasoning_effort = Reasoning::ALL
+            .get(ai.reasoning)
+            .copied()
+            .unwrap_or(Reasoning::Off);
+        provider.credential = match ai.source {
+            0 => Credential::None,
+            2 => Credential::File {
+                path: ai.path.text().to_owned(),
+            },
+            _ => {
+                if !ai.key.text().is_empty() {
+                    Credential::Vault {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        endpoint: provider.endpoint()?,
+                    }
+                } else {
+                    match &provider.credential {
+                        Credential::Vault { .. } => provider.credential.clone(),
+                        _ => return Err("Insert a key for the system vault.".into()),
+                    }
+                }
+            }
+        };
+        provider.validate()?;
+        Ok(crate::ai::Preferences {
+            enabled: ai.enabled,
+            max_simultaneous: Some(simultaneous),
+            provider: Some(provider),
+        })
+    }
+
+    /// Returns the provider that a connection test uses.
+    pub fn ai_test_provider(&self) -> Result<Provider, String> {
+        self.ai_preferences()?
+            .provider
+            .or_else(|| Some(self.draft().ai.provider.clone()))
+            .ok_or_else(|| "Configure a provider before testing.".into())
+    }
+
+    /// Replaces the autocomplete fields with one saved block.
     pub fn set_ai_preferences(&mut self, preferences: crate::ai::Preferences) {
-        self.draft_mut().ai_completion = Some(preferences);
+        let global = self.global.ai_completion.clone();
+        let effective = crate::ai::Preferences::resolve(global.as_ref(), Some(&preferences));
+        self.draft_mut().ai = AiDraft::of(Some(&preferences), &effective);
+        self.draft_mut().ai.touched = true;
     }
 
     pub fn preferences(&self) -> Result<Preferences, String> {
@@ -697,7 +1016,11 @@ impl SettingsForm {
         preferences.mcp_default_access = draft.mcp_default;
         preferences.mcp_max_access = draft.mcp_max;
         preferences.mcp_remember_clients = draft.mcp_remember;
-        preferences.ai_completion = draft.ai_completion.clone();
+        preferences.ai_completion = if draft.ai.touched {
+            Some(self.ai_preferences()?)
+        } else {
+            draft.ai.saved.clone()
+        };
         preferences.keymap = draft.keymap.clone();
         self.validate_shortcuts(&preferences)?;
         preferences.page_size = parse(&draft.page_size, text::FIELD_PAGE_SIZE)?;

@@ -1,12 +1,12 @@
 mod common;
 
 use common::{ctrl, key, shift};
-use crossterm::event::{Event, KeyCode};
+use crossterm::event::{Event, KeyCode, KeyModifiers};
 use edtui::Index2;
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::{Value, json};
 use sqln::{
-    ai::{self, Context, Credential, Kind, Object, Preferences, Protocol, Provider, Snapshot},
+    ai::{self, Context, Credential, Kind, Object, Preferences, Provider, Snapshot},
     app::{App, Options},
     clipboard::MemoryClipboard,
     editor::KeyboardMode,
@@ -24,6 +24,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use unicode_width::UnicodeWidthStr;
 
 struct Server {
     url: String,
@@ -112,7 +113,6 @@ impl Server {
     fn provider(&self) -> Provider {
         Provider {
             kind: Kind::Compatible,
-            protocol: Protocol::Chat,
             model: "test-model".into(),
             base_url: self.url.clone(),
             ..Provider::default()
@@ -171,6 +171,7 @@ fn app(name: &str, provider: Provider) -> App {
             database: Some(path),
             ai_completion: Preferences {
                 enabled: Some(true),
+                max_simultaneous: None,
                 provider: Some(provider),
             },
             ..Options::default()
@@ -178,6 +179,18 @@ fn app(name: &str, provider: Provider) -> App {
         Rc::new(RefCell::new(MemoryClipboard::default())),
         Theme::plain(),
     )
+}
+/// Returns true when the editor shows ghost text with its bar.
+fn ghost(screen: &str) -> bool {
+    screen.contains("[Tab Accept]")
+}
+fn rows(screen: &str) -> String {
+    let chars: Vec<char> = screen.chars().collect();
+    chars
+        .chunks(80)
+        .map(|row| row.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 fn request(app: &mut App) {
     app.on_event(Event::Key(ctrl(' ')));
@@ -191,6 +204,35 @@ fn approve(app: &mut App) {
     pump(app, |s| s.contains("Send SQL and schema"));
     app.on_event(Event::Key(key(KeyCode::Tab)));
     app.on_event(Event::Key(key(KeyCode::Enter)));
+}
+
+/// Clicks a label on the screen with the left button.
+fn click_at(app: &mut App, label: &str) {
+    let shown = rows(&screen(app));
+    let (x, y) = shown
+        .lines()
+        .enumerate()
+        .find_map(|(y, line)| {
+            line.find(label)
+                .map(|byte| (UnicodeWidthStr::width(&line[..byte]) + 1, y))
+        })
+        .unwrap_or_else(|| panic!("Missing {label}:\n{shown}"));
+    app.on_event(Event::Mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: x as u16,
+        row: y as u16,
+        modifiers: KeyModifiers::NONE,
+    }));
+}
+
+/// Pastes `text`, requests a completion at column 7 of the first line, and waits for
+/// its ghost.
+fn ghost_at_first_line(app: &mut App, text: &str) {
+    app.on_event(Event::Paste(text.into()));
+    app.console_mut().editor.set_cursor(Index2::new(0, 7));
+    request(app);
+    approve(app);
+    pump(app, ghost);
 }
 
 #[test]
@@ -228,51 +270,50 @@ fn typing_no_local_match_does_not_open_an_ai_only_list() {
     assert!(f.editor.suggestions().is_none());
 }
 #[test]
-fn target_replacement_preserves_unicode_and_is_one_undo_step() {
+fn a_replacement_preserves_unicode_and_is_one_undo_step() {
     for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
         let mut f = common::Fixture::new("SELECT café;", keyboard);
         if keyboard == KeyboardMode::Vim {
             f.press(key(KeyCode::Char('i')));
         }
-        f.editor.set_cursor(Index2::new(0, 7));
-        if keyboard == KeyboardMode::Conventional {
-            for _ in 0..4 {
-                f.press(shift(KeyCode::Right));
-            }
-        }
-        let target = f.editor.ai_target(None);
-        f.editor.apply_ai(&target, "42".into()).unwrap();
+        // An agent edit replaces the selected word in one undo step, and the
+        // multibyte text stays whole.
+        let edit = sqln::agent::Edit {
+            start: sqln::agent::Position { line: 0, column: 7 },
+            end: sqln::agent::Position {
+                line: 0,
+                column: 11,
+            },
+            text: "42".into(),
+        };
+        f.editor
+            .apply_agent_edits(f.editor.revision(), &[edit])
+            .unwrap();
+        assert_eq!(f.text(), "SELECT 42;");
         f.editor.on_command(sqln::input::Action::EditorUndo, None);
         assert_eq!(f.text(), "SELECT café;");
     }
 }
 #[test]
-fn old_cursor_and_revision_refuse_application() {
-    let mut f = common::Fixture::conventional("SELECT ");
+fn an_application_uses_the_anchor_not_the_cursor() {
+    let mut f = common::Fixture::conventional("SELECT \nFROM t");
+    f.editor.set_cursor(Index2::new(0, 7));
     let target = f.editor.ai_target(None);
-    f.press(key(KeyCode::Right));
+    f.editor.set_cursor(Index2::new(1, 6));
     f.write("x");
-    assert!(f.editor.apply_ai(&target, "1".into()).is_err());
+    f.editor.apply_ghost(target.start, "42").unwrap();
+    assert_eq!(f.text(), "SELECT 42\nFROM tx");
 }
 #[test]
-fn protocols_preserve_suffix_and_original_selection() {
+fn the_chat_body_preserves_the_context_and_the_original() {
     let server = Server::new("1", Duration::ZERO);
-    let mut p = server.provider();
+    let p = server.provider();
     let mut ctx = context();
     ctx.original = "*".into();
     let prepared = ai::prepare(&p, &ctx, &snapshot(Vec::new())).unwrap();
     let user = prepared.body["messages"][1]["content"].as_str().unwrap();
     assert!(user.contains("FROM users"));
     assert!(user.contains("original"));
-    p.protocol = Protocol::Fim;
-    let prepared = ai::prepare(&p, &ctx, &snapshot(Vec::new())).unwrap();
-    assert_eq!(prepared.body["suffix"], ctx.suffix);
-    assert!(
-        prepared.body["prompt"]
-            .as_str()
-            .unwrap()
-            .ends_with("SELECT ")
-    );
 }
 #[test]
 fn context_reduction_is_deterministic_and_keeps_the_cache_complete() {
@@ -345,10 +386,12 @@ fn replacement_rejects_empty_truncated_and_unchanged_content() {
 fn configuration_inherits_provider_as_a_unit_and_project_can_disable() {
     let global = Preferences {
         enabled: Some(true),
+        max_simultaneous: None,
         provider: Some(Provider::default()),
     };
     let project = Preferences {
         enabled: Some(false),
+        max_simultaneous: None,
         provider: None,
     };
     let merged = Preferences::resolve(Some(&global), Some(&project));
@@ -364,12 +407,21 @@ fn user_accepts_a_preview_without_executing_sql() {
     app.on_event(Event::Paste("SELECT ".into()));
     request(&mut app);
     approve(&mut app);
-    pump(&mut app, |s| s.contains("AI insertion preview"));
+    let shown = pump(&mut app, ghost);
+    // The ghost text stands at the cursor, and the text does not change before Tab.
+    assert!(shown.contains("SELECT 42"), "{shown}");
     assert_eq!(app.console().editor.text(), "SELECT ");
     assert!(app.console().results.is_empty());
+    // The arrows keep the ghost text, and the cursor stays.
+    let cursor = app.console().editor.cursor();
+    for code in [KeyCode::Left, KeyCode::Right, KeyCode::Up, KeyCode::Down] {
+        app.on_event(Event::Key(key(code)));
+        assert!(ghost(&screen(&mut app)), "{code:?}");
+    }
+    assert_eq!(app.console().editor.cursor(), cursor);
     app.on_event(Event::Key(key(KeyCode::Tab)));
-    app.on_event(Event::Key(key(KeyCode::Enter)));
     assert_eq!(app.console().editor.text(), "SELECT 42");
+    assert!(!ghost(&screen(&mut app)));
     assert!(app.console().results.is_empty());
     app.on_event(Event::Key(ctrl('z')));
     assert_eq!(app.console().editor.text(), "SELECT ");
@@ -378,66 +430,232 @@ fn user_accepts_a_preview_without_executing_sql() {
     assert!(requests[0].contains("active_users"));
     assert!(requests[0].contains("nullable"));
 }
+
 #[test]
-fn a_selection_opens_a_diff_and_rejection_keeps_the_selection() {
-    let server = Server::new("name", Duration::ZERO);
-    let mut app = app("ai-select", server.provider());
-    app.on_event(Event::Paste("SELECT * FROM users;".into()));
-    app.console_mut().editor.set_cursor(Index2::new(0, 7));
-    app.on_event(Event::Key(shift(KeyCode::Right)));
-    let selected = app.console().editor.selected_text();
-    request(&mut app);
-    approve(&mut app);
-    pump(&mut app, |s| s.contains("AI replacement"));
+fn the_ghost_buttons_sit_after_the_text_without_a_bar() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-buttons", server.provider());
+    ghost_at_first_line(&mut app, "SELECT ");
+    let shown = screen(&mut app);
+    let rows = rows(&shown);
+    // The buttons share the row after the ghost text, and no bar takes the last row.
+    let accept = rows.lines().position(|line| line.contains("[Tab Accept]"));
+    let ghost_row = rows.lines().position(|line| line.contains("SELECT 42"));
+    assert_eq!(accept, ghost_row.map(|row| row + 1), "{rows}");
+    assert!(shown.contains("[Esc Reject]"), "{rows}");
+}
+
+#[test]
+fn a_click_moves_the_cursor_and_keeps_the_ghost() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-click", server.provider());
+    ghost_at_first_line(&mut app, "SELECT \nFROM t");
+    click_at(&mut app, "FROM t");
+    assert_eq!(app.console().editor.cursor().row, 1);
+    assert!(app.console().editor.has_ghosts());
+    // Tab decides the ghost at the line of the cursor: a cursor on another line
+    // refuses it, and the cursor on the anchor line accepts at the anchor.
+    app.on_event(Event::Key(key(KeyCode::Tab)));
+    assert_eq!(app.console().editor.text(), "SELECT \nFROM t");
+    app.on_event(Event::Key(key(KeyCode::Up)));
+    app.on_event(Event::Key(key(KeyCode::Tab)));
+    assert_eq!(app.console().editor.text(), "SELECT 42\nFROM t");
+}
+
+#[test]
+fn edits_and_undo_decide_the_ghost() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-edit", server.provider());
+    ghost_at_first_line(&mut app, "SELECT \nFROM t");
+    // Typing on another line keeps the ghost, and the cursor moves with the arrows.
+    app.on_event(Event::Key(key(KeyCode::Down)));
+    assert!(app.console().editor.has_ghosts());
+    assert_eq!(app.console().editor.cursor().row, 1);
+    app.on_event(Event::Key(key(KeyCode::Char('x'))));
+    assert!(app.console().editor.has_ghosts());
+    assert_eq!(app.console().editor.text(), "SELECT \nFROM tx");
+    // Any undo discards the ghost, in silence.
+    app.on_event(Event::Key(ctrl('z')));
+    assert!(!app.console().editor.has_ghosts());
+    assert_eq!(app.console().editor.text(), "SELECT \nFROM t");
+}
+
+#[test]
+fn an_edit_on_the_anchor_line_discards_the_ghost() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-anchor", server.provider());
+    ghost_at_first_line(&mut app, "SELECT ");
+    app.on_event(Event::Key(key(KeyCode::Backspace)));
+    assert!(!app.console().editor.has_ghosts());
+    assert_eq!(app.console().editor.text(), "SELECT");
+}
+
+#[test]
+fn run_executes_without_the_ghost_and_keeps_it() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-run", server.provider());
+    ghost_at_first_line(&mut app, "SELECT 1;");
     app.on_event(Event::Key(key(KeyCode::F(5))));
-    assert!(!app.console().is_busy());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.console().is_busy() {
+        assert!(Instant::now() < deadline);
+        app.drain_events();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    // The statement runs without the ghost text, and the ghost still waits.
+    assert_eq!(app.console().editor.text(), "SELECT 1;");
+    assert!(!app.console().results.is_empty());
+    assert!(app.console().editor.has_ghosts());
+}
+
+#[test]
+fn a_new_request_on_a_line_without_a_ghost_adds_one() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-replace", server.provider());
+    ghost_at_first_line(&mut app, "SELECT \nFROM t");
+    app.on_event(Event::Key(key(KeyCode::Down)));
+    request(&mut app);
+    pump(&mut app, |s| s.contains("FROM t42"));
+    assert_eq!(server.requests.lock().unwrap().len(), 2);
+    assert_eq!(app.console().editor.ghosts().len(), 2);
+    // Tab decides the ghost at the line of the cursor, and the other ghost waits.
+    app.on_event(Event::Key(key(KeyCode::Tab)));
+    assert_eq!(app.console().editor.text(), "SELECT \nFROM t42");
+    assert_eq!(app.console().editor.ghosts().len(), 1);
+}
+
+#[test]
+fn a_new_request_on_the_line_of_a_ghost_replaces_it() {
+    let server = Server::new("7", Duration::ZERO);
+    let mut app = app("ai-replace-line", server.provider());
+    ghost_at_first_line(&mut app, "SELECT ");
+    request(&mut app);
+    pump(&mut app, |s| s.contains("SELECT 7"));
+    assert_eq!(app.console().editor.ghosts().len(), 1);
+    app.on_event(Event::Key(key(KeyCode::Tab)));
+    assert_eq!(app.console().editor.text(), "SELECT 7");
+}
+
+#[test]
+fn the_tab_mark_shows_a_pending_ghost() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-mark", server.provider());
+    ghost_at_first_line(&mut app, "SELECT ");
+    assert!(screen(&mut app).contains("console-1\u{b1}1"));
+    app.on_event(Event::Key(key(KeyCode::Tab)));
+    assert!(!screen(&mut app).contains("console-1\u{b1}1"));
+}
+/// Clicks the `nth` occurrence of a label on the screen with the left button.
+fn click_nth(app: &mut App, label: &str, nth: usize) {
+    let shown = rows(&screen(app));
+    let places: Vec<_> = shown
+        .lines()
+        .enumerate()
+        .flat_map(|(y, line)| {
+            line.match_indices(label)
+                .map(move |(byte, _)| (y, byte))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let &(y, byte) = places
+        .get(nth)
+        .unwrap_or_else(|| panic!("Missing {label} #{nth}:\n{shown}"));
+    let x = UnicodeWidthStr::width(&shown.lines().nth(y).unwrap()[..byte]) + 1;
     app.on_event(Event::Mouse(crossterm::event::MouseEvent {
         kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-        column: 27,
-        row: 1,
-        modifiers: crossterm::event::KeyModifiers::NONE,
+        column: x as u16,
+        row: y as u16,
+        modifiers: KeyModifiers::NONE,
     }));
-    assert!(!app.console().is_busy());
-    assert!(screen(&mut app).contains("AI replacement"));
-    app.on_event(Event::Key(key(KeyCode::Esc)));
-    assert_eq!(app.console().editor.text(), "SELECT * FROM users;");
-    assert_eq!(app.console().editor.selected_text(), selected);
 }
+
+#[test]
+fn the_anchor_of_a_running_request_shows_in_the_gutter() {
+    let server = Server::new("42", Duration::from_millis(600));
+    let mut app = app("ai-anchor-mark", server.provider());
+    app.on_event(Event::Paste("SELECT \nFROM t".into()));
+    app.console_mut().editor.set_cursor(Index2::new(0, 7));
+    request(&mut app);
+    approve(&mut app);
+    pump(&mut app, |s| s.contains("AI thinking"));
+    // The requested line shows the running mark while the user edits another line.
+    app.console_mut().editor.set_cursor(Index2::new(1, 6));
+    app.on_event(Event::Key(key(KeyCode::Char('x'))));
+    let shown = rows(&screen(&mut app));
+    let anchor = shown
+        .lines()
+        .find(|line| line.contains("SELECT"))
+        .expect("anchor line");
+    assert!(
+        ["|1", "/1", "-1", "\\1"]
+            .iter()
+            .any(|mark| anchor.contains(mark)),
+        "{shown}"
+    );
+    // The ghost replaces the mark when the answer shows.
+    let shown = rows(&pump(&mut app, ghost));
+    let line = shown
+        .lines()
+        .find(|line| line.contains("SELECT 42"))
+        .expect("ghost line");
+    assert!(
+        !["|1", "/1", "-1", "\\1"]
+            .iter()
+            .any(|mark| line.contains(mark)),
+        "{shown}"
+    );
+}
+
 #[test]
 fn typing_during_a_request_discards_the_late_response() {
-    let server = Server::new("42", Duration::from_millis(150));
+    let server = Server::new("42", Duration::from_millis(600));
     let mut app = app("ai-stale", server.provider());
     app.on_event(Event::Paste("SELECT ".into()));
     request(&mut app);
     approve(&mut app);
     pump(&mut app, |s| s.contains("AI thinking"));
     app.on_event(Event::Paste("1".into()));
-    std::thread::sleep(Duration::from_millis(250));
+    // The request ends in the same event; it does not wait for the answer.
+    let shown = rows(&screen(&mut app));
+    assert!(!shown.contains("AI thinking"), "{shown}");
+    std::thread::sleep(Duration::from_millis(700));
     for _ in 0..8 {
         app.drain_events();
     }
-    assert!(!screen(&mut app).contains("AI insertion preview"));
+    assert!(!ghost(&screen(&mut app)));
     assert_eq!(app.console().editor.text(), "SELECT 1");
 }
+
+#[test]
+fn an_edit_above_keeps_the_request_and_moves_the_answer() {
+    let server = Server::new("42", Duration::from_millis(200));
+    let mut app = app("ai-move", server.provider());
+    app.on_event(Event::Paste("SELECT \nFROM t".into()));
+    app.console_mut().editor.set_cursor(Index2::new(0, 7));
+    request(&mut app);
+    approve(&mut app);
+    pump(&mut app, |s| s.contains("AI thinking"));
+    // An edit on another line moves the requested line; the answer follows it.
+    app.on_event(Event::Key(key(KeyCode::Home)));
+    app.on_event(Event::Key(key(KeyCode::Enter)));
+    let shown = rows(&pump(&mut app, ghost));
+    assert!(shown.contains("2   SELECT 42"), "{shown}");
+}
 #[tokio::test]
-async fn client_uses_fim_and_chat_without_sending_keys_in_the_body() {
+async fn client_uses_chat_without_sending_keys_in_the_body() {
     let server = Server::new("42", Duration::ZERO);
     let key = sqln::connector::target::Secret::new("test-secret");
     let cancel = tokio_util::sync::CancellationToken::new();
-    for protocol in [Protocol::Chat, Protocol::Fim] {
-        let mut provider = server.provider();
-        provider.protocol = protocol;
-        let prepared = ai::prepare(&provider, &context(), &snapshot(Vec::new())).unwrap();
-        assert_eq!(
-            ai::client::complete(&provider, &prepared, Some(&key), "", &cancel)
-                .await
-                .unwrap(),
-            "42"
-        );
-    }
+    let provider = server.provider();
+    let prepared = ai::prepare(&provider, &context(), &snapshot(Vec::new())).unwrap();
+    assert_eq!(
+        ai::client::complete(&provider, &prepared, Some(&key), "", &cancel)
+            .await
+            .unwrap(),
+        "42"
+    );
     let requests = server.requests.lock().unwrap();
     assert!(requests[0].starts_with("POST /v1/chat/completions"));
-    assert!(requests[1].starts_with("POST /v1/completions"));
     for request in requests.iter() {
         let (_, body) = request.split_once("\r\n\r\n").unwrap();
         assert!(!body.contains("test-secret"));
@@ -583,24 +801,48 @@ fn consent_is_private_and_changes_with_project_endpoint_or_key_reference() {
         );
     }
 }
+/// A settings form for a project. `project_ai` is the AI block of the project;
+/// `None` inherits the global block.
+fn ai_settings(
+    global_ai: Preferences,
+    project_ai: Option<Preferences>,
+) -> sqln::settings::SettingsForm {
+    let global = sqln::store::config::Preferences {
+        ai_completion: Some(global_ai),
+        ..Default::default()
+    };
+    let project = sqln::store::config::Preferences {
+        ai_completion: project_ai,
+        ..Default::default()
+    };
+    sqln::settings::SettingsForm::new(global, Some(project))
+}
+
 #[test]
 fn settings_keep_text_keys_as_text_and_allow_project_disable_with_inheritance() {
-    use ai::form::{Field, Form};
     let global = Preferences {
         enabled: Some(true),
+        max_simultaneous: None,
         provider: Some(Provider::default()),
     };
     let local = Preferences {
         enabled: Some(false),
+        max_simultaneous: None,
         provider: None,
     };
-    let mut form = Form::new(sqln::store::Scope::Project, Some(&local), Some(&global));
-    assert_eq!(form.preferences().unwrap(), local);
-    form.focus = Field::Model;
-    form.on_key(key(KeyCode::Char('j')));
-    form.on_key(key(KeyCode::Char('k')));
-    assert_eq!(form.model.text(), "jk");
-    assert_eq!(form.focus, Field::Model);
+    let mut form = ai_settings(global, Some(local.clone()));
+    // The simultaneous count writes its effective value, so the fields pin it.
+    let mut expected = local;
+    expected.max_simultaneous = Some(3);
+    assert_eq!(form.ai_preferences().unwrap(), expected);
+    form.focus_on(sqln::settings::Field::AiModel);
+    form.on_key(key(KeyCode::Char('j')), false);
+    form.on_key(key(KeyCode::Char('k')), false);
+    assert!(
+        !form.ai_inherit(),
+        "Typing makes the provider block custom."
+    );
+    assert_eq!(form.ai_preferences().unwrap().provider.unwrap().model, "jk");
 }
 #[test]
 fn a_warmed_schema_stays_cached_until_refresh_then_contains_external_ddl() {
@@ -609,7 +851,7 @@ fn a_warmed_schema_stays_cached_until_refresh_then_contains_external_ddl() {
     app.on_event(Event::Paste("SELECT ".into()));
     request(&mut app);
     approve(&mut app);
-    pump(&mut app, |s| s.contains("AI insertion preview"));
+    pump(&mut app, ghost);
     app.on_event(Event::Key(key(KeyCode::Esc)));
     let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("ai-cache.db");
     rusqlite::Connection::open(path)
@@ -617,7 +859,7 @@ fn a_warmed_schema_stays_cached_until_refresh_then_contains_external_ddl() {
         .execute_batch("CREATE TABLE later_object(id INTEGER)")
         .unwrap();
     request(&mut app);
-    pump(&mut app, |s| s.contains("AI insertion preview"));
+    pump(&mut app, ghost);
     app.on_event(Event::Key(key(KeyCode::Esc)));
     assert!(!server.requests.lock().unwrap()[1].contains("later_object"));
     app.on_event(Event::Key(ctrl('w')));
@@ -644,7 +886,7 @@ fn a_warmed_schema_stays_cached_until_refresh_then_contains_external_ddl() {
         std::thread::sleep(Duration::from_millis(2));
     }
     request(&mut app);
-    pump(&mut app, |s| s.contains("AI insertion preview"));
+    pump(&mut app, ghost);
     let requests = server.requests.lock().unwrap();
     assert!(
         requests.last().unwrap().contains("later_object"),
@@ -667,52 +909,29 @@ fn an_open_palette_keeps_focus_when_a_response_arrives() {
         "{}",
         screen(&mut app)
     );
-    std::thread::sleep(Duration::from_millis(250));
-    for _ in 0..8 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !app.console().editor.has_ghosts() {
+        assert!(Instant::now() < deadline);
         app.drain_events();
+        std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(!screen(&mut app).contains("AI insertion preview"));
+    // The ghost text waits in the editor. The palette keeps the keys.
+    app.on_event(Event::Key(key(KeyCode::Char('x'))));
+    assert!(screen(&mut app).contains("Commands"));
     app.on_event(Event::Key(key(KeyCode::Esc)));
-    pump(&mut app, |s| s.contains("AI insertion preview"));
+    assert!(ghost(&screen(&mut app)));
     assert_eq!(app.console().editor.text(), "SELECT ");
 }
-#[test]
-fn long_preview_lines_wrap_and_remain_readable_after_resize() {
-    let response = format!("{}END_OF_PROPOSAL", "long_column ".repeat(100));
-    let server = Server::new(&response, Duration::ZERO);
-    let mut app = app("ai-wrap", server.provider());
-    app.on_event(Event::Paste("SELECT ".into()));
-    request(&mut app);
-    approve(&mut app);
-    pump(&mut app, |s| s.contains("AI insertion preview"));
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal.draw(|f| app.draw(f)).unwrap();
-    for _ in 0..20 {
-        app.on_event(Event::Key(key(KeyCode::PageDown)));
-        screen(&mut app);
-    }
-    assert!(screen(&mut app).contains("END_OF_PROPOSAL"));
-    assert_eq!(app.console().editor.text(), "SELECT ");
-}
-
 #[tokio::test]
 async fn full_completion_urls_are_not_appended_twice() {
-    for protocol in [Protocol::Fim, Protocol::Chat] {
+    // The legacy FIM route of an old file maps to the chat route on the same base.
+    for (configured, expected) in [
+        ("/chat/completions/", "/v1/chat/completions"),
+        ("/completions/", "/v1/chat/completions"),
+    ] {
         let server = Server::new("name", Duration::ZERO);
         let mut provider = server.provider();
-        provider.model = "deepseek-flash".into();
-        provider.protocol = protocol;
-        let route = match protocol {
-            Protocol::Fim => "completions",
-            Protocol::Chat => "chat/completions",
-        };
-        provider.base_url = format!("{}/{route}/", server.url);
-        if protocol == Protocol::Fim {
-            provider.kind = Kind::Deepseek;
-            provider.credential = Credential::File {
-                path: "not-read-by-the-http-client".into(),
-            };
-        }
+        provider.base_url = format!("{}{configured}", server.url);
         let prepared = ai::prepare(&provider, &context(), &snapshot(Vec::new())).unwrap();
         let key = sqln::connector::target::Secret::new("fixture-key");
         ai::client::complete(
@@ -733,7 +952,7 @@ async fn full_completion_urls_are_not_appended_twice() {
         .unwrap();
         let requests = server.requests.lock().unwrap();
         assert!(
-            requests[0].starts_with(&format!("POST /v1/{route} HTTP/")),
+            requests[0].starts_with(&format!("POST {expected} HTTP/")),
             "The client must use the configured completion URL exactly."
         );
         assert!(
@@ -742,74 +961,304 @@ async fn full_completion_urls_are_not_appended_twice() {
         );
     }
 }
-
 #[test]
-fn deepseek_beta_completion_and_model_urls_use_different_routes() {
-    for configured in [
-        "",
-        "https://api.deepseek.com/beta",
-        "https://api.deepseek.com/beta/completions/",
-    ] {
-        let mut provider = Provider {
-            model: "deepseek-flash".into(),
-            base_url: configured.into(),
-            ..Provider::default()
-        };
-        let identity = provider.endpoint().unwrap();
-        provider.credential = Credential::Vault {
-            id: "fixture-reference".into(),
-            endpoint: identity.clone(),
-        };
-        provider.validate().unwrap();
-        assert_eq!(
-            provider.completion_url().unwrap(),
-            "https://api.deepseek.com/beta/completions"
-        );
-        assert_eq!(
-            provider.models_url().unwrap(),
-            "https://api.deepseek.com/models"
-        );
-        assert_eq!(
-            provider.endpoint().unwrap(),
-            identity,
-            "URL routing must not change saved credential identities."
-        );
-    }
-}
-
-#[test]
-fn completion_urls_must_match_the_configured_protocol() {
+fn the_default_endpoint_and_legacy_urls_keep_one_chat_route() {
+    // An empty endpoint uses the OpenRouter base.
     let mut provider = Provider {
-        kind: Kind::Compatible,
         model: "fixture".into(),
-        base_url: "https://example.com/v1/completions".into(),
-        protocol: Protocol::Chat,
         ..Provider::default()
     };
-    assert!(provider.validate().is_err());
-    provider.protocol = Protocol::Fim;
-    provider.base_url = "https://example.com/v1/chat/completions".into();
-    assert!(provider.validate().is_err());
+    assert_eq!(
+        provider.completion_url().unwrap(),
+        "https://openrouter.ai/api/v1/chat/completions"
+    );
+    assert_eq!(
+        provider.models_url().unwrap(),
+        "https://openrouter.ai/api/v1/models"
+    );
+    // A full completion URL of an old file keeps its identity and uses the chat route.
+    provider.base_url = "https://example.com/v1/completions/".into();
+    let identity = provider.endpoint().unwrap();
+    provider.credential = Credential::Vault {
+        id: "fixture-reference".into(),
+        endpoint: identity.clone(),
+    };
+    provider.validate().unwrap();
+    assert_eq!(
+        provider.completion_url().unwrap(),
+        "https://example.com/v1/chat/completions"
+    );
+    assert_eq!(
+        provider.endpoint().unwrap(),
+        identity,
+        "URL routing must not change saved credential identities."
+    );
 }
-
 #[test]
 fn pasting_provider_fields_creates_a_project_override() {
     let server = Server::new("name", Duration::ZERO);
     let global = Preferences {
         enabled: Some(true),
-        provider: Some(server.provider()),
+        max_simultaneous: None,
+        provider: Some(Provider {
+            model: String::new(),
+            ..server.provider()
+        }),
     };
-    let mut form = ai::form::Form::new(sqln::store::Scope::Project, None, Some(&global));
-    assert!(form.inherit);
-    form.focus = ai::form::Field::Model;
-    form.model.set("");
+    let mut form = ai_settings(global, None);
+    assert!(form.ai_inherit());
+    form.focus_on(sqln::settings::Field::AiModel);
     form.paste("deepseek-flash");
     assert!(
-        !form.inherit,
+        !form.ai_inherit(),
         "Pasting must have the same override behavior as typing."
     );
     assert_eq!(
-        form.preferences().unwrap().provider.unwrap().model,
+        form.ai_preferences().unwrap().provider.unwrap().model,
         "deepseek-flash"
     );
+}
+
+#[test]
+fn the_limit_of_simultaneous_answers_blocks_new_requests() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-limit", server.provider());
+    app.on_event(Event::Paste("a\nb\nc\nd".into()));
+    for (row, letter) in [(0, 'a'), (1, 'b'), (2, 'c')] {
+        app.console_mut().editor.set_cursor(Index2::new(row, 1));
+        request(&mut app);
+        if row == 0 {
+            approve(&mut app);
+        }
+        let answer = format!("{letter}42");
+        pump(&mut app, |s| s.contains(&answer));
+    }
+    assert_eq!(app.console().editor.ghosts().len(), 3);
+    // The fourth request on a free line hits the default limit of three.
+    app.console_mut().editor.set_cursor(Index2::new(3, 1));
+    request(&mut app);
+    let shown = screen(&mut app);
+    assert!(shown.contains("limit reached (3)"), "{shown}");
+    // A request on a line with a ghost replaces it, so the limit does not block it.
+    // The waiting bar of the request leaves the screen when its answer lands.
+    app.console_mut().editor.set_cursor(Index2::new(0, 1));
+    request(&mut app);
+    pump(&mut app, |s| !s.contains("Esc: Cancel"));
+    assert_eq!(app.console().editor.ghosts().len(), 3);
+    // A decision frees a place, and a new line can ask again.
+    app.console_mut().editor.set_cursor(Index2::new(1, 1));
+    app.on_event(Event::Key(key(KeyCode::Tab)));
+    assert_eq!(app.console().editor.ghosts().len(), 2);
+    app.console_mut().editor.set_cursor(Index2::new(3, 1));
+    request(&mut app);
+    pump(&mut app, |s| !s.contains("Esc: Cancel"));
+    assert_eq!(app.console().editor.ghosts().len(), 3);
+}
+
+#[test]
+fn esc_ends_only_the_run_at_the_line_of_the_cursor() {
+    let server = Server::new("42", Duration::from_millis(600));
+    let mut app = app("ai-esc", server.provider());
+    app.on_event(Event::Paste("SELECT \nFROM t".into()));
+    app.console_mut().editor.set_cursor(Index2::new(0, 7));
+    request(&mut app);
+    approve(&mut app);
+    // The first request reaches the server before the second one: its approval
+    // covers the same destination, so the second request asks no consent again.
+    pump(&mut app, |s| s.contains("AI thinking"));
+    app.console_mut().editor.set_cursor(Index2::new(1, 6));
+    request(&mut app);
+    pump(&mut app, |s| s.contains("×2"));
+    // Esc ends only the run of the cursor line, so that answer never shows.
+    app.on_event(Event::Key(key(KeyCode::Esc)));
+    let shown = screen(&mut app);
+    assert!(!shown.contains("×2"), "{shown}");
+    pump(&mut app, |s| s.contains("SELECT 42"));
+    assert_eq!(app.console().editor.ghosts().len(), 1);
+    assert_eq!(app.console().editor.text(), "SELECT \nFROM t");
+}
+
+#[test]
+fn the_tab_mark_counts_the_ghosts_that_wait() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-mark-count", server.provider());
+    app.on_event(Event::Paste("SELECT \nFROM t".into()));
+    app.console_mut().editor.set_cursor(Index2::new(0, 7));
+    request(&mut app);
+    approve(&mut app);
+    pump(&mut app, ghost);
+    app.console_mut().editor.set_cursor(Index2::new(1, 6));
+    request(&mut app);
+    pump(&mut app, |s| s.contains("FROM t42"));
+    assert!(screen(&mut app).contains("console-1\u{b1}2"));
+}
+
+#[test]
+fn each_ghost_keeps_its_own_buttons() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-two-buttons", server.provider());
+    app.on_event(Event::Paste("SELECT \nFROM t".into()));
+    app.console_mut().editor.set_cursor(Index2::new(0, 7));
+    request(&mut app);
+    approve(&mut app);
+    pump(&mut app, ghost);
+    app.console_mut().editor.set_cursor(Index2::new(1, 6));
+    request(&mut app);
+    let shown = rows(&pump(&mut app, |s| s.contains("FROM t42")));
+    assert_eq!(shown.matches("[Tab Accept]").count(), 2, "{shown}");
+    // The reject button of the second ghost decides only that ghost.
+    click_nth(&mut app, "[Esc Reject]", 1);
+    assert_eq!(app.console().editor.ghosts().len(), 1);
+    assert_eq!(app.console().editor.text(), "SELECT \nFROM t");
+}
+
+#[test]
+fn a_selection_refuses_ai_completion_and_keeps_the_selection() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-selection-refused", server.provider());
+    app.on_event(Event::Paste("SELECT x".into()));
+    app.console_mut().editor.set_cursor(Index2::new(0, 7));
+    app.on_event(Event::Key(shift(KeyCode::Right)));
+    let selected = app.console().editor.selected_text();
+    // The palette command refuses: the completion works at the cursor only.
+    app.on_event(Event::Key(ctrl('p')));
+    for c in "complete with".chars() {
+        app.on_event(Event::Key(key(KeyCode::Char(c))));
+    }
+    app.on_event(Event::Key(key(KeyCode::Enter)));
+    let shown = screen(&mut app);
+    assert!(
+        shown.contains("AI completion works at the cursor"),
+        "{shown}"
+    );
+    // The selection stays, and no answer starts.
+    assert_eq!(app.console().editor.selected_text(), selected);
+    assert!(!app.console().editor.has_ghosts());
+}
+
+#[test]
+fn an_explicit_list_hides_the_ai_row_under_a_selection() {
+    let mut f = common::Fixture::conventional("SELECT name FROM users");
+    f.editor.set_ai_available(true);
+    // Without a selection, the explicit list carries the AI row.
+    f.press(ctrl(' '));
+    assert!(f.editor.suggestions().is_some_and(|l| l.ai));
+    f.press(key(KeyCode::Esc));
+    // With a selection, the local list shows and the AI row hides.
+    f.editor.set_cursor(Index2::new(0, 20));
+    f.press(shift(KeyCode::Right));
+    f.press(ctrl(' '));
+    assert!(f.editor.suggestions().is_some_and(|l| !l.ai));
+}
+
+#[test]
+fn legacy_provider_fields_of_old_files_stay_valid() {
+    let file = r#"{"kind":"deepseek","model":"m","baseUrl":"https://example.com/v1/completions","protocol":"fim"}"#;
+    let provider: Provider = serde_json::from_str(file).unwrap();
+    assert_eq!(
+        provider.completion_url().unwrap(),
+        "https://example.com/v1/chat/completions"
+    );
+    let saved = serde_json::to_string(&provider).unwrap();
+    assert!(
+        !saved.contains("protocol"),
+        "New saves omit the legacy field."
+    );
+}
+
+#[test]
+fn the_reasoning_effort_appears_in_the_body_only_when_it_is_on() {
+    let server = Server::new("1", Duration::ZERO);
+    let p = server.provider();
+    let ctx = context();
+    let prepared = ai::prepare(&p, &ctx, &snapshot(Vec::new())).unwrap();
+    assert!(
+        prepared.body.get("reasoning_effort").is_none(),
+        "The default provider sends no reasoning field."
+    );
+    assert_eq!(prepared.body["max_completion_tokens"], p.max_output_tokens);
+    assert!(
+        prepared.body.get("max_tokens").is_none(),
+        "The body uses the current completion field, not the deprecated one."
+    );
+    let mut p = p;
+    p.reasoning_effort = ai::Reasoning::High;
+    let prepared = ai::prepare(&p, &ctx, &snapshot(Vec::new())).unwrap();
+    assert_eq!(prepared.body["reasoning_effort"], "high");
+    p.reasoning_effort = ai::Reasoning::None;
+    let prepared = ai::prepare(&p, &ctx, &snapshot(Vec::new())).unwrap();
+    assert_eq!(prepared.body["reasoning_effort"], "none");
+}
+
+#[test]
+fn the_reasoning_effort_of_old_files_stays_off_when_unknown() {
+    let provider: Provider = serde_json::from_str(r#"{"kind":"compatible","model":"m"}"#).unwrap();
+    assert_eq!(provider.reasoning_effort, ai::Reasoning::Off);
+    let saved = serde_json::to_string(&provider).unwrap();
+    assert!(!saved.contains("reasoning"), "Off stays out of the file.");
+    let unknown: Provider =
+        serde_json::from_str(r#"{"kind":"compatible","model":"m","reasoningEffort":"minimal"}"#)
+            .unwrap();
+    assert_eq!(unknown.reasoning_effort, ai::Reasoning::Off);
+    let set: Provider =
+        serde_json::from_str(r#"{"kind":"compatible","model":"m","reasoningEffort":"none"}"#)
+            .unwrap();
+    assert_eq!(set.reasoning_effort, ai::Reasoning::None);
+    let set: Provider =
+        serde_json::from_str(r#"{"kind":"compatible","model":"m","reasoningEffort":"high"}"#)
+            .unwrap();
+    assert_eq!(set.reasoning_effort, ai::Reasoning::High);
+}
+
+#[test]
+fn cycling_the_reasoning_effort_makes_the_block_custom_and_saves_the_value() {
+    let global = Preferences {
+        enabled: Some(true),
+        max_simultaneous: None,
+        provider: Some(Provider {
+            model: "test-model".into(),
+            ..Provider::default()
+        }),
+    };
+    let mut form = ai_settings(global, None);
+    assert!(form.ai_inherit());
+    form.focus_on(sqln::settings::Field::AiReasoning);
+    form.on_key(key(KeyCode::Right), false);
+    assert!(
+        !form.ai_inherit(),
+        "The reasoning effort belongs to the provider block."
+    );
+    assert_eq!(form.ai_reasoning(), 1);
+    assert_eq!(
+        form.ai_preferences()
+            .unwrap()
+            .provider
+            .unwrap()
+            .reasoning_effort,
+        ai::Reasoning::None
+    );
+    form.on_key(key(KeyCode::Right), false);
+    assert_eq!(
+        form.ai_preferences()
+            .unwrap()
+            .provider
+            .unwrap()
+            .reasoning_effort,
+        ai::Reasoning::Low
+    );
+    for _ in 0..2 {
+        form.on_key(key(KeyCode::Right), false);
+    }
+    let provider = form.ai_preferences().unwrap().provider.unwrap();
+    assert_eq!(provider.reasoning_effort, ai::Reasoning::High);
+    let saved = serde_json::to_string(&provider).unwrap();
+    assert!(saved.contains("reasoningEffort\":\"high\""));
+    // Four back steps return to Disabled, and the file keeps no field.
+    for _ in 0..4 {
+        form.on_key(key(KeyCode::Left), false);
+    }
+    assert_eq!(form.ai_reasoning(), 0);
+    let provider = form.ai_preferences().unwrap().provider.unwrap();
+    let saved = serde_json::to_string(&provider).unwrap();
+    assert!(!saved.contains("reasoning"));
 }

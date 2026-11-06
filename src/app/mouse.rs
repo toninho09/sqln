@@ -54,6 +54,9 @@ impl App {
             return;
         }
         let position = Position::new(mouse.column, mouse.row);
+        if !self.layout.agent_card.area.contains(position) && self.on_review_mouse(mouse) {
+            return;
+        }
         match mouse.kind {
             // The access card is above the panels, so it takes their clicks.
             MouseEventKind::Down(MouseButton::Left)
@@ -696,9 +699,9 @@ impl App {
         form.focus_on(field);
         let request = form.press();
         match request {
-            SettingsRequest::AiCompletion => self.open_ai_form(),
+            SettingsRequest::AiTest => self.test_ai_connection(),
             SettingsRequest::Save => self.save_settings(),
-            SettingsRequest::Cancel => self.settings_form = None,
+            SettingsRequest::Cancel => self.close_settings(),
             SettingsRequest::None => {}
         }
     }

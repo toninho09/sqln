@@ -5,79 +5,94 @@ It does not execute generated SQL. It does not use MCP sessions or agent access.
 
 ## Configure
 
-1. Open **Settings > IA > Autocomplete…**.
-2. Choose Global or Project in Settings before opening Autocomplete.
-3. Set **Enabled** to On.
-4. Set **Provider settings** to Custom.
-5. Select Deepseek, Openrouter, or Compatible.
-6. Enter the model identifier and, for Compatible, the API URL. A base URL or full completion URL is valid.
-7. Open **Credentials** with `F2`.
-8. Select System vault or Key file. Compatible also permits None.
-9. Enter a new vault key, or the path of a key file.
-10. Select **Apply**.
-11. Select **Save** in Settings.
+The fields live in **Settings > Autocomplete**, on one page. Choose Global or Project in Settings to pick the scope of the fields.
 
-`F1`, `F2`, and `F3` open Provider, Credentials, and Limits. Left and Right change choices.
-The optional **Test connection** button requests `/models`. It sends no SQL or database metadata.
+1. Set **Enabled** to On.
+2. Set **Provider** to Custom.
+3. Enter the model identifier and the API URL. Leave the URL empty to use the OpenRouter base. A base URL or full completion URL is valid.
+4. Set **Key source** to System vault, Key file, or None.
+5. Enter a new vault key, or the path of a key file.
+6. Select **Test** to check the endpoint, if you want.
+7. Select **Save** in Settings. The save writes a new vault key to the system vault.
+
+**Max simultaneous** holds the most AI answers that wait at once in one console, counting ghosts that show and requests that run. The range is 1 to 9 and the default is 3.
+**Context tokens**, **Output tokens**, and **Timeout seconds** bound the request.
+**Reasoning effort** chooses None, Low, Medium, or High for models that think. The request carries `reasoning_effort` with that value. **Disabled** sends no field, so the endpoint uses its default; **None** sends `reasoning_effort: "none"`, the explicit request that the model does not think.
+On the OpenRouter base, models without a reasoning control drop the field without an error, and the router maps the effort to the form of each backend. On a direct OpenAI endpoint, a model that rejects the field answers with an error. Set **Reasoning effort** back to **Disabled** to restore the compatible request.
+On OpenRouter, the router also knows the `reasoning.enabled: false` switch and the effort values `minimal`, `xhigh`, and `max`. SQLN sends only the values that the OpenAI reference accepts, so other OpenAI-compatible endpoints stay valid.
+
+The request body carries the output limit as `max_completion_tokens`, the current field of the reference. The output range starts at 16, because some providers refuse smaller values.
+The **Test** button requests `/models`. It sends no SQL or database metadata.
 A test failure does not prevent saving. Some compatible endpoints do not offer `/models`.
 Opening or saving Settings never tests the endpoint automatically.
+A save of a scope without an AI block writes none: untouched fields stay out of the file.
+When the vault write of a new key fails, the save offers retry or a key that stays in the session only.
 
 The project inherits the global provider block until it defines a custom block.
 A custom block contains the provider, model, endpoint, credential reference, and limits together.
 Changing a project model does not change the global provider.
-Set **Provider settings** to Inherited to restore the global block.
+Set **Provider** to Inherited to restore the global block.
 Set **Enabled** to Off in the project to disable AI even when the global configuration enables it.
 Disabling AI cancels outstanding requests and removes proposals.
 MCP settings remain independent.
 
 Vault keys belong to their scope and endpoint. A custom project provider needs a key for that scope.
-A failed vault operation offers retry or a key that stays only in the current session.
+A failed vault operation offers retry or a key that stays only in the current session. SQLN never stores an API key in `config.json` or its plaintext database-credential file.
 SQLN never stores an API key in `config.json` or its plaintext database-credential file.
 
 ## Complete SQL
 
-1. Position the cursor, or select the SQL to replace.
+1. Position the cursor.
 2. Open autocomplete with `Ctrl+Space`.
 3. Press `Up` from the first local suggestion to select **Complete with AI…**.
 4. Press the configured acceptance key: Tab, Enter, or both.
 5. Approve the connection and endpoint when SQLN requests consent.
-6. Review the response.
-7. Select **Accept** or **Reject**.
+6. Review the ghost text in the editor.
+7. Press `Tab` to accept the ghost at the line of the cursor, or `Esc` to reject it.
 
 The AI row also appears above nonempty local suggestion lists during typing.
 It is not initially selected. Typing never opens an AI-only list.
-Explicit `Ctrl+Space` can show an AI-only list, including in comments and with a selection.
-It also works in Vim normal and visual modes when AI is enabled.
+Explicit `Ctrl+Space` can show an AI-only list, including in comments.
+It also works in Vim normal mode when AI is enabled.
+A selection hides the AI row: the completion works at the cursor only, and the status bar reports the reason.
 The command palette offers **Complete with AI**. The command has no separate default shortcut.
 
-Without a selection, the editor shows a temporary insertion preview.
-With a selection, a comparison shows removed and added text, with changed words marked.
-Review starts on Reject. Tab and Shift+Tab select a button; Enter activates it; Esc rejects.
-PageUp and PageDown scroll the preview or comparison. The mouse wheel also scrolls.
-Long lines wrap to the available Unicode display width. Resize keeps controls accessible.
-Accept applies only the captured interval as one undo step. Reject preserves text and selection.
+The response shows as ghost text at the requested place, in the hint style.
+Several answers can wait at once, each on its own line: requests run in parallel, up to the configured limit.
+A dedicated row after each ghost text offers **Accept** and **Reject**; on a narrow screen the row shows only the keys.
+`Tab` decides the ghost at the line of the cursor, at its anchor; `Esc` ends the request of that line, or rejects its ghost.
+Each ghost stays until the user decides: keys, clicks, commands, cursor movement, tab changes, and schema refreshes keep it, and the editor stays editable.
+An edit of the anchor line closes only the ghost of that line, in silence; an edit on another line moves the anchor with the text.
+Any undo takes every ghost of the console.
+A new request on a line replaces the answer of that line, and a request on a free line adds one, within the limit.
+During a request, an edit of the requested line stops the request at once, and an edit on another line moves the anchor of the answer.
+`Run` executes the text without the ghosts, and the ghosts stay.
+The `±N` mark on the tab of the console counts the ghosts that wait.
+The completion never replaces a selection: it works at the cursor only. A request under a selection refuses with a message, and the selection stays.
+An agent proposal can still show an [inline diff](UI.md#inline-review); the AI completion never opens one.
 
 An animation identifies schema loading, pool waiting, and model work.
-Use Esc or **Cancel** to stop a request. SQL execution has its own Stop command.
-Editing, cursor or selection movement, tab changes, schema changes, and refresh discard stale requests and proposals.
+While a request runs, the requested line shows an animated mark in the first column of the gutter, as the [inline review](UI.md#inline-review) section describes.
+With several requests in one console, the bar shows their count, and its **Cancel** button ends them all; `Esc` ends only the request of the line of the cursor.
+SQL execution has its own Stop command.
+Only an edit of the requested line, the end of the console session, or a disabled provider discards a request, as the [inline review](UI.md#inline-review) section describes. An edit of the requested line stops the request at once; the application does not wait for an answer that cannot show.
 A response does not take focus from another dialog.
 
 ## Providers
 
-| Provider | API base | Protocol |
-|---|---|---|
-| DeepSeek | `https://api.deepseek.com/beta` | Native FIM, using prefix and suffix |
-| OpenRouter | `https://openrouter.ai/api/v1` | Chat Completions |
-| Compatible | User supplied | Chat Completions or FIM |
+SQLN speaks one standard: the OpenAI-compatible Chat Completions API, as OpenRouter uses today.
+
+| Provider | API base |
+|---|---|
+| OpenRouter | `https://openrouter.ai/api/v1` (default) |
+| Any OpenAI-compatible server | User supplied |
 
 The Endpoint field accepts an API base or a full completion URL, including a trailing slash.
-For DeepSeek, both `https://api.deepseek.com/beta` and `https://api.deepseek.com/beta/completions` work.
-SQLN adds the completion route only once. DeepSeek model discovery uses `https://api.deepseek.com/models`, not `/beta/models`.
-A full URL must match the selected FIM or Chat protocol. Credential identities keep the configured URL.
+SQLN adds the completion route only once. A legacy full FIM URL of an old file maps to the chat route on the same base.
+Credential identities keep the configured URL.
 
 Model identifiers come from the provider. SQLN does not choose a commercial model automatically.
-OpenRouter models do not necessarily expose native FIM. SQLN sends prefix, selection, and suffix as chat context instead.
-For Ollama, use its OpenAI-compatible base, for example `http://127.0.0.1:11434/v1`, with Chat protocol.
+For Ollama, use its OpenAI-compatible base, for example `http://127.0.0.1:11434/v1`.
 Install and run a local server separately. SQLN does not install, download, or load models.
 
 Remote endpoints require HTTPS. Plain HTTP is allowed only for loopback.
@@ -155,14 +170,14 @@ Place this object under `preferences` in `config.json`.
 The `aiCompletion` object and its fields are optional. Existing configuration files require no migration.
 Older SQLN binaries reject the new preference because they reject unknown configuration fields.
 
-## Explicit live DeepSeek test
+## Explicit live test
 
 The default suite uses a local HTTP fixture. It never calls a paid API.
-An opt-in test runs the real binary in a pseudoterminal with `deepseek-flash` and the full DeepSeek FIM URL.
+An opt-in test runs the real binary in a pseudoterminal against a real OpenAI-compatible endpoint.
 It requests a proposal, accepts it, checks the saved SQL, and verifies that acceptance does not execute SQL.
 
 1. Put the API key in a private file outside the repository.
-2. Run `SQLN_TEST_DEEPSEEK_KEY_FILE=/absolute/path/to/key cargo test --test terminal deepseek_fim_completion_runs_through_the_real_terminal -- --ignored --exact`.
+2. Run `SQLN_TEST_AI_KEY_FILE=/absolute/path/to/key SQLN_TEST_AI_MODEL=<model> cargo test --test terminal ai_chat_completion_runs_through_the_real_terminal -- --ignored --exact`. Set `SQLN_TEST_AI_BASE_URL` to use another endpoint; the default endpoint is OpenRouter.
 3. Remove the key file when it is no longer needed.
 
 The test uses a temporary configuration and a synthetic SQLite database. It does not modify the supplied key file.

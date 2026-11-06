@@ -497,15 +497,22 @@ fn proposals_need_review_and_direct_edits_need_a_user_option() {
     assert!(h.app.console().editor.text().is_empty());
     h.key(KeyCode::F(9));
     h.key(KeyCode::Enter);
+    // The change shows in the editor, with the bar of the review.
     let screen = h.draw(80, 24);
-    assert!(screen.contains("Edit proposal"), "{screen}");
-    assert!(screen.contains("+1 −0 lines"), "{screen}");
-    assert!(screen.contains("[Reject]"));
-    h.key(KeyCode::Right);
+    assert!(screen.contains("+ SELECT '猫"), "{screen}");
+    assert!(screen.contains("1/1 change"), "{screen}");
+    assert!(screen.contains("[a Accept]"), "{screen}");
+    assert!(screen.contains("± console-1"), "{screen}");
+    // Enter decides nothing.
     h.key(KeyCode::Enter);
+    assert!(h.app.console().editor.text().is_empty());
+    h.key(KeyCode::Char('a'));
     assert_eq!(h.app.console().editor.text(), "SELECT '猫';");
     let applied = h.wait_proposal(&proposal);
     assert_eq!(applied["status"], "applied");
+    assert_eq!(applied["accepted_changes"], 1);
+    assert_eq!(applied["rejected_changes"], 0);
+    assert!(!h.draw(80, 24).contains("± console-1"));
     assert_eq!(
         applied["console_revision"],
         h.app.console().editor.revision()
@@ -811,7 +818,7 @@ fn mouse_acceptance_applies_a_proposal_without_executing_sql() {
         .lines()
         .enumerate()
         .find_map(|(y, line)| {
-            line.find("[Accept]")
+            line.find("[a Accept]")
                 .map(|byte| (line[..byte].chars().count() + 1, y))
         })
         .unwrap();
@@ -859,7 +866,7 @@ fn revocation_cancels_the_sessions_work_and_blocks_further_reads() {
 }
 
 #[test]
-fn both_editor_modes_review_proposals_and_keep_default_rejection() {
+fn both_editor_modes_review_proposals_in_the_editor_and_put_them_off() {
     for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
         let mut h = Harness::mode(&format!("review-{mode:?}"), mode);
         h.authorize();
@@ -867,10 +874,21 @@ fn both_editor_modes_review_proposals_and_keep_default_rejection() {
         h.wait_proposal(&proposal);
         h.key(KeyCode::F(9));
         h.key(KeyCode::Enter);
-        assert!(h.draw(80, 24).contains("[Reject]"));
+        assert!(h.draw(80, 24).contains("[r Reject]"));
         h.draw(100, 30);
-        h.draw(80, 24);
+        assert!(h.draw(80, 24).contains("[r Reject]"));
+        // Keys that edit text do not change it. Esc puts the proposal off.
+        h.key(KeyCode::Char('x'));
+        h.key(KeyCode::Backspace);
+        assert!(h.app.console().editor.text().is_empty());
+        assert!(h.draw(80, 24).contains("read only during the review"));
+        h.key(KeyCode::Esc);
+        assert_eq!(h.job_status(&proposal), "pending");
+        assert!(h.app.console().editor.review().is_none());
+        assert!(h.draw(80, 24).contains("Edit proposal"));
+        h.key(KeyCode::F(9));
         h.key(KeyCode::Enter);
+        h.key(KeyCode::Char('r'));
         assert_eq!(h.job_status(&proposal), "rejected");
         assert!(h.app.console().editor.text().is_empty());
     }
@@ -1308,8 +1326,7 @@ fn the_agent_places_sql_in_its_tab_for_the_user_to_review_and_run() {
         assert_eq!(tab(&h), changed);
         h.key(KeyCode::F(9));
         h.key(KeyCode::Enter);
-        h.key(KeyCode::Right);
-        h.key(KeyCode::Enter);
+        h.key(KeyCode::Char('A'));
         assert_eq!(tab(&h), "CREATE TABLE made(id INTEGER, note TEXT);");
         assert!(h.draw(120, 24).contains("applied to MCP"));
         // The user runs it. It is a user run, so the write executes.
@@ -1725,12 +1742,12 @@ fn a_review_closes_when_its_proposal_is_discarded() {
     h.wait_proposal(&proposal);
     h.key(KeyCode::F(9));
     h.key(KeyCode::Enter);
-    assert!(h.draw(80, 24).contains("[Accept]"));
+    assert!(h.draw(80, 24).contains("[a Accept]"));
     // Another change to the console, such as a direct edit of another agent, invalidates it.
     h.app.console_mut().editor.on_paste("user text");
     h.app.drain_events();
     let screen = h.draw(120, 24);
-    assert!(!screen.contains("[Accept]"), "{screen}");
+    assert!(!screen.contains("[a Accept]"), "{screen}");
     assert!(screen.contains("Agent edit discarded"), "{screen}");
     assert_eq!(h.job_status(&proposal), "revision_conflict");
 }
@@ -1772,15 +1789,16 @@ fn proposal_cards_wait_behind_access_cards_and_open_their_review() {
     // A new proposal shows a card again. Review opens it.
     h.key(KeyCode::F(9));
     h.key(KeyCode::Enter);
-    h.key(KeyCode::Right);
-    h.key(KeyCode::Enter);
+    h.key(KeyCode::Char('A'));
     assert_eq!(h.job_status(&proposal), "applied");
     let proposal = h.proposal("-- next\n");
     h.wait_proposal(&proposal);
     h.click_label("[Review]");
     let screen = h.draw(80, 24);
-    assert!(screen.contains("[Accept]"), "{screen}");
-    assert!(screen.contains("-- next"), "{screen}");
+    assert!(screen.contains("[a Accept]"), "{screen}");
+    assert!(screen.contains("+ -- next"), "{screen}");
+    // The card of a proposal under review does not show.
+    assert!(!screen.contains("edits console-1"), "{screen}");
 }
 
 #[test]
@@ -1983,7 +2001,7 @@ fn agent_actions_on_user_consoles_go_to_the_session_messages() {
     assert!(notes(&mut h, &own).contains("proposed an edit"));
     h.key(KeyCode::F(9));
     h.key(KeyCode::Enter);
-    h.key(KeyCode::Enter);
+    h.key(KeyCode::Char('R'));
     assert_eq!(h.wait_proposal(&proposal)["status"], "rejected");
     assert!(notes(&mut h, &own).contains("Agent edit rejected for"));
 }
@@ -2240,16 +2258,19 @@ fn saved_mcp_settings_lower_the_access_close_and_open_the_endpoint_at_once() {
     );
     h.grant(3);
     h.own();
-    // Settings > IA at 80x24. Scope, MCP, Default access, then Max access.
-    let open_ia = |h: &mut Harness| {
+    // The MCP settings at 80x24. Scope, MCP, Default access, then Max access.
+    // Four rows down from General is the MCP section of the sidebar.
+    let open_mcp = |h: &mut Harness| {
         h.app.on_event(Event::Key(common::ctrl('w')));
         h.key(KeyCode::Char(','));
-        h.click_label("IA");
+        for _ in 0..4 {
+            h.key(KeyCode::Down);
+        }
         for _ in 0..2 {
             h.key(KeyCode::Tab);
         }
     };
-    open_ia(&mut h);
+    open_mcp(&mut h);
     let screen = h.draw(80, 24);
     assert!(screen.contains("Remember clients"), "{screen}");
     assert!(screen.contains("[Save]"), "{screen}");
@@ -2264,7 +2285,7 @@ fn saved_mcp_settings_lower_the_access_close_and_open_the_endpoint_at_once() {
     assert_eq!(reply["access"], "propose");
     assert!(agent_log(&h).contains("access lowered to Allow"));
     // MCP off revokes the session and removes the endpoint.
-    open_ia(&mut h);
+    open_mcp(&mut h);
     h.key(KeyCode::Right);
     h.key(KeyCode::Right);
     assert!(h.draw(80, 24).contains("< Off >"));
@@ -2287,9 +2308,103 @@ fn saved_mcp_settings_lower_the_access_close_and_open_the_endpoint_at_once() {
     };
     assert_eq!(descriptors(&h), 0);
     // The default, MCP on, opens a new endpoint.
-    open_ia(&mut h);
+    open_mcp(&mut h);
     h.key(KeyCode::Right);
     assert!(h.draw(80, 24).contains("< Default: On >"));
     h.click_label("[Save]");
     assert_eq!(descriptors(&h), 1);
+}
+
+/// An edit that replaces the characters from `column` to `end` on `line`.
+fn replace(line: usize, column: usize, end: usize, text: &str) -> Value {
+    json!({"start":{"line":line,"column":column},"end":{"line":line,"column":end},"text":text})
+}
+
+#[test]
+fn each_change_has_its_own_decision_undo_step_and_count() {
+    let mut h = Harness::new("partial-review");
+    h.authorize();
+    let before = "SELECT 1;\nSELECT 2;\nSELECT 3;\nSELECT 4;\nSELECT 5;";
+    h.app.on_event(Event::Paste(before.into()));
+    let console = h.app.console().id.to_string();
+    let revision = h.app.console().editor.revision();
+    let reply = h
+        .tool(
+            json!({"method":"edit_console","console_id":console,"revision":revision,
+            "edits":[replace(0, 7, 8, "10"), replace(4, 7, 8, "50")]}),
+        )
+        .unwrap();
+    let proposal = reply["job_id"].as_str().unwrap().to_owned();
+    assert_eq!(h.wait_proposal(&proposal)["status"], "pending");
+    h.key(KeyCode::F(9));
+    h.key(KeyCode::Enter);
+    let screen = h.draw(80, 24);
+    assert!(screen.contains("1/2 changes"), "{screen}");
+    assert!(screen.contains("- SELECT 1;"), "{screen}");
+    assert!(screen.contains("+ SELECT 10;"), "{screen}");
+    // The first change goes into the text at once.
+    h.key(KeyCode::Char('a'));
+    let first = "SELECT 10;\nSELECT 2;\nSELECT 3;\nSELECT 4;\nSELECT 5;";
+    assert_eq!(h.app.console().editor.text(), first);
+    assert!(h.draw(80, 24).contains("1/1 change"));
+    // Later keeps the decision and the proposal. Review opens the remaining change.
+    h.key(KeyCode::Esc);
+    assert_eq!(h.job_status(&proposal), "pending");
+    h.key(KeyCode::F(9));
+    h.key(KeyCode::Enter);
+    let screen = h.draw(80, 24);
+    assert!(screen.contains("1/1 change"), "{screen}");
+    assert!(screen.contains("+ SELECT 50;"), "{screen}");
+    h.key(KeyCode::Char('r'));
+    let done = h.wait_proposal(&proposal);
+    assert_eq!(done["status"], "partial");
+    assert_eq!(done["accepted_changes"], 1);
+    assert_eq!(done["rejected_changes"], 1);
+    assert_eq!(h.app.console().editor.text(), first);
+    assert!(h.draw(120, 24).contains("partly applied"));
+    // The editor stays, and the text is free again.
+    assert!(h.app.console().editor.review().is_none());
+    h.app.on_event(Event::Key(common::ctrl('z')));
+    assert_eq!(h.app.console().editor.text(), before);
+}
+
+#[test]
+fn custom_review_keys_show_in_the_bar_and_the_old_keys_are_text() {
+    let overrides = HashMap::from([
+        ("agentSessions".into(), vec!["f8".into()]),
+        ("agentReview".into(), vec!["f9".into()]),
+        ("reviewAccept".into(), vec!["y".into()]),
+        ("reviewClose".into(), vec!["q".into()]),
+    ]);
+    let mode = KeyboardMode::Conventional;
+    let options = Options {
+        database: Some(seeded_db("review-keys")),
+        keymap: Some(Keymap::with_overrides(mode, &overrides).unwrap()),
+        ..Default::default()
+    };
+    let mut h = Harness::options(options, mode);
+    h.authorize();
+    let proposal = h.proposal("SELECT 8;");
+    h.wait_proposal(&proposal);
+    h.key(KeyCode::F(9));
+    h.key(KeyCode::Enter);
+    let screen = h.draw(80, 24);
+    assert!(screen.contains("[y Accept]"), "{screen}");
+    assert!(screen.contains("[q"), "{screen}");
+    // The Ctrl+W panel menu lists the review commands.
+    h.app.on_event(Event::Key(common::ctrl('w')));
+    h.key(KeyCode::Char(' '));
+    let menu = h.draw(80, 24);
+    assert!(menu.contains("Ctrl+W · Review"), "{menu}");
+    assert!(menu.contains("y    Accept change"), "{menu}");
+    h.key(KeyCode::Esc);
+    h.key(KeyCode::Char('a'));
+    assert!(h.app.console().editor.text().is_empty());
+    h.key(KeyCode::Char('q'));
+    assert_eq!(h.job_status(&proposal), "pending");
+    h.key(KeyCode::F(9));
+    h.key(KeyCode::Enter);
+    h.key(KeyCode::Char('y'));
+    assert_eq!(h.job_status(&proposal), "applied");
+    assert_eq!(h.app.console().editor.text(), "SELECT 8;");
 }

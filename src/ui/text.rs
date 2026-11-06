@@ -355,6 +355,7 @@ pub const GROUP_CONNECTION: &str = "Connection";
 pub const GROUP_APPLICATION: &str = "Application";
 pub const GROUP_CONSOLE: &str = "Console";
 pub const GROUP_ROW: &str = "Row";
+pub const GROUP_REVIEW: &str = "Changes";
 pub const MENU_FOCUS: &str = "Move the focus";
 pub const MENU_NAVIGATOR: &str = "Toggle the explorer";
 pub const MENU_NEXT_TAB: &str = "Next tab";
@@ -735,7 +736,20 @@ pub const SECTION_EDITOR: &str = "Editor";
 pub const SECTION_RESULTS: &str = "Results";
 pub const SECTION_APPEARANCE: &str = "Appearance";
 pub const SECTION_SHORTCUTS: &str = "Shortcuts";
-pub const SECTION_AI: &str = "IA";
+pub const SECTION_MCP: &str = "MCP";
+pub const SECTION_AUTOCOMPLETE: &str = "Autocomplete";
+pub const FIELD_AI_ENABLED: &str = "Enabled";
+pub const FIELD_AI_PROVIDER: &str = "Provider";
+pub const FIELD_AI_MODEL: &str = "Model";
+pub const FIELD_AI_ENDPOINT: &str = "Endpoint";
+pub const FIELD_AI_SOURCE: &str = "Key source";
+pub const FIELD_AI_PATH: &str = "Key file";
+pub const FIELD_AI_KEY: &str = "New vault key";
+pub const FIELD_AI_CONTEXT: &str = "Context tokens";
+pub const FIELD_AI_OUTPUT: &str = "Output tokens";
+pub const FIELD_AI_TIMEOUT: &str = "Timeout seconds";
+pub const FIELD_AI_REASONING: &str = "Reasoning effort";
+pub const FIELD_AI_SIMULTANEOUS: &str = "Max simultaneous";
 pub const FIELD_MCP: &str = "MCP";
 pub const FIELD_MCP_DEFAULT: &str = "Default access";
 pub const FIELD_MCP_MAX: &str = "Max access";
@@ -783,6 +797,7 @@ pub fn shortcut_region(region: crate::input::Region) -> &'static str {
         crate::input::Region::Navigator => REGION_NAVIGATOR,
         crate::input::Region::Grid => REGION_GRID,
         crate::input::Region::Diagram => REGION_DIAGRAM,
+        crate::input::Region::Review => REGION_REVIEW,
     }
 }
 pub const FIELD_KEYBOARD: &str = "Keyboard";
@@ -1214,6 +1229,15 @@ pub const NOTE_PARTIAL_KEYS: &str = "(partial list)";
 pub const NOTE_FILTERED: &str = "(filtered)";
 pub const REGION_TABLE: &str = "Table";
 pub const REGION_DIAGRAM: &str = "Diagram";
+pub const REGION_REVIEW: &str = "Review";
+pub const AI_CURSOR_ONLY: &str = "AI completion works at the cursor, not on a selection.";
+
+/// Explains why the editor refuses a key during a review.
+pub fn review_read_only(accept: &str, reject: &str, close: &str, close_label: &str) -> String {
+    format!(
+        "The editor is read only during the review. {accept} accepts, {reject} rejects, {close}: {close_label}."
+    )
+}
 pub const REGION_COMPARE: &str = "Compare";
 pub const REGION_FILTER: &str = "Filter";
 
@@ -1458,6 +1482,13 @@ pub fn action_text(action: Action) -> &'static str {
         Action::DiagramCopy => "Copy the diagram as Mermaid text",
         Action::DiagramReload => "Read the diagram again",
         Action::DiagramKeysOnly => "Show only the key columns, or all",
+        Action::ReviewAccept => "Accept the current change",
+        Action::ReviewReject => "Reject the current change",
+        Action::ReviewAcceptAll => "Accept all changes",
+        Action::ReviewRejectAll => "Reject all changes",
+        Action::ReviewNext => "Go to the next change",
+        Action::ReviewPrevious => "Go to the previous change",
+        Action::ReviewClose => "Close the review",
         Action::NavigatorCompare => {
             "Compare the structure or the data of the row with another source"
         }
@@ -1524,6 +1555,13 @@ pub fn panel_command_text(action: Action) -> &'static str {
         DiagramStructure => "Structure",
         DiagramCopy => "Copy Mermaid",
         DiagramKeysOnly => "Key/all columns",
+        ReviewAccept => "Accept change",
+        ReviewReject => "Reject change",
+        ReviewAcceptAll => "Accept all",
+        ReviewRejectAll => "Reject all",
+        ReviewNext => "Next change",
+        ReviewPrevious => "Previous change",
+        ReviewClose => "Close review",
         _ => action_text(action),
     }
 }
@@ -1908,6 +1946,8 @@ pub const CONTROL_CLEAR: &str = "Clear";
 pub const AGENT_PREFIX: &str = "MCP · ";
 const AGENT_OFF_PREFIX: &str = "MCP off · ";
 pub const DIRECT_PREFIX: &str = "Direct · ";
+/// The mark of a console with a pending agent proposal.
+pub const PROPOSAL_PREFIX: &str = "± ";
 pub const AGENT_REJECT: &str = "Reject";
 pub const AGENT_ALLOW: &str = "Allow";
 pub const AGENT_ALLOW_ALL: &str = "Allow all";
@@ -1915,10 +1955,8 @@ pub const AGENT_FULL: &str = "Full access";
 pub const AGENT_FORGET: &str = "Forget";
 pub const AGENT_KEEP: &str = "Keep access";
 pub const AGENT_REVOKE: &str = "Revoke";
-pub const AGENT_ACCEPT: &str = "Accept";
 pub const AGENT_REVIEW: &str = "Review";
 pub const AGENT_STOP: &str = "Stop";
-pub const AGENT_REVIEW_FOOTER: &str = "Tab: choice | Enter: confirm | Esc: later";
 pub const AGENT_PROPOSAL_GONE: &str =
     "This agent proposal is no longer available. Ask the agent to propose again.";
 
@@ -2195,16 +2233,6 @@ pub fn agent_proposal_row(console: &str, client: &str, revision: u64) -> String 
 
 pub const AGENT_PROPOSAL_TITLE: &str = "Edit proposal";
 
-pub fn agent_proposal_header(
-    client: &str,
-    session: &str,
-    revision: u64,
-    added: usize,
-    removed: usize,
-) -> String {
-    format!("From {client} [{session}] · revision {revision} · +{added} −{removed} lines")
-}
-
 pub fn agent_access_done(client: &str, choice: &str) -> String {
     match choice {
         AGENT_ALLOW => format!("MCP {client}: access allowed. Edits need your review."),
@@ -2260,6 +2288,12 @@ pub const AGENT_DISCARDED_REVISION: &str =
     "Agent edit discarded: the console changed or closed. Ask the agent to propose again.";
 pub const AGENT_DISCARDED_BUDGET: &str =
     "Agent edit discarded: its diff exceeds the memory budget. Ask the agent for a smaller edit.";
+
+pub fn agent_partial(console: &str, accepted: usize, rejected: usize) -> String {
+    format!(
+        "Agent edit partly applied to {console}: {accepted} accepted, {rejected} rejected. SQL does not execute automatically."
+    )
+}
 
 pub fn agent_applied(console: &str) -> String {
     format!("Agent edit applied to {console}. SQL does not execute automatically.")

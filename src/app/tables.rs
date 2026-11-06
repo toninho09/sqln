@@ -90,7 +90,9 @@ impl App {
                         .file
                         .as_ref()
                         .is_some_and(|file| file.trouble.is_some());
-                    let name = self.agent.console_label(console.id, &console.name);
+                    let name = self
+                        .agent
+                        .console_label(&self.consoles, console.id, &console.name);
                     let label = main_tab_label(self.theme.icons.console, &name, unsaved);
                     (label, console.phase, &console.run)
                 }

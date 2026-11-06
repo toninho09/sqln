@@ -96,6 +96,11 @@ impl Chord {
         self.code == KeyCode::Char('w') && self.modifiers == KeyModifiers::CONTROL
     }
 
+    /// Returns true for a character without Ctrl or Alt: during input, it is text.
+    pub fn is_plain_char(self) -> bool {
+        matches!(self.code, KeyCode::Char(_)) && (self.modifiers - KeyModifiers::SHIFT).is_empty()
+    }
+
     /// Returns the same key without Shift, when the key has Shift.
     pub fn without_shift(self) -> Option<Self> {
         self.modifiers.contains(KeyModifiers::SHIFT).then(|| Self {
@@ -162,6 +167,8 @@ pub enum Region {
     Navigator,
     Grid,
     Diagram,
+    /// An inline review of proposed changes in the editor.
+    Review,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -305,6 +312,13 @@ pub enum Action {
     DiagramCopy,
     DiagramReload,
     DiagramKeysOnly,
+    ReviewAccept,
+    ReviewReject,
+    ReviewAcceptAll,
+    ReviewRejectAll,
+    ReviewNext,
+    ReviewPrevious,
+    ReviewClose,
 }
 
 impl Action {
@@ -1286,6 +1300,55 @@ const DEFAULTS: &[Item] = &[
         Region::Diagram,
         "diagramKeysOnly",
         &["K"],
+        &[],
+    ),
+    both(
+        Action::ReviewAccept,
+        Region::Review,
+        "reviewAccept",
+        &["a", "tab"],
+        &[],
+    ),
+    both(
+        Action::ReviewReject,
+        Region::Review,
+        "reviewReject",
+        &["r"],
+        &[],
+    ),
+    both(
+        Action::ReviewAcceptAll,
+        Region::Review,
+        "reviewAcceptAll",
+        &["A"],
+        &[],
+    ),
+    both(
+        Action::ReviewRejectAll,
+        Region::Review,
+        "reviewRejectAll",
+        &["R"],
+        &[],
+    ),
+    both(
+        Action::ReviewNext,
+        Region::Review,
+        "reviewNext",
+        &["down", "j", "]"],
+        &[],
+    ),
+    both(
+        Action::ReviewPrevious,
+        Region::Review,
+        "reviewPrevious",
+        &["up", "k", "["],
+        &[],
+    ),
+    both(
+        Action::ReviewClose,
+        Region::Review,
+        "reviewClose",
+        &["esc"],
         &[],
     ),
     both(

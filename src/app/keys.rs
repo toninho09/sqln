@@ -96,10 +96,6 @@ impl App {
         if self.on_ai_key(key) {
             return;
         }
-        if self.agent.review.is_some() {
-            self.on_agent_review_key(key);
-            return;
-        }
         if self.conflicts.is_some() {
             self.on_conflicts_key(key);
             return;
@@ -179,6 +175,9 @@ impl App {
         if let Some((region, mut keys)) = self.pending_key.take() {
             keys.push(chord);
             self.on_sequence(region, keys);
+            return;
+        }
+        if self.on_review_key(key) {
             return;
         }
         if !self.navigator_focused
@@ -428,6 +427,14 @@ impl App {
     }
 
     pub(super) fn perform(&mut self, action: Action, extend: bool) {
+        if action.region() == Region::Review {
+            self.perform_review(action);
+            return;
+        }
+        if self.review_blocks(action) {
+            self.refuse_review_edit();
+            return;
+        }
         if self
             .table()
             .is_some_and(|tab| !tab.result.edits.is_empty() || tab.edit_uncertain)
@@ -464,8 +471,8 @@ impl App {
         }
         match action {
             Action::EditorAiComplete => self.start_ai(),
-            Action::EditorAiAccept => self.decide_ai(true),
-            Action::EditorAiReject => self.decide_ai(false),
+            Action::EditorAiAccept => self.decide_ghost(true),
+            Action::EditorAiReject => self.decide_ghost(false),
             Action::EditorAiCancel => self.cancel_ai(),
             Action::AgentSessions => self.open_agent_sessions(),
             Action::AgentReview => self.open_agent_proposals(),
@@ -702,12 +709,15 @@ impl App {
         // The explorer is the only panel of the home screen.
         let panel = if self.navigator_focused || self.home() {
             Some(Region::Navigator)
+        } else if self.context_region() == Some(Region::Review) {
+            Some(Region::Review)
         } else {
             self.panel()
         };
         let (region, name) = match panel {
             Some(Region::Navigator) => (Some(Region::Navigator), text::REGION_NAVIGATOR),
             Some(Region::Diagram) => (Some(Region::Diagram), text::REGION_DIAGRAM),
+            Some(Region::Review) => (Some(Region::Review), text::REGION_REVIEW),
             Some(_) if self.compare_active.is_some() => (Some(Region::Grid), text::REGION_COMPARE),
             Some(_) if in_table => (Some(Region::Grid), text::REGION_TABLE),
             Some(_) => (Some(Region::Grid), text::REGION_GRID),
@@ -1146,8 +1156,8 @@ impl App {
         };
         match form.on_key(key, vim) {
             SettingsRequest::None => {}
-            SettingsRequest::Cancel => self.settings_form = None,
-            SettingsRequest::AiCompletion => self.open_ai_form(),
+            SettingsRequest::Cancel => self.close_settings(),
+            SettingsRequest::AiTest => self.test_ai_connection(),
             SettingsRequest::Save => self.save_settings(),
         }
     }
@@ -1471,6 +1481,12 @@ impl App {
         }
         if action == Action::EditorSuggestions && self.ai_eligible() {
             return true;
+        }
+        if action.region() == Region::Review {
+            return self.review_command_available(action);
+        }
+        if self.review_blocks(action) {
+            return false;
         }
         if self.home() && !home_allows(action) {
             return false;

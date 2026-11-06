@@ -5,6 +5,7 @@ pub mod ai;
 mod buffer;
 mod conventional;
 mod frame;
+pub mod review;
 mod search;
 mod undo;
 
@@ -151,6 +152,10 @@ pub struct SqlEditor {
     suggestions_enabled: bool,
     ai_available: bool,
     ai_requested: bool,
+    /// Set when a selection blocks the AI row of an explicit list.
+    ai_refused: bool,
+    /// The anchor of a running completion, with the time of the request.
+    ai_pending: Vec<(Index2, std::time::Instant)>,
     list_area: (Rect, usize),
     literal_text: bool,
     handler: EditorEventHandler,
@@ -181,6 +186,13 @@ pub struct SqlEditor {
     /// The revision of the text that the marks of the execution describe.
     plan_revision: u64,
     error_spot: Option<ErrorSpot>,
+    /// The open inline review. The text is read only while it is open.
+    review: Option<review::Review>,
+    /// The ghost answers that wait for a decision, with their shared view.
+    ghosts: Vec<review::Ghost>,
+    ghost_view: Option<review::GhostView>,
+    ghost_targets: Vec<(review::Control, Rect)>,
+    ghost_keys: review::Keys,
 }
 
 impl SqlEditor {
@@ -207,6 +219,8 @@ impl SqlEditor {
             suggestions_enabled: true,
             ai_available: false,
             ai_requested: false,
+            ai_refused: false,
+            ai_pending: Vec::new(),
             list_area: Default::default(),
             literal_text: false,
             handler: EditorEventHandler::vim_mode(),
@@ -232,6 +246,11 @@ impl SqlEditor {
             marks_revision: 0,
             plan_revision: 0,
             error_spot: None,
+            review: None,
+            ghosts: Vec::new(),
+            ghost_view: None,
+            ghost_targets: Vec::new(),
+            ghost_keys: Default::default(),
         }
     }
 
@@ -382,6 +401,7 @@ impl SqlEditor {
 
     fn mark_changed(&mut self) {
         self.revision += 1;
+        self.sync_ghosts();
     }
 
     fn snapshot(&mut self) -> &Snapshot {
@@ -550,7 +570,7 @@ impl SqlEditor {
         self.list = (!completion.items.is_empty()).then_some(SuggestionList {
             completion,
             selected: 0,
-            ai: self.ai_available,
+            ai: self.ai_row(),
         });
     }
 
@@ -634,7 +654,8 @@ impl SqlEditor {
         }
     }
 
-    fn selection_range(&self) -> Option<(Index2, Index2)> {
+    /// Returns the selection as an ordered pair, with the start first.
+    pub fn selection_range(&self) -> Option<(Index2, Index2)> {
         match self.keyboard {
             KeyboardMode::Conventional => self.selected_range(),
             KeyboardMode::Vim => self

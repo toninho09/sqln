@@ -621,9 +621,14 @@ impl App {
                     .filter(|proposal| proposal.state == "building")
                 {
                     match diff {
-                        Ok(text) => {
-                            proposal.lines = crate::ui::agent::diff_counts(&text.value);
-                            proposal.diff = Some(text);
+                        Ok((hunks, hold)) => {
+                            proposal.lines = hunks.iter().fold((0, 0), |(added, removed), hunk| {
+                                (added + hunk.new.len(), removed + hunk.old)
+                            });
+                            proposal.hunks = Some(hunks);
+                            // The changes replace the edits in the budget.
+                            proposal.edits.clear();
+                            proposal._hold = Some(hold);
                             proposal.state = "pending";
                             let (session, console) = (proposal.session.clone(), proposal.console);
                             let name = self

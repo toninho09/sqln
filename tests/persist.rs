@@ -3186,14 +3186,15 @@ fn the_sidebar_shows_the_fields_of_one_section() {
     let mut session = Session::start(&store);
     session.prefix(',');
     session.assert_sees("Reopen tabs");
-    session.assert_not_sees("Autocomplete");
+    // The sidebar always shows every title, so a section check uses a field label.
+    session.assert_not_sees("Undo (MiB)");
     session.assert_not_sees("Page size");
     session.code(KeyCode::Down);
-    session.assert_sees("Autocomplete");
+    session.assert_sees("Undo (MiB)");
     session.assert_not_sees("Reopen tabs");
     session.code(KeyCode::Down);
     session.assert_sees("Page size");
-    session.assert_not_sees("Autocomplete");
+    session.assert_not_sees("Undo (MiB)");
     session.code(KeyCode::Down);
     session.assert_sees("Default theme");
     session.assert_not_sees("Page size");
@@ -3201,13 +3202,18 @@ fn the_sidebar_shows_the_fields_of_one_section() {
     session.assert_sees("Remember clients");
     session.assert_not_sees("Default theme");
     session.code(KeyCode::Down);
-    session.assert_sees("Commands 1/");
+    session.assert_sees("Context tokens");
     session.assert_not_sees("Remember clients");
+    session.code(KeyCode::Down);
+    session.assert_sees("Commands 1/");
+    session.assert_not_sees("Context tokens");
     // The last section goes back to the first section.
     session.code(KeyCode::Down);
     session.assert_sees("Reopen tabs");
     session.code(KeyCode::Up);
     session.assert_sees("Commands 1/");
+    session.code(KeyCode::Up);
+    session.assert_sees("Context tokens");
     session.code(KeyCode::Up);
     session.assert_sees("Remember clients");
     // The scope stays in all sections.
@@ -4767,11 +4773,11 @@ fn the_project_mcp_settings_replace_the_global_values_and_the_defaults_apply_wit
 }
 
 #[test]
-fn the_ia_settings_show_the_defaults_and_the_client_help_and_write_the_scope() {
+fn the_mcp_settings_show_the_defaults_and_the_client_help_and_write_the_scope() {
     let (store, _) = store("p-mcp-settings");
     let mut session = Session::start(&store);
     session.prefix(',');
-    session.click_text("IA");
+    session.click_text("MCP");
     session.assert_sees("MCP");
     session.assert_sees("< Default: On >");
     session.assert_sees("< Default: Ask >");
@@ -4796,4 +4802,21 @@ fn the_ia_settings_show_the_defaults_and_the_client_help_and_write_the_scope() {
     assert!(text.contains("\"mcpMaxAccess\": \"direct\""), "{text}");
     assert!(!text.contains("\"mcp\":"), "{text}");
     assert!(!store.global.config_file().exists());
+}
+
+#[test]
+fn a_long_endpoint_uses_the_columns_of_a_wide_window() {
+    let (store, _) = two_connections("p-settings-endpoint-width");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    // Five rows down is the Autocomplete section.
+    for _ in 0..5 {
+        session.code(KeyCode::Down);
+    }
+    session.click_text("Endpoint");
+    let url = "https://openrouter.ai/api/v1/chat/completions";
+    session.write(url);
+    // The window is 100 columns, so the field shows more than the 30 columns
+    // of the smallest window.
+    session.assert_sees(url);
 }

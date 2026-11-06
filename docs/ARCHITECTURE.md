@@ -44,7 +44,7 @@ Main thread                        Tokio runtime
 | `editor` | EdTUI, conventional layer, search, and replace |
 | `sql` | Tokenizer, statement separation, and statement classes |
 | `complete` | Local autocomplete suggestions |
-| `ai` | Explicit completion protocols, scoped preferences, credentials, context, and metadata transforms |
+| `ai` | One OpenAI-compatible chat protocol, credentials, context, and metadata transforms. The Settings dialog edits the provider fields |
 | `catalog` | In-memory cache; schemas, tables, routines, sequences, triggers, and types first, columns and foreign keys on demand |
 | `definition` | DDL of one object: the queries per database and the text with its header |
 | `generate` | SQL templates of the navigator |
@@ -72,7 +72,7 @@ Main thread                        Tokio runtime
 | `script_file` | Saved state of a console: hash, line ending, save wait, and write problem |
 | `creds` | Vault and session passwords, with `zeroize` |
 | `trust` | Confirmed destinations and known paths |
-| `settings` | Form of the preferences per scope |
+| `settings` | Form of the preferences per scope, with the autocomplete provider fields |
 | `log` | Optional event log, without SQL or values |
 
 `ui` uses driver-independent connector models, such as `Namespace` and `TransactionState`, plus target helpers.
@@ -97,17 +97,21 @@ Assistant executions carry a cancellation token and a read-only flag. They never
 Without full access, a parser policy checks submitted SQL; native connector read-only controls provide a second check.
 Full access removes both checks for executions only. A read-only connection and the run questions still apply.
 Catalog, DDL, diagrams, and comparisons reuse existing readers and transformations under the same credential gate.
-Edit proposals use editor revisions and one undo step. Only UI actions approve access, accept proposals, or enable direct editing.
+Edit proposals use editor revisions. Each accepted change is one undo step. Only UI actions approve access, accept proposals, or enable direct editing.
 The shared data budget counts retained snapshots and text artifacts. Results use generation-checked pages without a reread.
 No assistant authorization, remembered access, or direct-edit setting enters saved files. See [MCP](MCP.md) for the complete contract.
+
+### Inline review
+
+AI responses and agent proposals use the review in the editor. `editor/review` holds the model: one diff review of line changes (hunks), and a list of ghosts, each an insertion at its anchor. It builds the rows of the view, applies an accepted change through the revision-checked edit path, and moves the later changes. A ghost stays until the user decides: an edit on another line moves the anchor, an edit of the anchor line closes only that ghost, and an undo takes them all. Several answers wait at once, bounded by a setting; their requests run in parallel and each shows an animated mark at its anchor. `ui/review` draws the rows, the gutter marks, the buttons of each ghost and of each pending change, and the bar of a diff. `app/review` routes the `Review` key region, the mouse, and paste, and reports each decision to its origin; the decide keys act on the line of the cursor. The editor is read only during a diff review, which ends the AI requests of its console. Diffs are built off the interface thread.
 
 ### AI SQL completion
 
 AI completion is separate from MCP. `app/ai` captures the editor interval and revisions, checks destination consent, and coordinates the request. `editor/ai` exposes immutable targets and applies a proposal through the existing single-undo edit path. Local `complete` suggestions remain independent of providers.
 
-`exec/ai` reads complete structural metadata through the credential gate and an independent pool lease. Snapshots count against the shared budget and follow catalog refresh generations. Unknown session states close their leases. `ai` serializes DeepSeek FIM or compatible chat requests, reduces oversized context deterministically, and bounds HTTP responses. Credential files are read again for each request. Vault keys use a separate `sqln-ai` service. Calls, preparation, and diff construction stay off the interface thread.
+`exec/ai` reads complete structural metadata through the credential gate and an independent pool lease. Snapshots count against the shared budget and follow catalog refresh generations. Unknown session states close their leases. `ai` serializes OpenAI-compatible chat requests, reduces oversized context deterministically, and bounds HTTP responses. Credential files are read again for each request. Vault keys use a separate `sqln-ai` service. Calls, preparation, and diff construction stay off the interface thread.
 
-`ui/ai` renders waiting states, a temporary insertion preview, replacement diffs, and scoped settings. Neither a preview nor a diff changes the editor buffer. Accepted proposals use checked revisions and one undo step, with no execution. Pending responses never take another dialog's focus.
+`ui/ai` renders waiting states and scoped settings. A response shows ghost text at the cursor of its console, through the [inline review](#inline-review) model. A review changes the buffer only when the user accepts a change, with checked revisions and no execution. Pending responses never take another dialog's focus.
 
 `preferences.aiCompletion` is optional. Enabled inherits independently; the provider block inherits as a unit. The global private `ai-trust.json` records consent, under its own lock. No SQL, metadata snapshots, responses, or key content enter those files. Scripts and workspace formats do not change. See [AI completion](AI_COMPLETION.md) for the contract and limits.
 
