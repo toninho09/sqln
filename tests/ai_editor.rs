@@ -50,7 +50,10 @@ fn ai_activation_uses_the_configured_suggestion_keys() {
             KeyCode::Tab
         };
         assert!(f.editor.on_list_key(key(code), keys));
-        assert!(f.editor.take_ai_request());
+        assert_eq!(
+            f.editor.take_ai_request(),
+            Some(sqln::editor::ai::AiSelection::Plain)
+        );
         assert_eq!(f.editor.text(), "-- query");
     }
 }
@@ -62,7 +65,7 @@ fn disabling_ai_closes_a_selected_ai_row_without_editing() {
     f.press(ctrl(' '));
     f.editor.set_ai_available(false);
     assert!(f.editor.suggestions().is_none());
-    assert!(!f.editor.take_ai_request());
+    assert_eq!(f.editor.take_ai_request(), None);
     assert_eq!(f.editor.text(), "-- query");
 }
 #[test]
@@ -75,5 +78,5 @@ fn a_modified_acceptance_key_does_not_start_ai() {
         KeyEvent::new(KeyCode::Tab, KeyModifiers::ALT),
         SuggestionKeys::Both
     ));
-    assert!(!f.editor.take_ai_request());
+    assert_eq!(f.editor.take_ai_request(), None);
 }

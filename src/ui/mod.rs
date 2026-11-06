@@ -1,6 +1,7 @@
 //! Screen drawing.
 
 pub mod agent;
+pub mod ai;
 pub mod auth;
 pub mod browser;
 pub mod compare;
@@ -417,6 +418,12 @@ pub(crate) fn draw_anchored_list<'a>(
     (area, first)
 }
 
+/// The AI rows above the local items: the request row, then the plain row.
+const AI_ROW_LABELS: [&str; crate::editor::AI_ROWS] = [
+    " AI  Complete with AI with a request…",
+    " AI  Complete with AI…",
+];
+
 pub(crate) fn draw_suggestions(
     frame: &mut Frame,
     bounds: Rect,
@@ -432,26 +439,21 @@ pub(crate) fn draw_suggestions(
             .map_or(0, |text| Span::raw(text).width() + 2);
         Span::raw(item.label.as_str()).width() + detail + 6
     };
-    let width = items
-        .iter()
-        .map(row_width)
-        .max()
-        .unwrap_or_default()
-        .max(if list.ai { 26 } else { 0 });
-    let selected = if list.ai {
-        if list.selected == usize::MAX {
-            0
-        } else {
-            list.selected + 1
-        }
-    } else {
-        list.selected
-    };
-    let shape = (items.len() + usize::from(list.ai), Some(selected), width);
+    let ai = crate::editor::ai_row_count(list.ai);
+    let mut width = items.iter().map(row_width).max().unwrap_or_default();
+    if ai > 0 {
+        let row = AI_ROW_LABELS
+            .iter()
+            .map(|label| Span::raw(*label).width() + 3)
+            .max()
+            .unwrap_or_default();
+        width = width.max(row);
+    }
+    let shape = (items.len() + ai, Some(list.selected), width);
     draw_anchored_list(frame, (bounds, anchor), shape, theme, |index, marked| {
-        if list.ai && index == 0 {
+        if list.ai && index < ai {
             return vec![Span::styled(
-                " AI  Complete with AI…",
+                AI_ROW_LABELS[index],
                 if marked {
                     theme.list_selected
                 } else {
@@ -459,7 +461,7 @@ pub(crate) fn draw_suggestions(
                 },
             )];
         }
-        let item = &items[index - usize::from(list.ai)];
+        let item = &items[index - ai];
         let (style, detail_style) = if marked {
             (theme.list_selected, theme.list_selected)
         } else {

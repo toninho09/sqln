@@ -160,6 +160,20 @@ This entry extends the persistent ghost entry: its decisions 3, 5, 8, and 9 now 
 | 8 | Selection diff | It stays exclusive: opening it takes the ghosts and their runs, and the editor refuses new requests until it closes | Ghosts frozen behind the diff; diffs blocked by ghosts | The diff is read only; one mode at a time |
 | 9 | Tab mark | `±N` counts the ghosts that wait | `±` without a count | The user sees how many answers wait |
 
+## AI completion with a user request — 2026-11-06
+
+The user asks to send a request with an AI completion, to say what the completion must do.
+This entry extends the cursor-only entry: the request rides the same flow, and the plain row keeps its direct start.
+
+| # | Point | Approved decision | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Entry | A second AI row, **Complete with AI with a request…**, sits above the plain row in the suggestion list. The palette offers the same command. No separate default shortcut | Only the palette command; always ask on the plain row | The row is visible while typing; the plain row stays one key away |
+| 2 | Input | A modal of one line opens on accept. `Enter` sends, `Esc` cancels, and an empty input sends a plain completion | An inline row in the editor; a footer line | The modal follows the rename pattern and keeps the editor untouched |
+| 3 | Body | The request travels as `request` in the user content, next to `context` and `metadata`, only when present. The system instruction tells the model to follow it | A second user message; a comment in the SQL | One body shape; strict endpoints reject extra roles of unclear order |
+| 4 | Limit | 1024 characters at most, and the text counts against the context window and the memory budget | No bound | The request shares the limits of the context |
+| 5 | Review | The answer shows as ghost text at the anchor, with the same accept, reject, and edit rules as a plain completion | A different review for requests | One completion experience |
+| 6 | Privacy | The request never echoes in the status bar, pending messages, or logs | Show the request while it waits | User text stays out of diagnostics |
+
 ## MCP settings in the IA section — 2026-11-05
 
 The user asks for an **IA** section in Settings, to set the MCP behavior per project.

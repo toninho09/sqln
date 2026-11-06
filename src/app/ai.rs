@@ -8,6 +8,7 @@ use crate::exec::{ConnectionId, ConsoleId};
 use crate::input::Action;
 use crate::store::Scope;
 use crate::store::config;
+use crate::ui::ai::{RequestAction, RequestPrompt};
 use crate::ui::auth::{PasswordAction, PasswordPrompt};
 use crate::ui::text;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
@@ -72,6 +73,7 @@ pub(super) struct State {
     form_token: u64,
     form_cancel: CancellationToken,
     prompt: Option<PasswordPrompt>,
+    request: Option<RequestPrompt>,
     session_keys: HashMap<String, Secret>,
     pending_save: Option<(config::Preferences, Scope, Secret, String)>,
     cancel_button: Rect,
@@ -94,6 +96,7 @@ impl State {
             form_token: 0,
             form_cancel: CancellationToken::new(),
             prompt: None,
+            request: None,
             session_keys: HashMap::new(),
             pending_save: None,
             cancel_button: Rect::default(),
@@ -104,7 +107,7 @@ impl State {
         self.runs.iter().any(|r| !r.cancel.is_cancelled())
     }
     pub fn modal(&self) -> bool {
-        self.prompt.is_some()
+        self.prompt.is_some() || self.request.is_some()
     }
 }
 impl Drop for State {
@@ -131,7 +134,7 @@ impl App {
     }
     pub(super) fn ai_action_available(&self, action: Action) -> bool {
         match action {
-            Action::EditorAiComplete => self.ai_eligible(),
+            Action::EditorAiComplete | Action::EditorAiCompleteRequest => self.ai_eligible(),
             Action::EditorAiAccept | Action::EditorAiReject => {
                 self.console().editor.has_ghosts() && self.review_active()
             }
@@ -192,8 +195,11 @@ impl App {
         for id in stale {
             self.cancel_ai_id(id);
         }
-        if self.console_mut().editor.take_ai_request() {
-            self.start_ai();
+        if let Some(selection) = self.console_mut().editor.take_ai_request() {
+            match selection {
+                crate::editor::ai::AiSelection::Plain => self.start_ai_with(None),
+                crate::editor::ai::AiSelection::Request => self.open_ai_request(),
+            }
         }
         if self.console_mut().editor.take_ai_refused() {
             self.status = Some(crate::ui::text::AI_CURSOR_ONLY.into());
@@ -431,7 +437,22 @@ impl App {
             .filter(|p| p.provider.is_some())
             .map_or(Scope::Global, |_| Scope::Project)
     }
-    pub(super) fn start_ai(&mut self) {
+    /// Opens the request input of a completion. The send runs the plain checks.
+    pub(super) fn open_ai_request(&mut self) {
+        if !self.ai_eligible() || self.config_blocked() {
+            self.status = Some(
+                "AI completion is unavailable. Enable it for a SQL console in Settings > Autocomplete."
+                    .into(),
+            );
+            return;
+        }
+        if self.ai.prompt.is_some() || self.ai.request.is_some() {
+            return;
+        }
+        self.console_mut().editor.close_suggestions();
+        self.ai.request = Some(RequestPrompt::new());
+    }
+    pub(super) fn start_ai_with(&mut self, instruction: Option<String>) {
         if !self.ai_eligible() || self.config_blocked() {
             self.status=Some("AI completion is unavailable. Enable it for a SQL console in Settings > Autocomplete.".into());
             return;
@@ -456,7 +477,9 @@ impl App {
             self.active_connection()
                 .and_then(|c| c.default_schema.clone())
         });
-        let target = self.console_mut().editor.ai_target(effective_schema);
+        let mut target = self.console_mut().editor.ai_target(effective_schema);
+        // The request of the user travels with the context. Empty text sends none.
+        target.context.instruction = instruction.filter(|text| !text.trim().is_empty());
         let console_id = self.console().id;
         // The AI completion works at the cursor only: a selection never starts it.
         if self.console().editor.selection_range().is_some() {
@@ -501,7 +524,12 @@ impl App {
         if let Err(e) = memory.charge(
             (target.context.prefix.len()
                 + target.context.original.len()
-                + target.context.suffix.len())
+                + target.context.suffix.len()
+                + target
+                    .context
+                    .instruction
+                    .as_ref()
+                    .map_or(0, |text| text.len()))
                 * 2
                 + 1024,
         ) {
@@ -1197,6 +1225,22 @@ impl App {
             || self.pending_key.is_some()
     }
     pub(super) fn on_ai_key(&mut self, key: KeyEvent) -> bool {
+        if let Some(prompt) = &mut self.ai.request {
+            match prompt.on_key(key) {
+                RequestAction::Cancel => self.ai.request = None,
+                RequestAction::Accept(text) => {
+                    self.ai.request = None;
+                    let instruction = if text.trim().is_empty() {
+                        None
+                    } else {
+                        Some(text)
+                    };
+                    self.start_ai_with(instruction);
+                }
+                _ => {}
+            }
+            return true;
+        }
         if let Some(prompt) = &mut self.ai.prompt {
             match prompt.on_key(key, false) {
                 PasswordAction::Cancel => self.cancel_ai(),
@@ -1240,6 +1284,10 @@ impl App {
         false
     }
     pub(super) fn on_ai_mouse(&mut self, mouse: MouseEvent) -> bool {
+        if self.ai.request.is_some() {
+            // The request input is a dialog: clicks under it start nothing.
+            return true;
+        }
         if self.ai.prompt.is_some() {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left)
                 && let Some((field, _)) = self
@@ -1301,6 +1349,10 @@ impl App {
         false
     }
     pub(super) fn ai_paste(&mut self, text: &str) -> bool {
+        if let Some(prompt) = &mut self.ai.request {
+            prompt.paste(text);
+            return true;
+        }
         if let Some(prompt) = &mut self.ai.prompt {
             prompt.paste(text);
             return true;
@@ -1345,8 +1397,11 @@ impl App {
             );
         }
     }
-    /// Draws the dialogs of the AI runs: the vault key prompt.
+    /// Draws the dialogs of the AI runs: the vault key prompt and the request input.
     pub(super) fn draw_ai_prompts(&mut self, frame: &mut Frame) {
+        if let Some(prompt) = &self.ai.request {
+            crate::ui::ai::draw_request(frame, prompt, &self.theme);
+        }
         if let Some(prompt) = &self.ai.prompt {
             self.layout.password = crate::ui::auth::draw_password(frame, prompt, &self.theme);
         }

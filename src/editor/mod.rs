@@ -135,8 +135,17 @@ struct ErrorSpot {
 /// The open list of suggestions. The editor rebuilds it after each text change.
 pub struct SuggestionList {
     pub completion: Completion,
+    /// The selected row of the whole list: the AI rows first, then the items.
     pub selected: usize,
     pub ai: bool,
+}
+
+/// The AI rows above the local items: the request row, then the plain row.
+pub const AI_ROWS: usize = 2;
+
+/// Returns how many AI rows a list holds.
+pub(crate) fn ai_row_count(ai: bool) -> usize {
+    usize::from(ai) * AI_ROWS
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -151,7 +160,7 @@ pub struct SqlEditor {
     keyboard: KeyboardMode,
     suggestions_enabled: bool,
     ai_available: bool,
-    ai_requested: bool,
+    ai_requested: Option<self::ai::AiSelection>,
     /// Set when a selection blocks the AI row of an explicit list.
     ai_refused: bool,
     /// The anchor of a running completion, with the time of the request.
@@ -218,7 +227,7 @@ impl SqlEditor {
             keyboard,
             suggestions_enabled: true,
             ai_available: false,
-            ai_requested: false,
+            ai_requested: None,
             ai_refused: false,
             ai_pending: Vec::new(),
             list_area: Default::default(),
@@ -422,15 +431,19 @@ impl SqlEditor {
             return false;
         };
         if keys.accepts(key) {
-            if list.ai && list.selected == usize::MAX {
-                self.ai_requested = true;
+            if list.ai && list.selected < AI_ROWS {
+                self.ai_requested = Some(if list.selected == 0 {
+                    self::ai::AiSelection::Request
+                } else {
+                    self::ai::AiSelection::Plain
+                });
                 self.close_suggestions();
                 return true;
             }
             self.accept_suggestion();
             return true;
         }
-        let count = list.completion.items.len();
+        let total = ai_row_count(list.ai) + list.completion.items.len();
         let plain = key.modifiers.is_empty();
         match key.code {
             KeyCode::Esc => {
@@ -438,24 +451,12 @@ impl SqlEditor {
                 self.list_request = None;
                 true
             }
-            KeyCode::Up if plain => {
-                list.selected = if list.ai && list.selected == 0 {
-                    usize::MAX
-                } else if list.selected == usize::MAX {
-                    if count == 0 { usize::MAX } else { count - 1 }
-                } else {
-                    (list.selected + count - 1) % count
-                };
+            KeyCode::Up if plain && total > 0 => {
+                list.selected = (list.selected + total - 1) % total;
                 true
             }
-            KeyCode::Down if plain => {
-                list.selected = if list.selected == usize::MAX {
-                    if count == 0 { usize::MAX } else { 0 }
-                } else if list.ai && list.selected + 1 == count {
-                    usize::MAX
-                } else {
-                    (list.selected + 1) % count
-                };
+            KeyCode::Down if plain && total > 0 => {
+                list.selected = (list.selected + 1) % total;
                 true
             }
             _ => false,
@@ -464,7 +465,8 @@ impl SqlEditor {
 
     fn accept_suggestion(&mut self) {
         let Some(list) = self.list.take() else { return };
-        let Some(item) = list.completion.items.get(list.selected) else {
+        let index = list.selected.saturating_sub(ai_row_count(list.ai));
+        let Some(item) = list.completion.items.get(index) else {
             return;
         };
         let snapshot = self.snapshot();
@@ -569,7 +571,8 @@ impl SqlEditor {
         }
         self.list = (!completion.items.is_empty()).then_some(SuggestionList {
             completion,
-            selected: 0,
+            // The list starts at the first local item; the AI rows wait above it.
+            selected: ai_row_count(self.ai_row()),
             ai: self.ai_row(),
         });
     }
@@ -641,15 +644,16 @@ impl SqlEditor {
             let ai_selected = self
                 .list
                 .as_ref()
-                .is_some_and(|l| l.ai && l.selected == usize::MAX);
+                .and_then(|l| l.ai.then_some(l.selected))
+                .filter(|s| *s < AI_ROWS);
             self.update_list(ListAction::Open, catalog);
-            if ai_selected && self.ai_available {
+            if let Some(index) = ai_selected.filter(|_| self.ai_available) {
                 let list = self.list.get_or_insert(SuggestionList {
                     completion: Completion::default(),
-                    selected: usize::MAX,
+                    selected: index,
                     ai: true,
                 });
-                list.selected = usize::MAX;
+                list.selected = index;
             }
         }
     }

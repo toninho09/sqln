@@ -50,12 +50,23 @@ SQLN never stores an API key in `config.json` or its plaintext database-credenti
 6. Review the ghost text in the editor.
 7. Press `Tab` to accept the ghost at the line of the cursor, or `Esc` to reject it.
 
-The AI row also appears above nonempty local suggestion lists during typing.
-It is not initially selected. Typing never opens an AI-only list.
-Explicit `Ctrl+Space` can show an AI-only list, including in comments.
+To say what the completion must do, select **Complete with AI with a request…**, the row above the plain AI row:
+
+1. Press `Up` twice from the first local suggestion, or once in an AI-only list.
+2. Press the configured acceptance key.
+3. Write the request in the dialog. `Enter` sends it, `Esc` cancels, and an empty input sends a plain completion.
+4. The answer shows as ghost text, with the same keys and rules as a plain completion.
+
+A request holds one line and at most 1024 characters. Its text counts against the context window and the memory budget.
+The request travels in the request body as `request`, next to `context` and `metadata`, and the system instruction tells the model to follow it.
+The request never echoes in the status bar, pending messages, or logs.
+
+The AI rows also appear above nonempty local suggestion lists during typing.
+They are not initially selected. Typing never opens an AI-only list.
+Explicit `Ctrl+Space` can show an AI-only list, including in comments; its first selection is the plain row.
 It also works in Vim normal mode when AI is enabled.
-A selection hides the AI row: the completion works at the cursor only, and the status bar reports the reason.
-The command palette offers **Complete with AI**. The command has no separate default shortcut.
+A selection hides the AI rows: the completion works at the cursor only, and the status bar reports the reason.
+The command palette offers **Complete with AI** and **Complete with AI with a request**. The commands have no separate default shortcut.
 
 The response shows as ghost text at the requested place, in the hint style.
 Several answers can wait at once, each on its own line: requests run in parallel, up to the configured limit.

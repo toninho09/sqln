@@ -72,6 +72,7 @@ An edit proposal opens as an [inline review](#inline-review) in its console. The
 AI responses and agent edit proposals show in the editor, as in an IDE.
 
 An AI insertion shows ghost text at the requested place, in the hint style. The text of the console does not change before acceptance. A dedicated row after each ghost text holds its buttons; a ghost has no bar. Several answers can wait at once, each on its own line.
+The suggestion list offers two AI rows: **Complete with AI…** and, above it, **Complete with AI with a request…**. The request row opens a modal of one line; `Enter` sends the request with the completion, `Esc` cancels, and an empty input sends a plain completion.
 While an answer runs, the requested line shows an animated mark (`|`, `/`, `-`, `\`) in the first column of the gutter, so the user sees each anchor while editing other lines. The ghost replaces the mark when the answer shows.
 
 ```text

@@ -227,9 +227,10 @@ Status and progress messages can temporarily replace the hint row.
 | Replace | `Ctrl+F`, then `Tab` | `Ctrl+F`, then `Tab` |
 | Suggestions | `Ctrl+Space` | `Ctrl+Space` |
 | Complete with AI | Select the AI row with `Up`, then use the suggestion acceptance key | Same; explicit opening also works in normal and visual modes when enabled |
+| Complete with AI with a request | Select the request row with `Up`, `Up`, then use the suggestion acceptance key | Same; `Enter` sends the dialog, `Esc` cancels |
 | Save now | `Ctrl+S` | `Ctrl+S` |
 
-AI completion has no separate default shortcut. Configure `editorAiComplete`, `editorAiAccept`, `editorAiReject`, and `editorAiCancel` as needed.
+AI completion has no separate default shortcut. Configure `editorAiComplete`, `editorAiCompleteRequest`, `editorAiAccept`, `editorAiReject`, and `editorAiCancel` as needed.
 An AI response opens an inline review. See [Review](#review). During a request, `Esc` or Cancel stops only AI work.
 See [AI completion](AI_COMPLETION.md).
 

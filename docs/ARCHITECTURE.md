@@ -107,11 +107,11 @@ AI responses and agent proposals use the review in the editor. `editor/review` h
 
 ### AI SQL completion
 
-AI completion is separate from MCP. `app/ai` captures the editor interval and revisions, checks destination consent, and coordinates the request. `editor/ai` exposes immutable targets and applies a proposal through the existing single-undo edit path. Local `complete` suggestions remain independent of providers.
+AI completion is separate from MCP. `app/ai` captures the editor interval and revisions, checks destination consent, and coordinates the request. The suggestion list holds two AI rows: the plain row starts a request at once, and the request row opens a one-line modal whose text travels as `request` in the body. `editor/ai` exposes immutable targets and applies a proposal through the existing single-undo edit path. Local `complete` suggestions remain independent of providers.
 
 `exec/ai` reads complete structural metadata through the credential gate and an independent pool lease. Snapshots count against the shared budget and follow catalog refresh generations. Unknown session states close their leases. `ai` serializes OpenAI-compatible chat requests, reduces oversized context deterministically, and bounds HTTP responses. Credential files are read again for each request. Vault keys use a separate `sqln-ai` service. Calls, preparation, and diff construction stay off the interface thread.
 
-`ui/ai` renders waiting states and scoped settings. A response shows ghost text at the cursor of its console, through the [inline review](#inline-review) model. A review changes the buffer only when the user accepts a change, with checked revisions and no execution. Pending responses never take another dialog's focus.
+`ui/ai` renders the request dialog, the waiting states, and scoped settings. A response shows ghost text at the cursor of its console, through the [inline review](#inline-review) model. A review changes the buffer only when the user accepts a change, with checked revisions and no execution. Pending responses never take another dialog's focus.
 
 `preferences.aiCompletion` is optional. Enabled inherits independently; the provider block inherits as a unit. The global private `ai-trust.json` records consent, under its own lock. No SQL, metadata snapshots, responses, or key content enter those files. Scripts and workspace formats do not change. See [AI completion](AI_COMPLETION.md) for the contract and limits.
 

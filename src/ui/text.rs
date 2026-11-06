@@ -156,6 +156,7 @@ pub const HINT_PICKER: &[HintPart] = &[
 ];
 pub const HINT_CHOOSE: &[HintPart] = &[("Up/Down", "move"), ("Enter", "choose"), ("Esc", "cancel")];
 pub const HINT_NAME: &[HintPart] = &[("Enter", "saves"), ("Esc", "cancels")];
+pub const HINT_AI_REQUEST: &[HintPart] = &[("Enter", "sends"), ("Esc", "cancels")];
 pub const HINT_SETTINGS_TEXT: &[HintPart] = &[
     ("Tab", "next"),
     ("Enter", "next"),
@@ -537,6 +538,7 @@ pub const FORM_CONNECTED: &str =
     "This connection is connected. Disconnect it to change access, TLS, or the pool.";
 pub const FIELD_KIND: &str = "Type";
 pub const FIELD_NAME: &str = "Name";
+pub const FIELD_AI_REQUEST: &str = "Request";
 pub const FIELD_SCOPE: &str = "Scope";
 pub const FIELD_ENTRY: &str = "Entry";
 pub const FIELD_URI: &str = "URI";
@@ -641,6 +643,8 @@ pub fn default_value(value: &str) -> String {
 pub const TITLE_NEW_CONNECTION: &str = "New connection";
 pub const TITLE_REMOVE_CONNECTION: &str = "Remove connection";
 pub const TITLE_RENAME: &str = "Rename console";
+pub const TITLE_AI_REQUEST: &str = "Complete with AI with a request";
+pub const NOTE_AI_REQUEST: &str = "Optional. An empty input sends a plain completion.";
 pub const TITLE_SETTINGS: &str = "Settings";
 pub const TITLE_CHANGE_CONNECTION: &str = "Change connection";
 pub const OPTION_CHANGE: &str = "Change connection";
@@ -1377,6 +1381,7 @@ pub fn action_text(action: Action) -> &'static str {
         Action::EditorReplace => "Find and replace in the editor",
         Action::EditorSuggestions => "Open the suggestions",
         Action::EditorAiComplete => "Complete with AI",
+        Action::EditorAiCompleteRequest => "Complete with AI with a request",
         Action::EditorAiAccept => "Accept the AI proposal",
         Action::EditorAiReject => "Reject the AI proposal",
         Action::EditorAiCancel => "Cancel AI completion",

@@ -1,9 +1,18 @@
 //! Immutable completion targets and the command row of the suggestion list.
-use super::{ListAction, SqlEditor, SuggestionList};
+use super::{AI_ROWS, ListAction, SqlEditor, SuggestionList};
 use crate::ai::Context;
 use crate::catalog::Catalog;
 use crate::complete::Completion;
 use edtui::Index2;
+
+/// Which AI row of the suggestion list the user accepted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AiSelection {
+    /// A completion without a request.
+    Plain,
+    /// A completion that carries the request of the user.
+    Request,
+}
 
 #[derive(Clone)]
 pub struct Target {
@@ -31,11 +40,15 @@ impl SqlEditor {
             return false;
         }
         let index = usize::from(row - self.list_area.0.y) + self.list_area.1;
-        if list.ai && index == 0 {
-            self.ai_requested = true;
+        if list.ai && index < AI_ROWS {
+            self.ai_requested = Some(if index == 0 {
+                AiSelection::Request
+            } else {
+                AiSelection::Plain
+            });
             self.close_suggestions();
         } else {
-            list.selected = index - usize::from(list.ai);
+            list.selected = index.saturating_sub(super::ai_row_count(list.ai));
             self.accept_suggestion();
         }
         true
@@ -44,13 +57,24 @@ impl SqlEditor {
         self.ai_available = available;
         let ai_row = self.ai_row();
         if let Some(list) = &mut self.list {
-            list.ai = ai_row;
-            if !available && list.selected == usize::MAX {
-                self.close_suggestions();
+            let before = super::ai_row_count(list.ai);
+            let after = super::ai_row_count(ai_row);
+            match after.cmp(&before) {
+                std::cmp::Ordering::Less => {
+                    // An AI row that the user selected cannot stay without its rows.
+                    if list.selected < AI_ROWS {
+                        self.close_suggestions();
+                        return;
+                    }
+                    list.selected -= before - after;
+                }
+                std::cmp::Ordering::Greater => list.selected += after - before,
+                std::cmp::Ordering::Equal => {}
             }
+            list.ai = ai_row;
         }
     }
-    pub fn take_ai_request(&mut self) -> bool {
+    pub fn take_ai_request(&mut self) -> Option<AiSelection> {
         std::mem::take(&mut self.ai_requested)
     }
     /// Sets the anchors of the running completions. Edits on other lines move them,
@@ -71,7 +95,8 @@ impl SqlEditor {
         if self.ai_row() && self.list.is_none() {
             self.list = Some(SuggestionList {
                 completion: Completion::default(),
-                selected: usize::MAX,
+                // The plain row stays the first selection of an AI-only list.
+                selected: AI_ROWS - 1,
                 ai: true,
             });
         } else if self.ai_available && self.selection_range().is_some() && self.list.is_none() {
@@ -128,6 +153,7 @@ impl SqlEditor {
                 suffix: snapshot.text[finish..right].into(),
                 dialect,
                 schema,
+                instruction: None,
             },
         }
     }

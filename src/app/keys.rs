@@ -470,7 +470,8 @@ impl App {
             return;
         }
         match action {
-            Action::EditorAiComplete => self.start_ai(),
+            Action::EditorAiComplete => self.start_ai_with(None),
+            Action::EditorAiCompleteRequest => self.open_ai_request(),
             Action::EditorAiAccept => self.decide_ghost(true),
             Action::EditorAiReject => self.decide_ghost(false),
             Action::EditorAiCancel => self.cancel_ai(),
@@ -1473,6 +1474,7 @@ impl App {
         if matches!(
             action,
             Action::EditorAiComplete
+                | Action::EditorAiCompleteRequest
                 | Action::EditorAiAccept
                 | Action::EditorAiReject
                 | Action::EditorAiCancel

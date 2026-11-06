@@ -138,6 +138,7 @@ fn context() -> Context {
         suffix: " FROM users;".into(),
         dialect: sqln::sql::Dialect::Sqlite,
         schema: Some("main".into()),
+        instruction: None,
     }
 }
 fn screen(app: &mut App) -> String {
@@ -200,6 +201,23 @@ fn request(app: &mut App) {
     }
     app.on_event(Event::Key(key(KeyCode::Tab)));
 }
+/// Selects the request row of the suggestion list, which opens the request input.
+fn open_request(app: &mut App) {
+    app.on_event(Event::Key(ctrl(' ')));
+    let list = app.console().editor.suggestions().unwrap();
+    let steps = if list.completion.items.is_empty() {
+        1
+    } else {
+        2
+    };
+    for _ in 0..steps {
+        app.on_event(Event::Key(key(KeyCode::Up)));
+    }
+    app.on_event(Event::Key(key(KeyCode::Tab)));
+    pump(app, |screen| {
+        screen.contains("Complete with AI with a request")
+    });
+}
 fn approve(app: &mut App) {
     pump(app, |s| s.contains("Send SQL and schema"));
     app.on_event(Event::Key(key(KeyCode::Tab)));
@@ -241,12 +259,37 @@ fn ai_is_above_local_items_but_not_initially_selected() {
     f.editor.set_cursor(Index2::new(0, 3));
     f.editor.set_ai_available(true);
     f.press(ctrl(' '));
+    // The list starts at the first local item, above the two AI rows.
+    assert_eq!(f.editor.suggestions().unwrap().selected, 2);
+    f.press(key(KeyCode::Up));
+    assert_eq!(f.editor.suggestions().unwrap().selected, 1);
+    f.press(key(KeyCode::Tab));
+    assert_eq!(
+        f.editor.take_ai_request(),
+        Some(sqln::editor::ai::AiSelection::Plain)
+    );
+    assert_eq!(f.text(), "sel");
+}
+#[test]
+fn the_request_row_sits_above_the_plain_ai_row() {
+    let mut f = common::Fixture::conventional("sel");
+    f.editor.set_cursor(Index2::new(0, 3));
+    f.editor.set_ai_available(true);
+    f.press(ctrl(' '));
+    f.press(key(KeyCode::Up));
+    f.press(key(KeyCode::Up));
     assert_eq!(f.editor.suggestions().unwrap().selected, 0);
     f.press(key(KeyCode::Up));
-    assert_eq!(f.editor.suggestions().unwrap().selected, usize::MAX);
+    // The selection wraps to the last local item.
+    let count = f.editor.suggestions().unwrap().completion.items.len();
+    assert_eq!(f.editor.suggestions().unwrap().selected, count + 1);
+    f.press(key(KeyCode::Down));
+    assert_eq!(f.editor.suggestions().unwrap().selected, 0);
     f.press(key(KeyCode::Tab));
-    assert!(f.editor.take_ai_request());
-    assert_eq!(f.text(), "sel");
+    assert_eq!(
+        f.editor.take_ai_request(),
+        Some(sqln::editor::ai::AiSelection::Request)
+    );
 }
 #[test]
 fn explicit_ai_only_list_handles_repeated_arrows_without_panics() {
@@ -254,13 +297,18 @@ fn explicit_ai_only_list_handles_repeated_arrows_without_panics() {
     f.editor.set_cursor(Index2::new(0, 19));
     f.editor.set_ai_available(true);
     f.press(ctrl(' '));
+    // The plain row stays the first selection of an AI-only list.
+    assert_eq!(f.editor.suggestions().unwrap().selected, 1);
     for _ in 0..5 {
         f.press(key(KeyCode::Up));
         f.press(key(KeyCode::Down));
     }
-    assert_eq!(f.editor.suggestions().unwrap().selected, usize::MAX);
+    assert_eq!(f.editor.suggestions().unwrap().selected, 1);
     f.press(key(KeyCode::Tab));
-    assert!(f.editor.take_ai_request());
+    assert_eq!(
+        f.editor.take_ai_request(),
+        Some(sqln::editor::ai::AiSelection::Plain)
+    );
 }
 #[test]
 fn typing_no_local_match_does_not_open_an_ai_only_list() {
@@ -399,6 +447,102 @@ fn configuration_inherits_provider_as_a_unit_and_project_can_disable() {
     assert_eq!(merged.provider, global.provider);
     let old: sqln::store::config::Preferences = serde_json::from_str("{}").unwrap();
     assert!(old.ai_completion.is_none());
+}
+#[test]
+fn the_request_field_travels_only_when_present() {
+    let server = Server::new("1", Duration::ZERO);
+    let p = server.provider();
+    let plain = ai::prepare(&p, &context(), &snapshot(Vec::new())).unwrap();
+    let user = plain.body["messages"][1]["content"].as_str().unwrap();
+    assert!(!user.contains("\"request\":"));
+    let mut ctx = context();
+    ctx.instruction = Some("add ORDER BY id".into());
+    let prepared = ai::prepare(&p, &ctx, &snapshot(Vec::new())).unwrap();
+    let user = prepared.body["messages"][1]["content"].as_str().unwrap();
+    assert!(user.contains("\"request\":\"add ORDER BY id\""), "{user}");
+    let system = prepared.body["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("request field"));
+}
+#[test]
+fn a_long_request_counts_against_the_context_limit() {
+    let server = Server::new("1", Duration::ZERO);
+    let p = server.provider();
+    let mut ctx = context();
+    ctx.instruction = Some("x".repeat(40_000));
+    assert!(ai::prepare(&p, &ctx, &snapshot(Vec::new())).is_err());
+}
+#[test]
+fn a_typed_request_travels_to_the_model() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-request", server.provider());
+    app.on_event(Event::Paste("SELECT ".into()));
+    open_request(&mut app);
+    for c in "add ORDER BY id".chars() {
+        app.on_event(Event::Key(key(KeyCode::Char(c))));
+    }
+    // The input is a dialog: the keys stay out of the editor.
+    assert_eq!(app.console().editor.text(), "SELECT ");
+    app.on_event(Event::Key(key(KeyCode::Enter)));
+    approve(&mut app);
+    let shown = pump(&mut app, ghost);
+    assert!(shown.contains("SELECT 42"), "{shown}");
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(
+        requests[0].contains("add ORDER BY id") && requests[0].contains("\\\"request\\\""),
+        "{}",
+        requests[0]
+    );
+}
+#[test]
+fn an_empty_request_sends_a_plain_completion() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-request-empty", server.provider());
+    app.on_event(Event::Paste("SELECT ".into()));
+    open_request(&mut app);
+    app.on_event(Event::Key(key(KeyCode::Enter)));
+    approve(&mut app);
+    let shown = pump(&mut app, ghost);
+    assert!(shown.contains("SELECT 42"), "{shown}");
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(!requests[0].contains("\\\"request\\\""));
+}
+#[test]
+fn escape_closes_the_request_input_without_a_request() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-request-escape", server.provider());
+    app.on_event(Event::Paste("SELECT ".into()));
+    open_request(&mut app);
+    app.on_event(Event::Key(key(KeyCode::Esc)));
+    let shown = pump(&mut app, |screen| {
+        !screen.contains("Complete with AI with a request")
+    });
+    assert!(!ghost(&shown));
+    assert_eq!(server.requests.lock().unwrap().len(), 0);
+}
+#[test]
+fn the_request_input_accepts_paste() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-request-paste", server.provider());
+    app.on_event(Event::Paste("SELECT ".into()));
+    open_request(&mut app);
+    app.on_event(Event::Paste("ORDER BY id".into()));
+    assert!(screen(&mut app).contains("ORDER BY id"));
+}
+#[test]
+fn the_palette_offers_the_request_command_and_opens_its_input() {
+    let server = Server::new("42", Duration::ZERO);
+    let mut app = app("ai-request-palette", server.provider());
+    app.on_event(Event::Paste("SELECT ".into()));
+    app.on_event(Event::Key(ctrl('p')));
+    app.on_event(Event::Paste("with a request".into()));
+    let shown = pump(&mut app, |screen| {
+        screen.contains("Complete with AI with a request")
+    });
+    assert!(shown.contains("Complete with AI"), "{shown}");
+    app.on_event(Event::Key(key(KeyCode::Enter)));
+    pump(&mut app, |screen| screen.contains("Request: "));
 }
 #[test]
 fn user_accepts_a_preview_without_executing_sql() {
