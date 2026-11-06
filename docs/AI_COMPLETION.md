@@ -141,9 +141,11 @@ Default limits:
 Context sizing conservatively counts UTF-8 bytes and protocol overhead. It is not the model's exact tokenizer.
 Set the context window no higher than the selected model supports.
 When the full schema does not fit, SQLN reduces context automatically.
-It prioritizes referenced objects, direct foreign-key neighbors, the current schema, then other objects in stable order.
-Names and column metadata come before larger comments and definitions.
+The metadata budget derives from provider limits alone, so one snapshot and one provider configuration produce one identical metadata section for every request.
+Objects keep one canonical schema and name order; a whole object comes first, then its column metadata alone, then only its names, as space runs out.
+The `focus` field of the request lists, in the same order, the schema objects that the SQL references and their direct foreign-key targets.
 **Reduced context** identifies this state and gives included and omitted object counts.
+The request places the stable metadata before the changing SQL context, so repeated completions on one connection send identical leading bytes and raise the prompt-cache hits of the provider.
 The cached snapshot remains complete. SQLN refuses a request if its mandatory SQL interval does not fit.
 A truncated model output does not become an applicable proposal.
 

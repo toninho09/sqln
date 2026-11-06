@@ -462,7 +462,7 @@ const DEFAULTS: &[Item] = &[
         Action::RunScript,
         Region::Global,
         "runScript",
-        &["shift+enter", "shift+f5", "ctrl+w s"],
+        &["shift+f5", "ctrl+w s"],
         &[],
     ),
     both(

@@ -372,7 +372,7 @@ impl App {
             MouseEventKind::ScrollRight => (0, WHEEL_COLUMNS),
             _ => return,
         };
-        // Only the grid moves to the side.
+        // Only the grid and the editor move to the side.
         let vertical = columns == 0;
         if vertical
             && self.console_on_screen()
@@ -395,10 +395,7 @@ impl App {
             && area.contains(position)
         {
             result.view.move_by(rows, columns, &result.table, false);
-        } else if vertical
-            && self.layout.console.editor.contains(position)
-            && self.editor_has_focus()
-        {
+        } else if self.layout.console.editor.contains(position) && self.editor_has_focus() {
             self.console_mut().editor.on_mouse(mouse);
         }
     }

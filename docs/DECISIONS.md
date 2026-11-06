@@ -174,6 +174,18 @@ This entry extends the cursor-only entry: the request rides the same flow, and t
 | 5 | Review | The answer shows as ghost text at the anchor, with the same accept, reject, and edit rules as a plain completion | A different review for requests | One completion experience |
 | 6 | Privacy | The request never echoes in the status bar, pending messages, or logs | Show the request while it waits | User text stays out of diagnostics |
 
+## Prompt-cache-friendly completion request — 2026-11-06
+
+The user asks to raise the prompt-cache hits of the completion requests.
+This entry amends the large-context rule of the Explicit AI SQL completion table: reduction keeps one canonical order and a provider-derived budget.
+
+| # | Point | Approved decision | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Content order | The user content serializes `metadata` first and `context` last | Keep `context` first, as before | Providers cache identical leading bytes; the stable schema section then hits the prompt cache across requests |
+| 2 | Object order | One canonical schema and name order for every request | Order by SQL references, foreign-key neighbors, then current schema | Any per-request reorder changes the metadata bytes and ends the cache; the schema snapshot order already gives the canonical order |
+| 3 | Relevance | A `focus` field in the context lists the objects that the SQL references and their direct foreign-key targets, in the canonical order, only when present | Drop the relevance signal | The model still sees what the SQL names, without changing the cached section |
+| 4 | Metadata budget | The budget derives from provider limits alone: the window minus the output, minus a fixed SQL reserve of 16 KiB capped at half of the remainder | The remainder after the SQL of each request | The section stays identical for one snapshot and provider configuration, whatever SQL the request carries |
+
 ## MCP settings in the IA section — 2026-11-05
 
 The user asks for an **IA** section in Settings, to set the MCP behavior per project.

@@ -156,7 +156,7 @@ The prefix is the common path to both modes, and the terminal delivers that key.
 | Action | Shortcut | Alternative |
 |---|---|---|
 | Run | `Ctrl+Enter` | `F5` or `Ctrl+W e` |
-| Whole script | `Shift+Enter` | `Shift+F5` or `Ctrl+W s` |
+| Whole script | `Shift+F5` | `Ctrl+W s` |
 | Show the plan of the statement | `Ctrl+W E` | Command palette |
 | Run the statement and show its plan | `Ctrl+W A` | Command palette |
 | Stop script | `Ctrl+W x` | **Stop script** button |
@@ -167,7 +167,7 @@ The prefix is the common path to both modes, and the terminal delivers that key.
 | Command palette | `Ctrl+P` | `Ctrl+W :` |
 | Quit | `Ctrl+W q` | Command palette |
 
-`Ctrl+Enter` and `Shift+Enter` need keyboard enhancement in the terminal.
+`Ctrl+Enter` needs keyboard enhancement in the terminal.
 At startup, the application detects that feature and shows the available path in the hint bar.
 
 The palette lists the functional actions available in the current state, including editor and grid commands.

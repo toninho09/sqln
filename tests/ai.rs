@@ -1,5 +1,6 @@
 mod common;
 
+
 use common::{ctrl, key, shift};
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use edtui::Index2;
@@ -383,6 +384,82 @@ fn context_reduction_is_deterministic_and_keeps_the_cache_complete() {
     assert!(a.omitted > 0);
     assert_eq!(a.body, b.body);
     assert_eq!(snap.objects.len(), 200);
+}
+#[test]
+fn the_metadata_section_stays_identical_across_requests() {
+    let server = Server::new("1", Duration::ZERO);
+    let mut p = server.provider();
+    p.context_window_tokens = 4096;
+    let objects = (0..40)
+        .map(|n| Object {
+            schema: "main".into(),
+            name: format!("table_{n:03}"),
+            kind: "Table".into(),
+            metadata: vec![json!({"section":"columns","values":{"c":"x".repeat(20)}})],
+            targets: Vec::new(),
+        })
+        .collect();
+    let snap = snapshot(objects);
+    let mut first = context();
+    first.prefix = "SELECT c FROM table_005 ".into();
+    let mut second = context();
+    second.prefix = "INSERT INTO table_039 ".into();
+    second.suffix = " VALUES (1)".into();
+    let a = ai::prepare(&p, &first, &snap).unwrap();
+    let b = ai::prepare(&p, &second, &snap).unwrap();
+    let section = |prepared: &sqln::ai::Prepared| {
+        let user = prepared.body["messages"][1]["content"].as_str().unwrap();
+        assert!(user.starts_with("{\"metadata\":"), "{user}");
+        let end = user.find(",\"context\":").unwrap();
+        user[..end].to_owned()
+    };
+    assert_eq!(section(&a), section(&b));
+}
+#[test]
+fn referenced_objects_keep_the_canonical_order_and_list_in_focus() {
+    let server = Server::new("1", Duration::ZERO);
+    let p = server.provider();
+    let objects = vec![
+        Object {
+            schema: "main".into(),
+            name: "zeta".into(),
+            kind: "Table".into(),
+            metadata: Vec::new(),
+            targets: vec![("other".into(), "alpha".into())],
+        },
+        Object {
+            schema: "main".into(),
+            name: "beta".into(),
+            kind: "Table".into(),
+            metadata: Vec::new(),
+            targets: Vec::new(),
+        },
+        Object {
+            schema: "other".into(),
+            name: "alpha".into(),
+            kind: "Table".into(),
+            metadata: Vec::new(),
+            targets: Vec::new(),
+        },
+    ];
+    let snap = snapshot(objects);
+    let mut ctx = context();
+    ctx.prefix = "SELECT * FROM zeta ".into();
+    ctx.suffix = String::new();
+    let prepared = ai::prepare(&p, &ctx, &snap).unwrap();
+    let user = prepared.body["messages"][1]["content"].as_str().unwrap();
+    let order = (
+        user.find("\"name\":\"beta\"").unwrap(),
+        user.find("\"name\":\"zeta\"").unwrap(),
+        user.find("\"name\":\"alpha\"").unwrap(),
+    );
+    assert!(order.0 < order.1 && order.1 < order.2, "{user}");
+    assert!(
+        user.contains("\"focus\":[\"main.zeta\",\"other.alpha\"]"),
+        "{user}"
+    );
+    let system = prepared.body["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("focus field"));
 }
 #[test]
 fn invalid_endpoints_and_credential_destination_changes_are_refused() {

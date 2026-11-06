@@ -1007,6 +1007,14 @@ impl SqlEditor {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 self.handler.on_mouse_event(mouse, &mut self.state);
             }
+            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => {
+                let side = if matches!(mouse.kind, MouseEventKind::ScrollLeft) {
+                    -1
+                } else {
+                    1
+                };
+                self.scroll_sideways(side);
+            }
             MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left) => {
                 if let Some(position) = self.pointer_position(mouse) {
                     match self.keyboard {
@@ -1040,6 +1048,32 @@ impl SqlEditor {
         if let Some(selection) = &mut self.state.selection {
             selection.end = self.state.cursor;
         }
+    }
+
+    /// Moves the view sideways. EdTUI keeps the cursor inside the view at each draw,
+    /// so the cursor moves when the view passes it. One event moves one column, because
+    /// one gesture of a touchpad sends many events.
+    fn scroll_sideways(&mut self, columns: isize) {
+        let width = self.text_area.map_or(0, |area| usize::from(area.width));
+        if width == 0 {
+            return;
+        }
+        let (old_left, top) = self.state.viewport_offset();
+        let line = buffer::row(&self.state.lines, self.state.cursor.row);
+        // The view cannot pass the last column that the cursor reaches on its row.
+        let limit = match self.state.mode {
+            EditorMode::Normal => line.len().saturating_sub(1),
+            _ => line.len(),
+        };
+        let left = old_left.saturating_add_signed(columns).min(limit);
+        let end = last_column(line, left, width).min(limit);
+        let mut cursor = self.state.cursor;
+        cursor.col = cursor.col.clamp(left, end);
+        if cursor != self.state.cursor {
+            self.state.cursor = cursor;
+            self.preferred_col = None;
+        }
+        self.state.set_viewport_offset(left, top);
     }
 
     /// Converts a screen cell to a text position, with wide characters and tabs.
