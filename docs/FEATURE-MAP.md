@@ -153,6 +153,12 @@ Files: `complete/mod.rs`, `complete/context.rs`, `complete/grammar.rs`, `complet
 
 `complete/grammar` selects built-in types for `CREATE TABLE`, `ALTER TABLE`, and `CAST` per dialect. Column options and query clauses use the cursor context. Functions show parameter signatures in the list. Acceptance inserts empty parentheses and puts the cursor inside. Existing parentheses and arguments stay unchanged. The console and table fields use the same rules. These suggestions use local lists, with no database request.
 
+## 12a. AI completion
+
+Files: `ai/`, `app/ai.rs`, `editor/ai.rs`, `exec/ai.rs`, `ui/ai.rs`.
+
+The editor adds an explicit Action above local suggestions. `app/ai` captures a revision-checked interval, obtains local consent, and coordinates schema reads and HTTP requests. `exec/ai` reads complete structural snapshots through an authorized pool lease. The memory cache follows catalog refresh generations. `ai` prepares bounded context for DeepSeek FIM, OpenRouter chat, or a compatible endpoint. The interface shows an insertion preview or a replacement diff. Acceptance is one undo step and never runs SQL. Global and project settings use vault references or rotating key-file paths. See [AI completion](AI_COMPLETION.md).
+
 ## 13. Catalog and structure tab
 
 Files: `catalog.rs`, `structure.rs`.

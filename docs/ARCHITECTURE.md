@@ -43,7 +43,8 @@ Main thread                        Tokio runtime
 | `connection` | Connection definitions and the state of each connection in the application |
 | `editor` | EdTUI, conventional layer, search, and replace |
 | `sql` | Tokenizer, statement separation, and statement classes |
-| `complete` | Autocomplete suggestions |
+| `complete` | Local autocomplete suggestions |
+| `ai` | Explicit completion protocols, scoped preferences, credentials, context, and metadata transforms |
 | `catalog` | In-memory cache; schemas, tables, routines, sequences, triggers, and types first, columns and foreign keys on demand |
 | `definition` | DDL of one object: the queries per database and the text with its header |
 | `generate` | SQL templates of the navigator |
@@ -99,6 +100,16 @@ Catalog, DDL, diagrams, and comparisons reuse existing readers and transformatio
 Edit proposals use editor revisions and one undo step. Only UI actions approve access, accept proposals, or enable direct editing.
 The shared data budget counts retained snapshots and text artifacts. Results use generation-checked pages without a reread.
 No assistant authorization, remembered access, or direct-edit setting enters saved files. See [MCP](MCP.md) for the complete contract.
+
+### AI SQL completion
+
+AI completion is separate from MCP. `app/ai` captures the editor interval and revisions, checks destination consent, and coordinates the request. `editor/ai` exposes immutable targets and applies a proposal through the existing single-undo edit path. Local `complete` suggestions remain independent of providers.
+
+`exec/ai` reads complete structural metadata through the credential gate and an independent pool lease. Snapshots count against the shared budget and follow catalog refresh generations. Unknown session states close their leases. `ai` serializes DeepSeek FIM or compatible chat requests, reduces oversized context deterministically, and bounds HTTP responses. Credential files are read again for each request. Vault keys use a separate `sqln-ai` service. Calls, preparation, and diff construction stay off the interface thread.
+
+`ui/ai` renders waiting states, a temporary insertion preview, replacement diffs, and scoped settings. Neither a preview nor a diff changes the editor buffer. Accepted proposals use checked revisions and one undo step, with no execution. Pending responses never take another dialog's focus.
+
+`preferences.aiCompletion` is optional. Enabled inherits independently; the provider block inherits as a unit. The global private `ai-trust.json` records consent, under its own lock. No SQL, metadata snapshots, responses, or key content enter those files. Scripts and workspace formats do not change. See [AI completion](AI_COMPLETION.md) for the contract and limits.
 
 ### Files and saving
 

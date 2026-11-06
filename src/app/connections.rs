@@ -214,6 +214,7 @@ impl App {
     }
 
     pub(super) fn reload_catalog(&mut self, id: ConnectionId) {
+        self.invalidate_ai_schema(id);
         if self.config_blocked() {
             return;
         }
@@ -223,6 +224,7 @@ impl App {
             connection.catalog_read = read;
             connection.catalog_state = CatalogState::Loading;
         }
+        self.note_ai_catalog_read(id);
         self.authorize(id, super::auth::Use::Catalog(id, read));
     }
 
@@ -263,6 +265,9 @@ impl App {
                 None
             }
         };
+        if schemas.is_some() {
+            self.refresh_ai_schema(id);
+        }
         self.open_pending_diagram(id, schemas.is_some());
         self.update_picker(id, schemas);
         self.sync_compare_form();
@@ -741,6 +746,8 @@ impl App {
     }
 
     pub(super) fn on_disconnected(&mut self, id: ConnectionId) {
+        self.invalidate_ai_schema(id);
+        self.forget_ai_schema(id);
         let connected = self
             .manager
             .as_ref()

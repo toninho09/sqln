@@ -225,7 +225,13 @@ Status and progress messages can temporarily replace the hint row.
 | Search | `Ctrl+F` | `/` |
 | Replace | `Ctrl+F`, then `Tab` | `Ctrl+F`, then `Tab` |
 | Suggestions | `Ctrl+Space` | `Ctrl+Space` |
+| Complete with AI | Select the AI row with `Up`, then use the suggestion acceptance key | Same; explicit opening also works in normal and visual modes when enabled |
 | Save now | `Ctrl+S` | `Ctrl+S` |
+
+AI completion has no separate default shortcut. Configure `editorAiComplete`, `editorAiAccept`, `editorAiReject`, and `editorAiCancel` as needed.
+In AI review, `Tab` and `Shift+Tab` select Reject or Accept. `Enter` activates the selected button; `Esc` rejects.
+`PageUp`, `PageDown`, and the mouse wheel scroll the response. During a request, `Esc` or Cancel stops only AI work.
+See [AI completion](AI_COMPLETION.md).
 
 The list opens when you type a name or a dot, and `Ctrl+Space` opens the list without a prefix.
 In the Vim mode, the list works only during insert.

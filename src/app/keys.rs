@@ -93,6 +93,9 @@ impl App {
             self.on_password_key(key);
             return;
         }
+        if self.on_ai_key(key) {
+            return;
+        }
         if self.agent.review.is_some() {
             self.on_agent_review_key(key);
             return;
@@ -460,6 +463,10 @@ impl App {
             return;
         }
         match action {
+            Action::EditorAiComplete => self.start_ai(),
+            Action::EditorAiAccept => self.decide_ai(true),
+            Action::EditorAiReject => self.decide_ai(false),
+            Action::EditorAiCancel => self.cancel_ai(),
             Action::AgentSessions => self.open_agent_sessions(),
             Action::AgentReview => self.open_agent_proposals(),
             Action::AgentDirect => self.toggle_agent_direct(),
@@ -1140,6 +1147,7 @@ impl App {
         match form.on_key(key, vim) {
             SettingsRequest::None => {}
             SettingsRequest::Cancel => self.settings_form = None,
+            SettingsRequest::AiCompletion => self.open_ai_form(),
             SettingsRequest::Save => self.save_settings(),
         }
     }
@@ -1452,6 +1460,18 @@ impl App {
 
     /// Returns true when an action has an effect in the current state.
     pub(super) fn command_available(&self, action: Action) -> bool {
+        if matches!(
+            action,
+            Action::EditorAiComplete
+                | Action::EditorAiAccept
+                | Action::EditorAiReject
+                | Action::EditorAiCancel
+        ) {
+            return self.ai_action_available(action);
+        }
+        if action == Action::EditorSuggestions && self.ai_eligible() {
+            return true;
+        }
         if self.home() && !home_allows(action) {
             return false;
         }

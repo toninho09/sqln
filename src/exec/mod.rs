@@ -1,5 +1,6 @@
 //! Executions. Each console has one task, and that task owns the reserved session.
 
+mod ai;
 mod runner;
 mod sink;
 

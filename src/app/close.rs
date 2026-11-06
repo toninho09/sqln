@@ -259,6 +259,12 @@ impl App {
 
     pub(super) fn on_dialog_action(&mut self, action: DialogAction) {
         match action {
+            DialogAction::AiFormRetry => self.ai_form_retry(),
+            DialogAction::AiFormSession => self.ai_form_session(),
+            DialogAction::AiAllow(id) => self.ai_allow(id),
+            DialogAction::AiCancel(id) => self.ai_cancel_id(id),
+            DialogAction::AiRetry(id) => self.ai_retry(id),
+            DialogAction::AiSession(id) => self.ai_session(id),
             DialogAction::AgentAccess(session, grant) => {
                 self.agent_access_decision(&session, grant)
             }

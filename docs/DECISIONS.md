@@ -6,6 +6,28 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Explicit AI SQL completion
+
+The user approves a command-driven completion flow, separate from MCP.
+This adds optional `preferences.aiCompletion` settings. Existing configuration remains valid.
+
+| Point | Decision |
+|---|---|
+| Entry | AI row above local autocomplete items. Up selects it from the first local item; the configured suggestion acceptance key starts the request. No separate default shortcut. |
+| Scope | Consoles associated with PostgreSQL, MySQL, and SQLite. No Redis, unbound consoles, chat, agent tools, or generated SQL execution. |
+| Providers | DeepSeek native FIM, OpenRouter Chat Completions, and a configurable compatible endpoint. Optional local servers run outside SQLN. |
+| Provider URL | Accept an API base or a full completion URL. Add the route only once. DeepSeek FIM uses `/beta/completions`; model discovery uses `/models`. A real API and terminal test confirms these routes. |
+| Context | Cache the complete accessible structural schema. Respect connection schema filters. Refresh rebuilds a previously loaded snapshot; no polling for external changes. Never read records for completion. |
+| Large context | Reduce automatically, with a visible reduced-context label. Keep the cache complete. |
+| Selection | Replace only the selected interval. Without selection, propose insertion at the cursor. |
+| Review | Show a waiting animation, then Accept and Reject. Use an editor preview for insertion and a diff for replacement. Reject starts selected; acceptance is one undo step. |
+| Configuration | Global defaults and a project override. The project can disable AI. Enabled inherits independently; provider configuration inherits as one block. |
+| Credentials | System vault or the contents of a key file. Read the file for each request to support key rotation. No plaintext API-key persistence or environment-variable source in this delivery. |
+| Consent | Once per project path, connection, endpoint, and credential reference. Local private persistence only. |
+| Failures | Keep user text. Cancel stale requests; never retry or change provider automatically. |
+
+Implementation limits and configuration are in [AI completion](AI_COMPLETION.md).
+
 ## MCP settings in the IA section — 2026-11-05
 
 The user asks for an **IA** section in Settings, to set the MCP behavior per project.

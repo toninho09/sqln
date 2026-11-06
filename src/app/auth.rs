@@ -28,6 +28,7 @@ use crate::ui::auth::{PasswordAction, PasswordPrompt};
 use crate::ui::text;
 
 pub(super) enum Use {
+    AiSchema(ConnectionId, u64),
     Agent {
         console: ConsoleId,
         job: String,
@@ -859,6 +860,7 @@ impl App {
         self.sync_command_history();
         let Some(manager) = &self.manager else { return };
         match action {
+            Use::AiSchema(id, generation) => self.dispatch_ai_schema(id, generation),
             Use::Agent { job, .. } => self.dispatch_agent_job(&job),
             Use::Catalog(id, read) => {
                 let schemas = self
@@ -971,6 +973,9 @@ impl App {
     }
 
     fn cancel_auth_use(&mut self, action: &Use) {
+        if let Use::AiSchema(id, generation) = action {
+            self.cancel_ai_schema_auth(*id, *generation);
+        }
         if let Some(console) = action.console() {
             self.cancel_agent_console(console);
         }

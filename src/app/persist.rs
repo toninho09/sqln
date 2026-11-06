@@ -122,6 +122,7 @@ impl Persist {
         options.suggestion_keys = config.suggestion_keys;
         options.show_system_commands = config.show_system_commands;
         options.agent = config.agent;
+        options.ai_completion = config.ai_completion;
         options.export_choices = config.export;
         options.import_choices = config.import;
         config.connections
@@ -262,6 +263,7 @@ impl App {
     }
 
     fn apply_config(&mut self, config: Config) {
+        self.set_ai_preferences(config.ai_completion.clone());
         self.settings.page_size = config.page_size.unwrap_or(self.settings.page_size);
         self.settings.row_cap = config.row_cap.unwrap_or(self.settings.row_cap);
         self.settings.cap_in_sql = config.cap_in_sql;

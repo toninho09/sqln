@@ -76,6 +76,7 @@ fn label(field: Field) -> &'static str {
         Field::McpDefault => text::FIELD_MCP_DEFAULT,
         Field::McpMax => text::FIELD_MCP_MAX,
         Field::McpRemember => text::FIELD_MCP_REMEMBER,
+        Field::AiCompletion => "Autocomplete",
         _ => "",
     }
 }
@@ -83,6 +84,7 @@ fn label(field: Field) -> &'static str {
 /// Returns the text of a choice.
 fn choice(form: &SettingsForm, field: Field) -> String {
     match field {
+        Field::AiCompletion => "Configure…".to_owned(),
         Field::Scope if form.scope == Scope::Project => text::VALUE_SCOPE_PROJECT.to_owned(),
         Field::Scope => text::VALUE_SCOPE_GLOBAL.to_owned(),
         Field::Keyboard => form

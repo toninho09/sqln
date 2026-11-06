@@ -216,6 +216,20 @@ impl SystemVault {
         Self::default()
     }
 
+    pub fn read_api_key(&self, account: &str) -> Result<Option<Secret>, VaultError> {
+        match self.service_entry("sqln-ai", account)?.get_password() {
+            Ok(value) => Ok(Some(Secret::new(value))),
+            Err(keyring_core::Error::NoEntry) => Ok(None),
+            Err(error) => Err(vault_error(error)),
+        }
+    }
+
+    pub fn write_api_key(&self, account: &str, key: &Secret) -> Result<(), VaultError> {
+        self.service_entry("sqln-ai", account)?
+            .set_password(key.expose())
+            .map_err(vault_error)
+    }
+
     /// Uses an explicit store. Tests can supply the keyring-core memory store.
     pub fn with_store(store: Arc<CredentialStore>) -> Self {
         Self {
@@ -224,7 +238,14 @@ impl SystemVault {
     }
 
     fn entry(&self, identity: &Identity) -> Result<keyring_core::Entry, VaultError> {
-        let account = identity.account()?;
+        self.service_entry(SERVICE, &identity.account()?)
+    }
+
+    fn service_entry(
+        &self,
+        service: &str,
+        account: &str,
+    ) -> Result<keyring_core::Entry, VaultError> {
         if self.store.get().is_none() {
             let store = native_store()?;
             // Another caller can initialize the store first.
@@ -233,7 +254,7 @@ impl SystemVault {
         self.store
             .get()
             .expect("A successful initialization sets the store.")
-            .build(SERVICE, &account, None)
+            .build(service, account, None)
             .map_err(vault_error)
     }
 }

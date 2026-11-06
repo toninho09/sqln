@@ -696,6 +696,7 @@ impl App {
         form.focus_on(field);
         let request = form.press();
         match request {
+            SettingsRequest::AiCompletion => self.open_ai_form(),
             SettingsRequest::Save => self.save_settings(),
             SettingsRequest::Cancel => self.settings_form = None,
             SettingsRequest::None => {}

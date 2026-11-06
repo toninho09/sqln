@@ -1,6 +1,7 @@
 //! The application shell: the consoles, the connections, and the screen.
 
 mod agent;
+mod ai;
 mod auth;
 mod browse;
 mod close;
@@ -123,6 +124,8 @@ const MIN_EDITOR_RATIO: u16 = 10;
 const MAX_EDITOR_RATIO: u16 = 90;
 
 pub struct Options {
+    pub ai_completion: crate::ai::Preferences,
+    pub ai_vault: Option<Arc<crate::creds::SystemVault>>,
     /// Starts the local assistant endpoint. The command-line interface enables it.
     pub agent_ipc: bool,
     pub keyboard: KeyboardMode,
@@ -186,6 +189,8 @@ impl Default for Options {
             vault: None,
             appearance: (None, None),
             suggestion_keys: SuggestionKeys::default(),
+            ai_completion: crate::ai::Preferences::default(),
+            ai_vault: None,
             show_system_commands: crate::store::config::DEFAULT_SHOW_SYSTEM_COMMANDS,
             agent: crate::store::config::AgentSettings::default(),
             export_choices: ExportChoices::default(),
@@ -196,6 +201,12 @@ impl Default for Options {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum DialogAction {
+    AiFormRetry,
+    AiFormSession,
+    AiAllow(u64),
+    AiCancel(u64),
+    AiRetry(u64),
+    AiSession(u64),
     AgentAccess(String, agent::Grant),
     AgentRevoke(String),
     AgentDirect(ConsoleId),
@@ -374,6 +385,7 @@ struct ScreenLayout {
 }
 
 pub struct App {
+    ai: ai::State,
     consoles: Vec<Console>,
     /// The console that the console commands use. A table tab can be on screen.
     active: usize,
@@ -545,6 +557,7 @@ impl App {
             undo_limit: options.undo_limit,
             keymap,
             suggestion_keys: options.suggestion_keys,
+            ai: ai::State::new(options.ai_completion, options.ai_vault),
             show_system_commands: options.show_system_commands,
             database: options.database,
             clipboard,
@@ -812,7 +825,9 @@ impl App {
             self.clear_status();
         }
         self.keep_agent_focus();
+        self.sync_ai();
         self.route_event(event);
+        self.sync_ai();
         self.keep_agent_focus();
         self.sync_command_history();
         // The application keeps the message of the editor, so one clock serves both.
@@ -847,7 +862,8 @@ impl App {
         let time = now.saturating_duration_since(self.started);
         let frame = usize::try_from(time.as_millis() / RUN_FRAME.as_millis()).unwrap_or(0);
         // An agent task updates the time of its card, and the card appears after a delay.
-        let running = self.agent.active_tasks() != 0
+        let running = self.ai.busy()
+            || self.agent.active_tasks() != 0
             || self.consoles.iter().any(Console::is_busy)
             || self.tables.iter().any(TableTab::is_busy)
             || self.diagrams.iter().any(DiagramTab::is_busy)
@@ -892,6 +908,7 @@ impl App {
 
     fn modal_is_open(&self) -> bool {
         !self.dialogs.is_empty()
+            || self.ai.modal()
             || self.agent.review.is_some()
             || self.conflicts.is_some()
             || self.overlay.is_some()
@@ -910,6 +927,18 @@ impl App {
     }
 
     fn route_event(&mut self, event: Event) {
+        if self.dialogs.is_empty() && self.auth.prompt.is_none() {
+            if let Event::Paste(text) = &event
+                && self.ai_paste(text)
+            {
+                return;
+            }
+            if let Event::Mouse(mouse) = &event
+                && self.on_ai_mouse(*mouse)
+            {
+                return;
+            }
+        }
         let blocked = self.modal_is_open();
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
@@ -1073,13 +1102,15 @@ impl App {
     /// Reads waiting execution events and continues the row search.
     /// It returns true when the screen changed.
     pub fn drain_events(&mut self) -> bool {
+        let ai_changed = self.poll_ai();
         let agent_changed = self.drain_agent();
         self.continue_agent_jobs();
         self.sync_command_history();
         let ticked = self.tick();
         let authorized = self.poll_auth();
         let probed = self.poll_probes();
-        let changed = self.has_work() || ticked || authorized || probed || agent_changed;
+        let changed =
+            self.has_work() || ticked || authorized || probed || agent_changed || ai_changed;
         if changed {
             let deadline = Instant::now() + WORK_SLICE;
             match (self.compare_active, self.table_active) {
@@ -1662,6 +1693,7 @@ impl App {
 
     /// Draws the windows above the panels. `bounds` holds the rows above the status line.
     fn draw_layers(&mut self, frame: &mut Frame, bounds: Rect) {
+        self.draw_ai(frame);
         if self.command_page.is_some_and(|region| {
             region != Region::Navigator && self.context_region() != Some(region)
         }) {
@@ -1751,6 +1783,7 @@ impl App {
         if let Some(prompt) = &self.auth.prompt {
             self.layout.password = crate::ui::auth::draw_password(frame, prompt, &self.theme);
         }
+        self.draw_ai_form(frame);
         if let Some(dialog) = self.dialogs.front() {
             let labels: Vec<&str> = dialog.options.iter().map(|(label, _)| *label).collect();
             self.layout.dialog = draw_dialog(

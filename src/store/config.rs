@@ -225,6 +225,8 @@ pub struct Keymaps {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Preferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_completion: Option<crate::ai::Preferences>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyboard_mode: Option<KeyboardName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_size: Option<usize>,
@@ -415,6 +417,7 @@ pub struct Stored {
 /// The configuration of both scopes, after the precedence.
 #[derive(Debug)]
 pub struct Config {
+    pub ai_completion: crate::ai::Preferences,
     pub keyboard: KeyboardMode,
     pub page_size: Option<usize>,
     pub row_cap: Option<usize>,
@@ -863,6 +866,10 @@ fn combine(
         })
         .collect();
     Ok(Config {
+        ai_completion: crate::ai::Preferences::resolve(
+            global.ai_completion.as_ref(),
+            project.and_then(|p| p.ai_completion.as_ref()),
+        ),
         keyboard,
         page_size: pick(|preferences| preferences.page_size),
         row_cap: pick(|preferences| preferences.row_cap),

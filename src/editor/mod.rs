@@ -1,6 +1,7 @@
 //! The SQL editor: EdTUI, the conventional keys, suggestions, search, and highlights.
 
 mod agent;
+pub mod ai;
 mod buffer;
 mod conventional;
 mod frame;
@@ -134,6 +135,7 @@ struct ErrorSpot {
 pub struct SuggestionList {
     pub completion: Completion,
     pub selected: usize,
+    pub ai: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -147,6 +149,9 @@ pub struct SqlEditor {
     pub state: EditorState,
     keyboard: KeyboardMode,
     suggestions_enabled: bool,
+    ai_available: bool,
+    ai_requested: bool,
+    list_area: (Rect, usize),
     literal_text: bool,
     handler: EditorEventHandler,
     dialect: Dialect,
@@ -200,6 +205,9 @@ impl SqlEditor {
             state,
             keyboard,
             suggestions_enabled: true,
+            ai_available: false,
+            ai_requested: false,
+            list_area: Default::default(),
             literal_text: false,
             handler: EditorEventHandler::vim_mode(),
             dialect,
@@ -394,6 +402,11 @@ impl SqlEditor {
             return false;
         };
         if keys.accepts(key) {
+            if list.ai && list.selected == usize::MAX {
+                self.ai_requested = true;
+                self.close_suggestions();
+                return true;
+            }
             self.accept_suggestion();
             return true;
         }
@@ -406,11 +419,23 @@ impl SqlEditor {
                 true
             }
             KeyCode::Up if plain => {
-                list.selected = (list.selected + count - 1) % count;
+                list.selected = if list.ai && list.selected == 0 {
+                    usize::MAX
+                } else if list.selected == usize::MAX {
+                    if count == 0 { usize::MAX } else { count - 1 }
+                } else {
+                    (list.selected + count - 1) % count
+                };
                 true
             }
             KeyCode::Down if plain => {
-                list.selected = (list.selected + 1) % count;
+                list.selected = if list.selected == usize::MAX {
+                    if count == 0 { usize::MAX } else { 0 }
+                } else if list.ai && list.selected + 1 == count {
+                    usize::MAX
+                } else {
+                    (list.selected + 1) % count
+                };
                 true
             }
             _ => false,
@@ -444,9 +469,7 @@ impl SqlEditor {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char(' ') if ctrl => {
-                if self.state.mode == EditorMode::Insert {
-                    self.update_list(ListAction::Open, catalog);
-                }
+                self.open_explicit_suggestions(catalog);
                 return;
             }
             KeyCode::Char('f') if ctrl => {
@@ -527,6 +550,7 @@ impl SqlEditor {
         self.list = (!completion.items.is_empty()).then_some(SuggestionList {
             completion,
             selected: 0,
+            ai: self.ai_available,
         });
     }
 
@@ -544,9 +568,7 @@ impl SqlEditor {
                     search.field = SearchField::Replace;
                 }
             }
-            Action::EditorSuggestions if self.is_inserting() => {
-                self.update_list(ListAction::Open, catalog)
-            }
+            Action::EditorSuggestions => self.open_explicit_suggestions(catalog),
             Action::EditorUndo => self.undo(),
             Action::EditorRedo => self.redo(),
             Action::EditorCopy => self.copy_selection(),
@@ -587,6 +609,7 @@ impl SqlEditor {
     }
 
     pub fn close_suggestions(&mut self) {
+        self.list_area = Default::default();
         self.list = None;
         self.list_request = None;
     }
@@ -595,7 +618,19 @@ impl SqlEditor {
     /// when a request found nothing and the text and the cursor did not change.
     pub fn refresh_suggestions(&mut self, catalog: Option<&Catalog>) {
         if self.list.is_some() || self.list_request == Some((self.revision, self.state.cursor)) {
+            let ai_selected = self
+                .list
+                .as_ref()
+                .is_some_and(|l| l.ai && l.selected == usize::MAX);
             self.update_list(ListAction::Open, catalog);
+            if ai_selected && self.ai_available {
+                let list = self.list.get_or_insert(SuggestionList {
+                    completion: Completion::default(),
+                    selected: usize::MAX,
+                    ai: true,
+                });
+                list.selected = usize::MAX;
+            }
         }
     }
 

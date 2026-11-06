@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod ai;
 pub mod app;
 pub mod browser;
 pub mod catalog;

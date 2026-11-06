@@ -1,6 +1,7 @@
 //! Screen drawing.
 
 pub mod agent;
+pub mod ai;
 pub mod auth;
 pub mod browser;
 pub mod compare;
@@ -152,7 +153,8 @@ pub fn draw_editor(
     let cursor = editor.state.cursor_screen_position();
     if let (Some(list), Some(cursor)) = (editor.suggestions(), cursor) {
         let anchor = Position::new(cursor.x.saturating_sub(anchor_shift as u16), cursor.y);
-        draw_suggestions(frame, area, anchor, list, theme);
+        let layout = draw_suggestions(frame, area, anchor, list, theme);
+        editor.set_list_area(layout);
     }
 }
 
@@ -385,7 +387,7 @@ pub(crate) fn draw_suggestions(
     anchor: Position,
     list: &SuggestionList,
     theme: &Theme,
-) {
+) -> (Rect, usize) {
     let items = &list.completion.items;
     let row_width = |item: &Suggestion| {
         let detail = item
@@ -394,10 +396,34 @@ pub(crate) fn draw_suggestions(
             .map_or(0, |text| Span::raw(text).width() + 2);
         Span::raw(item.label.as_str()).width() + detail + 6
     };
-    let width = items.iter().map(row_width).max().unwrap_or_default();
-    let shape = (items.len(), Some(list.selected), width);
+    let width = items
+        .iter()
+        .map(row_width)
+        .max()
+        .unwrap_or_default()
+        .max(if list.ai { 26 } else { 0 });
+    let selected = if list.ai {
+        if list.selected == usize::MAX {
+            0
+        } else {
+            list.selected + 1
+        }
+    } else {
+        list.selected
+    };
+    let shape = (items.len() + usize::from(list.ai), Some(selected), width);
     draw_anchored_list(frame, (bounds, anchor), shape, theme, |index, marked| {
-        let item = &items[index];
+        if list.ai && index == 0 {
+            return vec![Span::styled(
+                " AI  Complete with AI…",
+                if marked {
+                    theme.list_selected
+                } else {
+                    theme.list
+                },
+            )];
+        }
+        let item = &items[index - usize::from(list.ai)];
         let (style, detail_style) = if marked {
             (theme.list_selected, theme.list_selected)
         } else {
@@ -411,5 +437,5 @@ pub(crate) fn draw_suggestions(
             spans.push(Span::styled(format!("  {detail}"), detail_style));
         }
         spans
-    });
+    })
 }

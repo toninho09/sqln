@@ -43,6 +43,7 @@ pub enum Field {
     McpDefault,
     McpMax,
     McpRemember,
+    AiCompletion,
     ShortcutMode,
     ShortcutCommands,
     ShortcutBack,
@@ -106,6 +107,7 @@ pub const SECTIONS: [Section; 6] = [
             Field::McpDefault,
             Field::McpMax,
             Field::McpRemember,
+            Field::AiCompletion,
         ],
         help: Some(text::HELP_MCP),
     },
@@ -117,6 +119,7 @@ pub const SECTIONS: [Section; 6] = [
 ];
 
 pub enum SettingsRequest {
+    AiCompletion,
     None,
     Cancel,
     Save,
@@ -142,6 +145,7 @@ struct Draft {
     mcp_default: Option<AgentDefault>,
     mcp_max: Option<AgentAccess>,
     mcp_remember: Option<bool>,
+    ai_completion: Option<crate::ai::Preferences>,
     keymap: Option<Keymaps>,
 }
 
@@ -176,6 +180,7 @@ impl Draft {
             mcp_default: preferences.mcp_default_access,
             mcp_max: preferences.mcp_max_access,
             mcp_remember: preferences.mcp_remember_clients,
+            ai_completion: preferences.ai_completion.clone(),
             keymap: preferences.keymap.clone(),
         }
     }
@@ -606,6 +611,7 @@ impl SettingsForm {
             return SettingsRequest::None;
         }
         match self.focus {
+            Field::AiCompletion => SettingsRequest::AiCompletion,
             Field::Save => SettingsRequest::Save,
             Field::Cancel => SettingsRequest::Cancel,
             field if self.input(field).is_none() => {
@@ -633,6 +639,9 @@ impl SettingsForm {
             KeyCode::Up => self.step(false),
             KeyCode::Char('j') if vim => self.step(true),
             KeyCode::Char('k') if vim => self.step(false),
+            KeyCode::Enter if self.focus == Field::AiCompletion => {
+                return SettingsRequest::AiCompletion;
+            }
             KeyCode::Enter if self.focus == Field::Save => return SettingsRequest::Save,
             KeyCode::Enter if self.focus == Field::Cancel => return SettingsRequest::Cancel,
             KeyCode::Enter => self.move_focus(true),
@@ -651,6 +660,24 @@ impl SettingsForm {
     }
 
     /// Returns the preferences of the scope. The other values of the file stay.
+    pub fn ai_preferences(
+        &self,
+    ) -> (
+        Scope,
+        Option<crate::ai::Preferences>,
+        Option<crate::ai::Preferences>,
+    ) {
+        (
+            self.scope,
+            self.draft().ai_completion.clone(),
+            self.global_draft.ai_completion.clone(),
+        )
+    }
+
+    pub fn set_ai_preferences(&mut self, preferences: crate::ai::Preferences) {
+        self.draft_mut().ai_completion = Some(preferences);
+    }
+
     pub fn preferences(&self) -> Result<Preferences, String> {
         let draft = self.draft();
         let base = match (self.scope, &self.project) {
@@ -670,6 +697,7 @@ impl SettingsForm {
         preferences.mcp_default_access = draft.mcp_default;
         preferences.mcp_max_access = draft.mcp_max;
         preferences.mcp_remember_clients = draft.mcp_remember;
+        preferences.ai_completion = draft.ai_completion.clone();
         preferences.keymap = draft.keymap.clone();
         self.validate_shortcuts(&preferences)?;
         preferences.page_size = parse(&draft.page_size, text::FIELD_PAGE_SIZE)?;

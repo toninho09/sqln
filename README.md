@@ -264,6 +264,12 @@ Conventional mode is the default. Change **Keyboard** in Settings to select Vim 
 Suggestions also appear as you type. `Tab` accepts a suggestion by default; `Enter` inserts a new line.
 Change **Autocomplete** in Settings if you prefer `Enter` or both keys to accept suggestions.
 
+**AI completion** is optional. Configure it in **Settings > IA > Autocomplete…**, globally or per project.
+Open suggestions, press `Up` from the first local item to select **Complete with AI…**, and use the acceptance key.
+SQLN shows an insertion preview or a replacement comparison with **Accept** and **Reject**. It never runs generated SQL.
+DeepSeek FIM, OpenRouter chat models, and compatible local servers are supported. Keys use the system vault or a rotating key file.
+See [AI completion](docs/AI_COMPLETION.md) for consent, context limits, and configuration.
+
 ### Navigator
 
 | Action | Key |

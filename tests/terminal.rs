@@ -280,6 +280,56 @@ fn paste(terminal: &mut Terminal, text: &str) {
 }
 
 #[test]
+#[ignore = "Requires explicit SQLN_TEST_DEEPSEEK_KEY_FILE and a paid DeepSeek API request."]
+fn deepseek_fim_completion_runs_through_the_real_terminal() {
+    let key_file = std::env::var_os("SQLN_TEST_DEEPSEEK_KEY_FILE")
+        .map(PathBuf::from)
+        .expect("Set SQLN_TEST_DEEPSEEK_KEY_FILE to a private key file outside the repository.");
+    assert!(key_file.is_absolute() && key_file.is_file());
+    let home = home_with_connection("terminal-deepseek-live");
+    let db = home.join("one.db");
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute_batch("CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    let root = Root::global(home.join("sqln"));
+    let mut config: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.config_file()).unwrap()).unwrap();
+    config["preferences"] = serde_json::json!({"mcp":false,"queryHistory":false,"aiCompletion":{"enabled":true,"provider":{
+        "kind":"deepseek","model":"deepseek-flash","baseUrl":"https://api.deepseek.com/beta/completions",
+        "maxOutputTokens":128,"credential":{"source":"file","path":key_file}
+    }}});
+    fs::write(root.config_file(), serde_json::to_vec(&config).unwrap()).unwrap();
+    let log = home.join("live.log");
+    let mut terminal = Terminal::start(program(&home, &["--log", log.to_str().unwrap()]));
+    terminal.answer(NO_KEY_REPORTS);
+    terminal.wait_for(FIRST_SCREEN);
+    paste(&mut terminal, "-- List the user names\nSELECT ");
+    terminal.wait_for("SELECT");
+    terminal.send(b"\x00");
+    terminal.wait_for("Complete with AI");
+    terminal.send(b"\x1b[A\t");
+    terminal.wait_for("Send SQL and schema");
+    terminal.send(b"\t\r");
+    terminal.wait_for("AI insertion preview");
+    terminal.send(b"\t\r");
+    terminal.send(QUIT);
+    assert!(terminal.wait_for_end().success());
+    let scripts = scripts_in(&home);
+    assert_eq!(scripts.len(), 1);
+    assert_ne!(scripts[0], "-- List the user names\nSELECT ");
+    assert!(scripts[0].to_lowercase().contains("users"));
+    let connection = rusqlite::Connection::open(db).unwrap();
+    assert!(connection.prepare(&scripts[0]).unwrap().readonly());
+    assert!(
+        !fs::read_to_string(log)
+            .unwrap()
+            .contains("execution finished"),
+        "Accepting generated SQL must not execute it."
+    );
+}
+
+#[test]
 fn a_start_and_a_quit_leave_the_terminal_as_it_was() {
     let home = temp_dir("terminal-quit");
     let log = home.join("sqln.log");
