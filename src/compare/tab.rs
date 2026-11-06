@@ -75,6 +75,8 @@ enum Step {
 }
 
 pub struct CompareTab {
+    /// True for a tab created by an assistant session.
+    pub agent: bool,
     /// The place of the tab in the order of opening.
     pub opened: u64,
     pub kind: Kind,
@@ -111,6 +113,7 @@ pub struct CompareTab {
 impl CompareTab {
     pub fn new(opened: u64, kind: Kind, sides: [SideRead; 2], removals: bool) -> Self {
         Self {
+            agent: false,
             opened,
             kind,
             sides,
@@ -147,9 +150,14 @@ impl CompareTab {
     pub fn label(&self) -> String {
         let side = &self.sides[0].side;
         let name = side.table.as_deref().unwrap_or(&side.schema);
-        match self.kind {
+        let label = match self.kind {
             Kind::Structure => text::compare_label(name),
             Kind::Data => text::data_compare_label(name),
+        };
+        if self.agent {
+            text::agent_tab_label(&label)
+        } else {
+            label
         }
     }
 

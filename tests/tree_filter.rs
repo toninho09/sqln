@@ -1,11 +1,9 @@
 // The filter of the navigator tree.
 
-mod common;
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use common::{ctrl, key, select_row, temp_db};
+use crate::common::{ctrl, key, select_row, temp_db};
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

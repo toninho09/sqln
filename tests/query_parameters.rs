@@ -1,13 +1,11 @@
 //! Named parameters, native bindings, and the panel through application input events.
 
-mod common;
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, temp_db};
+use crate::common::{ctrl, key, temp_db};
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::TestBackend};
 use sqln::app::{App, Options};

@@ -1,8 +1,6 @@
 // The complete interface: several consoles, the navigator, the form, and the panels.
 // Keys enter the application, and SQL runs in real SQLite files.
 
-mod common;
-
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -10,9 +8,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::common::sample_catalog;
+use crate::common::{ctrl, key, temp_db};
 use async_trait::async_trait;
-use common::sample_catalog;
-use common::{ctrl, key, temp_db};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -246,7 +244,7 @@ impl Fixture {
     }
 
     fn focus_form(&mut self, field: Field) {
-        common::focus_form_field(&mut self.app, field);
+        crate::common::focus_form_field(&mut self.app, field);
     }
 
     fn save(&mut self) {

@@ -39,6 +39,7 @@ The file paths are relative to `src/`.
 | 19 | Console saving and saved consoles | `script_file.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs` |
 | 20 | Credentials and trust | `creds.rs`, `trust.rs`, `app/auth.rs`, `ui/auth.rs` |
 | 21 | Appearance and themes | `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs` |
+| 23 | Local MCP assistant | `agent/`, `mcp.rs`, `app/agent/`, `editor/agent.rs`, `ui/agent.rs`; see [MCP](MCP.md) |
 | 22 | Operation and diagnostics | `main.rs`, `terminal.rs`, `log.rs` |
 
 ## 1. Application shell and main loop
@@ -151,6 +152,12 @@ Files: `complete/mod.rs`, `complete/context.rs`, `complete/grammar.rs`, `complet
 `complete/context` reads the text around the cursor and finds the expected kind of name. The suggestions come from the catalog: schemas, tables, views, and columns read on demand, with aliases, quotes, and the keywords of the dialect. After `ON`, the suggestion uses the foreign keys that the application reads together with the columns. The `suggestionKeys` preference chooses the key.
 
 `complete/grammar` selects built-in types for `CREATE TABLE`, `ALTER TABLE`, and `CAST` per dialect. Column options and query clauses use the cursor context. Functions show parameter signatures in the list. Acceptance inserts empty parentheses and puts the cursor inside. Existing parentheses and arguments stay unchanged. The console and table fields use the same rules. These suggestions use local lists, with no database request.
+
+## 12a. AI completion
+
+Files: `ai/`, `app/ai.rs`, `editor/ai.rs`, `exec/ai.rs`, `ui/ai.rs`.
+
+The editor adds an explicit Action above local suggestions: the plain row starts a request at once, and the request row above it opens a one-line modal whose text travels as `request` in the body. `app/ai` captures a revision-checked interval, obtains local consent, and coordinates schema reads and HTTP requests. `exec/ai` reads complete structural snapshots through an authorized pool lease. The memory cache follows catalog refresh generations. `ai` prepares bounded context for the OpenAI-compatible chat protocol, with OpenRouter as the default endpoint, and carries the reasoning effort of the provider in the request body. The editor shows ghost text at the cursor only. Several ghosts wait at once, bounded by the Max simultaneous setting, with parallel requests. Each acceptance is one undo step and never runs SQL. Global and project settings use vault references or rotating key-file paths. See [AI completion](AI_COMPLETION.md).
 
 ## 13. Catalog and structure tab
 

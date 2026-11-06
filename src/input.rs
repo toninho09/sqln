@@ -96,6 +96,11 @@ impl Chord {
         self.code == KeyCode::Char('w') && self.modifiers == KeyModifiers::CONTROL
     }
 
+    /// Returns true for a character without Ctrl or Alt: during input, it is text.
+    pub fn is_plain_char(self) -> bool {
+        matches!(self.code, KeyCode::Char(_)) && (self.modifiers - KeyModifiers::SHIFT).is_empty()
+    }
+
     /// Returns the same key without Shift, when the key has Shift.
     pub fn without_shift(self) -> Option<Self> {
         self.modifiers.contains(KeyModifiers::SHIFT).then(|| Self {
@@ -162,10 +167,20 @@ pub enum Region {
     Navigator,
     Grid,
     Diagram,
+    /// An inline review of proposed changes in the editor.
+    Review,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
+    AgentSessions,
+    AgentReview,
+    AgentDirect,
+    AgentStop,
+    AgentSqlToConsole,
+    AgentSqlClear,
+    AgentSession,
+    AgentTasks,
     Run,
     RunScript,
     Explain,
@@ -184,6 +199,11 @@ pub enum Action {
     EditorFind,
     EditorReplace,
     EditorSuggestions,
+    EditorAiComplete,
+    EditorAiCompleteRequest,
+    EditorAiAccept,
+    EditorAiReject,
+    EditorAiCancel,
     EditorUndo,
     EditorRedo,
     EditorSelectAll,
@@ -293,6 +313,13 @@ pub enum Action {
     DiagramCopy,
     DiagramReload,
     DiagramKeysOnly,
+    ReviewAccept,
+    ReviewReject,
+    ReviewAcceptAll,
+    ReviewRejectAll,
+    ReviewNext,
+    ReviewPrevious,
+    ReviewClose,
 }
 
 impl Action {
@@ -435,7 +462,7 @@ const DEFAULTS: &[Item] = &[
         Action::RunScript,
         Region::Global,
         "runScript",
-        &["shift+enter", "shift+f5", "ctrl+w s"],
+        &["shift+f5", "ctrl+w s"],
         &[],
     ),
     both(
@@ -520,6 +547,41 @@ const DEFAULTS: &[Item] = &[
         Action::EditorReplace,
         Region::Editor,
         "editorReplace",
+        &[],
+        &[],
+    ),
+    both(
+        Action::EditorAiComplete,
+        Region::Editor,
+        "editorAiComplete",
+        &[],
+        &[],
+    ),
+    both(
+        Action::EditorAiCompleteRequest,
+        Region::Editor,
+        "editorAiCompleteRequest",
+        &[],
+        &[],
+    ),
+    both(
+        Action::EditorAiAccept,
+        Region::Editor,
+        "editorAiAccept",
+        &[],
+        &[],
+    ),
+    both(
+        Action::EditorAiReject,
+        Region::Editor,
+        "editorAiReject",
+        &[],
+        &[],
+    ),
+    both(
+        Action::EditorAiCancel,
+        Region::Editor,
+        "editorAiCancel",
         &[],
         &[],
     ),
@@ -1248,6 +1310,87 @@ const DEFAULTS: &[Item] = &[
         &["K"],
         &[],
     ),
+    both(
+        Action::ReviewAccept,
+        Region::Review,
+        "reviewAccept",
+        &["a", "tab"],
+        &[],
+    ),
+    both(
+        Action::ReviewReject,
+        Region::Review,
+        "reviewReject",
+        &["r"],
+        &[],
+    ),
+    both(
+        Action::ReviewAcceptAll,
+        Region::Review,
+        "reviewAcceptAll",
+        &["A"],
+        &[],
+    ),
+    both(
+        Action::ReviewRejectAll,
+        Region::Review,
+        "reviewRejectAll",
+        &["R"],
+        &[],
+    ),
+    both(
+        Action::ReviewNext,
+        Region::Review,
+        "reviewNext",
+        &["down", "j", "]"],
+        &[],
+    ),
+    both(
+        Action::ReviewPrevious,
+        Region::Review,
+        "reviewPrevious",
+        &["up", "k", "["],
+        &[],
+    ),
+    both(
+        Action::ReviewClose,
+        Region::Review,
+        "reviewClose",
+        &["esc"],
+        &[],
+    ),
+    both(
+        Action::AgentSessions,
+        Region::Global,
+        "agentSessions",
+        &[],
+        &[],
+    ),
+    both(Action::AgentReview, Region::Global, "agentReview", &[], &[]),
+    both(Action::AgentDirect, Region::Global, "agentDirect", &[], &[]),
+    both(Action::AgentStop, Region::Global, "agentStop", &[], &[]),
+    both(
+        Action::AgentSqlToConsole,
+        Region::Global,
+        "agentSqlToConsole",
+        &[],
+        &[],
+    ),
+    both(
+        Action::AgentSqlClear,
+        Region::Global,
+        "agentSqlClear",
+        &[],
+        &[],
+    ),
+    both(
+        Action::AgentSession,
+        Region::Global,
+        "agentSession",
+        &[],
+        &[],
+    ),
+    both(Action::AgentTasks, Region::Global, "agentTasks", &[], &[]),
 ];
 
 /// The answer of the map to one key.

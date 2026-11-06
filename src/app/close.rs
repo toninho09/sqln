@@ -104,6 +104,20 @@ impl App {
 
     /// Asks the next question of a close. It runs again after each answer.
     pub(super) fn close_step(&mut self, id: ConsoleId) {
+        // The last agent tab of a connected session closes only with a revocation.
+        if !self.exiting
+            && let Some(session) = self.last_agent_tab(id)
+        {
+            self.show_dialog(
+                text::AGENT_CLOSE_TITLE,
+                text::agent_close_body(&self.agent.client(&session)),
+                vec![
+                    (text::OPTION_CANCEL, DialogAction::Dismiss),
+                    (text::AGENT_CLOSE_REVOKE, DialogAction::AgentCloseRevoke(id)),
+                ],
+            );
+            return;
+        }
         let Some(console) = self.console_by_id(id) else {
             return;
         };
@@ -153,6 +167,8 @@ impl App {
     }
 
     pub(super) fn remove_console(&mut self, id: ConsoleId) {
+        self.cancel_agent_console(id);
+        self.agent.forget_console(id);
         let Some(index) = self.console_index(id) else {
             return;
         };
@@ -190,6 +206,8 @@ impl App {
                 self.focus_navigator();
             }
         }
+        // A connected session keeps one agent tab.
+        self.ensure_agent_tabs();
         self.refresh_tree_consoles();
     }
 
@@ -241,6 +259,26 @@ impl App {
 
     pub(super) fn on_dialog_action(&mut self, action: DialogAction) {
         match action {
+            DialogAction::AiFormRetry => self.ai_form_retry(),
+            DialogAction::AiFormSession => self.ai_form_session(),
+            DialogAction::AiAllow(id) => self.ai_allow(id),
+            DialogAction::AiCancel(id) => self.cancel_ai_id(id),
+            DialogAction::AiRetry(id) => self.ai_retry(id),
+            DialogAction::AiSession(id) => self.ai_session(id),
+            DialogAction::AgentAccess(session, grant) => {
+                self.agent_access_decision(&session, grant)
+            }
+            DialogAction::AgentRevoke(session) => self.agent_revoke(&session),
+            DialogAction::AgentDirect(console) => self.allow_agent_direct(console),
+            DialogAction::AgentForget(client) => self.agent_forget(&client),
+            DialogAction::AgentStopTask(job) => self.stop_agent_task(&job),
+            DialogAction::AgentCloseRevoke(console) => {
+                if let Some(session) = self.last_agent_tab(console) {
+                    self.agent_revoke(&session);
+                }
+                self.close_step(console);
+            }
+            DialogAction::AgentRun(job, run) => self.agent_run_decision(&job, run),
             DialogAction::Dismiss => {}
             DialogAction::CancelClose(id) => {
                 self.cancel_save_close(id);

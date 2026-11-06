@@ -93,6 +93,9 @@ impl App {
             self.on_password_key(key);
             return;
         }
+        if self.on_ai_key(key) {
+            return;
+        }
         if self.conflicts.is_some() {
             self.on_conflicts_key(key);
             return;
@@ -172,6 +175,9 @@ impl App {
         if let Some((region, mut keys)) = self.pending_key.take() {
             keys.push(chord);
             self.on_sequence(region, keys);
+            return;
+        }
+        if self.on_review_key(key) {
             return;
         }
         if !self.navigator_focused
@@ -421,6 +427,14 @@ impl App {
     }
 
     pub(super) fn perform(&mut self, action: Action, extend: bool) {
+        if action.region() == Region::Review {
+            self.perform_review(action);
+            return;
+        }
+        if self.review_blocks(action) {
+            self.refuse_review_edit();
+            return;
+        }
         if self
             .table()
             .is_some_and(|tab| !tab.result.edits.is_empty() || tab.edit_uncertain)
@@ -456,6 +470,19 @@ impl App {
             return;
         }
         match action {
+            Action::EditorAiComplete => self.start_ai_with(None),
+            Action::EditorAiCompleteRequest => self.open_ai_request(),
+            Action::EditorAiAccept => self.decide_ghost(true),
+            Action::EditorAiReject => self.decide_ghost(false),
+            Action::EditorAiCancel => self.cancel_ai(),
+            Action::AgentSessions => self.open_agent_sessions(),
+            Action::AgentReview => self.open_agent_proposals(),
+            Action::AgentDirect => self.toggle_agent_direct(),
+            Action::AgentStop => self.stop_agent_tasks(),
+            Action::AgentSqlToConsole => self.agent_sql_to_console(),
+            Action::AgentSqlClear => self.agent_sql_clear(),
+            Action::AgentSession => self.open_tab_agent_session(),
+            Action::AgentTasks => self.open_agent_tasks(),
             Action::Run => self.run(RunTarget::Statements(RunScope::Default)),
             Action::RunScript => self.run(RunTarget::Statements(RunScope::Script)),
             Action::Explain => self.run(RunTarget::Plan { analyze: false }),
@@ -683,12 +710,15 @@ impl App {
         // The explorer is the only panel of the home screen.
         let panel = if self.navigator_focused || self.home() {
             Some(Region::Navigator)
+        } else if self.context_region() == Some(Region::Review) {
+            Some(Region::Review)
         } else {
             self.panel()
         };
         let (region, name) = match panel {
             Some(Region::Navigator) => (Some(Region::Navigator), text::REGION_NAVIGATOR),
             Some(Region::Diagram) => (Some(Region::Diagram), text::REGION_DIAGRAM),
+            Some(Region::Review) => (Some(Region::Review), text::REGION_REVIEW),
             Some(_) if self.compare_active.is_some() => (Some(Region::Grid), text::REGION_COMPARE),
             Some(_) if in_table => (Some(Region::Grid), text::REGION_TABLE),
             Some(_) => (Some(Region::Grid), text::REGION_GRID),
@@ -937,7 +967,8 @@ impl App {
                     return;
                 }
                 let console = &self.consoles[index];
-                let manual = console.manual;
+                // An agent tab runs in Auto mode: an open transaction would block the agent.
+                let manual = console.manual && !self.agent.owns(console.id);
                 let schema = console.schema.clone();
                 // A console can keep its manual mode when it moves to another source.
                 let options = RunOptions {
@@ -993,6 +1024,12 @@ impl App {
 
     pub(super) fn stop(&mut self, index: usize) {
         let id = self.consoles[index].id;
+        if self.cancel_agent_console(id) {
+            if self.consoles[index].closing && !self.consoles[index].is_busy() {
+                self.close_step(id);
+            }
+            return;
+        }
         if self.stop_export(id) {
             return;
         }
@@ -1120,7 +1157,8 @@ impl App {
         };
         match form.on_key(key, vim) {
             SettingsRequest::None => {}
-            SettingsRequest::Cancel => self.settings_form = None,
+            SettingsRequest::Cancel => self.close_settings(),
+            SettingsRequest::AiTest => self.test_ai_connection(),
             SettingsRequest::Save => self.save_settings(),
         }
     }
@@ -1433,6 +1471,25 @@ impl App {
 
     /// Returns true when an action has an effect in the current state.
     pub(super) fn command_available(&self, action: Action) -> bool {
+        if matches!(
+            action,
+            Action::EditorAiComplete
+                | Action::EditorAiCompleteRequest
+                | Action::EditorAiAccept
+                | Action::EditorAiReject
+                | Action::EditorAiCancel
+        ) {
+            return self.ai_action_available(action);
+        }
+        if action == Action::EditorSuggestions && self.ai_eligible() {
+            return true;
+        }
+        if action.region() == Region::Review {
+            return self.review_command_available(action);
+        }
+        if self.review_blocks(action) {
+            return false;
+        }
         if self.home() && !home_allows(action) {
             return false;
         }
@@ -1453,6 +1510,15 @@ impl App {
         let namespace =
             connection.is_some_and(|item| item.capabilities.namespace != Namespace::None);
         match action {
+            Action::AgentSessions => self.agent.has_sessions(),
+            Action::AgentReview => self.agent.has_proposals(),
+            Action::AgentDirect => !in_table && !self.home(),
+            Action::AgentStop => self.agent.active_tasks() != 0,
+            Action::AgentSqlToConsole | Action::AgentSqlClear => {
+                !in_table && self.agent.owns(console.id) && !console.editor.is_blank()
+            }
+            Action::AgentSession => !in_table && self.agent.tab_session(console.id).is_some(),
+            Action::AgentTasks => !in_table && self.agent.tab_tasks(console.id) != 0,
             Action::OpenPalette => false,
             Action::ContextCommands => self.context_region().is_some(),
             Action::Run | Action::RunScript => {
@@ -1470,7 +1536,7 @@ impl App {
                 (None, None, Some(tab)) => tab.is_busy(),
                 (None, None, None) => !idle,
             },
-            Action::ToggleMode => !in_table && idle && transactions,
+            Action::ToggleMode => !in_table && idle && transactions && !self.agent.owns(console.id),
             Action::Commit => {
                 !in_table
                     && idle
@@ -1613,6 +1679,9 @@ impl App {
 /// Returns true for an action that acts on the home screen: a command of the explorer,
 /// or a command that needs no tab.
 fn home_allows(action: Action) -> bool {
+    if matches!(action, Action::AgentSessions | Action::AgentStop) {
+        return true;
+    }
     use Action::*;
     action.region() == Region::Navigator
         || matches!(

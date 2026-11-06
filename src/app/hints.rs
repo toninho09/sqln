@@ -312,6 +312,29 @@ impl App {
                 self.results_hint()
             };
         }
+        if console.editor.has_ghosts() && console.editor.review().is_none() {
+            let keys = console.editor.ghost_keys();
+            return vec![
+                HintItem {
+                    key: keys.accept.clone(),
+                    label: "accept",
+                },
+                HintItem {
+                    key: keys.close.clone(),
+                    label: "reject",
+                },
+            ];
+        }
+        if let Some(review) = console.editor.review() {
+            return self.hint_parts(&[
+                (Action::ReviewAccept, "accept"),
+                (Action::ReviewReject, "reject"),
+                (Action::ReviewNext, "next"),
+                (Action::ReviewAcceptAll, "accept all"),
+                (Action::ReviewRejectAll, "reject all"),
+                (Action::ReviewClose, review.keys.close_label_lower()),
+            ]);
+        }
         if console.editor.suggestions().is_some() {
             return self.list_hint(text::LIST_EDITOR_KEYS);
         }

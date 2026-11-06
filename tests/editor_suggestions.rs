@@ -1,6 +1,4 @@
-mod common;
-
-use common::{Fixture, ctrl, key, shift};
+use crate::common::{Fixture, ctrl, key, shift};
 use crossterm::event::KeyCode::{Backspace, Down, Enter, Esc, Left, Tab, Up};
 use edtui::Index2;
 use sqln::catalog::Columns;

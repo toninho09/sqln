@@ -121,6 +121,8 @@ impl<'a> Value<'a> {
 
 #[derive(Debug, Default)]
 pub struct ResultTable {
+    /// Changes when loaded values change, including pending grid edits.
+    pub generation: u64,
     pub columns: Vec<String>,
     pub rows: Vec<Row>,
     pub bytes: usize,
@@ -130,7 +132,16 @@ pub struct ResultTable {
     manual: Vec<Option<usize>>,
 }
 
+static NEXT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+fn next_generation() -> u64 {
+    NEXT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 impl ResultTable {
+    /// Invalidates external result-page references after a value change.
+    pub fn invalidate(&mut self) {
+        self.generation = next_generation();
+    }
     pub fn new(columns: Vec<String>) -> Self {
         let natural: Vec<usize> = columns
             .iter()
@@ -142,6 +153,7 @@ impl ResultTable {
             .collect();
         let manual = vec![None; columns.len()];
         Self {
+            generation: next_generation(),
             columns,
             rows: Vec::new(),
             bytes: 0,
@@ -151,6 +163,7 @@ impl ResultTable {
     }
 
     pub fn append(&mut self, rows: Vec<Row>, bytes: usize) {
+        self.invalidate();
         for row in &rows {
             for (width, value) in self.natural.iter_mut().zip(row) {
                 *width = (*width).max(cell_width(value)).min(MAX_COLUMN_WIDTH);
@@ -161,6 +174,7 @@ impl ResultTable {
     }
 
     pub fn refresh_row_width(&mut self, index: usize) {
+        self.invalidate();
         if let Some(row) = self.rows.get(index) {
             for (width, value) in self.natural.iter_mut().zip(row) {
                 *width = (*width).max(cell_width(value)).min(MAX_COLUMN_WIDTH);

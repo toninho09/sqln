@@ -1,8 +1,6 @@
 // Tests of the undo history of the conventional mode and of its change to the Vim mode.
 
-mod common;
-
-use common::{Fixture, ctrl, key, shift};
+use crate::common::{Fixture, ctrl, key, shift};
 use crossterm::event::KeyCode::{
     self, Backspace, Char, Delete, Down, End, Enter, Esc, Left, Right, Tab, Up,
 };

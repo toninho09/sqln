@@ -1,13 +1,11 @@
 // The hint row: each state of the application shows the commands that act in that state.
 // The tests use a real SQLite file. `tests/table.rs` covers the table tabs.
 
-mod common;
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, temp_db};
+use crate::common::{ctrl, key, temp_db};
 use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -84,7 +82,7 @@ impl Screen {
     }
 
     fn select(&mut self, kind: RowKind, name: &str) {
-        common::select_row(&mut self.app, 0, &[kind], name);
+        crate::common::select_row(&mut self.app, 0, &[kind], name);
     }
 
     /// Returns the hint row of a screen with this width.
@@ -280,7 +278,7 @@ fn the_explorer_page_lists_the_commands_of_a_connection() {
     let mut s = Screen::conventional("connection-page");
     s.prefix('h');
     assert_eq!(
-        common::explorer_page(&s.app),
+        crate::common::explorer_page(&s.app),
         [
             "n New console",
             "s Scripts",
@@ -304,14 +302,14 @@ fn a_sqlite_file_keeps_no_session_to_disconnect() {
     let mut s = Screen::conventional("disconnect");
     s.run("SELECT 1;");
     s.prefix('h');
-    assert!(!common::explorer_page(&s.app).contains(&"D Disconnect".to_owned()));
+    assert!(!crate::common::explorer_page(&s.app).contains(&"D Disconnect".to_owned()));
 }
 
 #[test]
 fn a_sqlite_file_has_no_saved_password_to_delete() {
     let mut s = Screen::conventional("password");
     s.prefix('h');
-    assert!(!common::explorer_page(&s.app).contains(&"p Delete the password".to_owned()));
+    assert!(!crate::common::explorer_page(&s.app).contains(&"p Delete the password".to_owned()));
 }
 
 #[test]
@@ -335,7 +333,7 @@ fn a_schema_row_keeps_only_the_commands_of_its_tree() {
     );
     assert!(row.contains("c compare"), "{row}");
     assert!(row.ends_with("Ctrl+P commands"), "{row}");
-    let page = common::explorer_page(&s.app);
+    let page = crate::common::explorer_page(&s.app);
     for row in ["i Show the structure", "r Read the catalog"] {
         assert!(page.contains(&row.to_owned()), "{page:?}");
     }
@@ -358,7 +356,7 @@ fn a_table_row_keeps_only_the_commands_of_a_table() {
     assert!(row.contains("g sql/ddl"), "{row}");
     assert!(row.contains("c compare"), "{row}");
     assert!(row.ends_with("Ctrl+P commands"), "{row}");
-    let page = common::explorer_page(&s.app);
+    let page = crate::common::explorer_page(&s.app);
     for row in ["g Generate SQL", "I Import a file", "n New console"] {
         assert!(page.contains(&row.to_owned()), "{page:?}");
     }
@@ -394,7 +392,7 @@ fn a_column_row_shows_its_parent_and_opens_nothing() {
     s.code(KeyCode::Down);
     s.assert_shows(&["Left parent", "Ctrl+P commands"]);
     s.assert_hides(&["Enter open", "expand"]);
-    assert!(common::explorer_page(&s.app).contains(&"i Show the structure".to_owned()));
+    assert!(crate::common::explorer_page(&s.app).contains(&"i Show the structure".to_owned()));
 }
 
 // ---------------------------------------------------------------------------
@@ -416,7 +414,7 @@ const CONSOLE_ROWS: &[&str] = &[
 impl Screen {
     #[track_caller]
     fn menu_shows(&self, wanted: &[&str]) {
-        let rows = common::prefix_page(&self.app);
+        let rows = crate::common::prefix_page(&self.app);
         for text in wanted {
             let found = rows.iter().any(|row| row == text);
             assert!(found, "{text:?} is not in {rows:?}");
@@ -425,7 +423,7 @@ impl Screen {
 
     #[track_caller]
     fn menu_hides(&self, unwanted: &[&str]) {
-        let rows = common::prefix_page(&self.app);
+        let rows = crate::common::prefix_page(&self.app);
         for text in unwanted {
             let found = rows.iter().any(|row| row == text);
             assert!(!found, "{text:?} is in {rows:?}");

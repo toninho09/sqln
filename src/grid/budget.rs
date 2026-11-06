@@ -73,6 +73,16 @@ impl Budget {
         }
     }
 
+    /// Reserves a bounded snapshot or generated text in the shared budget.
+    pub fn reserve_bytes(&self, bytes: usize) -> bool {
+        self.used
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+                used.checked_add(bytes)
+                    .filter(|total| *total <= self.limit())
+            })
+            .is_ok()
+    }
+
     pub fn release(&self, bytes: usize) {
         let _ = self
             .used

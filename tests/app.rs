@@ -3,6 +3,13 @@
 
 mod common;
 
+mod command_log;
+mod commands;
+mod follow_key;
+mod guard;
+mod history;
+mod operation;
+
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -254,13 +261,13 @@ fn f5_runs_the_statement_at_the_cursor_and_the_grid_shows_it() {
 }
 
 #[test]
-fn ctrl_enter_runs_and_shift_enter_runs_the_script() {
+fn ctrl_enter_runs_and_shift_f5_runs_the_script() {
     let mut f = Fixture::new("run-keys");
     f.write("SELECT 1;\nSELECT 2;");
     f.press(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     f.idle();
     assert_eq!(f.app.console_mut().results.len(), 1);
-    f.press(shift(KeyCode::Enter));
+    f.press(shift(KeyCode::F(5)));
     f.idle();
     assert_eq!(f.app.console_mut().results.len(), 2);
 }
@@ -778,6 +785,25 @@ fn message_wheel_bursts_stop_at_the_edges_without_delaying_the_reverse_direction
     f.wheel(MouseEventKind::ScrollDown, 3, 25);
     f.buffer();
     assert_eq!(f.app.console().messages_scroll, 3);
+}
+
+#[test]
+fn the_horizontal_wheel_moves_the_view_of_the_editor() {
+    let mut f = Fixture::new("editor-wheel-side");
+    f.prefix('b');
+    f.write(&format!("-- {}", "0123456789".repeat(30)));
+    f.press(key(KeyCode::Home));
+    f.buffer();
+    assert_eq!(f.app.console().editor.scroll().0, 0);
+    f.wheel(MouseEventKind::ScrollRight, 10, 5);
+    assert_eq!(f.app.console().editor.scroll().0, 1);
+    // The view stops at the end of the row of the cursor.
+    for _ in 0..400 {
+        f.wheel(MouseEventKind::ScrollRight, 10, 5);
+    }
+    assert_eq!(f.app.console().editor.scroll().0, 303);
+    f.wheel(MouseEventKind::ScrollLeft, 10, 5);
+    assert_eq!(f.app.console().editor.scroll().0, 302);
 }
 
 #[test]

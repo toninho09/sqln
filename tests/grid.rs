@@ -1,5 +1,13 @@
 // Tests of the grid data without a screen: row search, column widths, and large values.
 
+mod common;
+
+mod compare_data;
+mod compare_tab;
+mod export;
+mod import;
+mod import_dialog;
+
 use std::time::{Duration, Instant};
 
 use sqln::exec::{ExecEvent, Flow, ResultSink, StatementKey};

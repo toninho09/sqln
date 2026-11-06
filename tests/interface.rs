@@ -1,8 +1,6 @@
 // The look of the application: themes, symbols, the status line, the menu of `Ctrl+W`,
 // the command palette, and the first screen.
 
-mod common;
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
@@ -10,7 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, shift, temp_db, temp_dir};
+use crate::common::{ctrl, key, shift, temp_db, temp_dir};
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -465,6 +463,7 @@ fn main_tabs(width: u16, labels: &[&str], active: usize, theme: &Theme) -> (Stri
         .map(|label| TabView {
             label: (*label).to_owned(),
             badge: None,
+            right: false,
         })
         .collect();
     draw_views(width, views, active, theme)
@@ -497,6 +496,7 @@ fn the_quit_button_stands_at_the_right_end_and_the_tabs_stop_before_it() {
         .map(|index| TabView {
             label: format!("console-{index}"),
             badge: None,
+            right: false,
         })
         .collect();
     let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
@@ -650,10 +650,12 @@ fn a_badge_stands_at_the_start_of_the_tab_and_the_close_mark_stays_at_the_end() 
         TabView {
             label: "one".to_owned(),
             badge,
+            right: false,
         },
         TabView {
             label: "two".to_owned(),
             badge: None,
+            right: false,
         },
     ];
     let (row, tabs) = draw_views(40, views, 0, &theme);
@@ -678,10 +680,12 @@ fn a_tab_with_a_badge_that_the_row_cuts_has_no_close_mark() {
         TabView {
             label: "one".to_owned(),
             badge: None,
+            right: false,
         },
         TabView {
             label: "two".to_owned(),
             badge,
+            right: false,
         },
     ];
     let (_, tabs) = draw_views(20, views, 0, &theme);
@@ -1472,7 +1476,7 @@ fn sqlite_form_screen(name: &str) -> Screen {
 }
 
 fn focus_field(screen: &mut Screen, field: Field) {
-    common::focus_form_field(&mut screen.app, field);
+    crate::common::focus_form_field(&mut screen.app, field);
 }
 
 /// Clicks a section of the sidebar of the form.

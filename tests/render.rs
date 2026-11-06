@@ -1,12 +1,10 @@
-mod common;
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::rc::Rc;
 
-use common::sample_catalog;
-use common::{Fixture, ctrl, key, shift};
+use crate::common::sample_catalog;
+use crate::common::{Fixture, ctrl, key, shift};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -182,7 +180,10 @@ fn every_theme_has_no_rgb_color_and_the_plain_theme_has_no_color() {
 #[test]
 fn selection_style_covers_only_the_selected_characters() {
     let mut f = Fixture::conventional("abcdef");
-    f.press_all(&[common::shift(KeyCode::Right), common::shift(KeyCode::Right)]);
+    f.press_all(&[
+        crate::common::shift(KeyCode::Right),
+        crate::common::shift(KeyCode::Right),
+    ]);
     let theme = Theme::ansi();
     let buffer = draw(&mut f.editor, &theme, 20, 3);
     let (x, y) = find(&buffer, "abcdef");
@@ -238,6 +239,54 @@ fn horizontal_scroll_keeps_the_cursor_visible() {
     draw(&mut f.editor, &Theme::ansi(), 40, 4);
     let cursor = f.editor.state.cursor_screen_position().unwrap();
     assert!(cursor.x < 40);
+}
+
+#[test]
+fn the_horizontal_wheel_moves_the_view_of_the_editor() {
+    let wheel = |editor: &mut SqlEditor, kind: MouseEventKind| {
+        editor.on_mouse(MouseEvent {
+            kind,
+            column: 10,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+    };
+    let mut f = Fixture::conventional(&"0123456789".repeat(12));
+    let before = draw(&mut f.editor, &Theme::ansi(), 40, 4);
+    for _ in 0..7 {
+        wheel(&mut f.editor, MouseEventKind::ScrollRight);
+    }
+    assert_eq!(f.editor.scroll().0, 7);
+    // The cursor starts at the first column, so the view carries it along.
+    assert_eq!(f.editor.cursor().col, 7);
+    let after = draw(&mut f.editor, &Theme::ansi(), 40, 4);
+    let first = line(&before, 0);
+    let moved = line(&after, 0);
+    let gutter = first.chars().take_while(|c| *c != '0').count();
+    assert!(
+        moved[gutter..].starts_with(first[gutter + 7..].trim_end()),
+        "before: {first}\nafter: {moved}"
+    );
+    for _ in 0..15 {
+        wheel(&mut f.editor, MouseEventKind::ScrollLeft);
+    }
+    assert_eq!(f.editor.scroll().0, 0);
+    // The view stops at the last column of the row of the cursor.
+    for _ in 0..200 {
+        wheel(&mut f.editor, MouseEventKind::ScrollRight);
+    }
+    assert_eq!(f.editor.scroll().0, 120);
+    draw(&mut f.editor, &Theme::ansi(), 40, 4);
+    assert!(f.editor.state.cursor_screen_position().unwrap().x < 40);
+    // In the Vim mode, the cursor stays on the last character.
+    let mut f = Fixture::vim(&"x".repeat(120));
+    draw(&mut f.editor, &Theme::ansi(), 40, 4);
+    for _ in 0..200 {
+        wheel(&mut f.editor, MouseEventKind::ScrollRight);
+    }
+    assert_eq!(f.editor.scroll().0, 119);
+    draw(&mut f.editor, &Theme::ansi(), 40, 4);
+    assert!(f.editor.state.cursor_screen_position().unwrap().x < 40);
 }
 
 #[test]
@@ -749,13 +798,13 @@ fn the_keys_of_the_hint_bar_fit_the_minimum_width() {
 fn the_explorer_page_shows_the_keys_of_the_key_map() {
     let overrides = HashMap::from([("navigatorStructure".to_owned(), vec!["u".to_owned()])]);
     let keymap = Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap();
-    let database = common::temp_db("explorer-key-map");
+    let database = crate::common::temp_db("explorer-key-map");
     rusqlite::Connection::open(&database)
         .unwrap()
         .execute_batch("CREATE TABLE t(a);")
         .unwrap();
     let app = hint_app_on(KeyboardMode::Conventional, Some(keymap), Some(database));
-    let page = common::explorer_page(&app);
+    let page = crate::common::explorer_page(&app);
     assert!(
         page.contains(&"u Show the structure".to_owned()),
         "{page:?}"
@@ -770,7 +819,7 @@ fn the_hint_bar_shows_the_keys_of_the_key_map() {
         ("nextTab".to_owned(), vec!["ctrl+w u".to_owned()]),
     ]);
     let keymap = Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap();
-    let database = common::temp_db("hint-key-map");
+    let database = crate::common::temp_db("hint-key-map");
     rusqlite::Connection::open(&database)
         .unwrap()
         .execute_batch("CREATE TABLE t(a);")

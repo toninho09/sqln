@@ -337,6 +337,11 @@ fn redis_changes_state(sql: &str) -> bool {
         .is_some_and(|word| is_any(word, REDIS_READS) || is_any(word, REDIS_SESSION))
 }
 
+/// Returns true only for a known Redis read, without session-control commands.
+pub fn is_known_redis_read(sql: &str) -> bool {
+    first_keyword(sql, Dialect::Redis).is_some_and(|word| is_any(word, REDIS_READS))
+}
+
 /// Returns true for a statement that a production connection confirms: it is not a
 /// plain read and it does not control the session.
 pub fn changes_state(sql: &str, dialect: Dialect) -> bool {

@@ -2,6 +2,9 @@
 
 mod common;
 
+mod optimizations;
+mod persist;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

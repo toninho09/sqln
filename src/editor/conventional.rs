@@ -251,6 +251,8 @@ impl SqlEditor {
             self.history.undo(&mut state.lines, &mut state.cursor) || self.undo_vim_step();
         self.after_history_step();
         if changed {
+            // Any undo takes every ghost, as the user decided.
+            self.take_ghosts();
             self.mark_changed();
         }
     }

@@ -935,6 +935,7 @@ impl TableTab {
         let missing = completion.missing_columns.clone();
         self.list_waits = !missing.is_empty();
         self.list = (!completion.items.is_empty()).then_some(SuggestionList {
+            ai: false,
             completion,
             selected: 0,
         });

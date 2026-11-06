@@ -1,5 +1,7 @@
 //! The application shell: the consoles, the connections, and the screen.
 
+mod agent;
+mod ai;
 mod auth;
 mod browse;
 mod close;
@@ -18,6 +20,7 @@ mod import;
 mod keys;
 mod mouse;
 mod persist;
+mod review;
 mod scripts;
 mod session;
 mod tables;
@@ -122,6 +125,10 @@ const MIN_EDITOR_RATIO: u16 = 10;
 const MAX_EDITOR_RATIO: u16 = 90;
 
 pub struct Options {
+    pub ai_completion: crate::ai::Preferences,
+    pub ai_vault: Option<Arc<crate::creds::SystemVault>>,
+    /// Starts the local assistant endpoint. The command-line interface enables it.
+    pub agent_ipc: bool,
     pub keyboard: KeyboardMode,
     /// The limit of the undo history of one console, in the conventional mode.
     pub undo_limit: usize,
@@ -156,6 +163,8 @@ pub struct Options {
     pub suggestion_keys: SuggestionKeys,
     /// True when Messages shows internal and shared commands.
     pub show_system_commands: bool,
+    /// The MCP preferences of the configuration.
+    pub agent: crate::store::config::AgentSettings,
     pub export_choices: ExportChoices,
     pub import_choices: ImportChoices,
 }
@@ -163,6 +172,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            agent_ipc: false,
             keyboard: KeyboardMode::Conventional,
             undo_limit: DEFAULT_UNDO_LIMIT,
             keymap: None,
@@ -180,7 +190,10 @@ impl Default for Options {
             vault: None,
             appearance: (None, None),
             suggestion_keys: SuggestionKeys::default(),
+            ai_completion: crate::ai::Preferences::default(),
+            ai_vault: None,
             show_system_commands: crate::store::config::DEFAULT_SHOW_SYSTEM_COMMANDS,
+            agent: crate::store::config::AgentSettings::default(),
             export_choices: ExportChoices::default(),
             import_choices: ImportChoices::default(),
         }
@@ -189,6 +202,23 @@ impl Default for Options {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum DialogAction {
+    AiFormRetry,
+    AiFormSession,
+    AiAllow(u64),
+    AiCancel(u64),
+    AiRetry(u64),
+    AiSession(u64),
+    AgentAccess(String, agent::Grant),
+    AgentRevoke(String),
+    AgentDirect(ConsoleId),
+    /// Removes the remembered access of a client.
+    AgentForget(String),
+    /// The answer to the run question of an agent task.
+    AgentRun(String, bool),
+    /// Stops one agent task. Its session keeps its access.
+    AgentStopTask(String),
+    /// Revokes the session of its last agent tab, then closes the tab.
+    AgentCloseRevoke(ConsoleId),
     Dismiss,
     CreateDatabase,
     CreateFormFile,
@@ -264,6 +294,7 @@ impl Overlay {
 
 /// What a row of a list stands for.
 enum PickerKind {
+    Agent(Vec<agent::Choice>),
     /// The first row is the default of the connection, and the others are schemas.
     Schema {
         console: ConsoleId,
@@ -323,6 +354,10 @@ struct ScreenLayout {
     main_tabs: Vec<MainTab>,
     /// The **Quit** button at the right end of the main tabs.
     quit: Rect,
+    agent_bar: crate::ui::agent::BarTargets,
+    agent_card: crate::ui::agent::CardTargets,
+    /// The item of the card in the last frame. A click acts on this item.
+    agent_notice: Option<agent::Notice>,
     body: Rect,
     console: ConsoleLayout,
     table: TableLayout,
@@ -351,6 +386,7 @@ struct ScreenLayout {
 }
 
 pub struct App {
+    ai: ai::State,
     consoles: Vec<Console>,
     /// The console that the console commands use. A table tab can be on screen.
     active: usize,
@@ -452,6 +488,7 @@ pub struct App {
     /// The files of the application. It is `None` when nothing loads or saves.
     persist: Option<persist::Persist>,
     auth: auth::Auth,
+    agent: agent::State,
     /// The scripts that another program changed, and that wait for a choice.
     conflicts: Option<conflicts::Conflicts>,
     /// The SQL rules of a console that has no connection.
@@ -521,6 +558,7 @@ impl App {
             undo_limit: options.undo_limit,
             keymap,
             suggestion_keys: options.suggestion_keys,
+            ai: ai::State::new(options.ai_completion, options.ai_vault),
             show_system_commands: options.show_system_commands,
             database: options.database,
             clipboard,
@@ -564,6 +602,7 @@ impl App {
             pending_diagrams: Vec::new(),
             persist,
             auth: auth::Auth::new(options.vault.take(), plain),
+            agent: agent::State::default(),
             conflicts: None,
             fallback_dialect: options.dialect,
             pending_key: None,
@@ -611,6 +650,13 @@ impl App {
             app.consoles[index].hidden = true;
             app.focus_navigator();
         }
+        app.agent.settings = options.agent;
+        if options.agent_ipc {
+            let directory =
+                crate::agent::ipc::runtime_dir().map_err(|error| text::agent_endpoint(&error));
+            app.agent.directory = Some(directory);
+            app.open_agent_endpoint();
+        }
         app
     }
 
@@ -643,6 +689,8 @@ impl App {
 
     /// Ends the runtime without a wait for a statement that does not answer.
     pub fn shutdown(&mut self) {
+        self.agent.server.take();
+        self.drain_agent();
         self.auth.shutdown();
         self.save_session();
         if let Some(manager) = self.manager.take() {
@@ -777,12 +825,35 @@ impl App {
         if ends_status(&event) {
             self.clear_status();
         }
+        self.keep_agent_focus();
+        self.sync_ai();
         self.route_event(event);
+        self.sync_ai();
+        self.keep_agent_focus();
         self.sync_command_history();
         // The application keeps the message of the editor, so one clock serves both.
         if let Some(message) = self.console_mut().editor.take_status() {
             self.status = Some(message.to_owned());
         }
+    }
+
+    /// Keeps the focus of an agent tab without SQL on its results, because it shows no editor.
+    fn keep_agent_focus(&mut self) {
+        let Some(console) = self.consoles.get(self.active) else {
+            return;
+        };
+        if console.focus != Focus::Results && self.agent_tab_without_sql(console.id) {
+            self.consoles[self.active].focus = Focus::Results;
+        }
+        self.see_agent_sql();
+    }
+
+    /// Returns true for an agent tab that holds no SQL for the user. It shows no editor.
+    fn agent_tab_without_sql(&self, console: ConsoleId) -> bool {
+        self.agent.owns(console)
+            && self
+                .console_index(console)
+                .is_some_and(|index| self.consoles[index].editor.is_blank())
     }
 
     /// Moves the clock of the screen. It returns true when a run or the age of an open
@@ -791,7 +862,10 @@ impl App {
         self.clock = now;
         let time = now.saturating_duration_since(self.started);
         let frame = usize::try_from(time.as_millis() / RUN_FRAME.as_millis()).unwrap_or(0);
-        let running = self.consoles.iter().any(Console::is_busy)
+        // An agent task updates the time of its card, and the card appears after a delay.
+        let running = self.ai.busy()
+            || self.agent.active_tasks() != 0
+            || self.consoles.iter().any(Console::is_busy)
             || self.tables.iter().any(TableTab::is_busy)
             || self.diagrams.iter().any(DiagramTab::is_busy)
             || self.compares.iter().any(CompareTab::is_busy);
@@ -835,6 +909,7 @@ impl App {
 
     fn modal_is_open(&self) -> bool {
         !self.dialogs.is_empty()
+            || self.ai.modal()
             || self.conflicts.is_some()
             || self.overlay.is_some()
             || self.help.is_some()
@@ -852,6 +927,18 @@ impl App {
     }
 
     fn route_event(&mut self, event: Event) {
+        if self.dialogs.is_empty() && self.auth.prompt.is_none() {
+            if let Event::Paste(text) = &event
+                && self.ai_paste(text)
+            {
+                return;
+            }
+            if let Event::Mouse(mouse) = &event
+                && self.on_ai_mouse(*mouse)
+            {
+                return;
+            }
+        }
         let blocked = self.modal_is_open();
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
@@ -973,10 +1060,19 @@ impl App {
             console.parameters.paste(text);
             return;
         }
-        if !console.paste_in_search(text) {
-            console.focus = Focus::Editor;
-            console.editor.on_paste(text);
+        if console.paste_in_search(text) {
+            return;
         }
+        if self.agent_tab_without_sql(self.console().id) {
+            self.status = Some(text::AGENT_NO_EDITOR.into());
+            return;
+        }
+        if self.review_paste() {
+            return;
+        }
+        let console = self.console_mut();
+        console.focus = Focus::Editor;
+        console.editor.on_paste(text);
     }
 
     /// Returns true when the next step must not wait for a key.
@@ -1008,11 +1104,15 @@ impl App {
     /// Reads waiting execution events and continues the row search.
     /// It returns true when the screen changed.
     pub fn drain_events(&mut self) -> bool {
+        let ai_changed = self.poll_ai();
+        let agent_changed = self.drain_agent();
+        self.continue_agent_jobs();
         self.sync_command_history();
         let ticked = self.tick();
         let authorized = self.poll_auth();
         let probed = self.poll_probes();
-        let changed = self.has_work() || ticked || authorized || probed;
+        let changed =
+            self.has_work() || ticked || authorized || probed || agent_changed || ai_changed;
         if changed {
             let deadline = Instant::now() + WORK_SLICE;
             match (self.compare_active, self.table_active) {
@@ -1036,12 +1136,15 @@ impl App {
                 break;
             }
         }
+        self.poll_agent_jobs();
         self.flush_history();
         changed || self.events_flow
     }
 
     fn on_exec_event(&mut self, event: ExecEvent) {
+        self.note_agent_event(&event);
         match event {
+            ExecEvent::AgentMetadata { job, result } => self.on_agent_metadata(&job, result),
             ExecEvent::CommandLog { target, event } => {
                 if let Some(console) = self
                     .consoles
@@ -1137,16 +1240,21 @@ impl App {
     pub fn draw(&mut self, frame: &mut Frame) {
         self.choose_theme();
         let area = frame.area();
+        self.layout.agent_bar = Default::default();
+        self.layout.agent_card = Default::default();
+        self.layout.agent_notice = None;
         frame.render_widget(Block::new().style(self.theme.base), area);
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
             draw_small_terminal(frame, area, (MIN_WIDTH, MIN_HEIGHT), &self.theme);
             return;
         }
         let tall = area.height >= TALL_HEIGHT;
-        let [tabs, rule, body, status, hints] = Layout::vertical([
+        let agent_bar = self.agent_bar();
+        let [tabs, rule, body, notice, status, hints] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(u16::from(tall)),
             Constraint::Min(0),
+            Constraint::Length(u16::from(agent_bar.is_some())),
             Constraint::Length(1),
             Constraint::Length(1),
         ])
@@ -1170,13 +1278,20 @@ impl App {
         } else {
             self.draw_active_console(frame, main, tall);
         }
+        if let Some(bar) = agent_bar {
+            self.layout.agent_bar = crate::ui::agent::draw_bar(frame, notice, &bar, &self.theme);
+        }
+        if let Some((notice, card)) = self.agent_card() {
+            self.layout.agent_card = crate::ui::agent::draw_card(frame, main, &card, &self.theme);
+            self.layout.agent_notice = Some(notice);
+        }
         self.draw_status(frame, status);
         self.draw_hint(frame, hints);
         self.draw_layers(
             frame,
             Rect {
                 y: 0,
-                height: status.y,
+                height: notice.y,
                 ..area
             },
         );
@@ -1254,6 +1369,10 @@ impl App {
             title: tall,
             welcome: self.welcome(),
             show_system_commands: self.show_system_commands,
+            agent: self.agent_tab_without_sql(self.consoles[self.active].id),
+            agent_sql: self.agent.owns(self.consoles[self.active].id),
+            agent_access: self.agent.tab_access(self.consoles[self.active].id),
+            agent_tasks: self.agent.tab_tasks(self.consoles[self.active].id),
         };
         let ratio = self.editor_ratio;
         let focused = !self.navigator_focused;
@@ -1372,9 +1491,56 @@ impl App {
         }
     }
 
+    /// Writes the effective key of an agent command, or its path in the palette.
+    pub(super) fn agent_shortcut(
+        &self,
+        action: crate::input::Action,
+        name: &str,
+        entry: &str,
+    ) -> Option<String> {
+        self.shown_key(action)
+            .map(|key| format!("{key}: {name}"))
+            .or_else(|| {
+                self.shown_key(crate::input::Action::OpenPalette)
+                    .map(|key| format!("{key} > {entry}"))
+            })
+    }
+
+    /// Returns the MCP row while an item waits for the user or an agent task runs.
+    fn agent_bar(&self) -> Option<crate::ui::agent::Bar> {
+        let access = self.agent.pending_access();
+        let proposals = self.agent.pending_proposals();
+        let tasks = self.agent.active_tasks();
+        if access + proposals + tasks == 0 {
+            return None;
+        }
+        let (action, name, entry) = if access != 0 {
+            (
+                crate::input::Action::AgentSessions,
+                "sessions",
+                "Agent sessions",
+            )
+        } else {
+            (
+                crate::input::Action::AgentReview,
+                "review",
+                "Review agent changes",
+            )
+        };
+        let shortcut = (access + proposals != 0).then(|| self.agent_shortcut(action, name, entry));
+        Some(crate::ui::agent::Bar {
+            items: text::agent_bar(access, proposals, tasks),
+            shortcut: shortcut.flatten(),
+            review: access + proposals != 0,
+            stop: tasks != 0,
+        })
+    }
+
     fn draw_status(&self, frame: &mut Frame, area: Rect) {
         let panel = self.status_panel();
         let data = (self.budget.used(), self.budget.limit());
+        let agent = self.agent.status_label();
+        let agent = agent.as_deref();
         if let Some(tab) = self.compare() {
             let view = tab.result.view;
             let position =
@@ -1396,6 +1562,7 @@ impl App {
                     .map(|manager| manager.usage(target.connection)),
                 data,
                 position,
+                agent,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1417,6 +1584,7 @@ impl App {
                     .map(|manager| manager.usage(tab.connection)),
                 data,
                 position: None,
+                agent,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1441,6 +1609,7 @@ impl App {
                     .map(|manager| manager.usage(tab.connection)),
                 data,
                 position,
+                agent,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1458,6 +1627,7 @@ impl App {
                 pool: None,
                 data,
                 position: None,
+                agent,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1495,6 +1665,7 @@ impl App {
                 .map(|(id, manager)| manager.usage(id)),
             data,
             position,
+            agent,
         };
         draw_statusline(frame, area, &status, &self.theme);
     }
@@ -1524,6 +1695,7 @@ impl App {
 
     /// Draws the windows above the panels. `bounds` holds the rows above the status line.
     fn draw_layers(&mut self, frame: &mut Frame, bounds: Rect) {
+        self.draw_ai(frame);
         if self.command_page.is_some_and(|region| {
             region != Region::Navigator && self.context_region() != Some(region)
         }) {
@@ -1610,6 +1782,7 @@ impl App {
         if let Some(prompt) = &self.auth.prompt {
             self.layout.password = crate::ui::auth::draw_password(frame, prompt, &self.theme);
         }
+        self.draw_ai_prompts(frame);
         if let Some(dialog) = self.dialogs.front() {
             let labels: Vec<&str> = dialog.options.iter().map(|(label, _)| *label).collect();
             self.layout.dialog = draw_dialog(

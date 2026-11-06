@@ -1,11 +1,9 @@
-mod common;
-
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{temp_db, temp_dir};
+use crate::common::{temp_db, temp_dir};
 use sqln::clipboard::{base64, base64_bytes};
 use sqln::connector::sqlite::{SqliteConnector, SqliteTarget};
 use sqln::exec::{ConsoleId, ExecEvent, ExecutionEnd, Manager, RunOptions, Settings};

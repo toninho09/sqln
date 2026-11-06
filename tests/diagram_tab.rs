@@ -1,14 +1,12 @@
 // The diagram tab in the application: the keys, the mouse, the copy, and the read of a
 // real SQLite file.
 
-mod common;
-
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, shift, temp_db};
+use crate::common::{ctrl, key, shift, temp_db};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -79,7 +77,7 @@ impl Fixture {
 
     /// Presses `d` on a row of the navigator and waits for the end of the read.
     fn diagram_of(&mut self, kinds: &[RowKind], name: &str) {
-        common::select_row(&mut self.app, 0, kinds, name);
+        crate::common::select_row(&mut self.app, 0, kinds, name);
         self.code(KeyCode::Char('d'));
         self.idle();
     }
@@ -197,7 +195,7 @@ fn d_on_a_table_shows_the_table_and_its_neighbors() {
 #[test]
 fn d_on_a_column_shows_the_diagram_of_its_table() {
     let mut f = Fixture::new("diagram-column");
-    common::select_row(&mut f.app, 0, &[RowKind::Table], "notes");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Table], "notes");
     f.code(KeyCode::Right);
     // The columns of a table arrive after its row opens.
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -239,11 +237,11 @@ fn a_view_and_a_second_d_open_no_new_tab() {
 #[test]
 fn the_explorer_page_lists_the_diagram_except_on_a_view() {
     let mut f = Fixture::new("diagram-page");
-    common::select_row(&mut f.app, 0, &[RowKind::Table], "items");
-    let page = common::explorer_page(&f.app);
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Table], "items");
+    let page = crate::common::explorer_page(&f.app);
     assert!(page.contains(&"d ER diagram".to_owned()), "{page:?}");
-    common::select_row(&mut f.app, 0, &[RowKind::View], "labels");
-    let page = common::explorer_page(&f.app);
+    crate::common::select_row(&mut f.app, 0, &[RowKind::View], "labels");
+    let page = crate::common::explorer_page(&f.app);
     assert!(!page.iter().any(|row| row.contains("diagram")), "{page:?}");
 }
 
@@ -527,7 +525,7 @@ fn a_paste_on_a_diagram_does_not_reach_the_console() {
 #[test]
 fn ctrl_w_d_opens_the_diagram_of_the_row_the_table_or_the_console() {
     let mut f = Fixture::new("diagram-prefix");
-    let menu = |f: &Fixture| common::prefix_page(&f.app);
+    let menu = |f: &Fixture| crate::common::prefix_page(&f.app);
     // The console of the file shows the current schema.
     assert!(menu(&f).contains(&"D ER diagram".to_owned()));
     f.press(ctrl('w'));
@@ -541,7 +539,7 @@ fn ctrl_w_d_opens_the_diagram_of_the_row_the_table_or_the_console() {
     assert!(!menu(&f).contains(&"D ER diagram".to_owned()));
 
     // A table tab shows the diagram of its table.
-    common::open_table(&mut f.app, 0, "items");
+    crate::common::open_table(&mut f.app, 0, "items");
     f.press(ctrl('w'));
     f.code(KeyCode::Char('D'));
     f.idle();
@@ -549,9 +547,9 @@ fn ctrl_w_d_opens_the_diagram_of_the_row_the_table_or_the_console() {
     assert!(matches!(focus, Focus::Table(table) if table.relation == "items"));
 
     // In the explorer, the row decides, and a view gives the reason.
-    common::select_row(&mut f.app, 0, &[RowKind::View], "labels");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::View], "labels");
     assert!(!menu(&f).contains(&"D ER diagram".to_owned()));
-    common::select_row(&mut f.app, 0, &[RowKind::Table], "notes");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Table], "notes");
     f.press(ctrl('w'));
     f.code(KeyCode::Char('D'));
     f.idle();

@@ -149,6 +149,7 @@ impl Edits {
             table.bytes = table.bytes - old_bytes + bytes;
         }
         self.rows.clear();
+        table.invalidate();
         Ok(())
     }
 }

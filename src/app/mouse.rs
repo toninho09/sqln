@@ -54,7 +54,16 @@ impl App {
             return;
         }
         let position = Position::new(mouse.column, mouse.row);
+        if !self.layout.agent_card.area.contains(position) && self.on_review_mouse(mouse) {
+            return;
+        }
         match mouse.kind {
+            // The access card is above the panels, so it takes their clicks.
+            MouseEventKind::Down(MouseButton::Left)
+                if self.layout.agent_card.area.contains(position) =>
+            {
+                self.on_agent_card(position);
+            }
             MouseEventKind::Down(MouseButton::Left) => self.on_press(mouse, position),
             MouseEventKind::Drag(MouseButton::Left) if self.drag.is_some() => self.on_drag(mouse),
             MouseEventKind::Up(_) if self.drag.is_some() => self.drag = None,
@@ -96,6 +105,16 @@ impl App {
             self.drag = Some(Drag::Navigator);
         } else if layout.quit.contains(position) {
             self.request_exit();
+        } else if layout.agent_bar.review.contains(position) {
+            self.pending_key = None;
+            self.command_page = None;
+            self.review_agent_next();
+        } else if layout.agent_bar.stop.contains(position) {
+            if self.command_available(Action::AgentStop) {
+                self.pending_key = None;
+                self.command_page = None;
+                self.perform(Action::AgentStop, false);
+            }
         } else if let Some(tab) = main_tab_at(&layout.main_tabs, position) {
             if tab.close.is_some_and(|close| mouse.column >= close) {
                 self.close_tab(tab.index);
@@ -334,6 +353,10 @@ impl App {
             Control::Commit => Action::Commit,
             Control::Rollback => Action::Rollback,
             Control::Schema => Action::ChooseSchema,
+            Control::NewConsole => Action::AgentSqlToConsole,
+            Control::Clear => Action::AgentSqlClear,
+            Control::Access => Action::AgentSession,
+            Control::Tasks => Action::AgentTasks,
         };
         self.perform(action, false);
     }
@@ -349,7 +372,7 @@ impl App {
             MouseEventKind::ScrollRight => (0, WHEEL_COLUMNS),
             _ => return,
         };
-        // Only the grid moves to the side.
+        // Only the grid and the editor move to the side.
         let vertical = columns == 0;
         if vertical
             && self.console_on_screen()
@@ -372,10 +395,7 @@ impl App {
             && area.contains(position)
         {
             result.view.move_by(rows, columns, &result.table, false);
-        } else if vertical
-            && self.layout.console.editor.contains(position)
-            && self.editor_has_focus()
-        {
+        } else if self.layout.console.editor.contains(position) && self.editor_has_focus() {
             self.console_mut().editor.on_mouse(mouse);
         }
     }
@@ -676,8 +696,9 @@ impl App {
         form.focus_on(field);
         let request = form.press();
         match request {
+            SettingsRequest::AiTest => self.test_ai_connection(),
             SettingsRequest::Save => self.save_settings(),
-            SettingsRequest::Cancel => self.settings_form = None,
+            SettingsRequest::Cancel => self.close_settings(),
             SettingsRequest::None => {}
         }
     }

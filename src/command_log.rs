@@ -453,6 +453,13 @@ impl History {
     pub fn iter(&self) -> impl Iterator<Item = &Message> {
         self.entries.iter().map(|entry| &entry.message)
     }
+    pub(crate) fn agent_messages(&self) -> impl Iterator<Item = &Message> {
+        self.entries
+            .iter()
+            .filter(|entry| self.show_system_commands || !entry.system)
+            .map(|entry| &entry.message)
+    }
+
     pub fn bytes(&self) -> usize {
         size_of::<Self>() + self.bytes + self.entries.capacity() * size_of::<Entry>()
     }

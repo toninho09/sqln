@@ -63,6 +63,74 @@ pub const DEFAULT_CAP_IN_SQL: bool = true;
 pub const DEFAULT_SHOW_SYSTEM_COMMANDS: bool = false;
 /// A run of this time or more rings the bell at its end. The value 0 stops the bell.
 pub const DEFAULT_BELL_AFTER_SECONDS: u64 = 10;
+/// The instance opens its MCP endpoint unless a file says otherwise.
+pub const DEFAULT_MCP: bool = true;
+pub const DEFAULT_MCP_REMEMBER_CLIENTS: bool = true;
+
+/// An access level of an MCP session. The names are the `access` values of `request_access`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentAccess {
+    /// Reads, read-only queries, and edit proposals.
+    Propose,
+    /// Also direct edits in all consoles.
+    Direct,
+    /// Also database writes, with the existing run confirmations.
+    #[default]
+    Full,
+}
+
+impl AgentAccess {
+    pub const ALL: [Self; 3] = [Self::Propose, Self::Direct, Self::Full];
+}
+
+/// What a new MCP session gets without a question. `Ask` shows the access request.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentDefault {
+    #[default]
+    Ask,
+    Propose,
+    Direct,
+    Full,
+}
+
+impl AgentDefault {
+    pub const ALL: [Self; 4] = [Self::Ask, Self::Propose, Self::Direct, Self::Full];
+
+    /// Returns the level that a new session gets without a question.
+    pub fn access(self) -> Option<AgentAccess> {
+        match self {
+            Self::Ask => None,
+            Self::Propose => Some(AgentAccess::Propose),
+            Self::Direct => Some(AgentAccess::Direct),
+            Self::Full => Some(AgentAccess::Full),
+        }
+    }
+}
+
+/// The MCP preferences, after the precedence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentSettings {
+    /// False when the instance has no MCP endpoint.
+    pub enabled: bool,
+    pub default_access: AgentDefault,
+    /// The highest level that a session can get.
+    pub max_access: AgentAccess,
+    /// False when each new session asks again, also for a known client.
+    pub remember_clients: bool,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            enabled: DEFAULT_MCP,
+            default_access: AgentDefault::default(),
+            max_access: AgentAccess::default(),
+            remember_clients: DEFAULT_MCP_REMEMBER_CLIENTS,
+        }
+    }
+}
 
 /// The theme of the interface. `Auto` follows the terminal, and `Ansi` uses the colors
 /// of the terminal profile. The other themes need a truecolor terminal.
@@ -157,6 +225,8 @@ pub struct Keymaps {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Preferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_completion: Option<crate::ai::Preferences>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyboard_mode: Option<KeyboardName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_size: Option<usize>,
@@ -186,6 +256,14 @@ pub struct Preferences {
     pub bell_after_seconds: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggestion_keys: Option<SuggestionKeys>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_default_access: Option<AgentDefault>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_max_access: Option<AgentAccess>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_remember_clients: Option<bool>,
     /// The choices of the export dialog. Only the global file holds them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub export: Option<ExportChoices>,
@@ -339,6 +417,7 @@ pub struct Stored {
 /// The configuration of both scopes, after the precedence.
 #[derive(Debug)]
 pub struct Config {
+    pub ai_completion: crate::ai::Preferences,
     pub keyboard: KeyboardMode,
     pub page_size: Option<usize>,
     pub row_cap: Option<usize>,
@@ -362,6 +441,7 @@ pub struct Config {
     pub bell_after_seconds: u64,
     /// The keys that accept a suggestion.
     pub suggestion_keys: SuggestionKeys,
+    pub agent: AgentSettings,
     /// The last choices of the export dialog.
     pub export: ExportChoices,
     /// The last choices of the import dialog.
@@ -786,6 +866,10 @@ fn combine(
         })
         .collect();
     Ok(Config {
+        ai_completion: crate::ai::Preferences::resolve(
+            global.ai_completion.as_ref(),
+            project.and_then(|p| p.ai_completion.as_ref()),
+        ),
         keyboard,
         page_size: pick(|preferences| preferences.page_size),
         row_cap: pick(|preferences| preferences.row_cap),
@@ -827,6 +911,24 @@ fn combine(
             .and_then(|preferences| preferences.suggestion_keys)
             .or(global.suggestion_keys)
             .unwrap_or_default(),
+        agent: AgentSettings {
+            enabled: project
+                .and_then(|preferences| preferences.mcp)
+                .or(global.mcp)
+                .unwrap_or(DEFAULT_MCP),
+            default_access: project
+                .and_then(|preferences| preferences.mcp_default_access)
+                .or(global.mcp_default_access)
+                .unwrap_or_default(),
+            max_access: project
+                .and_then(|preferences| preferences.mcp_max_access)
+                .or(global.mcp_max_access)
+                .unwrap_or_default(),
+            remember_clients: project
+                .and_then(|preferences| preferences.mcp_remember_clients)
+                .or(global.mcp_remember_clients)
+                .unwrap_or(DEFAULT_MCP_REMEMBER_CLIENTS),
+        },
         export: global.export.clone().unwrap_or_default(),
         import: global.import.clone().unwrap_or_default(),
         connections,

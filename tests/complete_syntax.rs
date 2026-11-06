@@ -1,6 +1,4 @@
-mod common;
-
-use common::{Fixture, ctrl, key};
+use crate::common::{Fixture, ctrl, key};
 use crossterm::event::KeyCode::{Esc, Tab};
 use edtui::Index2;
 use sqln::complete::{Completion, SuggestionKind, suggest};

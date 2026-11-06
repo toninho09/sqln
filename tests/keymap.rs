@@ -1,12 +1,10 @@
 // The key map: defaults, sequences, and the rules of the `keymap` configuration.
 
-mod common;
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use common::{ctrl, key};
+use crate::common::{ctrl, key};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
@@ -326,7 +324,7 @@ fn the_application_uses_the_map() {
 
 #[test]
 fn a_panel_key_has_priority_over_a_global_key() {
-    let path = common::temp_db("keymap-panel");
+    let path = crate::common::temp_db("keymap-panel");
     rusqlite::Connection::open(&path).unwrap();
     let items = overrides(&[("newConsole", &["f5"])]);
     let map = Keymap::with_overrides(KeyboardMode::Conventional, &items).unwrap();

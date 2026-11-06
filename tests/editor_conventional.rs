@@ -1,6 +1,4 @@
-mod common;
-
-use common::{Fixture, alt, ctrl, key, shift};
+use crate::common::{Fixture, alt, ctrl, key, shift};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use edtui::Index2;
 use sqln::editor::{KeyboardMode, RunScope};

@@ -121,6 +121,8 @@ impl Persist {
         options.appearance = (config.theme, config.icons);
         options.suggestion_keys = config.suggestion_keys;
         options.show_system_commands = config.show_system_commands;
+        options.agent = config.agent;
+        options.ai_completion = config.ai_completion;
         options.export_choices = config.export;
         options.import_choices = config.import;
         config.connections
@@ -261,6 +263,7 @@ impl App {
     }
 
     fn apply_config(&mut self, config: Config) {
+        self.set_ai_preferences(config.ai_completion.clone());
         self.settings.page_size = config.page_size.unwrap_or(self.settings.page_size);
         self.settings.row_cap = config.row_cap.unwrap_or(self.settings.row_cap);
         self.settings.cap_in_sql = config.cap_in_sql;
@@ -290,6 +293,7 @@ impl App {
         }
         self.apply_connections(config.connections);
         self.update_connection_settings();
+        self.apply_agent_settings(config.agent);
     }
 
     fn set_keyboard(&mut self, keyboard: KeyboardMode) {
@@ -444,61 +448,6 @@ impl App {
         }
     }
 
-    /// Writes the scope of the dialog, and it applies the files as a reload does.
-    pub(super) fn save_settings(&mut self) {
-        let Some(form) = &mut self.settings_form else {
-            return;
-        };
-        let preferences = match form.preferences() {
-            Ok(preferences) => preferences,
-            Err(message) => {
-                form.note = Some(message);
-                return;
-            }
-        };
-        let scope = form.scope;
-        let Some(persist) = &mut self.persist else {
-            return;
-        };
-        // Use the current files for the other scope, not only the dialog snapshot.
-        let validation = match scope {
-            Scope::Global => persist
-                .store
-                .project
-                .as_ref()
-                .map(|root| config::preferences(root, Scope::Project))
-                .transpose()
-                .and_then(|project| config::validate_keymaps(&preferences, project.as_ref())),
-            Scope::Project => config::preferences(&persist.store.global, Scope::Global)
-                .and_then(|global| config::validate_keymaps(&global, Some(&preferences))),
-        };
-        if let Err(message) = validation {
-            form.note = Some(message);
-            return;
-        }
-        let Some(root) = persist.store.root(scope) else {
-            return;
-        };
-        match config::change_preferences(root, scope, preferences) {
-            Ok(hash) => {
-                if let Some((_, known)) = persist.hashes.iter_mut().find(|(item, _)| *item == scope)
-                {
-                    *known = Some(hash);
-                }
-                self.settings_form = None;
-                self.reload_config();
-                if self
-                    .persist
-                    .as_ref()
-                    .is_some_and(|persist| persist.error.is_none())
-                {
-                    self.status = Some(text::SETTINGS_SAVED.to_owned());
-                }
-            }
-            Err(message) => form.note = Some(message),
-        }
-    }
-
     /// Keeps the choices of the export dialog. A write that fails leaves a note, and
     /// the export goes on.
     pub(super) fn save_export_choices(&mut self, choices: ExportChoices) {
@@ -543,7 +492,10 @@ impl App {
 
     /// Returns the script of the console, and it creates the script at the first edit.
     pub(super) fn ensure_file(&mut self, index: usize) {
-        if self.persist.is_none() || self.consoles[index].file.is_some() {
+        if self.persist.is_none()
+            || self.consoles[index].file.is_some()
+            || self.agent.owns(self.consoles[index].id)
+        {
             return;
         }
         let console = &self.consoles[index];
@@ -595,6 +547,10 @@ impl App {
 
     /// The save of the key `Ctrl+S`.
     pub(super) fn save_now(&mut self) {
+        if self.agent.owns(self.console().id) {
+            self.status = Some(text::AGENT_CONSOLE_TEMPORARY.to_owned());
+            return;
+        }
         if self.persist.is_none() {
             self.status = Some(text::NOTHING_TO_SAVE.to_owned());
             return;

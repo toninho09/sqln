@@ -18,6 +18,132 @@ Section 2 describes the current screen, in the style approved on 2026-10-31.
 The other sketches show the content of each screen, not its exact drawing.
 Windows have a rounded border, and buttons lose the brackets in themes with color.
 
+## Local assistant controls
+
+The palette offers **Agent sessions: allow or revoke access**, **Review agent changes**, **Stop all agent tasks**, and per-console direct editing.
+In an agent tab, it also offers the session dialog of that tab and the task list of that session.
+The MCP row stays above the status line while an access request or an edit proposal waits, or an agent task runs.
+It does not capture editor input, and typing or temporary status messages do not clear it.
+
+```text
+ MCP  1 access request · 2 edit proposals  F8: sessions             [Review]
+ MCP  1 task running                                       [Stop]
+```
+
+- The row shows counts with text, the effective shortcut, **Review**, and **Stop** while a task runs.
+- A narrow row drops the shortcut first, then uses short counts such as `1 access · 2 edits`.
+- **Review** opens the oldest access request, then the oldest proposal. The row never decides access.
+
+A card at the bottom right of the main area, above the MCP row, shows the most urgent agent item.
+The card does not take the focus or capture typing, and the editor text stays visible. One card shows at a time, in this order:
+
+| Card | Text | Buttons |
+|---|---|---|
+| `MCP access request` | `client asks for access to SQLN.` A new request also rings the terminal bell once | **Review**, **Later** |
+| `Edit proposal` | `client edits console-1: +2 −1 lines.` | **Review**, **Later** |
+| `Agent task running` | `client: Query 3f2a9c1e · 12s`, after 3 seconds of work, so a short query shows no card | **Stop**, **Hide** |
+
+```text
+ ╭ MCP access request ───────────────────────────────╮
+ │ claude-code asks for access to SQLN.              │
+ │ F8: sessions                    [Review]  [Later] │
+ ╰───────────────────────────────────────────────────╯
+```
+
+- The border and title use the warning color. The title is a text label for terminals without colors.
+- **Review** opens the access request or the proposal of the card. **Stop** cancels the task of the card only.
+- **Later** and **Hide** hide that item's card; the MCP row keeps the item. The next item's card then shows.
+- A new item shows a card again, with its place, such as `(2 of 2)`. A remembered client shows no card and does not ring.
+- An area narrower than 36 columns or lower than 6 rows shows the MCP row only.
+
+The access request shows the client, `(reported, not verified)`, the short session identifier, and the request age.
+Its options are **Reject**, **Allow**, **Allow all**, and **Full access**. Reject has the initial focus, and `Esc` selects it.
+After a decision, the next request opens, with `(1 of N)` in the title while more remain.
+The session list shows `Waiting for you`, the option of an allowed session, and `Rejected`, with the running tasks.
+It also lists clients with remembered access and no live session, as `client  remembered  option`. Select one to **Forget** it.
+
+A risky write of a session with **Full access** opens the run confirmation of a user run.
+Its text starts with `MCP client asks to run this SQL.` **Cancel** has the initial focus.
+
+An edit proposal opens as an [inline review](#inline-review) in its console. The tab of a console with a pending proposal starts with `± `.
+
+## Inline review
+
+AI responses and agent edit proposals show in the editor, as in an IDE.
+
+An AI insertion shows ghost text at the requested place, in the hint style. The text of the console does not change before acceptance. A dedicated row after each ghost text holds its buttons; a ghost has no bar. Several answers can wait at once, each on its own line.
+The suggestion list offers two AI rows: **Complete with AI…** and, above it, **Complete with AI with a request…**. The request row opens a modal of one line; `Enter` sends the request with the completion, `Esc` cancels, and an empty input sends a plain completion.
+While an answer runs, the requested line shows an animated mark (`|`, `/`, `-`, `\`) in the first column of the gutter, so the user sees each anchor while editing other lines. The ghost replaces the mark when the answer shows.
+
+```text
+ 1   SELECT 42
+     [Tab Accept] [Esc Reject]
+ 2   FROM t
+     [Tab Accept] [Esc Reject]
+```
+
+`Tab` decides the ghost at the line of the cursor, at its anchor. `Esc` ends the request of that line, or rejects its ghost. Each ghost stays until the user decides: keys, clicks, commands, cursor movement, tab changes, and schema refreshes keep it, and the editor stays editable. An edit of the anchor line closes only the ghost of that line, in silence; an edit on another line moves the anchor with the text. Any undo takes every ghost. A new request on a line replaces the answer of that line, and a request on a free line adds one, within the configured limit. `Run` executes the text without the ghosts, and the ghosts stay. The tab of the console shows `±N` with the count of the ghosts that wait.
+
+An agent proposal shows an inline diff. During a diff, the AI requests of the console end and new requests refuse; the ghosts that wait stay hidden and return when the review closes. Removed lines have `-` and the error color. Added lines have `+` and the success color. Changed words are bold and underlined. The `-` and `+` marks stay in terminals without colors.
+
+```text
+ 12   SELECT id, name
+ 13 - FROM users
+ 14 - WHERE active
+    + FROM users u
+    + WHERE u.active = true
+      [a Accept] [r Reject]
+ 15   ORDER BY id;
+ 1/2 changes · MCP claude [A Accept all] [R Reject all] [Esc Later]
+```
+
+- Each pending change has its **Accept** and **Reject** buttons on the row after it, and they decide that change. The bar on the last row of the editor shows the place of the current change, the origin, and the buttons for all changes.
+- A narrow row or bar drops the labels of the last buttons first, then shortens the text before the buttons. The keys stay.
+- No button has the focus, and `Enter` decides nothing.
+- An accepted change goes into the text at once, as one undo step. **Accept all** is one undo step. After a decision, the next pending change becomes current.
+- The editor is read only during the review. A key that edits or runs the text shows the reason and the review keys in the status bar. Global keys, `Ctrl+W`, and the palette still work.
+- `Esc` is **Later**: the review closes, and the proposal and its decisions stay pending.
+- After the last decision, the editor stays. The card shows the next proposal.
+- Left/Right and the horizontal wheel move the view sideways; PageUp/PageDown and the wheel move it up and down.
+- A click on a change makes it current. A click on a button acts.
+- The `Ctrl+W` panel menu, the palette, the hint row, and `F1` list the review commands.
+- A change of the text from outside the review, such as a reload or a direct edit of an agent, closes the review with the reason.
+
+The status bar shows `MCP n`, `MCP n all` with **Allow all**, or `MCP n full` with **Full access**. It goes before the transaction and execution state.
+An agent tab opens when the user allows access, without a focus change, and stands at the right end of the tab row, before **Quit**.
+When the row is full, it scrolls as usual, and agent tabs stay after the other tabs.
+The close of the last agent tab of a session with access asks **Close the agent tab**, with **Cancel** (initial focus) and **Revoke and close**.
+
+```text
+ console-1 X  console-2 X                      MCP · claude [3f2a9c1e] X  [Quit]
+```
+
+Tab labels use `MCP ·` for agent consoles and analyses, `MCP off ·` without access, `Direct ·` for direct edits, and `SQL ·` for SQL that the agent placed and the user did not open yet.
+Without placed SQL, an agent console has no editor: its Messages and result grids fill the console, with **Stop**, **Tasks N**, and **Access: level**.
+With placed SQL, an editor appears above them. The bar holds **Run**, **New console**, **Clear**, **Stop**, **Commit** and **Rollback** for an open transaction, **Tasks N**, and **Access: level**. The title row adds `SQL from agent`. There is no mode button: the tab runs in Auto mode.
+A narrow bar drops **Access** first, then **Tasks**. The palette keeps both commands.
+
+```text
+ [Run]  [New console]  [Clear]  [Stop]  [Tasks 1]  [Access: Allow]
+ 1   CREATE TABLE orders_archive (id INTEGER PRIMARY KEY);
+─ Result 1 ─ Messages ───────────────────────────────────
+```
+
+- **Access: level** shows `Allow`, `Allow all`, `Full access`, or `off`. It opens the session dialog: **Keep access** has the initial focus, then the other levels and **Revoke**.
+- **Tasks N** counts the active tasks of the session on all its connections. It is disabled at zero. It opens a list:
+
+```text
+ ╭ Agent tasks ─────────────────────────╮
+ │ Query    3f2a9c1e  running  12s      │
+ │ DDL read 9b01aa42  validating  4s    │
+ ╰──────────────────────────────────────╯
+```
+
+- A selected task opens a dialog with the client, the task, and its state. **Keep running** has the initial focus. **Stop** cancels that task only; access stays.
+- A task that ended before the selection shows a status message and opens no dialog.
+- The Messages of the agent tab record the session's actions: runs and edits of user consoles, proposals and their decision, discarded proposals, opened tabs, access changes, and revocation.
+See [MCP](MCP.md) for the operation and persistence rules.
+
 ## 1. Startup and console opening
 
 If `.sqln/` is not found in the current directory or the upper ones, ask about its creation.
@@ -1040,7 +1166,7 @@ The project writes only the values it declares.
 Offer the global or project scope and the fields below.
 Show the values inherited from global and allow removing a project definition to use the global one.
 **Save** writes the changes of all sections. **Cancel** changes nothing.
-The sidebar groups fields in **General**, **Editor**, **Results**, **Appearance**, and **Shortcuts**. The panel shows one section at a time.
+The sidebar groups fields in **General**, **Editor**, **Results**, **Appearance**, **MCP**, **Autocomplete**, and **Shortcuts**. The panel shows one section at a time.
 The scope and the buttons stay outside the sections, and appear in all of them.
 An error note appears above the buttons, even when the field is in another section.
 A new section needs a row in the `SECTIONS` table, and the window grows with the largest section.
@@ -1069,6 +1195,9 @@ The switch happens in the editor itself, so the selection and the history contin
 The **Editor** section includes **Autocomplete** and **Undo limit**, with 64 MiB per console as the conventional undo default.
 The **Results** section includes **Limit in SQL**, on by default, and **System commands**, off by default.
 **System commands** only filters the Messages view.
+
+The **MCP** section has the MCP fields. See [MCP settings](MCP.md#mcp-settings).
+Below the fields, a help text shows the Claude Code command and a reference to `docs/MCP.md`. SQLN never changes the files of an MCP client.
 
 The **Appearance** section has the **Default theme** field.
 The choice changes the colors at once, before saving. `Esc` and **Cancel** bring back the saved theme.
@@ -1240,7 +1369,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
                         │                         \___ \| | | | |   |  \| |
                         │                          ___) | |_| | |___| |\  |
                         │                         |____/ \__\_\_____|_| \_|
-                        │                                   0.1.2
+                        │                                   0.2.0
                         │                            No console is open
                         │
                         │                 Ctrl+W h a  Add a connection
@@ -1254,7 +1383,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
 
 Without a connection, the screen shows **No connection yet**, without the **Open a console** row.
 With the explorer hidden, the first row is `Ctrl+W b` **Show the explorer**, the status line shows `HOME`,
-and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.1.2` instead.
+and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.2.0` instead.
 
 ### Welcome screen
 
@@ -1262,7 +1391,7 @@ The screen appears over an editor without text. It keeps no state and captures n
 The first typed character removes the screen.
 
 ```text
-           SQLN 0.1.0
+           SQLN 0.2.0
            Write SQL here
 
                    F5  Run the statement

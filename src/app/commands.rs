@@ -27,6 +27,9 @@ impl App {
         if self.diagram_active.is_some() {
             return Some(Region::Diagram);
         }
+        if self.review_active() && self.console().editor.review().is_some() {
+            return Some(Region::Review);
+        }
         if self.editor_has_focus() {
             return Some(Region::Editor);
         }
@@ -206,6 +209,13 @@ impl App {
     }
 
     pub(super) fn command_label(&self, action: Action) -> &'static str {
+        if action == Action::AgentDirect {
+            return if self.agent.direct(self.console().id) {
+                "Disable agent direct editing for this console"
+            } else {
+                "Enable agent direct editing for this console"
+            };
+        }
         use Action::*;
         if action == GridOpenValue && self.table().is_some_and(|tab| tab.pending) {
             return text::COMMAND_LOAD_GRID;
@@ -308,6 +318,7 @@ impl App {
         let panel = match self.context_region() {
             Some(Region::Editor) => text::REGION_EDITOR,
             Some(Region::Diagram) => text::REGION_DIAGRAM,
+            Some(Region::Review) => text::REGION_REVIEW,
             _ if self.compare_active.is_some() => text::REGION_COMPARE,
             _ if self.table_active.is_some() => text::REGION_TABLE,
             _ => text::REGION_GRID,
@@ -435,6 +446,7 @@ fn command_group(action: Action) -> &'static str {
         | GridPreviousResult | GridNextResult | GridReload | GridCancelQuery | GridEndSession => {
             text::GROUP_TABLE_RESULTS
         }
+        action if action.region() == Region::Review => text::GROUP_REVIEW,
         _ => text::GROUP_ROW,
     }
 }

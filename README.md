@@ -25,6 +25,7 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - [Transactions and execution](#transactions-and-execution)
 - [Configuration and saved work](#configuration-and-saved-work)
 - [Credentials and connection security](#credentials-and-connection-security)
+- [Local MCP assistant](#local-mcp-assistant)
 - [Command-line reference](#command-line-reference)
 - [Troubleshooting](#troubleshooting)
 - [Known limitations](#known-limitations)
@@ -55,6 +56,7 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Saved work.** Save consoles automatically and reopen tabs with their cursor, scroll, and layout.
 - **Credential storage.** Use session passwords, macOS Keychain, or Linux Secret Service.
 - **Appearance.** Choose themes, per-connection colors and icons, and optional Nerd Font symbols.
+- **Local MCP assistant.** Connect Claude Code or OpenCode to an open SQLN instance. Approve read access, review SQL edits, or give full access.
 - **No telemetry.** SQLN does not send usage reports.
 
 ## Screenshots
@@ -239,7 +241,7 @@ Uppercase keys matter: `Ctrl+W C` and `Ctrl+W c` are different actions.
 | Close tab | `Ctrl+W c` |
 | Quit | `Ctrl+W q` |
 
-`Ctrl+Enter` and `Shift+Enter` also run queries when the terminal supports enhanced keyboard input.
+`Ctrl+Enter` also runs the current query when the terminal supports enhanced keyboard input.
 Use the prefix alternatives if the terminal does not deliver a shortcut.
 
 **`Ctrl+C` copies; it does not stop execution or quit SQLN.** Use `Ctrl+W x` to stop and `Ctrl+W q` to quit.
@@ -261,6 +263,12 @@ Conventional mode is the default. Change **Keyboard** in Settings to select Vim 
 
 Suggestions also appear as you type. `Tab` accepts a suggestion by default; `Enter` inserts a new line.
 Change **Autocomplete** in Settings if you prefer `Enter` or both keys to accept suggestions.
+
+**AI completion** is optional. Configure it in **Settings > Autocomplete**, globally or per project.
+Open suggestions, press `Up` from the first local item to select **Complete with AI…**, and use the acceptance key.
+The answer shows as ghost text in the editor. Press `Tab` to accept it and `Esc` to reject it. Completion works at the cursor only and never runs generated SQL.
+One OpenAI-compatible chat endpoint serves the requests, with OpenRouter as the default. Local servers use their OpenAI-compatible base. Keys use the system vault or a rotating key file.
+See [AI completion](docs/AI_COMPLETION.md) for consent, context limits, and configuration.
 
 ### Navigator
 
@@ -328,9 +336,9 @@ Read-only connections do not offer editing.
 6. Press `F2` in the review to apply the changes.
 
 Production connections ask for another confirmation.
-`Alt+N` sets a cell to SQL `NULL`; empty text and the text `NULL` remain different.
-`Alt+R` opens the review. `Alt+D` asks before discarding pending changes.
-Use the palette if your terminal does not send an Alt shortcut.
+`Ctrl+N` sets a cell to SQL `NULL`; empty text and the text `NULL` remain different.
+`Ctrl+R` opens the review. `Ctrl+D` asks before discarding pending changes.
+Use the palette if your terminal does not send a `Ctrl` shortcut.
 
 A `*` and underline mark each changed cell. The summary shows pending row and cell counts.
 Typing and keeping a value do not write to the database.
@@ -580,10 +588,22 @@ Disable **Query history** when needed. This does not remove old history or saved
 `--log` records event kinds without SQL, result values, or passwords.
 Before sharing any diagnostic file, inspect it for private paths and connection details.
 
+## Local MCP assistant
+
+Keep SQLN open and configure your client to start `sqln mcp` through stdio.
+The bridge discovers instances, including instances without a project. Each client needs approval in SQLN once per run of SQLN.
+Agents can read loaded results, execute read-only queries, propose SQL edits, and use metadata and analysis tools.
+Tools wait for their result, so one call returns the rows of a query.
+**Full access** also lets the agent write to the database. Production runs and writes without `WHERE` still ask you.
+
+See [MCP setup, tools, and security](docs/MCP.md) for global Claude Code and OpenCode configuration.
+**Settings > MCP** turns MCP on or off and sets the default and the maximum access, per project or globally.
+
 ## Command-line reference
 
 ```text
 sqln [options] [target]
+sqln mcp
 ```
 
 `target` is one SQLite file path or one connection URI. SQLN asks before creating a missing SQLite file.
@@ -597,7 +617,8 @@ Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `red
 | `-V`, `--version` | Show the version |
 | `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, or `redis` for an unconnected console; development option |
 
-SQLN is an interactive application. It does not provide a batch SQL runner or read scripts from standard input.
+The terminal interface does not provide a batch SQL runner or read scripts from standard input.
+`sqln mcp` uses standard input and output only for MCP. It does not accept raw SQL.
 A `.sql` path is not a script-opening argument; file targets are SQLite databases.
 
 ## Troubleshooting
@@ -751,8 +772,11 @@ Report the OS, terminal, SQLN version, and reproduction steps for a defect. Remo
 - [Architecture](docs/ARCHITECTURE.md): execution, storage, credentials, and module rules.
 - [Decisions](docs/DECISIONS.md): approved choices and tradeoffs.
 - [UI reference](docs/UI.md): interface structure and layouts.
+- [AI completion](docs/AI_COMPLETION.md): setup, providers, limits, and consent.
+- [Local MCP assistant](docs/MCP.md): client setup, tools, and security.
 - [Consolidated plan](docs/INITIAL_PLAN.md): scope, implementation state, and pending release checks.
 - [Technical test results](docs/RESULTS.md): initial driver and terminal investigations.
+- [External tools research](docs/TOOLS.md): how other tools solve the same points.
 - [Pagination validation](docs/PAGINATION-VALIDATION.md): pagination checks and their limits.
 
 ## License

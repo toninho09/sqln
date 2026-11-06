@@ -201,7 +201,7 @@ impl App {
             return;
         }
         match definition_text(dialect, &read.target, &name, &read.results) {
-            Ok(ddl) => self.open_text_console(read.connection, read.target.schema, &ddl),
+            Ok(ddl) => self.open_text_console(read.connection, Some(read.target.schema), &ddl),
             Err(reason) => self.status = Some(reason.to_owned()),
         }
     }

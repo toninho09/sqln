@@ -76,6 +76,7 @@ pub struct ConsoleTask {
     held: Option<Lease>,
     transaction: TransactionState,
     trace: Option<TraceContext>,
+    cancellation: tokio_util::sync::CancellationToken,
 }
 
 impl ConsoleTask {
@@ -95,12 +96,14 @@ impl ConsoleTask {
             held: None,
             transaction: TransactionState::None,
             trace: None,
+            cancellation: tokio_util::sync::CancellationToken::new(),
         }
     }
 
     pub async fn serve(mut self, mut commands: UnboundedReceiver<Command>) {
         while let Some(command) = commands.recv().await {
             self.settings = self.binding.settings().clone();
+            self.cancellation = tokio_util::sync::CancellationToken::new();
             match command {
                 Command::Edit {
                     execution,
@@ -177,6 +180,10 @@ impl ConsoleTask {
         let mut acquire = pin!(pool.acquire_traced(self.trace.clone()));
         loop {
             tokio::select! {
+                () = self.cancellation.cancelled() => {
+                    self.finish(execution, ExecutionEnd::CanceledBeforeStart, None).await;
+                    return None;
+                }
                 result = &mut acquire => match result {
                     Ok(lease) => return Some(lease),
                     Err(error) => {
@@ -200,11 +207,42 @@ impl ConsoleTask {
 
     async fn run_script(&mut self, request: RunRequest, commands: &mut UnboundedReceiver<Command>) {
         let RunRequest {
+            agent,
             trace,
             execution,
             statements,
             options,
         } = request;
+        let _agent_hold;
+        let agent_run = agent.is_some();
+        if let Some(agent) = agent {
+            _agent_hold = match agent.reservation {
+                Ok(hold) => Some(hold),
+                Err(error) => {
+                    self.finish(execution, ExecutionEnd::Refused, Some(error.message))
+                        .await;
+                    return;
+                }
+            };
+            self.cancellation = agent.cancel;
+            if self.held.is_some() || self.transaction != TransactionState::None {
+                self.finish(
+                    execution,
+                    ExecutionEnd::Refused,
+                    Some(
+                        "An agent cannot use an open or unknown transaction. Use its own console."
+                            .into(),
+                    ),
+                )
+                .await;
+                return;
+            }
+            // The application validates agent SQL on a blocking worker before it queues the run.
+            // Full access removes only this agent restriction, never the connection's own.
+            self.settings.read_only |= agent.read_only;
+        } else {
+            _agent_hold = None;
+        }
         self.trace = trace;
         let console = self.console;
         self.emit(ExecEvent::Queued { console, execution }).await;
@@ -311,6 +349,27 @@ impl ConsoleTask {
             self.emit(end_event).await;
         }
 
+        let mut message = None;
+        // An agent run never leaves a transaction open: nobody would end it.
+        if agent_run
+            && let Some(active) = lease.as_mut()
+            && active.session().transaction_state().await != TransactionState::None
+        {
+            message = Some(crate::ui::text::AGENT_ROLLED_BACK.to_owned());
+            if end == ExecutionEnd::Completed {
+                end = ExecutionEnd::Failed;
+            }
+            if active
+                .session()
+                .control(TransactionCommand::Rollback)
+                .await
+                .is_err()
+            {
+                // Closing the session ends its transaction.
+                lease = None;
+                self.observe_transaction(TransactionState::None).await;
+            }
+        }
         if let Some(lease) = lease {
             self.keep_or_release(lease).await;
         }
@@ -318,12 +377,12 @@ impl ConsoleTask {
             // The sync can take time, and this task shares its thread with other consoles.
             let _ = tokio::task::spawn_blocking(move || export.seal()).await;
         }
-        self.finish(execution, end, None).await;
+        self.finish(execution, end, message).await;
     }
 
     /// Reads the waiting commands. Each console accepts only one execution.
     async fn stop_is_pending(&mut self, commands: &mut UnboundedReceiver<Command>) -> bool {
-        let mut stop = false;
+        let mut stop = self.cancellation.is_cancelled();
         while let Ok(command) = commands.try_recv() {
             match command {
                 Command::Stop | Command::Close => stop = true,
@@ -477,6 +536,11 @@ impl ConsoleTask {
                     if !matches!(sent, Ok(Ok(()))) {
                         grace.as_mut().reset(tokio::time::Instant::now());
                     }
+                }
+                () = self.cancellation.cancelled(), if reason.is_none() => {
+                    reason = Some(StopReason::User);
+                    request = Some(cancel());
+                    grace.as_mut().reset(tokio::time::Instant::now() + settings.stop_grace);
                 }
                 () = &mut limit, if reason.is_none() && time_limit.is_some() => {
                     reason = Some(StopReason::Timeout);

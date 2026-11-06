@@ -1,15 +1,13 @@
 // The application with files: configuration, project, autosave, reopen, conflicts,
 // and scripts without a connection.
 
-mod common;
-
 use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, shift, temp_dir};
+use crate::common::{ctrl, key, shift, temp_dir};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -290,7 +288,7 @@ impl Session {
     }
 
     fn focus_form(&mut self, field: Field) {
-        common::focus_form_field(&mut self.app, field);
+        crate::common::focus_form_field(&mut self.app, field);
     }
 
     fn press_form_button(&mut self, field: Field) {
@@ -386,7 +384,7 @@ fn a_connection_with_a_relative_path_uses_the_folder_of_its_scope() {
     );
     let mut session = Session::start(&store);
     session.write("SELECT v FROM t;");
-    session.press(common::shift(KeyCode::F(5)));
+    session.press(crate::common::shift(KeyCode::F(5)));
     for _ in 0..2_000 {
         session.app.drain_events();
         if session.screen().contains("from-project") {
@@ -432,7 +430,7 @@ fn a_row_cap_of_the_file_limits_the_result() {
     );
     let mut session = Session::start(&store);
     session.write("SELECT v FROM t;");
-    session.press(common::shift(KeyCode::F(5)));
+    session.press(crate::common::shift(KeyCode::F(5)));
     for _ in 0..2_000 {
         session.app.drain_events();
         if session.screen().contains("row cap") || session.screen().contains("2 rows") {
@@ -524,7 +522,7 @@ fn after_a_failed_reload_the_open_connections_cannot_run_until_the_file_is_fixed
     session.code(KeyCode::Esc);
     // The connection stays in the list, but nothing runs.
     assert_eq!(session.app.connections().len(), 1);
-    session.press(common::shift(KeyCode::F(5)));
+    session.press(crate::common::shift(KeyCode::F(5)));
     session.assert_sees("configuration has an error");
     for _ in 0..40 {
         session.app.drain_events();
@@ -539,7 +537,7 @@ fn after_a_failed_reload_the_open_connections_cannot_run_until_the_file_is_fixed
     // The fix opens the connection again.
     write_config(&store.global, "{}", &[entry]);
     session.prefix('r');
-    session.press(common::shift(KeyCode::F(5)));
+    session.press(crate::common::shift(KeyCode::F(5)));
     for _ in 0..2_000 {
         session.app.drain_events();
         if session.screen().contains("42") {
@@ -620,7 +618,7 @@ fn a_reload_does_not_change_a_connection_with_an_open_transaction() {
     // A manual transaction keeps the session open.
     session.prefix('m');
     session.write("INSERT INTO t VALUES (1);");
-    session.press(common::shift(KeyCode::F(5)));
+    session.press(crate::common::shift(KeyCode::F(5)));
     for _ in 0..2_000 {
         session.app.drain_events();
         if session.app.console().in_transaction() {
@@ -961,7 +959,7 @@ fn a_connected_connection_can_change_its_name_and_the_file_follows() {
     let mut session = Session::start(&store);
     session.prefix('m');
     session.write("INSERT INTO t VALUES (1);");
-    session.press(common::shift(KeyCode::F(5)));
+    session.press(crate::common::shift(KeyCode::F(5)));
     for _ in 0..2_000 {
         session.app.drain_events();
         if session.app.console().in_transaction() {
@@ -1263,7 +1261,7 @@ fn a_failed_write_never_blocks_a_run() {
     fs::write(store.global.dir.join("consoles"), "x").unwrap();
     let mut session = Session::start(&store);
     session.type_and_save("SELECT 41 + 1;");
-    session.press(common::shift(KeyCode::F(5)));
+    session.press(crate::common::shift(KeyCode::F(5)));
     for _ in 0..2_000 {
         session.app.drain_events();
         if session.screen().contains("42") {
@@ -2030,7 +2028,7 @@ fn an_orphan_opens_for_edit_and_saves_but_the_run_asks_for_a_connection_first() 
     session.wait(500);
     assert_eq!(text_of(&store.global, "orphan"), "SELECT v FROM t; -- edit");
     // The run asks for a connection. It does not run anything.
-    session.press(common::shift(KeyCode::F(5)));
+    session.press(crate::common::shift(KeyCode::F(5)));
     session.assert_sees("Choose a connection");
     assert!(session.app.console().results.is_empty());
 }
@@ -2042,7 +2040,7 @@ fn associating_in_the_same_scope_confirms_links_and_does_not_run() {
     session.code(KeyCode::Char('h'));
     session.code(KeyCode::Char('s'));
     session.code(KeyCode::Enter);
-    session.press(common::shift(KeyCode::F(5)));
+    session.press(crate::common::shift(KeyCode::F(5)));
     session.assert_sees("global-db");
     session.assert_sees("project-db");
     session.code(KeyCode::Enter); // global-db is the first row
@@ -2051,7 +2049,7 @@ fn associating_in_the_same_scope_confirms_links_and_does_not_run() {
     // Cancel is the default and links nothing.
     session.code(KeyCode::Enter);
     assert!(session.app.console().connection.is_none());
-    session.press(common::shift(KeyCode::F(5)));
+    session.press(crate::common::shift(KeyCode::F(5)));
     session.code(KeyCode::Enter);
     session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
@@ -2064,7 +2062,7 @@ fn associating_in_the_same_scope_confirms_links_and_does_not_run() {
     assert_eq!(entry.meta.connection_id, "g1");
     assert_eq!(entry.meta.connection_scope, Scope::Global);
     // Now the run works.
-    session.press(common::shift(KeyCode::F(5)));
+    session.press(crate::common::shift(KeyCode::F(5)));
     for _ in 0..2_000 {
         session.app.drain_events();
         if session.screen().contains("hello") {
@@ -2085,7 +2083,7 @@ fn associating_with_a_connection_of_another_scope_moves_the_files() {
     session.code(KeyCode::Enter);
     session.code(KeyCode::End);
     session.write(" -- edited");
-    session.press(common::shift(KeyCode::F(5)));
+    session.press(crate::common::shift(KeyCode::F(5)));
     session.code(KeyCode::Down); // project-db
     session.code(KeyCode::Enter);
     session.assert_sees("moves the files");
@@ -2729,7 +2727,7 @@ fn a_table_of_the_last_session_loads_at_its_selection() {
     let (store, _) = reopening_store("p-reopen-table", "{}");
     let mut first = Session::start(&store);
     first.type_and_save("SELECT 1;");
-    common::open_table(&mut first.app, 0, "items");
+    crate::common::open_table(&mut first.app, 0, "items");
     first.pump_sees("4242");
     first.prefix('p');
     assert!(first.app.table().is_none());
@@ -2804,7 +2802,7 @@ fn a_structure_tab_does_not_reopen() {
     let (store, _) = reopening_store("p-reopen-structure", "{}");
     let mut first = Session::start(&store);
     first.type_and_save("SELECT 1;");
-    common::select_row(&mut first.app, 0, &[RowKind::Table], "items");
+    crate::common::select_row(&mut first.app, 0, &[RowKind::Table], "items");
     first.code(KeyCode::Char('i'));
     first.pump_sees("items (structure)");
     first.quit();
@@ -2820,7 +2818,7 @@ fn a_diagram_tab_does_not_reopen() {
     let (store, _) = reopening_store("p-reopen-diagram", "{}");
     let mut first = Session::start(&store);
     first.type_and_save("SELECT 1;");
-    common::select_row(&mut first.app, 0, &[RowKind::Table], "items");
+    crate::common::select_row(&mut first.app, 0, &[RowKind::Table], "items");
     first.code(KeyCode::Char('d'));
     first.pump_sees("items (diagram)");
     first.quit();
@@ -2839,7 +2837,7 @@ fn an_export_of_all_rows_reads_the_whole_structure() {
     write_config(&store.global, r#"{"pageSize":2}"#, &[entry]);
     let output = base.join("files").join("wide.csv");
     let mut session = Session::start(&store);
-    common::select_row(&mut session.app, 0, &[RowKind::Table], "wide");
+    crate::common::select_row(&mut session.app, 0, &[RowKind::Table], "wide");
     session.code(KeyCode::Char('i'));
     session.pump_sees("wide (structure)");
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -2875,7 +2873,7 @@ fn an_export_of_all_rows_reads_the_whole_structure() {
 fn a_table_on_screen_at_the_start_waits_for_a_key_and_has_no_empty_console() {
     let (store, _) = reopening_store("p-reopen-active", "{}");
     let mut first = Session::start(&store);
-    common::open_table(&mut first.app, 0, "items");
+    crate::common::open_table(&mut first.app, 0, "items");
     first.pump_sees("4242");
     first.quit();
     drop(first);
@@ -2911,7 +2909,7 @@ fn a_table_on_screen_at_the_start_waits_for_a_key_and_has_no_empty_console() {
 fn the_apply_button_also_loads_a_table_of_the_last_session() {
     let (store, _) = reopening_store("p-reopen-apply", "{}");
     let mut first = Session::start(&store);
-    common::open_table(&mut first.app, 0, "items");
+    crate::common::open_table(&mut first.app, 0, "items");
     first.pump_sees("4242");
     first.quit();
     drop(first);
@@ -3186,27 +3184,36 @@ fn the_sidebar_shows_the_fields_of_one_section() {
     let mut session = Session::start(&store);
     session.prefix(',');
     session.assert_sees("Reopen tabs");
-    session.assert_not_sees("Autocomplete");
+    // The sidebar always shows every title, so a section check uses a field label.
+    session.assert_not_sees("Undo (MiB)");
     session.assert_not_sees("Page size");
     session.code(KeyCode::Down);
-    session.assert_sees("Autocomplete");
+    session.assert_sees("Undo (MiB)");
     session.assert_not_sees("Reopen tabs");
     session.code(KeyCode::Down);
     session.assert_sees("Page size");
-    session.assert_not_sees("Autocomplete");
+    session.assert_not_sees("Undo (MiB)");
     session.code(KeyCode::Down);
     session.assert_sees("Default theme");
     session.assert_not_sees("Page size");
     session.code(KeyCode::Down);
-    session.assert_sees("Commands 1/");
+    session.assert_sees("Remember clients");
     session.assert_not_sees("Default theme");
+    session.code(KeyCode::Down);
+    session.assert_sees("Context tokens");
+    session.assert_not_sees("Remember clients");
+    session.code(KeyCode::Down);
+    session.assert_sees("Commands 1/");
+    session.assert_not_sees("Context tokens");
     // The last section goes back to the first section.
     session.code(KeyCode::Down);
     session.assert_sees("Reopen tabs");
     session.code(KeyCode::Up);
     session.assert_sees("Commands 1/");
     session.code(KeyCode::Up);
-    session.assert_sees("Default theme");
+    session.assert_sees("Context tokens");
+    session.code(KeyCode::Up);
+    session.assert_sees("Remember clients");
     // The scope stays in all sections.
     session.assert_sees("< Project >");
 }
@@ -3474,7 +3481,7 @@ impl Session {
     fn open_transaction(&mut self) {
         self.prefix('m');
         self.write("INSERT INTO items VALUES (1);");
-        self.press(common::shift(KeyCode::F(5)));
+        self.press(crate::common::shift(KeyCode::F(5)));
         for _ in 0..2_000 {
             self.app.drain_events();
             if self.app.console().in_transaction() {
@@ -3513,7 +3520,7 @@ fn a_table_tab_shows_the_theme_of_its_connection() {
     session.console_of("dev");
     session.go_to_connection("prod");
     session.code(KeyCode::Enter);
-    common::open_table(&mut session.app, 1, "items");
+    crate::common::open_table(&mut session.app, 1, "items");
     assert_eq!(session.panel_color(), theme_panel(ThemeName::Nord));
 }
 
@@ -4000,7 +4007,7 @@ fn the_tabs_of_a_removed_connection_do_not_reopen() {
     );
     let mut first = Session::start(&store);
     first.type_and_save("SELECT 1;");
-    common::open_table(&mut first.app, 0, "items");
+    crate::common::open_table(&mut first.app, 0, "items");
     first.pump_sees("4242");
     first.quit();
     drop(first);
@@ -4543,14 +4550,14 @@ impl Session {
     }
 
     fn open_consoles_node(&mut self) {
-        common::select_row(&mut self.app, 0, &[RowKind::Consoles], "Consoles");
+        crate::common::select_row(&mut self.app, 0, &[RowKind::Consoles], "Consoles");
         self.code(KeyCode::Right);
     }
 
     /// Moves the cursor to a console row. The node opens first.
     fn select_tree_console(&mut self, name: &str) {
         self.open_consoles_node();
-        common::select_row(&mut self.app, 0, &[RowKind::Console], name);
+        crate::common::select_row(&mut self.app, 0, &[RowKind::Console], name);
     }
 
     fn tree_row_name(&self) -> String {
@@ -4570,7 +4577,7 @@ impl Session {
 #[test]
 fn the_tree_lists_the_saved_and_the_open_consoles_under_a_closed_node() {
     let (mut session, _store) = session_with_tree_consoles("tree-list");
-    common::select_row(&mut session.app, 0, &[RowKind::Consoles], "Consoles");
+    crate::common::select_row(&mut session.app, 0, &[RowKind::Consoles], "Consoles");
     assert_eq!(session.tree(), ["s", "Consoles", "main"]);
     session.code(KeyCode::Right);
     assert_eq!(
@@ -4595,7 +4602,7 @@ fn a_connection_without_consoles_has_no_node() {
         ],
     );
     let mut session = Session::start(&store);
-    common::select_row(&mut session.app, 1, &[RowKind::Connection], "second");
+    crate::common::select_row(&mut session.app, 1, &[RowKind::Connection], "second");
     session.code(KeyCode::Right);
     let connections = session.app.connections();
     let rows = session.app.navigator().rows(connections);
@@ -4611,7 +4618,7 @@ fn enter_opens_a_saved_console_and_selects_an_open_console() {
     assert_eq!(session.app.console().name, "investigate");
     assert!(!session.app.navigator_focused());
     assert!(session.tree_console_is_open("investigate"));
-    common::select_row(&mut session.app, 0, &[RowKind::Console], "console-1");
+    crate::common::select_row(&mut session.app, 0, &[RowKind::Console], "console-1");
     session.code(KeyCode::Enter);
     assert_eq!(session.app.consoles().len(), 2);
     assert_eq!(session.app.console().name, "console-1");
@@ -4702,7 +4709,7 @@ fn a_console_row_names_its_own_commands() {
     for text in ["Enter open console", "r rename", "Del remove console"] {
         assert!(hint.contains(text), "{hint}");
     }
-    let page = common::explorer_page(&session.app);
+    let page = crate::common::explorer_page(&session.app);
     for row in ["r Rename the console", "Del Remove the console"] {
         assert!(page.contains(&row.to_owned()), "{page:?}");
     }
@@ -4731,4 +4738,83 @@ fn a_double_click_on_a_console_row_opens_it() {
     session.app.on_event(press.clone());
     session.app.on_event(press);
     assert_eq!(session.app.console().name, "investigate");
+}
+
+#[test]
+fn the_project_mcp_settings_replace_the_global_values_and_the_defaults_apply_without_them() {
+    use sqln::store::config::{AgentAccess, AgentDefault, AgentSettings};
+    let (store, _) = store("p-mcp-precedence");
+    assert_eq!(
+        config::load(&store).config.unwrap().agent,
+        AgentSettings::default()
+    );
+    write_config(
+        &store.global,
+        r#"{"mcp":false,"mcpDefaultAccess":"direct","mcpMaxAccess":"direct","mcpRememberClients":false}"#,
+        &[],
+    );
+    write_config(
+        store.project.as_ref().unwrap(),
+        r#"{"mcp":true,"mcpMaxAccess":"propose"}"#,
+        &[],
+    );
+    let agent = config::load(&store).config.unwrap().agent;
+    assert_eq!(
+        agent,
+        AgentSettings {
+            enabled: true,
+            default_access: AgentDefault::Direct,
+            max_access: AgentAccess::Propose,
+            remember_clients: false,
+        }
+    );
+}
+
+#[test]
+fn the_mcp_settings_show_the_defaults_and_the_client_help_and_write_the_scope() {
+    let (store, _) = store("p-mcp-settings");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    session.click_text("MCP");
+    session.assert_sees("MCP");
+    session.assert_sees("< Default: On >");
+    session.assert_sees("< Default: Ask >");
+    session.assert_sees("< Default: Full access >");
+    session.assert_sees("Remember clients");
+    session.assert_sees("Claude Code: claude mcp add --transport stdio --scope user");
+    session.assert_sees("sqln mcp");
+    session.assert_sees("docs/MCP.md");
+    // A click changes the choice. An explicit Ask can replace a global default.
+    session.click_text("Default access");
+    session.assert_sees("< Ask >");
+    session.code(KeyCode::Right);
+    session.assert_sees("< Allow >");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Right);
+    session.code(KeyCode::Right);
+    session.assert_sees("< Allow all >");
+    session.click_text("[Save]");
+    session.assert_sees("settings are saved");
+    let text = fs::read_to_string(store.project.as_ref().unwrap().config_file()).unwrap();
+    assert!(text.contains("\"mcpDefaultAccess\": \"propose\""), "{text}");
+    assert!(text.contains("\"mcpMaxAccess\": \"direct\""), "{text}");
+    assert!(!text.contains("\"mcp\":"), "{text}");
+    assert!(!store.global.config_file().exists());
+}
+
+#[test]
+fn a_long_endpoint_uses_the_columns_of_a_wide_window() {
+    let (store, _) = two_connections("p-settings-endpoint-width");
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    // Five rows down is the Autocomplete section.
+    for _ in 0..5 {
+        session.code(KeyCode::Down);
+    }
+    session.click_text("Endpoint");
+    let url = "https://openrouter.ai/api/v1/chat/completions";
+    session.write(url);
+    // The window is 100 columns, so the field shows more than the 30 columns
+    // of the smallest window.
+    session.assert_sees(url);
 }

@@ -1,11 +1,9 @@
 // The groups of objects in the explorer tree: routines, sequences, triggers, and types.
 
-mod common;
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use common::{key, select_row, temp_db};
+use crate::common::{key, select_row, temp_db};
 use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -297,7 +295,7 @@ fn the_commands_of_a_table_do_not_act_on_an_object() {
     tree.go_to("Triggers");
     tree.press(KeyCode::Right);
     tree.press(KeyCode::Down);
-    let page = common::explorer_page(&tree.app).join("\n");
+    let page = crate::common::explorer_page(&tree.app).join("\n");
     for label in ["structure", "diagram", "compare", "import"] {
         assert!(!page.to_lowercase().contains(label), "{label}: {page}");
     }

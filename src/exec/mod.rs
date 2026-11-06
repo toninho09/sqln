@@ -1,5 +1,6 @@
 //! Executions. Each console has one task, and that task owns the reserved session.
 
+mod ai;
 mod runner;
 mod sink;
 
@@ -103,6 +104,10 @@ pub enum ExecutionEnd {
 
 #[derive(Debug)]
 pub enum ExecEvent {
+    AgentMetadata {
+        job: String,
+        result: Result<AgentMetadata, String>,
+    },
     EditFinished {
         console: ConsoleId,
         execution: ExecutionId,
@@ -226,7 +231,8 @@ impl ExecEvent {
             | ExecEvent::Notice { key, .. }
             | ExecEvent::LimitAdded { key, .. }
             | ExecEvent::StatementFinished { key, .. } => Some(key.console),
-            ExecEvent::CommandLog { .. }
+            ExecEvent::AgentMetadata { .. }
+            | ExecEvent::CommandLog { .. }
             | ExecEvent::CatalogLoaded { .. }
             | ExecEvent::PasswordRefused { .. }
             | ExecEvent::ColumnsLoaded { .. }
@@ -279,7 +285,20 @@ pub struct RunOptions {
     pub parameters: Vec<crate::sql::parameters::Parameter>,
 }
 
+pub(crate) struct AgentRun {
+    pub reservation: Result<crate::agent::Hold, crate::agent::Error>,
+    pub cancel: tokio_util::sync::CancellationToken,
+    /// False only for a session with full access. A read-only connection stays read-only.
+    pub read_only: bool,
+}
+
+#[derive(Debug)]
+pub enum AgentMetadata {
+    Catalog(Catalog),
+}
+
 pub struct RunRequest {
+    pub(crate) agent: Option<AgentRun>,
     pub trace: Option<TraceContext>,
     pub execution: ExecutionId,
     pub statements: Vec<String>,
@@ -582,6 +601,43 @@ impl Manager {
         self.send(
             console,
             Command::Run(RunRequest {
+                agent: None,
+                trace: self.console_trace(console),
+                execution,
+                statements,
+                options,
+            }),
+        );
+        execution
+    }
+
+    pub(crate) fn run_agent(
+        &self,
+        console: ConsoleId,
+        statements: Vec<String>,
+        mut options: RunOptions,
+        cancel: tokio_util::sync::CancellationToken,
+        internal: bool,
+        read_only: bool,
+    ) -> ExecutionId {
+        options.manual = false;
+        options.export = None;
+        if !internal {
+            options.untimed = false;
+            options.row_cap = None;
+        }
+        let execution = self.next_execution.fetch_add(1, Ordering::Relaxed);
+        self.send(
+            console,
+            Command::Run(RunRequest {
+                agent: Some(AgentRun {
+                    reservation: crate::agent::Hold::new(
+                        statements.iter().map(String::capacity).sum(),
+                        &self.budget,
+                    ),
+                    cancel,
+                    read_only,
+                }),
                 trace: self.console_trace(console),
                 execution,
                 statements,
@@ -609,6 +665,49 @@ impl Manager {
         let execution = self.next_execution.fetch_add(1, Ordering::Relaxed);
         self.send(console, Command::Import(ImportRequest { execution, job }));
         execution
+    }
+
+    pub(crate) fn agent_metadata(
+        &self,
+        console: ConsoleId,
+        connection: ConnectionId,
+        job: String,
+        schemas: Vec<String>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) {
+        let binding = self.connections.get(&connection).cloned();
+        let events = self.events.clone();
+        let trace = self.console_trace(console);
+        self.runtime.spawn(async move {
+            // The job waits for this event, so a missing connection must still answer.
+            let Some(binding) = binding else {
+                let result = Err("The connection is not available. Connect it and submit the operation again.".into());
+                let _ = events.send(ExecEvent::AgentMetadata { job, result }).await;
+                return;
+            };
+            let read = async {
+                let mut lease = match binding.pool.acquire_traced(trace).await {
+                    Ok(lease) => lease,
+                    Err(error) => {
+                        if let Some(event) = binding.refusal(&error) { let _ = events.send(event).await; }
+                        return Err(error.message);
+                    }
+                };
+                let metadata = async {
+                    lease.session().apply_context(&SessionContext { read_only: true, ..Default::default() }).await.map_err(|error| error.message)?;
+                    lease.session().read_catalog_of(&schemas).await.map(AgentMetadata::Catalog).map_err(|error| error.message)
+                };
+                let limit = binding.settings().sql_timeout;
+                let result = match limit {
+                    Some(limit) => tokio::time::timeout(limit, metadata).await.map_err(|_| "The metadata time limit ended. Try a smaller operation.".to_owned())?,
+                    None => metadata.await,
+                };
+                lease.release().await;
+                result
+            };
+            let result = tokio::select! { result = read => result, () = cancel.cancelled() => Err("The assistant operation was cancelled.".into()) };
+            let _ = events.send(ExecEvent::AgentMetadata { job, result }).await;
+        });
     }
 
     pub fn stop(&self, console: ConsoleId) {

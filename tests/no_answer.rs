@@ -1,16 +1,14 @@
 // A database that does not answer a cancellation. SQLite always answers, so these
 // tests use a fake connector for the last-resort path of the plan.
 
-mod common;
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::common::{ctrl, key};
 use async_trait::async_trait;
-use common::{ctrl, key};
 use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

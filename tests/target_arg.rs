@@ -1,7 +1,5 @@
 // The target of the command line: a file or a URI that lasts for one session.
 
-mod common;
-
 use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,7 +7,7 @@ use std::process::{Command, Output};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{key, temp_db, temp_dir};
+use crate::common::{key, temp_db, temp_dir};
 use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

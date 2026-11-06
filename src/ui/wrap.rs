@@ -103,6 +103,18 @@ impl WrappedText {
         }
     }
 
+    /// Returns the first `count` characters of the text line that holds a row that
+    /// `row` read.
+    pub fn line_head(&self, index: usize, count: usize) -> String {
+        let mut first = index.min(self.rows.len().saturating_sub(1));
+        while first > 0 && self.rows.get(first).is_some_and(|row| row.2) {
+            first -= 1;
+        }
+        self.rows.get(first).map_or_else(String::new, |row| {
+            self.text[row.0..].chars().take(count).collect()
+        })
+    }
+
     /// Returns the last row at or before `index`.
     pub fn last_row_at(&mut self, index: usize) -> usize {
         if self.row(index).is_some() {

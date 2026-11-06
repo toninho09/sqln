@@ -1,6 +1,11 @@
 // The ER diagram: its queries on real SQLite, its model, its layout, and its Mermaid text.
 // `tests/servers.rs` runs the queries of PostgreSQL and MySQL.
 
+mod common;
+
+mod compare_schema;
+mod diagram_tab;
+
 use std::collections::BTreeSet;
 
 use rusqlite::Connection;

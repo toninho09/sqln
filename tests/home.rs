@@ -1,13 +1,11 @@
 // The home screen: the screen of the application without a tab.
 
-mod common;
-
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, prefix_page, temp_db, temp_dir};
+use crate::common::{ctrl, key, prefix_page, temp_db, temp_dir};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -208,7 +206,7 @@ fn closing_the_last_console_shows_the_home_screen() {
 #[test]
 fn closing_the_last_table_shows_the_home_screen() {
     let mut f = Fixture::sqlite("home-last-table");
-    common::open_table(&mut f.app, 0, "t");
+    crate::common::open_table(&mut f.app, 0, "t");
     f.pump_until(|f| f.app.table().is_some_and(|tab| !tab.is_busy()));
     f.prefix('p');
     assert!(f.app.table().is_none());
@@ -223,7 +221,7 @@ fn closing_the_last_table_shows_the_home_screen() {
 #[test]
 fn closing_the_last_diagram_shows_the_home_screen() {
     let mut f = Fixture::sqlite("home-last-diagram");
-    common::select_row(&mut f.app, 0, &[RowKind::Schema], "main");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Schema], "main");
     f.code(KeyCode::Char('d'));
     f.pump_until(|f| f.app.diagram().is_some_and(|tab| !tab.is_busy()));
     f.prefix('p');

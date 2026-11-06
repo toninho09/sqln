@@ -1,13 +1,11 @@
 // The import dialog in the application: the keys, the sections, and the end of a run.
 
-mod common;
-
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, select_row, shift, temp_db, temp_dir};
+use crate::common::{ctrl, key, select_row, shift, temp_db, temp_dir};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -123,7 +121,7 @@ impl Fixture {
 
     /// Opens a table with its first page.
     fn open(&mut self, name: &str) {
-        common::open_table(&mut self.app, 0, name);
+        crate::common::open_table(&mut self.app, 0, name);
         self.wait_idle();
     }
 
@@ -198,7 +196,7 @@ fn the_key_opens_the_dialog_from_the_grid_with_the_table_columns() {
 fn the_key_opens_the_table_and_the_dialog_from_the_navigator() {
     let mut f = Fixture::new("dialog-navigator");
     select_row(&mut f.app, 0, &[RowKind::Table], "people");
-    assert!(common::explorer_page(&f.app).contains(&"I Import a file".to_owned()));
+    assert!(crate::common::explorer_page(&f.app).contains(&"I Import a file".to_owned()));
     f.import_key();
     f.wait_for("Import to people");
     assert_eq!(f.app.table().unwrap().relation.relation, "people");
@@ -217,7 +215,7 @@ fn a_key_on_a_table_that_is_open_opens_its_dialog() {
 fn a_view_has_no_import() {
     let mut f = Fixture::new("dialog-view");
     select_row(&mut f.app, 0, &[RowKind::View], "names");
-    assert!(!common::explorer_page(&f.app).contains(&"I Import a file".to_owned()));
+    assert!(!crate::common::explorer_page(&f.app).contains(&"I Import a file".to_owned()));
     f.import_key();
     f.app.drain_events();
     assert!(!f.sees("Import to"));

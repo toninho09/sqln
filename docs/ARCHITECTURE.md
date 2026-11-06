@@ -29,10 +29,15 @@ Main thread                        Tokio runtime
 
 | Module | Responsibility |
 |---|---|
+| `agent` | Transport-independent assistant operations, read policy, private instance registry, and IPC |
+| `mcp` | MCP schemas and stdio bridge to authorized open instances |
+| `app/agent` | Access decisions, tasks, loaded-state reads, and edit proposals |
 | `app` | Application state, actions, and state updates |
 | `ui` | Drawing of the screens and the widgets, themes (`theme`), color schemes (`schemes`), symbols (`icons`), status bar (`statusline`), and prefix menu (`which_key`) |
 | `app/commands` | Shared command availability, contextual lists, priority, and target labels; `Action` remains the catalog |
 | `palette` | State and word filter of functional commands, including action names and technical aliases; `ui` draws it |
+| `filter_list` | Filtered list core, used by the palette, the history window, and the compare dialog lists |
+| `help` | State of the `F1` key reference: groups, filter, and scroll |
 | `browser` | State of the file explorer of the path fields: folder, rows, and filter |
 | `input` | Key map: regions, actions, sequences, and `keymap` rules |
 | `navigator` | Tree of connections, consoles, schemas, relations, columns, and other database objects |
@@ -40,11 +45,13 @@ Main thread                        Tokio runtime
 | `connection` | Connection definitions and the state of each connection in the application |
 | `editor` | EdTUI, conventional layer, search, and replace |
 | `sql` | Tokenizer, statement separation, and statement classes |
-| `complete` | Autocomplete suggestions |
+| `complete` | Local autocomplete suggestions |
+| `ai` | One OpenAI-compatible chat protocol, credentials, context, and metadata transforms. The Settings dialog edits the provider fields |
 | `catalog` | In-memory cache; schemas, tables, routines, sequences, triggers, and types first, columns and foreign keys on demand |
 | `definition` | DDL of one object: the queries per database and the text with its header |
 | `generate` | SQL templates of the navigator |
 | `console` | Editor, results, messages, and state of a console |
+| `parameters` | Panel of the query parameters of one console: fields, kinds, values, and Set state |
 | `command_log` | In-memory command history, bounded text, tracing, and the Messages viewport |
 | `plan` | Query plan commands, database output readers, and tree rows |
 | `mark_list` | Searchable list with a mark for each selected name |
@@ -68,7 +75,7 @@ Main thread                        Tokio runtime
 | `script_file` | Saved state of a console: hash, line ending, save wait, and write problem |
 | `creds` | Vault and session passwords, with `zeroize` |
 | `trust` | Confirmed destinations and known paths |
-| `settings` | Form of the preferences per scope |
+| `settings` | Form of the preferences per scope, with the autocomplete provider fields |
 | `log` | Optional event log, without SQL or values |
 
 `ui` uses driver-independent connector models, such as `Namespace` and `TransactionState`, plus target helpers.
@@ -82,6 +89,34 @@ The vault calls are synchronous, but `Manager::spawn_blocking` runs them off the
 `app` applies the key priority and the mouse. `app/auth.rs`, `app/keys.rs`, `app/hints.rs`, `app/mouse.rs`, `app/close.rs`, `app/connections.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs`, `app/session.rs`, `app/conflicts.rs`, `app/history.rs`, `app/guard.rs`, `app/export.rs`, and `app/browse.rs` divide that code.
 `store` keeps the folders and files. It does not depend on `app` or `ui`.
 Its configuration reader uses driver-independent connector target types.
+
+### Local assistant operations
+
+`sqln mcp` runs without a terminal. It discovers private Unix sockets. It uses the instance UUID of the call, or the only open instance.
+The bridge waits for task ends with repeated state reads. Each IPC request still gets one immediate answer.
+The SQLN process owns authorization and application state. Its IPC thread sends typed requests through a bounded queue.
+The interface processes at most eight requests or 2 ms per frame. It never waits for a database operation.
+Assistant executions carry a cancellation token and a read-only flag. They never inherit a user's reserved transaction, and never leave one open.
+Without full access, a parser policy checks submitted SQL; native connector read-only controls provide a second check.
+Full access removes both checks for executions only. A read-only connection and the run questions still apply.
+Catalog, DDL, diagrams, and comparisons reuse existing readers and transformations under the same credential gate.
+Edit proposals use editor revisions. Each accepted change is one undo step. Only UI actions approve access, accept proposals, or enable direct editing.
+The shared data budget counts retained snapshots and text artifacts. Results use generation-checked pages without a reread.
+No assistant authorization, remembered access, or direct-edit setting enters saved files. See [MCP](MCP.md) for the complete contract.
+
+### Inline review
+
+AI responses and agent proposals use the review in the editor. `editor/review` holds the model: one diff review of line changes (hunks), and a list of ghosts, each an insertion at its anchor. It builds the rows of the view, applies an accepted change through the revision-checked edit path, and moves the later changes. A ghost stays until the user decides: an edit on another line moves the anchor, an edit of the anchor line closes only that ghost, and an undo takes them all. Several answers wait at once, bounded by a setting; their requests run in parallel and each shows an animated mark at its anchor. `ui/review` draws the rows, the gutter marks, the buttons of each ghost and of each pending change, and the bar of a diff. `app/review` routes the `Review` key region, the mouse, and paste, and reports each decision to its origin; the decide keys act on the line of the cursor. The editor is read only during a diff review, which ends the AI requests of its console. Diffs are built off the interface thread.
+
+### AI SQL completion
+
+AI completion is separate from MCP. `app/ai` captures the editor interval and revisions, checks destination consent, and coordinates the request. The suggestion list holds two AI rows: the plain row starts a request at once, and the request row opens a one-line modal whose text travels as `request` in the body. `editor/ai` exposes immutable targets and applies a proposal through the existing single-undo edit path. Local `complete` suggestions remain independent of providers.
+
+`exec/ai` reads complete structural metadata through the credential gate and an independent pool lease. Snapshots count against the shared budget and follow catalog refresh generations. Unknown session states close their leases. `ai` serializes OpenAI-compatible chat requests, reduces oversized context deterministically, and bounds HTTP responses. Credential files are read again for each request. Vault keys use a separate `sqln-ai` service. Calls, preparation, and diff construction stay off the interface thread.
+
+`ui/ai` renders the request dialog, the waiting states, and scoped settings. A response shows ghost text at the cursor of its console, through the [inline review](#inline-review) model. A review changes the buffer only when the user accepts a change, with checked revisions and no execution. Pending responses never take another dialog's focus.
+
+`preferences.aiCompletion` is optional. Enabled inherits independently; the provider block inherits as a unit. The global private `ai-trust.json` records consent, under its own lock. No SQL, metadata snapshots, responses, or key content enter those files. Scripts and workspace formats do not change. See [AI completion](AI_COMPLETION.md) for the contract and limits.
 
 ### Files and saving
 
@@ -483,7 +518,11 @@ No scope receives `password`. The plain-text authorized password stays in `crede
     "formatJson": true,
     "showSystemCommands": false,
     "bellAfterSeconds": 10,
-    "suggestionKeys": "tab"
+    "suggestionKeys": "tab",
+    "mcp": true,
+    "mcpDefaultAccess": "ask",
+    "mcpMaxAccess": "full",
+    "mcpRememberClients": true
   },
   "connections": [
     {

@@ -1,8 +1,11 @@
 //! The SQL editor: EdTUI, the conventional keys, suggestions, search, and highlights.
 
+mod agent;
+pub mod ai;
 mod buffer;
 mod conventional;
 mod frame;
+pub mod review;
 mod search;
 mod undo;
 
@@ -132,7 +135,17 @@ struct ErrorSpot {
 /// The open list of suggestions. The editor rebuilds it after each text change.
 pub struct SuggestionList {
     pub completion: Completion,
+    /// The selected row of the whole list: the AI rows first, then the items.
     pub selected: usize,
+    pub ai: bool,
+}
+
+/// The AI rows above the local items: the request row, then the plain row.
+pub const AI_ROWS: usize = 2;
+
+/// Returns how many AI rows a list holds.
+pub(crate) fn ai_row_count(ai: bool) -> usize {
+    usize::from(ai) * AI_ROWS
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -146,6 +159,13 @@ pub struct SqlEditor {
     pub state: EditorState,
     keyboard: KeyboardMode,
     suggestions_enabled: bool,
+    ai_available: bool,
+    ai_requested: Option<self::ai::AiSelection>,
+    /// Set when a selection blocks the AI row of an explicit list.
+    ai_refused: bool,
+    /// The anchor of a running completion, with the time of the request.
+    ai_pending: Vec<(Index2, std::time::Instant)>,
+    list_area: (Rect, usize),
     literal_text: bool,
     handler: EditorEventHandler,
     dialect: Dialect,
@@ -159,6 +179,7 @@ pub struct SqlEditor {
     redo_depth: usize,
     page_height: usize,
     text_area: Option<Rect>,
+    agent_page: std::cell::RefCell<agent::ReadCursor>,
     revision: u64,
     /// The last known text in Vim mode. EdTUI does not report its edits.
     vim_shadow: Option<Lines>,
@@ -174,6 +195,13 @@ pub struct SqlEditor {
     /// The revision of the text that the marks of the execution describe.
     plan_revision: u64,
     error_spot: Option<ErrorSpot>,
+    /// The open inline review. The text is read only while it is open.
+    review: Option<review::Review>,
+    /// The ghost answers that wait for a decision, with their shared view.
+    ghosts: Vec<review::Ghost>,
+    ghost_view: Option<review::GhostView>,
+    ghost_targets: Vec<(review::Control, Rect)>,
+    ghost_keys: review::Keys,
 }
 
 impl SqlEditor {
@@ -198,6 +226,11 @@ impl SqlEditor {
             state,
             keyboard,
             suggestions_enabled: true,
+            ai_available: false,
+            ai_requested: None,
+            ai_refused: false,
+            ai_pending: Vec::new(),
+            list_area: Default::default(),
             literal_text: false,
             handler: EditorEventHandler::vim_mode(),
             dialect,
@@ -209,6 +242,7 @@ impl SqlEditor {
             redo_depth: 0,
             page_height: 20,
             text_area: None,
+            agent_page: std::cell::RefCell::new(agent::ReadCursor::default()),
             revision: 0,
             vim_shadow,
             snapshot: None,
@@ -221,6 +255,11 @@ impl SqlEditor {
             marks_revision: 0,
             plan_revision: 0,
             error_spot: None,
+            review: None,
+            ghosts: Vec::new(),
+            ghost_view: None,
+            ghost_targets: Vec::new(),
+            ghost_keys: Default::default(),
         }
     }
 
@@ -371,6 +410,7 @@ impl SqlEditor {
 
     fn mark_changed(&mut self) {
         self.revision += 1;
+        self.sync_ghosts();
     }
 
     fn snapshot(&mut self) -> &Snapshot {
@@ -391,10 +431,19 @@ impl SqlEditor {
             return false;
         };
         if keys.accepts(key) {
+            if list.ai && list.selected < AI_ROWS {
+                self.ai_requested = Some(if list.selected == 0 {
+                    self::ai::AiSelection::Request
+                } else {
+                    self::ai::AiSelection::Plain
+                });
+                self.close_suggestions();
+                return true;
+            }
             self.accept_suggestion();
             return true;
         }
-        let count = list.completion.items.len();
+        let total = ai_row_count(list.ai) + list.completion.items.len();
         let plain = key.modifiers.is_empty();
         match key.code {
             KeyCode::Esc => {
@@ -402,12 +451,12 @@ impl SqlEditor {
                 self.list_request = None;
                 true
             }
-            KeyCode::Up if plain => {
-                list.selected = (list.selected + count - 1) % count;
+            KeyCode::Up if plain && total > 0 => {
+                list.selected = (list.selected + total - 1) % total;
                 true
             }
-            KeyCode::Down if plain => {
-                list.selected = (list.selected + 1) % count;
+            KeyCode::Down if plain && total > 0 => {
+                list.selected = (list.selected + 1) % total;
                 true
             }
             _ => false,
@@ -416,7 +465,8 @@ impl SqlEditor {
 
     fn accept_suggestion(&mut self) {
         let Some(list) = self.list.take() else { return };
-        let Some(item) = list.completion.items.get(list.selected) else {
+        let index = list.selected.saturating_sub(ai_row_count(list.ai));
+        let Some(item) = list.completion.items.get(index) else {
             return;
         };
         let snapshot = self.snapshot();
@@ -441,9 +491,7 @@ impl SqlEditor {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char(' ') if ctrl => {
-                if self.state.mode == EditorMode::Insert {
-                    self.update_list(ListAction::Open, catalog);
-                }
+                self.open_explicit_suggestions(catalog);
                 return;
             }
             KeyCode::Char('f') if ctrl => {
@@ -523,7 +571,9 @@ impl SqlEditor {
         }
         self.list = (!completion.items.is_empty()).then_some(SuggestionList {
             completion,
-            selected: 0,
+            // The list starts at the first local item; the AI rows wait above it.
+            selected: ai_row_count(self.ai_row()),
+            ai: self.ai_row(),
         });
     }
 
@@ -541,9 +591,7 @@ impl SqlEditor {
                     search.field = SearchField::Replace;
                 }
             }
-            Action::EditorSuggestions if self.is_inserting() => {
-                self.update_list(ListAction::Open, catalog)
-            }
+            Action::EditorSuggestions => self.open_explicit_suggestions(catalog),
             Action::EditorUndo => self.undo(),
             Action::EditorRedo => self.redo(),
             Action::EditorCopy => self.copy_selection(),
@@ -584,6 +632,7 @@ impl SqlEditor {
     }
 
     pub fn close_suggestions(&mut self) {
+        self.list_area = Default::default();
         self.list = None;
         self.list_request = None;
     }
@@ -592,11 +641,25 @@ impl SqlEditor {
     /// when a request found nothing and the text and the cursor did not change.
     pub fn refresh_suggestions(&mut self, catalog: Option<&Catalog>) {
         if self.list.is_some() || self.list_request == Some((self.revision, self.state.cursor)) {
+            let ai_selected = self
+                .list
+                .as_ref()
+                .and_then(|l| l.ai.then_some(l.selected))
+                .filter(|s| *s < AI_ROWS);
             self.update_list(ListAction::Open, catalog);
+            if let Some(index) = ai_selected.filter(|_| self.ai_available) {
+                let list = self.list.get_or_insert(SuggestionList {
+                    completion: Completion::default(),
+                    selected: index,
+                    ai: true,
+                });
+                list.selected = index;
+            }
         }
     }
 
-    fn selection_range(&self) -> Option<(Index2, Index2)> {
+    /// Returns the selection as an ordered pair, with the start first.
+    pub fn selection_range(&self) -> Option<(Index2, Index2)> {
         match self.keyboard {
             KeyboardMode::Conventional => self.selected_range(),
             KeyboardMode::Vim => self
@@ -944,6 +1007,14 @@ impl SqlEditor {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 self.handler.on_mouse_event(mouse, &mut self.state);
             }
+            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => {
+                let side = if matches!(mouse.kind, MouseEventKind::ScrollLeft) {
+                    -1
+                } else {
+                    1
+                };
+                self.scroll_sideways(side);
+            }
             MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left) => {
                 if let Some(position) = self.pointer_position(mouse) {
                     match self.keyboard {
@@ -977,6 +1048,32 @@ impl SqlEditor {
         if let Some(selection) = &mut self.state.selection {
             selection.end = self.state.cursor;
         }
+    }
+
+    /// Moves the view sideways. EdTUI keeps the cursor inside the view at each draw,
+    /// so the cursor moves when the view passes it. One event moves one column, because
+    /// one gesture of a touchpad sends many events.
+    fn scroll_sideways(&mut self, columns: isize) {
+        let width = self.text_area.map_or(0, |area| usize::from(area.width));
+        if width == 0 {
+            return;
+        }
+        let (old_left, top) = self.state.viewport_offset();
+        let line = buffer::row(&self.state.lines, self.state.cursor.row);
+        // The view cannot pass the last column that the cursor reaches on its row.
+        let limit = match self.state.mode {
+            EditorMode::Normal => line.len().saturating_sub(1),
+            _ => line.len(),
+        };
+        let left = old_left.saturating_add_signed(columns).min(limit);
+        let end = last_column(line, left, width).min(limit);
+        let mut cursor = self.state.cursor;
+        cursor.col = cursor.col.clamp(left, end);
+        if cursor != self.state.cursor {
+            self.state.cursor = cursor;
+            self.preferred_col = None;
+        }
+        self.state.set_viewport_offset(left, top);
     }
 
     /// Converts a screen cell to a text position, with wide characters and tabs.

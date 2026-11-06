@@ -1,5 +1,7 @@
 //! Screen drawing.
 
+pub mod agent;
+pub mod ai;
 pub mod auth;
 pub mod browser;
 pub mod compare;
@@ -18,6 +20,7 @@ pub mod name;
 pub mod navigator;
 pub mod palette;
 pub mod parameters;
+pub mod review;
 pub mod schemes;
 pub mod settings;
 pub mod statusline;
@@ -114,6 +117,11 @@ pub fn draw_editor(
     let [text, scroll] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]).areas(text);
     // The application draws the line numbers, because EdTUI leaves no space around them.
+    if editor.review().is_some() || editor.has_ghosts() {
+        editor.set_text_area(gutterless(text, editor));
+        review::draw(frame.buffer_mut(), text, editor, theme);
+        return;
+    }
     let text_area = gutterless(text, editor);
     editor.set_text_area(text_area);
     let (width, height) = (text_area.width.into(), text_area.height.into());
@@ -137,6 +145,7 @@ pub fn draw_editor(
     }
     draw_gutter(frame.buffer_mut(), text, editor, focused, theme);
     draw_marks(frame, text, editor, theme);
+    draw_ai_anchor(frame.buffer_mut(), text, editor, theme);
     let (_, top) = editor.state.viewport_offset();
     draw_scrollbar(
         frame.buffer_mut(),
@@ -151,7 +160,8 @@ pub fn draw_editor(
     let cursor = editor.state.cursor_screen_position();
     if let (Some(list), Some(cursor)) = (editor.suggestions(), cursor) {
         let anchor = Position::new(cursor.x.saturating_sub(anchor_shift as u16), cursor.y);
-        draw_suggestions(frame, area, anchor, list, theme);
+        let layout = draw_suggestions(frame, area, anchor, list, theme);
+        editor.set_list_area(layout);
     }
 }
 
@@ -251,6 +261,36 @@ fn draw_gutter(buffer: &mut Buffer, area: Rect, editor: &SqlEditor, focused: boo
             style,
         );
     }
+}
+
+// Shows the anchor of a running completion: an animated mark in the first column of
+// the gutter of the requested line. The user edits other lines and still sees where
+// the answer will land.
+fn draw_ai_anchor(buffer: &mut Buffer, area: Rect, editor: &SqlEditor, theme: &Theme) {
+    let (_, top) = editor.state.viewport_offset();
+    for (at, since) in editor.ai_pending() {
+        let Some(offset) = at
+            .row
+            .checked_sub(top)
+            .filter(|offset| *offset < usize::from(area.height))
+        else {
+            continue;
+        };
+        if let Some(cell) = buffer.cell_mut((area.x, area.y + offset as u16)) {
+            let style = cell.style();
+            cell.set_symbol(spin_char(*since))
+                .set_style(style.patch(theme.hint));
+        }
+    }
+}
+
+/// Returns the animated mark of a request that runs since `since`.
+pub(crate) fn spin_char(since: std::time::Instant) -> &'static str {
+    const FRAMES: [&str; 4] = ["|", "/", "-", "\\"];
+    const FRAME_TIME: u128 = 100;
+    let frame =
+        usize::try_from(since.elapsed().as_millis() / FRAME_TIME).unwrap_or(0) % FRAMES.len();
+    FRAMES[frame]
 }
 
 /// Writes the statement states in the free column of the line number gutter.
@@ -378,13 +418,19 @@ pub(crate) fn draw_anchored_list<'a>(
     (area, first)
 }
 
+/// The AI rows above the local items: the request row, then the plain row.
+const AI_ROW_LABELS: [&str; crate::editor::AI_ROWS] = [
+    " AI  Complete with AI with a request…",
+    " AI  Complete with AI…",
+];
+
 pub(crate) fn draw_suggestions(
     frame: &mut Frame,
     bounds: Rect,
     anchor: Position,
     list: &SuggestionList,
     theme: &Theme,
-) {
+) -> (Rect, usize) {
     let items = &list.completion.items;
     let row_width = |item: &Suggestion| {
         let detail = item
@@ -393,10 +439,29 @@ pub(crate) fn draw_suggestions(
             .map_or(0, |text| Span::raw(text).width() + 2);
         Span::raw(item.label.as_str()).width() + detail + 6
     };
-    let width = items.iter().map(row_width).max().unwrap_or_default();
-    let shape = (items.len(), Some(list.selected), width);
+    let ai = crate::editor::ai_row_count(list.ai);
+    let mut width = items.iter().map(row_width).max().unwrap_or_default();
+    if ai > 0 {
+        let row = AI_ROW_LABELS
+            .iter()
+            .map(|label| Span::raw(*label).width() + 3)
+            .max()
+            .unwrap_or_default();
+        width = width.max(row);
+    }
+    let shape = (items.len() + ai, Some(list.selected), width);
     draw_anchored_list(frame, (bounds, anchor), shape, theme, |index, marked| {
-        let item = &items[index];
+        if list.ai && index < ai {
+            return vec![Span::styled(
+                AI_ROW_LABELS[index],
+                if marked {
+                    theme.list_selected
+                } else {
+                    theme.list
+                },
+            )];
+        }
+        let item = &items[index - ai];
         let (style, detail_style) = if marked {
             (theme.list_selected, theme.list_selected)
         } else {
@@ -410,5 +475,5 @@ pub(crate) fn draw_suggestions(
             spans.push(Span::styled(format!("  {detail}"), detail_style));
         }
         spans
-    });
+    })
 }

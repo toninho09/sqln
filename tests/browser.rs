@@ -1,11 +1,9 @@
 // The file browser of the path fields: its rows, its keys, and its window.
 
-mod common;
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use common::{ctrl, key, temp_dir};
+use crate::common::{ctrl, key, temp_dir};
 use crossterm::event::KeyCode;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

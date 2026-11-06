@@ -61,6 +61,7 @@ impl Shortcuts {
             Region::Navigator,
             Region::Grid,
             Region::Diagram,
+            Region::Review,
         ]
         .into_iter()
         .flat_map(Action::in_region)
