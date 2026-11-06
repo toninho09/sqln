@@ -1,12 +1,10 @@
 // The key reference groups, search, scrolling, and event isolation.
 
-mod common;
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use common::{ctrl, key};
+use crate::common::{ctrl, key};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

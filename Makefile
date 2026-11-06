@@ -8,10 +8,11 @@ Q = --quiet
 fmt:
 	@cargo fmt
 
-# Run the linters: rustfmt check and clippy.
+# Run the linters: rustfmt check, clippy, and the test-file check.
 lint:
 	@cargo fmt --check
 	@cargo clippy --all-targets $(Q) -- -D warnings
+	@scripts/check-test-files.sh
 
 # Run the tests in tests/. The database tests skip without the Docker stack.
 test:

@@ -1,12 +1,10 @@
 // The SQL text of the navigator: the templates, the list, and the copy of a name.
 
-mod common;
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, select_row, temp_db};
+use crate::common::{ctrl, key, select_row, temp_db};
 use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

@@ -1,15 +1,13 @@
 // The notices of the database in **Messages**. A fake connector sends them, so the
 // tests need no server. `tests/servers.rs` reads the real notices.
 
-mod common;
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::common::{ctrl, key};
 use async_trait::async_trait;
-use common::{ctrl, key};
 use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

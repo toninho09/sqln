@@ -1,8 +1,6 @@
 // The look of the application: themes, symbols, the status line, the menu of `Ctrl+W`,
 // the command palette, and the first screen.
 
-mod common;
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
@@ -10,7 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, shift, temp_db, temp_dir};
+use crate::common::{ctrl, key, shift, temp_db, temp_dir};
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -1478,7 +1476,7 @@ fn sqlite_form_screen(name: &str) -> Screen {
 }
 
 fn focus_field(screen: &mut Screen, field: Field) {
-    common::focus_form_field(&mut screen.app, field);
+    crate::common::focus_form_field(&mut screen.app, field);
 }
 
 /// Clicks a section of the sidebar of the form.

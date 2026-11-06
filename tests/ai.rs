@@ -1,5 +1,9 @@
 mod common;
 
+mod agent;
+mod ai_editor;
+mod ai_schema;
+mod mcp;
 
 use common::{ctrl, key, shift};
 use crossterm::event::{Event, KeyCode, KeyModifiers};

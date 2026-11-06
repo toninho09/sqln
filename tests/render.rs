@@ -1,12 +1,10 @@
-mod common;
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::rc::Rc;
 
-use common::sample_catalog;
-use common::{Fixture, ctrl, key, shift};
+use crate::common::sample_catalog;
+use crate::common::{Fixture, ctrl, key, shift};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -183,8 +181,8 @@ fn every_theme_has_no_rgb_color_and_the_plain_theme_has_no_color() {
 fn selection_style_covers_only_the_selected_characters() {
     let mut f = Fixture::conventional("abcdef");
     f.press_all(&[
-        common::shift(KeyCode::Right),
-        common::shift(KeyCode::Right),
+        crate::common::shift(KeyCode::Right),
+        crate::common::shift(KeyCode::Right),
     ]);
     let theme = Theme::ansi();
     let buffer = draw(&mut f.editor, &theme, 20, 3);
@@ -800,13 +798,13 @@ fn the_keys_of_the_hint_bar_fit_the_minimum_width() {
 fn the_explorer_page_shows_the_keys_of_the_key_map() {
     let overrides = HashMap::from([("navigatorStructure".to_owned(), vec!["u".to_owned()])]);
     let keymap = Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap();
-    let database = common::temp_db("explorer-key-map");
+    let database = crate::common::temp_db("explorer-key-map");
     rusqlite::Connection::open(&database)
         .unwrap()
         .execute_batch("CREATE TABLE t(a);")
         .unwrap();
     let app = hint_app_on(KeyboardMode::Conventional, Some(keymap), Some(database));
-    let page = common::explorer_page(&app);
+    let page = crate::common::explorer_page(&app);
     assert!(
         page.contains(&"u Show the structure".to_owned()),
         "{page:?}"
@@ -821,7 +819,7 @@ fn the_hint_bar_shows_the_keys_of_the_key_map() {
         ("nextTab".to_owned(), vec!["ctrl+w u".to_owned()]),
     ]);
     let keymap = Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap();
-    let database = common::temp_db("hint-key-map");
+    let database = crate::common::temp_db("hint-key-map");
     rusqlite::Connection::open(&database)
         .unwrap()
         .execute_batch("CREATE TABLE t(a);")

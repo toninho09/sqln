@@ -44,7 +44,7 @@ src/
 ├── sql/        SQL analysis, formatting, and literals.
 ├── grid/       Data, selection, search, and memory budget.
 └── store/      Configuration, scripts, and persistence.
-tests/          Behavior and integration tests.
+tests/          Behavior and integration tests. Every file is a `[[test]]` target or a `mod` of a root file; `scripts/check-test-files.sh` enforces it.
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed module responsibilities.
@@ -81,7 +81,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed module respons
 ## Makefile commands
 
 - `make fmt`: formats the code.
-- `make lint`: runs `cargo fmt --check` and `cargo clippy`.
+- `make lint`: runs `cargo fmt --check`, `cargo clippy`, and `scripts/check-test-files.sh`.
 - `make test`: runs tests in `tests/`. Database tests skip when their databases are unavailable.
 - `make test-integration`: starts Docker databases, loads `scripts/test-env.sh`, runs tests, and stops the databases.
 - `make bench`: runs performance and memory reports, then release-mode latency tests.

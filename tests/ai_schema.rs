@@ -1,5 +1,4 @@
 //! Real metadata reads. Network cases require scripts/test-env.sh.
-mod common;
 use sqln::{
     ai::{Snapshot, schema::Event},
     connector::{
@@ -59,7 +58,7 @@ fn read(manager: &Manager, connection: u64, schemas: Vec<String>) -> Arc<Snapsho
 }
 #[test]
 fn sqlite_snapshot_has_views_keys_indexes_and_definitions_without_records() {
-    let path = common::temp_db("ai-schema");
+    let path = crate::common::temp_db("ai-schema");
     rusqlite::Connection::open(&path).unwrap().execute_batch("CREATE TABLE parent(a INTEGER, b INTEGER, PRIMARY KEY(a,b)); CREATE TABLE child(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, label TEXT CHECK(length(label)>0), FOREIGN KEY(a,b) REFERENCES parent(a,b)); CREATE INDEX child_label ON child(label); CREATE VIEW labels AS SELECT label FROM child; INSERT INTO child VALUES(1,NULL,NULL,'never_send_this_record');").unwrap();
     let (mut manager, _events) = Manager::new(Arc::new(Budget::new(64 * 1024 * 1024))).unwrap();
     let connection = manager.add_connection(

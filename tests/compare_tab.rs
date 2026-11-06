@@ -1,15 +1,13 @@
 // The compare tab in the application: the dialog, the read of two real SQLite files,
 // the grid, the script console, the keys, and the close.
 
-mod common;
-
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, temp_dir};
+use crate::common::{ctrl, key, temp_dir};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -114,7 +112,7 @@ impl Fixture {
 
     /// Presses `c` on a row of the source and waits for the schemas of both sides.
     fn dialog(&mut self, kinds: &[RowKind], name: &str) {
-        common::select_row(&mut self.app, 0, kinds, name);
+        crate::common::select_row(&mut self.app, 0, kinds, name);
         self.char('c');
         self.wait(
             |app| {
@@ -339,8 +337,8 @@ fn the_dialog_refuses_the_source_as_the_target() {
 #[test]
 fn the_explorer_page_and_the_palette_offer_the_compare() {
     let mut f = Fixture::new("compare-menu", SOURCE, TARGET);
-    common::select_row(&mut f.app, 0, &[RowKind::Table], "owners");
-    assert!(common::explorer_page(&f.app).contains(&"c Compare".to_owned()));
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Table], "owners");
+    assert!(crate::common::explorer_page(&f.app).contains(&"c Compare".to_owned()));
     f.press(ctrl('p'));
     f.app.on_event(Event::Paste("compare".to_owned()));
     let screen = f.screen();
@@ -360,10 +358,10 @@ fn a_view_row_refuses_the_compare() {
         &format!("{SOURCE}CREATE VIEW labels AS SELECT label FROM items;"),
         TARGET,
     );
-    common::select_row(&mut f.app, 0, &[RowKind::View], "labels");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::View], "labels");
     f.char('c');
     assert!(f.app.compare_form().is_none());
-    assert!(!common::explorer_page(&f.app).contains(&"c Compare".to_owned()));
+    assert!(!crate::common::explorer_page(&f.app).contains(&"c Compare".to_owned()));
 }
 
 #[test]
@@ -526,13 +524,13 @@ fn hints_at(f: &mut Fixture, width: u16) -> String {
 #[test]
 fn the_hint_row_adds_compare_for_each_supported_row_on_a_wide_screen() {
     let mut f = Fixture::new("compare-hints", SOURCE, TARGET);
-    common::select_row(&mut f.app, 0, &[RowKind::Table], "owners");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Table], "owners");
     let row = hints_at(&mut f, 80);
     assert!(row.contains("Ctrl+P commands"), "{row}");
     assert!(hints_at(&mut f, 200).contains("c compare"));
-    common::select_row(&mut f.app, 0, &[RowKind::Schema], "main");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Schema], "main");
     assert!(hints_at(&mut f, 200).contains("c compare"));
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "source");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "source");
     let row = hints_at(&mut f, 200);
     assert!(row.contains("c compare"), "{row}");
     assert!(row.contains("Ctrl+P commands"), "{row}");
@@ -564,11 +562,11 @@ fn the_compare_panel_page_fits_and_copies_its_sync_script() {
 #[test]
 fn ctrl_w_v_is_in_the_first_page_and_opens_the_dialog_of_the_row() {
     let mut f = Fixture::new("compare-prefix", SOURCE, TARGET);
-    common::select_row(&mut f.app, 0, &[RowKind::Table], "owners");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Table], "owners");
     assert!(
-        common::prefix_page(&f.app).contains(&"v Compare".to_owned()),
+        crate::common::prefix_page(&f.app).contains(&"v Compare".to_owned()),
         "{:?}",
-        common::prefix_page(&f.app)
+        crate::common::prefix_page(&f.app)
     );
     f.press(ctrl('w'));
     f.char('v');
@@ -580,7 +578,7 @@ fn ctrl_w_v_is_in_the_first_page_and_opens_the_dialog_of_the_row() {
 #[test]
 fn ctrl_w_v_in_a_table_tab_uses_its_table_and_in_a_console_its_schema() {
     let mut f = Fixture::new("compare-prefix-tabs", SOURCE, TARGET);
-    common::select_row(&mut f.app, 0, &[RowKind::Table], "items");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Table], "items");
     f.code(KeyCode::Enter);
     f.wait(
         |app| app.table().is_some_and(|tab| !tab.is_busy()),
@@ -599,7 +597,7 @@ fn ctrl_w_v_in_a_table_tab_uses_its_table_and_in_a_console_its_schema() {
     // A console of the connection compares its schema.
     f.press(ctrl('w'));
     f.char('h');
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "source");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "source");
     f.code(KeyCode::Enter);
     assert!(f.app.table().is_none());
     f.press(ctrl('w'));

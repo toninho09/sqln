@@ -1,13 +1,11 @@
 // The question before a run: a write without WHERE, and a change on production.
 
-mod common;
-
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{key, shift, temp_db};
+use crate::common::{key, shift, temp_db};
 use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

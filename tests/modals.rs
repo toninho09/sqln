@@ -1,7 +1,5 @@
 // The size of each modal: it grows with the screen, up to a limit.
 
-mod common;
-
 use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -243,7 +241,7 @@ fn click_text(app: &mut App, rows: &[String], label: &str) {
 #[test]
 fn a_click_runs_a_command_below_the_rows_of_a_small_screen() {
     let mut app = app();
-    app.on_event(Event::Key(common::ctrl('p')));
+    app.on_event(Event::Key(crate::common::ctrl('p')));
     let rows = app_screen(&mut app, 200, 60);
     let place = rows
         .iter()

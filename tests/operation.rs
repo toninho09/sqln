@@ -1,11 +1,9 @@
 // The log, the panic report, and the command line.
 
-mod common;
-
 use std::fs;
 use std::process::{Command, Output};
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use sqln::terminal::write_panic_report;
 
 fn sqln(args: &[&str]) -> Output {

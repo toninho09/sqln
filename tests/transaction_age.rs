@@ -1,12 +1,10 @@
 // The age of an open transaction in the status line.
 
-mod common;
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, temp_db};
+use crate::common::{ctrl, key, temp_db};
 use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

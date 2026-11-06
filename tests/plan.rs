@@ -2,14 +2,12 @@
 // and the keys of a console. The texts come from PostgreSQL 18 and MySQL 8.4, and
 // `tests/servers.rs` reads the same plans from real servers.
 
-mod common;
-
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, shift, temp_db};
+use crate::common::{ctrl, key, shift, temp_db};
 use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;

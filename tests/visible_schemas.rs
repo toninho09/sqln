@@ -2,15 +2,13 @@
 // in the form, and the catalog read. These tests need no server. `tests/servers.rs` and
 // `tests/redis.rs` read real servers.
 
-mod common;
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::common::{ctrl, key};
 use async_trait::async_trait;
-use common::{ctrl, key};
 use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -367,7 +365,7 @@ fn connection_note(app: &App) -> Option<RowNote> {
 
 #[test]
 fn a_connection_with_a_list_shows_a_note_in_the_tree() {
-    let path = common::temp_db("visible-note");
+    let path = crate::common::temp_db("visible-note");
     let mut definition = Definition::sqlite(SqliteTarget::new(&path));
     definition.name = "db".into();
     let app = app_with(definition.clone());
@@ -382,9 +380,9 @@ fn a_connection_with_a_list_shows_a_note_in_the_tree() {
 #[test]
 fn a_list_that_cannot_connect_closes_with_the_error_in_the_form() {
     let mut app = app_with(network(Engine::Postgres));
-    common::select_row(&mut app, 0, &[RowKind::Connection], "remote");
+    crate::common::select_row(&mut app, 0, &[RowKind::Connection], "remote");
     app.on_event(Event::Key(key(KeyCode::Char('e'))));
-    common::focus_form_field(&mut app, Field::Schemas);
+    crate::common::focus_form_field(&mut app, Field::Schemas);
     app.on_event(Event::Key(ctrl('o')));
     assert!(app.form().unwrap().schema_list.is_some());
     let deadline = Instant::now() + Duration::from_secs(20);

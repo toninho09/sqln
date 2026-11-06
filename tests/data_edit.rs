@@ -1,7 +1,5 @@
 //! Pending cell changes, safe SQL, and real SQLite transactions through input events.
 
-mod common;
-
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -9,7 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, open_table, temp_db};
+use crate::common::{ctrl, key, open_table, temp_db};
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::TestBackend};
 use sqln::app::{App, Options};
@@ -550,7 +548,8 @@ fn a_reload_preserves_cursor_selection_and_draft_filter_text() {
     f.open("items");
     f.press(KeyCode::Right);
     f.edit("changed");
-    f.app.on_event(Event::Key(common::shift(KeyCode::Down)));
+    f.app
+        .on_event(Event::Key(crate::common::shift(KeyCode::Down)));
     let view = f.app.table().unwrap().result.view;
     f.press(KeyCode::Char('f'));
     f.app.on_event(Event::Paste("id = 999".into()));

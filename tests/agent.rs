@@ -1,5 +1,4 @@
 //! Assistant behavior through the private IPC, input events, and the existing executor.
-mod common;
 
 use crossterm::event::{Event, KeyCode};
 use ratatui::{Terminal, backend::TestBackend};
@@ -22,7 +21,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 fn seeded_db(name: &str) -> PathBuf {
-    let path = common::temp_db(&format!("agent-{name}"));
+    let path = crate::common::temp_db(&format!("agent-{name}"));
     let db = rusqlite::Connection::open(&path).unwrap();
     db.execute_batch("CREATE TABLE things(id INTEGER PRIMARY KEY, name TEXT, data BLOB); INSERT INTO things VALUES(1, 'one', X'00ff'),(2, 'two', NULL);").unwrap();
     path
@@ -111,7 +110,7 @@ impl Harness {
         })
     }
     fn key(&mut self, code: KeyCode) {
-        self.app.on_event(Event::Key(common::key(code)));
+        self.app.on_event(Event::Key(crate::common::key(code)));
     }
     /// Sends a tool request with the same arguments as an MCP client.
     fn tool(&mut self, request: Value) -> Reply {
@@ -517,7 +516,7 @@ fn proposals_need_review_and_direct_edits_need_a_user_option() {
         applied["console_revision"],
         h.app.console().editor.revision()
     );
-    h.app.on_event(Event::Key(common::ctrl('z')));
+    h.app.on_event(Event::Key(crate::common::ctrl('z')));
     assert!(h.app.console().editor.text().is_empty());
     let console = h.app.console().id.to_string();
     let revision = h.app.console().editor.revision();
@@ -1066,7 +1065,7 @@ fn the_policy_rejects_session_changes_hidden_writes_and_unknown_calls() {
 #[test]
 fn character_edits_preserve_cursor_and_undo_in_both_modes() {
     for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
-        let mut f = common::Fixture::new("猫abc\nSELECT 1;", mode);
+        let mut f = crate::common::Fixture::new("猫abc\nSELECT 1;", mode);
         f.editor.set_cursor(edtui::Index2::new(1, 3));
         let revision = f.editor.revision();
         f.editor
@@ -1142,7 +1141,7 @@ fn allow_all_edits_directly_with_a_notice_undo_and_a_way_back() {
         if mode == KeyboardMode::Vim {
             h.key(KeyCode::Char('u'));
         } else {
-            h.app.on_event(Event::Key(common::ctrl('z')));
+            h.app.on_event(Event::Key(crate::common::ctrl('z')));
         }
         assert!(h.app.console().editor.text().is_empty());
         h.key(KeyCode::F(8));
@@ -2032,7 +2031,7 @@ fn the_agent_tab_with_sql_keeps_every_button_at_the_minimum_size() {
 }
 
 fn close_tab(h: &mut Harness) {
-    h.app.on_event(Event::Key(common::ctrl('w')));
+    h.app.on_event(Event::Key(crate::common::ctrl('w')));
     h.key(KeyCode::Char('c'));
 }
 
@@ -2241,7 +2240,7 @@ fn agent_log(h: &Harness) -> String {
 #[test]
 fn saved_mcp_settings_lower_the_access_close_and_open_the_endpoint_at_once() {
     use sqln::store::{Root, Store};
-    let base = common::temp_dir("agent-mcp-live");
+    let base = crate::common::temp_dir("agent-mcp-live");
     let project = Root::project(&base.join("project"));
     std::fs::create_dir_all(&project.dir).unwrap();
     let store = Store {
@@ -2261,7 +2260,7 @@ fn saved_mcp_settings_lower_the_access_close_and_open_the_endpoint_at_once() {
     // The MCP settings at 80x24. Scope, MCP, Default access, then Max access.
     // Four rows down from General is the MCP section of the sidebar.
     let open_mcp = |h: &mut Harness| {
-        h.app.on_event(Event::Key(common::ctrl('w')));
+        h.app.on_event(Event::Key(crate::common::ctrl('w')));
         h.key(KeyCode::Char(','));
         for _ in 0..4 {
             h.key(KeyCode::Down);
@@ -2364,7 +2363,7 @@ fn each_change_has_its_own_decision_undo_step_and_count() {
     assert!(h.draw(120, 24).contains("partly applied"));
     // The editor stays, and the text is free again.
     assert!(h.app.console().editor.review().is_none());
-    h.app.on_event(Event::Key(common::ctrl('z')));
+    h.app.on_event(Event::Key(crate::common::ctrl('z')));
     assert_eq!(h.app.console().editor.text(), before);
 }
 
@@ -2392,7 +2391,7 @@ fn custom_review_keys_show_in_the_bar_and_the_old_keys_are_text() {
     assert!(screen.contains("[y Accept]"), "{screen}");
     assert!(screen.contains("[q"), "{screen}");
     // The Ctrl+W panel menu lists the review commands.
-    h.app.on_event(Event::Key(common::ctrl('w')));
+    h.app.on_event(Event::Key(crate::common::ctrl('w')));
     h.key(KeyCode::Char(' '));
     let menu = h.draw(80, 24);
     assert!(menu.contains("Ctrl+W · Review"), "{menu}");

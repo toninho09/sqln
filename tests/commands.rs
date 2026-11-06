@@ -1,13 +1,11 @@
 //! Command discovery, panel pages, and width-dependent hints.
 
-mod common;
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key};
+use crate::common::{ctrl, key};
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -28,7 +26,7 @@ struct Screen {
 
 impl Screen {
     fn new(name: &str, mode: KeyboardMode, overrides: &[(&str, &[&str])]) -> Self {
-        let path = common::temp_db(&format!("commands-{name}"));
+        let path = crate::common::temp_db(&format!("commands-{name}"));
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(
@@ -242,7 +240,7 @@ fn the_palette_finds_grid_commands_and_technical_aliases() {
     let screen = s.palette("EXPLAIN");
     assert!(!screen.contains(text::NO_COMMANDS), "{screen}");
     s.code(KeyCode::Esc);
-    common::select_row(&mut s.app, 0, &[RowKind::Table], "items");
+    crate::common::select_row(&mut s.app, 0, &[RowKind::Table], "items");
     let screen = s.palette("DDL");
     assert!(!screen.contains(text::NO_COMMANDS), "{screen}");
     assert!(screen.contains("items"), "{screen}");
@@ -299,7 +297,8 @@ fn panel_pages_and_the_reserved_palette_hint_use_custom_keys() {
     s.code(KeyCode::F(8));
     let screen = s.draw(80, 24);
     assert!(screen.contains("Alt+C"), "{screen}");
-    s.app.on_event(Event::Key(common::alt(KeyCode::Char('c'))));
+    s.app
+        .on_event(Event::Key(crate::common::alt(KeyCode::Char('c'))));
     assert_eq!(s.clipboard.borrow().text, "1\n");
 }
 
@@ -433,7 +432,7 @@ fn clearing_a_selection_gets_priority_in_the_hint_row() {
 #[test]
 fn table_and_diagram_pages_fit_and_run_their_local_commands() {
     let mut s = Screen::new("table-diagram-pages", KeyboardMode::Conventional, &[]);
-    common::open_table(&mut s.app, 0, "items");
+    crate::common::open_table(&mut s.app, 0, "items");
     s.wait(|app| app.table().is_some_and(|tab| !tab.is_busy()));
     let groups = s.app.context_menu();
     s.prefix(' ');
@@ -465,7 +464,7 @@ fn table_and_diagram_pages_fit_and_run_their_local_commands() {
 #[test]
 fn table_filters_and_order_are_available_in_the_palette() {
     let mut s = Screen::new("table-commands", KeyboardMode::Conventional, &[]);
-    common::open_table(&mut s.app, 0, "items");
+    crate::common::open_table(&mut s.app, 0, "items");
     s.wait(|app| app.table().is_some_and(|tab| !tab.is_busy()));
     for query in ["WHERE filter", "ORDER BY", "sort column", "apply where"] {
         let screen = s.palette(query);

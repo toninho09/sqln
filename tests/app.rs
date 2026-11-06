@@ -3,6 +3,12 @@
 
 mod common;
 
+mod command_log;
+mod commands;
+mod follow_key;
+mod guard;
+mod history;
+mod operation;
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};

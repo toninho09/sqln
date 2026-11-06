@@ -1,12 +1,10 @@
 // The saved state of one console: when it writes, and how it reacts to a change of the
 // files by another program.
 
-mod common;
-
 use std::fs;
 use std::time::{Duration, Instant};
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use sqln::script_file::{RETRY_DELAY, SAVE_DELAY, ScriptFile, Trouble};
 use sqln::store::file;
 use sqln::store::scripts::{self, LineEnding, ScriptMeta};

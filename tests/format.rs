@@ -1,8 +1,6 @@
 // The SQL formatter: its style, and the rule that no token changes.
 
-mod common;
-
-use common::{Fixture, ctrl, key};
+use crate::common::{Fixture, ctrl, key};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use edtui::Index2;
 use sqln::sql::{Dialect, format_statement, tokenize};

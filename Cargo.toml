@@ -5,6 +5,7 @@ edition = "2024"
 description = "Terminal database client with several SQL consoles"
 license = "MIT OR Apache-2.0"
 exclude = ["spikes/", "scripts/", "compose.test.yaml"]
+autotests = false
 
 [dependencies]
 arboard = { version = "3.7.0", default-features = false }
@@ -59,6 +60,83 @@ tokio = { version = "1.54", features = ["rt-multi-thread", "sync", "time", "macr
 
 [target.'cfg(unix)'.dev-dependencies]
 rustix = { version = "1", default-features = false, features = ["std", "process", "pty", "termios"] }
+
+[[test]]
+name = "ai"
+path = "tests/ai.rs"
+
+[[test]]
+name = "app"
+path = "tests/app.rs"
+
+[[test]]
+name = "diagram"
+path = "tests/diagram.rs"
+
+[[test]]
+name = "editing"
+path = "tests/editing.rs"
+
+[[test]]
+name = "exec"
+path = "tests/exec.rs"
+
+[[test]]
+name = "grid"
+path = "tests/grid.rs"
+
+[[test]]
+name = "settings"
+path = "tests/settings.rs"
+
+[[test]]
+name = "sql"
+path = "tests/sql.rs"
+
+[[test]]
+name = "store"
+path = "tests/store.rs"
+
+[[test]]
+name = "ui"
+path = "tests/ui.rs"
+
+# Targets that scripts, CI, or documents refer to by name; they stay alone.
+[[test]]
+name = "auth"
+path = "tests/auth.rs"
+
+[[test]]
+name = "credentials"
+path = "tests/credentials.rs"
+
+[[test]]
+name = "latency"
+path = "tests/latency.rs"
+
+[[test]]
+name = "redis"
+path = "tests/redis.rs"
+
+[[test]]
+name = "refused"
+path = "tests/refused.rs"
+
+[[test]]
+name = "servers"
+path = "tests/servers.rs"
+
+[[test]]
+name = "table"
+path = "tests/table.rs"
+
+[[test]]
+name = "terminal"
+path = "tests/terminal.rs"
+
+[[test]]
+name = "vault_probe"
+path = "tests/vault_probe.rs"
 
 [[bench]]
 name = "hot_paths"

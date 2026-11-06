@@ -1,13 +1,11 @@
 // The bell at the end of a long run.
 
-mod common;
-
 use std::cell::RefCell;
 use std::fs;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, temp_db, temp_dir};
+use crate::common::{ctrl, key, temp_db, temp_dir};
 use crossterm::event::{Event, KeyCode};
 use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;

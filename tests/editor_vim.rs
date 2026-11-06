@@ -1,6 +1,4 @@
-mod common;
-
-use common::{Fixture, ctrl, key};
+use crate::common::{Fixture, ctrl, key};
 use crossterm::event::KeyCode::{self, Char, Esc, Tab};
 use edtui::{EditorMode, Index2};
 use sqln::editor::KeyboardMode;

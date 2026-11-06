@@ -1,14 +1,12 @@
 // The query history: what it saves, its limits, and its window.
 
-mod common;
-
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, temp_dir};
+use crate::common::{ctrl, key, temp_dir};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -271,7 +269,7 @@ fn a_run_notes_each_statement_with_its_result() {
     session.write("SELECT 1; SELECT * FROM missing; SELECT 2;");
     session
         .app
-        .on_event(Event::Key(common::shift(KeyCode::F(5))));
+        .on_event(Event::Key(crate::common::shift(KeyCode::F(5))));
     session.idle();
     let entries = session.entries();
     assert_eq!(entries.len(), 2, "the third statement did not run");
@@ -368,7 +366,7 @@ fn a_table_tab_leaves_no_notes() {
     let mut session = Session::new("history-table", "{}");
     session.run("SELECT 1");
     let before = session.entries().len();
-    common::open_table(&mut session.app, 0, "t");
+    crate::common::open_table(&mut session.app, 0, "t");
     session.idle();
     assert_eq!(session.entries().len(), before);
 }
