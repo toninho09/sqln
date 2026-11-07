@@ -202,7 +202,7 @@ pub fn remove_orphan_temporaries(folder: &Path, min_age: Duration) {
             .and_then(|meta| meta.modified())
             .ok()
             .and_then(|time| SystemTime::now().duration_since(time).ok());
-        if !age.is_some_and(|age| age >= min_age) {
+        if age.is_none_or(|age| age < min_age) {
             continue;
         }
         let Ok(file) = File::options().read(true).write(true).open(&path) else {

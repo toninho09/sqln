@@ -115,10 +115,10 @@ impl DiagramTab {
 
     pub fn on_event(&mut self, event: ExecEvent, budget: &Budget) {
         match event {
-            ExecEvent::Started { execution, .. } if self.is_current(execution) => {
-                if self.phase == Phase::Waiting {
-                    self.phase = Phase::Running;
-                }
+            ExecEvent::Started { execution, .. }
+                if self.is_current(execution) && self.phase == Phase::Waiting =>
+            {
+                self.phase = Phase::Running;
             }
             ExecEvent::Rows { key, rows, bytes } => {
                 // An old execution has no place, so its data leaves the budget.

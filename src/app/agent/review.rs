@@ -111,11 +111,11 @@ impl App {
     }
     /// Stops one agent task. The session keeps its access.
     pub(in crate::app) fn stop_agent_task(&mut self, id: &str) {
-        if !self
+        if self
             .agent
             .jobs
             .get(id)
-            .is_some_and(|job| !finished(job.state))
+            .is_none_or(|job| finished(job.state))
         {
             self.status = Some(text::AGENT_TASK_GONE.into());
             return;

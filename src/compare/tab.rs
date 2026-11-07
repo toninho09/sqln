@@ -238,10 +238,10 @@ impl CompareTab {
 
     pub fn on_event(&mut self, event: ExecEvent, budget: &Budget) {
         match event {
-            ExecEvent::Started { execution, .. } if self.side_of(execution).is_some() => {
-                if self.phase == Phase::Waiting {
-                    self.phase = Phase::Running;
-                }
+            ExecEvent::Started { execution, .. }
+                if self.side_of(execution).is_some() && self.phase == Phase::Waiting =>
+            {
+                self.phase = Phase::Running;
             }
             ExecEvent::Columns { key, columns } if self.side_of(key.execution).is_some() => {
                 self.on_columns(columns);
@@ -254,10 +254,10 @@ impl CompareTab {
                 };
                 self.on_rows(side, key.index, rows, bytes, budget);
             }
-            ExecEvent::ResultDone { key, limit, .. } if self.side_of(key.execution).is_some() => {
-                if limit != ReadLimit::None {
-                    self.limit = limit;
-                }
+            ExecEvent::ResultDone { key, limit, .. }
+                if self.side_of(key.execution).is_some() && limit != ReadLimit::None =>
+            {
+                self.limit = limit;
             }
             ExecEvent::StatementFinished {
                 key,

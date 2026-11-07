@@ -317,10 +317,10 @@ fn column(tokens: &[Token], text: &str, dialect: Dialect) -> Position {
     }
     options.retain(|option| {
         let word = option.split_whitespace().next().unwrap_or(option);
-        !tokens[1..]
+        !(tokens[1..]
             .iter()
             .any(|token| is_word(text, Some(token), &[word]))
-            && !(*option == "NULL"
+            || *option == "NULL"
                 && tokens[1..]
                     .iter()
                     .any(|token| is_word(text, Some(token), &["NOT"])))
