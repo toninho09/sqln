@@ -8,9 +8,10 @@ use crate::exec::{ConnectionId, ConsoleId};
 use crate::input::Action;
 use crate::store::Scope;
 use crate::store::config;
-use crate::ui::ai::{RequestAction, RequestPrompt};
+use crate::ui::ai::RequestPrompt;
 use crate::ui::auth::{PasswordAction, PasswordPrompt};
 use crate::ui::text;
+use crate::ui::widgets::TextAction;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use edtui::Index2;
 use ratatui::{Frame, layout::Rect, widgets::Paragraph};
@@ -1227,8 +1228,8 @@ impl App {
     pub(super) fn on_ai_key(&mut self, key: KeyEvent) -> bool {
         if let Some(prompt) = &mut self.ai.request {
             match prompt.on_key(key) {
-                RequestAction::Cancel => self.ai.request = None,
-                RequestAction::Accept(text) => {
+                TextAction::Cancel => self.ai.request = None,
+                TextAction::Accept(text) => {
                     self.ai.request = None;
                     let instruction = if text.trim().is_empty() {
                         None

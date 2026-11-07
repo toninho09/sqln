@@ -23,10 +23,10 @@ use crate::settings::SettingsRequest;
 use crate::sql::{Dialect, first_keyword, is_plain_read};
 use crate::table::TableFocus;
 use crate::ui::console::fit;
-use crate::ui::name::NameAction;
 use crate::ui::text;
 use crate::ui::welcome::Welcome;
 use crate::ui::which_key::KeyGroup;
+use crate::ui::widgets::TextAction;
 use crate::ui::wrap::WrappedText;
 
 /// The actions of one row of the `Ctrl+W` menu, with its label.
@@ -1168,9 +1168,9 @@ impl App {
             return;
         };
         match prompt.on_key(key) {
-            NameAction::None => {}
-            NameAction::Cancel => self.rename = None,
-            NameAction::Accept(name) => self.accept_name(name),
+            TextAction::None => {}
+            TextAction::Cancel => self.rename = None,
+            TextAction::Accept(name) => self.accept_name(name),
         }
     }
 
