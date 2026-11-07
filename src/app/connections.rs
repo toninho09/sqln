@@ -90,6 +90,14 @@ impl App {
         let Some(path) = self.database.clone() else {
             return;
         };
+        if path
+            .to_string_lossy()
+            .trim()
+            .eq_ignore_ascii_case(":memory:")
+        {
+            self.add_sqlite(SqliteTarget::in_memory());
+            return;
+        }
         if let Err(error) = validate_path(&path) {
             self.status = Some(error.message);
             self.database = None;
@@ -1434,8 +1442,14 @@ impl App {
 /// Returns the full path of a SQLite file that does not exist yet.
 fn missing_file(definition: &Definition) -> Option<String> {
     match definition.resolved_source() {
-        Source::Sqlite(target) if !target.path.exists() && !target.allow_create => {
-            Some(target.path.display().to_string())
+        Source::Sqlite(target)
+            if matches!(
+                target.source,
+                crate::connector::sqlite::SqliteSource::File(_)
+            ) && !target.source_exists()
+                && !target.allow_create =>
+        {
+            Some(target.file_display())
         }
         _ => None,
     }

@@ -3,6 +3,7 @@
 mod agent;
 mod ai;
 mod auth;
+mod auto_refresh;
 mod browse;
 mod close;
 mod commands;
@@ -230,6 +231,8 @@ enum DialogAction {
     RunAnyway(ConsoleId, RunTarget),
     /// Run the statements that the question of `run_warning` showed.
     RunConfirmed(ConsoleId, RunTarget),
+    /// The interval of the auto-refresh of the tab on screen. `None` turns it off.
+    AutoRefresh(Option<u64>),
     RemoveConnection(ConnectionId),
     CreateProject,
     ReloadConfig,
@@ -1207,6 +1210,10 @@ impl App {
         }
         if let Some(index) = self.tables.iter().position(|tab| tab.id == id) {
             let finished = matches!(event, ExecEvent::ExecutionFinished { .. });
+            if finished {
+                let auto = self.tables[index].auto_execution;
+                self.on_auto_execution_end(&event, id, auto);
+            }
             self.tables[index].on_event(event, &budget);
             if finished
                 && !self.tables[index].is_busy()
@@ -1219,8 +1226,18 @@ impl App {
             self.continue_wanted_import();
             return;
         }
-        if let ExecEvent::StatementFinished { key, status, .. } = &event {
+        if let ExecEvent::StatementFinished { key, status, .. } = &event
+            && self
+                .console_index(id)
+                .is_none_or(|index| self.consoles[index].auto_execution != Some(key.execution))
+        {
             self.note_statement(key, status);
+        }
+        if let Some(index) = self.console_index(id) {
+            let auto = self.consoles[index].auto_execution;
+            if matches!(event, ExecEvent::ExecutionFinished { .. }) {
+                self.on_auto_execution_end(&event, id, auto);
+            }
         }
         match self.console_by_id(id) {
             Some(console) => {
@@ -1563,6 +1580,7 @@ impl App {
                 data,
                 position,
                 agent,
+                auto: None,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1585,6 +1603,7 @@ impl App {
                 data,
                 position: None,
                 agent,
+                auto: None,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1610,6 +1629,7 @@ impl App {
                 data,
                 position,
                 agent,
+                auto: tab.auto_refresh.map(|auto| auto.every.as_secs()),
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1628,6 +1648,7 @@ impl App {
                 data,
                 position: None,
                 agent,
+                auto: None,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1666,6 +1687,7 @@ impl App {
             data,
             position,
             agent,
+            auto: console.auto_refresh.map(|auto| auto.every.as_secs()),
         };
         draw_statusline(frame, area, &status, &self.theme);
     }

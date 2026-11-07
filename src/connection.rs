@@ -80,7 +80,12 @@ impl Definition {
     pub fn resolved_source(&self) -> Source {
         match &self.source {
             Source::Sqlite(target) => Source::Sqlite(SqliteTarget {
-                path: self.resolve(&target.path),
+                source: match &target.source {
+                    crate::connector::sqlite::SqliteSource::File(path) => {
+                        crate::connector::sqlite::SqliteSource::File(self.resolve(path))
+                    }
+                    memory => memory.clone(),
+                },
                 ..target.clone()
             }),
             Source::Network(target) => {
@@ -99,8 +104,14 @@ impl Definition {
 
     /// Returns a definition for a file, with the file name as its name.
     pub fn sqlite(target: SqliteTarget) -> Self {
-        let name = target.path.file_name().unwrap_or(target.path.as_os_str());
-        let name = name.to_string_lossy().into_owned();
+        let name = match &target.source {
+            crate::connector::sqlite::SqliteSource::File(path) => path
+                .file_name()
+                .unwrap_or(path.as_os_str())
+                .to_string_lossy()
+                .into_owned(),
+            crate::connector::sqlite::SqliteSource::Memory => ":memory:".to_owned(),
+        };
         Self::new(name, Source::Sqlite(target))
     }
 
@@ -112,13 +123,16 @@ impl Definition {
     }
 
     /// Returns the limits of this connection on top of the application settings.
+    /// A database in memory lives in one session, so the pool holds one place and no
+    /// idle timeout closes it.
     pub fn settings(&self, base: &Settings) -> Settings {
+        let memory = matches!(&self.source, Source::Sqlite(target) if target.is_memory());
         Settings {
             read_only: self.read_only || base.read_only,
-            max_connections: self.max_connections,
+            max_connections: if memory { 1 } else { self.max_connections },
             connect_timeout: self.connect_timeout,
             sql_timeout: self.sql_timeout,
-            idle_timeout: self.idle_timeout,
+            idle_timeout: if memory { None } else { self.idle_timeout },
             ..base.clone()
         }
     }
@@ -162,7 +176,12 @@ impl Definition {
     /// Writes the destination, without the password.
     pub fn summary(&self) -> String {
         match &self.source {
-            Source::Sqlite(target) => target.path.display().to_string(),
+            Source::Sqlite(target) => match &target.source {
+                crate::connector::sqlite::SqliteSource::File(path) => path.display().to_string(),
+                crate::connector::sqlite::SqliteSource::Memory => {
+                    ":memory: (until disconnect)".to_owned()
+                }
+            },
             Source::Network(target) => {
                 let tls = match target.tls {
                     Tls::Disabled => "no TLS",

@@ -383,9 +383,11 @@ Start with:
 - PostgreSQL.
 - MySQL.
 - SQLite in files.
+- SQLite in memory, through the `:memory:` text of the file field, with one pooled session.
 
-In-memory SQLite databases do not enter the first version.
-Do not accept an in-memory connection mode as a replacement for a SQLite file.
+**Defined — 2026-11-06:** the `:memory:` text opens one database in memory, which lives
+in the only session of its pool and ends with a disconnect or the end of the application.
+See [DECISIONS](DECISIONS.md), "SQLite in memory".
 
 **Defined:** support the PostgreSQL and MySQL versions still supported by the vendor.
 Treat MariaDB as best effort, through the MySQL connector.
@@ -2051,7 +2053,7 @@ It hit 1,000 of 1,000 reads, without log errors; the `25P02` error marks a trans
 - Preserve the autocommit semantics of the database, without creating a transaction for the whole script.
 - Do not undo automatically changes already committed when a later statement fails.
 - Respect implicit commits of the database, as happens with DDL on MySQL.
-- Validate the SQLite in-memory modes in the informed text, before opening the database.
+- Validate the SQLite file paths before opening the database. The `:memory:` text opens one database in memory in the single session of its pool.
 
 On PostgreSQL, several statements in one call form an implicit transaction.
 That does not equal reserving the connection and running each statement in autocommit.
@@ -2263,7 +2265,7 @@ The results of the technical tests are in [docs/RESULTS.md](RESULTS.md), and the
 - Not fall back insecurely after a verification failure.
 - Allow explicit TLS disabling and passwordless TLS access to localhost.
 - Not use the project scope as a reason to skip TLS on a remote host.
-- Open SQLite databases in files and reject the in-memory modes.
+- Open SQLite databases in files, and open `:memory:` as one database in memory that lives in the single session of its pool.
 - Refuse writes on a read-only connection, including after the session cleaning.
 - Consider local `localhost`, `127.0.0.0/8`, `::1`, and Unix socket.
 - Connect on first use, without opening connections at application startup.

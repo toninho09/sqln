@@ -70,6 +70,10 @@ name = "app"
 path = "tests/app.rs"
 
 [[test]]
+name = "auto_refresh"
+path = "tests/auto_refresh.rs"
+
+[[test]]
 name = "diagram"
 path = "tests/diagram.rs"
 

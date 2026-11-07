@@ -15,7 +15,7 @@ use sqln::connector::{
     Canceller, ConnectError, Connector, ExecError, ResetOutcome, Session, SessionContext,
     StatementEnd, TransactionCommand, TransactionState, network_connector,
 };
-use sqln::data_edit::{Failure, Job, Metadata, Outcome, Patch, SavedRow};
+use sqln::data_edit::{Change, Failure, Job, Metadata, Outcome, Patch, SavedRow};
 use sqln::exec::{ExecEvent, ExecutionEnd, Manager, RunOptions, Settings, StatementStatus};
 use sqln::grid::{Budget, Row, Value};
 use sqln::sql::Dialect;
@@ -140,6 +140,25 @@ impl Harness {
             columns: BTreeSet::from([col]),
         }
     }
+    fn update(&self, patch: Patch) -> Change {
+        Change::Update(patch)
+    }
+    fn delete(&self, original: &Row) -> Change {
+        Change::Delete {
+            original: SavedRow::reserve(original.clone(), &self.budget).unwrap(),
+        }
+    }
+    fn insert(&self, columns: &[usize], values: &[&str]) -> Change {
+        let mut cells = sqln::grid::RowWriter::default();
+        for value in values {
+            cells.push(Value::Text(value));
+        }
+        let row = cells.finish();
+        Change::Insert {
+            current: SavedRow::reserve(row, &self.budget).unwrap(),
+            columns: columns.iter().copied().collect(),
+        }
+    }
 }
 
 #[test]
@@ -184,7 +203,7 @@ fn network_updates_preserve_values_reject_conflicts_and_accept_mysql_no_ops() {
             assert!(matches!(
                 h.edit(Job::Apply {
                     metadata: metadata.clone(),
-                    patches: vec![patch]
+                    changes: vec![h.update(patch)]
                 })
                 .unwrap(),
                 Outcome::Applied
@@ -197,23 +216,60 @@ fn network_updates_preserve_values_reject_conflicts_and_accept_mysql_no_ops() {
         assert!(matches!(
             h.edit(Job::Apply {
                 metadata: metadata.clone(),
-                patches: vec![patch]
+                changes: vec![h.update(patch)]
             })
             .unwrap(),
             Outcome::Applied
         ));
         let rows = h.query(&select);
-        let patches = vec![
+        let changes: Vec<Change> = [
             h.patch(&rows[0], 2, Value::Text("first")),
             h.patch(&rows[1], 2, Value::Text("mine")),
-        ];
+        ]
+        .into_iter()
+        .map(|patch| h.update(patch))
+        .collect();
         h.query(&format!("UPDATE {table} SET amount = 9 WHERE id = 2"));
-        let error = h.edit(Job::Apply { metadata, patches }).unwrap_err();
+        let error = h.edit(Job::Apply { metadata, changes }).unwrap_err();
         assert_eq!(error.message, text::EDIT_CONFLICT);
         assert!(!error.uncertain);
         let rows = h.query(&select);
         assert_eq!(rows[0].text(2).as_deref(), Some("NULL"));
         assert_eq!(rows[1].text(2).as_deref(), Some("second"));
+        // A delete of a changed row conflicts, and an insert applies after the deletes.
+        let metadata = h.metadata(&schema, table);
+        let rows = h.query(&select);
+        let changes = vec![h.delete(&rows[1])];
+        h.query(&format!("UPDATE {table} SET amount = 8 WHERE id = 2"));
+        let error = h
+            .edit(Job::Apply {
+                metadata: metadata.clone(),
+                changes,
+            })
+            .unwrap_err();
+        assert_eq!(error.message, text::EDIT_CONFLICT);
+        let rows = h.query(&select);
+        let mut cells = sqln::grid::RowWriter::default();
+        cells.push(Value::Number("3"));
+        cells.push(Value::Text("c"));
+        cells.push(Value::Text("made"));
+        cells.push(Value::Null);
+        let row = cells.finish();
+        let insert = Change::Insert {
+            current: SavedRow::reserve(row, &h.budget).unwrap(),
+            columns: [0, 1, 2].into_iter().collect(),
+        };
+        let changes = vec![h.delete(&rows[1]), insert];
+        assert!(matches!(
+            h.edit(Job::Apply { metadata, changes }).unwrap(),
+            Outcome::Applied
+        ));
+        let rows = h.query(&select);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].text(0).as_deref(), Some("1"));
+        assert_eq!(rows[1].text(0).as_deref(), Some("3"));
+        assert_eq!(rows[1].text(1).as_deref(), Some("c"));
+        assert_eq!(rows[1].text(2).as_deref(), Some("made"));
         h.query(&format!("DROP TABLE {table}"));
         h.manager.shutdown();
     }
@@ -390,7 +446,7 @@ fn a_lost_commit_response_is_unknown_and_never_retries() {
     let error = h
         .edit(Job::Apply {
             metadata,
-            patches: vec![patch],
+            changes: vec![h.update(patch)],
         })
         .unwrap_err();
     assert!(error.uncertain);
@@ -413,7 +469,7 @@ fn stop_drops_an_unresponsive_update_and_rolls_back() {
         h.console,
         Job::Apply {
             metadata,
-            patches: vec![patch],
+            changes: vec![h.update(patch)],
         },
     );
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -441,7 +497,7 @@ fn a_failed_rollback_drops_the_session_instead_of_reusing_it() {
     assert!(
         !h.edit(Job::Apply {
             metadata,
-            patches: vec![patch]
+            changes: vec![h.update(patch)]
         })
         .unwrap_err()
         .uncertain
@@ -461,12 +517,13 @@ fn a_trigger_cannot_silently_replace_another_pending_row() {
     h.query("CREATE TRIGGER change_second AFTER UPDATE ON items WHEN NEW.id = 1 BEGIN UPDATE items SET value = 'trigger' WHERE id = 2; END;");
     let metadata = h.metadata("main", "items");
     let rows = h.query("SELECT * FROM items ORDER BY id");
-    let patches = vec![
+    let patches = [
         h.patch(&rows[0], 1, Value::Text("first")),
         h.patch(&rows[1], 1, Value::Text("mine")),
     ];
+    let changes: Vec<Change> = patches.into_iter().map(|patch| h.update(patch)).collect();
     assert_eq!(
-        h.edit(Job::Apply { metadata, patches })
+        h.edit(Job::Apply { metadata, changes })
             .unwrap_err()
             .message,
         text::EDIT_CONFLICT
@@ -474,5 +531,57 @@ fn a_trigger_cannot_silently_replace_another_pending_row() {
     let rows = h.query("SELECT * FROM items ORDER BY id");
     assert_eq!(rows[0].text(1).as_deref(), Some("old"));
     assert_eq!(rows[1].text(1).as_deref(), Some("second"));
+    h.manager.shutdown();
+}
+
+#[test]
+fn inserts_and_deletes_apply_in_one_checked_transaction() {
+    let (mut h, _, _) = faulty("edit-insert-delete", Fault::Trigger);
+    let metadata = h.metadata("main", "items");
+    let rows = h.query("SELECT * FROM items ORDER BY id");
+    let changes = vec![h.delete(&rows[1]), h.insert(&[0, 1], &["7", "new"])];
+    assert!(matches!(
+        h.edit(Job::Apply { metadata, changes }).unwrap(),
+        Outcome::Applied
+    ));
+    let rows = h.query("SELECT * FROM items ORDER BY id");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].text(0).as_deref(), Some("1"));
+    assert_eq!(rows[0].text(1).as_deref(), Some("old"));
+    assert_eq!(rows[1].text(0).as_deref(), Some("7"));
+    assert_eq!(rows[1].text(1).as_deref(), Some("new"));
+    h.manager.shutdown();
+}
+
+#[test]
+fn a_delete_of_a_changed_row_conflicts_and_keeps_the_rows() {
+    let (mut h, _, _) = faulty("edit-delete-conflict", Fault::Trigger);
+    let metadata = h.metadata("main", "items");
+    let rows = h.query("SELECT * FROM items ORDER BY id");
+    let changes = vec![h.delete(&rows[0])];
+    h.query("UPDATE items SET value = 'changed' WHERE id = 1");
+    let error = h.edit(Job::Apply { metadata, changes }).unwrap_err();
+    assert_eq!(error.message, text::EDIT_CONFLICT);
+    assert_eq!(
+        h.query("SELECT COUNT(*) FROM items")[0].text(0).as_deref(),
+        Some("2")
+    );
+    h.manager.shutdown();
+}
+
+#[test]
+fn an_insert_without_a_required_column_refuses_with_the_column_name() {
+    let (mut h, _, _) = faulty("edit-insert-required", Fault::Trigger);
+    h.query("CREATE TABLE labeled (id INTEGER PRIMARY KEY, label TEXT NOT NULL)");
+    let metadata = h.metadata("main", "labeled");
+    let change = h.insert(&[0], &["4", ""]);
+    let error = h
+        .edit(Job::Apply {
+            metadata,
+            changes: vec![change],
+        })
+        .unwrap_err();
+    assert!(error.message.contains("label"), "{}", error.message);
+    assert!(h.query("SELECT COUNT(*) FROM labeled")[0].text(0).is_some());
     h.manager.shutdown();
 }

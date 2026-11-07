@@ -501,6 +501,8 @@ impl App {
             (Action::GridCountRows, "count", tab.total.is_none()),
             (Action::GridImport, "import", true),
             (Action::GridEditCell, "edit", true),
+            (Action::GridNewRow, "new row", true),
+            (Action::GridDeleteRow, "delete row", true),
             (Action::GridReload, "reload", !tab.shows_sessions()),
             (Action::GridSelectAll, "select all", true),
             (Action::GridToggleSelection, "select", true),

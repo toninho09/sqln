@@ -40,6 +40,33 @@ impl RunEnd {
     }
 }
 
+/// The auto-refresh of one tab: the interval and the next moment it fires.
+#[derive(Clone, Copy, Debug)]
+pub struct AutoRefresh {
+    pub every: Duration,
+    pub next: Instant,
+}
+
+impl AutoRefresh {
+    /// Arms the next repetition from `now`.
+    pub fn new(every: Duration, now: Instant) -> Self {
+        Self {
+            every,
+            next: now + every,
+        }
+    }
+
+    /// True when the moment of the next repetition arrived.
+    pub fn due(&self, now: Instant) -> bool {
+        now >= self.next
+    }
+
+    /// Moves the next repetition after a fire.
+    pub fn spent(&mut self, now: Instant) {
+        self.next = now + self.every;
+    }
+}
+
 /// The time and the end of the runs of one tab.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RunClock {
@@ -182,6 +209,12 @@ pub struct Console {
     results_made: usize,
     /// True when a statement already reported the stop.
     stop_reported: bool,
+    /// The auto-refresh of this console, armed by the user.
+    pub auto_refresh: Option<AutoRefresh>,
+    /// The statements of the last run, which an auto-refresh repeats.
+    pub auto_snapshot: Option<Vec<String>>,
+    /// The execution of the last auto-refresh, so a failure turns it off.
+    pub auto_execution: Option<ExecutionId>,
     /// The plan that the current execution shows, in place of its statement.
     pub explain: Option<Explain>,
     first_not_executed: Option<usize>,
@@ -237,6 +270,9 @@ impl Console {
             reading: false,
             results_made: 0,
             stop_reported: false,
+            auto_refresh: None,
+            auto_snapshot: None,
+            auto_execution: None,
             explain: None,
             first_not_executed: None,
             statements: Vec::new(),
@@ -379,10 +415,10 @@ impl Console {
     pub fn on_event(&mut self, event: ExecEvent, budget: &Budget) -> Option<Signal> {
         match event {
             ExecEvent::Queued { .. } => {}
-            ExecEvent::Started { execution, .. } if self.is_current(execution) => {
-                if self.phase == Phase::Waiting {
-                    self.phase = Phase::Running;
-                }
+            ExecEvent::Started { execution, .. }
+                if self.is_current(execution) && self.phase == Phase::Waiting =>
+            {
+                self.phase = Phase::Running;
             }
             ExecEvent::StatementStarted { key } if self.is_current(key.execution) => {
                 self.message_key = Some(key);

@@ -84,7 +84,7 @@ fn local_database(name: &str, setup: &str) -> (PathBuf, String) {
 fn saved_file(store: &Store) -> PathBuf {
     let config = sqln::store::config::load(store).config.unwrap();
     match &config.connections[0].definition.source {
-        Source::Sqlite(target) => target.path.clone(),
+        Source::Sqlite(target) => target.path().to_path_buf(),
         Source::Network(_) => panic!("this connection is not SQLite"),
     }
 }

@@ -40,6 +40,7 @@ The file paths are relative to `src/`.
 | 20 | Credentials and trust | `creds.rs`, `trust.rs`, `app/auth.rs`, `ui/auth.rs` |
 | 21 | Appearance and themes | `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs` |
 | 23 | Local MCP assistant | `agent/`, `mcp.rs`, `app/agent/`, `editor/agent.rs`, `ui/agent.rs`; see [MCP](MCP.md) |
+| 24 | Auto-refresh | `app/auto_refresh.rs`, `console.rs`, `table.rs`, `app/persist.rs`, `app/commands.rs`, `ui/statusline.rs`, `ui/table.rs` |
 | 22 | Operation and diagnostics | `main.rs`, `terminal.rs`, `log.rs` |
 
 ## 1. Application shell and main loop
@@ -73,7 +74,7 @@ Files: `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connecto
 
 Files: `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/redis.rs`, `connector/tls.rs`.
 
-`Connector` declares the dialect and the `Capabilities`. `Session` runs one statement, delivers the rows to `ResultSink`, and reports the transaction state. Only this module knows driver types. PostgreSQL reads through the simple protocol, so each value keeps the database text. MySQL keeps the text and reads notices with `SHOW WARNINGS`. SQLite runs `rusqlite` on its own thread, because the driver is synchronous. Redis runs one command per line, with the quote rules of `split_words`. TLS uses verification by default, except on `localhost`, loopback, and Unix sockets; `connector/tls` reads CA and client certificate files.
+`Connector` declares the dialect and the `Capabilities`. `Session` runs one statement, delivers the rows to `ResultSink`, and reports the transaction state. Only this module knows driver types. PostgreSQL reads through the simple protocol, so each value keeps the database text. MySQL keeps the text and reads notices with `SHOW WARNINGS`. SQLite runs `rusqlite` on its own thread, because the driver is synchronous. The `:memory:` file text opens one database in memory, which lives in the only session of its pool: `Capabilities::single_session` limits the pool to one place, no idle timeout closes it, and the session returns clean instead of discarded, so temporary tables persist until a disconnect. Redis runs one command per line, with the quote rules of `split_words`. TLS uses verification by default, except on `localhost`, loopback, and Unix sockets; `connector/tls` reads CA and client certificate files.
 
 Cancellation uses a `Canceller` separate from the session: `CancelToken` on PostgreSQL, `KILL QUERY` on a temporary connection on MySQL, `InterruptHandle` on SQLite, and `CLIENT UNBLOCK` on Redis. Cleaning returns the session to its base state (`DISCARD ALL` without `DEALLOCATE ALL`, `Conn::reset`, drop, or `DISCARD`, the `CLIENT` modes, and `UNWATCH`).
 
@@ -221,17 +222,25 @@ Files: `table.rs`, `app/tables.rs`, `ui/table.rs`.
 
 ## 15a. Grid editing
 
-Files: `data_edit.rs`, `data_edit/form.rs`, `app/data_edit.rs`, `exec/runner/data_edit.rs`, `ui/data_edit.rs`.
+Files: `data_edit.rs`, `data_edit/form.rs`, `app/data_edit.rs`, `exec/runner/data_edit.rs`, `ui/data_edit.rs`, `ui/console.rs`.
 
-Table tabs offer local updates through `Action`, gated by connector capabilities and table metadata.
+Table tabs offer local updates, inserts, and deletes through `Action`, gated by connector capabilities and table metadata.
 The compare column reader supplies the primary key and protected-column information.
-`Edits` keeps budgeted original and submitted snapshots while the grid shows pending values.
+`Edits` keeps three sets: cell updates with budgeted original and submitted snapshots, rows marked for delete with the original row that the executor verifies, and appended pending rows with the columns the user provided; an empty cell of a pending row uses the table default and stays out of the `INSERT`.
+The grid marks a pending row with `+` or `-` beside its number, and the summary counts updates, deletes, and inserts.
+`d` on a row with cell changes restores the original values, because the delete wins; a second `d` on a pending row removes it.
 The modal editor reuses conventional and Vim editing. A separate read-only review shows values and SQL.
 Review formatting runs off the interface thread, without database access.
-Apply uses one reserved session and a short transaction, with row locks and original-value checks.
+Apply uses one reserved session and a short transaction, with row locks and original-value checks, in the order updates, deletes, inserts.
 A confirmed commit reloads the first page; failures keep pending values.
 An unknown commit blocks another submission. Close and exit ask before discarding pending values.
 No pending value reaches a workspace file.
+
+## 24. Auto-refresh
+
+Files: `app/auto_refresh.rs`, `console.rs`, `table.rs`, `app/persist.rs`, `app/commands.rs`, `ui/statusline.rs`, `ui/table.rs`.
+
+The `autoRefresh` action, listed by the palette and the grid page of `Ctrl+W Space`, opens a dialog with Off and six intervals. A console repeats the exact statements of its last run, captured when the run starts, with the current parameter values; a table tab reads the page of the cursor again. A last run that is not all plain reads — or, on Redis, not all known reads — refuses to arm. The tick of the main loop fires the due repetition of the tab on screen, and a busy tab, an open modal, a blocked configuration, pending grid edits, or an unknown transaction skips the moment in silence. An execution that does not complete turns the refresh off with a status note. The status line and the table summary show `auto Ns`. The state lives for the session, and a repetition writes no line in `history.jsonl`.
 
 ## 16. Export
 

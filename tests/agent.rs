@@ -1376,7 +1376,7 @@ impl Harness {
             .unwrap()
             .source
         {
-            sqln::connection::Source::Sqlite(target) => target.path.clone(),
+            sqln::connection::Source::Sqlite(target) => target.path().to_path_buf(),
             sqln::connection::Source::Network(_) => unreachable!(),
         };
         rusqlite::Connection::open(path)

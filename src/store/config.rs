@@ -18,7 +18,7 @@ use crate::connection::{
     DEFAULT_BUSY_SECONDS, DEFAULT_IDLE_SECONDS, DEFAULT_POOL_LIMIT, DEFAULT_SQL_SECONDS,
     Definition, Source,
 };
-use crate::connector::sqlite::SqliteTarget;
+use crate::connector::sqlite::{SqliteTarget, file_source};
 use crate::connector::target::{Address, ClientCertificate, Engine, NetworkTarget, Tls, TlsFiles};
 use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode};
 use crate::export::ExportChoices;
@@ -597,7 +597,11 @@ fn seconds(value: Option<u64>) -> Option<Duration> {
 pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
     let source = match entry.kind.engine() {
         None => {
-            let mut target = SqliteTarget::new(entry.file.clone().unwrap_or_default());
+            let file = entry.file.clone().unwrap_or_default();
+            let mut target = SqliteTarget {
+                source: file_source(&file),
+                ..SqliteTarget::new(PathBuf::new())
+            };
             target.foreign_keys = entry.foreign_keys;
             target.busy_timeout = Duration::from_millis(
                 entry
@@ -689,7 +693,10 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
     };
     match &definition.source {
         Source::Sqlite(target) => {
-            entry.file = Some(path_text(&target.path));
+            entry.file = Some(match &target.source {
+                crate::connector::sqlite::SqliteSource::File(path) => path_text(path),
+                crate::connector::sqlite::SqliteSource::Memory => ":memory:".to_owned(),
+            });
             entry.foreign_keys = target.foreign_keys;
             entry.busy_timeout_millis =
                 Some(u64::try_from(target.busy_timeout.as_millis()).unwrap_or(u64::MAX));

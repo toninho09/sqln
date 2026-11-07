@@ -552,3 +552,22 @@ fn an_open_transaction_keeps_its_session_after_the_idle_limit() {
     assert!(!w.manager.is_connected(w.connection));
     w.manager.shutdown();
 }
+
+#[tokio::test]
+async fn a_single_session_source_holds_one_place_and_no_idle_close() {
+    let connector = sqln::connector::sqlite::SqliteConnector::new(
+        sqln::connector::sqlite::SqliteTarget::in_memory(),
+    );
+    let pool = Pool::new(
+        std::sync::Arc::new(connector),
+        5,
+        Duration::from_millis(100),
+    );
+    assert_eq!(pool.usage(), (0, 1));
+    let lease = take(&pool).await;
+    lease.release().await;
+    // The idle session of an in-memory database never closes, or the data is lost.
+    let (closed, _) = pool.close_expired(Duration::ZERO);
+    assert_eq!(closed, 0);
+    assert!(pool.has_sessions());
+}

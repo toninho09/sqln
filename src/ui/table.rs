@@ -252,8 +252,12 @@ fn summary_parts(tab: &TableTab) -> (String, Option<&'static str>) {
     if !tab.result.edits.is_empty() {
         parts.push(text::edit_pending(
             tab.result.edits.rows.len(),
-            tab.result.edits.cells(),
+            tab.result.edits.deletes.len(),
+            tab.result.edits.inserts.len(),
         ));
+    }
+    if let Some(auto) = tab.auto_refresh {
+        parts.push(text::auto_refresh_label(auto.every.as_secs()));
     }
     if tab.edit_uncertain {
         parts.push(text::EDIT_UNCERTAIN_LABEL.to_owned());

@@ -313,12 +313,12 @@ fn both_scopes_list_their_connections_and_keep_their_names() {
     let Source::Sqlite(target) = project.resolved_source() else {
         panic!("sqlite")
     };
-    assert_eq!(target.path, base.join("project").join("db/app.db"));
+    assert_eq!(target.path(), base.join("project").join("db/app.db"));
     // A global connection uses the global folder.
     let Source::Sqlite(target) = config.connections[0].definition.resolved_source() else {
         panic!("sqlite")
     };
-    assert_eq!(target.path, base.join("global").join("data/app.db"));
+    assert_eq!(target.path(), base.join("global").join("data/app.db"));
 }
 
 #[test]
@@ -679,7 +679,7 @@ fn a_definition_round_trips_through_an_entry_without_the_password() {
     let Source::Sqlite(back_target) = &back.source else {
         panic!("sqlite")
     };
-    assert_eq!(back_target.path, Path::new("data/app.db"));
+    assert_eq!(back_target.path(), Path::new("data/app.db"));
     assert_eq!(back_target.foreign_keys, Some(true));
 
     let network = NetworkTarget {
@@ -906,4 +906,24 @@ fn a_damaged_workspace_gives_an_empty_state() {
         workspace::Workspace::default()
     );
     workspace::update(&store.global, |workspace| workspace.layout = None).unwrap();
+}
+
+#[test]
+fn a_memory_file_round_trips_through_the_configuration() {
+    let entry: config::ConnectionEntry = serde_json::from_value(serde_json::json!({
+        "id": "id", "name": "scratch", "kind": "sqlite", "file": ":memory:"
+    }))
+    .unwrap();
+    let definition = config::to_definition(&entry, PathBuf::from("/base"));
+    let Source::Sqlite(target) = &definition.source else {
+        panic!("sqlite");
+    };
+    assert!(target.is_memory());
+    // The path never resolves against the folder of the scope.
+    assert_eq!(definition.resolved_source(), definition.source);
+    let back = config::to_entry("id", &definition);
+    assert_eq!(back.file.as_deref(), Some(":memory:"));
+    let settings = definition.settings(&sqln::exec::Settings::default());
+    assert_eq!(settings.max_connections, 1);
+    assert_eq!(settings.idle_timeout, None);
 }

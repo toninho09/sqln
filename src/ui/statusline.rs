@@ -58,6 +58,8 @@ pub struct StatusData<'a> {
     pub position: Option<(usize, usize)>,
     /// The label of the MCP sessions with access, such as `MCP 1 all`.
     pub agent: Option<&'a str>,
+    /// The seconds of the auto-refresh of the tab, when it is armed.
+    pub auto: Option<u64>,
 }
 
 fn panel_label(panel: StatusPanel, theme: &Theme) -> (&'static str, Style) {
@@ -137,6 +139,9 @@ fn state_parts(data: &StatusData, theme: &Theme) -> Vec<(String, Style)> {
         .as_ref()
         .map_or_else(|| phase.to_owned(), |time| format!("{phase} {time}"));
     parts.push((phase, style));
+    if let Some(seconds) = data.auto {
+        parts.push((text::auto_refresh_label(seconds), theme.status_detail));
+    }
     parts
 }
 

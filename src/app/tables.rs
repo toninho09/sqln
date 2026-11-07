@@ -181,7 +181,7 @@ impl App {
         self.select_tab(next);
     }
 
-    fn dialect_of(&self, connection: ConnectionId) -> Option<Dialect> {
+    pub(super) fn dialect_of(&self, connection: ConnectionId) -> Option<Dialect> {
         self.connection(connection).map(|item| item.dialect)
     }
 
@@ -827,6 +827,8 @@ impl App {
             | Action::GridCloseResult => {}
             Action::GridEditCell => self.edit_cell(false),
             Action::GridSetNull => self.edit_cell(true),
+            Action::GridNewRow => self.new_row(),
+            Action::GridDeleteRow => self.toggle_delete_row(),
             Action::GridReviewEdits | Action::GridSaveEdits => self.review_edits(),
             Action::GridDiscardEdits => self.confirm_discard_edits(),
             Action::GridApply => self.apply_table(),

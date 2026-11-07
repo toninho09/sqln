@@ -60,6 +60,9 @@ impl State {
 struct Inner {
     connector: Arc<dyn Connector>,
     limit: usize,
+    /// True when the source keeps its state in one session. The pool holds exactly
+    /// one place, and no idle session closes, because a new session starts empty.
+    single: bool,
     connect_timeout: Duration,
     state: Mutex<State>,
 }
@@ -200,10 +203,12 @@ impl Drop for Lease {
 impl Pool {
     pub fn new(connector: Arc<dyn Connector>, limit: usize, connect_timeout: Duration) -> Self {
         let state = Mutex::new(State::default());
+        let single = connector.capabilities().single_session;
         Self {
             inner: Arc::new(Inner {
                 connector,
-                limit: limit.max(1),
+                limit: if single { 1 } else { limit.max(1) },
+                single,
                 connect_timeout,
                 state,
             }),
@@ -230,7 +235,12 @@ impl Pool {
 
     /// Closes each idle session that waited `limit` or more. Returns the number of
     /// closed sessions and the wait until the next idle session reaches the limit.
+    /// A source of one session never closes its idle session, because the state of
+    /// the source lives in it.
     pub fn close_expired(&self, limit: Duration) -> (usize, Duration) {
+        if self.inner.single {
+            return (0, limit);
+        }
         let now = Instant::now();
         let mut state = self.inner.lock();
         let (expired, kept): (Vec<Idle>, Vec<Idle>) = std::mem::take(&mut state.idle)

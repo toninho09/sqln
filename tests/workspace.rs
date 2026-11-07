@@ -888,12 +888,12 @@ fn a_new_file_needs_an_explicit_answer() {
 }
 
 #[test]
-fn the_memory_forms_of_sqlite_are_refused() {
+fn the_memory_form_saves_one_in_memory_connection() {
     let mut f = Fixture::new("form-memory", "");
     f.fill_sqlite("memory", Path::new(":memory:"));
     f.save();
-    f.assert_sees("SQLite needs a file.");
-    assert_eq!(f.app.connections().len(), 1);
+    f.assert_sees("memory");
+    assert_eq!(f.app.connections().len(), 2);
 }
 
 #[test]
@@ -1912,4 +1912,14 @@ fn the_close_mark_of_the_last_tab_shows_the_home_screen() {
     f.close_tab("console-1");
     assert!(f.app.home());
     assert!(!f.app.should_quit());
+}
+
+#[test]
+fn a_memory_target_round_trips_through_the_form_with_one_session() {
+    let definition = Definition::new("scratch", Source::Sqlite(SqliteTarget::in_memory()));
+    let form = ConnectionForm::editing(1, &definition, false);
+    assert_eq!(form.definition().unwrap(), definition);
+    let settings = definition.settings(&sqln::exec::Settings::default());
+    assert_eq!(settings.max_connections, 1);
+    assert_eq!(settings.idle_timeout, None);
 }

@@ -41,13 +41,14 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **SQL tools.** Format statements, toggle comments, and generate SQL templates from the navigator.
 - **Query parameters.** Write `:name` values, fill the panel under the editor, and run with native bindings that keep values out of the SQL text.
 - **Table browsing.** Apply SQL filters, sort columns, move between pages, and count rows on request.
-- **Grid editing.** Change table values locally, review the SQL, and apply checked updates in one transaction.
+- **Grid editing.** Change, insert, and delete table rows locally, review the SQL, and apply checked changes in one transaction.
 - **Key navigation.** Go from a row to the row that its foreign key reads, or to the rows of other tables that read it.
 - **Database objects.** See routines, sequences, triggers, and types in the navigator, and open the DDL of an object in a new console.
 - **Results inspection.** Select cells, search loaded rows, inspect a row vertically, and format JSON values.
 - **Export.** Write CSV, TSV, JSON, JSON Lines, or SQL inserts from the export dialog.
 - **Import.** Load CSV, TSV, JSON, or JSON Lines into a table, with column mapping and a preview.
 - **Execution controls.** Run a statement, a selection, or a script, with row limits, deadlines, and cancellation.
+- **Auto-refresh.** Repeat the last run of a console, or the page of a table, at a fixed interval.
 - **Query plans.** See the plan of a statement as a tree, with the share of each node.
 - **Server sessions.** List the sessions of PostgreSQL or MySQL, cancel a query, or end a session.
 - **ER diagrams.** Draw the tables and foreign keys of a schema or a table, and copy the diagram as Mermaid text.
@@ -337,12 +338,24 @@ Read-only connections do not offer editing.
 
 Production connections ask for another confirmation.
 `Ctrl+N` sets a cell to SQL `NULL`; empty text and the text `NULL` remain different.
+`n` appends one pending row for insert; an empty cell of a pending row uses the table default, and a natural key stays editable.
+`d` marks a row for delete, or removes a pending row; a marked row returns to its original values, and a second press removes the mark.
 `Ctrl+R` opens the review. `Ctrl+D` asks before discarding pending changes.
 Use the palette if your terminal does not send a `Ctrl` shortcut.
 
-A `*` and underline mark each changed cell. The summary shows pending row and cell counts.
+A `*` and underline mark each changed cell; `+` and `-` beside a row number mark a pending insert and a pending delete.
+The summary shows the pending update, delete, and insert counts.
 Typing and keeping a value do not write to the database.
 Copy, export, import, filtering, sorting, and page changes require resolving pending changes first.
+
+### Repeat a view
+
+The `autoRefresh` command, in the palette and in the page of `Ctrl+W Space`, repeats the
+tab on screen at a fixed interval: Off, 1s, 2s, 5s, 10s, 30s, or 60s.
+A console repeats the exact statements of its last run with the current parameter values;
+a table tab reads the page of the cursor again with the same filter and order.
+A last run that can change data refuses to arm, and a failed repetition turns the
+refresh off. The status line and the table summary show `auto Ns`.
 Closing a dirty table offers Apply, Discard, and Cancel. Pending changes stay in memory only.
 
 Apply checks the original rows under database locks and updates all pending rows in one transaction.
@@ -641,8 +654,8 @@ A `.sql` path is not a script-opening argument; file targets are SQLite database
 ## Known limitations
 
 - Windows support is not part of the current CI or binary matrix.
-- SQLite needs an on-disk file. In-memory databases are not supported.
-- Grid editing supports updates only, in keyed table tabs. Use SQL for inserts, deletes, binary values, or other grids.
+- A `:memory:` SQLite database lives in the single session of its connection: a disconnect or the end of the application loses it.
+- Grid editing changes, inserts, and deletes rows of keyed table tabs. Use SQL for binary values or other grids.
 - Arbitrary external `.sql` files cannot open directly as consoles.
 - There is no integrated SSH tunnel, IAM authentication, or Kerberos authentication.
 - MariaDB has no tree plan, so `Ctrl+W E` shows the error of the server. MySQL has no tree plan for a write on one table.

@@ -6,6 +6,56 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Grid inserts and deletes — 2026-11-06
+
+The user asks for pending inserts and deletes in the grid editing of table tabs, beside the pending updates.
+This entry extends "Grid editing — 2026-11-04"; every rule of that entry stays.
+
+| # | Point | Approved rule | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | New row | `n` appends one pending insert row of empty cells at the end of the loaded rows; `F2` edits each cell with the existing modal | A whole-row dialog | One flow with the updates; the modal already edits values |
+| 2 | Empty cell | An empty cell in a pending row means "not provided": the column stays out of the `INSERT` and the database default applies. NULL stays explicit | Store a distinct unset value | The default case needs no typed input |
+| 3 | Delete mark | `d` toggles the delete mark of the row of the cursor. A row with cell changes returns to its original values, because the delete wins. A second `d` on a pending insert row removes it, and no statement runs for it | Refuse the mark while cells changed | The user decides; the review shows the final SQL |
+| 4 | Keys of a marked row | A row marked for delete refuses cell edits until the mark leaves | Edit and delete at once | Two pending states of one row can disagree |
+| 5 | Insert columns | Keys, identities, generated, and binary columns stay protected. A natural key without an identity stays editable in a pending row | Protect every key column | Natural keys need a value |
+| 6 | Insert validation | A `NOT NULL` column without a default and without a provided value refuses the review and the apply with the column name | Send NULL | The database default and an explicit value stay distinct |
+| 7 | All-defaults insert | With no provided column, SQLite and PostgreSQL write `DEFAULT VALUES` and MySQL writes `() VALUES ()` | Refuse | Every column can have a default |
+| 8 | Apply order | One short transaction applies the updates, then the deletes, then the inserts. Deletes lock and verify the original row exactly as updates | One statement per apply; deletes first | Foreign keys can need the user's order, and the review shows it |
+| 9 | Insert identity | No lock can hold a row that does not exist. A constraint failure rolls the whole apply back and keeps the pending values | Check after the insert | Nothing to compare before the write |
+| 10 | Marks on screen | The row numbers of the grid carry `+` for a pending insert and `-` for a pending delete, with a color. The summary counts updates, deletes, and inserts, and only the non-zero parts show | Colors only | A text mark works without colors |
+| 11 | Guards | The existing pending-edit guards count inserts and deletes, so copy, export, import, filters, sort, reload, navigation, pages, and close stay blocked while any change is pending | New guards per change type | One source of truth |
+| 12 | After the apply | The first page reloads as today; cursor restoration by primary key ignores a pending row that the reload does not find | Restore by insert position | The position of a new row is not a key |
+
+## SQLite in memory — 2026-11-06
+
+The user asks for `:memory:` SQLite databases. The initial plan rejected them in the first version; the explicit request is the new fact, and this entry replaces that rejection.
+
+| # | Point | Approved rule | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Entry | The file field of the form and the command line accept exactly `:memory:`, without case. `file:` URIs and `mode=memory` stay refused | Any URI form | One text form keeps the validation simple |
+| 2 | Pool | The pool holds exactly one place, and no idle timeout closes it, because a new session starts empty | A shared cache between sessions | The shared cache has locking rules of its own |
+| 3 | Session | The session returns clean instead of discarded, so temporary tables persist for the session. A disconnect and the end of the application lose the database, which the form and the README say | Refuse the disconnect | The user asked for a scratch database, not a file |
+| 4 | Source type | `SqliteTarget` holds an enum of the file and the memory source, and `:memory:` never reaches the driver as a path | A magic path value | The type carries the rule |
+| 5 | Configuration | `config.json` stores `":memory:"` as the file of the connection. No saved file can hold it today, so no migration is needed | A new field | The text round-trips through the form |
+| 6 | Queue | Compare, structure, and console reads of the connection share the one session in arrival order | A second session | Data consistency wins over parallel reads |
+
+## Auto-refresh of the tab on screen — 2026-11-06
+
+The user asks for a repetition of the current view at a fixed interval.
+
+| # | Point | Approved rule | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Target | One command acts on the tab on screen: a console repeats its last run, and a table tab reads its page again with the same filter and order | Every tab at once | The user watches one place; background work needs a queue |
+| 2 | Entry | The palette (`Ctrl+P`) and the grid page of `Ctrl+W Space` list `autoRefresh`, with no default shortcut | A fixed key | The feature is occasional |
+| 3 | Interval | A dialog offers Off, 1s, 2s, 5s, 10s, 30s, and 60s | A free field | Seven covers the use; a field needs validation |
+| 4 | Console repetition | The exact statements of the last run repeat, captured when the run starts. Editing the editor changes nothing until a new run; parameters use the current values | Run the text of the editor | The repetition must be predictable |
+| 5 | Reads only | A console with a last run that is not all plain reads — or, on Redis, not all known reads — refuses to arm. The repetition never opens the run question | Ask at each repetition | A question every second stops the work |
+| 6 | Table repetition | The tab reads the page of the cursor again, and the grid holds that page again | Reload every loaded page | The memory budget follows the page |
+| 7 | Skip | A busy tab, an open modal or dialog, a blocked configuration, pending grid edits, or an unknown transaction skips the moment in silence; the interval stays armed | Stop on the first skip | The condition can pass one second later |
+| 8 | Failure | An execution that does not complete turns the refresh off with a status note | Retry | A failing read every second hides the error |
+| 9 | State | The status line of a console and the summary of a table show `auto Ns`. The state lives for the session; no configuration or workspace file changes | Persist the interval | The feature is a watch, not a setting |
+| 10 | History | A repetition writes no line in `history.jsonl`; the Messages history keeps its budgeted records | Record every repetition | The file would grow without value |
+
 ## Explicit AI SQL completion
 
 The user approves a command-driven completion flow, separate from MCP.

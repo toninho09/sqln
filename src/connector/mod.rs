@@ -55,6 +55,10 @@ pub struct Capabilities {
     pub data_edit: bool,
     /// True when consoles accept named scalar parameters.
     pub parameters: bool,
+    /// True when the source holds its state in one session, so the pool keeps exactly
+    /// one place and never closes an idle session. An in-memory SQLite database needs
+    /// this, because a new session starts empty.
+    pub single_session: bool,
 }
 
 impl Default for Capabilities {
@@ -65,6 +69,7 @@ impl Default for Capabilities {
             table_filters: true,
             data_edit: true,
             parameters: false,
+            single_session: false,
         }
     }
 }

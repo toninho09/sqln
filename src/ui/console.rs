@@ -677,17 +677,25 @@ fn grid_body(area: Rect, table: &ResultTable) -> Rect {
     }
 }
 
-/// Writes a row number in the columns before `body`.
+/// Writes a row number in the columns before `body`. A pending insert or delete
+/// mark takes the first column, and the number keeps the rest.
 fn draw_row_number(
     buffer: &mut Buffer,
     area: Rect,
     body: Rect,
     y: u16,
     number: usize,
+    mark: Option<char>,
     style: Style,
 ) {
     let digits = usize::from((body.x - area.x).saturating_sub(NUMBER_END));
-    buffer.set_stringn(area.x, y, format!("{number:>digits$}"), digits, style);
+    if let Some(mark) = mark {
+        buffer.set_stringn(area.x, y, mark.to_string(), 1, style);
+        let width = digits.saturating_sub(1);
+        buffer.set_stringn(area.x + 1, y, format!("{number:>width$}"), width, style);
+    } else {
+        buffer.set_stringn(area.x, y, format!("{number:>digits$}"), digits, style);
+    }
 }
 
 /// Writes the rule after the row numbers and the rule after each column.
@@ -748,7 +756,18 @@ pub fn draw_grid(
         } else {
             theme.row_number
         };
-        draw_row_number(buffer, area, body, y, row_index + 1, number);
+        let mark = result.edits.row_mark(row_index).map(|mark| match mark {
+            crate::data_edit::RowMark::Insert => '+',
+            crate::data_edit::RowMark::Delete => '-',
+        });
+        let marked_style = if mark.is_some() {
+            number
+                .patch(theme.hint)
+                .add_modifier(ratatui::style::Modifier::UNDERLINED)
+        } else {
+            number
+        };
+        draw_row_number(buffer, area, body, y, row_index + 1, mark, marked_style);
         draw_rules(buffer, body, &columns, y, theme);
         for ((column, x, width), value) in columns.iter().zip(row.cells().skip(view.left)) {
             let selected = selection.is_some_and(|range| {

@@ -409,6 +409,8 @@ If the vault fails, the session option does not offer global storage in plain te
 | Import a file, in a table tab | `I` | `I` |
 | Edit a table cell | `F2` | `F2` |
 | Set a table cell to NULL | `Ctrl+N` | `Ctrl+N` |
+| Add a row for insert | `n` | `n` |
+| Mark the row for delete, or remove a pending row | `d` | `d` |
 | Review pending changes | `Ctrl+R` | `Ctrl+R` |
 | Review and apply pending changes | `Ctrl+S` | `Ctrl+S` |
 | Discard pending changes, with confirmation | `Ctrl+D` | `Ctrl+D` |
@@ -440,9 +442,11 @@ In the value window and the row window, the keys are the same in both maps:
 | Close | `Esc` or `Enter` |
 
 Grid editing requires a writable table with a primary key. Key, identity, generated, and binary columns remain protected.
-The action names are `gridEditCell`, `gridSetNull`, `gridReviewEdits`, `gridSaveEdits`, and `gridDiscardEdits`.
+The action names are `gridEditCell`, `gridSetNull`, `gridNewRow`, `gridDeleteRow`, `gridReviewEdits`, `gridSaveEdits`, and `gridDiscardEdits`.
 The palette and panel menu show their effective shortcuts.
 Pending changes disable copy, export, import, filters, sorting, reload, key navigation, and page changes.
+A new pending row shows `+` beside its number, a row marked for delete shows `-`, and an empty cell of a pending row uses the table default.
+The `autoRefresh` action, with no default shortcut, opens the interval dialog of the tab on screen: a console repeats its last run, and a table reads its page again. Reads only, and a failed repetition turns it off.
 
 In the cell editor, `F2` or `Ctrl+S` keeps the value locally, without a database write.
 `Tab` selects the editor or buttons; the mouse selects and activates buttons.

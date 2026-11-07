@@ -481,6 +481,7 @@ impl App {
             Action::AgentStop => self.stop_agent_tasks(),
             Action::AgentSqlToConsole => self.agent_sql_to_console(),
             Action::AgentSqlClear => self.agent_sql_clear(),
+            Action::AutoRefresh => self.open_auto_refresh(),
             Action::AgentSession => self.open_tab_agent_session(),
             Action::AgentTasks => self.open_agent_tasks(),
             Action::Run => self.run(RunTarget::Statements(RunScope::Default)),
@@ -1464,7 +1465,7 @@ impl App {
             .collect()
     }
 
-    fn has_transactions(&self, connection: ConnectionId) -> bool {
+    pub(super) fn has_transactions(&self, connection: ConnectionId) -> bool {
         self.connection(connection)
             .is_none_or(|item| item.capabilities.transactions)
     }

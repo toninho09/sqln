@@ -336,8 +336,9 @@ impl ConnectionForm {
             Source::Sqlite(target) => {
                 form.kind = Kind::Sqlite;
                 form.foreign_keys = target.foreign_keys;
-                form.stored_file = Some(path_text(&target.path));
-                form.set(Field::File, path_text(&target.path));
+                let file = target.file_display();
+                form.stored_file = Some(file.clone());
+                form.set(Field::File, file);
                 form.set(
                     Field::BusyTimeout,
                     target.busy_timeout.as_secs().to_string(),
@@ -869,6 +870,14 @@ impl ConnectionForm {
         let file = self.trimmed(Field::File);
         if file.is_empty() {
             return Err(invalid(Field::File, text::FORM_NEEDS_FILE));
+        }
+        if file.eq_ignore_ascii_case(":memory:") {
+            // A database in memory needs no file, and it lives in one session.
+            let mut target = SqliteTarget::in_memory();
+            target.foreign_keys = self.foreign_keys;
+            let seconds = self.number(Field::BusyTimeout, text::FIELD_BUSY)?;
+            target.busy_timeout = Duration::from_secs(seconds);
+            return Ok(target);
         }
         validate_path(Path::new(file)).map_err(|error| invalid(Field::File, error.message))?;
         let mut target = SqliteTarget::new(self.file_path(file)?);

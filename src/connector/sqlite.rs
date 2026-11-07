@@ -26,9 +26,18 @@ use crate::sql::Dialect;
 
 const MAIN_SCHEMA: &str = "main";
 
+/// Where a SQLite database lives.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SqliteSource {
+    File(PathBuf),
+    /// One database in memory. It lives while the pool holds its only session, and a
+    /// disconnect or the end of the application loses it.
+    Memory,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SqliteTarget {
-    pub path: PathBuf,
+    pub source: SqliteSource,
     pub allow_create: bool,
     /// `None` keeps the default of SQLite.
     pub foreign_keys: Option<bool>,
@@ -38,11 +47,55 @@ pub struct SqliteTarget {
 impl SqliteTarget {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
-            path: path.into(),
+            source: SqliteSource::File(path.into()),
             allow_create: false,
             foreign_keys: None,
             busy_timeout: Duration::from_secs(5),
         }
+    }
+
+    pub fn in_memory() -> Self {
+        Self {
+            source: SqliteSource::Memory,
+            allow_create: false,
+            foreign_keys: None,
+            busy_timeout: Duration::from_secs(5),
+        }
+    }
+
+    pub fn is_memory(&self) -> bool {
+        matches!(self.source, SqliteSource::Memory)
+    }
+
+    /// The path of the file of the source. A database in memory has the `:memory:`
+    /// text, which never reaches the driver.
+    pub fn path(&self) -> &Path {
+        match &self.source {
+            SqliteSource::File(path) => path,
+            SqliteSource::Memory => Path::new(":memory:"),
+        }
+    }
+
+    /// True when the file of the source exists. A database in memory has no file.
+    pub fn source_exists(&self) -> bool {
+        matches!(&self.source, SqliteSource::File(path) if path.exists())
+    }
+
+    /// The text of the place of the source.
+    pub fn file_display(&self) -> String {
+        match &self.source {
+            SqliteSource::File(path) => path.display().to_string(),
+            SqliteSource::Memory => ":memory:".to_owned(),
+        }
+    }
+}
+
+/// Reads the text of a SQLite file field. `:memory:` opens one database in memory.
+pub fn file_source(text: &str) -> SqliteSource {
+    if text.trim().eq_ignore_ascii_case(":memory:") {
+        SqliteSource::Memory
+    } else {
+        SqliteSource::File(PathBuf::from(text))
     }
 }
 
@@ -64,11 +117,17 @@ pub fn validate_path(path: &Path) -> Result<(), ConnectError> {
 
 fn open(target: &SqliteTarget, trace: &Option<TraceContext>) -> Result<Connection, ConnectError> {
     let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    if target.allow_create {
+    if target.allow_create || target.is_memory() {
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
     let failed = |error: rusqlite::Error| ConnectError::new(error.to_string());
-    let conn = Connection::open_with_flags(&target.path, flags).map_err(failed)?;
+    let conn = match &target.source {
+        SqliteSource::File(path) => {
+            validate_path(path)?;
+            Connection::open_with_flags(path, flags).map_err(failed)?
+        }
+        SqliteSource::Memory => Connection::open_in_memory_with_flags(flags).map_err(failed)?,
+    };
     conn.busy_timeout(target.busy_timeout).map_err(failed)?;
     if let Some(enabled) = target.foreign_keys {
         let sql = format!(
@@ -99,6 +158,7 @@ impl Connector for SqliteConnector {
     fn capabilities(&self) -> super::Capabilities {
         super::Capabilities {
             parameters: true,
+            single_session: self.target.is_memory(),
             ..super::Capabilities::default()
         }
     }
@@ -111,7 +171,7 @@ impl Connector for SqliteConnector {
         &self,
         trace: Option<TraceContext>,
     ) -> Result<Box<dyn Session>, ConnectError> {
-        validate_path(&self.target.path)?;
+        let memory = self.target.is_memory();
         let target = self.target.clone();
         let (opened, wait_opened) = oneshot::channel();
         let (requests, inbox) = channel();
@@ -134,6 +194,7 @@ impl Connector for SqliteConnector {
         Ok(Box::new(SqliteSession {
             requests,
             interrupt: Arc::new(Interrupt(interrupt)),
+            memory,
             trace,
         }))
     }
@@ -461,6 +522,8 @@ struct SqliteSession {
     trace: Option<TraceContext>,
     requests: Sender<Request>,
     interrupt: Arc<Interrupt>,
+    /// True when the database of the session lives in memory, so the session stays.
+    memory: bool,
 }
 
 impl SqliteSession {
@@ -535,9 +598,14 @@ impl Session for SqliteSession {
         self.ask(Request::Control(command, reply), answer).await
     }
 
-    /// A new connection is the only cleanup that removes temporary tables.
+    /// A new connection is the only cleanup that removes temporary tables. A database
+    /// in memory lives in this session, so the session stays and the cleanup keeps it.
     async fn reset(&mut self) -> ResetOutcome {
-        ResetOutcome::Discard
+        if self.memory {
+            ResetOutcome::Clean
+        } else {
+            ResetOutcome::Discard
+        }
     }
 
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError> {

@@ -320,6 +320,7 @@ impl App {
                     self.run_confirmed(index, target);
                 }
             }
+            DialogAction::AutoRefresh(seconds) => self.choose_auto_refresh(seconds),
             DialogAction::RemoveConnection(connection) => self.remove_connection(connection),
             DialogAction::CreateProject => self.create_project(),
             DialogAction::ReloadConfig => self.reload_config(),

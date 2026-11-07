@@ -821,6 +821,7 @@ impl App {
     pub fn tick_at(&mut self, now: Instant) -> bool {
         let mut changed = self.advance_clock(now);
         changed |= self.expire_status(now);
+        changed |= self.auto_refresh_tick(now);
         if self.console_on_screen() {
             let console = &mut self.consoles[self.active];
             let revision = console.editor.revision();
