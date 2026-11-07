@@ -164,6 +164,23 @@ pub enum Item {
     Bad(BadRow),
 }
 
+/// Builds the item of a read row: a row when the cells fit, or the reason why the
+/// reader cannot use them.
+fn row_item(line: u64, source: String, cells: Result<Vec<Option<String>>, String>) -> Item {
+    match cells {
+        Ok(cells) => Item::Row(FileRow {
+            line,
+            source,
+            cells,
+        }),
+        Err(reason) => Item::Bad(BadRow {
+            line,
+            source,
+            reason,
+        }),
+    }
+}
+
 enum Source {
     Delimited(DelimitedReader),
     Json(JsonReader),

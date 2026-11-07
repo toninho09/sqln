@@ -358,6 +358,11 @@ pub fn next_optional<T: Copy + PartialEq>(
     next_choice(&order, value, forward)
 }
 
+/// Returns the value after a choice among no value, `true`, and `false`.
+fn next_bool(value: Option<bool>, forward: bool) -> Option<bool> {
+    next_choice(&[None, Some(true), Some(false)], value, forward)
+}
+
 fn parse(input: &LineInput, name: &str) -> Result<Option<usize>, String> {
     let value = input.text().trim();
     if value.is_empty() {
@@ -683,28 +688,20 @@ impl SettingsForm {
                 self.draft_mut().keyboard = next_choice(&order, self.draft().keyboard, forward);
             }
             Field::ReopenTabs => {
-                let order = [None, Some(true), Some(false)];
-                self.draft_mut().reopen_tabs =
-                    next_choice(&order, self.draft().reopen_tabs, forward);
+                self.draft_mut().reopen_tabs = next_bool(self.draft().reopen_tabs, forward);
             }
             Field::QueryHistory => {
-                let order = [None, Some(true), Some(false)];
-                self.draft_mut().query_history =
-                    next_choice(&order, self.draft().query_history, forward);
+                self.draft_mut().query_history = next_bool(self.draft().query_history, forward);
             }
             Field::ShowSystemCommands => {
-                let order = [None, Some(true), Some(false)];
                 self.draft_mut().show_system_commands =
-                    next_choice(&order, self.draft().show_system_commands, forward);
+                    next_bool(self.draft().show_system_commands, forward);
             }
             Field::FormatJson => {
-                let order = [None, Some(true), Some(false)];
-                self.draft_mut().format_json =
-                    next_choice(&order, self.draft().format_json, forward);
+                self.draft_mut().format_json = next_bool(self.draft().format_json, forward);
             }
             Field::CapInSql => {
-                let order = [None, Some(true), Some(false)];
-                self.draft_mut().cap_in_sql = next_choice(&order, self.draft().cap_in_sql, forward);
+                self.draft_mut().cap_in_sql = next_bool(self.draft().cap_in_sql, forward);
             }
             Field::SuggestionKeys => {
                 let order = [
@@ -721,7 +718,7 @@ impl SettingsForm {
                     next_optional(&ThemeName::ALL, self.draft().theme, forward);
             }
             Field::Mcp => {
-                self.draft_mut().mcp = next_optional(&[true, false], self.draft().mcp, forward);
+                self.draft_mut().mcp = next_bool(self.draft().mcp, forward);
             }
             Field::McpDefault => {
                 self.draft_mut().mcp_default =
@@ -732,13 +729,10 @@ impl SettingsForm {
                     next_optional(&AgentAccess::ALL, self.draft().mcp_max, forward);
             }
             Field::McpRemember => {
-                self.draft_mut().mcp_remember =
-                    next_optional(&[true, false], self.draft().mcp_remember, forward);
+                self.draft_mut().mcp_remember = next_bool(self.draft().mcp_remember, forward);
             }
             Field::AiEnabled => {
-                let order = [None, Some(true), Some(false)];
-                let value = self.draft().ai.enabled;
-                self.draft_mut().ai.enabled = next_choice(&order, value, forward);
+                self.draft_mut().ai.enabled = next_bool(self.draft().ai.enabled, forward);
                 self.draft_mut().ai.touched = true;
             }
             Field::AiProfile => {

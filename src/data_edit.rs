@@ -81,6 +81,26 @@ pub struct Edits {
     pub inserts: BTreeMap<usize, InsertRow>,
 }
 
+/// Returns the row with one replaced cell, and reserves it in the budget of the grid.
+/// It returns the row, its snapshot, and the reserved bytes.
+fn replaced_row(
+    old: &Row,
+    col: usize,
+    value: Value<'_>,
+    budget: &Arc<Budget>,
+) -> Result<(Row, Arc<SavedRow>, usize), String> {
+    let next: Row = old
+        .cells()
+        .enumerate()
+        .map(|(i, old)| if i == col { value } else { old })
+        .collect();
+    let snapshot = SavedRow::reserve(next.clone(), budget)?;
+    let Reservation::Accepted(bytes) = budget.reserve(&next) else {
+        return Err(text::EDIT_BUDGET.to_owned());
+    };
+    Ok((next, snapshot, bytes))
+}
+
 impl Edits {
     pub fn is_empty(&self) -> bool {
         self.rows.is_empty() && self.deletes.is_empty() && self.inserts.is_empty()
@@ -162,15 +182,7 @@ impl Edits {
         if old.get(col).ok_or(text::EDIT_NO_CELL)? == value {
             return Ok(());
         }
-        let next: Row = old
-            .cells()
-            .enumerate()
-            .map(|(i, old)| if i == col { value } else { old })
-            .collect();
-        let snapshot = SavedRow::reserve(next.clone(), budget)?;
-        let Reservation::Accepted(bytes) = budget.reserve(&next) else {
-            return Err(text::EDIT_BUDGET.to_owned());
-        };
+        let (next, snapshot, bytes) = replaced_row(old, col, value, budget)?;
         let old_bytes = row_cost(old);
         let old = std::mem::replace(&mut table.rows[row], next);
         table.bytes = table.bytes - old_bytes + bytes;
@@ -217,15 +229,7 @@ impl Edits {
         if old.get(col).ok_or(text::EDIT_NO_CELL)? == value {
             return Ok(());
         }
-        let next: Row = old
-            .cells()
-            .enumerate()
-            .map(|(i, old)| if i == col { value } else { old })
-            .collect();
-        let snapshot = SavedRow::reserve(next.clone(), budget)?;
-        let Reservation::Accepted(bytes) = budget.reserve(&next) else {
-            return Err(text::EDIT_BUDGET.to_owned());
-        };
+        let (next, snapshot, bytes) = replaced_row(old, col, value, budget)?;
         let old_bytes = row_cost(old);
         table.rows[row] = next;
         table.bytes = table.bytes - old_bytes + bytes;

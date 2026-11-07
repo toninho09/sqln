@@ -897,9 +897,8 @@ impl Session for PostgresSession {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<String>, ExecError> {
-        let command = crate::command_log::limited(format_args!(
-            "{COLUMNS_SQL}\nParameters: schema={schema:?}, relation={relation:?}"
-        ));
+        let command =
+            crate::command_log::limited(super::relation_command(COLUMNS_SQL, schema, relation));
         let rows = crate::command_log::observe(
             self.trace.clone(),
             command,
@@ -941,9 +940,7 @@ impl PostgresSession {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<ForeignKey>, ExecError> {
-        let command = crate::command_log::limited(format_args!(
-            "{sql}\nParameters: schema={schema:?}, relation={relation:?}"
-        ));
+        let command = crate::command_log::limited(super::relation_command(sql, schema, relation));
         let rows = crate::command_log::observe(
             self.trace.clone(),
             command,

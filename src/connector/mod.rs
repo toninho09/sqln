@@ -192,6 +192,11 @@ pub fn network_connector(target: NetworkTarget) -> Arc<dyn Connector> {
     }
 }
 
+/// Names a query of the catalog with its parameters, for the log of commands.
+pub(crate) fn relation_command(sql: &str, schema: &str, relation: &str) -> String {
+    format!("{sql}\nParameters: schema={schema:?}, relation={relation:?}")
+}
+
 #[async_trait]
 pub trait Connector: Send + Sync {
     fn dialect(&self) -> Dialect;
