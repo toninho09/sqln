@@ -3,7 +3,6 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
@@ -11,8 +10,8 @@ use unicode_width::UnicodeWidthStr;
 use super::console::{draw_grid, draw_panel_title, message_style, search_line};
 use super::theme::Theme;
 use super::widgets::{
-    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, centered, draw_buttons, draw_note, draw_row,
-    modal_width, open_modal, value_width,
+    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, centered, choice_line, draw_buttons, draw_note,
+    draw_row, flag_line, modal_width, open_modal, value_width,
 };
 use super::{draw_anchored_list, input_spans, text};
 use crate::compare::Kind;
@@ -118,11 +117,6 @@ fn label(field: Field) -> &'static str {
 
 fn value(form: &CompareForm, field: Field, width: usize, theme: &Theme) -> Line<'static> {
     let focused = form.focus == field;
-    let style = if focused {
-        theme.dialog_focus
-    } else {
-        Style::new()
-    };
     let side = field.side().map(|side| &form.sides[side]);
     match (field, side) {
         (Field::SourceTable | Field::TargetTable, Some(side)) => {
@@ -135,23 +129,20 @@ fn value(form: &CompareForm, field: Field, width: usize, theme: &Theme) -> Line<
             let name = form
                 .choice(field.side().unwrap_or(0))
                 .map_or(String::new(), |choice| printable(&choice.name));
-            Line::from(Span::styled(format!("< {name} >"), style))
+            choice_line(&name, focused, theme)
         }
         (Field::Kind, _) => {
             let kind = match form.kind {
                 Kind::Structure => text::KIND_STRUCTURE,
                 Kind::Data => text::KIND_DATA,
             };
-            Line::from(Span::styled(format!("< {kind} >"), style))
+            choice_line(kind, focused, theme)
         }
         (_, Some(side)) => match side.schema_name() {
-            Some(schema) => Line::from(Span::styled(format!("< {} >", printable(schema)), style)),
+            Some(schema) => choice_line(&printable(schema), focused, theme),
             None => Line::styled(text::COMPARE_LOADING, theme.hint),
         },
-        _ => {
-            let mark = if form.removals { "[x]" } else { "[ ]" };
-            Line::from(Span::styled(mark, style))
-        }
+        _ => flag_line(form.removals, focused, theme),
     }
 }
 

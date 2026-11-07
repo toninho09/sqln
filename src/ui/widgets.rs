@@ -116,6 +116,38 @@ impl SidebarModal {
 
 // The rows of a form.
 
+/// Returns the style of the value of a focused field.
+pub fn focus_style(focused: bool, theme: &Theme) -> Style {
+    if focused {
+        theme.dialog_focus
+    } else {
+        Style::new()
+    }
+}
+
+/// Writes a choice between angles, as the value of a form row.
+pub fn choice_value(name: &str) -> String {
+    format!("< {name} >")
+}
+
+/// The mark of a flag of a form.
+pub fn flag_mark(on: bool) -> &'static str {
+    if on { "[x]" } else { "[ ]" }
+}
+
+/// Returns the line of a choice value, in the focus style.
+pub fn choice_line(name: &str, focused: bool, theme: &Theme) -> Line<'static> {
+    Line::from(Span::styled(
+        choice_value(name),
+        focus_style(focused, theme),
+    ))
+}
+
+/// Returns the line of a flag, in the focus style.
+pub fn flag_line(on: bool, focused: bool, theme: &Theme) -> Line<'static> {
+    Line::from(Span::styled(flag_mark(on), focus_style(focused, theme)))
+}
+
 /// Returns the columns that the button of a path field takes from its value, with a gap.
 pub fn browse_width(theme: &Theme) -> u16 {
     u16::try_from(theme.button(text::BUTTON_BROWSE).width() + 1).unwrap_or(0)

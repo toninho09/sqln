@@ -9,7 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::statusline::{HintItem, hint_line};
 use super::theme::Theme;
-use super::widgets::{centered, open_modal, short_modal_width};
+use super::widgets::{centered, flag_mark, open_modal, short_modal_width};
 use super::{input_spans, text};
 use crate::connector::target::Secret;
 use crate::grid::printable;
@@ -143,7 +143,7 @@ pub fn draw_password(
     };
     if prompt.save_allowed {
         let row = Rect::new(inner.x, inner.y + 3, inner.width, 1);
-        let mark = if prompt.save { "[x]" } else { "[ ]" };
+        let mark = flag_mark(prompt.save);
         let label = if prompt.plain {
             text::SAVE_IN_PLAIN_TEXT
         } else {

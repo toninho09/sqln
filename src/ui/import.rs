@@ -3,13 +3,13 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
 use super::theme::Theme;
 use super::widgets::{
-    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, SidebarModal, browse_width, centered,
+    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, SidebarModal, browse_width, centered, choice_line,
     draw_browse_button, draw_buttons, draw_note, draw_row, draw_sidebar_rows, modal_width,
     value_width,
 };
@@ -94,12 +94,7 @@ fn value<'a>(form: &ImportForm, field: Field, width: usize, theme: &Theme) -> Li
         }
         return Line::from(input_spans(&chars, input.cursor(), width, focused, theme).0);
     }
-    let style = if focused {
-        theme.dialog_focus
-    } else {
-        Style::new()
-    };
-    Line::from(Span::styled(format!("< {} >", choice(form, field)), style))
+    choice_line(&choice(form, field), focused, theme)
 }
 
 /// Writes text in exactly `width` columns.

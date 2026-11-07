@@ -2,7 +2,6 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -12,8 +11,8 @@ use super::text;
 use super::theme::Theme;
 use super::widgets::{
     BORDER_ROWS, FOOTER_ROWS, LEFT, ListWindow, RIGHT, SidebarModal, browse_width, centered,
-    draw_browse_button, draw_buttons, draw_list_window, draw_note, draw_row, draw_sidebar_rows,
-    modal_width, value_width,
+    choice_value, draw_browse_button, draw_buttons, draw_list_window, draw_note, draw_row,
+    draw_sidebar_rows, flag_mark, focus_style, modal_width, value_width,
 };
 use crate::connector::target::hide_uri_password;
 use crate::filter_list::FilterList;
@@ -142,11 +141,7 @@ fn value_spans(
     width: usize,
     theme: &Theme,
 ) -> Vec<Span<'static>> {
-    let style = if form.focus == field {
-        theme.dialog_focus
-    } else {
-        Style::new()
-    };
+    let style = focus_style(form.focus == field, theme);
     match field.style() {
         FieldStyle::Choice => {
             let symbol = form
@@ -154,12 +149,12 @@ fn value_spans(
                 .filter(|_| field == Field::Icon)
                 .map_or(String::new(), |icon| Theme::icon(connection_symbol(icon)));
             let name = choice(form, field);
-            vec![Span::styled(format!("< {symbol}{name} >"), style)]
+            vec![Span::styled(
+                choice_value(&format!("{symbol}{name}")),
+                style,
+            )]
         }
-        FieldStyle::Flag => {
-            let mark = if form.flag(field) { "[x]" } else { "[ ]" };
-            vec![Span::styled(mark, style)]
-        }
+        FieldStyle::Flag => vec![Span::styled(flag_mark(form.flag(field)), style)],
         _ => text_spans(form, field, width, theme),
     }
 }
@@ -310,11 +305,7 @@ fn draw_schema_list(
                 theme.dialog
             };
             frame.buffer_mut().set_style(area, style);
-            let mark = if open.list.is_marked(name) {
-                "[x]"
-            } else {
-                "[ ]"
-            };
+            let mark = flag_mark(open.list.is_marked(name));
             let line = format!(" {mark} {}", printable(name));
             frame.render_widget(Paragraph::new(line), area);
         },

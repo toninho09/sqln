@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::text;
 use super::theme::Theme;
-use super::widgets::{centered, list_rows, open_modal, short_modal_width};
+use super::widgets::{centered, choice_value, list_rows, open_modal, short_modal_width};
 use crate::grid::printable;
 
 /// What the question shows for one script.
@@ -65,7 +65,7 @@ pub fn draw_conflicts(
             text::STATE_CHANGED
         };
         let name: String = printable(row.name).chars().take(name_width).collect();
-        let choice = format!("< {} >", row.choice.unwrap_or(text::CHOICE_NONE));
+        let choice = choice_value(row.choice.unwrap_or(text::CHOICE_NONE));
         let style = if index == cursor {
             theme.dialog_focus
         } else {

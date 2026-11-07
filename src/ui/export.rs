@@ -2,14 +2,14 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 
 use super::settings::WIDTH;
 use super::theme::Theme;
 use super::widgets::{
-    BORDER_ROWS, FOOTER_ROWS, SidebarModal, browse_width, centered, draw_browse_button,
-    draw_buttons, draw_note, draw_row, draw_sidebar_rows, modal_width, value_width,
+    BORDER_ROWS, FOOTER_ROWS, SidebarModal, browse_width, centered, choice_line,
+    draw_browse_button, draw_buttons, draw_note, draw_row, draw_sidebar_rows, modal_width,
+    value_width,
 };
 use super::widgets::{LEFT, RIGHT};
 use super::{input_spans, last_chars, text};
@@ -79,12 +79,7 @@ fn value<'a>(form: &ExportForm, field: Field, width: usize, theme: &Theme) -> Li
         }
         return Line::from(input_spans(&chars, input.cursor(), width, focused, theme).0);
     }
-    let style = if focused {
-        theme.dialog_focus
-    } else {
-        Style::new()
-    };
-    Line::from(Span::styled(format!("< {} >", choice(form, field)), style))
+    choice_line(&choice(form, field), focused, theme)
 }
 
 pub fn draw_export(frame: &mut Frame, form: &ExportForm, theme: &Theme) -> ExportLayout {

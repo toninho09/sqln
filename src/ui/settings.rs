@@ -2,15 +2,14 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
 use super::console::fit;
 use super::theme::Theme;
 use super::widgets::{
-    BORDER_ROWS, FOOTER_ROWS, LEFT, NOTE_ROWS, RIGHT, SidebarModal, centered, draw_buttons,
-    draw_note, draw_row, draw_sidebar_rows, modal_width, value_width,
+    BORDER_ROWS, FOOTER_ROWS, LEFT, NOTE_ROWS, RIGHT, SidebarModal, centered, choice_line,
+    draw_buttons, draw_note, draw_row, draw_sidebar_rows, modal_width, value_width,
 };
 use super::{input_spans, text};
 use crate::input::Action;
@@ -212,12 +211,7 @@ fn value<'a>(form: &SettingsForm, field: Field, theme: &Theme, width: usize) -> 
     if field == Field::Scope && !form.has_project() {
         return Line::raw(name);
     }
-    let style = if focused {
-        theme.dialog_focus
-    } else {
-        Style::new()
-    };
-    Line::from(Span::styled(format!("< {name} >"), style))
+    choice_line(&name, focused, theme)
 }
 
 fn draw_field_row(frame: &mut Frame, area: Rect, form: &SettingsForm, field: Field, theme: &Theme) {
