@@ -6,108 +6,57 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::common::mock;
 use crate::common::{ctrl, key};
-use async_trait::async_trait;
 use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use sqln::app::{App, Options};
-use sqln::catalog::Catalog;
 use sqln::clipboard::MemoryClipboard;
-use sqln::connector::{
-    Canceller, ConnectError, Connector, ExecError, ResetOutcome, Session, SessionContext,
-    StatementEnd, TransactionCommand, TransactionState,
-};
+use sqln::connector::{ExecError, StatementEnd};
 use sqln::console::MessageLevel;
-use sqln::exec::ResultSink;
 use sqln::grid::Value;
 use sqln::sql::Dialect;
 use sqln::ui::theme::Theme;
 
-struct Fake;
-struct FakeSession;
-struct NoCancel;
+type RunHandler = mock::RunHandler;
 
-#[async_trait]
-impl Canceller for NoCancel {
-    async fn cancel(&self) -> Result<(), String> {
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl Connector for Fake {
-    fn dialect(&self) -> Dialect {
-        Dialect::Postgres
-    }
-
-    async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
-        Ok(Box::new(FakeSession))
-    }
-}
-
-#[async_trait]
-impl Session for FakeSession {
-    fn canceller(&self) -> Arc<dyn Canceller> {
-        Arc::new(NoCancel)
-    }
-
-    async fn apply_context(&mut self, _: &SessionContext) -> Result<(), ExecError> {
-        Ok(())
-    }
-
-    /// The text of the statement chooses the answer.
-    async fn run(&mut self, sql: &str, mut sink: ResultSink) -> Result<StatementEnd, ExecError> {
-        match sql {
-            "read" => {
-                sink.set_columns(vec!["a".to_owned()]).await;
-                sink.push([Value::Null].into_iter().collect()).await;
-                let texts = vec!["WARNING: one".to_owned(), "NOTICE: two".to_owned()];
-                sink.notices(texts, 3).await;
-                let (rows, limit) = sink.finish().await;
-                Ok(StatementEnd {
-                    rows,
-                    has_columns: true,
-                    limit,
-                    ..StatementEnd::default()
-                })
+/// Answers what the statement text chooses.
+fn fake() -> Arc<mock::MockConnector> {
+    let run: RunHandler = Arc::new(|sql, mut sink| {
+        Box::pin(async move {
+            match sql.as_str() {
+                "read" => {
+                    sink.set_columns(vec!["a".to_owned()]).await;
+                    sink.push([Value::Null].into_iter().collect()).await;
+                    let texts = vec!["WARNING: one".to_owned(), "NOTICE: two".to_owned()];
+                    sink.notices(texts, 3).await;
+                    let (rows, limit) = sink.finish().await;
+                    Ok(StatementEnd {
+                        rows,
+                        has_columns: true,
+                        limit,
+                        ..StatementEnd::default()
+                    })
+                }
+                "fail" => {
+                    sink.notices(vec!["NOTICE: before".to_owned()], 0).await;
+                    sink.finish().await;
+                    Err(ExecError::new("boom"))
+                }
+                _ => {
+                    sink.finish().await;
+                    Ok(StatementEnd::default())
+                }
             }
-            "fail" => {
-                sink.notices(vec!["NOTICE: before".to_owned()], 0).await;
-                sink.finish().await;
-                Err(ExecError::new("boom"))
-            }
-            _ => {
-                sink.finish().await;
-                Ok(StatementEnd::default())
-            }
-        }
-    }
-
-    async fn transaction_state(&mut self) -> TransactionState {
-        TransactionState::None
-    }
-
-    async fn control(&mut self, _: TransactionCommand) -> Result<(), ExecError> {
-        Ok(())
-    }
-
-    async fn reset(&mut self) -> ResetOutcome {
-        ResetOutcome::Clean
-    }
-
-    async fn read_catalog(&mut self) -> Result<Catalog, ExecError> {
-        Ok(Catalog::default())
-    }
-
-    async fn read_columns(&mut self, _: &str, _: &str) -> Result<Vec<String>, ExecError> {
-        Ok(Vec::new())
-    }
+        })
+    });
+    Arc::new(mock::MockConnector::new(Dialect::Postgres, run))
 }
 
 fn app() -> App {
     let options = Options {
-        connector: Some(Arc::new(Fake)),
+        connector: Some(fake()),
         label: Some("fake".to_owned()),
         ..Options::default()
     };

@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod mock;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
