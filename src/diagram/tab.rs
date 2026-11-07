@@ -141,10 +141,7 @@ impl DiagramTab {
                 status: StatementStatus::Error(message),
                 ..
             } if self.is_current(key.execution) => {
-                self.message = Some(Message {
-                    level: MessageLevel::Error,
-                    text: message,
-                });
+                self.message = Some(Message::error(message));
             }
             ExecEvent::ExecutionFinished {
                 execution,
@@ -181,10 +178,7 @@ impl DiagramTab {
             }
             // The error of a statement is already in `message`.
             ExecutionEnd::Refused => None,
-            ExecutionEnd::Failed => message.map(|text| Message {
-                level: MessageLevel::Error,
-                text,
-            }),
+            ExecutionEnd::Failed => message.map(Message::error),
             ExecutionEnd::Stopped => note(MessageLevel::Info, text::DIAGRAM_STOPPED),
             ExecutionEnd::TimedOut => note(MessageLevel::Error, text::TABLE_TIMEOUT),
             ExecutionEnd::CanceledBeforeStart => note(MessageLevel::Info, text::TABLE_CANCELED),

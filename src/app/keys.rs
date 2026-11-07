@@ -6,6 +6,8 @@ use super::compare::compare_has;
 use super::guard::short;
 use super::tables::has_sessions;
 use super::{App, DialogAction, Overlay};
+use crate::catalog::Catalog;
+use crate::connection::Connection;
 use crate::connector::{Namespace, TransactionCommand, TransactionState};
 use crate::console::{AfterTransaction, Focus, GridAction, Phase};
 use crate::editor::{FormatOutcome, KeyboardMode, RunPlan, RunRefusal, RunScope};
@@ -43,6 +45,22 @@ pub(super) enum RunTarget {
     Plan {
         analyze: bool,
     },
+}
+
+/// Returns the catalog of the console: the catalog of its connection, or the fallback
+/// catalog when the console has no connection. The borrowed fields serve the call of
+/// the editor with the catalog at hand.
+fn editor_catalog<'a>(
+    connections: &'a [Connection],
+    connection: Option<ConnectionId>,
+    console_connection: Option<ConnectionId>,
+    fallback: Option<&'a Catalog>,
+) -> Option<&'a Catalog> {
+    match connection {
+        Some(id) => App::catalog_of(connections, id),
+        None if console_connection.is_none() => fallback,
+        None => None,
+    }
 }
 
 impl App {
@@ -379,14 +397,12 @@ impl App {
             fallback_catalog,
             ..
         } = self;
-        let catalog = match connection {
-            Some(id) => connections
-                .iter()
-                .find(|item| item.id == id)
-                .and_then(|item| item.catalog.as_ref()),
-            None if consoles[index].connection.is_none() => fallback_catalog.as_ref(),
-            None => None,
-        };
+        let catalog = editor_catalog(
+            connections,
+            connection,
+            consoles[index].connection,
+            fallback_catalog.as_ref(),
+        );
         consoles[index].editor.on_command(action, catalog);
         self.request_missing_columns(index);
     }
@@ -414,14 +430,12 @@ impl App {
             fallback_catalog,
             ..
         } = self;
-        let catalog = match connection {
-            Some(id) => connections
-                .iter()
-                .find(|item| item.id == id)
-                .and_then(|item| item.catalog.as_ref()),
-            None if consoles[index].connection.is_none() => fallback_catalog.as_ref(),
-            None => None,
-        };
+        let catalog = editor_catalog(
+            connections,
+            connection,
+            consoles[index].connection,
+            fallback_catalog.as_ref(),
+        );
         consoles[index].editor.on_key(key, catalog);
         self.request_missing_columns(index);
     }

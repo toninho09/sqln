@@ -321,8 +321,7 @@ impl App {
         for index in 0..self.consoles.len() {
             if self.consoles[index].connection == Some(id) {
                 self.catalog_for(index);
-                let catalog = self.connections.iter().find(|item| item.id == id);
-                let catalog = catalog.and_then(|item| item.catalog.as_ref());
+                let catalog = App::catalog_of(&self.connections, id);
                 self.consoles[index].editor.refresh_suggestions(catalog);
                 self.request_missing_columns(index);
             }
@@ -498,12 +497,9 @@ impl App {
 
     /// Writes a template. A template with columns first reads them.
     fn start_template(&mut self, request: SqlRequest, template: Template) {
-        let found = self
-            .connection(request.connection)
-            .and_then(|item| item.catalog.as_ref())
-            .and_then(|catalog| {
-                catalog.relation(Some(&request.relation.schema), &request.relation.relation)
-            });
+        let found = self.catalog(request.connection).and_then(|catalog| {
+            catalog.relation(Some(&request.relation.schema), &request.relation.relation)
+        });
         let missing = found.is_some_and(|(_, found)| found.columns == Columns::NotLoaded);
         if template.needs_columns() && missing {
             let (connection, relation) = (request.connection, request.relation.clone());
@@ -529,8 +525,7 @@ impl App {
                 .position(|console| console.connection == Some(*connection))
         };
         let columns = self
-            .connection(*connection)
-            .and_then(|item| item.catalog.as_ref())
+            .catalog(*connection)
             .and_then(|catalog| catalog.relation(Some(&relation.schema), &relation.relation))
             .and_then(|(_, found)| match &found.columns {
                 Columns::Loaded(columns) => Some(columns.clone()),

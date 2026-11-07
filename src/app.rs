@@ -772,6 +772,21 @@ impl App {
             .find(|connection| connection.id == id)
     }
 
+    /// Returns the catalog that a connection already read.
+    fn catalog(&self, id: ConnectionId) -> Option<&Catalog> {
+        Self::catalog_of(&self.connections, id)
+    }
+
+    /// Finds a catalog among the connections. A call of the borrowed fields serves the
+    /// places that hold another field of `App` at the same time.
+    fn catalog_of(connections: &[Connection], id: ConnectionId) -> Option<&Catalog> {
+        connections
+            .iter()
+            .find(|connection| connection.id == id)?
+            .catalog
+            .as_ref()
+    }
+
     fn connection_mut(&mut self, id: ConnectionId) -> Option<&mut Connection> {
         self.connections
             .iter_mut()

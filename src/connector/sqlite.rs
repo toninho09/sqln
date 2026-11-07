@@ -22,7 +22,7 @@ use crate::catalog::{
 use crate::command_log::{self, TraceContext};
 use crate::exec::{Flow, ResultSink};
 use crate::grid::{RowWriter, Value};
-use crate::sql::Dialect;
+use crate::sql::{Dialect, quote_identifier};
 
 const MAIN_SCHEMA: &str = "main";
 
@@ -363,10 +363,6 @@ fn run(
     })
 }
 
-fn quoted(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
-}
-
 fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> rusqlite::Result<Catalog> {
     let sql = "SELECT name FROM pragma_database_list WHERE name <> 'temp'";
     let names: Vec<String> = command_log::observe_blocking(trace, sql, || {
@@ -383,7 +379,7 @@ fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> rusqlite::Re
             "SELECT name, type FROM {}.sqlite_schema \
              WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' \
              ORDER BY name",
-            quoted(&name),
+            quote_identifier(&name, Dialect::Sqlite),
         );
         let relations = command_log::observe_blocking(trace, &sql, || {
             let mut statement = conn.prepare(&sql)?;
@@ -406,7 +402,7 @@ fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> rusqlite::Re
         })?;
         let sql = format!(
             "SELECT name, tbl_name FROM {}.sqlite_schema WHERE type = 'trigger'",
-            quoted(&name),
+            quote_identifier(&name, Dialect::Sqlite),
         );
         let triggers: Vec<[String; 4]> = command_log::observe_blocking(trace, &sql, || {
             let mut statement = conn.prepare(&sql)?;

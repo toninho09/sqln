@@ -147,6 +147,29 @@ pub struct Message {
     pub text: String,
 }
 
+impl Message {
+    pub fn info(text: impl Into<String>) -> Self {
+        Self {
+            level: MessageLevel::Info,
+            text: text.into(),
+        }
+    }
+
+    pub fn warning(text: impl Into<String>) -> Self {
+        Self {
+            level: MessageLevel::Warning,
+            text: text.into(),
+        }
+    }
+
+    pub fn error(text: impl Into<String>) -> Self {
+        Self {
+            level: MessageLevel::Error,
+            text: text.into(),
+        }
+    }
+}
+
 /// The next step after a commit or a rollback that a dialog asked for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AfterTransaction {

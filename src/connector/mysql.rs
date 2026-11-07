@@ -22,7 +22,7 @@ use crate::catalog::{
 };
 use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, RowWriter, Value};
-use crate::sql::{Dialect, counts_rows, is_plain_read};
+use crate::sql::{Dialect, counts_rows, is_plain_read, quote_identifier};
 
 /// `ER_QUERY_INTERRUPTED`: `KILL QUERY` stopped the statement.
 const QUERY_INTERRUPTED: u16 = 1317;
@@ -298,10 +298,6 @@ fn server_code(error: &DriverError) -> Option<u16> {
     }
 }
 
-fn quoted(name: &str) -> String {
-    format!("`{}`", name.replace('`', "``"))
-}
-
 #[derive(Default)]
 struct Outcome {
     has_columns: bool,
@@ -354,7 +350,7 @@ impl MySqlSession {
         let Some(database) = &self.database else {
             return false;
         };
-        let sql = format!("USE {}", quoted(database));
+        let sql = format!("USE {}", quote_identifier(database, Dialect::MySql));
         crate::command_log::observe(self.trace.clone(), &sql, self.conn().query_drop(&sql))
             .await
             .is_ok()
@@ -540,7 +536,7 @@ impl Session for MySqlSession {
                 .map_err(|error| exec_error(&error, sql))?;
         }
         if let Some(schema) = &context.schema {
-            let sql = format!("USE {}", quoted(schema));
+            let sql = format!("USE {}", quote_identifier(schema, Dialect::MySql));
             crate::command_log::observe(self.trace.clone(), &sql, self.conn().query_drop(&sql))
                 .await
                 .map_err(|error| exec_error(&error, &sql))?;

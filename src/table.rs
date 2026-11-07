@@ -10,7 +10,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::catalog::{Catalog, Relation, RelationRef};
 use crate::complete::{quote_name, suggest};
 use crate::connector::redis::value_page;
-use crate::console::{Message, MessageLevel, Phase, RunClock};
+use crate::console::{Message, Phase, RunClock};
 use crate::editor::SuggestionList;
 use crate::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, StatementStatus,
@@ -408,10 +408,7 @@ impl TableTab {
     /// the application opens no connection and asks for no password.
     pub fn wait_for_use(&mut self, note: String) {
         self.pending = true;
-        self.message = Some(Message {
-            level: MessageLevel::Info,
-            text: note,
-        });
+        self.message = Some(Message::info(note));
     }
 
     pub fn is_busy(&self) -> bool {
@@ -608,10 +605,7 @@ impl TableTab {
                 kind: PageKind::Rows,
             }),
             Err(reason) => {
-                self.message = Some(Message {
-                    level: MessageLevel::Error,
-                    text: reason,
-                });
+                self.message = Some(Message::error(reason));
                 None
             }
         }
@@ -742,10 +736,7 @@ impl TableTab {
                 status: StatementStatus::Error(message),
                 ..
             } if self.is_current(key.execution) => {
-                self.message = Some(Message {
-                    level: MessageLevel::Error,
-                    text: message,
-                });
+                self.message = Some(Message::error(message));
             }
             ExecEvent::ExecutionFinished {
                 execution,
@@ -841,25 +832,14 @@ impl TableTab {
         {
             self.show_page(page);
         }
-        let info = |text: &str| Message {
-            level: MessageLevel::Info,
-            text: text.to_owned(),
-        };
-        let error = |text: &str| Message {
-            level: MessageLevel::Error,
-            text: text.to_owned(),
-        };
         let note = match end {
             // The error of a statement is already in `message`.
             ExecutionEnd::Completed | ExecutionEnd::Refused => None,
-            ExecutionEnd::Failed => message.map(|text| Message {
-                level: MessageLevel::Error,
-                text,
-            }),
-            ExecutionEnd::Stopped => Some(info(text::TABLE_STOPPED)),
-            ExecutionEnd::TimedOut => Some(error(text::TABLE_TIMEOUT)),
-            ExecutionEnd::CanceledBeforeStart => Some(info(text::TABLE_CANCELED)),
-            ExecutionEnd::ConnectionClosed => Some(error(text::TABLE_CLOSED)),
+            ExecutionEnd::Failed => message.map(Message::error),
+            ExecutionEnd::Stopped => Some(Message::info(text::TABLE_STOPPED)),
+            ExecutionEnd::TimedOut => Some(Message::error(text::TABLE_TIMEOUT)),
+            ExecutionEnd::CanceledBeforeStart => Some(Message::info(text::TABLE_CANCELED)),
+            ExecutionEnd::ConnectionClosed => Some(Message::error(text::TABLE_CLOSED)),
         };
         if note.is_some() {
             self.message = note;

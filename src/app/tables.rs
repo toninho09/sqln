@@ -273,7 +273,7 @@ impl App {
     }
 
     fn tab_relation(&self, tab: &TableTab) -> Option<&Relation> {
-        let catalog = self.connection(tab.connection)?.catalog.as_ref()?;
+        let catalog = self.catalog(tab.connection)?;
         let relation = &tab.relation;
         let (_, found) = catalog.relation(Some(&relation.schema), &relation.relation)?;
         Some(found)
@@ -920,10 +920,7 @@ impl App {
             connections,
             ..
         } = self;
-        let catalog = connections
-            .iter()
-            .find(|item| item.id == connection)
-            .and_then(|item| item.catalog.as_ref());
+        let catalog = App::catalog_of(connections, connection);
         let tab = &mut tables[index];
         let missing = match key {
             Some(key) => tab.on_field_key(key, dialect, catalog),
@@ -952,10 +949,7 @@ impl App {
                 connections,
                 ..
             } = self;
-            let catalog = connections
-                .iter()
-                .find(|item| item.id == connection)
-                .and_then(|item| item.catalog.as_ref());
+            let catalog = App::catalog_of(connections, connection);
             let missing = tables[index].refresh_list(dialect, catalog);
             self.request_relation_columns(connection, missing);
         }
