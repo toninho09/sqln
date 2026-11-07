@@ -1063,6 +1063,12 @@ impl App {
                     self.confirm_association(console, *connection);
                 }
             }
+            PickerKind::SqlFile { path, connections } => {
+                let connection = connections.get(cursor).copied();
+                if let Some(connection) = connection {
+                    self.picked_sql_file_connection(connection, path);
+                }
+            }
             PickerKind::Follow {
                 connection,
                 mut choices,

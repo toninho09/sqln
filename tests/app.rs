@@ -9,6 +9,7 @@ mod follow_key;
 mod guard;
 mod history;
 mod operation;
+mod sql_file;
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};

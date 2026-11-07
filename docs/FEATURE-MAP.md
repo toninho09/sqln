@@ -36,7 +36,7 @@ The file paths are relative to `src/`.
 | 16a | Import | `import/mod.rs`, `import/delimited.rs`, `import/json.rs`, `import/statement.rs`, `import/feed.rs`, `import/form.rs`, `exec/runner/import.rs`, `app/import.rs`, `ui/import.rs` |
 | 17 | Query history | `history.rs`, `store/history.rs`, `app/history.rs`, `ui/history.rs` |
 | 18 | Folders and configuration | `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `settings.rs`, `ui/settings.rs` |
-| 19 | Console saving and saved consoles | `script_file.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs` |
+| 19 | Console saving and saved consoles | `script_file.rs`, `script_file/external.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/sql_file.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs` |
 | 20 | Credentials and trust | `creds.rs`, `trust.rs`, `app/auth.rs`, `ui/auth.rs` |
 | 21 | Appearance and themes | `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs` |
 | 23 | Local MCP assistant | `agent/`, `mcp.rs`, `app/agent/`, `editor/agent.rs`, `ui/agent.rs`; see [MCP](MCP.md) |
@@ -252,7 +252,7 @@ The dialog holds the choices and writes nothing. The formats are CSV, TSV, JSON,
 
 Files: `import/mod.rs`, `import/delimited.rs`, `import/json.rs`, `import/statement.rs`, `import/feed.rs`, `import/form.rs`, `exec/runner/import.rs`, `app/import.rs`, `ui/import.rs`.
 
-`I` opens the import dialog for an existing writable SQL table. CSV, TSV, JSON, and JSON Lines use column mapping and a preview.
+`I` opens the import dialog for an existing writable SQL table. CSV, TSV, JSON, and JSON Lines use column mapping and a preview. SQL files open as consoles instead; opening them does not run them.
 The executor writes batches with no SQL time limit. All or nothing rolls back on failure; By batch keeps completed batches.
 Log errors retries a failed batch row by row and writes failed rows to the chosen log, up to the error limit.
 Only the Import button starts writes. Production asks first. Completion shows the result and reloads the table.
@@ -273,9 +273,11 @@ The store has the global folder and, when it exists, the project `.sqln/` folder
 
 ## 19. Console saving and saved consoles
 
-Files: `script_file.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs`.
+Files: `script_file.rs`, `script_file/external.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/sql_file.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs`.
 
 Each console has a `consoles/<id>.sql` file and a `consoles/<id>.json` file; the UUID is the `id` and the base of both names. The autosave waits 500 ms after the last edit and retries after 5 s on failure; `Ctrl+S` saves at once. The write is atomic, and a failure keeps the text and shows the alert. A `locks/<id>.lock` file with `flock` keeps one instance per console. `ScriptFile::poll` rereads the file only when the size or the date changed, and then compares the hash; one question lists the scripts that another program changed or removed. `workspace.json` keeps cursor, scroll, layout, and open tabs; at startup, the application reopens the tabs of the last session when `reopenTabs` is on. `app/scripts` lists the consoles, opens them, and manages the scripts without a connection; the rename prompt of `ui/name` serves the tab and the rows of the lists. The attach flow copies both files, verifies them, removes the originals, and runs no SQL.
+
+The palette command `openSqlFile` and `--script` open an external `.sql` file as a console, after a question: a copy, which follows the rules above, or a link (`script_file/external`). A linked console writes the file only on `Ctrl+S` and on the questions of a close, with the hash of the bytes that it read: a change by another program asks reload or overwrite, and a removed file asks to recreate. A link lives in the session only, the tab row marks its changes, and `ensure_file` skips it, so it never becomes a script of the store.
 
 ## 20. Credentials and trust
 

@@ -188,6 +188,8 @@ pub enum Action {
     FormatSql,
     ToggleComment,
     OpenHistory,
+    /// Opens an external `.sql` file as a console: a copy, or a link that saves to it.
+    OpenSqlFile,
     OpenSessions,
     OpenDiagram,
     OpenCompare,
@@ -492,6 +494,7 @@ const DEFAULTS: &[Item] = &[
         &["ctrl+w H"],
         &[],
     ),
+    both(Action::OpenSqlFile, Region::Global, "openSqlFile", &[], &[]),
     both(
         Action::OpenSessions,
         Region::Global,

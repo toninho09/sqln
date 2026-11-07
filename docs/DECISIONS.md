@@ -6,6 +6,28 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## SQL files and table import
+
+The user chose to remove the proposed SQL row importer and use the external-file console flow instead. Table import remains limited to CSV, TSV, JSON, and JSON Lines. Opening a SQL file does not execute it; the user reviews and runs it through the existing console execution flow and its protections.
+
+## External `.sql` files as consoles — 2026-11-07
+
+The user asked for the open of arbitrary `.sql` files as consoles, and chose the question at the open and the command-line flag.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Question | The open asks: a **copy** of the text, or a console **linked** to the file | One fixed mode | Both uses are common; the user chose the question |
+| 2. Copy | A normal console: the autosave and the saved consoles apply without a change | Mark the copy read-only | The copy follows the rules of every console |
+| 3. Link | The console writes the file only on an explicit action: `Ctrl+S` and the questions of a close | Autosave to the external file | A write of a file of the user needs an act of the user |
+| 4. Conflicts | The write checks the bytes that the console read: a change by another program asks reload or overwrite, a removed file asks to recreate | Silent overwrite; a lock file | The rules of the atomic write and `Trouble` already cover the cases, and an external file has no sidecar |
+| 5. Place | A linked console lives in the session only: it enters no workspace and no store | Persist the link in the workspace | The session format would change for one case; the file keeps the text |
+| 6. Entry points | The palette command `openSqlFile` (no default key), the file browser, and `--script <file>` on the command line | A fixed shortcut | The palette serves commands without a key, and the flag serves the shell |
+| 7. Connection | The connection of the active console, then the only connection, then a picker; without connections the command refuses with a message | Open without a connection | A console runs its text against a connection |
+| 8. `--script` | The file must exist, and a start without a target needs a saved connection; the same question of the open follows | Run the script at the start | The flag opens a console; it does not run anything |
+| 9. Encoding | UTF-8, with the byte order mark kept on each write; a file in another encoding is an error | Windows-1252 | The editor holds text, and the import already covers other encodings |
+
+Implementation notes: `script_file/external.rs` holds the link; the console field is `external` beside `file`, and `ensure_file` skips a linked console, so it never becomes a script of the store. The tab row marks a linked console with changes. Canceling the open creates no console; canceling a conflict during a close also cancels the close or exit. External saves use unique temporary files, retain permissions, and follow symbolic links without replacing them. If a link points elsewhere after opening, the save refuses and asks the user to reopen it. Mixed line endings are retained for matching lines and paired changed lines; new lines use the file's existing default.
+
 ## Grid inserts and deletes — 2026-11-06
 
 The user asks for pending inserts and deletes in the grid editing of table tabs, beside the pending updates.

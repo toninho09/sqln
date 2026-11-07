@@ -6,7 +6,7 @@ use crate::form::Field;
 
 impl App {
     /// Only the export path, the import log, and the SQLite file can name a file that
-    /// does not exist.
+    /// does not exist. A `.sql` file that opens as a console must exist.
     /// Opens the window of the focused field of the connection form: the list of the
     /// schemas or the file browser.
     pub(super) fn open_form_window(&mut self) {
@@ -28,6 +28,9 @@ impl App {
             form.browser_start()
         } else if let Some(form) = &self.form {
             (form.text(form.focus), form.focus == Field::File)
+        } else if self.sql_file_open.is_some() {
+            // The open of a `.sql` file: the connection is known, and the file exists.
+            ("", false)
         } else {
             return;
         };
@@ -47,12 +50,17 @@ impl App {
             BrowserRequest::None => return,
             BrowserRequest::Cancel => {
                 self.browser = None;
+                self.sql_file_open = None;
                 return;
             }
             BrowserRequest::File(path) => (path, true),
             BrowserRequest::Folder(path) => (path, false),
         };
         self.browser = None;
+        if self.sql_file_open.is_some() && chose_file {
+            self.sql_file_chosen(std::path::PathBuf::from(path));
+            return;
+        }
         if let Some(form) = &mut self.export_form {
             form.set_path(&path, chose_file);
         } else if let Some(form) = &mut self.import_form {

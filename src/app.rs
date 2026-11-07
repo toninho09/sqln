@@ -24,6 +24,7 @@ mod persist;
 mod review;
 mod scripts;
 mod session;
+mod sql_file;
 mod tables;
 
 use std::cell::RefCell;
@@ -151,6 +152,8 @@ pub struct Options {
     pub connector: Option<Arc<dyn Connector>>,
     /// The name of `connector` in the interface.
     pub label: Option<String>,
+    /// A `.sql` file that the command line opens as a console at the start.
+    pub script: Option<PathBuf>,
     pub settings: Settings,
     /// The folders of the files. Without a store, the application loads and saves nothing.
     pub store: Option<Store>,
@@ -185,6 +188,7 @@ impl Default for Options {
             start_home: false,
             connector: None,
             label: None,
+            script: None,
             settings: Settings::default(),
             store: None,
             offer_project: None,
@@ -262,6 +266,15 @@ enum DialogAction {
     /// Give the incomplete file of a tab its final name.
     ExportKeep(ConsoleId),
     ExportDelete(ConsoleId),
+    /// Opens the pending `.sql` file as a copy or as a linked console.
+    SqlFileCancel,
+    SqlFileCopy,
+    SqlFileLinked,
+    /// The answers of the questions of a console that links to a file.
+    SqlFileReload(ConsoleId),
+    SqlFileOverwrite(ConsoleId),
+    SqlFileWriteClose(ConsoleId),
+    SqlFileDiscardClose(ConsoleId),
 }
 
 struct Dialog {
@@ -313,6 +326,12 @@ enum PickerKind {
     },
     Associate {
         console: ConsoleId,
+        connections: Vec<ConnectionId>,
+    },
+    /// The connection of a `.sql` file that opens as a console. `path` is `None` when
+    /// the file browser chooses the file after the connection.
+    SqlFile {
+        path: Option<std::path::PathBuf>,
         connections: Vec<ConnectionId>,
     },
     /// The rows are the SQL templates of a relation.
@@ -472,6 +491,10 @@ pub struct App {
     compare_form: Option<CompareForm>,
     /// The file browser of the focused path field in a dialog or in the form.
     browser: Option<FileBrowser>,
+    /// The connection that waits for the `.sql` file of an open.
+    sql_file_open: Option<ConnectionId>,
+    /// The file that waits for the answer of the copy-or-linked question.
+    sql_file: Option<sql_file::PendingSqlFile>,
     /// The first choices of the next export dialog.
     export_choices: ExportChoices,
     /// The exports in progress, with at most one for each tab.
@@ -585,6 +608,8 @@ impl App {
             edit_form: None,
             compare_form: None,
             browser: None,
+            sql_file_open: None,
+            sql_file: None,
             export_choices: options.export_choices.clone(),
             exports: Vec::new(),
             import_choices: options.import_choices.clone(),
@@ -659,6 +684,9 @@ impl App {
                 crate::agent::ipc::runtime_dir().map_err(|error| text::agent_endpoint(&error));
             app.agent.directory = Some(directory);
             app.open_agent_endpoint();
+        }
+        if let Some(path) = options.script.take() {
+            app.open_sql_file_path(path);
         }
         app
     }

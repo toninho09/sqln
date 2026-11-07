@@ -86,10 +86,14 @@ impl App {
             let (label, phase, run) = match tab {
                 Tab::Console(index) => {
                     let console = &self.consoles[index];
+                    let revision = console.editor.revision();
                     let unsaved = console
                         .file
                         .as_ref()
-                        .is_some_and(|file| file.trouble.is_some());
+                        .is_some_and(|file| file.trouble.is_some())
+                        || console.external.as_ref().is_some_and(|external| {
+                            external.trouble.is_some() || external.is_dirty(revision)
+                        });
                     let name = self
                         .agent
                         .console_label(&self.consoles, console.id, &console.name);

@@ -55,6 +55,7 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Compare.** Compare table structures or data across SQL connections, and open a sync script without running it.
 - **Transactions.** Use autocommit or manual mode, with transaction state and age on screen.
 - **Saved work.** Save consoles automatically and reopen tabs with their cursor, scroll, and layout.
+- **External SQL files.** Open a `.sql` file from disk as a console: a copy of its text, or a link that writes the file on `Ctrl+S` with change checks.
 - **Credential storage.** Use session passwords, macOS Keychain, or Linux Secret Service.
 - **Appearance.** Choose themes, per-connection colors and icons, and optional Nerd Font symbols.
 - **Local MCP assistant.** Connect Claude Code or OpenCode to an open SQLN instance. Approve read access, review SQL edits, or give full access.
@@ -401,6 +402,8 @@ The import only adds rows to an existing table.
 The log holds the rows of the file in plain text.
 A connection marked as production asks before the import.
 
+For a `.sql` file, use **Open a SQL file as a console** in the command palette or start SQLN with `--script <file>`. Opening the file does not run it; review it and use `Shift+F5` or `Ctrl+W S` to run the script.
+
 ### Query plans
 
 Press `Ctrl+W E` to see the plan of the selection or of the statement at the cursor.
@@ -625,6 +628,7 @@ Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `red
 | Option | Purpose |
 |---|---|
 | `--project <folder>` | Select the project root |
+| `--script <file>` | Open a `.sql` file as a console at the start; it needs a target or a saved connection |
 | `--log <file>` | Write the event log |
 | `-h`, `--help` | Show command-line help |
 | `-V`, `--version` | Show the version |
@@ -632,7 +636,7 @@ Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `red
 
 The terminal interface does not provide a batch SQL runner or read scripts from standard input.
 `sqln mcp` uses standard input and output only for MCP. It does not accept raw SQL.
-A `.sql` path is not a script-opening argument; file targets are SQLite databases.
+A positional `.sql` path is not a script-opening argument; positional file targets are SQLite databases. Use `--script` to open a `.sql` file as a console.
 
 ## Troubleshooting
 
@@ -656,7 +660,7 @@ A `.sql` path is not a script-opening argument; file targets are SQLite database
 - Windows support is not part of the current CI or binary matrix.
 - A `:memory:` SQLite database lives in the single session of its connection: a disconnect or the end of the application loses it.
 - Grid editing changes, inserts, and deletes rows of keyed table tabs. Use SQL for binary values or other grids.
-- Arbitrary external `.sql` files cannot open directly as consoles.
+- A console linked to an external `.sql` file lives in the session only: closing SQLN closes it, and the file keeps its text. The file must be UTF-8, and the link has no autosave: `Ctrl+S` and the close questions write it.
 - There is no integrated SSH tunnel, IAM authentication, or Kerberos authentication.
 - MariaDB has no tree plan, so `Ctrl+W E` shows the error of the server. MySQL has no tree plan for a write on one table.
 - PostgreSQL `COPY FROM STDIN` and `COPY TO STDOUT` are not supported.

@@ -1489,6 +1489,7 @@ pub fn action_text(action: Action) -> &'static str {
         Action::RenameConsole => "Rename the console",
         Action::ChangeConnection => "Change the connection of the console",
         Action::OpenSettings => "Open the settings",
+        Action::OpenSqlFile => "Open a SQL file as a console",
         Action::GridExport => "Export the result to a file",
         Action::GridImport => "Import a file to this table",
         Action::AutoRefresh => "Auto-refresh of the current tab",
@@ -2003,6 +2004,8 @@ Target:
 Options:
   --project <folder>     Use the project in this folder. Without it, SQLN uses
                          the nearest .sqln folder above the working folder.
+  --script <file>        Open a .sql file as a console at the start. It needs a
+                         target or a saved connection.
   --log <file>           Write a log of events, without SQL or values.
   -h, --help             Show this text.
   -V, --version          Show the version.
@@ -2508,6 +2511,17 @@ pub const SCRIPT_OPEN: &str = "Close the console before you remove its script.";
 pub const SCRIPT_BUSY: &str = "Another SQLN instance uses this script.";
 pub const SCRIPT_REMOVED: &str = "Script removed.";
 pub const TITLE_CONFLICTS: &str = "Scripts changed outside SQLN";
+pub const TITLE_SQL_FILE: &str = "Open a SQL file";
+pub const OPTION_SQL_FILE_COPY: &str = "Copy";
+pub const OPTION_SQL_FILE_LINKED: &str = "Linked to the file";
+pub const TITLE_SQL_FILE_CHANGED: &str = "File changed outside SQLN";
+pub const TITLE_SQL_FILE_REMOVED: &str = "File removed";
+pub const OPTION_SQL_FILE_RELOAD: &str = "Reload the file";
+pub const OPTION_SQL_FILE_OVERWRITE: &str = "Overwrite the file";
+pub const OPTION_SQL_FILE_RECREATE: &str = "Recreate the file";
+pub const OPTION_SQL_FILE_WRITE_CLOSE: &str = "Write and close";
+pub const OPTION_SQL_FILE_CLOSE_WITHOUT: &str = "Close without writing";
+pub const SQL_FILE_RELOADED: &str = "The file is open again.";
 pub const STATE_CHANGED: &str = "changed";
 pub const STATE_REMOVED: &str = "removed";
 pub const CHOICE_NONE: &str = "choose";
@@ -2551,6 +2565,32 @@ pub fn unsaved_changed(name: &str) -> String {
 pub fn unsaved_removed(name: &str) -> String {
     format!(
         "Another program removed the script of {name}. SQLN did not save the text.\n\nClose the console and lose the text that no file holds?"
+    )
+}
+
+pub fn sql_file_question(path: &str) -> String {
+    format!(
+        "{path}\n\nOpen the file as a copy of its text, or link the console to the file? A linked console writes the file on each save."
+    )
+}
+
+pub fn sql_file_failed(path: &str, message: &str) -> String {
+    format!("Cannot open {path}: {message}")
+}
+
+pub fn sql_file_changed(path: &str) -> String {
+    format!(
+        "Another program changed {path} after this console read it.\n\nReload the file and lose the text of the console, or write the text over the file?"
+    )
+}
+
+pub fn sql_file_removed(path: &str) -> String {
+    format!("Another program removed {path}.\n\nRecreate the file with the text of the console?")
+}
+
+pub fn sql_file_unsaved(path: &str) -> String {
+    format!(
+        "The console holds changes for {path} that the file does not have.\n\nWrite the file before the console closes?"
     )
 }
 

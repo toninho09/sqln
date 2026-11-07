@@ -178,6 +178,9 @@ pub struct Console {
     pub ran_parameters: Vec<crate::sql::parameters::Parameter>,
     /// The files of the console. A console without a file keeps its text in memory.
     pub file: Option<ScriptFile>,
+    /// The external `.sql` file that a linked console edits. The console writes it
+    /// only on an explicit save, so it never enters the store.
+    pub external: Option<crate::script_file::ExternalFile>,
     /// True after the user chose to close without the text that no file holds.
     pub discard_text: bool,
     /// The place of the tab in the order of opening.
@@ -249,6 +252,8 @@ impl Console {
             parameters: crate::parameters::Panel::default(),
             ran_parameters: Vec::new(),
             file: None,
+            // The external `.sql` file that a linked console edits.
+            external: None,
             discard_text: false,
             opened: 0,
             hidden: false,

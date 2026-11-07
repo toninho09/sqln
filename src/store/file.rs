@@ -91,6 +91,37 @@ pub fn write_atomic(path: &Path, bytes: &[u8], expect: Expect) -> Result<u64, Wr
     write(path, bytes, expect, false)
 }
 
+/// Writes an external file without reusing a neighboring temporary file, and keeps
+/// its permissions. `permissions` also supplies the mode when a removed file returns.
+pub fn write_external_atomic(
+    path: &Path,
+    bytes: &[u8],
+    expect: Expect,
+    permissions: &fs::Permissions,
+) -> Result<u64, WriteError> {
+    let failed = |error: io::Error| WriteError::Failed(error.to_string());
+    let temporary = temporary_unique(path);
+    let mut opened = false;
+    let result = (|| {
+        let mut file = private_options()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(failed)?;
+        opened = true;
+        file.write_all(bytes).map_err(failed)?;
+        file.set_permissions(permissions.clone()).map_err(failed)?;
+        file.sync_all().map_err(failed)?;
+        drop(file);
+        check(path, expect)?;
+        fs::rename(&temporary, path).map_err(failed)
+    })();
+    if result.is_err() && opened {
+        let _ = fs::remove_file(&temporary);
+    }
+    result.map(|()| hash(bytes))
+}
+
 /// Writes with owner-only permissions on Unix, including the temporary file.
 /// A unique temporary file prevents reuse of a file or symlink from another writer.
 pub fn write_private_atomic(path: &Path, bytes: &[u8], expect: Expect) -> Result<u64, WriteError> {

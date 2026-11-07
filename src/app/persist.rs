@@ -311,7 +311,11 @@ impl App {
         let was_dirty = console
             .file
             .as_ref()
-            .is_some_and(|file| file.is_dirty(console.editor.revision()));
+            .is_some_and(|file| file.is_dirty(console.editor.revision()))
+            || console
+                .external
+                .as_ref()
+                .is_some_and(|file| file.is_dirty(console.editor.revision()));
         let cursor = console.editor.cursor();
         console.editor = editor;
         let lines = text.split('\n').collect::<Vec<_>>();
@@ -323,6 +327,9 @@ impl App {
         let revision = console.editor.revision();
         if let Some(file) = &mut console.file {
             file.rebase(revision, was_dirty);
+        }
+        if let Some(external) = &mut console.external {
+            external.rebase(revision, was_dirty);
         }
     }
 
@@ -494,6 +501,7 @@ impl App {
     pub(super) fn ensure_file(&mut self, index: usize) {
         if self.persist.is_none()
             || self.consoles[index].file.is_some()
+            || self.consoles[index].external.is_some()
             || self.agent.owns(self.consoles[index].id)
         {
             return;
@@ -551,11 +559,15 @@ impl App {
             self.status = Some(text::AGENT_CONSOLE_TEMPORARY.to_owned());
             return;
         }
+        let index = self.active;
+        if self.consoles[index].external.is_some() {
+            self.save_external_console(index);
+            return;
+        }
         if self.persist.is_none() {
             self.status = Some(text::NOTHING_TO_SAVE.to_owned());
             return;
         }
-        let index = self.active;
         self.ensure_file(index);
         let console = &self.consoles[index];
         let Some(file) = &console.file else {
@@ -949,6 +961,14 @@ impl App {
     /// Writes the pending text before a close. It returns false after it asked a
     /// question, because the text has no safe place to go.
     pub(super) fn flush_console(&mut self, index: usize) -> bool {
+        if let Some(external) = &self.consoles[index].external {
+            let revision = self.consoles[index].editor.revision();
+            if self.consoles[index].discard_text || !external.is_dirty(revision) {
+                return true;
+            }
+            self.ask_external_close(index);
+            return false;
+        }
         if self.persist.is_none() {
             return true;
         }
@@ -1032,6 +1052,17 @@ impl App {
     /// Writes what it can for a signal or a panic. These cases allow no question, so a
     /// console that waits for a choice keeps its file as it is.
     pub fn save_without_questions(&mut self) {
+        // A linked console writes its file with the check of a change, because there is
+        // no question to ask. A file that another program changed keeps its text.
+        for console in &mut self.consoles {
+            if let Some(external) = &mut console.external {
+                let revision = console.editor.revision();
+                if external.is_dirty(revision) {
+                    let text = console.editor.text();
+                    let _ = external.save(&text, revision);
+                }
+            }
+        }
         if self.persist.is_none() {
             return;
         }

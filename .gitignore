@@ -4,3 +4,6 @@ target/
 .pi/
 spikes/
 test.db
+test.sql
+.codegraph
+.commandcode

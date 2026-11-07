@@ -506,6 +506,7 @@ impl App {
             Action::ToggleComment => self.comment_console(),
             Action::OpenHistory => self.open_history(),
             Action::OpenSessions => self.open_sessions(),
+            Action::OpenSqlFile => self.start_open_sql_file(),
             Action::OpenDiagram => self.open_diagram_here(),
             Action::OpenCompare => self.open_compare_here(),
             // A table tab follows the key before this match.
@@ -1554,6 +1555,7 @@ impl App {
                 dialect.is_some_and(has_sessions)
             }),
             Action::RenameConsole | Action::ChangeConnection => !in_table,
+            Action::OpenSqlFile => !self.connections.is_empty(),
             Action::FocusParameters | Action::ToggleParameters => {
                 self.console_on_screen() && !console.parameters.fields.is_empty()
             }
@@ -1698,5 +1700,6 @@ fn home_allows(action: Action) -> bool {
                 | OpenSessions
                 | OpenDiagram
                 | OpenCompare
+                | OpenSqlFile
         )
 }
