@@ -54,3 +54,46 @@ fn binary_classification_preserves_bytes_and_the_memory_budget() {
     budget.release(cost);
     assert_eq!(budget.used(), 0);
 }
+
+/// The scan of a field reads eight bytes at a time, so it must find a separator at every
+/// place of a text, including the bytes after the blocks of eight.
+#[test]
+fn the_scan_of_a_field_finds_a_separator_at_every_place() {
+    for length in 0..=40 {
+        for at in 0..length {
+            for separator in ['\t', '\n', '\r', '"'] {
+                let mut text: Vec<char> = (0..length).map(|_| 'a').collect();
+                text[at] = separator;
+                let text: String = text.into_iter().collect();
+                let expected = format!("\"{}\"", text.replace('"', "\"\""));
+                assert_eq!(
+                    sqln::grid::delimited_text(&text, b'\t', ""),
+                    expected,
+                    "length {length}, place {at}, separator {separator:?}"
+                );
+            }
+        }
+    }
+    let plain = "a text with no separator at all, and a comma";
+    assert_eq!(sqln::grid::delimited_text(plain, b'\t', ""), plain);
+    let semicolon = "a;b";
+    assert_eq!(sqln::grid::delimited_text(semicolon, b';', ""), "\"a;b\"");
+    assert_eq!(sqln::grid::delimited_text(semicolon, b'\t', ""), semicolon);
+}
+
+/// The digits of each byte come from a table of pairs, which must keep the order of the
+/// high and the low digit.
+#[test]
+fn hexadecimal_keeps_the_high_digit_before_the_low_one() {
+    let bytes: Vec<u8> = (0..=255).collect();
+    let text = sqln::grid::hex(&bytes);
+    let expected: String = bytes.iter().map(|byte| format!("{byte:02X}")).collect();
+    assert_eq!(text, format!("0x{expected}"));
+    assert_eq!(sqln::grid::hex(&[]), "0x");
+    for length in 1..=20 {
+        let bytes: Vec<u8> = (0..length as u8).collect();
+        let text = sqln::grid::hex(&bytes);
+        let expected: String = bytes.iter().map(|byte| format!("{byte:02X}")).collect();
+        assert_eq!(text, format!("0x{expected}"), "length {length}");
+    }
+}

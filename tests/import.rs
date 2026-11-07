@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::common::{temp_db, temp_dir};
+use crate::common::{temp_db, temp_db_path, temp_dir};
 use sqln::clipboard::{base64, base64_bytes};
 use sqln::connector::sqlite::{SqliteConnector, SqliteTarget};
 use sqln::exec::{ConsoleId, ExecEvent, ExecutionEnd, Manager, RunOptions, Settings};
@@ -1042,7 +1042,7 @@ fn a_read_only_connection_refuses_the_rows() {
     // The table must exist first, so a second harness opens the same database.
     let creator = Harness::new("import-read-only", TABLE);
     drop(creator);
-    let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("import-read-only.db");
+    let path = temp_db_path("import-read-only");
     let mut h = Harness::at(&path, settings);
     let file = write_file("import-read-only", b"a,b\n1,x\n");
     let finished = h.import(plain_job(&file, ImportMode::AllOrNothing, 10));

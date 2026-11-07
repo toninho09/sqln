@@ -149,3 +149,6 @@ harness = false
 [[bench]]
 name = "memory"
 harness = false
+
+[profile.test]
+debug = 0

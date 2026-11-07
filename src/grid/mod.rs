@@ -7,8 +7,6 @@ mod row;
 mod search;
 mod tsv;
 
-use std::iter::repeat;
-
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub use self::binary::Binary;
@@ -212,15 +210,7 @@ impl ResultTable {
         // nothing.
         let size = rows.iter().map(Row::bytes).sum::<usize>();
         let size = size + size / 8;
-        let columns = right - left + 1;
-        // A broken reply can hold a row without its last values.
-        let cells = rows.iter().map(|row| {
-            row.cells()
-                .skip(left)
-                .chain(repeat(Value::Null))
-                .take(columns)
-        });
-        tsv::encode(cells, size)
+        tsv::encode(rows, left, right, size)
     }
 }
 

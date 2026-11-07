@@ -14,7 +14,7 @@ use sqln::exec::{ExecEvent, Flow, ResultSink, StatementKey};
 use sqln::grid::json::{FORMAT_LIMIT, pretty};
 use sqln::grid::{Budget, GridView, Reservation, ResultTable, Row, RowSearch, RowWriter, Value};
 use sqln::result::ResultTab;
-use sqln::ui::wrap::WrappedText;
+use sqln::ui::wrap::{Content, WrappedText};
 
 fn text(value: &str) -> Value<'_> {
     Value::Text(value)
@@ -457,7 +457,7 @@ fn a_new_width_reads_the_rows_again_and_the_last_row_limits_the_view() {
     wrapped.set_width(4);
     assert_eq!(wrapped.row(1), Some("efgh"));
     assert_eq!(wrapped.last_row_at(50), 1);
-    assert_eq!(wrapped.text(), "abcdefgh");
+    assert_eq!(wrapped.to_text(), "abcdefgh");
 }
 
 #[test]
@@ -470,6 +470,41 @@ fn a_row_of_a_large_text_reads_only_that_row() {
     }
     assert!(
         started.elapsed() < Duration::from_millis(100),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn a_binary_value_keeps_its_bytes_and_shows_the_digits_of_each_row() {
+    let bytes: Vec<u8> = (0..=255u8).collect();
+    let expected: String = std::iter::once("0x".to_owned())
+        .chain(bytes.iter().map(|byte| format!("{byte:02X}")))
+        .collect();
+    let mut wrapped = WrappedText::from_source(Content::Hex(bytes.into()));
+    wrapped.set_width(7);
+    let mut joined = String::new();
+    let mut index = 0;
+    while let Some(row) = wrapped.row(index) {
+        assert!(row.len() <= 7, "row {index} holds {}", row.len());
+        joined.push_str(row);
+        index += 1;
+    }
+    assert_eq!(joined, expected);
+    assert_eq!(wrapped.to_text(), expected);
+}
+
+#[test]
+fn a_binary_value_reads_only_the_rows_on_screen() {
+    let bytes = vec![0x5Au8; 64 * 1024 * 1024];
+    let mut wrapped = WrappedText::from_source(Content::Hex(bytes.into()));
+    wrapped.set_width(200);
+    let started = Instant::now();
+    for index in 0..30 {
+        assert_eq!(wrapped.row(index).unwrap().len(), 200);
+    }
+    assert!(
+        started.elapsed() < Duration::from_millis(50),
         "{:?}",
         started.elapsed()
     );

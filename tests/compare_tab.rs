@@ -492,7 +492,7 @@ fn a_data_compare_that_does_not_fit_the_budget_shows_nothing() {
     let rows: String = (0..2000)
         .map(|id| format!("INSERT INTO big VALUES ({id}, '{}');", "x".repeat(200)))
         .collect();
-    let source = format!("CREATE TABLE big(id INTEGER PRIMARY KEY, body TEXT);{rows}");
+    let source = format!("BEGIN;CREATE TABLE big(id INTEGER PRIMARY KEY, body TEXT);{rows}COMMIT;");
     let mut f = Fixture::with(
         "compare-data-budget",
         &source,

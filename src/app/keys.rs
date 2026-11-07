@@ -580,15 +580,23 @@ impl App {
                 footer,
                 json,
             } => {
-                let original = (text, footer);
                 let formatted = self.persist.as_ref().is_none_or(|item| item.format_json);
-                let ((shown, footer), other) = match json {
-                    Some(json) if formatted => (json, Some(original)),
-                    other => (original, other),
+                let (contents, footer, other) = match json {
+                    Some((json, json_footer)) if formatted => (
+                        WrappedText::new(json),
+                        json_footer,
+                        Some((text.source().to_text(), footer)),
+                    ),
+                    Some((json, json_footer)) => (
+                        WrappedText::from_source(text.source()),
+                        footer,
+                        Some((json, json_footer)),
+                    ),
+                    None => (WrappedText::from_source(text.source()), footer, None),
                 };
                 self.overlay = Some(Overlay {
                     title,
-                    contents: WrappedText::new(shown),
+                    contents,
                     footer,
                     scroll: 0,
                     other,
@@ -1210,7 +1218,7 @@ impl App {
             KeyCode::Left | KeyCode::Char('h') => self.step_row_window(false),
             KeyCode::Right | KeyCode::Char('l') => self.step_row_window(true),
             KeyCode::Char('c') if ctrl => {
-                let contents = overlay.contents.text().to_owned();
+                let contents = overlay.contents.to_text();
                 self.copy(&contents);
             }
             _ => {}

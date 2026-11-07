@@ -2,10 +2,12 @@
 # Run cargo test and print a one-line summary. On failure, list the failing tests.
 # Usage: scripts/test-summary.sh [cargo test target flags]
 #
-# Test binaries run in parallel instead of one by one, which is the main cost
-# of the suite. Time-limit tests can fail under this load, so each failing
-# binary runs again alone; only a second failure counts. Test filters and
-# libtest arguments are not supported; run cargo test directly for those.
+# Test binaries run in parallel instead of one by one, with four test threads
+# each. Most tests wait on timers and input, so the extra threads overlap the
+# waits. Time-limit tests can still fail under this load, so each failing
+# binary runs again alone and is reported; only a second failure counts. Test
+# filters and libtest arguments are not supported; run cargo test directly for
+# those.
 
 dir="$(mktemp -d)"
 status=0
@@ -18,16 +20,22 @@ if ! cargo test --no-run --message-format=json "$@" >"$dir/build.json" 2>"$dir/b
 fi
 
 # Collect the test executables. Keep only deps/ paths: target/debug/sqln is
-# the application binary, not a test harness.
+# the application binary, not a test harness. The largest binaries hold the
+# longest waits, so they start first and their waits overlap with the rest.
 awk 'match($0, /"executable":"[^"]*\/deps\/[^"]+"/) {
   print substr($0, RSTART + 14, RLENGTH - 15)
-}' "$dir/build.json" | sort -u >"$dir/bins"
+}' "$dir/build.json" | sort -u | while IFS= read -r bin; do
+  printf '%s %s\n' "$(wc -c <"$bin")" "$bin"
+done | sort -rn | awk '{$1 = ""; sub(/^ /, ""); print}' >"$dir/bins"
 
-jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
-tr '\n' '\0' <"$dir/bins" | DIR="$dir" xargs -0 -P "$jobs" -n 1 sh -c '
+cpus="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
+jobs="$cpus"
+[ "$jobs" -lt 1 ] && jobs=1
+threads=4
+tr '\n' '\0' <"$dir/bins" | DIR="$dir" THREADS="$threads" xargs -0 -P "$jobs" -n 1 sh -c '
   bin="$1"
   name="$(basename "$bin")"
-  if "$bin" --quiet >"$DIR/log-$name" 2>&1; then
+  if "$bin" --quiet --test-threads="$THREADS" >"$DIR/log-$name" 2>&1; then
     :
   else
     printf "%s\n" "$bin" >>"$DIR/failed"
@@ -39,8 +47,8 @@ tr '\n' '\0' <"$dir/bins" | DIR="$dir" xargs -0 -P "$jobs" -n 1 sh -c '
 if [ -f "$dir/failed" ]; then
   while IFS= read -r bin; do
     name="$(basename "$bin")"
-    if "$bin" --quiet >"$dir/log-$name" 2>&1; then
-      :
+    if "$bin" --quiet --test-threads="$threads" >"$dir/log-$name" 2>&1; then
+      printf "%s\n" "$name" >>"$dir/retried"
     else
       status=1
       printf "%s\n" "$bin" >>"$dir/really-failed"
@@ -58,6 +66,11 @@ awk '
   }
   END { printf "tests: %d passed, %d failed, %d ignored\n", passed, failed, ignored }
 ' "$dir"/log-* 2>/dev/null
+
+if [ -f "$dir/retried" ]; then
+  names="$(sed 's/-[0-9a-f]*$//' "$dir/retried" | sort -u | tr '\n' ' ')"
+  echo "retried alone after a first failure: ${names% }"
+fi
 
 if [ "$status" -ne 0 ]; then
   echo "failing tests:"

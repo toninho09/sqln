@@ -1,5 +1,6 @@
 //! A result grid with its cursor and its search. A console result and a table share it.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -11,6 +12,7 @@ use crate::input::Action;
 use crate::plan::PlanView;
 use crate::ui::console::fit;
 use crate::ui::text;
+use crate::ui::wrap::Content;
 
 /// The longest name of a column in the row window.
 const ROW_NAME_WIDTH: usize = 32;
@@ -45,7 +47,7 @@ pub enum GridAction {
     Copy(String),
     OpenValue {
         title: String,
-        text: String,
+        text: ValueText,
         footer: String,
         /// The formatted form of a JSON value, with its footer.
         json: Option<(String, String)>,
@@ -53,6 +55,31 @@ pub enum GridAction {
     /// The window of one row of the grid.
     OpenRow(usize),
     CloseResult,
+}
+
+/// The text of the value window. A binary value that is not text stays as bytes, so the
+/// window reads only the rows on screen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ValueText {
+    Text(String),
+    Binary(Arc<[u8]>),
+}
+
+impl ValueText {
+    /// Returns the number of characters of the complete text.
+    fn chars(&self) -> usize {
+        match self {
+            Self::Text(text) => text.chars().count(),
+            Self::Binary(bytes) => 2 + bytes.len() * 2,
+        }
+    }
+
+    pub fn source(self) -> Content {
+        match self {
+            Self::Text(text) => Content::Text(text),
+            Self::Binary(bytes) => Content::Hex(bytes),
+        }
+    }
 }
 
 /// The text of the window of one row.
@@ -243,11 +270,19 @@ fn open_value(table: &ResultTable, view: &GridView) -> GridAction {
         return GridAction::None;
     };
     let column = table.columns.get(view.col).map_or("", String::as_str);
-    let contents = value.full_text();
-    let chars = contents.chars().count();
-    let formatted = match value {
-        Value::Text(_) | Value::Binary(_) => pretty(&contents),
-        Value::Null | Value::Number(_) => None,
+    // A binary value that is not text keeps its bytes, so the window does not make the
+    // digits of a large value before it shows a row.
+    let text = match value {
+        Value::Binary(bytes) if bytes.text().is_none() => {
+            ValueText::Binary(Arc::from(bytes.bytes()))
+        }
+        value => ValueText::Text(value.full_text()),
+    };
+    let chars = text.chars();
+    // Only a value that shows as text can hold JSON.
+    let formatted = match (value, &text) {
+        (Value::Text(_) | Value::Binary(_), ValueText::Text(contents)) => pretty(contents),
+        _ => None,
     };
     let kind = match value {
         _ if formatted.is_some() => text::VALUE_JSON_ORIGINAL,
@@ -259,7 +294,7 @@ fn open_value(table: &ResultTable, view: &GridView) -> GridAction {
     GridAction::OpenValue {
         title: text::value_title(&printable(column), view.row),
         footer: text::value_footer(chars, kind),
-        text: contents,
+        text,
         json: formatted.map(|json| (json, text::value_footer(chars, text::VALUE_JSON))),
     }
 }

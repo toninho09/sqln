@@ -169,9 +169,17 @@ pub fn prefix_page(app: &App) -> Vec<String> {
     menu_rows(app.prefix_menu())
 }
 
+/// Returns the path of a database of one test. The file may exist.
+pub fn temp_db_path(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(env!("CARGO_CRATE_NAME"))
+        .join(format!("{name}.db"))
+}
+
 /// Returns a path for a database of one test. The file does not exist.
 pub fn temp_db(name: &str) -> std::path::PathBuf {
-    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}.db"));
+    let path = temp_db_path(name);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     for suffix in ["", "-journal", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
     }
@@ -248,7 +256,9 @@ pub fn select_row(
 
 /// Returns an empty folder that belongs to one test.
 pub fn temp_dir(name: &str) -> std::path::PathBuf {
-    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("dir-{name}"));
+    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(env!("CARGO_CRATE_NAME"))
+        .join(format!("dir-{name}"));
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
     path

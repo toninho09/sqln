@@ -687,6 +687,7 @@ make check   # Run lint and the complete default test suite.
 make bench   # Print the performance and memory reports and run the latency targets.
 ```
 
+Test binaries build without debug info. Set `CARGO_PROFILE_TEST_DEBUG=2` when a backtrace needs symbols.
 Database-dependent tests skip when their environment is absent. A passing local check alone does not prove database integration.
 Native-vault tests require explicit authorization. Performance tests do not run as benchmarks in the default debug suite.
 

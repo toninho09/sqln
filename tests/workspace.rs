@@ -1863,7 +1863,7 @@ fn each_main_tab_has_a_close_mark() {
 
 #[test]
 fn the_close_mark_closes_a_tab_that_is_not_on_screen() {
-    let mut f = Fixture::new("close-other", "");
+    let mut f = Fixture::new("close-hidden", "");
     f.open_consoles(3);
     assert_eq!(f.app.console().name, "console-3");
     f.close_tab("console-1");

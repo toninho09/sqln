@@ -299,7 +299,7 @@ impl Overlay {
     /// Shows the other form of a JSON value from its first row.
     fn switch_form(&mut self) {
         if let Some((text, footer)) = self.other.take() {
-            let shown = self.contents.text().to_owned();
+            let shown = self.contents.to_text();
             let old_footer = std::mem::replace(&mut self.footer, footer);
             self.contents = WrappedText::new(text);
             self.other = Some((shown, old_footer));
