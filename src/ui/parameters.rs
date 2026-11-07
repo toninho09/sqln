@@ -6,7 +6,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::console::{draw_panel_title, fit};
+use super::kit::measure::fit;
+use super::kit::panel::draw_panel_title;
 use super::theme::Theme;
 use super::{draw_scrollbar, text};
 use crate::grid::{printable, printable_start};

@@ -5,7 +5,7 @@ use crate::console::Focus;
 use crate::input::{Action, Region};
 use crate::navigator::{Navigator, RowKind};
 use crate::table::TableFocus;
-use crate::ui::console::fit;
+use crate::ui::kit::measure::fit;
 use crate::ui::text;
 use crate::ui::which_key::KeyGroup;
 

@@ -277,8 +277,8 @@ impl App {
         let buttons = &self.layout.table.buttons;
         let control = buttons
             .iter()
-            .find(|button| column >= button.0 && column < button.1);
-        match control.map(|button| button.2) {
+            .find(|(_, rect)| column >= rect.x && column < rect.right());
+        match control.map(|(control, _)| *control) {
             Some(TableControl::Apply) => self.apply_table(),
             Some(TableControl::Clear) => self.clear_table(),
             Some(TableControl::ApplyEdits) => {
@@ -300,8 +300,8 @@ impl App {
         let buttons = &self.layout.table.pager;
         let control = buttons
             .iter()
-            .find(|button| column >= button.0 && column < button.1);
-        let Some(control) = control.map(|button| button.2) else {
+            .find(|(_, rect)| column >= rect.x && column < rect.right());
+        let Some(control) = control.map(|(control, _)| *control) else {
             return;
         };
         self.focus_table(TableFocus::Grid);
@@ -341,11 +341,11 @@ impl App {
             .console
             .control_buttons
             .iter()
-            .find(|button| column >= button.0 && column < button.1);
-        let Some((_, _, control)) = control else {
+            .find(|(_, rect)| column >= rect.x && column < rect.right());
+        let Some((control, _)) = control else {
             return;
         };
-        let action = match control {
+        let action = match *control {
             Control::Run => Action::Run,
             Control::Script => Action::RunScript,
             Control::Stop => Action::Stop,

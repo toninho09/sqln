@@ -2,9 +2,9 @@
 
 use crossterm::event::KeyEvent;
 
+use super::kit::prompt::{TextAction, TextPrompt, draw_text_prompt};
 use super::text;
 use super::theme::Theme;
-use super::widgets::{TextAction, TextPrompt, draw_text_prompt};
 use crate::exec::ConsoleId;
 use crate::grid::printable;
 use crate::store::scripts::ScriptEntry;

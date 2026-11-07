@@ -15,7 +15,7 @@ use crate::input::{Action, Chord, Lookup, Region};
 use crate::navigator::{Navigator, RowKind};
 use crate::settings;
 use crate::table::{TableFocus, TableTab};
-use crate::ui::statusline::{HintItem, fit_hints, hint_text};
+use crate::ui::kit::feedback::{HintItem, fit_hints, hint_text};
 use crate::ui::text;
 use unicode_width::UnicodeWidthStr;
 

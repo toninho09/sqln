@@ -15,6 +15,7 @@ pub mod help;
 pub mod history;
 pub mod icons;
 pub mod import;
+pub mod kit;
 pub mod messages;
 pub mod name;
 pub mod navigator;
@@ -22,6 +23,7 @@ pub mod palette;
 pub mod parameters;
 pub mod review;
 pub mod schemes;
+pub mod searchbar;
 pub mod settings;
 pub mod statusline;
 pub mod table;
@@ -29,7 +31,6 @@ pub mod text;
 pub mod theme;
 pub mod welcome;
 pub mod which_key;
-pub mod widgets;
 pub mod wrap;
 
 use edtui::{EditorTheme, EditorView, LineNumbers};
@@ -39,16 +40,17 @@ use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-    StatefulWidget, Widget,
+    Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget,
 };
 
 pub use self::conflicts::{ConflictLayout, ConflictRowView, draw_conflicts};
 pub use self::console::{
     ConsoleLayout, MainTab, TabView, column_edge_at, draw_console, draw_dialog, draw_main_tabs,
-    draw_overlay, draw_panel_title, draw_picker, draw_rule, draw_small_terminal, grid_cell_at,
-    grid_row_number_at, header_column_at, main_tab_label, run_badge, tab_at,
+    draw_overlay, draw_picker, draw_small_terminal, grid_cell_at, grid_row_number_at,
+    header_column_at, main_tab_label, run_badge, tab_at,
 };
+use self::kit::list::viewport;
+use self::kit::style::{self, ListRow};
 pub use self::table::{TableBar, TableControl, TableLayout, draw_table, section_at};
 use self::theme::Theme;
 use crate::complete::{Suggestion, SuggestionKind};
@@ -59,20 +61,6 @@ use crate::editor::{MarkState, SearchBar, SearchField, SqlEditor, SuggestionList
 const GUTTER_COLUMNS: u16 = 4;
 const MAX_LIST_ROWS: usize = 8;
 const MIN_LIST_WIDTH: u16 = 24;
-
-/// Returns the last characters of a text. The end of a path holds its last name.
-pub(crate) fn last_chars(chars: &[char], width: usize) -> String {
-    chars[chars.len().saturating_sub(width)..].iter().collect()
-}
-
-/// Returns the block of a window above the panels.
-pub(crate) fn float_block<'a>(title: &str, theme: &Theme) -> Block<'a> {
-    Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(theme.float_border)
-        .title(Span::styled(format!(" {title} "), theme.float_title))
-        .style(theme.dialog)
-}
 
 /// Draws a scrollbar on the last column of an area, when the content needs one.
 pub(crate) fn draw_scrollbar(
@@ -395,19 +383,20 @@ pub(crate) fn draw_anchored_list<'a>(
     let rows = count.min(MAX_LIST_ROWS) as u16;
     let width = u16::try_from(width).unwrap_or(u16::MAX).max(MIN_LIST_WIDTH);
     let area = list_area(anchor, bounds, width, rows);
-    let visible = usize::from(area.height);
-    let first = selected
-        .map_or(0, |place| place + 1)
-        .saturating_sub(visible)
-        .min(count.saturating_sub(visible));
+    let view = viewport(selected.unwrap_or(0), count, area.height);
+    let first = view.first;
+    let visible = view.rows;
     frame.render_widget(Clear, area);
     for (y, index) in (area.y..).zip((first..count).take(visible)) {
         let marked = Some(index) == selected;
-        let style = if marked {
-            theme.list_selected
-        } else {
-            theme.list
-        };
+        let style = style::list_row_style(
+            if marked {
+                ListRow::Selected
+            } else {
+                ListRow::Normal
+            },
+            theme,
+        );
         let line = Line::from(row(index, marked));
         let rect = Rect {
             y,
@@ -455,18 +444,29 @@ pub(crate) fn draw_suggestions(
         if list.ai && index < ai {
             return vec![Span::styled(
                 AI_ROW_LABELS[index],
-                if marked {
-                    theme.list_selected
-                } else {
-                    theme.list
-                },
+                style::list_row_style(
+                    if marked {
+                        ListRow::Selected
+                    } else {
+                        ListRow::Normal
+                    },
+                    theme,
+                ),
             )];
         }
         let item = &items[index - ai];
-        let (style, detail_style) = if marked {
-            (theme.list_selected, theme.list_selected)
+        let style = style::list_row_style(
+            if marked {
+                ListRow::Selected
+            } else {
+                ListRow::Normal
+            },
+            theme,
+        );
+        let detail_style = if marked {
+            theme.list_selected
         } else {
-            (theme.list, theme.list_detail)
+            theme.list_detail
         };
         let mut spans = vec![
             Span::styled(format!(" {} ", kind_tag(item.kind)), detail_style),

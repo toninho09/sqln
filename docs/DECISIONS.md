@@ -1852,3 +1852,18 @@ With the **Theme** and **Icon** fields, the form uses the compact mode up to 31 
 ### Pending items
 
 - Validate the themes and the icons in a real terminal. The visual check used the screens drawn with the Monaco font, outside the terminal.
+
+## UI kit — 2026-11-07
+
+The user asked for a shared UI kit: easier screen creation, one visual language, and only slight differences between modals, fields, and buttons. The migration moved the shared pieces to `src/ui/kit` in phases that preserved the screen first, then applied the variation contract.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Structure | `ui/kit` holds geometry, semantic styles, modal chrome, form rows, buttons, inputs, lists, prompts, feedback, measurement, and panel titles | Keep the helpers in `widgets.rs` and each screen | One place for the base look; a screen declares fields and rows |
+| Modal | One rounded chrome with title, sidebar, content, note, and buttons; only size, placement, sidebar, heading, body, and bottom title vary | One border or footer per screen | The position of the title, note, and buttons stays the same on every screen |
+| Field | One row with the focus mark, label, value padding, and `field`/`field_focus`; labels use `Narrow` (16) or `Wide` (24) | A magic label width per dialog | A new field inherits the focus and padding rules |
+| Button | `Dialog`, `Toolbar`, and `Inline` variants over one row; height 1, gap 2 | A manual loop per screen | Focus, disabled, and click areas stay equal |
+| Note | `Info`/`Hint` use `hint`, `Success` uses `mark_good`, `Warning` uses `mark_neutral`, `Error` uses `error` | One mapping per screen | The same message looks the same on every screen |
+| List | Selected `list_selected`, normal `list`; trees use `tree_selected`/`tree_cursor` | `dialog_focus` for list selection | Lists, trees, and fields keep different meanings |
+| Visual changes | Form label 25 → 24; `Info` notes from `status` to `hint`; list normal rows from `dialog` to `list`; picker/conflicts selection from `dialog_focus` to `list_selected` | Keep every current value | The user asked for fewer variations; these are the only pixels that change |
+| Exceptions | The parameters panel keeps its byte cursor and display-width renderer; the editor review keeps its key/label degradation above the kit | Force every renderer into the kit at once | Both have rules that the form row does not share |

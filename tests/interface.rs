@@ -1675,13 +1675,15 @@ fn each_kind_of_note_has_its_own_color() {
     );
     assert_eq!(
         color_of(FormNote::Info("message".to_owned())),
-        theme.status.fg.unwrap()
+        theme.hint.fg.unwrap()
     );
     assert_eq!(
         color_of(FormNote::Error("message".to_owned())),
         theme.error.fg.unwrap()
     );
-    assert_ne!(theme.mark_good.fg, theme.status.fg);
+    assert_ne!(theme.mark_good.fg, theme.hint.fg);
+    assert_ne!(theme.mark_good.fg, theme.error.fg);
+    assert_ne!(theme.hint.fg, theme.error.fg);
 }
 
 #[test]

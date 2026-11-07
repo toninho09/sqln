@@ -10,7 +10,7 @@ use crate::grid::json::pretty;
 use crate::grid::{Budget, GridView, Reservation, ResultTable, RowSearch, Value, printable};
 use crate::input::Action;
 use crate::plan::PlanView;
-use crate::ui::console::fit;
+use crate::ui::kit::measure::fit;
 use crate::ui::text;
 use crate::ui::wrap::Content;
 

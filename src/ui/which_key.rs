@@ -6,8 +6,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
+use super::kit::modal::open_modal;
 use super::theme::Theme;
-use super::widgets::open_modal;
 
 const COLUMNS: u16 = 3;
 const MAX_WIDTH: u16 = 78;

@@ -34,6 +34,7 @@ Main thread                        Tokio runtime
 | `app/agent` | Access decisions, tasks, loaded-state reads, and edit proposals |
 | `app` | Application state, actions, and state updates |
 | `ui` | Drawing of the screens and the widgets, themes (`theme`), color schemes (`schemes`), symbols (`icons`), status bar (`statusline`), and prefix menu (`which_key`) |
+| `ui/kit` | Shared geometry, semantic styles, modal chrome, form rows, buttons, inputs, lists, prompts, feedback, measurement, and panel titles |
 | `app/commands` | Shared command availability, contextual lists, priority, and target labels; `Action` remains the catalog |
 | `palette` | State and word filter of functional commands, including action names and technical aliases; `ui` draws it |
 | `filter_list` | Filtered list core, used by the palette, the history window, and the compare dialog lists |

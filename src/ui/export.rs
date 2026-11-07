@@ -4,20 +4,20 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 
+use super::kit::buttons::{self, RowOptions};
+use super::kit::feedback::draw_note;
+use super::kit::form::{browse_width, choice_line, draw_browse_button, draw_row, value_width};
+use super::kit::geometry::modal_width;
+use super::kit::input::{self, FieldMode, FieldText};
+use super::kit::modal::{Modal, SidebarSpec};
 use super::settings::WIDTH;
+use super::text;
 use super::theme::Theme;
-use super::widgets::{
-    BORDER_ROWS, FOOTER_ROWS, SidebarModal, browse_width, centered, choice_line,
-    draw_browse_button, draw_buttons, draw_note, draw_row, draw_sidebar_rows, modal_width,
-    value_width,
-};
-use super::widgets::{LEFT, RIGHT};
-use super::{input_spans, last_chars, text};
 use crate::export::NullText;
 use crate::export::form::{ExportForm, Field, RowChoice};
 
 /// The columns of a label. `Rows per INSERT` needs them, with one space.
-const LABEL_WIDTH: u16 = 16;
+const LABEL_WIDTH: u16 = super::kit::form::LabelWidth::Narrow.columns();
 const FIRST_FIELD_ROW: u16 = 1;
 /// The fields of the largest format: `Rows`, `File`, and four options of CSV.
 const MAX_FIELDS: u16 = 6;
@@ -69,26 +69,29 @@ fn choice(form: &ExportForm, field: Field) -> String {
     }
 }
 
-fn value<'a>(form: &ExportForm, field: Field, width: usize, theme: &Theme) -> Line<'a> {
+fn value(form: &ExportForm, field: Field, width: usize, theme: &Theme) -> Line<'static> {
     let focused = form.focus == field;
     if let Some(input) = form.input(field) {
-        let chars: Vec<char> = input.text().chars().collect();
-        // The end of a path holds the name of the file and its extension.
-        if field == Field::File && !focused {
-            return Line::raw(last_chars(&chars, width));
-        }
-        return Line::from(input_spans(&chars, input.cursor(), width, focused, theme).0);
+        let mode = if field == Field::File {
+            FieldMode::Path
+        } else {
+            FieldMode::Text
+        };
+        return input::line(
+            FieldText {
+                text: input.text(),
+                cursor: input.cursor(),
+                width,
+                focused,
+                mode,
+            },
+            theme,
+        );
     }
     choice_line(&choice(form, field), focused, theme)
 }
 
 pub fn draw_export(frame: &mut Frame, form: &ExportForm, theme: &Theme) -> ExportLayout {
-    let height = BORDER_ROWS + FIRST_FIELD_ROW + MAX_FIELDS + FOOTER_ROWS;
-    let width = modal_width(frame.area().width, WIDTH);
-    let area = centered(frame.area(), width, height);
-    let SidebarModal { sidebar, pane, .. } =
-        SidebarModal::open(frame, area, text::TITLE_EXPORT, theme);
-
     let formats = form.formats();
     let names: Vec<&str> = formats
         .iter()
@@ -98,14 +101,21 @@ pub fn draw_export(frame: &mut Frame, form: &ExportForm, theme: &Theme) -> Expor
         .iter()
         .position(|format| *format == form.format)
         .unwrap_or(0);
+    let modal = Modal::form(
+        modal_width(frame.area().width, WIDTH),
+        FIRST_FIELD_ROW,
+        MAX_FIELDS,
+    )
+    .title(text::TITLE_EXPORT)
+    .sidebar(SidebarSpec {
+        titles: &names,
+        open,
+        focused: form.focus == Field::Formats,
+    })
+    .open(frame, theme);
+    let pane = modal.pane;
     let mut layout = ExportLayout {
-        formats: draw_sidebar_rows(
-            frame,
-            sidebar,
-            &names,
-            (open, form.focus == Field::Formats),
-            theme,
-        ),
+        formats: modal.sidebar_rows,
         fields: Vec::new(),
         browse: None,
     };
@@ -135,27 +145,30 @@ pub fn draw_export(frame: &mut Frame, form: &ExportForm, theme: &Theme) -> Expor
         layout.fields.push((field, row));
     }
 
-    let content = Rect {
-        x: pane.x + LEFT,
-        y: pane.y,
-        width: pane.width.saturating_sub(LEFT + RIGHT),
-        height: 1,
-    };
-    let button_row = pane.bottom().saturating_sub(2);
+    let content = modal.content;
+    let button_row = modal.button_row;
     if let Some(note) = &form.note {
         draw_note(frame, content, button_row, note, theme.error);
     } else if let Some(reason) = form.all_rows_reason() {
         draw_note(frame, content, button_row, reason, theme.hint);
     }
-    let buttons = [
-        (Field::Export, text::BUTTON_EXPORT),
-        (Field::Cancel, text::OPTION_CANCEL),
-    ];
-    layout.fields.extend(draw_buttons(
+    let buttons = buttons::dialog_items(
+        [
+            (Field::Export, text::BUTTON_EXPORT),
+            (Field::Cancel, text::OPTION_CANCEL),
+        ],
+        form.focus,
+        theme,
+    );
+    layout.fields.extend(buttons::draw(
         frame,
-        content,
-        button_row,
-        (&buttons, form.focus),
+        Rect {
+            y: button_row,
+            height: 1,
+            ..content
+        },
+        RowOptions::DIALOG,
+        &buttons,
         theme,
     ));
     layout

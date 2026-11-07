@@ -10,6 +10,7 @@ mod help;
 mod hints;
 mod home;
 mod interface;
+mod kit;
 mod messages;
 mod modals;
 mod notices;

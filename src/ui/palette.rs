@@ -6,19 +6,23 @@ use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
+use super::kit::list::{ListWindow, draw_list_window};
+use super::kit::style::{self, ListRow};
 use super::text;
 use super::theme::Theme;
-use super::widgets::{ListWindow, draw_list_window};
 use crate::palette::{Command, Palette};
 
 const WIDTH: u16 = 64;
 
 fn draw_command(frame: &mut Frame, row: Rect, command: &Command, selected: bool, theme: &Theme) {
-    let style = if selected {
-        theme.list_selected
-    } else {
-        theme.dialog
-    };
+    let style = style::list_row_style(
+        if selected {
+            ListRow::Selected
+        } else {
+            ListRow::Normal
+        },
+        theme,
+    );
     frame.buffer_mut().set_style(row, style);
     let key_room = command.key.as_ref().map_or(0, |key| key.width() + 2);
     let label_area = Rect {

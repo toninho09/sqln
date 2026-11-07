@@ -5,19 +5,22 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
-use super::console::fit;
+use super::kit::buttons::{self, RowOptions};
+use super::kit::feedback::draw_note;
+use super::kit::form::{choice_line, draw_row, value_width};
+use super::kit::geometry::{BORDER_ROWS, FOOTER_ROWS, NOTE_ROWS, modal_width};
+use super::kit::input::{self, FieldMode, FieldText};
+use super::kit::list::viewport_centered;
+use super::kit::measure::fit;
+use super::kit::modal::{Modal, SidebarSpec};
+use super::text;
 use super::theme::Theme;
-use super::widgets::{
-    BORDER_ROWS, FOOTER_ROWS, LEFT, NOTE_ROWS, RIGHT, SidebarModal, centered, choice_line,
-    draw_buttons, draw_note, draw_row, draw_sidebar_rows, modal_width, value_width,
-};
-use super::{input_spans, text};
 use crate::input::Action;
 use crate::settings::{Field, SECTIONS, SettingsForm};
 use crate::store::Scope;
 
 pub(super) const WIDTH: u16 = 72;
-const LABEL_WIDTH: u16 = 16;
+const LABEL_WIDTH: u16 = super::kit::form::LabelWidth::Narrow.columns();
 /// The value columns of a number field.
 const NUMBER_WIDTH: usize = 12;
 /// The rows inside the window, from its top.
@@ -159,16 +162,16 @@ fn choice(form: &SettingsForm, field: Field) -> String {
     }
 }
 
-fn value<'a>(form: &SettingsForm, field: Field, theme: &Theme, width: usize) -> Line<'a> {
+fn value(form: &SettingsForm, field: Field, theme: &Theme, width: usize) -> Line<'static> {
     let focused = form.focus == field;
     if let Some(input) = form.input(field) {
-        let masked = field == Field::AiKey && !input.text().is_empty();
-        let chars: Vec<char> = if masked {
-            "*".repeat(input.text().chars().count().min(24))
-                .chars()
-                .collect()
+        let mode = if field == Field::AiKey && !input.text().is_empty() {
+            FieldMode::Masked {
+                mask: '*',
+                limit: Some(24),
+            }
         } else {
-            input.text().chars().collect()
+            FieldMode::Text
         };
         // A number keeps its short columns; a provider field takes the whole row.
         let columns = if matches!(
@@ -179,17 +182,26 @@ fn value<'a>(form: &SettingsForm, field: Field, theme: &Theme, width: usize) -> 
         } else {
             NUMBER_WIDTH
         };
-        let mut spans = input_spans(&chars, input.cursor(), columns, focused, theme).0;
-        if chars.is_empty() {
+        let mut line = input::line(
+            FieldText {
+                text: input.text(),
+                cursor: input.cursor(),
+                width: columns,
+                focused,
+                mode,
+            },
+            theme,
+        );
+        if input.text().is_empty() {
             let hint = match field {
                 Field::AiKey => choice(form, field),
                 _ => form.inherited(field),
             };
             if !hint.is_empty() {
-                spans.push(Span::styled(hint, theme.hint));
+                line.spans.push(Span::styled(hint, theme.hint));
             }
         }
-        return Line::from(spans);
+        return line;
     }
     let name = choice(form, field);
     if matches!(
@@ -275,19 +287,17 @@ fn draw_command_list(
     );
     let start = header.y + 1;
     let end = pane.bottom().saturating_sub(2 + NOTE_ROWS + 1);
-    let rows = usize::from(end.saturating_sub(start));
-    let first = selected
-        .saturating_sub(rows / 2)
-        .min(commands.len().saturating_sub(rows));
+    let rows = u16::try_from(usize::from(end.saturating_sub(start))).unwrap_or(0);
+    let view = viewport_centered(selected, commands.len(), rows);
     let list = Rect {
         y: start,
-        height: u16::try_from(rows).unwrap_or(0),
+        height: rows,
         ..content
     };
     layout.fields.push((Field::ShortcutCommands, list));
-    for (offset, (action, keys)) in commands.iter().skip(first).take(rows).enumerate() {
+    for (offset, (action, keys)) in commands.iter().enumerate().skip(view.first).take(view.rows) {
         let row = Rect {
-            y: start + u16::try_from(offset).unwrap_or(0),
+            y: start + u16::try_from(offset - view.first).unwrap_or(0),
             height: 1,
             ..content
         };
@@ -337,8 +347,8 @@ fn draw_command_list(
 
 fn draw_recording(
     frame: &mut Frame,
-    pane: Rect,
     content: Rect,
+    button_row: u16,
     form: &SettingsForm,
     theme: &Theme,
     layout: &mut SettingsLayout,
@@ -356,7 +366,6 @@ fn draw_recording(
         Line::raw(""),
         Line::styled(sequence, theme.dialog_focus),
     ];
-    let button_row = pane.bottom().saturating_sub(2);
     let body = Rect {
         y: content.y + 1,
         height: button_row.saturating_sub(content.y + 1 + NOTE_ROWS),
@@ -368,15 +377,23 @@ fn draw_recording(
     }
     // During recording, only these buttons receive mouse clicks.
     layout.fields.clear();
-    let buttons = [
-        (Field::ShortcutOk, text::SHORTCUT_OK),
-        (Field::ShortcutCancel, text::SHORTCUT_CANCEL),
-    ];
-    layout.fields.extend(draw_buttons(
+    let buttons = buttons::dialog_items(
+        [
+            (Field::ShortcutOk, text::SHORTCUT_OK),
+            (Field::ShortcutCancel, text::SHORTCUT_CANCEL),
+        ],
+        form.focus,
+        theme,
+    );
+    layout.fields.extend(buttons::draw(
         frame,
-        content,
-        button_row,
-        (&buttons, form.focus),
+        Rect {
+            y: button_row,
+            height: 1,
+            ..content
+        },
+        RowOptions::DIALOG,
+        &buttons,
         theme,
     ));
 }
@@ -394,13 +411,19 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
     } else {
         window_height()
     };
-    let area = centered(frame.area(), width, height);
-    let SidebarModal { sidebar, pane, .. } =
-        SidebarModal::open(frame, area, text::TITLE_SETTINGS, theme);
     let titles: Vec<&str> = SECTIONS.iter().map(|section| section.title).collect();
-    let open = (form.section, form.focus == Field::Sections);
+    let modal = Modal::sized(width, height)
+        .title(text::TITLE_SETTINGS)
+        .heading_row(TITLE_ROW)
+        .sidebar(SidebarSpec {
+            titles: &titles,
+            open: form.section,
+            focused: form.focus == Field::Sections,
+        })
+        .open(frame, theme);
+    let pane = modal.pane;
     let mut layout = SettingsLayout {
-        sections: draw_sidebar_rows(frame, sidebar, &titles, open, theme),
+        sections: modal.sidebar_rows,
         fields: Vec::new(),
         command_rows: Vec::new(),
     };
@@ -415,12 +438,7 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
         layout.fields.push((Field::Scope, scope));
     }
 
-    let content = Rect {
-        x: pane.x + LEFT,
-        y: pane.y + TITLE_ROW,
-        width: pane.width.saturating_sub(LEFT + RIGHT),
-        height: 1,
-    };
+    let content = modal.content;
     let title = if shortcuts && form.shortcuts.is_editing() {
         format!(
             "{} · {}",
@@ -432,7 +450,7 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
     };
     frame.render_widget(Paragraph::new(title).style(theme.panel_title), content);
     if form.shortcuts.is_recording() {
-        draw_recording(frame, pane, content, form, theme, &mut layout);
+        draw_recording(frame, content, modal.button_row, form, theme, &mut layout);
         return layout;
     }
     if shortcuts && !form.shortcuts.is_editing() {
@@ -454,7 +472,7 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
         }
     }
 
-    let button_row = pane.bottom().saturating_sub(2);
+    let button_row = modal.button_row;
     if let Some(help) = section.help {
         // One empty row after the fields. The help ends before the note.
         let top = pane.y + FIRST_FIELD_ROW + u16::try_from(section.fields.len()).unwrap_or(0) + 1;
@@ -481,15 +499,23 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
         );
         draw_note(frame, content, button_row, &note, theme.hint);
     }
-    let buttons = [
-        (Field::Save, text::BUTTON_SAVE),
-        (Field::Cancel, text::OPTION_CANCEL),
-    ];
-    layout.fields.extend(draw_buttons(
+    let buttons = buttons::dialog_items(
+        [
+            (Field::Save, text::BUTTON_SAVE),
+            (Field::Cancel, text::OPTION_CANCEL),
+        ],
+        form.focus,
+        theme,
+    );
+    layout.fields.extend(buttons::draw(
         frame,
-        content,
-        button_row,
-        (&buttons, form.focus),
+        Rect {
+            y: button_row,
+            height: 1,
+            ..content
+        },
+        RowOptions::DIALOG,
+        &buttons,
         theme,
     ));
     layout

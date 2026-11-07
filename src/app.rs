@@ -90,19 +90,21 @@ use crate::ui::form::{FormLayout, draw_form};
 use crate::ui::help::draw_help;
 use crate::ui::history::draw_history;
 use crate::ui::import::{ImportLayout, draw_import};
+use crate::ui::kit::feedback::hint_line;
+use crate::ui::kit::panel::{draw_panel_title, draw_rule};
 use crate::ui::name::{NamePrompt, draw_name};
 use crate::ui::navigator::draw_navigator;
 use crate::ui::palette::draw_palette;
 use crate::ui::settings::{SettingsLayout, draw_settings};
-use crate::ui::statusline::{StatusData, StatusPanel, draw_statusline, hint_line, run_time};
+use crate::ui::statusline::{StatusData, StatusPanel, draw_statusline, run_time};
 use crate::ui::theme::{ColorEnv, Theme};
 use crate::ui::welcome::draw_welcome;
 use crate::ui::which_key::draw_which_key;
 use crate::ui::wrap::WrappedText;
 use crate::ui::{
     ConflictLayout, ConflictRowView, ConsoleLayout, MainTab, TableBar, TableLayout, draw_conflicts,
-    draw_console, draw_dialog, draw_main_tabs, draw_overlay, draw_panel_title, draw_picker,
-    draw_rule, draw_small_terminal, draw_table, text,
+    draw_console, draw_dialog, draw_main_tabs, draw_overlay, draw_picker, draw_small_terminal,
+    draw_table, text,
 };
 
 const MIN_WIDTH: u16 = 80;

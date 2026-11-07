@@ -9,8 +9,8 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use sqln::browser::{BrowserRequest, FileBrowser, RowView};
 use sqln::ui::browser::draw_browser;
+use sqln::ui::kit::geometry::modal_width;
 use sqln::ui::theme::Theme;
-use sqln::ui::widgets::modal_width;
 
 /// Creates a folder with these names. A name that ends with `/` is a folder.
 fn tree(name: &str, names: &[&str]) -> PathBuf {

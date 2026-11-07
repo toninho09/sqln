@@ -852,12 +852,12 @@ impl App {
         if mouse.kind == MouseEventKind::Down(MouseButton::Left)
             && self.layout.edit.controls.contains(position)
         {
-            if let Some((_, _, button)) = self
+            if let Some((button, _)) = self
                 .layout
                 .edit
                 .buttons
                 .iter()
-                .find(|(start, end, _)| mouse.column >= *start && mouse.column < *end)
+                .find(|(_, rect)| rect.contains(position))
             {
                 self.edit_button(*button);
             }

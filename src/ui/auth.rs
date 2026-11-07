@@ -5,12 +5,15 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use unicode_width::UnicodeWidthStr;
 
-use super::statusline::{HintItem, hint_line};
+use super::kit::buttons::{self, ButtonState, RowOptions};
+use super::kit::feedback::{HintItem, hint_line};
+use super::kit::form::flag_mark;
+use super::kit::geometry::{centered, short_modal_width};
+use super::kit::input::{self, FieldMode, FieldText};
+use super::kit::modal::open_modal;
+use super::text;
 use super::theme::Theme;
-use super::widgets::{centered, flag_mark, open_modal, short_modal_width};
-use super::{input_spans, text};
 use crate::connector::target::Secret;
 use crate::grid::printable;
 use crate::line_input::LineInput;
@@ -120,17 +123,22 @@ pub fn draw_password(
         Rect::new(inner.x, inner.y, inner.width, 1),
     );
     let field = Rect::new(inner.x, inner.y + 2, inner.width, 1);
-    let chars: Vec<char> = prompt.input.text().chars().map(|_| '•').collect();
     let mut spans = vec![Span::raw(format!("{}: ", text::FIELD_PASSWORD))];
     spans.extend(
-        input_spans(
-            &chars,
-            prompt.input.cursor(),
-            usize::from(inner.width).saturating_sub(10),
-            prompt.focus == 0,
+        input::view(
+            FieldText {
+                text: prompt.input.text(),
+                cursor: prompt.input.cursor(),
+                width: usize::from(inner.width).saturating_sub(10),
+                focused: prompt.focus == 0,
+                mode: FieldMode::Masked {
+                    mask: '•',
+                    limit: None,
+                },
+            },
             theme,
         )
-        .0,
+        .spans,
     );
     frame.render_widget(Paragraph::new(Line::from(spans)), field);
     let mut layout = vec![(0, field)];
@@ -164,23 +172,27 @@ pub fn draw_password(
         Paragraph::new(hint_line(&HintItem::of(hint), theme)),
         Rect::new(inner.x, inner.y + 4, inner.width, 1),
     );
-    let connect = theme.button(text::BUTTON_CONNECT);
-    let cancel = theme.button(text::OPTION_CANCEL);
+    let items = [
+        (
+            2,
+            theme.button(text::BUTTON_CONNECT),
+            if prompt.focus == 2 {
+                ButtonState::Focused
+            } else {
+                ButtonState::Idle
+            },
+        ),
+        (
+            3,
+            theme.button(text::OPTION_CANCEL),
+            if prompt.focus == 3 {
+                ButtonState::Focused
+            } else {
+                ButtonState::Idle
+            },
+        ),
+    ];
     let row = Rect::new(inner.x, inner.y + 6, inner.width, 1);
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(connect.clone(), style(2)),
-            Span::raw("  "),
-            Span::styled(cancel.clone(), style(3)),
-        ])),
-        row,
-    );
-    let connect_width = u16::try_from(connect.width()).unwrap_or(0);
-    let cancel_width = u16::try_from(cancel.width()).unwrap_or(0);
-    layout.push((2, Rect::new(row.x, row.y, connect_width, 1)));
-    layout.push((
-        3,
-        Rect::new(row.x + connect_width + 2, row.y, cancel_width, 1),
-    ));
+    layout.extend(buttons::draw(frame, row, RowOptions::DIALOG, &items, theme));
     layout
 }

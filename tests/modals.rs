@@ -13,11 +13,11 @@ use sqln::settings::SettingsForm;
 use sqln::store::config::Preferences;
 use sqln::ui::auth::{PasswordPrompt, draw_password};
 use sqln::ui::console::{draw_dialog, draw_overlay, draw_picker};
+use sqln::ui::kit::geometry::short_modal_width;
 use sqln::ui::name::{NamePrompt, NameTarget, draw_name};
 use sqln::ui::palette::draw_palette;
 use sqln::ui::settings::draw_settings;
 use sqln::ui::theme::Theme;
-use sqln::ui::widgets::short_modal_width;
 use sqln::ui::wrap::WrappedText;
 use sqln::ui::{ConflictRowView, draw_conflicts, text};
 

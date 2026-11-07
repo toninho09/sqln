@@ -1443,3 +1443,18 @@ The bar keys are in [KEYMAP.md](KEYMAP.md).
 │ 3 SELECT name FROM users;                                │
 └──────────────────────────────────────────────────────────┘
 ```
+
+## UI kit
+
+The screens share `src/ui/kit`. A new modal, field, button, or list uses the kit instead of drawing its own chrome or choosing theme fields directly.
+
+| Piece | Shared base | Allowed differences |
+|---|---|---|
+| Modal | Rounded border, `float_border`/`float_title`, `dialog` background, one space around the title, note above the buttons | Width and height, placement (center, bottom, bottom right), optional sidebar, optional heading, body (form, list, preview, editor, help), bottom title |
+| Field | Focus mark in the first column, label at `LEFT`, value at `LEFT + label`, one column of padding, `field`/`field_focus` background | `LabelWidth::Narrow` (16) or `Wide` (24); value Text, Masked, Path, Choice, Flag, or Button; browse button at the end |
+| Button | Height 1, gap 2, `theme.button` label, click area equal to the label | Dialog (focus `dialog_focus`, idle `dialog_option`), Toolbar (enabled `control`, disabled `control_off`, stops at the edge), Inline (right or left, no painted gaps) |
+| Note | `style::note_style` | Info and Hint `hint`, Success `mark_good`, Warning `mark_neutral`, Error `error` |
+| List | `style::list_row_style` | Selected `list_selected`, normal `list`; a tree or sidebar uses `tree_selected`/`tree_cursor` |
+| Panel title | `panel::draw_panel_title` | Focused `panel_title_focused`, idle `panel_title` |
+
+The only allowed differences are the rows above. A screen that needs another style adds a variant to the kit, not a new local branch.

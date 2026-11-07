@@ -6,10 +6,12 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
+use super::kit::geometry::{centered, modal_width};
+use super::kit::list::draw_prompt;
+use super::kit::modal::float_block;
 use super::theme::Theme;
-use super::widgets::{centered, draw_prompt, modal_width};
 use super::wrap::WrappedText;
-use super::{draw_scrollbar, float_block, text};
+use super::{draw_scrollbar, text};
 use crate::help::Help;
 
 fn wrapped(text: &str, width: usize) -> Vec<String> {
