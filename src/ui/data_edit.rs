@@ -3,11 +3,12 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use super::console::draw_buttons;
 use super::theme::Theme;
-use super::{draw_editor, float_block, text};
+use super::widgets::open_modal;
+use super::{draw_editor, text};
 use crate::data_edit::form::{Body, EditForm};
 use crate::grid::printable;
 
@@ -28,10 +29,7 @@ pub fn draw_edit(frame: &mut Frame, form: &mut EditForm, theme: &Theme) -> EditL
         width,
         height,
     );
-    frame.render_widget(Clear, area);
-    let block = float_block(&printable(&form.title), theme);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = open_modal(frame, area, &printable(&form.title), theme);
     let [contents, note, controls] = Layout::vertical([
         Constraint::Min(1),
         Constraint::Length(1),

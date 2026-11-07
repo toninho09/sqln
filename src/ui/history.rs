@@ -5,9 +5,9 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::palette::{ListWindow, draw_list_window};
 use super::text;
 use super::theme::Theme;
+use super::widgets::{ListWindow, draw_list_window};
 use crate::history::{HistoryList, HistoryRow};
 
 const WIDTH: u16 = 100;

@@ -7,9 +7,9 @@ use ratatui::widgets::Paragraph;
 
 use super::draw_scrollbar;
 use super::icons::{Icons, connection_symbol};
-use super::palette::draw_prompt_field;
 use super::text;
 use super::theme::Theme;
+use super::widgets::draw_prompt_field;
 use crate::connection::Connection;
 use crate::grid::printable;
 use crate::navigator::{Navigator, RowKind, RowNote};

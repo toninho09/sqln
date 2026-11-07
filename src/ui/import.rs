@@ -4,16 +4,16 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use super::console::{centered, modal_width};
-use super::settings::{
-    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, SIDEBAR_WIDTH, browse_width, draw_browse_button,
-    draw_buttons, draw_divider, draw_note, draw_row, draw_sidebar_rows, value_width,
-};
 use super::theme::Theme;
-use super::{float_block, input_spans, last_chars, text};
+use super::widgets::{
+    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, SidebarModal, browse_width, centered,
+    draw_browse_button, draw_buttons, draw_note, draw_row, draw_sidebar_rows, modal_width,
+    value_width,
+};
+use super::{input_spans, last_chars, text};
 use crate::export::NullText;
 use crate::grid::printable_start;
 use crate::import::form::{Field, ImportForm, Section};
@@ -295,23 +295,8 @@ pub fn draw_import(frame: &mut Frame, form: &ImportForm, theme: &Theme) -> Impor
     let height = BORDER_ROWS + FIRST_FIELD_ROW + SECTION_ROWS + FOOTER_ROWS;
     let width = modal_width(frame.area().width, WIDTH);
     let area = centered(frame.area(), width, height);
-    frame.render_widget(Clear, area);
-    let block = float_block(text::TITLE_IMPORT, theme);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let sidebar = Rect {
-        y: inner.y + 1,
-        width: SIDEBAR_WIDTH,
-        height: inner.height.saturating_sub(1),
-        ..inner
-    };
-    draw_divider(frame, area, sidebar.right(), theme);
-    let pane = Rect {
-        x: sidebar.right() + 1,
-        width: inner.width.saturating_sub(SIDEBAR_WIDTH + 1),
-        ..inner
-    };
+    let SidebarModal { sidebar, pane, .. } =
+        SidebarModal::open(frame, area, text::TITLE_IMPORT, theme);
 
     let names = Section::ALL.map(text::import_section_name);
     let open = Section::ALL

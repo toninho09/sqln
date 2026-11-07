@@ -4,12 +4,11 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
-use super::console::{centered, short_modal_width};
-use super::float_block;
 use super::statusline::{HintItem, hint_line};
 use super::theme::Theme;
+use super::widgets::{centered, open_modal, short_modal_width};
 use super::{input_spans, text};
 use crate::line_input::LineInput;
 
@@ -64,10 +63,7 @@ impl RequestPrompt {
 
 pub fn draw_request(frame: &mut Frame, prompt: &RequestPrompt, theme: &Theme) {
     let area = centered(frame.area(), short_modal_width(frame.area().width, 60), 6);
-    frame.render_widget(Clear, area);
-    let block = float_block(text::TITLE_AI_REQUEST, theme);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = open_modal(frame, area, text::TITLE_AI_REQUEST, theme);
     let chars: Vec<char> = prompt.input.text().chars().collect();
     let width = usize::from(inner.width).saturating_sub(11);
     let mut spans = vec![Span::raw(format!("{}: ", text::FIELD_AI_REQUEST))];

@@ -4,13 +4,12 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use super::console::{centered, short_modal_width};
-use super::float_block;
 use super::statusline::{HintItem, hint_line};
 use super::theme::Theme;
+use super::widgets::{centered, open_modal, short_modal_width};
 use super::{input_spans, text};
 use crate::connector::target::Secret;
 use crate::grid::printable;
@@ -115,10 +114,7 @@ pub fn draw_password(
     theme: &Theme,
 ) -> Vec<(usize, Rect)> {
     let area = centered(frame.area(), short_modal_width(frame.area().width, 70), 9);
-    frame.render_widget(Clear, area);
-    let block = float_block(&prompt.title, theme);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = open_modal(frame, area, &prompt.title, theme);
     frame.render_widget(
         Paragraph::new(printable(&prompt.destination)),
         Rect::new(inner.x, inner.y, inner.width, 1),

@@ -3,13 +3,12 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
-use super::console::{MODAL_FREE_ROWS, centered, fitted, modal_width};
-use super::palette::draw_prompt;
 use super::settings::WIDTH as MODAL_WIDTH;
 use super::theme::Theme;
-use super::{float_block, last_chars, text};
+use super::widgets::{MODAL_FREE_ROWS, centered, draw_prompt, fitted, modal_width, open_modal};
+use super::{last_chars, text};
 use crate::browser::{FileBrowser, RowView};
 use crate::grid::printable;
 
@@ -45,10 +44,7 @@ pub fn draw_browser(frame: &mut Frame, browser: &FileBrowser, theme: &Theme) -> 
         MAX_ROWS + CHROME_ROWS,
     );
     let area = centered(screen, width, height);
-    frame.render_widget(Clear, area);
-    let block = float_block(text::TITLE_BROWSER, theme);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = open_modal(frame, area, text::TITLE_BROWSER, theme);
 
     // The end of a path holds the open folder.
     let folder = printable(&browser.folder().display().to_string());

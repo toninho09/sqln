@@ -5,17 +5,16 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
-use super::console::{
-    centered, draw_grid, draw_panel_title, message_style, modal_width, search_line,
-};
-use super::settings::{
-    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, draw_buttons, draw_note, draw_row, value_width,
-};
+use super::console::{draw_grid, draw_panel_title, message_style, search_line};
 use super::theme::Theme;
-use super::{draw_anchored_list, float_block, input_spans, text};
+use super::widgets::{
+    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, centered, draw_buttons, draw_note, draw_row,
+    modal_width, open_modal, value_width,
+};
+use super::{draw_anchored_list, input_spans, text};
 use crate::compare::Kind;
 use crate::compare::form::{CompareForm, Field};
 use crate::compare::tab::CompareTab;
@@ -188,10 +187,7 @@ pub fn draw_compare_form(frame: &mut Frame, form: &CompareForm, theme: &Theme) -
     let height = BORDER_ROWS + FIRST_FIELD_ROW + FIELD_ROWS + FOOTER_ROWS;
     let width = modal_width(frame.area().width, WIDTH);
     let area = centered(frame.area(), width, height);
-    frame.render_widget(Clear, area);
-    let block = float_block(text::TITLE_COMPARE, theme);
-    let pane = block.inner(area);
-    frame.render_widget(block, area);
+    let pane = open_modal(frame, area, text::TITLE_COMPARE, theme);
     let mut layout = CompareLayout::default();
     let fields = &Field::ALL[..usize::from(FIELD_ROWS)];
     for (y, field) in (pane.y + FIRST_FIELD_ROW..).zip(fields.iter().copied()) {

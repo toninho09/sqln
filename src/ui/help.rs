@@ -6,9 +6,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-use super::console::{centered, modal_width};
-use super::palette::draw_prompt;
 use super::theme::Theme;
+use super::widgets::{centered, draw_prompt, modal_width};
 use super::wrap::WrappedText;
 use super::{draw_scrollbar, float_block, text};
 use crate::help::Help;

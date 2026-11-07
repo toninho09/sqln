@@ -3,13 +3,12 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use super::console::{centered, list_rows, short_modal_width};
-use super::float_block;
 use super::text;
 use super::theme::Theme;
+use super::widgets::{centered, list_rows, open_modal, short_modal_width};
 use crate::grid::printable;
 
 /// What the question shows for one script.
@@ -48,10 +47,7 @@ pub fn draw_conflicts(
     let height = u16::try_from(rows.len()).unwrap_or(limit).min(limit) + CHROME_ROWS;
     let area = centered(screen, short_modal_width(screen.width, WIDTH), height);
     let name_width = NAME_WIDTH + usize::from(area.width.saturating_sub(WIDTH));
-    frame.render_widget(Clear, area);
-    let block = float_block(text::TITLE_CONFLICTS, theme);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = open_modal(frame, area, text::TITLE_CONFLICTS, theme);
     let mut layout = ConflictLayout::default();
     for (index, row) in rows
         .iter()

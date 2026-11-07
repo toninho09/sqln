@@ -29,6 +29,7 @@ pub mod text;
 pub mod theme;
 pub mod welcome;
 pub mod which_key;
+pub mod widgets;
 pub mod wrap;
 
 use edtui::{EditorTheme, EditorView, LineNumbers};

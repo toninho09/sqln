@@ -3,11 +3,11 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use super::float_block;
 use super::theme::Theme;
+use super::widgets::open_modal;
 
 const COLUMNS: u16 = 3;
 const MAX_WIDTH: u16 = 78;
@@ -74,10 +74,7 @@ pub fn draw_which_key(
         .min(bounds.height);
     let x = bounds.x + (bounds.width - width) / 2;
     let area = Rect::new(x, bounds.bottom() - height, width, height);
-    frame.render_widget(Clear, area);
-    let block = float_block(title, theme);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = open_modal(frame, area, title, theme);
 
     let column_width = inner.width / COLUMNS;
     for (index, lines) in (0u16..).zip(columns) {

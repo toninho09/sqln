@@ -4,19 +4,17 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
-use super::console::{centered, modal_width};
-use super::float_block;
 use super::icons::connection_symbol;
 use super::input_spans;
-use super::palette::{ListWindow, draw_list_window};
-use super::settings::{
-    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, SIDEBAR_WIDTH, browse_width, draw_browse_button,
-    draw_buttons, draw_divider, draw_note, draw_sidebar_rows,
-};
 use super::text;
 use super::theme::Theme;
+use super::widgets::{
+    BORDER_ROWS, FOOTER_ROWS, LEFT, ListWindow, RIGHT, SidebarModal, browse_width, centered,
+    draw_browse_button, draw_buttons, draw_list_window, draw_note, draw_row, draw_sidebar_rows,
+    modal_width, value_width,
+};
 use crate::connector::target::hide_uri_password;
 use crate::filter_list::FilterList;
 use crate::form::{ConnectionForm, Field, FieldStyle, FormNote, Group, Kind, SchemaList};
@@ -176,60 +174,19 @@ fn draw_field_row(
     theme: &Theme,
 ) -> Option<Rect> {
     let focused = form.focus == field;
-    if focused {
-        let mark = Span::styled(theme.icons.focus_mark, theme.panel_title_focused);
-        frame.render_widget(
-            Paragraph::new(mark),
-            Rect {
-                x: area.x + 1,
-                width: 1,
-                ..area
-            },
-        );
+    let mut width = value_width(area, LABEL_WIDTH);
+    if field.opens_window() {
+        width = width.saturating_sub(usize::from(browse_width(theme)));
     }
-    let label_style = if focused {
-        theme.panel_title_focused
-    } else {
-        Style::new()
-    };
-    let label_area = Rect {
-        x: area.x + LEFT,
-        width: LABEL_WIDTH,
-        ..area
-    };
-    let name = label(form.kind, field);
-    frame.render_widget(Paragraph::new(name).style(label_style), label_area);
-
-    let start = area.x + LEFT + LABEL_WIDTH;
-    let value = Rect {
-        x: start,
-        width: area.right().saturating_sub(start + RIGHT),
-        ..area
-    };
-    // The background comes first, because the text and the cursor have their own styles.
-    frame.buffer_mut().set_style(
-        value,
-        if focused {
-            theme.field_focus
-        } else {
-            theme.field
-        },
+    let spans = value_spans(form, field, width.max(1), theme);
+    draw_row(
+        frame,
+        area,
+        (label(form.kind, field), LABEL_WIDTH),
+        focused,
+        Line::from(spans),
+        theme,
     );
-    let text = Rect {
-        x: value.x + 1,
-        width: value.width.saturating_sub(2),
-        ..value
-    };
-    let text = Rect {
-        width: text.width.saturating_sub(if field.opens_window() {
-            browse_width(theme)
-        } else {
-            0
-        }),
-        ..text
-    };
-    let spans = value_spans(form, field, usize::from(text.width).max(1), theme);
-    frame.render_widget(Paragraph::new(Line::from(spans)), text);
     field
         .opens_window()
         .then(|| draw_browse_button(frame, area, focused, theme))
@@ -246,27 +203,11 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
     let height =
         BORDER_ROWS + FIRST_FIELD_ROW + u16::try_from(tallest).unwrap_or(u16::MAX) + FOOTER_ROWS;
     let area = centered(frame.area(), modal_width(frame.area().width, WIDTH), height);
-    frame.render_widget(Clear, area);
     let title = match &form.editing {
         None => text::TITLE_NEW_CONNECTION.to_owned(),
         Some(_) => text::edit_connection_title(&printable(form.text(Field::Name))),
     };
-    let block = float_block(&title, theme);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let sidebar = Rect {
-        y: inner.y + 1,
-        width: SIDEBAR_WIDTH,
-        height: inner.height.saturating_sub(1),
-        ..inner
-    };
-    draw_divider(frame, area, sidebar.right(), theme);
-    let pane = Rect {
-        x: sidebar.right() + 1,
-        width: inner.width.saturating_sub(SIDEBAR_WIDTH + 1),
-        ..inner
-    };
+    let SidebarModal { sidebar, pane, .. } = SidebarModal::open(frame, area, &title, theme);
     let open = form.shown_section();
     let titles: Vec<&str> = sections
         .iter()

@@ -12,6 +12,10 @@ use unicode_width::UnicodeWidthStr;
 
 use super::theme::Theme;
 use super::welcome::{Welcome, draw_welcome};
+use super::widgets::{
+    MODAL_FREE_COLUMNS, MODAL_FREE_ROWS, MODAL_WIDTH_LIMIT, SHORT_MODAL_WIDTH_LIMIT, centered,
+    fitted, list_rows, open_modal, short_modal_width,
+};
 use super::wrap::WrappedText;
 use super::{draw_editor, draw_scrollbar, float_block, text};
 use crate::connector::Namespace;
@@ -871,44 +875,6 @@ pub fn grid_cell_at(
 }
 
 /// The columns that stay free beside a modal that grows.
-const MODAL_FREE_COLUMNS: u16 = 8;
-/// The rows that stay free above and below a modal that grows.
-pub(super) const MODAL_FREE_ROWS: u16 = 4;
-const MODAL_WIDTH_LIMIT: u16 = 140;
-const SHORT_MODAL_WIDTH_LIMIT: u16 = 100;
-const LIST_ROWS_LIMIT: u16 = 30;
-
-/// Returns a size that leaves `free` cells of the screen, from `base` to `limit`.
-pub fn fitted(screen: u16, free: u16, base: u16, limit: u16) -> u16 {
-    screen.saturating_sub(free).clamp(base, limit.max(base))
-}
-
-/// Returns the width of a modal. A long path needs the free columns of a wide screen.
-pub fn modal_width(screen: u16, base: u16) -> u16 {
-    fitted(screen, MODAL_FREE_COLUMNS, base, MODAL_WIDTH_LIMIT)
-}
-
-/// Returns the width of a modal with short rows, such as a list of names.
-pub fn short_modal_width(screen: u16, base: u16) -> u16 {
-    fitted(screen, MODAL_FREE_COLUMNS, base, SHORT_MODAL_WIDTH_LIMIT)
-}
-
-/// Returns the largest count of rows of a list. `chrome` is the other rows of its window.
-pub fn list_rows(screen: u16, chrome: u16, base: u16) -> u16 {
-    fitted(screen, MODAL_FREE_ROWS + chrome, base, LIST_ROWS_LIMIT)
-}
-
-pub fn centered(area: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(area.width);
-    let height = height.min(area.height);
-    Rect::new(
-        area.x + (area.width - width) / 2,
-        area.y + (area.height - height) / 2,
-        width,
-        height,
-    )
-}
-
 /// Draws a question. It returns the columns of each option and the row of the options.
 pub fn draw_dialog(
     frame: &mut Frame,
@@ -930,10 +896,7 @@ pub fn draw_dialog(
         width,
         u16::try_from(body_rows).unwrap_or(10).saturating_add(4),
     );
-    frame.render_widget(Clear, box_area);
-    let block = float_block(title, theme);
-    let inner = block.inner(box_area);
-    frame.render_widget(block, box_area);
+    let inner = open_modal(frame, box_area, title, theme);
 
     let [message, buttons] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(inner);
@@ -980,10 +943,7 @@ pub fn draw_picker(
         short_modal_width(screen.width, PICKER_WIDTH),
         rows + PICKER_CHROME_ROWS,
     );
-    frame.render_widget(Clear, box_area);
-    let block = float_block(title, theme);
-    let inner = block.inner(box_area);
-    frame.render_widget(block, box_area);
+    let inner = open_modal(frame, box_area, title, theme);
     let height = usize::from(inner.height.saturating_sub(1)).max(1);
     let first = (cursor + 1).saturating_sub(height);
     let mut lines: Vec<Line> = items
