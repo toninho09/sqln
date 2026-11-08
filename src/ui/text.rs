@@ -590,6 +590,8 @@ pub const REDIS_BAD_REPLY: &str = "The server sent a reply that SQLN cannot read
 pub const REDIS_NO_TRANSACTIONS: &str = "Redis has no manual transactions. Use MULTI in a script.";
 pub const REDIS_READ_ONLY: &str =
     "This connection is read only, and the server does not mark this command as a read.";
+/// DuckDB fixes its access mode when the file opens, so a session refuses a write here.
+pub const DUCKDB_READ_ONLY: &str = "This connection is read only. A DuckDB connection cannot change its access mode, so SQLN refuses the write here.";
 pub const REDIS_CONTINUOUS: &str =
     "SQLN cannot show a continuous stream, so it refuses this command.";
 pub const REDIS_IDENTITY: &str =
@@ -697,6 +699,7 @@ pub const VALUE_POSTGRES: &str = "PostgreSQL";
 pub const VALUE_MYSQL: &str = "MySQL";
 pub const VALUE_REDIS: &str = "Redis/Valkey";
 pub const VALUE_SQLITE: &str = "SQLite";
+pub const VALUE_DUCKDB: &str = "DuckDB";
 pub const VALUE_SCOPE_PROJECT: &str = "Project";
 pub const VALUE_SCOPE_GLOBAL: &str = "Global";
 pub const VALUE_FIELDS: &str = "Fields";
@@ -1997,7 +2000,8 @@ Assistant:
                          instance and approve access in its terminal interface.
 
 Target:
-  A SQLite file, or a URI such as postgres://user@host/name. Without a password
+  A SQLite file, a DuckDB target such as duckdb:file.duckdb or duckdb: (in
+  memory), or a URI such as postgres://user@host/name. Without a password
   in the URI, SQLN asks for it. A password in a URI stays in the shell history.
   The connection of a target lasts for this session, and SQLN saves nothing of it.
 
@@ -2011,8 +2015,8 @@ Options:
   -V, --version          Show the version.
 
 Development options:
-  --dialect <name>       Use postgres, mysql, sqlite, or redis in a console without
-                         a connection.
+  --dialect <name>       Use postgres, mysql, sqlite, duckdb, or redis in a console
+                         without a connection.
 
 The settings and the connections are in config.json, in the global folder
 (~/.config/sqln, or $XDG_CONFIG_HOME/sqln) and in the .sqln folder of the project.

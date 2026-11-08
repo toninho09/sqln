@@ -3,7 +3,7 @@ target/
 .test-certs/
 .pi/
 spikes/
-test.db
+test.db*
 test.sql
 .codegraph
 .commandcode

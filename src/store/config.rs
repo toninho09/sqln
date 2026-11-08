@@ -18,6 +18,7 @@ use crate::connection::{
     DEFAULT_BUSY_SECONDS, DEFAULT_IDLE_SECONDS, DEFAULT_POOL_LIMIT, DEFAULT_SQL_SECONDS,
     Definition, Source,
 };
+use crate::connector::duckdb::DuckdbTarget;
 use crate::connector::sqlite::{SqliteTarget, file_source};
 use crate::connector::target::{Address, ClientCertificate, Engine, NetworkTarget, Tls, TlsFiles};
 use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode};
@@ -278,17 +279,18 @@ pub enum KindName {
     Postgres,
     Mysql,
     Sqlite,
+    Duckdb,
     Redis,
 }
 
 impl KindName {
-    /// Returns the engine of a network connection. SQLite has no engine.
+    /// Returns the engine of a network connection. SQLite and DuckDB have no engine.
     fn engine(self) -> Option<Engine> {
         match self {
             KindName::Postgres => Some(Engine::Postgres),
             KindName::Mysql => Some(Engine::MySql),
             KindName::Redis => Some(Engine::Redis),
-            KindName::Sqlite => None,
+            KindName::Sqlite | KindName::Duckdb => None,
         }
     }
 }
@@ -548,7 +550,10 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
     match entry.kind.engine() {
         None => {
             if !non_empty(entry.file.as_ref()) {
-                return Err("A SQLite connection needs a file.".to_owned());
+                return Err(match entry.kind {
+                    KindName::Duckdb => "A DuckDB connection needs a file.".to_owned(),
+                    _ => "A SQLite connection needs a file.".to_owned(),
+                });
             }
         }
         Some(engine) => {
@@ -596,6 +601,15 @@ fn seconds(value: Option<u64>) -> Option<Duration> {
 /// Builds the definition of a validated entry. `base` is the folder of the scope.
 pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
     let source = match entry.kind.engine() {
+        None if entry.kind == KindName::Duckdb => {
+            let file = entry.file.clone().unwrap_or_default();
+            let mut target = DuckdbTarget {
+                source: crate::connector::duckdb::file_source(&file),
+                ..DuckdbTarget::new(PathBuf::new())
+            };
+            target.read_only = entry.read_only;
+            Source::Duckdb(target)
+        }
         None => {
             let file = entry.file.clone().unwrap_or_default();
             let mut target = SqliteTarget {
@@ -693,6 +707,7 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
     };
     match &definition.source {
         Source::Sqlite(target) => {
+            entry.kind = KindName::Sqlite;
             entry.file = Some(match &target.source {
                 crate::connector::sqlite::SqliteSource::File(path) => path_text(path),
                 crate::connector::sqlite::SqliteSource::Memory => ":memory:".to_owned(),
@@ -700,6 +715,13 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
             entry.foreign_keys = target.foreign_keys;
             entry.busy_timeout_millis =
                 Some(u64::try_from(target.busy_timeout.as_millis()).unwrap_or(u64::MAX));
+        }
+        Source::Duckdb(target) => {
+            entry.kind = KindName::Duckdb;
+            entry.file = Some(match &target.source {
+                crate::connector::duckdb::DuckdbSource::File(path) => path_text(path),
+                crate::connector::duckdb::DuckdbSource::Memory => ":memory:".to_owned(),
+            });
         }
         Source::Network(target) => {
             entry.kind = match target.engine {

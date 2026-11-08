@@ -1,6 +1,6 @@
 # AI SQL completion
 
-AI completion is optional and off by default. It supports consoles associated with PostgreSQL, MySQL, and SQLite.
+AI completion is optional and off by default. It supports consoles associated with PostgreSQL, MySQL, SQLite, and DuckDB.
 It does not execute generated SQL. It does not use MCP sessions or agent access.
 
 ## Configure

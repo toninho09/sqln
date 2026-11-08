@@ -1258,8 +1258,11 @@ impl App {
     pub(super) fn create_form_file(&mut self) {
         match self.form_definition() {
             Some(Ok(mut definition)) => {
-                if let Source::Sqlite(target) = &mut definition.source {
-                    target.allow_create = true;
+                // The user accepted the creation, so the connection may make the file.
+                match &mut definition.source {
+                    Source::Sqlite(target) => target.allow_create = true,
+                    Source::Duckdb(target) => target.allow_create = true,
+                    Source::Network(_) => {}
                 }
                 self.apply_definition(definition);
             }
@@ -1440,13 +1443,22 @@ impl App {
     }
 }
 
-/// Returns the full path of a SQLite file that does not exist yet.
+/// Returns the full path of a file that does not exist yet.
 fn missing_file(definition: &Definition) -> Option<String> {
     match definition.resolved_source() {
         Source::Sqlite(target)
             if matches!(
                 target.source,
                 crate::connector::sqlite::SqliteSource::File(_)
+            ) && !target.source_exists()
+                && !target.allow_create =>
+        {
+            Some(target.file_display())
+        }
+        Source::Duckdb(target)
+            if matches!(
+                target.source,
+                crate::connector::duckdb::DuckdbSource::File(_)
             ) && !target.source_exists()
                 && !target.allow_create =>
         {

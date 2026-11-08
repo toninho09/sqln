@@ -1,5 +1,6 @@
 //! The contract of the database connectors. Only this module knows driver types.
 
+pub mod duckdb;
 pub mod mysql;
 pub mod postgres;
 pub mod redis;

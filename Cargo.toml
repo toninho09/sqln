@@ -13,6 +13,7 @@ async-trait = "0.1"
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 crossterm = "0.29.0"
+duckdb = { version = "1.20000.1", default-features = false, features = ["bundled"] }
 edtui = { version = "0.11.7", default-features = false, features = ["mouse-support"] }
 futures-util = "0.3"
 keyring-core = "1.0.1"
@@ -76,6 +77,10 @@ path = "tests/auto_refresh.rs"
 [[test]]
 name = "diagram"
 path = "tests/diagram.rs"
+
+[[test]]
+name = "duckdb"
+path = "tests/duckdb.rs"
 
 [[test]]
 name = "editing"

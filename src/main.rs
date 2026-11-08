@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use sqln::app::{Options, run};
 use sqln::connection::{Definition, Source};
+use sqln::connector::duckdb::{DuckdbTarget, file_source as duckdb_source};
 use sqln::connector::target::{OpenTarget, open_target};
 use sqln::sql::Dialect;
 use sqln::store::{self, Root, Store};
@@ -63,6 +64,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
                     Some("postgres") => Dialect::Postgres,
                     Some("mysql") => Dialect::MySql,
                     Some("sqlite") => Dialect::Sqlite,
+                    Some("duckdb") => Dialect::DuckDb,
                     Some("redis") => Dialect::Redis,
                     other => return Err(format!("Unknown dialect: {}", other.unwrap_or(""))),
                 });
@@ -79,6 +81,14 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
 fn open(options: &mut Options, target: &str) -> Result<(), String> {
     match open_target(target)? {
         OpenTarget::File(path) => options.database = Some(path),
+        OpenTarget::Duckdb(text) => {
+            let target = DuckdbTarget {
+                source: duckdb_source(&text),
+                allow_create: true,
+                read_only: false,
+            };
+            options.connections.push(Definition::duckdb(target));
+        }
         OpenTarget::Network(mut target) => {
             if target.password.is_none() && target.engine.needs_user() && stdin().is_terminal() {
                 target.password = read_password(&text::password_prompt(&target.user))

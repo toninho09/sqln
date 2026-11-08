@@ -1867,3 +1867,26 @@ The user asked for a shared UI kit: easier screen creation, one visual language,
 | List | Selected `list_selected`, normal `list`; trees use `tree_selected`/`tree_cursor` | `dialog_focus` for list selection | Lists, trees, and fields keep different meanings |
 | Visual changes | Form label 25 → 24; `Info` notes from `status` to `hint`; list normal rows from `dialog` to `list`; picker/conflicts selection from `dialog_focus` to `list_selected` | Keep every current value | The user asked for fewer variations; these are the only pixels that change |
 | Exceptions | The parameters panel keeps its byte cursor and display-width renderer; the editor review keeps its key/label degradation above the kit | Force every renderer into the kit at once | Both have rules that the form row does not share |
+
+## DuckDB — 2026-11-07
+
+The user asked for DuckDB support. The delivery is the engine and the essential interface: the connector, the connection form, `config.json`, the command line, and the icon. Schema compare, the ER diagram, the DDL window, `EXPLAIN`, grid editing, and the foreign-key reads stay out.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Driver | The `duckdb` crate `1.20000.1` with `default-features = false, features = ["bundled"]` | Default features | The default of `libduckdb-sys` downloads a prebuilt library at build time; the bundled source builds offline and reproducibly, at the cost of a long C++ build |
+| Model | One file or one database in memory, as SQLite | A network server | DuckDB is embedded; the model and the thread-per-session bridge of `connector/sqlite.rs` fit it exactly |
+| Sessions | The connector opens the database once in an owner thread, and each session clones that connection with `try_clone` | `Connection::open` for each session | Two `open` calls on one file make two isolated instances: a write of one session stays invisible to the other, and the writes of the pool are lost |
+| Owner start | The lock of the first open spans the wait, so concurrent first connections never open the file twice | A check after the open | Two opens of one file race for its lock, and one of them fails |
+| Dead owner | A file clears the dead owner and starts a new one once; a database in memory keeps the failure | A restart for every source | The thread is the only holder of the database: a database in memory dies with it, and a restart would hand out an empty database without a word |
+| In memory | `single_session` and no idle close, as an in-memory SQLite database | A pool of sessions | A new connection starts with an empty database |
+| Result read | Arrow through `stream_arrow`, with `array_value_to_string` for each cell | `Row::get::<String>` | The driver refuses `String` for a list, a struct, or a map, and an owning read materializes every row before the row cap applies |
+| Change count | `execute` when the prepared statement reports no result column, and also when the statement changes rows without `RETURNING` | Only the column count, as the SQLite connector does | DuckDB answers every row change, also under `WITH`, with one `Count` column that is already in the prepared statement, and it would reach the grid as a user result |
+| Current schema | The catalog reads `SELECT current_schema()` of the session, as PostgreSQL does | A fixed `main` | A console changes the schema with `SET schema`, and the catalog is read on the session that holds it |
+| Transaction state | The session keeps it from the statements it runs | `Connection::is_autocommit` | The driver reports that function as a constant `true` |
+| Aborted transaction | `Failed`, and only `ROLLBACK` ends it | `Open` | DuckDB refuses every statement after an error inside a transaction, as PostgreSQL does |
+| Read-only | `access_mode = READ_ONLY` when the file opens, from the definition | A check of each statement only | The engine enforces it, and a file cannot open read-write and read-only at once |
+| Read-only of the settings | Refuse a data-changing statement in the connector | Open the file read-only | A DuckDB connection cannot change its access mode after it opens, so the global preference, the agent, and a reservation need a check outside the engine |
+| External files | Refuse a `csv`, `tsv`, `parquet`, `json`, `jsonl`, or `ndjson` file, and name `read_csv`, `read_parquet`, or `read_json` | Open it, as the driver does | `Connection::open` of one of these starts a database in memory without a word, so a table of the session disappears at the end |
+| Command line | The `duckdb:` scheme, with `duckdb:` and `duckdb::memory:` in memory | Detect a file extension | A bare path stays a SQLite file, which the current behavior requires |
+| Form order | DuckDB at the end of the type choices | Next to SQLite | The tests of the form reach a kind by counting arrows |

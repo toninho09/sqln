@@ -4,7 +4,7 @@ use crate::sql::Dialect;
 
 pub fn types(dialect: Dialect) -> &'static [&'static str] {
     match dialect {
-        Dialect::Postgres => &[
+        Dialect::Postgres | Dialect::DuckDb => &[
             "SMALLINT",
             "INTEGER",
             "BIGINT",
@@ -105,7 +105,7 @@ const COMMON_FUNCTIONS: &[(&str, &str)] = &[
 
 pub fn functions(dialect: Dialect) -> impl Iterator<Item = (&'static str, &'static str)> {
     let specific: &[(&str, &str)] = match dialect {
-        Dialect::Postgres => &[
+        Dialect::Postgres | Dialect::DuckDb => &[
             ("SUBSTRING", "SUBSTRING(text, start, count)"),
             ("CONCAT", "CONCAT(value, ...)"),
             ("STRING_AGG", "STRING_AGG(value, delimiter)"),

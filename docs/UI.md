@@ -789,7 +789,7 @@ The form has a sidebar, as the Settings dialog has. Each section shows its own f
 | Security | TLS, CA file, client certificate, and client key |
 | Options | Schemas (Databases in MySQL and Redis), SQLite foreign keys and busy limit, Pool, Read only, Production, Connect limit, SQL limit, Idle limit, Theme, and Icon |
 
-A section without fields stays out of the sidebar, so SQLite has no Credentials and no Security.
+A section without fields stays out of the sidebar, so SQLite has no Credentials and no Security. DuckDB shows File and Schemas, and it has no busy timeout or foreign keys.
 The buttons stay at the bottom of each section.
 All sections keep the height of the largest section, so the window does not move. The width starts at 76 columns, grows to 140 columns on a larger screen, and leaves 8 columns free.
 The form of a connected connection also has the sidebar: General holds the name, and Options holds the schemas, the theme, the icon, and the production mark.

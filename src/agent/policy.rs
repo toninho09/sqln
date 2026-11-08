@@ -3,7 +3,7 @@
 use super::Error;
 use crate::sql::{Dialect, TokenKind, is_plain_read, tokenize};
 use sqlparser::ast::{Query, Select, Statement, Visit, Visitor};
-use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+use sqlparser::dialect::{DuckDbDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
 use std::ops::ControlFlow;
 
@@ -49,6 +49,7 @@ pub fn validate(statements: &[String], dialect: Dialect) -> Result<(), Error> {
             Dialect::Postgres => Parser::parse_sql(&PostgreSqlDialect {}, sql),
             Dialect::MySql => Parser::parse_sql(&MySqlDialect {}, sql),
             Dialect::Sqlite => Parser::parse_sql(&SQLiteDialect {}, sql),
+            Dialect::DuckDb => Parser::parse_sql(&DuckDbDialect {}, sql),
             Dialect::Redis => unreachable!(),
         }
         .map_err(|_| refused())?;

@@ -99,6 +99,7 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
             Kind::MySql => text::VALUE_MYSQL,
             Kind::Redis => text::VALUE_REDIS,
             Kind::Sqlite => text::VALUE_SQLITE,
+            Kind::Duckdb => text::VALUE_DUCKDB,
         },
         Field::Scope if form.scope == Scope::Project => text::VALUE_SCOPE_PROJECT,
         Field::Scope => text::VALUE_SCOPE_GLOBAL,

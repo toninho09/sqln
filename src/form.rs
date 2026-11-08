@@ -11,6 +11,7 @@ use crate::connection::{
     DEFAULT_BUSY_SECONDS, DEFAULT_CONNECT_SECONDS, DEFAULT_IDLE_SECONDS, DEFAULT_POOL_LIMIT,
     DEFAULT_SQL_SECONDS, Definition, Source,
 };
+use crate::connector::duckdb::DuckdbTarget;
 use crate::connector::sqlite::{SqliteTarget, validate_path};
 use crate::connector::target::{
     Address, ClientCertificate, Engine, NetworkTarget, Secret, Tls, TlsFiles, parse_uri,
@@ -148,17 +149,23 @@ pub enum Kind {
     MySql,
     Sqlite,
     Redis,
+    Duckdb,
 }
 
 impl Kind {
-    /// Returns the engine of a network connection. SQLite has no engine.
+    /// Returns the engine of a network connection. SQLite and DuckDB have no engine.
     fn engine(self) -> Option<Engine> {
         match self {
             Kind::Postgres => Some(Engine::Postgres),
             Kind::MySql => Some(Engine::MySql),
             Kind::Redis => Some(Engine::Redis),
-            Kind::Sqlite => None,
+            Kind::Sqlite | Kind::Duckdb => None,
         }
+    }
+
+    /// Returns true for a source that holds one file.
+    fn is_file(self) -> bool {
+        matches!(self, Kind::Sqlite | Kind::Duckdb)
     }
 }
 
@@ -344,6 +351,12 @@ impl ConnectionForm {
                     target.busy_timeout.as_secs().to_string(),
                 );
             }
+            Source::Duckdb(target) => {
+                form.kind = Kind::Duckdb;
+                let file = target.file_display();
+                form.stored_file = Some(file.clone());
+                form.set(Field::File, file);
+            }
             Source::Network(target) => form.fill_network(target),
         }
         form.cursor = form.focused_len();
@@ -408,7 +421,7 @@ impl ConnectionForm {
     pub fn fields(&self) -> Vec<Field> {
         if self.display_only {
             let mut fields = vec![Field::Name];
-            if self.kind != Kind::Sqlite {
+            if !self.kind.is_file() {
                 fields.push(Field::Schemas);
             }
             fields.extend([
@@ -427,6 +440,7 @@ impl ConnectionForm {
         }
         match self.kind {
             Kind::Sqlite => fields.extend([Field::File, Field::ForeignKeys, Field::BusyTimeout]),
+            Kind::Duckdb => fields.extend([Field::File, Field::Schemas]),
             _ if self.use_uri => fields.extend([Field::Entry, Field::Uri, Field::Credential]),
             _ => fields.extend([
                 Field::Entry,
@@ -442,11 +456,11 @@ impl ConnectionForm {
                 Field::ClientKey,
             ]),
         }
-        if self.kind != Kind::Sqlite {
+        if !self.kind.is_file() {
             fields.push(Field::Schemas);
         }
         fields.extend([Field::Pool, Field::ReadOnly, Field::Production]);
-        if self.kind != Kind::Sqlite {
+        if !self.kind.is_file() {
             fields.push(Field::ConnectTimeout);
         }
         fields.extend([
@@ -545,7 +559,13 @@ impl ConnectionForm {
     fn change(&mut self, forward: bool) {
         match self.focus {
             Field::Kind => {
-                let order = [Kind::Postgres, Kind::MySql, Kind::Sqlite, Kind::Redis];
+                let order = [
+                    Kind::Postgres,
+                    Kind::MySql,
+                    Kind::Sqlite,
+                    Kind::Redis,
+                    Kind::Duckdb,
+                ];
                 let index = order
                     .iter()
                     .position(|kind| *kind == self.kind)
@@ -887,6 +907,22 @@ impl ConnectionForm {
         Ok(target)
     }
 
+    fn duckdb_target(&self) -> Result<DuckdbTarget, Invalid> {
+        let file = self.trimmed(Field::File);
+        if file.is_empty() {
+            return Err(invalid(Field::File, text::FORM_NEEDS_FILE));
+        }
+        if file.eq_ignore_ascii_case(":memory:") {
+            // A database in memory needs no file, and it lives in one session.
+            let mut target = DuckdbTarget::in_memory();
+            target.read_only = self.read_only;
+            return Ok(target);
+        }
+        let mut target = DuckdbTarget::new(self.file_path(file)?);
+        target.read_only = self.read_only;
+        Ok(target)
+    }
+
     /// Returns the path of the SQLite file. A path that the user writes starts at the
     /// current folder, and it becomes a full path, so the test and the saved connection
     /// open the same file. A saved path keeps its meaning in the configuration.
@@ -905,6 +941,7 @@ impl ConnectionForm {
             return Err(invalid(Field::Name, text::FORM_NEEDS_NAME));
         }
         let source = match self.kind.engine() {
+            None if self.kind == Kind::Duckdb => Source::Duckdb(self.duckdb_target()?),
             None => Source::Sqlite(self.sqlite_target()?),
             Some(engine) if self.use_uri => Source::Network(self.uri_target(engine)?),
             Some(engine) => Source::Network(self.network_target(engine)?),
@@ -921,6 +958,8 @@ impl ConnectionForm {
         definition.max_connections = usize::try_from(limit).unwrap_or(usize::MAX);
         if self.kind != Kind::Sqlite {
             definition.schemas = self.schemas()?;
+        }
+        if !self.kind.is_file() {
             let seconds = self.number(Field::ConnectTimeout, text::FIELD_CONNECT)?;
             if seconds == 0 {
                 return Err(invalid(

@@ -173,7 +173,7 @@ fn definition(tokens: &[Token], text: &str, dialect: Dialect, opens: &[usize]) -
     let tail = &tokens[end..];
     if tail.is_empty() {
         return Some(words(match dialect {
-            Dialect::Postgres => &[
+            Dialect::Postgres | Dialect::DuckDb => &[
                 "ADD COLUMN",
                 "DROP COLUMN",
                 "ALTER COLUMN",
@@ -313,7 +313,7 @@ fn column(tokens: &[Token], text: &str, dialect: Dialect) -> Position {
                 options.push("AUTOINCREMENT");
             }
         }
-        Dialect::Postgres | Dialect::Redis => {}
+        Dialect::Postgres | Dialect::DuckDb | Dialect::Redis => {}
     }
     options.retain(|option| {
         let word = option.split_whitespace().next().unwrap_or(option);

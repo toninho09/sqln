@@ -107,6 +107,15 @@ fn the_field_exists_for_network_kinds_also_when_connected() {
     form.kind = Kind::Sqlite;
     assert!(!form.fields().contains(&Field::Schemas));
 
+    // A DuckDB connection keeps its schemas, but it has no busy timeout or foreign keys.
+    let mut form = ConnectionForm::new();
+    form.kind = Kind::Duckdb;
+    assert!(form.fields().contains(&Field::Schemas));
+    assert!(form.fields().contains(&Field::File));
+    assert!(!form.fields().contains(&Field::BusyTimeout));
+    assert!(!form.fields().contains(&Field::ForeignKeys));
+    assert!(!form.fields().contains(&Field::Host));
+
     let mut definition = network(Engine::Postgres);
     definition.schemas = list(&["public", "sales"]);
     let connected = ConnectionForm::editing(1, &definition, true);

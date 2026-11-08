@@ -14,7 +14,7 @@ The file paths are relative to `src/`.
 | 2 | Key map and discovery | `input.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `ui/text.rs` |
 | 3 | Navigator and tree filter | `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs` |
 | 4 | Connections and connection form | `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs` |
-| 5 | Database connectors | `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/redis.rs`, `connector/tls.rs` |
+| 5 | Database connectors | `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/duckdb.rs`, `connector/redis.rs`, `connector/tls.rs` |
 | 6 | Connection pool | `pool.rs` |
 | 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs` |
 | 7a | Query plan | `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs` |
@@ -67,16 +67,16 @@ The navigator shows the tree of connections, consoles, schemas, relations, colum
 
 Files: `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs`.
 
-`Definition` holds the connection settings, and `Source` selects a SQLite file or a network target.
+`Definition` holds the connection settings, and `Source` selects a SQLite file, a DuckDB file, or a network target.
 `ConnectionKey` holds the saved connection ID and its global or project scope. The form holds text only and builds a definition on request. `app/connections` owns the catalogs and the actions of the navigator and the form. A file or a URI from the command line enters `connector/target`; that connection lives for the session only and writes no file. `p` in the navigator erases the saved password, and the removal of a connection offers that deletion separately.
 
 ## 5. Database connectors
 
-Files: `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/redis.rs`, `connector/tls.rs`.
+Files: `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/duckdb.rs`, `connector/redis.rs`, `connector/tls.rs`.
 
-`Connector` declares the dialect and the `Capabilities`. `Session` runs one statement, delivers the rows to `ResultSink`, and reports the transaction state. Only this module knows driver types. PostgreSQL reads through the simple protocol, so each value keeps the database text. MySQL keeps the text and reads notices with `SHOW WARNINGS`. SQLite runs `rusqlite` on its own thread, because the driver is synchronous. The `:memory:` file text opens one database in memory, which lives in the only session of its pool: `Capabilities::single_session` limits the pool to one place, no idle timeout closes it, and the session returns clean instead of discarded, so temporary tables persist until a disconnect. Redis runs one command per line, with the quote rules of `split_words`. TLS uses verification by default, except on `localhost`, loopback, and Unix sockets; `connector/tls` reads CA and client certificate files.
+`Connector` declares the dialect and the `Capabilities`. `Session` runs one statement, delivers the rows to `ResultSink`, and reports the transaction state. Only this module knows driver types. PostgreSQL reads through the simple protocol, so each value keeps the database text. MySQL keeps the text and reads notices with `SHOW WARNINGS`. SQLite runs `rusqlite` on its own thread, because the driver is synchronous; DuckDB follows the same pattern with `duckdb`, and it reads the result through Arrow, so a list, a struct, and a timestamp keep the text of the database. The `:memory:` file text opens one database in memory, which lives in the only session of its pool: `Capabilities::single_session` limits the pool to one place, no idle timeout closes it, and the session returns clean instead of discarded, so temporary tables persist until a disconnect. Redis runs one command per line, with the quote rules of `split_words`. TLS uses verification by default, except on `localhost`, loopback, and Unix sockets; `connector/tls` reads CA and client certificate files.
 
-Cancellation uses a `Canceller` separate from the session: `CancelToken` on PostgreSQL, `KILL QUERY` on a temporary connection on MySQL, `InterruptHandle` on SQLite, and `CLIENT UNBLOCK` on Redis. Cleaning returns the session to its base state (`DISCARD ALL` without `DEALLOCATE ALL`, `Conn::reset`, drop, or `DISCARD`, the `CLIENT` modes, and `UNWATCH`).
+Cancellation uses a `Canceller` separate from the session: `CancelToken` on PostgreSQL, `KILL QUERY` on a temporary connection on MySQL, `InterruptHandle` on SQLite and DuckDB, and `CLIENT UNBLOCK` on Redis. Cleaning returns the session to its base state (`DISCARD ALL` without `DEALLOCATE ALL`, `Conn::reset`, drop, or `DISCARD`, the `CLIENT` modes, and `UNWATCH`).
 
 ## 6. Connection pool
 

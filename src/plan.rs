@@ -109,6 +109,7 @@ pub fn plan_view(dialect: Dialect, raw: &ResultTable) -> Option<PlanView> {
         Dialect::MySql => read_mysql(&first_cell()?)?,
         Dialect::Sqlite => read_sqlite(raw)?,
         Dialect::Redis => return None,
+        Dialect::DuckDb => return None,
     };
     let shares = shares(&reading.nodes);
     let columns = columns(&reading.nodes, &shares);

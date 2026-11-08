@@ -48,6 +48,7 @@ pub struct Icons {
     pub postgres: &'static str,
     pub mysql: &'static str,
     pub sqlite: &'static str,
+    pub duckdb: &'static str,
     pub redis: &'static str,
     /// The marks of a key column in a diagram box. A column in both keys shows the first.
     pub primary_key: &'static str,
@@ -117,6 +118,7 @@ impl Icons {
             postgres: "pg",
             mysql: "my",
             sqlite: "sq",
+            duckdb: "dk",
             redis: "rd",
             primary_key: "PK",
             foreign_key: "FK",
@@ -162,6 +164,7 @@ impl Icons {
             postgres: "pg",
             mysql: "my",
             sqlite: "sq",
+            duckdb: "dk",
             redis: "rd",
             primary_key: "◆",
             foreign_key: "◇",
@@ -207,6 +210,7 @@ impl Icons {
             postgres: "\u{e76e}",
             mysql: "\u{e704}",
             sqlite: "\u{e7c4}",
+            duckdb: "\u{e7c4}",
             redis: "\u{e76d}",
             primary_key: "\u{f084}",
             foreign_key: "\u{f0c1}",
@@ -231,12 +235,13 @@ impl Icons {
             Dialect::Postgres => self.postgres,
             Dialect::MySql => self.mysql,
             Dialect::Sqlite => self.sqlite,
+            Dialect::DuckDb => self.duckdb,
             Dialect::Redis => self.redis,
         }
     }
 
     /// Returns each symbol of the set, for the checks of the column width.
-    pub fn all(&self) -> [&'static str; 41] {
+    pub fn all(&self) -> [&'static str; 42] {
         [
             self.run,
             self.script,
@@ -274,6 +279,7 @@ impl Icons {
             self.postgres,
             self.mysql,
             self.sqlite,
+            self.duckdb,
             self.redis,
             self.primary_key,
             self.foreign_key,

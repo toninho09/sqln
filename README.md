@@ -5,7 +5,7 @@ A terminal database client with several connections, SQL consoles, and table tab
 SQLN brings an editor, a database navigator, and a results grid into one terminal.
 Use familiar editor keys or Vim mode. Keep scripts with a project, or use global connections across projects.
 
-**Databases:** SQLite, PostgreSQL, MySQL, Redis, and Valkey.
+**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, and Valkey.
 
 > SQLN is in development. This repository supports source installation and unsigned workflow binaries.
 > Review the [known limitations](#known-limitations) before use with important data.
@@ -155,6 +155,13 @@ Open an existing SQLite file:
 
 ```sh
 sqln ./existing.db
+```
+
+Open a DuckDB file, or one database in memory:
+
+```sh
+sqln duckdb:./analytics.duckdb
+sqln duckdb:
 ```
 
 Or connect to a server:
@@ -622,7 +629,7 @@ sqln [options] [target]
 sqln mcp
 ```
 
-`target` is one SQLite file path or one connection URI. SQLN asks before creating a missing SQLite file.
+`target` is one SQLite file path, one DuckDB target with the `duckdb:` scheme, or one connection URI. SQLN asks before creating a missing file.
 Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, and `valkeys`.
 
 | Option | Purpose |
@@ -632,7 +639,7 @@ Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `red
 | `--log <file>` | Write the event log |
 | `-h`, `--help` | Show command-line help |
 | `-V`, `--version` | Show the version |
-| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, or `redis` for an unconnected console; development option |
+| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, or `redis` for an unconnected console; development option |
 
 The terminal interface does not provide a batch SQL runner or read scripts from standard input.
 `sqln mcp` uses standard input and output only for MCP. It does not accept raw SQL.
@@ -658,7 +665,9 @@ A positional `.sql` path is not a script-opening argument; positional file targe
 ## Known limitations
 
 - Windows support is not part of the current CI or binary matrix.
-- A `:memory:` SQLite database lives in the single session of its connection: a disconnect or the end of the application loses it.
+- A `:memory:` SQLite or DuckDB database lives in the single session of its connection: a disconnect or the end of the application loses it.
+- DuckDB opens a database file, and it refuses a `CSV`, `Parquet`, or `JSON` file: read those from a database with `read_csv`, `read_parquet`, or `read_json`, because a driver open of one of them would start a database in memory that loses its tables when the console ends.
+- DuckDB lacks schema compare, ER diagram, the DDL window, `EXPLAIN`, grid editing, and foreign-key reads. A read-only DuckDB connection opens the file with `access_mode = READ_ONLY`; the global read-only preference refuses a write in the connector instead, because a DuckDB connection cannot change its access mode. The bundled build compiles DuckDB and makes the first build long.
 - Grid editing changes, inserts, and deletes rows of keyed table tabs. Use SQL for binary values or other grids.
 - A console linked to an external `.sql` file lives in the session only: closing SQLN closes it, and the file keeps its text. The file must be UTF-8, and the link has no autosave: `Ctrl+S` and the close questions write it.
 - There is no integrated SSH tunnel, IAM authentication, or Kerberos authentication.
@@ -667,7 +676,7 @@ A positional `.sql` path is not a script-opening argument; positional file targe
 - An ER diagram has no search, no zoom, and no export to an image file. The Mermaid copy holds the boxes on screen.
 - The DDL of a PostgreSQL table that SQLN writes leaves out partitions, inheritance, comments, grants, the owner, storage options, policies, and triggers. MySQL gives the DDL of a routine or a trigger only with the privilege to see it.
 - Key navigation acts only in a table tab. A console result does not tell the table of a column.
-- Query parameters support SQLite, PostgreSQL, and MySQL consoles with scalar values. Table filters, Redis, and Valkey have none.
+- Query parameters support SQLite, DuckDB, PostgreSQL, and MySQL consoles with scalar values. Table filters, Redis, and Valkey have none.
 - Search in results covers loaded rows only. Exporting all rows can issue a new read.
 - Import cannot create a table, update rows, or read SQL files. A MyISAM table cannot undo an import.
 - Conventional undo uses `undoLimitBytes`, with 64 MiB per console by default. The newest undo and redo steps stay even above that limit.

@@ -85,6 +85,7 @@ fn saved_file(store: &Store) -> PathBuf {
     let config = sqln::store::config::load(store).config.unwrap();
     match &config.connections[0].definition.source {
         Source::Sqlite(target) => target.path().to_path_buf(),
+        Source::Duckdb(_) => panic!("this connection is not SQLite"),
         Source::Network(_) => panic!("this connection is not SQLite"),
     }
 }
@@ -277,6 +278,8 @@ impl Session {
     fn fill_sqlite_form(&mut self, name: &str, file: &str) {
         self.prefix('h');
         self.code(KeyCode::Char('a'));
+        // `Left` goes backwards through the kinds from PostgreSQL.
+        self.code(KeyCode::Left);
         self.code(KeyCode::Left);
         self.code(KeyCode::Left);
         self.focus_form(Field::Name);
