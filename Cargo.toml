@@ -19,13 +19,13 @@ futures-util = "0.3"
 keyring-core = "1.0.1"
 mysql_async = { version = "0.37.1", default-features = false, features = ["minimal-rust", "default-rustls-ring"] }
 ratatui = "0.30.2"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
 redis = { version = "1.8.1", default-features = false, features = ["tokio-comp"] }
-rmcp = { version = "3.8", default-features = false, features = ["server", "transport-io"] }
+rmcp = { version = "3.9", default-features = false, features = ["server", "transport-io"] }
 schemars = "1.2"
 similar = "3.2"
 sqlparser = { version = "0.63", features = ["visitor"] }
-base64 = "0.22"
+base64 = "0.23"
 rusqlite = { version = "0.41", features = ["bundled"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8"
@@ -52,11 +52,12 @@ apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 secret-service = { version = "5.2", default-features = false }
+# Match the zbus types exposed by secret-service and the keyring store.
 zbus = { version = "5", default-features = false }
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-async-io-crypto-rust"] }
 
 [dev-dependencies]
-rmcp = { version = "3.8", default-features = false, features = ["client", "transport-child-process"] }
+rmcp = { version = "3.9", default-features = false, features = ["client", "transport-child-process"] }
 tokio = { version = "1.54", features = ["rt-multi-thread", "sync", "time", "macros"] }
 
 [target.'cfg(unix)'.dev-dependencies]

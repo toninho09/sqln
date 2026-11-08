@@ -7,7 +7,17 @@ use tokio_util::sync::CancellationToken;
 pub const RESPONSE_LIMIT: usize = 1024 * 1024;
 
 fn client(provider: &Provider) -> Result<reqwest::Client, String> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add_parsable_certificates(crate::connector::tls::system_roots().iter().cloned());
+    let tls = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .map_err(|_| "Cannot configure API TLS. Check the system TLS configuration.")?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
     reqwest::Client::builder()
+        .tls_backend_preconfigured(tls)
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(provider.timeout_seconds))

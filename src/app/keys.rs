@@ -513,6 +513,7 @@ impl App {
             Action::Explain => self.run(RunTarget::Plan { analyze: false }),
             Action::ExplainAnalyze => self.run(RunTarget::Plan { analyze: true }),
             Action::FormatSql => self.format_console(),
+            Action::SqlDiagnostics => self.show_sql_diagnostics(),
             Action::FocusParameters => {
                 self.navigator_focused = false;
                 let console = self.console_mut();
@@ -782,8 +783,8 @@ impl App {
         for (action, keys, label) in self.help_actions(Region::Global) {
             use Action::*;
             let title = match action {
-                Run | RunScript | Explain | ExplainAnalyze | Stop | FormatSql | ToggleComment
-                | OpenHistory => text::GROUP_RUN,
+                Run | RunScript | Explain | ExplainAnalyze | Stop | FormatSql | SqlDiagnostics
+                | ToggleComment | OpenHistory => text::GROUP_RUN,
                 ToggleMode | Commit | Rollback => text::GROUP_TRANSACTION,
                 ChooseSchema | ChangeConnection | OpenSessions | OpenDiagram | OpenCompare
                 | FollowKey => text::GROUP_CONNECTION,
@@ -1037,6 +1038,35 @@ impl App {
             }
             Err(RunRefusal::NoStatement) => self.status = Some(text::NO_STATEMENT.to_owned()),
         }
+    }
+
+    fn show_sql_diagnostics(&mut self) {
+        if !self.command_available(Action::SqlDiagnostics) {
+            let message =
+                if !self.console_on_screen() || self.console().editor.dialect() == Dialect::Redis {
+                    text::SYNTAX_UNAVAILABLE
+                } else if self.console().editor.syntax_report().is_some() {
+                    text::SYNTAX_CLEAN
+                } else {
+                    text::SYNTAX_WAITING
+                };
+            self.status = Some(message.into());
+            return;
+        }
+        let Some(report) = self.console().editor.syntax_report() else {
+            return;
+        };
+        let contents = text::syntax_details(report);
+        self.console_mut().editor.close_suggestions();
+        self.overlay = Some(Overlay {
+            _analysis_memory: None,
+            title: text::SYNTAX_TITLE.into(),
+            contents: WrappedText::new(contents),
+            footer: "Esc close | Up/Down scroll | Ctrl+C copy".into(),
+            scroll: 0,
+            other: None,
+            row: None,
+        });
     }
 
     fn format_console(&mut self) {
@@ -1397,6 +1427,7 @@ impl App {
             Run | RunScript => {
                 in_console && console.focus != Focus::Results && available && console.can_run()
             }
+            SqlDiagnostics => in_editor && available,
             Explain | ExplainAnalyze | FormatSql | ToggleComment => {
                 in_editor && available && !console.editor.is_blank()
             }
@@ -1455,6 +1486,7 @@ impl App {
                     (&[ExplainAnalyze], text::MENU_EXPLAIN_ANALYZE),
                     (&[Stop], text::MENU_STOP),
                     (&[FormatSql], text::MENU_FORMAT),
+                    (&[SqlDiagnostics], text::SYNTAX_TITLE),
                     (&[ToggleComment], text::MENU_COMMENT),
                     (&[OpenHistory], text::MENU_HISTORY),
                 ],
@@ -1598,6 +1630,12 @@ impl App {
             Action::OpenSqlFile => !self.connections.is_empty(),
             Action::FocusParameters | Action::ToggleParameters => {
                 self.console_on_screen() && !console.parameters.fields.is_empty()
+            }
+            Action::SqlDiagnostics => {
+                self.console_on_screen()
+                    && console.editor.syntax_report().is_some_and(|report| {
+                        !report.diagnostics.is_empty() || report.note.is_some()
+                    })
             }
             Action::FormatSql => !in_table && console.editor.dialect() != Dialect::Redis,
             Action::ToggleComment => !in_table,

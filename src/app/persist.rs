@@ -894,6 +894,11 @@ impl App {
         changed |= self.auto_refresh_tick(now);
         if self.console_on_screen() {
             let console = &mut self.consoles[self.active];
+            if let Some(manager) = &self.manager {
+                changed |= console
+                    .editor
+                    .poll_syntax(now, |operation| manager.spawn_blocking(operation));
+            }
             let revision = console.editor.revision();
             let dialect = console.editor.dialect();
             let supported = console

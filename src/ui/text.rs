@@ -1488,6 +1488,53 @@ pub const FILTER_KEYS: &[(&str, &str)] = &[
 pub const EDITOR_KEYS: &[(&str, &str)] =
     &[("Tab", "Accept the suggestion"), ("Esc", "Close the list")];
 
+pub const SYNTAX_TITLE: &str = "SQL syntax warnings";
+pub const SYNTAX_CLEAN: &str = "No local syntax warnings. The database can still reject this SQL.";
+pub const SYNTAX_WAITING: &str = "Syntax check pending. Wait after the last edit.";
+pub const SYNTAX_UNAVAILABLE: &str =
+    "Syntax warnings need a SQL console. Open a PostgreSQL, MySQL, SQLite, or DuckDB console.";
+pub const SYNTAX_LIMITATION: &str = "Local parser warnings can include unsupported database syntax. Review the SQL. Run remains available.";
+
+pub fn syntax_summary(report: &crate::sql::diagnostics::Report, row: usize) -> Option<String> {
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|item| item.location.is_some_and(|(line, _)| line == row + 1))
+        .or_else(|| report.diagnostics.first());
+    diagnostic
+        .map(|item| {
+            let place = item
+                .location
+                .map_or_else(String::new, |(line, column)| format!(" L{line}:C{column}"));
+            let partial = if report.note.is_some() {
+                ", partial"
+            } else {
+                ""
+            };
+            format!(
+                "Syntax warning ({}{partial}){place}: {}",
+                report.diagnostics.len(),
+                item.message
+            )
+        })
+        .or_else(|| report.note.clone())
+}
+
+pub fn syntax_details(report: &crate::sql::diagnostics::Report) -> String {
+    let mut text = format!("{SYNTAX_LIMITATION}\n\n");
+    for (index, item) in report.diagnostics.iter().enumerate() {
+        let place = item.location.map_or_else(
+            || "Location unavailable".into(),
+            |(line, column)| format!("Line {line}, column {column}"),
+        );
+        text.push_str(&format!("{}. {place}: {}\n\n", index + 1, item.message));
+    }
+    if let Some(note) = &report.note {
+        text.push_str(note);
+    }
+    text
+}
+
 pub const PARAMETERS_TITLE: &str = "Parameters";
 pub const PARAMETERS_TOGGLE: &str = "Collapse or expand parameters";
 pub const HINT_PARAMETERS: &[HintPart] = &[
@@ -1519,6 +1566,7 @@ pub fn action_text(action: Action) -> &'static str {
         Action::Commit => "Commit",
         Action::Rollback => "Rollback",
         Action::FormatSql => "Format the SQL",
+        Action::SqlDiagnostics => "Show SQL syntax warnings",
         Action::FocusParameters => "Focus query parameters",
         Action::ToggleParameters => "Collapse or expand query parameters",
         Action::ToggleComment => "Comment or uncomment the rows",

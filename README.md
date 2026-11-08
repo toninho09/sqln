@@ -39,6 +39,7 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Two editor modes.** Use conventional keys or Vim, with search, replace, undo, and SQL highlighting.
 - **Catalog autocomplete.** Complete schemas, tables, views, columns, aliases, SQL keywords, built-in types, and functions with signatures.
 - **SQL tools.** Format statements, toggle comments, and generate SQL templates from the navigator.
+- **Local syntax warnings.** Check SQL after a typing pause, without executing it. Open full warnings from the command palette.
 - **Query parameters.** Write `:name` values, fill the panel under the editor, and run with native bindings that keep values out of the SQL text.
 - **Table browsing.** Apply SQL filters, sort columns, move between pages, and count rows on request.
 - **Grid editing.** Change, insert, and delete table rows locally, review the SQL, and apply checked changes in one transaction.
@@ -749,6 +750,7 @@ A positional `.sql` path is not a script-opening argument; positional file targe
 
 ## Known limitations
 
+- Local syntax warnings use a parser, not the database. They can miss errors or flag valid extensions, including some MySQL routines. See [syntax warnings](docs/UI.md#local-sql-syntax-warnings) for limits.
 - Windows support is not part of the current CI or binary matrix.
 - A `:memory:` SQLite or DuckDB database lives in the single session of its connection: a disconnect or the end of the application loses it.
 - DuckDB opens a database file, and it refuses a `CSV`, `Parquet`, or `JSON` file: read those from a database with `read_csv`, `read_parquet`, or `read_json`, because a driver open of one of them would start a database in memory that loses its tables when the console ends.

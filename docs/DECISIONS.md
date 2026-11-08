@@ -6,6 +6,30 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Local SQL syntax warnings
+
+The user approves a local syntax checker that reuses the existing `sqlparser` dependency.
+This extends the SQL analysis tools. It does not replace the lexer selected in the Libraries decision.
+
+| Point | Approved rule |
+|---|---|
+| Scope | Syntax warnings for PostgreSQL, MySQL, SQLite, and DuckDB; no style or catalog validation |
+| Execution | Local background analysis after a short pause; no SQL execution or database access |
+| Editing | Preserve text, cursor, selection, conventional mode, and Vim mode |
+| Display | Located underlines and messages; explain parser coverage limits |
+| Protection | No corrections or execution blocking; existing execution checks remain unchanged |
+
+Implementation notes: the pause is 400 ms. Reports match revision and dialect.
+The checker normalizes ASCII named parameters without reading their values or changing source offsets.
+The active console uses the existing blocking executor, with at most one pending job per editor.
+Limits are 256 KiB, 128 instructions, 32 warnings, 512 message characters, and recursion depth 64.
+Each instruction has a limit of 1024 parser tokens, excluding whitespace and comments.
+The checker skips larger instructions before AST construction to bound recursive destruction. Other instructions still check.
+Skipped or partial checks carry a reason. A worker failure asks for an edit to retry.
+The palette action `sqlDiagnostics` opens the existing scrollable report, with no default shortcut.
+No configuration or saved-format changes. The parser has both false positives and false negatives.
+In particular, some MySQL routine syntax is unsupported. The database remains the final syntax validator.
+
 ## Analysis of loaded results
 
 The user approves column profiles, ordered text charts, and differences between consecutive console executions.

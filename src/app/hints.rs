@@ -375,6 +375,7 @@ impl App {
                 "suggestions",
                 console.editor.is_inserting(),
             ),
+            (Action::SqlDiagnostics, "warnings", true),
             (Action::FormatSql, "format", !console.editor.is_blank()),
             (Action::OpenHistory, "history", true),
             (Action::Explain, "plan", !console.editor.is_blank()),

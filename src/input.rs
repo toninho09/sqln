@@ -186,6 +186,7 @@ pub enum Action {
     Explain,
     ExplainAnalyze,
     FormatSql,
+    SqlDiagnostics,
     ToggleComment,
     OpenHistory,
     /// Opens an external `.sql` file as a console: a copy, or a link that saves to it.
@@ -484,6 +485,13 @@ const DEFAULTS: &[Item] = &[
         Region::Global,
         "formatSql",
         &["ctrl+w f"],
+        &[],
+    ),
+    both(
+        Action::SqlDiagnostics,
+        Region::Global,
+        "sqlDiagnostics",
+        &[],
         &[],
     ),
     // A terminal without enhanced keys sends `Ctrl+/` as the byte of `Ctrl+7`.

@@ -403,6 +403,7 @@ impl App {
                                     | Explain
                                     | ExplainAnalyze
                                     | FormatSql
+                                    | SqlDiagnostics
                                     | ToggleComment
                                     | OpenHistory
                             )) =>

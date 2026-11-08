@@ -357,6 +357,16 @@ fn the_palette_offers_every_command_in_some_state() {
     s.wait(|app| !app.console().parameters.fields.is_empty());
     s.keep_offered(&mut missing);
 
+    // Local syntax warnings, without an execution.
+    s.set_sql("SELECT (1 + );");
+    s.wait(|app| {
+        app.console()
+            .editor
+            .syntax_report()
+            .is_some_and(|report| !report.diagnostics.is_empty())
+    });
+    s.keep_offered(&mut missing);
+
     // Results, with the focus on the grid and a selection in the grid.
     s.set_sql("SELECT id, label FROM items;");
     s.code(KeyCode::F(5));

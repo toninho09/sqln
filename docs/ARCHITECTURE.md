@@ -45,7 +45,7 @@ Main thread                        Tokio runtime
 | `form` | Fields and validation of the connection form |
 | `connection` | Connection definitions and the state of each connection in the application |
 | `editor` | EdTUI, conventional layer, search, and replace |
-| `sql` | Tokenizer, statement separation, and statement classes |
+| `sql` | Tokenizer, statement separation, statement classes, and local syntax diagnostics |
 | `complete` | Local autocomplete suggestions |
 | `ai` | One OpenAI-compatible chat protocol, credentials, context, and metadata transforms. The Settings dialog edits the provider fields |
 | `catalog` | In-memory cache; schemas, tables, routines, sequences, triggers, and types first, columns and foreign keys on demand |
@@ -135,6 +135,10 @@ AI responses and agent proposals use the review in the editor. `editor/review` h
 
 ### AI SQL completion
 
+The HTTP client uses `reqwest` 0.13 with the `ring` TLS provider.
+It uses only system certificate roots through the shared `connector::tls::system_roots` cache.
+It does not use the default platform verifier or additional bundled roots.
+
 AI completion is separate from MCP. `app/ai` captures the editor interval and revisions, checks destination consent, and coordinates the request. The suggestion list holds two AI rows: the plain row starts a request at once, and the request row opens a one-line modal whose text travels as `request` in the body. `editor/ai` exposes immutable targets and applies a proposal through the existing single-undo edit path. Local `complete` suggestions remain independent of providers.
 
 `exec/ai` reads complete structural metadata through the credential gate and an independent pool lease. Snapshots count against the shared budget and follow catalog refresh generations. Unknown session states close their leases. `ai` serializes OpenAI-compatible chat requests, reduces oversized context deterministically, and bounds HTTP responses. Credential files are read again for each request. Vault keys use a separate `sqln-ai` service. Calls, preparation, and diff construction stay off the interface thread.
@@ -142,6 +146,22 @@ AI completion is separate from MCP. `app/ai` captures the editor interval and re
 `ui/ai` renders the request dialog, the waiting states, and scoped settings. A response shows ghost text at the cursor of its console, through the [inline review](#inline-review) model. A review changes the buffer only when the user accepts a change, with checked revisions and no execution. Pending responses never take another dialog's focus.
 
 `preferences.aiCompletion` is optional. Enabled inherits independently; the provider block inherits as a unit. The global private `ai-trust.json` records consent, under its own lock. No SQL, metadata snapshots, responses, or key content enter those files. Scripts and workspace formats do not change. See [AI completion](AI_COMPLETION.md) for the contract and limits.
+
+### Local syntax diagnostics
+
+`sql::diagnostics` checks bounded SQL text with the existing `sqlparser` dependency.
+It keeps the editor lexer and splitter, normalizes named parameters without values, and preserves source byte offsets.
+Parser location strings have a version-specific adapter; unknown locations produce messages without an underline.
+The checker has no database access, execution policy, or logging. Parser warnings never become execution restrictions.
+
+`editor::syntax` tracks one pending job per editor and checks after a 400 ms pause.
+The application polls only the console on screen, through the existing blocking executor.
+Reports carry editor revision and dialect identity. Stale responses do not change the current report.
+Input size, instruction count, warning count, message length, and parser recursion have fixed bounds.
+Each instruction has at most 1024 non-whitespace parser tokens before AST construction; comments do not count.
+This bounds AST depth and recursive destruction, which the parser recursion limit alone does not bound.
+The UI shows a summary and visible underlines. `Action::SqlDiagnostics` opens the existing scrollable text window.
+See [local syntax warnings](UI.md#local-sql-syntax-warnings) for coverage and limits.
 
 ### Files and saving
 

@@ -371,6 +371,37 @@ The indicators stay in the free column, between the row number and the text:
 When the database reports the position of an error, the editor underlines the token and keeps the cursor.
 The mark leaves with the next edit, and an edit during the execution prevents the mark.
 
+### Local SQL syntax warnings
+
+The active SQL console checks syntax after 400 ms without a text or dialect change.
+The check runs locally, outside the interface thread. It executes no SQL and reads no parameter values.
+PostgreSQL, MySQL, SQLite, and DuckDB use the bundled `sqlparser` dialects. Redis and Valkey have no SQL check.
+The existing lexer still serves highlighting, autocomplete, and incomplete editor text.
+
+Located warnings underline tokens without moving the cursor or changing the selection.
+A row below the editor shows the warning on the cursor line, or the first warning elsewhere.
+The row uses a text label and also works without colors or Nerd Fonts.
+The row disappears when the text changes. Old worker results cannot mark new text or another dialect.
+Database execution errors keep their existing marks and take precedence over local warning styles.
+Inline review keeps its own text renderer; the summary remains available during review.
+
+Use **Show SQL syntax warnings** in the command palette to read and copy the full report.
+The action id is `sqlDiagnostics`, with no default shortcut. Custom shortcuts use the shared command catalog.
+The report uses the existing scrollable text window. Opening it does not execute SQL or change editor text.
+
+These are parser warnings, not database validation. The parser can reject valid extensions and accept invalid SQL.
+For example, some MySQL procedure bodies are unsupported. The absence of warnings does not prove database acceptance.
+Checks do not validate catalog objects, types, permissions, or style. Warnings never block Run.
+
+Input above 256 KiB skips analysis with a visible reason. Each check limits recursion to 64 levels.
+Instructions above 1024 parser tokens skip analysis with a partial-check label. Whitespace and comments do not count.
+Simplify those instructions to check their syntax. Other instructions still check.
+Checks stop after 128 instructions or 32 warnings, with a partial-check label and a reason in the full report.
+Each instruction produces at most one parser warning. Messages contain at most 512 characters.
+Split a large script to check the remaining instructions. Worker failure asks for an edit to retry.
+These limits do not limit editing or execution. No preference, script, or workspace format changes.
+
+
 This example shows a finished execution, with two statements.
 The second statement reached the row cap and ended the read.
 The connection already returned to the pool, and the user walks the rows without a new query.
