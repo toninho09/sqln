@@ -410,6 +410,10 @@ impl App {
             (Action::GridNarrow, "narrow", true),
             (Action::GridWiden, "widen", true),
             (Action::GridAutoWidth, "auto width", true),
+            (Action::GridProfile, "profile", true),
+            (Action::GridChart, "chart", true),
+            (Action::GridComparePrevious, "differences", true),
+            (Action::GridKeepPrevious, "retain previous", true),
             (Action::GridCloseResult, "close result", true),
         ]);
         self.hints_when(&commands)
@@ -502,6 +506,8 @@ impl App {
             (Action::GridFocusOrder, "order by", true),
             (Action::GridCountRows, "count", tab.total.is_none()),
             (Action::GridImport, "import", true),
+            (Action::GridProfile, "profile", true),
+            (Action::GridChart, "chart", true),
             (Action::GridEditCell, "edit", true),
             (Action::GridNewRow, "new row", true),
             (Action::GridDeleteRow, "delete row", true),

@@ -156,6 +156,26 @@ fn success(count: usize) -> Vec<StatementStatus> {
 }
 
 #[test]
+fn streaming_bypasses_grid_limits_and_keeps_the_original_sql() {
+    let mut h = Harness::open(
+        "stream-limits",
+        Settings {
+            row_cap: 1,
+            budget_bytes: 1,
+            ..Settings::default()
+        },
+    );
+    let execution = h.manager.run(h.console, vec!["WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1005) SELECT x FROM n".into()], RunOptions { stream: true, ..RunOptions::default() });
+    let run = h.collect(execution);
+    assert_eq!(run.end, Some(ExecutionEnd::Completed));
+    assert_eq!(run.rows.len(), 1005);
+    assert_eq!(run.limits, vec![ReadLimit::None]);
+    assert!(run.added_limits.is_empty());
+    assert_eq!(run.bytes, 0);
+    assert_eq!(h.budget.used(), 0);
+}
+
+#[test]
 fn a_query_delivers_columns_and_rows_as_database_text() {
     let mut h = Harness::open("rows", Settings::default());
     let run = h.run(&["SELECT 1 AS a, 1.5 AS b, 'ação' AS c, NULL AS d, x'00FF' AS e, 1e20 AS f"]);

@@ -3,6 +3,7 @@
 
 mod common;
 
+mod analysis_ui;
 mod command_log;
 mod commands;
 mod follow_key;

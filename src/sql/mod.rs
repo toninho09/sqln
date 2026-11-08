@@ -5,6 +5,7 @@ mod format;
 mod lexer;
 pub mod literal;
 pub mod parameters;
+mod risk;
 mod statement;
 
 pub use classify::{
@@ -14,6 +15,7 @@ pub use classify::{
 };
 pub use format::format_statement;
 pub use lexer::{Lexer, Token, TokenKind, tokenize};
+pub use risk::run_risk;
 pub use statement::{Statement, split, split_tokens, statement_at};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

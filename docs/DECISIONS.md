@@ -6,6 +6,61 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Analysis of loaded results
+
+The user approves column profiles, ordered text charts, and differences between consecutive console executions.
+The existing EXPLAIN ANALYZE implementation remains; no second execution path is needed.
+
+| Point | Approved rule |
+|---|---|
+| Profile | Current column: loaded row count, NULL count and percentage, distinct values, and numeric-only min/max and histogram |
+| Data | No new query. A partial result or current table page carries a loaded-rows scope label |
+| Charts | Bar or line from two numeric columns. Preserve result order and keep every repeated X occurrence separate, without aggregation |
+| Retention | Optional per console; one previous complete result in memory, under the shared data budget |
+| Matching | The user selects key columns. Reordering rows does not create differences |
+| First comparison | Exactly one complete data result per execution; no query plans or partial results |
+| Failure | Explain the failure or memory limit and cancel. No partial report, automatic retry, or additional query |
+
+Implementation notes:
+
+- `Action` registers `gridProfile` (`p`), `gridChart` (`b`), `gridKeepPrevious` (`B`), and `gridComparePrevious` (`D`).
+- Existing menus, palette, hints, custom shortcuts, conventional mode, and Vim mode share availability.
+- Distinct counts exclude NULL and reuse the equality of `compare::data`; numeric min/max keep decimal precision.
+- Histograms use ten equal-width approximate ranges, or one range for a constant column. Unsupported numeric values carry an exclusion count.
+- Charts use occurrence positions, not numeric X distances. Line sections keep every point without sampling; point text preserves the values.
+- Comparison requires identical ordered column names and unique selected keys on both sides. It produces a report, not synchronization SQL.
+- Retention moves the old rows without cloning or releasing their budget charge. An execution failure or incomplete result cancels comparison and releases the snapshot.
+- Work advances in bounded steps and rejects changed generations. Scratch indexes, points, and report text use the shared budget.
+- Reports use the existing scrollable, copyable text window. Cancel releases the job and its reservations. No saved format changes.
+
+## Execution without the terminal interface
+
+The user approves batch execution for shell scripts, cron, and CI.
+This extends the command-line target rules without changing `--script`: opening a SQL file still executes nothing.
+
+| Point | Approved rule |
+|---|---|
+| Entry | `--execute <SQL>` with required `--output csv\|json`; no terminal interface, workspace restoration, or MCP |
+| Connection | One path or URI, or a saved connection by `--connection <name>`; `--scope global\|project` resolves ambiguous names |
+| SQL | Exactly one instruction; no script file or SQL from standard input in this delivery |
+| Results | One result set, with the existing CSV/JSON encoder rules; no grid cap, SQL limit insertion, or reread |
+| Deadline | Preserve the connection SQL timeout, independently of streaming output |
+| No result | Empty standard output; affected rows go to standard error |
+| Messages | Notices and failures go to standard error; questions use the controlling terminal |
+| Authorization | `--yes` authorizes protected execution and missing database creation; otherwise ask on the terminal, with No as default |
+| Trust | A saved network destination and project retain a separate trust confirmation; `--yes` never grants trust |
+| Credentials | Password file, then `SQLN_PASSWORD`, then saved credential or URI password, then a hidden terminal question |
+| Password file | UTF-8; remove one final LF or CRLF, preserve other whitespace; failure does not fall back |
+| Protection | Read-only, TLS, production, and missing-WHERE protections remain; use shared risk analysis |
+| End | Stop on output failure or SIGINT/SIGTERM, use existing cancellation, and never retry SQL |
+| Transactions | Do not leave a transaction open after a one-instruction invocation; roll it back and report failure |
+| Status | `0` success, `1` operational failure or refusal, `2` invalid arguments |
+| State | No console, workspace, history, or export-preference writes; no password saving or credential migration |
+
+Standard output cannot be recalled after a write. A failed invocation can leave partial or invalid output.
+Database writes can commit before an output failure or cancellation. One instruction can produce multiple result sets; detecting a second set fails instead of merging it.
+CSV data retains control bytes and formula-like text, as file export does. Redirect machine output to a file or pipe when values are untrusted.
+
 ## Themes with colored bases — 2026-11-08
 
 The user asked for themes with different base colors, to distinguish environments at a glance.

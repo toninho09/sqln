@@ -45,6 +45,7 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Key navigation.** Go from a row to the row that its foreign key reads, or to the rows of other tables that read it.
 - **Database objects.** See routines, sequences, triggers, and types in the navigator, and open the DDL of an object in a new console.
 - **Results inspection.** Select cells, search loaded rows, inspect a row vertically, and format JSON values.
+- **Local analysis.** Profile a column, draw text charts, and compare two console executions without another query.
 - **Export.** Write CSV, TSV, JSON, JSON Lines, or SQL inserts from the export dialog.
 - **Import.** Load CSV, TSV, JSON, or JSON Lines into a table, with column mapping and a preview.
 - **Execution controls.** Run a statement, a selection, or a script, with row limits, deadlines, and cancellation.
@@ -390,6 +391,38 @@ Export supports CSV, TSV, JSON, JSON Lines, and SQL inserts.
 Choose a selection, loaded rows, or all rows. An all-rows export can run a new read and observe newer data.
 Only the **Export** button writes the file. `Esc` cancels the dialog.
 
+### Analyze loaded results
+
+Use these commands in an idle console result or table grid:
+
+| Key | Command |
+|---|---|
+| `p` | Profile the current column: NULL count and percentage, distinct values without NULL, numeric min/max, and histogram |
+| `b` | Choose a bar or line chart and two numeric columns |
+| `B` | Turn previous-result retention on or off for the console |
+| `D` | Compare the current execution with the retained previous execution |
+
+The palette and `Ctrl+W Space` offer the same commands and show custom shortcuts.
+Profiles and charts use only loaded rows, or the current table page. An incomplete result carries a label.
+Distinct counts use the same value equality as data comparison. Numeric min/max keep decimal precision.
+Histograms and chart positions use approximate numbers; non-finite or out-of-range chart pairs stay out with a count.
+Charts preserve row order. Each repeated X has its own position; X spacing does not represent numeric distance.
+Line charts use consecutive sections without sampling. Scroll to see every section and its point values.
+
+For execution comparison:
+
+1. Press `B` in the first complete result to enable retention.
+2. Run the next query. The previous result stays in the shared memory budget.
+3. Press `D`, select key columns with `Enter`, and choose **Compare with selected key columns**.
+
+Comparison requires one complete data result per execution, the same column names and order, and unique selected keys.
+It reports added, removed, and changed rows; row order alone does not count as a change.
+Retention keeps one previous result per console until replacement, release, or console close. It does not persist across restarts.
+A failed or incomplete execution releases the retained result and records a warning in Messages.
+An analysis failure or memory limit cancels the report without partial differences, retries, or another query.
+The current grid remains available. Pending table edits block analysis.
+Press `Esc` to cancel or close, use arrows, PageUp/PageDown, or the mouse wheel to scroll, and `Ctrl+C` to copy.
+
 ### Import a file
 
 Press `I` on a table in the navigator, or in the grid of a table tab.
@@ -417,7 +450,8 @@ Press `Ctrl+W E` to see the plan of the selection or of the statement at the cur
 The **Plan** tab shows a tree. The **Share** column shows the part of the work of each node.
 The database does not run the statement for this plan.
 
-Press `Ctrl+W A` to run the statement and see the real time and rows of each node.
+Press `Ctrl+W A` (`explainAnalyze` in the palette) to run the statement and see the real time and rows of each node.
+Node times include their child nodes and multiply the average loop time by the loop count.
 SQLN asks first when the statement can write. On PostgreSQL, the change stays.
 
 | Database | `Ctrl+W E` | `Ctrl+W A` |
@@ -636,12 +670,63 @@ Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `red
 |---|---|
 | `--project <folder>` | Select the project root |
 | `--script <file>` | Open a `.sql` file as a console at the start; it needs a target or a saved connection |
+| `--execute <SQL>` | Run one instruction without the terminal interface |
+| `--output csv\|json` | Set the required output format for `--execute` |
+| `--connection <name>` | Select a saved connection for `--execute` instead of a target |
+| `--scope global\|project` | Select the scope when a saved connection name is ambiguous |
+| `--yes` | Authorize protected execution and missing database creation; it does not authorize trust |
+| `--password-file <file>` | Read the batch password from a UTF-8 file |
 | `--log <file>` | Write the event log |
 | `-h`, `--help` | Show command-line help |
 | `-V`, `--version` | Show the version |
 | `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, or `redis` for an unconnected console; development option |
 
-The terminal interface does not provide a batch SQL runner or read scripts from standard input.
+### Execution without the terminal interface
+
+```bash
+sqln app.db --execute "SELECT * FROM users" --output csv > users.csv
+sqln --connection production --execute "SELECT count(*) FROM users" --output json
+sqln --connection staging --execute "DELETE FROM logs" --output json --yes
+SQLN_PASSWORD="$DB_PASSWORD" sqln --connection app --execute "SELECT 1" --output json
+sqln --connection app --password-file /run/secrets/db-password --execute "SELECT 1" --output csv
+```
+
+`--execute` runs exactly one instruction. It accepts a final semicolon and comments.
+It does not run scripts or read SQL from standard input. Do not combine it with `--script` or `--dialect`.
+Supply exactly one target or `--connection`. Names ignore case. Use `--scope global` or `--scope project` for an ambiguous name.
+Relative paths of saved connections keep their configured base folder.
+
+Standard output contains only CSV or JSON. CSV has a header, a comma delimiter, UTF-8, and no BOM.
+JSON is an array of objects and uses the existing export rules for numbers, binary values, and repeated names.
+An empty result writes the CSV header or `[]`. A command without columns leaves standard output empty and reports affected rows on standard error.
+Database notices and failures also go to standard error. Export dialog preferences do not change these formats.
+CSV preserves control bytes and formula-like text. Redirect output to a file or pipe when values are untrusted.
+
+Execution streams all rows, without the grid cap or an added `LIMIT`. The connection SQL timeout still applies.
+On Unix, the statement deadline stays active through the final output flush, including blocked output after the query returns.
+Notices and affected-row messages on standard error also stop after cancellation or timeout.
+SQLN executes the instruction once. Multiple result sets are not supported; detecting another result fails the command.
+An instruction that leaves a transaction open fails and SQLN rolls it back.
+
+Without `--yes`, protected execution and missing database creation need a terminal confirmation. The default answer is No.
+The question uses the controlling terminal, so redirected input and output stay separate.
+Without a terminal, SQLN refuses the operation and reports the required authorization.
+`--yes` does not remove read-only or TLS protection. Trust for a saved network connection remains a separate terminal confirmation.
+For CI, first confirm the saved destination and project interactively on that machine.
+
+Password priority is `--password-file`, then `SQLN_PASSWORD`, then the saved credential or URI password, then a hidden terminal question.
+The file is UTF-8. SQLN removes one final LF or CRLF and preserves other whitespace.
+A file read failure does not fall back to another source. SQLN does not save passwords from these sources.
+Without a credential or terminal, password-free authentication remains available. A missing referenced credential fails with instructions.
+A URI password remains visible in shell history and process arguments. SQL text in `--execute` can also appear there.
+
+SIGINT and SIGTERM request cancellation. A broken pipe or output failure also stops execution.
+An error can leave partial or invalid output. Database changes can already be committed when output fails or cancellation arrives.
+A full or broken standard error stream can prevent the final error message from appearing. The exit status still reports failure.
+Always check the exit status: `0` means success, `1` means an operational failure or refusal, and `2` means invalid arguments.
+SQLN does not restore tabs, start MCP, or write workspace, console, history, or export-preference files in this mode.
+
+The terminal interface does not read SQL scripts from standard input.
 `sqln mcp` uses standard input and output only for MCP. It does not accept raw SQL.
 A positional `.sql` path is not a script-opening argument; positional file targets are SQLite databases. Use `--script` to open a `.sql` file as a console.
 

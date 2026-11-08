@@ -15,7 +15,7 @@ use tokio::time::{sleep, timeout};
 
 use super::{
     Binding, Command, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, ResultSink,
-    RunRequest, Settings, StatementKey, StatementStatus, context,
+    RunRequest, Settings, StatementKey, StatementStatus, StreamControl, context,
 };
 use crate::command_log::TraceContext;
 use crate::connector::{ExecError, StatementEnd, TransactionCommand, TransactionState};
@@ -61,6 +61,7 @@ impl Waited {
 struct Delivery {
     cap: usize,
     export: Option<ExportWriter>,
+    stream: bool,
     timed: bool,
     capture: Option<super::sink::Capture>,
     parameters: Vec<crate::sql::parameters::Parameter>,
@@ -77,6 +78,7 @@ pub struct ConsoleTask {
     transaction: TransactionState,
     trace: Option<TraceContext>,
     cancellation: tokio_util::sync::CancellationToken,
+    stream_stopped: Option<Arc<StreamControl>>,
 }
 
 impl ConsoleTask {
@@ -85,6 +87,7 @@ impl ConsoleTask {
         binding: Binding,
         budget: Arc<Budget>,
         events: Sender<ExecEvent>,
+        stream_stopped: Option<Arc<StreamControl>>,
     ) -> Self {
         let settings = binding.settings().clone();
         Self {
@@ -93,6 +96,7 @@ impl ConsoleTask {
             binding,
             budget,
             events,
+            stream_stopped,
             held: None,
             transaction: TransactionState::None,
             trace: None,
@@ -301,6 +305,7 @@ impl ConsoleTask {
             let delivery = Delivery {
                 cap,
                 export: export.clone(),
+                stream: options.stream,
                 // An export ends with the user. It has no time limit.
                 timed: export.is_none() && !untimed,
                 capture: None,
@@ -350,12 +355,16 @@ impl ConsoleTask {
         }
 
         let mut message = None;
-        // An agent run never leaves a transaction open: nobody would end it.
-        if agent_run
+        // A noninteractive run cannot leave a transaction open.
+        if (agent_run || options.stream)
             && let Some(active) = lease.as_mut()
             && active.session().transaction_state().await != TransactionState::None
         {
-            message = Some(crate::ui::text::AGENT_ROLLED_BACK.to_owned());
+            message = Some(if agent_run {
+                crate::ui::text::AGENT_ROLLED_BACK.to_owned()
+            } else {
+                "The statement leaves an open transaction. SQLN rolls it back.".to_owned()
+            });
             if end == ExecutionEnd::Completed {
                 end = ExecutionEnd::Failed;
             }
@@ -447,18 +456,23 @@ impl ConsoleTask {
         let Delivery {
             cap,
             export,
+            stream,
             timed,
             capture,
             parameters,
         } = delivery;
         let mut sink = ResultSink::new(key, self.events.clone(), self.budget.clone(), cap);
+        sink.stream(stream);
         let time_limit = self.settings.sql_timeout.filter(|_| timed);
         // The row after the cap proves that the result has more rows. An export has no cap.
         let rows = cap.saturating_add(1);
-        let limited =
-            (capture.is_none() && self.settings.cap_in_sql && export.is_none() && cap < usize::MAX)
-                .then(|| with_row_limit(sql, self.binding.pool.dialect(), rows))
-                .flatten();
+        let limited = (!stream
+            && capture.is_none()
+            && self.settings.cap_in_sql
+            && export.is_none()
+            && cap < usize::MAX)
+            .then(|| with_row_limit(sql, self.binding.pool.dialect(), rows))
+            .flatten();
         if let Some(capture) = capture {
             sink.capture_to(capture);
         }
@@ -497,8 +511,15 @@ impl ConsoleTask {
         });
         session.set_trace_context(trace);
         let canceller = session.canceller();
+        let stream_stopped = self.stream_stopped.clone().filter(|_| stream);
+        if let Some(control) = &stream_stopped {
+            control.start(time_limit);
+        }
         let cancel = || {
             stopping.store(true, Ordering::SeqCst);
+            if let Some(stopped) = &stream_stopped {
+                stopped.stop();
+            }
             let canceller = canceller.clone();
             tokio::spawn(async move { canceller.cancel().await })
         };

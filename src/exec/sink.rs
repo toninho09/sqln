@@ -63,6 +63,7 @@ pub struct ResultSink {
     stopping: Arc<AtomicBool>,
     /// The rows go to this file, and the grid receives nothing.
     export: Option<ExportWriter>,
+    stream: bool,
     capture: Option<Capture>,
 }
 
@@ -94,8 +95,13 @@ impl ResultSink {
             first_limit: ReadLimit::None,
             stopping: Arc::new(AtomicBool::new(false)),
             export: None,
+            stream: false,
             capture: None,
         }
+    }
+
+    pub(super) fn stream(&mut self, stream: bool) {
+        self.stream = stream;
     }
 
     pub(super) fn capture_to(&mut self, capture: Capture) {
@@ -115,6 +121,11 @@ impl ResultSink {
     fn store(&mut self, row: Row) -> Flow {
         if self.stopping.load(Ordering::SeqCst) {
             return Flow::Discard;
+        }
+        if self.stream {
+            self.batch.push(row);
+            self.stored += 1;
+            return Flow::Continue;
         }
         if let Some(capture) = &self.capture {
             let mut captured = capture
@@ -230,7 +241,7 @@ impl ResultSink {
 
     pub async fn push(&mut self, row: Row) -> Flow {
         let flow = self.store(row);
-        if self.batch.len() >= BATCH_ROWS || flow != Flow::Continue {
+        if self.stream || self.batch.len() >= BATCH_ROWS || flow != Flow::Continue {
             self.flush().await;
         }
         flow
@@ -276,7 +287,7 @@ impl ResultSink {
 
     pub fn push_blocking(&mut self, row: Row) -> Flow {
         let flow = self.store(row);
-        if self.batch.len() >= BATCH_ROWS || flow != Flow::Continue {
+        if self.stream || self.batch.len() >= BATCH_ROWS || flow != Flow::Continue {
             self.flush_blocking();
         }
         flow

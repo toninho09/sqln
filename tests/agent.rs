@@ -2415,3 +2415,73 @@ fn custom_review_keys_show_in_the_bar_and_the_old_keys_are_text() {
     assert_eq!(h.job_status(&proposal), "applied");
     assert_eq!(h.app.console().editor.text(), "SELECT 8;");
 }
+
+/// Asks the open palette for the technical name of the action.
+fn palette_has(h: &mut Harness, action: Action) -> bool {
+    h.app.drain_events();
+    h.app.on_event(Event::Key(crate::common::ctrl('p')));
+    h.app.on_event(Event::Paste(action.name().to_owned()));
+    let screen = h.draw(100, 30);
+    h.key(KeyCode::Esc);
+    screen.contains(sqln::ui::text::TITLE_PALETTE) && !screen.contains(sqln::ui::text::NO_COMMANDS)
+}
+
+#[test]
+fn the_palette_offers_every_command_of_the_agent_and_its_review() {
+    let mut h = Harness::new("palette-all");
+    h.authorize();
+    for action in [Action::AgentDirect, Action::AgentSessions] {
+        assert!(palette_has(&mut h, action), "{action:?} missing");
+    }
+    // The console of the agent: its session, its SQL, and a task that waits for the user.
+    let connection = h.connection();
+    let reply = h
+        .tool(json!({"method":"edit_console","connection_id":connection,"sql":"SELECT 1;"}))
+        .unwrap();
+    assert_eq!(reply["status"], "placed");
+    h.click_label("MCP · test agent");
+    for action in [
+        Action::AgentDirect,
+        Action::AgentSession,
+        Action::AgentSqlToConsole,
+        Action::AgentSqlClear,
+    ] {
+        assert!(palette_has(&mut h, action), "{action:?} missing");
+    }
+    // A running task of that console: the stop commands of the session.
+    let joins = (0..40)
+        .map(|index| format!("things t{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let job = h.query(&format!("SELECT count(*) FROM {joins}"));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while h.job_status(&job) != "running" {
+        assert!(Instant::now() < deadline);
+    }
+    for action in [Action::AgentStop, Action::AgentTasks] {
+        assert!(palette_has(&mut h, action), "{action:?} missing");
+    }
+    h.tool(json!({"method":"job","job_id":job,"cancel":true}))
+        .unwrap();
+    assert_eq!(h.wait_job(&job)["status"], "cancelled");
+    // A pending proposal, then its inline review.
+    let proposal = h.proposal("SELECT 3;");
+    assert_eq!(h.wait_proposal(&proposal)["status"], "pending");
+    assert!(palette_has(&mut h, Action::AgentReview), "missing");
+    h.key(KeyCode::F(9));
+    h.key(KeyCode::Enter);
+    for action in [
+        Action::ReviewAccept,
+        Action::ReviewReject,
+        Action::ReviewAcceptAll,
+        Action::ReviewRejectAll,
+        Action::ReviewNext,
+        Action::ReviewPrevious,
+        Action::ReviewClose,
+    ] {
+        let has = palette_has(&mut h, action);
+        let review = h.app.console().editor.review().is_some();
+        let ghosts = h.app.console().editor.has_ghosts();
+        assert!(has, "{action:?} missing (review={review} ghosts={ghosts})");
+    }
+}

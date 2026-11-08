@@ -935,6 +935,7 @@ impl App {
                     only_schema: false,
                     row_cap: Some(request.row_cap),
                     export: None,
+                    stream: false,
                     untimed: false,
                     parameters: Vec::new(),
                 };
@@ -991,8 +992,12 @@ impl App {
         }
         if let Some(id) = action.console() {
             self.clear_wanted_import(id);
+            let budget = self.budget.clone();
             if let Some(console) = self.console_by_id(id) {
                 console.phase = Phase::Idle;
+                if matches!(action, Use::Run { .. }) {
+                    console.cancel_comparison("credential preparation was canceled", &budget);
+                }
             }
             if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Idle;

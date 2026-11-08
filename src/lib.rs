@@ -1,6 +1,8 @@
 pub mod agent;
 pub mod ai;
+pub mod analysis;
 pub mod app;
+pub mod batch;
 pub mod browser;
 pub mod catalog;
 pub mod clipboard;

@@ -212,6 +212,10 @@ pub struct Console {
     /// The application needs one console, and the tab row does not show this one.
     pub hidden: bool,
     pub results: Vec<ResultTab>,
+    /// Retains one complete result when the next execution starts.
+    pub retain_result: bool,
+    pub previous_result: Option<crate::grid::ResultTable>,
+    pub comparison_ready: bool,
     pub messages: History,
     /// The index of a result. The value `results.len()` selects **Messages**.
     pub active: usize,
@@ -281,6 +285,9 @@ impl Console {
             opened: 0,
             hidden: false,
             results: Vec::new(),
+            retain_result: false,
+            previous_result: None,
+            comparison_ready: false,
             messages: History::default(),
             active: 0,
             focus: Focus::Editor,
@@ -370,7 +377,7 @@ impl Console {
         self.active >= self.results.len()
     }
 
-    /// Accepts an execution. It clears the old results and frees their budget.
+    /// Accepts an execution. Optional retention keeps one complete result; other old results leave the budget.
     pub fn begin_execution(&mut self, execution: ExecutionId, plan: &RunPlan, budget: &Budget) {
         self.prepare_execution(Some(execution), plan, budget);
         self.run.start();
@@ -388,6 +395,14 @@ impl Console {
         plan: &RunPlan,
         budget: &Budget,
     ) {
+        // Credential preparation can call this twice for the same request.
+        if self.phase != Phase::Waiting || !self.results.is_empty() {
+            self.discard_previous(budget);
+            if self.retain_result && self.comparison_ready && self.results.len() == 1 {
+                self.previous_result = self.results.pop().map(|result| result.table);
+            }
+        }
+        self.comparison_ready = false;
         for result in self.results.drain(..) {
             budget.release(result.table.bytes);
         }
@@ -405,6 +420,8 @@ impl Console {
 
     /// Ends the results of the last connection. The text stays.
     pub fn clear_results(&mut self, budget: &Budget) {
+        self.discard_previous(budget);
+        self.comparison_ready = false;
         self.ran_parameters.clear();
         for result in self.results.drain(..) {
             budget.release(result.table.bytes);
@@ -415,8 +432,23 @@ impl Console {
         self.editor.clear_marks();
     }
 
-    /// Returns the number of warnings in **Messages**. Its tab shows the number, because
-    /// a run that ends well selects its last result.
+    /// Releases the retained result without changing the retention choice.
+    pub fn discard_previous(&mut self, budget: &Budget) {
+        if let Some(previous) = self.previous_result.take() {
+            budget.release(previous.bytes);
+        }
+    }
+
+    /// Cancels result comparison and records the reason when retention is active.
+    pub fn cancel_comparison(&mut self, reason: &str, budget: &Budget) {
+        self.discard_previous(budget);
+        self.comparison_ready = false;
+        if self.retain_result {
+            self.push_message(MessageLevel::Warning, format!("Result comparison canceled: {reason}. Use one complete data result and try again."));
+        }
+    }
+
+    /// Returns the number of warnings in Messages.
     pub fn warnings(&self) -> usize {
         self.warnings
     }
@@ -505,7 +537,7 @@ impl Console {
                 ..
             } if self.is_current(execution) => {
                 self.message_key = None;
-                return Some(self.on_execution_finished(end, message));
+                return Some(self.on_execution_finished(end, message, budget));
             }
             ExecEvent::TransactionChanged { state, .. } => {
                 self.set_transaction(state);
@@ -633,7 +665,36 @@ impl Console {
         self.push_statement_message(MessageLevel::Info, message, CommandState::Completed);
     }
 
-    fn on_execution_finished(&mut self, end: ExecutionEnd, message: Option<String>) -> Signal {
+    fn on_execution_finished(
+        &mut self,
+        end: ExecutionEnd,
+        message: Option<String>,
+        budget: &Budget,
+    ) -> Signal {
+        self.comparison_ready = end == ExecutionEnd::Completed
+            && self.results_made == 1
+            && self.results.len() == 1
+            && self.results[0].is_complete()
+            && !self.results[0].plan
+            && self.explain.is_none();
+        if self.retain_result && !self.comparison_ready {
+            let reason = if end != ExecutionEnd::Completed {
+                "the execution failed, stopped, or did not start"
+            } else if self.results_made != 1 || self.results.len() != 1 {
+                "the execution does not have exactly one result"
+            } else if self.explain.is_some() || self.results[0].plan {
+                "query plans are not data results"
+            } else {
+                match self.results[0].limit {
+                    ReadLimit::Budget | ReadLimit::ValueTooLarge => {
+                        "the memory limit stopped the result"
+                    }
+                    ReadLimit::RowCap => "the row limit stopped the result",
+                    ReadLimit::None => "the result is incomplete",
+                }
+            };
+            self.cancel_comparison(reason, budget);
+        }
         if end == ExecutionEnd::Refused {
             // A refused execution started no statement. The console must not wait for
             // an end that already came, so its state returns to idle.
@@ -707,6 +768,7 @@ impl Console {
             return false;
         }
         let result = self.results.remove(self.active);
+        self.comparison_ready = false;
         budget.release(result.table.bytes);
         true
     }

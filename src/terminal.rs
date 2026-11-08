@@ -158,7 +158,11 @@ pub fn ring_bell() {
 /// Reads a password before the interface starts, without an echo. An empty text means
 /// no password. `Esc` and `Ctrl+C` return an error, which stops the start.
 pub fn read_password(prompt: &str) -> io::Result<Option<Secret>> {
-    let mut output = stderr();
+    read_password_to(prompt, &mut stderr())
+}
+
+/// Writes the password question to the selected terminal output.
+pub fn read_password_to(prompt: &str, output: &mut impl Write) -> io::Result<Option<Secret>> {
     write!(output, "{prompt}")?;
     output.flush()?;
     enable_raw_mode()?;

@@ -98,6 +98,7 @@ impl ConsoleTask {
         let delivery = Delivery {
             cap: self.settings.row_cap,
             export: None,
+            stream: false,
             timed: false,
             capture: None,
             parameters: Vec::new(),

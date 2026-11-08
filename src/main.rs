@@ -1,12 +1,14 @@
 use std::io::{IsTerminal, Write, stderr, stdin};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use sqln::app::{Options, run};
 use sqln::connection::{Definition, Source};
 use sqln::connector::duckdb::{DuckdbTarget, file_source as duckdb_source};
 use sqln::connector::target::{OpenTarget, open_target};
+use sqln::export::ExportFormat;
 use sqln::sql::Dialect;
+use sqln::store::Scope;
 use sqln::store::{self, Root, Store};
 use sqln::terminal::read_password;
 use sqln::ui::text::{self, HELP};
@@ -27,6 +29,12 @@ struct Cli {
     script: Option<PathBuf>,
     /// The file or the URI to open.
     target: Option<String>,
+    execute: Option<String>,
+    output: Option<ExportFormat>,
+    connection: Option<String>,
+    scope: Option<Scope>,
+    yes: bool,
+    password_file: Option<PathBuf>,
 }
 
 fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
@@ -59,6 +67,51 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
                 let file = args.next().ok_or("--script needs a .sql file.")?;
                 cli.script = Some(PathBuf::from(file));
             }
+            "--execute" => {
+                if cli
+                    .execute
+                    .replace(args.next().ok_or("--execute needs SQL.")?)
+                    .is_some()
+                {
+                    return Err("Use --execute only once.".into());
+                }
+            }
+            "--output" => {
+                let format = match args.next().as_deref() {
+                    Some("csv") => ExportFormat::Csv,
+                    Some("json") => ExportFormat::Json,
+                    _ => return Err("--output needs csv or json.".into()),
+                };
+                if cli.output.replace(format).is_some() {
+                    return Err("Use --output only once.".into());
+                }
+            }
+            "--connection" => {
+                if cli
+                    .connection
+                    .replace(args.next().ok_or("--connection needs a name.")?)
+                    .is_some()
+                {
+                    return Err("Use --connection only once.".into());
+                }
+            }
+            "--scope" => {
+                let scope = match args.next().as_deref() {
+                    Some("global") => Scope::Global,
+                    Some("project") => Scope::Project,
+                    _ => return Err("--scope needs global or project.".into()),
+                };
+                if cli.scope.replace(scope).is_some() {
+                    return Err("Use --scope only once.".into());
+                }
+            }
+            "--yes" => cli.yes = true,
+            "--password-file" => {
+                let path = PathBuf::from(args.next().ok_or("--password-file needs a file.")?);
+                if cli.password_file.replace(path).is_some() {
+                    return Err("Use --password-file only once.".into());
+                }
+            }
             "--dialect" => {
                 cli.dialect = Some(match args.next().as_deref() {
                     Some("postgres") => Dialect::Postgres,
@@ -73,6 +126,29 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
             _ if cli.target.is_some() => return Err(text::ONE_TARGET.to_owned()),
             other => cli.target = Some(other.to_owned()),
         }
+    }
+    if cli.execute.is_some() {
+        if cli.output.is_none() {
+            return Err("--execute needs --output csv or --output json.".into());
+        }
+        if cli.script.is_some() || cli.dialect.is_some() {
+            return Err("--execute cannot be combined with --script or --dialect.".into());
+        }
+        if cli.target.is_some() == cli.connection.is_some() {
+            return Err("--execute needs exactly one target or --connection <name>.".into());
+        }
+        if cli.scope.is_some() && cli.connection.is_none() {
+            return Err("--scope needs --connection.".into());
+        }
+    } else if cli.output.is_some()
+        || cli.connection.is_some()
+        || cli.scope.is_some()
+        || cli.yes
+        || cli.password_file.is_some()
+    {
+        return Err(
+            "--output, --connection, --scope, --yes, and --password-file need --execute.".into(),
+        );
     }
     Ok(Command::Run(cli))
 }
@@ -106,18 +182,26 @@ fn open(options: &mut Options, target: &str) -> Result<(), String> {
 
 /// Finds the folders of the two scopes. Without a project, the options carry the
 /// folder where the application can offer one.
-fn options_of(cli: Cli) -> Result<Options, String> {
+fn store_of(project: Option<&Path>) -> Result<(Store, Option<PathBuf>), String> {
     let global = store::default_global_dir()
         .ok_or("SQLN cannot find the home folder. Set HOME or XDG_CONFIG_HOME.")?;
     let working = std::env::current_dir().map_err(|error| error.to_string())?;
-    let located = store::locate_project(&working, cli.project.as_deref());
-    let mut options = Options {
-        agent_ipc: true,
-        store: Some(Store {
+    let located = store::locate_project(&working, project);
+    Ok((
+        Store {
             global: Root::global(global),
             project: located.root.as_deref().map(Root::project),
-        }),
-        offer_project: located.offer,
+        },
+        located.offer,
+    ))
+}
+
+fn options_of(cli: Cli) -> Result<Options, String> {
+    let (store, offer) = store_of(cli.project.as_deref())?;
+    let mut options = Options {
+        agent_ipc: true,
+        store: Some(store),
+        offer_project: offer,
         start_home: true,
         ..Options::default()
     };
@@ -160,6 +244,35 @@ fn main() -> ExitCode {
         }
         Ok(Command::Help) => print!("{HELP}"),
         Ok(Command::Version) => println!("sqln {}", env!("CARGO_PKG_VERSION")),
+        Ok(Command::Run(cli)) if cli.execute.is_some() => {
+            let store = match store_of(cli.project.as_deref()) {
+                Ok((store, _)) => store,
+                Err(message) => {
+                    sqln::batch::report_error(&message);
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Some(file) = &cli.log
+                && let Err(error) = sqln::log::open(file)
+            {
+                sqln::batch::report_error(&error.to_string());
+                return ExitCode::FAILURE;
+            }
+            let options = sqln::batch::Options {
+                store,
+                target: cli.target,
+                connection: cli.connection,
+                scope: cli.scope,
+                sql: cli.execute.expect("The match checks --execute."),
+                format: cli.output.expect("The parser requires --output."),
+                yes: cli.yes,
+                password_file: cli.password_file,
+            };
+            if let Err(error) = sqln::batch::run(options) {
+                sqln::batch::report_error(&error.message);
+                return ExitCode::from(if error.usage { 2 } else { 1 });
+            }
+        }
         Ok(Command::Run(cli)) => {
             let log = cli.log.clone();
             let options = match options_of(cli) {
@@ -183,7 +296,7 @@ fn main() -> ExitCode {
             }
         }
         Err(message) => {
-            eprintln!("sqln: {message}\n\n{HELP}");
+            eprintln!("sqln: {}\n\n{HELP}", sqln::grid::printable(&message));
             return ExitCode::from(2);
         }
     }

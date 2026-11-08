@@ -232,6 +232,98 @@ fn program_in_shell(home: &Path, args: &[&str]) -> Command {
     command
 }
 
+#[test]
+fn batch_confirmation_uses_the_terminal_without_opening_the_tui() {
+    for authorize in [false, true] {
+        let home = home_with_connection(if authorize {
+            "batch-allow"
+        } else {
+            "batch-cancel"
+        });
+        let database = home.join("one.db");
+        rusqlite::Connection::open(&database)
+            .unwrap()
+            .execute_batch("CREATE TABLE t(id); INSERT INTO t VALUES (1);")
+            .unwrap();
+        let mut command = in_home(&home, "/bin/sh");
+        command.env_remove("SQLN_PASSWORD").args([
+            "-c",
+            "\"$@\" </dev/null > result.json; status=$?; echo status=$status; exec sleep 60",
+            "sh",
+            env!("CARGO_BIN_EXE_sqln"),
+            "--connection",
+            "one",
+            "--execute",
+            "UPDATE t SET id=id+1",
+            "--output",
+            "json",
+        ]);
+        let mut terminal = Terminal::start(command);
+        terminal.wait_for("[y/N]");
+        terminal.send(if authorize { b"y\n" } else { b"\n" });
+        terminal.wait_for(if authorize { "status=0" } else { "status=1" });
+        assert!(!terminal.output().contains(ENTER_SCREEN));
+        assert!(terminal.echoes());
+        assert!(fs::read(home.join("result.json")).unwrap().is_empty());
+        let id: i64 = rusqlite::Connection::open(&database)
+            .unwrap()
+            .query_row("SELECT id FROM t", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(id, if authorize { 2 } else { 1 });
+    }
+}
+
+#[test]
+fn batch_password_question_uses_the_terminal_with_redirected_streams() {
+    let home = temp_dir("batch-password-redirected");
+    let mut command = in_home(&home, "/bin/sh");
+    command.env_remove("SQLN_PASSWORD").args([
+        "-c",
+        "\"$@\" </dev/null >result.csv 2>errors.log; status=$?; stty -a; echo status=$status; exec sleep 60",
+        "sh",
+        env!("CARGO_BIN_EXE_sqln"),
+        "postgres://app@127.0.0.1:1/db",
+        "--execute",
+        "SELECT 1",
+        "--output",
+        "csv",
+    ]);
+    let mut terminal = Terminal::start(command);
+    terminal.wait_for("Password for app");
+    terminal.wait_for_raw_mode();
+    terminal.send(b"batch-secret\r");
+    assert_ended_with_echo(&mut terminal, 1);
+    let errors = fs::read_to_string(home.join("errors.log")).unwrap();
+    assert!(!errors.contains("Password for"));
+    assert!(!errors.contains("batch-secret"));
+    assert!(!terminal.output().contains("batch-secret"));
+    assert!(!terminal.output().contains(ENTER_SCREEN));
+    assert!(fs::read(home.join("result.csv")).unwrap().is_empty());
+}
+
+#[test]
+fn batch_password_question_hides_text_and_restores_the_terminal() {
+    let home = temp_dir("batch-password");
+    let mut command = program_in_shell(
+        &home,
+        &[
+            "postgres://app@127.0.0.1:1/db",
+            "--execute",
+            "SELECT 1",
+            "--output",
+            "json",
+        ],
+    );
+    command.env_remove("SQLN_PASSWORD");
+    let mut terminal = Terminal::start(command);
+    terminal.wait_for("Password for app");
+    terminal.wait_for_raw_mode();
+    terminal.send(b"batch-secret\r");
+    assert_ended_with_echo(&mut terminal, 1);
+    assert!(!terminal.output().contains("batch-secret"));
+    assert!(!terminal.output().contains(ENTER_SCREEN));
+}
+
 /// Waits for the report of `program_in_shell`. The raw mode shows as `-echo`.
 fn assert_ended_with_echo(terminal: &mut Terminal, status: i32) {
     terminal.wait_for(&format!("status={status}"));

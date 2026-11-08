@@ -1024,6 +1024,7 @@ impl App {
         };
         let cursor = picker.cursor;
         match picker.kind {
+            PickerKind::Analysis(choice) => self.choose_analysis(choice, cursor),
             PickerKind::Agent(choices) => {
                 if let Some(choice) = choices.get(cursor) {
                     self.accept_agent_choice(choice.clone());

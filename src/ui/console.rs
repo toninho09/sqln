@@ -442,7 +442,15 @@ pub fn draw_console(
         let line = match &result.search {
             Some(search) => search_line(search, &result.table, theme),
             None => Line::from(Span::styled(
-                format!(" {}", printable(&result.summary)),
+                format!(
+                    " {}{}",
+                    if console.retain_result {
+                        "Keep previous: On · "
+                    } else {
+                        ""
+                    },
+                    printable(&result.summary)
+                ),
                 theme.hint,
             )),
         };

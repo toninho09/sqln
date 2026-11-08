@@ -2,6 +2,7 @@
 
 mod agent;
 mod ai;
+mod analysis;
 mod auth;
 mod auto_refresh;
 mod browse;
@@ -293,6 +294,7 @@ struct Dialog {
 }
 
 struct Overlay {
+    _analysis_memory: Option<crate::analysis::Memory>,
     title: String,
     contents: WrappedText,
     footer: String,
@@ -318,6 +320,7 @@ impl Overlay {
 
 /// What a row of a list stands for.
 enum PickerKind {
+    Analysis(analysis::Choice),
     Agent(Vec<agent::Choice>),
     /// The first row is the default of the connection, and the others are schemas.
     Schema {
@@ -472,6 +475,7 @@ pub struct App {
     history: Option<HistoryList>,
     form: Option<ConnectionForm>,
     overlay: Option<Overlay>,
+    analysis_job: Option<crate::analysis::Job>,
     help: Option<Help>,
     status: Option<String>,
     /// The message on the clock, with the time of its first frame.
@@ -610,6 +614,7 @@ impl App {
             history: None,
             form: None,
             overlay: None,
+            analysis_job: None,
             help: None,
             rename: None,
             settings_form: None,
@@ -1102,6 +1107,19 @@ impl App {
             Event::Mouse(mouse) if self.edit_form.is_some() => self.on_edit_mouse(mouse),
             Event::Mouse(mouse) if self.import_form.is_some() => self.on_import_mouse(mouse),
             Event::Mouse(mouse) if self.compare_form.is_some() => self.on_compare_mouse(mouse),
+            Event::Mouse(mouse) if self.overlay.is_some() => {
+                if let Some(overlay) = &mut self.overlay {
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => {
+                            overlay.scroll = overlay.scroll.saturating_sub(3)
+                        }
+                        MouseEventKind::ScrollDown => {
+                            overlay.scroll = overlay.scroll.saturating_add(3)
+                        }
+                        _ => {}
+                    }
+                }
+            }
             Event::Mouse(mouse) if self.help.is_some() => {
                 if let Some(help) = &mut self.help {
                     match mouse.kind {
@@ -1176,7 +1194,7 @@ impl App {
             (None, Some(tab)) => tab.result.search_has_work(),
             (None, None) => self.console().search_has_work(),
         };
-        search || self.exports_have_work()
+        search || self.exports_have_work() || self.analysis_job.is_some()
     }
 
     /// Returns the time that the main loop can wait for a key. Events that arrive now
@@ -1209,6 +1227,7 @@ impl App {
                 (None, None) => self.console_mut().continue_search(deadline),
             }
             self.continue_exports(deadline);
+            self.continue_analysis(deadline);
         }
         // The number of frames must not grow with the events, because a frame has a cost.
         let deadline = Instant::now() + WORK_SLICE;

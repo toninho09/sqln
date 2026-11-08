@@ -16,6 +16,8 @@ use sqln::{
     clipboard::MemoryClipboard,
     editor::KeyboardMode,
     grid::Budget,
+    input::Action,
+    ui::text,
     ui::theme::Theme,
 };
 use std::{
@@ -1486,4 +1488,38 @@ fn cycling_the_reasoning_effort_makes_the_block_custom_and_saves_the_value() {
     let provider = form.ai_preferences().unwrap().provider.unwrap();
     let saved = serde_json::to_string(&provider).unwrap();
     assert!(!saved.contains("reasoning"));
+}
+
+/// Asks the open palette for the technical name of the action.
+fn palette_has(app: &mut App, action: Action) -> bool {
+    app.drain_events();
+    app.on_event(Event::Key(ctrl('p')));
+    app.on_event(Event::Paste(action.name().to_owned()));
+    let shown = screen(app);
+    let found = shown.contains(text::TITLE_PALETTE) && !shown.contains(text::NO_COMMANDS);
+    app.on_event(Event::Key(key(KeyCode::Esc)));
+    found
+}
+
+#[test]
+fn the_palette_offers_every_command_of_the_ai_completion() {
+    // The editor with text: the two ways to ask for a completion.
+    let server = Server::new("42", Duration::ZERO);
+    let mut first = app("ai-palette-all", server.provider());
+    first.on_event(Event::Paste("SELECT ".into()));
+    for action in [Action::EditorAiComplete, Action::EditorAiCompleteRequest] {
+        assert!(palette_has(&mut first, action), "{action:?} missing");
+    }
+    // A completion that waits: the cancel of the run, then its ghost.
+    let slow = Server::new("42", Duration::from_millis(400));
+    let mut app = app("ai-palette-run", slow.provider());
+    app.on_event(Event::Paste("SELECT ".into()));
+    request(&mut app);
+    approve(&mut app);
+    pump(&mut app, |s| s.contains("AI thinking"));
+    assert!(palette_has(&mut app, Action::EditorAiCancel), "missing");
+    pump(&mut app, ghost);
+    for action in [Action::EditorAiAccept, Action::EditorAiReject] {
+        assert!(palette_has(&mut app, action), "{action:?} missing");
+    }
 }

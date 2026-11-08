@@ -2,6 +2,7 @@
 
 mod common;
 
+mod analysis;
 mod compare_data;
 mod compare_tab;
 mod export;

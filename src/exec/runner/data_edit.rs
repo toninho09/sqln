@@ -40,6 +40,7 @@ impl ConsoleTask {
         let delivery = Delivery {
             cap,
             export: None,
+            stream: false,
             timed: true,
             capture: Some(capture.clone()),
             parameters: Vec::new(),

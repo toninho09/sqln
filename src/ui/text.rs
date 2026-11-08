@@ -1240,6 +1240,7 @@ pub const PLAN_OBJECT: &str = "Object";
 pub const PLAN_SHARE: &str = "Share";
 pub const PLAN_COST: &str = "Cost";
 pub const PLAN_ROWS: &str = "Rows";
+pub const GROUP_ANALYSIS: &str = "Analysis";
 pub const PLAN_TIME: &str = "Time (ms)";
 pub const PLAN_ACTUAL_ROWS: &str = "Actual rows";
 pub const PLAN_LOOPS: &str = "Loops";
@@ -1608,6 +1609,10 @@ pub fn action_text(action: Action) -> &'static str {
         Action::GridCopy => "Copy as TSV",
         Action::GridOpenValue => "Open the value",
         Action::GridOpenRow => "Open the row",
+        Action::GridProfile => "Show the column profile",
+        Action::GridChart => "Show a text chart",
+        Action::GridKeepPrevious => "Keep the previous result for comparison",
+        Action::GridComparePrevious => "Compare with the previous execution",
         Action::GridCountRows => "Count the rows",
         Action::GridFind => "Find in the loaded rows",
         Action::GridNarrow => "Make the column narrow",
@@ -1681,6 +1686,10 @@ pub fn panel_command_text(action: Action) -> &'static str {
         GridClearSelection => "Clear selection",
         GridOpenValue => "Open value",
         GridOpenRow => "Open row",
+        GridProfile => "Column profile",
+        GridChart => "Text chart",
+        GridKeepPrevious => "Retain previous",
+        GridComparePrevious => "Execution diff",
         GridFind => "Find",
         GridNarrow => "Narrow column",
         GridWiden => "Widen column",
@@ -1731,6 +1740,11 @@ pub fn command_aliases(action: Action) -> &'static str {
         Action::EditorFind | Action::EditorReplace | Action::GridFind => "search find replace",
         Action::EditorSuggestions => "autocomplete completion suggestions",
         Action::GridCopy => "copy cell selection clipboard tsv",
+        Action::GridProfile => "profile column null distinct min max histogram statistics",
+        Action::GridChart => "chart graph bar line numeric",
+        Action::GridKeepPrevious | Action::GridComparePrevious => {
+            "diff compare previous execution snapshot"
+        }
         Action::NavigatorRefresh => "refresh reload catalog rename console",
         Action::GridFocusFilter => "where filter",
         Action::GridFocusOrder | Action::GridSortColumn => "order by sort",
@@ -2084,6 +2098,14 @@ Options:
                          the nearest .sqln folder above the working folder.
   --script <file>        Open a .sql file as a console at the start. It needs a
                          target or a saved connection.
+  --execute <SQL>       Run one instruction without the terminal interface.
+  --output csv|json     Set the required format for --execute.
+  --connection <name>   Use a saved connection instead of a target.
+  --scope global|project Select the scope of a saved connection name.
+  --yes                 Authorize protected execution and database creation.
+                         Without it, SQLN asks on the terminal. Trust stays separate.
+  --password-file <file> Read a batch password. Otherwise use SQLN_PASSWORD,
+                         then a saved credential, then a terminal question.
   --log <file>           Write a log of events, without SQL or values.
   -h, --help             Show this text.
   -V, --version          Show the version.

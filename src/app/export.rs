@@ -340,6 +340,7 @@ impl App {
             only_schema: false,
             row_cap: None,
             export: Some(writer.clone()),
+            stream: false,
             untimed: false,
             parameters,
         };

@@ -12,7 +12,7 @@ arboard = { version = "3.7.0", default-features = false }
 async-trait = "0.1"
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-crossterm = "0.29.0"
+crossterm = { version = "0.29.0", features = ["use-dev-tty"] }
 duckdb = { version = "1.20000.1", default-features = false, features = ["bundled"] }
 edtui = { version = "0.11.7", default-features = false, features = ["mouse-support"] }
 futures-util = "0.3"
@@ -69,6 +69,10 @@ path = "tests/ai.rs"
 [[test]]
 name = "app"
 path = "tests/app.rs"
+
+[[test]]
+name = "batch"
+path = "tests/batch.rs"
 
 [[test]]
 name = "auto_refresh"

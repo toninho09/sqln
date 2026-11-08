@@ -4504,3 +4504,17 @@ fn a_data_compare_between_two_dialects_writes_the_script_of_the_target() {
     pg.run_ok(&["DROP SCHEMA cmp_dcross CASCADE"]);
     my.run_ok(&["DROP DATABASE cmp_dcross"]);
 }
+
+#[test]
+fn the_palette_offers_the_schema_command_of_a_namespace_source() {
+    let Some(server) = only(Kind::Postgres) else {
+        return;
+    };
+    let mut s = Screen::open(&server);
+    s.type_text("SELECT 1;");
+    s.press(ctrl('p'));
+    s.app.on_event(Event::Paste("chooseSchema".into()));
+    let screen = s.screen();
+    assert!(screen.contains("Choose the schema or database"), "{screen}");
+    s.code(KeyCode::Esc);
+}

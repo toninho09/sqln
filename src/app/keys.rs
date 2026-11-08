@@ -474,6 +474,16 @@ impl App {
         if self.home() && !home_allows(action) {
             return;
         }
+        if matches!(
+            action,
+            Action::GridProfile
+                | Action::GridChart
+                | Action::GridKeepPrevious
+                | Action::GridComparePrevious
+        ) {
+            self.perform_analysis(action);
+            return;
+        }
         if self.diagram_active.is_some() && self.perform_on_diagram(action) {
             return;
         }
@@ -609,6 +619,7 @@ impl App {
                     None => (WrappedText::from_source(text.source()), footer, None),
                 };
                 self.overlay = Some(Overlay {
+                    _analysis_memory: None,
                     title,
                     contents,
                     footer,
@@ -632,6 +643,7 @@ impl App {
         let window = self.active_result().and_then(|item| item.row_window(row));
         let Some(window) = window else { return };
         self.overlay = Some(Overlay {
+            _analysis_memory: None,
             title: window.title,
             contents: WrappedText::with_indent(window.text, window.indent),
             footer: window.footer,
@@ -1001,6 +1013,7 @@ impl App {
                     only_schema: false,
                     row_cap: None,
                     export: None,
+                    stream: false,
                     untimed: false,
                     parameters,
                 };
@@ -1225,9 +1238,14 @@ impl App {
             return;
         };
         match key.code {
-            KeyCode::Esc | KeyCode::Enter => self.overlay = None,
+            KeyCode::Esc | KeyCode::Enter => {
+                self.overlay = None;
+                self.analysis_job = None;
+            }
             KeyCode::Up | KeyCode::Char('k') => overlay.scroll = overlay.scroll.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => overlay.scroll = overlay.scroll.saturating_add(1),
+            KeyCode::PageUp => overlay.scroll = overlay.scroll.saturating_sub(10),
+            KeyCode::PageDown => overlay.scroll = overlay.scroll.saturating_add(10),
             KeyCode::Char('f') if !ctrl => overlay.switch_form(),
             KeyCode::Left | KeyCode::Char('h') => self.step_row_window(false),
             KeyCode::Right | KeyCode::Char('l') => self.step_row_window(true),

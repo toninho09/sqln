@@ -159,6 +159,7 @@ impl App {
             only_schema: false,
             row_cap: None,
             export: None,
+            stream: false,
             untimed: false,
             parameters,
         };

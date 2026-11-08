@@ -57,12 +57,15 @@ Main thread                        Tokio runtime
 | `plan` | Query plan commands, database output readers, and tree rows |
 | `mark_list` | Searchable list with a mark for each selected name |
 | `result` | Grid of one result with cursor and search, used by consoles and tables |
+| `analysis` | Bounded jobs for column profiles, ordered text charts, and loaded-result differences; shared-budget scratch data and reports |
+| `app/analysis` | Analysis command availability, column and key choices, job coordination, and report windows |
 | `table` | Table tab: pages, fields, sorting, suggestions, and query |
 | `data_edit` | Pending rows, budgeted snapshots, key predicates, update SQL, review, and cursor restoration |
 | `structure` | Catalog queries of the structure tab, per database, scope, and section |
 | `diagram` | ER diagram: catalog queries, model, layout of boxes and lines, Mermaid text, and the state of a diagram tab |
 | `compare` | Structure and data compare: catalog queries, model of a schema, differences, sync DDL, rows by key, the dialog, and the state of a compare tab |
 | `line_input` | Single-line text field, used by the filter bar fields |
+| `batch` | One noninteractive instruction, saved-name resolution, terminal authorization, credentials, and CSV/JSON delivery |
 | `exec` | Executions, scripts, cap, and cancellation |
 | `pool` | Limit, queue, reservation, and cleaning |
 | `connector` | Contract and PostgreSQL, MySQL, SQLite, DuckDB, and Redis/Valkey connectors |
@@ -90,6 +93,27 @@ The vault calls are synchronous, but `Manager::spawn_blocking` runs them off the
 `app` applies the key priority and the mouse. `app/auth.rs`, `app/keys.rs`, `app/hints.rs`, `app/mouse.rs`, `app/close.rs`, `app/connections.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs`, `app/session.rs`, `app/conflicts.rs`, `app/history.rs`, `app/guard.rs`, `app/export.rs`, and `app/browse.rs` divide that code.
 `store` keeps the folders and files. It does not depend on `app` or `ui`.
 Its configuration reader uses driver-independent connector target types.
+
+### Batch execution
+
+`main` selects `batch` for `--execute` before it creates application or terminal state.
+`batch` loads the same configuration and connection definitions, then uses `exec::Manager` and the existing pools.
+`sql::run_risk` supplies the risk analysis for both `app::guard` and `batch`.
+Terminal questions use `/dev/tty`, not the SQL input or the data output. Trust remains separate from `--yes`.
+`batch::auth` resolves password-file, environment, and saved credentials without saving or migrating them.
+
+Streaming execution uses a one-event queue. The sink sends one row per event, with backpressure, without grid storage or its cap.
+`export::Encoder` writes those original values to standard output. Format defaults do not depend on saved export preferences.
+Streaming does not disable the connection timeout. No SQL `LIMIT` is added, and no reread occurs.
+The coordinator drains execution events after a failure and uses the existing stop and session-cleanup path.
+On Unix, standard output and standard error use nonblocking adapters so signals can stop a full pipe. They restore the original file flags.
+Notices and affected-row messages share the statement deadline and cancellation state. Output failures use the same stop-and-drain path.
+The final error report attempts a nonblocking write so a full error stream cannot prevent process exit.
+The executor shares cancellation and the statement deadline with the output adapter, without waiting for event delivery.
+The deadline starts with the statement and stays active through the final output flush, even after the database returns.
+Password questions write to the controlling terminal. The terminal input uses the poll backend, including when stdin is redirected.
+SIGINT and SIGTERM feed the existing stop command. A transaction that remains open is rolled back and the execution fails.
+Batch execution writes no history, console, workspace, or preference state. Explicit trust confirmation uses the existing private atomic store.
 
 ### Local assistant operations
 
@@ -309,6 +333,25 @@ The limit in memory stays the same.
 
 A row can keep its place in the budget after the end of its execution. A data compare keeps each source row until the compare ends, because the target rows meet them in a later execution. A target row that equals its source row leaves the budget at once. The index of the keys stays out of the budget.
 
+### Loaded-result analysis
+
+`analysis::Job` reads the active `ResultTable` in at most 128 steps per call, under the frame deadline.
+It checks table generations before each step. Reports use the existing text window; no database task starts.
+`app/analysis` opens the chart and key pickers, coordinates jobs, and releases reservations when the window closes or cancels.
+Jobs reserve scratch indexes, point arrays, and report text in the shared `Budget`. Completed reports keep only their text reservation.
+Profile distinct counts and execution differences reuse the canonical value and key rules of `compare::data`.
+Profile distinct indexes refer to loaded rows instead of copying text or binary values.
+Hashing and equality checks process at most 4096 bytes per step, including duplicate values.
+Numeric min/max compare decimal strings without `f64`; histogram ranges and chart positions use approximate numbers.
+Charts keep every finite numeric pair in row order and give repeated X occurrences separate positions.
+
+`Console::retain_result` is session-only and optional. Execution preparation moves one eligible current table into `previous_result`.
+The retained rows keep their existing budget charge; credential preparation must not retain or release them twice.
+The next preparation releases the older retained table. Toggle-off, connection change, console close, or a failed/incomplete execution releases it too.
+`comparison_ready` requires a successful execution with exactly one complete, non-plan data result.
+A comparison requires unchanged columns and explicit unique key columns. A failure discards the whole pending report and shows its reason.
+Difference reports convert cell values and column names in bounded chunks. Each chunk reserves memory before conversion.
+
 ## 3. Concurrency
 
 ### Rules
@@ -406,7 +449,7 @@ A preview reads only the visible prefix. TSV encoding borrows selected values wi
 ## 5. Script execution
 
 1. The console requests the execution and receives an `ExecutionId`.
-2. The application clears the previous results and frees the budget.
+2. The application clears the previous results and frees the budget, except one complete result when local comparison retention is on.
 3. The editor delivers a copy of the text.
 4. `sql` separates the statements and keeps their positions.
 5. `pool` delivers a reservation, or the execution enters the queue.
