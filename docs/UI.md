@@ -1239,6 +1239,21 @@ That field also works with the active connection and appears in all icon sets, i
 | Catppuccin Latte | `catppuccin-latte` | Light |
 | Gruvbox | `gruvbox` | Warm dark |
 | Nord | `nord` | Bluish gray |
+| Dracula | `dracula` | Violet dark |
+| One Dark | `one-dark` | Neutral dark |
+| Monokai | `monokai` | Warm dark |
+| Solarized Dark | `solarized-dark` | Teal dark |
+| Solarized Light | `solarized-light` | Cream light |
+| GitHub Dark | `github-dark` | Neutral dark |
+| Rose Pine | `rose-pine` | Muted violet dark |
+| High Contrast | `high-contrast` | Black base with bright marks |
+| High Contrast Light | `high-contrast-light` | White base with dark marks |
+| Everforest | `everforest` | Green-tinted dark |
+| Kanagawa | `kanagawa` | Ink-blue dark |
+| Night Owl | `night-owl` | Deep navy dark |
+| Rose Pine Dawn | `rose-pine-dawn` | Warm light |
+| Everforest Light | `everforest-light` | Green-tinted light |
+| Ember | `ember` | Red-tinted dark, for production |
 | Custom | `{"custom": "<id>"}` | The theme file `themes/<id>.json`; a missing file falls back to `auto` |
 
 A custom theme of the project wins over a global theme with the same id, as the other preferences do.

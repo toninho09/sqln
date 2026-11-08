@@ -14,7 +14,7 @@ use super::file::{self, Expect};
 pub const VERSION: u32 = 1;
 
 /// The ids that the built-in themes use, so no file can take them.
-pub const RESERVED: [&str; 8] = [
+pub const RESERVED: [&str; 23] = [
     "auto",
     "astrodark",
     "ansi",
@@ -23,6 +23,21 @@ pub const RESERVED: [&str; 8] = [
     "catppuccin-latte",
     "gruvbox",
     "nord",
+    "dracula",
+    "one-dark",
+    "monokai",
+    "solarized-dark",
+    "solarized-light",
+    "github-dark",
+    "rose-pine",
+    "high-contrast",
+    "high-contrast-light",
+    "everforest",
+    "kanagawa",
+    "night-owl",
+    "rose-pine-dawn",
+    "everforest-light",
+    "ember",
 ];
 
 /// A color of a theme file, written as `#RRGGBB`.

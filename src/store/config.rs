@@ -148,13 +148,28 @@ pub enum ThemeName {
     CatppuccinLatte,
     Gruvbox,
     Nord,
+    Dracula,
+    OneDark,
+    Monokai,
+    SolarizedDark,
+    SolarizedLight,
+    GithubDark,
+    RosePine,
+    HighContrast,
+    HighContrastLight,
+    Everforest,
+    Kanagawa,
+    NightOwl,
+    RosePineDawn,
+    EverforestLight,
+    Ember,
     /// The id of a theme file, without `.json`.
     Custom(String),
 }
 
 impl ThemeName {
     /// The built-in themes, in the order of the settings.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 23] = [
         Self::Auto,
         Self::Astrodark,
         Self::Ansi,
@@ -163,6 +178,21 @@ impl ThemeName {
         Self::CatppuccinLatte,
         Self::Gruvbox,
         Self::Nord,
+        Self::Dracula,
+        Self::OneDark,
+        Self::Monokai,
+        Self::SolarizedDark,
+        Self::SolarizedLight,
+        Self::GithubDark,
+        Self::RosePine,
+        Self::HighContrast,
+        Self::HighContrastLight,
+        Self::Everforest,
+        Self::Kanagawa,
+        Self::NightOwl,
+        Self::RosePineDawn,
+        Self::EverforestLight,
+        Self::Ember,
     ];
 
     /// The id of a custom theme.

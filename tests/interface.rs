@@ -364,6 +364,21 @@ fn each_scheme_keeps_its_text_readable() {
         schemes::CATPPUCCIN_LATTE,
         schemes::GRUVBOX,
         schemes::NORD,
+        schemes::DRACULA,
+        schemes::ONE_DARK,
+        schemes::MONOKAI,
+        schemes::SOLARIZED_DARK,
+        schemes::SOLARIZED_LIGHT,
+        schemes::GITHUB_DARK,
+        schemes::ROSE_PINE,
+        schemes::HIGH_CONTRAST,
+        schemes::HIGH_CONTRAST_LIGHT,
+        schemes::EVERFOREST,
+        schemes::KANAGAWA,
+        schemes::NIGHT_OWL,
+        schemes::ROSE_PINE_DAWN,
+        schemes::EVERFOREST_LIGHT,
+        schemes::EMBER,
     ];
     for scheme in schemes {
         let theme = Theme::from_scheme(&scheme);

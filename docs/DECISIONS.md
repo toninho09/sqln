@@ -6,6 +6,28 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Themes with colored bases — 2026-11-08
+
+The user asked for themes with different base colors, to distinguish environments at a glance.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| List | Add Everforest (green dark), Kanagawa (ink blue), Night Owl (navy), Rose Pine Dawn (warm light), Everforest Light (green light), and Ember (red dark) | More neutral dark themes | The tinted bases separate development, staging, and production at a glance |
+| Production mark | `ember` uses a red-tinted base | A setting that colors only the status line | The base is visible on every screen, including the grid and the dialogs |
+| Contrast | Adjust some original tones to keep 4.5 on body text and 3.0 on marks and labels | Keep the original tones | Bright fills and tinted bases need their own text colors |
+| Definition | Each theme remains a `Scheme` constant and a `ThemeName` variant, with a reserved id | Environment-specific settings | The existing per-connection theme already selects a palette |
+
+## More built-in themes — 2026-11-08
+
+The user asked for more themes inspired by popular developer palettes, including high-contrast choices.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| List | Add Dracula, One Dark, Monokai, Solarized Dark, Solarized Light, GitHub Dark, Rose Pine, High Contrast, and High Contrast Light after Nord | Only dark themes; only one high-contrast theme | The palettes cover different tastes, and the two high-contrast themes serve accessibility on dark and light terminals |
+| Definition | Each theme is a `Scheme` constant and a `ThemeName` variant, and its id stays reserved | Ship them as custom theme files | Built-in themes do not depend on files or scopes |
+| Contrast | Some original tones change to pass 4.5 on body text and 3.0 on marks and labels | Keep every original tone | Some official tones fail the minimum contrast, as the first themes already did |
+| Order | Append the names after Nord | Reorder the existing list | Saved values stay valid, and the settings keep their current choices in place |
+
 ## SQL files and table import
 
 The user chose to remove the proposed SQL row importer and use the external-file console flow instead. Table import remains limited to CSV, TSV, JSON, and JSON Lines. Opening a SQL file does not execute it; the user reviews and runs it through the existing console execution flow and its protections.

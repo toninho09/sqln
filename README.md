@@ -562,7 +562,7 @@ Do not replace an existing configuration with this example: its empty connection
 SQLN reports invalid configuration with its file and position. Correct it before restarting or reloading.
 Press `Ctrl+W r` to reload configuration.
 
-Available themes: `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-latte`, `gruvbox`, and `nord`.
+Available themes: `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-latte`, `gruvbox`, `nord`, `dracula`, `one-dark`, `monokai`, `solarized-dark`, `solarized-light`, `github-dark`, `rose-pine`, `high-contrast`, `high-contrast-light`, `everforest`, `kanagawa`, `night-owl`, `rose-pine-dawn`, `everforest-light`, and `ember`.
 Use `ansi` for the terminal palette. Set `NO_COLOR=1` to remove colors.
 Select `nerd` icons only if the terminal uses a Nerd Font.
 

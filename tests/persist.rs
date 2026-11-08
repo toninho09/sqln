@@ -3321,9 +3321,14 @@ fn a_saved_theme_goes_to_the_file_and_comes_back_at_the_next_start() {
     session.open_theme_settings();
     session.assert_sees("Default: Auto");
     // `Left` goes from the first choice to the end of the list.
-    session.code(KeyCode::Left);
-    session.code(KeyCode::Left);
-    session.code(KeyCode::Left);
+    let steps = ThemeName::ALL.len()
+        - ThemeName::ALL
+            .iter()
+            .position(|name| *name == ThemeName::CatppuccinLatte)
+            .unwrap();
+    for _ in 0..steps {
+        session.code(KeyCode::Left);
+    }
     session.assert_sees("< Catppuccin Latte >");
     // Theme, Themes, New, Edit, and Delete come before the save.
     for _ in 0..5 {
@@ -3545,9 +3550,10 @@ fn the_form_shows_a_theme_at_once_and_the_file_keeps_the_saved_theme() {
     session.code(KeyCode::Char('e'));
     session.focus_form(Field::Theme);
     session.assert_sees("< Default >");
+    let last = ThemeName::ALL.last().unwrap().clone();
     session.code(KeyCode::Left);
-    session.assert_sees("< Nord >");
-    assert_eq!(session.panel_color(), theme_panel(ThemeName::Nord));
+    session.assert_sees(&format!("< {} >", sqln::ui::text::theme_name(&last)));
+    assert_eq!(session.panel_color(), theme_panel(last));
     session.code(KeyCode::Esc);
     assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
     let after = fs::read_to_string(store.global.config_file()).unwrap();
@@ -3555,8 +3561,13 @@ fn the_form_shows_a_theme_at_once_and_the_file_keeps_the_saved_theme() {
 
     session.code(KeyCode::Char('e'));
     session.focus_form(Field::Theme);
-    session.code(KeyCode::Left);
-    session.code(KeyCode::Left);
+    let gruvbox = ThemeName::ALL
+        .iter()
+        .position(|name| *name == ThemeName::Gruvbox)
+        .unwrap();
+    for _ in 0..=gruvbox {
+        session.code(KeyCode::Right);
+    }
     session.assert_sees("< Gruvbox >");
     session.press_form_button(Field::Save);
     assert!(session.app.form().is_none(), "{}", session.screen());
@@ -4874,13 +4885,18 @@ fn a_new_theme_becomes_a_file_and_the_choice_comes_back_at_the_next_start() {
     session.code(KeyCode::Enter);
     session.assert_sees("Mine · mine (Global)");
     // The default theme cycles to the new theme, and the screen shows its palette.
-    // The default theme starts at the value of the file, so one step reaches the new
+    // The default theme starts at the value of the file, so the steps reach the new
     // theme at the end of the list.
     for _ in 0..7 {
         session.code(KeyCode::Tab);
     }
-    session.code(KeyCode::Right);
-    session.code(KeyCode::Right);
+    let gruvbox = ThemeName::ALL
+        .iter()
+        .position(|name| *name == ThemeName::Gruvbox)
+        .unwrap();
+    for _ in 0..(ThemeName::ALL.len() - gruvbox) {
+        session.code(KeyCode::Right);
+    }
     session.assert_sees("< Mine >");
     assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
     for _ in 0..5 {
