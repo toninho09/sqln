@@ -140,11 +140,11 @@ The **Build binaries** workflow produces archives for:
 |---|---|
 | Linux, x86-64, GNU libc | `x86_64-unknown-linux-gnu` |
 | macOS, Apple Silicon | `aarch64-apple-darwin` |
-| macOS, Intel | `x86_64-apple-darwin` |
 
 Manual runs provide workflow artifacts. Version-tag runs also attach the archives to a GitHub Release.
 See [manual binary builds](#manual-binary-builds) and [releases](#releases) for instructions.
 Linux artifacts use Ubuntu 24.04 and are not static binaries. Older Linux systems can require a source build.
+macOS artifacts target Apple Silicon. Intel Macs require a source build.
 The macOS artifacts are not signed or notarized. They do not replace signed release binaries.
 
 ## Quick start
@@ -768,9 +768,9 @@ No additional publishing or signing secrets are required.
 
 ### Releases
 
-Pushing a tag that starts with `v` starts the three binary builds in the same workflow.
-After all three builds pass, a separate job verifies checksums and publishes a GitHub Release for that tag.
-The release includes the three `.tar.gz` archives, their checksum files, and generated release notes.
+Pushing a tag that starts with `v` starts the two binary builds in the same workflow.
+After both builds pass, a separate job verifies checksums and publishes a GitHub Release for that tag.
+The release includes the two `.tar.gz` archives, their checksum files, and generated release notes.
 
 **A version-tag push authorizes public release publication.** Do not push the tag until the version is ready.
 The workflow does not wait for branch CI. Confirm its success for the same commit before creating a release tag.

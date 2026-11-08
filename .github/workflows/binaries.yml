@@ -24,8 +24,6 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: macos-15
             target: aarch64-apple-darwin
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
     env:
       TARGET: ${{ matrix.target }}
     steps:
@@ -34,10 +32,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install stable Rust
-        run: |
-          rustup toolchain install stable --profile minimal --target "$TARGET"
-          rustup default stable
+      - name: Add Rust target
+        run: rustup target add --toolchain stable "$TARGET"
+
+      - name: Cache Rust dependencies and build output
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: binaries
+          key: ${{ matrix.target }}
 
       - name: Build locked release binary
         run: cargo build --release --locked --bin sqln --target "$TARGET"
