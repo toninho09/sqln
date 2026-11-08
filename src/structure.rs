@@ -112,6 +112,9 @@ pub fn structure_sql(
     }
     let schema = name_literal(&relation.schema, dialect);
     let table = name_literal(&relation.relation, dialect);
+    // DuckDB filters by the `catalog.schema` name of an attached database, which one
+    // literal cannot write.
+    let duckdb = duckdb_namespace(&relation.schema, dialect);
     Some(match (dialect, scope, section) {
         (Dialect::Postgres, Scope::Relation, Section::Columns) => postgres_columns(&schema, &table),
         (Dialect::Postgres, Scope::Relation, Section::Indexes) => postgres_indexes(&schema, &table),
@@ -129,13 +132,13 @@ pub fn structure_sql(
         (Dialect::MySql, Scope::Connection, _) => mysql_all_columns(None),
         (Dialect::Postgres, Scope::Sessions, _) => POSTGRES_SESSIONS.to_owned(),
         (Dialect::MySql, Scope::Sessions, _) => MYSQL_SESSIONS.to_owned(),
-        (Dialect::DuckDb, Scope::Relation, Section::Columns) => duckdb_columns(&schema, &table),
-        (Dialect::DuckDb, Scope::Relation, Section::Indexes) => duckdb_indexes(&schema, &table),
+        (Dialect::DuckDb, Scope::Relation, Section::Columns) => duckdb_columns(&table, &duckdb),
+        (Dialect::DuckDb, Scope::Relation, Section::Indexes) => duckdb_indexes(&table, &duckdb),
         (Dialect::DuckDb, Scope::Relation, Section::ForeignKeys) => {
-            duckdb_foreign_keys(&schema, &table)
+            duckdb_foreign_keys(&table, &duckdb)
         }
-        (Dialect::DuckDb, Scope::Schema, _) => duckdb_all_columns(Some(&schema)),
-        (Dialect::DuckDb, Scope::Connection, _) => duckdb_all_columns(None),
+        (Dialect::DuckDb, Scope::Schema, _) => duckdb_all_columns(&duckdb),
+        (Dialect::DuckDb, Scope::Connection, _) => duckdb_all_columns(""),
         (_, Scope::Sessions, _) => return None,
         (_, Scope::Relation, Section::Columns) => sqlite_columns(&schema, &table),
         (_, Scope::Relation, Section::Indexes) => sqlite_indexes(&schema, &table),
@@ -346,42 +349,55 @@ const DUCKDB_COLUMN_DATA: &str = "\
     CASE WHEN is_nullable THEN 'yes' ELSE 'no' END AS nullable, \
     column_default AS \"default\"";
 
-fn duckdb_columns(schema: &str, table: &str) -> String {
+/// The filters of a DuckDB schema name, with a leading space. A name with a dot is the
+/// `catalog.schema` name of a database the session attached; a plain name is a schema
+/// of the connection, and it matches every catalog with that schema, because a session
+/// can change the current one with `SET schema`.
+fn duckdb_namespace(schema: &str, dialect: Dialect) -> String {
+    match schema.split_once('.') {
+        Some((database, schema)) => format!(
+            " AND database_name = {} AND schema_name = {}",
+            name_literal(database, dialect),
+            name_literal(schema, dialect)
+        ),
+        None => format!(" AND schema_name = {}", name_literal(schema, dialect)),
+    }
+}
+
+fn duckdb_columns(table: &str, namespace: &str) -> String {
     format!(
         "SELECT {DUCKDB_COLUMN_DATA}, \
          CASE WHEN EXISTS (SELECT 1 FROM duckdb_constraints() k \
-           WHERE k.constraint_type = 'PRIMARY KEY' AND k.schema_name = c.schema_name \
-             AND k.table_name = c.table_name \
+           WHERE k.constraint_type = 'PRIMARY KEY' AND k.database_name = c.database_name \
+             AND k.schema_name = c.schema_name AND k.table_name = c.table_name \
              AND list_contains(k.constraint_column_names, c.column_name)) THEN 'PK' END AS \"key\" \
          FROM duckdb_columns() c \
-         WHERE c.schema_name = {schema} AND c.table_name = {table} \
+         WHERE c.table_name = {table}{namespace} \
          ORDER BY c.column_index"
     )
 }
 
-fn duckdb_all_columns(schema: Option<&str>) -> String {
-    let filter = schema.map_or_else(String::new, |schema| {
-        format!(" WHERE c.schema_name = {schema}")
-    });
+fn duckdb_all_columns(namespace: &str) -> String {
     format!(
         "SELECT c.schema_name AS \"schema\", c.table_name AS relation, {DUCKDB_COLUMN_DATA} \
-         FROM duckdb_columns() c{filter} \
+         FROM duckdb_columns() c \
+         WHERE TRUE{namespace} \
          ORDER BY c.schema_name, c.table_name, c.column_index"
     )
 }
 
 /// A DuckDB index reports its `CREATE INDEX` text, and the columns stay in that text.
-fn duckdb_indexes(schema: &str, table: &str) -> String {
+fn duckdb_indexes(table: &str, namespace: &str) -> String {
     format!(
         "SELECT index_name AS name, sql AS columns, \
          CASE WHEN is_unique THEN 'yes' ELSE 'no' END AS \"unique\" \
          FROM duckdb_indexes() \
-         WHERE schema_name = {schema} AND table_name = {table} \
+         WHERE table_name = {table}{namespace} \
          ORDER BY index_name"
     )
 }
 
-fn duckdb_foreign_keys(schema: &str, table: &str) -> String {
+fn duckdb_foreign_keys(table: &str, namespace: &str) -> String {
     format!(
         "SELECT constraint_name AS name, \
          list_aggregate(constraint_column_names, 'string_agg', ', ') AS columns, \
@@ -389,7 +405,7 @@ fn duckdb_foreign_keys(schema: &str, table: &str) -> String {
            list_aggregate(referenced_column_names, 'string_agg', ', ') || ')', '') AS \"references\", \
          NULL AS on_update, NULL AS on_delete \
          FROM duckdb_constraints() \
-         WHERE constraint_type = 'FOREIGN KEY' AND schema_name = {schema} AND table_name = {table} \
+         WHERE constraint_type = 'FOREIGN KEY' AND table_name = {table}{namespace} \
          GROUP BY constraint_name, referenced_table, referenced_column_names \
          ORDER BY constraint_name"
     )

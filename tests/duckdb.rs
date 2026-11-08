@@ -9,8 +9,8 @@ use sqln::connection::{Definition, Source};
 use sqln::connector::duckdb::{DuckdbConnector, DuckdbSource, DuckdbTarget};
 use sqln::connector::{Connector, SessionContext, TransactionCommand, TransactionState};
 use sqln::exec::{
-    ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, Manager, ReadLimit, RunOptions, Settings,
-    StatementStatus,
+    ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, Manager, ReadLimit, ResultSink, RunOptions,
+    Settings, StatementStatus,
 };
 use sqln::grid::{Budget, Row, Value};
 use tokio::sync::mpsc::Receiver;
@@ -143,6 +143,28 @@ impl Harness {
     fn second_console(&mut self) -> ConsoleId {
         self.manager.open_console(self.connection).unwrap()
     }
+
+    /// Reads the catalog of the connection through the manager.
+    fn catalog(&mut self) -> sqln::catalog::Catalog {
+        self.manager.load_catalog(self.connection, 1, Vec::new());
+        loop {
+            if let ExecEvent::CatalogLoaded { catalog, .. } = self.next() {
+                return catalog.expect("the catalog of the connection");
+            }
+        }
+    }
+}
+
+/// A sink that keeps the row cap of the tests away.
+fn sink() -> ResultSink {
+    let (events, inbox) = tokio::sync::mpsc::channel(1024);
+    std::mem::forget(inbox);
+    let key = sqln::exec::StatementKey {
+        console: 1,
+        execution: 1,
+        index: 0,
+    };
+    ResultSink::new(key, events, Arc::new(Budget::new(1 << 30)), 1000)
 }
 
 fn success(count: usize) -> Vec<StatementStatus> {
@@ -773,4 +795,144 @@ fn the_catalog_reports_the_schema_of_the_session() {
             .map(|schema| &schema.name)
             .collect::<Vec<_>>()
     );
+}
+
+/// Creates a DuckDB file with a `public.player` table for the tests of an attached
+/// database, and returns the path of the file.
+fn attached_duckdb(name: &str) -> PathBuf {
+    let path = temp_duckdb(name).with_file_name("attached.duckdb");
+    for suffix in ["", ".wal", ".tmp"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+    {
+        let conn = duckdb::Connection::open(&path).expect("a writable file");
+        conn.execute_batch(
+            "CREATE SCHEMA public; CREATE TABLE public.player(id INTEGER, name TEXT); \
+             INSERT INTO public.player VALUES (1, 'one'), (2, 'two')",
+        )
+        .expect("the schema and the table");
+    }
+    path
+}
+
+#[test]
+fn the_catalog_names_the_schema_of_an_attached_database() {
+    let path = attached_duckdb("attach-catalog");
+    let mut h = Harness::open("attach-catalog", Settings::default());
+    let attach = format!("ATTACH '{}' AS db (READ_ONLY)", path.display());
+    h.run(&["CREATE TABLE local(v INTEGER)", &attach]);
+    let catalog = h.catalog();
+    let names: Vec<&str> = catalog
+        .schemas
+        .iter()
+        .map(|schema| schema.name.as_str())
+        .collect();
+    assert!(
+        names.contains(&"main") && names.contains(&"db.public"),
+        "the schemas: {names:?}"
+    );
+    let own = catalog
+        .schema("main")
+        .expect("the schema of the connection");
+    assert!(
+        own.relations
+            .iter()
+            .any(|relation| relation.name == "local"),
+        "the own tables: {:?}",
+        own.relations
+    );
+    let attached = catalog
+        .schema("db.public")
+        .expect("the schema of the attached database");
+    assert!(
+        attached
+            .relations
+            .iter()
+            .any(|relation| relation.name == "player"),
+        "the attached tables: {:?}",
+        attached.relations
+    );
+}
+
+#[test]
+fn a_table_of_an_attached_database_reads() {
+    let path = attached_duckdb("attach-read");
+    let mut h = Harness::open("attach-read", Settings::default());
+    let attach = format!("ATTACH '{}' AS db (READ_ONLY)", path.display());
+    h.run(&[&attach]);
+    let relation = RelationRef {
+        schema: "db.public".to_owned(),
+        relation: "player".to_owned(),
+    };
+    // The query is the one the interface builds to open the table.
+    assert_eq!(
+        sqln::table::from_clause(&relation, sqln::sql::Dialect::DuckDb),
+        "\"db\".\"public\".\"player\""
+    );
+    let run = h.run(&[&format!(
+        "SELECT * FROM {}",
+        sqln::table::from_clause(&relation, sqln::sql::Dialect::DuckDb)
+    )]);
+    assert_eq!(run.statuses, success(1));
+    assert_eq!(run.columns, [["id", "name"]]);
+    assert_eq!(run.rows.len(), 2);
+    assert_eq!(run.rows[0].get(0).unwrap(), number("1"));
+    assert_eq!(run.rows[1].get(1).unwrap(), Value::Text("two"));
+}
+
+#[test]
+fn the_columns_of_an_attached_relation_read() {
+    let path = attached_duckdb("attach-columns");
+    let columns = tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let mut target = DuckdbTarget::new(temp_duckdb("attach-columns"));
+        target.allow_create = true;
+        let connector = DuckdbConnector::new(target);
+        let mut session = connector.connect().await.expect("a session");
+        session
+            .run(
+                &format!("ATTACH '{}' AS db (READ_ONLY)", path.display()),
+                sink(),
+            )
+            .await
+            .expect("the attach");
+        session
+            .read_columns("db.public", "player")
+            .await
+            .expect("the columns of an attached relation")
+    });
+    assert_eq!(columns, ["id", "name"]);
+}
+
+#[test]
+fn a_console_reads_the_schema_of_an_attached_database() {
+    let path = attached_duckdb("attach-schema");
+    let (current, count) = tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let mut target = DuckdbTarget::new(temp_duckdb("attach-schema"));
+        target.allow_create = true;
+        let connector = DuckdbConnector::new(target);
+        let mut session = connector.connect().await.expect("a session");
+        session
+            .run(
+                &format!("ATTACH '{}' AS db (READ_ONLY)", path.display()),
+                sink(),
+            )
+            .await
+            .expect("the attach");
+        session
+            .apply_context(&SessionContext {
+                schema: Some("db.public".to_owned()),
+                read_only: false,
+                only_schema: false,
+            })
+            .await
+            .expect("the schema of the console");
+        let catalog = session.read_catalog().await.expect("the catalog");
+        let run = session
+            .run("SELECT * FROM player", sink())
+            .await
+            .expect("the unqualified read");
+        (catalog.current_schema, run.rows)
+    });
+    assert_eq!(current.as_deref(), Some("db.public"));
+    assert_eq!(count, 2);
 }

@@ -142,11 +142,18 @@ pub struct TableTab {
 
 /// Returns the relation as the `FROM` clause writes it.
 pub fn from_clause(relation: &RelationRef, dialect: Dialect) -> String {
-    format!(
-        "{}.{}",
-        quote_identifier(&relation.schema, dialect),
-        quote_identifier(&relation.relation, dialect)
-    )
+    // DuckDB names a schema of an attached database as `catalog.schema`, and each part
+    // needs its own quotes.
+    let schema = match dialect {
+        Dialect::DuckDb => relation
+            .schema
+            .split('.')
+            .map(|part| quote_identifier(part, dialect))
+            .collect::<Vec<_>>()
+            .join("."),
+        _ => quote_identifier(&relation.schema, dialect),
+    };
+    format!("{schema}.{}", quote_identifier(&relation.relation, dialect))
 }
 
 /// Returns true when the text is one statement without an open token. A semicolon,

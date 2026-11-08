@@ -314,8 +314,19 @@ impl Connector for DuckdbConnector {
         thread::Builder::new()
             .name("duckdb-session".to_owned())
             .spawn(move || {
+                // The clone ran no statement, so its current database names the catalog
+                // of the connection. `SET schema` changes the current database of a
+                // session later, and the catalog read needs the name that stays.
+                let current: String =
+                    match database.query_row("SELECT current_database()", [], |row| row.get(0)) {
+                        Ok(current) => current,
+                        Err(error) => {
+                            let _ = opened.send(Err(ConnectError::new(error.to_string())));
+                            return;
+                        }
+                    };
                 let _ = opened.send(Ok(database.interrupt_handle()));
-                serve(&database, &inbox, opening_trace);
+                serve(&database, &inbox, opening_trace, current);
             })
             .map_err(|error| ConnectError::new(error.to_string()))?;
         let interrupt = wait_opened
@@ -352,8 +363,15 @@ fn exec_error(error: duckdb::Error) -> ExecError {
     ExecError::new(error.to_string())
 }
 
-/// Runs in the session thread. It ends when the session drops its sender.
-fn serve(conn: &Connection, inbox: &Receiver<Request>, mut trace: Option<TraceContext>) {
+/// Runs in the session thread. It ends when the session drops its sender. `database`
+/// names the catalog of the connection, which the catalog read needs to tell the schemas
+/// of the attached databases apart.
+fn serve(
+    conn: &Connection,
+    inbox: &Receiver<Request>,
+    mut trace: Option<TraceContext>,
+    database: String,
+) {
     // The connection cannot report its transaction state, so the thread keeps it.
     let mut transaction = TransactionState::None;
     while let Ok(request) = inbox.recv() {
@@ -392,11 +410,12 @@ fn serve(conn: &Connection, inbox: &Receiver<Request>, mut trace: Option<TraceCo
                 let _ = reply.send(result);
             }
             Request::Catalog(reply) => {
-                let _ = reply.send(read_catalog(conn, &trace).map_err(exec_error));
+                let _ = reply.send(read_catalog(conn, &database, &trace).map_err(exec_error));
             }
             Request::Columns(schema, relation, reply) => {
-                let _ =
-                    reply.send(read_columns(conn, &schema, &relation, &trace).map_err(exec_error));
+                let _ = reply.send(
+                    read_columns(conn, &database, &schema, &relation, &trace).map_err(exec_error),
+                );
             }
         }
     }
@@ -610,32 +629,49 @@ fn run(
     })
 }
 
-fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> duckdb::Result<Catalog> {
+fn read_catalog(
+    conn: &Connection,
+    database: &str,
+    trace: &Option<TraceContext>,
+) -> duckdb::Result<Catalog> {
     // The current schema is the one of the session, which a console changes with
-    // `SET schema`, as PostgreSQL reads it.
+    // `SET schema`, as PostgreSQL reads it. A name with a dot is a schema of an attached
+    // database.
+    let anchor = crate::sql::quote_literal(database, Dialect::DuckDb);
+    let sql = format!(
+        "SELECT CASE WHEN current_database() = {anchor} THEN current_schema() \
+         ELSE current_database() || '.' || current_schema() END"
+    );
     let current: Option<String> =
-        command_log::observe_blocking(trace, "SELECT current_schema()", || {
-            conn.query_row("SELECT current_schema()", [], |row| row.get(0))
-        })?;
-    // `duckdb_schemas` lists one row per catalog, so `main` repeats. The two schemas of
-    // DuckDB itself stay out.
-    let sql = "SELECT DISTINCT schema_name FROM duckdb_schemas() \
-               WHERE schema_name NOT IN ('information_schema', 'pg_catalog') \
-               ORDER BY 1";
-    let names: Vec<String> = command_log::observe_blocking(trace, sql, || {
-        let mut statement = conn.prepare(sql)?;
-        let names = statement.query_map([], |row| row.get(0))?;
+        command_log::observe_blocking(trace, &sql, || conn.query_row(&sql, [], |row| row.get(0)))?;
+    // `duckdb_schemas`, `duckdb_tables`, and `duckdb_views` list the objects of every
+    // database the session attached, and a schema name alone cannot reach one of its
+    // schemas: a schema of another database keeps the `catalog.schema` name. The
+    // catalogs of DuckDB itself stay out.
+    let sql = format!(
+        "SELECT CASE WHEN database_name = {anchor} THEN schema_name \
+           ELSE database_name || '.' || schema_name END, database_name, schema_name \
+         FROM duckdb_schemas() \
+         WHERE database_name NOT IN ('system', 'temp') \
+           AND schema_name NOT IN ('information_schema', 'pg_catalog') \
+         ORDER BY 1"
+    );
+    let names: Vec<(String, String, String)> = command_log::observe_blocking(trace, &sql, || {
+        let mut statement = conn.prepare(&sql)?;
+        let names = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         names.collect()
     })?;
 
     let mut schemas = Vec::with_capacity(names.len());
-    for name in names {
-        let literal = crate::sql::quote_literal(&name, Dialect::DuckDb);
+    for (name, catalog, schema) in names {
+        let catalog = crate::sql::quote_literal(&catalog, Dialect::DuckDb);
+        let schema = crate::sql::quote_literal(&schema, Dialect::DuckDb);
         let sql = format!(
-            "SELECT table_name, 'table' FROM duckdb_tables() WHERE schema_name = {literal} \
+            "SELECT table_name, 'table' FROM duckdb_tables() \
+             WHERE database_name = {catalog} AND schema_name = {schema} \
              UNION ALL \
              SELECT view_name, 'view' FROM duckdb_views() \
-             WHERE schema_name = {literal} AND NOT internal \
+             WHERE database_name = {catalog} AND schema_name = {schema} AND NOT internal \
              ORDER BY 1"
         );
         let relations = command_log::observe_blocking(trace, &sql, || {
@@ -670,19 +706,25 @@ fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> duckdb::Resu
 
 fn read_columns(
     conn: &Connection,
+    database: &str,
     schema: &str,
     relation: &str,
     trace: &Option<TraceContext>,
 ) -> duckdb::Result<Vec<String>> {
+    // A schema name with a dot is the `catalog.schema` name of an attached database.
+    let (catalog, schema) = match schema.split_once('.') {
+        Some((catalog, schema)) => (catalog, schema),
+        None => (database, schema),
+    };
     let sql = "SELECT column_name FROM duckdb_columns() \
-               WHERE schema_name = ?2 AND table_name = ?1 \
+               WHERE database_name = ?3 AND schema_name = ?2 AND table_name = ?1 \
                ORDER BY column_index";
     command_log::observe_blocking(
         trace,
-        format_args!("{sql}\nParameters: ?1={relation:?}, ?2={schema:?}"),
+        format_args!("{sql}\nParameters: ?1={relation:?}, ?2={schema:?}, ?3={catalog:?}"),
         || {
             let mut statement = conn.prepare(sql)?;
-            let names = statement.query_map((relation, schema), |row| row.get(0))?;
+            let names = statement.query_map((relation, schema, catalog), |row| row.get(0))?;
             names.collect()
         },
     )

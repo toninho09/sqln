@@ -611,3 +611,65 @@ fn a_name_with_a_schema_reads_the_catalog_and_not_a_with_name() {
     assert!(found.contains(&"name".to_owned()), "{found:?}");
     assert!(!found.contains(&"only_column".to_owned()), "{found:?}");
 }
+
+/// A catalog of a DuckDB connection with an attached database.
+fn duckdb_catalog() -> Catalog {
+    Catalog {
+        schemas: vec![
+            Schema {
+                name: "main".to_owned(),
+                relations: vec![relation("local", RelationKind::Table, &["v"])],
+                partial: false,
+                objects: Vec::new(),
+            },
+            Schema {
+                name: "my db.public".to_owned(),
+                relations: vec![relation("player", RelationKind::Table, &["id", "name"])],
+                partial: false,
+                objects: Vec::new(),
+            },
+        ],
+        current_schema: Some("main".to_owned()),
+    }
+}
+
+#[test]
+fn an_insert_of_an_attached_schema_quotes_each_part_alone() {
+    // One quoted identifier would keep the dot inside the quotes, and the engine
+    // would read a schema that does not exist.
+    let sql = apply(
+        "SELECT * FROM play|",
+        Dialect::DuckDb,
+        Some(&duckdb_catalog()),
+        "my db.public.player",
+    );
+    assert_eq!(sql, "SELECT * FROM \"my db\".public.player");
+}
+
+#[test]
+fn an_insert_of_an_attached_schema_with_plain_parts_needs_no_quotes() {
+    let catalog = Catalog {
+        schemas: vec![
+            Schema {
+                name: "main".to_owned(),
+                relations: vec![relation("local", RelationKind::Table, &["v"])],
+                partial: false,
+                objects: Vec::new(),
+            },
+            Schema {
+                name: "db.public".to_owned(),
+                relations: vec![relation("player", RelationKind::Table, &["id", "name"])],
+                partial: false,
+                objects: Vec::new(),
+            },
+        ],
+        current_schema: Some("main".to_owned()),
+    };
+    let sql = apply(
+        "SELECT * FROM play|",
+        Dialect::DuckDb,
+        Some(&catalog),
+        "db.public.player",
+    );
+    assert_eq!(sql, "SELECT * FROM db.public.player");
+}

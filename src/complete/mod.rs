@@ -303,7 +303,7 @@ impl Builder {
         };
         let insert = format!(
             "{}.{}",
-            quote_name(&schema.name, self.dialect, self.quote),
+            quote_schema(&schema.name, self.dialect, self.quote),
             quote_name(&relation.name, self.dialect, self.quote),
         );
         self.push(
@@ -584,4 +584,17 @@ pub fn quote_name(name: &str, dialect: Dialect, typed_quote: Option<char>) -> St
         return format!("[{name}]");
     }
     quote_with(name, open)
+}
+
+/// Writes a schema name. A schema of an attached DuckDB database keeps the
+/// `catalog.schema` name, and one identifier cannot write it, because the engine would
+/// read the dot inside the quotes: the parts are written one by one.
+pub fn quote_schema(name: &str, dialect: Dialect, typed_quote: Option<char>) -> String {
+    if dialect != Dialect::DuckDb {
+        return quote_name(name, dialect, typed_quote);
+    }
+    name.split('.')
+        .map(|part| quote_name(part, dialect, typed_quote))
+        .collect::<Vec<_>>()
+        .join(".")
 }

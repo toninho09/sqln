@@ -54,6 +54,22 @@ fn a_name_follows_the_quotes_of_the_dialect() {
 }
 
 #[test]
+fn a_name_of_an_attached_duckdb_schema_quotes_each_part() {
+    // Plain parts stay unquoted: the engine reads the three parts.
+    assert_eq!(
+        qualified_name(Some("db.public"), "player", Dialect::DuckDb),
+        "db.public.player"
+    );
+    // One quoted identifier would keep the dot inside the quotes, and the engine
+    // would read a schema that does not exist.
+    assert_eq!(
+        qualified_name(Some("my db.public"), "player", Dialect::DuckDb),
+        "\"my db\".public.player"
+    );
+    assert_eq!(qualified_name(Some("main"), "t", Dialect::DuckDb), "main.t");
+}
+
+#[test]
 fn only_the_templates_with_columns_need_them() {
     assert!(!Template::SelectAll.needs_columns());
     assert!(!Template::Delete.needs_columns());
