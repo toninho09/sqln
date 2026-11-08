@@ -248,30 +248,32 @@ fn the_configuration_chooses_the_theme_and_no_color_has_priority() {
         truecolor: true,
     };
     let start = Theme::ansi();
-    assert_eq!(start.with_choices(None, None, color), start);
+    assert_eq!(start.with_choices(None, |_| None, None, color), start);
     assert_eq!(
-        start.with_choices(Some(ThemeName::Astrodark), None, color),
+        start.with_choices(Some(ThemeName::Astrodark), |_| None, None, color),
         Theme::astrodark()
     );
     assert_eq!(
-        Theme::astrodark().with_choices(Some(ThemeName::Ansi), None, color),
+        Theme::astrodark().with_choices(Some(ThemeName::Ansi), |_| None, None, color),
         Theme::ansi()
     );
     assert_eq!(
-        start.with_choices(Some(ThemeName::Auto), None, color),
+        start.with_choices(Some(ThemeName::Auto), |_| None, None, color),
         Theme::astrodark()
     );
     assert_eq!(
-        start.with_choices(Some(ThemeName::Astrodark), None, no_color),
+        start.with_choices(Some(ThemeName::Astrodark), |_| None, None, no_color),
         Theme::plain()
     );
     assert_eq!(
-        start.with_choices(None, Some(IconName::Nerd), color).icons,
+        start
+            .with_choices(None, |_| None, Some(IconName::Nerd), color)
+            .icons,
         Icons::nerd()
     );
     assert_eq!(
         Theme::plain()
-            .with_choices(None, Some(IconName::Nerd), color)
+            .with_choices(None, |_| None, Some(IconName::Nerd), color)
             .icons,
         Icons::plain()
     );
@@ -318,7 +320,7 @@ fn each_name_gives_its_own_theme_and_a_place_in_the_file() {
     let themes: Vec<Theme> = ThemeName::ALL
         .iter()
         .filter(|name| **name != ThemeName::Auto)
-        .map(|name| Theme::named(*name, env))
+        .map(|name| Theme::named(name, |_| None, env))
         .collect();
     for (index, theme) in themes.iter().enumerate() {
         assert!(!themes[index + 1..].contains(theme), "{index}");

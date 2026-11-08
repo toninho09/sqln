@@ -79,6 +79,79 @@ fn the_settings_grow_like_the_export_dialog() {
 }
 
 #[test]
+fn theme_buttons_follow_the_visible_list_at_all_sizes() {
+    use sqln::settings::{Field, SECTIONS, themes::Themes};
+    use sqln::store::Scope;
+    use sqln::ui::schemes::ASTRODARK;
+    use sqln::ui::theme::{CustomTheme, ThemeCatalog};
+
+    for count in [0, 1, 40] {
+        let mut catalog = ThemeCatalog::default();
+        for index in 0..count {
+            let id = format!("theme-{index:02}");
+            catalog.insert(CustomTheme::new(id.clone(), id, ASTRODARK, Scope::Global));
+        }
+        let mut form = SettingsForm::new(Preferences::default(), None);
+        form.section = SECTIONS
+            .iter()
+            .position(|section| section.fields.contains(&Field::Theme))
+            .unwrap();
+        form.themes = Themes::new(catalog, Default::default());
+        form.themes.move_selection(count as isize);
+        form.focus_on(Field::Themes);
+        for (width, height) in [(80, 24), (160, 45)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            let mut layout = None;
+            terminal
+                .draw(|frame| layout = Some(draw_settings(frame, &form, &Theme::plain())))
+                .unwrap();
+            let layout = layout.unwrap();
+            let field = |name| layout.fields.iter().find(|(id, _)| *id == name).unwrap().1;
+            let list = field(Field::Themes);
+            let new = field(Field::ThemeNew);
+            let edit = field(Field::ThemeEdit);
+            let delete = field(Field::ThemeDelete);
+            assert!(new.y >= list.bottom() && new.y <= list.bottom() + 1);
+            assert_eq!(new.y, edit.y);
+            assert_eq!(edit.y, delete.y);
+            assert!(new.right() <= edit.x && edit.right() <= delete.x);
+            assert!(delete.right() <= width);
+            assert!(delete.bottom() <= field(Field::Save).y);
+            if count > 0 {
+                assert!(
+                    layout
+                        .theme_rows
+                        .iter()
+                        .any(|(id, _)| id == &format!("theme-{:02}", count - 1))
+                );
+            } else {
+                assert_eq!(list.height, 1);
+            }
+        }
+    }
+}
+
+#[test]
+fn the_theme_editor_keeps_its_controls_visible_at_minimum_size() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    use sqln::settings::{Field, SECTIONS};
+
+    let mut form = SettingsForm::new(Preferences::default(), None);
+    form.section = SECTIONS
+        .iter()
+        .position(|section| section.fields.contains(&Field::Theme))
+        .unwrap();
+    form.focus_on(Field::ThemeNew);
+    form.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), false);
+    let screen = drawn(80, 24, |frame, theme| {
+        draw_settings(frame, &form, theme);
+    });
+    for label in ["Name", "Base", "red", "Done", "Back to commands"] {
+        assert!(screen.contains(label), "{label}:\n{screen}");
+    }
+}
+
+#[test]
 fn the_palette_grows_to_its_limit() {
     let palette = commands(3);
     check_widths(100, |frame, theme| {

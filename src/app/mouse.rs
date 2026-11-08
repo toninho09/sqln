@@ -647,16 +647,24 @@ impl App {
             mouse.kind,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
         ) {
-            let inside = self.layout.settings.fields.iter().any(|(field, area)| {
+            let settings = &self.layout.settings;
+            let inside_commands = settings.fields.iter().any(|(field, area)| {
                 *field == SettingsField::ShortcutCommands && area.contains(position)
             });
-            if inside && let Some(form) = &mut self.settings_form {
+            let inside_colors = settings.fields.iter().any(|(field, area)| {
+                *field == SettingsField::ThemeColors && area.contains(position)
+            });
+            if let Some(form) = &mut self.settings_form {
                 let delta = if mouse.kind == MouseEventKind::ScrollUp {
                     -WHEEL_ROWS
                 } else {
                     WHEEL_ROWS
                 };
-                form.move_shortcut_command(delta);
+                if inside_commands {
+                    form.move_shortcut_command(delta);
+                } else if inside_colors {
+                    form.scroll_theme_color(delta);
+                }
             }
             return;
         }
@@ -672,6 +680,30 @@ impl App {
         {
             if let Some(form) = &mut self.settings_form {
                 form.edit_shortcut(*action);
+            }
+            return;
+        }
+        if let Some((id, _)) = self
+            .layout
+            .settings
+            .theme_rows
+            .iter()
+            .find(|(_, area)| area.contains(position))
+        {
+            if let Some(form) = &mut self.settings_form {
+                form.select_theme(id);
+            }
+            return;
+        }
+        if let Some((role, _)) = self
+            .layout
+            .settings
+            .color_rows
+            .iter()
+            .find(|(_, area)| area.contains(position))
+        {
+            if let Some(form) = &mut self.settings_form {
+                form.focus_theme_color(*role);
             }
             return;
         }

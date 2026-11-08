@@ -127,6 +127,7 @@ AI completion is separate from MCP. `app/ai` captures the editor interval and re
 |---|---|
 | `store::file` | `write_atomic`, `write_private_atomic` (exclusive temporary and permission `0600` on Unix), hash, locks, and cleanup of old `.tmp` files |
 | `store::config` | Reading with `serde`, validation, precedence, `Definition` of each entry, and `change_connections` (reread under lock, change, and write) |
+| `store::themes` | `themes/<id>.json`: one custom theme per file, load with notes, save and removal under `locks/themes.lock` with the hash of the load, and the manifest hash of the folder |
 | `store::scripts` | `.sql` and `.json` files of a console, list, lock per console, copy between scopes, and line ending |
 | `store::workspace` | `workspace.json`, optional state with invalid-file detection, written under `config.lock` |
 | `store::history` | `history.jsonl`: one JSON line per statement, appended at the end of the file, read per connection, and truncated at the start of the file |
@@ -148,6 +149,7 @@ Code rules:
 6. The lock of a console is the file `locks/<id>.lock`, with `flock`. The system releases it at process end.
 7. `ScriptFile::due` compares the editor revision with the last written one. The main loop passes the clock, and the test controls the time.
 8. The line ending of the file (`LF` or `CRLF`) stays in the `ScriptFile`. The editor always uses `LF`.
+9. A theme file that cannot load gives a note, and the other files load. A damaged or missing theme never blocks the application, and the choice falls back to `auto`.
 9. `ScriptFile::poll` reads the file only if the size or the date changed, and then compares the hash.
 10. A connection definition carries the base folder. `Definition::connector` resolves the relative paths with it at open time.
 11. Script writes use a dedicated worker, separate from credential access. Only one operation runs at a time.
@@ -635,6 +637,7 @@ Example:
 | `config.json` | Global and project | Versionable in the project |
 | `consoles/<id>.sql` | Global and project | Versionable in the project |
 | `consoles/<id>.json` | Global and project | Versionable in the project |
+| `themes/<id>.json` | Global and project | Versionable in the project |
 | `workspace.json` | Global and project | Ignored |
 | `locks/<id>.lock` | Global and project | Ignored |
 | `.gitignore` | Project | Versionable |

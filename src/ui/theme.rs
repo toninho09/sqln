@@ -2,11 +2,81 @@
 //! The `ansi` theme uses the colors of the terminal profile. `NO_COLOR` gives the
 //! `plain` theme, which has no color.
 
+use std::collections::BTreeMap;
+
 use ratatui::style::{Color, Modifier, Style};
 
 use super::icons::Icons;
 use super::schemes::{self, Scheme};
+use crate::store::Scope;
 use crate::store::config::{IconName, ThemeName};
+
+/// A custom theme of the store, loaded from a file of one scope.
+#[derive(Clone, Debug)]
+pub struct CustomTheme {
+    pub id: String,
+    pub name: String,
+    pub scheme: Scheme,
+    pub scope: Scope,
+    /// The hash of the file at the load. `None` for a theme that no file holds yet.
+    pub file: Option<u64>,
+}
+
+impl CustomTheme {
+    /// Builds a new theme that no file holds.
+    pub fn new(id: String, name: String, scheme: Scheme, scope: Scope) -> Self {
+        Self {
+            id,
+            name,
+            scheme,
+            scope,
+            file: None,
+        }
+    }
+}
+
+/// The custom themes of both scopes, after the precedence. A project id wins over
+/// a global id with the same name.
+#[derive(Clone, Debug, Default)]
+pub struct ThemeCatalog {
+    themes: BTreeMap<String, CustomTheme>,
+}
+
+impl ThemeCatalog {
+    /// Adds a theme. A later theme with the same id replaces it, so the project
+    /// loads after the global.
+    pub fn insert(&mut self, theme: CustomTheme) {
+        self.themes.insert(theme.id.clone(), theme);
+    }
+
+    pub fn get(&self, id: &str) -> Option<&CustomTheme> {
+        self.themes.get(id)
+    }
+
+    pub fn scheme(&self, id: &str) -> Option<Scheme> {
+        self.themes.get(id).map(|theme| theme.scheme)
+    }
+
+    pub fn name_of(&self, id: &str) -> Option<&str> {
+        self.themes.get(id).map(|theme| theme.name.as_str())
+    }
+
+    pub fn list(&self) -> impl Iterator<Item = &CustomTheme> {
+        self.themes.values()
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = &str> {
+        self.themes.keys().map(String::as_str)
+    }
+
+    pub fn len(&self) -> usize {
+        self.themes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.themes.is_empty()
+    }
+}
 
 /// What the terminal environment says about colors.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -153,8 +223,12 @@ impl Theme {
         }
     }
 
-    /// Returns the theme of a name.
-    pub fn named(name: ThemeName, env: ColorEnv) -> Self {
+    /// Returns the theme of a name. `custom` gives the scheme of a custom id, and
+    /// a missing theme falls back to `Auto`.
+    pub fn named<F>(name: &ThemeName, custom: F, env: ColorEnv) -> Self
+    where
+        F: Fn(&str) -> Option<Scheme>,
+    {
         match name {
             ThemeName::Auto => Self::automatic(env),
             ThemeName::Astrodark => Self::astrodark(),
@@ -164,21 +238,28 @@ impl Theme {
             ThemeName::CatppuccinLatte => Self::from_scheme(&schemes::CATPPUCCIN_LATTE),
             ThemeName::Gruvbox => Self::from_scheme(&schemes::GRUVBOX),
             ThemeName::Nord => Self::from_scheme(&schemes::NORD),
+            ThemeName::Custom(id) => custom(id)
+                .map(|scheme| Self::from_scheme(&scheme))
+                .unwrap_or_else(|| Self::automatic(env)),
         }
     }
 
     /// Applies the choices of the configuration to this theme. `NO_COLOR` has priority
     /// over the configuration, and a choice without a value keeps this theme.
-    pub fn with_choices(
+    pub fn with_choices<F>(
         self,
         theme: Option<ThemeName>,
+        custom: F,
         icons: Option<IconName>,
         env: ColorEnv,
-    ) -> Self {
+    ) -> Self
+    where
+        F: Fn(&str) -> Option<Scheme>,
+    {
         if env.no_color {
             return Self::plain();
         }
-        let chosen = theme.map_or(self, |name| Self::named(name, env));
+        let chosen = theme.map_or(self, |name| Self::named(&name, custom, env));
         // The plain set stays, because that theme identifies an item by its text.
         match icons {
             Some(_) if chosen.icons == Icons::plain() => chosen,

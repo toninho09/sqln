@@ -7,6 +7,7 @@ pub mod config;
 pub mod file;
 pub mod history;
 pub mod scripts;
+pub mod themes;
 pub mod workspace;
 
 use std::ffi::OsString;
@@ -54,6 +55,11 @@ impl Root {
 
     pub fn config_file(&self) -> PathBuf {
         self.dir.join("config.json")
+    }
+
+    /// The custom color themes, one file per theme.
+    pub fn themes_dir(&self) -> PathBuf {
+        self.dir.join("themes")
     }
 
     pub fn workspace_file(&self) -> PathBuf {

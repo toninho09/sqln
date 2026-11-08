@@ -927,3 +927,169 @@ fn a_memory_file_round_trips_through_the_configuration() {
     assert_eq!(settings.max_connections, 1);
     assert_eq!(settings.idle_timeout, None);
 }
+
+// ---- themes ----
+
+use sqln::store::themes;
+use sqln::ui::schemes::{self, Scheme};
+
+#[test]
+fn a_theme_file_round_trips_through_the_folder() {
+    let (store, _) = store_in("themes-round-trip");
+    let colors = schemes::GRUVBOX.to_colors();
+    let hash = themes::save(&store.global, "mine", " Mine ", &colors, None).unwrap();
+    let (loaded, notes) = themes::load(&store.global);
+    assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].id, "mine");
+    assert_eq!(loaded[0].name, "Mine");
+    assert_eq!(loaded[0].colors, colors);
+    assert_eq!(loaded[0].hash, hash);
+    assert_eq!(Scheme::from_colors(&loaded[0].colors), schemes::GRUVBOX);
+    // A changed theme keeps its place: the write knows the file that it replaces.
+    themes::save(
+        &store.global,
+        "mine",
+        "Mine",
+        &schemes::NORD.to_colors(),
+        Some(hash),
+    )
+    .unwrap();
+    let (loaded, notes) = themes::load(&store.global);
+    assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(Scheme::from_colors(&loaded[0].colors), schemes::NORD);
+}
+
+#[test]
+fn a_theme_file_does_not_go_away_silently() {
+    let (store, _) = store_in("themes-conflict");
+    let colors = schemes::ASTRODARK.to_colors();
+    let hash = themes::save(&store.global, "mine", "Mine", &colors, None).unwrap();
+    // A new theme cannot replace a file that appeared.
+    assert!(themes::save(&store.global, "mine", "Mine", &colors, None).is_err());
+    // A known hash that no longer matches refuses the write.
+    fs::write(
+        store.global.themes_dir().join("mine.json"),
+        fs::read_to_string(store.global.themes_dir().join("mine.json")).unwrap() + " ",
+    )
+    .unwrap();
+    assert!(themes::save(&store.global, "mine", "Mine", &colors, Some(hash)).is_err());
+    // A removal needs the hash of the load.
+    let (loaded, notes) = themes::load(&store.global);
+    assert!(notes.is_empty(), "{notes:?}");
+    assert!(themes::remove(&store.global, "mine", hash).is_err());
+    themes::remove(&store.global, "mine", loaded[0].hash).unwrap();
+    assert!(!store.global.themes_dir().join("mine.json").exists());
+    // A theme that another program removed is already gone.
+    themes::remove(&store.global, "mine", loaded[0].hash).unwrap();
+}
+
+#[test]
+fn a_theme_file_needs_a_valid_id_and_name() {
+    let (store, _) = store_in("themes-invalid");
+    let colors = schemes::ASTRODARK.to_colors();
+    assert!(themes::save(&store.global, "Gruvbox", "Mine", &colors, None).is_err());
+    assert!(themes::save(&store.global, "my theme", "Mine", &colors, None).is_err());
+    assert!(themes::save(&store.global, "mine", " ", &colors, None).is_err());
+    assert!(themes::load(&store.global).0.is_empty());
+}
+
+#[test]
+fn a_damaged_theme_file_gives_a_note_and_the_others_load() {
+    let (store, _) = store_in("themes-damaged");
+    let colors = schemes::ASTRODARK.to_colors();
+    themes::save(&store.global, "mine", "Mine", &colors, None).unwrap();
+    write(&store.global.themes_dir().join("broken.json"), "{");
+    write(
+        &store.global.themes_dir().join("wrong-version.json"),
+        r#"{"version":2,"name":"W","colors":{}}"#,
+    );
+    write(
+        &store.global.themes_dir().join("no-name.json"),
+        r#"{"version":1,"name":" ","colors":{}}"#,
+    );
+    write(
+        &store.global.themes_dir().join("Gruvbox.json"),
+        r#"{"version":1,"name":"G","colors":{}}"#,
+    );
+    write(&store.global.themes_dir().join("notes.txt"), "text");
+    let (loaded, notes) = themes::load(&store.global);
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].id, "mine");
+    assert_eq!(notes.len(), 4, "{notes:?}");
+    assert!(
+        notes.iter().all(|note| note.starts_with("themes/")),
+        "{notes:?}"
+    );
+}
+
+#[test]
+fn the_manifest_of_the_themes_folder_changes_with_the_files() {
+    let (store, _) = store_in("themes-manifest");
+    assert_eq!(themes::manifest(&store.global), None);
+    let colors = schemes::ASTRODARK.to_colors();
+    let hash = themes::save(&store.global, "a", "A", &colors, None).unwrap();
+    let first = themes::manifest(&store.global);
+    assert_ne!(first, None);
+    themes::save(&store.global, "a", "B", &colors, Some(hash)).unwrap();
+    assert_ne!(themes::manifest(&store.global), first);
+    let (loaded, _) = themes::load(&store.global);
+    themes::remove(&store.global, "a", loaded[0].hash).unwrap();
+    assert_ne!(themes::manifest(&store.global), None);
+}
+
+#[test]
+fn a_custom_theme_round_trips_through_the_configuration() {
+    let (store, _) = store_in("themes-config");
+    let preferences = config::Preferences {
+        theme: Some(sqln::store::config::ThemeName::Custom("mine".to_owned())),
+        ..config::Preferences::default()
+    };
+    config::change_preferences(&store.global, Scope::Global, preferences).unwrap();
+    let text = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(text.contains("\"custom\": \"mine\""), "{text}");
+    let loaded = config::preferences(&store.global, Scope::Global).unwrap();
+    assert_eq!(
+        loaded.theme,
+        Some(sqln::store::config::ThemeName::Custom("mine".to_owned()))
+    );
+    // A built-in value keeps its old text.
+    write(
+        &store.global.config_file(),
+        r#"{"version":1,"preferences":{"theme":"gruvbox"}}"#,
+    );
+    let loaded = config::preferences(&store.global, Scope::Global).unwrap();
+    assert_eq!(loaded.theme, Some(sqln::store::config::ThemeName::Gruvbox));
+}
+
+#[test]
+fn every_scheme_round_trips_through_the_colors_of_a_file() {
+    let (store, _) = store_in("themes-schemes");
+    let palettes = [
+        schemes::ASTRODARK,
+        schemes::TOKYO_NIGHT,
+        schemes::CATPPUCCIN_MOCHA,
+        schemes::CATPPUCCIN_LATTE,
+        schemes::GRUVBOX,
+        schemes::NORD,
+    ];
+    for (index, palette) in palettes.iter().enumerate() {
+        themes::save(
+            &store.global,
+            &format!("s{index}"),
+            "S",
+            &palette.to_colors(),
+            None,
+        )
+        .unwrap();
+    }
+    let (loaded, notes) = themes::load(&store.global);
+    assert!(notes.is_empty(), "{notes:?}");
+    for (index, palette) in palettes.iter().enumerate() {
+        assert_eq!(
+            Scheme::from_colors(&loaded[index].colors),
+            *palette,
+            "palette {index}"
+        );
+    }
+}

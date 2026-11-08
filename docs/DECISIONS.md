@@ -1891,3 +1891,25 @@ The user asked for DuckDB support. The delivery is the engine and the essential 
 | Command line | The `duckdb:` scheme, with `duckdb:` and `duckdb::memory:` in memory | Detect a file extension | A bare path stays a SQLite file, which the current behavior requires |
 | Form order | DuckDB at the end of the type choices | Next to SQLite | The tests of the form reach a kind by counting arrows |
 | Attached databases | A schema of an attached database keeps the `catalog.schema` name, and the catalog, the column read, the structure, the completion, and the templates filter by catalog | Hide the schemas of the attached databases | `duckdb_schemas`, `duckdb_tables`, and `duckdb_views` list every catalog of the session, and a schema name alone cannot reach a table of one of them: the open wrote `FROM "public"."player"` and the engine answered that the schema does not exist. The anchor is the catalog of the connection, read on a clone that ran no statement, because `SET schema` changes the current database of a session and a pooled read can run on any session. A local schema whose own name has a dot does not open, because every read splits the name at the first dot |
+
+## Custom themes — 2026-11-08
+
+The user asked for theme creation in Settings, with a full palette editor, both scopes, a live preview, and no write before the dialog save.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Storage | One file per theme, `themes/<id>.json`, in the folder of each scope | Colors inside `config.json` | A palette of 30 colors would bloat the file, and a project theme becomes versionable and shareable |
+| File format | `version`, `name`, and `colors` with every palette color as `#RRGGBB`, `denyUnknownFields` | A base plus overrides | One file stands alone, and a typo in a key names its file. The conversions between `Colors` and `Scheme` list every field, so the compiler checks the sync |
+| Precedence | A project id wins over a global id, as the preferences do | Namespaces such as `project/x` | One rule for the whole configuration, and the list marks the origin |
+| Name | The display name is free; the file id comes from the name, slug to `[a-z0-9-]`, and a reserved built-in name refuses the theme | A free id field | The user thinks in names, not ids. The reserved names keep a file from shadowing a built-in theme |
+| Editor | A sub-mode of the Appearance section, as the shortcuts: name, base, and one hex input per color with a swatch | A separate dialog window | The settings modal already has sub-modes, and the focus, the mouse, and the keyboard stay in one place |
+| Base | Only for a new theme; changing it replaces the whole palette | Merging the changes over the base | The palette is complete data, not a diff, so the base is only a starting point |
+| Live preview | The editor draft resolves in `App::choose_theme` each frame, before the loaded catalog | A preview pane inside the editor | The theme of the whole screen is the preview, and the existing choice point needs no new code. A draft without a name resolves to the placeholder `draft` |
+| Contrast | The editor warns with the count of places below the WCAG minima, shared with the tests of the built-in schemes | Block the save | The user owns the palette, and a terminal can be light or dark; the warning informs, the file is valid |
+| Save | The dialog save writes new or edited themes, then `config.json`, then removes deleted themes; nothing before it | Write each theme file at the editor exit | The dialog keeps its contract "writes nothing before the save". Each file write is atomic, but the group is not: on failure, the dialog reports the error and retains the draft for retry |
+| Delete | Refuse while in use, by the effective draft of the dialog or by a connection; otherwise the removal joins the save | Ask first with a dialog | The removal is reversible until the save, and the refusal explains the reason and the way out |
+| Conflicts | Each write carries the hash of its load, under `locks/themes.lock` | Replace without a check | The rule of `config.json` applies: another program's change never goes away silently |
+| Damage | A file that cannot load gives a note at the start, in Settings, and at each reload; the other files load | Block the configuration | A theme is not critical data, and one damaged file cannot stop the connections |
+| Missing theme | The choice falls back to `auto`, with a note in the status bar | Keep the last colors or quit | The data is not critical, and the note names the theme and the fallback |
+| External change | The poll hashes a manifest of the folder names and contents, and the existing reload question covers the themes | Reload without a question | The rule of `config.json` applies, and `ReloadConfig` already reloads both |
+| Per-connection theme | The connection form cycles the built-in themes and the customs of both scopes | The connection picks its own scope only | The resolution is the merged catalog, and a project can share a theme that a global connection uses |

@@ -134,8 +134,9 @@ impl Default for AgentSettings {
 }
 
 /// The theme of the interface. `Auto` follows the terminal, and `Ansi` uses the colors
-/// of the terminal profile. The other themes need a truecolor terminal.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// of the terminal profile. The other themes need a truecolor terminal. `Custom` names
+/// a theme file of the `themes` folder; a missing file falls back to `Auto`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ThemeName {
     #[default]
@@ -147,10 +148,12 @@ pub enum ThemeName {
     CatppuccinLatte,
     Gruvbox,
     Nord,
+    /// The id of a theme file, without `.json`.
+    Custom(String),
 }
 
 impl ThemeName {
-    /// The themes, in the order of the settings.
+    /// The built-in themes, in the order of the settings.
     pub const ALL: [Self; 8] = [
         Self::Auto,
         Self::Astrodark,
@@ -161,6 +164,14 @@ impl ThemeName {
         Self::Gruvbox,
         Self::Nord,
     ];
+
+    /// The id of a custom theme.
+    pub fn custom_id(&self) -> Option<&str> {
+        match self {
+            Self::Custom(id) => Some(id),
+            _ => None,
+        }
+    }
 }
 
 /// An icon that a connection shows in place of the icon of its database.
@@ -668,7 +679,7 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
     definition.sql_timeout = seconds(entry.sql_timeout_seconds);
     definition.idle_timeout = seconds(entry.idle_timeout_seconds);
     definition.base = Some(base);
-    definition.theme = entry.theme;
+    definition.theme = entry.theme.clone();
     definition.icon = entry.icon;
     definition.schemas.clone_from(&entry.schemas);
     definition
@@ -701,7 +712,7 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
         connect_timeout_seconds: None,
         sql_timeout_seconds: definition.sql_timeout.map(|time| time.as_secs()),
         idle_timeout_seconds: definition.idle_timeout.map(|time| time.as_secs()),
-        theme: definition.theme,
+        theme: definition.theme.clone(),
         icon: definition.icon,
         schemas: definition.schemas.clone(),
     };
@@ -911,8 +922,8 @@ fn combine(
             .unwrap_or(DEFAULT_UNDO_LIMIT),
         keymap,
         theme: project
-            .and_then(|preferences| preferences.theme)
-            .or(global.theme),
+            .and_then(|preferences| preferences.theme.clone())
+            .or_else(|| global.theme.clone()),
         icons: project
             .and_then(|preferences| preferences.icons)
             .or(global.icons),

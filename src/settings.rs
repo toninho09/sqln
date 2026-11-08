@@ -8,6 +8,7 @@ use crate::editor::DEFAULT_UNDO_LIMIT;
 use crate::input::SuggestionKeys;
 
 pub mod shortcuts;
+pub mod themes;
 use crate::line_input::LineInput;
 use crate::store::Scope;
 use crate::store::config::{
@@ -16,7 +17,10 @@ use crate::store::config::{
     DEFAULT_SHOW_SYSTEM_COMMANDS, KeyboardName, Keymaps, Preferences, ThemeName,
 };
 use crate::ui::text;
+use crate::ui::theme::ThemeCatalog;
 use shortcuts::Shortcuts;
+use std::collections::HashSet;
+use themes::Themes;
 
 const MEBIBYTE: usize = 1024 * 1024;
 /// The defaults of `Settings`, for the note of a field without a value.
@@ -40,6 +44,15 @@ pub enum Field {
     SuggestionKeys,
     UndoLimit,
     Theme,
+    Themes,
+    ThemeNew,
+    ThemeEdit,
+    ThemeDelete,
+    ThemeName,
+    ThemeBase,
+    ThemeColors,
+    ThemeDone,
+    ThemeBack,
     Mcp,
     McpDefault,
     McpMax,
@@ -110,8 +123,8 @@ pub const SECTIONS: [Section; 7] = [
     },
     Section {
         title: text::SECTION_APPEARANCE,
-        fields: &[Field::Theme],
-        help: None,
+        fields: themes::FIELDS,
+        help: Some(text::HELP_THEMES),
     },
     Section {
         title: text::SECTION_MCP,
@@ -310,7 +323,7 @@ impl Draft {
             format_json: preferences.format_json,
             show_system_commands: preferences.show_system_commands,
             suggestion_keys: preferences.suggestion_keys,
-            theme: preferences.theme,
+            theme: preferences.theme.clone(),
             mcp: preferences.mcp,
             mcp_default: preferences.mcp_default_access,
             mcp_max: preferences.mcp_max_access,
@@ -330,6 +343,7 @@ pub struct SettingsForm {
     /// True while a vault write or a connection test runs.
     pub ai_busy: bool,
     pub shortcuts: Shortcuts,
+    pub themes: Themes,
     global: Preferences,
     project: Option<Preferences>,
     global_draft: Draft,
@@ -337,24 +351,24 @@ pub struct SettingsForm {
 }
 
 /// Returns the value after `value` in a list of choices.
-pub fn next_choice<T: Copy + PartialEq>(order: &[T], value: T, forward: bool) -> T {
+pub fn next_choice<T: Clone + PartialEq>(order: &[T], value: T, forward: bool) -> T {
     let index = order.iter().position(|item| *item == value).unwrap_or(0);
     let next = if forward {
         index + 1
     } else {
         index + order.len() - 1
     };
-    order[next % order.len()]
+    order[next % order.len()].clone()
 }
 
 /// Returns the value after `value` in a list that starts with no value.
-pub fn next_optional<T: Copy + PartialEq>(
+pub fn next_optional<T: Clone + PartialEq>(
     values: &[T],
     value: Option<T>,
     forward: bool,
 ) -> Option<T> {
-    let mut order = vec![None];
-    order.extend(values.iter().copied().map(Some));
+    let mut order: Vec<Option<T>> = vec![None];
+    order.extend(values.iter().cloned().map(Some));
     next_choice(&order, value, forward)
 }
 
@@ -406,6 +420,17 @@ impl SettingsForm {
     /// Opens on the project when one exists, as the connection form does. The focus
     /// starts on the sidebar.
     pub fn new(global: Preferences, project: Option<Preferences>) -> Self {
+        Self::with_themes(global, project, ThemeCatalog::default(), HashSet::new())
+    }
+
+    /// Opens with the custom themes of both scopes, and the ids that a connection
+    /// uses, so a theme in use cannot go away.
+    pub fn with_themes(
+        global: Preferences,
+        project: Option<Preferences>,
+        custom: ThemeCatalog,
+        used: HashSet<String>,
+    ) -> Self {
         let scope = if project.is_some() {
             Scope::Project
         } else {
@@ -423,6 +448,7 @@ impl SettingsForm {
                     .and_then(|p| p.keyboard_mode)
                     .or(global.keyboard_mode),
             ),
+            themes: Themes::new(custom, used),
             global_draft: Draft::of(&global, &global),
             project_draft: project.as_ref().map(|p| Draft::of(p, &global)),
             global,
@@ -477,7 +503,7 @@ impl SettingsForm {
     }
 
     pub fn theme(&self) -> Option<ThemeName> {
-        self.draft().theme
+        self.draft().theme.clone()
     }
 
     pub fn mcp(&self) -> Option<bool> {
@@ -499,10 +525,10 @@ impl SettingsForm {
     /// Returns the theme that a save of this scope gives. A project value has priority
     /// over a global value.
     pub fn saved_theme(&self) -> Option<ThemeName> {
-        let draft = self.draft().theme;
+        let draft = self.draft().theme.clone();
         match (self.scope, &self.project) {
-            (Scope::Project, _) => draft.or(self.global.theme),
-            (Scope::Global, Some(project)) => project.theme.or(draft),
+            (Scope::Project, _) => draft.or_else(|| self.global.theme.clone()),
+            (Scope::Global, Some(project)) => project.theme.clone().or(draft),
             (Scope::Global, None) => draft,
         }
     }
@@ -524,12 +550,27 @@ impl SettingsForm {
             Field::AiOutput => Some(&draft.ai.output),
             Field::AiTimeout => Some(&draft.ai.timeout),
             Field::AiSimultaneous => Some(&draft.ai.simultaneous),
+            Field::ThemeName => self.themes.editor().map(|editor| &editor.name),
+            Field::ThemeColors => self
+                .themes
+                .editor()
+                .map(|editor| &editor.hexes[editor.cursor]),
             _ => None,
         }
     }
 
     fn input_mut(&mut self) -> Option<&mut LineInput> {
         let field = self.focus;
+        match field {
+            Field::ThemeName => return self.themes.editor_mut().map(|editor| &mut editor.name),
+            Field::ThemeColors => {
+                return self
+                    .themes
+                    .editor_mut()
+                    .map(|editor| &mut editor.hexes[editor.cursor]);
+            }
+            _ => {}
+        }
         let draft = self.draft_mut();
         match field {
             Field::PageSize => Some(&mut draft.page_size),
@@ -578,7 +619,10 @@ impl SettingsForm {
             Field::SuggestionKeys => global
                 .suggestion_keys
                 .map(|keys| text::suggestion_keys_name(keys).to_owned()),
-            Field::Theme => global.theme.map(|name| text::theme_name(name).to_owned()),
+            Field::Theme => global
+                .theme
+                .as_ref()
+                .map(|name| text::theme_label(name, &self.themes.view())),
             Field::Mcp => global.mcp.map(|value| text::on_off(value).to_owned()),
             Field::McpDefault => global
                 .mcp_default_access
@@ -621,7 +665,7 @@ impl SettingsForm {
                 text::default_value(&(DEFAULT_UNDO_LIMIT / MEBIBYTE).to_string())
             }
             _ if field == Field::Theme => {
-                text::default_value(text::theme_name(ThemeName::default()))
+                text::default_value(text::theme_name(&ThemeName::default()))
             }
             _ if field == Field::Mcp => text::default_value(text::on_off(DEFAULT_MCP)),
             _ if field == Field::McpDefault => {
@@ -641,16 +685,22 @@ impl SettingsForm {
     /// Returns the places of the focus, in the order of `Tab`. The fields of the closed
     /// sections are not in the list.
     fn stops(&self) -> Vec<Field> {
+        if self.themes.is_editing() {
+            return self.theme_stops().to_vec();
+        }
         let mut stops = vec![Field::Sections];
         if self.has_project() {
             stops.push(Field::Scope);
         }
         let fields = SECTIONS[self.section].fields;
-        stops.extend_from_slice(if fields.contains(&Field::ShortcutCommands) {
+        let fields = if fields.contains(&Field::ShortcutCommands) {
             self.shortcut_stops()
+        } else if fields.contains(&Field::Themes) {
+            self.theme_stops()
         } else {
             fields
-        });
+        };
+        stops.extend_from_slice(fields);
         stops.extend([Field::Save, Field::Cancel]);
         stops
     }
@@ -665,6 +715,7 @@ impl SettingsForm {
             let order: Vec<usize> = (0..SECTIONS.len()).collect();
             self.section = next_choice(&order, self.section, forward);
             self.shortcuts.editing = false;
+            self.themes.cancel();
         } else {
             self.move_focus(forward);
         }
@@ -714,8 +765,12 @@ impl SettingsForm {
                     next_choice(&order, self.draft().suggestion_keys, forward);
             }
             Field::Theme => {
+                let choices = self.themes.choices();
                 self.draft_mut().theme =
-                    next_optional(&ThemeName::ALL, self.draft().theme, forward);
+                    next_optional(&choices, self.draft().theme.clone(), forward);
+            }
+            Field::ThemeBase => {
+                self.themes.change_base(forward);
             }
             Field::Mcp => {
                 self.draft_mut().mcp = next_bool(self.draft().mcp, forward);
@@ -756,6 +811,11 @@ impl SettingsForm {
         }
     }
 
+    /// True while the focus sits on a field of the theme editor that takes text.
+    fn theme_text(&self) -> bool {
+        matches!(self.focus, Field::ThemeName | Field::ThemeColors)
+    }
+
     pub fn paste(&mut self, value: &str) {
         if self.ai_busy {
             return;
@@ -765,6 +825,23 @@ impl SettingsForm {
             self.draft_mut().ai.touched = true;
             if let Some(input) = self.input_mut() {
                 input.insert(value);
+            }
+            return;
+        }
+        if self.focus == Field::ThemeName
+            && let Some(input) = self.input_mut()
+        {
+            input.insert(value);
+            return;
+        }
+        if self.focus == Field::ThemeColors {
+            let hex: String = value
+                .chars()
+                .filter(|c| c.is_ascii_hexdigit() || *c == '#')
+                .collect();
+            if let Some(input) = self.input_mut() {
+                input.insert(&hex);
+                self.themes.after_edit();
             }
             return;
         }
@@ -785,11 +862,15 @@ impl SettingsForm {
 
     /// Opens one section and puts the focus on the sidebar. The mouse uses this.
     pub fn open_section(&mut self, section: usize) {
-        if self.shortcuts.is_recording() {
+        if self.shortcuts.is_recording() || self.themes.is_editing() {
+            if self.themes.is_editing() {
+                self.note = Some(text::THEME_EDITOR_OPEN.to_owned());
+            }
             return;
         }
         self.section = section;
         self.shortcuts.editing = false;
+        self.themes.cancel();
         self.focus = Field::Sections;
     }
 
@@ -799,6 +880,9 @@ impl SettingsForm {
             return SettingsRequest::None;
         }
         if self.ai_busy {
+            return SettingsRequest::None;
+        }
+        if self.theme_press() {
             return SettingsRequest::None;
         }
         match self.focus {
@@ -822,6 +906,9 @@ impl SettingsForm {
         if self.shortcut_key(key, vim) {
             return SettingsRequest::None;
         }
+        if self.theme_key(key, vim) {
+            return SettingsRequest::None;
+        }
         // While a vault write or a test runs, only the close works.
         if self.ai_busy && key.code != KeyCode::Esc {
             return SettingsRequest::None;
@@ -832,8 +919,12 @@ impl SettingsForm {
             KeyCode::BackTab => self.move_focus(false),
             KeyCode::Down => self.step(true),
             KeyCode::Up => self.step(false),
-            KeyCode::Char('j') if vim && !ai_text(self.focus) => self.step(true),
-            KeyCode::Char('k') if vim && !ai_text(self.focus) => self.step(false),
+            KeyCode::Char('j') if vim && !ai_text(self.focus) && !self.theme_text() => {
+                self.step(true)
+            }
+            KeyCode::Char('k') if vim && !ai_text(self.focus) && !self.theme_text() => {
+                self.step(false)
+            }
             KeyCode::Enter if self.focus == Field::AiTest => return SettingsRequest::AiTest,
             KeyCode::Enter if self.focus == Field::Save => return SettingsRequest::Save,
             KeyCode::Enter if self.focus == Field::Cancel => return SettingsRequest::Cancel,
@@ -842,7 +933,8 @@ impl SettingsForm {
             KeyCode::Right if self.input(self.focus).is_none() => self.change(true),
             KeyCode::Char('h') if vim && self.input(self.focus).is_none() => self.change(false),
             KeyCode::Char('l') if vim && self.input(self.focus).is_none() => self.change(true),
-            KeyCode::Char(c) if !c.is_ascii_digit() && !ai_text(self.focus) => {}
+            KeyCode::Char(c)
+                if !c.is_ascii_digit() && !ai_text(self.focus) && !self.theme_text() => {}
             _ => {
                 // An edit of a provider field makes the block custom.
                 if ai_owned(self.focus) {
@@ -854,6 +946,7 @@ impl SettingsForm {
                 if let Some(input) = self.input_mut() {
                     input.on_key(key);
                 }
+                self.themes.after_edit();
             }
         }
         SettingsRequest::None
@@ -993,6 +1086,9 @@ impl SettingsForm {
 
     pub fn preferences(&self) -> Result<Preferences, String> {
         let draft = self.draft();
+        if self.themes.is_editing() {
+            return Err(text::THEME_EDITOR_OPEN.to_owned());
+        }
         let base = match (self.scope, &self.project) {
             (Scope::Project, Some(project)) => project,
             _ => &self.global,
@@ -1005,7 +1101,7 @@ impl SettingsForm {
         preferences.show_system_commands = draft.show_system_commands;
         preferences.cap_in_sql = draft.cap_in_sql;
         preferences.suggestion_keys = draft.suggestion_keys;
-        preferences.theme = draft.theme;
+        preferences.theme = draft.theme.clone();
         preferences.mcp = draft.mcp;
         preferences.mcp_default_access = draft.mcp_default;
         preferences.mcp_max_access = draft.mcp_max;

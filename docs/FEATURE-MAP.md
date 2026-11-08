@@ -289,9 +289,9 @@ A vault failure offers retry, session use, or cancel, never silent plain text. W
 
 ## 21. Appearance and themes
 
-Files: `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs`.
+Files: `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs`, `store/themes.rs`, `settings/themes.rs`.
 
-The themes are `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-latte`, `gruvbox`, and `nord`. The RGB schemes need a truecolor terminal, and `NO_COLOR` removes the colors. Each connection can select a theme and an icon. The icons come in Unicode and Nerd Font sets. The status line shows the focus, the connection, the state, and the use of resources. `ui/wrap` wraps the text of a window row by row, on demand.
+The themes are `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-latte`, `gruvbox`, and `nord`, and the custom themes of the `themes` folder of each scope, created and edited in `Settings > Appearance` with a live preview. The RGB schemes need a truecolor terminal, and `NO_COLOR` removes the colors. Each connection can select a theme and an icon. The icons come in Unicode and Nerd Font sets. The status line shows the focus, the connection, the state, and the use of resources. `ui/wrap` wraps the text of a window row by row, on demand.
 
 ## 22. Operation and diagnostics
 

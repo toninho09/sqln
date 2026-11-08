@@ -142,6 +142,8 @@ impl App {
             }
             return Some(match form.focus {
                 settings::Field::ShortcutCommands => text::HINT_SHORTCUT_COMMANDS,
+                settings::Field::Themes => text::HINT_THEME_LIST,
+                settings::Field::ThemeColors => text::HINT_THEME_COLORS,
                 settings::Field::Sections => text::HINT_SETTINGS_SECTIONS,
                 settings::Field::Save | settings::Field::Cancel => text::HINT_FORM_BUTTON,
                 field if form.input(field).is_some() => text::HINT_SETTINGS_TEXT,

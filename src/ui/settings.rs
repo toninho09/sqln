@@ -19,10 +19,14 @@ use crate::input::Action;
 use crate::settings::{Field, SECTIONS, SettingsForm};
 use crate::store::Scope;
 
+use ratatui::style::Style;
+
 pub(super) const WIDTH: u16 = 72;
 const LABEL_WIDTH: u16 = super::kit::form::LabelWidth::Narrow.columns();
 /// The value columns of a number field.
 const NUMBER_WIDTH: usize = 12;
+/// The value columns of the hex text of a color.
+const HEX_WIDTH: usize = 9;
 /// The rows inside the window, from its top.
 const SCOPE_ROW: u16 = 1;
 const TITLE_ROW: u16 = 3;
@@ -35,6 +39,10 @@ pub struct SettingsLayout {
     pub sections: Vec<Rect>,
     pub fields: Vec<(Field, Rect)>,
     pub command_rows: Vec<(Action, Rect)>,
+    /// One area for each theme of the list, with its id.
+    pub theme_rows: Vec<(String, Rect)>,
+    /// One area for each color of the editor.
+    pub color_rows: Vec<(usize, Rect)>,
 }
 
 /// The window has the height of the largest section, and all sections keep the same size.
@@ -60,6 +68,9 @@ fn label(field: Field) -> &'static str {
         Field::SuggestionKeys => text::FIELD_SUGGESTION_KEYS,
         Field::UndoLimit => text::FIELD_UNDO_LIMIT,
         Field::Theme => text::FIELD_THEME,
+        Field::Themes => text::FIELD_THEMES,
+        Field::ThemeName => text::FIELD_THEME_NAME,
+        Field::ThemeBase => text::FIELD_THEME_BASE,
         Field::ShortcutMode => text::FIELD_SHORTCUT_MODE,
         Field::ShortcutBinding => text::FIELD_SHORTCUT_BINDING,
         Field::ShortcutFinish => text::FIELD_SHORTCUT_FINISH,
@@ -138,10 +149,9 @@ fn choice(form: &SettingsForm, field: Field) -> String {
             || form.inherited(field),
             |keys| text::suggestion_keys_name(keys).to_owned(),
         ),
-        Field::Theme => form.theme().map_or_else(
-            || form.inherited(field),
-            |name| text::theme_name(name).to_owned(),
-        ),
+        Field::Theme => form
+            .theme()
+            .map_or_else(|| form.inherited(field), |name| form.theme_label(&name)),
         Field::Mcp => form.mcp().map_or_else(
             || form.inherited(field),
             |value| text::on_off(value).to_owned(),
@@ -158,6 +168,14 @@ fn choice(form: &SettingsForm, field: Field) -> String {
             || form.inherited(field),
             |value| text::on_off(value).to_owned(),
         ),
+        Field::ThemeNew
+        | Field::ThemeEdit
+        | Field::ThemeDelete
+        | Field::ThemeDone
+        | Field::ThemeBack
+        | Field::ThemeBase
+        | Field::Themes
+        | Field::ThemeColors => form.theme_value(field),
         field => form.shortcut_value(field),
     }
 }
@@ -195,6 +213,8 @@ fn value(form: &SettingsForm, field: Field, theme: &Theme, width: usize) -> Line
         if input.text().is_empty() {
             let hint = match field {
                 Field::AiKey => choice(form, field),
+                // The editor fields carry their own meaning.
+                Field::ThemeName | Field::ThemeColors => String::new(),
                 _ => form.inherited(field),
             };
             if !hint.is_empty() {
@@ -211,6 +231,11 @@ fn value(form: &SettingsForm, field: Field, theme: &Theme, width: usize) -> Line
             | Field::ShortcutRestore
             | Field::ShortcutBack
             | Field::AiTest
+            | Field::ThemeNew
+            | Field::ThemeEdit
+            | Field::ThemeDelete
+            | Field::ThemeDone
+            | Field::ThemeBack
     ) {
         let style = if focused {
             theme.dialog_focus
@@ -398,11 +423,209 @@ fn draw_recording(
     ));
 }
 
+/// Draws the list of the custom themes, with its buttons.
+fn draw_theme_list(
+    frame: &mut Frame,
+    pane: Rect,
+    content: Rect,
+    button_row: u16,
+    form: &SettingsForm,
+    theme: &Theme,
+    layout: &mut SettingsLayout,
+) {
+    let first = Rect {
+        y: pane.y + FIRST_FIELD_ROW,
+        height: 1,
+        ..pane
+    };
+    draw_field_row(frame, first, form, Field::Theme, theme);
+    layout.fields.push((Field::Theme, first));
+    let header = Rect {
+        y: first.y + 2,
+        height: 1,
+        ..content
+    };
+    frame.render_widget(
+        Paragraph::new(text::FIELD_THEMES.to_uppercase()).style(theme.panel_title),
+        header,
+    );
+    // Use only the rows the list needs, while reserving space for the buttons
+    // and the note. Long lists scroll; an empty list still has its message.
+    let note_top = button_row.saturating_sub(NOTE_ROWS);
+    let list = form.theme_list();
+    let available = note_top.saturating_sub(header.y + 1).saturating_sub(2);
+    let rows = u16::try_from(list.len().max(1))
+        .unwrap_or(u16::MAX)
+        .min(available);
+    let buttons_top = (header.y + 1).saturating_add(rows).saturating_add(1);
+    let view = viewport_centered(form.theme_selected(), list.len(), rows);
+    let area = Rect {
+        y: header.y + 1,
+        height: rows,
+        ..content
+    };
+    layout.fields.push((Field::Themes, area));
+    if list.is_empty() {
+        frame.render_widget(Paragraph::new(text::THEME_NONE).style(theme.hint), area);
+    }
+    for (offset, item) in list.iter().enumerate().skip(view.first).take(view.rows) {
+        let row = Rect {
+            y: area.y + u16::try_from(offset - view.first).unwrap_or(0),
+            height: 1,
+            ..content
+        };
+        layout.theme_rows.push((item.id.clone(), row));
+        if offset == form.theme_selected() {
+            let style = if form.focus == Field::Themes {
+                theme.tree_selected
+            } else {
+                theme.tree_cursor
+            };
+            frame.buffer_mut().set_style(row, style);
+            frame.render_widget(
+                Paragraph::new(theme.icons.focus_mark).style(style),
+                Rect {
+                    x: row.x.saturating_sub(2),
+                    width: 1,
+                    ..row
+                },
+            );
+        }
+        let origin = match item.scope {
+            Scope::Project => text::VALUE_SCOPE_PROJECT,
+            Scope::Global => text::VALUE_SCOPE_GLOBAL,
+        };
+        let line = fit(
+            &format!(
+                "{} · {} ({origin})",
+                crate::grid::printable(&item.name),
+                crate::grid::printable(&item.id)
+            ),
+            usize::from(content.width),
+        )
+        .0;
+        frame.render_widget(Paragraph::new(line), row);
+    }
+    let buttons = buttons::dialog_items(
+        [
+            (Field::ThemeNew, text::BUTTON_THEME_NEW),
+            (Field::ThemeEdit, text::BUTTON_THEME_EDIT),
+            (Field::ThemeDelete, text::BUTTON_THEME_DELETE),
+        ],
+        form.focus,
+        theme,
+    );
+    layout.fields.extend(buttons::draw(
+        frame,
+        Rect {
+            y: buttons_top,
+            height: 1,
+            ..content
+        },
+        RowOptions::DIALOG,
+        &buttons,
+        theme,
+    ));
+}
+
+/// Draws the theme editor: the name, the base, the colors, and its buttons.
+fn draw_theme_editor(
+    frame: &mut Frame,
+    pane: Rect,
+    content: Rect,
+    button_row: u16,
+    form: &SettingsForm,
+    theme: &Theme,
+    layout: &mut SettingsLayout,
+) {
+    let name = Rect {
+        y: pane.y + FIRST_FIELD_ROW,
+        height: 1,
+        ..pane
+    };
+    draw_field_row(frame, name, form, Field::ThemeName, theme);
+    layout.fields.push((Field::ThemeName, name));
+    let mut next = name.y + 1;
+    if form.theme_is_new() {
+        let base = Rect {
+            y: next,
+            height: 1,
+            ..pane
+        };
+        draw_field_row(frame, base, form, Field::ThemeBase, theme);
+        layout.fields.push((Field::ThemeBase, base));
+        next += 1;
+    }
+    let header = Rect {
+        y: next + 1,
+        height: 1,
+        ..content
+    };
+    frame.render_widget(
+        Paragraph::new(text::FIELD_THEMES.to_uppercase()).style(theme.panel_title),
+        header,
+    );
+    let note_top = button_row.saturating_sub(NOTE_ROWS);
+    let buttons_top = note_top.saturating_sub(2);
+    let roles = form.theme_role_count();
+    let rows = u16::try_from(usize::from(buttons_top.saturating_sub(header.y + 1))).unwrap_or(0);
+    let view = viewport_centered(form.theme_cursor(), roles, rows);
+    let area = Rect {
+        y: header.y + 1,
+        height: rows,
+        ..content
+    };
+    layout.fields.push((Field::ThemeColors, area));
+    for role in view.first..view.first.saturating_add(view.rows).min(roles) {
+        let row = Rect {
+            y: area.y + u16::try_from(role - view.first).unwrap_or(0),
+            height: 1,
+            ..pane
+        };
+        layout.color_rows.push((role, row));
+        let Some((hex, color)) = form.theme_hex(role) else {
+            continue;
+        };
+        let focused = form.focus == Field::ThemeColors && form.theme_cursor() == role;
+        let mut line = input::line(
+            FieldText {
+                text: hex.text(),
+                cursor: hex.cursor(),
+                width: HEX_WIDTH,
+                focused,
+                mode: FieldMode::Text,
+            },
+            theme,
+        );
+        line.spans.push(Span::raw(" "));
+        line.spans
+            .push(Span::styled("  ", Style::new().bg(color).fg(color)));
+        draw_row(
+            frame,
+            row,
+            (SettingsForm::theme_role_label(role), LABEL_WIDTH),
+            focused,
+            line,
+            theme,
+        );
+    }
+    for (index, field) in [Field::ThemeDone, Field::ThemeBack].into_iter().enumerate() {
+        let row = Rect {
+            y: buttons_top + index as u16,
+            height: 1,
+            ..pane
+        };
+        draw_field_row(frame, row, form, field, theme);
+        layout.fields.push((field, row));
+    }
+}
+
 pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> SettingsLayout {
     let width = modal_width(frame.area().width, WIDTH);
     let section = &SECTIONS[form.section];
     let shortcuts = section.fields.contains(&Field::ShortcutCommands);
-    let height = if shortcuts && !form.shortcuts.is_editing() {
+    let themes = section.fields.contains(&Field::Themes);
+    let height = if (shortcuts && !form.shortcuts.is_editing()) || themes {
         frame
             .area()
             .height
@@ -426,6 +649,8 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
         sections: modal.sidebar_rows,
         fields: Vec::new(),
         command_rows: Vec::new(),
+        theme_rows: Vec::new(),
+        color_rows: Vec::new(),
     };
 
     let scope = Rect {
@@ -445,6 +670,12 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
             section.title.to_uppercase(),
             form.shortcuts.action.name()
         )
+    } else if themes && form.theme_is_editing() {
+        format!(
+            "{} · {}",
+            section.title.to_uppercase(),
+            form.theme_editor_id()
+        )
     } else {
         section.title.to_uppercase()
     };
@@ -455,6 +686,28 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
     }
     if shortcuts && !form.shortcuts.is_editing() {
         draw_command_list(frame, pane, content, form, theme, &mut layout);
+    } else if themes {
+        if form.theme_is_editing() {
+            draw_theme_editor(
+                frame,
+                pane,
+                content,
+                modal.button_row,
+                form,
+                theme,
+                &mut layout,
+            );
+        } else {
+            draw_theme_list(
+                frame,
+                pane,
+                content,
+                modal.button_row,
+                form,
+                theme,
+                &mut layout,
+            );
+        }
     } else {
         let fields = if shortcuts {
             form.shortcut_stops()
@@ -473,7 +726,7 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
     }
 
     let button_row = modal.button_row;
-    if let Some(help) = section.help {
+    if let Some(help) = section.help.filter(|_| !themes) {
         // One empty row after the fields. The help ends before the note.
         let top = pane.y + FIRST_FIELD_ROW + u16::try_from(section.fields.len()).unwrap_or(0) + 1;
         let help_area = Rect {
@@ -490,6 +743,8 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
     }
     if let Some(note) = &form.note {
         draw_note(frame, content, button_row, note, theme.error);
+    } else if let Some(warning) = form.theme_contrast_warning() {
+        draw_note(frame, content, button_row, &warning, theme.hint);
     } else if shortcuts {
         let action = form.shortcuts.action;
         let note = format!(

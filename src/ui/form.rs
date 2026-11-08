@@ -111,7 +111,8 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
         Field::Credential => text::VALUE_SESSION,
         Field::Tls if form.verify_tls => text::VALUE_TLS_VERIFY,
         Field::Tls => text::VALUE_TLS_OFF,
-        Field::Theme => form.theme.map_or(text::VALUE_DEFAULT, text::theme_name),
+        // A custom theme has its own name, so `value_line` builds this value.
+        Field::Theme => text::VALUE_DEFAULT,
         Field::Icon => form
             .icon
             .map_or(text::VALUE_DEFAULT, text::connection_icon_name),
@@ -158,8 +159,16 @@ fn value_line(form: &ConnectionForm, field: Field, width: usize, theme: &Theme) 
                 .icon
                 .filter(|_| field == Field::Icon)
                 .map_or(String::new(), |icon| Theme::icon(connection_symbol(icon)));
+            let value = if field == Field::Theme {
+                form.theme.as_ref().map_or_else(
+                    || text::VALUE_DEFAULT.to_owned(),
+                    |name| text::theme_label(name, &form.themes),
+                )
+            } else {
+                choice(form, field).to_owned()
+            };
             Line::from(Span::styled(
-                choice_value(&format!("{symbol}{}", choice(form, field))),
+                choice_value(&format!("{symbol}{value}")),
                 style,
             ))
         }

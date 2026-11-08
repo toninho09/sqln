@@ -97,7 +97,7 @@ use crate::ui::navigator::draw_navigator;
 use crate::ui::palette::draw_palette;
 use crate::ui::settings::{SettingsLayout, draw_settings};
 use crate::ui::statusline::{StatusData, StatusPanel, draw_statusline, run_time};
-use crate::ui::theme::{ColorEnv, Theme};
+use crate::ui::theme::{ColorEnv, Theme, ThemeCatalog};
 use crate::ui::welcome::draw_welcome;
 use crate::ui::which_key::draw_which_key;
 use crate::ui::wrap::WrappedText;
@@ -165,6 +165,10 @@ pub struct Options {
     pub vault: Option<Arc<dyn crate::creds::Vault>>,
     /// The `theme` and `icons` choices of the configuration.
     pub appearance: (Option<ThemeName>, Option<IconName>),
+    /// The custom themes of the files of both scopes.
+    pub custom_themes: ThemeCatalog,
+    /// The trouble of the theme files at the start.
+    pub theme_notes: Vec<String>,
     /// The keys that accept a suggestion.
     pub suggestion_keys: SuggestionKeys,
     /// True when Messages shows internal and shared commands.
@@ -196,6 +200,8 @@ impl Default for Options {
             offer_project: None,
             vault: None,
             appearance: (None, None),
+            custom_themes: ThemeCatalog::default(),
+            theme_notes: Vec::new(),
             suggestion_keys: SuggestionKeys::default(),
             ai_completion: crate::ai::Preferences::default(),
             ai_vault: None,
@@ -452,6 +458,8 @@ pub struct App {
     color_env: ColorEnv,
     /// The `theme` and `icons` choices of the files.
     appearance: (Option<ThemeName>, Option<IconName>),
+    /// The custom themes of both scopes, after the precedence.
+    custom_themes: ThemeCatalog,
     /// The theme of the current frame. `choose_theme` writes it at the start of each
     /// frame, so a change of tab or of a choice needs no other step.
     theme: Theme,
@@ -562,7 +570,6 @@ impl App {
             .as_ref()
             .map(|persist| PlainFile::new(&persist.store.global));
         let color_env = ColorEnv::read();
-        let (chosen_theme, chosen_icons) = options.appearance;
         let mut app = Self {
             consoles: Vec::new(),
             active: 0,
@@ -593,7 +600,8 @@ impl App {
             terminal_theme: theme,
             color_env,
             appearance: options.appearance,
-            theme: theme.with_choices(chosen_theme, chosen_icons, color_env),
+            custom_themes: options.custom_themes.clone(),
+            theme,
             layout: ScreenLayout::default(),
             editor_ratio: DEFAULT_EDITOR_RATIO,
             dialogs: VecDeque::new(),
@@ -690,7 +698,22 @@ impl App {
         if let Some(path) = options.script.take() {
             app.open_sql_file_path(path);
         }
+        // The choices of the configuration apply to the first frame, as in each later one.
+        app.choose_theme();
+        app.missing_theme_note();
+        if !options.theme_notes.is_empty() {
+            app.status = Some(options.theme_notes.join(" "));
+        }
         app
+    }
+
+    /// Notes the default theme of the files when no file holds it.
+    fn missing_theme_note(&mut self) {
+        if let Some(ThemeName::Custom(id)) = &self.appearance.0
+            && self.custom_themes.get(id).is_none()
+        {
+            self.status = Some(text::theme_missing(id));
+        }
     }
 
     /// Each editor of a console comes from here, so it has the limit of the settings.
@@ -817,18 +840,35 @@ impl App {
     /// save. After that, the connection of the open tab has priority over the default.
     fn theme_choice(&self) -> Option<ThemeName> {
         if let Some(form) = &self.settings_form {
-            return form.saved_theme();
+            return form.preview_theme();
         }
-        let chosen = self.form.as_ref().and_then(|form| form.theme);
-        let connection = || self.tab_connection()?.definition.as_ref()?.theme;
-        chosen.or_else(connection).or(self.appearance.0)
+        let chosen = self.form.as_ref().and_then(|form| form.theme.clone());
+        let connection = || self.tab_connection()?.definition.as_ref()?.theme.clone();
+        chosen
+            .or_else(connection)
+            .or_else(|| self.appearance.0.clone())
+    }
+
+    /// The palette of a custom id: the dialog of the settings comes first, because
+    /// its drafts preview on the screen.
+    fn draft_scheme(&self, id: &str) -> Option<crate::ui::schemes::Scheme> {
+        if let Some(form) = &self.settings_form {
+            if let Some(scheme) = form.theme_scheme(id) {
+                return Some(scheme);
+            }
+            if form.theme_gone(id) {
+                return None;
+            }
+        }
+        self.custom_themes.scheme(id)
     }
 
     fn choose_theme(&mut self) {
+        let name = self.theme_choice();
+        let base = self.terminal_theme;
         let (_, icons) = self.appearance;
-        self.theme = self
-            .terminal_theme
-            .with_choices(self.theme_choice(), icons, self.color_env);
+        let env = self.color_env;
+        self.theme = base.with_choices(name, |id| self.draft_scheme(id), icons, env);
     }
 
     /// Adds a question. It opens now, or after the questions before it.

@@ -179,7 +179,7 @@ pub fn suggestion_keys_name(keys: SuggestionKeys) -> &'static str {
     }
 }
 
-pub fn theme_name(name: crate::store::config::ThemeName) -> &'static str {
+pub fn theme_name(name: &crate::store::config::ThemeName) -> &'static str {
     use crate::store::config::ThemeName;
     match name {
         ThemeName::Auto => "Auto",
@@ -190,6 +190,20 @@ pub fn theme_name(name: crate::store::config::ThemeName) -> &'static str {
         ThemeName::CatppuccinLatte => "Catppuccin Latte",
         ThemeName::Gruvbox => "Gruvbox",
         ThemeName::Nord => "Nord",
+        ThemeName::Custom(_) => "Custom",
+    }
+}
+
+/// The name of a theme in lists. A custom theme shows its own name.
+pub fn theme_label(
+    name: &crate::store::config::ThemeName,
+    custom: &crate::ui::theme::ThemeCatalog,
+) -> String {
+    match name {
+        crate::store::config::ThemeName::Custom(id) => {
+            crate::grid::printable(custom.name_of(id).unwrap_or(id))
+        }
+        name => theme_name(name).to_owned(),
     }
 }
 
@@ -234,6 +248,17 @@ pub const HINT_SETTINGS_TEXT: &[HintPart] = &[
     ("Enter", "next"),
     ("Esc", "cancel"),
     ("", "An empty field removes the value"),
+];
+pub const HINT_THEME_LIST: &[HintPart] = &[
+    ("Up/Down", "move"),
+    ("Enter", "edit"),
+    ("Tab", "next"),
+    ("Esc", "cancel"),
+];
+pub const HINT_THEME_COLORS: &[HintPart] = &[
+    ("Up/Down", "color"),
+    ("Tab", "next"),
+    ("Esc", "discard the draft"),
 ];
 pub const HINT_SETTINGS_SECTIONS: &[HintPart] =
     &[("Up/Down", "section"), ("Tab", "next"), ("Esc", "cancel")];
@@ -915,6 +940,40 @@ pub const FIELD_BUDGET: &str = "Data (MiB)";
 pub const FIELD_THEME: &str = "Default theme";
 pub const FIELD_CONNECTION_THEME: &str = "Theme";
 pub const FIELD_CONNECTION_ICON: &str = "Icon";
+pub const FIELD_THEMES: &str = "Custom themes";
+pub const FIELD_THEME_NAME: &str = "Name";
+pub const FIELD_THEME_BASE: &str = "Base";
+pub const BUTTON_THEME_NEW: &str = "New theme";
+pub const BUTTON_THEME_EDIT: &str = "Edit";
+pub const BUTTON_THEME_DELETE: &str = "Delete";
+pub const BUTTON_THEME_DONE: &str = "Done";
+pub const THEME_NONE: &str = "No custom themes.";
+pub const THEME_EDITOR_OPEN: &str = "Close the theme editor before saving.";
+pub const THEME_IN_USE: &str =
+    "The theme is in use. Change the default theme or the theme of a connection first.";
+pub const THEME_ID_TAKEN: &str = "A theme with this id already exists.";
+pub const THEME_INVALID_ID: &str =
+    "The name gives an id of lowercase letters, numbers, and dashes.";
+pub const HELP_THEMES: &str =
+    "Each theme is one file of the themes folder. New theme copies the base palette.";
+
+/// The warning of a theme that the files no longer hold.
+pub fn theme_missing(id: &str) -> String {
+    format!(
+        "The theme {} is missing. The default theme applies.",
+        crate::grid::printable(id)
+    )
+}
+
+/// The warning of a color without the form `#RRGGBB`.
+pub fn theme_hex_invalid(role: &str) -> String {
+    format!("The color of {role} needs the form #RRGGBB.")
+}
+
+/// The warning of a palette with low contrast.
+pub fn theme_contrast(count: usize) -> String {
+    format!("Low contrast in {count} places. The text can be hard to read on some terminals.")
+}
 
 pub fn export_format_name(format: ExportFormat) -> &'static str {
     match format {

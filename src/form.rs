@@ -22,6 +22,7 @@ use crate::settings::{next_choice, next_optional};
 use crate::store::Scope;
 use crate::store::config::{ConnectionIcon, CredentialName, ThemeName};
 use crate::ui::text;
+use crate::ui::theme::ThemeCatalog;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Field {
@@ -213,6 +214,8 @@ pub struct ConnectionForm {
     pub production: bool,
     /// `None` uses the default theme.
     pub theme: Option<ThemeName>,
+    /// The custom themes of the picker.
+    pub themes: ThemeCatalog,
     /// `None` uses the icon of the database.
     pub icon: Option<ConnectionIcon>,
     /// The scope of a new connection. The scope of a saved connection does not change.
@@ -287,6 +290,7 @@ impl ConnectionForm {
             read_only: false,
             production: false,
             theme: None,
+            themes: ThemeCatalog::default(),
             icon: None,
             scope: Scope::Global,
             project_available: false,
@@ -326,7 +330,7 @@ impl ConnectionForm {
         form.tls_chosen = true;
         form.read_only = definition.read_only;
         form.production = definition.production;
-        form.theme = definition.theme;
+        form.theme = definition.theme.clone();
         form.icon = definition.icon;
         form.set(Field::Name, definition.name.clone());
         form.set(Field::Pool, definition.max_connections.to_string());
@@ -603,7 +607,11 @@ impl ConnectionForm {
             }
             Field::ReadOnly => self.read_only = !self.read_only,
             Field::Production => self.production = !self.production,
-            Field::Theme => self.theme = next_optional(&ThemeName::ALL, self.theme, forward),
+            Field::Theme => {
+                let mut choices: Vec<ThemeName> = ThemeName::ALL.to_vec();
+                choices.extend(self.themes.ids().map(|id| ThemeName::Custom(id.to_owned())));
+                self.theme = next_optional(&choices, self.theme.clone(), forward);
+            }
             Field::Icon => self.icon = next_optional(&ConnectionIcon::ALL, self.icon, forward),
             _ => {}
         }
@@ -953,7 +961,7 @@ impl ConnectionForm {
         let mut definition = Definition::new(name, source);
         definition.read_only = self.read_only;
         definition.production = self.production;
-        definition.theme = self.theme;
+        definition.theme = self.theme.clone();
         definition.icon = self.icon;
         definition.max_connections = usize::try_from(limit).unwrap_or(usize::MAX);
         if self.kind != Kind::Sqlite {

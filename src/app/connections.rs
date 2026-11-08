@@ -358,7 +358,9 @@ impl App {
     pub(super) fn on_navigator_action(&mut self, action: Action) {
         if action == Action::NavigatorAdd {
             if !self.config_blocked() {
-                self.form = Some(ConnectionForm::new_in(self.has_project()));
+                let mut form = ConnectionForm::new_in(self.has_project());
+                form.themes = self.custom_themes.clone();
+                self.form = Some(form);
             }
             return;
         }
@@ -807,6 +809,7 @@ impl App {
             .as_ref()
             .is_some_and(|manager| manager.is_connected(id));
         let mut form = ConnectionForm::editing(id, definition, connected);
+        form.themes = self.custom_themes.clone();
         if let Some(connection) = self.connection(id) {
             form.credential = connection.credential;
             if let Some(key) = &connection.key {
@@ -1192,7 +1195,7 @@ impl App {
         let editing = form.editing;
         if form.display_only {
             let name = form.text(Field::Name).trim().to_owned();
-            let (theme, icon, production) = (form.theme, form.icon, form.production);
+            let (theme, icon, production) = (form.theme.clone(), form.icon, form.production);
             match form.schemas() {
                 Ok(schemas) => self.save_display(name, theme, icon, production, schemas),
                 Err(invalid) => self.show_invalid(invalid),

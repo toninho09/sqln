@@ -1203,6 +1203,17 @@ The **Appearance** section has the **Default theme** field.
 The choice changes the colors at once, before saving. `Esc` and **Cancel** bring back the saved theme.
 In the global scope, a theme defined in the project keeps priority.
 
+The same section has the **Custom themes** list, with the buttons **New theme**, **Edit**, and **Delete**:
+
+- **New theme** opens the editor on a copy of the theme that the scope chooses. The **Base** row swaps the whole palette for another theme.
+- The editor edits the display **Name** and one hex value (`#RRGGBB`) per color of the palette, with a swatch beside each value. The screen previews each color while it parses, including the Settings window itself.
+- **Done** keeps the draft in the dialog, and the dialog **Save** writes the file. Nothing reaches the disk before that save: `Esc` in the editor discards the draft, and **Cancel** in the dialog discards everything.
+- The name gives the id of the file: lowercase letters, numbers, and dashes. The list shows the name, the id, and the origin (`Global` or `Project`).
+- **Delete** refuses a theme that the default theme or a connection still uses, with the reason. The removal writes at the dialog save, and **Cancel** brings the theme back.
+- The editor warns about colors of low contrast, with the count of places, but it never blocks the save.
+
+A custom theme needs a truecolor terminal, as the built-in RGB themes do.
+
 The connection form has the **Theme** field, which defines a theme only for that connection.
 The **Default** value uses the default theme. The open tab decides the colors of the whole screen: the screen uses the theme of the connection of the tab, and a tab without its own theme uses the default theme.
 That field also changes the colors before saving. It works with the active connection and does not close the session or the transaction.
@@ -1228,6 +1239,9 @@ That field also works with the active connection and appears in all icon sets, i
 | Catppuccin Latte | `catppuccin-latte` | Light |
 | Gruvbox | `gruvbox` | Warm dark |
 | Nord | `nord` | Bluish gray |
+| Custom | `{"custom": "<id>"}` | The theme file `themes/<id>.json`; a missing file falls back to `auto` |
+
+A custom theme of the project wins over a global theme with the same id, as the other preferences do.
 
 `NO_COLOR` has priority over any theme.
 
