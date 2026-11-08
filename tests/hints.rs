@@ -14,7 +14,7 @@ use sqln::clipboard::MemoryClipboard;
 use sqln::connector::TransactionState;
 use sqln::editor::KeyboardMode;
 use sqln::navigator::RowKind;
-use sqln::ui::statusline::{HintItem, fit_hints, hint_text};
+use sqln::ui::kit::feedback::{HintItem, fit_hints, hint_text};
 use sqln::ui::theme::Theme;
 
 const SETUP: &str = "CREATE TABLE items(id INTEGER, label TEXT); INSERT INTO items VALUES (1, 'a');

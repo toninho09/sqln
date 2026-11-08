@@ -9,6 +9,7 @@ mod follow_key;
 mod guard;
 mod history;
 mod operation;
+mod sql_file;
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -208,13 +209,19 @@ fn an_explicit_choice_creates_the_file() {
 }
 
 #[test]
-fn a_memory_path_is_refused() {
+fn a_memory_path_opens_one_in_memory_database() {
     let mut f = Fixture::at(
         Path::new(":memory:"),
         KeyboardMode::Conventional,
         Settings::default(),
     );
-    f.assert_sees("not valid");
+    f.assert_sees(":memory:");
+    // The pool holds exactly one place, because a second session starts empty.
+    f.assert_sees("Pool 0/1");
+    f.run_script("CREATE TABLE demo (id INTEGER PRIMARY KEY, value TEXT);");
+    f.run_script("INSERT INTO demo VALUES (1, 'kept');");
+    f.run_script("SELECT value FROM demo;");
+    f.assert_sees("kept");
 }
 
 #[test]

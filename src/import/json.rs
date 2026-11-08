@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde::de::{Deserializer, MapAccess, Visitor};
 use serde_json::value::RawValue;
 
-use super::{BadRow, FileRow, ImportFormat, Input, Item, KEY_OBJECTS, ReadOptions};
+use super::{ImportFormat, Input, Item, KEY_OBJECTS, ReadOptions};
 use crate::sql::Dialect;
 use crate::ui::text;
 
@@ -324,18 +324,7 @@ impl JsonReader {
         };
         let cells = self.cells();
         let source = self.source();
-        Ok(Some(match cells {
-            Ok(cells) => Item::Row(FileRow {
-                line,
-                source,
-                cells,
-            }),
-            Err(reason) => Item::Bad(BadRow {
-                line,
-                source,
-                reason,
-            }),
-        }))
+        Ok(Some(super::row_item(line, source, cells)))
     }
 }
 

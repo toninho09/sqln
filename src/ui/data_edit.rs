@@ -3,11 +3,12 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
-use super::console::draw_buttons;
+use super::kit::buttons::{self, RowOptions};
+use super::kit::modal::open_modal;
 use super::theme::Theme;
-use super::{draw_editor, float_block, text};
+use super::{draw_editor, text};
 use crate::data_edit::form::{Body, EditForm};
 use crate::grid::printable;
 
@@ -15,7 +16,7 @@ use crate::grid::printable;
 pub struct EditLayout {
     pub contents: Rect,
     pub controls: Rect,
-    pub buttons: Vec<(u16, u16, usize)>,
+    pub buttons: Vec<(usize, Rect)>,
 }
 
 pub fn draw_edit(frame: &mut Frame, form: &mut EditForm, theme: &Theme) -> EditLayout {
@@ -28,10 +29,7 @@ pub fn draw_edit(frame: &mut Frame, form: &mut EditForm, theme: &Theme) -> EditL
         width,
         height,
     );
-    frame.render_widget(Clear, area);
-    let block = float_block(&printable(&form.title), theme);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = open_modal(frame, area, &printable(&form.title), theme);
     let [contents, note, controls] = Layout::vertical([
         Constraint::Min(1),
         Constraint::Length(1),
@@ -68,7 +66,7 @@ pub fn draw_edit(frame: &mut Frame, form: &mut EditForm, theme: &Theme) -> EditL
     } else {
         vec![text::EDIT_KEEP, text::EDIT_SET_NULL, text::OPTION_CANCEL]
     };
-    let items = labels
+    let items: Vec<(usize, String, bool)> = labels
         .into_iter()
         .enumerate()
         .map(|(index, label)| {
@@ -80,7 +78,8 @@ pub fn draw_edit(frame: &mut Frame, form: &mut EditForm, theme: &Theme) -> EditL
             (index + 1, theme.button(&mark), true)
         })
         .collect();
-    let buttons = draw_buttons(frame, controls, items, theme);
+    let items = buttons::toolbar_items(items);
+    let buttons = buttons::draw(frame, controls, RowOptions::TOOLBAR, &items, theme);
     EditLayout {
         contents,
         controls,

@@ -892,6 +892,10 @@ impl App {
                 else {
                     return;
                 };
+                // An auto-refresh repeats the statements of this run, without a plan.
+                if explain.is_none() {
+                    self.consoles[index].auto_snapshot = Some(plan.statements.clone());
+                }
                 // The marks of the editor keep the text of the user.
                 let statements = match &explain {
                     Some(explain) => plan

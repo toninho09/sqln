@@ -84,7 +84,8 @@ fn local_database(name: &str, setup: &str) -> (PathBuf, String) {
 fn saved_file(store: &Store) -> PathBuf {
     let config = sqln::store::config::load(store).config.unwrap();
     match &config.connections[0].definition.source {
-        Source::Sqlite(target) => target.path.clone(),
+        Source::Sqlite(target) => target.path().to_path_buf(),
+        Source::Duckdb(_) => panic!("this connection is not SQLite"),
         Source::Network(_) => panic!("this connection is not SQLite"),
     }
 }
@@ -277,6 +278,8 @@ impl Session {
     fn fill_sqlite_form(&mut self, name: &str, file: &str) {
         self.prefix('h');
         self.code(KeyCode::Char('a'));
+        // `Left` goes backwards through the kinds from PostgreSQL.
+        self.code(KeyCode::Left);
         self.code(KeyCode::Left);
         self.code(KeyCode::Left);
         self.focus_form(Field::Name);
@@ -3267,7 +3270,10 @@ impl Session {
 }
 
 fn theme_panel(name: ThemeName) -> Color {
-    Theme::named(name, ColorEnv::default()).panel.bg.unwrap()
+    Theme::named(&name, |_| None, ColorEnv::default())
+        .panel
+        .bg
+        .unwrap()
 }
 
 #[test]
@@ -3315,11 +3321,19 @@ fn a_saved_theme_goes_to_the_file_and_comes_back_at_the_next_start() {
     session.open_theme_settings();
     session.assert_sees("Default: Auto");
     // `Left` goes from the first choice to the end of the list.
-    session.code(KeyCode::Left);
-    session.code(KeyCode::Left);
-    session.code(KeyCode::Left);
+    let steps = ThemeName::ALL.len()
+        - ThemeName::ALL
+            .iter()
+            .position(|name| *name == ThemeName::CatppuccinLatte)
+            .unwrap();
+    for _ in 0..steps {
+        session.code(KeyCode::Left);
+    }
     session.assert_sees("< Catppuccin Latte >");
-    session.code(KeyCode::Tab);
+    // Theme, Themes, New, Edit, and Delete come before the save.
+    for _ in 0..5 {
+        session.code(KeyCode::Tab);
+    }
     session.code(KeyCode::Enter);
     session.assert_sees("settings are saved");
     assert_eq!(
@@ -3536,9 +3550,10 @@ fn the_form_shows_a_theme_at_once_and_the_file_keeps_the_saved_theme() {
     session.code(KeyCode::Char('e'));
     session.focus_form(Field::Theme);
     session.assert_sees("< Default >");
+    let last = ThemeName::ALL.last().unwrap().clone();
     session.code(KeyCode::Left);
-    session.assert_sees("< Nord >");
-    assert_eq!(session.panel_color(), theme_panel(ThemeName::Nord));
+    session.assert_sees(&format!("< {} >", sqln::ui::text::theme_name(&last)));
+    assert_eq!(session.panel_color(), theme_panel(last));
     session.code(KeyCode::Esc);
     assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
     let after = fs::read_to_string(store.global.config_file()).unwrap();
@@ -3546,8 +3561,13 @@ fn the_form_shows_a_theme_at_once_and_the_file_keeps_the_saved_theme() {
 
     session.code(KeyCode::Char('e'));
     session.focus_form(Field::Theme);
-    session.code(KeyCode::Left);
-    session.code(KeyCode::Left);
+    let gruvbox = ThemeName::ALL
+        .iter()
+        .position(|name| *name == ThemeName::Gruvbox)
+        .unwrap();
+    for _ in 0..=gruvbox {
+        session.code(KeyCode::Right);
+    }
     session.assert_sees("< Gruvbox >");
     session.press_form_button(Field::Save);
     assert!(session.app.form().is_none(), "{}", session.screen());
@@ -4817,4 +4837,282 @@ fn a_long_endpoint_uses_the_columns_of_a_wide_window() {
     // The window is 100 columns, so the field shows more than the 30 columns
     // of the smallest window.
     session.assert_sees(url);
+}
+
+// ---- custom themes ----
+
+#[test]
+fn a_theme_name_accepts_vim_navigation_letters() {
+    let mut form = SettingsForm::new(Preferences::default(), None);
+    form.section = SECTIONS
+        .iter()
+        .position(|section| section.fields.contains(&SettingsField::Theme))
+        .unwrap();
+    form.focus_on(SettingsField::ThemeNew);
+    form.on_key(key(KeyCode::Enter), true);
+    for c in "jklh".chars() {
+        form.on_key(key(KeyCode::Char(c)), true);
+    }
+    assert_eq!(form.input(SettingsField::ThemeName).unwrap().text(), "jklh");
+    assert_eq!(form.focus, SettingsField::ThemeName);
+}
+
+/// Saves a theme file that copies the Gruvbox palette.
+fn save_theme_file(store: &Store, id: &str, name: &str) {
+    use sqln::store::themes;
+    use sqln::ui::schemes;
+    themes::save(&store.global, id, name, &schemes::GRUVBOX.to_colors(), None).unwrap();
+}
+
+#[test]
+fn a_new_theme_becomes_a_file_and_the_choice_comes_back_at_the_next_start() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let (store, _) = reopening_store("p-theme-new", r#"{"theme":"gruvbox"}"#);
+    let mut session = Session::start(&store);
+    session.open_theme_settings();
+    session.assert_sees("No custom themes.");
+    // The editor opens on a copy of the theme of the scope.
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    session.write("Mine");
+    session.assert_sees("APPEARANCE · mine");
+    for _ in 0..3 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("Mine · mine (Global)");
+    // The default theme cycles to the new theme, and the screen shows its palette.
+    // The default theme starts at the value of the file, so the steps reach the new
+    // theme at the end of the list.
+    for _ in 0..7 {
+        session.code(KeyCode::Tab);
+    }
+    let gruvbox = ThemeName::ALL
+        .iter()
+        .position(|name| *name == ThemeName::Gruvbox)
+        .unwrap();
+    for _ in 0..(ThemeName::ALL.len() - gruvbox) {
+        session.code(KeyCode::Right);
+    }
+    session.assert_sees("< Mine >");
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
+    for _ in 0..5 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+    let theme = fs::read_to_string(store.global.themes_dir().join("mine.json")).unwrap();
+    assert!(theme.contains(r#""name": "Mine""#), "{theme}");
+    assert!(theme.contains(r##""red": "#fb4934""##), "{theme}");
+    let config = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(config.contains(r#""custom": "mine""#), "{config}");
+    drop(session);
+
+    let mut session = Session::start(&store);
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
+}
+
+#[test]
+fn the_editor_previews_each_color_and_a_cancel_brings_the_saved_theme_back() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let (store, _) = reopening_store("p-theme-editor", r#"{"theme":"gruvbox"}"#);
+    let mut session = Session::start(&store);
+    session.open_theme_settings();
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    // The colors follow the editor: Name, Base, then the list.
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    // `panel` is the background of the explorer, and the screen shows it at once.
+    for _ in 0..16 {
+        session.code(KeyCode::Down);
+    }
+    for _ in 0..7 {
+        session.code(KeyCode::Backspace);
+    }
+    session.write("#123456");
+    assert_eq!(session.panel_color(), Color::Rgb(0x12, 0x34, 0x56));
+    // The editor ends without the draft, and the dialog ends without a write.
+    session.code(KeyCode::Esc);
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
+    session.assert_sees("No custom themes.");
+    session.code(KeyCode::Esc);
+    assert!(!store.global.themes_dir().join("draft.json").exists());
+    assert!(!store.global.themes_dir().exists());
+}
+
+#[test]
+fn the_editor_warns_about_colors_of_low_contrast() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let (store, _) = reopening_store("p-theme-contrast", r#"{"theme":"gruvbox"}"#);
+    let mut session = Session::start(&store);
+    session.open_theme_settings();
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
+    // The text of the base gives no contrast at all.
+    for _ in 0..6 {
+        session.code(KeyCode::Down);
+    }
+    for _ in 0..7 {
+        session.code(KeyCode::Backspace);
+    }
+    session.write("#282828");
+    session.assert_sees("Low contrast in ");
+}
+
+#[test]
+fn a_theme_in_use_stays_and_an_unused_theme_goes_away_at_the_save() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let (store, _) = reopening_store("p-theme-delete", r#"{"theme":{"custom":"mine"}}"#);
+    save_theme_file(&store, "mine", "Mine");
+    let mut session = Session::start(&store);
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
+    session.open_theme_settings();
+    session.assert_sees("Mine · mine (Global)");
+    // The default theme uses it, so the removal refuses.
+    for _ in 0..4 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("The theme is in use.");
+    // The default theme gives the theme away.
+    for _ in 0..4 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Right);
+    session.assert_sees("Default: Auto");
+    for _ in 0..4 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_not_sees("Mine · mine");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+    assert!(!store.global.themes_dir().join("mine.json").exists());
+    let config = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(!config.contains("custom"), "{config}");
+}
+
+#[test]
+fn a_missing_theme_file_falls_back_with_a_note() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let (store, _) = reopening_store("p-theme-missing", r#"{"theme":{"custom":"gone"}}"#);
+    let mut session = Session::start(&store);
+    let fallback = Theme::automatic(ColorEnv::read())
+        .panel
+        .bg
+        .unwrap_or(Color::Reset);
+    assert_eq!(session.panel_color(), fallback);
+    session.assert_sees("The theme gone is missing.");
+}
+
+#[test]
+fn a_connection_can_use_a_custom_theme() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let (store, base) = global_only("p-theme-connection");
+    let db = database(&base, "s", ITEMS).display().to_string();
+    let entry = format!(
+        r#"{{"id":"g1","name":"s","kind":"sqlite","file":"{db}","theme":{{"custom":"mine"}}}}"#
+    );
+    write_config(&store.global, "{}", &[entry]);
+    save_theme_file(&store, "mine", "Mine");
+    let mut session = Session::start(&store);
+    assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
+}
+
+#[test]
+fn the_themes_work_with_the_mouse() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let (store, _) = reopening_store("p-theme-mouse-editor", r#"{"theme":"gruvbox"}"#);
+    let mut session = Session::start(&store);
+    session.prefix(',');
+    let section = SECTIONS
+        .iter()
+        .position(|section| section.fields.contains(&SettingsField::Themes))
+        .unwrap();
+    for _ in 0..section {
+        session.code(KeyCode::Down);
+    }
+    // A click opens the editor, a click edits the name, and a click on a color row
+    // moves the cursor.
+    session.click_text("New theme");
+    session.assert_sees("APPEARANCE · draft");
+    session.click_text("Name");
+    session.write("Zed");
+    session.assert_sees("APPEARANCE · zed");
+    session.click_text("blue");
+    for _ in 0..7 {
+        session.code(KeyCode::Backspace);
+    }
+    session.write("#0055ff");
+    session.assert_sees("#0055ff");
+    // The scroll wheel moves the colors.
+    let (column, row) = session.locate("#0055ff");
+    for _ in 0..12 {
+        session.mouse(MouseEventKind::ScrollDown, column, row);
+    }
+    session.assert_sees("#504945");
+    // The Done button keeps the draft, and Save writes the file.
+    session.click_text("Done");
+    session.assert_sees("Zed · zed (Global)");
+    session.click_text("Save");
+    assert!(store.global.themes_dir().join("zed.json").exists());
+}
+
+#[test]
+fn an_edit_of_a_custom_theme_keeps_its_id_and_writes_at_the_save() {
+    if ColorEnv::read().no_color {
+        return;
+    }
+    let (store, _) = reopening_store("p-theme-edit", "{}");
+    save_theme_file(&store, "mine", "Mine");
+    let mut session = Session::start(&store);
+    session.open_theme_settings();
+    // The list opens the editor on the selected theme, with its name.
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    session.assert_sees("APPEARANCE · mine");
+    // A new display name keeps the id, so the references stay.
+    for _ in 0..4 {
+        session.code(KeyCode::Backspace);
+    }
+    session.write("Renamed");
+    session.assert_sees("APPEARANCE · mine");
+    // The editing editor has no Base row: Name, colors, Done.
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Down);
+    for _ in 0..7 {
+        session.code(KeyCode::Backspace);
+    }
+    session.write("#005f87");
+    session.code(KeyCode::Tab);
+    session.code(KeyCode::Enter);
+    session.assert_sees("Renamed · mine (Global)");
+    for _ in 0..4 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    let theme = fs::read_to_string(store.global.themes_dir().join("mine.json")).unwrap();
+    assert!(theme.contains(r#""name": "Renamed""#), "{theme}");
+    assert!(theme.contains(r##""orange": "#005f87""##), "{theme}");
 }

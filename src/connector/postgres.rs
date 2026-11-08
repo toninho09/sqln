@@ -40,7 +40,8 @@ use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, RowWriter, Value};
 use crate::sql::literal::text_literal;
 use crate::sql::{
-    Dialect, counts_rows, is_plain_read, reads_or_writes_stdio, removes_prepared_statements,
+    Dialect, counts_rows, is_plain_read, quote_identifier, reads_or_writes_stdio,
+    removes_prepared_statements,
 };
 use crate::ui::text;
 
@@ -530,16 +531,12 @@ struct Outcome {
     changed: Option<u64>,
 }
 
-fn quoted(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
-}
-
 /// Writes the `search_path` of a console schema. The schema comes first, and the default
 /// path of the session stays after it, so the types and functions of an extension stay
 /// visible, such as `geography` of PostGIS in `public`. With `only`, the path holds only
 /// the schema. The cleanup of the session restores the default path.
 fn schema_path_sql(schema: &str, only: bool) -> String {
-    let first = quoted(schema);
+    let first = quote_identifier(schema, Dialect::Postgres);
     if only {
         return format!("SET search_path TO {first};");
     }
@@ -838,7 +835,7 @@ impl Session for PostgresSession {
             let mut sql: String = names
                 .into_iter()
                 .filter_map(|row| row.into_iter().next().flatten())
-                .map(|name| format!("DEALLOCATE {};", quoted(&name)))
+                .map(|name| format!("DEALLOCATE {};", quote_identifier(&name, Dialect::Postgres)))
                 .collect();
             sql.push_str(CLEANUP_SQL);
             crate::command_log::observe(self.trace.clone(), &sql, self.client.batch_execute(&sql))
@@ -900,9 +897,8 @@ impl Session for PostgresSession {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<String>, ExecError> {
-        let command = crate::command_log::limited(format_args!(
-            "{COLUMNS_SQL}\nParameters: schema={schema:?}, relation={relation:?}"
-        ));
+        let command =
+            crate::command_log::limited(super::relation_command(COLUMNS_SQL, schema, relation));
         let rows = crate::command_log::observe(
             self.trace.clone(),
             command,
@@ -944,9 +940,7 @@ impl PostgresSession {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<ForeignKey>, ExecError> {
-        let command = crate::command_log::limited(format_args!(
-            "{sql}\nParameters: schema={schema:?}, relation={relation:?}"
-        ));
+        let command = crate::command_log::limited(super::relation_command(sql, schema, relation));
         let rows = crate::command_log::observe(
             self.trace.clone(),
             command,

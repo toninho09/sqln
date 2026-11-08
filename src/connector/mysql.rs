@@ -22,7 +22,7 @@ use crate::catalog::{
 };
 use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, RowWriter, Value};
-use crate::sql::{Dialect, counts_rows, is_plain_read};
+use crate::sql::{Dialect, counts_rows, is_plain_read, quote_identifier};
 
 /// `ER_QUERY_INTERRUPTED`: `KILL QUERY` stopped the statement.
 const QUERY_INTERRUPTED: u16 = 1317;
@@ -298,10 +298,6 @@ fn server_code(error: &DriverError) -> Option<u16> {
     }
 }
 
-fn quoted(name: &str) -> String {
-    format!("`{}`", name.replace('`', "``"))
-}
-
 #[derive(Default)]
 struct Outcome {
     has_columns: bool,
@@ -354,7 +350,7 @@ impl MySqlSession {
         let Some(database) = &self.database else {
             return false;
         };
-        let sql = format!("USE {}", quoted(database));
+        let sql = format!("USE {}", quote_identifier(database, Dialect::MySql));
         crate::command_log::observe(self.trace.clone(), &sql, self.conn().query_drop(&sql))
             .await
             .is_ok()
@@ -540,7 +536,7 @@ impl Session for MySqlSession {
                 .map_err(|error| exec_error(&error, sql))?;
         }
         if let Some(schema) = &context.schema {
-            let sql = format!("USE {}", quoted(schema));
+            let sql = format!("USE {}", quote_identifier(schema, Dialect::MySql));
             crate::command_log::observe(self.trace.clone(), &sql, self.conn().query_drop(&sql))
                 .await
                 .map_err(|error| exec_error(&error, &sql))?;
@@ -551,18 +547,7 @@ impl Session for MySqlSession {
     async fn run(&mut self, sql: &str, mut sink: ResultSink) -> Result<StatementEnd, ExecError> {
         self.running = true;
         let read = self.read(sql, &mut sink).await;
-        if read.is_ok() {
-            self.send_warnings(sql, &mut sink).await;
-        }
-        let (rows, limit) = sink.finish().await;
-        self.running = false;
-        self.status_is_current = read.is_ok();
-        read.map(|outcome| StatementEnd {
-            rows,
-            has_columns: outcome.has_columns,
-            changed: outcome.changed,
-            limit,
-        })
+        self.finish_read(sql, read, sink).await
     }
 
     async fn run_parameters(
@@ -595,18 +580,7 @@ impl Session for MySqlSession {
             Self::consume(result, sql, &mut sink, free, canceller).await
         })
         .await;
-        if read.is_ok() {
-            self.send_warnings(sql, &mut sink).await;
-        }
-        let (rows, limit) = sink.finish().await;
-        self.running = false;
-        self.status_is_current = read.is_ok();
-        read.map(|outcome| StatementEnd {
-            rows,
-            has_columns: outcome.has_columns,
-            changed: outcome.changed,
-            limit,
-        })
+        self.finish_read(sql, read, sink).await
     }
 
     async fn transaction_state(&mut self) -> TransactionState {
@@ -704,9 +678,8 @@ impl Session for MySqlSession {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<String>, ExecError> {
-        let command = crate::command_log::limited(format_args!(
-            "{COLUMNS_SQL}\nParameters: schema={schema:?}, relation={relation:?}"
-        ));
+        let command =
+            crate::command_log::limited(super::relation_command(COLUMNS_SQL, schema, relation));
         crate::command_log::observe(
             self.trace.clone(),
             command,
@@ -734,6 +707,30 @@ impl Session for MySqlSession {
 }
 
 impl MySqlSession {
+    /// Ends a read: the warnings of the server, the rows of the sink, and the state of
+    /// a statement that just ended.
+    async fn finish_read(
+        &mut self,
+        sql: &str,
+        read: Result<Outcome, ExecError>,
+        mut sink: ResultSink,
+    ) -> Result<StatementEnd, ExecError> {
+        if read.is_ok() {
+            self.send_warnings(sql, &mut sink).await;
+        }
+        let (rows, limit) = sink.finish().await;
+        self.running = false;
+        self.status_is_current = read.is_ok();
+        read.map(|outcome| StatementEnd {
+            rows,
+            has_columns: outcome.has_columns,
+            changed: outcome.changed,
+            limit,
+        })
+    }
+}
+
+impl MySqlSession {
     /// Reads the keys of a key query: the name, the schema and the name of the other
     /// table, the column of the relation, and the column of the other table.
     async fn read_keys(
@@ -742,9 +739,7 @@ impl MySqlSession {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<ForeignKey>, ExecError> {
-        let command = crate::command_log::limited(format_args!(
-            "{sql}\nParameters: schema={schema:?}, relation={relation:?}"
-        ));
+        let command = crate::command_log::limited(super::relation_command(sql, schema, relation));
         let rows: Vec<(String, String, String, String, String)> = crate::command_log::observe(
             self.trace.clone(),
             command,

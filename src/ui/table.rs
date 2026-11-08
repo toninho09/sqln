@@ -6,12 +6,14 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
-use super::console::message_style;
-use super::console::{
-    BUTTON_GAP, draw_buttons, draw_grid, draw_panel_title, draw_tabs, label_at, search_line,
-};
+use super::console::{BUTTON_GAP, draw_grid, draw_tabs, label_at};
+use super::kit::buttons::{self, RowOptions};
+use super::kit::feedback::message_style;
+use super::kit::input::{self, FieldMode, FieldText};
+use super::kit::panel::draw_panel_title;
+use super::searchbar::search_line;
 use super::theme::Theme;
-use super::{draw_suggestions, input_spans, text};
+use super::{draw_suggestions, text};
 use crate::console::Phase;
 use crate::exec::ReadLimit;
 use crate::grid::printable;
@@ -49,13 +51,13 @@ pub struct TableLayout {
     pub order: Rect,
     pub controls: Rect,
     /// Each button, with its first column and the column after its end.
-    pub buttons: Vec<(u16, u16, TableControl)>,
+    pub buttons: Vec<(TableControl, Rect)>,
     /// The row of the sections of a structure. It has no height in other tabs.
     pub sections: Rect,
     pub grid: Rect,
     /// The row under the grid, with the buttons of the pages.
     pub summary: Rect,
-    pub pager: Vec<(u16, u16, TableControl)>,
+    pub pager: Vec<(TableControl, Rect)>,
 }
 
 pub struct TableBar<'a> {
@@ -163,12 +165,20 @@ fn draw_field(
         Layout::horizontal([Constraint::Length(LABEL_WIDTH), Constraint::Min(0)]).areas(area);
     frame.render_widget(Paragraph::new(format!(" {label}")), name);
     let width = usize::from(field.width).saturating_sub(2).max(1);
-    let chars: Vec<char> = printable(input.text()).chars().collect();
-    let (spans, first) = input_spans(&chars, input.cursor(), width, focused, theme);
-    let used: usize = spans.iter().map(Span::width).sum();
+    let text = printable(input.text());
+    let view = input::view(
+        FieldText {
+            text: &text,
+            cursor: input.cursor(),
+            width,
+            focused,
+            mode: FieldMode::Text,
+        },
+        theme,
+    );
     let mut line = vec![Span::raw(theme.button_marks.0)];
-    line.extend(spans);
-    line.push(Span::raw(" ".repeat(width.saturating_sub(used))));
+    line.extend(view.spans);
+    line.push(Span::raw(" ".repeat(width.saturating_sub(view.used))));
     line.push(Span::raw(theme.button_marks.1));
     frame.render_widget(Paragraph::new(Line::from(line)).style(theme.field), field);
     (
@@ -177,7 +187,7 @@ fn draw_field(
             width: field.width.saturating_sub(2),
             ..field
         },
-        first,
+        view.first,
     )
 }
 
@@ -252,8 +262,12 @@ fn summary_parts(tab: &TableTab) -> (String, Option<&'static str>) {
     if !tab.result.edits.is_empty() {
         parts.push(text::edit_pending(
             tab.result.edits.rows.len(),
-            tab.result.edits.cells(),
+            tab.result.edits.deletes.len(),
+            tab.result.edits.inserts.len(),
         ));
+    }
+    if let Some(auto) = tab.auto_refresh {
+        parts.push(text::auto_refresh_label(auto.every.as_secs()));
     }
     if tab.edit_uncertain {
         parts.push(text::EDIT_UNCERTAIN_LABEL.to_owned());
@@ -340,12 +354,8 @@ pub fn draw_table(
         focused && tab.focus == TableFocus::Order,
         theme,
     );
-    let buttons = draw_buttons(
-        frame,
-        controls,
-        control_items(tab, bar.blocked, theme),
-        theme,
-    );
+    let items = buttons::toolbar_items(control_items(tab, bar.blocked, theme));
+    let buttons = buttons::draw(frame, controls, RowOptions::TOOLBAR, &items, theme);
 
     if let Some(section) = tab.section() {
         let labels = section_labels();
@@ -380,7 +390,8 @@ pub fn draw_table(
         None => Line::styled(format!(" {state_text}"), theme.hint),
     };
     frame.render_widget(Paragraph::new(line), state);
-    let pager = draw_buttons(frame, buttons_area, pager_items, theme);
+    let items = buttons::toolbar_items(pager_items);
+    let pager = buttons::draw(frame, buttons_area, RowOptions::TOOLBAR, &items, theme);
     let note = match &tab.message {
         Some(message) if !message_in_grid => Some(Line::styled(
             format!(" {}", printable(&message.text)),

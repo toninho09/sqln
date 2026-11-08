@@ -297,9 +297,7 @@ impl App {
         let Some(table) = &side.table else {
             return Ok(());
         };
-        let catalog = self
-            .connection(side.connection)
-            .and_then(|item| item.catalog.as_ref());
+        let catalog = self.catalog(side.connection);
         match catalog.and_then(|catalog| catalog.relation(Some(&side.schema), table)) {
             Some((_, relation)) if relation.kind == RelationKind::View => {
                 Err(text::COMPARE_VIEW.to_owned())

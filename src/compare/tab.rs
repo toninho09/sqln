@@ -238,10 +238,10 @@ impl CompareTab {
 
     pub fn on_event(&mut self, event: ExecEvent, budget: &Budget) {
         match event {
-            ExecEvent::Started { execution, .. } if self.side_of(execution).is_some() => {
-                if self.phase == Phase::Waiting {
-                    self.phase = Phase::Running;
-                }
+            ExecEvent::Started { execution, .. }
+                if self.side_of(execution).is_some() && self.phase == Phase::Waiting =>
+            {
+                self.phase = Phase::Running;
             }
             ExecEvent::Columns { key, columns } if self.side_of(key.execution).is_some() => {
                 self.on_columns(columns);
@@ -254,20 +254,17 @@ impl CompareTab {
                 };
                 self.on_rows(side, key.index, rows, bytes, budget);
             }
-            ExecEvent::ResultDone { key, limit, .. } if self.side_of(key.execution).is_some() => {
-                if limit != ReadLimit::None {
-                    self.limit = limit;
-                }
+            ExecEvent::ResultDone { key, limit, .. }
+                if self.side_of(key.execution).is_some() && limit != ReadLimit::None =>
+            {
+                self.limit = limit;
             }
             ExecEvent::StatementFinished {
                 key,
                 status: StatementStatus::Error(message),
                 ..
             } if self.side_of(key.execution).is_some() => {
-                self.message = Some(Message {
-                    level: MessageLevel::Error,
-                    text: message,
-                });
+                self.message = Some(Message::error(message));
             }
             ExecEvent::ExecutionFinished {
                 execution,
@@ -279,10 +276,7 @@ impl CompareTab {
                     return;
                 };
                 if let Some(text) = message.filter(|_| end == ExecutionEnd::Failed) {
-                    self.message.get_or_insert(Message {
-                        level: MessageLevel::Error,
-                        text,
-                    });
+                    self.message.get_or_insert(Message::error(text));
                 }
                 self.side_end(side, end, budget);
             }
@@ -342,10 +336,7 @@ impl CompareTab {
     /// Keeps the first reason of a failure. The read goes on to its end, and the end shows
     /// the reason.
     fn fail(&mut self, reason: String) {
-        self.message.get_or_insert(Message {
-            level: MessageLevel::Error,
-            text: reason,
-        });
+        self.message.get_or_insert(Message::error(reason));
     }
 
     /// Records the end of the read of a side, and goes to the next step when the step has
@@ -371,10 +362,7 @@ impl CompareTab {
             } else {
                 text::COMPARE_LIMITED
             };
-            self.message = Some(Message {
-                level: MessageLevel::Error,
-                text: reason.to_owned(),
-            });
+            self.message = Some(Message::error(reason.to_owned()));
             self.stop_with(ExecutionEnd::Completed, budget);
             return;
         }
@@ -600,10 +588,7 @@ impl CompareTab {
         self.count = count;
         self.done = true;
         if count == 0 {
-            self.message = Some(Message {
-                level: MessageLevel::Info,
-                text: text::COMPARE_EQUAL.to_owned(),
-            });
+            self.message = Some(Message::info(text::COMPARE_EQUAL));
         }
         true
     }

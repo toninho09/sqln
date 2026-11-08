@@ -112,12 +112,22 @@ pub struct NetworkTarget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OpenTarget {
     File(PathBuf),
+    /// A DuckDB file or one database in memory. The text is empty for memory.
+    Duckdb(String),
     Network(NetworkTarget),
 }
 
-/// Reads the target of the command line. A text with a scheme is a URI, and any other
-/// text is the path of a SQLite file.
+/// The scheme that marks a DuckDB target.
+const DUCKDB_SCHEME: &str = "duckdb:";
+
+/// Reads the target of the command line. A text with a scheme is a URI, a text with the
+/// `duckdb:` scheme is a DuckDB target, and any other text is the path of a SQLite file.
 pub fn open_target(text: &str) -> Result<OpenTarget, String> {
+    if let Some(rest) = text.strip_prefix(DUCKDB_SCHEME) {
+        // `duckdb:` names the empty text, and `duckdb::memory:` keeps `:memory:`. Both
+        // open one database in memory.
+        return Ok(OpenTarget::Duckdb(rest.to_owned()));
+    }
     if text.contains("://") {
         parse_uri(text).map(OpenTarget::Network)
     } else {

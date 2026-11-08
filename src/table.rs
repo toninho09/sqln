@@ -10,7 +10,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::catalog::{Catalog, Relation, RelationRef};
 use crate::complete::{quote_name, suggest};
 use crate::connector::redis::value_page;
-use crate::console::{Message, MessageLevel, Phase, RunClock};
+use crate::console::{Message, Phase, RunClock};
 use crate::editor::SuggestionList;
 use crate::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, StatementStatus,
@@ -75,6 +75,17 @@ struct Load {
     session_gone: bool,
 }
 
+/// What the application does when the metadata read of an edit ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditAfter {
+    /// Opens the cell editor.
+    Cell { row: usize, col: usize, null: bool },
+    /// Appends one pending insert row.
+    NewRow,
+    /// Toggles the delete mark of the row.
+    Delete { row: usize },
+}
+
 pub struct TableTab {
     /// The place of the tab in the order of opening.
     pub opened: u64,
@@ -91,7 +102,7 @@ pub struct TableTab {
     pub edit_metadata: Option<crate::data_edit::Metadata>,
     pub edit_execution: Option<ExecutionId>,
     pub edit_uncertain: bool,
-    pub edit_after: Option<(usize, usize, bool)>,
+    pub edit_after: Option<EditAfter>,
     pub edit_close: bool,
     pub edit_reload: bool,
     pub edit_restore: Option<crate::data_edit::Restore>,
@@ -123,15 +134,26 @@ pub struct TableTab {
     /// The note of a signal that the database accepted. The application shows it, and
     /// then the tab reads the sessions again.
     pub signal_note: Option<&'static str>,
+    /// The auto-refresh of this tab, armed by the user.
+    pub auto_refresh: Option<crate::console::AutoRefresh>,
+    /// The execution of the last auto-refresh, so a failure turns it off.
+    pub auto_execution: Option<ExecutionId>,
 }
 
 /// Returns the relation as the `FROM` clause writes it.
 pub fn from_clause(relation: &RelationRef, dialect: Dialect) -> String {
-    format!(
-        "{}.{}",
-        quote_identifier(&relation.schema, dialect),
-        quote_identifier(&relation.relation, dialect)
-    )
+    // DuckDB names a schema of an attached database as `catalog.schema`, and each part
+    // needs its own quotes.
+    let schema = match dialect {
+        Dialect::DuckDb => relation
+            .schema
+            .split('.')
+            .map(|part| quote_identifier(part, dialect))
+            .collect::<Vec<_>>()
+            .join("."),
+        _ => quote_identifier(&relation.schema, dialect),
+    };
+    format!("{schema}.{}", quote_identifier(&relation.relation, dialect))
 }
 
 /// Returns true when the text is one statement without an open token. A semicolon,
@@ -333,6 +355,8 @@ impl TableTab {
             list_waits: false,
             pending: false,
             signal_note: None,
+            auto_refresh: None,
+            auto_execution: None,
         }
     }
 
@@ -360,14 +384,38 @@ impl TableTab {
         }
     }
 
+    /// Builds a request that reads the page of the cursor again, with the same filter
+    /// and order. The grid holds only that page again. It returns `None` while the tab
+    /// is busy or holds pending edits.
+    pub fn refresh_page(&mut self, dialect: Dialect, budget: &Budget) -> Option<PageRequest> {
+        if self.is_busy() || !self.result.edits.is_empty() || self.edit_uncertain {
+            return None;
+        }
+        let page = self.page();
+        let offset = page * self.page_size.max(1);
+        let sql = self.page_sql(dialect, offset).ok()?;
+        self.total = None;
+        self.pending = false;
+        self.clear_rows(budget);
+        self.message = None;
+        self.has_more = false;
+        self.limit = ReadLimit::None;
+        self.load = None;
+        self.list = None;
+        Some(PageRequest {
+            sql,
+            first: true,
+            row_cap: self.page_size.saturating_add(1),
+            show: Some(page),
+            kind: PageKind::Rows,
+        })
+    }
+
     /// Marks a tab of the last session. The first use reads its rows, so the start of
     /// the application opens no connection and asks for no password.
     pub fn wait_for_use(&mut self, note: String) {
         self.pending = true;
-        self.message = Some(Message {
-            level: MessageLevel::Info,
-            text: note,
-        });
+        self.message = Some(Message::info(note));
     }
 
     pub fn is_busy(&self) -> bool {
@@ -564,10 +612,7 @@ impl TableTab {
                 kind: PageKind::Rows,
             }),
             Err(reason) => {
-                self.message = Some(Message {
-                    level: MessageLevel::Error,
-                    text: reason,
-                });
+                self.message = Some(Message::error(reason));
                 None
             }
         }
@@ -637,6 +682,11 @@ impl TableTab {
             .is_some_and(|load| load.kind == PageKind::Count)
     }
 
+    /// The execution of the request in progress, if any.
+    pub fn current_execution(&self) -> Option<ExecutionId> {
+        self.load.as_ref().map(|load| load.execution)
+    }
+
     /// Records the execution that the manager accepted for a page.
     pub fn started(&mut self, execution: ExecutionId, first: bool, show: Option<usize>) {
         self.limit = ReadLimit::None;
@@ -671,15 +721,16 @@ impl TableTab {
 
     pub fn on_event(&mut self, event: ExecEvent, budget: &Budget) {
         match event {
-            ExecEvent::Started { execution, .. } if self.is_current(execution) => {
-                if self.phase == Phase::Waiting {
-                    self.phase = Phase::Running;
-                }
+            ExecEvent::Started { execution, .. }
+                if self.is_current(execution) && self.phase == Phase::Waiting =>
+            {
+                self.phase = Phase::Running;
             }
-            ExecEvent::Columns { key, columns } if self.is_current(key.execution) => {
-                if self.load.as_ref().is_some_and(|load| load.first) {
-                    self.result = ResultTab::new(0, columns);
-                }
+            ExecEvent::Columns { key, columns }
+                if self.is_current(key.execution)
+                    && self.load.as_ref().is_some_and(|load| load.first) =>
+            {
+                self.result = ResultTab::new(0, columns);
             }
             ExecEvent::Rows { key, rows, bytes } => {
                 self.on_rows(key.execution, rows, bytes, budget)
@@ -692,10 +743,7 @@ impl TableTab {
                 status: StatementStatus::Error(message),
                 ..
             } if self.is_current(key.execution) => {
-                self.message = Some(Message {
-                    level: MessageLevel::Error,
-                    text: message,
-                });
+                self.message = Some(Message::error(message));
             }
             ExecEvent::ExecutionFinished {
                 execution,
@@ -791,25 +839,14 @@ impl TableTab {
         {
             self.show_page(page);
         }
-        let info = |text: &str| Message {
-            level: MessageLevel::Info,
-            text: text.to_owned(),
-        };
-        let error = |text: &str| Message {
-            level: MessageLevel::Error,
-            text: text.to_owned(),
-        };
         let note = match end {
             // The error of a statement is already in `message`.
             ExecutionEnd::Completed | ExecutionEnd::Refused => None,
-            ExecutionEnd::Failed => message.map(|text| Message {
-                level: MessageLevel::Error,
-                text,
-            }),
-            ExecutionEnd::Stopped => Some(info(text::TABLE_STOPPED)),
-            ExecutionEnd::TimedOut => Some(error(text::TABLE_TIMEOUT)),
-            ExecutionEnd::CanceledBeforeStart => Some(info(text::TABLE_CANCELED)),
-            ExecutionEnd::ConnectionClosed => Some(error(text::TABLE_CLOSED)),
+            ExecutionEnd::Failed => message.map(Message::error),
+            ExecutionEnd::Stopped => Some(Message::info(text::TABLE_STOPPED)),
+            ExecutionEnd::TimedOut => Some(Message::error(text::TABLE_TIMEOUT)),
+            ExecutionEnd::CanceledBeforeStart => Some(Message::info(text::TABLE_CANCELED)),
+            ExecutionEnd::ConnectionClosed => Some(Message::error(text::TABLE_CLOSED)),
         };
         if note.is_some() {
             self.message = note;

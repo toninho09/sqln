@@ -5,7 +5,8 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::palette::{ListWindow, draw_list_window};
+use super::kit::list::{ListWindow, draw_list_window};
+use super::kit::style::{self, ListRow};
 use super::text;
 use super::theme::Theme;
 use crate::history::{HistoryList, HistoryRow};
@@ -20,10 +21,18 @@ fn draw_row(frame: &mut Frame, area: Rect, row: &HistoryRow, selected: bool, the
     } else {
         (theme.icons.failed, theme.mark_bad)
     };
-    let (base, mark_style) = if selected {
-        (theme.list_selected, theme.list_selected)
+    let base = style::list_row_style(
+        if selected {
+            ListRow::Selected
+        } else {
+            ListRow::Normal
+        },
+        theme,
+    );
+    let mark_style = if selected {
+        theme.list_selected
     } else {
-        (theme.dialog, mark_style)
+        mark_style
     };
     frame.buffer_mut().set_style(area, base);
     let line = Line::from(vec![

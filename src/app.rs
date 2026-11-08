@@ -3,6 +3,7 @@
 mod agent;
 mod ai;
 mod auth;
+mod auto_refresh;
 mod browse;
 mod close;
 mod commands;
@@ -23,6 +24,7 @@ mod persist;
 mod review;
 mod scripts;
 mod session;
+mod sql_file;
 mod tables;
 
 use std::cell::RefCell;
@@ -88,19 +90,21 @@ use crate::ui::form::{FormLayout, draw_form};
 use crate::ui::help::draw_help;
 use crate::ui::history::draw_history;
 use crate::ui::import::{ImportLayout, draw_import};
+use crate::ui::kit::feedback::hint_line;
+use crate::ui::kit::panel::{draw_panel_title, draw_rule};
 use crate::ui::name::{NamePrompt, draw_name};
 use crate::ui::navigator::draw_navigator;
 use crate::ui::palette::draw_palette;
 use crate::ui::settings::{SettingsLayout, draw_settings};
-use crate::ui::statusline::{StatusData, StatusPanel, draw_statusline, hint_line, run_time};
-use crate::ui::theme::{ColorEnv, Theme};
+use crate::ui::statusline::{StatusData, StatusPanel, draw_statusline, run_time};
+use crate::ui::theme::{ColorEnv, Theme, ThemeCatalog};
 use crate::ui::welcome::draw_welcome;
 use crate::ui::which_key::draw_which_key;
 use crate::ui::wrap::WrappedText;
 use crate::ui::{
     ConflictLayout, ConflictRowView, ConsoleLayout, MainTab, TableBar, TableLayout, draw_conflicts,
-    draw_console, draw_dialog, draw_main_tabs, draw_overlay, draw_panel_title, draw_picker,
-    draw_rule, draw_small_terminal, draw_table, text,
+    draw_console, draw_dialog, draw_main_tabs, draw_overlay, draw_picker, draw_small_terminal,
+    draw_table, text,
 };
 
 const MIN_WIDTH: u16 = 80;
@@ -150,6 +154,8 @@ pub struct Options {
     pub connector: Option<Arc<dyn Connector>>,
     /// The name of `connector` in the interface.
     pub label: Option<String>,
+    /// A `.sql` file that the command line opens as a console at the start.
+    pub script: Option<PathBuf>,
     pub settings: Settings,
     /// The folders of the files. Without a store, the application loads and saves nothing.
     pub store: Option<Store>,
@@ -159,6 +165,10 @@ pub struct Options {
     pub vault: Option<Arc<dyn crate::creds::Vault>>,
     /// The `theme` and `icons` choices of the configuration.
     pub appearance: (Option<ThemeName>, Option<IconName>),
+    /// The custom themes of the files of both scopes.
+    pub custom_themes: ThemeCatalog,
+    /// The trouble of the theme files at the start.
+    pub theme_notes: Vec<String>,
     /// The keys that accept a suggestion.
     pub suggestion_keys: SuggestionKeys,
     /// True when Messages shows internal and shared commands.
@@ -184,11 +194,14 @@ impl Default for Options {
             start_home: false,
             connector: None,
             label: None,
+            script: None,
             settings: Settings::default(),
             store: None,
             offer_project: None,
             vault: None,
             appearance: (None, None),
+            custom_themes: ThemeCatalog::default(),
+            theme_notes: Vec::new(),
             suggestion_keys: SuggestionKeys::default(),
             ai_completion: crate::ai::Preferences::default(),
             ai_vault: None,
@@ -230,6 +243,8 @@ enum DialogAction {
     RunAnyway(ConsoleId, RunTarget),
     /// Run the statements that the question of `run_warning` showed.
     RunConfirmed(ConsoleId, RunTarget),
+    /// The interval of the auto-refresh of the tab on screen. `None` turns it off.
+    AutoRefresh(Option<u64>),
     RemoveConnection(ConnectionId),
     CreateProject,
     ReloadConfig,
@@ -259,6 +274,15 @@ enum DialogAction {
     /// Give the incomplete file of a tab its final name.
     ExportKeep(ConsoleId),
     ExportDelete(ConsoleId),
+    /// Opens the pending `.sql` file as a copy or as a linked console.
+    SqlFileCancel,
+    SqlFileCopy,
+    SqlFileLinked,
+    /// The answers of the questions of a console that links to a file.
+    SqlFileReload(ConsoleId),
+    SqlFileOverwrite(ConsoleId),
+    SqlFileWriteClose(ConsoleId),
+    SqlFileDiscardClose(ConsoleId),
 }
 
 struct Dialog {
@@ -283,7 +307,7 @@ impl Overlay {
     /// Shows the other form of a JSON value from its first row.
     fn switch_form(&mut self) {
         if let Some((text, footer)) = self.other.take() {
-            let shown = self.contents.text().to_owned();
+            let shown = self.contents.to_text();
             let old_footer = std::mem::replace(&mut self.footer, footer);
             self.contents = WrappedText::new(text);
             self.other = Some((shown, old_footer));
@@ -310,6 +334,12 @@ enum PickerKind {
     },
     Associate {
         console: ConsoleId,
+        connections: Vec<ConnectionId>,
+    },
+    /// The connection of a `.sql` file that opens as a console. `path` is `None` when
+    /// the file browser chooses the file after the connection.
+    SqlFile {
+        path: Option<std::path::PathBuf>,
         connections: Vec<ConnectionId>,
     },
     /// The rows are the SQL templates of a relation.
@@ -428,6 +458,8 @@ pub struct App {
     color_env: ColorEnv,
     /// The `theme` and `icons` choices of the files.
     appearance: (Option<ThemeName>, Option<IconName>),
+    /// The custom themes of both scopes, after the precedence.
+    custom_themes: ThemeCatalog,
     /// The theme of the current frame. `choose_theme` writes it at the start of each
     /// frame, so a change of tab or of a choice needs no other step.
     theme: Theme,
@@ -469,6 +501,10 @@ pub struct App {
     compare_form: Option<CompareForm>,
     /// The file browser of the focused path field in a dialog or in the form.
     browser: Option<FileBrowser>,
+    /// The connection that waits for the `.sql` file of an open.
+    sql_file_open: Option<ConnectionId>,
+    /// The file that waits for the answer of the copy-or-linked question.
+    sql_file: Option<sql_file::PendingSqlFile>,
     /// The first choices of the next export dialog.
     export_choices: ExportChoices,
     /// The exports in progress, with at most one for each tab.
@@ -534,7 +570,6 @@ impl App {
             .as_ref()
             .map(|persist| PlainFile::new(&persist.store.global));
         let color_env = ColorEnv::read();
-        let (chosen_theme, chosen_icons) = options.appearance;
         let mut app = Self {
             consoles: Vec::new(),
             active: 0,
@@ -565,7 +600,8 @@ impl App {
             terminal_theme: theme,
             color_env,
             appearance: options.appearance,
-            theme: theme.with_choices(chosen_theme, chosen_icons, color_env),
+            custom_themes: options.custom_themes.clone(),
+            theme,
             layout: ScreenLayout::default(),
             editor_ratio: DEFAULT_EDITOR_RATIO,
             dialogs: VecDeque::new(),
@@ -582,6 +618,8 @@ impl App {
             edit_form: None,
             compare_form: None,
             browser: None,
+            sql_file_open: None,
+            sql_file: None,
             export_choices: options.export_choices.clone(),
             exports: Vec::new(),
             import_choices: options.import_choices.clone(),
@@ -657,7 +695,25 @@ impl App {
             app.agent.directory = Some(directory);
             app.open_agent_endpoint();
         }
+        if let Some(path) = options.script.take() {
+            app.open_sql_file_path(path);
+        }
+        // The choices of the configuration apply to the first frame, as in each later one.
+        app.choose_theme();
+        app.missing_theme_note();
+        if !options.theme_notes.is_empty() {
+            app.status = Some(options.theme_notes.join(" "));
+        }
         app
+    }
+
+    /// Notes the default theme of the files when no file holds it.
+    fn missing_theme_note(&mut self) {
+        if let Some(ThemeName::Custom(id)) = &self.appearance.0
+            && self.custom_themes.get(id).is_none()
+        {
+            self.status = Some(text::theme_missing(id));
+        }
     }
 
     /// Each editor of a console comes from here, so it has the limit of the settings.
@@ -741,6 +797,21 @@ impl App {
             .find(|connection| connection.id == id)
     }
 
+    /// Returns the catalog that a connection already read.
+    fn catalog(&self, id: ConnectionId) -> Option<&Catalog> {
+        Self::catalog_of(&self.connections, id)
+    }
+
+    /// Finds a catalog among the connections. A call of the borrowed fields serves the
+    /// places that hold another field of `App` at the same time.
+    fn catalog_of(connections: &[Connection], id: ConnectionId) -> Option<&Catalog> {
+        connections
+            .iter()
+            .find(|connection| connection.id == id)?
+            .catalog
+            .as_ref()
+    }
+
     fn connection_mut(&mut self, id: ConnectionId) -> Option<&mut Connection> {
         self.connections
             .iter_mut()
@@ -769,18 +840,35 @@ impl App {
     /// save. After that, the connection of the open tab has priority over the default.
     fn theme_choice(&self) -> Option<ThemeName> {
         if let Some(form) = &self.settings_form {
-            return form.saved_theme();
+            return form.preview_theme();
         }
-        let chosen = self.form.as_ref().and_then(|form| form.theme);
-        let connection = || self.tab_connection()?.definition.as_ref()?.theme;
-        chosen.or_else(connection).or(self.appearance.0)
+        let chosen = self.form.as_ref().and_then(|form| form.theme.clone());
+        let connection = || self.tab_connection()?.definition.as_ref()?.theme.clone();
+        chosen
+            .or_else(connection)
+            .or_else(|| self.appearance.0.clone())
+    }
+
+    /// The palette of a custom id: the dialog of the settings comes first, because
+    /// its drafts preview on the screen.
+    fn draft_scheme(&self, id: &str) -> Option<crate::ui::schemes::Scheme> {
+        if let Some(form) = &self.settings_form {
+            if let Some(scheme) = form.theme_scheme(id) {
+                return Some(scheme);
+            }
+            if form.theme_gone(id) {
+                return None;
+            }
+        }
+        self.custom_themes.scheme(id)
     }
 
     fn choose_theme(&mut self) {
+        let name = self.theme_choice();
+        let base = self.terminal_theme;
         let (_, icons) = self.appearance;
-        self.theme = self
-            .terminal_theme
-            .with_choices(self.theme_choice(), icons, self.color_env);
+        let env = self.color_env;
+        self.theme = base.with_choices(name, |id| self.draft_scheme(id), icons, env);
     }
 
     /// Adds a question. It opens now, or after the questions before it.
@@ -1207,6 +1295,10 @@ impl App {
         }
         if let Some(index) = self.tables.iter().position(|tab| tab.id == id) {
             let finished = matches!(event, ExecEvent::ExecutionFinished { .. });
+            if finished {
+                let auto = self.tables[index].auto_execution;
+                self.on_auto_execution_end(&event, id, auto);
+            }
             self.tables[index].on_event(event, &budget);
             if finished
                 && !self.tables[index].is_busy()
@@ -1219,8 +1311,18 @@ impl App {
             self.continue_wanted_import();
             return;
         }
-        if let ExecEvent::StatementFinished { key, status, .. } = &event {
+        if let ExecEvent::StatementFinished { key, status, .. } = &event
+            && self
+                .console_index(id)
+                .is_none_or(|index| self.consoles[index].auto_execution != Some(key.execution))
+        {
             self.note_statement(key, status);
+        }
+        if let Some(index) = self.console_index(id) {
+            let auto = self.consoles[index].auto_execution;
+            if matches!(event, ExecEvent::ExecutionFinished { .. }) {
+                self.on_auto_execution_end(&event, id, auto);
+            }
         }
         match self.console_by_id(id) {
             Some(console) => {
@@ -1563,6 +1665,7 @@ impl App {
                 data,
                 position,
                 agent,
+                auto: None,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1585,6 +1688,7 @@ impl App {
                 data,
                 position: None,
                 agent,
+                auto: None,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1610,6 +1714,7 @@ impl App {
                 data,
                 position,
                 agent,
+                auto: tab.auto_refresh.map(|auto| auto.every.as_secs()),
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1628,6 +1733,7 @@ impl App {
                 data,
                 position: None,
                 agent,
+                auto: None,
             };
             draw_statusline(frame, area, &status, &self.theme);
             return;
@@ -1666,6 +1772,7 @@ impl App {
             data,
             position,
             agent,
+            auto: console.auto_refresh.map(|auto| auto.every.as_secs()),
         };
         draw_statusline(frame, area, &status, &self.theme);
     }

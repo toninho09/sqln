@@ -277,8 +277,8 @@ impl App {
         let buttons = &self.layout.table.buttons;
         let control = buttons
             .iter()
-            .find(|button| column >= button.0 && column < button.1);
-        match control.map(|button| button.2) {
+            .find(|(_, rect)| column >= rect.x && column < rect.right());
+        match control.map(|(control, _)| *control) {
             Some(TableControl::Apply) => self.apply_table(),
             Some(TableControl::Clear) => self.clear_table(),
             Some(TableControl::ApplyEdits) => {
@@ -300,8 +300,8 @@ impl App {
         let buttons = &self.layout.table.pager;
         let control = buttons
             .iter()
-            .find(|button| column >= button.0 && column < button.1);
-        let Some(control) = control.map(|button| button.2) else {
+            .find(|(_, rect)| column >= rect.x && column < rect.right());
+        let Some(control) = control.map(|(control, _)| *control) else {
             return;
         };
         self.focus_table(TableFocus::Grid);
@@ -341,11 +341,11 @@ impl App {
             .console
             .control_buttons
             .iter()
-            .find(|button| column >= button.0 && column < button.1);
-        let Some((_, _, control)) = control else {
+            .find(|(_, rect)| column >= rect.x && column < rect.right());
+        let Some((control, _)) = control else {
             return;
         };
-        let action = match control {
+        let action = match *control {
             Control::Run => Action::Run,
             Control::Script => Action::RunScript,
             Control::Stop => Action::Stop,
@@ -647,16 +647,24 @@ impl App {
             mouse.kind,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
         ) {
-            let inside = self.layout.settings.fields.iter().any(|(field, area)| {
+            let settings = &self.layout.settings;
+            let inside_commands = settings.fields.iter().any(|(field, area)| {
                 *field == SettingsField::ShortcutCommands && area.contains(position)
             });
-            if inside && let Some(form) = &mut self.settings_form {
+            let inside_colors = settings.fields.iter().any(|(field, area)| {
+                *field == SettingsField::ThemeColors && area.contains(position)
+            });
+            if let Some(form) = &mut self.settings_form {
                 let delta = if mouse.kind == MouseEventKind::ScrollUp {
                     -WHEEL_ROWS
                 } else {
                     WHEEL_ROWS
                 };
-                form.move_shortcut_command(delta);
+                if inside_commands {
+                    form.move_shortcut_command(delta);
+                } else if inside_colors {
+                    form.scroll_theme_color(delta);
+                }
             }
             return;
         }
@@ -672,6 +680,30 @@ impl App {
         {
             if let Some(form) = &mut self.settings_form {
                 form.edit_shortcut(*action);
+            }
+            return;
+        }
+        if let Some((id, _)) = self
+            .layout
+            .settings
+            .theme_rows
+            .iter()
+            .find(|(_, area)| area.contains(position))
+        {
+            if let Some(form) = &mut self.settings_form {
+                form.select_theme(id);
+            }
+            return;
+        }
+        if let Some((role, _)) = self
+            .layout
+            .settings
+            .color_rows
+            .iter()
+            .find(|(_, area)| area.contains(position))
+        {
+            if let Some(form) = &mut self.settings_form {
+                form.focus_theme_color(*role);
             }
             return;
         }

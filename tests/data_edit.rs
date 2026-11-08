@@ -245,6 +245,12 @@ impl Fixture {
             })
             .unwrap()
     }
+    fn count(&self) -> i64 {
+        rusqlite::Connection::open(&self.path)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))
+            .unwrap()
+    }
 }
 
 #[test]
@@ -256,7 +262,7 @@ fn a_cell_stays_local_until_review_and_apply() {
     assert_eq!(f.value(1).as_deref(), Some("old"));
     assert_eq!(f.app.table().unwrap().result.edits.cells(), 1);
     let screen = f.screen(80, 24);
-    assert!(screen.contains("Pending: 1 rows, 1 cells"), "{screen}");
+    assert!(screen.contains("Pending: 1 update"), "{screen}");
     f.apply();
     assert_eq!(f.value(1).as_deref(), Some("new '雪'\nline"));
     assert!(f.app.table().unwrap().result.edits.is_empty());
@@ -716,4 +722,122 @@ fn vim_escape_keeps_navigation_keys_inside_the_value_editor() {
         Some("prefix-old")
     );
     assert_eq!(f.value(1).as_deref(), Some("old"));
+}
+
+#[test]
+fn a_new_row_stays_local_until_apply_and_uses_the_column_defaults() {
+    let mut f = Fixture::new("edit-insert", KeyboardMode::Conventional);
+    f.open("items");
+    f.press(KeyCode::Char('n'));
+    f.idle();
+    let tab = f.app.table().unwrap();
+    assert_eq!(tab.result.edits.inserts.len(), 1);
+    assert_eq!(tab.result.table.rows.len(), 3);
+    let screen = f.screen(80, 24);
+    assert!(screen.contains("Pending: 1 insert"), "{screen}");
+    // The cursor starts at the id column of the new row, so F2 edits that cell.
+    f.press(KeyCode::F(2));
+    f.idle();
+    assert!(f.screen(80, 24).contains(text::EDIT_TITLE));
+    f.app.on_event(Event::Key(ctrl('a')));
+    f.app.on_event(Event::Paste("9".into()));
+    f.press(KeyCode::F(2));
+    assert_eq!(
+        f.app.table().unwrap().result.edits.inserts[&2]
+            .columns
+            .len(),
+        1
+    );
+    // The columns of the fixture: id, value, amount, required, computed.
+    for (steps, text) in [(1, "made"), (2, "3")] {
+        for _ in 0..steps {
+            f.press(KeyCode::Right);
+        }
+        f.press(KeyCode::F(2));
+        f.idle();
+        f.app.on_event(Event::Key(ctrl('a')));
+        f.app.on_event(Event::Paste(text.into()));
+        f.press(KeyCode::F(2));
+    }
+    assert_eq!(
+        f.app.table().unwrap().result.edits.inserts[&2]
+            .columns
+            .len(),
+        3
+    );
+    assert_eq!(f.count(), 2);
+    f.apply();
+    assert_eq!(f.count(), 3);
+    let (id, value, required): (i64, String, String) = rusqlite::Connection::open(&f.path)
+        .unwrap()
+        .query_row(
+            "SELECT id, value, required FROM items WHERE value = 'made'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!((id, value.as_str(), required.as_str()), (9, "made", "3"));
+    assert!(f.app.table().unwrap().result.edits.is_empty());
+}
+
+#[test]
+fn marking_a_row_for_delete_wins_over_its_cell_changes_and_toggles_back() {
+    let mut f = Fixture::new("edit-delete", KeyboardMode::Conventional);
+    f.open("items");
+    f.press(KeyCode::Right);
+    f.edit("draft");
+    assert_eq!(f.app.table().unwrap().result.edits.cells(), 1);
+    f.press(KeyCode::Char('d'));
+    let tab = f.app.table().unwrap();
+    assert_eq!(tab.result.edits.deletes.len(), 1);
+    assert_eq!(tab.result.edits.cells(), 0);
+    // The cell returns to the database value, because the delete wins.
+    assert_eq!(tab.result.table.rows[0].text(1).as_deref(), Some("old"));
+    let screen = f.screen(80, 24);
+    assert!(screen.contains("Pending: 1 delete"), "{screen}");
+    assert_eq!(f.count(), 2);
+    // A second press removes the mark, and the row stays.
+    f.press(KeyCode::Char('d'));
+    assert!(f.app.table().unwrap().result.edits.is_empty());
+    assert_eq!(f.count(), 2);
+    // A third press marks it again, and the apply deletes the row.
+    f.press(KeyCode::Char('d'));
+    f.apply();
+    assert_eq!(f.count(), 1);
+    let present: i64 = rusqlite::Connection::open(&f.path)
+        .unwrap()
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM items WHERE id = 1)",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(present, 0);
+}
+
+#[test]
+fn removing_a_pending_insert_row_runs_no_statement() {
+    let mut f = Fixture::new("edit-insert-remove", KeyboardMode::Conventional);
+    f.open("items");
+    f.press(KeyCode::Char('n'));
+    f.idle();
+    assert_eq!(f.app.table().unwrap().result.table.rows.len(), 3);
+    f.press(KeyCode::Char('d'));
+    let tab = f.app.table().unwrap();
+    assert!(tab.result.edits.is_empty());
+    assert_eq!(tab.result.table.rows.len(), 2);
+    assert_eq!(f.count(), 2);
+}
+
+#[test]
+fn editing_a_cell_of_a_deleted_row_refuses_and_shows_the_reason() {
+    let mut f = Fixture::new("edit-deleted-refusal", KeyboardMode::Conventional);
+    f.open("items");
+    f.press(KeyCode::Char('d'));
+    f.idle();
+    assert_eq!(f.app.table().unwrap().result.edits.deletes.len(), 1);
+    f.press(KeyCode::Right);
+    f.press(KeyCode::F(2));
+    assert!(f.screen(100, 30).contains("marked for delete"));
+    assert_eq!(f.app.table().unwrap().result.edits.cells(), 0);
 }

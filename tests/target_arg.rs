@@ -232,3 +232,27 @@ fn a_missing_file_asks_first_and_then_binds_the_console() {
     assert_eq!(connection.key, None);
     assert!(connection.name.contains("new.db"));
 }
+
+#[test]
+fn a_memory_target_keeps_one_database_across_statements() {
+    let mut app = app_with(Options {
+        database: Some(PathBuf::from(":memory:")),
+        session_target: true,
+        ..Options::default()
+    });
+    assert!(app.console().connection.is_some());
+    let connection = &app.connections()[0];
+    assert_eq!(connection.name, ":memory:");
+    assert!(connection.capabilities.single_session);
+    app.on_event(Event::Paste(
+        "CREATE TABLE demo (id INTEGER PRIMARY KEY, value TEXT); INSERT INTO demo VALUES (1, 'kept');"
+            .to_owned(),
+    ));
+    press(&mut app, KeyCode::F(5));
+    run_until_idle(&mut app);
+    // The second execution reads what the first wrote: one session holds the database.
+    app.on_event(Event::Paste("SELECT value FROM demo".to_owned()));
+    press(&mut app, KeyCode::F(5));
+    run_until_idle(&mut app);
+    assert!(screen(&mut app).contains("kept"));
+}

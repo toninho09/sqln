@@ -15,7 +15,7 @@ use crate::input::{Action, Chord, Lookup, Region};
 use crate::navigator::{Navigator, RowKind};
 use crate::settings;
 use crate::table::{TableFocus, TableTab};
-use crate::ui::statusline::{HintItem, fit_hints, hint_text};
+use crate::ui::kit::feedback::{HintItem, fit_hints, hint_text};
 use crate::ui::text;
 use unicode_width::UnicodeWidthStr;
 
@@ -142,6 +142,8 @@ impl App {
             }
             return Some(match form.focus {
                 settings::Field::ShortcutCommands => text::HINT_SHORTCUT_COMMANDS,
+                settings::Field::Themes => text::HINT_THEME_LIST,
+                settings::Field::ThemeColors => text::HINT_THEME_COLORS,
                 settings::Field::Sections => text::HINT_SETTINGS_SECTIONS,
                 settings::Field::Save | settings::Field::Cancel => text::HINT_FORM_BUTTON,
                 field if form.input(field).is_some() => text::HINT_SETTINGS_TEXT,
@@ -501,6 +503,8 @@ impl App {
             (Action::GridCountRows, "count", tab.total.is_none()),
             (Action::GridImport, "import", true),
             (Action::GridEditCell, "edit", true),
+            (Action::GridNewRow, "new row", true),
+            (Action::GridDeleteRow, "delete row", true),
             (Action::GridReload, "reload", !tab.shows_sessions()),
             (Action::GridSelectAll, "select all", true),
             (Action::GridToggleSelection, "select", true),

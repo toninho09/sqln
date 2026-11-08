@@ -34,6 +34,7 @@ Main thread                        Tokio runtime
 | `app/agent` | Access decisions, tasks, loaded-state reads, and edit proposals |
 | `app` | Application state, actions, and state updates |
 | `ui` | Drawing of the screens and the widgets, themes (`theme`), color schemes (`schemes`), symbols (`icons`), status bar (`statusline`), and prefix menu (`which_key`) |
+| `ui/kit` | Shared geometry, semantic styles, modal chrome, form rows, buttons, inputs, lists, prompts, feedback, measurement, and panel titles |
 | `app/commands` | Shared command availability, contextual lists, priority, and target labels; `Action` remains the catalog |
 | `palette` | State and word filter of functional commands, including action names and technical aliases; `ui` draws it |
 | `filter_list` | Filtered list core, used by the palette, the history window, and the compare dialog lists |
@@ -64,7 +65,7 @@ Main thread                        Tokio runtime
 | `line_input` | Single-line text field, used by the filter bar fields |
 | `exec` | Executions, scripts, cap, and cancellation |
 | `pool` | Limit, queue, reservation, and cleaning |
-| `connector` | Contract and PostgreSQL, MySQL, SQLite, and Redis/Valkey connectors |
+| `connector` | Contract and PostgreSQL, MySQL, SQLite, DuckDB, and Redis/Valkey connectors |
 | `grid` | Rows in one block each (`row`), widths, search, budget, TSV, and readable JSON shape (`json`) |
 | `export` | Export formats, temporary file, and modal form |
 | `import` | File readers, `INSERT` text, batches, the error log, and modal form |
@@ -79,7 +80,7 @@ Main thread                        Tokio runtime
 | `log` | Optional event log, without SQL or values |
 
 `ui` uses driver-independent connector models, such as `Namespace` and `TransactionState`, plus target helpers.
-`store::config` uses SQLite and network target definitions. Neither layer uses native driver connections.
+`store::config` uses SQLite, DuckDB, and network target definitions. Neither layer uses native driver connections.
 Only `connector` knows native driver types.
 
 `app::auth` integrates `creds` and `trust` into first use, with the password and trust dialogs.
@@ -126,6 +127,7 @@ AI completion is separate from MCP. `app/ai` captures the editor interval and re
 |---|---|
 | `store::file` | `write_atomic`, `write_private_atomic` (exclusive temporary and permission `0600` on Unix), hash, locks, and cleanup of old `.tmp` files |
 | `store::config` | Reading with `serde`, validation, precedence, `Definition` of each entry, and `change_connections` (reread under lock, change, and write) |
+| `store::themes` | `themes/<id>.json`: one custom theme per file, load with notes, save and removal under `locks/themes.lock` with the hash of the load, and the manifest hash of the folder |
 | `store::scripts` | `.sql` and `.json` files of a console, list, lock per console, copy between scopes, and line ending |
 | `store::workspace` | `workspace.json`, optional state with invalid-file detection, written under `config.lock` |
 | `store::history` | `history.jsonl`: one JSON line per statement, appended at the end of the file, read per connection, and truncated at the start of the file |
@@ -147,6 +149,7 @@ Code rules:
 6. The lock of a console is the file `locks/<id>.lock`, with `flock`. The system releases it at process end.
 7. `ScriptFile::due` compares the editor revision with the last written one. The main loop passes the clock, and the test controls the time.
 8. The line ending of the file (`LF` or `CRLF`) stays in the `ScriptFile`. The editor always uses `LF`.
+9. A theme file that cannot load gives a note, and the other files load. A damaged or missing theme never blocks the application, and the choice falls back to `auto`.
 9. `ScriptFile::poll` reads the file only if the size or the date changed, and then compares the hash.
 10. A connection definition carries the base folder. `Definition::connector` resolves the relative paths with it at open time.
 11. Script writes use a dedicated worker, separate from credential access. Only one operation runs at a time.
@@ -384,6 +387,7 @@ Closing the connection is the only case that abandons that future.
 | PostgreSQL | `CancelToken` | The steps of `DISCARD ALL` without `DEALLOCATE ALL`, and `DEALLOCATE` of each `PREPARE`; after a `DISCARD ALL` or `DEALLOCATE` of the user, close the session | Clock probe, through the simple protocol |
 | MySQL | `KILL QUERY` on a temporary connection | `Conn::reset` and back to the database of the connection | `SERVER_STATUS_IN_TRANS` of the last response; `DO 0` after an error |
 | SQLite | `InterruptHandle` | Drop the connection | `is_autocommit` |
+| DuckDB | `InterruptHandle` | Drop the connection, because a temporary table only goes away with a new connection | The session keeps it: the driver reports `is_autocommit` as a constant |
 | Redis/Valkey | `CLIENT UNBLOCK` on a temporary connection; no effect, close the session | `DISCARD`, the `CLIENT` name and modes, `UNWATCH`, and back to the database of the connection, in one round trip | Always `None`: the source has no manual transaction |
 
 `run` sends one statement, delivers the rows to `ResultSink`, and obeys the `Flow::Stop` return.
@@ -560,7 +564,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
 
 | Field | Values |
 |---|---|
-| `kind` | `postgres`, `mysql`, `sqlite`, or `redis` |
+| `kind` | `postgres`, `mysql`, `sqlite`, `duckdb`, or `redis` |
 | `credential` | `vault`, `session`, `globalPlainText`, or `none` |
 | `tls.mode` | `verify` or `disabled` |
 | `theme` | Optional. A value of `theme` of `preferences`. Without the field, the connection uses the default theme |
@@ -633,6 +637,7 @@ Example:
 | `config.json` | Global and project | Versionable in the project |
 | `consoles/<id>.sql` | Global and project | Versionable in the project |
 | `consoles/<id>.json` | Global and project | Versionable in the project |
+| `themes/<id>.json` | Global and project | Versionable in the project |
 | `workspace.json` | Global and project | Ignored |
 | `locks/<id>.lock` | Global and project | Ignored |
 | `.gitignore` | Project | Versionable |

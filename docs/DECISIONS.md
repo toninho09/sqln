@@ -6,6 +6,100 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Themes with colored bases — 2026-11-08
+
+The user asked for themes with different base colors, to distinguish environments at a glance.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| List | Add Everforest (green dark), Kanagawa (ink blue), Night Owl (navy), Rose Pine Dawn (warm light), Everforest Light (green light), and Ember (red dark) | More neutral dark themes | The tinted bases separate development, staging, and production at a glance |
+| Production mark | `ember` uses a red-tinted base | A setting that colors only the status line | The base is visible on every screen, including the grid and the dialogs |
+| Contrast | Adjust some original tones to keep 4.5 on body text and 3.0 on marks and labels | Keep the original tones | Bright fills and tinted bases need their own text colors |
+| Definition | Each theme remains a `Scheme` constant and a `ThemeName` variant, with a reserved id | Environment-specific settings | The existing per-connection theme already selects a palette |
+
+## More built-in themes — 2026-11-08
+
+The user asked for more themes inspired by popular developer palettes, including high-contrast choices.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| List | Add Dracula, One Dark, Monokai, Solarized Dark, Solarized Light, GitHub Dark, Rose Pine, High Contrast, and High Contrast Light after Nord | Only dark themes; only one high-contrast theme | The palettes cover different tastes, and the two high-contrast themes serve accessibility on dark and light terminals |
+| Definition | Each theme is a `Scheme` constant and a `ThemeName` variant, and its id stays reserved | Ship them as custom theme files | Built-in themes do not depend on files or scopes |
+| Contrast | Some original tones change to pass 4.5 on body text and 3.0 on marks and labels | Keep every original tone | Some official tones fail the minimum contrast, as the first themes already did |
+| Order | Append the names after Nord | Reorder the existing list | Saved values stay valid, and the settings keep their current choices in place |
+
+## SQL files and table import
+
+The user chose to remove the proposed SQL row importer and use the external-file console flow instead. Table import remains limited to CSV, TSV, JSON, and JSON Lines. Opening a SQL file does not execute it; the user reviews and runs it through the existing console execution flow and its protections.
+
+## External `.sql` files as consoles — 2026-11-07
+
+The user asked for the open of arbitrary `.sql` files as consoles, and chose the question at the open and the command-line flag.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Question | The open asks: a **copy** of the text, or a console **linked** to the file | One fixed mode | Both uses are common; the user chose the question |
+| 2. Copy | A normal console: the autosave and the saved consoles apply without a change | Mark the copy read-only | The copy follows the rules of every console |
+| 3. Link | The console writes the file only on an explicit action: `Ctrl+S` and the questions of a close | Autosave to the external file | A write of a file of the user needs an act of the user |
+| 4. Conflicts | The write checks the bytes that the console read: a change by another program asks reload or overwrite, a removed file asks to recreate | Silent overwrite; a lock file | The rules of the atomic write and `Trouble` already cover the cases, and an external file has no sidecar |
+| 5. Place | A linked console lives in the session only: it enters no workspace and no store | Persist the link in the workspace | The session format would change for one case; the file keeps the text |
+| 6. Entry points | The palette command `openSqlFile` (no default key), the file browser, and `--script <file>` on the command line | A fixed shortcut | The palette serves commands without a key, and the flag serves the shell |
+| 7. Connection | The connection of the active console, then the only connection, then a picker; without connections the command refuses with a message | Open without a connection | A console runs its text against a connection |
+| 8. `--script` | The file must exist, and a start without a target needs a saved connection; the same question of the open follows | Run the script at the start | The flag opens a console; it does not run anything |
+| 9. Encoding | UTF-8, with the byte order mark kept on each write; a file in another encoding is an error | Windows-1252 | The editor holds text, and the import already covers other encodings |
+
+Implementation notes: `script_file/external.rs` holds the link; the console field is `external` beside `file`, and `ensure_file` skips a linked console, so it never becomes a script of the store. The tab row marks a linked console with changes. Canceling the open creates no console; canceling a conflict during a close also cancels the close or exit. External saves use unique temporary files, retain permissions, and follow symbolic links without replacing them. If a link points elsewhere after opening, the save refuses and asks the user to reopen it. Mixed line endings are retained for matching lines and paired changed lines; new lines use the file's existing default.
+
+## Grid inserts and deletes — 2026-11-06
+
+The user asks for pending inserts and deletes in the grid editing of table tabs, beside the pending updates.
+This entry extends "Grid editing — 2026-11-04"; every rule of that entry stays.
+
+| # | Point | Approved rule | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | New row | `n` appends one pending insert row of empty cells at the end of the loaded rows; `F2` edits each cell with the existing modal | A whole-row dialog | One flow with the updates; the modal already edits values |
+| 2 | Empty cell | An empty cell in a pending row means "not provided": the column stays out of the `INSERT` and the database default applies. NULL stays explicit | Store a distinct unset value | The default case needs no typed input |
+| 3 | Delete mark | `d` toggles the delete mark of the row of the cursor. A row with cell changes returns to its original values, because the delete wins. A second `d` on a pending insert row removes it, and no statement runs for it | Refuse the mark while cells changed | The user decides; the review shows the final SQL |
+| 4 | Keys of a marked row | A row marked for delete refuses cell edits until the mark leaves | Edit and delete at once | Two pending states of one row can disagree |
+| 5 | Insert columns | Keys, identities, generated, and binary columns stay protected. A natural key without an identity stays editable in a pending row | Protect every key column | Natural keys need a value |
+| 6 | Insert validation | A `NOT NULL` column without a default and without a provided value refuses the review and the apply with the column name | Send NULL | The database default and an explicit value stay distinct |
+| 7 | All-defaults insert | With no provided column, SQLite and PostgreSQL write `DEFAULT VALUES` and MySQL writes `() VALUES ()` | Refuse | Every column can have a default |
+| 8 | Apply order | One short transaction applies the updates, then the deletes, then the inserts. Deletes lock and verify the original row exactly as updates | One statement per apply; deletes first | Foreign keys can need the user's order, and the review shows it |
+| 9 | Insert identity | No lock can hold a row that does not exist. A constraint failure rolls the whole apply back and keeps the pending values | Check after the insert | Nothing to compare before the write |
+| 10 | Marks on screen | The row numbers of the grid carry `+` for a pending insert and `-` for a pending delete, with a color. The summary counts updates, deletes, and inserts, and only the non-zero parts show | Colors only | A text mark works without colors |
+| 11 | Guards | The existing pending-edit guards count inserts and deletes, so copy, export, import, filters, sort, reload, navigation, pages, and close stay blocked while any change is pending | New guards per change type | One source of truth |
+| 12 | After the apply | The first page reloads as today; cursor restoration by primary key ignores a pending row that the reload does not find | Restore by insert position | The position of a new row is not a key |
+
+## SQLite in memory — 2026-11-06
+
+The user asks for `:memory:` SQLite databases. The initial plan rejected them in the first version; the explicit request is the new fact, and this entry replaces that rejection.
+
+| # | Point | Approved rule | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Entry | The file field of the form and the command line accept exactly `:memory:`, without case. `file:` URIs and `mode=memory` stay refused | Any URI form | One text form keeps the validation simple |
+| 2 | Pool | The pool holds exactly one place, and no idle timeout closes it, because a new session starts empty | A shared cache between sessions | The shared cache has locking rules of its own |
+| 3 | Session | The session returns clean instead of discarded, so temporary tables persist for the session. A disconnect and the end of the application lose the database, which the form and the README say | Refuse the disconnect | The user asked for a scratch database, not a file |
+| 4 | Source type | `SqliteTarget` holds an enum of the file and the memory source, and `:memory:` never reaches the driver as a path | A magic path value | The type carries the rule |
+| 5 | Configuration | `config.json` stores `":memory:"` as the file of the connection. No saved file can hold it today, so no migration is needed | A new field | The text round-trips through the form |
+| 6 | Queue | Compare, structure, and console reads of the connection share the one session in arrival order | A second session | Data consistency wins over parallel reads |
+
+## Auto-refresh of the tab on screen — 2026-11-06
+
+The user asks for a repetition of the current view at a fixed interval.
+
+| # | Point | Approved rule | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Target | One command acts on the tab on screen: a console repeats its last run, and a table tab reads its page again with the same filter and order | Every tab at once | The user watches one place; background work needs a queue |
+| 2 | Entry | The palette (`Ctrl+P`) and the grid page of `Ctrl+W Space` list `autoRefresh`, with no default shortcut | A fixed key | The feature is occasional |
+| 3 | Interval | A dialog offers Off, 1s, 2s, 5s, 10s, 30s, and 60s | A free field | Seven covers the use; a field needs validation |
+| 4 | Console repetition | The exact statements of the last run repeat, captured when the run starts. Editing the editor changes nothing until a new run; parameters use the current values | Run the text of the editor | The repetition must be predictable |
+| 5 | Reads only | A console with a last run that is not all plain reads — or, on Redis, not all known reads — refuses to arm. The repetition never opens the run question | Ask at each repetition | A question every second stops the work |
+| 6 | Table repetition | The tab reads the page of the cursor again, and the grid holds that page again | Reload every loaded page | The memory budget follows the page |
+| 7 | Skip | A busy tab, an open modal or dialog, a blocked configuration, pending grid edits, or an unknown transaction skips the moment in silence; the interval stays armed | Stop on the first skip | The condition can pass one second later |
+| 8 | Failure | An execution that does not complete turns the refresh off with a status note | Retry | A failing read every second hides the error |
+| 9 | State | The status line of a console and the summary of a table show `auto Ns`. The state lives for the session; no configuration or workspace file changes | Persist the interval | The feature is a watch, not a setting |
+| 10 | History | A repetition writes no line in `history.jsonl`; the Messages history keeps its budgeted records | Record every repetition | The file would grow without value |
+
 ## Explicit AI SQL completion
 
 The user approves a command-driven completion flow, separate from MCP.
@@ -1780,3 +1874,64 @@ With the **Theme** and **Icon** fields, the form uses the compact mode up to 31 
 ### Pending items
 
 - Validate the themes and the icons in a real terminal. The visual check used the screens drawn with the Monaco font, outside the terminal.
+
+## UI kit — 2026-11-07
+
+The user asked for a shared UI kit: easier screen creation, one visual language, and only slight differences between modals, fields, and buttons. The migration moved the shared pieces to `src/ui/kit` in phases that preserved the screen first, then applied the variation contract.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Structure | `ui/kit` holds geometry, semantic styles, modal chrome, form rows, buttons, inputs, lists, prompts, feedback, measurement, and panel titles | Keep the helpers in `widgets.rs` and each screen | One place for the base look; a screen declares fields and rows |
+| Modal | One rounded chrome with title, sidebar, content, note, and buttons; only size, placement, sidebar, heading, body, and bottom title vary | One border or footer per screen | The position of the title, note, and buttons stays the same on every screen |
+| Field | One row with the focus mark, label, value padding, and `field`/`field_focus`; labels use `Narrow` (16) or `Wide` (24) | A magic label width per dialog | A new field inherits the focus and padding rules |
+| Button | `Dialog`, `Toolbar`, and `Inline` variants over one row; height 1, gap 2 | A manual loop per screen | Focus, disabled, and click areas stay equal |
+| Note | `Info`/`Hint` use `hint`, `Success` uses `mark_good`, `Warning` uses `mark_neutral`, `Error` uses `error` | One mapping per screen | The same message looks the same on every screen |
+| List | Selected `list_selected`, normal `list`; trees use `tree_selected`/`tree_cursor` | `dialog_focus` for list selection | Lists, trees, and fields keep different meanings |
+| Visual changes | Form label 25 → 24; `Info` notes from `status` to `hint`; list normal rows from `dialog` to `list`; picker/conflicts selection from `dialog_focus` to `list_selected` | Keep every current value | The user asked for fewer variations; these are the only pixels that change |
+| Exceptions | The parameters panel keeps its byte cursor and display-width renderer; the editor review keeps its key/label degradation above the kit | Force every renderer into the kit at once | Both have rules that the form row does not share |
+
+## DuckDB — 2026-11-07
+
+The user asked for DuckDB support. The delivery is the engine and the essential interface: the connector, the connection form, `config.json`, the command line, and the icon. Schema compare, the ER diagram, the DDL window, `EXPLAIN`, grid editing, and the foreign-key reads stay out.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Driver | The `duckdb` crate `1.20000.1` with `default-features = false, features = ["bundled"]` | Default features | The default of `libduckdb-sys` downloads a prebuilt library at build time; the bundled source builds offline and reproducibly, at the cost of a long C++ build |
+| Model | One file or one database in memory, as SQLite | A network server | DuckDB is embedded; the model and the thread-per-session bridge of `connector/sqlite.rs` fit it exactly |
+| Sessions | The connector opens the database once in an owner thread, and each session clones that connection with `try_clone` | `Connection::open` for each session | Two `open` calls on one file make two isolated instances: a write of one session stays invisible to the other, and the writes of the pool are lost |
+| Owner start | The lock of the first open spans the wait, so concurrent first connections never open the file twice | A check after the open | Two opens of one file race for its lock, and one of them fails |
+| Dead owner | A file clears the dead owner and starts a new one once; a database in memory keeps the failure | A restart for every source | The thread is the only holder of the database: a database in memory dies with it, and a restart would hand out an empty database without a word |
+| In memory | `single_session` and no idle close, as an in-memory SQLite database | A pool of sessions | A new connection starts with an empty database |
+| Result read | Arrow through `stream_arrow`, with `array_value_to_string` for each cell | `Row::get::<String>` | The driver refuses `String` for a list, a struct, or a map, and an owning read materializes every row before the row cap applies |
+| Change count | `execute` when the prepared statement reports no result column, and also when the statement changes rows without `RETURNING` | Only the column count, as the SQLite connector does | DuckDB answers every row change, also under `WITH`, with one `Count` column that is already in the prepared statement, and it would reach the grid as a user result |
+| Current schema | The catalog reads `SELECT current_schema()` of the session, as PostgreSQL does | A fixed `main` | A console changes the schema with `SET schema`, and the catalog is read on the session that holds it |
+| Transaction state | The session keeps it from the statements it runs | `Connection::is_autocommit` | The driver reports that function as a constant `true` |
+| Aborted transaction | `Failed`, and only `ROLLBACK` ends it | `Open` | DuckDB refuses every statement after an error inside a transaction, as PostgreSQL does |
+| Read-only | `access_mode = READ_ONLY` when the file opens, from the definition | A check of each statement only | The engine enforces it, and a file cannot open read-write and read-only at once |
+| Read-only of the settings | Refuse a data-changing statement in the connector | Open the file read-only | A DuckDB connection cannot change its access mode after it opens, so the global preference, the agent, and a reservation need a check outside the engine |
+| External files | Refuse a `csv`, `tsv`, `parquet`, `json`, `jsonl`, or `ndjson` file, and name `read_csv`, `read_parquet`, or `read_json` | Open it, as the driver does | `Connection::open` of one of these starts a database in memory without a word, so a table of the session disappears at the end |
+| Command line | The `duckdb:` scheme, with `duckdb:` and `duckdb::memory:` in memory | Detect a file extension | A bare path stays a SQLite file, which the current behavior requires |
+| Form order | DuckDB at the end of the type choices | Next to SQLite | The tests of the form reach a kind by counting arrows |
+| Attached databases | A schema of an attached database keeps the `catalog.schema` name, and the catalog, the column read, the structure, the completion, and the templates filter by catalog | Hide the schemas of the attached databases | `duckdb_schemas`, `duckdb_tables`, and `duckdb_views` list every catalog of the session, and a schema name alone cannot reach a table of one of them: the open wrote `FROM "public"."player"` and the engine answered that the schema does not exist. The anchor is the catalog of the connection, read on a clone that ran no statement, because `SET schema` changes the current database of a session and a pooled read can run on any session. A local schema whose own name has a dot does not open, because every read splits the name at the first dot |
+
+## Custom themes — 2026-11-08
+
+The user asked for theme creation in Settings, with a full palette editor, both scopes, a live preview, and no write before the dialog save.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Storage | One file per theme, `themes/<id>.json`, in the folder of each scope | Colors inside `config.json` | A palette of 30 colors would bloat the file, and a project theme becomes versionable and shareable |
+| File format | `version`, `name`, and `colors` with every palette color as `#RRGGBB`, `denyUnknownFields` | A base plus overrides | One file stands alone, and a typo in a key names its file. The conversions between `Colors` and `Scheme` list every field, so the compiler checks the sync |
+| Precedence | A project id wins over a global id, as the preferences do | Namespaces such as `project/x` | One rule for the whole configuration, and the list marks the origin |
+| Name | The display name is free; the file id comes from the name, slug to `[a-z0-9-]`, and a reserved built-in name refuses the theme | A free id field | The user thinks in names, not ids. The reserved names keep a file from shadowing a built-in theme |
+| Editor | A sub-mode of the Appearance section, as the shortcuts: name, base, and one hex input per color with a swatch | A separate dialog window | The settings modal already has sub-modes, and the focus, the mouse, and the keyboard stay in one place |
+| Base | Only for a new theme; changing it replaces the whole palette | Merging the changes over the base | The palette is complete data, not a diff, so the base is only a starting point |
+| Live preview | The editor draft resolves in `App::choose_theme` each frame, before the loaded catalog | A preview pane inside the editor | The theme of the whole screen is the preview, and the existing choice point needs no new code. A draft without a name resolves to the placeholder `draft` |
+| Contrast | The editor warns with the count of places below the WCAG minima, shared with the tests of the built-in schemes | Block the save | The user owns the palette, and a terminal can be light or dark; the warning informs, the file is valid |
+| Save | The dialog save writes new or edited themes, then `config.json`, then removes deleted themes; nothing before it | Write each theme file at the editor exit | The dialog keeps its contract "writes nothing before the save". Each file write is atomic, but the group is not: on failure, the dialog reports the error and retains the draft for retry |
+| Delete | Refuse while in use, by the effective draft of the dialog or by a connection; otherwise the removal joins the save | Ask first with a dialog | The removal is reversible until the save, and the refusal explains the reason and the way out |
+| Conflicts | Each write carries the hash of its load, under `locks/themes.lock` | Replace without a check | The rule of `config.json` applies: another program's change never goes away silently |
+| Damage | A file that cannot load gives a note at the start, in Settings, and at each reload; the other files load | Block the configuration | A theme is not critical data, and one damaged file cannot stop the connections |
+| Missing theme | The choice falls back to `auto`, with a note in the status bar | Keep the last colors or quit | The data is not critical, and the note names the theme and the fallback |
+| External change | The poll hashes a manifest of the folder names and contents, and the existing reload question covers the themes | Reload without a question | The rule of `config.json` applies, and `ReloadConfig` already reloads both |
+| Per-connection theme | The connection form cycles the built-in themes and the customs of both scopes | The connection picks its own scope only | The resolution is the merged catalog, and a project can share a theme that a global connection uses |

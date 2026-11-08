@@ -279,6 +279,13 @@ impl App {
                 self.close_step(console);
             }
             DialogAction::AgentRun(job, run) => self.agent_run_decision(&job, run),
+            DialogAction::SqlFileCancel => self.sql_file = None,
+            DialogAction::SqlFileCopy => self.accept_sql_file(false),
+            DialogAction::SqlFileLinked => self.accept_sql_file(true),
+            DialogAction::SqlFileReload(console) => self.reload_external(console),
+            DialogAction::SqlFileOverwrite(console) => self.overwrite_external(console),
+            DialogAction::SqlFileWriteClose(console) => self.write_close_external(console),
+            DialogAction::SqlFileDiscardClose(console) => self.discard_close_external(console),
             DialogAction::Dismiss => {}
             DialogAction::CancelClose(id) => {
                 self.cancel_save_close(id);
@@ -320,6 +327,7 @@ impl App {
                     self.run_confirmed(index, target);
                 }
             }
+            DialogAction::AutoRefresh(seconds) => self.choose_auto_refresh(seconds),
             DialogAction::RemoveConnection(connection) => self.remove_connection(connection),
             DialogAction::CreateProject => self.create_project(),
             DialogAction::ReloadConfig => self.reload_config(),

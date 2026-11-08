@@ -1376,8 +1376,10 @@ impl Harness {
             .unwrap()
             .source
         {
-            sqln::connection::Source::Sqlite(target) => target.path.clone(),
-            sqln::connection::Source::Network(_) => unreachable!(),
+            sqln::connection::Source::Sqlite(target) => target.path().to_path_buf(),
+            sqln::connection::Source::Duckdb(_) | sqln::connection::Source::Network(_) => {
+                unreachable!()
+            }
         };
         rusqlite::Connection::open(path)
             .unwrap()
@@ -1800,24 +1802,21 @@ fn proposal_cards_wait_behind_access_cards_and_open_their_review() {
     assert!(!screen.contains("edits console-1"), "{screen}");
 }
 
+/// Waits for the card of a task that runs long enough to show it.
+fn wait_card(h: &mut Harness) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !h.draw(80, 24).contains("Agent task running") {
+        h.app.drain_events();
+        assert!(Instant::now() < deadline, "no task card");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[test]
-fn a_long_task_shows_a_card_with_stop_and_hide() {
-    let mut h = Harness::new("task-card");
+fn a_long_task_card_stops_its_task() {
+    let mut h = Harness::new("task-card-stop");
     h.authorize();
-    let joins = (0..40)
-        .map(|index| format!("things t{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!("SELECT count(*) FROM {joins}");
-    let wait_card = |h: &mut Harness| {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !h.draw(80, 24).contains("Agent task running") {
-            h.app.drain_events();
-            assert!(Instant::now() < deadline, "no task card");
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    };
-    let job = h.query(&sql);
+    let job = h.query(&slow_sql());
     // A short task shows no card.
     assert!(!h.draw(80, 24).contains("Agent task running"));
     wait_card(&mut h);
@@ -1832,15 +1831,24 @@ fn a_long_task_shows_a_card_with_stop_and_hide() {
     assert_eq!(h.access()["status"], "authorized");
     let own = reply["tab_ids"][0].as_str().unwrap().to_owned();
     h.wait_busy(&own, false);
-    // Hide removes the card. The MCP row keeps the task and its Stop button.
-    let job = h.query(&sql);
+}
+
+#[test]
+fn hiding_a_long_task_card_keeps_its_task() {
+    let mut h = Harness::new("task-card-hide");
+    h.authorize();
+    let own = h.own();
+    let job = h.query(&slow_sql());
     wait_card(&mut h);
+    // Hide removes the card. The MCP row keeps the task and its Stop button.
     h.click_label("[Hide]");
     let screen = h.draw(80, 24);
     assert!(!screen.contains("Agent task running"), "{screen}");
     assert!(screen.contains("1 task running"), "{screen}");
     h.tool(json!({"method":"job","job_id":job,"cancel":true}))
         .unwrap();
+    let reply = h.wait_job(&job);
+    assert_eq!(reply["status"], "cancelled", "{reply}");
     h.wait_busy(&own, false);
 }
 

@@ -5,7 +5,7 @@ use crate::console::Focus;
 use crate::input::{Action, Region};
 use crate::navigator::{Navigator, RowKind};
 use crate::table::TableFocus;
-use crate::ui::console::fit;
+use crate::ui::kit::measure::fit;
 use crate::ui::text;
 use crate::ui::which_key::KeyGroup;
 
@@ -139,6 +139,9 @@ impl App {
         }
         match action {
             GridEditCell | GridSetNull => self.can_edit_cell(),
+            GridNewRow => self.new_row_refusal().is_none(),
+            GridDeleteRow => self.delete_row_refusal().is_none(),
+            AutoRefresh => self.auto_refresh_available(),
             GridReviewEdits | GridSaveEdits => {
                 pending && tab.is_some_and(|tab| !tab.is_busy() && !tab.edit_uncertain)
             }
@@ -349,7 +352,13 @@ impl App {
         // These commands do not depend on the row of the explorer.
         actions.extend([NavigatorAdd, NavigatorScripts]);
         if !self.navigator_focused {
-            actions.extend([GridExport, GridImport, GridApply, GridClearFilters]);
+            actions.extend([
+                GridExport,
+                GridImport,
+                GridApply,
+                GridClearFilters,
+                AutoRefresh,
+            ]);
         }
         actions.extend(Action::in_region(Region::Global).filter(|action| {
             *action != OpenPalette
@@ -403,7 +412,7 @@ fn command_priority(action: Action) -> u8 {
         NavigatorClearFilter | GridClearSelection => 3,
         Run | NavigatorOpen | DiagramOpen | CompareScript => 4,
         RunScript | NavigatorNewConsole | DiagramStructure | CompareCopy => 5,
-        GridEditCell => 5,
+        GridEditCell | GridNewRow | GridDeleteRow => 5,
         GridSaveEdits | GridReviewEdits | GridDiscardEdits => 3,
         GridCopy => 6,
         GridOpenValue => 7,

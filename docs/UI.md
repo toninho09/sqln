@@ -789,7 +789,7 @@ The form has a sidebar, as the Settings dialog has. Each section shows its own f
 | Security | TLS, CA file, client certificate, and client key |
 | Options | Schemas (Databases in MySQL and Redis), SQLite foreign keys and busy limit, Pool, Read only, Production, Connect limit, SQL limit, Idle limit, Theme, and Icon |
 
-A section without fields stays out of the sidebar, so SQLite has no Credentials and no Security.
+A section without fields stays out of the sidebar, so SQLite has no Credentials and no Security. DuckDB shows File and Schemas, and it has no busy timeout or foreign keys.
 The buttons stay at the bottom of each section.
 All sections keep the height of the largest section, so the window does not move. The width starts at 76 columns, grows to 140 columns on a larger screen, and leaves 8 columns free.
 The form of a connected connection also has the sidebar: General holds the name, and Options holds the schemas, the theme, the icon, and the production mark.
@@ -1203,6 +1203,17 @@ The **Appearance** section has the **Default theme** field.
 The choice changes the colors at once, before saving. `Esc` and **Cancel** bring back the saved theme.
 In the global scope, a theme defined in the project keeps priority.
 
+The same section has the **Custom themes** list, with the buttons **New theme**, **Edit**, and **Delete**:
+
+- **New theme** opens the editor on a copy of the theme that the scope chooses. The **Base** row swaps the whole palette for another theme.
+- The editor edits the display **Name** and one hex value (`#RRGGBB`) per color of the palette, with a swatch beside each value. The screen previews each color while it parses, including the Settings window itself.
+- **Done** keeps the draft in the dialog, and the dialog **Save** writes the file. Nothing reaches the disk before that save: `Esc` in the editor discards the draft, and **Cancel** in the dialog discards everything.
+- The name gives the id of the file: lowercase letters, numbers, and dashes. The list shows the name, the id, and the origin (`Global` or `Project`).
+- **Delete** refuses a theme that the default theme or a connection still uses, with the reason. The removal writes at the dialog save, and **Cancel** brings the theme back.
+- The editor warns about colors of low contrast, with the count of places, but it never blocks the save.
+
+A custom theme needs a truecolor terminal, as the built-in RGB themes do.
+
 The connection form has the **Theme** field, which defines a theme only for that connection.
 The **Default** value uses the default theme. The open tab decides the colors of the whole screen: the screen uses the theme of the connection of the tab, and a tab without its own theme uses the default theme.
 That field also changes the colors before saving. It works with the active connection and does not close the session or the transaction.
@@ -1228,6 +1239,24 @@ That field also works with the active connection and appears in all icon sets, i
 | Catppuccin Latte | `catppuccin-latte` | Light |
 | Gruvbox | `gruvbox` | Warm dark |
 | Nord | `nord` | Bluish gray |
+| Dracula | `dracula` | Violet dark |
+| One Dark | `one-dark` | Neutral dark |
+| Monokai | `monokai` | Warm dark |
+| Solarized Dark | `solarized-dark` | Teal dark |
+| Solarized Light | `solarized-light` | Cream light |
+| GitHub Dark | `github-dark` | Neutral dark |
+| Rose Pine | `rose-pine` | Muted violet dark |
+| High Contrast | `high-contrast` | Black base with bright marks |
+| High Contrast Light | `high-contrast-light` | White base with dark marks |
+| Everforest | `everforest` | Green-tinted dark |
+| Kanagawa | `kanagawa` | Ink-blue dark |
+| Night Owl | `night-owl` | Deep navy dark |
+| Rose Pine Dawn | `rose-pine-dawn` | Warm light |
+| Everforest Light | `everforest-light` | Green-tinted light |
+| Ember | `ember` | Red-tinted dark, for production |
+| Custom | `{"custom": "<id>"}` | The theme file `themes/<id>.json`; a missing file falls back to `auto` |
+
+A custom theme of the project wins over a global theme with the same id, as the other preferences do.
 
 `NO_COLOR` has priority over any theme.
 
@@ -1369,7 +1398,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
                         │                         \___ \| | | | |   |  \| |
                         │                          ___) | |_| | |___| |\  |
                         │                         |____/ \__\_\_____|_| \_|
-                        │                                   0.2.0
+                        │                                   0.3.0
                         │                            No console is open
                         │
                         │                 Ctrl+W h a  Add a connection
@@ -1383,7 +1412,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
 
 Without a connection, the screen shows **No connection yet**, without the **Open a console** row.
 With the explorer hidden, the first row is `Ctrl+W b` **Show the explorer**, the status line shows `HOME`,
-and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.2.0` instead.
+and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.3.0` instead.
 
 ### Welcome screen
 
@@ -1391,7 +1420,7 @@ The screen appears over an editor without text. It keeps no state and captures n
 The first typed character removes the screen.
 
 ```text
-           SQLN 0.2.0
+           SQLN 0.3.0
            Write SQL here
 
                    F5  Run the statement
@@ -1443,3 +1472,18 @@ The bar keys are in [KEYMAP.md](KEYMAP.md).
 │ 3 SELECT name FROM users;                                │
 └──────────────────────────────────────────────────────────┘
 ```
+
+## UI kit
+
+The screens share `src/ui/kit`. A new modal, field, button, or list uses the kit instead of drawing its own chrome or choosing theme fields directly.
+
+| Piece | Shared base | Allowed differences |
+|---|---|---|
+| Modal | Rounded border, `float_border`/`float_title`, `dialog` background, one space around the title, note above the buttons | Width and height, placement (center, bottom, bottom right), optional sidebar, optional heading, body (form, list, preview, editor, help), bottom title |
+| Field | Focus mark in the first column, label at `LEFT`, value at `LEFT + label`, one column of padding, `field`/`field_focus` background | `LabelWidth::Narrow` (16) or `Wide` (24); value Text, Masked, Path, Choice, Flag, or Button; browse button at the end |
+| Button | Height 1, gap 2, `theme.button` label, click area equal to the label | Dialog (focus `dialog_focus`, idle `dialog_option`), Toolbar (enabled `control`, disabled `control_off`, stops at the edge), Inline (right or left, no painted gaps) |
+| Note | `style::note_style` | Info and Hint `hint`, Success `mark_good`, Warning `mark_neutral`, Error `error` |
+| List | `style::list_row_style` | Selected `list_selected`, normal `list`; a tree or sidebar uses `tree_selected`/`tree_cursor` |
+| Panel title | `panel::draw_panel_title` | Focused `panel_title_focused`, idle `panel_title` |
+
+The only allowed differences are the rows above. A screen that needs another style adds a variant to the kit, not a new local branch.

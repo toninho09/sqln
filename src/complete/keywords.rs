@@ -514,7 +514,7 @@ const RESERVED: &[&str] = &[
 
 fn specific(dialect: Dialect) -> &'static [&'static str] {
     match dialect {
-        Dialect::Postgres => POSTGRES,
+        Dialect::Postgres | Dialect::DuckDb => POSTGRES,
         Dialect::MySql => MYSQL,
         Dialect::Sqlite => SQLITE,
         Dialect::Redis => REDIS,
@@ -533,7 +533,7 @@ pub fn all(dialect: Dialect) -> impl Iterator<Item = &'static str> {
 
 pub fn starters(dialect: Dialect) -> impl Iterator<Item = &'static str> {
     let (common, specific) = match dialect {
-        Dialect::Postgres => (STARTERS, POSTGRES_STARTERS),
+        Dialect::Postgres | Dialect::DuckDb => (STARTERS, POSTGRES_STARTERS),
         Dialect::MySql => (STARTERS, MYSQL_STARTERS),
         Dialect::Sqlite => (STARTERS, SQLITE_STARTERS),
         Dialect::Redis => (&[][..], REDIS),

@@ -1,6 +1,6 @@
 [package]
 name = "sqln"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Terminal database client with several SQL consoles"
 license = "MIT OR Apache-2.0"
@@ -13,6 +13,7 @@ async-trait = "0.1"
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 crossterm = "0.29.0"
+duckdb = { version = "1.20000.1", default-features = false, features = ["bundled"] }
 edtui = { version = "0.11.7", default-features = false, features = ["mouse-support"] }
 futures-util = "0.3"
 keyring-core = "1.0.1"
@@ -70,8 +71,16 @@ name = "app"
 path = "tests/app.rs"
 
 [[test]]
+name = "auto_refresh"
+path = "tests/auto_refresh.rs"
+
+[[test]]
 name = "diagram"
 path = "tests/diagram.rs"
+
+[[test]]
+name = "duckdb"
+path = "tests/duckdb.rs"
 
 [[test]]
 name = "editing"
@@ -145,3 +154,6 @@ harness = false
 [[bench]]
 name = "memory"
 harness = false
+
+[profile.test]
+debug = 0

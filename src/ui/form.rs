@@ -2,19 +2,20 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
-use super::console::{centered, modal_width};
-use super::float_block;
 use super::icons::connection_symbol;
-use super::input_spans;
-use super::palette::{ListWindow, draw_list_window};
-use super::settings::{
-    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, SIDEBAR_WIDTH, browse_width, draw_browse_button,
-    draw_buttons, draw_divider, draw_note, draw_sidebar_rows,
+use super::kit::buttons::{self, RowOptions};
+use super::kit::feedback::draw_note;
+use super::kit::form::{
+    browse_width, choice_value, draw_browse_button, draw_row, flag_mark, focus_style, value_width,
 };
+use super::kit::geometry::modal_width;
+use super::kit::input::{self, FieldMode, FieldText};
+use super::kit::list::{ListWindow, draw_list_window};
+use super::kit::modal::{Modal, SidebarSpec};
+use super::kit::style::{self, ListRow, NoteLevel};
 use super::text;
 use super::theme::Theme;
 use crate::connector::target::hide_uri_password;
@@ -25,7 +26,7 @@ use crate::store::Scope;
 
 /// The sidebar, the label, and the longest choice fit in this width.
 const WIDTH: u16 = 76;
-const LABEL_WIDTH: u16 = 25;
+const LABEL_WIDTH: u16 = super::kit::form::LabelWidth::Wide.columns();
 /// The rows inside the window, from its top.
 const TITLE_ROW: u16 = 1;
 const FIRST_FIELD_ROW: u16 = 3;
@@ -98,6 +99,7 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
             Kind::MySql => text::VALUE_MYSQL,
             Kind::Redis => text::VALUE_REDIS,
             Kind::Sqlite => text::VALUE_SQLITE,
+            Kind::Duckdb => text::VALUE_DUCKDB,
         },
         Field::Scope if form.scope == Scope::Project => text::VALUE_SCOPE_PROJECT,
         Field::Scope => text::VALUE_SCOPE_GLOBAL,
@@ -109,7 +111,8 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
         Field::Credential => text::VALUE_SESSION,
         Field::Tls if form.verify_tls => text::VALUE_TLS_VERIFY,
         Field::Tls => text::VALUE_TLS_OFF,
-        Field::Theme => form.theme.map_or(text::VALUE_DEFAULT, text::theme_name),
+        // A custom theme has its own name, so `value_line` builds this value.
+        Field::Theme => text::VALUE_DEFAULT,
         Field::Icon => form
             .icon
             .map_or(text::VALUE_DEFAULT, text::connection_icon_name),
@@ -122,47 +125,55 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
 }
 
 /// Writes a text value, and it keeps the cursor inside the width.
-fn text_spans(
-    form: &ConnectionForm,
-    field: Field,
-    width: usize,
-    theme: &Theme,
-) -> Vec<Span<'static>> {
-    let chars: Vec<char> = match field {
-        Field::Password => form.text(field).chars().map(|_| MASK).collect(),
-        Field::Uri => hide_uri_password(&printable(form.text(field)), MASK)
-            .chars()
-            .collect(),
-        _ => printable(form.text(field)).chars().collect(),
+fn text_line(form: &ConnectionForm, field: Field, width: usize, theme: &Theme) -> Line<'static> {
+    let text = match field {
+        Field::Password => form.text(field).to_owned(),
+        Field::Uri => hide_uri_password(&printable(form.text(field)), MASK),
+        _ => printable(form.text(field)),
     };
-    input_spans(&chars, form.cursor, width, form.focus == field, theme).0
+    let mode = match field {
+        Field::Password => FieldMode::Masked {
+            mask: MASK,
+            limit: None,
+        },
+        Field::Uri => FieldMode::Path,
+        _ => FieldMode::Text,
+    };
+    input::line(
+        FieldText {
+            text: &text,
+            cursor: form.cursor,
+            width,
+            focused: form.focus == field,
+            mode,
+        },
+        theme,
+    )
 }
 
-fn value_spans(
-    form: &ConnectionForm,
-    field: Field,
-    width: usize,
-    theme: &Theme,
-) -> Vec<Span<'static>> {
-    let style = if form.focus == field {
-        theme.dialog_focus
-    } else {
-        Style::new()
-    };
+fn value_line(form: &ConnectionForm, field: Field, width: usize, theme: &Theme) -> Line<'static> {
+    let style = focus_style(form.focus == field, theme);
     match field.style() {
         FieldStyle::Choice => {
             let symbol = form
                 .icon
                 .filter(|_| field == Field::Icon)
                 .map_or(String::new(), |icon| Theme::icon(connection_symbol(icon)));
-            let name = choice(form, field);
-            vec![Span::styled(format!("< {symbol}{name} >"), style)]
+            let value = if field == Field::Theme {
+                form.theme.as_ref().map_or_else(
+                    || text::VALUE_DEFAULT.to_owned(),
+                    |name| text::theme_label(name, &form.themes),
+                )
+            } else {
+                choice(form, field).to_owned()
+            };
+            Line::from(Span::styled(
+                choice_value(&format!("{symbol}{value}")),
+                style,
+            ))
         }
-        FieldStyle::Flag => {
-            let mark = if form.flag(field) { "[x]" } else { "[ ]" };
-            vec![Span::styled(mark, style)]
-        }
-        _ => text_spans(form, field, width, theme),
+        FieldStyle::Flag => Line::from(Span::styled(flag_mark(form.flag(field)), style)),
+        _ => text_line(form, field, width, theme),
     }
 }
 
@@ -176,60 +187,19 @@ fn draw_field_row(
     theme: &Theme,
 ) -> Option<Rect> {
     let focused = form.focus == field;
-    if focused {
-        let mark = Span::styled(theme.icons.focus_mark, theme.panel_title_focused);
-        frame.render_widget(
-            Paragraph::new(mark),
-            Rect {
-                x: area.x + 1,
-                width: 1,
-                ..area
-            },
-        );
+    let mut width = value_width(area, LABEL_WIDTH);
+    if field.opens_window() {
+        width = width.saturating_sub(usize::from(browse_width(theme)));
     }
-    let label_style = if focused {
-        theme.panel_title_focused
-    } else {
-        Style::new()
-    };
-    let label_area = Rect {
-        x: area.x + LEFT,
-        width: LABEL_WIDTH,
-        ..area
-    };
-    let name = label(form.kind, field);
-    frame.render_widget(Paragraph::new(name).style(label_style), label_area);
-
-    let start = area.x + LEFT + LABEL_WIDTH;
-    let value = Rect {
-        x: start,
-        width: area.right().saturating_sub(start + RIGHT),
-        ..area
-    };
-    // The background comes first, because the text and the cursor have their own styles.
-    frame.buffer_mut().set_style(
-        value,
-        if focused {
-            theme.field_focus
-        } else {
-            theme.field
-        },
+    let line = value_line(form, field, width.max(1), theme);
+    draw_row(
+        frame,
+        area,
+        (label(form.kind, field), LABEL_WIDTH),
+        focused,
+        line,
+        theme,
     );
-    let text = Rect {
-        x: value.x + 1,
-        width: value.width.saturating_sub(2),
-        ..value
-    };
-    let text = Rect {
-        width: text.width.saturating_sub(if field.opens_window() {
-            browse_width(theme)
-        } else {
-            0
-        }),
-        ..text
-    };
-    let spans = value_spans(form, field, usize::from(text.width).max(1), theme);
-    frame.render_widget(Paragraph::new(Line::from(spans)), text);
     field
         .opens_window()
         .then(|| draw_browse_button(frame, area, focused, theme))
@@ -243,55 +213,39 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
         .map(|section| form.fields_of(*section).len())
         .max()
         .unwrap_or(0);
-    let height =
-        BORDER_ROWS + FIRST_FIELD_ROW + u16::try_from(tallest).unwrap_or(u16::MAX) + FOOTER_ROWS;
-    let area = centered(frame.area(), modal_width(frame.area().width, WIDTH), height);
-    frame.render_widget(Clear, area);
     let title = match &form.editing {
         None => text::TITLE_NEW_CONNECTION.to_owned(),
         Some(_) => text::edit_connection_title(&printable(form.text(Field::Name))),
-    };
-    let block = float_block(&title, theme);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let sidebar = Rect {
-        y: inner.y + 1,
-        width: SIDEBAR_WIDTH,
-        height: inner.height.saturating_sub(1),
-        ..inner
-    };
-    draw_divider(frame, area, sidebar.right(), theme);
-    let pane = Rect {
-        x: sidebar.right() + 1,
-        width: inner.width.saturating_sub(SIDEBAR_WIDTH + 1),
-        ..inner
     };
     let open = form.shown_section();
     let titles: Vec<&str> = sections
         .iter()
         .map(|section| section_title(*section))
         .collect();
-    let index = sections.iter().position(|section| *section == open);
-    let focused = form.focus == Field::Sections;
-    let rows = draw_sidebar_rows(
-        frame,
-        sidebar,
-        &titles,
-        (index.unwrap_or(0), focused),
-        theme,
-    );
+    let index = sections
+        .iter()
+        .position(|section| *section == open)
+        .unwrap_or(0);
+    let modal = Modal::form(
+        modal_width(frame.area().width, WIDTH),
+        FIRST_FIELD_ROW,
+        u16::try_from(tallest).unwrap_or(u16::MAX),
+    )
+    .title(title)
+    .heading_row(TITLE_ROW)
+    .sidebar(SidebarSpec {
+        titles: &titles,
+        open: index,
+        focused: form.focus == Field::Sections,
+    })
+    .open(frame, theme);
+    let pane = modal.pane;
     let mut layout = FormLayout {
-        sections: sections.into_iter().zip(rows).collect(),
+        sections: sections.into_iter().zip(modal.sidebar_rows).collect(),
         ..FormLayout::default()
     };
 
-    let content = Rect {
-        x: pane.x + LEFT,
-        y: pane.y + TITLE_ROW,
-        width: pane.width.saturating_sub(LEFT + RIGHT),
-        height: 1,
-    };
+    let content = modal.content;
     let heading = section_title(open).to_uppercase();
     frame.render_widget(Paragraph::new(heading).style(theme.panel_title), content);
     for (y, field) in (pane.y + FIRST_FIELD_ROW..).zip(form.section_fields()) {
@@ -306,25 +260,37 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
         layout.fields.push((field, row));
     }
 
-    let button_row = pane.bottom().saturating_sub(2);
+    let button_row = modal.button_row;
     if let Some(note) = &form.note {
-        let (message, style) = match note {
-            FormNote::Info(message) => (message, theme.status),
-            FormNote::Success(message) => (message, theme.mark_good),
-            FormNote::Error(message) => (message, theme.error),
+        let (message, level) = match note {
+            FormNote::Info(message) => (message, NoteLevel::Info),
+            FormNote::Success(message) => (message, NoteLevel::Success),
+            FormNote::Error(message) => (message, NoteLevel::Error),
         };
-        draw_note(frame, content, button_row, message, style);
+        draw_note(
+            frame,
+            content,
+            button_row,
+            message,
+            style::note_style(level, theme),
+        );
     }
-    let buttons: Vec<(Field, &str)> = form
-        .buttons()
-        .into_iter()
-        .map(|field| (field, label(form.kind, field)))
-        .collect();
-    layout.fields.extend(draw_buttons(
+    let buttons = buttons::dialog_items(
+        form.buttons()
+            .into_iter()
+            .map(|field| (field, label(form.kind, field))),
+        form.focus,
+        theme,
+    );
+    layout.fields.extend(buttons::draw(
         frame,
-        content,
-        button_row,
-        (&buttons, form.focus),
+        Rect {
+            y: button_row,
+            height: 1,
+            ..content
+        },
+        RowOptions::DIALOG,
+        &buttons,
         theme,
     ));
     if let Some(open) = &form.schema_list {
@@ -363,17 +329,16 @@ fn draw_schema_list(
         list,
         theme,
         |frame, area, name, selected| {
-            let style = if selected {
-                theme.list_selected
-            } else {
-                theme.dialog
-            };
+            let style = style::list_row_style(
+                if selected {
+                    ListRow::Selected
+                } else {
+                    ListRow::Normal
+                },
+                theme,
+            );
             frame.buffer_mut().set_style(area, style);
-            let mark = if open.list.is_marked(name) {
-                "[x]"
-            } else {
-                "[ ]"
-            };
+            let mark = flag_mark(open.list.is_marked(name));
             let line = format!(" {mark} {}", printable(name));
             frame.render_widget(Paragraph::new(line), area);
         },

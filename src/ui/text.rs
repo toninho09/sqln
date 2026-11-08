@@ -51,9 +51,81 @@ pub const EDIT_DISCARD_QUESTION: &str =
     "Discard all pending changes? This does not undo a database commit.";
 pub const EDIT_CELL_HINT: &str = "F2/Ctrl+S keep locally · Tab buttons · Esc cancel";
 pub const EDIT_REVIEW_HINT: &str = "F2/Ctrl+S apply · Up/Down scroll · Tab buttons · Esc cancel";
+pub const AUTO_REFRESH_TITLE: &str = "Auto-refresh";
+pub const AUTO_REFRESH_NEEDS_RUN: &str =
+    "Run a statement first: auto-refresh repeats the last run of this console.";
+pub const AUTO_REFRESH_READ_ONLY: &str =
+    "Auto-refresh repeats reads only: the last run can change data.";
 
-pub fn edit_pending(rows: usize, cells: usize) -> String {
-    format!("Pending: {rows} rows, {cells} cells")
+/// The name of one choice of the auto-refresh dialog.
+pub fn auto_refresh_choice(seconds: Option<u64>) -> &'static str {
+    match seconds {
+        None => "Off",
+        Some(1) => "1s",
+        Some(2) => "2s",
+        Some(5) => "5s",
+        Some(10) => "10s",
+        Some(30) => "30s",
+        _ => "60s",
+    }
+}
+
+/// The body of the auto-refresh dialog.
+pub fn auto_refresh_body(current: Option<u64>) -> String {
+    let state = match current {
+        Some(seconds) => format!(
+            "The current interval is {}.",
+            auto_refresh_choice(Some(seconds))
+        ),
+        None => "Auto-refresh is off.".to_owned(),
+    };
+    format!(
+        "{state} A console repeats its last run and a table reads its page again. Only reads repeat."
+    )
+}
+
+/// The label of the state on screen, such as `auto 5s`.
+pub fn auto_refresh_label(seconds: u64) -> String {
+    format!("auto {seconds}s")
+}
+
+/// The status note when a failed execution turns the refresh off.
+pub fn auto_refresh_stopped(message: Option<&str>) -> String {
+    match message {
+        Some(reason) => format!("Auto-refresh stopped: {reason}"),
+        None => "Auto-refresh stopped.".to_owned(),
+    }
+}
+pub const EDIT_ROW_DELETED: &str =
+    "This row is marked for delete. Toggle the mark to edit its cells.";
+pub const EDIT_ROW_ADDED: &str =
+    "Row added below. Edit the cells, then review and apply the changes.";
+pub const EDIT_ROW_MARKED: &str =
+    "Row marked for delete. Review and apply, or discard the changes.";
+pub const EDIT_ROW_UNMARKED: &str = "Delete mark removed from the row.";
+pub const EDIT_INSERT_REMOVED: &str = "Pending insert row removed. No statement runs for it.";
+pub const EDIT_UPDATE_ROW: &str = "Update";
+pub const EDIT_DELETE_ROW: &str = "Delete";
+pub const EDIT_INSERT_ROW: &str = "Insert";
+
+pub fn edit_pending(updates: usize, deletes: usize, inserts: usize) -> String {
+    let mut parts = Vec::new();
+    let mut push = |count: usize, one: &'static str, many: &'static str| {
+        if count > 0 {
+            parts.push(format!("{count} {}", if count == 1 { one } else { many }));
+        }
+    };
+    push(updates, "update", "updates");
+    push(deletes, "delete", "deletes");
+    push(inserts, "insert", "inserts");
+    if parts.is_empty() {
+        parts.push("no changes".to_owned());
+    }
+    format!("Pending: {}", parts.join(", "))
+}
+
+pub fn edit_insert_needs(column: &str) -> String {
+    format!("Column {column} needs a value, because it rejects NULL and has no default.")
 }
 
 pub fn edit_production(table: &str, connection: &str) -> String {
@@ -107,7 +179,7 @@ pub fn suggestion_keys_name(keys: SuggestionKeys) -> &'static str {
     }
 }
 
-pub fn theme_name(name: crate::store::config::ThemeName) -> &'static str {
+pub fn theme_name(name: &crate::store::config::ThemeName) -> &'static str {
     use crate::store::config::ThemeName;
     match name {
         ThemeName::Auto => "Auto",
@@ -118,6 +190,35 @@ pub fn theme_name(name: crate::store::config::ThemeName) -> &'static str {
         ThemeName::CatppuccinLatte => "Catppuccin Latte",
         ThemeName::Gruvbox => "Gruvbox",
         ThemeName::Nord => "Nord",
+        ThemeName::Dracula => "Dracula",
+        ThemeName::OneDark => "One Dark",
+        ThemeName::Monokai => "Monokai",
+        ThemeName::SolarizedDark => "Solarized Dark",
+        ThemeName::SolarizedLight => "Solarized Light",
+        ThemeName::GithubDark => "GitHub Dark",
+        ThemeName::RosePine => "Rose Pine",
+        ThemeName::HighContrast => "High Contrast",
+        ThemeName::HighContrastLight => "High Contrast Light",
+        ThemeName::Everforest => "Everforest",
+        ThemeName::Kanagawa => "Kanagawa",
+        ThemeName::NightOwl => "Night Owl",
+        ThemeName::RosePineDawn => "Rose Pine Dawn",
+        ThemeName::EverforestLight => "Everforest Light",
+        ThemeName::Ember => "Ember",
+        ThemeName::Custom(_) => "Custom",
+    }
+}
+
+/// The name of a theme in lists. A custom theme shows its own name.
+pub fn theme_label(
+    name: &crate::store::config::ThemeName,
+    custom: &crate::ui::theme::ThemeCatalog,
+) -> String {
+    match name {
+        crate::store::config::ThemeName::Custom(id) => {
+            crate::grid::printable(custom.name_of(id).unwrap_or(id))
+        }
+        name => theme_name(name).to_owned(),
     }
 }
 
@@ -162,6 +263,17 @@ pub const HINT_SETTINGS_TEXT: &[HintPart] = &[
     ("Enter", "next"),
     ("Esc", "cancel"),
     ("", "An empty field removes the value"),
+];
+pub const HINT_THEME_LIST: &[HintPart] = &[
+    ("Up/Down", "move"),
+    ("Enter", "edit"),
+    ("Tab", "next"),
+    ("Esc", "cancel"),
+];
+pub const HINT_THEME_COLORS: &[HintPart] = &[
+    ("Up/Down", "color"),
+    ("Tab", "next"),
+    ("Esc", "discard the draft"),
 ];
 pub const HINT_SETTINGS_SECTIONS: &[HintPart] =
     &[("Up/Down", "section"), ("Tab", "next"), ("Esc", "cancel")];
@@ -518,6 +630,8 @@ pub const REDIS_BAD_REPLY: &str = "The server sent a reply that SQLN cannot read
 pub const REDIS_NO_TRANSACTIONS: &str = "Redis has no manual transactions. Use MULTI in a script.";
 pub const REDIS_READ_ONLY: &str =
     "This connection is read only, and the server does not mark this command as a read.";
+/// DuckDB fixes its access mode when the file opens, so a session refuses a write here.
+pub const DUCKDB_READ_ONLY: &str = "This connection is read only. A DuckDB connection cannot change its access mode, so SQLN refuses the write here.";
 pub const REDIS_CONTINUOUS: &str =
     "SQLN cannot show a continuous stream, so it refuses this command.";
 pub const REDIS_IDENTITY: &str =
@@ -625,6 +739,7 @@ pub const VALUE_POSTGRES: &str = "PostgreSQL";
 pub const VALUE_MYSQL: &str = "MySQL";
 pub const VALUE_REDIS: &str = "Redis/Valkey";
 pub const VALUE_SQLITE: &str = "SQLite";
+pub const VALUE_DUCKDB: &str = "DuckDB";
 pub const VALUE_SCOPE_PROJECT: &str = "Project";
 pub const VALUE_SCOPE_GLOBAL: &str = "Global";
 pub const VALUE_FIELDS: &str = "Fields";
@@ -840,6 +955,40 @@ pub const FIELD_BUDGET: &str = "Data (MiB)";
 pub const FIELD_THEME: &str = "Default theme";
 pub const FIELD_CONNECTION_THEME: &str = "Theme";
 pub const FIELD_CONNECTION_ICON: &str = "Icon";
+pub const FIELD_THEMES: &str = "Custom themes";
+pub const FIELD_THEME_NAME: &str = "Name";
+pub const FIELD_THEME_BASE: &str = "Base";
+pub const BUTTON_THEME_NEW: &str = "New theme";
+pub const BUTTON_THEME_EDIT: &str = "Edit";
+pub const BUTTON_THEME_DELETE: &str = "Delete";
+pub const BUTTON_THEME_DONE: &str = "Done";
+pub const THEME_NONE: &str = "No custom themes.";
+pub const THEME_EDITOR_OPEN: &str = "Close the theme editor before saving.";
+pub const THEME_IN_USE: &str =
+    "The theme is in use. Change the default theme or the theme of a connection first.";
+pub const THEME_ID_TAKEN: &str = "A theme with this id already exists.";
+pub const THEME_INVALID_ID: &str =
+    "The name gives an id of lowercase letters, numbers, and dashes.";
+pub const HELP_THEMES: &str =
+    "Each theme is one file of the themes folder. New theme copies the base palette.";
+
+/// The warning of a theme that the files no longer hold.
+pub fn theme_missing(id: &str) -> String {
+    format!(
+        "The theme {} is missing. The default theme applies.",
+        crate::grid::printable(id)
+    )
+}
+
+/// The warning of a color without the form `#RRGGBB`.
+pub fn theme_hex_invalid(role: &str) -> String {
+    format!("The color of {role} needs the form #RRGGBB.")
+}
+
+/// The warning of a palette with low contrast.
+pub fn theme_contrast(count: usize) -> String {
+    format!("Low contrast in {count} places. The text can be hard to read on some terminals.")
+}
 
 pub fn export_format_name(format: ExportFormat) -> &'static str {
     match format {
@@ -1417,10 +1566,14 @@ pub fn action_text(action: Action) -> &'static str {
         Action::RenameConsole => "Rename the console",
         Action::ChangeConnection => "Change the connection of the console",
         Action::OpenSettings => "Open the settings",
+        Action::OpenSqlFile => "Open a SQL file as a console",
         Action::GridExport => "Export the result to a file",
         Action::GridImport => "Import a file to this table",
+        Action::AutoRefresh => "Auto-refresh of the current tab",
         Action::GridEditCell => "Edit the selected cell",
         Action::GridSetNull => "Set the selected cell to NULL",
+        Action::GridNewRow => "Add a row",
+        Action::GridDeleteRow => "Mark for delete",
         Action::GridReviewEdits => "Review pending table changes",
         Action::GridSaveEdits => "Review and apply pending table changes",
         Action::GridDiscardEdits => "Discard pending table changes",
@@ -1921,20 +2074,23 @@ Assistant:
                          instance and approve access in its terminal interface.
 
 Target:
-  A SQLite file, or a URI such as postgres://user@host/name. Without a password
+  A SQLite file, a DuckDB target such as duckdb:file.duckdb or duckdb: (in
+  memory), or a URI such as postgres://user@host/name. Without a password
   in the URI, SQLN asks for it. A password in a URI stays in the shell history.
   The connection of a target lasts for this session, and SQLN saves nothing of it.
 
 Options:
   --project <folder>     Use the project in this folder. Without it, SQLN uses
                          the nearest .sqln folder above the working folder.
+  --script <file>        Open a .sql file as a console at the start. It needs a
+                         target or a saved connection.
   --log <file>           Write a log of events, without SQL or values.
   -h, --help             Show this text.
   -V, --version          Show the version.
 
 Development options:
-  --dialect <name>       Use postgres, mysql, sqlite, or redis in a console without
-                         a connection.
+  --dialect <name>       Use postgres, mysql, sqlite, duckdb, or redis in a console
+                         without a connection.
 
 The settings and the connections are in config.json, in the global folder
 (~/.config/sqln, or $XDG_CONFIG_HOME/sqln) and in the .sqln folder of the project.
@@ -2433,6 +2589,17 @@ pub const SCRIPT_OPEN: &str = "Close the console before you remove its script.";
 pub const SCRIPT_BUSY: &str = "Another SQLN instance uses this script.";
 pub const SCRIPT_REMOVED: &str = "Script removed.";
 pub const TITLE_CONFLICTS: &str = "Scripts changed outside SQLN";
+pub const TITLE_SQL_FILE: &str = "Open a SQL file";
+pub const OPTION_SQL_FILE_COPY: &str = "Copy";
+pub const OPTION_SQL_FILE_LINKED: &str = "Linked to the file";
+pub const TITLE_SQL_FILE_CHANGED: &str = "File changed outside SQLN";
+pub const TITLE_SQL_FILE_REMOVED: &str = "File removed";
+pub const OPTION_SQL_FILE_RELOAD: &str = "Reload the file";
+pub const OPTION_SQL_FILE_OVERWRITE: &str = "Overwrite the file";
+pub const OPTION_SQL_FILE_RECREATE: &str = "Recreate the file";
+pub const OPTION_SQL_FILE_WRITE_CLOSE: &str = "Write and close";
+pub const OPTION_SQL_FILE_CLOSE_WITHOUT: &str = "Close without writing";
+pub const SQL_FILE_RELOADED: &str = "The file is open again.";
 pub const STATE_CHANGED: &str = "changed";
 pub const STATE_REMOVED: &str = "removed";
 pub const CHOICE_NONE: &str = "choose";
@@ -2476,6 +2643,32 @@ pub fn unsaved_changed(name: &str) -> String {
 pub fn unsaved_removed(name: &str) -> String {
     format!(
         "Another program removed the script of {name}. SQLN did not save the text.\n\nClose the console and lose the text that no file holds?"
+    )
+}
+
+pub fn sql_file_question(path: &str) -> String {
+    format!(
+        "{path}\n\nOpen the file as a copy of its text, or link the console to the file? A linked console writes the file on each save."
+    )
+}
+
+pub fn sql_file_failed(path: &str, message: &str) -> String {
+    format!("Cannot open {path}: {message}")
+}
+
+pub fn sql_file_changed(path: &str) -> String {
+    format!(
+        "Another program changed {path} after this console read it.\n\nReload the file and lose the text of the console, or write the text over the file?"
+    )
+}
+
+pub fn sql_file_removed(path: &str) -> String {
+    format!("Another program removed {path}.\n\nRecreate the file with the text of the console?")
+}
+
+pub fn sql_file_unsaved(path: &str) -> String {
+    format!(
+        "The console holds changes for {path} that the file does not have.\n\nWrite the file before the console closes?"
     )
 }
 

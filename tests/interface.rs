@@ -248,30 +248,32 @@ fn the_configuration_chooses_the_theme_and_no_color_has_priority() {
         truecolor: true,
     };
     let start = Theme::ansi();
-    assert_eq!(start.with_choices(None, None, color), start);
+    assert_eq!(start.with_choices(None, |_| None, None, color), start);
     assert_eq!(
-        start.with_choices(Some(ThemeName::Astrodark), None, color),
+        start.with_choices(Some(ThemeName::Astrodark), |_| None, None, color),
         Theme::astrodark()
     );
     assert_eq!(
-        Theme::astrodark().with_choices(Some(ThemeName::Ansi), None, color),
+        Theme::astrodark().with_choices(Some(ThemeName::Ansi), |_| None, None, color),
         Theme::ansi()
     );
     assert_eq!(
-        start.with_choices(Some(ThemeName::Auto), None, color),
+        start.with_choices(Some(ThemeName::Auto), |_| None, None, color),
         Theme::astrodark()
     );
     assert_eq!(
-        start.with_choices(Some(ThemeName::Astrodark), None, no_color),
+        start.with_choices(Some(ThemeName::Astrodark), |_| None, None, no_color),
         Theme::plain()
     );
     assert_eq!(
-        start.with_choices(None, Some(IconName::Nerd), color).icons,
+        start
+            .with_choices(None, |_| None, Some(IconName::Nerd), color)
+            .icons,
         Icons::nerd()
     );
     assert_eq!(
         Theme::plain()
-            .with_choices(None, Some(IconName::Nerd), color)
+            .with_choices(None, |_| None, Some(IconName::Nerd), color)
             .icons,
         Icons::plain()
     );
@@ -283,6 +285,19 @@ fn each_symbol_of_each_set_fills_one_column_per_character() {
         for symbol in icons.all() {
             assert_eq!(symbol.width(), symbol.chars().count(), "{symbol:?}");
         }
+    }
+}
+
+#[test]
+fn the_kind_field_names_each_source() {
+    let mut screen = form_screen("form-kind-names", Theme::plain());
+    let names = ["PostgreSQL", "MySQL", "SQLite", "Redis/Valkey", "DuckDB"];
+    for (index, name) in names.iter().enumerate() {
+        if index > 0 {
+            screen.code(KeyCode::Right);
+        }
+        let shown = screen.screen(100, 30);
+        assert!(shown.contains(&format!("< {name} >")), "{name}:\n{shown}");
     }
 }
 
@@ -305,7 +320,7 @@ fn each_name_gives_its_own_theme_and_a_place_in_the_file() {
     let themes: Vec<Theme> = ThemeName::ALL
         .iter()
         .filter(|name| **name != ThemeName::Auto)
-        .map(|name| Theme::named(*name, env))
+        .map(|name| Theme::named(name, |_| None, env))
         .collect();
     for (index, theme) in themes.iter().enumerate() {
         assert!(!themes[index + 1..].contains(theme), "{index}");
@@ -349,6 +364,21 @@ fn each_scheme_keeps_its_text_readable() {
         schemes::CATPPUCCIN_LATTE,
         schemes::GRUVBOX,
         schemes::NORD,
+        schemes::DRACULA,
+        schemes::ONE_DARK,
+        schemes::MONOKAI,
+        schemes::SOLARIZED_DARK,
+        schemes::SOLARIZED_LIGHT,
+        schemes::GITHUB_DARK,
+        schemes::ROSE_PINE,
+        schemes::HIGH_CONTRAST,
+        schemes::HIGH_CONTRAST_LIGHT,
+        schemes::EVERFOREST,
+        schemes::KANAGAWA,
+        schemes::NIGHT_OWL,
+        schemes::ROSE_PINE_DAWN,
+        schemes::EVERFOREST_LIGHT,
+        schemes::EMBER,
     ];
     for scheme in schemes {
         let theme = Theme::from_scheme(&scheme);
@@ -1364,6 +1394,8 @@ fn the_sidebar_shows_only_the_sections_with_fields() {
         shown.contains("Credentials") && shown.contains("Security"),
         "{shown}"
     );
+    // `Left` goes backwards through the kinds from PostgreSQL.
+    screen.code(KeyCode::Left);
     screen.code(KeyCode::Left);
     screen.code(KeyCode::Left);
     assert_eq!(screen.app.form().unwrap().kind, sqln::form::Kind::Sqlite);
@@ -1675,13 +1707,15 @@ fn each_kind_of_note_has_its_own_color() {
     );
     assert_eq!(
         color_of(FormNote::Info("message".to_owned())),
-        theme.status.fg.unwrap()
+        theme.hint.fg.unwrap()
     );
     assert_eq!(
         color_of(FormNote::Error("message".to_owned())),
         theme.error.fg.unwrap()
     );
-    assert_ne!(theme.mark_good.fg, theme.status.fg);
+    assert_ne!(theme.mark_good.fg, theme.hint.fg);
+    assert_ne!(theme.mark_good.fg, theme.error.fg);
+    assert_ne!(theme.hint.fg, theme.error.fg);
 }
 
 #[test]
@@ -1693,6 +1727,8 @@ fn a_working_connection_gives_a_success_note_and_a_test_in_progress_does_not() {
         .unwrap();
     let theme = Theme::astrodark();
     let mut screen = form_screen("form-success-start", theme);
+    // `Left` goes backwards through the kinds from PostgreSQL.
+    screen.code(KeyCode::Left);
     screen.code(KeyCode::Left);
     screen.code(KeyCode::Left);
     focus_field(&mut screen, Field::Name);

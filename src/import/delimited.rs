@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 
-use super::{BadRow, Encoding, FileRow, ImportFormat, Input, Item, ReadOptions};
+use super::{Encoding, ImportFormat, Input, Item, ReadOptions};
 use crate::ui::text;
 
 /// The characters of the bytes 0x80 to 0x9F. The other bytes match their code points.
@@ -245,18 +245,7 @@ impl DelimitedReader {
             _ => self.cells(),
         };
         let source = self.source();
-        Ok(Some(match cells {
-            Ok(cells) => Item::Row(FileRow {
-                line,
-                source,
-                cells,
-            }),
-            Err(reason) => Item::Bad(BadRow {
-                line,
-                source,
-                reason,
-            }),
-        }))
+        Ok(Some(super::row_item(line, source, cells)))
     }
 
     /// Returns the columns from the first record. Without a header, only their number

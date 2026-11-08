@@ -174,6 +174,7 @@ impl Connector for RedisConnector {
             table_filters: false,
             data_edit: false,
             parameters: false,
+            single_session: false,
         }
     }
 

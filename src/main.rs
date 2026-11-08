@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use sqln::app::{Options, run};
 use sqln::connection::{Definition, Source};
+use sqln::connector::duckdb::{DuckdbTarget, file_source as duckdb_source};
 use sqln::connector::target::{OpenTarget, open_target};
 use sqln::sql::Dialect;
 use sqln::store::{self, Root, Store};
@@ -22,6 +23,8 @@ struct Cli {
     project: Option<PathBuf>,
     dialect: Option<Dialect>,
     log: Option<PathBuf>,
+    /// A `.sql` file that opens as a console at the start.
+    script: Option<PathBuf>,
     /// The file or the URI to open.
     target: Option<String>,
 }
@@ -52,11 +55,16 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
                 let file = args.next().ok_or("--log needs a file.")?;
                 cli.log = Some(PathBuf::from(file));
             }
+            "--script" => {
+                let file = args.next().ok_or("--script needs a .sql file.")?;
+                cli.script = Some(PathBuf::from(file));
+            }
             "--dialect" => {
                 cli.dialect = Some(match args.next().as_deref() {
                     Some("postgres") => Dialect::Postgres,
                     Some("mysql") => Dialect::MySql,
                     Some("sqlite") => Dialect::Sqlite,
+                    Some("duckdb") => Dialect::DuckDb,
                     Some("redis") => Dialect::Redis,
                     other => return Err(format!("Unknown dialect: {}", other.unwrap_or(""))),
                 });
@@ -73,6 +81,14 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
 fn open(options: &mut Options, target: &str) -> Result<(), String> {
     match open_target(target)? {
         OpenTarget::File(path) => options.database = Some(path),
+        OpenTarget::Duckdb(text) => {
+            let target = DuckdbTarget {
+                source: duckdb_source(&text),
+                allow_create: true,
+                read_only: false,
+            };
+            options.connections.push(Definition::duckdb(target));
+        }
         OpenTarget::Network(mut target) => {
             if target.password.is_none() && target.engine.needs_user() && stdin().is_terminal() {
                 target.password = read_password(&text::password_prompt(&target.user))
@@ -107,6 +123,26 @@ fn options_of(cli: Cli) -> Result<Options, String> {
     };
     if let Some(dialect) = cli.dialect {
         options.dialect = dialect;
+    }
+    if let Some(script) = &cli.script {
+        if !script.is_file() {
+            return Err(format!(
+                "--script needs an existing file: {}",
+                script.display()
+            ));
+        }
+        // Without a target, the file opens in a saved connection. There is no other
+        // connection to pick at the start.
+        let saved = options
+            .store
+            .as_ref()
+            .map(store::config::load)
+            .and_then(|loaded| loaded.config.ok())
+            .is_some_and(|config| !config.connections.is_empty());
+        if cli.target.is_none() && !saved {
+            return Err("--script needs a connection: give a target or save a connection.".into());
+        }
+        options.script = Some(script.clone());
     }
     if let Some(target) = &cli.target {
         open(&mut options, target)?;

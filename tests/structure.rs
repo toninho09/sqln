@@ -235,6 +235,30 @@ fn mysql_doubles_a_backslash_in_a_name() {
 }
 
 #[test]
+fn duckdb_filters_an_attached_database_by_catalog_and_schema() {
+    let attached = relation("db.public", "player");
+    let sql = structure_sql(
+        Dialect::DuckDb,
+        Scope::Relation,
+        &attached,
+        Section::Columns,
+    )
+    .unwrap();
+    assert!(
+        sql.contains("database_name = 'db'") && sql.contains("schema_name = 'public'"),
+        "{sql}"
+    );
+    let local = structure_sql(
+        Dialect::DuckDb,
+        Scope::Relation,
+        &relation("main", "t"),
+        Section::Columns,
+    )
+    .unwrap();
+    assert!(!local.contains("database_name = '"), "{local}");
+}
+
+#[test]
 fn a_connection_hides_the_schemas_that_the_navigator_hides() {
     let all = RelationRef::default();
     let postgres =

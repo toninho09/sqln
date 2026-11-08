@@ -1,7 +1,8 @@
 //! The MCP row, and the scrollable review of proposed SQL edits.
 
+use super::kit::buttons::{self, ButtonState, RowOptions};
 use crate::ui::{text, theme::Theme};
-use ratatui::{Frame, layout::Rect, style::Style, text::Span, widgets::Paragraph};
+use ratatui::{Frame, layout::Rect, text::Span, widgets::Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 /// The content of the MCP row.
@@ -56,36 +57,35 @@ pub fn draw_card(frame: &mut Frame, area: Rect, card: &Card, theme: &Theme) -> C
     }
     let rect = Rect::new(area.right() - width - 1, area.bottom() - 4, width, 4);
     frame.render_widget(ratatui::widgets::Clear, rect);
-    let warning = Style {
-        bg: None,
-        ..theme.status_warning
-    };
-    let block = super::float_block(card.title, theme)
-        .border_style(warning)
-        .title_style(warning)
-        .padding(ratatui::widgets::Padding::horizontal(1));
+    let block = super::kit::modal::warning_block(card.title, theme);
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     let room = usize::from(inner.width);
-    let (message, _) = super::console::fit(&card.message, room);
+    let (message, _) = super::kit::measure::fit(&card.message, room);
     frame.render_widget(Paragraph::new(message), Rect { height: 1, ..inner });
     let row = Rect {
         y: inner.y + 1,
         height: 1,
         ..inner
     };
-    let mut right = row.right();
-    let mut place = |label: &str| {
-        let label = theme.button(label);
-        let width = u16::try_from(label.width()).unwrap_or(u16::MAX);
-        let x = right.saturating_sub(width).max(row.x);
-        let target = Rect::new(x, row.y, right.saturating_sub(x), 1);
-        frame.render_widget(Paragraph::new(label).style(theme.dialog_option), target);
-        right = x.saturating_sub(2);
-        target
+    let items = [
+        (0usize, theme.button(card.primary), ButtonState::Idle),
+        (1usize, theme.button(card.secondary), ButtonState::Idle),
+    ];
+    let drawn = buttons::draw(frame, row, RowOptions::INLINE_RIGHT, &items, theme);
+    let target = |index: usize| {
+        drawn
+            .iter()
+            .find(|(id, _)| *id == index)
+            .map_or(Rect::default(), |(_, rect)| *rect)
     };
-    let secondary = place(card.secondary);
-    let primary = place(card.primary);
+    let primary = target(0);
+    let secondary = target(1);
+    let right = drawn
+        .iter()
+        .map(|(_, rect)| rect.x)
+        .min()
+        .map_or(row.right(), |x| x.saturating_sub(2));
     if let Some(shortcut) = card
         .shortcut
         .as_ref()
@@ -103,22 +103,31 @@ pub fn draw_card(frame: &mut Frame, area: Rect, card: &Card, theme: &Theme) -> C
 /// Draws the MCP row. The buttons stay at the right, and the text gives way to them.
 pub fn draw_bar(frame: &mut Frame, area: Rect, bar: &Bar, theme: &Theme) -> BarTargets {
     let mut targets = BarTargets::default();
-    let mut right = area.right().saturating_sub(1);
-    let mut place = |label: &str| {
-        let label = theme.button(label);
-        let width = u16::try_from(label.width()).unwrap_or(u16::MAX);
-        let x = right.saturating_sub(width).max(area.x);
-        let rect = Rect::new(x, area.y, right.saturating_sub(x), 1);
-        frame.render_widget(Paragraph::new(label).style(theme.dialog_option), rect);
-        right = x.saturating_sub(2);
-        rect
-    };
-    if bar.review {
-        targets.review = place(text::AGENT_REVIEW);
-    }
+    let mut items = Vec::new();
     if bar.stop {
-        targets.stop = place(text::AGENT_STOP);
+        items.push((0usize, theme.button(text::AGENT_STOP), ButtonState::Idle));
     }
+    if bar.review {
+        items.push((1usize, theme.button(text::AGENT_REVIEW), ButtonState::Idle));
+    }
+    let buttons_area = Rect {
+        width: area.width.saturating_sub(1),
+        height: 1,
+        ..area
+    };
+    let drawn = buttons::draw(frame, buttons_area, RowOptions::INLINE_RIGHT, &items, theme);
+    for (id, rect) in &drawn {
+        if *id == 0 {
+            targets.stop = *rect;
+        } else {
+            targets.review = *rect;
+        }
+    }
+    let right = drawn
+        .iter()
+        .map(|(_, rect)| rect.x)
+        .min()
+        .map_or(area.right().saturating_sub(1), |x| x.saturating_sub(2));
     let label = " MCP ";
     let room = usize::from(right.saturating_sub(area.x)).saturating_sub(label.width() + 1);
     let (long, short) = &bar.items;
@@ -131,7 +140,7 @@ pub fn draw_bar(frame: &mut Frame, area: Rect, bar: &Bar, theme: &Theme) -> BarT
         message.push_str("  ");
         message.push_str(shortcut);
     }
-    let (message, _) = super::console::fit(&message, room);
+    let (message, _) = super::kit::measure::fit(&message, room);
     let line = ratatui::text::Line::from(vec![
         Span::styled(label, theme.status_warning),
         Span::raw(" "),

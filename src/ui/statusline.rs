@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use super::console::fit;
+use super::kit::measure::fit;
 use super::text;
 use super::theme::Theme;
 use crate::connector::TransactionState;
@@ -58,6 +58,8 @@ pub struct StatusData<'a> {
     pub position: Option<(usize, usize)>,
     /// The label of the MCP sessions with access, such as `MCP 1 all`.
     pub agent: Option<&'a str>,
+    /// The seconds of the auto-refresh of the tab, when it is armed.
+    pub auto: Option<u64>,
 }
 
 fn panel_label(panel: StatusPanel, theme: &Theme) -> (&'static str, Style) {
@@ -137,6 +139,9 @@ fn state_parts(data: &StatusData, theme: &Theme) -> Vec<(String, Style)> {
         .as_ref()
         .map_or_else(|| phase.to_owned(), |time| format!("{phase} {time}"));
     parts.push((phase, style));
+    if let Some(seconds) = data.auto {
+        parts.push((text::auto_refresh_label(seconds), theme.status_detail));
+    }
     parts
 }
 
@@ -204,71 +209,6 @@ fn short_name(name: &str, room: usize) -> String {
     }
     let (start, _) = fit(name, room.saturating_sub(1));
     format!("{start}…")
-}
-
-/// One command of the hint bar: a key and its effect. A note has an empty key.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HintItem {
-    pub key: String,
-    pub label: &'static str,
-}
-
-impl HintItem {
-    pub fn of(parts: &[text::HintPart]) -> Vec<Self> {
-        parts
-            .iter()
-            .map(|(key, label)| Self {
-                key: (*key).to_owned(),
-                label: *label,
-            })
-            .collect()
-    }
-
-    fn text(&self) -> String {
-        if self.key.is_empty() {
-            self.label.to_owned()
-        } else {
-            format!("{} {}", self.key, self.label)
-        }
-    }
-}
-
-/// Returns the text of a row of commands.
-pub fn hint_text(items: &[HintItem]) -> String {
-    let parts: Vec<String> = items.iter().map(HintItem::text).collect();
-    parts.join(GAP)
-}
-
-/// Keeps the commands that fit a row, in their order. A command that does not fit stays
-/// out whole, so the row shows no cut key, and a later short command can still fit.
-pub fn fit_hints(items: &[HintItem], width: usize) -> Vec<HintItem> {
-    let mut used = 0;
-    let mut kept = Vec::new();
-    for item in items {
-        let gap = if kept.is_empty() { 0 } else { GAP.len() };
-        let cost = gap + item.text().width();
-        if used + cost <= width {
-            used += cost;
-            kept.push(item.clone());
-        }
-    }
-    kept
-}
-
-/// Returns a row of commands. The style of the keys and the gap separate each command.
-pub fn hint_line(items: &[HintItem], theme: &Theme) -> Line<'static> {
-    let mut spans = Vec::new();
-    for (index, item) in items.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw(GAP));
-        }
-        if !item.key.is_empty() {
-            spans.push(Span::styled(item.key.clone(), theme.key));
-            spans.push(Span::raw(" "));
-        }
-        spans.push(Span::styled(item.label, theme.hint));
-    }
-    Line::from(spans)
 }
 
 /// Draws the row. The state stays, and the name of the connection gives way to it.

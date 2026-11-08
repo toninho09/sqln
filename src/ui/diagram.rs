@@ -9,7 +9,9 @@ use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::console::{draw_panel_title, fit, message_style};
+use super::kit::feedback::message_style;
+use super::kit::measure::fit;
+use super::kit::panel::draw_panel_title;
 use super::text;
 use super::theme::Theme;
 use crate::console::Phase;

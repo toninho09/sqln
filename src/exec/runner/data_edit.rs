@@ -10,7 +10,7 @@ use super::{
 };
 use crate::compare::sql::table_columns_sql;
 use crate::connector::TransactionState;
-use crate::data_edit::{Failure, Job, Metadata, Outcome};
+use crate::data_edit::{Change, Failure, Job, Metadata, Outcome};
 use crate::exec::sink::Captured;
 use crate::pool::Lease;
 use crate::sql::{Dialect, literal::text_literal};
@@ -123,10 +123,10 @@ impl ConsoleTask {
         let console = self.console;
         self.emit(ExecEvent::Queued { console, execution }).await;
         let job = match job {
-            Job::Review { metadata, patches } => {
+            Job::Review { metadata, changes } => {
                 self.emit(ExecEvent::Started { console, execution }).await;
                 let result = tokio::task::spawn_blocking(move || {
-                    crate::data_edit::review(&metadata, &patches)
+                    crate::data_edit::review(&metadata, &changes)
                 })
                 .await;
                 let result = match result {
@@ -240,8 +240,8 @@ impl ConsoleTask {
                     .await
                     .map(Outcome::Metadata)
             }
-            Job::Apply { metadata, patches } => {
-                if metadata.dialect != self.binding.pool.dialect() || patches.is_empty() {
+            Job::Apply { metadata, changes } => {
+                if metadata.dialect != self.binding.pool.dialect() || changes.is_empty() {
                     return Err(failure(text::EDIT_NO_CHANGES));
                 }
                 let begin = if metadata.dialect == Dialect::Sqlite {
@@ -257,14 +257,16 @@ impl ConsoleTask {
                     .map(|col| col.name.clone())
                     .collect();
                 // Hold the row locks until commit. Validate all rows before any write.
-                for patch in &patches {
-                    let sql = metadata.lock_sql(&patch.original.row).map_err(failure)?;
-                    let captured = self.edit_statement(lease, key, &sql, 2, commands).await?;
-                    if captured.columns != columns
-                        || captured.rows.len() != 1
-                        || captured.rows[0].row != patch.original.row
-                    {
-                        return Err(failure(text::EDIT_CONFLICT));
+                for change in &changes {
+                    if let Some(original) = change.original() {
+                        let sql = metadata.lock_sql(&original.row).map_err(failure)?;
+                        let captured = self.edit_statement(lease, key, &sql, 2, commands).await?;
+                        if captured.columns != columns
+                            || captured.rows.len() != 1
+                            || captured.rows[0].row != original.row
+                        {
+                            return Err(failure(text::EDIT_CONFLICT));
+                        }
                     }
                 }
                 let current = self
@@ -273,22 +275,51 @@ impl ConsoleTask {
                 if current != metadata {
                     return Err(failure(text::EDIT_SCHEMA_CHANGED));
                 }
-                for patch in &patches {
-                    let sql = metadata.update_sql(patch).map_err(failure)?;
-                    // Earlier triggers can change another pending row on this session.
-                    let locked = metadata.lock_sql(&patch.original.row).map_err(failure)?;
-                    let captured = self
-                        .edit_statement(lease, key, &locked, 2, commands)
-                        .await?;
-                    if captured.rows.len() != 1 || captured.rows[0].row != patch.original.row {
-                        return Err(failure(text::EDIT_CONFLICT));
-                    }
-                    let result = self.edit_statement(lease, key, &sql, 1, commands).await?;
-                    // The lock proves identity even when MySQL reports no changed value.
-                    if !matches!(result.changed, Some(1))
-                        && !(metadata.dialect == Dialect::MySql && result.changed == Some(0))
-                    {
-                        return Err(failure(text::EDIT_CONFLICT));
+                for change in &changes {
+                    match change {
+                        Change::Update(patch) => {
+                            let sql = metadata.update_sql(patch).map_err(failure)?;
+                            // Earlier triggers can change another pending row on this session.
+                            let locked = metadata.lock_sql(&patch.original.row).map_err(failure)?;
+                            let captured = self
+                                .edit_statement(lease, key, &locked, 2, commands)
+                                .await?;
+                            if captured.rows.len() != 1
+                                || captured.rows[0].row != patch.original.row
+                            {
+                                return Err(failure(text::EDIT_CONFLICT));
+                            }
+                            let result = self.edit_statement(lease, key, &sql, 1, commands).await?;
+                            // The lock proves identity even when MySQL reports no changed value.
+                            if !(matches!(result.changed, Some(1))
+                                || metadata.dialect == Dialect::MySql && result.changed == Some(0))
+                            {
+                                return Err(failure(text::EDIT_CONFLICT));
+                            }
+                        }
+                        Change::Delete { original } => {
+                            let locked = metadata.lock_sql(&original.row).map_err(failure)?;
+                            let captured = self
+                                .edit_statement(lease, key, &locked, 2, commands)
+                                .await?;
+                            if captured.rows.len() != 1 || captured.rows[0].row != original.row {
+                                return Err(failure(text::EDIT_CONFLICT));
+                            }
+                            let sql = metadata.delete_sql(&original.row).map_err(failure)?;
+                            let result = self.edit_statement(lease, key, &sql, 1, commands).await?;
+                            if result.changed != Some(1) {
+                                return Err(failure(text::EDIT_CONFLICT));
+                            }
+                        }
+                        Change::Insert { current, columns } => {
+                            let sql = metadata
+                                .insert_sql(&current.row, columns)
+                                .map_err(failure)?;
+                            let result = self.edit_statement(lease, key, &sql, 1, commands).await?;
+                            if result.changed != Some(1) {
+                                return Err(failure(text::EDIT_CONFLICT));
+                            }
+                        }
                     }
                 }
                 if let Err(mut error) = self.edit_statement(lease, key, "COMMIT", 1, commands).await

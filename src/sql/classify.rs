@@ -442,6 +442,23 @@ pub fn counts_rows(sql: &str, dialect: Dialect) -> bool {
     })
 }
 
+/// Returns true for a statement that changes rows or files and has no result of its
+/// own, which DuckDB answers with one `Count` row. A `RETURNING` clause gives the
+/// statement a result of its own, and the caller reads it as a stream.
+pub fn changes_without_result(sql: &str, dialect: Dialect) -> bool {
+    let words = top_level_words(sql, dialect);
+    main_verb(&words).is_some_and(|verb| {
+        is_any(
+            verb,
+            &[
+                "INSERT", "UPDATE", "DELETE", "MERGE", "REPLACE", "COPY", "LOAD",
+            ],
+        )
+    }) && !words
+        .iter()
+        .any(|word| word.eq_ignore_ascii_case("RETURNING"))
+}
+
 /// Returns true for `DEALLOCATE` and `DISCARD ALL`. These statements can remove the
 /// prepared statements of the driver from the server.
 pub fn removes_prepared_statements(sql: &str, dialect: Dialect) -> bool {

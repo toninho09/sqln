@@ -515,7 +515,7 @@ fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
 #[test]
 fn each_hint_fits_the_minimum_terminal_width() {
     use sqln::input::SuggestionKeys;
-    use sqln::ui::statusline::{HintItem, hint_text};
+    use sqln::ui::kit::feedback::{HintItem, hint_text};
     use sqln::ui::text;
     for parts in [
         text::HINT_FILTER,

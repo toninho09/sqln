@@ -9,7 +9,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use sqln::browser::{BrowserRequest, FileBrowser, RowView};
 use sqln::ui::browser::draw_browser;
-use sqln::ui::console::modal_width;
+use sqln::ui::kit::geometry::modal_width;
 use sqln::ui::theme::Theme;
 
 /// Creates a folder with these names. A name that ends with `/` is a folder.

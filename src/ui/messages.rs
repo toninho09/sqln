@@ -7,6 +7,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
+use super::kit::feedback::log_note_style;
 use super::theme::Theme;
 use super::wrap::row_end;
 use crate::command_log::{CommandState, Entry, History, ViewKey, limited};
@@ -233,9 +234,10 @@ impl<'a> Layout<'a> {
                             printable(&part.text[at..end]),
                             theme.panel_title.add_modifier(Modifier::BOLD),
                         ),
-                        Kind::Note(level) => {
-                            Line::styled(printable(&part.text[at..end]), note_style(level, theme))
-                        }
+                        Kind::Note(level) => Line::styled(
+                            printable(&part.text[at..end]),
+                            log_note_style(level, theme),
+                        ),
                         Kind::Space => Line::default(),
                     };
                     shown.push(line);
@@ -255,14 +257,6 @@ fn statement_text<'a>(entry: &Entry, text: &'a str) -> &'a str {
         .key
         .and_then(|key| text.strip_prefix(&format!("Statement {}: ", key.index + 1)))
         .unwrap_or(text)
-}
-
-fn note_style(level: MessageLevel, theme: &Theme) -> Style {
-    match level {
-        MessageLevel::Info => theme.hint,
-        MessageLevel::Warning => theme.mark_neutral,
-        MessageLevel::Error => theme.error,
-    }
 }
 
 fn state_style(state: CommandState, theme: &Theme) -> Style {

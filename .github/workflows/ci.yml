@@ -29,13 +29,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install stable Rust
-        run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup default stable
+      - name: Install Rust components
+        run: rustup component add --toolchain stable rustfmt clippy
 
-      - name: Fetch locked dependencies
-        run: cargo fetch --locked
+      - name: Cache Rust dependencies and build output
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: ci
 
       - name: Run delivery checks
         run: make check
@@ -50,13 +50,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install stable Rust
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-
-      - name: Fetch locked dependencies
-        run: cargo fetch --locked
+      - name: Cache Rust dependencies and build output
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: ci
 
       - name: Create disposable TLS certificates
         run: scripts/test-certs.sh

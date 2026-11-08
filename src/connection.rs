@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::catalog::{Catalog, RelationRef};
+use crate::connector::duckdb::{DuckdbConnector, DuckdbSource, DuckdbTarget};
 use crate::connector::sqlite::{SqliteConnector, SqliteTarget};
 use crate::connector::target::{Address, Engine, NetworkTarget, Tls};
 use crate::connector::{Capabilities, Connector, network_connector};
@@ -23,6 +24,7 @@ pub const DEFAULT_BUSY_SECONDS: u64 = 5;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
     Sqlite(SqliteTarget),
+    Duckdb(DuckdbTarget),
     Network(NetworkTarget),
 }
 
@@ -80,7 +82,19 @@ impl Definition {
     pub fn resolved_source(&self) -> Source {
         match &self.source {
             Source::Sqlite(target) => Source::Sqlite(SqliteTarget {
-                path: self.resolve(&target.path),
+                source: match &target.source {
+                    crate::connector::sqlite::SqliteSource::File(path) => {
+                        crate::connector::sqlite::SqliteSource::File(self.resolve(path))
+                    }
+                    memory => memory.clone(),
+                },
+                ..target.clone()
+            }),
+            Source::Duckdb(target) => Source::Duckdb(DuckdbTarget {
+                source: match &target.source {
+                    DuckdbSource::File(path) => DuckdbSource::File(self.resolve(path)),
+                    memory => memory.clone(),
+                },
                 ..target.clone()
             }),
             Source::Network(target) => {
@@ -99,26 +113,58 @@ impl Definition {
 
     /// Returns a definition for a file, with the file name as its name.
     pub fn sqlite(target: SqliteTarget) -> Self {
-        let name = target.path.file_name().unwrap_or(target.path.as_os_str());
-        let name = name.to_string_lossy().into_owned();
+        let name = match &target.source {
+            crate::connector::sqlite::SqliteSource::File(path) => path
+                .file_name()
+                .unwrap_or(path.as_os_str())
+                .to_string_lossy()
+                .into_owned(),
+            crate::connector::sqlite::SqliteSource::Memory => ":memory:".to_owned(),
+        };
         Self::new(name, Source::Sqlite(target))
+    }
+
+    /// Returns a definition for a DuckDB file, with the file name as its name.
+    pub fn duckdb(target: DuckdbTarget) -> Self {
+        let name = match &target.source {
+            DuckdbSource::File(path) => path
+                .file_name()
+                .unwrap_or(path.as_os_str())
+                .to_string_lossy()
+                .into_owned(),
+            DuckdbSource::Memory => ":memory:".to_owned(),
+        };
+        Self::new(name, Source::Duckdb(target))
     }
 
     pub fn connector(&self) -> Arc<dyn Connector> {
         match self.resolved_source() {
             Source::Sqlite(target) => Arc::new(SqliteConnector::new(target)),
+            Source::Duckdb(target) => Arc::new(DuckdbConnector::new(DuckdbTarget {
+                // DuckDB applies read-only when the file opens, so the definition decides
+                // it here, in one place.
+                read_only: self.read_only,
+                ..target
+            })),
             Source::Network(target) => network_connector(target),
         }
     }
 
     /// Returns the limits of this connection on top of the application settings.
+    /// A database in memory lives in one session, so the pool holds one place and no
+    /// idle timeout closes it.
     pub fn settings(&self, base: &Settings) -> Settings {
+        let memory = match &self.source {
+            Source::Sqlite(target) => target.is_memory(),
+            Source::Duckdb(target) => target.is_memory(),
+            Source::Network(_) => false,
+        };
         Settings {
             read_only: self.read_only || base.read_only,
-            max_connections: self.max_connections,
+            max_connections: if memory { 1 } else { self.max_connections },
             connect_timeout: self.connect_timeout,
             sql_timeout: self.sql_timeout,
-            idle_timeout: self.idle_timeout,
+            idle_timeout: if memory { None } else { self.idle_timeout },
             ..base.clone()
         }
     }
@@ -162,7 +208,16 @@ impl Definition {
     /// Writes the destination, without the password.
     pub fn summary(&self) -> String {
         match &self.source {
-            Source::Sqlite(target) => target.path.display().to_string(),
+            Source::Sqlite(target) => match &target.source {
+                crate::connector::sqlite::SqliteSource::File(path) => path.display().to_string(),
+                crate::connector::sqlite::SqliteSource::Memory => {
+                    ":memory: (until disconnect)".to_owned()
+                }
+            },
+            Source::Duckdb(target) => match &target.source {
+                DuckdbSource::File(path) => format!("DuckDB {}", path.display()),
+                DuckdbSource::Memory => "DuckDB :memory: (until disconnect)".to_owned(),
+            },
             Source::Network(target) => {
                 let tls = match target.tls {
                     Tls::Disabled => "no TLS",

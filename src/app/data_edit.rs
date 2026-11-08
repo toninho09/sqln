@@ -7,16 +7,18 @@ use super::auth::Use;
 use super::{App, DialogAction};
 use crate::console::Phase;
 use crate::data_edit::form::{Body, EditForm};
-use crate::data_edit::{Job, Outcome, Restore, SavedRow};
+use crate::data_edit::{DeleteToggle, Job, Outcome, Restore, SavedRow};
 use crate::exec::{ConsoleId, ExecEvent, ExecutionEnd};
 use crate::grid::Value;
 use crate::input::{Chord, Lookup, Region};
 use crate::sql::literal::is_number;
+use crate::table::EditAfter;
 use crate::ui::text;
 use crate::ui::wrap::WrappedText;
 
 impl App {
-    pub(super) fn edit_refusal(&self) -> Option<String> {
+    /// The reasons that block every edit of the grid of a table tab.
+    fn edit_base_refusal(&self) -> Option<String> {
         let tab = self.table()?;
         if tab.is_busy() {
             return Some(text::TABLE_BUSY.to_owned());
@@ -34,11 +36,68 @@ impl App {
         {
             return Some(text::EDIT_UNAVAILABLE.to_owned());
         }
+        None
+    }
+
+    /// The reasons that block a new pending insert row.
+    pub(super) fn new_row_refusal(&self) -> Option<String> {
+        if self.table().is_none() {
+            return Some(text::EDIT_UNAVAILABLE.to_owned());
+        }
+        if let Some(reason) = self.edit_base_refusal() {
+            return Some(reason);
+        }
+        let tab = self.table()?;
+        if let Some(metadata) = &tab.edit_metadata
+            && !metadata.matches(&tab.result.table.columns)
+        {
+            return Some(text::EDIT_SCHEMA_CHANGED.to_owned());
+        }
+        None
+    }
+
+    /// The reasons that block the delete mark of the row of the cursor.
+    pub(super) fn delete_row_refusal(&self) -> Option<String> {
+        if self.table().is_none() {
+            return Some(text::EDIT_UNAVAILABLE.to_owned());
+        }
+        if let Some(reason) = self.edit_base_refusal() {
+            return Some(reason);
+        }
+        let tab = self.table()?;
         if tab.result.table.rows.is_empty() {
             return Some(text::EDIT_NO_CELL.to_owned());
         }
+        if let Some(metadata) = &tab.edit_metadata
+            && !metadata.matches(&tab.result.table.columns)
+        {
+            return Some(text::EDIT_SCHEMA_CHANGED.to_owned());
+        }
+        None
+    }
+
+    pub(super) fn edit_refusal(&self) -> Option<String> {
+        if let Some(reason) = self.edit_base_refusal() {
+            return Some(reason);
+        }
+        let tab = self.table()?;
+        if tab.result.table.rows.is_empty() {
+            return Some(text::EDIT_NO_CELL.to_owned());
+        }
+        let row = tab.result.view.row;
+        if tab.result.edits.is_insert(row) {
+            if let Some(metadata) = &tab.edit_metadata {
+                return metadata
+                    .editable_insert(&tab.result.table.columns, tab.result.view.col)
+                    .err();
+            }
+            return None;
+        }
+        if tab.result.edits.deletes.contains_key(&row) {
+            return Some(text::EDIT_ROW_DELETED.to_owned());
+        }
         if let Some(metadata) = &tab.edit_metadata {
-            let row = tab.result.table.rows.get(tab.result.view.row)?;
+            let row = tab.result.table.rows.get(row)?;
             if let Err(reason) =
                 metadata.editable(&tab.result.table.columns, row, tab.result.view.col)
             {
@@ -93,10 +152,140 @@ impl App {
                 .iter_mut()
                 .find(|tab| tab.id == id)
                 .unwrap()
-                .edit_after = Some((row, col, null));
+                .edit_after = Some(EditAfter::Cell { row, col, null });
             self.authorize(connection, Use::Edit { console: id, job });
         } else {
             self.open_cell_editor(id, row, col, null);
+        }
+    }
+
+    /// Appends one pending insert row, after the metadata read when needed.
+    pub(super) fn new_row(&mut self) {
+        if self.config_blocked() {
+            return;
+        }
+        if let Some(reason) = self.new_row_refusal() {
+            self.status = Some(reason.to_owned());
+            return;
+        }
+        let Some(tab) = self.table() else {
+            self.status = Some(text::EDIT_UNAVAILABLE.to_owned());
+            return;
+        };
+        let (id, connection) = (tab.id, tab.connection);
+        if tab.edit_metadata.is_none() {
+            let Some(dialect) = self.connection(connection).map(|item| item.dialect) else {
+                return;
+            };
+            let job = Job::Inspect {
+                relation: tab.relation.clone(),
+                dialect,
+            };
+            self.tables
+                .iter_mut()
+                .find(|tab| tab.id == id)
+                .unwrap()
+                .edit_after = Some(EditAfter::NewRow);
+            self.authorize(connection, Use::Edit { console: id, job });
+        } else {
+            self.append_new_row(id);
+        }
+    }
+
+    fn append_new_row(&mut self, id: ConsoleId) {
+        if self.table().is_none_or(|tab| tab.id != id) {
+            return;
+        }
+        let budget = self.budget.clone();
+        let Some(index) = self.tables.iter().position(|tab| tab.id == id) else {
+            return;
+        };
+        let tab = &mut self.tables[index];
+        match tab.result.edits.new_row(&mut tab.result.table, &budget) {
+            Ok(row) => {
+                let col = tab.result.view.col;
+                tab.result.view.move_to(row, col, &tab.result.table, false);
+                self.reset_table_search(index);
+                self.status = Some(text::EDIT_ROW_ADDED.to_owned());
+            }
+            Err(reason) => self.status = Some(reason),
+        }
+    }
+
+    /// Toggles the delete mark of the row of the cursor, after the metadata read when
+    /// needed.
+    pub(super) fn toggle_delete_row(&mut self) {
+        if self.config_blocked() {
+            return;
+        }
+        if let Some(reason) = self.delete_row_refusal() {
+            self.status = Some(reason.to_owned());
+            return;
+        }
+        let Some(tab) = self.table() else {
+            self.status = Some(text::EDIT_UNAVAILABLE.to_owned());
+            return;
+        };
+        let (id, connection, row) = (tab.id, tab.connection, tab.result.view.row);
+        if tab.edit_metadata.is_none() {
+            let Some(dialect) = self.connection(connection).map(|item| item.dialect) else {
+                return;
+            };
+            let job = Job::Inspect {
+                relation: tab.relation.clone(),
+                dialect,
+            };
+            self.tables
+                .iter_mut()
+                .find(|tab| tab.id == id)
+                .unwrap()
+                .edit_after = Some(EditAfter::Delete { row });
+            self.authorize(connection, Use::Edit { console: id, job });
+        } else {
+            self.toggle_delete_row_at(id, row);
+        }
+    }
+
+    fn toggle_delete_row_at(&mut self, id: ConsoleId, row: usize) {
+        if self.table().is_none_or(|tab| tab.id != id) {
+            return;
+        }
+        let budget = self.budget.clone();
+        let Some(index) = self.tables.iter().position(|tab| tab.id == id) else {
+            return;
+        };
+        let tab = &mut self.tables[index];
+        let result = tab
+            .result
+            .edits
+            .toggle_delete(&mut tab.result.table, row, &budget);
+        let note = match result {
+            Ok(DeleteToggle::Marked) => Some(text::EDIT_ROW_MARKED),
+            Ok(DeleteToggle::Unmarked) => Some(text::EDIT_ROW_UNMARKED),
+            Ok(DeleteToggle::RemovedInsert) => {
+                let col = tab.result.view.col;
+                let at = tab.result.view.row;
+                tab.result.view.move_to(at, col, &tab.result.table, false);
+                Some(text::EDIT_INSERT_REMOVED)
+            }
+            Err(reason) => {
+                self.status = Some(reason);
+                None
+            }
+        };
+        if let Some(note) = note {
+            self.reset_table_search(index);
+            self.status = Some(note.to_owned());
+        }
+    }
+
+    /// A new search reads the new values instead of retaining old matches.
+    fn reset_table_search(&mut self, index: usize) {
+        let tab = &mut self.tables[index];
+        if let Some(search) = &mut tab.result.search {
+            let query = search.query().to_owned();
+            *search = crate::grid::RowSearch::new((tab.result.view.row, tab.result.view.col));
+            search.push_str(&query);
         }
     }
 
@@ -111,7 +300,12 @@ impl App {
         let Some(values) = tab.result.table.rows.get(row) else {
             return;
         };
-        if let Err(reason) = metadata.editable(&tab.result.table.columns, values, col) {
+        let check = if tab.result.edits.is_insert(row) {
+            metadata.editable_insert(&tab.result.table.columns, col)
+        } else {
+            metadata.editable(&tab.result.table.columns, values, col)
+        };
+        if let Err(reason) = check {
             self.status = Some(reason);
             return;
         }
@@ -154,12 +348,19 @@ impl App {
             return false;
         };
         let tab = &self.tables[index];
+        let insert = tab.result.edits.is_insert(row);
         let result = (|| {
             let metadata = tab.edit_metadata.as_ref().ok_or(text::EDIT_UNAVAILABLE)?;
             let values = tab.result.table.rows.get(row).ok_or(text::EDIT_NO_CELL)?;
-            metadata
-                .editable(&tab.result.table.columns, values, col)
-                .map_err(|_| text::EDIT_PROTECTED)?;
+            if insert {
+                metadata
+                    .editable_insert(&tab.result.table.columns, col)
+                    .map_err(|_| text::EDIT_PROTECTED)?;
+            } else {
+                metadata
+                    .editable(&tab.result.table.columns, values, col)
+                    .map_err(|_| text::EDIT_PROTECTED)?;
+            }
             if value.is_none() && !metadata.table.columns[col].nullable {
                 return Err(text::EDIT_NOT_NULL);
             }
@@ -170,21 +371,32 @@ impl App {
             return false;
         }
         let tab = &mut self.tables[index];
+        let insert = tab.result.edits.is_insert(row);
         let value = match value {
             None => Value::Null,
             Some(value)
-                if matches!(tab.result.table.rows[row].get(col), Some(Value::Number(_)))
-                    && is_number(value) =>
+                if (if insert {
+                    tab.edit_metadata
+                        .as_ref()
+                        .is_some_and(|metadata| metadata.numeric(col))
+                } else {
+                    matches!(tab.result.table.rows[row].get(col), Some(Value::Number(_)))
+                }) && is_number(value) =>
             {
                 Value::Number(value)
             }
             Some(value) => Value::Text(value),
         };
-        match tab
-            .result
-            .edits
-            .set(&mut tab.result.table, row, col, value, &budget)
-        {
+        let result = if insert {
+            tab.result
+                .edits
+                .set_insert(&mut tab.result.table, row, col, value, &budget)
+        } else {
+            tab.result
+                .edits
+                .set(&mut tab.result.table, row, col, value, &budget)
+        };
+        match result {
             Ok(()) => {
                 // A new search reads the new values instead of retaining old matches.
                 if let Some(search) = &mut tab.result.search {
@@ -226,8 +438,8 @@ impl App {
             return;
         };
         let id = tab.id;
-        let patches = tab.result.edits.patches();
-        self.start_edit_job(id, Job::Review { metadata, patches });
+        let changes = tab.result.edits.changes();
+        self.start_edit_job(id, Job::Review { metadata, changes });
     }
 
     fn request_apply_edits(&mut self, id: ConsoleId) {
@@ -278,8 +490,8 @@ impl App {
         let Some(metadata) = tab.edit_metadata.clone() else {
             return;
         };
-        let patches = tab.result.edits.patches();
-        if patches.is_empty() {
+        let changes = tab.result.edits.changes();
+        if changes.is_empty() {
             return;
         }
         let connection = tab.connection;
@@ -313,7 +525,7 @@ impl App {
             connection,
             Use::Edit {
                 console: id,
-                job: Job::Apply { metadata, patches },
+                job: Job::Apply { metadata, changes },
             },
         );
     }
@@ -377,8 +589,15 @@ impl App {
                 match result {
                     Ok(Outcome::Metadata(metadata)) => {
                         tab.edit_metadata = Some(metadata);
-                        if let Some((row, col, null)) = tab.edit_after.take() {
-                            self.open_cell_editor(id, row, col, null);
+                        match tab.edit_after.take() {
+                            Some(EditAfter::Cell { row, col, null }) => {
+                                self.open_cell_editor(id, row, col, null);
+                            }
+                            Some(EditAfter::NewRow) => self.append_new_row(id),
+                            Some(EditAfter::Delete { row }) => {
+                                self.toggle_delete_row_at(id, row);
+                            }
+                            None => {}
                         }
                     }
                     Ok(Outcome::Review(contents)) => {
@@ -401,7 +620,7 @@ impl App {
                         }
                     }
                     Ok(Outcome::Applied) => {
-                        tab.result.edits.rows.clear();
+                        tab.result.edits = Default::default();
                         self.status = Some(text::EDIT_SAVED.to_owned());
                         let close = tab.edit_close;
                         tab.edit_close = false;
@@ -633,12 +852,12 @@ impl App {
         if mouse.kind == MouseEventKind::Down(MouseButton::Left)
             && self.layout.edit.controls.contains(position)
         {
-            if let Some((_, _, button)) = self
+            if let Some((button, _)) = self
                 .layout
                 .edit
                 .buttons
                 .iter()
-                .find(|(start, end, _)| mouse.column >= *start && mouse.column < *end)
+                .find(|(_, rect)| rect.contains(position))
             {
                 self.edit_button(*button);
             }

@@ -18,7 +18,8 @@ use crate::connection::{
     DEFAULT_BUSY_SECONDS, DEFAULT_IDLE_SECONDS, DEFAULT_POOL_LIMIT, DEFAULT_SQL_SECONDS,
     Definition, Source,
 };
-use crate::connector::sqlite::SqliteTarget;
+use crate::connector::duckdb::DuckdbTarget;
+use crate::connector::sqlite::{SqliteTarget, file_source};
 use crate::connector::target::{Address, ClientCertificate, Engine, NetworkTarget, Tls, TlsFiles};
 use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode};
 use crate::export::ExportChoices;
@@ -133,8 +134,9 @@ impl Default for AgentSettings {
 }
 
 /// The theme of the interface. `Auto` follows the terminal, and `Ansi` uses the colors
-/// of the terminal profile. The other themes need a truecolor terminal.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// of the terminal profile. The other themes need a truecolor terminal. `Custom` names
+/// a theme file of the `themes` folder; a missing file falls back to `Auto`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ThemeName {
     #[default]
@@ -146,11 +148,28 @@ pub enum ThemeName {
     CatppuccinLatte,
     Gruvbox,
     Nord,
+    Dracula,
+    OneDark,
+    Monokai,
+    SolarizedDark,
+    SolarizedLight,
+    GithubDark,
+    RosePine,
+    HighContrast,
+    HighContrastLight,
+    Everforest,
+    Kanagawa,
+    NightOwl,
+    RosePineDawn,
+    EverforestLight,
+    Ember,
+    /// The id of a theme file, without `.json`.
+    Custom(String),
 }
 
 impl ThemeName {
-    /// The themes, in the order of the settings.
-    pub const ALL: [Self; 8] = [
+    /// The built-in themes, in the order of the settings.
+    pub const ALL: [Self; 23] = [
         Self::Auto,
         Self::Astrodark,
         Self::Ansi,
@@ -159,7 +178,30 @@ impl ThemeName {
         Self::CatppuccinLatte,
         Self::Gruvbox,
         Self::Nord,
+        Self::Dracula,
+        Self::OneDark,
+        Self::Monokai,
+        Self::SolarizedDark,
+        Self::SolarizedLight,
+        Self::GithubDark,
+        Self::RosePine,
+        Self::HighContrast,
+        Self::HighContrastLight,
+        Self::Everforest,
+        Self::Kanagawa,
+        Self::NightOwl,
+        Self::RosePineDawn,
+        Self::EverforestLight,
+        Self::Ember,
     ];
+
+    /// The id of a custom theme.
+    pub fn custom_id(&self) -> Option<&str> {
+        match self {
+            Self::Custom(id) => Some(id),
+            _ => None,
+        }
+    }
 }
 
 /// An icon that a connection shows in place of the icon of its database.
@@ -278,17 +320,18 @@ pub enum KindName {
     Postgres,
     Mysql,
     Sqlite,
+    Duckdb,
     Redis,
 }
 
 impl KindName {
-    /// Returns the engine of a network connection. SQLite has no engine.
+    /// Returns the engine of a network connection. SQLite and DuckDB have no engine.
     fn engine(self) -> Option<Engine> {
         match self {
             KindName::Postgres => Some(Engine::Postgres),
             KindName::Mysql => Some(Engine::MySql),
             KindName::Redis => Some(Engine::Redis),
-            KindName::Sqlite => None,
+            KindName::Sqlite | KindName::Duckdb => None,
         }
     }
 }
@@ -548,7 +591,10 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
     match entry.kind.engine() {
         None => {
             if !non_empty(entry.file.as_ref()) {
-                return Err("A SQLite connection needs a file.".to_owned());
+                return Err(match entry.kind {
+                    KindName::Duckdb => "A DuckDB connection needs a file.".to_owned(),
+                    _ => "A SQLite connection needs a file.".to_owned(),
+                });
             }
         }
         Some(engine) => {
@@ -596,8 +642,21 @@ fn seconds(value: Option<u64>) -> Option<Duration> {
 /// Builds the definition of a validated entry. `base` is the folder of the scope.
 pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
     let source = match entry.kind.engine() {
+        None if entry.kind == KindName::Duckdb => {
+            let file = entry.file.clone().unwrap_or_default();
+            let mut target = DuckdbTarget {
+                source: crate::connector::duckdb::file_source(&file),
+                ..DuckdbTarget::new(PathBuf::new())
+            };
+            target.read_only = entry.read_only;
+            Source::Duckdb(target)
+        }
         None => {
-            let mut target = SqliteTarget::new(entry.file.clone().unwrap_or_default());
+            let file = entry.file.clone().unwrap_or_default();
+            let mut target = SqliteTarget {
+                source: file_source(&file),
+                ..SqliteTarget::new(PathBuf::new())
+            };
             target.foreign_keys = entry.foreign_keys;
             target.busy_timeout = Duration::from_millis(
                 entry
@@ -650,7 +709,7 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
     definition.sql_timeout = seconds(entry.sql_timeout_seconds);
     definition.idle_timeout = seconds(entry.idle_timeout_seconds);
     definition.base = Some(base);
-    definition.theme = entry.theme;
+    definition.theme = entry.theme.clone();
     definition.icon = entry.icon;
     definition.schemas.clone_from(&entry.schemas);
     definition
@@ -683,16 +742,27 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
         connect_timeout_seconds: None,
         sql_timeout_seconds: definition.sql_timeout.map(|time| time.as_secs()),
         idle_timeout_seconds: definition.idle_timeout.map(|time| time.as_secs()),
-        theme: definition.theme,
+        theme: definition.theme.clone(),
         icon: definition.icon,
         schemas: definition.schemas.clone(),
     };
     match &definition.source {
         Source::Sqlite(target) => {
-            entry.file = Some(path_text(&target.path));
+            entry.kind = KindName::Sqlite;
+            entry.file = Some(match &target.source {
+                crate::connector::sqlite::SqliteSource::File(path) => path_text(path),
+                crate::connector::sqlite::SqliteSource::Memory => ":memory:".to_owned(),
+            });
             entry.foreign_keys = target.foreign_keys;
             entry.busy_timeout_millis =
                 Some(u64::try_from(target.busy_timeout.as_millis()).unwrap_or(u64::MAX));
+        }
+        Source::Duckdb(target) => {
+            entry.kind = KindName::Duckdb;
+            entry.file = Some(match &target.source {
+                crate::connector::duckdb::DuckdbSource::File(path) => path_text(path),
+                crate::connector::duckdb::DuckdbSource::Memory => ":memory:".to_owned(),
+            });
         }
         Source::Network(target) => {
             entry.kind = match target.engine {
@@ -882,8 +952,8 @@ fn combine(
             .unwrap_or(DEFAULT_UNDO_LIMIT),
         keymap,
         theme: project
-            .and_then(|preferences| preferences.theme)
-            .or(global.theme),
+            .and_then(|preferences| preferences.theme.clone())
+            .or_else(|| global.theme.clone()),
         icons: project
             .and_then(|preferences| preferences.icons)
             .or(global.icons),

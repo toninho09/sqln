@@ -7,6 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use super::kit::buttons::{self, ButtonState, RowOptions};
 use super::theme::Theme;
 use crate::editor::review::{Control, Hunk, Keys, Review, Row};
 use crate::editor::{SqlEditor, TAB_WIDTH};
@@ -497,12 +498,15 @@ fn button(
         theme.button(&format!("{key} {label}"))
     };
     let width = text.width() as u16;
-    if x + width > right {
-        return right;
+    let area = Rect::new(x, y, right.saturating_sub(x), 1);
+    let items = [(control, text, ButtonState::Idle)];
+    match buttons::draw_in_buffer(buffer, area, RowOptions::INLINE_LEFT, &items, theme).first() {
+        Some((_, rect)) => {
+            targets.push((control, *rect));
+            x.saturating_add(width).saturating_add(1)
+        }
+        None => right,
     }
-    buffer.set_string(x, y, &text, theme.dialog_option);
-    targets.push((control, Rect::new(x, y, width, 1)));
-    x + width + 1
 }
 
 /// Draws a row of buttons at `(x, y)`. When the labels do not fit, each button shows
@@ -595,7 +599,7 @@ fn draw_bar(
     let (shown_title, labels) = match fits(least) {
         Some(labels) => {
             let free = room - size(labels);
-            (super::console::fit(&title, free).0, labels)
+            (super::kit::measure::fit(&title, free).0, labels)
         }
         None => (String::new(), fits(0).unwrap_or(0)),
     };

@@ -3,17 +3,18 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use super::console::{centered, modal_width};
-use super::settings::{
-    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, SIDEBAR_WIDTH, browse_width, draw_browse_button,
-    draw_buttons, draw_divider, draw_note, draw_row, draw_sidebar_rows, value_width,
-};
+use super::kit::buttons::{self, RowOptions};
+use super::kit::feedback::draw_note;
+use super::kit::form::{browse_width, choice_line, draw_browse_button, draw_row, value_width};
+use super::kit::geometry::{FOOTER_ROWS, LEFT, RIGHT, modal_width};
+use super::kit::input::{self, FieldMode, FieldText};
+use super::kit::modal::{Modal, SidebarSpec};
+use super::text;
 use super::theme::Theme;
-use super::{float_block, input_spans, last_chars, text};
 use crate::export::NullText;
 use crate::grid::printable_start;
 use crate::import::form::{Field, ImportForm, Section};
@@ -21,7 +22,7 @@ use crate::import::{Encoding, ImportMode, Item};
 
 const WIDTH: u16 = 78;
 /// The columns of a label. `Rows per batch` needs them, with one space.
-const LABEL_WIDTH: u16 = 16;
+const LABEL_WIDTH: u16 = super::kit::form::LabelWidth::Narrow.columns();
 const FIRST_FIELD_ROW: u16 = 1;
 /// The rows of a section: the preview and the list need a page of rows.
 const SECTION_ROWS: u16 = 12;
@@ -84,22 +85,26 @@ fn choice(form: &ImportForm, field: Field) -> String {
     }
 }
 
-fn value<'a>(form: &ImportForm, field: Field, width: usize, theme: &Theme) -> Line<'a> {
+fn value(form: &ImportForm, field: Field, width: usize, theme: &Theme) -> Line<'static> {
     let focused = form.focus == field;
     if let Some(input) = form.input(field) {
-        let chars: Vec<char> = input.text().chars().collect();
-        // The end of a path holds the name of the file.
-        if matches!(field, Field::File | Field::Log) && !focused {
-            return Line::raw(last_chars(&chars, width));
-        }
-        return Line::from(input_spans(&chars, input.cursor(), width, focused, theme).0);
+        let mode = if matches!(field, Field::File | Field::Log) {
+            FieldMode::Path
+        } else {
+            FieldMode::Text
+        };
+        return input::line(
+            FieldText {
+                text: input.text(),
+                cursor: input.cursor(),
+                width,
+                focused,
+                mode,
+            },
+            theme,
+        );
     }
-    let style = if focused {
-        theme.dialog_focus
-    } else {
-        Style::new()
-    };
-    Line::from(Span::styled(format!("< {} >", choice(form, field)), style))
+    choice_line(&choice(form, field), focused, theme)
 }
 
 /// Writes text in exactly `width` columns.
@@ -292,40 +297,26 @@ fn draw_format_note(frame: &mut Frame, form: &ImportForm, pane: Rect, theme: &Th
 }
 
 pub fn draw_import(frame: &mut Frame, form: &ImportForm, theme: &Theme) -> ImportLayout {
-    let height = BORDER_ROWS + FIRST_FIELD_ROW + SECTION_ROWS + FOOTER_ROWS;
-    let width = modal_width(frame.area().width, WIDTH);
-    let area = centered(frame.area(), width, height);
-    frame.render_widget(Clear, area);
-    let block = float_block(text::TITLE_IMPORT, theme);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let sidebar = Rect {
-        y: inner.y + 1,
-        width: SIDEBAR_WIDTH,
-        height: inner.height.saturating_sub(1),
-        ..inner
-    };
-    draw_divider(frame, area, sidebar.right(), theme);
-    let pane = Rect {
-        x: sidebar.right() + 1,
-        width: inner.width.saturating_sub(SIDEBAR_WIDTH + 1),
-        ..inner
-    };
-
     let names = Section::ALL.map(text::import_section_name);
     let open = Section::ALL
         .iter()
         .position(|section| *section == form.section)
         .unwrap_or(0);
+    let modal = Modal::form(
+        modal_width(frame.area().width, WIDTH),
+        FIRST_FIELD_ROW,
+        SECTION_ROWS,
+    )
+    .title(text::TITLE_IMPORT)
+    .sidebar(SidebarSpec {
+        titles: &names,
+        open,
+        focused: form.focus == Field::Sections,
+    })
+    .open(frame, theme);
+    let pane = modal.pane;
     let mut layout = ImportLayout {
-        sections: draw_sidebar_rows(
-            frame,
-            sidebar,
-            &names,
-            (open, form.focus == Field::Sections),
-            theme,
-        ),
+        sections: modal.sidebar_rows,
         ..ImportLayout::default()
     };
 
@@ -356,26 +347,29 @@ pub fn draw_import(frame: &mut Frame, form: &ImportForm, theme: &Theme) -> Impor
         }
     }
 
-    let content = Rect {
-        x: pane.x + LEFT,
-        y: pane.y,
-        width: pane.width.saturating_sub(LEFT + RIGHT),
-        height: 1,
-    };
-    let button_row = pane.bottom().saturating_sub(2);
+    let content = modal.content;
+    let button_row = modal.button_row;
     let failure = form.probe().and_then(|probe| probe.failure.as_deref());
     if let Some(note) = form.note.as_deref().or(failure) {
         draw_note(frame, content, button_row, note, theme.error);
     }
-    let buttons = [
-        (Field::Import, text::BUTTON_IMPORT),
-        (Field::Cancel, text::OPTION_CANCEL),
-    ];
-    layout.fields.extend(draw_buttons(
+    let buttons = buttons::dialog_items(
+        [
+            (Field::Import, text::BUTTON_IMPORT),
+            (Field::Cancel, text::OPTION_CANCEL),
+        ],
+        form.focus,
+        theme,
+    );
+    layout.fields.extend(buttons::draw(
         frame,
-        content,
-        button_row,
-        (&buttons, form.focus),
+        Rect {
+            y: button_row,
+            height: 1,
+            ..content
+        },
+        RowOptions::DIALOG,
+        &buttons,
         theme,
     ));
     layout

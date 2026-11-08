@@ -14,7 +14,7 @@ The file paths are relative to `src/`.
 | 2 | Key map and discovery | `input.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `ui/text.rs` |
 | 3 | Navigator and tree filter | `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs` |
 | 4 | Connections and connection form | `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs` |
-| 5 | Database connectors | `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/redis.rs`, `connector/tls.rs` |
+| 5 | Database connectors | `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/duckdb.rs`, `connector/redis.rs`, `connector/tls.rs` |
 | 6 | Connection pool | `pool.rs` |
 | 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs` |
 | 7a | Query plan | `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs` |
@@ -36,10 +36,11 @@ The file paths are relative to `src/`.
 | 16a | Import | `import/mod.rs`, `import/delimited.rs`, `import/json.rs`, `import/statement.rs`, `import/feed.rs`, `import/form.rs`, `exec/runner/import.rs`, `app/import.rs`, `ui/import.rs` |
 | 17 | Query history | `history.rs`, `store/history.rs`, `app/history.rs`, `ui/history.rs` |
 | 18 | Folders and configuration | `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `settings.rs`, `ui/settings.rs` |
-| 19 | Console saving and saved consoles | `script_file.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs` |
+| 19 | Console saving and saved consoles | `script_file.rs`, `script_file/external.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/sql_file.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs` |
 | 20 | Credentials and trust | `creds.rs`, `trust.rs`, `app/auth.rs`, `ui/auth.rs` |
 | 21 | Appearance and themes | `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs` |
 | 23 | Local MCP assistant | `agent/`, `mcp.rs`, `app/agent/`, `editor/agent.rs`, `ui/agent.rs`; see [MCP](MCP.md) |
+| 24 | Auto-refresh | `app/auto_refresh.rs`, `console.rs`, `table.rs`, `app/persist.rs`, `app/commands.rs`, `ui/statusline.rs`, `ui/table.rs` |
 | 22 | Operation and diagnostics | `main.rs`, `terminal.rs`, `log.rs` |
 
 ## 1. Application shell and main loop
@@ -66,16 +67,16 @@ The navigator shows the tree of connections, consoles, schemas, relations, colum
 
 Files: `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs`.
 
-`Definition` holds the connection settings, and `Source` selects a SQLite file or a network target.
+`Definition` holds the connection settings, and `Source` selects a SQLite file, a DuckDB file, or a network target.
 `ConnectionKey` holds the saved connection ID and its global or project scope. The form holds text only and builds a definition on request. `app/connections` owns the catalogs and the actions of the navigator and the form. A file or a URI from the command line enters `connector/target`; that connection lives for the session only and writes no file. `p` in the navigator erases the saved password, and the removal of a connection offers that deletion separately.
 
 ## 5. Database connectors
 
-Files: `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/redis.rs`, `connector/tls.rs`.
+Files: `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/duckdb.rs`, `connector/redis.rs`, `connector/tls.rs`.
 
-`Connector` declares the dialect and the `Capabilities`. `Session` runs one statement, delivers the rows to `ResultSink`, and reports the transaction state. Only this module knows driver types. PostgreSQL reads through the simple protocol, so each value keeps the database text. MySQL keeps the text and reads notices with `SHOW WARNINGS`. SQLite runs `rusqlite` on its own thread, because the driver is synchronous. Redis runs one command per line, with the quote rules of `split_words`. TLS uses verification by default, except on `localhost`, loopback, and Unix sockets; `connector/tls` reads CA and client certificate files.
+`Connector` declares the dialect and the `Capabilities`. `Session` runs one statement, delivers the rows to `ResultSink`, and reports the transaction state. Only this module knows driver types. PostgreSQL reads through the simple protocol, so each value keeps the database text. MySQL keeps the text and reads notices with `SHOW WARNINGS`. SQLite runs `rusqlite` on its own thread, because the driver is synchronous; DuckDB follows the same pattern with `duckdb`, and it reads the result through Arrow, so a list, a struct, and a timestamp keep the text of the database. The `:memory:` file text opens one database in memory, which lives in the only session of its pool: `Capabilities::single_session` limits the pool to one place, no idle timeout closes it, and the session returns clean instead of discarded, so temporary tables persist until a disconnect. Redis runs one command per line, with the quote rules of `split_words`. TLS uses verification by default, except on `localhost`, loopback, and Unix sockets; `connector/tls` reads CA and client certificate files.
 
-Cancellation uses a `Canceller` separate from the session: `CancelToken` on PostgreSQL, `KILL QUERY` on a temporary connection on MySQL, `InterruptHandle` on SQLite, and `CLIENT UNBLOCK` on Redis. Cleaning returns the session to its base state (`DISCARD ALL` without `DEALLOCATE ALL`, `Conn::reset`, drop, or `DISCARD`, the `CLIENT` modes, and `UNWATCH`).
+Cancellation uses a `Canceller` separate from the session: `CancelToken` on PostgreSQL, `KILL QUERY` on a temporary connection on MySQL, `InterruptHandle` on SQLite and DuckDB, and `CLIENT UNBLOCK` on Redis. Cleaning returns the session to its base state (`DISCARD ALL` without `DEALLOCATE ALL`, `Conn::reset`, drop, or `DISCARD`, the `CLIENT` modes, and `UNWATCH`).
 
 ## 6. Connection pool
 
@@ -221,17 +222,25 @@ Files: `table.rs`, `app/tables.rs`, `ui/table.rs`.
 
 ## 15a. Grid editing
 
-Files: `data_edit.rs`, `data_edit/form.rs`, `app/data_edit.rs`, `exec/runner/data_edit.rs`, `ui/data_edit.rs`.
+Files: `data_edit.rs`, `data_edit/form.rs`, `app/data_edit.rs`, `exec/runner/data_edit.rs`, `ui/data_edit.rs`, `ui/console.rs`.
 
-Table tabs offer local updates through `Action`, gated by connector capabilities and table metadata.
+Table tabs offer local updates, inserts, and deletes through `Action`, gated by connector capabilities and table metadata.
 The compare column reader supplies the primary key and protected-column information.
-`Edits` keeps budgeted original and submitted snapshots while the grid shows pending values.
+`Edits` keeps three sets: cell updates with budgeted original and submitted snapshots, rows marked for delete with the original row that the executor verifies, and appended pending rows with the columns the user provided; an empty cell of a pending row uses the table default and stays out of the `INSERT`.
+The grid marks a pending row with `+` or `-` beside its number, and the summary counts updates, deletes, and inserts.
+`d` on a row with cell changes restores the original values, because the delete wins; a second `d` on a pending row removes it.
 The modal editor reuses conventional and Vim editing. A separate read-only review shows values and SQL.
 Review formatting runs off the interface thread, without database access.
-Apply uses one reserved session and a short transaction, with row locks and original-value checks.
+Apply uses one reserved session and a short transaction, with row locks and original-value checks, in the order updates, deletes, inserts.
 A confirmed commit reloads the first page; failures keep pending values.
 An unknown commit blocks another submission. Close and exit ask before discarding pending values.
 No pending value reaches a workspace file.
+
+## 24. Auto-refresh
+
+Files: `app/auto_refresh.rs`, `console.rs`, `table.rs`, `app/persist.rs`, `app/commands.rs`, `ui/statusline.rs`, `ui/table.rs`.
+
+The `autoRefresh` action, listed by the palette and the grid page of `Ctrl+W Space`, opens a dialog with Off and six intervals. A console repeats the exact statements of its last run, captured when the run starts, with the current parameter values; a table tab reads the page of the cursor again. A last run that is not all plain reads — or, on Redis, not all known reads — refuses to arm. The tick of the main loop fires the due repetition of the tab on screen, and a busy tab, an open modal, a blocked configuration, pending grid edits, or an unknown transaction skips the moment in silence. An execution that does not complete turns the refresh off with a status note. The status line and the table summary show `auto Ns`. The state lives for the session, and a repetition writes no line in `history.jsonl`.
 
 ## 16. Export
 
@@ -243,7 +252,7 @@ The dialog holds the choices and writes nothing. The formats are CSV, TSV, JSON,
 
 Files: `import/mod.rs`, `import/delimited.rs`, `import/json.rs`, `import/statement.rs`, `import/feed.rs`, `import/form.rs`, `exec/runner/import.rs`, `app/import.rs`, `ui/import.rs`.
 
-`I` opens the import dialog for an existing writable SQL table. CSV, TSV, JSON, and JSON Lines use column mapping and a preview.
+`I` opens the import dialog for an existing writable SQL table. CSV, TSV, JSON, and JSON Lines use column mapping and a preview. SQL files open as consoles instead; opening them does not run them.
 The executor writes batches with no SQL time limit. All or nothing rolls back on failure; By batch keeps completed batches.
 Log errors retries a failed batch row by row and writes failed rows to the chosen log, up to the error limit.
 Only the Import button starts writes. Production asks first. Completion shows the result and reloads the table.
@@ -264,9 +273,11 @@ The store has the global folder and, when it exists, the project `.sqln/` folder
 
 ## 19. Console saving and saved consoles
 
-Files: `script_file.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs`.
+Files: `script_file.rs`, `script_file/external.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/sql_file.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs`.
 
 Each console has a `consoles/<id>.sql` file and a `consoles/<id>.json` file; the UUID is the `id` and the base of both names. The autosave waits 500 ms after the last edit and retries after 5 s on failure; `Ctrl+S` saves at once. The write is atomic, and a failure keeps the text and shows the alert. A `locks/<id>.lock` file with `flock` keeps one instance per console. `ScriptFile::poll` rereads the file only when the size or the date changed, and then compares the hash; one question lists the scripts that another program changed or removed. `workspace.json` keeps cursor, scroll, layout, and open tabs; at startup, the application reopens the tabs of the last session when `reopenTabs` is on. `app/scripts` lists the consoles, opens them, and manages the scripts without a connection; the rename prompt of `ui/name` serves the tab and the rows of the lists. The attach flow copies both files, verifies them, removes the originals, and runs no SQL.
+
+The palette command `openSqlFile` and `--script` open an external `.sql` file as a console, after a question: a copy, which follows the rules above, or a link (`script_file/external`). A linked console writes the file only on `Ctrl+S` and on the questions of a close, with the hash of the bytes that it read: a change by another program asks reload or overwrite, and a removed file asks to recreate. A link lives in the session only, the tab row marks its changes, and `ensure_file` skips it, so it never becomes a script of the store.
 
 ## 20. Credentials and trust
 
@@ -278,9 +289,9 @@ A vault failure offers retry, session use, or cancel, never silent plain text. W
 
 ## 21. Appearance and themes
 
-Files: `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs`.
+Files: `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs`, `store/themes.rs`, `settings/themes.rs`.
 
-The themes are `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-latte`, `gruvbox`, and `nord`. The RGB schemes need a truecolor terminal, and `NO_COLOR` removes the colors. Each connection can select a theme and an icon. The icons come in Unicode and Nerd Font sets. The status line shows the focus, the connection, the state, and the use of resources. `ui/wrap` wraps the text of a window row by row, on demand.
+The themes are `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-latte`, `gruvbox`, `nord`, `dracula`, `one-dark`, `monokai`, `solarized-dark`, `solarized-light`, `github-dark`, `rose-pine`, `high-contrast`, `high-contrast-light`, `everforest`, `kanagawa`, `night-owl`, `rose-pine-dawn`, `everforest-light`, and `ember`, and the custom themes of the `themes` folder of each scope, created and edited in `Settings > Appearance` with a live preview. The RGB schemes need a truecolor terminal, and `NO_COLOR` removes the colors. Each connection can select a theme and an icon. The icons come in Unicode and Nerd Font sets. The status line shows the focus, the connection, the state, and the use of resources. `ui/wrap` wraps the text of a window row by row, on demand.
 
 ## 22. Operation and diagnostics
 

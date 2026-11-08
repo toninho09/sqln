@@ -188,6 +188,8 @@ pub enum Action {
     FormatSql,
     ToggleComment,
     OpenHistory,
+    /// Opens an external `.sql` file as a console: a copy, or a link that saves to it.
+    OpenSqlFile,
     OpenSessions,
     OpenDiagram,
     OpenCompare,
@@ -286,8 +288,11 @@ pub enum Action {
     GridCountRows,
     GridExport,
     GridImport,
+    AutoRefresh,
     GridEditCell,
     GridSetNull,
+    GridNewRow,
+    GridDeleteRow,
     GridReviewEdits,
     GridSaveEdits,
     GridDiscardEdits,
@@ -375,6 +380,8 @@ impl Action {
             self,
             Action::GridEditCell
                 | Action::GridSetNull
+                | Action::GridNewRow
+                | Action::GridDeleteRow
                 | Action::GridReviewEdits
                 | Action::GridSaveEdits
                 | Action::GridDiscardEdits
@@ -487,6 +494,7 @@ const DEFAULTS: &[Item] = &[
         &["ctrl+w H"],
         &[],
     ),
+    both(Action::OpenSqlFile, Region::Global, "openSqlFile", &[], &[]),
     both(
         Action::OpenSessions,
         Region::Global,
@@ -1089,6 +1097,7 @@ const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(Action::GridApply, Region::Grid, "gridApply", &[], &[]),
+    both(Action::AutoRefresh, Region::Grid, "autoRefresh", &[], &[]),
     both(
         Action::GridClearFilters,
         Region::Grid,
@@ -1139,6 +1148,14 @@ const DEFAULTS: &[Item] = &[
         Region::Grid,
         "gridSetNull",
         &["ctrl+n"],
+        &[],
+    ),
+    both(Action::GridNewRow, Region::Grid, "gridNewRow", &["n"], &[]),
+    both(
+        Action::GridDeleteRow,
+        Region::Grid,
+        "gridDeleteRow",
+        &["d"],
         &[],
     ),
     both(

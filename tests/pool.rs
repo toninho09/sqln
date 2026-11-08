@@ -1,112 +1,34 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use futures_util::FutureExt;
-use sqln::catalog::Catalog;
-use sqln::connector::{
-    Canceller, ConnectError, Connector, ExecError, ResetOutcome, Session, SessionContext,
-    StatementEnd, TransactionCommand, TransactionState,
-};
-use sqln::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, ResultSink, RunOptions, Settings};
+use sqln::connector::{ResetOutcome, StatementEnd};
+use sqln::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, RunOptions, Settings};
 use sqln::grid::Budget;
 use sqln::pool::{Lease, Pool};
 use sqln::sql::Dialect;
 use tokio::sync::mpsc::Receiver;
 use tokio::time::{sleep, timeout};
 
+use crate::common::mock;
+use sqln::connector::TransactionCommand;
+
 const SHORT: Duration = Duration::from_millis(50);
 
-#[derive(Clone, Copy, PartialEq)]
-enum Behavior {
-    Works,
-    Refuses,
-    Hangs,
+type Fake = mock::MockConnector;
+
+/// A connector whose sessions answer the default and keep the transaction states.
+fn fake_of(connect: mock::Connect, reset: ResetOutcome) -> Arc<Fake> {
+    let run: mock::RunHandler =
+        Arc::new(|_sql, _sink| Box::pin(async { Ok(StatementEnd::default()) }));
+    let fake = Arc::new(Fake::new(Dialect::Sqlite, run));
+    fake.when_connecting(connect);
+    fake.on_reset(reset);
+    fake
 }
 
-struct Fake {
-    behavior: Mutex<Behavior>,
-    opened: AtomicUsize,
-    reset: ResetOutcome,
-}
-
-impl Fake {
-    fn new(behavior: Behavior, reset: ResetOutcome) -> Arc<Self> {
-        Arc::new(Self {
-            behavior: Mutex::new(behavior),
-            opened: AtomicUsize::new(0),
-            reset,
-        })
-    }
-}
-
-#[async_trait]
-impl Connector for Fake {
-    fn dialect(&self) -> Dialect {
-        Dialect::Sqlite
-    }
-
-    async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
-        let behavior = *self.behavior.lock().unwrap();
-        match behavior {
-            Behavior::Works => {
-                self.opened.fetch_add(1, Ordering::SeqCst);
-                Ok(Box::new(FakeSession {
-                    reset: self.reset,
-                    transaction: TransactionState::None,
-                }))
-            }
-            Behavior::Refuses => Err(ConnectError::new("refused".to_owned())),
-            Behavior::Hangs => std::future::pending().await,
-        }
-    }
-}
-
-struct FakeSession {
-    reset: ResetOutcome,
-    transaction: TransactionState,
-}
-
-struct NoCancel;
-
-#[async_trait]
-impl Canceller for NoCancel {
-    async fn cancel(&self) -> Result<(), String> {
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl Session for FakeSession {
-    fn canceller(&self) -> Arc<dyn Canceller> {
-        Arc::new(NoCancel)
-    }
-    async fn apply_context(&mut self, _: &SessionContext) -> Result<(), ExecError> {
-        Ok(())
-    }
-    async fn run(&mut self, _: &str, _: ResultSink) -> Result<StatementEnd, ExecError> {
-        Ok(StatementEnd::default())
-    }
-    async fn transaction_state(&mut self) -> TransactionState {
-        self.transaction
-    }
-    async fn control(&mut self, command: TransactionCommand) -> Result<(), ExecError> {
-        self.transaction = match command {
-            TransactionCommand::Begin => TransactionState::Open,
-            TransactionCommand::Commit | TransactionCommand::Rollback => TransactionState::None,
-        };
-        Ok(())
-    }
-    async fn reset(&mut self) -> ResetOutcome {
-        self.reset
-    }
-    async fn read_catalog(&mut self) -> Result<Catalog, ExecError> {
-        Ok(Catalog::default())
-    }
-    async fn read_columns(&mut self, _: &str, _: &str) -> Result<Vec<String>, ExecError> {
-        Ok(Vec::new())
-    }
+fn works() -> Arc<Fake> {
+    fake_of(mock::Connect::Works, ResetOutcome::Clean)
 }
 
 fn pool(fake: &Arc<Fake>, limit: usize) -> Pool {
@@ -123,7 +45,7 @@ async fn take(pool: &Pool) -> Lease {
 
 #[tokio::test]
 async fn a_canceled_wait_returns_the_session_that_reached_it() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 1);
     let lease = take(&pool).await;
     let mut wait = Box::pin(pool.acquire());
@@ -133,12 +55,12 @@ async fn a_canceled_wait_returns_the_session_that_reached_it() {
     drop(wait);
     assert_eq!(pool.usage(), (0, 1));
     take(&pool).await.release().await;
-    assert_eq!(fake.opened.load(Ordering::SeqCst), 1);
+    assert_eq!(fake.opened(), 1);
 }
 
 #[tokio::test]
 async fn a_canceled_wait_closes_a_session_of_an_old_generation() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 1);
     let lease = take(&pool).await;
     let mut wait = Box::pin(pool.acquire());
@@ -148,38 +70,38 @@ async fn a_canceled_wait_closes_a_session_of_an_old_generation() {
     drop(wait);
     assert_eq!(pool.usage(), (0, 1));
     take(&pool).await.release().await;
-    assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
+    assert_eq!(fake.opened(), 2);
 }
 
 #[tokio::test]
 async fn a_free_session_returns_for_the_next_use() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 2);
     take(&pool).await.release().await;
     take(&pool).await.release().await;
-    assert_eq!(fake.opened.load(Ordering::SeqCst), 1);
+    assert_eq!(fake.opened(), 1);
     assert_eq!(pool.usage(), (0, 2));
 }
 
 #[tokio::test]
 async fn a_failed_cleanup_discards_the_session() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Discard);
+    let fake = fake_of(mock::Connect::Works, ResetOutcome::Discard);
     let pool = pool(&fake, 2);
     take(&pool).await.release().await;
     assert_eq!(pool.usage(), (0, 2));
     take(&pool).await.release().await;
-    assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
+    assert_eq!(fake.opened(), 2);
 }
 
 #[tokio::test]
 async fn the_limit_holds_and_the_next_request_waits() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 2);
     let first = take(&pool).await;
     let _second = take(&pool).await;
     assert_eq!(pool.usage(), (2, 2));
     assert!(timeout(SHORT, pool.acquire()).await.is_err());
-    assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
+    assert_eq!(fake.opened(), 2);
 
     let waiting = tokio::spawn({
         let pool = pool.clone();
@@ -191,16 +113,12 @@ async fn the_limit_holds_and_the_next_request_waits() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(
-        fake.opened.load(Ordering::SeqCst),
-        2,
-        "the waiter uses the free session"
-    );
+    assert_eq!(fake.opened(), 2, "the waiter uses the free session");
 }
 
 #[tokio::test]
 async fn requests_receive_places_in_order_of_arrival() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 1);
     let first = take(&pool).await;
     let order = Arc::new(Mutex::new(Vec::new()));
@@ -228,7 +146,7 @@ async fn requests_receive_places_in_order_of_arrival() {
 
 #[tokio::test]
 async fn a_canceled_wait_leaves_the_queue_and_keeps_the_order() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 1);
     let first = take(&pool).await;
 
@@ -255,7 +173,7 @@ async fn a_canceled_wait_leaves_the_queue_and_keeps_the_order() {
 
 #[tokio::test]
 async fn a_new_request_does_not_pass_the_queue() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Discard);
+    let fake = fake_of(mock::Connect::Works, ResetOutcome::Discard);
     let pool = pool(&fake, 1);
     let first = take(&pool).await;
     let waiting = tokio::spawn({
@@ -282,7 +200,10 @@ async fn a_new_request_does_not_pass_the_queue() {
 
 #[tokio::test]
 async fn a_refused_connection_is_a_failure_and_frees_the_place() {
-    let fake = Fake::new(Behavior::Refuses, ResetOutcome::Clean);
+    let fake = fake_of(
+        mock::Connect::Refuses("refused".to_owned()),
+        ResetOutcome::Clean,
+    );
     let pool = pool(&fake, 1);
     let error = timeout(Duration::from_secs(5), pool.acquire())
         .await
@@ -295,7 +216,7 @@ async fn a_refused_connection_is_a_failure_and_frees_the_place() {
 
 #[tokio::test]
 async fn a_silent_server_ends_at_the_connection_time_limit() {
-    let fake = Fake::new(Behavior::Hangs, ResetOutcome::Clean);
+    let fake = fake_of(mock::Connect::Hangs, ResetOutcome::Clean);
     let pool = pool(&fake, 1);
     let error = timeout(Duration::from_secs(5), pool.acquire())
         .await
@@ -308,7 +229,7 @@ async fn a_silent_server_ends_at_the_connection_time_limit() {
 
 #[tokio::test]
 async fn a_canceled_connection_frees_the_place() {
-    let fake = Fake::new(Behavior::Hangs, ResetOutcome::Clean);
+    let fake = fake_of(mock::Connect::Hangs, ResetOutcome::Clean);
     let pool = pool(&fake, 1);
     assert!(
         timeout(Duration::from_millis(10), pool.acquire())
@@ -320,7 +241,7 @@ async fn a_canceled_connection_frees_the_place() {
 
 #[tokio::test]
 async fn a_dropped_lease_frees_the_place_and_wakes_the_queue() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 1);
     let first = take(&pool).await;
     let waiting = tokio::spawn({
@@ -333,12 +254,12 @@ async fn a_dropped_lease_frees_the_place_and_wakes_the_queue() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
+    assert_eq!(fake.opened(), 2);
 }
 
 #[tokio::test]
 async fn a_waiter_opens_a_new_session_after_a_failed_opening() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 1);
     let first = take(&pool).await;
     let waiting = tokio::spawn({
@@ -346,7 +267,7 @@ async fn a_waiter_opens_a_new_session_after_a_failed_opening() {
         async move { pool.acquire().await.map(|_| ()) }
     });
     sleep(SHORT).await;
-    *fake.behavior.lock().unwrap() = Behavior::Refuses;
+    fake.when_connecting(mock::Connect::Refuses("refused".to_owned()));
     drop(first);
     let result = timeout(Duration::from_secs(5), waiting)
         .await
@@ -361,7 +282,7 @@ async fn a_waiter_opens_a_new_session_after_a_failed_opening() {
 
 #[tokio::test]
 async fn an_idle_session_closes_at_the_idle_limit_and_a_session_in_use_stays() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 2);
     let in_use = take(&pool).await;
     take(&pool).await.release().await;
@@ -379,7 +300,7 @@ async fn an_idle_session_closes_at_the_idle_limit_and_a_session_in_use_stays() {
 #[tokio::test]
 async fn the_older_idle_session_closes_and_the_newer_one_stays() {
     let limit = Duration::from_millis(200);
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 2);
     let (first, second) = (take(&pool).await, take(&pool).await);
     first.release().await;
@@ -391,24 +312,24 @@ async fn the_older_idle_session_closes_and_the_newer_one_stays() {
     assert!(next < Duration::from_millis(100), "{next:?}");
     // The newer session serves the next use.
     take(&pool).await.release().await;
-    assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
+    assert_eq!(fake.opened(), 2);
 }
 
 #[tokio::test]
 async fn close_idle_ends_the_idle_sessions_and_a_later_use_opens_one() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 2);
     take(&pool).await.release().await;
     assert!(pool.has_sessions());
     pool.close_idle();
     assert!(!pool.has_sessions());
     take(&pool).await.release().await;
-    assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
+    assert_eq!(fake.opened(), 2);
 }
 
 #[tokio::test]
 async fn a_session_in_use_during_close_idle_closes_when_it_returns() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 2);
     let lease = take(&pool).await;
     pool.close_idle();
@@ -423,7 +344,7 @@ async fn a_session_in_use_during_close_idle_closes_when_it_returns() {
 
 #[tokio::test]
 async fn a_session_that_starts_after_close_idle_returns_to_the_pool() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 2);
     pool.close_idle();
     take(&pool).await.release().await;
@@ -432,18 +353,18 @@ async fn a_session_that_starts_after_close_idle_returns_to_the_pool() {
 
 #[tokio::test]
 async fn close_idle_gives_the_free_place_to_a_waiter() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 1);
     take(&pool).await.release().await;
     pool.close_idle();
     assert_eq!(pool.usage().0, 0);
     take(&pool).await.release().await;
-    assert_eq!(fake.opened.load(Ordering::SeqCst), 2);
+    assert_eq!(fake.opened(), 2);
 }
 
 #[tokio::test]
 async fn close_idle_between_the_grant_and_its_read_closes_the_session() {
-    let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+    let fake = works();
     let pool = pool(&fake, 1);
     let lease = take(&pool).await;
     let waiting = {
@@ -474,7 +395,7 @@ struct Watched {
 
 impl Watched {
     fn open(idle_timeout: Duration) -> Self {
-        let fake = Fake::new(Behavior::Works, ResetOutcome::Clean);
+        let fake = works();
         let settings = Settings {
             idle_timeout: Some(idle_timeout),
             ..Settings::default()
@@ -551,4 +472,23 @@ fn an_open_transaction_keeps_its_session_after_the_idle_limit() {
     assert!(w.wait(idle_closed, Duration::from_secs(5)));
     assert!(!w.manager.is_connected(w.connection));
     w.manager.shutdown();
+}
+
+#[tokio::test]
+async fn a_single_session_source_holds_one_place_and_no_idle_close() {
+    let connector = sqln::connector::sqlite::SqliteConnector::new(
+        sqln::connector::sqlite::SqliteTarget::in_memory(),
+    );
+    let pool = Pool::new(
+        std::sync::Arc::new(connector),
+        5,
+        Duration::from_millis(100),
+    );
+    assert_eq!(pool.usage(), (0, 1));
+    let lease = take(&pool).await;
+    lease.release().await;
+    // The idle session of an in-memory database never closes, or the data is lost.
+    let (closed, _) = pool.close_expired(Duration::ZERO);
+    assert_eq!(closed, 0);
+    assert!(pool.has_sessions());
 }

@@ -247,6 +247,7 @@ pub fn definition_text(
             texts.join("\n\n")
         }
         (Dialect::Redis, _) => return Err(text::DEFINITION_MISSING),
+        (Dialect::DuckDb, _) => return Err(text::DEFINITION_MISSING),
     };
     let mut header = format!(
         "-- {} {}.{} · {connection}\n",

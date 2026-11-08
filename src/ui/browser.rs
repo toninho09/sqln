@@ -3,13 +3,16 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
-use super::console::{MODAL_FREE_ROWS, centered, fitted, modal_width};
-use super::palette::draw_prompt;
+use super::kit::geometry::{MODAL_FREE_ROWS, centered, fitted, modal_width};
+use super::kit::list::{draw_prompt, draw_rows, viewport};
+use super::kit::measure::last_chars;
+use super::kit::modal::open_modal;
+use super::kit::style::{self, ListRow};
 use super::settings::WIDTH as MODAL_WIDTH;
+use super::text;
 use super::theme::Theme;
-use super::{float_block, last_chars, text};
 use crate::browser::{FileBrowser, RowView};
 use crate::grid::printable;
 
@@ -45,10 +48,7 @@ pub fn draw_browser(frame: &mut Frame, browser: &FileBrowser, theme: &Theme) -> 
         MAX_ROWS + CHROME_ROWS,
     );
     let area = centered(screen, width, height);
-    frame.render_widget(Clear, area);
-    let block = float_block(text::TITLE_BROWSER, theme);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = open_modal(frame, area, text::TITLE_BROWSER, theme);
 
     // The end of a path holds the open folder.
     let folder = printable(&browser.folder().display().to_string());
@@ -88,23 +88,18 @@ pub fn draw_browser(frame: &mut Frame, browser: &FileBrowser, theme: &Theme) -> 
         frame.render_widget(Paragraph::new(empty), list);
         return (list, 0);
     }
-    let visible = usize::from(list.height).max(1);
-    let first = (browser.cursor() + 1).saturating_sub(visible);
-    for (y, (index, row)) in (list.y..).zip(browser.rows().enumerate().skip(first).take(visible)) {
-        let place = Rect {
-            y,
-            height: 1,
-            ..list
-        };
-        let style = if index == browser.cursor() {
-            theme.list_selected
-        } else if row == RowView::UseFolder {
+    let rows: Vec<RowView> = browser.rows().collect();
+    let view = viewport(browser.cursor(), rows.len(), list.height);
+    draw_rows(frame, list, &rows, view, |frame, place, row, selected| {
+        let style = if selected {
+            style::list_row_style(ListRow::Selected, theme)
+        } else if *row == RowView::UseFolder {
             theme.key
         } else {
-            theme.dialog
+            style::list_row_style(ListRow::Normal, theme)
         };
         frame.buffer_mut().set_style(place, style);
-        frame.render_widget(Paragraph::new(row_text(row)), place);
-    }
-    (list, first)
+        frame.render_widget(Paragraph::new(row_text(*row)), place);
+    });
+    (list, view.first)
 }

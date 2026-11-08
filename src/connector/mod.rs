@@ -1,5 +1,6 @@
 //! The contract of the database connectors. Only this module knows driver types.
 
+pub mod duckdb;
 pub mod mysql;
 pub mod postgres;
 pub mod redis;
@@ -55,6 +56,10 @@ pub struct Capabilities {
     pub data_edit: bool,
     /// True when consoles accept named scalar parameters.
     pub parameters: bool,
+    /// True when the source holds its state in one session, so the pool keeps exactly
+    /// one place and never closes an idle session. An in-memory SQLite database needs
+    /// this, because a new session starts empty.
+    pub single_session: bool,
 }
 
 impl Default for Capabilities {
@@ -65,6 +70,7 @@ impl Default for Capabilities {
             table_filters: true,
             data_edit: true,
             parameters: false,
+            single_session: false,
         }
     }
 }
@@ -185,6 +191,11 @@ pub fn network_connector(target: NetworkTarget) -> Arc<dyn Connector> {
         Engine::MySql => Arc::new(MySqlConnector::new(target)),
         Engine::Redis => Arc::new(RedisConnector::new(target)),
     }
+}
+
+/// Names a query of the catalog with its parameters, for the log of commands.
+pub(crate) fn relation_command(sql: &str, schema: &str, relation: &str) -> String {
+    format!("{sql}\nParameters: schema={schema:?}, relation={relation:?}")
 }
 
 #[async_trait]

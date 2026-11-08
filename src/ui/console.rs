@@ -10,12 +10,23 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
+use super::kit::buttons::{self, ButtonState, RowOptions};
+use super::kit::geometry::{
+    MODAL_FREE_COLUMNS, MODAL_FREE_ROWS, MODAL_WIDTH_LIMIT, SHORT_MODAL_WIDTH_LIMIT, centered,
+    fitted, list_rows, short_modal_width,
+};
+use super::kit::list::{draw_rows, viewport};
+use super::kit::measure::fit;
+use super::kit::modal::{float_block, open_modal};
+use super::kit::panel::{draw_panel_title, draw_rule};
+use super::kit::style::{self, ListRow};
+use super::searchbar::search_line;
 use super::theme::Theme;
 use super::welcome::{Welcome, draw_welcome};
 use super::wrap::WrappedText;
-use super::{draw_editor, draw_scrollbar, float_block, text};
+use super::{draw_editor, draw_scrollbar, text};
 use crate::connector::Namespace;
-use crate::console::{Console, Focus, Message, MessageLevel, Phase, ResultTab, RunClock, RunEnd};
+use crate::console::{Console, Focus, Phase, ResultTab, RunClock, RunEnd};
 use crate::grid::{COLUMN_GAP, GridView, ResultTable, RowSearch, Value, printable};
 
 const PICKER_WIDTH: u16 = 48;
@@ -29,7 +40,6 @@ pub(super) const BUTTON_GAP: u16 = 2;
 const NUMBER_END: u16 = 3;
 /// The columns between two columns of the grid.
 const GAP: u16 = COLUMN_GAP as u16;
-const RULE: &str = "─";
 
 /// A button of the console bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,7 +66,7 @@ pub enum Control {
 pub struct ConsoleLayout {
     pub controls: Rect,
     /// Each button, with its first column and the column after its end.
-    pub control_buttons: Vec<(u16, u16, Control)>,
+    pub control_buttons: Vec<(Control, Rect)>,
     pub editor: Rect,
     pub parameters: super::parameters::ParameterLayout,
     pub tabs: Rect,
@@ -85,16 +95,6 @@ pub struct BarData<'a> {
     pub agent_access: Option<String>,
     /// The active tasks of the session of an agent console, on all its connections.
     pub agent_tasks: usize,
-}
-
-/// Draws the title of a panel. The title of the panel with the focus has its own style.
-pub fn draw_panel_title(frame: &mut Frame, area: Rect, title: &str, focused: bool, theme: &Theme) {
-    let style = if focused {
-        theme.panel_title_focused
-    } else {
-        theme.panel_title
-    };
-    frame.render_widget(Paragraph::new(format!(" {title}")).style(style), area);
 }
 
 /// Lists the buttons of the console bar. A button that has no effect now looks disabled.
@@ -198,36 +198,6 @@ fn control_items(console: &Console, bar: &BarData, theme: &Theme) -> Vec<(Contro
         items.push((Control::Schema, shown, idle && !console.in_transaction()));
     }
     items
-}
-
-/// Draws buttons in a row. A button that has no effect now looks disabled.
-/// It returns the first column and the column after the end of each button.
-pub fn draw_buttons<T: Copy>(
-    frame: &mut Frame,
-    area: Rect,
-    items: Vec<(T, String, bool)>,
-    theme: &Theme,
-) -> Vec<(u16, u16, T)> {
-    let mut spans = vec![Span::raw(" ")];
-    let mut buttons = Vec::new();
-    let mut x = area.x + 1;
-    for (control, label, enabled) in items {
-        let width = u16::try_from(label.width()).unwrap_or(u16::MAX);
-        if x.saturating_add(width) > area.right() {
-            break;
-        }
-        buttons.push((x, x + width, control));
-        let style = if enabled {
-            theme.control
-        } else {
-            theme.control_off
-        };
-        spans.push(Span::styled(label, style));
-        spans.push(Span::raw("  "));
-        x += width + BUTTON_GAP;
-    }
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
-    buttons
 }
 
 /// Writes the label of a main tab. A tab with a text that no file holds has a mark.
@@ -385,14 +355,6 @@ fn draw_quit_button(frame: &mut Frame, area: Rect, theme: &Theme) -> Rect {
     button
 }
 
-/// Draws the row under the main tabs.
-pub fn draw_rule(frame: &mut Frame, area: Rect, theme: &Theme) {
-    frame.render_widget(
-        Paragraph::new(RULE.repeat(usize::from(area.width))).style(theme.divider),
-        area,
-    );
-}
-
 pub fn draw_console(
     frame: &mut Frame,
     area: Rect,
@@ -447,7 +409,8 @@ pub fn draw_console(
         let path = printable(&parts.join(" › "));
         draw_panel_title(frame, title, &path, editor_focused, theme);
     }
-    let control_buttons = draw_buttons(frame, controls, control_items(console, bar, theme), theme);
+    let items = buttons::toolbar_items(control_items(console, bar, theme));
+    let control_buttons = buttons::draw(frame, controls, RowOptions::TOOLBAR, &items, theme);
     if !bar.agent {
         draw_editor(frame, editor, &mut console.editor, editor_focused, theme);
     }
@@ -498,31 +461,6 @@ pub fn draw_console(
         tabs,
         results,
         split,
-    }
-}
-
-pub fn search_line(search: &RowSearch, table: &ResultTable, theme: &Theme) -> Line<'static> {
-    let count = if search.query().is_empty() {
-        String::new()
-    } else {
-        text::search_count(search.position(), search.total(), search.is_partial(table))
-    };
-    Line::from(vec![
-        Span::raw(format!(
-            " {}{}",
-            text::FIND_LABEL,
-            printable(search.query())
-        )),
-        Span::styled(" ", theme.cursor),
-        Span::styled(format!(" {count}"), theme.hint),
-    ])
-}
-
-pub(super) fn message_style(message: &Message, theme: &Theme) -> Style {
-    match message.level {
-        MessageLevel::Info => Style::new(),
-        MessageLevel::Warning => theme.mark_neutral,
-        MessageLevel::Error => theme.error,
     }
 }
 
@@ -623,20 +561,6 @@ fn draw_messages(frame: &mut Frame, area: Rect, console: &mut Console, theme: &T
     frame.render_widget(paragraph, area);
 }
 
-pub fn fit(text: &str, width: usize) -> (String, usize) {
-    let mut fitted = String::new();
-    let mut used = 0;
-    for c in text.chars() {
-        let char_width = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-        if used + char_width > width {
-            break;
-        }
-        fitted.push(c);
-        used += char_width;
-    }
-    (fitted, used)
-}
-
 /// Lists the visible columns as `(column, x, width)`.
 fn visible_columns(table: &ResultTable, view: &GridView, area: Rect) -> Vec<(usize, u16, u16)> {
     let mut x = area.x;
@@ -677,17 +601,25 @@ fn grid_body(area: Rect, table: &ResultTable) -> Rect {
     }
 }
 
-/// Writes a row number in the columns before `body`.
+/// Writes a row number in the columns before `body`. A pending insert or delete
+/// mark takes the first column, and the number keeps the rest.
 fn draw_row_number(
     buffer: &mut Buffer,
     area: Rect,
     body: Rect,
     y: u16,
     number: usize,
+    mark: Option<char>,
     style: Style,
 ) {
     let digits = usize::from((body.x - area.x).saturating_sub(NUMBER_END));
-    buffer.set_stringn(area.x, y, format!("{number:>digits$}"), digits, style);
+    if let Some(mark) = mark {
+        buffer.set_stringn(area.x, y, mark.to_string(), 1, style);
+        let width = digits.saturating_sub(1);
+        buffer.set_stringn(area.x + 1, y, format!("{number:>width$}"), width, style);
+    } else {
+        buffer.set_stringn(area.x, y, format!("{number:>digits$}"), digits, style);
+    }
 }
 
 /// Writes the rule after the row numbers and the rule after each column.
@@ -748,7 +680,18 @@ pub fn draw_grid(
         } else {
             theme.row_number
         };
-        draw_row_number(buffer, area, body, y, row_index + 1, number);
+        let mark = result.edits.row_mark(row_index).map(|mark| match mark {
+            crate::data_edit::RowMark::Insert => '+',
+            crate::data_edit::RowMark::Delete => '-',
+        });
+        let marked_style = if mark.is_some() {
+            number
+                .patch(theme.hint)
+                .add_modifier(ratatui::style::Modifier::UNDERLINED)
+        } else {
+            number
+        };
+        draw_row_number(buffer, area, body, y, row_index + 1, mark, marked_style);
         draw_rules(buffer, body, &columns, y, theme);
         for ((column, x, width), value) in columns.iter().zip(row.cells().skip(view.left)) {
             let selected = selection.is_some_and(|range| {
@@ -852,44 +795,6 @@ pub fn grid_cell_at(
 }
 
 /// The columns that stay free beside a modal that grows.
-const MODAL_FREE_COLUMNS: u16 = 8;
-/// The rows that stay free above and below a modal that grows.
-pub(super) const MODAL_FREE_ROWS: u16 = 4;
-const MODAL_WIDTH_LIMIT: u16 = 140;
-const SHORT_MODAL_WIDTH_LIMIT: u16 = 100;
-const LIST_ROWS_LIMIT: u16 = 30;
-
-/// Returns a size that leaves `free` cells of the screen, from `base` to `limit`.
-pub fn fitted(screen: u16, free: u16, base: u16, limit: u16) -> u16 {
-    screen.saturating_sub(free).clamp(base, limit.max(base))
-}
-
-/// Returns the width of a modal. A long path needs the free columns of a wide screen.
-pub fn modal_width(screen: u16, base: u16) -> u16 {
-    fitted(screen, MODAL_FREE_COLUMNS, base, MODAL_WIDTH_LIMIT)
-}
-
-/// Returns the width of a modal with short rows, such as a list of names.
-pub fn short_modal_width(screen: u16, base: u16) -> u16 {
-    fitted(screen, MODAL_FREE_COLUMNS, base, SHORT_MODAL_WIDTH_LIMIT)
-}
-
-/// Returns the largest count of rows of a list. `chrome` is the other rows of its window.
-pub fn list_rows(screen: u16, chrome: u16, base: u16) -> u16 {
-    fitted(screen, MODAL_FREE_ROWS + chrome, base, LIST_ROWS_LIMIT)
-}
-
-pub fn centered(area: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(area.width);
-    let height = height.min(area.height);
-    Rect::new(
-        area.x + (area.width - width) / 2,
-        area.y + (area.height - height) / 2,
-        width,
-        height,
-    )
-}
-
 /// Draws a question. It returns the columns of each option and the row of the options.
 pub fn draw_dialog(
     frame: &mut Frame,
@@ -911,10 +816,7 @@ pub fn draw_dialog(
         width,
         u16::try_from(body_rows).unwrap_or(10).saturating_add(4),
     );
-    frame.render_widget(Clear, box_area);
-    let block = float_block(title, theme);
-    let inner = block.inner(box_area);
-    frame.render_widget(block, box_area);
+    let inner = open_modal(frame, box_area, title, theme);
 
     let [message, buttons] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(inner);
@@ -923,23 +825,22 @@ pub fn draw_dialog(
         message,
     );
 
-    let mut spans = Vec::new();
-    let mut targets = Vec::new();
-    let mut x = buttons.x;
-    for (index, label) in options.iter().enumerate() {
-        let style = if index == focus {
-            theme.dialog_focus
-        } else {
-            theme.dialog_option
-        };
-        let text = theme.button(label);
-        let label_width = u16::try_from(text.width()).unwrap_or(u16::MAX);
-        targets.push((x, x.saturating_add(label_width), index));
-        x = x.saturating_add(label_width).saturating_add(2);
-        spans.push(Span::styled(text, style));
-        spans.push(Span::raw("  "));
-    }
-    frame.render_widget(Paragraph::new(Line::from(spans)), buttons);
+    let items: Vec<(usize, String, ButtonState)> = options
+        .iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let state = if index == focus {
+                ButtonState::Focused
+            } else {
+                ButtonState::Idle
+            };
+            (index, theme.button(label), state)
+        })
+        .collect();
+    let targets = buttons::draw(frame, buttons, RowOptions::DIALOG, &items, theme)
+        .into_iter()
+        .map(|(index, rect)| (rect.x, rect.right(), index))
+        .collect();
     (targets, buttons.y)
 }
 
@@ -961,31 +862,42 @@ pub fn draw_picker(
         short_modal_width(screen.width, PICKER_WIDTH),
         rows + PICKER_CHROME_ROWS,
     );
-    frame.render_widget(Clear, box_area);
-    let block = float_block(title, theme);
-    let inner = block.inner(box_area);
-    frame.render_widget(block, box_area);
-    let height = usize::from(inner.height.saturating_sub(1)).max(1);
-    let first = (cursor + 1).saturating_sub(height);
-    let mut lines: Vec<Line> = items
-        .iter()
-        .enumerate()
-        .skip(first)
-        .take(height)
-        .map(|(index, item)| {
-            let style = if index == cursor {
-                theme.dialog_focus
-            } else {
-                theme.dialog_option
-            };
-            Line::styled(printable(item), style)
-        })
-        .collect();
+    let inner = open_modal(frame, box_area, title, theme);
+    let rows = inner.height.saturating_sub(1);
+    let view = viewport(cursor, items.len(), rows);
+    let rows_area = Rect {
+        height: rows,
+        ..inner
+    };
+    draw_rows(
+        frame,
+        rows_area,
+        items.iter(),
+        view,
+        |frame, area, item, selected| {
+            let style = style::list_row_style(
+                if selected {
+                    ListRow::Selected
+                } else {
+                    ListRow::Normal
+                },
+                theme,
+            );
+            frame.render_widget(Paragraph::new(Line::styled(printable(item), style)), area);
+        },
+    );
     if loading {
-        lines.push(Line::styled(text::SCHEMA_LOADING, theme.hint));
+        let line = Line::styled(text::SCHEMA_LOADING, theme.hint);
+        frame.render_widget(
+            Paragraph::new(line),
+            Rect {
+                y: inner.y + u16::try_from(view.rows).unwrap_or(0),
+                height: 1,
+                ..inner
+            },
+        );
     }
-    frame.render_widget(Paragraph::new(lines), inner);
-    (inner, first)
+    (inner, view.first)
 }
 
 /// Keeps the line breaks of a text and replaces the other control characters.

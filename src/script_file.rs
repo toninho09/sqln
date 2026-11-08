@@ -6,6 +6,10 @@
 
 mod worker;
 
+pub mod external;
+
+pub use external::ExternalFile;
+
 use worker::PendingSave;
 pub(crate) use worker::SaveWorker;
 

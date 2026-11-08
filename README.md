@@ -5,7 +5,7 @@ A terminal database client with several connections, SQL consoles, and table tab
 SQLN brings an editor, a database navigator, and a results grid into one terminal.
 Use familiar editor keys or Vim mode. Keep scripts with a project, or use global connections across projects.
 
-**Databases:** SQLite, PostgreSQL, MySQL, Redis, and Valkey.
+**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, and Valkey.
 
 > SQLN is in development. This repository supports source installation and unsigned workflow binaries.
 > Review the [known limitations](#known-limitations) before use with important data.
@@ -41,19 +41,21 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **SQL tools.** Format statements, toggle comments, and generate SQL templates from the navigator.
 - **Query parameters.** Write `:name` values, fill the panel under the editor, and run with native bindings that keep values out of the SQL text.
 - **Table browsing.** Apply SQL filters, sort columns, move between pages, and count rows on request.
-- **Grid editing.** Change table values locally, review the SQL, and apply checked updates in one transaction.
+- **Grid editing.** Change, insert, and delete table rows locally, review the SQL, and apply checked changes in one transaction.
 - **Key navigation.** Go from a row to the row that its foreign key reads, or to the rows of other tables that read it.
 - **Database objects.** See routines, sequences, triggers, and types in the navigator, and open the DDL of an object in a new console.
 - **Results inspection.** Select cells, search loaded rows, inspect a row vertically, and format JSON values.
 - **Export.** Write CSV, TSV, JSON, JSON Lines, or SQL inserts from the export dialog.
 - **Import.** Load CSV, TSV, JSON, or JSON Lines into a table, with column mapping and a preview.
 - **Execution controls.** Run a statement, a selection, or a script, with row limits, deadlines, and cancellation.
+- **Auto-refresh.** Repeat the last run of a console, or the page of a table, at a fixed interval.
 - **Query plans.** See the plan of a statement as a tree, with the share of each node.
 - **Server sessions.** List the sessions of PostgreSQL or MySQL, cancel a query, or end a session.
 - **ER diagrams.** Draw the tables and foreign keys of a schema or a table, and copy the diagram as Mermaid text.
 - **Compare.** Compare table structures or data across SQL connections, and open a sync script without running it.
 - **Transactions.** Use autocommit or manual mode, with transaction state and age on screen.
 - **Saved work.** Save consoles automatically and reopen tabs with their cursor, scroll, and layout.
+- **External SQL files.** Open a `.sql` file from disk as a console: a copy of its text, or a link that writes the file on `Ctrl+S` with change checks.
 - **Credential storage.** Use session passwords, macOS Keychain, or Linux Secret Service.
 - **Appearance.** Choose themes, per-connection colors and icons, and optional Nerd Font symbols.
 - **Local MCP assistant.** Connect Claude Code or OpenCode to an open SQLN instance. Approve read access, review SQL edits, or give full access.
@@ -138,11 +140,11 @@ The **Build binaries** workflow produces archives for:
 |---|---|
 | Linux, x86-64, GNU libc | `x86_64-unknown-linux-gnu` |
 | macOS, Apple Silicon | `aarch64-apple-darwin` |
-| macOS, Intel | `x86_64-apple-darwin` |
 
 Manual runs provide workflow artifacts. Version-tag runs also attach the archives to a GitHub Release.
 See [manual binary builds](#manual-binary-builds) and [releases](#releases) for instructions.
 Linux artifacts use Ubuntu 24.04 and are not static binaries. Older Linux systems can require a source build.
+macOS artifacts target Apple Silicon. Intel Macs require a source build.
 The macOS artifacts are not signed or notarized. They do not replace signed release binaries.
 
 ## Quick start
@@ -153,6 +155,13 @@ Open an existing SQLite file:
 
 ```sh
 sqln ./existing.db
+```
+
+Open a DuckDB file, or one database in memory:
+
+```sh
+sqln duckdb:./analytics.duckdb
+sqln duckdb:
 ```
 
 Or connect to a server:
@@ -337,12 +346,24 @@ Read-only connections do not offer editing.
 
 Production connections ask for another confirmation.
 `Ctrl+N` sets a cell to SQL `NULL`; empty text and the text `NULL` remain different.
+`n` appends one pending row for insert; an empty cell of a pending row uses the table default, and a natural key stays editable.
+`d` marks a row for delete, or removes a pending row; a marked row returns to its original values, and a second press removes the mark.
 `Ctrl+R` opens the review. `Ctrl+D` asks before discarding pending changes.
 Use the palette if your terminal does not send a `Ctrl` shortcut.
 
-A `*` and underline mark each changed cell. The summary shows pending row and cell counts.
+A `*` and underline mark each changed cell; `+` and `-` beside a row number mark a pending insert and a pending delete.
+The summary shows the pending update, delete, and insert counts.
 Typing and keeping a value do not write to the database.
 Copy, export, import, filtering, sorting, and page changes require resolving pending changes first.
+
+### Repeat a view
+
+The `autoRefresh` command, in the palette and in the page of `Ctrl+W Space`, repeats the
+tab on screen at a fixed interval: Off, 1s, 2s, 5s, 10s, 30s, or 60s.
+A console repeats the exact statements of its last run with the current parameter values;
+a table tab reads the page of the cursor again with the same filter and order.
+A last run that can change data refuses to arm, and a failed repetition turns the
+refresh off. The status line and the table summary show `auto Ns`.
 Closing a dirty table offers Apply, Discard, and Cancel. Pending changes stay in memory only.
 
 Apply checks the original rows under database locks and updates all pending rows in one transaction.
@@ -387,6 +408,8 @@ Press `I` on a table in the navigator, or in the grid of a table tab.
 The import only adds rows to an existing table.
 The log holds the rows of the file in plain text.
 A connection marked as production asks before the import.
+
+For a `.sql` file, use **Open a SQL file as a console** in the command palette or start SQLN with `--script <file>`. Opening the file does not run it; review it and use `Shift+F5` or `Ctrl+W S` to run the script.
 
 ### Query plans
 
@@ -539,7 +562,7 @@ Do not replace an existing configuration with this example: its empty connection
 SQLN reports invalid configuration with its file and position. Correct it before restarting or reloading.
 Press `Ctrl+W r` to reload configuration.
 
-Available themes: `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-latte`, `gruvbox`, and `nord`.
+Available themes: `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-latte`, `gruvbox`, `nord`, `dracula`, `one-dark`, `monokai`, `solarized-dark`, `solarized-light`, `github-dark`, `rose-pine`, `high-contrast`, `high-contrast-light`, `everforest`, `kanagawa`, `night-owl`, `rose-pine-dawn`, `everforest-light`, and `ember`.
 Use `ansi` for the terminal palette. Set `NO_COLOR=1` to remove colors.
 Select `nerd` icons only if the terminal uses a Nerd Font.
 
@@ -606,20 +629,21 @@ sqln [options] [target]
 sqln mcp
 ```
 
-`target` is one SQLite file path or one connection URI. SQLN asks before creating a missing SQLite file.
+`target` is one SQLite file path, one DuckDB target with the `duckdb:` scheme, or one connection URI. SQLN asks before creating a missing file.
 Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, and `valkeys`.
 
 | Option | Purpose |
 |---|---|
 | `--project <folder>` | Select the project root |
+| `--script <file>` | Open a `.sql` file as a console at the start; it needs a target or a saved connection |
 | `--log <file>` | Write the event log |
 | `-h`, `--help` | Show command-line help |
 | `-V`, `--version` | Show the version |
-| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, or `redis` for an unconnected console; development option |
+| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, or `redis` for an unconnected console; development option |
 
 The terminal interface does not provide a batch SQL runner or read scripts from standard input.
 `sqln mcp` uses standard input and output only for MCP. It does not accept raw SQL.
-A `.sql` path is not a script-opening argument; file targets are SQLite databases.
+A positional `.sql` path is not a script-opening argument; positional file targets are SQLite databases. Use `--script` to open a `.sql` file as a console.
 
 ## Troubleshooting
 
@@ -641,16 +665,19 @@ A `.sql` path is not a script-opening argument; file targets are SQLite database
 ## Known limitations
 
 - Windows support is not part of the current CI or binary matrix.
-- SQLite needs an on-disk file. In-memory databases are not supported.
-- Grid editing supports updates only, in keyed table tabs. Use SQL for inserts, deletes, binary values, or other grids.
-- Arbitrary external `.sql` files cannot open directly as consoles.
+- A `:memory:` SQLite or DuckDB database lives in the single session of its connection: a disconnect or the end of the application loses it.
+- DuckDB opens a database file, and it refuses a `CSV`, `Parquet`, or `JSON` file: read those from a database with `read_csv`, `read_parquet`, or `read_json`, because a driver open of one of them would start a database in memory that loses its tables when the console ends.
+- DuckDB lacks schema compare, ER diagram, the DDL window, `EXPLAIN`, grid editing, and foreign-key reads. A read-only DuckDB connection opens the file with `access_mode = READ_ONLY`; the global read-only preference refuses a write in the connector instead, because a DuckDB connection cannot change its access mode. The bundled build compiles DuckDB and makes the first build long.
+- A DuckDB console can `ATTACH` other databases. Their schemas appear in the navigator with the `catalog.schema` name, and SQLN opens their tables with the catalog name, because a schema name alone cannot reach them. An `ATTACH` is not saved in the database file: it ends when the connection closes. A local DuckDB schema whose own name has a dot does not open, because SQLN reads the dot as the catalog separator.
+- Grid editing changes, inserts, and deletes rows of keyed table tabs. Use SQL for binary values or other grids.
+- A console linked to an external `.sql` file lives in the session only: closing SQLN closes it, and the file keeps its text. The file must be UTF-8, and the link has no autosave: `Ctrl+S` and the close questions write it.
 - There is no integrated SSH tunnel, IAM authentication, or Kerberos authentication.
 - MariaDB has no tree plan, so `Ctrl+W E` shows the error of the server. MySQL has no tree plan for a write on one table.
 - PostgreSQL `COPY FROM STDIN` and `COPY TO STDOUT` are not supported.
 - An ER diagram has no search, no zoom, and no export to an image file. The Mermaid copy holds the boxes on screen.
 - The DDL of a PostgreSQL table that SQLN writes leaves out partitions, inheritance, comments, grants, the owner, storage options, policies, and triggers. MySQL gives the DDL of a routine or a trigger only with the privilege to see it.
 - Key navigation acts only in a table tab. A console result does not tell the table of a column.
-- Query parameters support SQLite, PostgreSQL, and MySQL consoles with scalar values. Table filters, Redis, and Valkey have none.
+- Query parameters support SQLite, DuckDB, PostgreSQL, and MySQL consoles with scalar values. Table filters, Redis, and Valkey have none.
 - Search in results covers loaded rows only. Exporting all rows can issue a new read.
 - Import cannot create a table, update rows, or read SQL files. A MyISAM table cannot undo an import.
 - Conventional undo uses `undoLimitBytes`, with 64 MiB per console by default. The newest undo and redo steps stay even above that limit.
@@ -670,6 +697,7 @@ make check   # Run lint and the complete default test suite.
 make bench   # Print the performance and memory reports and run the latency targets.
 ```
 
+Test binaries build without debug info. Set `CARGO_PROFILE_TEST_DEBUG=2` when a backtrace needs symbols.
 Database-dependent tests skip when their environment is absent. A passing local check alone does not prove database integration.
 Native-vault tests require explicit authorization. Performance tests do not run as benchmarks in the default debug suite.
 
@@ -740,9 +768,9 @@ No additional publishing or signing secrets are required.
 
 ### Releases
 
-Pushing a tag that starts with `v` starts the three binary builds in the same workflow.
-After all three builds pass, a separate job verifies checksums and publishes a GitHub Release for that tag.
-The release includes the three `.tar.gz` archives, their checksum files, and generated release notes.
+Pushing a tag that starts with `v` starts the two binary builds in the same workflow.
+After both builds pass, a separate job verifies checksums and publishes a GitHub Release for that tag.
+The release includes the two `.tar.gz` archives, their checksum files, and generated release notes.
 
 **A version-tag push authorizes public release publication.** Do not push the tag until the version is ready.
 The workflow does not wait for branch CI. Confirm its success for the same commit before creating a release tag.

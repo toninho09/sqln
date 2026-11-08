@@ -707,10 +707,7 @@ impl History {
             },
             |entry| row_count(&entry.message.text, width) + usize::from(entry.pending),
             |entry, skip, count| raw_rows(entry, width, skip, count),
-            || Message {
-                level: MessageLevel::Info,
-                text: "[Older records removed.]".to_owned(),
-            },
+            || Message::info("[Older records removed.]"),
         )
     }
 
@@ -816,10 +813,7 @@ fn raw_rows(entry: &Entry, width: usize, skip: usize, count: usize) -> Vec<Messa
         next = after;
     }
     if entry.pending && row >= skip && shown.len() < count {
-        shown.push(Message {
-            level: MessageLevel::Info,
-            text: "Running. Result unknown.".to_owned(),
-        });
+        shown.push(Message::info("Running. Result unknown."));
     }
     shown
 }

@@ -86,10 +86,14 @@ impl App {
             let (label, phase, run) = match tab {
                 Tab::Console(index) => {
                     let console = &self.consoles[index];
+                    let revision = console.editor.revision();
                     let unsaved = console
                         .file
                         .as_ref()
-                        .is_some_and(|file| file.trouble.is_some());
+                        .is_some_and(|file| file.trouble.is_some())
+                        || console.external.as_ref().is_some_and(|external| {
+                            external.trouble.is_some() || external.is_dirty(revision)
+                        });
                     let name = self
                         .agent
                         .console_label(&self.consoles, console.id, &console.name);
@@ -181,7 +185,7 @@ impl App {
         self.select_tab(next);
     }
 
-    fn dialect_of(&self, connection: ConnectionId) -> Option<Dialect> {
+    pub(super) fn dialect_of(&self, connection: ConnectionId) -> Option<Dialect> {
         self.connection(connection).map(|item| item.dialect)
     }
 
@@ -269,7 +273,7 @@ impl App {
     }
 
     fn tab_relation(&self, tab: &TableTab) -> Option<&Relation> {
-        let catalog = self.connection(tab.connection)?.catalog.as_ref()?;
+        let catalog = self.catalog(tab.connection)?;
         let relation = &tab.relation;
         let (_, found) = catalog.relation(Some(&relation.schema), &relation.relation)?;
         Some(found)
@@ -827,6 +831,8 @@ impl App {
             | Action::GridCloseResult => {}
             Action::GridEditCell => self.edit_cell(false),
             Action::GridSetNull => self.edit_cell(true),
+            Action::GridNewRow => self.new_row(),
+            Action::GridDeleteRow => self.toggle_delete_row(),
             Action::GridReviewEdits | Action::GridSaveEdits => self.review_edits(),
             Action::GridDiscardEdits => self.confirm_discard_edits(),
             Action::GridApply => self.apply_table(),
@@ -914,10 +920,7 @@ impl App {
             connections,
             ..
         } = self;
-        let catalog = connections
-            .iter()
-            .find(|item| item.id == connection)
-            .and_then(|item| item.catalog.as_ref());
+        let catalog = App::catalog_of(connections, connection);
         let tab = &mut tables[index];
         let missing = match key {
             Some(key) => tab.on_field_key(key, dialect, catalog),
@@ -946,10 +949,7 @@ impl App {
                 connections,
                 ..
             } = self;
-            let catalog = connections
-                .iter()
-                .find(|item| item.id == connection)
-                .and_then(|item| item.catalog.as_ref());
+            let catalog = App::catalog_of(connections, connection);
             let missing = tables[index].refresh_list(dialect, catalog);
             self.request_relation_columns(connection, missing);
         }

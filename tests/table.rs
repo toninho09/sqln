@@ -255,6 +255,7 @@ impl Connector for RecordingConnector {
             table_filters: !self.0.redis,
             data_edit: !self.0.redis,
             parameters: false,
+            single_session: false,
         }
     }
 

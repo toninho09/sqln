@@ -1078,7 +1078,7 @@ fn a_warmed_schema_stays_cached_until_refresh_then_contains_external_ddl() {
     approve(&mut app);
     pump(&mut app, ghost);
     app.on_event(Event::Key(key(KeyCode::Esc)));
-    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("ai-cache.db");
+    let path = common::temp_db_path("ai-cache");
     rusqlite::Connection::open(path)
         .unwrap()
         .execute_batch("CREATE TABLE later_object(id INTEGER)")

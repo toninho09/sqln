@@ -2,7 +2,7 @@
 //! values holds `<column>` and an empty `WHERE`, so the database refuses an incomplete
 //! text. A `?` does not do this, because SQLite binds a missing value as `NULL`.
 
-use crate::complete::quote_name;
+use crate::complete::{quote_name, quote_schema};
 use crate::sql::Dialect;
 
 /// The rows of a generated `SELECT`.
@@ -38,7 +38,7 @@ impl Template {
 pub fn qualified_name(schema: Option<&str>, relation: &str, dialect: Dialect) -> String {
     let name = quote_name(relation, dialect, None);
     match schema {
-        Some(schema) => format!("{}.{name}", quote_name(schema, dialect, None)),
+        Some(schema) => format!("{}.{name}", quote_schema(schema, dialect, None)),
         None => name,
     }
 }

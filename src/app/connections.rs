@@ -90,6 +90,14 @@ impl App {
         let Some(path) = self.database.clone() else {
             return;
         };
+        if path
+            .to_string_lossy()
+            .trim()
+            .eq_ignore_ascii_case(":memory:")
+        {
+            self.add_sqlite(SqliteTarget::in_memory());
+            return;
+        }
         if let Err(error) = validate_path(&path) {
             self.status = Some(error.message);
             self.database = None;
@@ -313,8 +321,7 @@ impl App {
         for index in 0..self.consoles.len() {
             if self.consoles[index].connection == Some(id) {
                 self.catalog_for(index);
-                let catalog = self.connections.iter().find(|item| item.id == id);
-                let catalog = catalog.and_then(|item| item.catalog.as_ref());
+                let catalog = App::catalog_of(&self.connections, id);
                 self.consoles[index].editor.refresh_suggestions(catalog);
                 self.request_missing_columns(index);
             }
@@ -351,7 +358,9 @@ impl App {
     pub(super) fn on_navigator_action(&mut self, action: Action) {
         if action == Action::NavigatorAdd {
             if !self.config_blocked() {
-                self.form = Some(ConnectionForm::new_in(self.has_project()));
+                let mut form = ConnectionForm::new_in(self.has_project());
+                form.themes = self.custom_themes.clone();
+                self.form = Some(form);
             }
             return;
         }
@@ -490,12 +499,9 @@ impl App {
 
     /// Writes a template. A template with columns first reads them.
     fn start_template(&mut self, request: SqlRequest, template: Template) {
-        let found = self
-            .connection(request.connection)
-            .and_then(|item| item.catalog.as_ref())
-            .and_then(|catalog| {
-                catalog.relation(Some(&request.relation.schema), &request.relation.relation)
-            });
+        let found = self.catalog(request.connection).and_then(|catalog| {
+            catalog.relation(Some(&request.relation.schema), &request.relation.relation)
+        });
         let missing = found.is_some_and(|(_, found)| found.columns == Columns::NotLoaded);
         if template.needs_columns() && missing {
             let (connection, relation) = (request.connection, request.relation.clone());
@@ -521,8 +527,7 @@ impl App {
                 .position(|console| console.connection == Some(*connection))
         };
         let columns = self
-            .connection(*connection)
-            .and_then(|item| item.catalog.as_ref())
+            .catalog(*connection)
             .and_then(|catalog| catalog.relation(Some(&relation.schema), &relation.relation))
             .and_then(|(_, found)| match &found.columns {
                 Columns::Loaded(columns) => Some(columns.clone()),
@@ -804,6 +809,7 @@ impl App {
             .as_ref()
             .is_some_and(|manager| manager.is_connected(id));
         let mut form = ConnectionForm::editing(id, definition, connected);
+        form.themes = self.custom_themes.clone();
         if let Some(connection) = self.connection(id) {
             form.credential = connection.credential;
             if let Some(key) = &connection.key {
@@ -1055,6 +1061,12 @@ impl App {
                     self.confirm_association(console, *connection);
                 }
             }
+            PickerKind::SqlFile { path, connections } => {
+                let connection = connections.get(cursor).copied();
+                if let Some(connection) = connection {
+                    self.picked_sql_file_connection(connection, path);
+                }
+            }
             PickerKind::Follow {
                 connection,
                 mut choices,
@@ -1183,7 +1195,7 @@ impl App {
         let editing = form.editing;
         if form.display_only {
             let name = form.text(Field::Name).trim().to_owned();
-            let (theme, icon, production) = (form.theme, form.icon, form.production);
+            let (theme, icon, production) = (form.theme.clone(), form.icon, form.production);
             match form.schemas() {
                 Ok(schemas) => self.save_display(name, theme, icon, production, schemas),
                 Err(invalid) => self.show_invalid(invalid),
@@ -1249,8 +1261,11 @@ impl App {
     pub(super) fn create_form_file(&mut self) {
         match self.form_definition() {
             Some(Ok(mut definition)) => {
-                if let Source::Sqlite(target) = &mut definition.source {
-                    target.allow_create = true;
+                // The user accepted the creation, so the connection may make the file.
+                match &mut definition.source {
+                    Source::Sqlite(target) => target.allow_create = true,
+                    Source::Duckdb(target) => target.allow_create = true,
+                    Source::Network(_) => {}
                 }
                 self.apply_definition(definition);
             }
@@ -1431,11 +1446,26 @@ impl App {
     }
 }
 
-/// Returns the full path of a SQLite file that does not exist yet.
+/// Returns the full path of a file that does not exist yet.
 fn missing_file(definition: &Definition) -> Option<String> {
     match definition.resolved_source() {
-        Source::Sqlite(target) if !target.path.exists() && !target.allow_create => {
-            Some(target.path.display().to_string())
+        Source::Sqlite(target)
+            if matches!(
+                target.source,
+                crate::connector::sqlite::SqliteSource::File(_)
+            ) && !target.source_exists()
+                && !target.allow_create =>
+        {
+            Some(target.file_display())
+        }
+        Source::Duckdb(target)
+            if matches!(
+                target.source,
+                crate::connector::duckdb::DuckdbSource::File(_)
+            ) && !target.source_exists()
+                && !target.allow_create =>
+        {
+            Some(target.file_display())
         }
         _ => None,
     }

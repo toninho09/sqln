@@ -6,6 +6,8 @@ use super::compare::compare_has;
 use super::guard::short;
 use super::tables::has_sessions;
 use super::{App, DialogAction, Overlay};
+use crate::catalog::Catalog;
+use crate::connection::Connection;
 use crate::connector::{Namespace, TransactionCommand, TransactionState};
 use crate::console::{AfterTransaction, Focus, GridAction, Phase};
 use crate::editor::{FormatOutcome, KeyboardMode, RunPlan, RunRefusal, RunScope};
@@ -20,8 +22,8 @@ use crate::plan::Explain;
 use crate::settings::SettingsRequest;
 use crate::sql::{Dialect, first_keyword, is_plain_read};
 use crate::table::TableFocus;
-use crate::ui::console::fit;
-use crate::ui::name::NameAction;
+use crate::ui::kit::measure::fit;
+use crate::ui::kit::prompt::TextAction;
 use crate::ui::text;
 use crate::ui::welcome::Welcome;
 use crate::ui::which_key::KeyGroup;
@@ -43,6 +45,22 @@ pub(super) enum RunTarget {
     Plan {
         analyze: bool,
     },
+}
+
+/// Returns the catalog of the console: the catalog of its connection, or the fallback
+/// catalog when the console has no connection. The borrowed fields serve the call of
+/// the editor with the catalog at hand.
+fn editor_catalog<'a>(
+    connections: &'a [Connection],
+    connection: Option<ConnectionId>,
+    console_connection: Option<ConnectionId>,
+    fallback: Option<&'a Catalog>,
+) -> Option<&'a Catalog> {
+    match connection {
+        Some(id) => App::catalog_of(connections, id),
+        None if console_connection.is_none() => fallback,
+        None => None,
+    }
 }
 
 impl App {
@@ -379,14 +397,12 @@ impl App {
             fallback_catalog,
             ..
         } = self;
-        let catalog = match connection {
-            Some(id) => connections
-                .iter()
-                .find(|item| item.id == id)
-                .and_then(|item| item.catalog.as_ref()),
-            None if consoles[index].connection.is_none() => fallback_catalog.as_ref(),
-            None => None,
-        };
+        let catalog = editor_catalog(
+            connections,
+            connection,
+            consoles[index].connection,
+            fallback_catalog.as_ref(),
+        );
         consoles[index].editor.on_command(action, catalog);
         self.request_missing_columns(index);
     }
@@ -414,14 +430,12 @@ impl App {
             fallback_catalog,
             ..
         } = self;
-        let catalog = match connection {
-            Some(id) => connections
-                .iter()
-                .find(|item| item.id == id)
-                .and_then(|item| item.catalog.as_ref()),
-            None if consoles[index].connection.is_none() => fallback_catalog.as_ref(),
-            None => None,
-        };
+        let catalog = editor_catalog(
+            connections,
+            connection,
+            consoles[index].connection,
+            fallback_catalog.as_ref(),
+        );
         consoles[index].editor.on_key(key, catalog);
         self.request_missing_columns(index);
     }
@@ -481,6 +495,7 @@ impl App {
             Action::AgentStop => self.stop_agent_tasks(),
             Action::AgentSqlToConsole => self.agent_sql_to_console(),
             Action::AgentSqlClear => self.agent_sql_clear(),
+            Action::AutoRefresh => self.open_auto_refresh(),
             Action::AgentSession => self.open_tab_agent_session(),
             Action::AgentTasks => self.open_agent_tasks(),
             Action::Run => self.run(RunTarget::Statements(RunScope::Default)),
@@ -505,6 +520,7 @@ impl App {
             Action::ToggleComment => self.comment_console(),
             Action::OpenHistory => self.open_history(),
             Action::OpenSessions => self.open_sessions(),
+            Action::OpenSqlFile => self.start_open_sql_file(),
             Action::OpenDiagram => self.open_diagram_here(),
             Action::OpenCompare => self.open_compare_here(),
             // A table tab follows the key before this match.
@@ -578,15 +594,23 @@ impl App {
                 footer,
                 json,
             } => {
-                let original = (text, footer);
                 let formatted = self.persist.as_ref().is_none_or(|item| item.format_json);
-                let ((shown, footer), other) = match json {
-                    Some(json) if formatted => (json, Some(original)),
-                    other => (original, other),
+                let (contents, footer, other) = match json {
+                    Some((json, json_footer)) if formatted => (
+                        WrappedText::new(json),
+                        json_footer,
+                        Some((text.source().to_text(), footer)),
+                    ),
+                    Some((json, json_footer)) => (
+                        WrappedText::from_source(text.source()),
+                        footer,
+                        Some((json, json_footer)),
+                    ),
+                    None => (WrappedText::from_source(text.source()), footer, None),
                 };
                 self.overlay = Some(Overlay {
                     title,
-                    contents: WrappedText::new(shown),
+                    contents,
                     footer,
                     scroll: 0,
                     other,
@@ -1144,9 +1168,9 @@ impl App {
             return;
         };
         match prompt.on_key(key) {
-            NameAction::None => {}
-            NameAction::Cancel => self.rename = None,
-            NameAction::Accept(name) => self.accept_name(name),
+            TextAction::None => {}
+            TextAction::Cancel => self.rename = None,
+            TextAction::Accept(name) => self.accept_name(name),
         }
     }
 
@@ -1208,7 +1232,7 @@ impl App {
             KeyCode::Left | KeyCode::Char('h') => self.step_row_window(false),
             KeyCode::Right | KeyCode::Char('l') => self.step_row_window(true),
             KeyCode::Char('c') if ctrl => {
-                let contents = overlay.contents.text().to_owned();
+                let contents = overlay.contents.to_text();
                 self.copy(&contents);
             }
             _ => {}
@@ -1464,7 +1488,7 @@ impl App {
             .collect()
     }
 
-    fn has_transactions(&self, connection: ConnectionId) -> bool {
+    pub(super) fn has_transactions(&self, connection: ConnectionId) -> bool {
         self.connection(connection)
             .is_none_or(|item| item.capabilities.transactions)
     }
@@ -1553,6 +1577,7 @@ impl App {
                 dialect.is_some_and(has_sessions)
             }),
             Action::RenameConsole | Action::ChangeConnection => !in_table,
+            Action::OpenSqlFile => !self.connections.is_empty(),
             Action::FocusParameters | Action::ToggleParameters => {
                 self.console_on_screen() && !console.parameters.fields.is_empty()
             }
@@ -1697,5 +1722,6 @@ fn home_allows(action: Action) -> bool {
                 | OpenSessions
                 | OpenDiagram
                 | OpenCompare
+                | OpenSqlFile
         )
 }

@@ -104,9 +104,7 @@ impl App {
     /// Refuses the diagram of a view, which has no keys.
     fn focus_target(&self, connection: ConnectionId, focus: Focus) -> Result<Target, &'static str> {
         if let Focus::Table(table) = &focus {
-            let catalog = self
-                .connection(connection)
-                .and_then(|item| item.catalog.as_ref());
+            let catalog = self.catalog(connection);
             let found =
                 catalog.and_then(|catalog| catalog.relation(Some(&table.schema), &table.relation));
             if found.is_some_and(|(_, relation)| relation.kind == RelationKind::View) {

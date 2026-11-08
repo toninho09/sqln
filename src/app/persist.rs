@@ -19,7 +19,9 @@ use crate::store::scripts::{self, ScriptMeta};
 use crate::store::workspace::{self, EditorState, Position};
 use crate::store::{self, Root, Scope, Store};
 use crate::store::{file, history};
+use crate::ui::schemes::Scheme;
 use crate::ui::text;
+use crate::ui::theme::{CustomTheme, ThemeCatalog};
 
 /// The time between two checks of the files for a change by another program.
 const POLL_EVERY: Duration = Duration::from_secs(1);
@@ -44,6 +46,8 @@ pub(super) struct Persist {
     pub store: Store,
     /// The hash of each configuration file at the last load or check.
     pub hashes: Vec<(Scope, Option<u64>)>,
+    /// The hash of the themes folder of each scope at the last load or check.
+    pub(super) theme_hashes: Vec<(Scope, Option<u64>)>,
     /// The error of the last load. It blocks the connections to databases.
     pub error: Option<ConfigError>,
     /// The scripts whose problem the user already saw. They stay paused.
@@ -64,6 +68,36 @@ pub(super) struct Persist {
     /// A run of this time or more rings the bell at its end. The value 0 stops the bell.
     pub bell_after_seconds: u64,
     pub history: HistoryLog,
+}
+
+/// Reads the custom themes of both scopes. A project id wins over a global id
+/// with the same name, and a file that cannot load gives a note.
+pub(super) fn load_themes(store: &Store) -> (ThemeCatalog, Vec<String>) {
+    let mut catalog = ThemeCatalog::default();
+    let mut notes = Vec::new();
+    for (scope, root) in store.scopes() {
+        let (themes, mut trouble) = crate::store::themes::load(root);
+        notes.append(&mut trouble);
+        for theme in themes {
+            catalog.insert(CustomTheme {
+                id: theme.id,
+                name: theme.name,
+                scheme: Scheme::from_colors(&theme.colors),
+                scope,
+                file: Some(theme.hash),
+            });
+        }
+    }
+    (catalog, notes)
+}
+
+/// The manifest hash of the themes folder of each scope.
+pub(super) fn theme_manifests(store: &Store) -> Vec<(Scope, Option<u64>)> {
+    store
+        .scopes()
+        .into_iter()
+        .map(|(scope, root)| (scope, crate::store::themes::manifest(root)))
+        .collect()
 }
 
 impl Persist {
@@ -89,11 +123,16 @@ impl Persist {
             Err(failure) => error = Some(failure),
         }
         let session_target = options.session_target;
+        let (custom_themes, theme_notes) = load_themes(&store);
+        let theme_hashes = theme_manifests(&store);
+        options.custom_themes = custom_themes;
+        options.theme_notes = theme_notes;
         let persist = Self {
             worker: SaveWorker::new(),
             saves: HashMap::new(),
             store,
             hashes,
+            theme_hashes,
             error,
             presented: HashSet::new(),
             next_poll: Instant::now() + POLL_EVERY,
@@ -249,6 +288,9 @@ impl App {
         persist.config_prompt = false;
         let Loaded { hashes, config } = config::load(&persist.store);
         persist.hashes = hashes;
+        let (custom_themes, notes) = load_themes(&persist.store);
+        self.custom_themes = custom_themes;
+        persist.theme_hashes = theme_manifests(&persist.store);
         match config {
             Err(error) => {
                 persist.error = Some(error.clone());
@@ -258,6 +300,10 @@ impl App {
                 persist.error = None;
                 self.apply_config(config);
                 self.status = Some(text::CONFIG_RELOADED.to_owned());
+                self.missing_theme_note();
+                if let Some(note) = notes.first() {
+                    self.status = Some(note.clone());
+                }
             }
         }
     }
@@ -311,7 +357,11 @@ impl App {
         let was_dirty = console
             .file
             .as_ref()
-            .is_some_and(|file| file.is_dirty(console.editor.revision()));
+            .is_some_and(|file| file.is_dirty(console.editor.revision()))
+            || console
+                .external
+                .as_ref()
+                .is_some_and(|file| file.is_dirty(console.editor.revision()));
         let cursor = console.editor.cursor();
         console.editor = editor;
         let lines = text.split('\n').collect::<Vec<_>>();
@@ -323,6 +373,9 @@ impl App {
         let revision = console.editor.revision();
         if let Some(file) = &mut console.file {
             file.rebase(revision, was_dirty);
+        }
+        if let Some(external) = &mut console.external {
+            external.rebase(revision, was_dirty);
         }
     }
 
@@ -376,7 +429,7 @@ impl App {
         let same_credential = self.connections[index].credential == item.credential;
         if let Some(current) = &mut self.connections[index].definition {
             // These values need no new session, so they apply to a connection in use too.
-            current.theme = definition.theme;
+            current.theme = definition.theme.clone();
             current.icon = definition.icon;
             if same_credential {
                 definition.keep_password_of(current);
@@ -442,7 +495,19 @@ impl App {
         let project = project.transpose();
         match (global, project) {
             (Ok(global), Ok(project)) => {
-                self.settings_form = Some(SettingsForm::new(global, project))
+                let (custom, notes) = load_themes(&persist.store);
+                if let Some(note) = notes.first() {
+                    self.status = Some(note.clone());
+                }
+                let used = self
+                    .connections
+                    .iter()
+                    .filter_map(|connection| {
+                        let theme = connection.definition.as_ref()?.theme.clone()?;
+                        theme.custom_id().map(str::to_owned)
+                    })
+                    .collect();
+                self.settings_form = Some(SettingsForm::with_themes(global, project, custom, used))
             }
             (Err(message), _) | (_, Err(message)) => self.status = Some(message),
         }
@@ -494,6 +559,7 @@ impl App {
     pub(super) fn ensure_file(&mut self, index: usize) {
         if self.persist.is_none()
             || self.consoles[index].file.is_some()
+            || self.consoles[index].external.is_some()
             || self.agent.owns(self.consoles[index].id)
         {
             return;
@@ -551,11 +617,15 @@ impl App {
             self.status = Some(text::AGENT_CONSOLE_TEMPORARY.to_owned());
             return;
         }
+        let index = self.active;
+        if self.consoles[index].external.is_some() {
+            self.save_external_console(index);
+            return;
+        }
         if self.persist.is_none() {
             self.status = Some(text::NOTHING_TO_SAVE.to_owned());
             return;
         }
-        let index = self.active;
         self.ensure_file(index);
         let console = &self.consoles[index];
         let Some(file) = &console.file else {
@@ -821,6 +891,7 @@ impl App {
     pub fn tick_at(&mut self, now: Instant) -> bool {
         let mut changed = self.advance_clock(now);
         changed |= self.expire_status(now);
+        changed |= self.auto_refresh_tick(now);
         if self.console_on_screen() {
             let console = &mut self.consoles[self.active];
             let revision = console.editor.revision();
@@ -922,6 +993,16 @@ impl App {
                 *known = hash;
                 changed = true;
             }
+            let manifest = crate::store::themes::manifest(root);
+            if let Some((_, known)) = persist
+                .theme_hashes
+                .iter_mut()
+                .find(|(item, _)| *item == scope)
+                && *known != manifest
+            {
+                *known = manifest;
+                changed = true;
+            }
         }
         if changed {
             persist.config_prompt = true;
@@ -948,6 +1029,14 @@ impl App {
     /// Writes the pending text before a close. It returns false after it asked a
     /// question, because the text has no safe place to go.
     pub(super) fn flush_console(&mut self, index: usize) -> bool {
+        if let Some(external) = &self.consoles[index].external {
+            let revision = self.consoles[index].editor.revision();
+            if self.consoles[index].discard_text || !external.is_dirty(revision) {
+                return true;
+            }
+            self.ask_external_close(index);
+            return false;
+        }
         if self.persist.is_none() {
             return true;
         }
@@ -1031,6 +1120,17 @@ impl App {
     /// Writes what it can for a signal or a panic. These cases allow no question, so a
     /// console that waits for a choice keeps its file as it is.
     pub fn save_without_questions(&mut self) {
+        // A linked console writes its file with the check of a change, because there is
+        // no question to ask. A file that another program changed keeps its text.
+        for console in &mut self.consoles {
+            if let Some(external) = &mut console.external {
+                let revision = console.editor.revision();
+                if external.is_dirty(revision) {
+                    let text = console.editor.text();
+                    let _ = external.save(&text, revision);
+                }
+            }
+        }
         if self.persist.is_none() {
             return;
         }

@@ -3,19 +3,22 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
-use super::console::{
-    centered, draw_grid, draw_panel_title, message_style, modal_width, search_line,
-};
-use super::settings::{
-    BORDER_ROWS, FOOTER_ROWS, LEFT, RIGHT, draw_buttons, draw_note, draw_row, value_width,
-};
+use super::console::draw_grid;
+use super::kit::buttons::{self, RowOptions};
+use super::kit::feedback::draw_note;
+use super::kit::feedback::message_style;
+use super::kit::form::{choice_line, draw_row, flag_line, value_width};
+use super::kit::geometry::{LEFT, modal_width};
+use super::kit::input::{self, FieldMode, FieldText};
+use super::kit::modal::Modal;
+use super::kit::panel::draw_panel_title;
+use super::searchbar::search_line;
 use super::theme::Theme;
-use super::{draw_anchored_list, float_block, input_spans, text};
+use super::{draw_anchored_list, text};
 use crate::compare::Kind;
 use crate::compare::form::{CompareForm, Field};
 use crate::compare::tab::CompareTab;
@@ -24,7 +27,7 @@ use crate::grid::printable;
 use crate::line_input::LineInput;
 
 const WIDTH: u16 = 72;
-const LABEL_WIDTH: u16 = 24;
+const LABEL_WIDTH: u16 = super::kit::form::LabelWidth::Wide.columns();
 const FIRST_FIELD_ROW: u16 = 1;
 const FIELD_ROWS: u16 = 8;
 
@@ -119,11 +122,6 @@ fn label(field: Field) -> &'static str {
 
 fn value(form: &CompareForm, field: Field, width: usize, theme: &Theme) -> Line<'static> {
     let focused = form.focus == field;
-    let style = if focused {
-        theme.dialog_focus
-    } else {
-        Style::new()
-    };
     let side = field.side().map(|side| &form.sides[side]);
     match (field, side) {
         (Field::SourceTable | Field::TargetTable, Some(side)) => {
@@ -136,29 +134,35 @@ fn value(form: &CompareForm, field: Field, width: usize, theme: &Theme) -> Line<
             let name = form
                 .choice(field.side().unwrap_or(0))
                 .map_or(String::new(), |choice| printable(&choice.name));
-            Line::from(Span::styled(format!("< {name} >"), style))
+            choice_line(&name, focused, theme)
         }
         (Field::Kind, _) => {
             let kind = match form.kind {
                 Kind::Structure => text::KIND_STRUCTURE,
                 Kind::Data => text::KIND_DATA,
             };
-            Line::from(Span::styled(format!("< {kind} >"), style))
+            choice_line(kind, focused, theme)
         }
         (_, Some(side)) => match side.schema_name() {
-            Some(schema) => Line::from(Span::styled(format!("< {} >", printable(schema)), style)),
+            Some(schema) => choice_line(&printable(schema), focused, theme),
             None => Line::styled(text::COMPARE_LOADING, theme.hint),
         },
-        _ => {
-            let mark = if form.removals { "[x]" } else { "[ ]" };
-            Line::from(Span::styled(mark, style))
-        }
+        _ => flag_line(form.removals, focused, theme),
     }
 }
 
 fn input_line(input: &LineInput, width: usize, focused: bool, theme: &Theme) -> Line<'static> {
-    let chars: Vec<char> = printable(input.text()).chars().collect();
-    Line::from(input_spans(&chars, input.cursor(), width, focused, theme).0)
+    let text = printable(input.text());
+    input::line(
+        FieldText {
+            text: &text,
+            cursor: input.cursor(),
+            width,
+            focused,
+            mode: FieldMode::Text,
+        },
+        theme,
+    )
 }
 
 /// Draws the list of the focused field below its value. It returns the area of the list
@@ -185,13 +189,14 @@ fn draw_field_list(
 }
 
 pub fn draw_compare_form(frame: &mut Frame, form: &CompareForm, theme: &Theme) -> CompareLayout {
-    let height = BORDER_ROWS + FIRST_FIELD_ROW + FIELD_ROWS + FOOTER_ROWS;
-    let width = modal_width(frame.area().width, WIDTH);
-    let area = centered(frame.area(), width, height);
-    frame.render_widget(Clear, area);
-    let block = float_block(text::TITLE_COMPARE, theme);
-    let pane = block.inner(area);
-    frame.render_widget(block, area);
+    let modal = Modal::form(
+        modal_width(frame.area().width, WIDTH),
+        FIRST_FIELD_ROW,
+        FIELD_ROWS,
+    )
+    .title(text::TITLE_COMPARE)
+    .open(frame, theme);
+    let pane = modal.pane;
     let mut layout = CompareLayout::default();
     let fields = &Field::ALL[..usize::from(FIELD_ROWS)];
     for (y, field) in (pane.y + FIRST_FIELD_ROW..).zip(fields.iter().copied()) {
@@ -211,13 +216,8 @@ pub fn draw_compare_form(frame: &mut Frame, form: &CompareForm, theme: &Theme) -
         );
         layout.fields.push((field, row));
     }
-    let content = Rect {
-        x: pane.x + LEFT,
-        y: pane.y,
-        width: pane.width.saturating_sub(LEFT + RIGHT),
-        height: 1,
-    };
-    let button_row = pane.bottom().saturating_sub(2);
+    let content = modal.content;
+    let button_row = modal.button_row;
     match &form.note {
         Some(note) => draw_note(frame, content, button_row, note, theme.error),
         None => {
@@ -228,15 +228,23 @@ pub fn draw_compare_form(frame: &mut Frame, form: &CompareForm, theme: &Theme) -
             draw_note(frame, content, button_row, hint, theme.hint);
         }
     }
-    let buttons = [
-        (Field::Compare, text::BUTTON_COMPARE),
-        (Field::Cancel, text::OPTION_CANCEL),
-    ];
-    layout.fields.extend(draw_buttons(
+    let buttons = buttons::dialog_items(
+        [
+            (Field::Compare, text::BUTTON_COMPARE),
+            (Field::Cancel, text::OPTION_CANCEL),
+        ],
+        form.focus,
+        theme,
+    );
+    layout.fields.extend(buttons::draw(
         frame,
-        content,
-        button_row,
-        (&buttons, form.focus),
+        Rect {
+            y: button_row,
+            height: 1,
+            ..content
+        },
+        RowOptions::DIALOG,
+        &buttons,
         theme,
     ));
     let focused = layout.fields.iter().find(|(field, _)| *field == form.focus);
