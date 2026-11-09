@@ -671,10 +671,12 @@ Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `red
 |---|---|
 | `--project <folder>` | Select the project root |
 | `--script <file>` | Open a `.sql` file as a console at the start; it needs a target or a saved connection |
-| `--execute <SQL>` | Run one instruction without the terminal interface |
-| `--output csv\|json` | Set the required output format for `--execute` |
+| `--execute <SQL>` | Run SQL without the terminal interface; `-` reads the script from standard input |
+| `--output csv\|json` | Set the result format for `--execute`; optional |
 | `--connection <name>` | Select a saved connection for `--execute` instead of a target |
 | `--scope global\|project` | Select the scope when a saved connection name is ambiguous |
+| `--single-transaction` | Run the whole script in one transaction that rolls back on any failure |
+| `--continue-on-error` | Keep running after a failed instruction and report every failure |
 | `--yes` | Authorize protected execution and missing database creation; it does not authorize trust |
 | `--password-file <file>` | Read the batch password from a UTF-8 file |
 | `--log <file>` | Write the event log |
@@ -690,24 +692,33 @@ sqln --connection production --execute "SELECT count(*) FROM users" --output jso
 sqln --connection staging --execute "DELETE FROM logs" --output json --yes
 SQLN_PASSWORD="$DB_PASSWORD" sqln --connection app --execute "SELECT 1" --output json
 sqln --connection app --password-file /run/secrets/db-password --execute "SELECT 1" --output csv
+sqln app.db --execute - --output csv < migration.sql
+sqln app.db --execute - --single-transaction --continue-on-error < migration.sql
 ```
 
-`--execute` runs exactly one instruction. It accepts a final semicolon and comments.
-It does not run scripts or read SQL from standard input. Do not combine it with `--script` or `--dialect`.
+`--execute` runs one instruction or a script of several instructions, in order, on one session.
+It accepts a final semicolon, comments, and the `DELIMITER` rule. Use `-` to read the SQL from standard input,
+up to 10 MiB; an empty input is an invalid argument. Do not combine `--execute` with `--script` or `--dialect`.
 Supply exactly one target or `--connection`. Names ignore case. Use `--scope global` or `--scope project` for an ambiguous name.
 Relative paths of saved connections keep their configured base folder.
 
-Standard output contains only CSV or JSON. CSV has a header, a comma delimiter, UTF-8, and no BOM.
-JSON is an array of objects and uses the existing export rules for numbers, binary values, and repeated names.
+Standard output contains only CSV or JSON, and it stays empty without `--output`. CSV has a header, a comma delimiter, UTF-8, and no BOM.
+JSON is one array of objects per result set, one set per line, and uses the existing export rules for numbers, binary values, and repeated names.
+Several result sets are written in order: CSV repeats the header for each set.
 An empty result writes the CSV header or `[]`. A command without columns leaves standard output empty and reports affected rows on standard error.
+Without `--output`, every result set reports its row count on standard error.
 Database notices and failures also go to standard error. Export dialog preferences do not change these formats.
 CSV preserves control bytes and formula-like text. Redirect output to a file or pipe when values are untrusted.
 
 Execution streams all rows, without the grid cap or an added `LIMIT`. The connection SQL timeout still applies.
 On Unix, the statement deadline stays active through the final output flush, including blocked output after the query returns.
 Notices and affected-row messages on standard error also stop after cancellation or timeout.
-SQLN executes the instruction once. Multiple result sets are not supported; detecting another result fails the command.
-An instruction that leaves a transaction open fails and SQLN rolls it back.
+The default stops the script at the first failed instruction. `--continue-on-error` runs the rest and reports every failure with its number.
+`--single-transaction` opens one transaction, commits when every instruction succeeds, and rolls back on any failure or signal; Redis refuses the flag.
+SQLN finishes and flushes result output before the final `COMMIT`; a failure during that flush triggers rollback.
+Output can reach the consumer before `COMMIT`, even when `COMMIT` later fails. A successful flush does not guarantee consumer storage.
+A script that ends its own transaction makes the final `COMMIT` fail. On PostgreSQL, a failure inside the transaction can make later instructions fail with the server message.
+An instruction outside `--single-transaction` that leaves a transaction open fails and SQLN rolls it back.
 
 Without `--yes`, protected execution and missing database creation need a terminal confirmation. The default answer is No.
 The question uses the controlling terminal, so redirected input and output stay separate.

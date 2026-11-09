@@ -4,7 +4,7 @@ mod auth;
 #[cfg(unix)]
 mod output;
 
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,9 +17,12 @@ use crate::exec::{
     ExecEvent, ExecutionEnd, Manager, RunOptions, Settings, StatementStatus, StreamControl,
 };
 use crate::export::{Encoder, ExportFormat, ExportOptions};
-use crate::grid::{Budget, printable};
+use crate::grid::{Budget, Row, printable};
 use crate::sql::{self, Dialect};
 use crate::store::{Scope, Store, config};
+
+/// The largest script that `--execute -` reads from standard input.
+const STDIN_LIMIT: usize = 10 * 1024 * 1024;
 
 pub struct Options {
     pub store: Store,
@@ -27,7 +30,12 @@ pub struct Options {
     pub connection: Option<String>,
     pub scope: Option<Scope>,
     pub sql: String,
-    pub format: ExportFormat,
+    /// `None` keeps standard output empty; row counts go to the error stream.
+    pub output: Option<ExportFormat>,
+    /// True runs the whole script in one transaction that rolls back on failure.
+    pub single_transaction: bool,
+    /// True keeps running after a failed instruction.
+    pub continue_on_error: bool,
     pub yes: bool,
     pub password_file: Option<PathBuf>,
 }
@@ -143,6 +151,31 @@ fn allow_create(definition: &mut Definition, yes: bool) -> Result<(), Error> {
     Ok(())
 }
 
+/// Reads the SQL of `--execute -` from standard input.
+/// The read happens before SQLN resolves a connection, so a password question
+/// never comes before an input failure.
+pub fn read_standard_input() -> Result<String, Error> {
+    if io::stdin().is_terminal() {
+        return Err(Error::usage(
+            "--execute - needs SQL on standard input, not an interactive terminal.",
+        ));
+    }
+    let mut bytes = Vec::new();
+    let mut limited = io::stdin().take(STDIN_LIMIT as u64 + 1);
+    if let Err(error) = limited.read_to_end(&mut bytes) {
+        return Err(Error::failed(format!(
+            "Standard input cannot be read: {error}"
+        )));
+    }
+    if bytes.len() > STDIN_LIMIT {
+        return Err(Error::usage(format!(
+            "--execute - input exceeds {} MiB.",
+            STDIN_LIMIT / (1024 * 1024)
+        )));
+    }
+    String::from_utf8(bytes).map_err(|_| Error::failed("Standard input is not valid UTF-8."))
+}
+
 /// Runs without restoring or changing consoles, workspace, or export preferences.
 pub fn run(options: Options) -> Result<(), Error> {
     let (mut definition, stored) = resolve(&options)?;
@@ -155,14 +188,18 @@ pub fn run(options: Options) -> Result<(), Error> {
             crate::connector::target::Engine::Redis => Dialect::Redis,
         },
     };
-    let statements = sql::split(&options.sql, dialect);
-    if statements.len() != 1 {
+    let statements: Vec<String> = sql::split(&options.sql, dialect)
+        .iter()
+        .map(|statement| statement.text(&options.sql).to_owned())
+        .collect();
+    if statements.is_empty() {
         return Err(Error::usage(
-            "--execute needs exactly one instruction. Scripts are not supported.",
+            "--execute needs SQL: the text has no instruction.",
         ));
     }
-    let statement = statements[0].text(&options.sql).to_owned();
-    let statements = vec![statement];
+    if options.single_transaction && dialect == Dialect::Redis {
+        return Err(Error::usage("--single-transaction does not support Redis."));
+    }
     if !options.yes
         && let Some(risk) = sql::run_risk(
             &statements,
@@ -192,7 +229,7 @@ pub fn run(options: Options) -> Result<(), Error> {
     let signals = Signals::new()?;
     let budget = Arc::new(Budget::new(Settings::default().budget_bytes));
     let stream_stopped = Arc::new(StreamControl::default());
-    let (mut manager, events) = Manager::new_streaming(budget, stream_stopped.clone())?;
+    let (mut manager, mut events) = Manager::new_streaming(budget, stream_stopped.clone())?;
     let settings = definition.settings(&Settings {
         row_cap: usize::MAX,
         cap_in_sql: false,
@@ -203,145 +240,355 @@ pub fn run(options: Options) -> Result<(), Error> {
         .open_console(connection)
         .expect("The connection exists.");
     manager.stop_when(console, signals.stopped.clone());
-    let execution = manager.run(
+    let mut sinks = Sinks::new(options.output, &signals.stopped, &stream_stopped)?;
+    let mut context = Drain {
+        manager: &manager,
+        events: &mut events,
         console,
-        statements,
-        RunOptions {
-            stream: true,
-            ..RunOptions::default()
-        },
-    );
+        stopped: &signals.stopped,
+    };
     crate::log::event("batch started");
-    let result = deliver(
-        &manager,
-        events,
-        console,
-        execution,
-        options.format,
-        &signals.stopped,
-        &stream_stopped,
-    );
+    let result = execute(&mut context, &statements, &options, &mut sinks);
     manager.close_console(console);
     manager.remove_connection(connection);
     manager.shutdown();
     result
 }
 
-fn deliver(
-    manager: &Manager,
-    mut events: tokio::sync::mpsc::Receiver<ExecEvent>,
+/// The shared context of the drained executions of one invocation.
+struct Drain<'a> {
+    manager: &'a Manager,
+    events: &'a mut tokio::sync::mpsc::Receiver<ExecEvent>,
     console: u64,
-    execution: u64,
-    format: ExportFormat,
-    stopped: &AtomicBool,
-    stream_stopped: &StreamControl,
+    stopped: &'a AtomicBool,
+}
+
+/// Runs the script and, with `--single-transaction`, the statement that ends the
+/// transaction.
+fn execute(
+    context: &mut Drain<'_>,
+    statements: &[String],
+    options: &Options,
+    sinks: &mut Sinks<'_>,
 ) -> Result<(), Error> {
-    #[cfg(unix)]
-    let mut errors = output::Output::new(io::stderr(), stopped, stream_stopped)?;
-    #[cfg(not(unix))]
-    let mut errors = io::stderr();
-    #[cfg(unix)]
-    let output = output::Output::new(io::stdout(), stopped, stream_stopped)?;
-    #[cfg(not(unix))]
-    let output = {
-        let _ = stream_stopped;
-        io::stdout()
-    };
-    let mut encoder = Encoder::new(
-        BufWriter::new(output),
-        ExportOptions {
-            format,
-            ..ExportOptions::default()
+    let execution = context.manager.run(
+        context.console,
+        statements.to_vec(),
+        RunOptions {
+            stream: true,
+            manual: options.single_transaction,
+            hold_transaction: options.single_transaction,
+            continue_on_error: options.continue_on_error,
+            ..RunOptions::default()
         },
     );
-    let mut columns = false;
-    let mut failure = None;
+    let mut summary = drain(context, execution, true, options.continue_on_error, sinks)?;
+    if summary.signal {
+        return Err(Error::failed(
+            "The execution stops after a signal. Output can be incomplete.",
+        ));
+    }
+    if !options.single_transaction {
+        return finish(&summary, statements.len(), options.continue_on_error, sinks);
+    }
+    // Flush the result before COMMIT so an output failure can still roll back.
+    if !summary.failed()
+        && let Err(error) = sinks.finish()
+    {
+        summary.fail_output(error);
+    }
+    // The transaction stays open on the held session. End it with one statement.
+    let (close_sql, kind) = if summary.failed() {
+        ("ROLLBACK", "rollback")
+    } else {
+        ("COMMIT", "commit")
+    };
+    let closing_execution = context.manager.run(
+        context.console,
+        vec![close_sql.to_owned()],
+        RunOptions {
+            stream: true,
+            ..RunOptions::default()
+        },
+    );
+    let closing = drain(context, closing_execution, false, false, sinks)?;
+    if summary.failed() {
+        return finish(&summary, statements.len(), options.continue_on_error, sinks);
+    }
+    if closing.failed() {
+        return Err(Error::failed(format!(
+            "The {kind} failed: {}",
+            describe(&closing, 1, false)
+        )));
+    }
+    Ok(())
+}
+
+/// Writes the final bytes and turns a failed summary into the report error.
+fn finish(
+    summary: &Summary,
+    total: usize,
+    continue_on_error: bool,
+    sinks: &mut Sinks<'_>,
+) -> Result<(), Error> {
+    if summary.failed() {
+        return Err(Error::failed(describe(summary, total, continue_on_error)));
+    }
+    sinks.finish()?;
+    Ok(())
+}
+
+/// One text line that explains a failed run.
+fn describe(summary: &Summary, total: usize, continue_on_error: bool) -> String {
+    if let Some(output) = &summary.output_failed {
+        return output.clone();
+    }
+    if let Some(message) = &summary.run_message {
+        return message.clone();
+    }
+    if !summary.failures.is_empty() {
+        if continue_on_error {
+            return format!(
+                "{} of {} instructions failed.",
+                summary.failures.len(),
+                total
+            );
+        }
+        let (index, message) = &summary.failures[0];
+        return format!("[{index}] {message}");
+    }
+    format!("The execution did not complete: {:?}.", summary.end)
+}
+
+/// What one execution reported.
+#[derive(Default)]
+struct Summary {
+    end: Option<ExecutionEnd>,
+    run_message: Option<String>,
+    /// Instruction failures: the one-based number and the message.
+    failures: Vec<(usize, String)>,
+    output_failed: Option<String>,
+    signal: bool,
+}
+
+impl Summary {
+    /// Stores the first output failure and returns true for that failure.
+    fn fail_output(&mut self, error: io::Error) -> bool {
+        let first = self.output_failed.is_none();
+        self.output_failed
+            .get_or_insert_with(|| format!("Output failed: {error}. Output can be incomplete."));
+        first
+    }
+
+    fn failed(&self) -> bool {
+        self.end != Some(ExecutionEnd::Completed)
+            || self.run_message.is_some()
+            || !self.failures.is_empty()
+            || self.output_failed.is_some()
+    }
+}
+
+/// Reads the events of one execution until it ends.
+///
+/// `numbered` marks the run of the user script: its reports carry instruction
+/// numbers. The closing statement of a transaction runs without numbers.
+fn drain(
+    context: &mut Drain<'_>,
+    execution: u64,
+    numbered: bool,
+    continue_on_error: bool,
+    sinks: &mut Sinks<'_>,
+) -> Result<Summary, Error> {
+    let manager = context.manager;
+    let console = context.console;
+    let mut summary = Summary::default();
     let mut stopping = false;
     loop {
-        if stopped.load(Ordering::Relaxed) && !stopping {
+        if context.stopped.load(Ordering::Relaxed) && !stopping {
             manager.stop(console);
             stopping = true;
-            failure = Some(Error::failed(
-                "The execution stops after a signal. Output can be incomplete.",
-            ));
+            summary.signal = true;
         }
-        let event = match events.blocking_recv() {
+        let event = match context.events.blocking_recv() {
             Some(event) => event,
             None => {
-                return Err(failure
-                    .unwrap_or_else(|| Error::failed("The executor closed before completion.")));
+                return Err(Error::failed("The executor closed before completion."));
             }
         };
         if event.console() != Some(console) || event.execution().is_some_and(|id| id != execution) {
             continue;
         }
-        let written =
-            match event {
-                ExecEvent::Columns { columns: names, .. } if failure.is_none() => {
-                    if columns {
-                        failure = Some(Error::failed(
-                            "Multiple results are not supported. Output can be incomplete.",
-                        ));
-                        Ok(())
-                    } else {
-                        columns = true;
-                        encoder.start(&names)
-                    }
-                }
-                ExecEvent::Rows { rows, .. } if failure.is_none() => {
-                    rows.iter().try_for_each(|row| encoder.row(row.cells()))
-                }
-                ExecEvent::Notice { text, .. } => writeln!(errors, "sqln: {}", printable(&text)),
-                ExecEvent::StatementFinished { status, end, .. } => match status {
+        let written = match event {
+            ExecEvent::Columns { columns, .. } => sinks.start_set(&columns),
+            ExecEvent::Rows { rows, .. } => sinks.rows(&rows),
+            ExecEvent::ResultDone { key, rows, .. } => {
+                sinks.returned(usize::from(numbered) * (key.index + 1), rows)
+            }
+            ExecEvent::Notice { text, .. } => sinks.notice(&text),
+            ExecEvent::StatementFinished {
+                key, status, end, ..
+            } => {
+                let index = usize::from(numbered) * (key.index + 1);
+                match status {
                     StatementStatus::Success => {
-                        if !columns && let Some(changed) = end.and_then(|end| end.changed) {
-                            writeln!(errors, "sqln: {changed} rows affected.")
+                        if numbered
+                            && !end.is_some_and(|end| end.has_columns)
+                            && let Some(changed) = end.and_then(|end| end.changed)
+                        {
+                            sinks.affected(index, changed)
                         } else {
                             Ok(())
                         }
                     }
                     StatementStatus::Error(message) => {
-                        failure.get_or_insert_with(|| Error::failed(message));
-                        Ok(())
+                        summary.failures.push((index, message.clone()));
+                        if continue_on_error {
+                            sinks.failure_line(index, &message)
+                        } else {
+                            Ok(())
+                        }
                     }
                     other => {
-                        failure.get_or_insert_with(|| {
-                            Error::failed(format!("The statement did not complete: {other:?}."))
-                        });
+                        summary
+                            .failures
+                            .push((index, format!("The statement did not complete: {other:?}.")));
                         Ok(())
                     }
-                },
-                ExecEvent::ConfirmClose { .. } => {
-                    // Batch execution has no transaction that can continue after the process ends.
-                    manager.confirm_close(console, true);
-                    Ok(())
                 }
-                ExecEvent::ExecutionFinished { end, message, .. } => {
-                    if end != ExecutionEnd::Completed || message.is_some() {
-                        failure.get_or_insert_with(|| {
-                            Error::failed(message.unwrap_or_else(|| {
-                                format!("The execution did not complete: {end:?}.")
-                            }))
-                        });
-                    }
-                    if let Some(error) = failure {
-                        return Err(error);
-                    }
-                    if columns {
-                        encoder.finish()?;
-                    }
-                    return Ok(());
-                }
-                _ => Ok(()),
-            };
-        if let Err(error) = written {
-            failure.get_or_insert_with(|| {
-                Error::failed(format!("Output failed: {error}. Output can be incomplete."))
-            });
-        }
-        if failure.is_some() && !stopping {
+            }
+            ExecEvent::ConfirmClose { .. } => {
+                // Batch execution has no transaction that can continue after the
+                // process ends. A dropped session rolls back on the server.
+                manager.confirm_close(console, true);
+                Ok(())
+            }
+            ExecEvent::ExecutionFinished { end, message, .. } => {
+                summary.end = Some(end);
+                summary.run_message = message;
+                return Ok(summary);
+            }
+            _ => Ok(()),
+        };
+        if let Err(error) = written
+            && summary.fail_output(error)
+            && !stopping
+        {
             manager.stop(console);
             stopping = true;
+        }
+    }
+}
+
+/// The writers of one invocation: the error stream and the optional result encoder.
+struct Sinks<'a> {
+    errors: ErrorsSink<'a>,
+    encoder: Option<Encoder<StdoutSink<'a>>>,
+    /// True when at least one result set arrived. Without a set, standard output
+    /// stays empty: no format writes its empty form.
+    started: bool,
+}
+
+#[cfg(unix)]
+type ErrorsSink<'a> = output::Output<'a>;
+#[cfg(not(unix))]
+type ErrorsSink<'a> = io::Stderr;
+
+#[cfg(unix)]
+type StdoutSink<'a> = BufWriter<output::Output<'a>>;
+#[cfg(not(unix))]
+type StdoutSink<'a> = BufWriter<io::Stdout>;
+
+impl<'a> Sinks<'a> {
+    fn new(
+        format: Option<ExportFormat>,
+        stopped: &'a AtomicBool,
+        stream_stopped: &'a StreamControl,
+    ) -> io::Result<Self> {
+        #[cfg(unix)]
+        let errors = output::Output::new(io::stderr(), stopped, stream_stopped)?;
+        #[cfg(not(unix))]
+        {
+            let _ = (stopped, stream_stopped);
+            let errors = io::stderr();
+            let encoder = match format {
+                Some(format) => Some(Encoder::new(
+                    BufWriter::new(io::stdout()),
+                    ExportOptions {
+                        format,
+                        ..ExportOptions::default()
+                    },
+                )),
+                None => None,
+            };
+            return Ok(Self {
+                errors,
+                encoder,
+                started: false,
+            });
+        }
+        #[cfg(unix)]
+        let encoder = match format {
+            Some(format) => Some(Encoder::new(
+                BufWriter::new(output::Output::new(io::stdout(), stopped, stream_stopped)?),
+                ExportOptions {
+                    format,
+                    ..ExportOptions::default()
+                },
+            )),
+            None => None,
+        };
+        #[cfg(unix)]
+        Ok(Self {
+            errors,
+            encoder,
+            started: false,
+        })
+    }
+
+    /// Starts one result set. Without `--output`, the set only counts at its end.
+    fn start_set(&mut self, columns: &[String]) -> io::Result<()> {
+        self.started = true;
+        match &mut self.encoder {
+            Some(encoder) => encoder.start_set(columns),
+            None => Ok(()),
+        }
+    }
+
+    fn rows(&mut self, rows: &[Row]) -> io::Result<()> {
+        match &mut self.encoder {
+            Some(encoder) => rows.iter().try_for_each(|row| encoder.row(row.cells())),
+            None => Ok(()),
+        }
+    }
+
+    /// Reports the rows of one set when standard output stays empty.
+    /// A zero index marks the closing statement of a transaction, which reports nothing.
+    fn returned(&mut self, index: usize, rows: usize) -> io::Result<()> {
+        if self.encoder.is_none() && index > 0 {
+            writeln!(self.errors, "sqln: [{index}] {rows} rows returned.")
+        } else {
+            Ok(())
+        }
+    }
+
+    fn notice(&mut self, text: &str) -> io::Result<()> {
+        writeln!(self.errors, "sqln: {}", printable(text))
+    }
+
+    fn affected(&mut self, index: usize, changed: u64) -> io::Result<()> {
+        writeln!(self.errors, "sqln: [{index}] {changed} rows affected.")
+    }
+
+    fn failure_line(&mut self, index: usize, message: &str) -> io::Result<()> {
+        writeln!(self.errors, "sqln: [{index}] {}", printable(message))
+    }
+
+    /// Ends the last set and sends the waiting bytes. Without a set, the writer
+    /// sends nothing, so a script of writes leaves standard output empty.
+    fn finish(&mut self) -> io::Result<()> {
+        match (&mut self.encoder, self.started) {
+            (Some(encoder), true) => encoder.finish(),
+            _ => Ok(()),
         }
     }
 }

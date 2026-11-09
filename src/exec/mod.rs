@@ -280,6 +280,13 @@ pub struct RunOptions {
     pub export: Option<ExportWriter>,
     /// True sends rows with backpressure, without the grid cap or storage budget.
     pub stream: bool,
+    /// True keeps running after a statement error, so a batch script reports every
+    /// failure. A timeout, a stop, or a closed connection still ends the run.
+    pub continue_on_error: bool,
+    /// True leaves a transaction open at the end of the run. A batch that commits
+    /// or rolls back with its own statements uses this, because the streaming end
+    /// check would otherwise roll the transaction back.
+    pub hold_transaction: bool,
     /// True for a read that ends with the user, as an export does: the time limit does
     /// not apply.
     pub untimed: bool,

@@ -33,6 +33,8 @@ struct Cli {
     output: Option<ExportFormat>,
     connection: Option<String>,
     scope: Option<Scope>,
+    single_transaction: bool,
+    continue_on_error: bool,
     yes: bool,
     password_file: Option<PathBuf>,
 }
@@ -106,6 +108,8 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
                 }
             }
             "--yes" => cli.yes = true,
+            "--single-transaction" => cli.single_transaction = true,
+            "--continue-on-error" => cli.continue_on_error = true,
             "--password-file" => {
                 let path = PathBuf::from(args.next().ok_or("--password-file needs a file.")?);
                 if cli.password_file.replace(path).is_some() {
@@ -128,9 +132,6 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
         }
     }
     if cli.execute.is_some() {
-        if cli.output.is_none() {
-            return Err("--execute needs --output csv or --output json.".into());
-        }
         if cli.script.is_some() || cli.dialect.is_some() {
             return Err("--execute cannot be combined with --script or --dialect.".into());
         }
@@ -145,9 +146,12 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
         || cli.scope.is_some()
         || cli.yes
         || cli.password_file.is_some()
+        || cli.single_transaction
+        || cli.continue_on_error
     {
         return Err(
-            "--output, --connection, --scope, --yes, and --password-file need --execute.".into(),
+            "--output, --connection, --scope, --yes, --password-file, --single-transaction, and --continue-on-error need --execute."
+                .into(),
         );
     }
     Ok(Command::Run(cli))
@@ -258,13 +262,28 @@ fn main() -> ExitCode {
                 sqln::batch::report_error(&error.to_string());
                 return ExitCode::FAILURE;
             }
+            // The dash reads the script before SQLN resolves a connection, so no
+            // password question comes before an input failure.
+            let sql = match cli.execute.as_deref() {
+                Some("-") => match sqln::batch::read_standard_input() {
+                    Ok(text) => text,
+                    Err(error) => {
+                        sqln::batch::report_error(&error.message);
+                        return ExitCode::from(if error.usage { 2 } else { 1 });
+                    }
+                },
+                Some(sql) => sql.to_owned(),
+                _ => unreachable!("The match checks --execute."),
+            };
             let options = sqln::batch::Options {
                 store,
                 target: cli.target,
                 connection: cli.connection,
                 scope: cli.scope,
-                sql: cli.execute.expect("The match checks --execute."),
-                format: cli.output.expect("The parser requires --output."),
+                sql,
+                output: cli.output,
+                single_transaction: cli.single_transaction,
+                continue_on_error: cli.continue_on_error,
                 yes: cli.yes,
                 password_file: cli.password_file,
             };

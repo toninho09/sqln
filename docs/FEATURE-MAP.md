@@ -41,6 +41,7 @@ The file paths are relative to `src/`.
 | 21 | Appearance and themes | `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs` |
 | 23 | Local MCP assistant | `agent/`, `mcp.rs`, `app/agent/`, `editor/agent.rs`, `ui/agent.rs`; see [MCP](MCP.md) |
 | 24 | Auto-refresh | `app/auto_refresh.rs`, `console.rs`, `table.rs`, `app/persist.rs`, `app/commands.rs`, `ui/statusline.rs`, `ui/table.rs` |
+| 25 | Batch execution | `batch.rs`, `batch/auth.rs`, `batch/output.rs`, `main.rs`, `exec/runner.rs`, `export/mod.rs` |
 | 22 | Operation and diagnostics | `main.rs`, `terminal.rs`, `log.rs` |
 
 ## 1. Application shell and main loop
@@ -298,3 +299,9 @@ The themes are `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `
 Files: `main.rs`, `terminal.rs`, `log.rs`.
 
 The command line accepts `--project`, `--dialect`, `--log`, `--help`, and `--version`, and one target: a SQLite file or a connection URI. The setup covers mouse, paste, and the small terminal warning. The restore runs at exit and on panic, with a panic report. Shutdown signals save pending text and exit without questions. Interface quit uses the close and transaction questions. `--log` records kinds of events, never SQL, values, or passwords. The BEL sounds after `bellAfterSeconds`, with a default of 10 s.
+
+## 25. Batch execution
+
+Files: `batch.rs`, `batch/auth.rs`, `batch/output.rs`, `main.rs`, `exec/runner.rs`, `export/mod.rs`.
+
+`--execute` runs one instruction or a script without the terminal interface, with `--output csv|json` optional and `-` reading the script from standard input up to 10 MiB. The script runs in one execution, in order, on one reserved session, so session state such as variables stays. Every result set is written in order: `Encoder::start_set` closes the previous set, CSV and TSV repeat the header, and JSON writes one array per set. Without `--output`, standard output stays empty and each set reports its row count on the error stream; `rows affected` and `rows returned` carry the instruction number. The default stops at the first failed instruction; `--continue-on-error` keeps the run going through statement errors and reports each one, while a timeout, a stop, or a closed connection still ends it. `--single-transaction` opens the transaction with the session control, holds it past the run with `RunOptions::hold_transaction`, and ends it with one `COMMIT` or `ROLLBACK` statement; Redis refuses the flag, and a signal keeps the first-delivery rule of dropping the session. See the decision record for the full rules.

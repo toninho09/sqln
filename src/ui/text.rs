@@ -2146,10 +2146,18 @@ Options:
                          the nearest .sqln folder above the working folder.
   --script <file>        Open a .sql file as a console at the start. It needs a
                          target or a saved connection.
-  --execute <SQL>       Run one instruction without the terminal interface.
-  --output csv|json     Set the required format for --execute.
+  --execute <SQL>       Run SQL without the terminal interface. Several
+                         instructions run in order. Use - to read the script
+                         from standard input, up to 10 MiB.
+  --output csv|json     Set the result format for --execute. Every result set
+                         is written in order. Without it, standard output stays
+                         empty and row counts go to the error stream.
   --connection <name>   Use a saved connection instead of a target.
   --scope global|project Select the scope of a saved connection name.
+  --single-transaction  Run the whole script in one transaction that rolls
+                         back on any failure. Redis has no support.
+  --continue-on-error   Keep running after a failed instruction and report
+                         every failure. The exit code still marks a failure.
   --yes                 Authorize protected execution and database creation.
                          Without it, SQLN asks on the terminal. Trust stays separate.
   --password-file <file> Read a batch password. Otherwise use SQLN_PASSWORD,

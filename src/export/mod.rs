@@ -245,11 +245,29 @@ impl<W: Write> Encoder<W> {
 
     /// Writes what comes before the rows. A second result of a statement adds nothing.
     pub fn start(&mut self, columns: &[String]) -> io::Result<()> {
-        if std::mem::replace(&mut self.started, true) {
+        if self.started {
             return Ok(());
         }
+        self.begin_set(columns, true)
+    }
+
+    /// Closes the open set and starts a new one with new columns. Batch output
+    /// calls this once per result set, so a script writes every set in order.
+    /// The BOM goes only before the first set.
+    pub fn start_set(&mut self, columns: &[String]) -> io::Result<()> {
+        if std::mem::replace(&mut self.started, true) {
+            self.close_set()?;
+            self.begin_set(columns, false)
+        } else {
+            self.begin_set(columns, true)
+        }
+    }
+
+    /// Writes the start of one set: the header line and the format state.
+    fn begin_set(&mut self, columns: &[String], bom: bool) -> io::Result<()> {
+        self.started = true;
         if self.is_delimited() {
-            if self.options.bom {
+            if bom && self.options.bom {
                 self.out.write_all(BOM)?;
             }
             if self.options.header {
@@ -279,6 +297,18 @@ impl<W: Write> Encoder<W> {
             }
             ExportFormat::Csv | ExportFormat::Tsv => {}
         }
+        Ok(())
+    }
+
+    /// Closes the open set: the JSON array or the `INSERT`.
+    fn close_set(&mut self) -> io::Result<()> {
+        match self.options.format {
+            ExportFormat::Json if self.open_rows == 0 => self.out.write_all(b"[]\n")?,
+            ExportFormat::Json => self.out.write_all(b"\n]\n")?,
+            ExportFormat::SqlInsert if self.open_rows > 0 => self.out.write_all(b";\n")?,
+            _ => {}
+        }
+        self.open_rows = 0;
         Ok(())
     }
 
@@ -346,12 +376,7 @@ impl<W: Write> Encoder<W> {
 
     /// Closes the format and sends the waiting bytes to the writer.
     pub fn finish(&mut self) -> io::Result<()> {
-        match self.options.format {
-            ExportFormat::Json if self.open_rows == 0 => self.out.write_all(b"[]\n")?,
-            ExportFormat::Json => self.out.write_all(b"\n]\n")?,
-            ExportFormat::SqlInsert if self.open_rows > 0 => self.out.write_all(b";\n")?,
-            _ => {}
-        }
+        self.close_set()?;
         self.out.flush()
     }
 }

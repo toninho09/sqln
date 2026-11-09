@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
+
 use serde_json::{Value, json};
 use sqln::connection::ConnectionKey;
 use sqln::connector::target::parse_uri;
@@ -160,17 +162,11 @@ fn streams_more_than_the_grid_cap_without_a_reread() {
 fn arguments_and_multiple_statements_fail_before_creation() {
     let home = Home::new();
     for args in [
-        vec!["missing.db", "--execute", "SELECT 1"],
         vec!["missing.db", "--execute", "SELECT 1", "--output", "xml"],
         vec!["--output", "csv"],
-        vec![
-            "missing.db",
-            "--execute",
-            "SELECT 1; SELECT 2",
-            "--output",
-            "json",
-            "--yes",
-        ],
+        vec!["missing.db", "--single-transaction"],
+        vec!["missing.db", "--continue-on-error"],
+        vec![":memory:", "--execute", "-"],
         vec![
             "missing.db",
             "--execute",
@@ -221,6 +217,331 @@ fn arguments_and_multiple_statements_fail_before_creation() {
         success(&home.query("/* comment */ SELECT ';' AS text; -- end", "csv")),
         "text\n;\n"
     );
+}
+
+#[test]
+fn several_instructions_write_every_result_set() {
+    let home = Home::new();
+    let sql = "SELECT 1 AS a; SELECT 2 AS b";
+    assert_eq!(
+        success(&home.run(&[":memory:", "--execute", sql, "--output", "csv"])),
+        "a\n1\nb\n2\n"
+    );
+    assert_eq!(
+        success(&home.run(&[":memory:", "--execute", sql, "--output", "json"])),
+        "[\n{\"a\":1}\n]\n[\n{\"b\":2}\n]\n"
+    );
+    let output = home.run(&[":memory:", "--execute", sql]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stdout.is_empty());
+    let errors = String::from_utf8_lossy(&output.stderr);
+    assert!(errors.contains("sqln: [1] 1 rows returned."));
+    assert!(errors.contains("sqln: [2] 1 rows returned."));
+}
+
+#[test]
+fn writes_without_output_report_rows_affected_per_instruction() {
+    let home = Home::new();
+    let path = home.database();
+    let output = home.run(&[
+        path.to_str().unwrap(),
+        "--execute",
+        "INSERT INTO items VALUES (3); INSERT INTO items VALUES (4)",
+    ]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stdout.is_empty());
+    let errors = String::from_utf8_lossy(&output.stderr);
+    assert!(errors.contains("sqln: [1] 1 rows affected."));
+    assert!(errors.contains("sqln: [2] 1 rows affected."));
+}
+
+#[test]
+fn a_failure_stops_the_script_by_default() {
+    let home = Home::new();
+    let path = home.database();
+    let target = path.to_str().unwrap();
+    let output = home.run(&[
+        target,
+        "--execute",
+        "INSERT INTO items VALUES (3); SELECT * FROM absent; INSERT INTO items VALUES (4)",
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("[2]"));
+    assert_eq!(rows(&path), 3);
+}
+
+#[test]
+fn continue_on_error_runs_the_rest_and_reports_every_failure() {
+    let home = Home::new();
+    let path = home.database();
+    let target = path.to_str().unwrap();
+    let output = home.run(&[
+        target,
+        "--execute",
+        "INSERT INTO items VALUES (3); SELECT * FROM absent; INSERT INTO items VALUES (4)",
+        "--continue-on-error",
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    let errors = String::from_utf8_lossy(&output.stderr);
+    assert!(errors.contains("sqln: [2]"));
+    assert!(errors.contains("1 of 3 instructions failed."));
+    assert_eq!(rows(&path), 4);
+}
+
+#[test]
+fn single_transaction_commits_and_rolls_back() {
+    let home = Home::new();
+    let path = home.database();
+    let target = path.to_str().unwrap();
+    let ok = home.run(&[
+        target,
+        "--execute",
+        "INSERT INTO items VALUES (3); INSERT INTO items VALUES (4)",
+        "--single-transaction",
+    ]);
+    assert_eq!(ok.status.code(), Some(0));
+    assert_eq!(rows(&path), 4);
+    let failed = home.run(&[
+        target,
+        "--execute",
+        "INSERT INTO items VALUES (9); SELECT * FROM absent",
+        "--single-transaction",
+    ]);
+    assert_eq!(failed.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("[2]"));
+    assert_eq!(rows(&path), 4);
+}
+
+#[test]
+fn single_transaction_flushes_results_before_commit() {
+    for format in ["csv", "json"] {
+        let home = Home::new();
+        let path = home.database();
+        let output = home.run(&[
+            path.to_str().unwrap(),
+            "--execute",
+            "INSERT INTO items VALUES (3) RETURNING id",
+            "--single-transaction",
+            "--output",
+            format,
+        ]);
+        let text = success(&output);
+        if format == "json" {
+            assert_eq!(
+                serde_json::from_str::<Value>(&text).unwrap(),
+                json!([{"id":3}])
+            );
+        } else {
+            assert_eq!(text, "id\n3\n");
+        }
+        assert!(output.stderr.is_empty());
+        assert_eq!(rows(&path), 3);
+    }
+}
+
+#[test]
+fn single_transaction_rolls_back_when_final_output_fails() {
+    for format in ["csv", "json"] {
+        for continue_on_error in [false, true] {
+            let home = Home::new();
+            let path = home.database();
+            let (reader, writer) = std::os::unix::net::UnixStream::pair().unwrap();
+            drop(reader);
+            let mut command = home.command(&[
+                path.to_str().unwrap(),
+                "--execute",
+                "INSERT INTO items VALUES (3) RETURNING id",
+                "--single-transaction",
+                "--output",
+                format,
+            ]);
+            if continue_on_error {
+                command.arg("--continue-on-error");
+            }
+            // The small result stays in BufWriter until the final flush.
+            let mut child = command
+                .stdout(Stdio::from(std::os::fd::OwnedFd::from(writer)))
+                .spawn()
+                .unwrap();
+            wait(&mut child);
+            let output = child.wait_with_output().unwrap();
+            assert_eq!(output.status.code(), Some(1));
+            assert_eq!(rows(&path), 2);
+            let errors = String::from_utf8_lossy(&output.stderr);
+            assert!(errors.contains("Output failed"), "{errors}");
+            assert!(!errors.contains("commit failed"), "{errors}");
+            assert!(!errors.contains("rollback failed"), "{errors}");
+        }
+    }
+}
+
+#[test]
+fn single_transaction_rolls_back_when_final_output_times_out() {
+    for format in ["csv", "json"] {
+        let home = Home::new();
+        let path = home.database();
+        home.config(
+            false,
+            json!([{"id":"g1","name":"one","kind":"sqlite","file":path,"sqlTimeoutSeconds":1}]),
+        );
+        let (_reader, output) = full_output();
+        let mut child = home
+            .command(&[
+                "--connection",
+                "one",
+                "--execute",
+                "INSERT INTO items VALUES (3) RETURNING id",
+                "--single-transaction",
+                "--output",
+                format,
+            ])
+            .stdout(output)
+            .spawn()
+            .unwrap();
+        wait(&mut child);
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(rows(&path), 2);
+        let errors = String::from_utf8_lossy(&output.stderr);
+        assert!(errors.contains("Output failed"), "{errors}");
+        assert!(errors.contains("timeout"), "{errors}");
+    }
+}
+
+#[test]
+fn single_transaction_rolls_back_when_final_output_gets_a_signal() {
+    for format in ["csv", "json"] {
+        for signal in [rustix::process::Signal::INT, rustix::process::Signal::TERM] {
+            let home = Home::new();
+            let path = home.database();
+            home.config(
+                false,
+                json!([{"id":"g1","name":"one","kind":"sqlite","file":path,"sqlTimeoutSeconds":null}]),
+            );
+            let log = home.0.join("events.log");
+            let (_reader, output) = full_output();
+            let mut child = home
+                .command(&[
+                    "--connection",
+                    "one",
+                    "--execute",
+                    "INSERT INTO items VALUES (3) RETURNING id",
+                    "--single-transaction",
+                    "--output",
+                    format,
+                    "--log",
+                    log.to_str().unwrap(),
+                ])
+                .stdout(output)
+                .spawn()
+                .unwrap();
+            wait_for_batch(&log);
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(child.try_wait().unwrap().is_none());
+            let pid = rustix::process::Pid::from_raw(child.id() as i32).unwrap();
+            rustix::process::kill_process(pid, signal).unwrap();
+            wait(&mut child);
+            let output = child.wait_with_output().unwrap();
+            assert_eq!(output.status.code(), Some(1));
+            assert_eq!(rows(&path), 2);
+            let errors = String::from_utf8_lossy(&output.stderr);
+            assert!(errors.contains("signal"), "{errors}");
+        }
+    }
+}
+
+#[test]
+fn single_transaction_refuses_redis() {
+    let home = Home::new();
+    let output = home.run(&[
+        "redis://127.0.0.1:1/0",
+        "--execute",
+        "PING",
+        "--single-transaction",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Redis"));
+}
+
+#[test]
+fn standard_input_runs_a_script() {
+    let home = Home::new();
+    let mut child = home
+        .command(&[":memory:", "--execute", "-", "--output", "csv"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"SELECT 1 AS a; SELECT 2 AS b")
+        .unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "a\n1\nb\n2\n",
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn standard_input_above_the_limit_is_refused() {
+    let home = Home::new();
+    let mut child = home
+        .command(&[":memory:", "--execute", "-", "--output", "csv"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // The process stops reading after the limit, so the test writes exactly one
+    // byte more and never blocks on a full pipe.
+    let over = 10 * 1024 * 1024 + 1;
+    let chunk = [b'x'; 65536];
+    let mut sent = 0;
+    while sent < over {
+        let end = (over - sent).min(chunk.len());
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(&chunk[..end])
+            .unwrap();
+        sent += end;
+    }
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("10 MiB"));
+}
+
+#[test]
+fn standard_input_on_a_terminal_is_refused() {
+    let home = Home::new();
+    let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).unwrap();
+    grantpt(&master).unwrap();
+    unlockpt(&master).unwrap();
+    let path = ptsname(&master, Vec::new()).unwrap();
+    let slave = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path.to_str().unwrap())
+        .unwrap();
+    let output = home
+        .command(&[":memory:", "--execute", "-", "--output", "csv"])
+        .stdin(Stdio::from(slave))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("standard input"));
+}
+
+fn rows(path: &std::path::Path) -> i64 {
+    rusqlite::Connection::open(path)
+        .unwrap()
+        .query_row("SELECT count(*) FROM items", [], |row| row.get(0))
+        .unwrap()
 }
 
 #[test]
@@ -428,8 +749,8 @@ fn saved_timeout_stops_output_after_a_finite_query_finishes() {
     }
 }
 
-/// Fills a separate error stream before the batch process starts.
-fn full_error_output() -> (std::os::unix::net::UnixStream, Stdio) {
+/// Fills a separate output stream before the batch process starts.
+fn full_output() -> (std::os::unix::net::UnixStream, Stdio) {
     let (reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
     writer.set_nonblocking(true).unwrap();
     for bytes in [&[b'x'; 4096][..], &b"x"[..]] {
@@ -437,7 +758,7 @@ fn full_error_output() -> (std::os::unix::net::UnixStream, Stdio) {
             match writer.write(bytes) {
                 Ok(_) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(error) => panic!("Cannot fill the error stream: {error}"),
+                Err(error) => panic!("Cannot fill the output stream: {error}"),
             }
         }
     }
@@ -464,7 +785,7 @@ fn saved_timeout_stops_a_full_error_stream() {
         false,
         json!([{"id":"g1","name":"one","kind":"sqlite","file":path,"sqlTimeoutSeconds":1}]),
     );
-    let (_reader, errors) = full_error_output();
+    let (_reader, errors) = full_output();
     let mut child = home
         .command(&[
             "--connection",
@@ -491,7 +812,7 @@ fn signals_stop_a_full_error_stream_without_repeating_the_write() {
             json!([{"id":"g1","name":"one","kind":"sqlite","file":path,"sqlTimeoutSeconds":null}]),
         );
         let log = home.0.join("events.log");
-        let (_reader, errors) = full_error_output();
+        let (_reader, errors) = full_output();
         let mut child = home
             .command(&[
                 "--connection",
@@ -531,7 +852,7 @@ fn a_disabled_timeout_allows_error_output_to_wait_for_its_reader() {
         false,
         json!([{"id":"g1","name":"one","kind":"sqlite","file":path,"sqlTimeoutSeconds":null}]),
     );
-    let (mut reader, errors) = full_error_output();
+    let (mut reader, errors) = full_output();
     let mut child = home
         .command(&[
             "--connection",
@@ -553,13 +874,18 @@ fn a_disabled_timeout_allows_error_output_to_wait_for_its_reader() {
     });
     wait(&mut child);
     assert_eq!(child.wait().unwrap().code(), Some(0));
-    assert!(reader.join().unwrap().ends_with("sqln: 1 rows affected.\n"));
+    assert!(
+        reader
+            .join()
+            .unwrap()
+            .ends_with("sqln: [1] 1 rows affected.\n")
+    );
 }
 
 #[test]
 fn final_errors_do_not_wait_for_a_full_error_stream() {
     let home = Home::new();
-    let (_reader, errors) = full_error_output();
+    let (_reader, errors) = full_output();
     let mut child = home
         .command(&[
             ":memory:",
@@ -891,7 +1217,7 @@ fn postgres_notices_stop_on_a_full_error_stream() {
     })
     .confirm(&identity, None)
     .unwrap();
-    let (_reader, errors) = full_error_output();
+    let (_reader, errors) = full_output();
     let mut child = home
         .command(&[
             "--connection",
@@ -915,7 +1241,7 @@ fn postgres_batch_credentials() {
 }
 
 #[test]
-fn mysql_multiple_results_fail_instead_of_merging_columns() {
+fn mysql_multiple_results_write_every_set() {
     let Some(uri) = server("SQLN_TEST_MYSQL") else {
         return;
     };
@@ -940,9 +1266,9 @@ fn mysql_multiple_results_fail_instead_of_merging_columns() {
         "csv",
     ]);
     success(&cleanup);
-    assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("Multiple results"));
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("second_column"));
+    let text = success(&output);
+    assert!(text.contains("first_column"));
+    assert!(text.contains("second_column"));
 }
 
 #[test]

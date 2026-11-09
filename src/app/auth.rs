@@ -936,6 +936,8 @@ impl App {
                     row_cap: Some(request.row_cap),
                     export: None,
                     stream: false,
+                    continue_on_error: false,
+                    hold_transaction: false,
                     untimed: false,
                     parameters: Vec::new(),
                 };

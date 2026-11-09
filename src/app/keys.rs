@@ -1015,6 +1015,8 @@ impl App {
                     row_cap: None,
                     export: None,
                     stream: false,
+                    continue_on_error: false,
+                    hold_transaction: false,
                     untimed: false,
                     parameters,
                 };

@@ -6,6 +6,31 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Batch execution of scripts
+
+The user approves several instructions and standard input for `--execute`.
+This extends the recorded rules of batch execution without the terminal interface; that entry keeps the first delivery.
+
+| Point | Approved rule |
+|---|---|
+| Batch entry | `--execute <SQL>` or `--execute -`; the dash reads SQL from standard input, before SQLN resolves the connection |
+| Input size | Refuse standard input above 10 MiB and input without one instruction; both are use errors |
+| Instructions | Several instructions run in one execution, in order, on one session |
+| Several result sets | Write every set in order: CSV and TSV repeat the header, JSON writes one array per set on its own line |
+| Stop on error | The default stops at the first failed instruction; `--continue-on-error` runs the rest and reports each failure with its number |
+| Single transaction | `--single-transaction` opens one transaction, commits when every instruction succeeds, and rolls back on any failure or signal; Redis refuses the flag |
+| Output | `--output csv\|json` is optional; without it, standard output stays empty and each set reports its row count on the error stream |
+| Reports | `rows affected` and `rows returned` carry the instruction number on the error stream |
+| Unchanged | Targets, credentials, trust, protection, deadlines, signals, exit codes, and the no-write state rules of the first delivery stay |
+
+Implementation notes:
+
+- With `--single-transaction`, SQLN finishes and flushes result output before the final `COMMIT`. A flush failure triggers rollback and keeps the output failure as the primary error. SQLN does not finish the encoder twice.
+- Output can reach the consumer before `COMMIT`, even when `COMMIT` later fails. A successful flush does not guarantee consumer storage.
+- A script that ends its own transaction makes the final `COMMIT` of `--single-transaction` fail; the report explains it.
+- On PostgreSQL inside `--single-transaction`, a failed instruction can abort the transaction, so later instructions fail with the server message; SQLN reports every failure and rolls back.
+- A signal keeps the first-delivery behavior: SQLN stops, drops the session, and the server rolls back an open transaction.
+
 ## Local SQL syntax warnings
 
 The user approves a local syntax checker that reuses the existing `sqlparser` dependency.

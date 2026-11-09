@@ -290,10 +290,11 @@ impl ConsoleTask {
                 index,
             };
             let stop_requested = self.stop_is_pending(commands).await;
-            let Some(active) = lease
-                .as_mut()
-                .filter(|_| end == ExecutionEnd::Completed && !stop_requested)
-            else {
+            let Some(active) = lease.as_mut().filter(|_| {
+                !stop_requested
+                    && (end == ExecutionEnd::Completed
+                        || (options.continue_on_error && end == ExecutionEnd::Failed))
+            }) else {
                 if stop_requested && end == ExecutionEnd::Completed {
                     end = ExecutionEnd::Stopped;
                 }
@@ -355,8 +356,9 @@ impl ConsoleTask {
         }
 
         let mut message = None;
-        // A noninteractive run cannot leave a transaction open.
-        if (agent_run || options.stream)
+        // A noninteractive run cannot leave a transaction open. A batch that holds
+        // the transaction ends it with its own COMMIT or ROLLBACK statement.
+        if (agent_run || (options.stream && !options.hold_transaction))
             && let Some(active) = lease.as_mut()
             && active.session().transaction_state().await != TransactionState::None
         {

@@ -341,6 +341,8 @@ impl App {
             row_cap: None,
             export: Some(writer.clone()),
             stream: false,
+            continue_on_error: false,
+            hold_transaction: false,
             untimed: false,
             parameters,
         };
