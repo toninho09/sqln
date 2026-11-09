@@ -160,5 +160,7 @@ harness = false
 name = "memory"
 harness = false
 
-[profile.test]
+# Tests inherit this profile. Keep debug assertions and incremental compilation enabled.
+[profile.dev]
+opt-level = 1
 debug = 0

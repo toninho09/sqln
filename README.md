@@ -795,7 +795,16 @@ make check   # Run lint and the complete default test suite.
 make bench   # Print the performance and memory reports and run the latency targets.
 ```
 
-Test binaries build without debug info. Set `CARGO_PROFILE_TEST_DEBUG=2` when a backtrace needs symbols.
+Development builds, Clippy, and tests use level-one optimization without debug info.
+The test profile inherits the development profile to reduce duplicate dependency builds.
+Debug assertions and incremental compilation stay enabled.
+Set `CARGO_PROFILE_DEV_DEBUG=2` or `CARGO_PROFILE_TEST_DEBUG=2` when a backtrace needs symbols.
+Use consistent profiles and compiler flags across agent commands to reuse the cache.
+These settings do not remove existing build artifacts.
+Test binaries run in parallel, with one binary per two logical CPUs and four test threads each.
+Formatting and test-file checks run first, before compilation.
+The under-20-second target applies to local checks with an up-to-date build cache, without database servers.
+The first build takes longer, especially when Cargo compiles bundled DuckDB.
 Database-dependent tests skip when their environment is absent. A passing local check alone does not prove database integration.
 Native-vault tests require explicit authorization. Performance tests do not run as benchmarks in the default debug suite.
 
