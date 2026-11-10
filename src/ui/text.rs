@@ -632,8 +632,8 @@ pub const REDIS_READ_ONLY: &str =
     "This connection is read only, and the server does not mark this command as a read.";
 /// DuckDB fixes its access mode when the file opens, so a session refuses a write here.
 pub const DUCKDB_READ_ONLY: &str = "This connection is read only. A DuckDB connection cannot change its access mode, so SQLN refuses the write here.";
-pub const REDIS_CONTINUOUS: &str =
-    "SQLN cannot show a continuous stream, so it refuses this command.";
+pub const CONTINUOUS_NOT_LAST: &str = "A command that does not end must be the last command of the run. Move it to the end or run it alone.";
+pub const CONTINUOUS_CONSOLE_ONLY: &str = "A command that does not end runs only in a console. Run it in a console and use Stop to end it.";
 pub const REDIS_IDENTITY: &str =
     "This command changes the login of a shared session, so SQLN refuses it.";
 pub const REDIS_NO_REPLY: &str =
@@ -644,6 +644,27 @@ pub const REDIS_COLUMN_MEMBER: &str = "member";
 pub const REDIS_COLUMN_SCORE: &str = "score";
 pub const REDIS_COLUMN_ID: &str = "id";
 pub const REDIS_COLUMN_FIELDS: &str = "fields";
+pub const REDIS_COLUMN_STREAM: &str = "stream";
+pub const REDIS_COLUMN_RECEIVED_AT: &str = "received_at";
+pub const REDIS_COLUMN_KIND: &str = "kind";
+pub const REDIS_COLUMN_PATTERN: &str = "pattern";
+pub const REDIS_COLUMN_CHANNEL: &str = "channel";
+pub const REDIS_COLUMN_MESSAGE: &str = "message";
+pub const REDIS_COLUMN_TIME: &str = "time";
+pub const REDIS_COLUMN_DATABASE: &str = "database";
+pub const REDIS_COLUMN_CLIENT: &str = "client";
+pub const REDIS_COLUMN_COMMAND: &str = "command";
+pub const REDIS_SYNC_STATUS: &str = "status";
+pub const REDIS_SYNC_RDB: &str = "rdb";
+pub const REDIS_SYNC_COMMAND: &str = "command";
+pub const REDIS_LIVE_CLOSED: &str =
+    "The server closed the connection of the stream. Run the command again.";
+pub const REDIS_LIVE_BAD: &str =
+    "The server sent a reply that SQLN cannot read. Run the command again.";
+
+pub fn redis_subscribed(channel: &str, count: &str) -> String {
+    format!("Subscribed to {channel}. Subscriptions: {count}.")
+}
 pub const FORM_URI_KIND: &str = "The connection text is for another database type.";
 pub const FORM_POOL_ZERO: &str = "The pool limit must be 1 or more.";
 pub const FORM_CLIENT_PAIR: &str = "A client certificate needs its file and its key.";
@@ -1437,10 +1458,13 @@ pub fn last_run(time: std::time::Duration) -> String {
 pub const PHASE_IDLE: &str = "Idle";
 pub const PHASE_WAITING: &str = "Waiting";
 pub const PHASE_RUNNING: &str = "Running";
+pub const PHASE_LIVE: &str = "Live";
 pub const PHASE_STOPPING: &str = "Stopping";
 
 pub const COPY_REFUSED: &str =
     "SQLN does not support COPY with STDIN or STDOUT. Use a file on the server.";
+pub const LIVE_STOPPED: &str =
+    "The stream stopped at the user request. The grid keeps the rows that it received.";
 pub const STOPPED_AFTER_LAST: &str =
     "The execution stopped. The last statement ended before the stop request.";
 pub const STOPPED_BEFORE_SEND: &str = "The statement stopped before it reached the database.";
@@ -2006,6 +2030,32 @@ pub fn redis_unknown_type(kind: &str) -> String {
 
 pub fn rows_read(rows: usize) -> String {
     plural(rows, "row")
+}
+
+/// The summary of a live result: the rows in the grid and the oldest rows that left it.
+pub fn live_rows(rows: usize, dropped: usize) -> String {
+    if dropped == 0 {
+        format!("{} received. Live.", plural(rows, "row"))
+    } else {
+        format!(
+            "{} shown, {} dropped. Live: the grid keeps the newest rows.",
+            plural(rows, "row"),
+            count(dropped)
+        )
+    }
+}
+
+/// The summary of a live result after its end.
+pub fn live_rows_done(rows: usize, dropped: usize) -> String {
+    if dropped == 0 {
+        format!("{} received.", plural(rows, "row"))
+    } else {
+        format!(
+            "{} shown, {} dropped. The grid kept the newest rows.",
+            plural(rows, "row"),
+            count(dropped)
+        )
+    }
 }
 
 pub fn row_cap_reached(rows: usize) -> String {

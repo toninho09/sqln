@@ -940,6 +940,7 @@ impl App {
                     hold_transaction: false,
                     untimed: false,
                     parameters: Vec::new(),
+                    live: false,
                 };
                 let (first, show, kind) = (request.first, request.show, request.kind);
                 let execution = manager.run(console, vec![request.sql], options);

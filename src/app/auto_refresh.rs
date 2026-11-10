@@ -164,6 +164,7 @@ impl App {
             hold_transaction: false,
             untimed: false,
             parameters,
+            live: false,
         };
         let plan = RunPlan {
             statements,
@@ -283,10 +284,13 @@ impl App {
 }
 
 /// Returns true when every statement is a read that an auto-refresh can repeat without
-/// a question. A Redis command must be a known read.
+/// a question. A Redis command must be a known read. A continuous command never ends,
+/// so it cannot repeat.
 pub fn statements_are_reads(statements: &[String], dialect: Dialect) -> bool {
     statements.iter().all(|sql| {
-        if dialect == Dialect::Redis {
+        if crate::sql::is_continuous(sql, dialect) {
+            false
+        } else if dialect == Dialect::Redis {
             is_known_redis_read(sql)
         } else {
             is_plain_read(sql, dialect)

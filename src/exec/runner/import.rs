@@ -102,6 +102,7 @@ impl ConsoleTask {
             timed: false,
             capture: None,
             parameters: Vec::new(),
+            live: false,
         };
         let (waited, reason) = self
             .run_statement(key, active, sql, delivery, commands)

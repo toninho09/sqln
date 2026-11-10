@@ -128,6 +128,7 @@ fn style_of_state(age: Option<Duration>, theme: &Theme) -> Style {
         session: Some((false, TransactionState::Open)),
         transaction_age: age,
         phase: Phase::Idle,
+        live: false,
         run_time: None,
         pool: None,
         data: (0, 1),

@@ -27,6 +27,8 @@ use crate::grid::{Row, RowWriter, Value};
 use crate::sql::Dialect;
 use crate::ui::text;
 
+pub mod live;
+
 /// A session call that gets no answer in this time counts as lost.
 const SESSION_LIMIT: Duration = Duration::from_secs(5);
 /// The explorer shows at most this count of keys in each database.
@@ -35,15 +37,8 @@ pub const MAX_KEYS: usize = 1_000;
 const SCAN_STEP: &str = "1000";
 /// The first word of the text that a key tab sends. It is not a server command.
 const VALUE_PAGE: &str = "SQLN.VALUE";
-/// These commands turn the connection into a stream that has no end.
-const CONTINUOUS: &[&str] = &[
-    "SUBSCRIBE",
-    "PSUBSCRIBE",
-    "SSUBSCRIBE",
-    "MONITOR",
-    "SYNC",
-    "PSYNC",
-];
+/// These commands only receive messages, so a read-only connection accepts them.
+const SUBSCRIBE: &[&str] = &["SUBSCRIBE", "PSUBSCRIBE", "SSUBSCRIBE"];
 /// These commands change the identity of a session that the pool gives to other consoles.
 const IDENTITY: &[&str] = &["AUTH", "HELLO", "RESET"];
 
@@ -80,15 +75,17 @@ fn connection_info(target: &NetworkTarget) -> Result<RedisConnectionInfo, Connec
     Ok(info)
 }
 
+/// A connection to the server, with or without TLS.
+trait Transport: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send + Sync> Transport for T {}
+type Stream = Box<dyn Transport>;
+
 /// Starts the driver on a stream. The runner holds the time limits, because the limits
 /// of the driver would stop a command that waits, such as `BLPOP`.
-async fn start<S>(
+async fn start(
     info: &RedisConnectionInfo,
-    stream: S,
-) -> Result<MultiplexedConnection, ConnectError>
-where
-    S: Unpin + AsyncRead + AsyncWrite + Send + 'static,
-{
+    stream: Stream,
+) -> Result<MultiplexedConnection, ConnectError> {
     let config = AsyncConnectionConfig::new().set_response_timeout(None);
     let (conn, driver) = MultiplexedConnection::new_with_config(info, stream, config)
         .await
@@ -97,18 +94,13 @@ where
     Ok(conn)
 }
 
-async fn open_tcp(
-    info: &RedisConnectionInfo,
-    host: &str,
-    port: u16,
-    tls_mode: &Tls,
-) -> Result<MultiplexedConnection, ConnectError> {
+async fn open_tcp(host: &str, port: u16, tls_mode: &Tls) -> Result<Stream, ConnectError> {
     let stream = TcpStream::connect((host, port))
         .await
         .map_err(connect_failed)?;
     stream.set_nodelay(true).map_err(connect_failed)?;
     let Tls::Verify(files) = tls_mode else {
-        return start(info, stream).await;
+        return Ok(Box::new(stream));
     };
     let config = tls::client_config(files)?;
     let name = ServerName::try_from(host.to_owned()).map_err(connect_failed)?;
@@ -116,39 +108,36 @@ async fn open_tcp(
         .connect(name, stream)
         .await
         .map_err(connect_failed)?;
-    start(info, stream).await
+    Ok(Box::new(stream))
 }
 
 #[cfg(unix)]
-async fn open_socket(
-    info: &RedisConnectionInfo,
-    path: &std::path::Path,
-    tls_mode: &Tls,
-) -> Result<MultiplexedConnection, ConnectError> {
+async fn open_socket(path: &std::path::Path, tls_mode: &Tls) -> Result<Stream, ConnectError> {
     if matches!(tls_mode, Tls::Verify(_)) {
         return Err(ConnectError::new(text::REDIS_SOCKET_TLS));
     }
     let stream = tokio::net::UnixStream::connect(path)
         .await
         .map_err(connect_failed)?;
-    start(info, stream).await
+    Ok(Box::new(stream))
 }
 
 #[cfg(not(unix))]
-async fn open_socket(
-    _info: &RedisConnectionInfo,
-    _path: &std::path::Path,
-    _tls_mode: &Tls,
-) -> Result<MultiplexedConnection, ConnectError> {
+async fn open_socket(_path: &std::path::Path, _tls_mode: &Tls) -> Result<Stream, ConnectError> {
     Err(ConnectError::new(text::REDIS_NO_SOCKET))
+}
+
+/// Opens the stream of a target, with the TLS rule of SQLN.
+async fn open_stream(target: &NetworkTarget) -> Result<Stream, ConnectError> {
+    match &target.address {
+        Address::Tcp { host, port } => open_tcp(host, *port, &target.tls).await,
+        Address::Socket(path) => open_socket(path, &target.tls).await,
+    }
 }
 
 async fn open(target: &NetworkTarget) -> Result<MultiplexedConnection, ConnectError> {
     let info = connection_info(target)?;
-    match &target.address {
-        Address::Tcp { host, port } => open_tcp(&info, host, *port, &target.tls).await,
-        Address::Socket(path) => open_socket(&info, path, &target.tls).await,
-    }
+    start(&info, open_stream(target).await?).await
 }
 
 pub struct RedisConnector {
@@ -451,6 +440,25 @@ pub fn reply_grid(reply: &Reply) -> Option<(Vec<&'static str>, Vec<Row>)> {
     }
 }
 
+/// Returns each stream of an `XREAD` answer with its entries. RESP3 gives a map; RESP2
+/// gives a list of pairs. A time limit without entries gives nil.
+fn stream_entries(reply: &Reply) -> Vec<(&Reply, &Reply)> {
+    match reply {
+        Reply::Map(pairs) => pairs
+            .iter()
+            .map(|(name, entries)| (name, entries))
+            .collect(),
+        Reply::Attribute { data, .. } => stream_entries(data),
+        other => items(other)
+            .iter()
+            .filter_map(|pair| match items(pair) {
+                [name, entries] => Some((name, entries)),
+                _ => None,
+            })
+            .collect(),
+    }
+}
+
 /// Returns the items of a list or of a set. Any other reply has no items.
 fn items(reply: &Reply) -> &[Reply] {
     match reply {
@@ -619,9 +627,6 @@ impl RedisSession {
 
     async fn check(&mut self, name: &[u8], argument: Option<&[u8]>) -> Result<(), ExecError> {
         let upper = String::from_utf8_lossy(name).to_ascii_uppercase();
-        if CONTINUOUS.contains(&upper.as_str()) {
-            return Err(ExecError::new(text::REDIS_CONTINUOUS));
-        }
         if IDENTITY.contains(&upper.as_str()) {
             return Err(ExecError::new(text::REDIS_IDENTITY));
         }
@@ -630,7 +635,7 @@ impl RedisSession {
         if upper == "CLIENT" && reply {
             return Err(ExecError::new(text::REDIS_NO_REPLY));
         }
-        if self.read_only && !self.is_read(name).await {
+        if self.read_only && !SUBSCRIBE.contains(&upper.as_str()) && !self.is_read(name).await {
             return Err(ExecError::new(text::REDIS_READ_ONLY));
         }
         Ok(())
@@ -645,9 +650,100 @@ impl RedisSession {
             return self.read_value(&words, sink).await;
         }
         self.check(name, words.get(1).map(Vec::as_slice)).await?;
+        if crate::sql::is_continuous(line, Dialect::Redis) {
+            let upper = String::from_utf8_lossy(name).to_ascii_uppercase();
+            return if upper.starts_with("XREAD") {
+                self.tail(words, sink).await
+            } else {
+                live::run(&self.canceller.target, &words, self.trace.clone(), sink).await
+            };
+        }
         let words: Vec<&[u8]> = words.iter().map(Vec::as_slice).collect();
         let reply = self.ask(&words).await?;
         Ok(show(&reply, sink).await)
+    }
+
+    /// Runs `XREAD` or `XREADGROUP` again after each answer, from the last entry of each
+    /// stream, until the user stops it. A `$` starts after the last entry that exists
+    /// now, so no entry goes between two reads. A `>` of a group stays.
+    async fn tail(
+        &mut self,
+        mut words: Vec<Vec<u8>>,
+        sink: &mut ResultSink,
+    ) -> Result<bool, ExecError> {
+        let streams = words
+            .iter()
+            .position(|word| word.eq_ignore_ascii_case(b"STREAMS"))
+            .map(|at| at + 1);
+        let count = streams.map_or(0, |first| (words.len() - first) / 2);
+        let Some(first) =
+            streams.filter(|first| count > 0 && (words.len() - first).is_multiple_of(2))
+        else {
+            // The server reports the syntax error.
+            let words: Vec<&[u8]> = words.iter().map(Vec::as_slice).collect();
+            let reply = self.ask(&words).await?;
+            return Ok(show(&reply, sink).await);
+        };
+        for index in 0..count {
+            if words[first + count + index] == b"$" {
+                let key = words[first + index].clone();
+                let last = self
+                    .ask(&[b"XREVRANGE", &key, b"+", b"-", b"COUNT", b"1"])
+                    .await?;
+                words[first + count + index] = items(&last)
+                    .first()
+                    .and_then(|entry| items(entry).first())
+                    .map_or_else(|| b"0-0".to_vec(), |id| reply_text(id).into_bytes());
+            }
+        }
+        set_columns(
+            &[
+                text::REDIS_COLUMN_STREAM,
+                text::REDIS_COLUMN_ID,
+                text::REDIS_COLUMN_FIELDS,
+            ],
+            sink,
+        )
+        .await;
+        let stop = sink.stop_token();
+        let canceller = self.canceller.clone();
+        loop {
+            sink.flush().await;
+            let reply = {
+                let refs: Vec<&[u8]> = words.iter().map(Vec::as_slice).collect();
+                let ask = self.ask(&refs);
+                tokio::pin!(ask);
+                tokio::select! {
+                    reply = &mut ask => reply,
+                    () = stop.cancelled() => {
+                        // A failed request leaves the read waiting, and the runner then
+                        // closes the session.
+                        let _ = canceller.cancel().await;
+                        ask.await
+                    }
+                }
+            };
+            if stop.is_cancelled() {
+                return Ok(true);
+            }
+            for (stream, entries) in stream_entries(&reply?) {
+                let index =
+                    (0..count).find(|index| words[first + index] == reply_text(stream).as_bytes());
+                for entry in items(entries) {
+                    let [id, fields] = items(entry) else {
+                        continue;
+                    };
+                    if let Some(index) = index
+                        && words[first + count + index] != b">"
+                    {
+                        words[first + count + index] = reply_text(id).into_bytes();
+                    }
+                    if sink.push(row(&[stream, id, fields])).await != Flow::Continue {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
     }
 
     /// Reads one page of a key, with the command of its type.

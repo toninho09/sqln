@@ -1676,6 +1676,7 @@ impl App {
                 session: None,
                 transaction_age: None,
                 phase: tab.phase,
+                live: false,
                 run_time: run_time(tab.phase, &tab.run, self.clock),
                 pool: self
                     .manager
@@ -1699,6 +1700,7 @@ impl App {
                 session: None,
                 transaction_age: None,
                 phase: tab.phase,
+                live: false,
                 run_time: run_time(tab.phase, &tab.run, self.clock),
                 pool: self
                     .manager
@@ -1725,6 +1727,7 @@ impl App {
                 session: None,
                 transaction_age: None,
                 phase: tab.phase,
+                live: false,
                 run_time: run_time(tab.phase, &tab.run, self.clock),
                 pool: self
                     .manager
@@ -1747,6 +1750,7 @@ impl App {
                 session: None,
                 transaction_age: None,
                 phase: Phase::Idle,
+                live: false,
                 run_time: None,
                 pool: None,
                 data,
@@ -1783,6 +1787,7 @@ impl App {
             session: Some((console.manual, console.transaction)),
             transaction_age: console.transaction_age(self.clock),
             phase: console.phase,
+            live: console.is_live(),
             run_time: run_time(console.phase, &console.run, self.clock),
             pool: console
                 .connection

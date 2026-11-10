@@ -345,6 +345,7 @@ impl App {
             hold_transaction: false,
             untimed: false,
             parameters,
+            live: false,
         };
         let execution = manager.run(id, vec![sql], run);
         if let Some((phase, clock)) = self.tab_run(id) {

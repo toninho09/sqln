@@ -241,6 +241,7 @@ The badge of the result stays until the user leaves the tab where they saw it. A
 The next execution changes the badge. Consoles and tables use the same badges.
 
 **Time:** the status bar shows `Running 12.345s` during the execution and `Idle (last 2.440s)` after.
+A continuous command, such as `SUBSCRIBE` on Redis, shows `Live 12.345s`, and its summary shows the rows received and dropped. After **Stop**, its grid stays on screen.
 The time has three decimal places, and the screen updates every 100 ms only during an execution. Long times use `1m 05.123s` and `1h 02m 05.123s`.
 The time starts with the execution, so the wait for a password does not count.
 

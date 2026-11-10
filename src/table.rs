@@ -726,7 +726,7 @@ impl TableTab {
             {
                 self.phase = Phase::Running;
             }
-            ExecEvent::Columns { key, columns }
+            ExecEvent::Columns { key, columns, .. }
                 if self.is_current(key.execution)
                     && self.load.as_ref().is_some_and(|load| load.first) =>
             {

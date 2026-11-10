@@ -14,9 +14,8 @@ pub(super) struct Captured {
 }
 
 pub(super) type Capture = Arc<Mutex<Captured>>;
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use tokio::sync::mpsc::Sender;
+use tokio_util::sync::CancellationToken;
 
 use super::{ExecEvent, StatementKey};
 use crate::export::ExportWriter;
@@ -60,10 +59,13 @@ pub struct ResultSink {
     total: usize,
     /// The first limit of the results that ended.
     first_limit: ReadLimit,
-    stopping: Arc<AtomicBool>,
+    stopping: CancellationToken,
     /// The rows go to this file, and the grid receives nothing.
     export: Option<ExportWriter>,
     stream: bool,
+    /// The row cap of a live result. The grid drops its oldest rows at the cap, so the
+    /// sink sends every row and reserves no budget.
+    live: Option<usize>,
     capture: Option<Capture>,
 }
 
@@ -93,15 +95,21 @@ impl ResultSink {
             open: false,
             total: 0,
             first_limit: ReadLimit::None,
-            stopping: Arc::new(AtomicBool::new(false)),
+            stopping: CancellationToken::new(),
             export: None,
             stream: false,
+            live: None,
             capture: None,
         }
     }
 
     pub(super) fn stream(&mut self, stream: bool) {
         self.stream = stream;
+    }
+
+    /// Starts a result that grows until the user stops it.
+    pub(super) fn live(&mut self) {
+        self.live = Some(self.cap);
     }
 
     pub(super) fn capture_to(&mut self, capture: Capture) {
@@ -113,14 +121,19 @@ impl ResultSink {
         self.export = Some(writer);
     }
 
-    /// Returns the flag that ends the storage of rows.
-    pub fn stop_flag(&self) -> Arc<AtomicBool> {
+    /// Returns the token that ends the storage of rows.
+    pub fn stop_token(&self) -> CancellationToken {
         self.stopping.clone()
     }
 
     fn store(&mut self, row: Row) -> Flow {
-        if self.stopping.load(Ordering::SeqCst) {
+        if self.stopping.is_cancelled() {
             return Flow::Discard;
+        }
+        if self.live.is_some() {
+            self.batch.push(row);
+            self.stored += 1;
+            return Flow::Continue;
         }
         if self.stream {
             self.batch.push(row);
@@ -211,6 +224,7 @@ impl ResultSink {
         Some(ExecEvent::Columns {
             key: self.key,
             columns,
+            live: self.live,
         })
     }
 
@@ -247,7 +261,8 @@ impl ResultSink {
         flow
     }
 
-    async fn flush(&mut self) {
+    /// Sends the waiting rows. A continuous statement calls it before it waits.
+    pub async fn flush(&mut self) {
         if let Some(event) = self.take_batch()
             && let Err(error) = self.events.send(event).await
             && let ExecEvent::Rows { bytes, .. } = error.0

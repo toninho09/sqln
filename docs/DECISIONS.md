@@ -6,6 +6,47 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Continuous commands — 2026-11-09
+
+The user asks for the Redis streaming commands, with a generic contract for other sources later.
+This request reopens point 5 of "Redis and Valkey — 2026-10-31" and the refusal of `SYNC` and `PSYNC` in that section.
+
+| Point | Approved rule |
+|---|---|
+| Commands | `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE`, `MONITOR`, `SYNC`, `PSYNC`, and `XREAD` or `XREADGROUP` with `BLOCK` before `STREAMS` |
+| Display | The result grid of the console grows until **Stop** |
+| Limit | At the row cap or at a full budget, the oldest rows leave the grid; the summary shows the count of dropped rows |
+| Script | The continuous command must be the last command of the run; otherwise the run is refused with a reason |
+| Protection | Pub/Sub and `XREAD` with `BLOCK` count as reads: a read-only connection runs them, and a production connection does not ask. `MONITOR`, `SYNC`, `PSYNC`, and `XREADGROUP` keep the current rules |
+| Time limit | No SQL time limit for the continuous command; the earlier commands of the run keep it |
+| Other modes | Console only. Batch execution, MCP and agent tools, and auto-refresh refuse with a reason |
+| RDB | `SYNC` and `PSYNC` show one `rdb` row with the size of the file; SQLN reads and drops its bytes |
+| `XREAD` with `BLOCK` | Always continuous, in every mode. Batch and MCP now refuse it; use `XREAD` without `BLOCK` for one read |
+
+These choices follow the rules above on the points the rules left open.
+
+| Subject | Choice | Rejected | Reason |
+|---|---|---|---|
+| Generic contract | `sql::is_continuous` names the commands; `RunOptions::live`, the live mode of `ResultSink`, and `ResultTab::append_live` are the same for each source | One flow for each source | Another source adds only its rule and its connector loop |
+| Stop | The sink has a stop token; the connector waits for it with the network and ends by itself. The runner does not call the `Canceller` | The `Canceller` of the session | `CLIENT UNBLOCK` does not stop a subscriber |
+| Connection | Pub/Sub, `MONITOR`, `SYNC`, and `PSYNC` use their own connection, with the TLS rule of SQLN, RESP2, and no `SELECT`: those commands cross databases | The session connection | A stop closes that connection, and the session of the pool stays clean |
+| Reader | Own small RESP2 reader | Driver parser | `aio::Monitor::new` is private in `redis` 1.8, and the driver parser does not accept the RDB file |
+| `XREAD` | Runs again on the session connection. A `$` becomes the last entry that exists at the start; each answer moves the ID of its stream; a `>` stays. **Stop** sends `CLIENT UNBLOCK` | A second connection | No entry goes between two reads, and a stopped read keeps the session |
+| `PSYNC` | Sends `REPLCONF ACK` with the offset each second | No acknowledgment | The server closes a replica without acknowledgment after `repl-timeout` |
+| Columns | Pub/Sub: `received_at`, `kind`, `pattern`, `channel`, `message`. `MONITOR`: `time`, `database`, `client`, `command`. `SYNC`/`PSYNC`: `received_at`, `kind`, `value`. `XREAD`: `stream`, `id`, `fields` | One text column | Uses the grid search and copy |
+| Subscription answers | A notice in **Messages** | A row | The rows hold only messages |
+| Status | `Live` in the status line and in the summary while the result grows. After **Stop**, the grid stays on screen | `Running` | The state needs a text label |
+
+### Known limitations of continuous commands
+
+| Subject | Limitation |
+|---|---|
+| Rows in transit | The rows between the connector and the grid do not count in the budget. The event queue holds at most 256 batches of 200 rows |
+| Dropped rows | A copy, an export, or an analysis reads only the rows that stay in the grid |
+| Width | At 80 columns, the last columns of a Pub/Sub row need a horizontal move |
+| `PSYNC` | `+CONTINUE` and a diskless transfer with an `EOF` mark are not tested. SQLN does not announce `capa eof` |
+| Valkey and Redis versions | `SSUBSCRIBE` needs Redis 7 or Valkey |
+
 ## Batch execution of scripts
 
 The user approves several instructions and standard input for `--execute`.
@@ -1636,7 +1677,7 @@ This request reopens the rule "MongoDB, Redis, and Kafka stay out of the first v
 | 2. Explorer | Databases and up to 1,000 keys per database, with `SCAN`; `Enter` opens the value in a tab | Only databases with a paginated list; only databases | Allows browsing without writing commands |
 | 3. Read only | Ask `COMMAND INFO` and refuse commands without the `readonly` mark; without a server response, refuse | Fixed list; remove the option | Covers Valkey and modules, and the server has no read-only session |
 | 4. Transactions | No manual mode; `MULTI` and `EXEC` work in a script | Tie the manual mode to `MULTI` and `EXEC` | Inside `MULTI`, a read answers `QUEUED`, without data |
-| 5. Continuous commands | Refuse `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE`, and `MONITOR` | Continuous flow in the grid | The console has no continuous flow |
+| 5. Continuous commands | Refuse `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE`, and `MONITOR` (replaced by "Continuous commands — 2026-11-09") | Continuous flow in the grid | The console has no continuous flow |
 | 6. Destructive commands | Without confirmation | Ask for confirmation | `DROP` also does not ask for confirmation |
 | 7. TLS of `redis://` | SQLN rule: local without TLS, remote verifies; `?sslmode=disable` turns it off; `rediss://` always uses TLS | `redis://` never uses TLS | The password only travels without TLS by explicit choice |
 | 8. Topology | Single server only | Cluster; Cluster and Sentinel | Cluster and Sentinel change the pool |
@@ -1652,7 +1693,7 @@ These choices follow the rules above on the points the rules left open.
 | Database in the form | Number, validated in the form, in the URI, and in `config.json` | Free text | Redis has no database names |
 | User | Optional only for Redis | Require `default` | A server without ACL has no user |
 | Identity commands | Refuse `AUTH`, `HELLO`, and `RESET` | Allow | The session returns to the pool, and another console would receive the new login |
-| Replication | Refuse `SYNC` and `PSYNC` with the continuous commands | Allow | Those commands also do not end |
+| Replication | Refuse `SYNC` and `PSYNC` with the continuous commands (replaced by "Continuous commands — 2026-11-09") | Allow | Those commands also do not end |
 | Tests | `tests/redis.rs`, separate from `tests/servers.rs` | Add to `tests/servers.rs` | That file repeats SQL on each server |
 
 ### Known limitations of Redis and Valkey

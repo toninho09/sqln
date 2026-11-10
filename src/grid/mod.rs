@@ -171,6 +171,19 @@ impl ResultTable {
         self.bytes += bytes;
     }
 
+    /// Removes the first `count` rows. It returns their bytes, and the caller releases
+    /// them from the budget.
+    pub fn drop_front(&mut self, count: usize) -> usize {
+        let count = count.min(self.rows.len());
+        if count == 0 {
+            return 0;
+        }
+        self.invalidate();
+        let bytes: usize = self.rows.drain(..count).map(|row| row_cost(&row)).sum();
+        self.bytes = self.bytes.saturating_sub(bytes);
+        bytes
+    }
+
     pub fn refresh_row_width(&mut self, index: usize) {
         self.invalidate();
         if let Some(row) = self.rows.get(index) {

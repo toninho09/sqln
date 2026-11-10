@@ -1019,6 +1019,7 @@ impl App {
                     hold_transaction: false,
                     untimed: false,
                     parameters,
+                    live: true,
                 };
                 let console = &self.consoles[index];
                 let revision = console.editor.revision();

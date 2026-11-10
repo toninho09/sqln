@@ -42,6 +42,108 @@ fn words(line: &str) -> Vec<String> {
 }
 
 #[test]
+fn continuous_commands_are_known_by_their_words() {
+    use sqln::sql::is_continuous;
+    for command in [
+        "SUBSCRIBE a",
+        "psubscribe a*",
+        "SSUBSCRIBE a",
+        "MONITOR",
+        "SYNC",
+        "PSYNC ? -1",
+        "XREAD BLOCK 0 STREAMS k $",
+        "xread count 5 block 100 streams k 0",
+        "XREADGROUP GROUP g c BLOCK 0 STREAMS k >",
+        "# comment\nMONITOR",
+    ] {
+        assert!(is_continuous(command, Dialect::Redis), "{command}");
+    }
+    for command in [
+        "XREAD STREAMS BLOCK 0",
+        "XREAD COUNT 1 STREAMS k 0",
+        "XREADGROUP GROUP BLOCK BLOCK STREAMS k >",
+        "PUBLISH c m",
+        "GET SUBSCRIBE",
+        "\"MONITOR\"",
+    ] {
+        assert!(!is_continuous(command, Dialect::Redis), "{command}");
+    }
+    assert!(!is_continuous("SUBSCRIBE", Dialect::Postgres));
+}
+
+#[test]
+fn the_live_reader_reads_resp2_replies() {
+    use sqln::connector::redis::live::{Frame, parse};
+    let bulk = |text: &str| Frame::Bulk(Some(text.as_bytes().to_vec()));
+    let message = b"*3\r\n$7\r\nmessage\r\n$1\r\nc\r\n$2\r\nhi\r\n+OK\r\n";
+    let (frame, size) = parse(message).unwrap().unwrap();
+    assert_eq!(
+        frame,
+        Frame::Array(Some(vec![bulk("message"), bulk("c"), bulk("hi")]))
+    );
+    assert_eq!(&message[size..], b"+OK\r\n");
+    for end in 0..size {
+        assert_eq!(
+            parse(&message[..end]).unwrap(),
+            None,
+            "a part waits for more"
+        );
+    }
+    assert_eq!(parse(b":-3\r\n").unwrap().unwrap().0, Frame::Int(-3));
+    assert_eq!(parse(b"$-1\r\n").unwrap().unwrap().0, Frame::Bulk(None));
+    assert_eq!(
+        parse(b"-ERR no\r\n").unwrap().unwrap().0,
+        Frame::Error("ERR no".to_owned())
+    );
+    assert!(parse(b"?bad\r\n").is_err());
+    assert!(parse(b"$2\r\nabc\r\n").is_err());
+}
+
+#[test]
+fn the_live_reader_drops_the_rdb_file_in_small_parts() {
+    use sqln::connector::redis::live::{Frame, Reader};
+    use tokio::io::AsyncWriteExt;
+    runtime().block_on(async {
+        let (mut write, read) = tokio::io::duplex(3);
+        tokio::spawn(async move {
+            let data = b"\n\n$10\r\n0123456789*1\r\n$4\r\nPING\r\n";
+            write.write_all(data).await.unwrap();
+        });
+        let mut reader = Reader::new(read);
+        assert_eq!(reader.skip_rdb().await.unwrap(), 10);
+        let (frame, size) = reader.frame().await.unwrap();
+        assert_eq!(
+            frame,
+            Frame::Array(Some(vec![Frame::Bulk(Some(b"PING".to_vec()))]))
+        );
+        assert_eq!(size, 14);
+        let error = reader.frame().await.unwrap_err();
+        assert!(error.message.contains("closed"), "{error:?}");
+    });
+}
+
+#[test]
+fn a_monitor_line_fills_its_columns() {
+    use sqln::connector::redis::live::monitor_row;
+    let row = texts(&monitor_row(
+        r#"1700000000.123456 [0 127.0.0.1:5000] "SET" "k" "v""#,
+    ));
+    assert_eq!(
+        row,
+        [
+            "1700000000.123456",
+            "0",
+            "127.0.0.1:5000",
+            r#""SET" "k" "v""#
+        ]
+    );
+    let row = texts(&monitor_row(r#"1700000000.1 [3 lua] "GET" "k""#));
+    assert_eq!(row, ["1700000000.1", "3", "lua", r#""GET" "k""#]);
+    let row = texts(&monitor_row("unknown text"));
+    assert_eq!(row, ["NULL", "NULL", "NULL", "unknown text"]);
+}
+
+#[test]
 fn a_line_splits_as_in_redis_cli() {
     assert_eq!(words("  GET   a "), ["GET", "a"]);
     assert_eq!(words(r#"SET a "b c""#), ["SET", "a", "b c"]);
@@ -298,6 +400,7 @@ struct Run {
     rows: Vec<Row>,
     statuses: Vec<StatementStatus>,
     end: Option<ExecutionEnd>,
+    message: Option<String>,
     commands: Vec<String>,
 }
 
@@ -368,9 +471,11 @@ impl Harness {
                 ExecEvent::ExecutionFinished {
                     execution: finished,
                     end,
+                    message,
                     ..
                 } if finished == execution => {
                     run.end = Some(end);
+                    run.message = message;
                     return run;
                 }
                 _ => {}
@@ -395,6 +500,53 @@ impl Harness {
 
     fn wait_started(&mut self) {
         while !matches!(self.next(), ExecEvent::StatementStarted { .. }) {}
+    }
+
+    /// Starts a run as a console does, so a continuous command is accepted.
+    fn start_live(&mut self, statements: &[&str]) -> u64 {
+        let statements = statements.iter().map(|text| (*text).to_owned()).collect();
+        let options = RunOptions {
+            live: true,
+            ..RunOptions::default()
+        };
+        self.manager.run(self.console, statements, options)
+    }
+
+    /// Waits for the columns of a live result. They arrive after the server accepted the
+    /// command.
+    fn wait_columns(&mut self) -> (Vec<String>, Option<usize>) {
+        loop {
+            match self.next() {
+                ExecEvent::Columns { columns, live, .. } => return (columns, live),
+                ExecEvent::ExecutionFinished { end, message, .. } => {
+                    panic!("the run ended: {end:?} {message:?}")
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Waits for rows until one of them matches.
+    fn wait_row(&mut self, found: impl Fn(&[String]) -> bool) -> Vec<String> {
+        loop {
+            match self.next() {
+                ExecEvent::Rows { rows, .. } => {
+                    if let Some(row) = rows.iter().map(texts).find(|row| found(row)) {
+                        return row;
+                    }
+                }
+                ExecEvent::ExecutionFinished { end, message, .. } => {
+                    panic!("the run ended: {end:?} {message:?}")
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Stops the live run and returns its end.
+    fn stop_live(&mut self, execution: u64) -> Run {
+        self.manager.stop(self.console);
+        self.collect(execution)
     }
 }
 
@@ -533,19 +685,182 @@ fn read_only_runs_only_what_the_server_marks_as_a_read() {
 }
 
 #[test]
-fn continuous_commands_are_refused() {
+fn pub_sub_shows_each_message_until_stop() {
+    for uri in uris() {
+        for (subscribe, publish, kind, pattern) in [
+            (
+                "SUBSCRIBE live:a",
+                "PUBLISH live:a hello",
+                "message",
+                "NULL",
+            ),
+            (
+                "PSUBSCRIBE live:p*",
+                "PUBLISH live:pq hello",
+                "pmessage",
+                "live:p*",
+            ),
+            (
+                "SSUBSCRIBE live:s",
+                "SPUBLISH live:s hello",
+                "smessage",
+                "NULL",
+            ),
+        ] {
+            let mut h = open(&uri);
+            let execution = h.start_live(&[subscribe]);
+            let (columns, live) = h.wait_columns();
+            assert_eq!(
+                columns,
+                ["received_at", "kind", "pattern", "channel", "message"]
+            );
+            assert_eq!(live, Some(Settings::default().row_cap));
+            open(&uri).run_ok(&[publish]);
+            let row = h.wait_row(|row| row[4] == "hello");
+            assert_eq!(row[1], kind, "{subscribe}");
+            assert_eq!(row[2], pattern, "{subscribe}");
+            let run = h.stop_live(execution);
+            assert_eq!(run.end, Some(ExecutionEnd::Stopped), "{subscribe}: {run:?}");
+            assert_eq!(run.statuses, [StatementStatus::Success], "{subscribe}");
+            assert_eq!(h.run_ok(&["PING"]).grid(), [["PONG"]], "the session stays");
+        }
+    }
+}
+
+#[test]
+fn a_live_command_has_no_time_limit() {
+    for uri in uris() {
+        let settings = Settings {
+            sql_timeout: Some(Duration::from_millis(200)),
+            ..Settings::default()
+        };
+        let mut h = Harness::open(&uri, settings);
+        let execution = h.start_live(&["SUBSCRIBE live:time"]);
+        h.wait_columns();
+        std::thread::sleep(Duration::from_millis(600));
+        open(&uri).run_ok(&["PUBLISH live:time late"]);
+        h.wait_row(|row| row[4] == "late");
+        let run = h.stop_live(execution);
+        assert_eq!(run.end, Some(ExecutionEnd::Stopped), "{run:?}");
+    }
+}
+
+#[test]
+fn monitor_shows_the_commands_of_other_clients() {
     for uri in uris() {
         let mut h = open(&uri);
+        let execution = h.start_live(&["MONITOR"]);
+        let (columns, _) = h.wait_columns();
+        assert_eq!(columns, ["time", "database", "client", "command"]);
+        open(&uri).run_ok(&["SET live:monitor v"]);
+        let row = h.wait_row(|row| row[3].contains("live:monitor"));
+        assert_eq!(row[3], r#""SET" "live:monitor" "v""#);
+        assert_eq!(row[1], "0");
+        let run = h.stop_live(execution);
+        assert_eq!(run.end, Some(ExecutionEnd::Stopped), "{run:?}");
+    }
+}
+
+#[test]
+fn xread_block_reads_each_new_entry_until_stop() {
+    for uri in uris() {
+        let mut h = open(&uri);
+        h.run_ok(&["DEL live:x", "XADD live:x * old 1"]);
+        let execution = h.start_live(&["XREAD BLOCK 200 STREAMS live:x $"]);
+        let (columns, _) = h.wait_columns();
+        assert_eq!(columns, ["stream", "id", "fields"]);
+        // A wait longer than BLOCK makes the read start again.
+        std::thread::sleep(Duration::from_millis(500));
+        open(&uri).run_ok(&["XADD live:x * f 1"]);
+        let first = h.wait_row(|_| true);
+        open(&uri).run_ok(&["XADD live:x * f 2"]);
+        let second = h.wait_row(|_| true);
+        assert_eq!(first[0], "live:x");
+        assert!(
+            first[2].contains('1') && second[2].contains('2'),
+            "{first:?} {second:?}"
+        );
+        assert_ne!(first[1], second[1]);
+        let run = h.stop_live(execution);
+        assert_eq!(run.end, Some(ExecutionEnd::Stopped), "{run:?}");
+        assert_eq!(h.run_ok(&["PING"]).grid(), [["PONG"]], "the session stays");
+    }
+}
+
+#[test]
+fn xreadgroup_block_keeps_reading_new_entries() {
+    for uri in uris() {
+        let mut h = open(&uri);
+        h.run_ok(&["DEL live:g", "XGROUP CREATE live:g g $ MKSTREAM"]);
+        let execution = h.start_live(&["XREADGROUP GROUP g c BLOCK 0 STREAMS live:g >"]);
+        h.wait_columns();
+        open(&uri).run_ok(&["XADD live:g * f 1"]);
+        h.wait_row(|row| row[2].contains('1'));
+        open(&uri).run_ok(&["XADD live:g * f 2"]);
+        h.wait_row(|row| row[2].contains('2'));
+        let run = h.stop_live(execution);
+        assert_eq!(run.end, Some(ExecutionEnd::Stopped), "{run:?}");
+    }
+}
+
+#[test]
+fn sync_shows_the_rdb_size_and_then_each_command() {
+    for uri in uris() {
+        for command in ["SYNC", "PSYNC ? -1"] {
+            let mut h = open(&uri);
+            let execution = h.start_live(&[command]);
+            let (columns, _) = h.wait_columns();
+            assert_eq!(columns, ["received_at", "kind", "value"]);
+            let rdb = h.wait_row(|row| row[1] == "rdb");
+            assert!(rdb[2].parse::<usize>().unwrap() > 0, "{rdb:?}");
+            open(&uri).run_ok(&["SET live:sync v"]);
+            let row = h.wait_row(|row| row[2].contains("live:sync"));
+            assert_eq!(row[1], "command");
+            let run = h.stop_live(execution);
+            assert_eq!(run.end, Some(ExecutionEnd::Stopped), "{command}: {run:?}");
+        }
+    }
+}
+
+#[test]
+fn read_only_accepts_pub_sub_and_refuses_other_live_commands() {
+    for uri in uris() {
+        let settings = Settings {
+            read_only: true,
+            ..Settings::default()
+        };
+        let mut h = Harness::open(&uri, settings);
+        let execution = h.start_live(&["SUBSCRIBE live:ro"]);
+        h.wait_columns();
+        assert_eq!(h.stop_live(execution).end, Some(ExecutionEnd::Stopped));
         for command in [
-            "SUBSCRIBE c",
-            "psubscribe c*",
-            "SSUBSCRIBE c",
             "MONITOR",
             "SYNC",
+            "XREADGROUP GROUP g c BLOCK 0 STREAMS live:ro >",
         ] {
-            let run = h.run(&[command]);
-            assert!(run.error().contains("continuous"), "{command}: {run:?}");
+            let execution = h.start_live(&[command]);
+            let run = h.collect(execution);
+            assert!(run.error().contains("read only"), "{command}: {run:?}");
         }
+    }
+}
+
+#[test]
+fn a_live_command_must_be_the_last_command_of_a_console_run() {
+    // The runner refuses before it asks for a session, so no server is needed.
+    let mut h = open("redis://127.0.0.1:1/0");
+    let execution = h.start_live(&["SUBSCRIBE c", "PING"]);
+    let run = h.collect(execution);
+    assert_eq!(run.end, Some(ExecutionEnd::Refused), "{run:?}");
+    assert!(run.message.as_deref().unwrap().contains("last"), "{run:?}");
+
+    for command in ["SUBSCRIBE c", "MONITOR", "XREAD BLOCK 0 STREAMS k $"] {
+        let run = h.run(&[command]);
+        assert_eq!(run.end, Some(ExecutionEnd::Refused), "{command}: {run:?}");
+        assert!(
+            run.message.as_deref().unwrap().contains("console"),
+            "{run:?}"
+        );
     }
 }
 
@@ -855,7 +1170,11 @@ impl Screen {
     }
 
     fn screen(&mut self) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        self.screen_at(100, 30)
+    }
+
+    fn screen_at(&mut self, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|frame| self.app.draw(frame)).unwrap();
         let buffer = terminal.backend().buffer();
         let mut text = String::new();
@@ -867,10 +1186,14 @@ impl Screen {
     }
 
     fn wait_for(&mut self, wanted: &str) {
+        self.wait_for_at(100, 30, wanted);
+    }
+
+    fn wait_for_at(&mut self, width: u16, height: u16, wanted: &str) {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             self.app.drain_events();
-            let screen = self.screen();
+            let screen = self.screen_at(width, height);
             if screen.contains(wanted) {
                 return;
             }
@@ -964,6 +1287,40 @@ fn the_form_of_an_open_connection_marks_a_database_and_the_tree_follows() {
             Some(RowNote::Filtered)
         );
         h.run_ok(&["SELECT 13", "FLUSHDB"]);
+    }
+}
+
+#[test]
+fn a_live_result_shows_its_state_and_rows_on_a_small_screen() {
+    for uri in uris() {
+        let mut screen = Screen::open(&uri);
+        let app = &mut screen.app;
+        app.on_event(Event::Key(ctrl('a')));
+        app.on_event(Event::Paste("SUBSCRIBE live:ui".to_owned()));
+        app.on_event(Event::Key(common::key(KeyCode::F(5))));
+        screen.wait_for_at(80, 24, "0 rows received. Live.");
+        let shown = screen.screen_at(80, 24);
+        let status = shown.lines().rev().nth(1).unwrap();
+        assert!(status.contains("Live"), "{shown}");
+
+        open(&uri).run_ok(&["PUBLISH live:ui shown-row"]);
+        screen.wait_for_at(80, 24, "1 row received. Live.");
+        let shown = screen.screen_at(80, 24);
+        assert!(shown.contains("│ message │ NULL"), "{shown}");
+
+        let app = &mut screen.app;
+        app.on_event(Event::Key(ctrl('w')));
+        app.on_event(Event::Key(common::key(KeyCode::Char('x'))));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while app.console().is_busy() {
+            app.drain_events();
+            assert!(Instant::now() < deadline, "the stream did not stop");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let shown = screen.screen_at(80, 24);
+        assert!(shown.contains("1 row received."), "{shown}");
+        assert!(!shown.contains("Live"), "{shown}");
+        assert!(shown.contains("│ message │ NULL"), "the rows stay: {shown}");
     }
 }
 

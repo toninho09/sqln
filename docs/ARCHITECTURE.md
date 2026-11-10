@@ -501,6 +501,18 @@ The consoles of a connection share its settings through `Binding`. A save in Set
 6. If the request fails, the deadline ends at once.
 7. If the request does not finish after the response, the session is dropped, because it could hit the next statement.
 
+### Continuous statements
+
+`sql::is_continuous` names the statements that send rows until the user stops them. A new source adds its rule there.
+
+1. Only a console run sets `RunOptions::live`. The runner refuses a run with a continuous statement that is not the last statement, or a run without `live`.
+2. The runner removes the time limit and puts `ResultSink` in live mode. The sink keeps no cap and reserves no budget. `ExecEvent::Columns` carries the row cap in `live`.
+3. The connector loops until `ResultSink::stopped` returns. It calls `ResultSink::flush` before a read that can wait.
+4. **Stop** cancels only the stop token. The connector ends by itself; the 5-second deadline still closes a session that does not answer.
+5. `ResultTab::append_live` reserves each row in the budget. At the cap or at a full budget, the oldest rows leave the grid, and the cursor, the selection, and the search stay on their rows.
+
+Redis opens its own connection for Pub/Sub, `MONITOR`, `SYNC`, and `PSYNC`, with RESP2 and `connector::redis::live`. `XREAD` and `XREADGROUP` with `BLOCK` run again on the session connection and stop with `CLIENT UNBLOCK`.
+
 `Canceller::cancel` returns after the database handles the request.
 In PostgreSQL, that requires reading until the server closes the request connection.
 In MySQL, the response of `KILL QUERY` already confirms the request.

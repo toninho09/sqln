@@ -47,6 +47,17 @@ The rules are in "Driver decision" of the [plan](INITIAL_PLAN.md) and "Libraries
 Not tested in this phase: keepalive with a real network failure, and the operating system CA.
 The plan keeps those items in "Checks without a result".
 
+## 2a. Redis continuous commands — 2026-11-09
+
+Tested with `tests/redis.rs` on Redis 8 and Valkey 9 from `compose.test.yaml`.
+
+| Subject | Result | Rule in the code |
+|---|---|---|
+| Driver monitor | `redis` 1.8.1 keeps `aio::Monitor::new` private, so it cannot use the own stream | Own RESP2 reader in `connector/redis/live.rs` |
+| `SYNC` and `PSYNC` | Without `capa eof`, both servers send a sized RDB file, with empty lines before it, and then the commands | Read and drop the file; show its size |
+| Subscriber stop | `CLIENT UNBLOCK` does not stop a subscriber | Close the own connection at the stop token |
+| `XREAD` stop | `CLIENT UNBLOCK` ends the read, and the session stays usable | Keep the session after **Stop** |
+
 ## 3. Keys in iTerm (`keytest`) — 2026-10-30
 
 The record `keytest-results.log` sits in `../spikes/`, beside the capture of that test.

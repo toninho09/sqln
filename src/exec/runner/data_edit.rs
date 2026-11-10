@@ -44,6 +44,7 @@ impl ConsoleTask {
             timed: true,
             capture: Some(capture.clone()),
             parameters: Vec::new(),
+            live: false,
         };
         let (waited, reason) = self
             .run_statement(*key, active, sql, delivery, commands)

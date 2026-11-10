@@ -131,6 +131,8 @@ pub enum ExecEvent {
     Columns {
         key: StatementKey,
         columns: Vec<String>,
+        /// The row cap of a live result: at the cap, the grid drops its oldest rows.
+        live: Option<usize>,
     },
     Rows {
         key: StatementKey,
@@ -292,6 +294,9 @@ pub struct RunOptions {
     pub untimed: bool,
     /// Values captured when the user requests this execution.
     pub parameters: Vec<crate::sql::parameters::Parameter>,
+    /// True accepts a continuous statement at the end of the run. It has no time limit
+    /// and grows its result until the user stops it. Only a console sets this.
+    pub live: bool,
 }
 
 /// Shares cancellation and the SQL deadline with the streaming output.

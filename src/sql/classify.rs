@@ -112,6 +112,7 @@ const REDIS_READS: &[&str] = &[
     "PEXPIRETIME",
     "PFCOUNT",
     "PING",
+    "PSUBSCRIBE",
     "PTTL",
     "RANDOMKEY",
     "SCAN",
@@ -125,7 +126,9 @@ const REDIS_READS: &[&str] = &[
     "SORT_RO",
     "SRANDMEMBER",
     "SSCAN",
+    "SSUBSCRIBE",
     "STRLEN",
+    "SUBSCRIBE",
     "SUBSTR",
     "SUNION",
     "TIME",
@@ -156,6 +159,16 @@ const REDIS_READS: &[&str] = &[
     "ZSCAN",
     "ZSCORE",
     "ZUNION",
+];
+
+/// These Redis commands turn the connection into a stream that has no end.
+const REDIS_CONTINUOUS: &[&str] = &[
+    "SUBSCRIBE",
+    "PSUBSCRIBE",
+    "SSUBSCRIBE",
+    "MONITOR",
+    "SYNC",
+    "PSYNC",
 ];
 
 /// These Redis commands control the session, as `BEGIN` and `USE` do in SQL. Each command
@@ -340,6 +353,41 @@ fn redis_changes_state(sql: &str) -> bool {
 /// Returns true only for a known Redis read, without session-control commands.
 pub fn is_known_redis_read(sql: &str) -> bool {
     first_keyword(sql, Dialect::Redis).is_some_and(|word| is_any(word, REDIS_READS))
+}
+
+/// Returns true for a statement that sends rows until the user stops it. A source with
+/// such commands adds its rule here. In Redis, `XREAD` and `XREADGROUP` with `BLOCK`
+/// before `STREAMS` read again after each answer.
+pub fn is_continuous(sql: &str, dialect: Dialect) -> bool {
+    if dialect != Dialect::Redis {
+        return false;
+    }
+    let tokens = tokenize(sql, dialect);
+    let mut words = tokens
+        .iter()
+        .filter(|token| token.kind != TokenKind::Comment)
+        .map(|token| (token.kind, &sql[token.start()..token.end()]));
+    let Some((TokenKind::Word, command)) = words.next() else {
+        return false;
+    };
+    if is_any(command, REDIS_CONTINUOUS) {
+        return true;
+    }
+    if !is_any(command, &["XREAD", "XREADGROUP"]) {
+        return false;
+    }
+    // The group and the consumer after `GROUP` are names, so they can be `BLOCK`.
+    while let Some((kind, word)) = words.next() {
+        if word.eq_ignore_ascii_case("STREAMS") {
+            return false;
+        }
+        if word.eq_ignore_ascii_case("GROUP") {
+            words.nth(1);
+        } else if kind == TokenKind::Word && word.eq_ignore_ascii_case("BLOCK") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Returns true for a statement that a production connection confirms: it is not a

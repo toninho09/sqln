@@ -468,6 +468,15 @@ impl Console {
         self.message_key = None;
     }
 
+    /// Returns true while a continuous statement grows its result.
+    pub fn is_live(&self) -> bool {
+        self.phase != Phase::Idle
+            && self
+                .results
+                .last()
+                .is_some_and(|result| result.live.is_some())
+    }
+
     fn is_current(&self, execution: ExecutionId) -> bool {
         self.execution == Some(execution)
     }
@@ -485,18 +494,26 @@ impl Console {
                 self.transaction_before = self.transaction;
                 self.editor.set_mark_state(key.index, MarkState::Running);
             }
-            ExecEvent::Columns { key, columns } if self.is_current(key.execution) => {
+            ExecEvent::Columns { key, columns, live } if self.is_current(key.execution) => {
                 self.results_made += 1;
                 self.reading = true;
                 let mut result = ResultTab::new(self.results_made, columns);
                 result.statement = key.index;
+                if live.is_some() {
+                    result.live = live;
+                    result.summary = text::live_rows(0, 0);
+                }
                 self.results.push(result);
             }
             ExecEvent::Rows { key, rows, bytes } => self.on_rows(key, rows, bytes, budget),
             ExecEvent::ResultDone { key, rows, limit } if self.is_current(key.execution) => {
                 self.reading = false;
                 if let Some(result) = self.results.last_mut() {
-                    result.summary = read_summary(rows, limit);
+                    result.summary = if result.live.is_some() {
+                        text::live_rows_done(result.table.rows.len(), result.dropped)
+                    } else {
+                        read_summary(rows, limit)
+                    };
                     result.limit = limit;
                     // The list can hold room for twice its rows, and no more rows arrive.
                     result.table.rows.shrink_to_fit();
@@ -569,9 +586,12 @@ impl Console {
     fn on_rows(&mut self, key: StatementKey, rows: Vec<Row>, bytes: usize, budget: &Budget) {
         // An old execution has no grid, so its data leaves the budget.
         match self.results.last_mut() {
-            Some(result) if self.execution == Some(key.execution) => {
-                result.table.append(rows, bytes)
-            }
+            Some(result) if self.execution == Some(key.execution) => match result.live {
+                Some(cap) => result.append_live(rows, cap, budget),
+                None => result.table.append(rows, bytes),
+            },
+            // A live batch reserves its rows in the grid, not in the sink. A console
+            // accepts one execution at a time, so this branch holds no live batch.
             _ => budget.release(bytes),
         }
     }
@@ -723,7 +743,15 @@ impl Console {
         }
         // A stop can arrive between two statements, or a statement can end with success
         // after the stop request. **Messages** must still explain the end.
-        if end == ExecutionEnd::Stopped && !self.stop_reported {
+        // A stop is the normal end of a live result, so its grid stays on screen.
+        let live_stopped = end == ExecutionEnd::Stopped
+            && self
+                .results
+                .last()
+                .is_some_and(|result| result.live.is_some());
+        if live_stopped {
+            self.push_message(MessageLevel::Info, text::LIVE_STOPPED.to_owned());
+        } else if end == ExecutionEnd::Stopped && !self.stop_reported {
             let message = self
                 .first_not_executed
                 .map_or_else(|| text::STOPPED_AFTER_LAST.to_owned(), text::stopped_before);
@@ -734,7 +762,8 @@ impl Console {
         self.reading = false;
         // A script that ends normally shows its last result. Any other end shows
         // **Messages**, because that tab explains the end.
-        self.active = if end == ExecutionEnd::Completed && !self.results.is_empty() {
+        let shows_result = end == ExecutionEnd::Completed || live_stopped;
+        self.active = if shows_result && !self.results.is_empty() {
             self.results.len() - 1
         } else {
             self.results.len()
