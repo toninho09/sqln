@@ -219,6 +219,7 @@ Native session protection also applies:
 | MySQL | `SET SESSION TRANSACTION READ ONLY` |
 | SQLite | `PRAGMA query_only = ON` |
 | Redis/Valkey | Known read command plus the server's `readonly` flag |
+| Kafka | No agent read. The assistant refuses each Kafka command |
 
 These restrictions belong to each agent execution. They do not change saved connection settings.
 Pool cleanup removes the context before another execution reuses a session. Unknown cleanup discards the session.

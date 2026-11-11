@@ -79,6 +79,14 @@ fn an_open_transaction_shows_its_age_and_asks_for_a_frame_when_the_minute_change
     assert!(!screen(&mut app, 100).contains("Transaction open 1m"));
 
     let now = Instant::now();
+    // Finish syntax analysis before checking which clock changes require a frame.
+    let deadline = now + Duration::from_secs(10);
+    app.tick_at(now);
+    while app.console().editor.syntax_report().is_none() {
+        app.tick_at(now + Duration::from_secs(1));
+        assert!(Instant::now() < deadline, "syntax analysis did not end");
+        std::thread::sleep(Duration::from_millis(1));
+    }
     assert!(app.tick_at(now + 3 * MINUTE));
     assert!(screen(&mut app, 100).contains("Transaction open 3m"));
     assert!(!app.tick_at(now + 3 * MINUTE));
@@ -120,6 +128,7 @@ fn style_of_state(age: Option<Duration>, theme: &Theme) -> Style {
         session: Some((false, TransactionState::Open)),
         transaction_age: age,
         phase: Phase::Idle,
+        live: false,
         run_time: None,
         pool: None,
         data: (0, 1),

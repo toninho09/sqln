@@ -14,3 +14,4 @@ mod editor_vim;
 mod external_file;
 mod join_suggestions;
 mod script_file;
+mod syntax_diagnostics;

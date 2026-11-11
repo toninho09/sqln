@@ -2,9 +2,9 @@
 # Run cargo test and print a one-line summary. On failure, list the failing tests.
 # Usage: scripts/test-summary.sh [cargo test target flags]
 #
-# Test binaries run in parallel instead of one by one, with four test threads
-# each. Most tests wait on timers and input, so the extra threads overlap the
-# waits. Time-limit tests can still fail under this load, so each failing
+# Test binaries run in parallel, with one binary per two logical CPUs and
+# four test threads each. This overlaps waits without excessive CPU load.
+# Time-limit tests can still fail under this load, so each failing
 # binary runs again alone and is reported; only a second failure counts. Test
 # filters and libtest arguments are not supported; run cargo test directly for
 # those.
@@ -29,7 +29,7 @@ awk 'match($0, /"executable":"[^"]*\/deps\/[^"]+"/) {
 done | sort -rn | awk '{$1 = ""; sub(/^ /, ""); print}' >"$dir/bins"
 
 cpus="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
-jobs="$cpus"
+jobs="$(( (cpus + 1) / 2 ))"
 [ "$jobs" -lt 1 ] && jobs=1
 threads=4
 tr '\n' '\0' <"$dir/bins" | DIR="$dir" THREADS="$threads" xargs -0 -P "$jobs" -n 1 sh -c '

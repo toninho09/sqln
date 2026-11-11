@@ -32,10 +32,23 @@ jobs:
       - name: Install Rust components
         run: rustup component add --toolchain stable rustfmt clippy
 
+      # librdkafka 2.12.1 includes curl/curl.h even when curl support is off.
+      - name: Install libcurl headers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libcurl4-openssl-dev
+
       - name: Cache Rust dependencies and build output
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: ci
+
+      # rust-cache deletes the files in target/duckdb-sources, including the
+      # completion marker. Remove the partial tree so libduckdb-sys unpacks it again.
+      - name: Remove partial DuckDB sources
+        shell: bash
+        run: rm -rf target/duckdb-sources target/*/duckdb-sources
 
       - name: Run delivery checks
         run: make check
@@ -50,10 +63,22 @@ jobs:
         with:
           persist-credentials: false
 
+      # librdkafka 2.12.1 includes curl/curl.h even when curl support is off.
+      - name: Install libcurl headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libcurl4-openssl-dev
+
       - name: Cache Rust dependencies and build output
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: ci
+
+      # rust-cache deletes the files in target/duckdb-sources, including the
+      # completion marker. Remove the partial tree so libduckdb-sys unpacks it again.
+      - name: Remove partial DuckDB sources
+        shell: bash
+        run: rm -rf target/duckdb-sources target/*/duckdb-sources
 
       - name: Create disposable TLS certificates
         run: scripts/test-certs.sh

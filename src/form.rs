@@ -14,7 +14,8 @@ use crate::connection::{
 use crate::connector::duckdb::DuckdbTarget;
 use crate::connector::sqlite::{SqliteTarget, validate_path};
 use crate::connector::target::{
-    Address, ClientCertificate, Engine, NetworkTarget, Secret, Tls, TlsFiles, parse_uri,
+    Address, ClientCertificate, Engine, KafkaOptions, NetworkTarget, Registry, Sasl, Secret, Tls,
+    TlsFiles, parse_uri,
 };
 use crate::exec::ConnectionId;
 use crate::mark_list::{MarkList, MarkRequest};
@@ -38,11 +39,17 @@ pub enum Field {
     Database,
     User,
     Password,
+    /// The SASL mechanism of a Kafka connection.
+    Sasl,
     Credential,
     Tls,
     CaFile,
     ClientCertificate,
     ClientKey,
+    /// The Schema Registry of a Kafka connection.
+    RegistryUrl,
+    RegistryUser,
+    RegistryPassword,
     File,
     ForeignKeys,
     BusyTimeout,
@@ -79,12 +86,13 @@ impl Field {
             | Field::Scope
             | Field::Entry
             | Field::Credential
+            | Field::Sasl
             | Field::Tls
             | Field::ForeignKeys
             | Field::Theme
             | Field::Icon => FieldStyle::Choice,
             Field::ReadOnly | Field::Production => FieldStyle::Flag,
-            Field::Password => FieldStyle::Secret,
+            Field::Password | Field::RegistryPassword => FieldStyle::Secret,
             Field::Test | Field::Save | Field::Disconnect | Field::Cancel => FieldStyle::Button,
             _ => FieldStyle::Text,
         }
@@ -97,10 +105,11 @@ impl Field {
             Field::Uri | Field::Host | Field::Port | Field::Database | Field::File => {
                 Group::Address
             }
-            Field::User | Field::Password | Field::Credential => Group::Credentials,
+            Field::User | Field::Password | Field::Sasl | Field::Credential => Group::Credentials,
             Field::Tls | Field::CaFile | Field::ClientCertificate | Field::ClientKey => {
                 Group::Security
             }
+            Field::RegistryUrl | Field::RegistryUser | Field::RegistryPassword => Group::Registry,
             _ => Group::Options,
         }
     }
@@ -127,6 +136,7 @@ pub enum Group {
     Address,
     Credentials,
     Security,
+    Registry,
     Options,
 }
 
@@ -151,6 +161,7 @@ pub enum Kind {
     Sqlite,
     Redis,
     Duckdb,
+    Kafka,
 }
 
 impl Kind {
@@ -160,6 +171,7 @@ impl Kind {
             Kind::Postgres => Some(Engine::Postgres),
             Kind::MySql => Some(Engine::MySql),
             Kind::Redis => Some(Engine::Redis),
+            Kind::Kafka => Some(Engine::Kafka),
             Kind::Sqlite | Kind::Duckdb => None,
         }
     }
@@ -208,6 +220,8 @@ pub struct ConnectionForm {
     pub connection_id: String,
     pub use_uri: bool,
     pub verify_tls: bool,
+    /// The SASL mechanism of a Kafka connection with a user.
+    pub sasl: Sasl,
     /// `None` keeps the default of SQLite.
     pub foreign_keys: Option<bool>,
     pub read_only: bool,
@@ -286,6 +300,7 @@ impl ConnectionForm {
             connection_id: uuid::Uuid::new_v4().to_string(),
             use_uri: false,
             verify_tls: true,
+            sasl: Sasl::default(),
             foreign_keys: None,
             read_only: false,
             production: false,
@@ -372,7 +387,16 @@ impl ConnectionForm {
             Engine::Postgres => Kind::Postgres,
             Engine::MySql => Kind::MySql,
             Engine::Redis => Kind::Redis,
+            Engine::Kafka => Kind::Kafka,
         };
+        self.sasl = target.kafka.sasl;
+        if let Some(registry) = &target.kafka.registry {
+            self.set(Field::RegistryUrl, registry.url.clone());
+            self.set(Field::RegistryUser, registry.user.clone());
+            if let Some(password) = &registry.password {
+                self.set(Field::RegistryPassword, password.expose().to_owned());
+            }
+        }
         match &target.address {
             Address::Tcp { host, port } => {
                 self.set(Field::Host, host.clone());
@@ -425,7 +449,7 @@ impl ConnectionForm {
     pub fn fields(&self) -> Vec<Field> {
         if self.display_only {
             let mut fields = vec![Field::Name];
-            if !self.kind.is_file() {
+            if self.has_schemas() {
                 fields.push(Field::Schemas);
             }
             fields.extend([
@@ -446,21 +470,32 @@ impl ConnectionForm {
             Kind::Sqlite => fields.extend([Field::File, Field::ForeignKeys, Field::BusyTimeout]),
             Kind::Duckdb => fields.extend([Field::File, Field::Schemas]),
             _ if self.use_uri => fields.extend([Field::Entry, Field::Uri, Field::Credential]),
-            _ => fields.extend([
-                Field::Entry,
-                Field::Host,
-                Field::Port,
-                Field::Database,
-                Field::User,
-                Field::Password,
-                Field::Credential,
-                Field::Tls,
-                Field::CaFile,
-                Field::ClientCertificate,
-                Field::ClientKey,
-            ]),
+            _ => {
+                fields.extend([Field::Entry, Field::Host, Field::Port]);
+                if self.kind != Kind::Kafka {
+                    fields.push(Field::Database);
+                }
+                fields.extend([Field::User, Field::Password]);
+                if self.kind == Kind::Kafka {
+                    fields.push(Field::Sasl);
+                }
+                fields.extend([
+                    Field::Credential,
+                    Field::Tls,
+                    Field::CaFile,
+                    Field::ClientCertificate,
+                    Field::ClientKey,
+                ]);
+            }
         }
-        if !self.kind.is_file() {
+        if self.kind == Kind::Kafka {
+            fields.extend([
+                Field::RegistryUrl,
+                Field::RegistryUser,
+                Field::RegistryPassword,
+            ]);
+        }
+        if self.has_schemas() {
             fields.push(Field::Schemas);
         }
         fields.extend([Field::Pool, Field::ReadOnly, Field::Production]);
@@ -477,6 +512,12 @@ impl ConnectionForm {
             Field::Cancel,
         ]);
         fields
+    }
+
+    /// Returns true when the explorer of the source can hide schemas. SQLite has one
+    /// schema, and the catalog of Kafka holds two fixed lists.
+    fn has_schemas(&self) -> bool {
+        !matches!(self.kind, Kind::Sqlite | Kind::Kafka)
     }
 
     /// Lists the sections that hold a field, in order.
@@ -569,6 +610,7 @@ impl ConnectionForm {
                     Kind::Sqlite,
                     Kind::Redis,
                     Kind::Duckdb,
+                    Kind::Kafka,
                 ];
                 let index = order
                     .iter()
@@ -592,6 +634,7 @@ impl ConnectionForm {
                     CredentialName::Vault
                 };
             }
+            Field::Sasl => self.sasl = next_choice(&Sasl::ALL, self.sasl, forward),
             Field::Tls => {
                 self.verify_tls = !self.verify_tls;
                 self.tls_chosen = true;
@@ -795,6 +838,9 @@ impl ConnectionForm {
 
     /// Returns the visible schemas of the field. A Redis database must be a number.
     pub fn schemas(&self) -> Result<Vec<String>, Invalid> {
+        if !self.has_schemas() {
+            return Ok(Vec::new());
+        }
         let names = schema_names(self.text(Field::Schemas));
         let engine = self.kind.engine();
         if engine.is_some_and(|engine| !names.iter().all(|name| engine.accepts_database(name))) {
@@ -872,6 +918,9 @@ impl ConnectionForm {
         if database.is_some_and(|name| !engine.accepts_database(name)) {
             return Err(invalid(Field::Database, text::FORM_REDIS_DATABASE));
         }
+        if engine == Engine::Kafka && host.starts_with('/') {
+            return Err(invalid(Field::Host, text::FORM_KAFKA_SOCKET));
+        }
         Ok(NetworkTarget {
             engine,
             address,
@@ -879,6 +928,49 @@ impl ConnectionForm {
             password: self.password(),
             database: database.map(str::to_owned),
             tls,
+            kafka: self.kafka_options(engine, None)?,
+        })
+    }
+
+    /// Reads the Kafka fields. A registry of the connection text stays when the field is
+    /// empty. Other engines get the default.
+    fn kafka_options(
+        &self,
+        engine: Engine,
+        uri: Option<KafkaOptions>,
+    ) -> Result<KafkaOptions, Invalid> {
+        if engine != Engine::Kafka {
+            return Ok(KafkaOptions::default());
+        }
+        let uri = uri.unwrap_or_default();
+        let url = self.trimmed(Field::RegistryUrl);
+        let user = self.trimmed(Field::RegistryUser);
+        let url = if url.is_empty() {
+            uri.registry.map(|registry| registry.url)
+        } else {
+            Some(url.to_owned())
+        };
+        let registry = match url {
+            Some(url) => {
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    return Err(invalid(Field::RegistryUrl, text::FORM_REGISTRY_URL));
+                }
+                Some(Box::new(Registry {
+                    url,
+                    user: user.to_owned(),
+                    password: Some(self.text(Field::RegistryPassword))
+                        .filter(|text| !text.is_empty() && !user.is_empty())
+                        .map(Secret::new),
+                }))
+            }
+            None if !user.is_empty() => {
+                return Err(invalid(Field::RegistryUrl, text::FORM_REGISTRY_URL));
+            }
+            None => None,
+        };
+        Ok(KafkaOptions {
+            sasl: if self.use_uri { uri.sasl } else { self.sasl },
+            registry,
         })
     }
 
@@ -891,6 +983,7 @@ impl ConnectionForm {
         if target.password.is_none() {
             target.password = self.password();
         }
+        target.kafka = self.kafka_options(engine, Some(target.kafka.clone()))?;
         Ok(target)
     }
 

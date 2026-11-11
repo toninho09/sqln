@@ -186,6 +186,7 @@ pub enum Action {
     Explain,
     ExplainAnalyze,
     FormatSql,
+    SqlDiagnostics,
     ToggleComment,
     OpenHistory,
     /// Opens an external `.sql` file as a console: a copy, or a link that saves to it.
@@ -272,6 +273,10 @@ pub enum Action {
     GridCopy,
     GridOpenValue,
     GridOpenRow,
+    GridProfile,
+    GridChart,
+    GridKeepPrevious,
+    GridComparePrevious,
     GridFind,
     GridNarrow,
     GridWiden,
@@ -407,7 +412,10 @@ impl Action {
 
     /// Returns true for an action that only the results of a console have.
     pub fn is_console_only(self) -> bool {
-        matches!(self, Action::GridCloseResult)
+        matches!(
+            self,
+            Action::GridCloseResult | Action::GridKeepPrevious | Action::GridComparePrevious
+        )
     }
 
     /// Returns true for a move that Shift changes into a selection.
@@ -477,6 +485,13 @@ const DEFAULTS: &[Item] = &[
         Region::Global,
         "formatSql",
         &["ctrl+w f"],
+        &[],
+    ),
+    both(
+        Action::SqlDiagnostics,
+        Region::Global,
+        "sqlDiagnostics",
+        &[],
         &[],
     ),
     // A terminal without enhanced keys sends `Ctrl+/` as the byte of `Ctrl+7`.
@@ -1220,6 +1235,28 @@ const DEFAULTS: &[Item] = &[
         Region::Grid,
         "compareCopy",
         &["Y"],
+        &[],
+    ),
+    both(
+        Action::GridProfile,
+        Region::Grid,
+        "gridProfile",
+        &["p"],
+        &[],
+    ),
+    both(Action::GridChart, Region::Grid, "gridChart", &["b"], &[]),
+    both(
+        Action::GridKeepPrevious,
+        Region::Grid,
+        "gridKeepPrevious",
+        &["B"],
+        &[],
+    ),
+    both(
+        Action::GridComparePrevious,
+        Region::Grid,
+        "gridComparePrevious",
+        &["D"],
         &[],
     ),
     both(

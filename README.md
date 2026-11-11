@@ -5,7 +5,7 @@ A terminal database client with several connections, SQL consoles, and table tab
 SQLN brings an editor, a database navigator, and a results grid into one terminal.
 Use familiar editor keys or Vim mode. Keep scripts with a project, or use global connections across projects.
 
-**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, and Valkey.
+**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, and Kafka with the Schema Registry.
 
 > SQLN is in development. This repository supports source installation and unsigned workflow binaries.
 > Review the [known limitations](#known-limitations) before use with important data.
@@ -39,12 +39,14 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Two editor modes.** Use conventional keys or Vim, with search, replace, undo, and SQL highlighting.
 - **Catalog autocomplete.** Complete schemas, tables, views, columns, aliases, SQL keywords, built-in types, and functions with signatures.
 - **SQL tools.** Format statements, toggle comments, and generate SQL templates from the navigator.
+- **Local syntax warnings.** Check SQL after a typing pause, without executing it. Open full warnings from the command palette.
 - **Query parameters.** Write `:name` values, fill the panel under the editor, and run with native bindings that keep values out of the SQL text.
 - **Table browsing.** Apply SQL filters, sort columns, move between pages, and count rows on request.
 - **Grid editing.** Change, insert, and delete table rows locally, review the SQL, and apply checked changes in one transaction.
 - **Key navigation.** Go from a row to the row that its foreign key reads, or to the rows of other tables that read it.
 - **Database objects.** See routines, sequences, triggers, and types in the navigator, and open the DDL of an object in a new console.
 - **Results inspection.** Select cells, search loaded rows, inspect a row vertically, and format JSON values.
+- **Local analysis.** Profile a column, draw text charts, and compare two console executions without another query.
 - **Export.** Write CSV, TSV, JSON, JSON Lines, or SQL inserts from the export dialog.
 - **Import.** Load CSV, TSV, JSON, or JSON Lines into a table, with column mapping and a preview.
 - **Execution controls.** Run a statement, a selection, or a script, with row limits, deadlines, and cancellation.
@@ -86,6 +88,7 @@ Choose the output format, rows, file, and formatting options before writing an e
 - A terminal with Unicode support. Truecolor is optional; Nerd Fonts are optional.
 - A current stable Rust toolchain, with Cargo, for source installation.
 - A native compiler and linker. SQLite is bundled and needs a C compiler.
+- `cmake` and `perl`. The Kafka client builds librdkafka and OpenSSL from source.
 
 The project does not declare a minimum Rust version. CI checks the current stable toolchain.
 
@@ -95,11 +98,11 @@ On macOS, install the command-line development tools if you do not have them:
 xcode-select --install
 ```
 
-On Debian or Ubuntu, install the native build tools:
+On Debian or Ubuntu, install the native build tools and the libcurl headers:
 
 ```sh
 sudo apt-get update
-sudo apt-get install --yes build-essential
+sudo apt-get install --yes build-essential libcurl4-openssl-dev
 ```
 
 Install Rust with [rustup](https://rustup.rs/) if needed.
@@ -171,10 +174,11 @@ sqln 'postgres://alice@localhost/my_database'
 sqln 'mysql://alice@localhost/my_database'
 sqln 'redis://localhost/0'
 sqln 'valkey://localhost/0'
+sqln 'kafka://localhost:9092'
 ```
 
 For PostgreSQL and MySQL, SQLN asks for a password when the URI omits it in an interactive terminal.
-For password-protected Redis or Valkey, use the connection form to enter the password without shell-history exposure.
+For password-protected Redis, Valkey, or Kafka with SASL, use the connection form to enter the password without shell-history exposure.
 
 A command-line connection lasts for the session only. It does not create a saved connection or saved consoles for that target.
 To save a connection, start `sqln` and add it through the navigator.
@@ -212,6 +216,25 @@ PING
 ```
 
 Each Redis command occupies one line. Redis consoles do not run SQL.
+
+For Kafka, each line is one SQLN command. Each command only reads:
+
+```text
+TOPICS
+PARTITIONS orders
+CONSUME orders FROM earliest WHERE value.customer.id = 42 AND key CONTAINS 'eu' LIMIT 100
+CONSUME orders PARTITION 2 FROM @2026-11-10T12:00:00Z SCAN 50000
+TAIL orders WHERE value.status = 'failed'
+GROUPS
+GROUP billing
+```
+
+- `CONSUME` reads to the last message of each partition at its start. `TAIL` waits for new messages until **Stop**.
+- `FROM` takes `earliest`, `latest`, an offset, or `@` and a UTC time.
+- The filter runs in SQLN, after the decoding: `key = 'text'`, `CONTAINS 'text'` (without case), `MATCHES 'regex'`, and `value.field` with `=`, `!=`, `<`, `<=`, `>`, or `>=`. Use `AND`, `OR`, `NOT`, and parentheses.
+- With a Schema Registry, Avro, JSON Schema, and Protobuf values become JSON. A value that does not decode stays as bytes, with a note in **Messages**.
+- SQLN never joins a consumer group and never commits an offset. `GROUP <id>` shows the committed offsets and the lag.
+- The explorer lists `topics` and `groups`. `Enter` on a topic opens its last 500 messages, newest first, with a filter field.
 
 Press `Ctrl+P` for the command palette or `F1` for help in the main panels.
 
@@ -390,6 +413,38 @@ Export supports CSV, TSV, JSON, JSON Lines, and SQL inserts.
 Choose a selection, loaded rows, or all rows. An all-rows export can run a new read and observe newer data.
 Only the **Export** button writes the file. `Esc` cancels the dialog.
 
+### Analyze loaded results
+
+Use these commands in an idle console result or table grid:
+
+| Key | Command |
+|---|---|
+| `p` | Profile the current column: NULL count and percentage, distinct values without NULL, numeric min/max, and histogram |
+| `b` | Choose a bar or line chart and two numeric columns |
+| `B` | Turn previous-result retention on or off for the console |
+| `D` | Compare the current execution with the retained previous execution |
+
+The palette and `Ctrl+W Space` offer the same commands and show custom shortcuts.
+Profiles and charts use only loaded rows, or the current table page. An incomplete result carries a label.
+Distinct counts use the same value equality as data comparison. Numeric min/max keep decimal precision.
+Histograms and chart positions use approximate numbers; non-finite or out-of-range chart pairs stay out with a count.
+Charts preserve row order. Each repeated X has its own position; X spacing does not represent numeric distance.
+Line charts use consecutive sections without sampling. Scroll to see every section and its point values.
+
+For execution comparison:
+
+1. Press `B` in the first complete result to enable retention.
+2. Run the next query. The previous result stays in the shared memory budget.
+3. Press `D`, select key columns with `Enter`, and choose **Compare with selected key columns**.
+
+Comparison requires one complete data result per execution, the same column names and order, and unique selected keys.
+It reports added, removed, and changed rows; row order alone does not count as a change.
+Retention keeps one previous result per console until replacement, release, or console close. It does not persist across restarts.
+A failed or incomplete execution releases the retained result and records a warning in Messages.
+An analysis failure or memory limit cancels the report without partial differences, retries, or another query.
+The current grid remains available. Pending table edits block analysis.
+Press `Esc` to cancel or close, use arrows, PageUp/PageDown, or the mouse wheel to scroll, and `Ctrl+C` to copy.
+
 ### Import a file
 
 Press `I` on a table in the navigator, or in the grid of a table tab.
@@ -417,7 +472,8 @@ Press `Ctrl+W E` to see the plan of the selection or of the statement at the cur
 The **Plan** tab shows a tree. The **Share** column shows the part of the work of each node.
 The database does not run the statement for this plan.
 
-Press `Ctrl+W A` to run the statement and see the real time and rows of each node.
+Press `Ctrl+W A` (`explainAnalyze` in the palette) to run the statement and see the real time and rows of each node.
+Node times include their child nodes and multiply the average loop time by the loop count.
 SQLN asks first when the statement can write. On PostgreSQL, the change stays.
 
 | Database | `Ctrl+W E` | `Ctrl+W A` |
@@ -601,7 +657,9 @@ MySQL client keys can use PKCS#1, PKCS#8, or SEC1 format. PostgreSQL client keys
 
 SQLN does not use an unverified TLS fallback. Even `sslmode=require` and `verify-ca` use full verification.
 An explicit `sslmode=disable` removes TLS; use it only when the connection environment permits unencrypted traffic.
-`rediss` and `valkeys` always require verified TLS.
+`rediss`, `valkeys`, and `kafkas` always require verified TLS.
+Kafka takes `sasl=plain`, `sasl=scram-sha-256`, or `sasl=scram-sha-512` (the default) for a user, and `registry=<url>` for the Schema Registry.
+Without a CA file, Kafka verifies with the system roots only.
 
 ### Local data and diagnostics
 
@@ -630,18 +688,80 @@ sqln mcp
 ```
 
 `target` is one SQLite file path, one DuckDB target with the `duckdb:` scheme, or one connection URI. SQLN asks before creating a missing file.
-Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, and `valkeys`.
+Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, `valkeys`, `kafka`, and `kafkas`.
 
 | Option | Purpose |
 |---|---|
 | `--project <folder>` | Select the project root |
 | `--script <file>` | Open a `.sql` file as a console at the start; it needs a target or a saved connection |
+| `--execute <SQL>` | Run SQL without the terminal interface; `-` reads the script from standard input |
+| `--output csv\|json` | Set the result format for `--execute`; optional |
+| `--connection <name>` | Select a saved connection for `--execute` instead of a target |
+| `--scope global\|project` | Select the scope when a saved connection name is ambiguous |
+| `--single-transaction` | Run the whole script in one transaction that rolls back on any failure |
+| `--continue-on-error` | Keep running after a failed instruction and report every failure |
+| `--yes` | Authorize protected execution and missing database creation; it does not authorize trust |
+| `--password-file <file>` | Read the batch password from a UTF-8 file |
 | `--log <file>` | Write the event log |
 | `-h`, `--help` | Show command-line help |
 | `-V`, `--version` | Show the version |
-| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, or `redis` for an unconnected console; development option |
+| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, or `kafka` for an unconnected console; development option |
 
-The terminal interface does not provide a batch SQL runner or read scripts from standard input.
+### Execution without the terminal interface
+
+```bash
+sqln app.db --execute "SELECT * FROM users" --output csv > users.csv
+sqln --connection production --execute "SELECT count(*) FROM users" --output json
+sqln --connection staging --execute "DELETE FROM logs" --output json --yes
+SQLN_PASSWORD="$DB_PASSWORD" sqln --connection app --execute "SELECT 1" --output json
+sqln --connection app --password-file /run/secrets/db-password --execute "SELECT 1" --output csv
+sqln app.db --execute - --output csv < migration.sql
+sqln app.db --execute - --single-transaction --continue-on-error < migration.sql
+```
+
+`--execute` runs one instruction or a script of several instructions, in order, on one session.
+It accepts a final semicolon, comments, and the `DELIMITER` rule. Use `-` to read the SQL from standard input,
+up to 10 MiB; an empty input is an invalid argument. Do not combine `--execute` with `--script` or `--dialect`.
+Supply exactly one target or `--connection`. Names ignore case. Use `--scope global` or `--scope project` for an ambiguous name.
+Relative paths of saved connections keep their configured base folder.
+
+Standard output contains only CSV or JSON, and it stays empty without `--output`. CSV has a header, a comma delimiter, UTF-8, and no BOM.
+JSON is one array of objects per result set, one set per line, and uses the existing export rules for numbers, binary values, and repeated names.
+Several result sets are written in order: CSV repeats the header for each set.
+An empty result writes the CSV header or `[]`. A command without columns leaves standard output empty and reports affected rows on standard error.
+Without `--output`, every result set reports its row count on standard error.
+Database notices and failures also go to standard error. Export dialog preferences do not change these formats.
+CSV preserves control bytes and formula-like text. Redirect output to a file or pipe when values are untrusted.
+
+Execution streams all rows, without the grid cap or an added `LIMIT`. The connection SQL timeout still applies.
+On Unix, the statement deadline stays active through the final output flush, including blocked output after the query returns.
+Notices and affected-row messages on standard error also stop after cancellation or timeout.
+The default stops the script at the first failed instruction. `--continue-on-error` runs the rest and reports every failure with its number.
+`--single-transaction` opens one transaction, commits when every instruction succeeds, and rolls back on any failure or signal; Redis refuses the flag.
+SQLN finishes and flushes result output before the final `COMMIT`; a failure during that flush triggers rollback.
+Output can reach the consumer before `COMMIT`, even when `COMMIT` later fails. A successful flush does not guarantee consumer storage.
+A script that ends its own transaction makes the final `COMMIT` fail. On PostgreSQL, a failure inside the transaction can make later instructions fail with the server message.
+An instruction outside `--single-transaction` that leaves a transaction open fails and SQLN rolls it back.
+
+Without `--yes`, protected execution and missing database creation need a terminal confirmation. The default answer is No.
+The question uses the controlling terminal, so redirected input and output stay separate.
+Without a terminal, SQLN refuses the operation and reports the required authorization.
+`--yes` does not remove read-only or TLS protection. Trust for a saved network connection remains a separate terminal confirmation.
+For CI, first confirm the saved destination and project interactively on that machine.
+
+Password priority is `--password-file`, then `SQLN_PASSWORD`, then the saved credential or URI password, then a hidden terminal question.
+The file is UTF-8. SQLN removes one final LF or CRLF and preserves other whitespace.
+A file read failure does not fall back to another source. SQLN does not save passwords from these sources.
+Without a credential or terminal, password-free authentication remains available. A missing referenced credential fails with instructions.
+A URI password remains visible in shell history and process arguments. SQL text in `--execute` can also appear there.
+
+SIGINT and SIGTERM request cancellation. A broken pipe or output failure also stops execution.
+An error can leave partial or invalid output. Database changes can already be committed when output fails or cancellation arrives.
+A full or broken standard error stream can prevent the final error message from appearing. The exit status still reports failure.
+Always check the exit status: `0` means success, `1` means an operational failure or refusal, and `2` means invalid arguments.
+SQLN does not restore tabs, start MCP, or write workspace, console, history, or export-preference files in this mode.
+
+The terminal interface does not read SQL scripts from standard input.
 `sqln mcp` uses standard input and output only for MCP. It does not accept raw SQL.
 A positional `.sql` path is not a script-opening argument; positional file targets are SQLite databases. Use `--script` to open a `.sql` file as a console.
 
@@ -664,6 +784,7 @@ A positional `.sql` path is not a script-opening argument; positional file targe
 
 ## Known limitations
 
+- Local syntax warnings use a parser, not the database. They can miss errors or flag valid extensions, including some MySQL routines. See [syntax warnings](docs/UI.md#local-sql-syntax-warnings) for limits.
 - Windows support is not part of the current CI or binary matrix.
 - A `:memory:` SQLite or DuckDB database lives in the single session of its connection: a disconnect or the end of the application loses it.
 - DuckDB opens a database file, and it refuses a `CSV`, `Parquet`, or `JSON` file: read those from a database with `read_csv`, `read_parquet`, or `read_json`, because a driver open of one of them would start a database in memory that loses its tables when the console ends.
@@ -697,7 +818,16 @@ make check   # Run lint and the complete default test suite.
 make bench   # Print the performance and memory reports and run the latency targets.
 ```
 
-Test binaries build without debug info. Set `CARGO_PROFILE_TEST_DEBUG=2` when a backtrace needs symbols.
+Development builds, Clippy, and tests use level-one optimization without debug info.
+The test profile inherits the development profile to reduce duplicate dependency builds.
+Debug assertions and incremental compilation stay enabled.
+Set `CARGO_PROFILE_DEV_DEBUG=2` or `CARGO_PROFILE_TEST_DEBUG=2` when a backtrace needs symbols.
+Use consistent profiles and compiler flags across agent commands to reuse the cache.
+These settings do not remove existing build artifacts.
+Test binaries run in parallel, with one binary per two logical CPUs and four test threads each.
+Formatting and test-file checks run first, before compilation.
+The under-20-second target applies to local checks with an up-to-date build cache, without database servers.
+The first build takes longer, especially when Cargo compiles bundled DuckDB.
 Database-dependent tests skip when their environment is absent. A passing local check alone does not prove database integration.
 Native-vault tests require explicit authorization. Performance tests do not run as benchmarks in the default debug suite.
 
@@ -733,7 +863,7 @@ The TLS stack includes PostgreSQL, MySQL, and Redis endpoints.
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pushes to any branch, including `main`:
 
 - Formatting, Clippy, and the default test suite on Linux and macOS.
-- Database integration on Linux, with PostgreSQL, MySQL, Redis, Valkey, and TLS endpoints.
+- Database integration on Linux, with PostgreSQL, MySQL, Redis, Valkey, Kafka, the Schema Registry, and TLS endpoints.
 - Database logs on failure and stack cleanup after the integration job.
 
 Opening a pull request does not start another run. The pull request shows checks from its branch commit.

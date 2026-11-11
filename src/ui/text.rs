@@ -179,6 +179,14 @@ pub fn suggestion_keys_name(keys: SuggestionKeys) -> &'static str {
     }
 }
 
+pub fn explorer_side_name(side: crate::store::config::ExplorerSide) -> &'static str {
+    use crate::store::config::ExplorerSide;
+    match side {
+        ExplorerSide::Left => "Left",
+        ExplorerSide::Right => "Right",
+    }
+}
+
 pub fn theme_name(name: &crate::store::config::ThemeName) -> &'static str {
     use crate::store::config::ThemeName;
     match name {
@@ -443,6 +451,7 @@ pub const FORM_GENERAL: &str = "General";
 pub const FORM_ADDRESS: &str = "Address";
 pub const FORM_CREDENTIALS: &str = "Credentials";
 pub const FORM_SECURITY: &str = "Security";
+pub const FORM_REGISTRY: &str = "Schema Registry";
 pub const FORM_OPTIONS: &str = "Options";
 pub const TITLE_PALETTE: &str = "Commands";
 pub const TITLE_PREFIX: &str = "Ctrl+W";
@@ -619,6 +628,9 @@ pub const FORM_NEEDS_USER: &str = "The connection needs a user.";
 pub const FORM_NEEDS_FILE: &str = "SQLite needs a file.";
 pub const FORM_REDIS_DATABASE: &str = "The Redis database must be a number.";
 pub const FORM_REDIS_SCHEMAS: &str = "Each Redis database must be a number.";
+pub const FORM_KAFKA_SOCKET: &str = "A Kafka connection needs a host name, not a socket.";
+pub const FORM_REGISTRY_URL: &str =
+    "The registry URL must start with http:// or https://. A registry user needs a URL.";
 pub const REDIS_SOCKET_TLS: &str = "A Unix socket does not use TLS. Turn off TLS.";
 pub const REDIS_NO_SOCKET: &str = "This system has no Unix sockets.";
 pub const REDIS_NO_STOP: &str = "The server cannot stop this command.";
@@ -632,8 +644,8 @@ pub const REDIS_READ_ONLY: &str =
     "This connection is read only, and the server does not mark this command as a read.";
 /// DuckDB fixes its access mode when the file opens, so a session refuses a write here.
 pub const DUCKDB_READ_ONLY: &str = "This connection is read only. A DuckDB connection cannot change its access mode, so SQLN refuses the write here.";
-pub const REDIS_CONTINUOUS: &str =
-    "SQLN cannot show a continuous stream, so it refuses this command.";
+pub const CONTINUOUS_NOT_LAST: &str = "A command that does not end must be the last command of the run. Move it to the end or run it alone.";
+pub const CONTINUOUS_CONSOLE_ONLY: &str = "A command that does not end runs only in a console. Run it in a console and use Stop to end it.";
 pub const REDIS_IDENTITY: &str =
     "This command changes the login of a shared session, so SQLN refuses it.";
 pub const REDIS_NO_REPLY: &str =
@@ -644,6 +656,117 @@ pub const REDIS_COLUMN_MEMBER: &str = "member";
 pub const REDIS_COLUMN_SCORE: &str = "score";
 pub const REDIS_COLUMN_ID: &str = "id";
 pub const REDIS_COLUMN_FIELDS: &str = "fields";
+pub const REDIS_COLUMN_STREAM: &str = "stream";
+pub const REDIS_COLUMN_RECEIVED_AT: &str = "received_at";
+pub const REDIS_COLUMN_KIND: &str = "kind";
+pub const REDIS_COLUMN_PATTERN: &str = "pattern";
+pub const REDIS_COLUMN_CHANNEL: &str = "channel";
+pub const REDIS_COLUMN_MESSAGE: &str = "message";
+pub const REDIS_COLUMN_TIME: &str = "time";
+pub const REDIS_COLUMN_DATABASE: &str = "database";
+pub const REDIS_COLUMN_CLIENT: &str = "client";
+pub const REDIS_COLUMN_COMMAND: &str = "command";
+pub const REDIS_SYNC_STATUS: &str = "status";
+pub const REDIS_SYNC_RDB: &str = "rdb";
+pub const REDIS_SYNC_COMMAND: &str = "command";
+pub const REDIS_LIVE_CLOSED: &str =
+    "The server closed the connection of the stream. Run the command again.";
+pub const REDIS_LIVE_BAD: &str =
+    "The server sent a reply that SQLN cannot read. Run the command again.";
+
+pub const KAFKA_UNKNOWN_COMMAND: &str =
+    "Unknown Kafka command. Use TOPICS, PARTITIONS, CONSUME, TAIL, GROUPS, or GROUP.";
+pub const KAFKA_EXTRA_WORDS: &str = "The command has more words than it accepts. Remove them.";
+pub const KAFKA_CONSUME_CLAUSES: &str =
+    "CONSUME accepts PARTITION, FROM, WHERE, LIMIT, and SCAN after the topic.";
+pub const KAFKA_TAIL_CLAUSES: &str = "TAIL accepts PARTITION, FROM, and WHERE after the topic.";
+pub const KAFKA_REPEATED_CLAUSE: &str = "Each clause can occur one time. Remove the repeat.";
+pub const KAFKA_BAD_START: &str = "FROM needs earliest, latest, an offset of 0 or more, or @ and a time, such as @2026-11-10T12:00:00Z.";
+pub const KAFKA_BAD_TEXT: &str = "The text has a bad escape or is not UTF-8.";
+pub const KAFKA_BAD_OPERATOR: &str = "Use != for not equal.";
+pub const KAFKA_NEEDS_FIELD: &str =
+    "The condition needs key, value, headers, or a field such as value.customer.id.";
+pub const KAFKA_NEEDS_OPERATOR: &str = "Use key = 'text', CONTAINS 'text', MATCHES 'regex', or value.field with =, !=, <, <=, >, or >=.";
+pub const KAFKA_NEEDS_TEXT: &str = "The condition needs a text between quotes.";
+pub const KAFKA_NEEDS_VALUE: &str =
+    "The condition needs a text between quotes, a number, true, false, or null.";
+pub const KAFKA_NO_CLOSE: &str = "The filter has a parenthesis that does not close.";
+pub const KAFKA_BAD_REGEX: &str =
+    "The regular expression is not valid or is too large. Check its syntax.";
+pub const KAFKA_WHAT_TOPIC: &str = "a topic";
+pub const KAFKA_WHAT_GROUP: &str = "a group";
+pub const KAFKA_WHAT_PARTITION: &str = "a partition number";
+pub const KAFKA_WHAT_COUNT: &str = "a number of 1 or more";
+pub const KAFKA_NO_TOPIC: &str = "The topic does not exist. Use TOPICS to see the topics.";
+pub const KAFKA_NO_PARTITION: &str =
+    "The topic has no partition with this number. Use PARTITIONS to see them.";
+pub const KAFKA_NO_TRANSACTIONS: &str =
+    "Kafka has no transactions in SQLN. Each command only reads.";
+pub const KAFKA_CALL_FAILED: &str = "The Kafka call stopped before its end. Try again.";
+pub const KAFKA_GROUP_EMPTY: &str =
+    "The group has no committed offsets. A group that does not exist also gives this result.";
+pub const KAFKA_PATH_TEXT: &str =
+    "librdkafka needs a TLS file path in UTF-8. Move or rename the file.";
+pub const KAFKA_NO_ROOTS: &str =
+    "The system has no TLS roots for Kafka. Set a CA file in the Security section.";
+pub const KAFKA_DECODE_FAILED: &str = "the payload does not match its schema";
+pub const KAFKA_REGISTRY_CLIENT: &str = "SQLN cannot create the Schema Registry client.";
+pub const KAFKA_REGISTRY_UNREACHABLE: &str =
+    "SQLN cannot reach the Schema Registry. Check the URL, the network, and TLS.";
+pub const KAFKA_REGISTRY_REFUSED: &str =
+    "the Schema Registry refused the credentials. Check the registry user and password";
+pub const KAFKA_REGISTRY_NO_SCHEMA: &str = "the Schema Registry has no schema with this id";
+pub const KAFKA_REGISTRY_BAD_ANSWER: &str =
+    "the Schema Registry sent an answer that SQLN cannot read";
+pub const KAFKA_REGISTRY_BAD_SCHEMA: &str = "SQLN cannot read the schema of the registry";
+pub const KAFKA_REGISTRY_DEEP: &str = "the schema has too many levels of references";
+pub const KAFKA_REGISTRY_VAULT: &str = "SQLN cannot read the registry password from the vault";
+
+/// Names what a Kafka command needs at a position.
+pub fn kafka_needs(what: &str) -> String {
+    format!("The command needs {what} here.")
+}
+
+pub fn kafka_registry_not_saved(error: &str) -> String {
+    format!(
+        "SQLN did not save the Schema Registry password in the vault: {error} Edit the connection and save again."
+    )
+}
+
+pub fn kafka_registry_status(status: u16) -> String {
+    format!("the Schema Registry answered HTTP {status}")
+}
+
+pub fn kafka_registry_vault_error(error: &str) -> String {
+    format!("SQLN cannot read the registry password from the vault: {error}")
+}
+
+pub fn kafka_registry_unavailable(reason: &str) -> String {
+    format!("The Schema Registry is not available: {reason}. Values stay as text or bytes.")
+}
+
+/// A payload with a schema id that the registry could not decode keeps its bytes.
+pub fn kafka_decode_notice(id: u32, reason: &str) -> String {
+    format!("Schema {id}: {reason}. The value stays as bytes.")
+}
+
+pub fn kafka_topic_error(error: &str) -> String {
+    format!("The cluster refused the topic: {error}.")
+}
+
+/// The counts of a read with a filter, a scan limit, or a stop.
+pub fn kafka_scanned(scanned: u64, matched: u64, stopped: bool) -> String {
+    let end = if stopped {
+        " The read stopped before the end."
+    } else {
+        ""
+    };
+    format!("Scanned {scanned} messages; {matched} matched.{end}")
+}
+
+pub fn redis_subscribed(channel: &str, count: &str) -> String {
+    format!("Subscribed to {channel}. Subscriptions: {count}.")
+}
 pub const FORM_URI_KIND: &str = "The connection text is for another database type.";
 pub const FORM_POOL_ZERO: &str = "The pool limit must be 1 or more.";
 pub const FORM_CLIENT_PAIR: &str = "A client certificate needs its file and its key.";
@@ -722,6 +845,10 @@ pub const FIELD_TLS: &str = "TLS";
 pub const FIELD_CA: &str = "CA file";
 pub const FIELD_CLIENT_CERTIFICATE: &str = "Client certificate";
 pub const FIELD_CLIENT_KEY: &str = "Client key";
+pub const FIELD_SASL: &str = "SASL";
+pub const FIELD_REGISTRY_URL: &str = "Registry URL";
+pub const FIELD_REGISTRY_USER: &str = "Registry user";
+pub const FIELD_REGISTRY_PASSWORD: &str = "Registry password";
 pub const FIELD_FILE: &str = "File";
 pub const FIELD_FOREIGN_KEYS: &str = "foreign_keys";
 pub const FIELD_BUSY: &str = "Lock limit (seconds)";
@@ -738,6 +865,7 @@ pub const BUTTON_CANCEL: &str = "Cancel";
 pub const VALUE_POSTGRES: &str = "PostgreSQL";
 pub const VALUE_MYSQL: &str = "MySQL";
 pub const VALUE_REDIS: &str = "Redis/Valkey";
+pub const VALUE_KAFKA: &str = "Kafka";
 pub const VALUE_SQLITE: &str = "SQLite";
 pub const VALUE_DUCKDB: &str = "DuckDB";
 pub const VALUE_SCOPE_PROJECT: &str = "Project";
@@ -953,6 +1081,7 @@ pub const FIELD_ROW_CAP: &str = "Row cap";
 pub const FIELD_CAP_IN_SQL: &str = "Limit in SQL";
 pub const FIELD_BUDGET: &str = "Data (MiB)";
 pub const FIELD_THEME: &str = "Default theme";
+pub const FIELD_EXPLORER_SIDE: &str = "Explorer side";
 pub const FIELD_CONNECTION_THEME: &str = "Theme";
 pub const FIELD_CONNECTION_ICON: &str = "Icon";
 pub const FIELD_THEMES: &str = "Custom themes";
@@ -1240,6 +1369,7 @@ pub const PLAN_OBJECT: &str = "Object";
 pub const PLAN_SHARE: &str = "Share";
 pub const PLAN_COST: &str = "Cost";
 pub const PLAN_ROWS: &str = "Rows";
+pub const GROUP_ANALYSIS: &str = "Analysis";
 pub const PLAN_TIME: &str = "Time (ms)";
 pub const PLAN_ACTUAL_ROWS: &str = "Actual rows";
 pub const PLAN_LOOPS: &str = "Loops";
@@ -1436,10 +1566,13 @@ pub fn last_run(time: std::time::Duration) -> String {
 pub const PHASE_IDLE: &str = "Idle";
 pub const PHASE_WAITING: &str = "Waiting";
 pub const PHASE_RUNNING: &str = "Running";
+pub const PHASE_LIVE: &str = "Live";
 pub const PHASE_STOPPING: &str = "Stopping";
 
 pub const COPY_REFUSED: &str =
     "SQLN does not support COPY with STDIN or STDOUT. Use a file on the server.";
+pub const LIVE_STOPPED: &str =
+    "The stream stopped at the user request. The grid keeps the rows that it received.";
 pub const STOPPED_AFTER_LAST: &str =
     "The execution stopped. The last statement ended before the stop request.";
 pub const STOPPED_BEFORE_SEND: &str = "The statement stopped before it reached the database.";
@@ -1487,6 +1620,53 @@ pub const FILTER_KEYS: &[(&str, &str)] = &[
 pub const EDITOR_KEYS: &[(&str, &str)] =
     &[("Tab", "Accept the suggestion"), ("Esc", "Close the list")];
 
+pub const SYNTAX_TITLE: &str = "SQL syntax warnings";
+pub const SYNTAX_CLEAN: &str = "No local syntax warnings. The database can still reject this SQL.";
+pub const SYNTAX_WAITING: &str = "Syntax check pending. Wait after the last edit.";
+pub const SYNTAX_UNAVAILABLE: &str =
+    "Syntax warnings need a SQL console. Open a PostgreSQL, MySQL, SQLite, or DuckDB console.";
+pub const SYNTAX_LIMITATION: &str = "Local parser warnings can include unsupported database syntax. Review the SQL. Run remains available.";
+
+pub fn syntax_summary(report: &crate::sql::diagnostics::Report, row: usize) -> Option<String> {
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|item| item.location.is_some_and(|(line, _)| line == row + 1))
+        .or_else(|| report.diagnostics.first());
+    diagnostic
+        .map(|item| {
+            let place = item
+                .location
+                .map_or_else(String::new, |(line, column)| format!(" L{line}:C{column}"));
+            let partial = if report.note.is_some() {
+                ", partial"
+            } else {
+                ""
+            };
+            format!(
+                "Syntax warning ({}{partial}){place}: {}",
+                report.diagnostics.len(),
+                item.message
+            )
+        })
+        .or_else(|| report.note.clone())
+}
+
+pub fn syntax_details(report: &crate::sql::diagnostics::Report) -> String {
+    let mut text = format!("{SYNTAX_LIMITATION}\n\n");
+    for (index, item) in report.diagnostics.iter().enumerate() {
+        let place = item.location.map_or_else(
+            || "Location unavailable".into(),
+            |(line, column)| format!("Line {line}, column {column}"),
+        );
+        text.push_str(&format!("{}. {place}: {}\n\n", index + 1, item.message));
+    }
+    if let Some(note) = &report.note {
+        text.push_str(note);
+    }
+    text
+}
+
 pub const PARAMETERS_TITLE: &str = "Parameters";
 pub const PARAMETERS_TOGGLE: &str = "Collapse or expand parameters";
 pub const HINT_PARAMETERS: &[HintPart] = &[
@@ -1518,6 +1698,7 @@ pub fn action_text(action: Action) -> &'static str {
         Action::Commit => "Commit",
         Action::Rollback => "Rollback",
         Action::FormatSql => "Format the SQL",
+        Action::SqlDiagnostics => "Show SQL syntax warnings",
         Action::FocusParameters => "Focus query parameters",
         Action::ToggleParameters => "Collapse or expand query parameters",
         Action::ToggleComment => "Comment or uncomment the rows",
@@ -1548,8 +1729,8 @@ pub fn action_text(action: Action) -> &'static str {
         Action::PreviousTab => "Previous tab",
         Action::ToggleNavigator => "Hide or show the navigator",
         Action::ChooseSchema => "Choose the schema or database",
-        Action::FocusLeft => "Go to the navigator",
-        Action::FocusRight => "Leave the navigator",
+        Action::FocusLeft => "Go to the left panel",
+        Action::FocusRight => "Go to the right panel",
         Action::FocusUp => "Go to the editor",
         Action::FocusDown => "Go to the results",
         Action::NavigatorUp => "Previous row",
@@ -1608,6 +1789,10 @@ pub fn action_text(action: Action) -> &'static str {
         Action::GridCopy => "Copy as TSV",
         Action::GridOpenValue => "Open the value",
         Action::GridOpenRow => "Open the row",
+        Action::GridProfile => "Show the column profile",
+        Action::GridChart => "Show a text chart",
+        Action::GridKeepPrevious => "Keep the previous result for comparison",
+        Action::GridComparePrevious => "Compare with the previous execution",
         Action::GridCountRows => "Count the rows",
         Action::GridFind => "Find in the loaded rows",
         Action::GridNarrow => "Make the column narrow",
@@ -1681,6 +1866,10 @@ pub fn panel_command_text(action: Action) -> &'static str {
         GridClearSelection => "Clear selection",
         GridOpenValue => "Open value",
         GridOpenRow => "Open row",
+        GridProfile => "Column profile",
+        GridChart => "Text chart",
+        GridKeepPrevious => "Retain previous",
+        GridComparePrevious => "Execution diff",
         GridFind => "Find",
         GridNarrow => "Narrow column",
         GridWiden => "Widen column",
@@ -1731,6 +1920,11 @@ pub fn command_aliases(action: Action) -> &'static str {
         Action::EditorFind | Action::EditorReplace | Action::GridFind => "search find replace",
         Action::EditorSuggestions => "autocomplete completion suggestions",
         Action::GridCopy => "copy cell selection clipboard tsv",
+        Action::GridProfile => "profile column null distinct min max histogram statistics",
+        Action::GridChart => "chart graph bar line numeric",
+        Action::GridKeepPrevious | Action::GridComparePrevious => {
+            "diff compare previous execution snapshot"
+        }
         Action::NavigatorRefresh => "refresh reload catalog rename console",
         Action::GridFocusFilter => "where filter",
         Action::GridFocusOrder | Action::GridSortColumn => "order by sort",
@@ -1946,6 +2140,32 @@ pub fn rows_read(rows: usize) -> String {
     plural(rows, "row")
 }
 
+/// The summary of a live result: the rows in the grid and the oldest rows that left it.
+pub fn live_rows(rows: usize, dropped: usize) -> String {
+    if dropped == 0 {
+        format!("{} received. Live.", plural(rows, "row"))
+    } else {
+        format!(
+            "{} shown, {} dropped. Live: the grid keeps the newest rows.",
+            plural(rows, "row"),
+            count(dropped)
+        )
+    }
+}
+
+/// The summary of a live result after its end.
+pub fn live_rows_done(rows: usize, dropped: usize) -> String {
+    if dropped == 0 {
+        format!("{} received.", plural(rows, "row"))
+    } else {
+        format!(
+            "{} shown, {} dropped. The grid kept the newest rows.",
+            plural(rows, "row"),
+            count(dropped)
+        )
+    }
+}
+
 pub fn row_cap_reached(rows: usize) -> String {
     format!(
         "{} read. Row cap reached. The result can have more rows.",
@@ -2084,13 +2304,29 @@ Options:
                          the nearest .sqln folder above the working folder.
   --script <file>        Open a .sql file as a console at the start. It needs a
                          target or a saved connection.
+  --execute <SQL>       Run SQL without the terminal interface. Several
+                         instructions run in order. Use - to read the script
+                         from standard input, up to 10 MiB.
+  --output csv|json     Set the result format for --execute. Every result set
+                         is written in order. Without it, standard output stays
+                         empty and row counts go to the error stream.
+  --connection <name>   Use a saved connection instead of a target.
+  --scope global|project Select the scope of a saved connection name.
+  --single-transaction  Run the whole script in one transaction that rolls
+                         back on any failure. Redis and Kafka have no support.
+  --continue-on-error   Keep running after a failed instruction and report
+                         every failure. The exit code still marks a failure.
+  --yes                 Authorize protected execution and database creation.
+                         Without it, SQLN asks on the terminal. Trust stays separate.
+  --password-file <file> Read a batch password. Otherwise use SQLN_PASSWORD,
+                         then a saved credential, then a terminal question.
   --log <file>           Write a log of events, without SQL or values.
   -h, --help             Show this text.
   -V, --version          Show the version.
 
 Development options:
-  --dialect <name>       Use postgres, mysql, sqlite, duckdb, or redis in a console
-                         without a connection.
+  --dialect <name>       Use postgres, mysql, sqlite, duckdb, redis, or kafka in a
+                         console without a connection.
 
 The settings and the connections are in config.json, in the global folder
 (~/.config/sqln, or $XDG_CONFIG_HOME/sqln) and in the .sqln folder of the project.

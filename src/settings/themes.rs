@@ -18,6 +18,7 @@ use ratatui::style::Color;
 /// The fields of the Appearance section without the editor.
 pub const FIELDS: &[Field] = &[
     Field::Theme,
+    Field::ExplorerSide,
     Field::Themes,
     Field::ThemeNew,
     Field::ThemeEdit,

@@ -94,9 +94,21 @@ pub fn draw_editor(
     focused: bool,
     theme: &Theme,
 ) {
+    let warning = editor
+        .syntax_report()
+        .and_then(|report| text::syntax_summary(report, editor.cursor().row));
     let bar_height = if editor.search().is_some() { 2 } else { 0 };
-    let [bar, text] =
-        Layout::vertical([Constraint::Length(bar_height), Constraint::Min(0)]).areas(area);
+    let [bar, text, warning_area] = Layout::vertical([
+        Constraint::Length(bar_height),
+        Constraint::Min(1),
+        Constraint::Length(u16::from(warning.is_some() && area.height > bar_height + 1)),
+    ])
+    .areas(area);
+    if let Some(warning) = warning {
+        let warning = crate::grid::printable(&warning);
+        let warning = kit::measure::fit(&warning, warning_area.width.into()).0;
+        frame.render_widget(Paragraph::new(warning).style(theme.error), warning_area);
+    }
 
     if let Some(search) = editor.search() {
         draw_search_bar(frame, bar, search);

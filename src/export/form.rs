@@ -387,10 +387,10 @@ impl ExportForm {
     }
 }
 
-/// Redis has no tables, so it has no `INSERT`.
+/// Redis and Kafka have no tables, so they have no `INSERT`.
 fn formats_of(dialect: Dialect) -> Vec<ExportFormat> {
     ExportFormat::ALL
         .into_iter()
-        .filter(|format| dialect != Dialect::Redis || *format != ExportFormat::SqlInsert)
+        .filter(|format| !dialect.is_command_line() || *format != ExportFormat::SqlInsert)
         .collect()
 }

@@ -310,7 +310,7 @@ pub fn draw_table(
     ] = Layout::vertical([
         Constraint::Length(u16::from(bar.title)),
         Constraint::Length(u16::from(tab.filters)),
-        Constraint::Length(u16::from(tab.filters)),
+        Constraint::Length(u16::from(tab.filters && !tab.filter_only)),
         Constraint::Length(1),
         Constraint::Length(u16::from(tab.section().is_some())),
         Constraint::Min(0),
@@ -397,10 +397,9 @@ pub fn draw_table(
             format!(" {}", printable(&message.text)),
             message_style(message, theme),
         )),
-        _ if tab.filters && tab.applied_order().is_empty() => Some(Line::styled(
-            format!(" {}", text::TABLE_NO_ORDER),
-            theme.hint,
-        )),
+        _ if tab.filters && !tab.filter_only && tab.applied_order().is_empty() => Some(
+            Line::styled(format!(" {}", text::TABLE_NO_ORDER), theme.hint),
+        ),
         _ => None,
     };
     if let Some(note) = note {

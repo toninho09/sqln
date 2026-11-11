@@ -122,6 +122,7 @@ Grid Apply controls its own short transaction.
 `Ctrl+W C` and `Ctrl+W R` do not ask for confirmation, like the commit and rollback buttons.
 `Ctrl+W N` uses uppercase `N` and does not replace `Ctrl+W n`.
 `Ctrl+W H` uses uppercase `H` and does not replace `Ctrl+W h`.
+`Ctrl+W h` and `Ctrl+W l` follow the screen. With **Explorer side** set to **Right** in `Settings > Appearance`, `Ctrl+W l` goes to the explorer and `Ctrl+W h` leaves it.
 `Ctrl+W E` and `Ctrl+W A` use uppercase keys and do not replace `Ctrl+W e` and `Ctrl+W a`.
 `Ctrl+W S` uses uppercase `S` and does not replace `Ctrl+W s`. With the focus in the navigator, it uses the connection of the row.
 `Ctrl+W D` uses uppercase `D` and does not replace `Ctrl+W d`. With the focus in the navigator, it uses the row, as `d` does. A table tab shows the diagram of its table, and a console shows its current schema.
@@ -181,7 +182,7 @@ Add connection and scripts without a connection remain global. `Ctrl+W Tab` rema
 Apply filters and Clear filters also appear in the palette, without default shortcuts.
 `Ctrl+P` has priority over the `MoveUp` of EdTUI during input in the Vim mode.
 
-The comment action acts on the selection or on the cursor line, with `-- ` in SQL and `# ` in Redis.
+The comment action acts on the selection or on the cursor line, with `-- ` in SQL and `# ` in Redis and Kafka.
 A selection that ends at column 0 leaves that line out. If all lines have the comment, the action removes it.
 A terminal without keyboard enhancement sends `Ctrl+/` as the byte of `Ctrl+7`, so both keys do the same action.
 `Ctrl+/` is not in the `keytest` record. Use `Ctrl+W /` if the terminal does not deliver that key.
@@ -417,6 +418,10 @@ If the vault fails, the session option does not offer global storage in plain te
 | Clear the selection | `Esc` | `Esc` |
 | Open value | `Enter` | `Enter` |
 | Open the row vertically | `r` | `r` |
+| Profile the current column | `p` | `p` |
+| Draw a bar or line chart | `b` | `b` |
+| Toggle previous-result retention, console only | `B` | `B` |
+| Compare two complete executions, console only | `D` | `D` |
 | Search in the loaded rows | `Ctrl+F` | `/` |
 | Shrink and grow the column | `<` and `>` | `<` and `>` |
 | Automatic column width | `=` | `=` |
@@ -431,11 +436,20 @@ If the vault fails, the session option does not offer global storage in plain te
 Without a selection, `Ctrl+C` copies the current cell.
 The result that still receives rows does not close, and the **Messages** tab does not either.
 
-In the value window and the row window, the keys are the same in both maps:
+The analysis actions are `gridProfile`, `gridChart`, `gridKeepPrevious`, and `gridComparePrevious`.
+The palette, panel menu, and hints use the effective shortcuts and the same availability checks.
+Profiles and charts read loaded rows only. Pending edits block them.
+Charts ask for Bar or Line, then X and Y columns. They preserve order and show repeated X occurrences separately.
+Comparison asks for key columns: Enter toggles a column, and the first row starts the comparison.
+Esc cancels any choice. Mouse clicks select choices. Retention is optional and keeps one previous complete result in memory.
+Only one complete data result per execution can be compared; duplicate keys cancel the report.
+Failures and memory limits show a reason and cancel without partial output or another query.
+
+In analysis reports, the value window, and the row window, the keys are the same in both maps:
 
 | Action | Key |
 |---|---|
-| Scroll | `Up` and `Down`, or `j` and `k` |
+| Scroll | `Up` and `Down`, `j` and `k`, PageUp/PageDown, or the mouse wheel |
 | Toggle JSON formatting, in the value window only | `f` |
 | Change row, in the row window | `Left` and `Right`, or `h` and `l` |
 | Copy the visible text | `Ctrl+C` |

@@ -92,6 +92,7 @@ fn network(engine: Engine) -> Definition {
         password: None,
         database: None,
         tls: Tls::Disabled,
+        kafka: Default::default(),
     };
     Definition::new("remote", Source::Network(target))
 }

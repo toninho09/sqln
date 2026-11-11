@@ -84,7 +84,7 @@ impl App {
     /// shows its current schema.
     fn row_diagram(&self, row: &Row) -> Result<Target, &'static str> {
         let item = &self.connections[row.connection];
-        if item.dialect == Dialect::Redis {
+        if item.dialect.is_command_line() {
             return Err(text::DIAGRAM_REFUSED);
         }
         let focus = match row.kind {
@@ -168,7 +168,7 @@ impl App {
             }
         };
         let dialect = self.connection(connection).map(|item| item.dialect);
-        if dialect.is_none_or(|dialect| dialect == Dialect::Redis) {
+        if dialect.is_none_or(Dialect::is_command_line) {
             return Err(text::DIAGRAM_REFUSED);
         }
         match table {

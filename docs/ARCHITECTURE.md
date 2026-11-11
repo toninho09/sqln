@@ -45,7 +45,7 @@ Main thread                        Tokio runtime
 | `form` | Fields and validation of the connection form |
 | `connection` | Connection definitions and the state of each connection in the application |
 | `editor` | EdTUI, conventional layer, search, and replace |
-| `sql` | Tokenizer, statement separation, and statement classes |
+| `sql` | Tokenizer, statement separation, statement classes, and local syntax diagnostics |
 | `complete` | Local autocomplete suggestions |
 | `ai` | One OpenAI-compatible chat protocol, credentials, context, and metadata transforms. The Settings dialog edits the provider fields |
 | `catalog` | In-memory cache; schemas, tables, routines, sequences, triggers, and types first, columns and foreign keys on demand |
@@ -57,15 +57,18 @@ Main thread                        Tokio runtime
 | `plan` | Query plan commands, database output readers, and tree rows |
 | `mark_list` | Searchable list with a mark for each selected name |
 | `result` | Grid of one result with cursor and search, used by consoles and tables |
+| `analysis` | Bounded jobs for column profiles, ordered text charts, and loaded-result differences; shared-budget scratch data and reports |
+| `app/analysis` | Analysis command availability, column and key choices, job coordination, and report windows |
 | `table` | Table tab: pages, fields, sorting, suggestions, and query |
 | `data_edit` | Pending rows, budgeted snapshots, key predicates, update SQL, review, and cursor restoration |
 | `structure` | Catalog queries of the structure tab, per database, scope, and section |
 | `diagram` | ER diagram: catalog queries, model, layout of boxes and lines, Mermaid text, and the state of a diagram tab |
 | `compare` | Structure and data compare: catalog queries, model of a schema, differences, sync DDL, rows by key, the dialog, and the state of a compare tab |
 | `line_input` | Single-line text field, used by the filter bar fields |
+| `batch` | One noninteractive instruction, saved-name resolution, terminal authorization, credentials, and CSV/JSON delivery |
 | `exec` | Executions, scripts, cap, and cancellation |
 | `pool` | Limit, queue, reservation, and cleaning |
-| `connector` | Contract and PostgreSQL, MySQL, SQLite, DuckDB, and Redis/Valkey connectors |
+| `connector` | Contract and PostgreSQL, MySQL, SQLite, DuckDB, Redis/Valkey, and Kafka connectors, with the Schema Registry client |
 | `grid` | Rows in one block each (`row`), widths, search, budget, TSV, and readable JSON shape (`json`) |
 | `export` | Export formats, temporary file, and modal form |
 | `import` | File readers, `INSERT` text, batches, the error log, and modal form |
@@ -91,6 +94,27 @@ The vault calls are synchronous, but `Manager::spawn_blocking` runs them off the
 `store` keeps the folders and files. It does not depend on `app` or `ui`.
 Its configuration reader uses driver-independent connector target types.
 
+### Batch execution
+
+`main` selects `batch` for `--execute` before it creates application or terminal state.
+`batch` loads the same configuration and connection definitions, then uses `exec::Manager` and the existing pools.
+`sql::run_risk` supplies the risk analysis for both `app::guard` and `batch`.
+Terminal questions use `/dev/tty`, not the SQL input or the data output. Trust remains separate from `--yes`.
+`batch::auth` resolves password-file, environment, and saved credentials without saving or migrating them.
+
+Streaming execution uses a one-event queue. The sink sends one row per event, with backpressure, without grid storage or its cap.
+`export::Encoder` writes those original values to standard output. Format defaults do not depend on saved export preferences.
+Streaming does not disable the connection timeout. No SQL `LIMIT` is added, and no reread occurs.
+The coordinator drains execution events after a failure and uses the existing stop and session-cleanup path.
+On Unix, standard output and standard error use nonblocking adapters so signals can stop a full pipe. They restore the original file flags.
+Notices and affected-row messages share the statement deadline and cancellation state. Output failures use the same stop-and-drain path.
+The final error report attempts a nonblocking write so a full error stream cannot prevent process exit.
+The executor shares cancellation and the statement deadline with the output adapter, without waiting for event delivery.
+The deadline starts with the statement and stays active through the final output flush, even after the database returns.
+Password questions write to the controlling terminal. The terminal input uses the poll backend, including when stdin is redirected.
+SIGINT and SIGTERM feed the existing stop command. A transaction that remains open is rolled back and the execution fails.
+Batch execution writes no history, console, workspace, or preference state. Explicit trust confirmation uses the existing private atomic store.
+
 ### Local assistant operations
 
 `sqln mcp` runs without a terminal. It discovers private Unix sockets. It uses the instance UUID of the call, or the only open instance.
@@ -111,6 +135,10 @@ AI responses and agent proposals use the review in the editor. `editor/review` h
 
 ### AI SQL completion
 
+The HTTP client uses `reqwest` 0.13 with the `ring` TLS provider.
+It uses only system certificate roots through the shared `connector::tls::system_roots` cache.
+It does not use the default platform verifier or additional bundled roots.
+
 AI completion is separate from MCP. `app/ai` captures the editor interval and revisions, checks destination consent, and coordinates the request. The suggestion list holds two AI rows: the plain row starts a request at once, and the request row opens a one-line modal whose text travels as `request` in the body. `editor/ai` exposes immutable targets and applies a proposal through the existing single-undo edit path. Local `complete` suggestions remain independent of providers.
 
 `exec/ai` reads complete structural metadata through the credential gate and an independent pool lease. Snapshots count against the shared budget and follow catalog refresh generations. Unknown session states close their leases. `ai` serializes OpenAI-compatible chat requests, reduces oversized context deterministically, and bounds HTTP responses. Credential files are read again for each request. Vault keys use a separate `sqln-ai` service. Calls, preparation, and diff construction stay off the interface thread.
@@ -118,6 +146,22 @@ AI completion is separate from MCP. `app/ai` captures the editor interval and re
 `ui/ai` renders the request dialog, the waiting states, and scoped settings. A response shows ghost text at the cursor of its console, through the [inline review](#inline-review) model. A review changes the buffer only when the user accepts a change, with checked revisions and no execution. Pending responses never take another dialog's focus.
 
 `preferences.aiCompletion` is optional. Enabled inherits independently; the provider block inherits as a unit. The global private `ai-trust.json` records consent, under its own lock. No SQL, metadata snapshots, responses, or key content enter those files. Scripts and workspace formats do not change. See [AI completion](AI_COMPLETION.md) for the contract and limits.
+
+### Local syntax diagnostics
+
+`sql::diagnostics` checks bounded SQL text with the existing `sqlparser` dependency.
+It keeps the editor lexer and splitter, normalizes named parameters without values, and preserves source byte offsets.
+Parser location strings have a version-specific adapter; unknown locations produce messages without an underline.
+The checker has no database access, execution policy, or logging. Parser warnings never become execution restrictions.
+
+`editor::syntax` tracks one pending job per editor and checks after a 400 ms pause.
+The application polls only the console on screen, through the existing blocking executor.
+Reports carry editor revision and dialect identity. Stale responses do not change the current report.
+Input size, instruction count, warning count, message length, and parser recursion have fixed bounds.
+Each instruction has at most 1024 non-whitespace parser tokens before AST construction; comments do not count.
+This bounds AST depth and recursive destruction, which the parser recursion limit alone does not bound.
+The UI shows a summary and visible underlines. `Action::SqlDiagnostics` opens the existing scrollable text window.
+See [local syntax warnings](UI.md#local-sql-syntax-warnings) for coverage and limits.
 
 ### Files and saving
 
@@ -217,6 +261,12 @@ A Redis key tab uses the same path, without SQL:
 3. The session uses the command of the type: `GET`, `LRANGE`, `HSCAN`, `SSCAN`, `ZRANGE`, or `XRANGE`.
 4. A false `Capabilities::table_filters` removes `WHERE`, `ORDER BY`, **Clear filters**, and sorting from the tab. **Apply** becomes **Reload**.
 
+A Kafka tab uses the same path, without SQL:
+
+1. A topic tab reads `SQLN.TOPIC <topic> 500 [WHERE <filter>]` per `connector::kafka::page_text`. That text is not a console command. The session reads older windows of offsets until 500 matches, and it sends them newest first.
+2. A group tab reads `GROUP <id>`, the lag command of the console.
+3. `TableTab::filter_only` keeps the `WHERE` field of a topic tab and removes `ORDER BY` and sorting. The tab has one page.
+
 ### Grid editing
 
 `ResultTab::edits` keeps the original and current row snapshots for pending table changes.
@@ -309,6 +359,25 @@ The limit in memory stays the same.
 
 A row can keep its place in the budget after the end of its execution. A data compare keeps each source row until the compare ends, because the target rows meet them in a later execution. A target row that equals its source row leaves the budget at once. The index of the keys stays out of the budget.
 
+### Loaded-result analysis
+
+`analysis::Job` reads the active `ResultTable` in at most 128 steps per call, under the frame deadline.
+It checks table generations before each step. Reports use the existing text window; no database task starts.
+`app/analysis` opens the chart and key pickers, coordinates jobs, and releases reservations when the window closes or cancels.
+Jobs reserve scratch indexes, point arrays, and report text in the shared `Budget`. Completed reports keep only their text reservation.
+Profile distinct counts and execution differences reuse the canonical value and key rules of `compare::data`.
+Profile distinct indexes refer to loaded rows instead of copying text or binary values.
+Hashing and equality checks process at most 4096 bytes per step, including duplicate values.
+Numeric min/max compare decimal strings without `f64`; histogram ranges and chart positions use approximate numbers.
+Charts keep every finite numeric pair in row order and give repeated X occurrences separate positions.
+
+`Console::retain_result` is session-only and optional. Execution preparation moves one eligible current table into `previous_result`.
+The retained rows keep their existing budget charge; credential preparation must not retain or release them twice.
+The next preparation releases the older retained table. Toggle-off, connection change, console close, or a failed/incomplete execution releases it too.
+`comparison_ready` requires a successful execution with exactly one complete, non-plan data result.
+A comparison requires unchanged columns and explicit unique key columns. A failure discards the whole pending report and shows its reason.
+Difference reports convert cell values and column names in bounded chunks. Each chunk reserves memory before conversion.
+
 ## 3. Concurrency
 
 ### Rules
@@ -389,6 +458,7 @@ Closing the connection is the only case that abandons that future.
 | SQLite | `InterruptHandle` | Drop the connection | `is_autocommit` |
 | DuckDB | `InterruptHandle` | Drop the connection, because a temporary table only goes away with a new connection | The session keeps it: the driver reports `is_autocommit` as a constant |
 | Redis/Valkey | `CLIENT UNBLOCK` on a temporary connection; no effect, close the session | `DISCARD`, the `CLIENT` name and modes, `UNWATCH`, and back to the database of the connection, in one round trip | Always `None`: the source has no manual transaction |
+| Kafka | Nothing: the read watches the stop token of the sink | Nothing: each read owns its consumer | Always `None`: each command only reads |
 
 `run` sends one statement, delivers the rows to `ResultSink`, and obeys the `Flow::Stop` return.
 One statement may deliver several results, such as `CALL` in MySQL, and the cap applies to each one.
@@ -406,7 +476,7 @@ A preview reads only the visible prefix. TSV encoding borrows selected values wi
 ## 5. Script execution
 
 1. The console requests the execution and receives an `ExecutionId`.
-2. The application clears the previous results and frees the budget.
+2. The application clears the previous results and frees the budget, except one complete result when local comparison retention is on.
 3. The editor delivers a copy of the text.
 4. `sql` separates the statements and keeps their positions.
 5. `pool` delivers a reservation, or the execution enters the queue.
@@ -437,6 +507,20 @@ The consoles of a connection share its settings through `Binding`. A save in Set
 5. Without a response and with a transaction, the interface asks for confirmation.
 6. If the request fails, the deadline ends at once.
 7. If the request does not finish after the response, the session is dropped, because it could hit the next statement.
+
+### Continuous statements
+
+`sql::is_continuous` names the statements that send rows until the user stops them. A new source adds its rule there.
+
+1. Only a console run sets `RunOptions::live`. The runner refuses a run with a continuous statement that is not the last statement, or a run without `live`.
+2. The runner removes the time limit and puts `ResultSink` in live mode. The sink keeps no cap and reserves no budget. `ExecEvent::Columns` carries the row cap in `live`.
+3. The connector loops until `ResultSink::stopped` returns. It calls `ResultSink::flush` before a read that can wait.
+4. **Stop** cancels only the stop token. The connector ends by itself; the 5-second deadline still closes a session that does not answer.
+5. `ResultTab::append_live` reserves each row in the budget. At the cap or at a full budget, the oldest rows leave the grid, and the cursor, the selection, and the search stay on their rows.
+
+Redis opens its own connection for Pub/Sub, `MONITOR`, `SYNC`, and `PSYNC`, with RESP2 and `connector::redis::live`. `XREAD` and `XREADGROUP` with `BLOCK` run again on the session connection and stop with `CLIENT UNBLOCK`.
+
+Kafka `TAIL` assigns the partitions to its own consumer, without a commit, and waits for messages until the stop token. It calls `ResultSink::flush` after 200 ms without a message.
 
 `Canceller::cancel` returns after the database handles the request.
 In PostgreSQL, that requires reading until the server closes the request connection.
@@ -517,6 +601,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
     "keymap": {},
     "theme": "auto",
     "icons": "unicode",
+    "explorerSide": "left",
     "reopenTabs": true,
     "queryHistory": true,
     "formatJson": true,
@@ -564,12 +649,14 @@ No scope receives `password`. The plain-text authorized password stays in `crede
 
 | Field | Values |
 |---|---|
-| `kind` | `postgres`, `mysql`, `sqlite`, `duckdb`, or `redis` |
+| `kind` | `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, or `kafka` |
 | `credential` | `vault`, `session`, `globalPlainText`, or `none` |
 | `tls.mode` | `verify` or `disabled` |
 | `theme` | Optional. A value of `theme` of `preferences`. Without the field, the connection uses the default theme |
 | `icon` | Optional. `warning`, `skull`, `radiation`, `flag`, `crown`, `flask`, `star`, `diamond`, `tools`, `gear`, `home`, `heart`, `snowflake`, or `check`. Without the field, the connection uses the database icon |
-| `schemas` | Optional. The schemas, or the Redis databases, that the catalog keeps. The current schema always stays. Without the field, or with an empty list, the catalog keeps all |
+| `schemas` | Optional. The schemas, or the Redis databases, that the catalog keeps. The current schema always stays. Without the field, or with an empty list, the catalog keeps all. Kafka refuses the field |
+| `sasl` | Optional, only for `kafka`. `plain`, `scram-sha-256`, or `scram-sha-512`. Without the field, a Kafka user uses `scram-sha-512` |
+| `schemaRegistry` | Optional, only for `kafka`. `url` (`http://` or `https://`) and an optional `username`. The password stays in the system vault or in the session |
 
 The `globalPlainText` value exists only in the global scope.
 The value `sqlTimeoutSeconds: null` runs without a deadline, and the absence of the field means 30 seconds.

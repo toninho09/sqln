@@ -1,19 +1,22 @@
 //! SQL text analysis. This module accepts incomplete text and never fails.
 
 mod classify;
+pub mod diagnostics;
 mod format;
 mod lexer;
 pub mod literal;
 pub mod parameters;
+mod risk;
 mod statement;
 
 pub use classify::{
-    changes_state, changes_without_result, counts_rows, first_keyword, is_known_redis_read,
-    is_plain_read, is_secret, lacks_where, reads_or_writes_stdio, removes_prepared_statements,
-    with_row_limit,
+    changes_state, changes_without_result, counts_rows, first_keyword, is_continuous,
+    is_known_kafka_read, is_known_redis_read, is_plain_read, is_secret, lacks_where,
+    reads_or_writes_stdio, removes_prepared_statements, with_row_limit,
 };
 pub use format::format_statement;
 pub use lexer::{Lexer, Token, TokenKind, tokenize};
+pub use risk::run_risk;
 pub use statement::{Statement, split, split_tokens, statement_at};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +27,28 @@ pub enum Dialect {
     DuckDb,
     /// Redis and Valkey commands. This text is not SQL.
     Redis,
+    /// Kafka commands of SQLN, one for each line. This text is not SQL.
+    Kafka,
+}
+
+impl Dialect {
+    /// Returns true for a source with commands instead of SQL: one command for each line,
+    /// and `#` at the start of a line for a comment.
+    pub fn is_command_line(self) -> bool {
+        matches!(self, Dialect::Redis | Dialect::Kafka)
+    }
+}
+
+/// Shares parser dialect selection between assistant policy and local syntax checks.
+pub(crate) fn parser_dialect(dialect: Dialect) -> Option<&'static dyn sqlparser::dialect::Dialect> {
+    use sqlparser::dialect::{DuckDbDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
+    Some(match dialect {
+        Dialect::Postgres => &PostgreSqlDialect {},
+        Dialect::MySql => &MySqlDialect {},
+        Dialect::Sqlite => &SQLiteDialect {},
+        Dialect::DuckDb => &DuckDbDialect {},
+        Dialect::Redis | Dialect::Kafka => return None,
+    })
 }
 
 /// Wraps a name in `open` quotes and doubles the quotes inside the name.

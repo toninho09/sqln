@@ -62,7 +62,7 @@ impl App {
             let explorer = if self.navigator.collapsed {
                 Action::ToggleNavigator
             } else {
-                Action::FocusLeft
+                self.explorer_entry()
             };
             return self.hint_parts(&[
                 (explorer, "explorer"),
@@ -362,7 +362,7 @@ impl App {
                 "connection",
                 !console.can_run() && !self.connections.is_empty(),
             ),
-            (Action::FocusLeft, "navigator", !console.can_run()),
+            (self.explorer_entry(), "navigator", !console.can_run()),
             (Action::FocusDown, "results", !console.results.is_empty()),
             (
                 Action::FocusParameters,
@@ -375,6 +375,7 @@ impl App {
                 "suggestions",
                 console.editor.is_inserting(),
             ),
+            (Action::SqlDiagnostics, "warnings", true),
             (Action::FormatSql, "format", !console.editor.is_blank()),
             (Action::OpenHistory, "history", true),
             (Action::Explain, "plan", !console.editor.is_blank()),
@@ -410,6 +411,10 @@ impl App {
             (Action::GridNarrow, "narrow", true),
             (Action::GridWiden, "widen", true),
             (Action::GridAutoWidth, "auto width", true),
+            (Action::GridProfile, "profile", true),
+            (Action::GridChart, "chart", true),
+            (Action::GridComparePrevious, "differences", true),
+            (Action::GridKeepPrevious, "retain previous", true),
             (Action::GridCloseResult, "close result", true),
         ]);
         self.hints_when(&commands)
@@ -502,6 +507,8 @@ impl App {
             (Action::GridFocusOrder, "order by", true),
             (Action::GridCountRows, "count", tab.total.is_none()),
             (Action::GridImport, "import", true),
+            (Action::GridProfile, "profile", true),
+            (Action::GridChart, "chart", true),
             (Action::GridEditCell, "edit", true),
             (Action::GridNewRow, "new row", true),
             (Action::GridDeleteRow, "delete row", true),

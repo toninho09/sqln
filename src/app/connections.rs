@@ -1,6 +1,7 @@
 //! Connections, their catalogs, the navigator actions, and the form.
 
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -19,7 +20,6 @@ use crate::generate::{Template, generate, qualified_name};
 use crate::grid::printable;
 use crate::input::Action;
 use crate::navigator::{Navigator, Row, RowKind, is_relation};
-use crate::sql::Dialect;
 use crate::store::Scope;
 use crate::store::config::{Change, ConnectionIcon, CredentialName, ThemeName};
 use crate::table::TableTab;
@@ -434,7 +434,7 @@ impl App {
     /// column, with SQL text.
     fn row_templates(&self, row: &Row) -> Option<(SqlRequest, &'static [Template])> {
         let item = &self.connections[row.connection];
-        if item.dialect == Dialect::Redis
+        if item.dialect.is_command_line()
             || matches!(row.kind, RowKind::Connection | RowKind::Schema)
         {
             return None;
@@ -1024,6 +1024,7 @@ impl App {
         };
         let cursor = picker.cursor;
         match picker.kind {
+            PickerKind::Analysis(choice) => self.choose_analysis(choice, cursor),
             PickerKind::Agent(choices) => {
                 if let Some(choice) = choices.get(cursor) {
                     self.accept_agent_choice(choice.clone());
@@ -1381,6 +1382,9 @@ impl App {
                 return;
             }
         }
+        if credential == CredentialName::Vault {
+            self.write_registry_password(&definition);
+        }
         let id = match editing {
             Some(id) => {
                 self.replace_definition(id, definition);
@@ -1443,6 +1447,64 @@ impl App {
                 self.save_console_meta(index);
             }
         }
+    }
+}
+
+/// The answers of the vault writes of Schema Registry passwords.
+pub(super) struct VaultWrites {
+    sender: Sender<Result<(), String>>,
+    receiver: Receiver<Result<(), String>>,
+}
+
+impl Default for VaultWrites {
+    fn default() -> Self {
+        let (sender, receiver) = channel();
+        Self { sender, receiver }
+    }
+}
+
+impl App {
+    /// Writes a typed Schema Registry password to the vault, as the main password goes
+    /// there by the choice of the form. The session keeps the password in memory, so the
+    /// connection works before the write ends.
+    fn write_registry_password(&self, definition: &Definition) {
+        let Source::Network(target) = &definition.source else {
+            return;
+        };
+        let Some((account, password)) = target.kafka.registry.as_ref().and_then(|registry| {
+            let password = registry
+                .password
+                .clone()
+                .filter(|_| !registry.user.is_empty())?;
+            Some((
+                crate::connector::kafka::registry_account(&registry.url, &registry.user),
+                password,
+            ))
+        }) else {
+            return;
+        };
+        let (Some(manager), vault) = (&self.manager, self.ai_vault()) else {
+            return;
+        };
+        let sender = self.registry_writes.sender.clone();
+        manager.spawn_blocking(move || {
+            let result = vault
+                .write_api_key(&account, &password)
+                .map_err(|error| text::kafka_registry_not_saved(&error.to_string()));
+            let _ = sender.send(result);
+        });
+    }
+
+    /// Shows a failed vault write of a registry password. It returns true for a change.
+    pub(super) fn poll_registry_writes(&mut self) -> bool {
+        let mut changed = false;
+        while let Ok(result) = self.registry_writes.receiver.try_recv() {
+            if let Err(message) = result {
+                self.status = Some(message);
+                changed = true;
+            }
+        }
+        changed
     }
 }
 

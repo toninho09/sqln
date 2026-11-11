@@ -159,6 +159,7 @@ impl Persist {
         options.keymap = Some(config.keymap);
         options.appearance = (config.theme, config.icons);
         options.suggestion_keys = config.suggestion_keys;
+        options.explorer_side = config.explorer_side;
         options.show_system_commands = config.show_system_commands;
         options.agent = config.agent;
         options.ai_completion = config.ai_completion;
@@ -325,6 +326,7 @@ impl App {
         self.command_page = None;
         self.keymap = config.keymap;
         self.suggestion_keys = config.suggestion_keys;
+        self.explorer_side = config.explorer_side;
         self.show_system_commands = config.show_system_commands;
         if let Some(persist) = &mut self.persist {
             persist.query_history = config.query_history;
@@ -894,6 +896,11 @@ impl App {
         changed |= self.auto_refresh_tick(now);
         if self.console_on_screen() {
             let console = &mut self.consoles[self.active];
+            if let Some(manager) = &self.manager {
+                changed |= console
+                    .editor
+                    .poll_syntax(now, |operation| manager.spawn_blocking(operation));
+            }
             let revision = console.editor.revision();
             let dialect = console.editor.dialect();
             let supported = console

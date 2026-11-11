@@ -96,6 +96,10 @@ pub struct TableTab {
     pub is_view: bool,
     /// False for a tab without SQL text: a value of a key, or a structure.
     pub filters: bool,
+    /// True for a tab with a filter and without an order: a Kafka topic.
+    pub filter_only: bool,
+    /// The word that names a tab of a source without tables, such as `topic`.
+    pub kind_word: Option<&'static str>,
     /// The catalog grid of a structure tab. `None` means a tab of rows.
     pub structure: Option<Structure>,
     pub result: ResultTab,
@@ -214,6 +218,11 @@ pub fn page_sql(
     if dialect == Dialect::Redis {
         return Ok(value_page(relation, offset, page_size.saturating_add(1)));
     }
+    if dialect == Dialect::Kafka {
+        // A Kafka tab has one page, so a later page reads nothing.
+        let count = if offset == 0 { page_size } else { 0 };
+        return Ok(crate::connector::kafka::page_text(relation, filter, count));
+    }
     let mut sql = select_sql(dialect, relation, filter, order);
     sql.push_str(&limit_clause(page_size, offset));
     if is_one_statement(&sql, dialect) {
@@ -328,6 +337,8 @@ impl TableTab {
             relation,
             is_view,
             filters: true,
+            filter_only: false,
+            kind_word: None,
             structure: None,
             result: ResultTab::new(0, Vec::new()),
             edit_metadata: None,
@@ -455,6 +466,7 @@ impl TableTab {
     pub fn kind(&self) -> &'static str {
         match (&self.structure, self.filters, self.is_view) {
             _ if self.shows_sessions() => "sessions",
+            (None, ..) if self.kind_word.is_some() => self.kind_word.unwrap_or("key"),
             (Some(_), ..) => "structure",
             (None, false, _) => "key",
             (None, true, true) => "view",
@@ -573,7 +585,7 @@ impl TableTab {
         dialect: Dialect,
         budget: &Budget,
     ) -> Option<PageRequest> {
-        if !self.filters {
+        if !self.filters || self.filter_only {
             return None;
         }
         let name = self.result.table.columns.get(column)?.clone();
@@ -726,7 +738,7 @@ impl TableTab {
             {
                 self.phase = Phase::Running;
             }
-            ExecEvent::Columns { key, columns }
+            ExecEvent::Columns { key, columns, .. }
                 if self.is_current(key.execution)
                     && self.load.as_ref().is_some_and(|load| load.first) =>
             {
@@ -865,7 +877,7 @@ impl TableTab {
     /// Moves the focus to the other field.
     pub fn switch_field(&mut self) {
         self.list = None;
-        self.focus = if self.focus == TableFocus::Filter {
+        self.focus = if self.focus == TableFocus::Filter && !self.filter_only {
             TableFocus::Order
         } else {
             TableFocus::Filter
@@ -956,10 +968,17 @@ impl TableTab {
             TableFocus::Order => ("ORDER BY", &self.order),
             TableFocus::Grid => return Vec::new(),
         };
-        let head = format!(
-            "SELECT * FROM {}\n{clause} ",
-            from_clause(&self.relation, dialect)
-        );
+        let head = if dialect == Dialect::Kafka {
+            format!(
+                "CONSUME {} {clause} ",
+                crate::connector::words::command_word(&self.relation.relation)
+            )
+        } else {
+            format!(
+                "SELECT * FROM {}\n{clause} ",
+                from_clause(&self.relation, dialect)
+            )
+        };
         let sql = format!("{head}{}", field.text());
         let cursor = head.len() + field.byte_cursor();
         let mut completion = suggest(&sql, cursor, dialect, catalog);

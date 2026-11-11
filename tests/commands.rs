@@ -3,19 +3,23 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::common::{ctrl, key};
+use crate::common::{ctrl, key, shift};
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
-use sqln::connector::TransactionState;
+use sqln::compare::form::Field;
+use sqln::connector::{StatementEnd, TransactionState};
 use sqln::editor::KeyboardMode;
+use sqln::grid::Value;
 use sqln::input::{Action, Chord, Keymap, Region};
 use sqln::navigator::RowKind;
+use sqln::store::{Root, Store};
 use sqln::ui::text;
 use sqln::ui::theme::Theme;
 
@@ -115,6 +119,365 @@ impl Screen {
         assert!(!screen.contains(text::NO_COMMANDS), "{screen}");
         self.code(KeyCode::Enter);
     }
+}
+
+/// Commands that need a state outside the SQLite walk. The tests of the assistant, its
+/// review, and the AI provider hold their own fixtures; this file covers the rest.
+const OTHER_FIXTURES: &[Action] = &[
+    Action::AgentSessions,
+    Action::AgentReview,
+    Action::AgentStop,
+    Action::AgentSqlToConsole,
+    Action::AgentSqlClear,
+    Action::AgentSession,
+    Action::AgentTasks,
+    Action::ReviewAccept,
+    Action::ReviewReject,
+    Action::ReviewAcceptAll,
+    Action::ReviewRejectAll,
+    Action::ReviewNext,
+    Action::ReviewPrevious,
+    Action::ReviewClose,
+    Action::EditorAiComplete,
+    Action::EditorAiCompleteRequest,
+    Action::EditorAiAccept,
+    Action::EditorAiReject,
+    Action::EditorAiCancel,
+    // A network connection with a saved password: `tests/auth.rs`
+    // `the_palette_offers_the_command_that_deletes_the_saved_password`.
+    Action::NavigatorDeletePassword,
+    // A source with sessions and an analyze plan: `the_palette_offers_the_commands_of_a_session_source`.
+    Action::ExplainAnalyze,
+    Action::OpenSessions,
+    Action::ChooseSchema,
+    Action::NavigatorDisconnect,
+    Action::NavigatorSessions,
+    Action::GridCancelQuery,
+    Action::GridEndSession,
+];
+
+/// Walks the states of one application and asks the palette for every command.
+struct States {
+    app: App,
+}
+
+impl States {
+    /// Opens two saved SQLite connections: `source` with rows to read and to edit,
+    /// and `target` with a table that differs, for a compare.
+    fn new(name: &str) -> Self {
+        let base = crate::common::temp_dir(&format!("palette-{name}"));
+        let global = Root::global(base.join("global"));
+        std::fs::create_dir_all(&global.dir).unwrap();
+        let source = "\
+            CREATE TABLE items(id INTEGER PRIMARY KEY, label TEXT);\
+            INSERT INTO items VALUES (1, 'one'), (2, 'two');\
+            CREATE TABLE big(id INTEGER PRIMARY KEY, label TEXT);\
+            WITH RECURSIVE seq(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM seq LIMIT 101)\
+            INSERT INTO big SELECT x, 'row ' || x FROM seq;\
+            CREATE TABLE child(id INTEGER PRIMARY KEY, item INTEGER REFERENCES items(id), label TEXT);";
+        let target = "CREATE TABLE items(id INTEGER PRIMARY KEY, label TEXT NOT NULL);";
+        let files = [("source", source), ("target", target)].map(|(file, sql)| {
+            let path = base.join(format!("{file}.db"));
+            rusqlite::Connection::open(&path)
+                .unwrap()
+                .execute_batch(sql)
+                .unwrap();
+            path
+        });
+        let entry = |id: &str, path: &std::path::Path| {
+            format!(
+                r#"{{"id":"{id}","name":"{id}","kind":"sqlite","file":"{}"}}"#,
+                path.display()
+            )
+        };
+        let config = format!(
+            r#"{{"version":1,"preferences":{{}},"connections":[{},{}]}}"#,
+            entry("source", &files[0]),
+            entry("target", &files[1])
+        );
+        std::fs::write(global.config_file(), config).unwrap();
+        let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
+        let app = App::new(
+            Options {
+                store: Some(Store {
+                    global,
+                    project: None,
+                }),
+                ..Options::default()
+            },
+            clipboard,
+            Theme::plain(),
+        );
+        Self { app }
+    }
+
+    fn code(&mut self, code: KeyCode) {
+        self.app.on_event(Event::Key(key(code)));
+    }
+    fn control(&mut self, c: char) {
+        self.app.on_event(Event::Key(ctrl(c)));
+    }
+    fn prefix(&mut self, c: char) {
+        self.control('w');
+        self.code(KeyCode::Char(c));
+    }
+    fn press(&mut self, c: char) {
+        self.code(KeyCode::Char(c));
+    }
+    fn paste(&mut self, value: &str) {
+        self.app.on_event(Event::Paste(value.to_owned()));
+    }
+    fn set_sql(&mut self, sql: &str) {
+        self.control('a');
+        self.paste(sql);
+    }
+
+    fn draw(&mut self) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| self.app.draw(frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..30)
+            .map(|y| {
+                (0..120)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn wait(&mut self, done: impl Fn(&App) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            self.app.drain_events();
+            if done(&self.app) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "{}", self.draw());
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn wait_screen(&mut self, needle: &str) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            self.app.drain_events();
+            if self.draw().contains(needle) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{needle} missing: {}",
+                self.draw()
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// Asks the open palette for the technical name of the action.
+    fn offered(&mut self, action: Action) -> bool {
+        self.control('p');
+        self.app.on_event(Event::Paste(action.name().to_owned()));
+        let screen = self.draw();
+        self.code(KeyCode::Esc);
+        screen.contains(text::TITLE_PALETTE) && !screen.contains(text::NO_COMMANDS)
+    }
+
+    /// Drops the commands that this state offers from the list of the missing ones.
+    fn keep_offered(&mut self, missing: &mut Vec<Action>) {
+        let mut left = Vec::new();
+        for action in missing.drain(..) {
+            if !self.offered(action) {
+                left.push(action);
+            }
+        }
+        *missing = left;
+    }
+
+    /// Opens the compare of two tables and waits for its tab.
+    fn compare(&mut self) {
+        crate::common::select_row(&mut self.app, 0, &[RowKind::Table], "items");
+        self.press('c');
+        self.wait(|app| {
+            app.compare_form()
+                .is_some_and(|form| form.sides.iter().all(|side| side.schemas.is_some()))
+        });
+        for _ in 0..Field::ALL.len() {
+            if self
+                .app
+                .compare_form()
+                .is_some_and(|form| form.focus == Field::Compare)
+            {
+                break;
+            }
+            self.code(KeyCode::Tab);
+        }
+        self.code(KeyCode::Enter);
+        self.wait(|app| {
+            app.compare_form().is_none() && app.compare().is_some_and(|tab| !tab.is_busy())
+        });
+    }
+}
+
+#[test]
+fn the_palette_offers_every_command_in_some_state() {
+    let mut s = States::new("walk");
+    let mut missing: Vec<Action> = [
+        Region::Global,
+        Region::Editor,
+        Region::Navigator,
+        Region::Grid,
+        Region::Diagram,
+        Region::Review,
+    ]
+    .iter()
+    .flat_map(|region| Action::in_region(*region))
+    .filter(|action| {
+        action.is_command() && *action != Action::OpenPalette && !OTHER_FIXTURES.contains(action)
+    })
+    .collect();
+
+    // The home screen.
+    s.keep_offered(&mut missing);
+
+    // A console with text, a selection, and an undo that leaves a redo.
+    crate::common::select_row(&mut s.app, 0, &[RowKind::Connection], "source");
+    s.code(KeyCode::Enter);
+    s.wait(|app| !app.home());
+    s.set_sql("SELECT id, label FROM items;");
+    s.keep_offered(&mut missing);
+    s.code(KeyCode::Home);
+    s.app.on_event(Event::Key(shift(KeyCode::Right)));
+    s.keep_offered(&mut missing);
+    s.control('z');
+    s.keep_offered(&mut missing);
+
+    // Query parameters.
+    s.set_sql("SELECT :min;");
+    s.wait(|app| !app.console().parameters.fields.is_empty());
+    s.keep_offered(&mut missing);
+
+    // Local syntax warnings, without an execution.
+    s.set_sql("SELECT (1 + );");
+    s.wait(|app| {
+        app.console()
+            .editor
+            .syntax_report()
+            .is_some_and(|report| !report.diagnostics.is_empty())
+    });
+    s.keep_offered(&mut missing);
+
+    // Results, with the focus on the grid and a selection in the grid.
+    s.set_sql("SELECT id, label FROM items;");
+    s.code(KeyCode::F(5));
+    s.wait(|app| !app.console().is_busy() && !app.console().results.is_empty());
+    s.keep_offered(&mut missing);
+    s.prefix('j');
+    s.keep_offered(&mut missing);
+
+    // A selection in the grid, then a second run that keeps the previous result.
+    s.control('p');
+    s.paste("start or end the selection");
+    s.code(KeyCode::Enter);
+    s.keep_offered(&mut missing);
+    s.code(KeyCode::Esc);
+    s.press('B');
+    s.prefix('k');
+    s.code(KeyCode::F(5));
+    s.wait(|app| !app.console().is_busy());
+    s.prefix('j');
+    s.keep_offered(&mut missing);
+
+    // A slow query that only Stop can end.
+    s.prefix('k');
+    s.set_sql(
+        "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 400000000) \
+         SELECT sum(x) AS n FROM c;",
+    );
+    s.code(KeyCode::F(5));
+    s.wait(|app| app.console().is_busy());
+    s.keep_offered(&mut missing);
+    s.control('p');
+    s.paste("stop the script");
+    s.code(KeyCode::Enter);
+    s.wait(|app| !app.console().is_busy());
+
+    // A manual transaction.
+    s.prefix('m');
+    s.set_sql("SELECT 1;");
+    s.code(KeyCode::F(5));
+    s.wait(|app| !app.console().is_busy() && app.console().in_transaction());
+    s.keep_offered(&mut missing);
+    s.control('p');
+    s.paste("rollback");
+    s.code(KeyCode::Enter);
+    s.wait(|app| !app.console().is_busy());
+
+    // The explorer: a closed and an open connection, a table, and a filter.
+    s.prefix('h');
+    s.keep_offered(&mut missing);
+    s.code(KeyCode::Right);
+    s.keep_offered(&mut missing);
+    crate::common::select_row(&mut s.app, 0, &[RowKind::Table], "items");
+    s.keep_offered(&mut missing);
+    s.press('/');
+    s.paste("items");
+    s.code(KeyCode::Tab);
+    s.keep_offered(&mut missing);
+    s.code(KeyCode::Esc);
+
+    // A table tab with a next page, an edited cell, and an applied filter.
+    crate::common::open_table(&mut s.app, 0, "big");
+    s.wait(|app| app.table().is_some_and(|tab| !tab.is_busy()));
+    s.keep_offered(&mut missing);
+    s.code(KeyCode::Right);
+    s.code(KeyCode::F(2));
+    s.wait_screen(text::EDIT_TITLE);
+    s.control('a');
+    s.paste("changed");
+    s.code(KeyCode::F(2));
+    s.wait(|app| app.table().is_some_and(|tab| !tab.result.edits.is_empty()));
+    s.keep_offered(&mut missing);
+    s.control('p');
+    s.paste("discard");
+    s.code(KeyCode::Enter);
+    s.wait_screen(text::EDIT_DISCARD_QUESTION);
+    s.code(KeyCode::Right);
+    s.code(KeyCode::Enter);
+    s.wait(|app| {
+        app.table()
+            .is_some_and(|tab| !tab.is_busy() && tab.result.edits.is_empty())
+    });
+    s.code(KeyCode::Char('f'));
+    s.paste("id > 0");
+    s.control('p');
+    s.paste("apply where");
+    s.code(KeyCode::Enter);
+    s.wait(|app| {
+        app.table()
+            .is_some_and(|tab| !tab.is_busy() && !tab.applied_filter().is_empty())
+    });
+    s.code(KeyCode::Esc);
+    s.keep_offered(&mut missing);
+    s.control('p');
+    s.paste("clear filters");
+    s.code(KeyCode::Enter);
+    s.wait(|app| app.table().is_some_and(|tab| !tab.is_busy()));
+
+    // A table with a foreign key, its diagram, and a compare tab.
+    crate::common::open_table(&mut s.app, 0, "child");
+    s.wait(|app| app.table().is_some_and(|tab| !tab.is_busy()));
+    s.keep_offered(&mut missing);
+    s.prefix('D');
+    s.wait(|app| app.diagram().is_some_and(|tab| !tab.is_busy()));
+    s.keep_offered(&mut missing);
+    s.compare();
+    s.keep_offered(&mut missing);
+
+    assert!(
+        missing.is_empty(),
+        "commands missing from the palette: {missing:?}"
+    );
 }
 
 #[test]
@@ -480,4 +843,138 @@ fn table_filters_and_order_are_available_in_the_palette() {
     s.wait(|app| app.table().is_some_and(|tab| !tab.is_busy()));
     assert_eq!(s.app.table().unwrap().loaded(), 2);
     assert_eq!(s.app.table().unwrap().applied_filter(), "");
+}
+
+/// Draws the screen of the application at a size that fits the palette.
+fn draw_screen(app: &mut App) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let buffer = terminal.backend().buffer();
+    (0..30)
+        .map(|y| {
+            (0..120)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Asks the open palette for the technical name of the action.
+fn palette_offers(app: &mut App, action: Action) -> bool {
+    app.on_event(Event::Key(ctrl('p')));
+    app.on_event(Event::Paste(action.name().to_owned()));
+    let screen = draw_screen(app);
+    let found = screen.contains(text::TITLE_PALETTE) && !screen.contains(text::NO_COMMANDS);
+    app.on_event(Event::Key(key(KeyCode::Esc)));
+    found
+}
+
+#[test]
+fn the_palette_offers_the_commands_of_a_session_source() {
+    let sessions = |sql: &str| sql.contains("pg_stat_activity");
+    let run: crate::common::mock::RunHandler = Arc::new(move |sql, mut sink| {
+        Box::pin(async move {
+            let columns: Vec<String> = [
+                "pid",
+                "user",
+                "database",
+                "application",
+                "client",
+                "state",
+                "wait",
+                "transaction_age",
+                "query_age",
+                "query",
+            ]
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
+            let has_columns = sessions(&sql);
+            if has_columns {
+                sink.set_columns(columns).await;
+                sink.push(
+                    [
+                        Value::Number("42"),
+                        Value::Text("postgres"),
+                        Value::Text("db"),
+                        Value::Text(""),
+                        Value::Text("127.0.0.1"),
+                        Value::Text("idle"),
+                        Value::Null,
+                        Value::Null,
+                        Value::Null,
+                        Value::Text("SELECT 1"),
+                    ]
+                    .into_iter()
+                    .collect(),
+                )
+                .await;
+            }
+            let (rows, limit) = sink.finish().await;
+            Ok(StatementEnd {
+                rows,
+                has_columns,
+                limit,
+                ..StatementEnd::default()
+            })
+        })
+    });
+    let connector = Arc::new(crate::common::mock::MockConnector::with_capabilities(
+        sqln::sql::Dialect::Postgres,
+        run,
+        sqln::connector::Capabilities {
+            namespace: sqln::connector::Namespace::Schema,
+            ..sqln::connector::Capabilities::default()
+        },
+    ));
+    let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
+    let mut app = App::new(
+        Options {
+            connector: Some(connector),
+            label: Some("fake".to_owned()),
+            ..Options::default()
+        },
+        clipboard,
+        Theme::plain(),
+    );
+    // The editor of a PostgreSQL console: the analyze plan and the sessions.
+    app.on_event(Event::Key(ctrl('a')));
+    app.on_event(Event::Paste("SELECT 1;".to_owned()));
+    for action in [
+        Action::ExplainAnalyze,
+        Action::OpenSessions,
+        Action::ChooseSchema,
+    ] {
+        assert!(palette_offers(&mut app, action), "{action:?} missing");
+    }
+    // A session in the pool: the explorer offers to end it and to list the sessions.
+    app.on_event(Event::Key(key(KeyCode::F(5))));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.console().is_busy() {
+        app.drain_events();
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    app.on_event(Event::Key(ctrl('w')));
+    app.on_event(Event::Key(key(KeyCode::Char('h'))));
+    for action in [Action::NavigatorDisconnect, Action::NavigatorSessions] {
+        assert!(palette_offers(&mut app, action), "{action:?} missing");
+    }
+    // The sessions tab: the signals that act on the session of a row.
+    app.on_event(Event::Key(ctrl('p')));
+    app.on_event(Event::Paste("sessions of the server".to_owned()));
+    app.on_event(Event::Key(key(KeyCode::Enter)));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !app
+        .table()
+        .is_some_and(|tab| tab.shows_sessions() && tab.loaded() > 0 && !tab.is_busy())
+    {
+        app.drain_events();
+        assert!(Instant::now() < deadline, "{}", draw_screen(&mut app));
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    for action in [Action::GridCancelQuery, Action::GridEndSession] {
+        assert!(palette_offers(&mut app, action), "{action:?} missing");
+    }
 }

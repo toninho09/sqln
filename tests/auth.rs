@@ -98,6 +98,7 @@ fn definition() -> Definition {
             password: None,
             database: None,
             tls: Tls::Disabled,
+            kafka: Default::default(),
         }),
     )
 }
@@ -1188,4 +1189,27 @@ fn the_time_of_a_run_does_not_count_the_wait_for_credentials() {
     assert!(!screen.contains("1m 0"), "{screen}");
     f.prefix('x');
     f.vault.release();
+}
+
+/// Asks the open palette for the technical name of the action.
+fn paste_palette(f: &mut Fixture, query: &str) {
+    f.app.on_event(Event::Key(ctrl('p')));
+    f.paste(query);
+    assert!(
+        !f.screen().contains("No command matches"),
+        "{query}: {}",
+        f.screen()
+    );
+    f.code(KeyCode::Esc);
+}
+
+#[test]
+fn the_palette_offers_the_command_that_deletes_the_saved_password() {
+    let mut f = Fixture::new(CredentialName::Session, true);
+    f.run();
+    f.sees("Password · test-db");
+    f.enter_password(true);
+    f.idle();
+    f.prefix('h');
+    paste_palette(&mut f, "deletePassword");
 }

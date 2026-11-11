@@ -38,7 +38,7 @@ pub fn compare_sql(dialect: Dialect, schema: &str) -> Option<Vec<String>> {
             sqlite_indexes(&literal),
             sqlite_objects(&quote_identifier(schema, dialect)),
         ]),
-        Dialect::DuckDb | Dialect::Redis => None,
+        Dialect::DuckDb | Dialect::Redis | Dialect::Kafka => None,
     }
 }
 
@@ -57,7 +57,7 @@ pub fn table_columns_sql(dialect: Dialect, schema: &str, table: &str) -> Option<
             &format!(" AND c.TABLE_NAME = {name}"),
         )),
         Dialect::Sqlite => Some(sqlite_columns(&literal, &format!(" AND t.name = {name}"))),
-        Dialect::DuckDb | Dialect::Redis => None,
+        Dialect::DuckDb | Dialect::Redis | Dialect::Kafka => None,
     }
 }
 

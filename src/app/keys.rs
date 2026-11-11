@@ -21,6 +21,7 @@ use crate::palette::{Command, Palette, PaletteRequest};
 use crate::plan::Explain;
 use crate::settings::SettingsRequest;
 use crate::sql::{Dialect, first_keyword, is_plain_read};
+use crate::store::config::ExplorerSide;
 use crate::table::TableFocus;
 use crate::ui::kit::measure::fit;
 use crate::ui::kit::prompt::TextAction;
@@ -471,7 +472,17 @@ impl App {
         {
             return;
         }
-        if self.home() && !home_allows(action) {
+        if self.home() && !self.home_allows(action) {
+            return;
+        }
+        if matches!(
+            action,
+            Action::GridProfile
+                | Action::GridChart
+                | Action::GridKeepPrevious
+                | Action::GridComparePrevious
+        ) {
+            self.perform_analysis(action);
             return;
         }
         if self.diagram_active.is_some() && self.perform_on_diagram(action) {
@@ -503,6 +514,7 @@ impl App {
             Action::Explain => self.run(RunTarget::Plan { analyze: false }),
             Action::ExplainAnalyze => self.run(RunTarget::Plan { analyze: true }),
             Action::FormatSql => self.format_console(),
+            Action::SqlDiagnostics => self.show_sql_diagnostics(),
             Action::FocusParameters => {
                 self.navigator_focused = false;
                 let console = self.console_mut();
@@ -547,8 +559,10 @@ impl App {
             Action::OpenSettings => self.open_settings(),
             Action::GridExport => self.open_export(),
             Action::GridImport => self.open_import(),
-            Action::FocusLeft => self.focus_navigator(),
-            Action::FocusRight => self.navigator_focused = false,
+            Action::FocusLeft | Action::FocusRight if action == self.explorer_entry() => {
+                self.focus_navigator();
+            }
+            Action::FocusLeft | Action::FocusRight => self.navigator_focused = false,
             Action::FocusUp => self.focus_console(Focus::Editor),
             Action::FocusDown => self.focus_console(Focus::Results),
             Action::NavigatorUp
@@ -609,6 +623,7 @@ impl App {
                     None => (WrappedText::from_source(text.source()), footer, None),
                 };
                 self.overlay = Some(Overlay {
+                    _analysis_memory: None,
                     title,
                     contents,
                     footer,
@@ -632,6 +647,7 @@ impl App {
         let window = self.active_result().and_then(|item| item.row_window(row));
         let Some(window) = window else { return };
         self.overlay = Some(Overlay {
+            _analysis_memory: None,
             title: window.title,
             contents: WrappedText::with_indent(window.text, window.indent),
             footer: window.footer,
@@ -688,6 +704,21 @@ impl App {
             console.editor.close_suggestions();
         }
         console.focus = focus;
+    }
+
+    /// Returns the focus key toward the side of the explorer. The other focus key
+    /// leaves the explorer.
+    pub(super) fn explorer_entry(&self) -> Action {
+        match self.explorer_side {
+            ExplorerSide::Left => Action::FocusLeft,
+            ExplorerSide::Right => Action::FocusRight,
+        }
+    }
+
+    /// Returns true for an action that acts on the home screen: a command of the
+    /// explorer, the focus key toward the explorer, or a command that needs no tab.
+    fn home_allows(&self, action: Action) -> bool {
+        action == self.explorer_entry() || home_allows(action)
     }
 
     fn toggle_navigator(&mut self) {
@@ -770,8 +801,8 @@ impl App {
         for (action, keys, label) in self.help_actions(Region::Global) {
             use Action::*;
             let title = match action {
-                Run | RunScript | Explain | ExplainAnalyze | Stop | FormatSql | ToggleComment
-                | OpenHistory => text::GROUP_RUN,
+                Run | RunScript | Explain | ExplainAnalyze | Stop | FormatSql | SqlDiagnostics
+                | ToggleComment | OpenHistory => text::GROUP_RUN,
                 ToggleMode | Commit | Rollback => text::GROUP_TRANSACTION,
                 ChooseSchema | ChangeConnection | OpenSessions | OpenDiagram | OpenCompare
                 | FollowKey => text::GROUP_CONNECTION,
@@ -1001,8 +1032,12 @@ impl App {
                     only_schema: false,
                     row_cap: None,
                     export: None,
+                    stream: false,
+                    continue_on_error: false,
+                    hold_transaction: false,
                     untimed: false,
                     parameters,
+                    live: true,
                 };
                 let console = &self.consoles[index];
                 let revision = console.editor.revision();
@@ -1024,6 +1059,35 @@ impl App {
             }
             Err(RunRefusal::NoStatement) => self.status = Some(text::NO_STATEMENT.to_owned()),
         }
+    }
+
+    fn show_sql_diagnostics(&mut self) {
+        if !self.command_available(Action::SqlDiagnostics) {
+            let message =
+                if !self.console_on_screen() || self.console().editor.dialect().is_command_line() {
+                    text::SYNTAX_UNAVAILABLE
+                } else if self.console().editor.syntax_report().is_some() {
+                    text::SYNTAX_CLEAN
+                } else {
+                    text::SYNTAX_WAITING
+                };
+            self.status = Some(message.into());
+            return;
+        }
+        let Some(report) = self.console().editor.syntax_report() else {
+            return;
+        };
+        let contents = text::syntax_details(report);
+        self.console_mut().editor.close_suggestions();
+        self.overlay = Some(Overlay {
+            _analysis_memory: None,
+            title: text::SYNTAX_TITLE.into(),
+            contents: WrappedText::new(contents),
+            footer: "Esc close | Up/Down scroll | Ctrl+C copy".into(),
+            scroll: 0,
+            other: None,
+            row: None,
+        });
     }
 
     fn format_console(&mut self) {
@@ -1225,9 +1289,14 @@ impl App {
             return;
         };
         match key.code {
-            KeyCode::Esc | KeyCode::Enter => self.overlay = None,
+            KeyCode::Esc | KeyCode::Enter => {
+                self.overlay = None;
+                self.analysis_job = None;
+            }
             KeyCode::Up | KeyCode::Char('k') => overlay.scroll = overlay.scroll.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => overlay.scroll = overlay.scroll.saturating_add(1),
+            KeyCode::PageUp => overlay.scroll = overlay.scroll.saturating_sub(10),
+            KeyCode::PageDown => overlay.scroll = overlay.scroll.saturating_add(10),
             KeyCode::Char('f') if !ctrl => overlay.switch_form(),
             KeyCode::Left | KeyCode::Char('h') => self.step_row_window(false),
             KeyCode::Right | KeyCode::Char('l') => self.step_row_window(true),
@@ -1379,6 +1448,7 @@ impl App {
             Run | RunScript => {
                 in_console && console.focus != Focus::Results && available && console.can_run()
             }
+            SqlDiagnostics => in_editor && available,
             Explain | ExplainAnalyze | FormatSql | ToggleComment => {
                 in_editor && available && !console.editor.is_blank()
             }
@@ -1437,6 +1507,7 @@ impl App {
                     (&[ExplainAnalyze], text::MENU_EXPLAIN_ANALYZE),
                     (&[Stop], text::MENU_STOP),
                     (&[FormatSql], text::MENU_FORMAT),
+                    (&[SqlDiagnostics], text::SYNTAX_TITLE),
                     (&[ToggleComment], text::MENU_COMMENT),
                     (&[OpenHistory], text::MENU_HISTORY),
                 ],
@@ -1514,7 +1585,7 @@ impl App {
         if self.review_blocks(action) {
             return false;
         }
-        if self.home() && !home_allows(action) {
+        if self.home() && !self.home_allows(action) {
             return false;
         }
         match action.region() {
@@ -1581,11 +1652,19 @@ impl App {
             Action::FocusParameters | Action::ToggleParameters => {
                 self.console_on_screen() && !console.parameters.fields.is_empty()
             }
-            Action::FormatSql => !in_table && console.editor.dialect() != Dialect::Redis,
+            Action::SqlDiagnostics => {
+                self.console_on_screen()
+                    && console.editor.syntax_report().is_some_and(|report| {
+                        !report.diagnostics.is_empty() || report.note.is_some()
+                    })
+            }
+            Action::FormatSql => !in_table && !console.editor.dialect().is_command_line(),
             Action::ToggleComment => !in_table,
             Action::OpenHistory => !in_table && self.history_is_open_to(connection),
-            Action::FocusLeft => !self.navigator.collapsed && !self.navigator_focused,
-            Action::FocusRight => self.navigator_focused,
+            Action::FocusLeft | Action::FocusRight if action == self.explorer_entry() => {
+                !self.navigator.collapsed && !self.navigator_focused
+            }
+            Action::FocusLeft | Action::FocusRight => self.navigator_focused,
             _ => true,
         }
     }
@@ -1695,14 +1774,13 @@ impl App {
     /// Returns the key that moves to the explorer, then the key of an explorer command,
     /// with its label. That path acts from any panel.
     fn explorer_row(&self, action: Action, label: &'static str) -> Option<(String, &'static str)> {
-        let focus = self.shown_key(Action::FocusLeft)?;
+        let focus = self.shown_key(self.explorer_entry())?;
         let key = self.shown_key(action)?;
         Some((format!("{focus} {key}"), label))
     }
 }
 
-/// Returns true for an action that acts on the home screen: a command of the explorer,
-/// or a command that needs no tab.
+/// Returns true for a command of the explorer, or a command that needs no tab.
 fn home_allows(action: Action) -> bool {
     if matches!(action, Action::AgentSessions | Action::AgentStop) {
         return true;
@@ -1716,7 +1794,6 @@ fn home_allows(action: Action) -> bool {
                 | ToggleNavigator
                 | ReloadConfig
                 | OpenSettings
-                | FocusLeft
                 | ExplorerCommands
                 | ContextCommands
                 | OpenSessions

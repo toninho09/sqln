@@ -102,7 +102,7 @@ impl Panel {
         text: impl FnOnce() -> String,
         spawn: impl FnOnce(Box<dyn FnOnce() + Send>),
     ) -> bool {
-        if dialect == Dialect::Redis {
+        if dialect.is_command_line() {
             let changed = !self.fields.is_empty();
             self.update_names(Vec::new());
             self.scan = None;

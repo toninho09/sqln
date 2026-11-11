@@ -1,5 +1,6 @@
 //! A result grid with its cursor and its search. A console result and a table share it.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -7,7 +8,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::exec::ReadLimit;
 use crate::grid::json::pretty;
-use crate::grid::{Budget, GridView, Reservation, ResultTable, RowSearch, Value, printable};
+use crate::grid::{
+    Budget, GridView, Reservation, ResultTable, Row, RowSearch, Value, printable, row_cost,
+};
 use crate::input::Action;
 use crate::plan::PlanView;
 use crate::ui::kit::measure::fit;
@@ -38,6 +41,10 @@ pub struct ResultTab {
     pub cut_short: bool,
     /// True when the grid shows the tree of a plan.
     pub plan: bool,
+    /// The row cap of a live result. At the cap, the oldest rows leave the grid.
+    pub live: Option<usize>,
+    /// The rows of a live result that left the grid or never entered it.
+    pub dropped: usize,
 }
 
 /// The action of a key in the results panel.
@@ -105,7 +112,68 @@ impl ResultTab {
             limit: ReadLimit::None,
             cut_short: false,
             plan: false,
+            live: None,
+            dropped: 0,
         }
+    }
+
+    /// Adds the rows of a live result. At the row cap or at a full budget, the oldest
+    /// rows leave the grid. The cursor, the selection, and the search stay on their rows,
+    /// and a cursor on the last row follows the new last row.
+    pub fn append_live(&mut self, rows: Vec<Row>, cap: usize, budget: &Budget) {
+        let follow = self.view.row + 1 >= self.table.rows.len();
+        let mut front = 0;
+        let mut kept = VecDeque::with_capacity(rows.len());
+        let mut kept_bytes = 0;
+        for row in rows {
+            loop {
+                let loaded = self.table.rows.len() - front + kept.len();
+                if loaded < cap {
+                    match budget.reserve(&row) {
+                        Reservation::Accepted(cost) => {
+                            kept.push_back(row);
+                            kept_bytes += cost;
+                            break;
+                        }
+                        Reservation::ValueTooLarge => {
+                            self.dropped += 1;
+                            break;
+                        }
+                        Reservation::BudgetReached => {}
+                    }
+                }
+                let cost = if front < self.table.rows.len() {
+                    front += 1;
+                    row_cost(&self.table.rows[front - 1])
+                } else if let Some(old) = kept.pop_front() {
+                    let cost = row_cost(&old);
+                    kept_bytes -= cost;
+                    cost
+                } else {
+                    // The grid is empty, and the row still has no place.
+                    self.dropped += 1;
+                    break;
+                };
+                budget.release(cost);
+                self.dropped += 1;
+            }
+        }
+        self.table.drop_front(front);
+        self.table.append(kept.into(), kept_bytes);
+        let last = self.table.rows.len().saturating_sub(1);
+        if follow {
+            self.view.row = last;
+        } else {
+            self.view.row = self.view.row.saturating_sub(front);
+        }
+        self.view.top = self.view.top.saturating_sub(front);
+        if let Some((row, _)) = &mut self.view.anchor {
+            *row = row.saturating_sub(front);
+        }
+        if let Some(search) = &mut self.search {
+            search.drop_front(front);
+        }
+        self.summary = text::live_rows(self.table.rows.len(), self.dropped);
     }
 
     /// Replaces the text of the database with the tree of a plan. The new rows take a

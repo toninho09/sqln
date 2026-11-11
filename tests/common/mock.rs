@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use futures_util::future::BoxFuture;
 use sqln::catalog::Catalog;
 use sqln::connector::{
-    Canceller, ConnectError, Connector, ExecError, ResetOutcome, Session, SessionContext,
-    StatementEnd, TransactionCommand, TransactionState,
+    Canceller, Capabilities, ConnectError, Connector, ExecError, ResetOutcome, Session,
+    SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
 use sqln::exec::ResultSink;
 use sqln::sql::Dialect;
@@ -48,6 +48,7 @@ struct Inner {
     opened: AtomicUsize,
     /// The statements that reached the sessions, in order.
     statements: Mutex<Vec<String>>,
+    capabilities: Capabilities,
 }
 
 /// A connector whose sessions answer what a handler chooses.
@@ -56,6 +57,15 @@ pub struct MockConnector(Arc<Inner>);
 
 impl MockConnector {
     pub fn new(dialect: Dialect, run: RunHandler) -> Self {
+        Self::with_capabilities(dialect, run, Capabilities::default())
+    }
+
+    /// Builds a connector whose source reports these features.
+    pub fn with_capabilities(
+        dialect: Dialect,
+        run: RunHandler,
+        capabilities: Capabilities,
+    ) -> Self {
         Self(Arc::new(Inner {
             dialect,
             connect: Mutex::new(Connect::Works),
@@ -63,6 +73,7 @@ impl MockConnector {
             reset: Mutex::new(ResetOutcome::Clean),
             opened: AtomicUsize::new(0),
             statements: Mutex::new(Vec::new()),
+            capabilities,
         }))
     }
 
@@ -91,6 +102,10 @@ impl MockConnector {
 impl Connector for MockConnector {
     fn dialect(&self) -> Dialect {
         self.0.dialect
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        self.0.capabilities
     }
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {

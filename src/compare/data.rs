@@ -282,7 +282,7 @@ fn cell(row: &Row, column: usize) -> Value<'_> {
 
 /// Returns the form of a value that a compare reads: a number in its decimal form, and
 /// any other value as its bytes. `NULL` has no form.
-fn canonical(value: Value<'_>) -> Option<Cow<'_, [u8]>> {
+pub(crate) fn canonical(value: Value<'_>) -> Option<Cow<'_, [u8]>> {
     match value {
         Value::Null => None,
         Value::Number(text) => Some(match decimal(text) {
@@ -304,7 +304,7 @@ pub fn same(a: Value<'_>, b: Value<'_>) -> bool {
     }
 }
 
-fn key_hash(row: &Row, columns: impl Iterator<Item = usize>) -> u64 {
+pub(crate) fn key_hash(row: &Row, columns: impl Iterator<Item = usize>) -> u64 {
     let mut hasher = DefaultHasher::new();
     for column in columns {
         canonical(cell(row, column)).hash(&mut hasher);

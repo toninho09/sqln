@@ -46,6 +46,7 @@ fn identity() -> Identity {
             password: None,
             database: None,
             tls: Tls::Verify(TlsFiles::default()),
+            kafka: Default::default(),
         }),
     );
     Identity::of(&key, &definition).expect("A network definition has an identity.")

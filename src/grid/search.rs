@@ -129,6 +129,29 @@ impl RowSearch {
         self.matcher.reset();
     }
 
+    /// Follows the rows after the first `removed` rows of the table go away.
+    pub fn drop_front(&mut self, removed: usize) {
+        if removed == 0 {
+            return;
+        }
+        let gone = self.matches.partition_point(|(row, _)| *row < removed);
+        self.matches.drain(..gone);
+        for (row, _) in &mut self.matches {
+            *row -= removed;
+        }
+        self.current = self.current.and_then(|index| index.checked_sub(gone));
+        self.origin.0 = self.origin.0.saturating_sub(removed);
+        if self.next_row < removed {
+            self.next_row = 0;
+            self.next_col = 0;
+            self.offset = 0;
+            self.matcher.reset();
+        } else {
+            self.next_row -= removed;
+        }
+        self.capped = self.matches.len() >= MAX_MATCHES;
+    }
+
     /// Moves to the next or the previous result, and it returns the cell.
     pub fn advance(&mut self, forward: bool) -> Option<(usize, usize)> {
         let count = self.matches.len();

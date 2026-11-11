@@ -692,6 +692,7 @@ fn a_definition_round_trips_through_an_entry_without_the_password() {
         password: Some(Secret::new("hunter2")),
         database: Some("d".into()),
         tls: Tls::Disabled,
+        kafka: Default::default(),
     };
     let mut definition = Definition::new("remote", Source::Network(network));
     definition.sql_timeout = None;

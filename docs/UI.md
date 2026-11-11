@@ -241,6 +241,7 @@ The badge of the result stays until the user leaves the tab where they saw it. A
 The next execution changes the badge. Consoles and tables use the same badges.
 
 **Time:** the status bar shows `Running 12.345s` during the execution and `Idle (last 2.440s)` after.
+A continuous command, such as `SUBSCRIBE` on Redis, shows `Live 12.345s`, and its summary shows the rows received and dropped. After **Stop**, its grid stays on screen.
 The time has three decimal places, and the screen updates every 100 ms only during an execution. Long times use `1m 05.123s` and `1h 02m 05.123s`.
 The time starts with the execution, so the wait for a password does not count.
 
@@ -370,6 +371,37 @@ The indicators stay in the free column, between the row number and the text:
 
 When the database reports the position of an error, the editor underlines the token and keeps the cursor.
 The mark leaves with the next edit, and an edit during the execution prevents the mark.
+
+### Local SQL syntax warnings
+
+The active SQL console checks syntax after 400 ms without a text or dialect change.
+The check runs locally, outside the interface thread. It executes no SQL and reads no parameter values.
+PostgreSQL, MySQL, SQLite, and DuckDB use the bundled `sqlparser` dialects. Redis, Valkey, and Kafka have no SQL check.
+The existing lexer still serves highlighting, autocomplete, and incomplete editor text.
+
+Located warnings underline tokens without moving the cursor or changing the selection.
+A row below the editor shows the warning on the cursor line, or the first warning elsewhere.
+The row uses a text label and also works without colors or Nerd Fonts.
+The row disappears when the text changes. Old worker results cannot mark new text or another dialect.
+Database execution errors keep their existing marks and take precedence over local warning styles.
+Inline review keeps its own text renderer; the summary remains available during review.
+
+Use **Show SQL syntax warnings** in the command palette to read and copy the full report.
+The action id is `sqlDiagnostics`, with no default shortcut. Custom shortcuts use the shared command catalog.
+The report uses the existing scrollable text window. Opening it does not execute SQL or change editor text.
+
+These are parser warnings, not database validation. The parser can reject valid extensions and accept invalid SQL.
+For example, some MySQL procedure bodies are unsupported. The absence of warnings does not prove database acceptance.
+Checks do not validate catalog objects, types, permissions, or style. Warnings never block Run.
+
+Input above 256 KiB skips analysis with a visible reason. Each check limits recursion to 64 levels.
+Instructions above 1024 parser tokens skip analysis with a partial-check label. Whitespace and comments do not count.
+Simplify those instructions to check their syntax. Other instructions still check.
+Checks stop after 128 instructions or 32 warnings, with a partial-check label and a reason in the full report.
+Each instruction produces at most one parser warning. Messages contain at most 512 characters.
+Split a large script to check the remaining instructions. Worker failure asks for an edit to retry.
+These limits do not limit editing or execution. No preference, script, or workspace format changes.
+
 
 This example shows a finished execution, with two statements.
 The second statement reached the row cap and ended the read.
@@ -549,7 +581,7 @@ The table tab and the structure tab stay open together.
 - The grid uses the pagination, the budget, the search, the copy, and the export of the table tab.
 - The export has no target table, as in a console.
 - The tab does not come back in the next session.
-- Redis and Valkey have no structure. `i` shows the reason in the status bar.
+- Redis, Valkey, and Kafka have no structure. `i` shows the reason in the status bar.
 
 ### Diagram tab
 
@@ -586,7 +618,7 @@ The table tab and the structure tab stay open together.
 - The row under the picture shows the count of tables and keys, `keys only`, and `partial` when a limit stopped the read.
 - **Reload** (`R`) reads the diagram again. DDL does not update the tab on its own.
 - The tab does not come back in the next session.
-- Redis and Valkey have no diagram. `d` shows the reason in the status bar.
+- Redis, Valkey, and Kafka have no diagram. `d` shows the reason in the status bar.
 
 ### Compare tab
 
@@ -675,7 +707,7 @@ A data compare has the label `name (data)`. The grid has a `Change` column and t
 The modal opens at **Selection**, when it exists. Otherwise, it opens at **All rows**, when available, and last at **Loaded rows**.
 **All rows** disappears when the grid already has everything.
 In the console, **All rows** needs a plain read and a command in the execution, or an open transaction. In the other cases, the modal explains the reason.
-Redis and Valkey offer only the loaded rows, without SQL INSERT.
+Redis, Valkey, and Kafka offer only the loaded rows, without SQL INSERT.
 
 | Format | Options |
 |---|---|
@@ -755,6 +787,14 @@ In the navigator, each numbered database shows up to 1,000 keys. `(partial list)
 The tab uses the grid, the pages, and **Load more**, without `WHERE`, `ORDER BY`, **Clear filters**, and sorting.
 **Reload** reads the value again.
 In the console, each line is one command, as in `redis-cli`. A `#` at the start of the line makes a comment.
+
+### Kafka topic or group
+
+In the navigator, a Kafka connection shows two schemas: `topics` and `groups`. Internal topics, which start with `__`, stay out.
+`Enter` on a topic opens a tab with the label `<topic> (topic)`. It shows the last 500 messages, newest first, in one page.
+The tab has a `WHERE` field with the Kafka filter, such as `value.status = 'failed'`, without `ORDER BY` and sorting. **Apply filters** reads again with the filter.
+`Enter` on a group opens a tab with the label `<group> (group)`. It shows the committed offset, the end offset, and the lag of each partition.
+In the console, each line is one Kafka command of SQLN. `TAIL` shows `Live` until **Stop**, as a continuous Redis command.
 
 ## 4. Connection form
 
@@ -1203,6 +1243,9 @@ The **Appearance** section has the **Default theme** field.
 The choice changes the colors at once, before saving. `Esc` and **Cancel** bring back the saved theme.
 In the global scope, a theme defined in the project keeps priority.
 
+The **Explorer side** field puts the explorer on the **Left** (default) or on the **Right** of the screen. The save moves it at once.
+The focus keys follow the screen: with the explorer on the right, `Ctrl+W l` goes to the explorer, `Ctrl+W h` leaves it, and the home screen shows paths such as `Ctrl+W l a`.
+
 The same section has the **Custom themes** list, with the buttons **New theme**, **Edit**, and **Delete**:
 
 - **New theme** opens the editor on a copy of the theme that the scope chooses. The **Base** row swaps the whole palette for another theme.
@@ -1398,7 +1441,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
                         │                         \___ \| | | | |   |  \| |
                         │                          ___) | |_| | |___| |\  |
                         │                         |____/ \__\_\_____|_| \_|
-                        │                                   0.3.0
+                        │                                   0.4.0
                         │                            No console is open
                         │
                         │                 Ctrl+W h a  Add a connection
@@ -1412,7 +1455,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
 
 Without a connection, the screen shows **No connection yet**, without the **Open a console** row.
 With the explorer hidden, the first row is `Ctrl+W b` **Show the explorer**, the status line shows `HOME`,
-and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.3.0` instead.
+and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.4.0` instead.
 
 ### Welcome screen
 
@@ -1420,7 +1463,7 @@ The screen appears over an editor without text. It keeps no state and captures n
 The first typed character removes the screen.
 
 ```text
-           SQLN 0.3.0
+           SQLN 0.4.0
            Write SQL here
 
                    F5  Run the statement

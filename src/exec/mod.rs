@@ -5,9 +5,9 @@ mod runner;
 mod sink;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedSender};
@@ -131,6 +131,8 @@ pub enum ExecEvent {
     Columns {
         key: StatementKey,
         columns: Vec<String>,
+        /// The row cap of a live result: at the cap, the grid drops its oldest rows.
+        live: Option<usize>,
     },
     Rows {
         key: StatementKey,
@@ -278,11 +280,52 @@ pub struct RunOptions {
     pub row_cap: Option<usize>,
     /// The file of an export. The rows go there, and the time limit does not apply.
     pub export: Option<ExportWriter>,
+    /// True sends rows with backpressure, without the grid cap or storage budget.
+    pub stream: bool,
+    /// True keeps running after a statement error, so a batch script reports every
+    /// failure. A timeout, a stop, or a closed connection still ends the run.
+    pub continue_on_error: bool,
+    /// True leaves a transaction open at the end of the run. A batch that commits
+    /// or rolls back with its own statements uses this, because the streaming end
+    /// check would otherwise roll the transaction back.
+    pub hold_transaction: bool,
     /// True for a read that ends with the user, as an export does: the time limit does
     /// not apply.
     pub untimed: bool,
     /// Values captured when the user requests this execution.
     pub parameters: Vec<crate::sql::parameters::Parameter>,
+    /// True accepts a continuous statement at the end of the run. It has no time limit
+    /// and grows its result until the user stops it. Only a console sets this.
+    pub live: bool,
+}
+
+/// Shares cancellation and the SQL deadline with the streaming output.
+#[derive(Default)]
+pub struct StreamControl {
+    stopped: AtomicBool,
+    deadline: Mutex<Option<Instant>>,
+}
+
+impl StreamControl {
+    fn start(&self, timeout: Option<Duration>) {
+        *self.deadline.lock().unwrap_or_else(PoisonError::into_inner) =
+            timeout.and_then(|timeout| Instant::now().checked_add(timeout));
+        self.stopped.store(false, Ordering::Relaxed);
+    }
+
+    fn stop(&self) {
+        self.stopped.store(true, Ordering::Relaxed);
+    }
+
+    /// The deadline stays active until the consumer finishes its output.
+    pub fn is_stopped(&self) -> bool {
+        self.stopped.load(Ordering::Relaxed)
+            || self
+                .deadline
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_some_and(|deadline| Instant::now() >= deadline)
+    }
 }
 
 pub(crate) struct AgentRun {
@@ -364,6 +407,7 @@ pub struct Manager {
     blocking: Arc<tokio::sync::Semaphore>,
     budget: Arc<Budget>,
     events: Sender<ExecEvent>,
+    stream_stopped: Option<Arc<StreamControl>>,
     connections: HashMap<ConnectionId, Binding>,
     consoles: HashMap<ConsoleId, ConsoleEntry>,
     next_connection: ConnectionId,
@@ -376,16 +420,34 @@ pub struct Manager {
 
 impl Manager {
     pub fn new(budget: Arc<Budget>) -> std::io::Result<(Self, Receiver<ExecEvent>)> {
+        Self::with_event_capacity(budget, EVENT_CAPACITY)
+    }
+
+    /// Keeps one event queued and signals cancellation to the streaming consumer.
+    pub fn new_streaming(
+        budget: Arc<Budget>,
+        stopped: Arc<StreamControl>,
+    ) -> std::io::Result<(Self, Receiver<ExecEvent>)> {
+        let (mut manager, receiver) = Self::with_event_capacity(budget, 1)?;
+        manager.stream_stopped = Some(stopped);
+        Ok((manager, receiver))
+    }
+
+    fn with_event_capacity(
+        budget: Arc<Budget>,
+        capacity: usize,
+    ) -> std::io::Result<(Self, Receiver<ExecEvent>)> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()?;
-        let (events, receiver) = mpsc::channel(EVENT_CAPACITY);
+        let (events, receiver) = mpsc::channel(capacity);
         let manager = Self {
             runtime,
             blocking: Arc::new(tokio::sync::Semaphore::new(1)),
             budget,
             events,
+            stream_stopped: None,
             connections: HashMap::new(),
             consoles: HashMap::new(),
             next_connection: 1,
@@ -538,6 +600,7 @@ impl Manager {
             binding.clone(),
             self.budget.clone(),
             self.events.clone(),
+            self.stream_stopped.clone(),
         );
         self.runtime.spawn(task.serve(inbox));
         self.consoles.insert(
@@ -622,6 +685,7 @@ impl Manager {
     ) -> ExecutionId {
         options.manual = false;
         options.export = None;
+        options.stream = false;
         if !internal {
             options.untimed = false;
             options.row_cap = None;
@@ -707,6 +771,23 @@ impl Manager {
             };
             let result = tokio::select! { result = read => result, () = cancel.cancelled() => Err("The assistant operation was cancelled.".into()) };
             let _ = events.send(ExecEvent::AgentMetadata { job, result }).await;
+        });
+    }
+
+    /// Bridges a process signal flag to the existing cancellation command.
+    pub fn stop_when(&self, console: ConsoleId, stopped: Arc<AtomicBool>) {
+        let Some(entry) = self.consoles.get(&console) else {
+            return;
+        };
+        let commands = entry.commands.clone();
+        self.runtime.spawn(async move {
+            while !commands.is_closed() {
+                if stopped.load(Ordering::Relaxed) {
+                    let _ = commands.send(Command::Stop);
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
         });
     }
 

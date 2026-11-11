@@ -50,6 +50,8 @@ pub struct StatusData<'a> {
     /// The time since the application first saw the open transaction.
     pub transaction_age: Option<Duration>,
     pub phase: Phase,
+    /// True while a continuous statement grows its result.
+    pub live: bool,
     /// The time of the run in progress, or of the last run.
     pub run_time: Option<String>,
     pub pool: Option<(usize, usize)>,
@@ -99,8 +101,9 @@ fn transaction_part(
     }
 }
 
-fn phase_part(phase: Phase, theme: &Theme) -> (&'static str, Style) {
+fn phase_part(phase: Phase, live: bool, theme: &Theme) -> (&'static str, Style) {
     match phase {
+        Phase::Running if live => (text::PHASE_LIVE, theme.status_warning),
         Phase::Idle => (text::PHASE_IDLE, theme.status_detail),
         Phase::Waiting => (text::PHASE_WAITING, theme.status_warning),
         Phase::Running => (text::PHASE_RUNNING, theme.status_warning),
@@ -133,7 +136,7 @@ fn state_parts(data: &StatusData, theme: &Theme) -> Vec<(String, Style)> {
         parts.push((mode.to_owned(), theme.statusline));
         parts.push(transaction_part(transaction, data.transaction_age, theme));
     }
-    let (phase, style) = phase_part(data.phase, theme);
+    let (phase, style) = phase_part(data.phase, data.live, theme);
     let phase = data
         .run_time
         .as_ref()

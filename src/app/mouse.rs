@@ -14,6 +14,7 @@ use crate::input::Action;
 use crate::navigator::{MIN_WIDTH, Navigator, RowKind};
 use crate::result::ResultTab;
 use crate::settings::{Field as SettingsField, SettingsRequest};
+use crate::store::config::ExplorerSide;
 use crate::table::TableFocus;
 use crate::ui::console::Control;
 use crate::ui::navigator::TREE_PAD;
@@ -404,9 +405,15 @@ impl App {
         match self.drag {
             Some(Drag::Column { .. }) => self.drag_column(mouse),
             Some(Drag::Navigator) => {
-                let start = self.layout.body.x;
-                let limit = self.layout.body.width.saturating_sub(MIN_MAIN_WIDTH);
-                let width = mouse.column.saturating_sub(start);
+                let body = self.layout.body;
+                let limit = body.width.saturating_sub(MIN_MAIN_WIDTH);
+                let width = match self.explorer_side {
+                    ExplorerSide::Left => mouse.column.saturating_sub(body.x),
+                    // The divider is the column before the explorer.
+                    ExplorerSide::Right => {
+                        body.right().saturating_sub(mouse.column.saturating_add(1))
+                    }
+                };
                 self.navigator.width = width.clamp(MIN_WIDTH.min(limit), limit);
             }
             Some(Drag::Diagram { .. }) => self.drag_diagram(mouse),

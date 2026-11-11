@@ -306,7 +306,7 @@ fn read_indexes(
                 .and_then(|texts| texts.get(&("index", group.name.clone())))
                 .map(|text| after_parenthesis(text, dialect).to_owned())
                 .unwrap_or_default(),
-            Dialect::DuckDb | Dialect::Redis => String::new(),
+            Dialect::DuckDb | Dialect::Redis | Dialect::Kafka => String::new(),
         };
         table.indexes.push(Index {
             name: group.name,

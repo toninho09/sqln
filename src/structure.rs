@@ -107,7 +107,7 @@ pub fn structure_sql(
     relation: &RelationRef,
     section: Section,
 ) -> Option<String> {
-    if dialect == Dialect::Redis {
+    if dialect.is_command_line() {
         return None;
     }
     let schema = name_literal(&relation.schema, dialect);

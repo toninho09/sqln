@@ -162,7 +162,7 @@ impl App {
         };
         if complete {
             AllRows::Complete
-        } else if dialect == Dialect::Redis {
+        } else if dialect.is_command_line() {
             AllRows::Refused(text::EXPORT_ALL_SOURCE)
         } else if table.is_some() {
             AllRows::Available
@@ -340,8 +340,12 @@ impl App {
             only_schema: false,
             row_cap: None,
             export: Some(writer.clone()),
+            stream: false,
+            continue_on_error: false,
+            hold_transaction: false,
             untimed: false,
             parameters,
+            live: false,
         };
         let execution = manager.run(id, vec![sql], run);
         if let Some((phase, clock)) = self.tab_run(id) {

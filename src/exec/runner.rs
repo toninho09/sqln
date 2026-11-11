@@ -6,7 +6,6 @@ mod import;
 
 use std::pin::pin;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
@@ -15,14 +14,14 @@ use tokio::time::{sleep, timeout};
 
 use super::{
     Binding, Command, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, ResultSink,
-    RunRequest, Settings, StatementKey, StatementStatus, context,
+    RunRequest, Settings, StatementKey, StatementStatus, StreamControl, context,
 };
 use crate::command_log::TraceContext;
 use crate::connector::{ExecError, StatementEnd, TransactionCommand, TransactionState};
 use crate::export::ExportWriter;
 use crate::grid::Budget;
 use crate::pool::Lease;
-use crate::sql::with_row_limit;
+use crate::sql::{is_continuous, with_row_limit};
 
 /// A delay that stays longer than any statement. It stands for "no time limit".
 const NO_LIMIT: Duration = Duration::from_secs(60 * 60 * 24 * 365);
@@ -61,9 +60,13 @@ impl Waited {
 struct Delivery {
     cap: usize,
     export: Option<ExportWriter>,
+    stream: bool,
     timed: bool,
     capture: Option<super::sink::Capture>,
     parameters: Vec<crate::sql::parameters::Parameter>,
+    /// True for a continuous statement: no time limit, a live result, and a stop that
+    /// only the connector handles.
+    live: bool,
 }
 
 pub struct ConsoleTask {
@@ -77,6 +80,7 @@ pub struct ConsoleTask {
     transaction: TransactionState,
     trace: Option<TraceContext>,
     cancellation: tokio_util::sync::CancellationToken,
+    stream_stopped: Option<Arc<StreamControl>>,
 }
 
 impl ConsoleTask {
@@ -85,6 +89,7 @@ impl ConsoleTask {
         binding: Binding,
         budget: Arc<Budget>,
         events: Sender<ExecEvent>,
+        stream_stopped: Option<Arc<StreamControl>>,
     ) -> Self {
         let settings = binding.settings().clone();
         Self {
@@ -93,6 +98,7 @@ impl ConsoleTask {
             binding,
             budget,
             events,
+            stream_stopped,
             held: None,
             transaction: TransactionState::None,
             trace: None,
@@ -213,6 +219,13 @@ impl ConsoleTask {
             statements,
             options,
         } = request;
+        if let Some(message) =
+            continuous_refusal(&statements, self.binding.pool.dialect(), options.live)
+        {
+            self.finish(execution, ExecutionEnd::Refused, Some(message.to_owned()))
+                .await;
+            return;
+        }
         let _agent_hold;
         let agent_run = agent.is_some();
         if let Some(agent) = agent {
@@ -286,10 +299,11 @@ impl ConsoleTask {
                 index,
             };
             let stop_requested = self.stop_is_pending(commands).await;
-            let Some(active) = lease
-                .as_mut()
-                .filter(|_| end == ExecutionEnd::Completed && !stop_requested)
-            else {
+            let Some(active) = lease.as_mut().filter(|_| {
+                !stop_requested
+                    && (end == ExecutionEnd::Completed
+                        || (options.continue_on_error && end == ExecutionEnd::Failed))
+            }) else {
                 if stop_requested && end == ExecutionEnd::Completed {
                     end = ExecutionEnd::Stopped;
                 }
@@ -301,10 +315,12 @@ impl ConsoleTask {
             let delivery = Delivery {
                 cap,
                 export: export.clone(),
+                stream: options.stream,
                 // An export ends with the user. It has no time limit.
                 timed: export.is_none() && !untimed,
                 capture: None,
                 parameters: options.parameters.clone(),
+                live: options.live && is_continuous(sql, self.binding.pool.dialect()),
             };
             let (waited, reason) = self
                 .run_statement(key, active, sql, delivery, commands)
@@ -350,12 +366,17 @@ impl ConsoleTask {
         }
 
         let mut message = None;
-        // An agent run never leaves a transaction open: nobody would end it.
-        if agent_run
+        // A noninteractive run cannot leave a transaction open. A batch that holds
+        // the transaction ends it with its own COMMIT or ROLLBACK statement.
+        if (agent_run || (options.stream && !options.hold_transaction))
             && let Some(active) = lease.as_mut()
             && active.session().transaction_state().await != TransactionState::None
         {
-            message = Some(crate::ui::text::AGENT_ROLLED_BACK.to_owned());
+            message = Some(if agent_run {
+                crate::ui::text::AGENT_ROLLED_BACK.to_owned()
+            } else {
+                "The statement leaves an open transaction. SQLN rolls it back.".to_owned()
+            });
             if end == ExecutionEnd::Completed {
                 end = ExecutionEnd::Failed;
             }
@@ -447,18 +468,27 @@ impl ConsoleTask {
         let Delivery {
             cap,
             export,
+            stream,
             timed,
             capture,
             parameters,
+            live,
         } = delivery;
         let mut sink = ResultSink::new(key, self.events.clone(), self.budget.clone(), cap);
-        let time_limit = self.settings.sql_timeout.filter(|_| timed);
+        sink.stream(stream);
+        if live {
+            sink.live();
+        }
+        let time_limit = self.settings.sql_timeout.filter(|_| timed && !live);
         // The row after the cap proves that the result has more rows. An export has no cap.
         let rows = cap.saturating_add(1);
-        let limited =
-            (capture.is_none() && self.settings.cap_in_sql && export.is_none() && cap < usize::MAX)
-                .then(|| with_row_limit(sql, self.binding.pool.dialect(), rows))
-                .flatten();
+        let limited = (!stream
+            && capture.is_none()
+            && self.settings.cap_in_sql
+            && export.is_none()
+            && cap < usize::MAX)
+            .then(|| with_row_limit(sql, self.binding.pool.dialect(), rows))
+            .flatten();
         if let Some(capture) = capture {
             sink.capture_to(capture);
         }
@@ -487,7 +517,7 @@ impl ConsoleTask {
                 }
             }
         };
-        let stopping = sink.stop_flag();
+        let stopping = sink.stop_token();
         let session = lease.session();
         let trace = self.trace.as_ref().map(|trace| {
             let mut trace = trace.clone();
@@ -497,10 +527,24 @@ impl ConsoleTask {
         });
         session.set_trace_context(trace);
         let canceller = session.canceller();
+        let stream_stopped = self.stream_stopped.clone().filter(|_| stream);
+        if let Some(control) = &stream_stopped {
+            control.start(time_limit);
+        }
         let cancel = || {
-            stopping.store(true, Ordering::SeqCst);
+            stopping.cancel();
+            if let Some(stopped) = &stream_stopped {
+                stopped.stop();
+            }
             let canceller = canceller.clone();
-            tokio::spawn(async move { canceller.cancel().await })
+            // A continuous statement waits for the stop token and ends by itself.
+            tokio::spawn(async move {
+                if live {
+                    Ok(())
+                } else {
+                    canceller.cancel().await
+                }
+            })
         };
 
         let mut run = if let Some(bound) = &bound {
@@ -614,6 +658,25 @@ async fn settle(request: Option<JoinHandle<Result<(), String>>>, limit: Duration
         request.abort();
     }
     settled
+}
+
+/// Returns the reason to refuse a run with a continuous statement: it must be the last
+/// statement, and only a console accepts it.
+fn continuous_refusal(
+    statements: &[String],
+    dialect: crate::sql::Dialect,
+    live: bool,
+) -> Option<&'static str> {
+    let position = statements
+        .iter()
+        .position(|sql| is_continuous(sql, dialect))?;
+    if !live {
+        Some(crate::ui::text::CONTINUOUS_CONSOLE_ONLY)
+    } else if position + 1 < statements.len() {
+        Some(crate::ui::text::CONTINUOUS_NOT_LAST)
+    } else {
+        None
+    }
 }
 
 fn statement_status(

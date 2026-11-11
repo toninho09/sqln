@@ -8,11 +8,11 @@ Q = --quiet
 fmt:
 	@cargo fmt
 
-# Run the linters: rustfmt check, clippy, and the test-file check.
+# Run the linters. Use the test profile to reuse dependency builds.
 lint:
 	@cargo fmt --check
-	@cargo clippy --all-targets $(Q) -- -D warnings
 	@scripts/check-test-files.sh
+	@cargo clippy --all-targets --profile test $(Q) -- -D warnings
 
 # Run the tests in tests/. The database tests skip without the Docker stack.
 test:

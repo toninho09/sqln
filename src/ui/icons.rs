@@ -50,6 +50,7 @@ pub struct Icons {
     pub sqlite: &'static str,
     pub duckdb: &'static str,
     pub redis: &'static str,
+    pub kafka: &'static str,
     /// The marks of a key column in a diagram box. A column in both keys shows the first.
     pub primary_key: &'static str,
     pub foreign_key: &'static str,
@@ -120,6 +121,7 @@ impl Icons {
             sqlite: "sq",
             duckdb: "dk",
             redis: "rd",
+            kafka: "kf",
             primary_key: "PK",
             foreign_key: "FK",
             arrow_left: "<",
@@ -166,6 +168,7 @@ impl Icons {
             sqlite: "sq",
             duckdb: "dk",
             redis: "rd",
+            kafka: "kf",
             primary_key: "◆",
             foreign_key: "◇",
             arrow_left: "◀",
@@ -212,6 +215,8 @@ impl Icons {
             sqlite: "\u{e7c4}",
             duckdb: "\u{e7c4}",
             redis: "\u{e76d}",
+            // Nerd Fonts has no Kafka logo in the dev set, so the database symbol stands in.
+            kafka: "\u{f1c0}",
             primary_key: "\u{f084}",
             foreign_key: "\u{f0c1}",
             arrow_left: "◀",
@@ -237,11 +242,12 @@ impl Icons {
             Dialect::Sqlite => self.sqlite,
             Dialect::DuckDb => self.duckdb,
             Dialect::Redis => self.redis,
+            Dialect::Kafka => self.kafka,
         }
     }
 
     /// Returns each symbol of the set, for the checks of the column width.
-    pub fn all(&self) -> [&'static str; 42] {
+    pub fn all(&self) -> [&'static str; 43] {
         [
             self.run,
             self.script,
@@ -281,6 +287,7 @@ impl Icons {
             self.sqlite,
             self.duckdb,
             self.redis,
+            self.kafka,
             self.primary_key,
             self.foreign_key,
             self.arrow_left,

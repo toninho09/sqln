@@ -7,6 +7,7 @@ mod conventional;
 mod frame;
 pub mod review;
 mod search;
+mod syntax;
 mod undo;
 
 use std::collections::{BTreeSet, HashMap};
@@ -195,6 +196,7 @@ pub struct SqlEditor {
     /// The revision of the text that the marks of the execution describe.
     plan_revision: u64,
     error_spot: Option<ErrorSpot>,
+    syntax: syntax::Syntax,
     /// The open inline review. The text is read only while it is open.
     review: Option<review::Review>,
     /// The ghost answers that wait for a decision, with their shared view.
@@ -255,6 +257,7 @@ impl SqlEditor {
             marks_revision: 0,
             plan_revision: 0,
             error_spot: None,
+            syntax: syntax::Syntax::default(),
             review: None,
             ghosts: Vec::new(),
             ghost_view: None,
@@ -745,7 +748,7 @@ impl SqlEditor {
             Some((start, end)) => (start.row, end.row),
             None => (cursor.row, cursor.row),
         };
-        let marker = if self.dialect == Dialect::Redis {
+        let marker = if self.dialect.is_command_line() {
             "#"
         } else {
             "--"
@@ -1295,10 +1298,23 @@ impl SqlEditor {
             .as_ref()
             .filter(|spot| spot.revision == self.revision)
             .map(|spot| (spot.start, spot.end));
+        let warnings: Vec<_> = self
+            .syntax_report()
+            .into_iter()
+            .flat_map(|report| &report.diagnostics)
+            .filter_map(|diagnostic| diagnostic.range.clone())
+            .collect();
         let snapshot = self.snapshot();
         if let Some((start, end)) = spot {
             let start = snapshot.position(start);
             styles.mark(start, snapshot.position_before(end), theme.error_spot);
+        }
+        for range in warnings {
+            styles.mark(
+                snapshot.position(range.start),
+                snapshot.position_before(range.end),
+                theme.error_spot,
+            );
         }
         for (row, end) in window.rows() {
             for (token, first, last) in snapshot.row_tokens(row, window.left, end) {

@@ -512,21 +512,45 @@ const RESERVED: &[&str] = &[
     "WITH",
 ];
 
+/// The Kafka commands of SQLN. Each command starts a line.
+pub const KAFKA_COMMANDS: &[&str] = &["CONSUME", "GROUP", "GROUPS", "PARTITIONS", "TAIL", "TOPICS"];
+
+/// The words after a Kafka command: the clauses, the start positions, and the filter.
+pub const KAFKA_CLAUSES: &[&str] = &[
+    "AND",
+    "CONTAINS",
+    "EARLIEST",
+    "FROM",
+    "HEADERS",
+    "KEY",
+    "LATEST",
+    "LIMIT",
+    "MATCHES",
+    "NOT",
+    "NULL",
+    "OR",
+    "PARTITION",
+    "SCAN",
+    "VALUE",
+    "WHERE",
+];
+
 fn specific(dialect: Dialect) -> &'static [&'static str] {
     match dialect {
         Dialect::Postgres | Dialect::DuckDb => POSTGRES,
         Dialect::MySql => MYSQL,
         Dialect::Sqlite => SQLITE,
         Dialect::Redis => REDIS,
+        Dialect::Kafka => KAFKA_CLAUSES,
     }
 }
 
-/// Redis has no SQL words, so its list stands alone.
+/// Redis and Kafka have no SQL words, so their lists stand alone.
 pub fn all(dialect: Dialect) -> impl Iterator<Item = &'static str> {
-    let common = if dialect == Dialect::Redis {
-        &[]
-    } else {
-        COMMON
+    let common = match dialect {
+        Dialect::Redis => &[][..],
+        Dialect::Kafka => KAFKA_COMMANDS,
+        _ => COMMON,
     };
     common.iter().chain(specific(dialect)).copied()
 }
@@ -537,6 +561,7 @@ pub fn starters(dialect: Dialect) -> impl Iterator<Item = &'static str> {
         Dialect::MySql => (STARTERS, MYSQL_STARTERS),
         Dialect::Sqlite => (STARTERS, SQLITE_STARTERS),
         Dialect::Redis => (&[][..], REDIS),
+        Dialect::Kafka => (&[][..], KAFKA_COMMANDS),
     };
     common.iter().chain(specific).copied()
 }

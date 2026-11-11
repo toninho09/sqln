@@ -291,7 +291,14 @@ fn each_symbol_of_each_set_fills_one_column_per_character() {
 #[test]
 fn the_kind_field_names_each_source() {
     let mut screen = form_screen("form-kind-names", Theme::plain());
-    let names = ["PostgreSQL", "MySQL", "SQLite", "Redis/Valkey", "DuckDB"];
+    let names = [
+        "PostgreSQL",
+        "MySQL",
+        "SQLite",
+        "Redis/Valkey",
+        "DuckDB",
+        "Kafka",
+    ];
     for (index, name) in names.iter().enumerate() {
         if index > 0 {
             screen.code(KeyCode::Right);
@@ -1394,7 +1401,8 @@ fn the_sidebar_shows_only_the_sections_with_fields() {
         shown.contains("Credentials") && shown.contains("Security"),
         "{shown}"
     );
-    // `Left` goes backwards through the kinds from PostgreSQL.
+    // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis, SQLite.
+    screen.code(KeyCode::Left);
     screen.code(KeyCode::Left);
     screen.code(KeyCode::Left);
     screen.code(KeyCode::Left);
@@ -1727,7 +1735,8 @@ fn a_working_connection_gives_a_success_note_and_a_test_in_progress_does_not() {
         .unwrap();
     let theme = Theme::astrodark();
     let mut screen = form_screen("form-success-start", theme);
-    // `Left` goes backwards through the kinds from PostgreSQL.
+    // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis, SQLite.
+    screen.code(KeyCode::Left);
     screen.code(KeyCode::Left);
     screen.code(KeyCode::Left);
     screen.code(KeyCode::Left);

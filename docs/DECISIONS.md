@@ -6,6 +6,229 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Side of the explorer — 2026-11-10
+
+The user asks to choose the side of the explorer and approves the points below.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Place of the choice | **Explorer side** field in `Settings > Appearance`, after **Default theme**: Left (default) or Right. It goes to `explorerSide` of `preferences`, with the global and project scopes | A command that swaps the side, saved in `workspace.json`; both | User choice |
+| 2. Focus keys | They follow the screen. With the explorer on the right, `Ctrl+W l` goes to the explorer and `Ctrl+W h` leaves it | `Ctrl+W h` always goes to the explorer | User choice |
+
+| Implementation point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Text of the focus keys | "Go to the left panel" and "Go to the right panel" | Text that changes with the side | The help, the palette, and the shortcuts read one static text per command |
+| Home screen and hints | The path to the explorer uses the focus key of its side, such as `Ctrl+W l a` | Always `Ctrl+W h` | The shown key must act |
+| Divider | A drag of the divider changes the width on both sides; the console keeps its minimum width | — | Same rule as the left side |
+| Change | The save of Settings moves the explorer at once | A restart | Same rule as the other preferences |
+
+## Kafka and Schema Registry — 2026-11-10
+
+The user asks for Kafka support with the Schema Registry and approves the points below.
+This request reopens the rule "MongoDB, Redis, and Kafka stay out of the first version" only for Kafka.
+It also reopens the rule "Search: literal text, no regular expression" only for the Kafka filter.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Scope | Browse and read, `TAIL`, consumer groups and lag | Produce messages; topic administration | User choice |
+| 2. Library | `rdkafka` 0.39 (librdkafka) | `rskafka`; own client with `kafka-protocol` | User choice. librdkafka has groups, SASL, and offsets by time |
+| 3. Formats | Avro, JSON Schema, and Protobuf | Avro only | User choice |
+| 4. Console | Own commands, one for each line; `#` at the start of a line is a comment | Only the explorer | User choice. Same model as Redis |
+| 5. Connection type | "Kafka", with `kafka://` and `kafkas://`, port 9092 | Two types | Same pattern as `redis://` and `rediss://` |
+| 6. Bootstrap | One host. The metadata of the cluster gives the other brokers | A list of hosts | `NetworkTarget` has one address. YAGNI |
+| 7. TLS | SQLN rule: local without TLS, remote verifies, `?sslmode=disable` turns it off; `kafkas://` always uses TLS | — | The password only travels without TLS by explicit choice |
+| 8. Authentication | Optional user. With a user: SASL `PLAIN`, `SCRAM-SHA-256`, or `SCRAM-SHA-512` (default) | GSSAPI and OAuth | GSSAPI needs Cyrus SASL in C |
+| 9. No consumer group | A read never subscribes and never commits (`enable.auto.commit=false`, `enable.auto.offset.store=false`), only `assign`. librdkafka needs a `group.id` for a consumer, so a read uses the local id `sqln-read`; without `subscribe` and without a commit the cluster never creates that group. `GROUP <id>` asks only for committed offsets (OffsetFetch) and never joins | No `group.id`; a random group; the legacy librdkafka API through FFI | Spike: librdkafka refuses `assign` without `group.id`. The user chose the local id. A test compares the group list before and after each read |
+| 10. Read only | Each command only reads, so the read-only option changes nothing | — | The scope has no write |
+| 11. Commands | `TOPICS`; `PARTITIONS <topic>`; `CONSUME <topic> [PARTITION n] [FROM earliest\|latest\|<offset>\|@<time>] [WHERE <filter>] [LIMIT n] [SCAN n]`; `TAIL <topic> [PARTITION n] [FROM …] [WHERE <filter>]`; `GROUPS`; `GROUP <id>`. Clauses come in any order, each one time | — | Covers the scope |
+| 12. `CONSUME` | Reads to `LIMIT` matches (default: the row cap) or to the high offset of each partition at the start. `SCAN n` limits the read messages. **Stop** ends the read and keeps the rows. A filter, a scan limit, or a stop adds `Scanned N messages; M matched.` in **Messages** | — | A finite result, as a query |
+| 13. `TAIL` | A continuous command of the 2026-11-09 contract: it grows until **Stop**; at the cap, the oldest rows leave. The default start is `latest` | — | Reuses the live flow |
+| 14. Filter: place | In the client, after the decoding: console (`CONSUME`, `TAIL`) and the filter field of the topic tab, with the same syntax | Server filter | Kafka has no server filter |
+| 15. Filter: syntax | `key = 'text'`; `key\|value\|headers CONTAINS 'text'` (literal, without case); `key\|value MATCHES 'regex'` (crate `regex`, linear time, size limit; `(?i)` ignores case); `value.a.b.0 <op> <literal>` with `=`, `!=`, `<`, `<=`, `>`, `>=` and a text, a number, `true`, `false`, or `null`; `AND`, `OR`, `NOT`, parentheses; `AND` before `OR` | — | User choice: the four kinds |
+| 16. Filter: cases | A missing field or another type is false. A value without JSON makes a field condition false; `CONTAINS` and `MATCHES` read the text only when it is UTF-8. A syntax error or a bad regex refuses before the read, with its position | — | No surprise and no silent failure |
+| 17. Columns | `partition`, `offset`, `timestamp` (UTC), `key`, `value`, `headers` (JSON), `schema` | — | Grid search and copy work |
+| 18. Decoding | For key and value: the byte 0 and a configured registry decode with the schema to JSON; a failure keeps the bytes and adds a notice; else UTF-8 text; else bytes. A tombstone is `NULL` | — | Never loses data in silence |
+| 19. Explorer | Two fixed schemas: `topics` and `groups`. `Enter` on a topic opens a tab with the last 500 messages that match the filter (empty: all), newest first, with **Refresh** and without pages. The read goes back in windows of offsets for each partition until 500 matches or the start. `Enter` on a group opens its lag | Pages of a global offset | An offset across partitions has no stable page |
+| 20. Lag | `GROUP <id>`: `topic`, `partition`, `committed`, `end`, `lag`, `member`. `GROUPS`: `group`, `state`, `protocol`, `members` | — | Read only |
+| 21. Schema Registry | Optional fields of a Kafka connection: URL, user, and password. `config.json` gets `"schemaRegistry": {"url", "username"}` and `"sasl"`; `version` stays 1. The password follows the **Credential** choice of the form: **Vault** writes it to the system vault, **Session** keeps it in memory | Always the vault | The user authorizes each secret storage |
+| 22. Schema cache | By id, for the life of the connector | Expiry | A schema id never changes |
+| 23. Completion | Fixed list of commands, then the topics or groups of the catalog, then the clause words | — | Topics are few, unlike Redis keys |
+| 24. AI and MCP | No AI completion and no MCP read for Kafka | — | Same rule as Redis |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Build | `rdkafka` with `cmake-build`, `ssl-vendored`, `libz-static`, `zstd`, and `tokio`. A clean build needs `cmake` and `perl` | System librdkafka | One binary, without a system library |
+| TLS of librdkafka | OpenSSL inside librdkafka only. `ssl.ca.pem` gets the system roots of `connector::tls::system_roots` in PEM; a CA file goes to `ssl.ca.location`; a client pair goes to `ssl.certificate.location` and `ssl.key.location` | A second set of roots | The other connectors keep `ring`; the roots stay the same, except the bundled `webpki` roots, which have no certificate form |
+| TLS of the registry | `reqwest` with `connector::tls::client_config` | — | One TLS rule |
+| Calls that wait | Metadata, offsets, group list, and committed offsets run in `spawn_blocking` with a 10-second limit | The executor thread | The interface thread never waits |
+| One read, one consumer | Each `CONSUME`, `TAIL`, and topic-tab round creates its own consumer and closes it on a blocking thread | One consumer for the session | A later read never receives a message of an earlier read |
+| Stop | The read watches the stop token of the sink. The `Canceller` does nothing | — | The read ends by itself |
+| Logs of librdkafka | Dropped | The `log` crate | They can hold names and values |
+| Batch password | `--execute` asks for the password on the terminal for a Kafka user without a saved password | The Redis rule: ask only with a saved reference | A SASL user always needs a password |
+| Refused password | A consumer receives the broker errors as events of its queue. A failed call reads these events, so an authentication error asks for a password | Only the result of the call | The call result says only "transport failure" |
+| Registry password | The connector reads the vault one time, on a blocking thread, when the registry has a user and the session has no password. The vault account is the registry URL and the user | The vault in the app | The batch mode and the app use the same path |
+| Shared word reader | `connector::words` holds the `redis-cli` word reader and `command_word`, for Redis and for the Kafka completion and tab text | A copy for Kafka | DRY |
+| Topic tab | `TableTab::filter_only` shows only the filter field; `kind_word` names the tab `topic` or `group`; the page text is `SQLN.TOPIC <topic> <count> [WHERE …]`, which is not a console command | A new tab kind | Reuses the table tab |
+
+### Known limitations of Kafka
+
+| Subject | Limitation |
+|---|---|
+| Bootstrap | One host. If that broker is down, the connection fails |
+| TLS roots | Without a CA file, librdkafka uses only the system roots |
+| Authentication | No GSSAPI and no OAuth. The tests do not cover mutual TLS or SCRAM |
+| Topic tab | The order is the producer timestamp. A partition with timestamps out of offset order can give an approximate list |
+| `GROUP` | It asks the committed offsets of each partition of each topic, and one end offset for each committed partition. A large cluster makes many calls |
+| Internal topics | Names that start with `__` stay out of the explorer. `TOPICS` lists them with `internal` set to `true` |
+| Registry | A Protobuf message index outside the file, or an Avro logical type without a JSON form, keeps the bytes with a notice |
+
+## Continuous commands — 2026-11-09
+
+The user asks for the Redis streaming commands, with a generic contract for other sources later.
+This request reopens point 5 of "Redis and Valkey — 2026-10-31" and the refusal of `SYNC` and `PSYNC` in that section.
+
+| Point | Approved rule |
+|---|---|
+| Commands | `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE`, `MONITOR`, `SYNC`, `PSYNC`, and `XREAD` or `XREADGROUP` with `BLOCK` before `STREAMS` |
+| Display | The result grid of the console grows until **Stop** |
+| Limit | At the row cap or at a full budget, the oldest rows leave the grid; the summary shows the count of dropped rows |
+| Script | The continuous command must be the last command of the run; otherwise the run is refused with a reason |
+| Protection | Pub/Sub and `XREAD` with `BLOCK` count as reads: a read-only connection runs them, and a production connection does not ask. `MONITOR`, `SYNC`, `PSYNC`, and `XREADGROUP` keep the current rules |
+| Time limit | No SQL time limit for the continuous command; the earlier commands of the run keep it |
+| Other modes | Console only. Batch execution, MCP and agent tools, and auto-refresh refuse with a reason |
+| RDB | `SYNC` and `PSYNC` show one `rdb` row with the size of the file; SQLN reads and drops its bytes |
+| `XREAD` with `BLOCK` | Always continuous, in every mode. Batch and MCP now refuse it; use `XREAD` without `BLOCK` for one read |
+
+These choices follow the rules above on the points the rules left open.
+
+| Subject | Choice | Rejected | Reason |
+|---|---|---|---|
+| Generic contract | `sql::is_continuous` names the commands; `RunOptions::live`, the live mode of `ResultSink`, and `ResultTab::append_live` are the same for each source | One flow for each source | Another source adds only its rule and its connector loop |
+| Stop | The sink has a stop token; the connector waits for it with the network and ends by itself. The runner does not call the `Canceller` | The `Canceller` of the session | `CLIENT UNBLOCK` does not stop a subscriber |
+| Connection | Pub/Sub, `MONITOR`, `SYNC`, and `PSYNC` use their own connection, with the TLS rule of SQLN, RESP2, and no `SELECT`: those commands cross databases | The session connection | A stop closes that connection, and the session of the pool stays clean |
+| Reader | Own small RESP2 reader | Driver parser | `aio::Monitor::new` is private in `redis` 1.8, and the driver parser does not accept the RDB file |
+| `XREAD` | Runs again on the session connection. A `$` becomes the last entry that exists at the start; each answer moves the ID of its stream; a `>` stays. **Stop** sends `CLIENT UNBLOCK` | A second connection | No entry goes between two reads, and a stopped read keeps the session |
+| `PSYNC` | Sends `REPLCONF ACK` with the offset each second | No acknowledgment | The server closes a replica without acknowledgment after `repl-timeout` |
+| Columns | Pub/Sub: `received_at`, `kind`, `pattern`, `channel`, `message`. `MONITOR`: `time`, `database`, `client`, `command`. `SYNC`/`PSYNC`: `received_at`, `kind`, `value`. `XREAD`: `stream`, `id`, `fields` | One text column | Uses the grid search and copy |
+| Subscription answers | A notice in **Messages** | A row | The rows hold only messages |
+| Status | `Live` in the status line and in the summary while the result grows. After **Stop**, the grid stays on screen | `Running` | The state needs a text label |
+
+### Known limitations of continuous commands
+
+| Subject | Limitation |
+|---|---|
+| Rows in transit | The rows between the connector and the grid do not count in the budget. The event queue holds at most 256 batches of 200 rows |
+| Dropped rows | A copy, an export, or an analysis reads only the rows that stay in the grid |
+| Width | At 80 columns, the last columns of a Pub/Sub row need a horizontal move |
+| `PSYNC` | `+CONTINUE` and a diskless transfer with an `EOF` mark are not tested. SQLN does not announce `capa eof` |
+| Valkey and Redis versions | `SSUBSCRIBE` needs Redis 7 or Valkey |
+
+## Batch execution of scripts
+
+The user approves several instructions and standard input for `--execute`.
+This extends the recorded rules of batch execution without the terminal interface; that entry keeps the first delivery.
+
+| Point | Approved rule |
+|---|---|
+| Batch entry | `--execute <SQL>` or `--execute -`; the dash reads SQL from standard input, before SQLN resolves the connection |
+| Input size | Refuse standard input above 10 MiB and input without one instruction; both are use errors |
+| Instructions | Several instructions run in one execution, in order, on one session |
+| Several result sets | Write every set in order: CSV and TSV repeat the header, JSON writes one array per set on its own line |
+| Stop on error | The default stops at the first failed instruction; `--continue-on-error` runs the rest and reports each failure with its number |
+| Single transaction | `--single-transaction` opens one transaction, commits when every instruction succeeds, and rolls back on any failure or signal; Redis refuses the flag |
+| Output | `--output csv\|json` is optional; without it, standard output stays empty and each set reports its row count on the error stream |
+| Reports | `rows affected` and `rows returned` carry the instruction number on the error stream |
+| Unchanged | Targets, credentials, trust, protection, deadlines, signals, exit codes, and the no-write state rules of the first delivery stay |
+
+Implementation notes:
+
+- With `--single-transaction`, SQLN finishes and flushes result output before the final `COMMIT`. A flush failure triggers rollback and keeps the output failure as the primary error. SQLN does not finish the encoder twice.
+- Output can reach the consumer before `COMMIT`, even when `COMMIT` later fails. A successful flush does not guarantee consumer storage.
+- A script that ends its own transaction makes the final `COMMIT` of `--single-transaction` fail; the report explains it.
+- On PostgreSQL inside `--single-transaction`, a failed instruction can abort the transaction, so later instructions fail with the server message; SQLN reports every failure and rolls back.
+- A signal keeps the first-delivery behavior: SQLN stops, drops the session, and the server rolls back an open transaction.
+
+## Local SQL syntax warnings
+
+The user approves a local syntax checker that reuses the existing `sqlparser` dependency.
+This extends the SQL analysis tools. It does not replace the lexer selected in the Libraries decision.
+
+| Point | Approved rule |
+|---|---|
+| Scope | Syntax warnings for PostgreSQL, MySQL, SQLite, and DuckDB; no style or catalog validation |
+| Execution | Local background analysis after a short pause; no SQL execution or database access |
+| Editing | Preserve text, cursor, selection, conventional mode, and Vim mode |
+| Display | Located underlines and messages; explain parser coverage limits |
+| Protection | No corrections or execution blocking; existing execution checks remain unchanged |
+
+Implementation notes: the pause is 400 ms. Reports match revision and dialect.
+The checker normalizes ASCII named parameters without reading their values or changing source offsets.
+The active console uses the existing blocking executor, with at most one pending job per editor.
+Limits are 256 KiB, 128 instructions, 32 warnings, 512 message characters, and recursion depth 64.
+Each instruction has a limit of 1024 parser tokens, excluding whitespace and comments.
+The checker skips larger instructions before AST construction to bound recursive destruction. Other instructions still check.
+Skipped or partial checks carry a reason. A worker failure asks for an edit to retry.
+The palette action `sqlDiagnostics` opens the existing scrollable report, with no default shortcut.
+No configuration or saved-format changes. The parser has both false positives and false negatives.
+In particular, some MySQL routine syntax is unsupported. The database remains the final syntax validator.
+
+## Analysis of loaded results
+
+The user approves column profiles, ordered text charts, and differences between consecutive console executions.
+The existing EXPLAIN ANALYZE implementation remains; no second execution path is needed.
+
+| Point | Approved rule |
+|---|---|
+| Profile | Current column: loaded row count, NULL count and percentage, distinct values, and numeric-only min/max and histogram |
+| Data | No new query. A partial result or current table page carries a loaded-rows scope label |
+| Charts | Bar or line from two numeric columns. Preserve result order and keep every repeated X occurrence separate, without aggregation |
+| Retention | Optional per console; one previous complete result in memory, under the shared data budget |
+| Matching | The user selects key columns. Reordering rows does not create differences |
+| First comparison | Exactly one complete data result per execution; no query plans or partial results |
+| Failure | Explain the failure or memory limit and cancel. No partial report, automatic retry, or additional query |
+
+Implementation notes:
+
+- `Action` registers `gridProfile` (`p`), `gridChart` (`b`), `gridKeepPrevious` (`B`), and `gridComparePrevious` (`D`).
+- Existing menus, palette, hints, custom shortcuts, conventional mode, and Vim mode share availability.
+- Distinct counts exclude NULL and reuse the equality of `compare::data`; numeric min/max keep decimal precision.
+- Histograms use ten equal-width approximate ranges, or one range for a constant column. Unsupported numeric values carry an exclusion count.
+- Charts use occurrence positions, not numeric X distances. Line sections keep every point without sampling; point text preserves the values.
+- Comparison requires identical ordered column names and unique selected keys on both sides. It produces a report, not synchronization SQL.
+- Retention moves the old rows without cloning or releasing their budget charge. An execution failure or incomplete result cancels comparison and releases the snapshot.
+- Work advances in bounded steps and rejects changed generations. Scratch indexes, points, and report text use the shared budget.
+- Reports use the existing scrollable, copyable text window. Cancel releases the job and its reservations. No saved format changes.
+
+## Execution without the terminal interface
+
+The user approves batch execution for shell scripts, cron, and CI.
+This extends the command-line target rules without changing `--script`: opening a SQL file still executes nothing.
+
+| Point | Approved rule |
+|---|---|
+| Entry | `--execute <SQL>` with required `--output csv\|json`; no terminal interface, workspace restoration, or MCP |
+| Connection | One path or URI, or a saved connection by `--connection <name>`; `--scope global\|project` resolves ambiguous names |
+| SQL | Exactly one instruction; no script file or SQL from standard input in this delivery |
+| Results | One result set, with the existing CSV/JSON encoder rules; no grid cap, SQL limit insertion, or reread |
+| Deadline | Preserve the connection SQL timeout, independently of streaming output |
+| No result | Empty standard output; affected rows go to standard error |
+| Messages | Notices and failures go to standard error; questions use the controlling terminal |
+| Authorization | `--yes` authorizes protected execution and missing database creation; otherwise ask on the terminal, with No as default |
+| Trust | A saved network destination and project retain a separate trust confirmation; `--yes` never grants trust |
+| Credentials | Password file, then `SQLN_PASSWORD`, then saved credential or URI password, then a hidden terminal question |
+| Password file | UTF-8; remove one final LF or CRLF, preserve other whitespace; failure does not fall back |
+| Protection | Read-only, TLS, production, and missing-WHERE protections remain; use shared risk analysis |
+| End | Stop on output failure or SIGINT/SIGTERM, use existing cancellation, and never retry SQL |
+| Transactions | Do not leave a transaction open after a one-instruction invocation; roll it back and report failure |
+| Status | `0` success, `1` operational failure or refusal, `2` invalid arguments |
+| State | No console, workspace, history, or export-preference writes; no password saving or credential migration |
+
+Standard output cannot be recalled after a write. A failed invocation can leave partial or invalid output.
+Database writes can commit before an output failure or cancellation. One instruction can produce multiple result sets; detecting a second set fails instead of merging it.
+CSV data retains control bytes and formula-like text, as file export does. Redirect machine output to a file or pipe when values are untrusted.
+
 ## Themes with colored bases — 2026-11-08
 
 The user asked for themes with different base colors, to distinguish environments at a glance.
@@ -1532,7 +1755,7 @@ This request reopens the rule "MongoDB, Redis, and Kafka stay out of the first v
 | 2. Explorer | Databases and up to 1,000 keys per database, with `SCAN`; `Enter` opens the value in a tab | Only databases with a paginated list; only databases | Allows browsing without writing commands |
 | 3. Read only | Ask `COMMAND INFO` and refuse commands without the `readonly` mark; without a server response, refuse | Fixed list; remove the option | Covers Valkey and modules, and the server has no read-only session |
 | 4. Transactions | No manual mode; `MULTI` and `EXEC` work in a script | Tie the manual mode to `MULTI` and `EXEC` | Inside `MULTI`, a read answers `QUEUED`, without data |
-| 5. Continuous commands | Refuse `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE`, and `MONITOR` | Continuous flow in the grid | The console has no continuous flow |
+| 5. Continuous commands | Refuse `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE`, and `MONITOR` (replaced by "Continuous commands — 2026-11-09") | Continuous flow in the grid | The console has no continuous flow |
 | 6. Destructive commands | Without confirmation | Ask for confirmation | `DROP` also does not ask for confirmation |
 | 7. TLS of `redis://` | SQLN rule: local without TLS, remote verifies; `?sslmode=disable` turns it off; `rediss://` always uses TLS | `redis://` never uses TLS | The password only travels without TLS by explicit choice |
 | 8. Topology | Single server only | Cluster; Cluster and Sentinel | Cluster and Sentinel change the pool |
@@ -1548,7 +1771,7 @@ These choices follow the rules above on the points the rules left open.
 | Database in the form | Number, validated in the form, in the URI, and in `config.json` | Free text | Redis has no database names |
 | User | Optional only for Redis | Require `default` | A server without ACL has no user |
 | Identity commands | Refuse `AUTH`, `HELLO`, and `RESET` | Allow | The session returns to the pool, and another console would receive the new login |
-| Replication | Refuse `SYNC` and `PSYNC` with the continuous commands | Allow | Those commands also do not end |
+| Replication | Refuse `SYNC` and `PSYNC` with the continuous commands (replaced by "Continuous commands — 2026-11-09") | Allow | Those commands also do not end |
 | Tests | `tests/redis.rs`, separate from `tests/servers.rs` | Add to `tests/servers.rs` | That file repeats SQL on each server |
 
 ### Known limitations of Redis and Valkey
@@ -1777,7 +2000,7 @@ Current state: tabs follow opening order. Closing the last console selects a rem
 | Probe on PostgreSQL | Clock through the simple protocol | `SAVEPOINT` | `SAVEPOINT` generates log errors |
 | State on MySQL | `SERVER_STATUS_IN_TRANS` of the response, and `DO 0` after an error | `SET TRANSACTION`; `performance_schema` | The probe erased the user `SET TRANSACTION` and cleared `SHOW WARNINGS`; `performance_schema` needs privileges |
 | Types on PostgreSQL | `prepare` before the simple protocol | Heuristic over the text | `bytea` and numbers need the type; costs one round trip to the server |
-| TLS provider | `ring` | `aws-lc-rs` | Avoids a second provider and the `aws-lc` build |
+| TLS provider | `ring`, except OpenSSL inside librdkafka for Kafka (2026-11-10) | `aws-lc-rs` | Avoids a second provider and the `aws-lc` build |
 
 ## Product
 

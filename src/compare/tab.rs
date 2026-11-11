@@ -243,7 +243,7 @@ impl CompareTab {
             {
                 self.phase = Phase::Running;
             }
-            ExecEvent::Columns { key, columns } if self.side_of(key.execution).is_some() => {
+            ExecEvent::Columns { key, columns, .. } if self.side_of(key.execution).is_some() => {
                 self.on_columns(columns);
             }
             ExecEvent::Rows { key, rows, bytes } => {

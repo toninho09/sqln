@@ -2,6 +2,7 @@
 
 mod common;
 
+mod analysis;
 mod compare_data;
 mod compare_tab;
 mod export;
@@ -524,8 +525,7 @@ fn a_sink_drops_the_rows_after_the_stop_request() {
     assert_eq!(sink.push_blocking(row(&["kept"])), Flow::Continue);
     let used = budget.used();
 
-    sink.stop_flag()
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    sink.stop_token().cancel();
     assert_eq!(sink.push_blocking(row(&["dropped"])), Flow::Discard);
     assert_eq!(budget.used(), used);
     assert_eq!(sink.finish_blocking().0, 1);
@@ -674,4 +674,101 @@ fn a_narrow_window_gives_the_indent_to_the_text() {
         rows.iter().map(|(_, row)| row.as_str()).collect::<String>(),
         "name : one two three"
     );
+}
+
+fn live_tab(cap: usize) -> ResultTab {
+    let mut tab = ResultTab::new(1, vec!["message".to_owned()]);
+    tab.live = Some(cap);
+    tab
+}
+
+fn messages(tab: &ResultTab) -> Vec<String> {
+    tab.table
+        .rows
+        .iter()
+        .map(|row| row.get(0).unwrap().display())
+        .collect()
+}
+
+#[test]
+fn a_live_result_keeps_the_newest_rows_at_the_row_cap() {
+    let budget = Budget::new(1 << 20);
+    let mut tab = live_tab(3);
+    tab.append_live(vec![row(&["1"]), row(&["2"])], 3, &budget);
+    tab.append_live(vec![row(&["3"]), row(&["4"]), row(&["5"])], 3, &budget);
+
+    assert_eq!(messages(&tab), ["3", "4", "5"]);
+    assert_eq!(tab.dropped, 2);
+    assert_eq!(
+        budget.used(),
+        tab.table.bytes,
+        "dropped rows leave the budget"
+    );
+    assert!(tab.summary.contains("2 dropped"), "{}", tab.summary);
+}
+
+#[test]
+fn a_live_result_drops_the_oldest_rows_at_a_full_budget() {
+    let one = sqln::grid::row_cost(&row(&["1"]));
+    let budget = Budget::new(one * 2);
+    let mut tab = live_tab(100);
+    tab.append_live(vec![row(&["1"]), row(&["2"]), row(&["3"])], 100, &budget);
+
+    assert_eq!(messages(&tab), ["2", "3"]);
+    assert_eq!(tab.dropped, 1);
+    assert_eq!(budget.used(), one * 2);
+}
+
+#[test]
+fn a_live_row_larger_than_the_budget_is_dropped() {
+    let budget = Budget::new(64);
+    let mut tab = live_tab(10);
+    let large = "x".repeat(100);
+    tab.append_live(vec![row(&[&large])], 10, &budget);
+
+    assert!(tab.table.rows.is_empty());
+    assert_eq!(tab.dropped, 1);
+    assert_eq!(budget.used(), 0);
+}
+
+#[test]
+fn the_cursor_of_a_live_result_stays_on_its_row_or_follows_the_end() {
+    let budget = Budget::new(1 << 20);
+    let mut tab = live_tab(4);
+    tab.append_live(vec![row(&["1"]), row(&["2"]), row(&["3"])], 4, &budget);
+    assert_eq!(tab.view.row, 2, "a cursor on the last row follows new rows");
+
+    tab.view.row = 2;
+    tab.view.anchor = Some((1, 0));
+    tab.append_live(vec![row(&["4"]), row(&["5"])], 4, &budget);
+    // "3" was the last row, so the cursor follows the end.
+    assert_eq!(tab.view.row, 3);
+
+    tab.view.row = 1;
+    tab.view.anchor = Some((1, 0));
+    tab.append_live(vec![row(&["6"])], 4, &budget);
+    assert_eq!(messages(&tab), ["3", "4", "5", "6"]);
+    assert_eq!(tab.view.row, 0, "the cursor stays on row 4");
+    assert_eq!(tab.view.anchor, Some((0, 0)));
+}
+
+#[test]
+fn the_search_of_a_live_result_follows_its_rows() {
+    let budget = Budget::new(1 << 20);
+    let mut tab = live_tab(3);
+    tab.append_live(vec![row(&["a"]), row(&["hit"]), row(&["b"])], 3, &budget);
+    let mut search = RowSearch::new((0, 0));
+    search.push_str("hit");
+    assert_eq!(search.scan(&tab.table, later()), Some((1, 0)));
+    tab.search = Some(search);
+
+    tab.append_live(vec![row(&["c"])], 3, &budget);
+    let search = tab.search.as_mut().unwrap();
+    assert!(search.is_match(0, 0));
+    assert!(search.is_current(0, 0));
+
+    tab.append_live(vec![row(&["d"])], 3, &budget);
+    let search = tab.search.as_mut().unwrap();
+    assert_eq!(search.total(), 0, "the match left the grid");
+    assert_eq!(search.position(), 0);
 }

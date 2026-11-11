@@ -255,6 +255,7 @@ impl App {
             return false;
         };
         if !tab.filters
+            || tab.filter_only
             || tab.is_view
             || tab.structure.is_some()
             || !tab.result.edits.is_empty()
@@ -609,11 +610,26 @@ impl App {
         relation: RelationRef,
         view: bool,
     ) -> TableTab {
-        let mut tab = TableTab::new(id, connection, relation, view, self.settings.page_size);
+        let kafka = self.dialect_of(connection) == Some(Dialect::Kafka);
+        let page_size = if kafka {
+            crate::connector::kafka::TOPIC_TAB_MESSAGES
+        } else {
+            self.settings.page_size
+        };
+        let topic = kafka && relation.schema == crate::connector::kafka::TOPICS;
+        let group = kafka && relation.schema == crate::connector::kafka::GROUPS;
+        let mut tab = TableTab::new(id, connection, relation, view, page_size);
         tab.opened = self.next_tab_place();
-        tab.filters = self
-            .connection(connection)
-            .is_none_or(|item| item.capabilities.table_filters);
+        tab.filters = topic
+            || self
+                .connection(connection)
+                .is_none_or(|item| item.capabilities.table_filters);
+        tab.filter_only = topic;
+        tab.kind_word = match (topic, group) {
+            (true, _) => Some("topic"),
+            (_, true) => Some("group"),
+            _ => None,
+        };
         tab
     }
 
@@ -875,7 +891,11 @@ impl App {
         self.navigator_focused = false;
         if let Some(tab) = self.table_mut() {
             tab.list = None;
-            tab.focus = if tab.filters { focus } else { TableFocus::Grid };
+            tab.focus = match focus {
+                _ if !tab.filters => TableFocus::Grid,
+                TableFocus::Order if tab.filter_only => TableFocus::Filter,
+                focus => focus,
+            };
         }
     }
 

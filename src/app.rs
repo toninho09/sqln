@@ -2,6 +2,7 @@
 
 mod agent;
 mod ai;
+mod analysis;
 mod auth;
 mod auto_refresh;
 mod browse;
@@ -74,7 +75,7 @@ use crate::navigator::Navigator;
 use crate::palette::Palette;
 use crate::settings::SettingsForm;
 use crate::sql::Dialect;
-use crate::store::config::{IconName, ThemeName};
+use crate::store::config::{ExplorerSide, IconName, ThemeName};
 use crate::store::scripts::ScriptEntry;
 use crate::store::{Scope, Store};
 use crate::structure::SessionSignal;
@@ -171,6 +172,7 @@ pub struct Options {
     pub theme_notes: Vec<String>,
     /// The keys that accept a suggestion.
     pub suggestion_keys: SuggestionKeys,
+    pub explorer_side: ExplorerSide,
     /// True when Messages shows internal and shared commands.
     pub show_system_commands: bool,
     /// The MCP preferences of the configuration.
@@ -203,6 +205,7 @@ impl Default for Options {
             custom_themes: ThemeCatalog::default(),
             theme_notes: Vec::new(),
             suggestion_keys: SuggestionKeys::default(),
+            explorer_side: ExplorerSide::default(),
             ai_completion: crate::ai::Preferences::default(),
             ai_vault: None,
             show_system_commands: crate::store::config::DEFAULT_SHOW_SYSTEM_COMMANDS,
@@ -293,6 +296,7 @@ struct Dialog {
 }
 
 struct Overlay {
+    _analysis_memory: Option<crate::analysis::Memory>,
     title: String,
     contents: WrappedText,
     footer: String,
@@ -318,6 +322,7 @@ impl Overlay {
 
 /// What a row of a list stands for.
 enum PickerKind {
+    Analysis(analysis::Choice),
     Agent(Vec<agent::Choice>),
     /// The first row is the default of the connection, and the others are schemas.
     Schema {
@@ -450,6 +455,7 @@ pub struct App {
     undo_limit: usize,
     keymap: Keymap,
     suggestion_keys: SuggestionKeys,
+    explorer_side: ExplorerSide,
     show_system_commands: bool,
     database: Option<PathBuf>,
     clipboard: SharedClipboard,
@@ -472,6 +478,7 @@ pub struct App {
     history: Option<HistoryList>,
     form: Option<ConnectionForm>,
     overlay: Option<Overlay>,
+    analysis_job: Option<crate::analysis::Job>,
     help: Option<Help>,
     status: Option<String>,
     /// The message on the clock, with the time of its first frame.
@@ -519,6 +526,8 @@ pub struct App {
     pending_follow: Option<ConsoleId>,
     /// The answers of the file reads of the import dialog.
     import_probes: import::ProbeChannel,
+    /// The answers of the vault writes of Schema Registry passwords.
+    registry_writes: connections::VaultWrites,
     /// A table tab that opens the import dialog after its first page.
     import_wanted: Option<ConsoleId>,
     /// The files of the application. It is `None` when nothing loads or saves.
@@ -593,6 +602,7 @@ impl App {
             undo_limit: options.undo_limit,
             keymap,
             suggestion_keys: options.suggestion_keys,
+            explorer_side: options.explorer_side,
             ai: ai::State::new(options.ai_completion, options.ai_vault),
             show_system_commands: options.show_system_commands,
             database: options.database,
@@ -610,6 +620,7 @@ impl App {
             history: None,
             form: None,
             overlay: None,
+            analysis_job: None,
             help: None,
             rename: None,
             settings_form: None,
@@ -627,6 +638,7 @@ impl App {
             definitions: Vec::new(),
             pending_follow: None,
             import_probes: import::ProbeChannel::default(),
+            registry_writes: connections::VaultWrites::default(),
             import_wanted: None,
             status: None,
             status_shown: None,
@@ -1102,6 +1114,19 @@ impl App {
             Event::Mouse(mouse) if self.edit_form.is_some() => self.on_edit_mouse(mouse),
             Event::Mouse(mouse) if self.import_form.is_some() => self.on_import_mouse(mouse),
             Event::Mouse(mouse) if self.compare_form.is_some() => self.on_compare_mouse(mouse),
+            Event::Mouse(mouse) if self.overlay.is_some() => {
+                if let Some(overlay) = &mut self.overlay {
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => {
+                            overlay.scroll = overlay.scroll.saturating_sub(3)
+                        }
+                        MouseEventKind::ScrollDown => {
+                            overlay.scroll = overlay.scroll.saturating_add(3)
+                        }
+                        _ => {}
+                    }
+                }
+            }
             Event::Mouse(mouse) if self.help.is_some() => {
                 if let Some(help) = &mut self.help {
                     match mouse.kind {
@@ -1176,7 +1201,7 @@ impl App {
             (None, Some(tab)) => tab.result.search_has_work(),
             (None, None) => self.console().search_has_work(),
         };
-        search || self.exports_have_work()
+        search || self.exports_have_work() || self.analysis_job.is_some()
     }
 
     /// Returns the time that the main loop can wait for a key. Events that arrive now
@@ -1198,7 +1223,7 @@ impl App {
         self.sync_command_history();
         let ticked = self.tick();
         let authorized = self.poll_auth();
-        let probed = self.poll_probes();
+        let probed = self.poll_probes() | self.poll_registry_writes();
         let changed =
             self.has_work() || ticked || authorized || probed || agent_changed || ai_changed;
         if changed {
@@ -1209,6 +1234,7 @@ impl App {
                 (None, None) => self.console_mut().continue_search(deadline),
             }
             self.continue_exports(deadline);
+            self.continue_analysis(deadline);
         }
         // The number of frames must not grow with the events, because a frame has a cost.
         let deadline = Instant::now() + WORK_SLICE;
@@ -1412,12 +1438,26 @@ impl App {
             .navigator
             .width
             .min(body.width.saturating_sub(mouse::MIN_MAIN_WIDTH));
-        let [side, divider, main] = Layout::horizontal([
-            Constraint::Length(width),
-            Constraint::Length(1),
-            Constraint::Min(0),
-        ])
-        .areas(body);
+        let [side, divider, main] = match self.explorer_side {
+            ExplorerSide::Left => {
+                let [side, divider, main] = Layout::horizontal([
+                    Constraint::Length(width),
+                    Constraint::Length(1),
+                    Constraint::Min(0),
+                ])
+                .areas(body);
+                [side, divider, main]
+            }
+            ExplorerSide::Right => {
+                let [main, divider, side] = Layout::horizontal([
+                    Constraint::Min(0),
+                    Constraint::Length(1),
+                    Constraint::Length(width),
+                ])
+                .areas(body);
+                [side, divider, main]
+            }
+        };
         let [title, tree] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(side);
         let focused = self.navigator_focused;
@@ -1657,6 +1697,7 @@ impl App {
                 session: None,
                 transaction_age: None,
                 phase: tab.phase,
+                live: false,
                 run_time: run_time(tab.phase, &tab.run, self.clock),
                 pool: self
                     .manager
@@ -1680,6 +1721,7 @@ impl App {
                 session: None,
                 transaction_age: None,
                 phase: tab.phase,
+                live: false,
                 run_time: run_time(tab.phase, &tab.run, self.clock),
                 pool: self
                     .manager
@@ -1706,6 +1748,7 @@ impl App {
                 session: None,
                 transaction_age: None,
                 phase: tab.phase,
+                live: false,
                 run_time: run_time(tab.phase, &tab.run, self.clock),
                 pool: self
                     .manager
@@ -1728,6 +1771,7 @@ impl App {
                 session: None,
                 transaction_age: None,
                 phase: Phase::Idle,
+                live: false,
                 run_time: None,
                 pool: None,
                 data,
@@ -1764,6 +1808,7 @@ impl App {
             session: Some((console.manual, console.transaction)),
             transaction_age: console.transaction_age(self.clock),
             phase: console.phase,
+            live: console.is_live(),
             run_time: run_time(console.phase, &console.run, self.clock),
             pool: console
                 .connection

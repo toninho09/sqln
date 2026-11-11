@@ -1,17 +1,20 @@
 //! The contract of the database connectors. Only this module knows driver types.
 
 pub mod duckdb;
+pub mod kafka;
 pub mod mysql;
 pub mod postgres;
 pub mod redis;
 pub mod sqlite;
 pub mod target;
-mod tls;
+pub(crate) mod tls;
+pub mod words;
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use self::kafka::KafkaConnector;
 use self::mysql::MySqlConnector;
 use self::postgres::PostgresConnector;
 use self::redis::RedisConnector;
@@ -190,6 +193,7 @@ pub fn network_connector(target: NetworkTarget) -> Arc<dyn Connector> {
         Engine::Postgres => Arc::new(PostgresConnector::new(target)),
         Engine::MySql => Arc::new(MySqlConnector::new(target)),
         Engine::Redis => Arc::new(RedisConnector::new(target)),
+        Engine::Kafka => Arc::new(KafkaConnector::new(target)),
     }
 }
 

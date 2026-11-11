@@ -14,7 +14,7 @@ The file paths are relative to `src/`.
 | 2 | Key map and discovery | `input.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `ui/text.rs` |
 | 3 | Navigator and tree filter | `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs` |
 | 4 | Connections and connection form | `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs` |
-| 5 | Database connectors | `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/duckdb.rs`, `connector/redis.rs`, `connector/tls.rs` |
+| 5 | Database connectors | `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/duckdb.rs`, `connector/redis.rs`, `connector/redis/live.rs`, `connector/kafka.rs`, `connector/kafka/*.rs`, `connector/words.rs`, `connector/tls.rs` |
 | 6 | Connection pool | `pool.rs` |
 | 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs` |
 | 7a | Query plan | `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs` |
@@ -41,6 +41,7 @@ The file paths are relative to `src/`.
 | 21 | Appearance and themes | `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs` |
 | 23 | Local MCP assistant | `agent/`, `mcp.rs`, `app/agent/`, `editor/agent.rs`, `ui/agent.rs`; see [MCP](MCP.md) |
 | 24 | Auto-refresh | `app/auto_refresh.rs`, `console.rs`, `table.rs`, `app/persist.rs`, `app/commands.rs`, `ui/statusline.rs`, `ui/table.rs` |
+| 25 | Batch execution | `batch.rs`, `batch/auth.rs`, `batch/output.rs`, `main.rs`, `exec/runner.rs`, `export/mod.rs` |
 | 22 | Operation and diagnostics | `main.rs`, `terminal.rs`, `log.rs` |
 
 ## 1. Application shell and main loop
@@ -72,11 +73,11 @@ Files: `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connecto
 
 ## 5. Database connectors
 
-Files: `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/duckdb.rs`, `connector/redis.rs`, `connector/tls.rs`.
+Files: `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/duckdb.rs`, `connector/redis.rs`, `connector/redis/live.rs`, `connector/kafka.rs`, `connector/kafka/*.rs`, `connector/words.rs`, `connector/tls.rs`.
 
-`Connector` declares the dialect and the `Capabilities`. `Session` runs one statement, delivers the rows to `ResultSink`, and reports the transaction state. Only this module knows driver types. PostgreSQL reads through the simple protocol, so each value keeps the database text. MySQL keeps the text and reads notices with `SHOW WARNINGS`. SQLite runs `rusqlite` on its own thread, because the driver is synchronous; DuckDB follows the same pattern with `duckdb`, and it reads the result through Arrow, so a list, a struct, and a timestamp keep the text of the database. The `:memory:` file text opens one database in memory, which lives in the only session of its pool: `Capabilities::single_session` limits the pool to one place, no idle timeout closes it, and the session returns clean instead of discarded, so temporary tables persist until a disconnect. Redis runs one command per line, with the quote rules of `split_words`. TLS uses verification by default, except on `localhost`, loopback, and Unix sockets; `connector/tls` reads CA and client certificate files.
+`Connector` declares the dialect and the `Capabilities`. `Session` runs one statement, delivers the rows to `ResultSink`, and reports the transaction state. Only this module knows driver types. PostgreSQL reads through the simple protocol, so each value keeps the database text. MySQL keeps the text and reads notices with `SHOW WARNINGS`. SQLite runs `rusqlite` on its own thread, because the driver is synchronous; DuckDB follows the same pattern with `duckdb`, and it reads the result through Arrow, so a list, a struct, and a timestamp keep the text of the database. The `:memory:` file text opens one database in memory, which lives in the only session of its pool: `Capabilities::single_session` limits the pool to one place, no idle timeout closes it, and the session returns clean instead of discarded, so temporary tables persist until a disconnect. Redis runs one command per line, with the quote rules of `connector::words::split_words`. Kafka also runs one command per line: `connector/kafka/command.rs` reads `TOPICS`, `PARTITIONS`, `CONSUME`, `TAIL`, `GROUPS`, and `GROUP`, and `connector/kafka/filter.rs` checks each decoded message in the client. A read assigns partitions to its own librdkafka consumer and never commits, so the cluster creates no group. `connector/kafka/registry.rs` reads Avro, JSON Schema, and Protobuf schemas by id, and `connector/kafka/decode.rs` turns the Confluent wire format into JSON. A continuous command (`sql::is_continuous`) grows a live result until **Stop**: Pub/Sub, `MONITOR`, `SYNC`, and `PSYNC` read on an own RESP2 connection in `connector/redis/live.rs`, and `XREAD` with `BLOCK` reads again on the session. TLS uses verification by default, except on `localhost`, loopback, and Unix sockets; `connector/tls` reads CA and client certificate files.
 
-Cancellation uses a `Canceller` separate from the session: `CancelToken` on PostgreSQL, `KILL QUERY` on a temporary connection on MySQL, `InterruptHandle` on SQLite and DuckDB, and `CLIENT UNBLOCK` on Redis. Cleaning returns the session to its base state (`DISCARD ALL` without `DEALLOCATE ALL`, `Conn::reset`, drop, or `DISCARD`, the `CLIENT` modes, and `UNWATCH`).
+Cancellation uses a `Canceller` separate from the session: `CancelToken` on PostgreSQL, `KILL QUERY` on a temporary connection on MySQL, `InterruptHandle` on SQLite and DuckDB, `CLIENT UNBLOCK` on Redis, and the stop token of the sink on Kafka. Cleaning returns the session to its base state (`DISCARD ALL` without `DEALLOCATE ALL`, `Conn::reset`, drop, or `DISCARD`, the `CLIENT` modes, and `UNWATCH`).
 
 ## 6. Connection pool
 
@@ -298,3 +299,9 @@ The themes are `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `
 Files: `main.rs`, `terminal.rs`, `log.rs`.
 
 The command line accepts `--project`, `--dialect`, `--log`, `--help`, and `--version`, and one target: a SQLite file or a connection URI. The setup covers mouse, paste, and the small terminal warning. The restore runs at exit and on panic, with a panic report. Shutdown signals save pending text and exit without questions. Interface quit uses the close and transaction questions. `--log` records kinds of events, never SQL, values, or passwords. The BEL sounds after `bellAfterSeconds`, with a default of 10 s.
+
+## 25. Batch execution
+
+Files: `batch.rs`, `batch/auth.rs`, `batch/output.rs`, `main.rs`, `exec/runner.rs`, `export/mod.rs`.
+
+`--execute` runs one instruction or a script without the terminal interface, with `--output csv|json` optional and `-` reading the script from standard input up to 10 MiB. The script runs in one execution, in order, on one reserved session, so session state such as variables stays. Every result set is written in order: `Encoder::start_set` closes the previous set, CSV and TSV repeat the header, and JSON writes one array per set. Without `--output`, standard output stays empty and each set reports its row count on the error stream; `rows affected` and `rows returned` carry the instruction number. The default stops at the first failed instruction; `--continue-on-error` keeps the run going through statement errors and reports each one, while a timeout, a stop, or a closed connection still ends it. `--single-transaction` opens the transaction with the session control, holds it past the run with `RunOptions::hold_transaction`, and ends it with one `COMMIT` or `ROLLBACK` statement; Redis refuses the flag, and a signal keeps the first-delivery rule of dropping the session. See the decision record for the full rules.

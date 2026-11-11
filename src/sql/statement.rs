@@ -179,7 +179,7 @@ fn delimiter_end(sql: &str, delimiter: &str, start: usize) -> Option<usize> {
 }
 
 fn split_source(sql: &str, dialect: Dialect, source: &mut impl TokenSource) -> Vec<Statement> {
-    if dialect == Dialect::Redis {
+    if dialect.is_command_line() {
         return split_lines(sql, source);
     }
     let mut statements = Vec::new();

@@ -278,7 +278,8 @@ impl Session {
     fn fill_sqlite_form(&mut self, name: &str, file: &str) {
         self.prefix('h');
         self.code(KeyCode::Char('a'));
-        // `Left` goes backwards through the kinds from PostgreSQL.
+        // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis, SQLite.
+        self.code(KeyCode::Left);
         self.code(KeyCode::Left);
         self.code(KeyCode::Left);
         self.code(KeyCode::Left);
@@ -3330,8 +3331,8 @@ fn a_saved_theme_goes_to_the_file_and_comes_back_at_the_next_start() {
         session.code(KeyCode::Left);
     }
     session.assert_sees("< Catppuccin Latte >");
-    // Theme, Themes, New, Edit, and Delete come before the save.
-    for _ in 0..5 {
+    // Theme, Explorer side, Themes, New, Edit, and Delete come before the save.
+    for _ in 0..6 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -4225,6 +4226,35 @@ fn the_settings_choose_the_keys_of_the_list_and_the_change_works_at_once() {
     assert_eq!(session.text(), ACCEPTED);
 }
 
+#[test]
+fn the_settings_choose_the_side_of_the_explorer_and_the_change_works_at_once() {
+    let (store, _) = reopening_store("p-explorer-side", "{}");
+    let mut session = Session::start(&store);
+    session.open_theme_settings();
+    session.code(KeyCode::Tab);
+    session.assert_sees("Explorer side");
+    session.assert_sees("Default: Left");
+    session.code(KeyCode::Right);
+    session.assert_sees("< Left >");
+    session.code(KeyCode::Right);
+    session.assert_sees("< Right >");
+    // Themes, New, Edit, and Delete come before the save.
+    for _ in 0..5 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+    let text = fs::read_to_string(store.global.config_file()).unwrap();
+    assert!(text.contains("\"explorerSide\": \"right\""), "{text}");
+    let title = session.screen().lines().nth(2).unwrap().to_owned();
+    assert!(title.trim_end().ends_with("EXPLORER"), "{title}");
+    drop(session);
+
+    let mut session = Session::start(&store);
+    let title = session.screen().lines().nth(2).unwrap().to_owned();
+    assert!(title.trim_end().ends_with("EXPLORER"), "{title}");
+}
+
 const UNDO_ROW: usize = 600 * 1024;
 
 impl Session {
@@ -4876,6 +4906,7 @@ fn a_new_theme_becomes_a_file_and_the_choice_comes_back_at_the_next_start() {
     // The editor opens on a copy of the theme of the scope.
     session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
     session.write("Mine");
     session.assert_sees("APPEARANCE · mine");
@@ -4899,7 +4930,7 @@ fn a_new_theme_becomes_a_file_and_the_choice_comes_back_at_the_next_start() {
     }
     session.assert_sees("< Mine >");
     assert_eq!(session.panel_color(), theme_panel(ThemeName::Gruvbox));
-    for _ in 0..5 {
+    for _ in 0..6 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -4923,6 +4954,7 @@ fn the_editor_previews_each_color_and_a_cancel_brings_the_saved_theme_back() {
     let (store, _) = reopening_store("p-theme-editor", r#"{"theme":"gruvbox"}"#);
     let mut session = Session::start(&store);
     session.open_theme_settings();
+    session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
@@ -4957,6 +4989,7 @@ fn the_editor_warns_about_colors_of_low_contrast() {
     session.open_theme_settings();
     session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
+    session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
     session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
@@ -4983,7 +5016,7 @@ fn a_theme_in_use_stays_and_an_unused_theme_goes_away_at_the_save() {
     session.open_theme_settings();
     session.assert_sees("Mine · mine (Global)");
     // The default theme uses it, so the removal refuses.
-    for _ in 0..4 {
+    for _ in 0..5 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -4994,7 +5027,7 @@ fn a_theme_in_use_stays_and_an_unused_theme_goes_away_at_the_save() {
     }
     session.code(KeyCode::Right);
     session.assert_sees("Default: Auto");
-    for _ in 0..4 {
+    for _ in 0..5 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -5089,6 +5122,7 @@ fn an_edit_of_a_custom_theme_keeps_its_id_and_writes_at_the_save() {
     let mut session = Session::start(&store);
     session.open_theme_settings();
     // The list opens the editor on the selected theme, with its name.
+    session.code(KeyCode::Tab);
     session.code(KeyCode::Tab);
     session.code(KeyCode::Enter);
     session.assert_sees("APPEARANCE · mine");

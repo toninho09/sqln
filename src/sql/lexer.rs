@@ -57,8 +57,8 @@ impl<'a> Lexer<'a> {
         let dialect = self.dialect;
         let byte = bytes[start];
 
-        if dialect == Dialect::Redis {
-            return self.read_redis_token(start);
+        if dialect.is_command_line() {
+            return self.read_command_token(start);
         }
         if bytes[start..].starts_with(b"--")
             && (dialect != Dialect::MySql
@@ -109,7 +109,7 @@ impl<'a> Lexer<'a> {
 
     /// Reads a token of a command line. A `#` starts a comment only at the start of a
     /// line, because `#` is a valid part of a key. A quote ends with its line at most.
-    fn read_redis_token(&self, start: usize) -> (TokenKind, usize, bool) {
+    fn read_command_token(&self, start: usize) -> (TokenKind, usize, bool) {
         let bytes = self.sql.as_bytes();
         let line_end = skip_line(bytes, start);
         match bytes[start] {
