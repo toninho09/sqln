@@ -523,6 +523,8 @@ pub struct App {
     pending_follow: Option<ConsoleId>,
     /// The answers of the file reads of the import dialog.
     import_probes: import::ProbeChannel,
+    /// The answers of the vault writes of Schema Registry passwords.
+    registry_writes: connections::VaultWrites,
     /// A table tab that opens the import dialog after its first page.
     import_wanted: Option<ConsoleId>,
     /// The files of the application. It is `None` when nothing loads or saves.
@@ -632,6 +634,7 @@ impl App {
             definitions: Vec::new(),
             pending_follow: None,
             import_probes: import::ProbeChannel::default(),
+            registry_writes: connections::VaultWrites::default(),
             import_wanted: None,
             status: None,
             status_shown: None,
@@ -1216,7 +1219,7 @@ impl App {
         self.sync_command_history();
         let ticked = self.tick();
         let authorized = self.poll_auth();
-        let probed = self.poll_probes();
+        let probed = self.poll_probes() | self.poll_registry_writes();
         let changed =
             self.has_work() || ticked || authorized || probed || agent_changed || ai_changed;
         if changed {

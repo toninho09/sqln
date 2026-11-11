@@ -50,7 +50,7 @@ pub struct Occurrence {
 
 /// Accepts ASCII names with a letter or underscore first. Quotes and comments are opaque.
 pub fn occurrences(sql: &str, dialect: Dialect) -> Vec<Occurrence> {
-    if dialect == Dialect::Redis {
+    if dialect.is_command_line() {
         return Vec::new();
     }
     let tokens = tokenize(sql, dialect);

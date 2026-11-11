@@ -143,7 +143,10 @@ pub(super) fn authenticate(
         .ok();
     #[cfg(not(unix))]
     let terminal: Option<std::fs::File> = None;
-    if let Some(mut terminal) = terminal.filter(|_| target.engine.needs_user() || reference) {
+    // A Kafka user always authenticates with SASL, so it always needs a password.
+    let sasl = target.engine == crate::connector::target::Engine::Kafka && !target.user.is_empty();
+    if let Some(mut terminal) = terminal.filter(|_| target.engine.needs_user() || reference || sasl)
+    {
         target.password = crate::terminal::read_password_to(
             &format!("Password for {}: ", printable(&target.user)),
             &mut terminal,

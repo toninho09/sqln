@@ -123,6 +123,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
                     Some("sqlite") => Dialect::Sqlite,
                     Some("duckdb") => Dialect::DuckDb,
                     Some("redis") => Dialect::Redis,
+                    Some("kafka") => Dialect::Kafka,
                     other => return Err(format!("Unknown dialect: {}", other.unwrap_or(""))),
                 });
             }

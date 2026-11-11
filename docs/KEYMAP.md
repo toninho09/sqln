@@ -181,7 +181,7 @@ Add connection and scripts without a connection remain global. `Ctrl+W Tab` rema
 Apply filters and Clear filters also appear in the palette, without default shortcuts.
 `Ctrl+P` has priority over the `MoveUp` of EdTUI during input in the Vim mode.
 
-The comment action acts on the selection or on the cursor line, with `-- ` in SQL and `# ` in Redis.
+The comment action acts on the selection or on the cursor line, with `-- ` in SQL and `# ` in Redis and Kafka.
 A selection that ends at column 0 leaves that line out. If all lines have the comment, the action removes it.
 A terminal without keyboard enhancement sends `Ctrl+/` as the byte of `Ctrl+7`, so both keys do the same action.
 `Ctrl+/` is not in the `keytest` record. Use `Ctrl+W /` if the terminal does not deliver that key.

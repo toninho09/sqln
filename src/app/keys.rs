@@ -1046,7 +1046,7 @@ impl App {
     fn show_sql_diagnostics(&mut self) {
         if !self.command_available(Action::SqlDiagnostics) {
             let message =
-                if !self.console_on_screen() || self.console().editor.dialect() == Dialect::Redis {
+                if !self.console_on_screen() || self.console().editor.dialect().is_command_line() {
                     text::SYNTAX_UNAVAILABLE
                 } else if self.console().editor.syntax_report().is_some() {
                     text::SYNTAX_CLEAN
@@ -1640,7 +1640,7 @@ impl App {
                         !report.diagnostics.is_empty() || report.note.is_some()
                     })
             }
-            Action::FormatSql => !in_table && console.editor.dialect() != Dialect::Redis,
+            Action::FormatSql => !in_table && !console.editor.dialect().is_command_line(),
             Action::ToggleComment => !in_table,
             Action::OpenHistory => !in_table && self.history_is_open_to(connection),
             Action::FocusLeft => !self.navigator.collapsed && !self.navigator_focused,

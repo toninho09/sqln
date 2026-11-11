@@ -68,8 +68,8 @@ pub fn suggest_in(
     dialect: Dialect,
     catalog: Option<&Catalog>,
 ) -> Completion {
-    if dialect == Dialect::Redis {
-        return suggest_command(sql, cursor);
+    if dialect.is_command_line() {
+        return suggest_command(sql, cursor, dialect, catalog);
     }
     let Some(analysis) = analyze(sql, statements, cursor, dialect) else {
         return Completion {
@@ -97,22 +97,52 @@ pub fn suggest_in(
     completion
 }
 
-/// Suggests a command at the start of a line. The arguments have no suggestions.
-fn suggest_command(sql: &str, cursor: usize) -> Completion {
+/// Suggests a command at the start of a line. A Redis argument has no suggestions. A
+/// Kafka argument gets the topics or groups of the catalog, then the clause words.
+fn suggest_command(
+    sql: &str,
+    cursor: usize,
+    dialect: Dialect,
+    catalog: Option<&Catalog>,
+) -> Completion {
     let line = sql[..cursor].rsplit('\n').next().unwrap_or("");
-    let typed = line.trim_start();
-    if !typed
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-    {
-        return Completion {
-            replace: cursor..cursor,
-            ..Completion::default()
-        };
+    let typed = line.rsplit([' ', '\t']).next().unwrap_or("");
+    let before: Vec<&str> = line[..line.len() - typed.len()]
+        .split_whitespace()
+        .collect();
+    let plain = |text: &str| {
+        text.bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    };
+    let empty = Completion {
+        replace: cursor..cursor,
+        ..Completion::default()
+    };
+    let replace = cursor - typed.len()..cursor;
+    let mut builder = Builder::new(typed, None, dialect);
+    match before.as_slice() {
+        [] if plain(typed) => {
+            keywords::starters(dialect).for_each(|word| builder.add_keyword(word));
+        }
+        [command] if dialect == Dialect::Kafka => {
+            let Some(schema) = crate::connector::kafka::argument_schema(command) else {
+                return empty;
+            };
+            for relation in catalog
+                .and_then(|catalog| catalog.schema(schema))
+                .map_or(&[][..], |schema| schema.relations.as_slice())
+            {
+                builder.add_command_name(&relation.name);
+            }
+        }
+        [_, _, ..] if dialect == Dialect::Kafka && plain(typed) => {
+            keywords::KAFKA_CLAUSES
+                .iter()
+                .for_each(|word| builder.add_keyword(word));
+        }
+        _ => return empty,
     }
-    let mut builder = Builder::new(typed, None, Dialect::Redis);
-    keywords::starters(Dialect::Redis).for_each(|word| builder.add_keyword(word));
-    builder.finish(cursor - typed.len()..cursor, typed)
+    builder.finish(replace, typed)
 }
 
 struct Ranked {
@@ -274,6 +304,23 @@ impl Builder {
                 insert: quote_name(name, self.dialect, self.quote),
                 kind,
                 detail: detail.map(str::to_owned),
+                cursor_offset: None,
+            },
+        );
+    }
+
+    /// Adds a name of a command line, with quotes only when the name needs them.
+    fn add_command_name(&mut self, name: &str) {
+        let Some(rank) = self.rank(name, true) else {
+            return;
+        };
+        self.push(
+            rank,
+            Suggestion {
+                label: name.to_owned(),
+                insert: crate::connector::words::command_word(name),
+                kind: SuggestionKind::Table,
+                detail: None,
                 cursor_offset: None,
             },
         );

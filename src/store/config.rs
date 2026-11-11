@@ -20,7 +20,9 @@ use crate::connection::{
 };
 use crate::connector::duckdb::DuckdbTarget;
 use crate::connector::sqlite::{SqliteTarget, file_source};
-use crate::connector::target::{Address, ClientCertificate, Engine, NetworkTarget, Tls, TlsFiles};
+use crate::connector::target::{
+    Address, ClientCertificate, Engine, KafkaOptions, NetworkTarget, Registry, Sasl, Tls, TlsFiles,
+};
 use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode};
 use crate::export::ExportChoices;
 use crate::import::ImportChoices;
@@ -322,6 +324,7 @@ pub enum KindName {
     Sqlite,
     Duckdb,
     Redis,
+    Kafka,
 }
 
 impl KindName {
@@ -331,6 +334,7 @@ impl KindName {
             KindName::Postgres => Some(Engine::Postgres),
             KindName::Mysql => Some(Engine::MySql),
             KindName::Redis => Some(Engine::Redis),
+            KindName::Kafka => Some(Engine::Kafka),
             KindName::Sqlite | KindName::Duckdb => None,
         }
     }
@@ -363,6 +367,15 @@ pub struct TlsEntry {
     pub client_cert: Option<String>,
     #[serde(default)]
     pub client_key: Option<String>,
+}
+
+/// The Schema Registry of a Kafka connection. The password stays in the system vault.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RegistryEntry {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,6 +445,12 @@ pub struct ConnectionEntry {
     /// The schemas, or the Redis databases, that the explorer shows. Empty shows all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub schemas: Vec<String>,
+    /// The SASL mechanism of a Kafka connection with a user. Missing means SCRAM-SHA-512.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sasl: Option<Sasl>,
+    /// The Schema Registry of a Kafka connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_registry: Option<RegistryEntry>,
 }
 
 /// The configuration of a scope that cannot load. The text names the file, and the
@@ -608,7 +627,28 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
                 .as_deref()
                 .is_some_and(|name| !name.is_empty() && !engine.accepts_database(name))
             {
-                return Err("The Redis database must be a number.".to_owned());
+                return Err(engine.database_error().to_owned());
+            }
+            if engine == Engine::Kafka && !entry.schemas.is_empty() {
+                return Err("A Kafka connection has no schemas.".to_owned());
+            }
+            if engine != Engine::Kafka && (entry.sasl.is_some() || entry.schema_registry.is_some())
+            {
+                return Err("sasl and schemaRegistry are valid only for kafka.".to_owned());
+            }
+            if engine == Engine::Kafka
+                && entry
+                    .host
+                    .as_deref()
+                    .is_some_and(|host| host.starts_with('/'))
+            {
+                return Err("A Kafka connection needs a host name, not a socket.".to_owned());
+            }
+            if let Some(registry) = &entry.schema_registry
+                && !registry.url.starts_with("http://")
+                && !registry.url.starts_with("https://")
+            {
+                return Err("schemaRegistry.url must start with http:// or https://.".to_owned());
             }
             if entry
                 .schemas
@@ -696,6 +736,16 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
                 password: None,
                 database: entry.database.clone().filter(|name| !name.is_empty()),
                 tls,
+                kafka: KafkaOptions {
+                    sasl: entry.sasl.unwrap_or_default(),
+                    registry: entry.schema_registry.as_ref().map(|registry| {
+                        Box::new(Registry {
+                            url: registry.url.clone(),
+                            user: registry.username.clone().unwrap_or_default(),
+                            password: None,
+                        })
+                    }),
+                },
             })
         }
     };
@@ -745,6 +795,8 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
         theme: definition.theme.clone(),
         icon: definition.icon,
         schemas: definition.schemas.clone(),
+        sasl: None,
+        schema_registry: None,
     };
     match &definition.source {
         Source::Sqlite(target) => {
@@ -769,7 +821,20 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
                 Engine::Postgres => KindName::Postgres,
                 Engine::MySql => KindName::Mysql,
                 Engine::Redis => KindName::Redis,
+                Engine::Kafka => KindName::Kafka,
             };
+            if target.engine == Engine::Kafka {
+                entry.sasl = Some(target.kafka.sasl);
+                entry.schema_registry =
+                    target
+                        .kafka
+                        .registry
+                        .as_ref()
+                        .map(|registry| RegistryEntry {
+                            url: registry.url.clone(),
+                            username: Some(registry.user.clone()).filter(|user| !user.is_empty()),
+                        });
+            }
             match &target.address {
                 Address::Tcp { host, port } => {
                     entry.host = Some(host.clone());

@@ -67,7 +67,7 @@ pub fn types(dialect: Dialect) -> &'static [&'static str] {
             "SET",
         ],
         Dialect::Sqlite => &["INTEGER", "REAL", "TEXT", "BLOB", "NUMERIC"],
-        Dialect::Redis => &[],
+        Dialect::Redis | Dialect::Kafka => &[],
     }
 }
 
@@ -136,9 +136,9 @@ pub fn functions(dialect: Dialect) -> impl Iterator<Item = (&'static str, &'stat
             ("JULIANDAY", "JULIANDAY(value, modifier, ...)"),
             ("JSON_EXTRACT", "JSON_EXTRACT(document, path, ...)"),
         ],
-        Dialect::Redis => &[],
+        Dialect::Redis | Dialect::Kafka => &[],
     };
-    let common = if dialect == Dialect::Redis {
+    let common = if dialect.is_command_line() {
         &[][..]
     } else {
         COMMON_FUNCTIONS

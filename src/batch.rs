@@ -186,6 +186,7 @@ pub fn run(options: Options) -> Result<(), Error> {
             crate::connector::target::Engine::Postgres => Dialect::Postgres,
             crate::connector::target::Engine::MySql => Dialect::MySql,
             crate::connector::target::Engine::Redis => Dialect::Redis,
+            crate::connector::target::Engine::Kafka => Dialect::Kafka,
         },
     };
     let statements: Vec<String> = sql::split(&options.sql, dialect)
@@ -197,8 +198,10 @@ pub fn run(options: Options) -> Result<(), Error> {
             "--execute needs SQL: the text has no instruction.",
         ));
     }
-    if options.single_transaction && dialect == Dialect::Redis {
-        return Err(Error::usage("--single-transaction does not support Redis."));
+    if options.single_transaction && dialect.is_command_line() {
+        return Err(Error::usage(
+            "--single-transaction does not support Redis or Kafka.",
+        ));
     }
     if !options.yes
         && let Some(risk) = sql::run_risk(

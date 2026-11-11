@@ -193,7 +193,7 @@ fn definition(tokens: &[Token], text: &str, dialect: Dialect, opens: &[usize]) -
                 "DROP FOREIGN KEY",
             ],
             Dialect::Sqlite => &["ADD COLUMN", "DROP COLUMN", "RENAME COLUMN", "RENAME TO"],
-            Dialect::Redis => &[],
+            Dialect::Redis | Dialect::Kafka => &[],
         }));
     }
     if is_word(text, tail.first(), &["ADD"])
@@ -313,7 +313,7 @@ fn column(tokens: &[Token], text: &str, dialect: Dialect) -> Position {
                 options.push("AUTOINCREMENT");
             }
         }
-        Dialect::Postgres | Dialect::DuckDb | Dialect::Redis => {}
+        Dialect::Postgres | Dialect::DuckDb | Dialect::Redis | Dialect::Kafka => {}
     }
     options.retain(|option| {
         let word = option.split_whitespace().next().unwrap_or(option);

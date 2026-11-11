@@ -39,6 +39,7 @@ fn section_title(section: Group) -> &'static str {
         Group::Address => text::FORM_ADDRESS,
         Group::Credentials => text::FORM_CREDENTIALS,
         Group::Security => text::FORM_SECURITY,
+        Group::Registry => text::FORM_REGISTRY,
         Group::Options => text::FORM_OPTIONS,
     }
 }
@@ -73,6 +74,10 @@ fn label(kind: Kind, field: Field) -> &'static str {
         Field::CaFile => text::FIELD_CA,
         Field::ClientCertificate => text::FIELD_CLIENT_CERTIFICATE,
         Field::ClientKey => text::FIELD_CLIENT_KEY,
+        Field::Sasl => text::FIELD_SASL,
+        Field::RegistryUrl => text::FIELD_REGISTRY_URL,
+        Field::RegistryUser => text::FIELD_REGISTRY_USER,
+        Field::RegistryPassword => text::FIELD_REGISTRY_PASSWORD,
         Field::File => text::FIELD_FILE,
         Field::ForeignKeys => text::FIELD_FOREIGN_KEYS,
         Field::BusyTimeout => text::FIELD_BUSY,
@@ -98,6 +103,7 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
             Kind::Postgres => text::VALUE_POSTGRES,
             Kind::MySql => text::VALUE_MYSQL,
             Kind::Redis => text::VALUE_REDIS,
+            Kind::Kafka => text::VALUE_KAFKA,
             Kind::Sqlite => text::VALUE_SQLITE,
             Kind::Duckdb => text::VALUE_DUCKDB,
         },
@@ -109,6 +115,7 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
             text::VALUE_VAULT
         }
         Field::Credential => text::VALUE_SESSION,
+        Field::Sasl => form.sasl.name(),
         Field::Tls if form.verify_tls => text::VALUE_TLS_VERIFY,
         Field::Tls => text::VALUE_TLS_OFF,
         // A custom theme has its own name, so `value_line` builds this value.
@@ -127,12 +134,12 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
 /// Writes a text value, and it keeps the cursor inside the width.
 fn text_line(form: &ConnectionForm, field: Field, width: usize, theme: &Theme) -> Line<'static> {
     let text = match field {
-        Field::Password => form.text(field).to_owned(),
+        Field::Password | Field::RegistryPassword => form.text(field).to_owned(),
         Field::Uri => hide_uri_password(&printable(form.text(field)), MASK),
         _ => printable(form.text(field)),
     };
     let mode = match field {
-        Field::Password => FieldMode::Masked {
+        Field::Password | Field::RegistryPassword => FieldMode::Masked {
             mask: MASK,
             limit: None,
         },

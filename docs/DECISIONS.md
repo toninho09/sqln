@@ -6,6 +6,68 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Kafka and Schema Registry — 2026-11-10
+
+The user asks for Kafka support with the Schema Registry and approves the points below.
+This request reopens the rule "MongoDB, Redis, and Kafka stay out of the first version" only for Kafka.
+It also reopens the rule "Search: literal text, no regular expression" only for the Kafka filter.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Scope | Browse and read, `TAIL`, consumer groups and lag | Produce messages; topic administration | User choice |
+| 2. Library | `rdkafka` 0.39 (librdkafka) | `rskafka`; own client with `kafka-protocol` | User choice. librdkafka has groups, SASL, and offsets by time |
+| 3. Formats | Avro, JSON Schema, and Protobuf | Avro only | User choice |
+| 4. Console | Own commands, one for each line; `#` at the start of a line is a comment | Only the explorer | User choice. Same model as Redis |
+| 5. Connection type | "Kafka", with `kafka://` and `kafkas://`, port 9092 | Two types | Same pattern as `redis://` and `rediss://` |
+| 6. Bootstrap | One host. The metadata of the cluster gives the other brokers | A list of hosts | `NetworkTarget` has one address. YAGNI |
+| 7. TLS | SQLN rule: local without TLS, remote verifies, `?sslmode=disable` turns it off; `kafkas://` always uses TLS | — | The password only travels without TLS by explicit choice |
+| 8. Authentication | Optional user. With a user: SASL `PLAIN`, `SCRAM-SHA-256`, or `SCRAM-SHA-512` (default) | GSSAPI and OAuth | GSSAPI needs Cyrus SASL in C |
+| 9. No consumer group | A read never subscribes and never commits (`enable.auto.commit=false`, `enable.auto.offset.store=false`), only `assign`. librdkafka needs a `group.id` for a consumer, so a read uses the local id `sqln-read`; without `subscribe` and without a commit the cluster never creates that group. `GROUP <id>` asks only for committed offsets (OffsetFetch) and never joins | No `group.id`; a random group; the legacy librdkafka API through FFI | Spike: librdkafka refuses `assign` without `group.id`. The user chose the local id. A test compares the group list before and after each read |
+| 10. Read only | Each command only reads, so the read-only option changes nothing | — | The scope has no write |
+| 11. Commands | `TOPICS`; `PARTITIONS <topic>`; `CONSUME <topic> [PARTITION n] [FROM earliest\|latest\|<offset>\|@<time>] [WHERE <filter>] [LIMIT n] [SCAN n]`; `TAIL <topic> [PARTITION n] [FROM …] [WHERE <filter>]`; `GROUPS`; `GROUP <id>`. Clauses come in any order, each one time | — | Covers the scope |
+| 12. `CONSUME` | Reads to `LIMIT` matches (default: the row cap) or to the high offset of each partition at the start. `SCAN n` limits the read messages. **Stop** ends the read and keeps the rows. A filter, a scan limit, or a stop adds `Scanned N messages; M matched.` in **Messages** | — | A finite result, as a query |
+| 13. `TAIL` | A continuous command of the 2026-11-09 contract: it grows until **Stop**; at the cap, the oldest rows leave. The default start is `latest` | — | Reuses the live flow |
+| 14. Filter: place | In the client, after the decoding: console (`CONSUME`, `TAIL`) and the filter field of the topic tab, with the same syntax | Server filter | Kafka has no server filter |
+| 15. Filter: syntax | `key = 'text'`; `key\|value\|headers CONTAINS 'text'` (literal, without case); `key\|value MATCHES 'regex'` (crate `regex`, linear time, size limit; `(?i)` ignores case); `value.a.b.0 <op> <literal>` with `=`, `!=`, `<`, `<=`, `>`, `>=` and a text, a number, `true`, `false`, or `null`; `AND`, `OR`, `NOT`, parentheses; `AND` before `OR` | — | User choice: the four kinds |
+| 16. Filter: cases | A missing field or another type is false. A value without JSON makes a field condition false; `CONTAINS` and `MATCHES` read the text only when it is UTF-8. A syntax error or a bad regex refuses before the read, with its position | — | No surprise and no silent failure |
+| 17. Columns | `partition`, `offset`, `timestamp` (UTC), `key`, `value`, `headers` (JSON), `schema` | — | Grid search and copy work |
+| 18. Decoding | For key and value: the byte 0 and a configured registry decode with the schema to JSON; a failure keeps the bytes and adds a notice; else UTF-8 text; else bytes. A tombstone is `NULL` | — | Never loses data in silence |
+| 19. Explorer | Two fixed schemas: `topics` and `groups`. `Enter` on a topic opens a tab with the last 500 messages that match the filter (empty: all), newest first, with **Refresh** and without pages. The read goes back in windows of offsets for each partition until 500 matches or the start. `Enter` on a group opens its lag | Pages of a global offset | An offset across partitions has no stable page |
+| 20. Lag | `GROUP <id>`: `topic`, `partition`, `committed`, `end`, `lag`, `member`. `GROUPS`: `group`, `state`, `protocol`, `members` | — | Read only |
+| 21. Schema Registry | Optional fields of a Kafka connection: URL, user, and password. `config.json` gets `"schemaRegistry": {"url", "username"}` and `"sasl"`; `version` stays 1. The password follows the **Credential** choice of the form: **Vault** writes it to the system vault, **Session** keeps it in memory | Always the vault | The user authorizes each secret storage |
+| 22. Schema cache | By id, for the life of the connector | Expiry | A schema id never changes |
+| 23. Completion | Fixed list of commands, then the topics or groups of the catalog, then the clause words | — | Topics are few, unlike Redis keys |
+| 24. AI and MCP | No AI completion and no MCP read for Kafka | — | Same rule as Redis |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Build | `rdkafka` with `cmake-build`, `ssl-vendored`, `libz-static`, `zstd`, and `tokio`. A clean build needs `cmake` and `perl` | System librdkafka | One binary, without a system library |
+| TLS of librdkafka | OpenSSL inside librdkafka only. `ssl.ca.pem` gets the system roots of `connector::tls::system_roots` in PEM; a CA file goes to `ssl.ca.location`; a client pair goes to `ssl.certificate.location` and `ssl.key.location` | A second set of roots | The other connectors keep `ring`; the roots stay the same, except the bundled `webpki` roots, which have no certificate form |
+| TLS of the registry | `reqwest` with `connector::tls::client_config` | — | One TLS rule |
+| Calls that wait | Metadata, offsets, group list, and committed offsets run in `spawn_blocking` with a 10-second limit | The executor thread | The interface thread never waits |
+| One read, one consumer | Each `CONSUME`, `TAIL`, and topic-tab round creates its own consumer and closes it on a blocking thread | One consumer for the session | A later read never receives a message of an earlier read |
+| Stop | The read watches the stop token of the sink. The `Canceller` does nothing | — | The read ends by itself |
+| Logs of librdkafka | Dropped | The `log` crate | They can hold names and values |
+| Batch password | `--execute` asks for the password on the terminal for a Kafka user without a saved password | The Redis rule: ask only with a saved reference | A SASL user always needs a password |
+| Refused password | A consumer receives the broker errors as events of its queue. A failed call reads these events, so an authentication error asks for a password | Only the result of the call | The call result says only "transport failure" |
+| Registry password | The connector reads the vault one time, on a blocking thread, when the registry has a user and the session has no password. The vault account is the registry URL and the user | The vault in the app | The batch mode and the app use the same path |
+| Shared word reader | `connector::words` holds the `redis-cli` word reader and `command_word`, for Redis and for the Kafka completion and tab text | A copy for Kafka | DRY |
+| Topic tab | `TableTab::filter_only` shows only the filter field; `kind_word` names the tab `topic` or `group`; the page text is `SQLN.TOPIC <topic> <count> [WHERE …]`, which is not a console command | A new tab kind | Reuses the table tab |
+
+### Known limitations of Kafka
+
+| Subject | Limitation |
+|---|---|
+| Bootstrap | One host. If that broker is down, the connection fails |
+| TLS roots | Without a CA file, librdkafka uses only the system roots |
+| Authentication | No GSSAPI and no OAuth. The tests do not cover mutual TLS or SCRAM |
+| Topic tab | The order is the producer timestamp. A partition with timestamps out of offset order can give an approximate list |
+| `GROUP` | It asks the committed offsets of each partition of each topic, and one end offset for each committed partition. A large cluster makes many calls |
+| Internal topics | Names that start with `__` stay out of the explorer. `TOPICS` lists them with `internal` set to `true` |
+| Registry | A Protobuf message index outside the file, or an Avro logical type without a JSON form, keeps the bytes with a notice |
+
 ## Continuous commands — 2026-11-09
 
 The user asks for the Redis streaming commands, with a generic contract for other sources later.
@@ -1922,7 +1984,7 @@ Current state: tabs follow opening order. Closing the last console selects a rem
 | Probe on PostgreSQL | Clock through the simple protocol | `SAVEPOINT` | `SAVEPOINT` generates log errors |
 | State on MySQL | `SERVER_STATUS_IN_TRANS` of the response, and `DO 0` after an error | `SET TRANSACTION`; `performance_schema` | The probe erased the user `SET TRANSACTION` and cleared `SHOW WARNINGS`; `performance_schema` needs privileges |
 | Types on PostgreSQL | `prepare` before the simple protocol | Heuristic over the text | `bytea` and numbers need the type; costs one round trip to the server |
-| TLS provider | `ring` | `aws-lc-rs` | Avoids a second provider and the `aws-lc` build |
+| TLS provider | `ring`, except OpenSSL inside librdkafka for Kafka (2026-11-10) | `aws-lc-rs` | Avoids a second provider and the `aws-lc` build |
 
 ## Product
 

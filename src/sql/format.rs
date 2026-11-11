@@ -287,7 +287,7 @@ pub fn format_statement(sql: &str, dialect: Dialect) -> Option<String> {
     let first = tokens
         .iter()
         .find(|token| token.kind != TokenKind::Comment)?;
-    if dialect == Dialect::Redis || !is_any(&sql[first.start()..first.end()], FORMATTED) {
+    if dialect.is_command_line() || !is_any(&sql[first.start()..first.end()], FORMATTED) {
         return Some(sql.to_owned());
     }
     let formatted = Writer::new(sql, &tokens).run();

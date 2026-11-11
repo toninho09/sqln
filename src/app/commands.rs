@@ -91,7 +91,7 @@ impl App {
                 !on_console
                     && !on_kind(RowKind::Consoles)
                     && !on_object
-                    && item.is_some_and(|item| item.dialect != crate::sql::Dialect::Redis)
+                    && item.is_some_and(|item| !item.dialect.is_command_line())
             }
             NavigatorDiagram => self.can_open_diagram(),
             NavigatorCompare => self.can_compare_row(),

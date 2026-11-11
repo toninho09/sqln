@@ -278,7 +278,8 @@ impl Session {
     fn fill_sqlite_form(&mut self, name: &str, file: &str) {
         self.prefix('h');
         self.code(KeyCode::Char('a'));
-        // `Left` goes backwards through the kinds from PostgreSQL.
+        // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis, SQLite.
+        self.code(KeyCode::Left);
         self.code(KeyCode::Left);
         self.code(KeyCode::Left);
         self.code(KeyCode::Left);

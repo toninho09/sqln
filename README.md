@@ -5,7 +5,7 @@ A terminal database client with several connections, SQL consoles, and table tab
 SQLN brings an editor, a database navigator, and a results grid into one terminal.
 Use familiar editor keys or Vim mode. Keep scripts with a project, or use global connections across projects.
 
-**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, and Valkey.
+**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, and Kafka with the Schema Registry.
 
 > SQLN is in development. This repository supports source installation and unsigned workflow binaries.
 > Review the [known limitations](#known-limitations) before use with important data.
@@ -88,6 +88,7 @@ Choose the output format, rows, file, and formatting options before writing an e
 - A terminal with Unicode support. Truecolor is optional; Nerd Fonts are optional.
 - A current stable Rust toolchain, with Cargo, for source installation.
 - A native compiler and linker. SQLite is bundled and needs a C compiler.
+- `cmake` and `perl`. The Kafka client builds librdkafka and OpenSSL from source.
 
 The project does not declare a minimum Rust version. CI checks the current stable toolchain.
 
@@ -173,10 +174,11 @@ sqln 'postgres://alice@localhost/my_database'
 sqln 'mysql://alice@localhost/my_database'
 sqln 'redis://localhost/0'
 sqln 'valkey://localhost/0'
+sqln 'kafka://localhost:9092'
 ```
 
 For PostgreSQL and MySQL, SQLN asks for a password when the URI omits it in an interactive terminal.
-For password-protected Redis or Valkey, use the connection form to enter the password without shell-history exposure.
+For password-protected Redis, Valkey, or Kafka with SASL, use the connection form to enter the password without shell-history exposure.
 
 A command-line connection lasts for the session only. It does not create a saved connection or saved consoles for that target.
 To save a connection, start `sqln` and add it through the navigator.
@@ -214,6 +216,25 @@ PING
 ```
 
 Each Redis command occupies one line. Redis consoles do not run SQL.
+
+For Kafka, each line is one SQLN command. Each command only reads:
+
+```text
+TOPICS
+PARTITIONS orders
+CONSUME orders FROM earliest WHERE value.customer.id = 42 AND key CONTAINS 'eu' LIMIT 100
+CONSUME orders PARTITION 2 FROM @2026-11-10T12:00:00Z SCAN 50000
+TAIL orders WHERE value.status = 'failed'
+GROUPS
+GROUP billing
+```
+
+- `CONSUME` reads to the last message of each partition at its start. `TAIL` waits for new messages until **Stop**.
+- `FROM` takes `earliest`, `latest`, an offset, or `@` and a UTC time.
+- The filter runs in SQLN, after the decoding: `key = 'text'`, `CONTAINS 'text'` (without case), `MATCHES 'regex'`, and `value.field` with `=`, `!=`, `<`, `<=`, `>`, or `>=`. Use `AND`, `OR`, `NOT`, and parentheses.
+- With a Schema Registry, Avro, JSON Schema, and Protobuf values become JSON. A value that does not decode stays as bytes, with a note in **Messages**.
+- SQLN never joins a consumer group and never commits an offset. `GROUP <id>` shows the committed offsets and the lag.
+- The explorer lists `topics` and `groups`. `Enter` on a topic opens its last 500 messages, newest first, with a filter field.
 
 Press `Ctrl+P` for the command palette or `F1` for help in the main panels.
 
@@ -636,7 +657,9 @@ MySQL client keys can use PKCS#1, PKCS#8, or SEC1 format. PostgreSQL client keys
 
 SQLN does not use an unverified TLS fallback. Even `sslmode=require` and `verify-ca` use full verification.
 An explicit `sslmode=disable` removes TLS; use it only when the connection environment permits unencrypted traffic.
-`rediss` and `valkeys` always require verified TLS.
+`rediss`, `valkeys`, and `kafkas` always require verified TLS.
+Kafka takes `sasl=plain`, `sasl=scram-sha-256`, or `sasl=scram-sha-512` (the default) for a user, and `registry=<url>` for the Schema Registry.
+Without a CA file, Kafka verifies with the system roots only.
 
 ### Local data and diagnostics
 
@@ -665,7 +688,7 @@ sqln mcp
 ```
 
 `target` is one SQLite file path, one DuckDB target with the `duckdb:` scheme, or one connection URI. SQLN asks before creating a missing file.
-Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, and `valkeys`.
+Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, `valkeys`, `kafka`, and `kafkas`.
 
 | Option | Purpose |
 |---|---|
@@ -682,7 +705,7 @@ Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `red
 | `--log <file>` | Write the event log |
 | `-h`, `--help` | Show command-line help |
 | `-V`, `--version` | Show the version |
-| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, or `redis` for an unconnected console; development option |
+| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, or `kafka` for an unconnected console; development option |
 
 ### Execution without the terminal interface
 
@@ -840,7 +863,7 @@ The TLS stack includes PostgreSQL, MySQL, and Redis endpoints.
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pushes to any branch, including `main`:
 
 - Formatting, Clippy, and the default test suite on Linux and macOS.
-- Database integration on Linux, with PostgreSQL, MySQL, Redis, Valkey, and TLS endpoints.
+- Database integration on Linux, with PostgreSQL, MySQL, Redis, Valkey, Kafka, the Schema Registry, and TLS endpoints.
 - Database logs on failure and stack cleanup after the integration job.
 
 Opening a pull request does not start another run. The pull request shows checks from its branch commit.

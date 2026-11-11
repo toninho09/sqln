@@ -234,7 +234,8 @@ impl Fixture {
     fn fill_sqlite(&mut self, name: &str, path: &Path) {
         self.navigator();
         self.code(KeyCode::Char('a'));
-        // `Left` goes backwards through the kinds from PostgreSQL.
+        // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis, SQLite.
+        self.code(KeyCode::Left);
         self.code(KeyCode::Left);
         self.code(KeyCode::Left);
         self.code(KeyCode::Left);

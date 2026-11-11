@@ -98,6 +98,7 @@ fn definition() -> Definition {
             password: None,
             database: None,
             tls: Tls::Disabled,
+            kafka: Default::default(),
         }),
     )
 }

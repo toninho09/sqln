@@ -68,7 +68,7 @@ Main thread                        Tokio runtime
 | `batch` | One noninteractive instruction, saved-name resolution, terminal authorization, credentials, and CSV/JSON delivery |
 | `exec` | Executions, scripts, cap, and cancellation |
 | `pool` | Limit, queue, reservation, and cleaning |
-| `connector` | Contract and PostgreSQL, MySQL, SQLite, DuckDB, and Redis/Valkey connectors |
+| `connector` | Contract and PostgreSQL, MySQL, SQLite, DuckDB, Redis/Valkey, and Kafka connectors, with the Schema Registry client |
 | `grid` | Rows in one block each (`row`), widths, search, budget, TSV, and readable JSON shape (`json`) |
 | `export` | Export formats, temporary file, and modal form |
 | `import` | File readers, `INSERT` text, batches, the error log, and modal form |
@@ -261,6 +261,12 @@ A Redis key tab uses the same path, without SQL:
 3. The session uses the command of the type: `GET`, `LRANGE`, `HSCAN`, `SSCAN`, `ZRANGE`, or `XRANGE`.
 4. A false `Capabilities::table_filters` removes `WHERE`, `ORDER BY`, **Clear filters**, and sorting from the tab. **Apply** becomes **Reload**.
 
+A Kafka tab uses the same path, without SQL:
+
+1. A topic tab reads `SQLN.TOPIC <topic> 500 [WHERE <filter>]` per `connector::kafka::page_text`. That text is not a console command. The session reads older windows of offsets until 500 matches, and it sends them newest first.
+2. A group tab reads `GROUP <id>`, the lag command of the console.
+3. `TableTab::filter_only` keeps the `WHERE` field of a topic tab and removes `ORDER BY` and sorting. The tab has one page.
+
 ### Grid editing
 
 `ResultTab::edits` keeps the original and current row snapshots for pending table changes.
@@ -452,6 +458,7 @@ Closing the connection is the only case that abandons that future.
 | SQLite | `InterruptHandle` | Drop the connection | `is_autocommit` |
 | DuckDB | `InterruptHandle` | Drop the connection, because a temporary table only goes away with a new connection | The session keeps it: the driver reports `is_autocommit` as a constant |
 | Redis/Valkey | `CLIENT UNBLOCK` on a temporary connection; no effect, close the session | `DISCARD`, the `CLIENT` name and modes, `UNWATCH`, and back to the database of the connection, in one round trip | Always `None`: the source has no manual transaction |
+| Kafka | Nothing: the read watches the stop token of the sink | Nothing: each read owns its consumer | Always `None`: each command only reads |
 
 `run` sends one statement, delivers the rows to `ResultSink`, and obeys the `Flow::Stop` return.
 One statement may deliver several results, such as `CALL` in MySQL, and the cap applies to each one.
@@ -512,6 +519,8 @@ The consoles of a connection share its settings through `Binding`. A save in Set
 5. `ResultTab::append_live` reserves each row in the budget. At the cap or at a full budget, the oldest rows leave the grid, and the cursor, the selection, and the search stay on their rows.
 
 Redis opens its own connection for Pub/Sub, `MONITOR`, `SYNC`, and `PSYNC`, with RESP2 and `connector::redis::live`. `XREAD` and `XREADGROUP` with `BLOCK` run again on the session connection and stop with `CLIENT UNBLOCK`.
+
+Kafka `TAIL` assigns the partitions to its own consumer, without a commit, and waits for messages until the stop token. It calls `ResultSink::flush` after 200 ms without a message.
 
 `Canceller::cancel` returns after the database handles the request.
 In PostgreSQL, that requires reading until the server closes the request connection.
@@ -639,12 +648,14 @@ No scope receives `password`. The plain-text authorized password stays in `crede
 
 | Field | Values |
 |---|---|
-| `kind` | `postgres`, `mysql`, `sqlite`, `duckdb`, or `redis` |
+| `kind` | `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, or `kafka` |
 | `credential` | `vault`, `session`, `globalPlainText`, or `none` |
 | `tls.mode` | `verify` or `disabled` |
 | `theme` | Optional. A value of `theme` of `preferences`. Without the field, the connection uses the default theme |
 | `icon` | Optional. `warning`, `skull`, `radiation`, `flag`, `crown`, `flask`, `star`, `diamond`, `tools`, `gear`, `home`, `heart`, `snowflake`, or `check`. Without the field, the connection uses the database icon |
-| `schemas` | Optional. The schemas, or the Redis databases, that the catalog keeps. The current schema always stays. Without the field, or with an empty list, the catalog keeps all |
+| `schemas` | Optional. The schemas, or the Redis databases, that the catalog keeps. The current schema always stays. Without the field, or with an empty list, the catalog keeps all. Kafka refuses the field |
+| `sasl` | Optional, only for `kafka`. `plain`, `scram-sha-256`, or `scram-sha-512`. Without the field, a Kafka user uses `scram-sha-512` |
+| `schemaRegistry` | Optional, only for `kafka`. `url` (`http://` or `https://`) and an optional `username`. The password stays in the system vault or in the session |
 
 The `globalPlainText` value exists only in the global scope.
 The value `sqlTimeoutSeconds: null` runs without a deadline, and the absence of the field means 30 seconds.

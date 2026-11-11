@@ -16,7 +16,7 @@ pub fn diagram_sql(dialect: Dialect, schema: &str) -> Option<[String; 2]> {
         Dialect::Postgres => Some([postgres_columns(&schema), postgres_keys(&schema)]),
         Dialect::MySql => Some([mysql_columns(&schema), mysql_keys(&schema)]),
         Dialect::Sqlite => Some([sqlite_columns(&schema), sqlite_keys(&schema)]),
-        Dialect::DuckDb | Dialect::Redis => None,
+        Dialect::DuckDb | Dialect::Redis | Dialect::Kafka => None,
     }
 }
 

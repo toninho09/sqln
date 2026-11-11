@@ -125,12 +125,17 @@ impl Drop for State {
     }
 }
 impl App {
+    /// Returns the system vault of the session. Tests can replace it.
+    pub(super) fn ai_vault(&self) -> Arc<SystemVault> {
+        self.ai.vault.clone()
+    }
+
     pub(super) fn ai_eligible(&self) -> bool {
         self.ai.preferences.enabled()
             && self.editor_has_focus()
             && self
                 .active_connection()
-                .is_some_and(|c| c.dialect != crate::sql::Dialect::Redis)
+                .is_some_and(|c| !c.dialect.is_command_line())
             && !self.console().is_busy()
             && !self.association_pending(self.console().id)
             && self.console().editor.review().is_none()

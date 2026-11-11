@@ -16,7 +16,6 @@ use crate::import::form::{ImportAction, ImportForm, ImportTable, ProbeRequest, T
 use crate::import::{ImportJob, ImportProgress, Probe, probe};
 use crate::input::Action;
 use crate::navigator::{Row, RowKind};
-use crate::sql::Dialect;
 use crate::structure::{Scope, Section, structure_sql};
 use crate::table::{TableTab, from_clause};
 use crate::ui::text;
@@ -111,7 +110,7 @@ impl App {
 
     fn connection_can_import(&self, id: ConnectionId) -> bool {
         self.connection(id)
-            .is_some_and(|item| item.dialect != Dialect::Redis && !self.is_read_only(id))
+            .is_some_and(|item| !item.dialect.is_command_line() && !self.is_read_only(id))
     }
 
     /// Opens the table of a row, and then its dialog. The first page uses the tab, so

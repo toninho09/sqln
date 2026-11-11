@@ -748,7 +748,7 @@ impl SqlEditor {
             Some((start, end)) => (start.row, end.row),
             None => (cursor.row, cursor.row),
         };
-        let marker = if self.dialect == Dialect::Redis {
+        let marker = if self.dialect.is_command_line() {
             "#"
         } else {
             "--"

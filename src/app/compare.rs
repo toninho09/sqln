@@ -17,7 +17,6 @@ use crate::diagram::Focus;
 use crate::exec::{ConnectionId, ConsoleId, RunOptions};
 use crate::input::Action;
 use crate::navigator::{Row, RowKind};
-use crate::sql::Dialect;
 use crate::structure::Scope;
 use crate::ui::text;
 
@@ -53,7 +52,7 @@ impl App {
     /// row has none. A column gives its table.
     fn row_compare(&self, row: &Row) -> Result<Source, &'static str> {
         let item = &self.connections[row.connection];
-        if item.dialect == Dialect::Redis {
+        if item.dialect.is_command_line() {
             return Err(text::COMPARE_REFUSED);
         }
         match row.kind {
@@ -123,7 +122,7 @@ impl App {
         let item = self
             .connection(connection)
             .ok_or(text::NO_SELECTED_CONNECTION)?;
-        if item.dialect == Dialect::Redis {
+        if item.dialect.is_command_line() {
             return Err(text::COMPARE_REFUSED);
         }
         let schema = schema.or_else(|| item.default_schema.clone());
@@ -160,11 +159,11 @@ impl App {
         self.sync_compare_form();
     }
 
-    /// Lists the connections that a compare can use. Redis has no tables.
+    /// Lists the connections that a compare can use. Redis and Kafka have no tables.
     fn compare_choices(&self) -> Vec<Choice> {
         self.connections
             .iter()
-            .filter(|item| item.dialect != Dialect::Redis)
+            .filter(|item| !item.dialect.is_command_line())
             .map(|item| Choice {
                 id: item.id,
                 name: item.name.clone(),

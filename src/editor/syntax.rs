@@ -24,7 +24,7 @@ impl SqlEditor {
         now: Instant,
         spawn: impl FnOnce(Box<dyn FnOnce() + Send>),
     ) -> bool {
-        if self.literal_text || self.dialect == Dialect::Redis {
+        if self.literal_text || self.dialect.is_command_line() {
             return false;
         }
         let key = (self.revision, self.dialect);
@@ -96,8 +96,8 @@ impl SqlEditor {
     pub fn syntax_report(&self) -> Option<&Report> {
         (self.syntax.completed == Some((self.revision, self.dialect))
             && !self.literal_text
-            && self.dialect != Dialect::Redis)
-            .then_some(self.syntax.report.as_ref())
-            .flatten()
+            && !self.dialect.is_command_line())
+        .then_some(self.syntax.report.as_ref())
+        .flatten()
     }
 }

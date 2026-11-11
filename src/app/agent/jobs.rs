@@ -1135,7 +1135,7 @@ impl App {
             .collect::<Result<Vec<_>, Error>>()?;
         for side in &sides {
             let item = self.connection(side.connection).ok_or_else(missing)?;
-            if item.dialect == Dialect::Redis
+            if item.dialect.is_command_line()
                 || (kind == crate::compare::Kind::Data && side.table.is_none())
             {
                 return Err(supported());

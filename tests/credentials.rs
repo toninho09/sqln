@@ -35,6 +35,7 @@ fn definition() -> Definition {
             password: Some(Secret::new(PASSWORD)),
             database: Some("app_db".into()),
             tls: Tls::Verify(TlsFiles::default()),
+            kafka: Default::default(),
         }),
     )
 }

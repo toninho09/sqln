@@ -376,7 +376,7 @@ The mark leaves with the next edit, and an edit during the execution prevents th
 
 The active SQL console checks syntax after 400 ms without a text or dialect change.
 The check runs locally, outside the interface thread. It executes no SQL and reads no parameter values.
-PostgreSQL, MySQL, SQLite, and DuckDB use the bundled `sqlparser` dialects. Redis and Valkey have no SQL check.
+PostgreSQL, MySQL, SQLite, and DuckDB use the bundled `sqlparser` dialects. Redis, Valkey, and Kafka have no SQL check.
 The existing lexer still serves highlighting, autocomplete, and incomplete editor text.
 
 Located warnings underline tokens without moving the cursor or changing the selection.
@@ -581,7 +581,7 @@ The table tab and the structure tab stay open together.
 - The grid uses the pagination, the budget, the search, the copy, and the export of the table tab.
 - The export has no target table, as in a console.
 - The tab does not come back in the next session.
-- Redis and Valkey have no structure. `i` shows the reason in the status bar.
+- Redis, Valkey, and Kafka have no structure. `i` shows the reason in the status bar.
 
 ### Diagram tab
 
@@ -618,7 +618,7 @@ The table tab and the structure tab stay open together.
 - The row under the picture shows the count of tables and keys, `keys only`, and `partial` when a limit stopped the read.
 - **Reload** (`R`) reads the diagram again. DDL does not update the tab on its own.
 - The tab does not come back in the next session.
-- Redis and Valkey have no diagram. `d` shows the reason in the status bar.
+- Redis, Valkey, and Kafka have no diagram. `d` shows the reason in the status bar.
 
 ### Compare tab
 
@@ -707,7 +707,7 @@ A data compare has the label `name (data)`. The grid has a `Change` column and t
 The modal opens at **Selection**, when it exists. Otherwise, it opens at **All rows**, when available, and last at **Loaded rows**.
 **All rows** disappears when the grid already has everything.
 In the console, **All rows** needs a plain read and a command in the execution, or an open transaction. In the other cases, the modal explains the reason.
-Redis and Valkey offer only the loaded rows, without SQL INSERT.
+Redis, Valkey, and Kafka offer only the loaded rows, without SQL INSERT.
 
 | Format | Options |
 |---|---|
@@ -787,6 +787,14 @@ In the navigator, each numbered database shows up to 1,000 keys. `(partial list)
 The tab uses the grid, the pages, and **Load more**, without `WHERE`, `ORDER BY`, **Clear filters**, and sorting.
 **Reload** reads the value again.
 In the console, each line is one command, as in `redis-cli`. A `#` at the start of the line makes a comment.
+
+### Kafka topic or group
+
+In the navigator, a Kafka connection shows two schemas: `topics` and `groups`. Internal topics, which start with `__`, stay out.
+`Enter` on a topic opens a tab with the label `<topic> (topic)`. It shows the last 500 messages, newest first, in one page.
+The tab has a `WHERE` field with the Kafka filter, such as `value.status = 'failed'`, without `ORDER BY` and sorting. **Apply filters** reads again with the filter.
+`Enter` on a group opens a tab with the label `<group> (group)`. It shows the committed offset, the end offset, and the lag of each partition.
+In the console, each line is one Kafka command of SQLN. `TAIL` shows `Live` until **Stop**, as a continuous Redis command.
 
 ## 4. Connection form
 

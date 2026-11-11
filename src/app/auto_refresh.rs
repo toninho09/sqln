@@ -292,6 +292,8 @@ pub fn statements_are_reads(statements: &[String], dialect: Dialect) -> bool {
             false
         } else if dialect == Dialect::Redis {
             is_known_redis_read(sql)
+        } else if dialect == Dialect::Kafka {
+            crate::sql::is_known_kafka_read(sql)
         } else {
             is_plain_read(sql, dialect)
         }

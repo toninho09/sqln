@@ -11,8 +11,8 @@ mod statement;
 
 pub use classify::{
     changes_state, changes_without_result, counts_rows, first_keyword, is_continuous,
-    is_known_redis_read, is_plain_read, is_secret, lacks_where, reads_or_writes_stdio,
-    removes_prepared_statements, with_row_limit,
+    is_known_kafka_read, is_known_redis_read, is_plain_read, is_secret, lacks_where,
+    reads_or_writes_stdio, removes_prepared_statements, with_row_limit,
 };
 pub use format::format_statement;
 pub use lexer::{Lexer, Token, TokenKind, tokenize};
@@ -27,6 +27,16 @@ pub enum Dialect {
     DuckDb,
     /// Redis and Valkey commands. This text is not SQL.
     Redis,
+    /// Kafka commands of SQLN, one for each line. This text is not SQL.
+    Kafka,
+}
+
+impl Dialect {
+    /// Returns true for a source with commands instead of SQL: one command for each line,
+    /// and `#` at the start of a line for a comment.
+    pub fn is_command_line(self) -> bool {
+        matches!(self, Dialect::Redis | Dialect::Kafka)
+    }
 }
 
 /// Shares parser dialect selection between assistant policy and local syntax checks.
@@ -37,7 +47,7 @@ pub(crate) fn parser_dialect(dialect: Dialect) -> Option<&'static dyn sqlparser:
         Dialect::MySql => &MySqlDialect {},
         Dialect::Sqlite => &SQLiteDialect {},
         Dialect::DuckDb => &DuckDbDialect {},
-        Dialect::Redis => return None,
+        Dialect::Redis | Dialect::Kafka => return None,
     })
 }
 

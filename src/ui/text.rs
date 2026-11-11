@@ -443,6 +443,7 @@ pub const FORM_GENERAL: &str = "General";
 pub const FORM_ADDRESS: &str = "Address";
 pub const FORM_CREDENTIALS: &str = "Credentials";
 pub const FORM_SECURITY: &str = "Security";
+pub const FORM_REGISTRY: &str = "Schema Registry";
 pub const FORM_OPTIONS: &str = "Options";
 pub const TITLE_PALETTE: &str = "Commands";
 pub const TITLE_PREFIX: &str = "Ctrl+W";
@@ -619,6 +620,9 @@ pub const FORM_NEEDS_USER: &str = "The connection needs a user.";
 pub const FORM_NEEDS_FILE: &str = "SQLite needs a file.";
 pub const FORM_REDIS_DATABASE: &str = "The Redis database must be a number.";
 pub const FORM_REDIS_SCHEMAS: &str = "Each Redis database must be a number.";
+pub const FORM_KAFKA_SOCKET: &str = "A Kafka connection needs a host name, not a socket.";
+pub const FORM_REGISTRY_URL: &str =
+    "The registry URL must start with http:// or https://. A registry user needs a URL.";
 pub const REDIS_SOCKET_TLS: &str = "A Unix socket does not use TLS. Turn off TLS.";
 pub const REDIS_NO_SOCKET: &str = "This system has no Unix sockets.";
 pub const REDIS_NO_STOP: &str = "The server cannot stop this command.";
@@ -661,6 +665,96 @@ pub const REDIS_LIVE_CLOSED: &str =
     "The server closed the connection of the stream. Run the command again.";
 pub const REDIS_LIVE_BAD: &str =
     "The server sent a reply that SQLN cannot read. Run the command again.";
+
+pub const KAFKA_UNKNOWN_COMMAND: &str =
+    "Unknown Kafka command. Use TOPICS, PARTITIONS, CONSUME, TAIL, GROUPS, or GROUP.";
+pub const KAFKA_EXTRA_WORDS: &str = "The command has more words than it accepts. Remove them.";
+pub const KAFKA_CONSUME_CLAUSES: &str =
+    "CONSUME accepts PARTITION, FROM, WHERE, LIMIT, and SCAN after the topic.";
+pub const KAFKA_TAIL_CLAUSES: &str = "TAIL accepts PARTITION, FROM, and WHERE after the topic.";
+pub const KAFKA_REPEATED_CLAUSE: &str = "Each clause can occur one time. Remove the repeat.";
+pub const KAFKA_BAD_START: &str = "FROM needs earliest, latest, an offset of 0 or more, or @ and a time, such as @2026-11-10T12:00:00Z.";
+pub const KAFKA_BAD_TEXT: &str = "The text has a bad escape or is not UTF-8.";
+pub const KAFKA_BAD_OPERATOR: &str = "Use != for not equal.";
+pub const KAFKA_NEEDS_FIELD: &str =
+    "The condition needs key, value, headers, or a field such as value.customer.id.";
+pub const KAFKA_NEEDS_OPERATOR: &str = "Use key = 'text', CONTAINS 'text', MATCHES 'regex', or value.field with =, !=, <, <=, >, or >=.";
+pub const KAFKA_NEEDS_TEXT: &str = "The condition needs a text between quotes.";
+pub const KAFKA_NEEDS_VALUE: &str =
+    "The condition needs a text between quotes, a number, true, false, or null.";
+pub const KAFKA_NO_CLOSE: &str = "The filter has a parenthesis that does not close.";
+pub const KAFKA_BAD_REGEX: &str =
+    "The regular expression is not valid or is too large. Check its syntax.";
+pub const KAFKA_WHAT_TOPIC: &str = "a topic";
+pub const KAFKA_WHAT_GROUP: &str = "a group";
+pub const KAFKA_WHAT_PARTITION: &str = "a partition number";
+pub const KAFKA_WHAT_COUNT: &str = "a number of 1 or more";
+pub const KAFKA_NO_TOPIC: &str = "The topic does not exist. Use TOPICS to see the topics.";
+pub const KAFKA_NO_PARTITION: &str =
+    "The topic has no partition with this number. Use PARTITIONS to see them.";
+pub const KAFKA_NO_TRANSACTIONS: &str =
+    "Kafka has no transactions in SQLN. Each command only reads.";
+pub const KAFKA_CALL_FAILED: &str = "The Kafka call stopped before its end. Try again.";
+pub const KAFKA_GROUP_EMPTY: &str =
+    "The group has no committed offsets. A group that does not exist also gives this result.";
+pub const KAFKA_PATH_TEXT: &str =
+    "librdkafka needs a TLS file path in UTF-8. Move or rename the file.";
+pub const KAFKA_NO_ROOTS: &str =
+    "The system has no TLS roots for Kafka. Set a CA file in the Security section.";
+pub const KAFKA_DECODE_FAILED: &str = "the payload does not match its schema";
+pub const KAFKA_REGISTRY_CLIENT: &str = "SQLN cannot create the Schema Registry client.";
+pub const KAFKA_REGISTRY_UNREACHABLE: &str =
+    "SQLN cannot reach the Schema Registry. Check the URL, the network, and TLS.";
+pub const KAFKA_REGISTRY_REFUSED: &str =
+    "the Schema Registry refused the credentials. Check the registry user and password";
+pub const KAFKA_REGISTRY_NO_SCHEMA: &str = "the Schema Registry has no schema with this id";
+pub const KAFKA_REGISTRY_BAD_ANSWER: &str =
+    "the Schema Registry sent an answer that SQLN cannot read";
+pub const KAFKA_REGISTRY_BAD_SCHEMA: &str = "SQLN cannot read the schema of the registry";
+pub const KAFKA_REGISTRY_DEEP: &str = "the schema has too many levels of references";
+pub const KAFKA_REGISTRY_VAULT: &str = "SQLN cannot read the registry password from the vault";
+
+/// Names what a Kafka command needs at a position.
+pub fn kafka_needs(what: &str) -> String {
+    format!("The command needs {what} here.")
+}
+
+pub fn kafka_registry_not_saved(error: &str) -> String {
+    format!(
+        "SQLN did not save the Schema Registry password in the vault: {error} Edit the connection and save again."
+    )
+}
+
+pub fn kafka_registry_status(status: u16) -> String {
+    format!("the Schema Registry answered HTTP {status}")
+}
+
+pub fn kafka_registry_vault_error(error: &str) -> String {
+    format!("SQLN cannot read the registry password from the vault: {error}")
+}
+
+pub fn kafka_registry_unavailable(reason: &str) -> String {
+    format!("The Schema Registry is not available: {reason}. Values stay as text or bytes.")
+}
+
+/// A payload with a schema id that the registry could not decode keeps its bytes.
+pub fn kafka_decode_notice(id: u32, reason: &str) -> String {
+    format!("Schema {id}: {reason}. The value stays as bytes.")
+}
+
+pub fn kafka_topic_error(error: &str) -> String {
+    format!("The cluster refused the topic: {error}.")
+}
+
+/// The counts of a read with a filter, a scan limit, or a stop.
+pub fn kafka_scanned(scanned: u64, matched: u64, stopped: bool) -> String {
+    let end = if stopped {
+        " The read stopped before the end."
+    } else {
+        ""
+    };
+    format!("Scanned {scanned} messages; {matched} matched.{end}")
+}
 
 pub fn redis_subscribed(channel: &str, count: &str) -> String {
     format!("Subscribed to {channel}. Subscriptions: {count}.")
@@ -743,6 +837,10 @@ pub const FIELD_TLS: &str = "TLS";
 pub const FIELD_CA: &str = "CA file";
 pub const FIELD_CLIENT_CERTIFICATE: &str = "Client certificate";
 pub const FIELD_CLIENT_KEY: &str = "Client key";
+pub const FIELD_SASL: &str = "SASL";
+pub const FIELD_REGISTRY_URL: &str = "Registry URL";
+pub const FIELD_REGISTRY_USER: &str = "Registry user";
+pub const FIELD_REGISTRY_PASSWORD: &str = "Registry password";
 pub const FIELD_FILE: &str = "File";
 pub const FIELD_FOREIGN_KEYS: &str = "foreign_keys";
 pub const FIELD_BUSY: &str = "Lock limit (seconds)";
@@ -759,6 +857,7 @@ pub const BUTTON_CANCEL: &str = "Cancel";
 pub const VALUE_POSTGRES: &str = "PostgreSQL";
 pub const VALUE_MYSQL: &str = "MySQL";
 pub const VALUE_REDIS: &str = "Redis/Valkey";
+pub const VALUE_KAFKA: &str = "Kafka";
 pub const VALUE_SQLITE: &str = "SQLite";
 pub const VALUE_DUCKDB: &str = "DuckDB";
 pub const VALUE_SCOPE_PROJECT: &str = "Project";
@@ -2205,7 +2304,7 @@ Options:
   --connection <name>   Use a saved connection instead of a target.
   --scope global|project Select the scope of a saved connection name.
   --single-transaction  Run the whole script in one transaction that rolls
-                         back on any failure. Redis has no support.
+                         back on any failure. Redis and Kafka have no support.
   --continue-on-error   Keep running after a failed instruction and report
                          every failure. The exit code still marks a failure.
   --yes                 Authorize protected execution and database creation.
@@ -2217,8 +2316,8 @@ Options:
   -V, --version          Show the version.
 
 Development options:
-  --dialect <name>       Use postgres, mysql, sqlite, duckdb, or redis in a console
-                         without a connection.
+  --dialect <name>       Use postgres, mysql, sqlite, duckdb, redis, or kafka in a
+                         console without a connection.
 
 The settings and the connections are in config.json, in the global folder
 (~/.config/sqln, or $XDG_CONFIG_HOME/sqln) and in the .sqln folder of the project.

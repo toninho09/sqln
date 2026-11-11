@@ -174,6 +174,9 @@ impl Definition {
         let mut definition = self.clone();
         if let Source::Network(target) = &mut definition.source {
             target.password = None;
+            if let Some(registry) = &mut target.kafka.registry {
+                registry.password = None;
+            }
         }
         definition
     }
@@ -191,6 +194,15 @@ impl Definition {
         };
         if same
             && let (Source::Network(new), Source::Network(old)) = (&mut self.source, &old.source)
+            && new.password.is_none()
+        {
+            new.password.clone_from(&old.password);
+        }
+        // The registry password follows the same rule with its own destination.
+        if let (Source::Network(new), Source::Network(old)) = (&mut self.source, &old.source)
+            && let (Some(new), Some(old)) = (&mut new.kafka.registry, &old.kafka.registry)
+            && new.url == old.url
+            && new.user == old.user
             && new.password.is_none()
         {
             new.password.clone_from(&old.password);
@@ -227,6 +239,7 @@ impl Definition {
                     Engine::Postgres => "PostgreSQL",
                     Engine::MySql => "MySQL",
                     Engine::Redis => "Redis/Valkey",
+                    Engine::Kafka => "Kafka",
                 };
                 let place = match &target.address {
                     Address::Tcp { host, port } => format!("{host}:{port}"),

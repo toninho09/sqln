@@ -162,7 +162,7 @@ impl App {
         };
         if complete {
             AllRows::Complete
-        } else if dialect == Dialect::Redis {
+        } else if dialect.is_command_line() {
             AllRows::Refused(text::EXPORT_ALL_SOURCE)
         } else if table.is_some() {
             AllRows::Available

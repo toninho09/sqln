@@ -34,6 +34,7 @@ pub enum Engine {
     Postgres,
     MySql,
     Redis,
+    Kafka,
 }
 
 impl Engine {
@@ -42,18 +43,81 @@ impl Engine {
             Engine::Postgres => 5432,
             Engine::MySql => 3306,
             Engine::Redis => 6379,
+            Engine::Kafka => 9092,
         }
     }
 
     /// Returns false for a source that works without a user name.
     pub fn needs_user(self) -> bool {
-        self != Engine::Redis
+        !matches!(self, Engine::Redis | Engine::Kafka)
     }
 
-    /// Returns true when the database name has a valid form for this source.
+    /// Returns true when the database name has a valid form for this source. Kafka has
+    /// no databases.
     pub fn accepts_database(self, name: &str) -> bool {
-        self != Engine::Redis || name.parse::<u32>().is_ok()
+        match self {
+            Engine::Redis => name.parse::<u32>().is_ok(),
+            Engine::Kafka => false,
+            Engine::Postgres | Engine::MySql => true,
+        }
     }
+
+    /// Returns the reason that `accepts_database` refuses a name.
+    pub fn database_error(self) -> &'static str {
+        match self {
+            Engine::Kafka => "A Kafka connection has no database.",
+            _ => "The Redis database must be a number.",
+        }
+    }
+}
+
+/// The SASL mechanism of a Kafka connection with a user.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Sasl {
+    #[serde(rename = "plain")]
+    Plain,
+    #[serde(rename = "scram-sha-256")]
+    ScramSha256,
+    #[default]
+    #[serde(rename = "scram-sha-512")]
+    ScramSha512,
+}
+
+impl Sasl {
+    pub const ALL: [Sasl; 3] = [Sasl::Plain, Sasl::ScramSha256, Sasl::ScramSha512];
+
+    /// Returns the name of the mechanism for librdkafka and for the connection text.
+    pub fn name(self) -> &'static str {
+        match self {
+            Sasl::Plain => "PLAIN",
+            Sasl::ScramSha256 => "SCRAM-SHA-256",
+            Sasl::ScramSha512 => "SCRAM-SHA-512",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|sasl| sasl.name().eq_ignore_ascii_case(text))
+    }
+}
+
+/// The Schema Registry of a Kafka connection. A saved password stays in the system vault,
+/// and the connector reads it there when `password` is empty.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Registry {
+    pub url: String,
+    /// Empty for a registry without authentication.
+    pub user: String,
+    /// The password of this session, from the form.
+    pub password: Option<Secret>,
+}
+
+/// The settings that only a Kafka connection uses. Other engines keep the default.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KafkaOptions {
+    pub sasl: Sasl,
+    pub registry: Option<Box<Registry>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -106,6 +170,7 @@ pub struct NetworkTarget {
     pub password: Option<Secret>,
     pub database: Option<String>,
     pub tls: Tls,
+    pub kafka: KafkaOptions,
 }
 
 /// What the command line opens.
@@ -178,6 +243,8 @@ struct Parameters {
     certificate: Option<PathBuf>,
     key: Option<PathBuf>,
     socket: Option<PathBuf>,
+    sasl: Option<Sasl>,
+    registry: Option<String>,
 }
 
 impl Parameters {
@@ -194,6 +261,13 @@ impl Parameters {
                 "host" | "socket" if value.starts_with('/') => {
                     parameters.socket = Some(value.into());
                 }
+                "sasl" => {
+                    parameters.sasl = Some(
+                        Sasl::parse(&value)
+                            .ok_or("sasl must be plain, scram-sha-256, or scram-sha-512.")?,
+                    );
+                }
+                "registry" if !value.is_empty() => parameters.registry = Some(value),
                 other => return Err(format!("Unknown connection parameter: {other}")),
             }
         }
@@ -288,7 +362,8 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
         "postgres" | "postgresql" => Engine::Postgres,
         "mysql" | "mariadb" => Engine::MySql,
         "redis" | "rediss" | "valkey" | "valkeys" => Engine::Redis,
-        _ => return Err("The scheme must be postgres, mysql, or redis.".to_owned()),
+        "kafka" | "kafkas" => Engine::Kafka,
+        _ => return Err("The scheme must be postgres, mysql, redis, or kafka.".to_owned()),
     };
     let (location, query) = rest.split_once('?').unwrap_or((rest, ""));
     let (authority, path) = location.split_once('/').unwrap_or((location, ""));
@@ -313,11 +388,27 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
         .as_deref()
         .is_some_and(|name| !engine.accepts_database(name))
     {
-        return Err("The Redis database must be a number.".to_owned());
+        return Err(engine.database_error().to_owned());
     }
 
     let mut parameters = Parameters::parse(query)?;
-    if matches!(scheme.as_str(), "rediss" | "valkeys") {
+    if engine != Engine::Kafka && (parameters.sasl.is_some() || parameters.registry.is_some()) {
+        return Err("sasl and registry are valid only for kafka.".to_owned());
+    }
+    if engine == Engine::Kafka && parameters.socket.is_some() {
+        return Err("A Kafka connection needs a host, not a socket.".to_owned());
+    }
+    let kafka = KafkaOptions {
+        sasl: parameters.sasl.take().unwrap_or_default(),
+        registry: parameters.registry.take().map(|url| {
+            Box::new(Registry {
+                url,
+                user: String::new(),
+                password: None,
+            })
+        }),
+    };
+    if matches!(scheme.as_str(), "rediss" | "valkeys" | "kafkas") {
         if parameters.tls_mode.as_deref() == Some("disable") {
             return Err("This scheme always uses TLS, so sslmode=disable is not valid.".to_owned());
         }
@@ -342,5 +433,6 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
         password,
         database,
         tls,
+        kafka,
     })
 }
