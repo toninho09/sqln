@@ -32,6 +32,13 @@ jobs:
       - name: Install Rust components
         run: rustup component add --toolchain stable rustfmt clippy
 
+      # librdkafka 2.12.1 includes curl/curl.h even when curl support is off.
+      - name: Install libcurl headers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libcurl4-openssl-dev
+
       - name: Cache Rust dependencies and build output
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -55,6 +62,12 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+
+      # librdkafka 2.12.1 includes curl/curl.h even when curl support is off.
+      - name: Install libcurl headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libcurl4-openssl-dev
 
       - name: Cache Rust dependencies and build output
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3

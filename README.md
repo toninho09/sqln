@@ -98,11 +98,11 @@ On macOS, install the command-line development tools if you do not have them:
 xcode-select --install
 ```
 
-On Debian or Ubuntu, install the native build tools:
+On Debian or Ubuntu, install the native build tools and the libcurl headers:
 
 ```sh
 sudo apt-get update
-sudo apt-get install --yes build-essential
+sudo apt-get install --yes build-essential libcurl4-openssl-dev
 ```
 
 Install Rust with [rustup](https://rustup.rs/) if needed.
