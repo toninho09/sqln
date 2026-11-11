@@ -41,6 +41,12 @@ jobs:
           shared-key: binaries
           key: ${{ matrix.target }}
 
+      # rust-cache deletes the files in target/duckdb-sources, including the
+      # completion marker. Remove the partial tree so libduckdb-sys unpacks it again.
+      - name: Remove partial DuckDB sources
+        shell: bash
+        run: rm -rf target/duckdb-sources target/*/duckdb-sources
+
       - name: Build locked release binary
         run: cargo build --release --locked --bin sqln --target "$TARGET"
 

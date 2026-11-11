@@ -37,6 +37,12 @@ jobs:
         with:
           shared-key: ci
 
+      # rust-cache deletes the files in target/duckdb-sources, including the
+      # completion marker. Remove the partial tree so libduckdb-sys unpacks it again.
+      - name: Remove partial DuckDB sources
+        shell: bash
+        run: rm -rf target/duckdb-sources target/*/duckdb-sources
+
       - name: Run delivery checks
         run: make check
 
@@ -54,6 +60,12 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: ci
+
+      # rust-cache deletes the files in target/duckdb-sources, including the
+      # completion marker. Remove the partial tree so libduckdb-sys unpacks it again.
+      - name: Remove partial DuckDB sources
+        shell: bash
+        run: rm -rf target/duckdb-sources target/*/duckdb-sources
 
       - name: Create disposable TLS certificates
         run: scripts/test-certs.sh
