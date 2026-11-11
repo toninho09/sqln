@@ -34,6 +34,7 @@ use sqln::editor::KeyboardMode;
 use sqln::exec::{ResultSink, Settings};
 use sqln::form::{ConnectionForm, Field, Kind};
 use sqln::sql::Dialect;
+use sqln::store::config::ExplorerSide;
 use sqln::ui::theme::Theme;
 use tokio::sync::Notify;
 
@@ -67,6 +68,10 @@ impl Fixture {
             connections: definitions,
             ..Options::default()
         };
+        Self::with_options(paths, options)
+    }
+
+    fn with_options(paths: Vec<PathBuf>, options: Options) -> Self {
         let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
         Self {
             app: App::new(options, clipboard, Theme::plain()),
@@ -1136,6 +1141,52 @@ fn a_drag_on_the_dividers_changes_the_panels() {
     let (_, moved) = f.locate("Messages");
     assert!(moved < row, "{moved} {row}");
     f.assert_sees("a value");
+}
+
+#[test]
+fn the_explorer_on_the_right_moves_its_panel_focus_keys_and_divider() {
+    let path = database("right-side", "");
+    let options = Options {
+        database: Some(path.clone()),
+        explorer_side: ExplorerSide::Right,
+        ..Options::default()
+    };
+    let mut f = Fixture::with_options(vec![path], options);
+    f.run("SELECT 'a value' AS shown;");
+    // The explorer takes the last 24 columns, after the divider. Its title starts
+    // after one space.
+    let (column, _) = f.locate("EXPLORER");
+    assert_eq!(column, WIDTH - 23);
+    assert_eq!(f.buffer()[(WIDTH - 25, 5)].symbol(), "│");
+    f.assert_sees("a value");
+
+    // The focus keys follow the screen: right goes to the explorer, left leaves it.
+    f.prefix('h');
+    assert!(!f.app.navigator_focused());
+    f.prefix('l');
+    assert!(f.app.navigator_focused());
+    f.prefix('l');
+    assert!(f.app.navigator_focused());
+    f.prefix('h');
+    assert!(!f.app.navigator_focused());
+
+    let left = MouseEventKind::Down(MouseButton::Left);
+    let drag = MouseEventKind::Drag(MouseButton::Left);
+    let up = MouseEventKind::Up(MouseButton::Left);
+    f.app.on_event(mouse(left, WIDTH - 25, 5));
+    f.app.on_event(mouse(drag, WIDTH - 41, 5));
+    f.app.on_event(mouse(up, WIDTH - 41, 5));
+    assert_eq!(f.app.navigator().width, 40);
+    assert_eq!(f.buffer()[(WIDTH - 41, 5)].symbol(), "│");
+
+    f.app.on_event(mouse(left, WIDTH - 41, 5));
+    f.app.on_event(mouse(drag, 0, 5));
+    f.app.on_event(mouse(up, 0, 5));
+    assert_eq!(
+        f.app.navigator().width,
+        60,
+        "the console keeps its minimum width"
+    );
 }
 
 #[test]

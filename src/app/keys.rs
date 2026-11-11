@@ -21,6 +21,7 @@ use crate::palette::{Command, Palette, PaletteRequest};
 use crate::plan::Explain;
 use crate::settings::SettingsRequest;
 use crate::sql::{Dialect, first_keyword, is_plain_read};
+use crate::store::config::ExplorerSide;
 use crate::table::TableFocus;
 use crate::ui::kit::measure::fit;
 use crate::ui::kit::prompt::TextAction;
@@ -471,7 +472,7 @@ impl App {
         {
             return;
         }
-        if self.home() && !home_allows(action) {
+        if self.home() && !self.home_allows(action) {
             return;
         }
         if matches!(
@@ -558,8 +559,10 @@ impl App {
             Action::OpenSettings => self.open_settings(),
             Action::GridExport => self.open_export(),
             Action::GridImport => self.open_import(),
-            Action::FocusLeft => self.focus_navigator(),
-            Action::FocusRight => self.navigator_focused = false,
+            Action::FocusLeft | Action::FocusRight if action == self.explorer_entry() => {
+                self.focus_navigator();
+            }
+            Action::FocusLeft | Action::FocusRight => self.navigator_focused = false,
             Action::FocusUp => self.focus_console(Focus::Editor),
             Action::FocusDown => self.focus_console(Focus::Results),
             Action::NavigatorUp
@@ -701,6 +704,21 @@ impl App {
             console.editor.close_suggestions();
         }
         console.focus = focus;
+    }
+
+    /// Returns the focus key toward the side of the explorer. The other focus key
+    /// leaves the explorer.
+    pub(super) fn explorer_entry(&self) -> Action {
+        match self.explorer_side {
+            ExplorerSide::Left => Action::FocusLeft,
+            ExplorerSide::Right => Action::FocusRight,
+        }
+    }
+
+    /// Returns true for an action that acts on the home screen: a command of the
+    /// explorer, the focus key toward the explorer, or a command that needs no tab.
+    fn home_allows(&self, action: Action) -> bool {
+        action == self.explorer_entry() || home_allows(action)
     }
 
     fn toggle_navigator(&mut self) {
@@ -1567,7 +1585,7 @@ impl App {
         if self.review_blocks(action) {
             return false;
         }
-        if self.home() && !home_allows(action) {
+        if self.home() && !self.home_allows(action) {
             return false;
         }
         match action.region() {
@@ -1643,8 +1661,10 @@ impl App {
             Action::FormatSql => !in_table && !console.editor.dialect().is_command_line(),
             Action::ToggleComment => !in_table,
             Action::OpenHistory => !in_table && self.history_is_open_to(connection),
-            Action::FocusLeft => !self.navigator.collapsed && !self.navigator_focused,
-            Action::FocusRight => self.navigator_focused,
+            Action::FocusLeft | Action::FocusRight if action == self.explorer_entry() => {
+                !self.navigator.collapsed && !self.navigator_focused
+            }
+            Action::FocusLeft | Action::FocusRight => self.navigator_focused,
             _ => true,
         }
     }
@@ -1754,14 +1774,13 @@ impl App {
     /// Returns the key that moves to the explorer, then the key of an explorer command,
     /// with its label. That path acts from any panel.
     fn explorer_row(&self, action: Action, label: &'static str) -> Option<(String, &'static str)> {
-        let focus = self.shown_key(Action::FocusLeft)?;
+        let focus = self.shown_key(self.explorer_entry())?;
         let key = self.shown_key(action)?;
         Some((format!("{focus} {key}"), label))
     }
 }
 
-/// Returns true for an action that acts on the home screen: a command of the explorer,
-/// or a command that needs no tab.
+/// Returns true for a command of the explorer, or a command that needs no tab.
 fn home_allows(action: Action) -> bool {
     if matches!(action, Action::AgentSessions | Action::AgentStop) {
         return true;
@@ -1775,7 +1794,6 @@ fn home_allows(action: Action) -> bool {
                 | ToggleNavigator
                 | ReloadConfig
                 | OpenSettings
-                | FocusLeft
                 | ExplorerCommands
                 | ContextCommands
                 | OpenSessions

@@ -1243,6 +1243,9 @@ The **Appearance** section has the **Default theme** field.
 The choice changes the colors at once, before saving. `Esc` and **Cancel** bring back the saved theme.
 In the global scope, a theme defined in the project keeps priority.
 
+The **Explorer side** field puts the explorer on the **Left** (default) or on the **Right** of the screen. The save moves it at once.
+The focus keys follow the screen: with the explorer on the right, `Ctrl+W l` goes to the explorer, `Ctrl+W h` leaves it, and the home screen shows paths such as `Ctrl+W l a`.
+
 The same section has the **Custom themes** list, with the buttons **New theme**, **Edit**, and **Delete**:
 
 - **New theme** opens the editor on a copy of the theme that the scope chooses. The **Base** row swaps the whole palette for another theme.

@@ -601,6 +601,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
     "keymap": {},
     "theme": "auto",
     "icons": "unicode",
+    "explorerSide": "left",
     "reopenTabs": true,
     "queryHistory": true,
     "formatJson": true,

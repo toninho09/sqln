@@ -179,6 +179,14 @@ pub fn suggestion_keys_name(keys: SuggestionKeys) -> &'static str {
     }
 }
 
+pub fn explorer_side_name(side: crate::store::config::ExplorerSide) -> &'static str {
+    use crate::store::config::ExplorerSide;
+    match side {
+        ExplorerSide::Left => "Left",
+        ExplorerSide::Right => "Right",
+    }
+}
+
 pub fn theme_name(name: &crate::store::config::ThemeName) -> &'static str {
     use crate::store::config::ThemeName;
     match name {
@@ -1073,6 +1081,7 @@ pub const FIELD_ROW_CAP: &str = "Row cap";
 pub const FIELD_CAP_IN_SQL: &str = "Limit in SQL";
 pub const FIELD_BUDGET: &str = "Data (MiB)";
 pub const FIELD_THEME: &str = "Default theme";
+pub const FIELD_EXPLORER_SIDE: &str = "Explorer side";
 pub const FIELD_CONNECTION_THEME: &str = "Theme";
 pub const FIELD_CONNECTION_ICON: &str = "Icon";
 pub const FIELD_THEMES: &str = "Custom themes";
@@ -1720,8 +1729,8 @@ pub fn action_text(action: Action) -> &'static str {
         Action::PreviousTab => "Previous tab",
         Action::ToggleNavigator => "Hide or show the navigator",
         Action::ChooseSchema => "Choose the schema or database",
-        Action::FocusLeft => "Go to the navigator",
-        Action::FocusRight => "Leave the navigator",
+        Action::FocusLeft => "Go to the left panel",
+        Action::FocusRight => "Go to the right panel",
         Action::FocusUp => "Go to the editor",
         Action::FocusDown => "Go to the results",
         Action::NavigatorUp => "Previous row",

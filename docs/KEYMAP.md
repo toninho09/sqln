@@ -122,6 +122,7 @@ Grid Apply controls its own short transaction.
 `Ctrl+W C` and `Ctrl+W R` do not ask for confirmation, like the commit and rollback buttons.
 `Ctrl+W N` uses uppercase `N` and does not replace `Ctrl+W n`.
 `Ctrl+W H` uses uppercase `H` and does not replace `Ctrl+W h`.
+`Ctrl+W h` and `Ctrl+W l` follow the screen. With **Explorer side** set to **Right** in `Settings > Appearance`, `Ctrl+W l` goes to the explorer and `Ctrl+W h` leaves it.
 `Ctrl+W E` and `Ctrl+W A` use uppercase keys and do not replace `Ctrl+W e` and `Ctrl+W a`.
 `Ctrl+W S` uses uppercase `S` and does not replace `Ctrl+W s`. With the focus in the navigator, it uses the connection of the row.
 `Ctrl+W D` uses uppercase `D` and does not replace `Ctrl+W d`. With the focus in the navigator, it uses the row, as `d` does. A table tab shows the diagram of its table, and a console shows its current schema.

@@ -14,7 +14,7 @@ use crate::store::Scope;
 use crate::store::config::{
     AgentAccess, AgentDefault, DEFAULT_BELL_AFTER_SECONDS, DEFAULT_CAP_IN_SQL, DEFAULT_FORMAT_JSON,
     DEFAULT_MCP, DEFAULT_MCP_REMEMBER_CLIENTS, DEFAULT_QUERY_HISTORY, DEFAULT_REOPEN_TABS,
-    DEFAULT_SHOW_SYSTEM_COMMANDS, KeyboardName, Keymaps, Preferences, ThemeName,
+    DEFAULT_SHOW_SYSTEM_COMMANDS, ExplorerSide, KeyboardName, Keymaps, Preferences, ThemeName,
 };
 use crate::ui::text;
 use crate::ui::theme::ThemeCatalog;
@@ -44,6 +44,7 @@ pub enum Field {
     SuggestionKeys,
     UndoLimit,
     Theme,
+    ExplorerSide,
     Themes,
     ThemeNew,
     ThemeEdit,
@@ -285,6 +286,7 @@ struct Draft {
     show_system_commands: Option<bool>,
     suggestion_keys: Option<SuggestionKeys>,
     theme: Option<ThemeName>,
+    explorer_side: Option<ExplorerSide>,
     mcp: Option<bool>,
     mcp_default: Option<AgentDefault>,
     mcp_max: Option<AgentAccess>,
@@ -324,6 +326,7 @@ impl Draft {
             show_system_commands: preferences.show_system_commands,
             suggestion_keys: preferences.suggestion_keys,
             theme: preferences.theme.clone(),
+            explorer_side: preferences.explorer_side,
             mcp: preferences.mcp,
             mcp_default: preferences.mcp_default_access,
             mcp_max: preferences.mcp_max_access,
@@ -502,6 +505,10 @@ impl SettingsForm {
         self.draft().suggestion_keys
     }
 
+    pub fn explorer_side(&self) -> Option<ExplorerSide> {
+        self.draft().explorer_side
+    }
+
     pub fn theme(&self) -> Option<ThemeName> {
         self.draft().theme.clone()
     }
@@ -623,6 +630,9 @@ impl SettingsForm {
                 .theme
                 .as_ref()
                 .map(|name| text::theme_label(name, &self.themes.view())),
+            Field::ExplorerSide => global
+                .explorer_side
+                .map(|side| text::explorer_side_name(side).to_owned()),
             Field::Mcp => global.mcp.map(|value| text::on_off(value).to_owned()),
             Field::McpDefault => global
                 .mcp_default_access
@@ -666,6 +676,9 @@ impl SettingsForm {
             }
             _ if field == Field::Theme => {
                 text::default_value(text::theme_name(&ThemeName::default()))
+            }
+            _ if field == Field::ExplorerSide => {
+                text::default_value(text::explorer_side_name(ExplorerSide::default()))
             }
             _ if field == Field::Mcp => text::default_value(text::on_off(DEFAULT_MCP)),
             _ if field == Field::McpDefault => {
@@ -763,6 +776,11 @@ impl SettingsForm {
                 ];
                 self.draft_mut().suggestion_keys =
                     next_choice(&order, self.draft().suggestion_keys, forward);
+            }
+            Field::ExplorerSide => {
+                let order = [None, Some(ExplorerSide::Left), Some(ExplorerSide::Right)];
+                self.draft_mut().explorer_side =
+                    next_choice(&order, self.draft().explorer_side, forward);
             }
             Field::Theme => {
                 let choices = self.themes.choices();
@@ -1102,6 +1120,7 @@ impl SettingsForm {
         preferences.cap_in_sql = draft.cap_in_sql;
         preferences.suggestion_keys = draft.suggestion_keys;
         preferences.theme = draft.theme.clone();
+        preferences.explorer_side = draft.explorer_side;
         preferences.mcp = draft.mcp;
         preferences.mcp_default_access = draft.mcp_default;
         preferences.mcp_max_access = draft.mcp_max;

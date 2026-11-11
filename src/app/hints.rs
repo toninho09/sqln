@@ -62,7 +62,7 @@ impl App {
             let explorer = if self.navigator.collapsed {
                 Action::ToggleNavigator
             } else {
-                Action::FocusLeft
+                self.explorer_entry()
             };
             return self.hint_parts(&[
                 (explorer, "explorer"),
@@ -362,7 +362,7 @@ impl App {
                 "connection",
                 !console.can_run() && !self.connections.is_empty(),
             ),
-            (Action::FocusLeft, "navigator", !console.can_run()),
+            (self.explorer_entry(), "navigator", !console.can_run()),
             (Action::FocusDown, "results", !console.results.is_empty()),
             (
                 Action::FocusParameters,

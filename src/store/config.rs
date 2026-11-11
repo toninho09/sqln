@@ -135,6 +135,15 @@ impl Default for AgentSettings {
     }
 }
 
+/// The side of the screen that shows the explorer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExplorerSide {
+    #[default]
+    Left,
+    Right,
+}
+
 /// The theme of the interface. `Auto` follows the terminal, and `Ansi` uses the colors
 /// of the terminal profile. The other themes need a truecolor terminal. `Custom` names
 /// a theme file of the `themes` folder; a missing file falls back to `Auto`.
@@ -288,6 +297,8 @@ pub struct Preferences {
     pub theme: Option<ThemeName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icons: Option<IconName>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explorer_side: Option<ExplorerSide>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reopen_tabs: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -491,6 +502,7 @@ pub struct Config {
     pub keymap: Keymap,
     pub theme: Option<ThemeName>,
     pub icons: Option<IconName>,
+    pub explorer_side: ExplorerSide,
     /// True when the start opens the tabs of the last session.
     pub reopen_tabs: bool,
     /// True when each statement of a console goes to the history file.
@@ -1022,6 +1034,10 @@ fn combine(
         icons: project
             .and_then(|preferences| preferences.icons)
             .or(global.icons),
+        explorer_side: project
+            .and_then(|preferences| preferences.explorer_side)
+            .or(global.explorer_side)
+            .unwrap_or_default(),
         reopen_tabs: project
             .and_then(|preferences| preferences.reopen_tabs)
             .or(global.reopen_tabs)

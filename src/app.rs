@@ -75,7 +75,7 @@ use crate::navigator::Navigator;
 use crate::palette::Palette;
 use crate::settings::SettingsForm;
 use crate::sql::Dialect;
-use crate::store::config::{IconName, ThemeName};
+use crate::store::config::{ExplorerSide, IconName, ThemeName};
 use crate::store::scripts::ScriptEntry;
 use crate::store::{Scope, Store};
 use crate::structure::SessionSignal;
@@ -172,6 +172,7 @@ pub struct Options {
     pub theme_notes: Vec<String>,
     /// The keys that accept a suggestion.
     pub suggestion_keys: SuggestionKeys,
+    pub explorer_side: ExplorerSide,
     /// True when Messages shows internal and shared commands.
     pub show_system_commands: bool,
     /// The MCP preferences of the configuration.
@@ -204,6 +205,7 @@ impl Default for Options {
             custom_themes: ThemeCatalog::default(),
             theme_notes: Vec::new(),
             suggestion_keys: SuggestionKeys::default(),
+            explorer_side: ExplorerSide::default(),
             ai_completion: crate::ai::Preferences::default(),
             ai_vault: None,
             show_system_commands: crate::store::config::DEFAULT_SHOW_SYSTEM_COMMANDS,
@@ -453,6 +455,7 @@ pub struct App {
     undo_limit: usize,
     keymap: Keymap,
     suggestion_keys: SuggestionKeys,
+    explorer_side: ExplorerSide,
     show_system_commands: bool,
     database: Option<PathBuf>,
     clipboard: SharedClipboard,
@@ -599,6 +602,7 @@ impl App {
             undo_limit: options.undo_limit,
             keymap,
             suggestion_keys: options.suggestion_keys,
+            explorer_side: options.explorer_side,
             ai: ai::State::new(options.ai_completion, options.ai_vault),
             show_system_commands: options.show_system_commands,
             database: options.database,
@@ -1434,12 +1438,26 @@ impl App {
             .navigator
             .width
             .min(body.width.saturating_sub(mouse::MIN_MAIN_WIDTH));
-        let [side, divider, main] = Layout::horizontal([
-            Constraint::Length(width),
-            Constraint::Length(1),
-            Constraint::Min(0),
-        ])
-        .areas(body);
+        let [side, divider, main] = match self.explorer_side {
+            ExplorerSide::Left => {
+                let [side, divider, main] = Layout::horizontal([
+                    Constraint::Length(width),
+                    Constraint::Length(1),
+                    Constraint::Min(0),
+                ])
+                .areas(body);
+                [side, divider, main]
+            }
+            ExplorerSide::Right => {
+                let [main, divider, side] = Layout::horizontal([
+                    Constraint::Min(0),
+                    Constraint::Length(1),
+                    Constraint::Length(width),
+                ])
+                .areas(body);
+                [side, divider, main]
+            }
+        };
         let [title, tree] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(side);
         let focused = self.navigator_focused;

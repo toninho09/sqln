@@ -6,6 +6,22 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Side of the explorer — 2026-11-10
+
+The user asks to choose the side of the explorer and approves the points below.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| 1. Place of the choice | **Explorer side** field in `Settings > Appearance`, after **Default theme**: Left (default) or Right. It goes to `explorerSide` of `preferences`, with the global and project scopes | A command that swaps the side, saved in `workspace.json`; both | User choice |
+| 2. Focus keys | They follow the screen. With the explorer on the right, `Ctrl+W l` goes to the explorer and `Ctrl+W h` leaves it | `Ctrl+W h` always goes to the explorer | User choice |
+
+| Implementation point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Text of the focus keys | "Go to the left panel" and "Go to the right panel" | Text that changes with the side | The help, the palette, and the shortcuts read one static text per command |
+| Home screen and hints | The path to the explorer uses the focus key of its side, such as `Ctrl+W l a` | Always `Ctrl+W h` | The shown key must act |
+| Divider | A drag of the divider changes the width on both sides; the console keeps its minimum width | — | Same rule as the left side |
+| Change | The save of Settings moves the explorer at once | A restart | Same rule as the other preferences |
+
 ## Kafka and Schema Registry — 2026-11-10
 
 The user asks for Kafka support with the Schema Registry and approves the points below.

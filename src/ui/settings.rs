@@ -68,6 +68,7 @@ fn label(field: Field) -> &'static str {
         Field::SuggestionKeys => text::FIELD_SUGGESTION_KEYS,
         Field::UndoLimit => text::FIELD_UNDO_LIMIT,
         Field::Theme => text::FIELD_THEME,
+        Field::ExplorerSide => text::FIELD_EXPLORER_SIDE,
         Field::Themes => text::FIELD_THEMES,
         Field::ThemeName => text::FIELD_THEME_NAME,
         Field::ThemeBase => text::FIELD_THEME_BASE,
@@ -152,6 +153,10 @@ fn choice(form: &SettingsForm, field: Field) -> String {
         Field::Theme => form
             .theme()
             .map_or_else(|| form.inherited(field), |name| form.theme_label(&name)),
+        Field::ExplorerSide => form.explorer_side().map_or_else(
+            || form.inherited(field),
+            |side| text::explorer_side_name(side).to_owned(),
+        ),
         Field::Mcp => form.mcp().map_or_else(
             || form.inherited(field),
             |value| text::on_off(value).to_owned(),
@@ -438,10 +443,16 @@ fn draw_theme_list(
         height: 1,
         ..pane
     };
-    draw_field_row(frame, first, form, Field::Theme, theme);
-    layout.fields.push((Field::Theme, first));
+    let side = Rect {
+        y: first.y + 1,
+        ..first
+    };
+    for (field, row) in [(Field::Theme, first), (Field::ExplorerSide, side)] {
+        draw_field_row(frame, row, form, field, theme);
+        layout.fields.push((field, row));
+    }
     let header = Rect {
-        y: first.y + 2,
+        y: side.y + 2,
         height: 1,
         ..content
     };
