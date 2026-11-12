@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use super::ResultTable;
+use super::{ResultTable, Value};
 use crate::find::Matcher;
 
 const CHARS_PER_STEP: usize = 512;
@@ -20,6 +20,9 @@ const MAX_MATCHES: usize = 1_000_000;
 pub struct RowSearch {
     query: String,
     matcher: Matcher,
+    /// The folded query in bytes, when the query holds only ASCII characters. A search
+    /// of text cells then reads bytes instead of characters.
+    ascii: Vec<u8>,
     /// The cells that match, ordered by row and column.
     matches: Vec<(usize, usize)>,
     next_row: usize,
@@ -36,6 +39,7 @@ impl RowSearch {
         Self {
             query: String::new(),
             matcher: Matcher::default(),
+            ascii: Vec::new(),
             matches: Vec::new(),
             next_row: 0,
             next_col: 0,
@@ -62,6 +66,11 @@ impl RowSearch {
 
     fn restart(&mut self) {
         self.matcher = Matcher::new(&self.query);
+        self.ascii = if self.query.is_ascii() {
+            self.query.as_bytes().to_ascii_lowercase()
+        } else {
+            Vec::new()
+        };
         self.next_col = 0;
         self.offset = 0;
         self.matches.clear();
@@ -95,13 +104,34 @@ impl RowSearch {
         self.current.map(|index| self.matches[index])
     }
 
-    /// Reads at most one row or `chars` characters.
-    fn scan_step(&mut self, table: &ResultTable, mut chars: usize) {
+    /// Reads at most one row or `budget` characters. A text cell with an ASCII query
+    /// reads bytes, and one byte counts as one character of the budget.
+    fn scan_step(&mut self, table: &ResultTable, mut budget: usize) {
         let mut cells = table.rows[self.next_row].cells().skip(self.next_col);
         let mut cell = cells.next();
         while let Some(value) = cell {
+            if let Some(text) = fast_text(value, &self.ascii) {
+                let offset = self.offset;
+                let (reached, found) = scan_ascii(text, &self.ascii, offset, budget);
+                budget = budget.saturating_sub(reached - offset);
+                if found {
+                    self.matches.push((self.next_row, self.next_col));
+                    self.next_cell();
+                    cell = cells.next();
+                } else if reached < text.len() {
+                    self.offset = reached;
+                    return;
+                } else {
+                    self.next_cell();
+                    cell = cells.next();
+                }
+                if budget == 0 {
+                    return;
+                }
+                continue;
+            }
             if let Some((c, next)) = value.search_char(self.offset) {
-                chars -= 1;
+                budget -= 1;
                 if let Some(found) = self.matcher.push(c) {
                     self.offset = next;
                     if found {
@@ -110,7 +140,7 @@ impl RowSearch {
                         cell = cells.next();
                     }
                 }
-                if chars == 0 {
+                if budget == 0 {
                     return;
                 }
             } else {
@@ -183,4 +213,51 @@ impl RowSearch {
     pub fn is_partial(&self, table: &ResultTable) -> bool {
         self.capped || self.has_work(table)
     }
+}
+
+/// Returns the text of a value when the ASCII byte search can read it.
+fn fast_text<'a>(value: Value<'a>, ascii: &[u8]) -> Option<&'a str> {
+    if ascii.is_empty() {
+        return None;
+    }
+    match value {
+        Value::Text(text) | Value::Number(text) => Some(text),
+        _ => None,
+    }
+}
+
+/// Returns true when both bytes fold to the same lowercase ASCII character.
+#[inline]
+fn same_fold(byte: u8, expected: u8) -> bool {
+    byte.to_ascii_lowercase() == expected
+}
+
+/// Searches `text` from `offset` for an ASCII needle folded to lowercase. The search
+/// reads at most `budget` bytes past `offset`. It returns the offset reached and true
+/// when the text holds the needle from that point. A new step reads again before
+/// `offset`, so a match across the edge of a step cannot escape.
+fn scan_ascii(text: &str, needle: &[u8], offset: usize, budget: usize) -> (usize, bool) {
+    let bytes = text.as_bytes();
+    let start = offset.saturating_sub(needle.len() - 1);
+    let limit = offset.saturating_add(budget).min(bytes.len());
+    let mut at = start;
+    while at < limit {
+        let Some(hit) = bytes[at..limit]
+            .iter()
+            .position(|&byte| same_fold(byte, needle[0]))
+            .map(|skip| at + skip)
+        else {
+            break;
+        };
+        let whole = needle.len() <= limit - hit
+            && needle
+                .iter()
+                .enumerate()
+                .all(|(index, &expected)| same_fold(bytes[hit + index], expected));
+        if whole {
+            return (limit, true);
+        }
+        at = hit + 1;
+    }
+    (limit, false)
 }

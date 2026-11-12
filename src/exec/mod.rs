@@ -34,7 +34,7 @@ pub type ConsoleId = u64;
 pub type ExecutionId = u64;
 
 /// Identifies a statement. The interface ignores events of an old execution.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct StatementKey {
     pub console: ConsoleId,
     pub execution: ExecutionId,

@@ -1,6 +1,6 @@
 //! The bounded, memory-only command history of one console.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Write};
 use std::ops::{Index, Range};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -397,6 +397,9 @@ pub struct History {
     last_end: usize,
     following: bool,
     show_system_commands: bool,
+    /// The newest note entry of each statement key, for the merge of `Started`.
+    /// It stops a search of the whole history on every user command.
+    notes: HashMap<StatementKey, u64>,
 }
 
 impl Default for History {
@@ -419,6 +422,7 @@ impl History {
             last_end: 0,
             following: true,
             show_system_commands: crate::store::config::DEFAULT_SHOW_SYSTEM_COMMANDS,
+            notes: HashMap::new(),
         }
     }
 
@@ -464,23 +468,50 @@ impl History {
         size_of::<Self>() + self.bytes + self.entries.capacity() * size_of::<Entry>()
     }
 
+    /// Drops the oldest entry and records what its removal changes. Returns false
+    /// when the history holds no entry.
+    fn drop_oldest(&mut self) -> bool {
+        let Some(entry) = self.entries.pop_front() else {
+            return false;
+        };
+        self.bytes -= entry.message.text.capacity();
+        if entry.command.is_none()
+            && let Some(key) = entry.key
+            && self.notes.get(&key).is_some_and(|id| *id == entry.id)
+        {
+            self.notes.remove(&key);
+        }
+        if let Some(key) = entry.key {
+            self.removed_key = Some(self.removed_key.map_or((key.execution, key.index), |old| {
+                old.max((key.execution, key.index))
+            }));
+        }
+        self.removed = true;
+        true
+    }
+
     fn bound(&mut self) {
         while size_of::<Self>() + self.bytes + self.entries.len() * size_of::<Entry>() > self.limit
         {
-            let Some(entry) = self.entries.pop_front() else {
+            if !self.drop_oldest() {
                 break;
-            };
-            self.bytes -= entry.message.text.capacity();
-            if let Some(key) = entry.key {
-                self.removed_key =
-                    Some(self.removed_key.map_or((key.execution, key.index), |old| {
-                        old.max((key.execution, key.index))
-                    }));
             }
-            self.removed = true;
         }
         if self.bytes() > self.limit {
-            self.entries.shrink_to_fit();
+            // A shrink to the exact length makes the next push grow the deque again,
+            // and each grow-shrink cycle moves every entry. The headroom holds the
+            // growth back, and the extra drops keep the capacity inside the limit.
+            let headroom = (self.entries.len() / 8).max(1);
+            while size_of::<Self>()
+                + self.bytes
+                + (self.entries.len() + headroom) * size_of::<Entry>()
+                > self.limit
+            {
+                if !self.drop_oldest() {
+                    break;
+                }
+            }
+            self.entries.shrink_to(self.entries.len() + headroom);
         }
     }
 
@@ -512,6 +543,11 @@ impl History {
             text
         };
         self.bytes += text.capacity();
+        if info.is_none()
+            && let Some(key) = key
+        {
+            self.notes.insert(key, id);
+        }
         let command_end = text.len();
         let mut header_len = info.map_or(0, |info| info.header_len).min(command_end);
         while !text.is_char_boundary(header_len) {
@@ -634,10 +670,10 @@ impl History {
                 dialect,
                 text,
             } => {
-                let note = if user && key.is_some() {
-                    self.entries
-                        .iter()
-                        .rposition(|entry| entry.command.is_none() && entry.key == key)
+                let note = if user && let Some(key) = key {
+                    self.notes
+                        .remove(&key)
+                        .and_then(|id| self.entries.iter().rposition(|entry| entry.id == id))
                         .and_then(|index| self.entries.remove(index))
                 } else {
                     None

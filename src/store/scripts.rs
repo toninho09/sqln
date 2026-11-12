@@ -18,7 +18,10 @@ use super::{Root, Scope};
 
 pub const VERSION: u32 = 1;
 /// A thread costs more than a few files, so a small folder reads on one thread.
-const MIN_SCRIPTS_PER_THREAD: usize = 256;
+const MIN_SCRIPTS_PER_THREAD: usize = 128;
+/// A read waits on the disk more than on the processor, so the threads can overlap
+/// the reads of more than one per core.
+const THREADS_PER_CORE: usize = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,13 +100,13 @@ fn is_safe_id(id: &str) -> bool {
 }
 
 /// Reads the identity of a script. A file that cannot be read returns `None`.
-fn read_entry(root: &Root, scope: Scope, path: &Path) -> Option<ScriptEntry> {
-    let meta: ScriptMeta = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+fn read_entry(dir: &Path, scope: Scope, path: &Path) -> Option<ScriptEntry> {
+    let meta: ScriptMeta = serde_json::from_slice(&read_meta(path).ok()?).ok()?;
     let stem = path.file_stem()?.to_str()?;
     if meta.id != stem || !is_safe_id(stem) {
         return None;
     }
-    let modified = [sql_file(root, &meta.id).as_path(), path]
+    let modified = [dir.join(format!("{}.sql", meta.id)).as_path(), path]
         .iter()
         .find_map(|path| fs::metadata(path).and_then(|meta| meta.modified()).ok());
     Some(ScriptEntry {
@@ -111,6 +114,15 @@ fn read_entry(root: &Root, scope: Scope, path: &Path) -> Option<ScriptEntry> {
         scope,
         modified,
     })
+}
+
+/// Reads a metadata file. A metadata file is small, so a fixed first buffer saves the
+/// size read of `fs::read`.
+fn read_meta(path: &Path) -> io::Result<Vec<u8>> {
+    let mut file = fs::File::open(path)?;
+    let mut bytes = Vec::with_capacity(512);
+    std::io::Read::read_to_end(&mut file, &mut bytes)?;
+    Ok(bytes)
 }
 
 /// Lists the scripts of a folder, the newest first. A file that cannot be read stays out.
@@ -127,14 +139,16 @@ pub fn list(root: &Root, scope: Scope) -> Vec<ScriptEntry> {
                 .is_some_and(|extension| extension == "json")
         })
         .collect();
-    let workers = thread::available_parallelism().map_or(1, NonZero::get);
+    let cores = thread::available_parallelism().map_or(1, NonZero::get);
+    let workers = cores * THREADS_PER_CORE;
     let share = paths.len().div_ceil(workers).max(MIN_SCRIPTS_PER_THREAD);
+    let dir = root.consoles_dir();
     let mut scripts: Vec<ScriptEntry> = thread::scope(|threads| {
         let workers: Vec<_> = paths
             .chunks(share)
             .map(|part| {
-                threads.spawn(move || {
-                    let read = part.iter().filter_map(|path| read_entry(root, scope, path));
+                threads.spawn(|| {
+                    let read = part.iter().filter_map(|path| read_entry(&dir, scope, path));
                     read.collect::<Vec<_>>()
                 })
             })

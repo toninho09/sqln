@@ -59,11 +59,18 @@ fn push_field(out: &mut String, text: &str, delimiter: u8, null: &str) {
         return;
     }
     out.push('"');
+    let bytes = text.as_bytes();
+    // A quote is ASCII, so its byte is always at the edge of a character.
+    // The byte search of the standard library reads many bytes at a time.
     let mut start = 0;
-    for (at, _) in text.match_indices('"') {
-        out.push_str(&text[start..=at]);
+    while let Some(found) = bytes[start..]
+        .iter()
+        .position(|&byte| byte == b'"')
+        .map(|at| start + at)
+    {
+        out.push_str(&text[start..=found]);
         out.push('"');
-        start = at + 1;
+        start = found + 1;
     }
     out.push_str(&text[start..]);
     out.push('"');
