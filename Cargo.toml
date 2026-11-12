@@ -21,7 +21,7 @@ keyring-core = "1.0.1"
 mysql_async = { version = "0.37.1", default-features = false, features = ["minimal-rust", "default-rustls-ring"] }
 prost-reflect = { version = "0.16", features = ["serde"] }
 protox = "0.10"
-ratatui = "0.30.2"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "layout-cache", "underline-color"] }
 rdkafka = { version = "0.39", default-features = false, features = ["tokio", "cmake-build", "ssl-vendored", "libz-static", "zstd"] }
 regex = "1.13"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
