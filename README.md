@@ -948,6 +948,8 @@ Report the OS, terminal, SQLN version, and reproduction steps for a defect. Remo
 
 ## Documentation
 
+The rendered documentation site lives at <https://toninho09.github.io/sqln/>.
+
 - [Feature map](docs/FEATURE-MAP.md): features and their source files.
 - [Keyboard reference](docs/KEYMAP.md): complete navigation and shortcut guide.
 - [Architecture](docs/ARCHITECTURE.md): execution, storage, credentials, and module rules.

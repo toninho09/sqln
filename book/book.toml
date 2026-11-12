@@ -1,0 +1,10 @@
+[book]
+title = "sqln"
+description = "Terminal database client with several SQL consoles"
+authors = ["toninho09"]
+language = "en"
+
+[output.html]
+git-repository-url = "https://github.com/toninho09/sqln"
+edit-url-template = "https://github.com/toninho09/sqln/edit/main/{path}"
+site-url = "/sqln/"

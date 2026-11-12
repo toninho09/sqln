@@ -85,6 +85,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed module respons
 - `make test`: runs tests in `tests/`. Database tests skip when their databases are unavailable.
 - `make test-integration`: starts Docker databases, loads `scripts/test-env.sh`, runs tests, and stops the databases.
 - `make bench`: runs performance and memory reports, then release-mode latency tests.
+- `make docs`: builds the documentation site into `book/book`.
+- `make docs-serve`: serves the documentation site locally.
 - `make check`: runs `make lint` and the full test suite.
 
 ## Integration tests

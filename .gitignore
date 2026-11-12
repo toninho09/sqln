@@ -1,5 +1,8 @@
 target/
 .DS_Store
+book/book/
+book/src/*
+!book/src/SUMMARY.md
 .test-certs/
 .pi/
 spikes/
