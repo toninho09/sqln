@@ -99,13 +99,14 @@ fn with_schema(parsed: &Parsed, payload: &[u8]) -> Result<Json, String> {
     let bad = || text::KAFKA_DECODE_FAILED.to_owned();
     match parsed {
         Parsed::Avro { schema, references } => {
-            let value = apache_avro::from_avro_datum_schemata(
-                schema,
-                references.iter().collect(),
-                &mut Cursor::new(payload),
-                None,
-            )
-            .map_err(|_| bad())?;
+            let reader = apache_avro::reader::datum::GenericDatumReader::builder(schema)
+                .writer_schemata(references.iter().collect())
+                .map_err(|_| bad())?
+                .build()
+                .map_err(|_| bad())?;
+            let value = reader
+                .read_value(&mut Cursor::new(payload))
+                .map_err(|_| bad())?;
             Json::try_from(value).map_err(|_| bad())
         }
         Parsed::Json => serde_json::from_slice(payload).map_err(|_| bad()),
