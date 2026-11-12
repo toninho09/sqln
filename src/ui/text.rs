@@ -675,7 +675,12 @@ pub const REDIS_LIVE_BAD: &str =
     "The server sent a reply that SQLN cannot read. Run the command again.";
 
 pub const KAFKA_UNKNOWN_COMMAND: &str =
-    "Unknown Kafka command. Use TOPICS, PARTITIONS, CONSUME, TAIL, GROUPS, or GROUP.";
+    "Unknown Kafka command. Use SELECT, TOPICS, PARTITIONS, CONSUME, TAIL, GROUPS, or GROUP.";
+pub const KAFKA_SELECT_COLUMN: &str =
+    "Select *, a message column, or value.field, with an optional AS alias.";
+pub const KAFKA_SELECT_START: &str =
+    "START AT needs EARLIEST, LATEST, OFFSET n, or TIMESTAMP 'UTC time'.";
+pub const KAFKA_SELECT_CLAUSES: &str = "SELECT accepts PARTITION, START AT, WHERE, LIMIT, and SCAN. End a continuous read with EMIT CHANGES, without LIMIT or SCAN.";
 pub const KAFKA_EXTRA_WORDS: &str = "The command has more words than it accepts. Remove them.";
 pub const KAFKA_CONSUME_CLAUSES: &str =
     "CONSUME accepts PARTITION, FROM, WHERE, LIMIT, and SCAN after the topic.";

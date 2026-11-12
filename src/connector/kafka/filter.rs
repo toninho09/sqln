@@ -246,7 +246,7 @@ fn part_text<'a>(part: Part, message: &Message<'a>) -> Option<&'a str> {
 }
 
 /// Returns the field at the path. A number in the path also reads an item of a list.
-fn field<'a>(json: &'a Json, path: &[String]) -> Option<&'a Json> {
+pub(super) fn field<'a>(json: &'a Json, path: &[String]) -> Option<&'a Json> {
     path.iter().try_fold(json, |current, name| match current {
         Json::Object(map) => map.get(name),
         Json::Array(items) => items.get(name.parse::<usize>().ok()?),

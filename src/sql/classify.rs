@@ -172,10 +172,15 @@ const REDIS_CONTINUOUS: &[&str] = &[
 ];
 
 /// The Kafka commands of SQLN. Each one only reads.
-const KAFKA_COMMANDS: &[&str] = &["TOPICS", "PARTITIONS", "CONSUME", "TAIL", "GROUPS", "GROUP"];
-
-/// The Kafka command that waits for new messages until the user stops it.
-const KAFKA_CONTINUOUS: &[&str] = &["TAIL"];
+const KAFKA_COMMANDS: &[&str] = &[
+    "SELECT",
+    "TOPICS",
+    "PARTITIONS",
+    "CONSUME",
+    "TAIL",
+    "GROUPS",
+    "GROUP",
+];
 
 /// These Redis commands control the session, as `BEGIN` and `USE` do in SQL. Each command
 /// of a `MULTI` block has its own line, so it counts by itself.
@@ -371,7 +376,27 @@ pub fn is_known_kafka_read(sql: &str) -> bool {
 /// before `STREAMS` read again after each answer. In Kafka, `TAIL` waits for messages.
 pub fn is_continuous(sql: &str, dialect: Dialect) -> bool {
     if dialect == Dialect::Kafka {
-        return first_keyword(sql, dialect).is_some_and(|word| is_any(word, KAFKA_CONTINUOUS));
+        let tokens = tokenize(sql, dialect);
+        let mut code: Vec<_> = tokens
+            .iter()
+            .filter(|token| token.kind != TokenKind::Comment)
+            .collect();
+        let is_word = |token: &&super::Token, word: &str| {
+            token.kind == TokenKind::Word
+                && sql[token.start()..token.end()].eq_ignore_ascii_case(word)
+        };
+        if code.first().is_some_and(|token| is_word(token, "TAIL")) {
+            return true;
+        }
+        if code.last().is_some_and(|token| {
+            token.kind == TokenKind::Punctuation && &sql[token.start()..token.end()] == ";"
+        }) {
+            code.pop();
+        }
+        return code.len() >= 3
+            && is_word(&code[0], "SELECT")
+            && is_word(&code[code.len() - 2], "EMIT")
+            && is_word(&code[code.len() - 1], "CHANGES");
     }
     if dialect != Dialect::Redis {
         return false;

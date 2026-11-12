@@ -5,6 +5,8 @@
 // Each server test uses its own topics and groups, so the tests can run at the same time.
 
 mod common;
+#[path = "kafka/select.rs"]
+mod select;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -303,7 +305,7 @@ fn the_list_holds_commands_then_names_then_clauses() {
         .collect();
     assert_eq!(clauses, ["WHERE"]);
     assert!(labels("TOPICS x").is_empty(), "TOPICS takes no name");
-    assert!(labels("SEL").is_empty(), "SQL words stay out");
+    assert_eq!(labels("SEL"), [("SELECT".to_owned(), "SELECT".to_owned())]);
 }
 
 // The tests below need a server.
@@ -756,6 +758,10 @@ fn from_a_time_starts_at_the_first_message_at_that_time() {
     let run = h.run_ok(&format!("CONSUME {topic} FROM @2023-11-14T22:14:20Z"));
     assert_eq!(run.column("key"), ["b", "c"]);
     assert_eq!(run.column("timestamp")[0], "2023-11-14T22:14:20.000Z");
+    let selected = h.run_ok(&format!(
+        "SELECT key FROM {topic} START AT TIMESTAMP '2023-11-14T22:14:20Z';"
+    ));
+    assert_eq!(selected.column("key"), run.column("key"));
     assert!(
         h.run_ok(&format!("CONSUME {topic} FROM @2030-01-01"))
             .rows
@@ -1055,6 +1061,14 @@ fn the_registry_decodes_avro_protobuf_and_json_schema() {
         "CONSUME {topic} WHERE value.name = 'Bia' OR value.home.city = 'RJ'"
     ));
     assert_eq!(run.column("key"), ["avro", "proto"]);
+    let selected = h.run_ok(&format!("SELECT key, value.name AS name FROM {topic};"));
+    assert_eq!(selected.column("name"), ["Ana", "Bia", "Caio", "NULL"]);
+    assert!(
+        selected
+            .notices
+            .iter()
+            .any(|notice| notice.contains("999999"))
+    );
 }
 
 struct Screen {

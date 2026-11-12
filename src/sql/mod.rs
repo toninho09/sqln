@@ -27,13 +27,13 @@ pub enum Dialect {
     DuckDb,
     /// Redis and Valkey commands. This text is not SQL.
     Redis,
-    /// Kafka commands of SQLN, one for each line. This text is not SQL.
+    /// Kafka line commands and the SELECT subset of SQLN.
     Kafka,
 }
 
 impl Dialect {
-    /// Returns true for a source with commands instead of SQL: one command for each line,
-    /// and `#` at the start of a line for a comment.
+    /// Returns true for a source with native commands and `#` line comments.
+    /// Kafka also accepts SELECT, without the relational SQL features.
     pub fn is_command_line(self) -> bool {
         matches!(self, Dialect::Redis | Dialect::Kafka)
     }

@@ -888,7 +888,11 @@ impl KafkaSession {
                 end: (!tail).then_some(*high),
             })
             .collect();
-        set_columns(&MESSAGE_COLUMNS, sink).await;
+        if let Some(projection) = &read.projection {
+            sink.set_columns(projection.names()).await;
+        } else {
+            set_columns(&MESSAGE_COLUMNS, sink).await;
+        }
         let mut notices = Notices::default();
         self.registry_notice(&mut notices);
         let stop = sink.stop_token();
@@ -904,6 +908,10 @@ impl KafkaSession {
                         .await
                     {
                         counts.matched += 1;
+                        let row = match &read.projection {
+                            Some(projection) => projection.apply(row),
+                            None => row,
+                        };
                         if sink.push(row).await != Flow::Continue {
                             break;
                         }

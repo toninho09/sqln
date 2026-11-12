@@ -512,10 +512,28 @@ const RESERVED: &[&str] = &[
     "WITH",
 ];
 
-/// The Kafka commands of SQLN. Each command starts a line.
-pub const KAFKA_COMMANDS: &[&str] = &["CONSUME", "GROUP", "GROUPS", "PARTITIONS", "TAIL", "TOPICS"];
+/// The Kafka commands of SQLN. SELECT can span multiple lines.
+pub const KAFKA_COMMANDS: &[&str] = &[
+    "SELECT",
+    "CONSUME",
+    "GROUP",
+    "GROUPS",
+    "PARTITIONS",
+    "TAIL",
+    "TOPICS",
+];
 
 /// The words after a Kafka command: the clauses, the start positions, and the filter.
+const KAFKA_SELECT_WORDS: &[&str] = &[
+    "AS",
+    "START",
+    "AT",
+    "OFFSET",
+    "TIMESTAMP",
+    "EMIT",
+    "CHANGES",
+];
+
 pub const KAFKA_CLAUSES: &[&str] = &[
     "AND",
     "CONTAINS",
@@ -545,14 +563,19 @@ fn specific(dialect: Dialect) -> &'static [&'static str] {
     }
 }
 
-/// Redis and Kafka have no SQL words, so their lists stand alone.
+/// Redis and Kafka use their own word lists.
 pub fn all(dialect: Dialect) -> impl Iterator<Item = &'static str> {
     let common = match dialect {
         Dialect::Redis => &[][..],
         Dialect::Kafka => KAFKA_COMMANDS,
         _ => COMMON,
     };
-    common.iter().chain(specific(dialect)).copied()
+    let extra = if dialect == Dialect::Kafka {
+        KAFKA_SELECT_WORDS
+    } else {
+        &[]
+    };
+    common.iter().chain(specific(dialect)).chain(extra).copied()
 }
 
 pub fn starters(dialect: Dialect) -> impl Iterator<Item = &'static str> {

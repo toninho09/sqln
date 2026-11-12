@@ -22,6 +22,28 @@ The user asks to choose the side of the explorer and approves the points below.
 | Divider | A drag of the divider changes the width on both sides; the console keeps its minimum width | — | Same rule as the left side |
 | Change | The save of Settings moves the explorer at once | A restart | Same rule as the other preferences |
 
+## Kafka SELECT queries
+
+The user approves SELECT syntax and keeps CONSUME and TAIL as alternative forms.
+This entry replaces the console and completion restrictions of the Kafka entry below.
+The read-only scope, consumer isolation, filters, and Schema Registry rules stay unchanged.
+
+| Point | Approved rule |
+|---|---|
+| Finite read | `SELECT * FROM topic` uses CONSUME: EARLIEST by default, with the high offsets captured at the start |
+| Continuous read | End SELECT with `EMIT CHANGES` to use TAIL: LATEST by default, until Stop, with the existing live row cap |
+| Start | `START AT EARLIEST`, `START AT LATEST`, `START AT OFFSET n`, or `START AT TIMESTAMP 'time'`; time follows the existing UTC and RFC 3339 parser |
+| Clauses | `PARTITION n`, `START AT …`, `WHERE …`, `LIMIT n`, and `SCAN n` occur at most once, in any order after the topic; EMIT CHANGES comes last and refuses LIMIT and SCAN |
+| Columns | `*`, or a comma-separated list of message columns and `value.field` paths, with optional `AS alias`; no expressions, joins, aggregates, or ORDER BY |
+| Scripts | SELECT can span lines and ends at a semicolon or the end of the script. A semicolon is required before another statement. Native commands keep one command per line. A line that starts with `#` is a comment |
+| Compatibility | Existing commands and saved scripts keep their syntax. Both forms use the same read execution. No saved format changes |
+| Completion | SELECT offers message columns, catalog topics, and its clause words. It uses no database reads |
+
+Projection implementation: a whole column keeps its original value and type.
+A JSON path preserves numbers, returns JSON text for objects and arrays, and returns NULL for absent or non-JSON values.
+JSON field names keep their case. Aliases change column labels only.
+SELECT accepts doubled quotes as well as the existing backslash escapes.
+
 ## Kafka and Schema Registry — 2026-11-10
 
 The user asks for Kafka support with the Schema Registry and approves the points below.

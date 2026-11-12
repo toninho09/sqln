@@ -3,6 +3,7 @@
 
 mod context;
 mod grammar;
+mod kafka;
 pub mod keywords;
 #[cfg(test)]
 mod tests;
@@ -68,6 +69,15 @@ pub fn suggest_in(
     dialect: Dialect,
     catalog: Option<&Catalog>,
 ) -> Completion {
+    if dialect == Dialect::Kafka
+        && let Some(statement) = statements.iter().rev().find(|statement| {
+            statement.start < cursor && (cursor <= statement.end || !statement.terminated)
+        })
+        && crate::sql::first_keyword(statement.text(sql), dialect)
+            .is_some_and(|word| word.eq_ignore_ascii_case("SELECT"))
+    {
+        return kafka::suggest(sql, statement.start, cursor, catalog);
+    }
     if dialect.is_command_line() {
         return suggest_command(sql, cursor, dialect, catalog);
     }

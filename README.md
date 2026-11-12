@@ -217,7 +217,30 @@ PING
 
 Each Redis command occupies one line. Redis consoles do not run SQL.
 
-For Kafka, each line is one SQLN command. Each command only reads:
+Kafka accepts a read-only SELECT subset. It does not need a SQL server or ksqlDB:
+
+```sql
+SELECT *
+FROM orders
+START AT EARLIEST
+WHERE value.status = 'failed'
+LIMIT 100
+SCAN 50000;
+
+SELECT timestamp, key, value.customer.id AS customer_id
+FROM orders
+EMIT CHANGES;
+```
+
+- Plain SELECT uses a finite read, as CONSUME. It starts at EARLIEST by default.
+- EMIT CHANGES uses a continuous read, as TAIL. It starts at LATEST by default and waits until **Stop**.
+- Use `START AT OFFSET 1500` or `START AT TIMESTAMP '2026-11-10T12:00:00Z'` for another start. `PARTITION 2` restricts the read to one partition.
+- LIMIT caps matching rows. SCAN caps examined messages. EMIT CHANGES accepts neither; its live row cap removes the oldest rows.
+- Select `*`, message columns, or `value.field` paths, with optional `AS alias`. Missing paths, tombstones, and values without JSON return NULL for a path. Whole columns keep bytes and NULL unchanged.
+- SELECT can span lines. End it with `;` before another statement. A final SELECT can omit `;`. Use `#` at the start of a line for comments.
+- Filters still run locally. Joins, aggregates, expressions, and ORDER BY are not supported. Reads have no global order across partitions.
+
+The native commands remain available, one per line. Each command only reads:
 
 ```text
 TOPICS
@@ -231,7 +254,7 @@ GROUP billing
 
 - `CONSUME` reads to the last message of each partition at its start. `TAIL` waits for new messages until **Stop**.
 - `FROM` takes `earliest`, `latest`, an offset, or `@` and a UTC time.
-- The filter runs in SQLN, after the decoding: `key = 'text'`, `CONTAINS 'text'` (without case), `MATCHES 'regex'`, and `value.field` with `=`, `!=`, `<`, `<=`, `>`, or `>=`. Use `AND`, `OR`, `NOT`, and parentheses.
+- Both SELECT and the native commands use the same filter in SQLN, after the decoding: `key = 'text'`, `CONTAINS 'text'` (without case), `MATCHES 'regex'`, and `value.field` with `=`, `!=`, `<`, `<=`, `>`, or `>=`. Use `AND`, `OR`, `NOT`, and parentheses.
 - With a Schema Registry, Avro, JSON Schema, and Protobuf values become JSON. A value that does not decode stays as bytes, with a note in **Messages**.
 - SQLN never joins a consumer group and never commits an offset. `GROUP <id>` shows the committed offsets and the lag.
 - The explorer lists `topics` and `groups`. `Enter` on a topic opens its last 500 messages, newest first, with a filter field.

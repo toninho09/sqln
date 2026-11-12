@@ -38,6 +38,8 @@ pub struct Lexer<'a> {
     dialect: Dialect,
     pub pos: usize,
     previous: Option<Token>,
+    kafka_select: bool,
+    command_start: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -47,6 +49,8 @@ impl<'a> Lexer<'a> {
             dialect,
             pos: 0,
             previous: None,
+            kafka_select: false,
+            command_start: true,
         }
     }
 
@@ -108,14 +112,19 @@ impl<'a> Lexer<'a> {
     }
 
     /// Reads a token of a command line. A `#` starts a comment only at the start of a
-    /// line, because `#` is a valid part of a key. A quote ends with its line at most.
+    /// line, because `#` is a valid part of a key. Only Kafka SELECT permits multiline quotes.
     fn read_command_token(&self, start: usize) -> (TokenKind, usize, bool) {
         let bytes = self.sql.as_bytes();
         let line_end = skip_line(bytes, start);
         match bytes[start] {
             b'#' if self.starts_line(start) => (TokenKind::Comment, line_end, false),
             quote @ (b'"' | b'\'') => {
-                let (end, closed) = skip_quoted(&bytes[..line_end], start, quote, true);
+                let end = if self.kafka_select {
+                    bytes.len()
+                } else {
+                    line_end
+                };
+                let (end, closed) = skip_quoted(&bytes[..end], start, quote, true);
                 (TokenKind::String, end, closed)
             }
             _ => read_plain(bytes, start),
@@ -164,6 +173,22 @@ impl Iterator for Lexer<'_> {
             start: u32::try_from(start).ok()?,
             end: u32::try_from(end).ok()?,
         };
+        if self.dialect == Dialect::Kafka && kind != TokenKind::Comment {
+            let starts_command = self.command_start
+                || (!self.kafka_select
+                    && self
+                        .previous
+                        .is_some_and(|previous| self.sql[previous.end()..start].contains('\n')));
+            if starts_command {
+                self.kafka_select =
+                    kind == TokenKind::Word && self.sql[start..end].eq_ignore_ascii_case("SELECT");
+                self.command_start = false;
+            }
+            if self.kafka_select && kind == TokenKind::Punctuation && &self.sql[start..end] == ";" {
+                self.kafka_select = false;
+                self.command_start = true;
+            }
+        }
         self.pos = end;
         self.previous = Some(token);
         Some(token)
