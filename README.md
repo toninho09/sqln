@@ -276,6 +276,8 @@ GROUP billing
 - SQLN never joins a consumer group and never commits an offset. `GROUP <id>` shows the committed offsets and the lag.
 - The explorer lists `topics` and `groups`. `Enter` on a topic opens its last 500 messages, newest first, with a filter field.
 
+See the [Kafka guide](docs/KAFKA.md) for a full walk-through with more examples.
+
 Press `Ctrl+P` for the command palette or `F1` for help in the main panels.
 
 ## Keyboard guide
@@ -973,6 +975,7 @@ The rendered documentation site lives at <https://toninho09.github.io/sqln/>.
 - [Architecture](docs/ARCHITECTURE.md): execution, storage, credentials, and module rules.
 - [Decisions](docs/DECISIONS.md): approved choices and tradeoffs.
 - [UI reference](docs/UI.md): interface structure and layouts.
+- [Kafka guide](docs/KAFKA.md): Kafka reads, filters, and examples.
 - [AI completion](docs/AI_COMPLETION.md): setup, providers, limits, and consent.
 - [Local MCP assistant](docs/MCP.md): client setup, tools, and security.
 - [Consolidated plan](docs/INITIAL_PLAN.md): scope, implementation state, and pending release checks.

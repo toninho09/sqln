@@ -794,7 +794,7 @@ In the navigator, a Kafka connection shows two schemas: `topics` and `groups`. I
 `Enter` on a topic opens a tab with the label `<topic> (topic)`. It shows the last 500 messages, newest first, in one page.
 The tab has a `WHERE` field with the Kafka filter, such as `value.status = 'failed'`, without `ORDER BY` and sorting. **Apply filters** reads again with the filter.
 `Enter` on a group opens a tab with the label `<group> (group)`. It shows the committed offset, the end offset, and the lag of each partition.
-In the console, Kafka accepts multiline `SELECT` statements, separated by semicolons, and native commands, one per line. `SELECT` uses the finite `CONSUME` read. `SELECT … EMIT CHANGES` and `TAIL` show `Live` until **Stop**, as a continuous Redis command. Both forms use the same filters and execution. SELECT completion offers message columns, catalog topics, and clause words. See the [Kafka examples](../README.md) for start positions, projections, and limits.
+In the console, Kafka accepts multiline `SELECT` statements, separated by semicolons, and native commands, one per line. `SELECT` uses the finite `CONSUME` read. `SELECT … EMIT CHANGES` and `TAIL` show `Live` until **Stop**, as a continuous Redis command. Both forms use the same filters and execution. SELECT completion offers message columns, catalog topics, and clause words. See the [Kafka guide](KAFKA.md) for start positions, projections, and limits.
 
 ## 4. Connection form
 

@@ -6,6 +6,8 @@
 
 - [Keyboard reference](./docs/KEYMAP.md)
 - [UI reference](./docs/UI.md)
+- [Kafka guide](./docs/KAFKA.md)
+- [AI completion](./docs/AI_COMPLETION.md)
 - [MCP assistant](./docs/MCP.md)
 
 # Reference
