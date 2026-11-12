@@ -85,6 +85,86 @@ fn a_kafka_text_refuses_what_kafka_does_not_have() {
     }
 }
 
+#[test]
+fn a_kafka_text_reads_the_consumer_group() {
+    let target = parse_uri("kafka://127.0.0.1?group=team-a.reader").unwrap();
+    assert_eq!(target.kafka.group.as_deref(), Some("team-a.reader"));
+    assert_eq!(target.kafka.read_group(), "team-a.reader");
+    let target = parse_uri("kafka://127.0.0.1?group=").unwrap();
+    assert_eq!(target.kafka.group, None, "an empty group keeps the default");
+    assert_eq!(target.kafka.read_group(), "sqln-read");
+    for (text, part) in [
+        ("kafka://127.0.0.1?group=a%20b", "space"),
+        ("kafka://127.0.0.1?group=a%1Bb", "control"),
+        ("redis://127.0.0.1?group=a", "only for kafka"),
+    ] {
+        let error = parse_uri(text).unwrap_err();
+        assert!(error.contains(part), "{text}: {error}");
+    }
+}
+
+#[test]
+fn the_form_saves_the_consumer_group_in_both_entry_modes() {
+    let mut form = kafka_form();
+    assert!(form.fields().contains(&Field::ConsumerGroup));
+    form.focus_on(Field::ConsumerGroup);
+    form.on_paste("  team-a.reader ");
+    let definition = form.definition().unwrap();
+    let Source::Network(target) = &definition.source else {
+        panic!("not a network source");
+    };
+    assert_eq!(target.kafka.group.as_deref(), Some("team-a.reader"));
+    let edited = ConnectionForm::editing(1, &definition, false);
+    assert_eq!(edited.definition().unwrap(), definition);
+
+    let mut form = kafka_form();
+    form.use_uri = true;
+    form.focus_on(Field::Uri);
+    form.on_paste("kafka://127.0.0.1?group=from-text");
+    assert!(form.fields().contains(&Field::ConsumerGroup));
+    let group = |form: &ConnectionForm| match form.definition().unwrap().source {
+        Source::Network(target) => target.kafka.group,
+        _ => panic!("not a network source"),
+    };
+    assert_eq!(group(&form).as_deref(), Some("from-text"));
+    form.focus_on(Field::ConsumerGroup);
+    form.on_paste("from-field");
+    assert_eq!(
+        group(&form).as_deref(),
+        Some("from-field"),
+        "the field wins"
+    );
+
+    let mut form = kafka_form();
+    form.focus_on(Field::ConsumerGroup);
+    form.on_paste("team a");
+    let error = form.definition().unwrap_err();
+    assert_eq!(error.field, Field::ConsumerGroup);
+    assert!(error.message.contains("space"), "{}", error.message);
+}
+
+#[test]
+fn the_consumer_group_field_shows_in_the_smallest_screen() {
+    let mut form = kafka_form();
+    form.focus_on(Field::ConsumerGroup);
+    form.on_paste("team-a.reader");
+    form.select_section(Field::ConsumerGroup.group());
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal
+        .draw(|frame| {
+            sqln::ui::form::draw_form(frame, &form, &Theme::plain());
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let shown: String = buffer
+        .content
+        .chunks(usize::from(buffer.area.width))
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>() + "\n")
+        .collect();
+    assert!(shown.contains("Consumer group"), "{shown}");
+    assert!(shown.contains("team-a.reader"), "{shown}");
+}
+
 fn kafka_form() -> ConnectionForm {
     let mut form = ConnectionForm::new();
     form.kind = Kind::Kafka;
@@ -186,6 +266,20 @@ fn a_saved_kafka_connection_keeps_sasl_and_registry_without_secrets() {
         "{json}"
     );
     assert!(!json.contains("secret"), "no password in the file: {json}");
+    assert!(!json.contains("consumerGroup"), "no default group: {json}");
+    let mut read = to_definition(&entry, "/base".into());
+    read.base = None;
+    assert_eq!(read, definition.without_password());
+
+    form.focus_on(Field::ConsumerGroup);
+    form.on_paste("team-a.reader");
+    let definition = form.definition().unwrap();
+    let entry = to_entry("k1", &definition);
+    let json = serde_json::to_string(&entry).unwrap();
+    assert!(
+        json.contains(r#""consumerGroup":"team-a.reader""#),
+        "{json}"
+    );
     let mut read = to_definition(&entry, "/base".into());
     read.base = None;
     assert_eq!(read, definition.without_password());
@@ -218,6 +312,14 @@ fn the_settings_refuse_kafka_fields_on_other_engines() {
         r#"{"version":1,"connections":[{"id":"k","name":"k","kind":"kafka","host":"h","schemaRegistry":{"url":"sr"}}]}"#,
     );
     assert!(message.contains("http"), "{message}");
+    let message = refused(
+        r#"{"version":1,"connections":[{"id":"r","name":"r","kind":"redis","host":"h","consumerGroup":"g"}]}"#,
+    );
+    assert!(message.contains("only for kafka"), "{message}");
+    let message = refused(
+        r#"{"version":1,"connections":[{"id":"k","name":"k","kind":"kafka","host":"h","consumerGroup":"a b"}]}"#,
+    );
+    assert!(message.contains("consumerGroup"), "{message}");
 }
 
 #[test]
@@ -489,7 +591,10 @@ impl Harness {
     }
 
     fn with(connector: Arc<dyn Connector>) -> Self {
-        let settings = Settings::default();
+        Self::with_settings(connector, Settings::default())
+    }
+
+    fn with_settings(connector: Arc<dyn Connector>, settings: Settings) -> Self {
         let budget = Arc::new(Budget::new(settings.budget_bytes));
         let (mut manager, events) = Manager::new(budget).unwrap();
         let connection = manager.add_connection(connector, settings);
@@ -683,6 +788,14 @@ fn consume_reads_to_the_end_of_each_partition_and_creates_no_group() {
     let after = group_names(&uri);
     assert_eq!(after, before, "a read creates no consumer group");
     assert!(!after.iter().any(|name| name == "sqln-read"));
+
+    let group = unique("custom-group");
+    let mut h = Harness::open(&format!("{uri}?group={group}"));
+    assert_eq!(h.run_ok(&format!("CONSUME {topic}")).rows.len(), 3);
+    assert!(
+        !group_names(&uri).contains(&group),
+        "a read with its own group creates no group"
+    );
 }
 
 #[test]
@@ -738,6 +851,57 @@ fn a_filter_keeps_the_matching_messages_and_reports_the_scan() {
     let run = h.run(&format!("CONSUME {topic} WHERE key MATCHES '('"));
     assert_eq!(run.end, Some(ExecutionEnd::Failed));
     assert!(run.error().contains("regular expression"), "{run:?}");
+}
+
+#[test]
+fn sql_conditions_read_the_key_headers_time_and_one_item_of_a_list() {
+    let Some(uri) = kafka_uri() else { return };
+    let topic = unique("expr");
+    create_topic(&uri, &topic, 1);
+    let base = 1_700_000_000_000_i64;
+    let sources: [(&str, &[u8], &str); 3] = [
+        (
+            "{\"id\": 1}",
+            br#"{"items": [{"sku": "a", "qty": 1}, {"sku": "b", "qty": 5}]}"#,
+            "web",
+        ),
+        (
+            "{\"id\": 2}",
+            br#"{"items": [{"sku": "a", "qty": 3}]}"#,
+            "app",
+        ),
+        ("{\"id\": 3}", br#"{"items": []}"#, "web"),
+    ];
+    let mut messages = Vec::new();
+    for (index, (key, value, source)) in sources.iter().enumerate() {
+        let mut message = Out::new(0, key, value);
+        message.time = Some(base + 60_000 * index as i64);
+        message.header = Some(("source", source));
+        messages.push(message);
+    }
+    produce(&uri, &topic, &messages);
+    let mut h = Harness::open(&uri);
+    // 1700000060000 ms is 2023-11-14T22:14:20Z.
+    for (filter, ids) in [
+        (
+            "ANY i IN value.items SATISFIES i.sku = 'a' AND i.qty > 2 END",
+            &["2"][..],
+        ),
+        ("headers.source = 'web' AND key.id > 1", &["3"]),
+        ("timestamp >= '2023-11-14T22:14:20Z'", &["2", "3"]),
+        ("'2023-11-14T22:14:20Z' IN (timestamp)", &["2"]),
+        ("SIZE(value.items) = 0 OR key.id IN (1)", &["1", "3"]),
+    ] {
+        let select = h.run_ok(&format!("SELECT key.id AS id FROM {topic} WHERE {filter}"));
+        assert_eq!(select.column("id"), ids, "{filter}");
+        let consume = h.run_ok(&format!("CONSUME {topic} WHERE {filter}"));
+        assert_eq!(consume.grid().len(), ids.len(), "{filter}");
+    }
+    let run = h.run_ok(&format!(
+        "SELECT key.id AS id, SIZE(value.items) * 10 AS n FROM {topic} WHERE headers.source IN ('web')"
+    ));
+    assert_eq!(run.column("id"), ["1", "3"]);
+    assert_eq!(run.column("n"), ["20", "0"]);
 }
 
 #[test]

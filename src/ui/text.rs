@@ -629,6 +629,11 @@ pub const FORM_NEEDS_FILE: &str = "SQLite needs a file.";
 pub const FORM_REDIS_DATABASE: &str = "The Redis database must be a number.";
 pub const FORM_REDIS_SCHEMAS: &str = "Each Redis database must be a number.";
 pub const FORM_KAFKA_SOCKET: &str = "A Kafka connection needs a host name, not a socket.";
+pub const KAFKA_EVAL_MEMORY: &str = "The Kafka expression exceeds the temporary memory limit. Reduce the projection or increase the memory limit.";
+pub const KAFKA_EVAL_STOPPED: &str =
+    "The Kafka expression stops because the execution is canceled.";
+pub const KAFKA_BAD_GROUP: &str =
+    "The consumer group cannot hold a space or a control character. Remove them.";
 pub const FORM_REGISTRY_URL: &str =
     "The registry URL must start with http:// or https://. A registry user needs a URL.";
 pub const REDIS_SOCKET_TLS: &str = "A Unix socket does not use TLS. Turn off TLS.";
@@ -676,8 +681,6 @@ pub const REDIS_LIVE_BAD: &str =
 
 pub const KAFKA_UNKNOWN_COMMAND: &str =
     "Unknown Kafka command. Use SELECT, TOPICS, PARTITIONS, CONSUME, TAIL, GROUPS, or GROUP.";
-pub const KAFKA_SELECT_COLUMN: &str =
-    "Select *, a message column, or value.field, with an optional AS alias.";
 pub const KAFKA_SELECT_START: &str =
     "START AT needs EARLIEST, LATEST, OFFSET n, or TIMESTAMP 'UTC time'.";
 pub const KAFKA_SELECT_CLAUSES: &str = "SELECT accepts PARTITION, START AT, WHERE, LIMIT, and SCAN. End a continuous read with EMIT CHANGES, without LIMIT or SCAN.";
@@ -689,13 +692,30 @@ pub const KAFKA_REPEATED_CLAUSE: &str = "Each clause can occur one time. Remove 
 pub const KAFKA_BAD_START: &str = "FROM needs earliest, latest, an offset of 0 or more, or @ and a time, such as @2026-11-10T12:00:00Z.";
 pub const KAFKA_BAD_TEXT: &str = "The text has a bad escape or is not UTF-8.";
 pub const KAFKA_BAD_OPERATOR: &str = "Use != for not equal.";
-pub const KAFKA_NEEDS_FIELD: &str =
-    "The condition needs key, value, headers, or a field such as value.customer.id.";
-pub const KAFKA_NEEDS_OPERATOR: &str = "Use key = 'text', CONTAINS 'text', MATCHES 'regex', or value.field with =, !=, <, <=, >, or >=.";
+pub const KAFKA_NEEDS_FIELD: &str = "Use a message column, such as key or value, a field, such as value.customer.id, or a function, such as LOWER(value.name).";
+pub const KAFKA_NEEDS_OPERATOR: &str = "Put =, !=, <, <=, >, >=, IS NULL, IN, BETWEEN, LIKE, ILIKE, CONTAINS, or MATCHES after the value.";
+pub const KAFKA_NEEDS_LIST: &str = "Put a field that holds a list here, such as value.tags, or a list of values, such as ('a', 'b').";
+pub const KAFKA_NEEDS_NULL: &str = "Write IS NULL, IS NOT NULL, IS MISSING, or IS NOT MISSING.";
+pub const KAFKA_NEEDS_AND: &str = "Write BETWEEN low AND high, such as BETWEEN 1 AND 5.";
+pub const KAFKA_NEEDS_NUMBER: &str =
+    "This value is a number. Compare it with a number, such as SIZE(value.items) > 2.";
+pub const KAFKA_TEXT_OPERATOR: &str =
+    "CONTAINS, MATCHES, LIKE, and ILIKE read a text. Use =, <, or > for a number.";
+pub const KAFKA_BAD_TIME: &str =
+    "Compare timestamp with a UTC time, such as '2026-11-10T12:00:00Z' or '2026-11-10'.";
+pub const KAFKA_LIKE_END: &str =
+    "The LIKE pattern ends with a backslash. Write \\\\ for one backslash in the text.";
+pub const KAFKA_CAST_TYPE: &str =
+    "Write CAST(value AS NUMBER), CAST(value AS TEXT), or CAST(value AS BOOLEAN).";
+pub const KAFKA_ITEM_NAME: &str = "Give the item a new simple name that is not a message column, such as ANY item IN value.items.";
+pub const KAFKA_QUANTIFIER: &str =
+    "Write ANY item IN value.list SATISFIES condition END, or EVERY in place of ANY.";
+pub const KAFKA_SIZE_FIELD: &str =
+    "SIZE needs a value without [*] between parentheses, such as SIZE(value.items).";
 pub const KAFKA_NEEDS_TEXT: &str = "The condition needs a text between quotes.";
 pub const KAFKA_NEEDS_VALUE: &str =
-    "The condition needs a text between quotes, a number, true, false, or null.";
-pub const KAFKA_NO_CLOSE: &str = "The filter has a parenthesis that does not close.";
+    "Put a value here: a field, a text between quotes, a number, true, false, or null.";
+pub const KAFKA_NO_CLOSE: &str = "A parenthesis does not close. Add ).";
 pub const KAFKA_BAD_REGEX: &str =
     "The regular expression is not valid or is too large. Check its syntax.";
 pub const KAFKA_WHAT_TOPIC: &str = "a topic";
@@ -730,6 +750,14 @@ pub const KAFKA_REGISTRY_VAULT: &str = "SQLN cannot read the registry password f
 /// Names what a Kafka command needs at a position.
 pub fn kafka_needs(what: &str) -> String {
     format!("The command needs {what} here.")
+}
+
+pub fn kafka_function_needs(name: &str, many: bool) -> String {
+    if many {
+        format!("{name} needs one or more values between parentheses, with commas between them.")
+    } else {
+        format!("{name} needs one value between parentheses.")
+    }
 }
 
 pub fn kafka_registry_not_saved(error: &str) -> String {
@@ -851,6 +879,7 @@ pub const FIELD_CA: &str = "CA file";
 pub const FIELD_CLIENT_CERTIFICATE: &str = "Client certificate";
 pub const FIELD_CLIENT_KEY: &str = "Client key";
 pub const FIELD_SASL: &str = "SASL";
+pub const FIELD_CONSUMER_GROUP: &str = "Consumer group";
 pub const FIELD_REGISTRY_URL: &str = "Registry URL";
 pub const FIELD_REGISTRY_USER: &str = "Registry user";
 pub const FIELD_REGISTRY_PASSWORD: &str = "Registry password";

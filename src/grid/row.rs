@@ -154,6 +154,28 @@ pub struct RowWriter {
 }
 
 impl RowWriter {
+    /// Allocates one row block of the known encoded size.
+    pub fn with_capacity(bytes: usize) -> Self {
+        Self {
+            data: Vec::with_capacity(bytes),
+        }
+    }
+
+    /// Returns the encoded size of one cell, including its header.
+    pub fn cell_bytes(value: Value<'_>) -> usize {
+        let bytes = match value {
+            Value::Null => 0,
+            Value::Text(text) | Value::Number(text) => text.len(),
+            Value::Binary(binary) => binary.bytes().len(),
+        };
+        let extra = bytes.checked_sub(LONG).map_or(0, |rest| {
+            (usize::BITS - rest.leading_zeros())
+                .max(1)
+                .div_ceil(GROUP_BITS) as usize
+        });
+        bytes + 1 + extra
+    }
+
     pub fn push(&mut self, value: Value<'_>) {
         let (kind, bytes) = match value {
             Value::Null => (NULL, &[][..]),
@@ -176,13 +198,18 @@ impl RowWriter {
         self.data.extend_from_slice(bytes);
     }
 
+    /// Ends a writer that does not need to keep its block for another row.
+    pub fn into_row(self) -> Row {
+        Row {
+            data: self.data.into_boxed_slice(),
+        }
+    }
+
     /// Ends the row. The writer is then ready for the next one.
     pub fn finish(&mut self) -> Row {
         // A large row keeps its block, so its values are not copied a second time.
         if self.data.len() > REUSED_BYTES {
-            return Row {
-                data: std::mem::take(&mut self.data).into_boxed_slice(),
-            };
+            return std::mem::take(self).into_row();
         }
         let data = Box::from(self.data.as_slice());
         self.data.clear();

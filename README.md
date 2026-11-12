@@ -230,15 +230,27 @@ SCAN 50000;
 SELECT timestamp, key, value.customer.id AS customer_id
 FROM orders
 EMIT CHANGES;
+
+SELECT key, value.items[*].sku AS skus, SIZE(value.items) AS count
+FROM orders
+WHERE 'vip' IN value.tags;
+
+SELECT key.id AS id, value.price * value.qty AS total, COALESCE(value.nick, value.name) AS name
+FROM orders
+WHERE ANY i IN value.items SATISFIES i.sku = 'a' AND i.qty > 2 END
+  AND headers.source IN ('web', 'app')
+  AND timestamp >= '2026-11-10T12:00:00Z';
 ```
 
 - Plain SELECT uses a finite read, as CONSUME. It starts at EARLIEST by default.
 - EMIT CHANGES uses a continuous read, as TAIL. It starts at LATEST by default and waits until **Stop**.
 - Use `START AT OFFSET 1500` or `START AT TIMESTAMP '2026-11-10T12:00:00Z'` for another start. `PARTITION 2` restricts the read to one partition.
 - LIMIT caps matching rows. SCAN caps examined messages. EMIT CHANGES accepts neither; its live row cap removes the oldest rows.
-- Select `*`, message columns, or `value.field` paths, with optional `AS alias`. Missing paths, tombstones, and values without JSON return NULL for a path. Whole columns keep bytes and NULL unchanged.
+- Select `*` or a list of values, each with an optional `AS alias`. A value is a message column, a field such as `value.customer.id`, `key.id`, or `headers.trace`, a literal, arithmetic, or a function. Missing paths, tombstones, and values without JSON return NULL. Whole columns keep bytes and NULL unchanged.
+- A path reads list items: `value.items[0]`, `value.items[-1]` (the last item), and `value.items[*].sku`. A column with `[*]` shows a JSON list of the found values.
 - SELECT can span lines. End it with `;` before another statement. A final SELECT can omit `;`. Use `#` at the start of a line for comments.
-- Filters still run locally. Joins, aggregates, expressions, and ORDER BY are not supported. Reads have no global order across partitions.
+- A name with spaces, dots, or brackets goes between double quotes after the dot: `value."order id"`.
+- Filters still run locally. Joins, aggregates, and ORDER BY are not supported. Reads have no global order across partitions.
 
 The native commands remain available, one per line. Each command only reads:
 
@@ -254,7 +266,12 @@ GROUP billing
 
 - `CONSUME` reads to the last message of each partition at its start. `TAIL` waits for new messages until **Stop**.
 - `FROM` takes `earliest`, `latest`, an offset, or `@` and a UTC time.
-- Both SELECT and the native commands use the same filter in SQLN, after the decoding: `key = 'text'`, `CONTAINS 'text'` (without case), `MATCHES 'regex'`, and `value.field` with `=`, `!=`, `<`, `<=`, `>`, or `>=`. Use `AND`, `OR`, `NOT`, and parentheses.
+- Both SELECT and the native commands use the same filter in SQLN, after the decoding. A condition compares two values with `=`, `!=`, `<`, `<=`, `>`, or `>=`, such as `value.paid < value.total` or `key = 'a'`. Use `AND`, `OR`, `NOT`, and parentheses.
+- Other conditions: `IS [NOT] NULL` (absent or null), `IS [NOT] MISSING` (absent), `[NOT] IN ('a', 'b')`, `'vip' IN value.tags`, `[NOT] BETWEEN 1 AND 5`, `[NOT] LIKE 'a%'`, `[NOT] ILIKE 'a%'` (without case), `CONTAINS 'text'` (without case), and `MATCHES 'regex'`.
+- `ANY i IN value.items SATISFIES <condition> END` is true when one item matches all of the condition. `EVERY … END` needs all items.
+- Values: `partition`, `offset`, `timestamp` (compare it with a UTC time in quotes), `key`, `value`, `headers`, `schema`, fields, `+ - * / %` with spaces, `||` for texts, `LOWER`, `UPPER`, `LENGTH`, `SIZE`, `COALESCE`, `CAST(x AS NUMBER|TEXT|BOOLEAN)`, and `TYPEOF`.
+- For lists, `value.items[*].sku = 'a'` is true when one item matches, `'vip' IN value.tags` finds an item, and `SIZE(value.items) > 2` counts the items.
+- Expressions generate values on demand. Large list combinations remain available, with Stop and the normal statement timeout. Generated text buffers use the configured memory limit, including live reads, export, and streaming. An oversized projection fails without a partial row; reduce it or increase the limit.
 - With a Schema Registry, Avro, JSON Schema, and Protobuf values become JSON. A value that does not decode stays as bytes, with a note in **Messages**.
 - SQLN never joins a consumer group and never commits an offset. `GROUP <id>` shows the committed offsets and the lag.
 - The explorer lists `topics` and `groups`. `Enter` on a topic opens its last 500 messages, newest first, with a filter field.
@@ -682,6 +699,7 @@ SQLN does not use an unverified TLS fallback. Even `sslmode=require` and `verify
 An explicit `sslmode=disable` removes TLS; use it only when the connection environment permits unencrypted traffic.
 `rediss`, `valkeys`, and `kafkas` always require verified TLS.
 Kafka takes `sasl=plain`, `sasl=scram-sha-256`, or `sasl=scram-sha-512` (the default) for a user, and `registry=<url>` for the Schema Registry.
+Kafka takes `group=<id>` for the consumer group id of the reads, such as a group with the prefix that the cluster permits. The form has the same **Consumer group** field. Without it, the reads use `sqln-read`. SQLN never joins the group and never commits.
 Without a CA file, Kafka verifies with the system roots only.
 
 ### Local data and diagnostics

@@ -35,6 +35,15 @@ impl Decoded {
         }
     }
 
+    /// Returns the payload as JSON: the JSON of the registry, or a text that holds JSON.
+    pub fn json(&self) -> Option<std::borrow::Cow<'_, Json>> {
+        match self {
+            Decoded::Json { json, .. } => Some(std::borrow::Cow::Borrowed(json)),
+            Decoded::Text(text) => serde_json::from_str(text).ok().map(std::borrow::Cow::Owned),
+            Decoded::Null | Decoded::Bytes(_) => None,
+        }
+    }
+
     /// Returns the schema that decoded the payload, as `12 avro`.
     pub fn schema(&self) -> Option<String> {
         match self {

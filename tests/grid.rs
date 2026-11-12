@@ -284,6 +284,27 @@ fn a_row_keeps_text_of_many_bytes_and_each_value_kind_apart() {
 }
 
 #[test]
+fn a_preallocated_row_has_the_predicted_cell_sizes_and_keeps_types() {
+    for length in [0, 1, 30, 31, 32, 158, 159, 160, 16_414, 16_415, 65_536] {
+        let text = "x".repeat(length);
+        let values = [
+            Value::Null,
+            Value::Text(&text),
+            Value::Number("42"),
+            Value::binary(text.as_bytes()),
+        ];
+        let bytes = values.iter().copied().map(RowWriter::cell_bytes).sum();
+        let mut writer = RowWriter::with_capacity(bytes);
+        for value in values {
+            writer.push(value);
+        }
+        let row = writer.into_row();
+        assert_eq!(row.bytes(), bytes);
+        assert_eq!(row.cells().collect::<Vec<_>>(), values);
+    }
+}
+
+#[test]
 fn a_writer_starts_each_row_empty() {
     let mut writer = RowWriter::default();
     let large = "a".repeat(100_000);

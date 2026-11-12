@@ -522,6 +522,8 @@ Redis opens its own connection for Pub/Sub, `MONITOR`, `SYNC`, and `PSYNC`, with
 
 Kafka `TAIL` assigns the partitions to its own consumer, without a commit, and waits for messages until the stop token. It calls `ResultSink::flush` after 200 ms without a message.
 
+Kafka evaluates message expressions in a blocking task, so the runner can process cancellation and its statement deadline. The expression visitor generates Cartesian combinations on demand and checks the stop token during traversal. `connector/kafka/filter/evaluation.rs` bounds temporary generated text and projection buffers per read, using `ResultSink::memory_limit`. This ceiling applies to live, export, and streaming delivery too; it does not cap total output. Projection serialization writes each list item directly into a bounded text buffer and sends no partial row on failure.
+
 `Canceller::cancel` returns after the database handles the request.
 In PostgreSQL, that requires reading until the server closes the request connection.
 In MySQL, the response of `KILL QUERY` already confirms the request.
@@ -657,6 +659,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
 | `schemas` | Optional. The schemas, or the Redis databases, that the catalog keeps. The current schema always stays. Without the field, or with an empty list, the catalog keeps all. Kafka refuses the field |
 | `sasl` | Optional, only for `kafka`. `plain`, `scram-sha-256`, or `scram-sha-512`. Without the field, a Kafka user uses `scram-sha-512` |
 | `schemaRegistry` | Optional, only for `kafka`. `url` (`http://` or `https://`) and an optional `username`. The password stays in the system vault or in the session |
+| `consumerGroup` | Optional, only for `kafka`. The `group.id` of the reads, without spaces or control characters. Without the field, the reads use `sqln-read`. SQLN never joins the group and never commits |
 
 The `globalPlainText` value exists only in the global scope.
 The value `sqlTimeoutSeconds: null` runs without a deadline, and the absence of the field means 30 seconds.

@@ -124,8 +124,17 @@ impl<'a> Lexer<'a> {
                 } else {
                     line_end
                 };
-                let (end, closed) = skip_quoted(&bytes[..end], start, quote, true);
-                (TokenKind::String, end, closed)
+                let name = self.dialect == Dialect::Kafka
+                    && quote == b'"'
+                    && start > 0
+                    && bytes[start - 1] == b'.';
+                let (end, closed) = skip_quoted(&bytes[..end], start, quote, !name);
+                let kind = if name {
+                    TokenKind::QuotedIdentifier
+                } else {
+                    TokenKind::String
+                };
+                (kind, end, closed)
             }
             _ => read_plain(bytes, start),
         }

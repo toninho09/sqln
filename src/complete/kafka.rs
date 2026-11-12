@@ -2,7 +2,7 @@
 
 use super::{Builder, Completion};
 use crate::catalog::Catalog;
-use crate::connector::kafka::{MESSAGE_COLUMNS, TOPICS, command};
+use crate::connector::kafka::{MESSAGE_COLUMNS, TOPICS, command, filter};
 use crate::sql::Dialect;
 
 pub(super) fn suggest(
@@ -53,8 +53,11 @@ pub(super) fn suggest(
             builder.add_command_name(&relation.name);
         }
     } else if from.is_none() {
-        if last_is("SELECT") || last.is_some_and(|token| token.is_operator(",")) {
+        if last_is("SELECT")
+            || last.is_some_and(|token| token.is_operator(",") || token.is_operator("("))
+        {
             words.extend(MESSAGE_COLUMNS);
+            words.extend(filter::FUNCTION_NAMES);
             words.push("*");
         } else if !last_is("AS") {
             if !last.is_some_and(|token| token.is_operator("*"))
@@ -83,9 +86,32 @@ pub(super) fn suggest(
     } else {
         if has("WHERE") {
             words.extend([
-                "KEY", "VALUE", "HEADERS", "CONTAINS", "MATCHES", "AND", "OR", "NOT", "NULL",
-                "TRUE", "FALSE",
+                "KEY",
+                "VALUE",
+                "HEADERS",
+                "TIMESTAMP",
+                "OFFSET",
+                "SCHEMA",
+                "CONTAINS",
+                "MATCHES",
+                "LIKE",
+                "ILIKE",
+                "IN",
+                "BETWEEN",
+                "IS",
+                "MISSING",
+                "ANY",
+                "EVERY",
+                "SATISFIES",
+                "END",
+                "AND",
+                "OR",
+                "NOT",
+                "NULL",
+                "TRUE",
+                "FALSE",
             ]);
+            words.extend(filter::FUNCTION_NAMES);
         }
         for clause in ["PARTITION", "START", "WHERE", "LIMIT", "SCAN", "EMIT"] {
             if !has(clause) && !(clause == "EMIT" && (has("LIMIT") || has("SCAN"))) {

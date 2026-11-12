@@ -17,10 +17,6 @@ use crate::ui::text;
 /// A call to the cluster that gets no answer in this time fails.
 pub const CALL_LIMIT: Duration = Duration::from_secs(10);
 
-/// The group of the reads of SQLN. librdkafka needs a group for a consumer, but SQLN never
-/// joins it and never commits, so the cluster never creates it.
-pub const READ_GROUP: &str = "sqln-read";
-
 /// Keeps the last error of the client, so a failed call can give its reason. The logs of
 /// librdkafka can hold names and values, so they go nowhere.
 #[derive(Default)]
@@ -84,7 +80,9 @@ fn path_text(path: &std::path::Path) -> Result<String, ConnectError> {
         .ok_or_else(|| ConnectError::new(text::KAFKA_PATH_TEXT))
 }
 
-/// Builds the configuration of a consumer of the target, in the group `group`.
+/// Builds the configuration of a consumer of the target, in the group `group`. librdkafka
+/// needs a group for a consumer, but SQLN never joins it and never commits, so the cluster
+/// never creates it.
 pub fn config(target: &NetworkTarget, group: &str) -> Result<ClientConfig, ConnectError> {
     let Address::Tcp { host, port } = &target.address else {
         return Err(ConnectError::new(text::FORM_KAFKA_SOCKET));
