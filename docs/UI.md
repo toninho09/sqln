@@ -212,6 +212,8 @@ Do not run or convert the SQL automatically.
 
 Editor and results appear together.
 The user can drag the divider and collapse the connection navigator.
+The result tab row keeps the selected result, Plan, or Messages tab visible after navigation and resizing.
+`<` and `>` mark hidden tabs. A click selects the nearest hidden tab on that side.
 
 ```text
 ▎ ◐ 12.345s  console-1 ×   ✓  orders ×   ✗  users (table) ×
@@ -427,6 +429,10 @@ Control rules:
 
 - **Run selection** uses the selection. **Run statement** uses the statement under the cursor.
 - The toolbar, palette, prefix menu, and hints identify the current Run scope. **Run script** always uses the whole script.
+- **Run subquery**, in the command palette, runs the smallest complete parenthesized `SELECT` or `WITH` query at the cursor.
+- The action has no default shortcut. Assign `runSubquery` to show its effective key in menus and hints.
+- Its confirmation shows the source line and SQL prefix. It keeps the selection and does not add outer aliases or CTE dependencies.
+- The action uses the normal execution checks and results. Without a subquery, it explains the refusal and runs nothing.
 - A row above a nonempty, idle editor shows the executable one-based lines, such as `Selection: Lines 3–8 · Script: whole script`.
 - A cursor outside SQL or a selection without statements shows the reason instead of another target.
 - Preview and execution share statement resolution. The preview changes no text, cursor, selection, or execution state.

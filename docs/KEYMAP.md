@@ -164,6 +164,7 @@ For an unbound task, `→` after the palette shortcut means to choose the named 
 |---|---|---|
 | Run | `Ctrl+Enter` | `F5` or `Ctrl+W e` |
 | Whole script | `Shift+F5` | `Ctrl+W s` |
+| Smallest subquery at the cursor | Command palette: **Run subquery** | Configurable shortcut |
 | Show the plan of the statement | `Ctrl+W E` | Command palette |
 | Run the statement and show its plan | `Ctrl+W A` | Command palette |
 | Stop script | `Ctrl+W x` | **Stop script** button |
@@ -173,6 +174,11 @@ For an unbound task, `→` after the palette shortcut means to choose the named 
 | Help | `F1` | `Ctrl+W ?` |
 | Command palette | `Ctrl+P` | `Ctrl+W :` |
 | Quit | `Ctrl+W q` | Command palette |
+
+**Run subquery** ignores the selection and asks before it runs the smallest complete parenthesized `SELECT` or `WITH` query.
+It keeps the original text without the outer parentheses. It does not add outer aliases or CTE dependencies.
+Missing dependencies produce the normal database error. No matching subquery runs nothing.
+Use `runSubquery` to assign its shortcut in settings. It has no default shortcut.
 
 `Ctrl+Enter` needs keyboard enhancement in the terminal.
 At startup, the application detects that feature and shows the available path in the hint bar.
@@ -672,6 +678,7 @@ The initial focus always stays on the option with no effect on the database or t
 |---|---|
 | Click | Select an item and change focus |
 | Click on a tab | Switch tab |
+| Click on `<` or `>` in the result tab row | Select the nearest hidden tab on that side |
 | Click on the `×` of a tab | Close the tab, with the questions of `Ctrl+W c` |
 | Click on **Quit** | Quit, with the questions of `Ctrl+W q` |
 | Click on the `EXPLORER` title | Give focus to the navigator |

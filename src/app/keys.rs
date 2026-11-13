@@ -511,6 +511,13 @@ impl App {
             Action::AgentTasks => self.open_agent_tasks(),
             Action::Run => self.run(RunTarget::Statements(RunScope::Default)),
             Action::RunScript => self.run(RunTarget::Statements(RunScope::Script)),
+            Action::RunSubquery => {
+                if self.command_available(action) {
+                    self.run(RunTarget::Statements(RunScope::Subquery));
+                } else {
+                    self.status = Some(text::SUBQUERY_UNAVAILABLE.to_owned());
+                }
+            }
             Action::Explain => self.run(RunTarget::Plan { analyze: false }),
             Action::ExplainAnalyze => self.run(RunTarget::Plan { analyze: true }),
             Action::FormatSql => self.format_console(),
@@ -806,8 +813,8 @@ impl App {
         for (action, keys, label) in self.help_actions(Region::Global) {
             use Action::*;
             let title = match action {
-                Run | RunScript | Explain | ExplainAnalyze | Stop | FormatSql | SqlDiagnostics
-                | ToggleComment | OpenHistory => text::GROUP_RUN,
+                Run | RunScript | RunSubquery | Explain | ExplainAnalyze | Stop | FormatSql
+                | SqlDiagnostics | ToggleComment | OpenHistory => text::GROUP_RUN,
                 ToggleMode | Commit | Rollback => text::GROUP_TRANSACTION,
                 ChooseSchema | ChangeConnection | OpenSessions | OpenDiagram | OpenCompare
                 | FollowKey => text::GROUP_CONNECTION,
@@ -958,6 +965,13 @@ impl App {
             return None;
         }
         let warning = self.run_warning(connection, plan);
+        if target == RunTarget::Statements(RunScope::Subquery) {
+            return Some(text::subquery_question(
+                plan.rows[0] + 1,
+                &short(&plan.statements[0]),
+                warning.as_deref(),
+            ));
+        }
         let dialect = self.connection(connection)?.dialect;
         let statement = plan.statements.first()?;
         let writes = matches!(target, RunTarget::Plan { .. })
@@ -1063,6 +1077,7 @@ impl App {
                 self.status = Some(text::CURSOR_OUTSIDE.to_owned());
             }
             Err(RunRefusal::NoStatement) => self.status = Some(text::NO_STATEMENT.to_owned()),
+            Err(RunRefusal::NoSubquery) => self.status = Some(text::NO_SUBQUERY.to_owned()),
         }
     }
 
@@ -1106,6 +1121,7 @@ impl App {
             Ok(FormatOutcome::Refused) => text::FORMAT_REFUSED,
             Err(RunRefusal::CursorOutside) => text::CURSOR_OUTSIDE,
             Err(RunRefusal::NoStatement) => text::NO_STATEMENT,
+            Err(RunRefusal::NoSubquery) => text::NO_SUBQUERY,
         };
         self.status = Some(message.to_owned());
     }
@@ -1524,7 +1540,7 @@ impl App {
             Run | RunScript => {
                 in_console && console.focus != Focus::Results && available && console.can_run()
             }
-            SqlDiagnostics => in_editor && available,
+            SqlDiagnostics | RunSubquery => in_editor && available,
             Explain | ExplainAnalyze | FormatSql | ToggleComment => {
                 in_editor && available && !console.editor.is_blank()
             }
@@ -1579,6 +1595,7 @@ impl App {
                 &[
                     (&[Run], text::MENU_RUN),
                     (&[RunScript], text::MENU_SCRIPT),
+                    (&[RunSubquery], text::MENU_SUBQUERY),
                     (&[Explain], text::MENU_EXPLAIN),
                     (&[ExplainAnalyze], text::MENU_EXPLAIN_ANALYZE),
                     (&[Stop], text::MENU_STOP),
@@ -1699,6 +1716,12 @@ impl App {
             Action::ContextCommands => self.context_region().is_some(),
             Action::Run | Action::RunScript => {
                 !in_table && idle && !self.association_pending(console.id)
+            }
+            Action::RunSubquery => {
+                self.editor_has_focus()
+                    && idle
+                    && !self.association_pending(console.id)
+                    && !console.editor.dialect().is_command_line()
             }
             Action::Explain | Action::ExplainAnalyze => {
                 let analyze = action == Action::ExplainAnalyze;

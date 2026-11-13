@@ -45,7 +45,7 @@ Main thread                        Tokio runtime
 | `form` | Fields and validation of the connection form |
 | `connection` | Connection definitions and the state of each connection in the application |
 | `editor` | EdTUI, conventional layer, search, and replace |
-| `sql` | Tokenizer, statement separation, statement classes, and local syntax diagnostics |
+| `sql` | Tokenizer, statement separation, subquery ranges, statement classes, and local syntax diagnostics |
 | `complete` | Local autocomplete suggestions |
 | `ai` | One OpenAI-compatible chat protocol, credentials, context, and metadata transforms. The Settings dialog edits the provider fields |
 | `catalog` | In-memory cache; schemas, tables, routines, sequences, triggers, and types first, columns and foreign keys on demand |

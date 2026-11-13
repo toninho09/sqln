@@ -510,6 +510,7 @@ pub const MENU_RENAME: &str = "Rename the tab";
 pub const MENU_CLOSE_TAB: &str = "Close the tab";
 pub const MENU_RUN: &str = "Run statement";
 pub const MENU_SCRIPT: &str = "Run script";
+pub const MENU_SUBQUERY: &str = "Run subquery";
 pub const RUN_SELECTION: &str = "Run selection";
 
 pub fn run_label(selection: bool) -> &'static str {
@@ -540,6 +541,7 @@ pub fn run_preview(
         }
         Err(crate::editor::RunRefusal::CursorOutside) => "No statement at cursor".to_owned(),
         Err(crate::editor::RunRefusal::NoStatement) => "No statement to run".to_owned(),
+        Err(crate::editor::RunRefusal::NoSubquery) => NO_SUBQUERY.to_owned(),
     };
     if script {
         format!("{target} · Script: whole script")
@@ -1455,6 +1457,18 @@ pub const DATABASE_LABEL: &str = "Database";
 pub const NO_DATABASE_LABEL: &str = "No database";
 pub const CURSOR_OUTSIDE: &str = "The cursor is outside a statement.";
 pub const NO_STATEMENT: &str = "The text has no statement to run.";
+pub const NO_SUBQUERY: &str =
+    "No complete SELECT or WITH subquery at the cursor. Move the cursor inside a subquery.";
+pub const SUBQUERY_UNAVAILABLE: &str = "Focus an idle SQL console to run a subquery.";
+
+pub fn subquery_question(line: usize, sql: &str, warning: Option<&str>) -> String {
+    let warning = warning
+        .map(|message| format!("{message}\n\n"))
+        .unwrap_or_default();
+    format!(
+        "{warning}Run only the subquery at line {line}?\n\n{sql}\n\nOuter aliases and CTE dependencies are not included."
+    )
+}
 pub const PLAN_REFUSED: &str = "This source has no query plan.";
 pub const PLAN_ANALYZE_REFUSED: &str = "SQLite cannot run a statement inside a plan.";
 pub const PLAN_ONE_STATEMENT: &str = "A plan needs one statement. Select only one.";
@@ -1791,6 +1805,7 @@ pub fn action_text(action: Action) -> &'static str {
         Action::AgentTasks => "Agent tasks of this session: stop a task",
         Action::Run => "Run the selection or the statement",
         Action::RunScript => "Run the script",
+        Action::RunSubquery => MENU_SUBQUERY,
         Action::Explain => "Show the plan of the statement",
         Action::ExplainAnalyze => "Run the statement and show its plan",
         Action::Stop => "Stop the script",

@@ -473,8 +473,14 @@ pub fn draw_console(
     );
     let focused = focused && console.focus == Focus::Results;
     let active = console.active.min(console.results.len());
-    let labels = tab_labels(console, tabs);
-    draw_tabs(frame, tabs, &labels, active, focused, theme);
+    draw_tab_places(
+        frame,
+        tabs,
+        result_tab_places(console, tabs),
+        active,
+        focused,
+        theme,
+    );
 
     if console.showing_messages() {
         console
@@ -516,23 +522,64 @@ pub fn draw_console(
     }
 }
 
-/// Lists the labels of a console. A tab takes more than one column, so a result after
-/// the first `area.width` results stays out of sight, and it has no label.
-fn tab_labels(console: &Console, area: Rect) -> Vec<String> {
-    let mut labels: Vec<String> = console
-        .results
-        .iter()
-        .take(usize::from(area.width))
-        .map(|result| {
-            if result.plan {
-                text::PLAN_TAB.to_owned()
-            } else {
-                text::result_tab(result.number)
-            }
-        })
-        .collect();
-    labels.push(text::messages_tab(console.warnings()));
-    labels
+/// Lists visible result tabs and overflow controls with their original indices.
+/// Work stays bounded by the row width, not the number of results.
+fn result_tab_places(console: &Console, area: Rect) -> Vec<(usize, String, u16)> {
+    if area.width == 0 || area.height == 0 {
+        return Vec::new();
+    }
+    let last = console.results.len();
+    let active = console.active.min(last);
+    let label = |index: usize| match console.results.get(index) {
+        Some(result) if result.plan => text::PLAN_TAB.to_owned(),
+        Some(result) => text::result_tab(result.number),
+        None => text::messages_tab(console.warnings()),
+    };
+    if area.width <= 2 {
+        return vec![(
+            active,
+            fit(&label(active), usize::from(area.width)).0,
+            area.x,
+        )];
+    }
+
+    let mut first = active;
+    let mut used = label(active).width() + 3;
+    let reserve_next = usize::from(active < last);
+    while first > 0 {
+        let previous = label(first - 1).width() + 3;
+        if used + previous + reserve_next > usize::from(area.width) {
+            break;
+        }
+        used += previous;
+        first -= 1;
+    }
+
+    let mut places = Vec::new();
+    if first > 0 {
+        places.push((first - 1, "<".to_owned(), area.x));
+    }
+    let mut x = area.x + 1;
+    let mut next = first;
+    for index in first..=last {
+        let shown = format!(" {} ", label(index));
+        let room =
+            usize::from(area.right().saturating_sub(x)).saturating_sub(usize::from(index < last));
+        if shown.width() > room && index > active {
+            break;
+        }
+        let (shown, width) = fit(&shown, room);
+        places.push((index, shown, x));
+        next = index + 1;
+        x = x.saturating_add(u16::try_from(width + 1).unwrap_or(u16::MAX));
+        if x >= area.right() {
+            break;
+        }
+    }
+    if next <= last {
+        places.push((next, ">".to_owned(), area.right() - 1));
+    }
+    places
 }
 
 /// Lists each tab with its text and its first column. The row of the tabs starts
@@ -558,6 +605,21 @@ pub fn draw_tabs(
     focused: bool,
     theme: &Theme,
 ) {
+    let places = tab_places(labels, area)
+        .into_iter()
+        .enumerate()
+        .map(|(index, (label, x))| (index, label, x));
+    draw_tab_places(frame, area, places, active, focused, theme);
+}
+
+fn draw_tab_places(
+    frame: &mut Frame,
+    area: Rect,
+    places: impl IntoIterator<Item = (usize, String, u16)>,
+    active: usize,
+    focused: bool,
+    theme: &Theme,
+) {
     draw_rule(frame, area, theme);
     let active_style = if focused {
         theme.result_tab_active.patch(theme.panel_title_focused)
@@ -565,7 +627,7 @@ pub fn draw_tabs(
         theme.result_tab_active
     };
     let buffer = frame.buffer_mut();
-    for (index, (label, x)) in tab_places(labels, area).into_iter().enumerate() {
+    for (index, label, x) in places {
         if x >= area.right() {
             break;
         }
@@ -588,7 +650,11 @@ pub fn label_at(labels: &[String], area: Rect, column: u16) -> Option<usize> {
 
 /// Returns the result tab of a console at a screen column.
 pub fn tab_at(console: &Console, area: Rect, column: u16) -> Option<usize> {
-    label_at(&tab_labels(console, area), area, column)
+    result_tab_places(console, area)
+        .into_iter()
+        .find_map(|(index, label, x)| {
+            (column >= x && usize::from(column - x) < label.width()).then_some(index)
+        })
 }
 
 fn draw_messages(frame: &mut Frame, area: Rect, console: &mut Console, theme: &Theme) {

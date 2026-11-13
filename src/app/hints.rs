@@ -385,6 +385,11 @@ impl App {
                 console.editor.is_inserting(),
             ),
             (Action::Help, "keys", true),
+            (
+                Action::RunSubquery,
+                "run subquery",
+                self.command_available(Action::RunSubquery) && console.can_run(),
+            ),
             (Action::SqlDiagnostics, "warnings", true),
             (Action::FormatSql, "format", !console.editor.is_blank()),
             (Action::OpenHistory, "history", true),

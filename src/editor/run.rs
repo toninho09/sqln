@@ -2,7 +2,7 @@
 
 use super::buffer::Snapshot;
 use super::{RunPlan, RunRefusal, RunScope, SqlEditor};
-use crate::sql::{Statement, split, split_tokens};
+use crate::sql::{Statement, split, split_tokens, subquery_at};
 
 /// The one-based lines of the text that Run executes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,6 +60,9 @@ impl SqlEditor {
         scope: RunScope,
         read: impl FnOnce(&Snapshot, &[Statement]) -> T,
     ) -> Result<T, RunRefusal> {
+        if scope == RunScope::Subquery && self.dialect.is_command_line() {
+            return Err(RunRefusal::NoSubquery);
+        }
         let selection = (scope == RunScope::Default)
             .then(|| self.selection_range())
             .flatten();
@@ -103,7 +106,23 @@ impl SqlEditor {
                 let statement = statements
                     .get(index)
                     .filter(|item| offset >= item.start)
-                    .ok_or(RunRefusal::CursorOutside)?;
+                    .ok_or(if scope == RunScope::Subquery {
+                        RunRefusal::NoSubquery
+                    } else {
+                        RunRefusal::CursorOutside
+                    })?;
+                if scope == RunScope::Subquery {
+                    let start = snapshot
+                        .tokens
+                        .partition_point(|token| token.start() < statement.start);
+                    let end = snapshot
+                        .tokens
+                        .partition_point(|token| token.start() < statement.end);
+                    let subquery =
+                        subquery_at(&snapshot.text, &snapshot.tokens[start..end], offset)
+                            .ok_or(RunRefusal::NoSubquery)?;
+                    return Ok(read(snapshot, std::slice::from_ref(&subquery)));
+                }
                 std::slice::from_ref(statement)
             }
         };

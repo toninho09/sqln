@@ -81,12 +81,15 @@ pub enum RunScope {
     /// The selection or, without a selection, the statement at the cursor.
     Default,
     Script,
+    /// The smallest complete SELECT or WITH subquery at the cursor, without its outer parentheses.
+    Subquery,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunRefusal {
     CursorOutside,
     NoStatement,
+    NoSubquery,
 }
 
 /// The result of a format.

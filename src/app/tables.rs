@@ -836,6 +836,7 @@ impl App {
             // A table has no script, no transaction, and no schema choice.
             Action::Run
             | Action::RunScript
+            | Action::RunSubquery
             | Action::Explain
             | Action::ExplainAnalyze
             | Action::ToggleMode

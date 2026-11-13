@@ -214,6 +214,8 @@ SELECT 1 AS example;
 Press `F5`, or press `Ctrl+W`, then `e`, to run it.
 The action shows **Run selection** or **Run statement**, according to the editor selection.
 A row above the editor shows the executable line range. **Run script** always uses the whole script.
+**Run subquery**, in the command palette, asks before it runs the smallest parenthesized `SELECT` or `WITH` query at the cursor.
+It does not add outer aliases or CTE dependencies. The normal Run scopes stay unchanged.
 Without a selection, the line-number column highlights the statement under the cursor. Execution-state symbols stay visible.
 The results appear below the editor. Use `Ctrl+W j` to move down to the grid.
 

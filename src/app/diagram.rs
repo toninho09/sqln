@@ -433,6 +433,7 @@ impl App {
             // A diagram has no editor, no results, no transaction, and no schema choice.
             Action::Run
             | Action::RunScript
+            | Action::RunSubquery
             | Action::Explain
             | Action::ExplainAnalyze
             | Action::FormatSql

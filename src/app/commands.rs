@@ -224,6 +224,9 @@ impl App {
         if action == Action::RunScript {
             return text::MENU_SCRIPT;
         }
+        if action == Action::RunSubquery {
+            return text::MENU_SUBQUERY;
+        }
         if action == Action::AgentDirect {
             return if self.agent.direct(self.console().id) {
                 "Disable agent direct editing for this console"
@@ -406,6 +409,7 @@ impl App {
                             && matches!(
                                 action,
                                 Run | RunScript
+                                    | RunSubquery
                                     | Explain
                                     | ExplainAnalyze
                                     | FormatSql
@@ -432,7 +436,7 @@ fn command_priority(action: Action) -> u8 {
         Rollback => 2,
         NavigatorClearFilter | GridClearSelection => 3,
         Run | NavigatorOpen | DiagramOpen | CompareScript => 4,
-        RunScript | NavigatorNewConsole | DiagramStructure | CompareCopy => 5,
+        RunScript | RunSubquery | NavigatorNewConsole | DiagramStructure | CompareCopy => 5,
         GridEditCell | GridNewRow | GridDeleteRow => 5,
         GridSaveEdits | GridReviewEdits | GridDiscardEdits => 3,
         GridCopy => 6,

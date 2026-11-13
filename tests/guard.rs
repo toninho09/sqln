@@ -93,6 +93,12 @@ impl Run {
         self.idle();
     }
 
+    fn subquery(&mut self) {
+        self.app.on_event(Event::Key(crate::common::ctrl('p')));
+        self.write("Run subquery");
+        self.press(KeyCode::Enter);
+    }
+
     fn rows(&self) -> i64 {
         rusqlite::Connection::open(&self.path)
             .unwrap()
@@ -108,6 +114,44 @@ impl Run {
             .collect::<Vec<_>>()
             .join("\n")
     }
+}
+
+#[test]
+fn a_subquery_run_does_not_execute_its_outer_delete() {
+    let mut run = Run::new("guard-subquery.db", |_| {});
+    run.write("DELETE FROM t WHERE a IN (SELECT 1 AS picked);");
+    run.app
+        .console_mut()
+        .editor
+        .set_cursor(edtui::Index2::new(0, 32));
+    run.subquery();
+    assert_eq!(run.rows(), 3);
+    assert!(run.screen().contains("SELECT 1 AS picked"));
+    run.press(KeyCode::Right);
+    run.press(KeyCode::Enter);
+    run.idle();
+    assert_eq!(run.rows(), 3);
+    assert_eq!(run.app.console().results[0].table.columns[0], "picked");
+}
+
+#[test]
+fn a_subquery_confirmation_keeps_the_production_warning() {
+    let mut run = Run::new("guard-subquery-production.db", |definition| {
+        definition.production = true;
+    });
+    run.write("SELECT (SELECT untrusted_function());");
+    run.app
+        .console_mut()
+        .editor
+        .set_cursor(edtui::Index2::new(0, 18));
+    run.subquery();
+    let screen = run.screen();
+    assert!(screen.contains(TITLE), "{screen}");
+    assert!(screen.contains("production connection"), "{screen}");
+    assert!(screen.contains("SELECT untrusted_function()"), "{screen}");
+    run.press(KeyCode::Enter);
+    assert!(!run.app.console().is_busy());
+    assert!(run.app.console().results.is_empty());
 }
 
 #[test]

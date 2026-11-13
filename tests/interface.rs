@@ -952,9 +952,165 @@ fn a_click_on_a_tab_works_with_more_results_than_columns() {
         assert!(Instant::now() < deadline, "the run did not end");
     }
     assert_eq!(screen.app.console().results.len(), 400);
-    let (column, row) = screen.locate("Result 2");
+    let shown = screen.screen(80, 24);
+    assert!(shown.contains("Result 400"), "{shown}");
+    let (column, row) = screen.locate("Result 399");
     screen.click(column, row);
-    assert_eq!(screen.app.console().active, 1);
+    assert_eq!(screen.app.console().active, 398);
+}
+
+fn result_tab_screen(keyboard: KeyboardMode, custom: bool) -> Screen {
+    let overrides = if custom {
+        HashMap::from([
+            ("gridPreviousResult".to_owned(), vec!["f6".to_owned()]),
+            ("gridNextResult".to_owned(), vec!["f7".to_owned()]),
+        ])
+    } else {
+        HashMap::new()
+    };
+    let keymap = Keymap::with_overrides(keyboard, &overrides).unwrap();
+    let mut screen = Screen {
+        app: App::new(
+            Options {
+                keyboard,
+                keymap: Some(keymap),
+                ..Options::default()
+            },
+            Rc::new(RefCell::new(MemoryClipboard::default())),
+            Theme::plain(),
+        ),
+    };
+    screen.write("SELECT 1;");
+    let console = screen.app.console_mut();
+    console.results = (1..=400)
+        .map(|number| sqln::console::ResultTab::new(number, Vec::new()))
+        .collect();
+    console.results[199].plan = true;
+    console.active = 399;
+    screen.prefix('j');
+    screen
+}
+
+#[test]
+fn result_tabs_follow_keys_and_resizing_in_both_modes_with_custom_shortcuts() {
+    for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        for custom in [false, true] {
+            let mut screen = result_tab_screen(keyboard, custom);
+            let previous = if custom {
+                KeyCode::F(6)
+            } else {
+                KeyCode::Char('[')
+            };
+            let next = if custom {
+                KeyCode::F(7)
+            } else {
+                KeyCode::Char(']')
+            };
+            let original = screen.app.console().editor.text();
+            let cursor = screen.app.console().editor.cursor();
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            for (key, active) in [
+                (next, 400),
+                (next, 0),
+                (next, 1),
+                (previous, 0),
+                (previous, 400),
+                (previous, 399),
+            ] {
+                screen.code(key);
+                assert_eq!(screen.app.console().active, active);
+                let label = if active == 400 {
+                    "Messages".to_owned()
+                } else {
+                    format!("Result {}", active + 1)
+                };
+                for width in [80, 120, 200, 80] {
+                    terminal
+                        .resize(ratatui::layout::Rect::new(0, 0, width, 24))
+                        .unwrap();
+                    screen.app.on_event(Event::Resize(width, 24));
+                    terminal.draw(|frame| screen.app.draw(frame)).unwrap();
+                    let shown = rows(terminal.backend().buffer()).join("\n");
+                    assert!(shown.contains(&label), "{label}:\n{shown}");
+                    assert_eq!(screen.app.console().active, active);
+                }
+            }
+            for _ in 0..200 {
+                screen.code(previous);
+            }
+            let shown = screen.screen(80, 24);
+            assert!(shown.contains(" Plan "), "{shown}");
+            assert_eq!(screen.app.console().active, 199);
+            screen.code(KeyCode::Char('x'));
+            assert_eq!(screen.app.console().results.len(), 399);
+            let shown = screen.screen(80, 24);
+            assert!(shown.contains("Result 201"), "{shown}");
+            assert_eq!(screen.app.console().editor.text(), original);
+            assert_eq!(screen.app.console().editor.cursor(), cursor);
+        }
+    }
+}
+
+#[test]
+fn result_tab_overflow_indicators_select_hidden_tabs_with_the_mouse() {
+    let mut screen = result_tab_screen(KeyboardMode::Conventional, false);
+    let buffer = screen.buffer(80, 24);
+    let lines = rows(&buffer);
+    let (row, line) = lines
+        .iter()
+        .enumerate()
+        .find(|(_, line)| line.contains("Result 400"))
+        .unwrap();
+    let next = line[..line.rfind('>').unwrap()].width() as u16;
+    screen.click(next, row as u16);
+    assert!(screen.app.console().showing_messages());
+
+    let buffer = screen.buffer(80, 24);
+    let lines = rows(&buffer);
+    let line = &lines[row];
+    assert!(line.contains("Messages"), "{line}");
+    assert!(!line.contains('>'), "{line}");
+    let first_number = line
+        .split("Result ")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    let previous = line[..line.find('<').unwrap()].width() as u16;
+    screen.click(previous, row as u16);
+    assert_eq!(screen.app.console().active, first_number - 2);
+    let shown = screen.screen(80, 24);
+    assert!(
+        shown.contains(&format!("Result {}", first_number - 1)),
+        "{shown}"
+    );
+}
+
+#[test]
+fn result_tab_hit_targets_stay_inside_narrow_rows() {
+    let mut screen = result_tab_screen(KeyboardMode::Conventional, false);
+    for active in [0, 199, 399, 400] {
+        screen.app.console_mut().active = active;
+        for width in 0..40 {
+            let area = ratatui::layout::Rect::new(3, 0, width, 1);
+            let hit = |column| sqln::ui::tab_at(screen.app.console(), area, column);
+            assert_eq!(hit(area.x - 1), None);
+            assert_eq!(hit(area.right()), None);
+            let visible = (area.x..area.right()).filter_map(hit).collect::<Vec<_>>();
+            assert_eq!(visible.contains(&active), width > 0, "{active}: {width}");
+            assert!(visible.iter().all(|index| *index <= 400));
+            let empty = ratatui::layout::Rect { height: 0, ..area };
+            assert_eq!(sqln::ui::tab_at(screen.app.console(), empty, area.x), None);
+        }
+    }
+    screen.app.console_mut().results.clear();
+    screen.app.console_mut().active = 0;
+    let shown = screen.screen(80, 24);
+    assert!(shown.contains("Messages"), "{shown}");
+    assert!(!shown.contains("Result 1"), "{shown}");
 }
 
 #[test]

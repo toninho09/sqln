@@ -6,6 +6,34 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Visible result tabs
+
+The user approves keeping the selected result tab visible when the row is too narrow.
+
+- The result row follows the selected result, Plan, or Messages tab, including after resize or result closure.
+- `<` and `>` mark hidden tabs. A click selects the nearest hidden tab on that side.
+- Existing result navigation, custom shortcuts, conventional mode, and Vim mode stay unchanged.
+- Drawing and mouse hit testing share the same positions and original result indices.
+- Layout work stays bounded by the row width, not the number of results.
+- Navigation preserves editor text, cursor, and selection. It runs no SQL and changes no saved format.
+
+## Execute a subquery
+
+The user approves a separate action for the smallest subquery at the cursor.
+
+- **Run subquery** uses the command palette. The configurable action name is `runSubquery`.
+- The action has no default shortcut, so existing custom shortcuts stay valid.
+- The action extracts the smallest complete parenthesized `SELECT` or `WITH` query that contains the cursor.
+- It removes the outer parentheses and does not add aliases, parameters, or CTE dependencies.
+- A selection does not change this scope. Text, cursor, selection, and the normal Run scopes stay unchanged.
+- A confirmation shows the source line and the SQL prefix before execution. Cancel has initial focus.
+- Existing execution checks, production warnings, parameter binding, authentication, and transaction rules still apply.
+- Missing subqueries give a reason and a next action. The action never falls back to the whole statement.
+- Correlated references and missing CTE dependencies can fail. The database error uses the existing Messages path.
+- The action is available in an idle relational SQL editor, not in Redis or Kafka consoles.
+- Lexical token ranges identify candidates. The database remains responsible for SQL validation.
+- No saved format changes.
+
 ## Execution scope and first tasks
 
 The user approves explicit execution labels and task-based startup guidance.

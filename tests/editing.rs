@@ -14,5 +14,6 @@ mod editor_vim;
 mod external_file;
 mod join_suggestions;
 mod run_preview;
+mod run_subquery;
 mod script_file;
 mod syntax_diagnostics;
