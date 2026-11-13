@@ -216,3 +216,78 @@ fn missing_columns_reach_the_application_and_a_refresh_shows_them() {
     f.press(ctrl(' '));
     assert_eq!(f.labels(), ["id"]);
 }
+
+/// A fixture whose `users` table has no columns yet, with the cursor in insert mode
+/// after `SELECT `.
+fn waiting_fixture(keyboard: KeyboardMode) -> Fixture {
+    let mut f = Fixture::new("SELECT  FROM users u", keyboard);
+    f.catalog.schemas[0].relations[0].columns = Columns::NotLoaded;
+    f.editor.set_cursor(Index2::new(0, 7));
+    if keyboard == KeyboardMode::Vim {
+        f.write("i");
+    }
+    f.write("u.");
+    f
+}
+
+#[test]
+fn an_empty_list_waits_for_columns_until_they_arrive() {
+    for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let mut f = waiting_fixture(keyboard);
+        assert!(f.editor.suggestions().is_none());
+        assert_eq!(f.editor.waiting(), Some("users"));
+        f.write("n");
+        f.press(key(Backspace));
+        assert_eq!(
+            f.editor.waiting(),
+            Some("users"),
+            "Backspace keeps the wait"
+        );
+        f.catalog.schemas[0].relations[0].columns = Columns::Loaded(vec!["id".to_owned()]);
+        f.editor.refresh_suggestions(Some(&f.catalog));
+        assert_eq!(f.labels(), ["id"]);
+        assert_eq!(f.editor.waiting(), None);
+    }
+}
+
+#[test]
+fn keys_pass_through_the_waiting_note_and_close_it() {
+    for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let mut f = waiting_fixture(keyboard);
+        f.press(key(Enter));
+        assert_eq!(f.text(), "SELECT u.\n FROM users u", "Enter writes a line");
+        assert_eq!(f.editor.waiting(), None);
+
+        let mut f = waiting_fixture(keyboard);
+        f.press(key(Tab));
+        assert_ne!(f.text(), "SELECT u. FROM users u", "Tab is not captured");
+        assert_eq!(f.editor.waiting(), None);
+
+        let mut f = waiting_fixture(keyboard);
+        f.press(key(Left));
+        assert_eq!(f.editor.waiting(), None);
+
+        let mut f = waiting_fixture(keyboard);
+        f.press(key(Esc));
+        assert_eq!(f.editor.waiting(), None);
+    }
+}
+
+#[test]
+fn a_failed_read_stops_the_wait_without_a_later_list() {
+    let mut f = waiting_fixture(KeyboardMode::Conventional);
+    let other = RelationRef {
+        schema: "public".to_owned(),
+        relation: "orders".to_owned(),
+    };
+    f.editor.stop_waiting(&other);
+    assert_eq!(f.editor.waiting(), Some("users"), "another relation failed");
+    f.editor.stop_waiting(&RelationRef {
+        schema: "public".to_owned(),
+        relation: "users".to_owned(),
+    });
+    assert_eq!(f.editor.waiting(), None);
+    f.catalog.schemas[0].relations[0].columns = Columns::Loaded(vec!["id".to_owned()]);
+    f.editor.refresh_suggestions(Some(&f.catalog));
+    assert!(f.editor.suggestions().is_none());
+}

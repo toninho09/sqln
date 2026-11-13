@@ -6,6 +6,56 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Kafka schema field completion — 2026-11-13
+
+The user asks for the completion of the fields of Avro, Protobuf, and JSON Schema values, and approves the points below.
+This entry replaces decision 23 of "Kafka and Schema Registry" and the words "It uses no database reads" of the Completion row of "Kafka SELECT queries".
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| Source | The latest schema of the subjects `<topic>-value` and `<topic>-key` in the Schema Registry. A topic without a subject or without a registry has no fields | A sample of messages | User choice. JSON without a schema has no suggestions |
+| Time of the read | The first `value.` or `key.` path of a topic in the editor or in the filter of a topic tab | The catalog read | User choice. Only the topics in use cost a read |
+| Note | While the read runs, an empty list shows `Reading the columns of <relation>.` below the cursor, in the hint style. The note takes no keys and no clicks. A key that closes a list also closes the note | A status message | User choice: the note is at the place of the list |
+| Note scope | All connections: a SQL list that waits for the columns of a table shows the same note | Only Kafka | User choice. One rule in the editor and in the filter fields |
+| Store | The paths are the columns of the topic in the catalog, until **Refresh** of the catalog | A second cache | Reuses the column flow of SQL |
+| Navigator | An expanded topic shows its paths, and the expansion reads them | Only the completion | User choice |
+| Roots | `value` and `key` | Only `value` | User choice |
+| Failure | The status line gives the reason, and the note closes. A later path asks again | A silent empty list | No silent failure |
+
+Mapping rules: the paths follow the JSON of the decoder.
+
+| Format | Fields | No fields below |
+|---|---|---|
+| Avro | Record fields; each branch of a union; `[*]` for the items of an array; named types and references | Map, enum, fixed, primitive and logical types |
+| Protobuf | The first message of the schema, as the index `[0]` of the wire format; JSON names, such as `orderId`; the fields of a `oneof`; `[*]` for repeated messages | Map; each `google.protobuf.*` type; enum and scalar types |
+| JSON Schema | `properties`; `[*]` for `items` and `prefixItems`; `$ref` to the same document or to a reference name; each schema of `allOf`, `anyOf`, `oneOf`, `then`, and `else` | `additionalProperties`, `patternProperties`, a remote `$ref` |
+
+Implementation limits: 10 steps after the root, 2000 paths for each root, and 100,000 visited schema nodes. A recursive type stops at its second use in one path.
+
+Known limitations: only the subject names of the TopicNameStrategy; Protobuf uses only the first message; the items of `ANY` and `EVERY` get no fields; a new schema shows after **Refresh** of the catalog.
+
+## Kafka read progress — 2026-11-13
+
+The user asks for the count of consumed messages while a Kafka command runs, and approves the choices below.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| Place | The summary line under the grid of the console result and of the topic tab | The status line | Each result has its own counts. The status line has less space at 80 columns |
+| Counts | Scanned messages; matched messages, only with a filter; bytes of the keys, values, and headers | Matched messages without a filter | Without a filter, the two counts are equal |
+| Percent | Only for a finite read: the largest part of its three ends, the offsets to the high offset of each partition at the start, `SCAN`, and `LIMIT` | A percent for `TAIL` | `TAIL` has no end |
+| Speed | `msg/s` of the scanned messages in the last second. The screen measures it at each frame; the first speed comes after one second | An average of the whole read | An average hides a pause of `TAIL` |
+| Lag | Only for `TAIL`: the sum of the high offset minus the next offset of each partition. A check of the high offsets runs each 2 seconds on a task, and the read never waits for it. A failed check removes the lag | Statistics of librdkafka; a check that stops the read | The statistics give the lag only for committed offsets, and SQLN never commits |
+| End | The console summary adds the counts and the reason: the end of each partition, `LIMIT`, the `SCAN` limit, or a stop. `TAIL` gives no reason, because it always ends with **Stop**. The topic tab shows the counts only while it loads | Keep `N rows read.` | The user choice |
+| Delivery | The connector writes atomic counters, and `ExecEvent::Columns` carries them once | One event for each change | Same reason as the export progress: the event queue has 256 places |
+
+These choices follow the rules above on the points the rules left open.
+
+| Subject | Choice | Reason |
+|---|---|---|
+| Order of the parts | State, scanned, matched, lag, speed, bytes | A narrow screen cuts the end of the line |
+| Notice in **Messages** | `Scanned N messages; M matched.` stays, with the rule 12 of "Kafka and Schema Registry" | The Messages history keeps it |
+| Row cap or data budget | The summary of the grid gives the reason, and the Kafka text adds only the counts | The grid text already explains the limit |
+
 ## Visible result tabs
 
 The user approves keeping the selected result tab visible when the row is too narrow.
@@ -253,7 +303,7 @@ The read-only scope, consumer isolation, filters, and Schema Registry rules stay
 | Columns | `*`, or a comma-separated list of message columns and `value.field` paths, with optional `AS alias`; no expressions, joins, aggregates, or ORDER BY |
 | Scripts | SELECT can span lines and ends at a semicolon or the end of the script. A semicolon is required before another statement. Native commands keep one command per line. A line that starts with `#` is a comment |
 | Compatibility | Existing commands and saved scripts keep their syntax. Both forms use the same read execution. No saved format changes |
-| Completion | SELECT offers message columns, catalog topics, and its clause words. It uses no database reads |
+| Completion | SELECT offers message columns, catalog topics, and its clause words. It uses no database reads. See "Kafka schema field completion — 2026-11-13" for field paths |
 
 Projection implementation: a whole column keeps its original value and type.
 A JSON path preserves numbers, returns JSON text for objects and arrays, and returns NULL for absent or non-JSON values.
@@ -290,7 +340,7 @@ It also reopens the rule "Search: literal text, no regular expression" only for 
 | 20. Lag | `GROUP <id>`: `topic`, `partition`, `committed`, `end`, `lag`, `member`. `GROUPS`: `group`, `state`, `protocol`, `members` | — | Read only |
 | 21. Schema Registry | Optional fields of a Kafka connection: URL, user, and password. `config.json` gets `"schemaRegistry": {"url", "username"}` and `"sasl"`; `version` stays 1. The password follows the **Credential** choice of the form: **Vault** writes it to the system vault, **Session** keeps it in memory | Always the vault | The user authorizes each secret storage |
 | 22. Schema cache | By id, for the life of the connector | Expiry | A schema id never changes |
-| 23. Completion | Fixed list of commands, then the topics or groups of the catalog, then the clause words | — | Topics are few, unlike Redis keys |
+| 23. Completion | Fixed list of commands, then the topics or groups of the catalog, then the clause words. Replaced for field paths by "Kafka schema field completion — 2026-11-13" | — | Topics are few, unlike Redis keys |
 | 24. AI and MCP | No AI completion and no MCP read for Kafka | — | Same rule as Redis |
 
 Implementation decisions:

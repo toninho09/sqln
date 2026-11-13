@@ -1,6 +1,7 @@
 //! Executions. Each console has one task, and that task owns the reserved session.
 
 mod ai;
+mod progress;
 mod runner;
 mod sink;
 
@@ -12,6 +13,7 @@ use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedSender};
 
+pub use self::progress::{ProgressSnapshot, ReadEnd, ReadMeter, ReadProgress, percent};
 pub use self::sink::{Flow, ReadLimit, ResultSink};
 use crate::catalog::{Catalog, ForeignKey, RelationRef};
 use crate::command_log::{LogEvent, TraceContext};
@@ -133,6 +135,8 @@ pub enum ExecEvent {
         columns: Vec<String>,
         /// The row cap of a live result: at the cap, the grid drops its oldest rows.
         live: Option<usize>,
+        /// The counts of a read that the connector updates while it runs.
+        progress: Option<Arc<ReadProgress>>,
     },
     Rows {
         key: StatementKey,

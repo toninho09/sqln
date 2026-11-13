@@ -36,7 +36,11 @@ pub enum Parsed {
         schema: AvroSchema,
         references: Vec<AvroSchema>,
     },
-    Json,
+    /// The decoder reads JSON without the schema, so only the field paths read the text.
+    Json {
+        text: String,
+        references: Vec<(String, String)>,
+    },
     Protobuf {
         pool: DescriptorPool,
     },
@@ -46,7 +50,7 @@ impl Parsed {
     pub fn kind(&self) -> &'static str {
         match self {
             Parsed::Avro { .. } => "avro",
-            Parsed::Json => "json",
+            Parsed::Json { .. } => "json",
             Parsed::Protobuf { .. } => "protobuf",
         }
     }
@@ -122,6 +126,11 @@ impl RegistryClient {
     }
 
     async fn get(&self, path: &str) -> Result<Json, String> {
+        self.request(path).await?.ok_or_else(|| status_error(404))
+    }
+
+    /// Reads one answer of the registry. The status 404 gives `None`.
+    async fn request(&self, path: &str) -> Result<Option<Json>, String> {
         let mut request = self
             .http
             .get(format!("{}{path}", self.url))
@@ -134,6 +143,9 @@ impl RegistryClient {
             .send()
             .await
             .map_err(|_| text::KAFKA_REGISTRY_UNREACHABLE.to_owned())?;
+        if response.status().as_u16() == 404 {
+            return Ok(None);
+        }
         if !response.status().is_success() {
             return Err(status_error(response.status().as_u16()));
         }
@@ -148,7 +160,9 @@ impl RegistryClient {
             }
             body.extend_from_slice(&chunk);
         }
-        serde_json::from_slice(&body).map_err(|_| text::KAFKA_REGISTRY_BAD_ANSWER.to_owned())
+        serde_json::from_slice(&body)
+            .map(Some)
+            .map_err(|_| text::KAFKA_REGISTRY_BAD_ANSWER.to_owned())
     }
 
     fn source(answer: &Json) -> Result<Source, String> {
@@ -242,6 +256,18 @@ impl RegistryClient {
         self.cache.lock().await.insert(id, parsed.clone());
         Ok(parsed)
     }
+
+    /// Returns the latest schema of a subject, or `None` when the registry does not know
+    /// the subject.
+    pub async fn latest(&self, subject: &str) -> Result<Option<Parsed>, String> {
+        let path = format!("/subjects/{}/versions/latest", percent_encode(subject));
+        let Some(answer) = self.request(&path).await? else {
+            return Ok(None);
+        };
+        let source = Self::source(&answer)?;
+        let references = self.references(&source).await?;
+        parse(&source.kind, &source.text, &references).map(Some)
+    }
 }
 
 /// Encodes a subject for a path. A subject can hold any character.
@@ -285,7 +311,10 @@ pub fn parse(kind: &str, text: &str, references: &[(String, String)]) -> Result<
             .map_err(|_| text::KAFKA_REGISTRY_BAD_SCHEMA.to_owned())?;
             Ok(Parsed::Avro { schema, references })
         }
-        "JSON" => Ok(Parsed::Json),
+        "JSON" => Ok(Parsed::Json {
+            text: text.to_owned(),
+            references: references.to_vec(),
+        }),
         "PROTOBUF" => {
             let mut files: HashMap<String, String> = references.iter().cloned().collect();
             files.insert(MAIN_FILE.to_owned(), text.to_owned());

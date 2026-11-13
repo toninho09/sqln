@@ -5,6 +5,10 @@
 // Each server test uses its own topics and groups, so the tests can run at the same time.
 
 mod common;
+#[path = "kafka/fields.rs"]
+mod fields;
+#[path = "kafka/progress.rs"]
+mod progress;
 #[path = "kafka/select.rs"]
 mod select;
 
@@ -549,6 +553,8 @@ struct Run {
     notices: Vec<String>,
     statuses: Vec<StatementStatus>,
     end: Option<ExecutionEnd>,
+    /// The counts that the read sent with its columns.
+    progress: Option<Arc<sqln::exec::ReadProgress>>,
 }
 
 impl Run {
@@ -621,7 +627,12 @@ impl Harness {
         let mut run = Run::default();
         loop {
             match self.next() {
-                ExecEvent::Columns { columns, .. } => run.columns.push(columns),
+                ExecEvent::Columns {
+                    columns, progress, ..
+                } => {
+                    run.columns.push(columns);
+                    run.progress = run.progress.take().or(progress);
+                }
                 ExecEvent::Rows { rows, .. } => run.rows.extend(rows),
                 ExecEvent::Notice { text, .. } => run.notices.push(text),
                 ExecEvent::StatementFinished { status, .. } => run.statuses.push(status),
@@ -1081,6 +1092,11 @@ fn a_topic_page_reads_the_newest_matches_first() {
     assert_eq!(run.column("key"), ["1199", "1198", "1197", "1196", "1195"]);
     let run = h.run_ok(&format!("SQLN.TOPIC {topic} 5 WHERE value.n < 100"));
     assert_eq!(run.column("key"), ["99", "98", "97", "96", "95"]);
+    // The matches are the oldest messages, so the page scans each message once.
+    let counts = run.progress.as_ref().unwrap().snapshot();
+    assert!(counts.filtered);
+    assert_eq!((counts.scanned, counts.matched), (1_200, 100));
+    assert_eq!((counts.percent, counts.lag), (None, None));
     let run = h.run_ok(&format!("SQLN.TOPIC {topic} 0"));
     assert!(run.rows.is_empty());
 }
@@ -1232,6 +1248,51 @@ fn the_registry_decodes_avro_protobuf_and_json_schema() {
             .notices
             .iter()
             .any(|notice| notice.contains("999999"))
+    );
+}
+
+#[test]
+fn the_columns_of_a_topic_are_the_paths_of_its_latest_schemas() {
+    let (Some(uri), Some(url)) = (kafka_uri(), registry_url()) else {
+        return;
+    };
+    let topic = unique("fields");
+    let address_subject = unique("address");
+    register(
+        &url,
+        &address_subject,
+        "AVRO",
+        r#"{"type":"record","name":"Address","namespace":"t","fields":[{"name":"city","type":"string"}]}"#,
+        serde_json::json!([]),
+    );
+    register(
+        &url,
+        &format!("{topic}-value"),
+        "AVRO",
+        r#"{"type":"record","name":"Person","namespace":"t","fields":[{"name":"name","type":"string"},{"name":"home","type":["null","t.Address"]}]}"#,
+        serde_json::json!([{"name": "t.Address", "subject": address_subject, "version": 1}]),
+    );
+    register(
+        &url,
+        &format!("{topic}-key"),
+        "PROTOBUF",
+        r#"syntax = "proto3"; message Key { int64 order_id = 1; }"#,
+        serde_json::json!([]),
+    );
+    let target = parse_uri(&format!("{uri}?registry={url}")).unwrap();
+    let (columns, without) = runtime().block_on(async {
+        let mut session = network_connector(target).connect().await.unwrap();
+        let columns = session.read_columns(TOPICS, &topic).await.unwrap();
+        let without = session.read_columns(TOPICS, &unique("none")).await.unwrap();
+        (columns, without)
+    });
+    assert_eq!(
+        columns,
+        ["value.name", "value.home", "value.home.city", "key.orderId"]
+    );
+    assert!(
+        without.is_empty(),
+        "a topic without a subject has no fields"
     );
 }
 

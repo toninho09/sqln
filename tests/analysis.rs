@@ -471,6 +471,7 @@ fn retained_rows_keep_one_budget_charge_across_credential_preparation_and_replac
                 key,
                 columns: vec!["value".into()],
                 live: None,
+                progress: None,
             },
             &budget,
         );

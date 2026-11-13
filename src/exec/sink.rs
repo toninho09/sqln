@@ -17,7 +17,7 @@ pub(super) type Capture = Arc<Mutex<Captured>>;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
-use super::{ExecEvent, StatementKey};
+use super::{ExecEvent, ReadProgress, StatementKey};
 use crate::export::ExportWriter;
 use crate::grid::{Budget, Reservation, Row};
 use crate::ui::text;
@@ -67,6 +67,8 @@ pub struct ResultSink {
     /// sink sends every row and reserves no budget.
     live: Option<usize>,
     capture: Option<Capture>,
+    /// The counts that the connector updates while it reads.
+    progress: Option<Arc<ReadProgress>>,
 }
 
 /// The rows of a batch that nobody received leave the budget.
@@ -100,6 +102,7 @@ impl ResultSink {
             stream: false,
             live: None,
             capture: None,
+            progress: None,
         }
     }
 
@@ -114,6 +117,12 @@ impl ResultSink {
 
     pub(super) fn capture_to(&mut self, capture: Capture) {
         self.capture = Some(capture);
+    }
+
+    /// Sends the counts of the read to the screen with the columns of the next result.
+    /// Call it before `set_columns`.
+    pub fn track(&mut self, progress: Arc<ReadProgress>) {
+        self.progress = Some(progress);
     }
 
     /// Sends the rows to a file. They skip the row cap and the budget of the grid.
@@ -230,6 +239,7 @@ impl ResultSink {
             key: self.key,
             columns,
             live: self.live,
+            progress: self.progress.clone(),
         })
     }
 

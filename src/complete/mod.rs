@@ -76,7 +76,7 @@ pub fn suggest_in(
         && crate::sql::first_keyword(statement.text(sql), dialect)
             .is_some_and(|word| word.eq_ignore_ascii_case("SELECT"))
     {
-        return kafka::suggest(sql, statement.start, cursor, catalog);
+        return kafka::suggest(sql, (statement.start, statement.end), cursor, catalog);
     }
     if dialect.is_command_line() {
         return suggest_command(sql, cursor, dialect, catalog);
@@ -128,6 +128,12 @@ fn suggest_command(
         replace: cursor..cursor,
         ..Completion::default()
     };
+    if dialect == Dialect::Kafka
+        && typed.contains('.')
+        && let Some(completion) = kafka::suggest_line_path(line, cursor, catalog)
+    {
+        return completion;
+    }
     let replace = cursor - typed.len()..cursor;
     let mut builder = Builder::new(typed, None, dialect);
     match before.as_slice() {
@@ -330,6 +336,24 @@ impl Builder {
                 label: name.to_owned(),
                 insert: crate::connector::words::command_word(name),
                 kind: SuggestionKind::Table,
+                detail: None,
+                cursor_offset: None,
+            },
+        );
+    }
+
+    /// Adds a name of a Kafka field path, with quotes only when the name needs them.
+    fn add_path_name(&mut self, name: &str) {
+        let Some(rank) = self.rank(name, true) else {
+            return;
+        };
+        self.push(
+            rank,
+            Suggestion {
+                // A schema can hold any name, so the label shows no control characters.
+                label: crate::grid::printable(name),
+                insert: crate::connector::kafka::filter::path_name(name).into_owned(),
+                kind: SuggestionKind::Column,
                 detail: None,
                 cursor_offset: None,
             },

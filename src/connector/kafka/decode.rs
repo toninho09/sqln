@@ -118,7 +118,7 @@ fn with_schema(parsed: &Parsed, payload: &[u8]) -> Result<Json, String> {
                 .map_err(|_| bad())?;
             Json::try_from(value).map_err(|_| bad())
         }
-        Parsed::Json => serde_json::from_slice(payload).map_err(|_| bad()),
+        Parsed::Json { .. } => serde_json::from_slice(payload).map_err(|_| bad()),
         Parsed::Protobuf { pool } => {
             let (message, start) = protobuf_message(pool, payload).ok_or_else(bad)?;
             let message = DynamicMessage::decode(message, &payload[start..]).map_err(|_| bad())?;

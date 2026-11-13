@@ -13,7 +13,7 @@ use super::kit::input::{self, FieldMode, FieldText};
 use super::kit::panel::draw_panel_title;
 use super::searchbar::search_line;
 use super::theme::Theme;
-use super::{draw_suggestions, text};
+use super::{draw_suggestions, draw_waiting, text};
 use crate::console::Phase;
 use crate::exec::ReadLimit;
 use crate::grid::printable;
@@ -22,7 +22,6 @@ use crate::structure::{Scope, Section};
 use crate::table::{TableFocus, TableTab};
 
 const LABEL_WIDTH: u16 = 10;
-const SUMMARY_GAP: &str = " · ";
 
 /// The buttons of the pages, with the text and the state of each one.
 type Pager = Vec<(TableControl, String, bool)>;
@@ -232,7 +231,7 @@ fn summary_row(tab: &TableTab, blocked: bool, width: usize, theme: &Theme) -> (S
     let (state, note) = summary_parts(tab);
     let full = note.map_or_else(
         || state.clone(),
-        |note| format!("{state}{SUMMARY_GAP}{note}"),
+        |note| format!("{state}{}{note}", text::SUMMARY_GAP),
     );
     if !tab.has_pages() {
         return (full, Vec::new());
@@ -276,7 +275,12 @@ fn summary_parts(tab: &TableTab) -> (String, Option<&'static str>) {
     match tab.phase {
         Phase::Waiting => parts.push(text::TABLE_WAITING.to_owned()),
         Phase::Running if tab.is_counting() => parts.push(text::TABLE_COUNTING.to_owned()),
-        Phase::Running => parts.push(text::TABLE_LOADING.to_owned()),
+        Phase::Running => {
+            parts.push(text::TABLE_LOADING.to_owned());
+            if let Some(meter) = &tab.result.progress {
+                parts.push(text::kafka_progress(&meter.snapshot(), meter.rate()));
+            }
+        }
         Phase::Stopping => parts.push(text::TABLE_STOPPING.to_owned()),
         Phase::Idle => match tab.limit {
             ReadLimit::Budget => parts.push(text::TABLE_BUDGET.to_owned()),
@@ -286,7 +290,7 @@ fn summary_parts(tab: &TableTab) -> (String, Option<&'static str>) {
             _ => {}
         },
     }
-    (parts.join(SUMMARY_GAP), note)
+    (parts.join(text::SUMMARY_GAP), note)
 }
 
 /// Draws the table view. It returns the areas for the mouse.
@@ -406,17 +410,26 @@ pub fn draw_table(
         frame.render_widget(Paragraph::new(note), notice);
     }
 
-    if let Some(list) = &tab.list {
+    if tab.list.is_some() || tab.waiting() {
         let (field, first, input) = match tab.focus {
             TableFocus::Filter => (filter_text, filter_first, &tab.filter),
             _ => (order_text, order_first, &tab.order),
         };
-        let start = input.text()[..list.completion.replace.start.min(input.text().len())]
+        let start = tab
+            .list
+            .as_ref()
+            .map_or(input.byte_cursor(), |list| list.completion.replace.start);
+        let start = input.text()[..start.min(input.text().len())]
             .chars()
             .count();
         let offset = u16::try_from(start.saturating_sub(first)).unwrap_or(0);
         let anchor = Position::new(field.x.saturating_add(offset).min(field.right()), field.y);
-        draw_suggestions(frame, area, anchor, list, theme);
+        match &tab.list {
+            Some(list) => {
+                draw_suggestions(frame, area, anchor, list, theme);
+            }
+            None => draw_waiting(frame, area, anchor, &tab.relation.relation, theme),
+        }
     }
     TableLayout {
         filter,

@@ -240,6 +240,8 @@ pub fn draw_editor(
         let anchor = Position::new(cursor.x.saturating_sub(anchor_shift as u16), cursor.y);
         let layout = draw_suggestions(frame, area, anchor, list, theme);
         editor.set_list_area(layout);
+    } else if let (Some(relation), Some(cursor)) = (editor.waiting(), cursor) {
+        draw_waiting(frame, area, cursor, relation, theme);
     }
 }
 
@@ -526,6 +528,25 @@ const AI_ROW_LABELS: [&str; crate::editor::AI_ROWS] = [
     " AI  Complete with AI with a request…",
     " AI  Complete with AI…",
 ];
+
+/// Draws a note below the anchor while the list waits for the columns of a relation.
+/// The note takes no keys and no clicks.
+pub(crate) fn draw_waiting(
+    frame: &mut Frame,
+    bounds: Rect,
+    anchor: Position,
+    relation: &str,
+    theme: &Theme,
+) {
+    let note = format!(
+        " {} ",
+        text::reading_columns(&crate::grid::printable(relation))
+    );
+    let width = Span::raw(note.as_str()).width();
+    draw_anchored_list(frame, (bounds, anchor), (1, None, width), theme, |_, _| {
+        vec![Span::styled(note.as_str(), theme.hint)]
+    });
+}
 
 pub(crate) fn draw_suggestions(
     frame: &mut Frame,

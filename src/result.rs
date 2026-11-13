@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::exec::ReadLimit;
+use crate::exec::{ReadLimit, ReadMeter};
 use crate::grid::json::pretty;
 use crate::grid::{
     Budget, GridView, Reservation, ResultTable, Row, RowSearch, Value, printable, row_cost,
@@ -45,6 +45,8 @@ pub struct ResultTab {
     pub live: Option<usize>,
     /// The rows of a live result that left the grid or never entered it.
     pub dropped: usize,
+    /// The counts of a read that runs, from its connector.
+    pub progress: Option<ReadMeter>,
 }
 
 /// The action of a key in the results panel.
@@ -114,6 +116,35 @@ impl ResultTab {
             plan: false,
             live: None,
             dropped: 0,
+            progress: None,
+        }
+    }
+
+    /// Writes the summary of a read that runs: the rows of a live result and the counts
+    /// of the connector.
+    pub fn show_progress(&mut self) {
+        let counts = self
+            .progress
+            .as_ref()
+            .map(|meter| (meter.snapshot(), meter.rate()));
+        self.summary = match (self.live, counts) {
+            (Some(_), None) => text::live_rows(self.table.rows.len(), self.dropped),
+            (Some(_), Some((progress, rate))) => format!(
+                "{}{}{}",
+                text::live_rows(self.table.rows.len(), self.dropped),
+                text::SUMMARY_GAP,
+                text::kafka_progress(&progress, rate)
+            ),
+            (None, Some((progress, rate))) => text::kafka_reading(&progress, rate),
+            (None, None) => return,
+        };
+    }
+
+    /// Measures the speed of a read that runs, and writes its summary.
+    pub fn sample_progress(&mut self, now: Instant) {
+        if let Some(meter) = &mut self.progress {
+            meter.sample(now);
+            self.show_progress();
         }
     }
 
@@ -173,7 +204,7 @@ impl ResultTab {
         if let Some(search) = &mut self.search {
             search.drop_front(front);
         }
-        self.summary = text::live_rows(self.table.rows.len(), self.dropped);
+        self.show_progress();
     }
 
     /// Replaces the text of the database with the tree of a plan. The new rows take a

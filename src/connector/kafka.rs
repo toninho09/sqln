@@ -5,12 +5,13 @@
 pub mod client;
 pub mod command;
 pub mod decode;
+pub mod fields;
 pub mod filter;
 pub mod registry;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use rdkafka::consumer::Consumer as _;
@@ -18,6 +19,7 @@ use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 use rdkafka::message::{Headers, Message as _};
 use rdkafka::{Offset, TopicPartitionList};
 use serde_json::Value as Json;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use self::client::{CALL_LIMIT, Consumer, Reader};
@@ -32,7 +34,7 @@ use super::{
     ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, RelationRef, Schema};
-use crate::exec::{Flow, ResultSink};
+use crate::exec::{Flow, ReadEnd, ReadProgress, ResultSink, percent};
 use crate::grid::{Row, RowWriter, Value};
 use crate::sql::Dialect;
 use crate::ui::text;
@@ -61,6 +63,8 @@ const FIRST_WINDOW: i64 = 500;
 const LARGEST_WINDOW: i64 = 50_000;
 /// A read without messages for this time sends its rows to the grid.
 const IDLE: Duration = Duration::from_millis(200);
+/// The time between two reads of the high offsets during `TAIL`, for its lag.
+const LAG_EVERY: Duration = Duration::from_secs(2);
 
 /// Returns the schema of the names after a command, for the completion.
 pub fn argument_schema(command: &str) -> Option<&'static str> {
@@ -298,6 +302,19 @@ struct Raw {
     headers: Vec<(String, Option<Vec<u8>>)>,
 }
 
+impl Raw {
+    /// Returns the bytes of the key, the value, and the headers.
+    fn size(&self) -> u64 {
+        let length = |bytes: &Option<Vec<u8>>| bytes.as_ref().map_or(0, Vec::len);
+        let headers: usize = self
+            .headers
+            .iter()
+            .map(|(name, value)| name.len() + length(value))
+            .sum();
+        u64::try_from(length(&self.key) + length(&self.value) + headers).unwrap_or(u64::MAX)
+    }
+}
+
 /// Where a read starts and ends in one partition. A read without an end waits for new
 /// messages until the user stops it.
 struct Window {
@@ -433,6 +450,150 @@ impl Drop for Scan {
     }
 }
 
+/// The position of a read in each partition. It gives the part of a finite read that is
+/// done, and the lag of a `TAIL`: the messages that it still has to read.
+struct Position {
+    /// The next offset of each partition.
+    next: HashMap<i32, i64>,
+    /// The end of a finite read, or the last known high offset of a `TAIL`.
+    ends: HashMap<i32, i64>,
+    /// The offsets from the next offset to the end, for all partitions.
+    left: i64,
+    /// The offsets from the start to the end, for all partitions.
+    total: i64,
+}
+
+impl Position {
+    fn new(windows: &[Window], ends: impl IntoIterator<Item = (i32, i64)>) -> Self {
+        let next: HashMap<i32, i64> = windows
+            .iter()
+            .map(|window| (window.partition, window.start))
+            .collect();
+        let mut position = Self {
+            next,
+            ends: HashMap::new(),
+            left: 0,
+            total: 0,
+        };
+        position.set_ends(ends);
+        position.total = position.left;
+        position
+    }
+
+    fn left_in(next: i64, end: i64) -> i64 {
+        (end - next).max(0)
+    }
+
+    /// Moves the position of a partition after a message.
+    fn advance(&mut self, partition: i32, offset: i64) {
+        let Some(next) = self.next.get_mut(&partition) else {
+            return;
+        };
+        let after = offset.saturating_add(1);
+        if after <= *next {
+            return;
+        }
+        if let Some(end) = self.ends.get(&partition).copied() {
+            self.left -= Self::left_in(*next, end) - Self::left_in(after, end);
+        }
+        *next = after;
+    }
+
+    /// Replaces the ends with new high offsets.
+    fn set_ends(&mut self, ends: impl IntoIterator<Item = (i32, i64)>) {
+        self.ends = ends.into_iter().collect();
+        self.left = self
+            .next
+            .iter()
+            .filter_map(|(partition, next)| {
+                let end = self.ends.get(partition)?;
+                Some(Self::left_in(*next, *end))
+            })
+            .sum();
+    }
+
+    fn left(&self) -> u64 {
+        u64::try_from(self.left).unwrap_or(0)
+    }
+
+    fn done(&self) -> u64 {
+        u64::try_from(self.total - self.left).unwrap_or(0)
+    }
+
+    fn total(&self) -> u64 {
+        u64::try_from(self.total).unwrap_or(0)
+    }
+}
+
+/// The partitions, with their low and high offsets.
+type Watermarks = Vec<(i32, i64, i64)>;
+
+/// Returns the low and high offsets of each partition.
+async fn watermarks(
+    consumer: &Arc<Consumer>,
+    topic: &str,
+    partitions: Vec<i32>,
+) -> Result<Watermarks, ExecError> {
+    let topic = topic.to_owned();
+    client::blocking(consumer, move |consumer| {
+        partitions
+            .into_iter()
+            .map(|id| {
+                let (low, high) = consumer.fetch_watermarks(&topic, id, CALL_LIMIT)?;
+                Ok((id, low, high))
+            })
+            .collect()
+    })
+    .await
+}
+
+/// Reads the high offsets of a `TAIL` again from time to time, for its lag. The read of
+/// the messages never waits for it.
+struct LagCheck {
+    consumer: Arc<Consumer>,
+    topic: String,
+    partitions: Vec<i32>,
+    task: Option<JoinHandle<Result<Watermarks, ExecError>>>,
+    started: Instant,
+}
+
+impl LagCheck {
+    fn new(consumer: Arc<Consumer>, topic: &str, partitions: Vec<i32>) -> Self {
+        Self {
+            consumer,
+            topic: topic.to_owned(),
+            partitions,
+            task: None,
+            started: Instant::now(),
+        }
+    }
+
+    /// Returns the answer of the last check when it is complete, and starts a new check
+    /// at the end of `LAG_EVERY`. `Some(None)` is a failed check.
+    async fn poll(&mut self) -> Option<Option<Vec<(i32, i64)>>> {
+        if self.task.as_ref().is_some_and(JoinHandle::is_finished) {
+            let task = self.task.take()?;
+            let highs = task.await.ok().and_then(Result::ok).map(|marks| {
+                marks
+                    .into_iter()
+                    .map(|(partition, _, high)| (partition, high))
+                    .collect()
+            });
+            return Some(highs);
+        }
+        if self.task.is_none() && self.started.elapsed() >= LAG_EVERY {
+            let consumer = self.consumer.clone();
+            let topic = self.topic.clone();
+            let partitions = self.partitions.clone();
+            self.task = Some(tokio::spawn(async move {
+                watermarks(&consumer, &topic, partitions).await
+            }));
+            self.started = Instant::now();
+        }
+        None
+    }
+}
+
 /// Reads the headers as a JSON object. A repeated name holds a list. A value that is not
 /// UTF-8 becomes `0x` and its hex digits.
 fn headers_json(headers: &[(String, Option<Vec<u8>>)]) -> Option<Json> {
@@ -546,13 +707,6 @@ struct KafkaSession {
     registry_error: Option<String>,
 }
 
-/// The counts of a read, for the notice at its end.
-#[derive(Default)]
-struct Counts {
-    scanned: u64,
-    matched: u64,
-}
-
 impl KafkaSession {
     async fn metadata(&self, topic: Option<String>) -> Result<Vec<TopicInfo>, ExecError> {
         client::blocking(&self.consumer, move |consumer| {
@@ -586,18 +740,13 @@ impl KafkaSession {
                 return Err(ExecError::new(text::KAFKA_NO_PARTITION));
             }
         }
-        let topic = topic.to_owned();
-        client::blocking(&self.consumer, move |consumer| {
-            partitions
-                .into_iter()
-                .map(|partition| {
-                    let (low, high) =
-                        consumer.fetch_watermarks(&topic, partition.id, CALL_LIMIT)?;
-                    Ok((partition, low, high))
-                })
-                .collect()
-        })
-        .await
+        let ids = partitions.iter().map(|partition| partition.id).collect();
+        let marks = watermarks(&self.consumer, topic, ids).await?;
+        Ok(partitions
+            .into_iter()
+            .zip(marks)
+            .map(|(partition, (_, low, high))| (partition, low, high))
+            .collect())
     }
 
     /// Returns the first offset of each partition for a start.
@@ -913,6 +1062,8 @@ impl KafkaSession {
                 end: (!tail).then_some(*high),
             })
             .collect();
+        let progress = Arc::new(ReadProgress::new(read.filter.is_some()));
+        sink.track(progress.clone());
         if let Some(projection) = &read.projection {
             sink.set_columns(projection.names()).await;
         } else {
@@ -925,12 +1076,36 @@ impl KafkaSession {
         let filter = read.filter.map(Arc::new);
         let projection = read.projection.map(Arc::new);
         let mut scan = Scan::start(&self.target, &read.topic, &windows, !tail)?;
-        let mut counts = Counts::default();
-        let mut stopped = false;
+        let highs = partitions
+            .iter()
+            .map(|(partition, _, high)| (partition.id, *high));
+        let mut position = Position::new(&windows, highs);
+        let mut lag = tail.then(|| {
+            let ids = windows.iter().map(|window| window.partition).collect();
+            LagCheck::new(self.consumer.clone(), &read.topic, ids)
+        });
+        let mut lag_known = true;
+        let limit = read.limit.map(|limit| limit as u64);
+        // The read ends at the first of its ends: the high offsets, `SCAN`, or `LIMIT`.
+        let read_percent = |position: &Position| {
+            [
+                percent(position.done(), position.total()),
+                read.scan.and_then(|scan| percent(progress.scanned(), scan)),
+                limit.and_then(|limit| percent(progress.matched(), limit)),
+            ]
+            .into_iter()
+            .flatten()
+            .max()
+        };
+        if !tail {
+            progress.set_percent(read_percent(&position));
+        }
+        let mut end = ReadEnd::None;
         loop {
             match scan.next(&stop).await? {
                 Next::Message(raw) => {
-                    counts.scanned += 1;
+                    progress.add_scanned(raw.size());
+                    position.advance(raw.partition, raw.offset);
                     let row = self
                         .message_row(
                             raw,
@@ -941,36 +1116,57 @@ impl KafkaSession {
                         )
                         .await;
                     if evaluation.stopped() {
-                        stopped = true;
+                        end = ReadEnd::Stopped;
                         break;
                     }
                     if let Some(row) = row? {
-                        counts.matched += 1;
+                        progress.add_matched();
                         if sink.push(row).await != Flow::Continue {
+                            if stop.is_cancelled() {
+                                end = ReadEnd::Stopped;
+                            }
                             break;
                         }
-                        if read
-                            .limit
-                            .is_some_and(|limit| counts.matched >= limit as u64)
-                        {
+                        if limit.is_some_and(|limit| progress.matched() >= limit) {
+                            end = ReadEnd::Limit;
                             break;
                         }
                     }
-                    if read.scan.is_some_and(|scan| counts.scanned >= scan) {
+                    if read.scan.is_some_and(|scan| progress.scanned() >= scan) {
+                        end = ReadEnd::Scan;
                         break;
+                    }
+                    if !tail {
+                        progress.set_percent(read_percent(&position));
                     }
                 }
                 Next::Idle => sink.flush().await,
-                Next::Done => break,
+                Next::Done => {
+                    end = ReadEnd::End;
+                    break;
+                }
                 Next::Stopped => {
-                    stopped = true;
+                    end = ReadEnd::Stopped;
                     break;
                 }
             }
+            if let Some(check) = &mut lag {
+                if let Some(highs) = check.poll().await {
+                    lag_known = highs.is_some();
+                    position.set_ends(highs.unwrap_or_default());
+                }
+                progress.set_lag(lag_known.then(|| position.left()));
+            }
         }
         drop(scan);
+        progress.set_end(end);
+        let stopped = end == ReadEnd::Stopped;
         if filter.is_some() || read.scan.is_some() || stopped {
-            notices.add(text::kafka_scanned(counts.scanned, counts.matched, stopped));
+            notices.add(text::kafka_scanned(
+                progress.scanned(),
+                progress.matched(),
+                stopped,
+            ));
         }
         notices.send(sink).await;
         Ok(true)
@@ -985,6 +1181,8 @@ impl KafkaSession {
         filter: Option<Filter>,
         sink: &mut ResultSink,
     ) -> Result<bool, ExecError> {
+        let progress = Arc::new(ReadProgress::new(filter.is_some()));
+        sink.track(progress.clone());
         set_columns(&MESSAGE_COLUMNS, sink).await;
         if count == 0 {
             return Ok(true);
@@ -1003,7 +1201,6 @@ impl KafkaSession {
         let mut sizes: HashMap<i32, i64> = lows.keys().map(|id| (*id, FIRST_WINDOW)).collect();
         let mut oldest: HashMap<i32, i64> = lows.keys().map(|id| (*id, i64::MAX)).collect();
         let mut found: Vec<(i64, i32, i64, Row)> = Vec::new();
-        let mut counts = Counts::default();
         let mut stopped = false;
         loop {
             found.sort_by_key(|item| std::cmp::Reverse((item.0, item.1, item.2)));
@@ -1027,7 +1224,7 @@ impl KafkaSession {
             loop {
                 match scan.next(&stop).await? {
                     Next::Message(raw) => {
-                        counts.scanned += 1;
+                        progress.add_scanned(raw.size());
                         let time = raw.timestamp.unwrap_or(-1);
                         let (partition, offset) = (raw.partition, raw.offset);
                         oldest
@@ -1041,7 +1238,7 @@ impl KafkaSession {
                             break;
                         }
                         if let Some(row) = row? {
-                            counts.matched += 1;
+                            progress.add_matched();
                             found.push((time, partition, offset, row));
                         }
                     }
@@ -1065,7 +1262,11 @@ impl KafkaSession {
         found.truncate(count);
         push_rows(found.into_iter().map(|(.., row)| row).collect(), sink).await;
         if filter.is_some() || stopped {
-            notices.add(text::kafka_scanned(counts.scanned, counts.matched, stopped));
+            notices.add(text::kafka_scanned(
+                progress.scanned(),
+                progress.matched(),
+                stopped,
+            ));
         }
         notices.send(sink).await;
         Ok(true)
@@ -1167,13 +1368,32 @@ impl Session for KafkaSession {
         Ok(vec![TOPICS.to_owned(), GROUPS.to_owned()])
     }
 
-    /// A topic and a group have no columns.
+    /// The columns of a topic are the field paths of the latest schemas of its value and
+    /// its key, such as `value.customer.id`. A group and a topic without a schema have no
+    /// columns.
     async fn read_columns(
         &mut self,
-        _schema: &str,
-        _relation: &str,
+        schema: &str,
+        relation: &str,
     ) -> Result<Vec<String>, ExecError> {
-        Ok(Vec::new())
+        if schema != TOPICS {
+            return Ok(Vec::new());
+        }
+        if let Some(message) = &self.registry_error {
+            return Err(ExecError::new(text::kafka_registry_unavailable(message)));
+        }
+        let Some(registry) = &self.registry else {
+            return Ok(Vec::new());
+        };
+        let mut paths = Vec::new();
+        for root in ["value", "key"] {
+            let subject = format!("{relation}-{root}");
+            let latest = registry.latest(&subject).await.map_err(ExecError::new)?;
+            if let Some(parsed) = latest {
+                paths.extend(fields::paths(root, &parsed));
+            }
+        }
+        Ok(paths)
     }
 }
 

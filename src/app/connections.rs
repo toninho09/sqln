@@ -305,6 +305,17 @@ impl App {
                 self.status = Some(message);
                 self.pending_sql = None;
                 self.pending_follow = None;
+                // A refresh would ask for the same columns again, so the lists only stop.
+                for console in &mut self.consoles {
+                    if console.connection == Some(id) {
+                        console.editor.stop_waiting(relation);
+                    }
+                }
+                for table in &mut self.tables {
+                    if table.connection == id {
+                        table.stop_waiting(relation);
+                    }
+                }
             }
         }
         self.continue_follow(id, relation);

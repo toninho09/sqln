@@ -964,6 +964,12 @@ impl App {
     /// transaction needs a new frame.
     fn advance_clock(&mut self, now: Instant) -> bool {
         self.clock = now;
+        for console in &mut self.consoles {
+            console.sample_progress(now);
+        }
+        for table in &mut self.tables {
+            table.sample_progress(now);
+        }
         let time = now.saturating_duration_since(self.started);
         let frame = usize::try_from(time.as_millis() / RUN_FRAME.as_millis()).unwrap_or(0);
         // An agent task updates the time of its card, and the card appears after a delay.

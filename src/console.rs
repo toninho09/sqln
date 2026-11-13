@@ -8,8 +8,8 @@ use crate::command_log::{CommandState, History};
 use crate::connector::{StatementEnd, TransactionCommand, TransactionState};
 use crate::editor::{KeyboardMode, MarkState, RunPlan, SqlEditor};
 use crate::exec::{
-    ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, StatementKey,
-    StatementStatus,
+    ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ProgressSnapshot, ReadEnd,
+    ReadLimit, ReadMeter, StatementKey, StatementStatus,
 };
 use crate::grid::{Budget, Row};
 use crate::input::Action;
@@ -319,6 +319,13 @@ impl Console {
         self.phase != Phase::Idle
     }
 
+    /// Measures the speed of the read that runs, and writes its summary.
+    pub fn sample_progress(&mut self, now: Instant) {
+        if let Some(result) = self.results.last_mut().filter(|_| self.reading) {
+            result.sample_progress(now);
+        }
+    }
+
     pub fn in_transaction(&self) -> bool {
         matches!(
             self.transaction,
@@ -494,25 +501,48 @@ impl Console {
                 self.transaction_before = self.transaction;
                 self.editor.set_mark_state(key.index, MarkState::Running);
             }
-            ExecEvent::Columns { key, columns, live } if self.is_current(key.execution) => {
+            ExecEvent::Columns {
+                key,
+                columns,
+                live,
+                progress,
+            } if self.is_current(key.execution) => {
                 self.results_made += 1;
                 self.reading = true;
                 let mut result = ResultTab::new(self.results_made, columns);
                 result.statement = key.index;
-                if live.is_some() {
-                    result.live = live;
-                    result.summary = text::live_rows(0, 0);
-                }
+                result.live = live;
+                result.progress = progress.map(ReadMeter::new);
+                result.show_progress();
                 self.results.push(result);
             }
             ExecEvent::Rows { key, rows, bytes } => self.on_rows(key, rows, bytes, budget),
             ExecEvent::ResultDone { key, rows, limit } if self.is_current(key.execution) => {
                 self.reading = false;
                 if let Some(result) = self.results.last_mut() {
-                    result.summary = if result.live.is_some() {
-                        text::live_rows_done(result.table.rows.len(), result.dropped)
-                    } else {
-                        read_summary(rows, limit)
+                    let progress = result.progress.take().map(|meter| meter.snapshot());
+                    result.summary = match (result.live, progress) {
+                        (Some(_), None) => {
+                            text::live_rows_done(result.table.rows.len(), result.dropped)
+                        }
+                        (Some(_), Some(progress)) => format!(
+                            "{} {}",
+                            text::live_rows_done(result.table.rows.len(), result.dropped),
+                            // A continuous read always ends with a stop, so it gives no
+                            // reason.
+                            text::kafka_read_end(&ProgressSnapshot {
+                                end: ReadEnd::None,
+                                ..progress
+                            })
+                        ),
+                        (None, None) => read_summary(rows, limit),
+                        (None, Some(progress)) => {
+                            let rows = match limit {
+                                ReadLimit::None => text::rows_read_sentence(rows),
+                                _ => read_summary(rows, limit),
+                            };
+                            format!("{rows} {}", text::kafka_read_end(&progress))
+                        }
                     };
                     result.limit = limit;
                     // The list can hold room for twice its rows, and no more rows arrive.

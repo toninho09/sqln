@@ -10,6 +10,7 @@ SQLN reads Kafka without a SQL server and without ksqlDB. The SQL here is the SQ
 - [Explore the cluster](#explore-the-cluster)
 - [Read a finite number of messages](#read-a-finite-number-of-messages)
 - [Watch new messages as they arrive](#watch-new-messages-as-they-arrive)
+- [Follow the progress of a read](#follow-the-progress-of-a-read)
 - [Filter by message content](#filter-by-message-content)
 - [Project only the columns you need](#project-only-the-columns-you-need)
 - [Work with lists](#work-with-lists)
@@ -104,6 +105,29 @@ SELECT * FROM orders START AT OFFSET 1500 EMIT CHANGES;
 ```
 
 `EMIT CHANGES` accepts neither `LIMIT` nor `SCAN`. Press **Stop**, or wait for the statement timeout, to end the read.
+
+## Follow the progress of a read
+
+The summary line under the grid shows the counts of a read while it runs. A narrow screen cuts the end of the line, so the important counts come first:
+
+```text
+Reading 45% · 12,345 messages scanned · 200 matched · 1,234 msg/s · 4.2 MiB
+56 rows received. Live. · 5,000 messages scanned · lag 3,400 · 120 msg/s · 4.2 MiB
+```
+
+- **Percent:** a finite read only. It uses the end that comes first: the last offset of each partition at the start, `SCAN`, or `LIMIT`.
+- **Matched:** only with a filter.
+- **Lag:** `EMIT CHANGES` and `TAIL` only. It counts the messages between the read and the end of each partition. SQLN reads the end again every 2 seconds.
+- **Speed:** the messages scanned in the last second. It appears after one second.
+- **Size:** the bytes of the keys, the values, and the headers.
+
+At the end, the summary keeps the counts and gives the reason:
+
+```text
+200 rows read. 12,345 messages scanned, 4.2 MiB. The read stopped at LIMIT.
+```
+
+A topic tab shows the same counts while it loads.
 
 ## Filter by message content
 
@@ -289,6 +313,22 @@ kafkas://kafka.example.com:9093?registry=https://registry.example.com
 
 The `schema` column shows the id of the schema of each message. A value that does not decode stays as bytes, with a note in **Messages**. The filter then sees no JSON fields for that message.
 
+### Complete field paths
+
+Type `value.` or `key.` in a `SELECT`, a `CONSUME`, a `TAIL`, or the filter of a topic tab. The list shows the fields of the latest schema of the subject `<topic>-value` or `<topic>-key`:
+
+```sql
+SELECT value.customer.name FROM orders WHERE value.items[*].sku = 'A1';
+```
+
+1. The first path of a topic reads its schemas. The note `Reading the columns of <topic>.` shows below the cursor during the read.
+2. After the read, each field name shows at the next dot. A list item accepts `[*]`, `[0]`, or `.0` before the next dot.
+3. A name with a space or a dot gets double quotes when you accept it.
+4. Expand a topic in the navigator to see the same paths.
+5. Use **Refresh** on the catalog to read a new schema version.
+
+The completion uses only subjects with the topic name. JSON without a schema, map keys, and the items of `ANY` and `EVERY` get no fields. A Protobuf schema gives the fields of its first message.
+
 ## Inspect consumer groups and lag
 
 List the groups of the cluster:
@@ -379,6 +419,7 @@ SELECT * FROM orders WHERE value IS NULL LIMIT 50;
 - A plain `SELECT` starts at `EARLIEST` and stops at the last message. `EMIT CHANGES` starts at `LATEST` and waits until **Stop**.
 - `EMIT CHANGES` accepts neither `LIMIT` nor `SCAN`.
 - `LIMIT` caps matching rows. `SCAN` caps examined messages.
+- The summary line shows the scanned messages, the speed, and the size while a read runs.
 - A final `SELECT` can omit `;`. End a statement with `;` before another one.
 - Start a line with `#` for a comment.
 - Put a name with spaces, dots, or brackets between double quotes after the dot: `value."order id"`.

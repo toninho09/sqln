@@ -19,7 +19,7 @@ use crossterm::event::{
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use sqln::app::{App, Options};
-use sqln::catalog::{Catalog, RelationRef};
+use sqln::catalog::{Catalog, Columns, RelationRef};
 use sqln::clipboard::MemoryClipboard;
 use sqln::connection::Definition;
 use sqln::connector::sqlite::SqliteTarget;
@@ -29,7 +29,7 @@ use sqln::connector::{
 };
 use sqln::console::Phase;
 use sqln::editor::KeyboardMode;
-use sqln::exec::{Flow, ReadLimit, ResultSink, Settings};
+use sqln::exec::{Flow, ReadLimit, ReadProgress, ResultSink, Settings};
 use sqln::grid::{Row, Value};
 use sqln::input::SuggestionKeys;
 use sqln::navigator::RowKind;
@@ -211,6 +211,14 @@ struct Recorder {
     redis: bool,
     /// The answer of the database to a signal. `f` means that the session is gone.
     signal_answer: Option<&'static str>,
+    /// The counts that a page sends with its columns, as a Kafka read does.
+    progress: Option<Arc<ReadProgress>>,
+    /// True gives a catalog without columns, and `read_columns` waits for
+    /// `columns_release`.
+    lazy_columns: bool,
+    columns_release: Notify,
+    /// True makes `read_columns` fail.
+    fail_columns: bool,
 }
 
 impl Recorder {
@@ -332,6 +340,9 @@ impl Session for RecordingSession {
             });
         }
         let (limit, offset) = page_of(sql);
+        if let Some(progress) = &self.0.progress {
+            sink.track(progress.clone());
+        }
         sink.set_columns(COLUMNS.iter().map(|name| (*name).to_owned()).collect())
             .await;
         let mut sent = 0;
@@ -377,10 +388,24 @@ impl Session for RecordingSession {
     }
 
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError> {
-        Ok(sample_catalog())
+        let mut catalog = sample_catalog();
+        if self.0.lazy_columns {
+            for schema in &mut catalog.schemas {
+                for relation in &mut schema.relations {
+                    relation.columns = Columns::NotLoaded;
+                }
+            }
+        }
+        Ok(catalog)
     }
 
     async fn read_columns(&mut self, _: &str, _: &str) -> Result<Vec<String>, ExecError> {
+        if self.0.lazy_columns {
+            self.0.columns_release.notified().await;
+        }
+        if self.0.fail_columns {
+            return Err(ExecError::new("The columns are not available."));
+        }
         Ok(COLUMNS.iter().map(|name| (*name).to_owned()).collect())
     }
 }
@@ -2428,6 +2453,51 @@ fn a_stop_in_the_middle_of_the_first_page_keeps_the_rows_and_the_next_page_conti
 }
 
 #[test]
+fn the_counts_of_a_read_show_in_the_summary_while_the_page_loads() {
+    // The sink sends a batch at 200 rows, so the page must be larger than that.
+    let settings = Settings {
+        page_size: 300,
+        ..Settings::default()
+    };
+    let progress = Arc::new(ReadProgress::new(true));
+    let recorder = Recorder {
+        rows: 1_000,
+        mid_rows: 250,
+        progress: Some(progress.clone()),
+        ..Recorder::default()
+    };
+    let (mut f, recorder) = Fixture::recorded_with(recorder, settings);
+    recorder.mid_hold.store(true, Ordering::SeqCst);
+    f.open_table_of(0, "users");
+    f.pump_until(|f| f.app.table().is_some_and(|tab| tab.loaded() == 200));
+    for _ in 0..3 {
+        progress.add_scanned(1024);
+    }
+    progress.add_matched();
+    let start = Instant::now();
+    f.app.tick_at(start);
+    for _ in 0..250 {
+        progress.add_scanned(1024);
+    }
+    f.app.tick_at(start + Duration::from_secs(1));
+    for (width, height) in [(80, 24), (120, 35)] {
+        let text = f.screen_at(width, height);
+        assert!(text.contains("loading · 253 messages scanned"), "{text}");
+    }
+    let wide = f.screen_at(120, 35);
+    assert!(
+        wide.contains("253 messages scanned · 1 matched · 250 msg/s · 253.0 KiB"),
+        "{wide}"
+    );
+    recorder.mid_hold.store(false, Ordering::SeqCst);
+    recorder.release.notify_one();
+    f.loaded();
+    let text = f.screen_at(120, 35);
+    assert!(!text.contains("messages scanned"), "{text}");
+    assert!(text.contains("300 rows loaded"), "{text}");
+}
+
+#[test]
 fn a_page_can_be_larger_than_the_row_cap_of_the_consoles() {
     let settings = Settings {
         page_size: 1_500,
@@ -2961,6 +3031,7 @@ fn the_extra_row_of_a_page_leaves_the_budget_with_the_exact_cost() {
             key,
             columns: vec!["v".to_owned()],
             live: None,
+            progress: None,
         },
         &budget,
     );
@@ -4302,4 +4373,65 @@ fn the_row_window_works_in_a_table_and_stops_at_the_loaded_rows() {
     f.assert_sees("name : name1");
     f.code(KeyCode::Esc);
     assert_eq!(f.app.table().unwrap().result.view.row, 1);
+}
+
+// ---- the note of a list that waits for columns ----
+
+fn lazy_filter(fail_columns: bool) -> (Fixture, Arc<Recorder>) {
+    let recorder = Arc::new(Recorder {
+        rows: 5,
+        lazy_columns: true,
+        fail_columns,
+        ..Recorder::default()
+    });
+    let options = Options {
+        connector: Some(Arc::new(RecordingConnector(recorder.clone()))),
+        label: Some("server".to_owned()),
+        ..Options::default()
+    };
+    let mut f = Fixture::start(options);
+    f.open_table("users");
+    f.type_filter("users.");
+    f.pump_until(|f| {
+        f.screen_at(80, 24)
+            .contains("Reading the columns of users.")
+    });
+    (f, recorder)
+}
+
+#[test]
+fn the_filter_shows_a_note_until_the_columns_arrive() {
+    let (mut f, recorder) = lazy_filter(false);
+    assert!(f.app.table().unwrap().list.is_none());
+    recorder.columns_release.notify_one();
+    f.pump_until(|f| f.app.table().unwrap().list.is_some());
+    let screen = f.screen_at(80, 24);
+    assert!(!screen.contains("Reading the columns"), "{screen}");
+    assert!(screen.contains("name"), "{screen}");
+}
+
+#[test]
+fn a_failed_column_read_ends_the_note_and_gives_the_reason() {
+    let (mut f, recorder) = lazy_filter(true);
+    recorder.columns_release.notify_one();
+    f.pump_until(|f| !f.screen_at(80, 24).contains("Reading the columns"));
+    f.assert_sees("The columns are not available.");
+    assert!(f.app.table().unwrap().list.is_none());
+}
+
+#[test]
+fn escape_closes_the_note_of_the_filter() {
+    let (mut f, recorder) = lazy_filter(false);
+    f.code(KeyCode::Esc);
+    assert!(!f.screen_at(80, 24).contains("Reading the columns"));
+    recorder.columns_release.notify_one();
+    f.pump_until(|f| {
+        let catalog = f.app.connections()[0].catalog.as_ref().unwrap();
+        let (_, users) = catalog.relation(Some("public"), "users").unwrap();
+        users.columns != Columns::NotLoaded
+    });
+    assert!(
+        f.app.table().unwrap().list.is_none(),
+        "Esc ended the request"
+    );
 }

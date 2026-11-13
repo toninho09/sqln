@@ -77,6 +77,26 @@ fn the_list_opens_below_the_cursor_at_the_start_of_the_word() {
 }
 
 #[test]
+fn a_list_that_waits_for_columns_shows_a_note_below_the_cursor() {
+    for theme in [Theme::plain(), Theme::ansi()] {
+        let mut f = Fixture::conventional("SELECT  FROM users u");
+        f.catalog.schemas[0].relations[0].columns = Columns::NotLoaded;
+        f.editor.set_cursor(Index2::new(0, 7));
+        f.write("u.");
+        let buffer = draw(&mut f.editor, &theme, 80, 24);
+        let (_, word_y) = find(&buffer, "SELECT u.");
+        let (_, note_y) = find(&buffer, "Reading the columns of users.");
+        assert_eq!(note_y, word_y + 1, "{}", screen(&buffer));
+
+        f.catalog.schemas[0].relations[0].columns = Columns::Loaded(vec!["id".to_owned()]);
+        f.editor.refresh_suggestions(Some(&f.catalog));
+        let buffer = draw(&mut f.editor, &theme, 80, 24);
+        assert!(!screen(&buffer).contains("Reading the columns"));
+        find(&buffer, "id");
+    }
+}
+
+#[test]
 fn the_list_opens_above_the_cursor_on_the_last_rows() {
     let text = "\n".repeat(11) + "SELECT * FROM ";
     let mut f = Fixture::conventional(&text);

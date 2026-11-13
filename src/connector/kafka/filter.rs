@@ -12,7 +12,7 @@ use std::cmp::Ordering;
 use regex::{Regex, RegexBuilder};
 use serde_json::{Number, Value as Json};
 
-pub use self::expr::{Context, Expr, Needs, Root, Segment};
+pub use self::expr::{Context, Expr, Needs, Root, Segment, parse_path, path_name};
 use super::command::{Cursor, Token, TokenKind, error_at, parse_time};
 use crate::connector::ExecError;
 use crate::ui::text;

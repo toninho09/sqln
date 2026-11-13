@@ -4,6 +4,7 @@
 //! more than a page, so it knows that a next page exists without a count.
 
 use std::ops::Range;
+use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -13,7 +14,8 @@ use crate::connector::redis::value_page;
 use crate::console::{Message, Phase, RunClock};
 use crate::editor::SuggestionList;
 use crate::exec::{
-    ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, StatementStatus,
+    ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, ReadMeter,
+    StatementStatus,
 };
 use crate::grid::{Budget, Row, Value, row_cost};
 use crate::input::SuggestionKeys;
@@ -412,7 +414,7 @@ impl TableTab {
         self.has_more = false;
         self.limit = ReadLimit::None;
         self.load = None;
-        self.list = None;
+        self.drop_list();
         Some(PageRequest {
             sql,
             first: true,
@@ -427,6 +429,14 @@ impl TableTab {
     pub fn wait_for_use(&mut self, note: String) {
         self.pending = true;
         self.message = Some(Message::info(note));
+    }
+
+    /// Measures the speed of the read that loads the rows.
+    pub fn sample_progress(&mut self, now: Instant) {
+        let busy = self.is_busy();
+        if let Some(meter) = self.result.progress.as_mut().filter(|_| busy) {
+            meter.sample(now);
+        }
     }
 
     pub fn is_busy(&self) -> bool {
@@ -614,7 +624,7 @@ impl TableTab {
         self.has_more = false;
         self.limit = ReadLimit::None;
         self.load = None;
-        self.list = None;
+        self.drop_list();
         match self.page_sql(dialect, 0) {
             Ok(sql) => Some(PageRequest {
                 sql,
@@ -738,11 +748,16 @@ impl TableTab {
             {
                 self.phase = Phase::Running;
             }
-            ExecEvent::Columns { key, columns, .. }
-                if self.is_current(key.execution)
-                    && self.load.as_ref().is_some_and(|load| load.first) =>
+            ExecEvent::Columns {
+                key,
+                columns,
+                progress,
+                ..
+            } if self.is_current(key.execution)
+                && self.load.as_ref().is_some_and(|load| load.first) =>
             {
                 self.result = ResultTab::new(0, columns);
+                self.result.progress = progress.map(ReadMeter::new);
             }
             ExecEvent::Rows { key, rows, bytes } => {
                 self.on_rows(key.execution, rows, bytes, budget)
@@ -876,7 +891,7 @@ impl TableTab {
 
     /// Moves the focus to the other field.
     pub fn switch_field(&mut self) {
-        self.list = None;
+        self.drop_list();
         self.focus = if self.focus == TableFocus::Filter && !self.filter_only {
             TableFocus::Order
         } else {
@@ -896,7 +911,7 @@ impl TableTab {
         let count = list.completion.items.len();
         let plain = key.modifiers.is_empty();
         match key.code {
-            KeyCode::Esc => self.list = None,
+            KeyCode::Esc => self.drop_list(),
             KeyCode::Up if plain => list.selected = (list.selected + count - 1) % count,
             KeyCode::Down if plain => list.selected = (list.selected + 1) % count,
             _ => return false,
@@ -937,7 +952,7 @@ impl TableTab {
             Edit::Wrote => self.update_list(dialect, catalog),
             Edit::Removed if self.list.is_some() => self.update_list(dialect, catalog),
             _ => {
-                self.list = None;
+                self.drop_list();
                 Vec::new()
             }
         }
@@ -998,9 +1013,26 @@ impl TableTab {
         missing
     }
 
+    fn drop_list(&mut self) {
+        self.list = None;
+        self.list_waits = false;
+    }
+
+    /// Returns true when the field shows no list because it waits for columns.
+    pub fn waiting(&self) -> bool {
+        self.list.is_none() && self.list_waits && self.focus != TableFocus::Grid
+    }
+
+    /// Ends the wait for a relation after a failed read of its columns.
+    pub fn stop_waiting(&mut self, relation: &RelationRef) {
+        if self.relation == *relation {
+            self.list_waits = false;
+        }
+    }
+
     /// Writes pasted text in the focused field. It returns false without a field.
     pub fn paste_in_field(&mut self, text: &str) -> bool {
-        self.list = None;
+        self.drop_list();
         match self.focused_field() {
             Some(field) => {
                 field.insert(text);

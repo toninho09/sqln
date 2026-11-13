@@ -196,6 +196,8 @@ pub struct SqlEditor {
     vim_shadow: Option<Lines>,
     snapshot: Option<(u64, Snapshot)>,
     list: Option<SuggestionList>,
+    /// The relation whose columns an empty list waits for. The screen shows a note.
+    waiting: Option<RelationRef>,
     search: Option<SearchBar>,
     status: Option<&'static str>,
     missing_columns: Vec<RelationRef>,
@@ -262,6 +264,7 @@ impl SqlEditor {
             vim_shadow,
             snapshot: None,
             list: None,
+            waiting: None,
             search: None,
             status: None,
             missing_columns: Vec::new(),
@@ -310,7 +313,7 @@ impl SqlEditor {
             return;
         }
         self.keyboard = keyboard;
-        self.list = None;
+        self.drop_list();
         self.list_request = None;
         self.undo_group = None;
         match keyboard {
@@ -484,7 +487,7 @@ impl SqlEditor {
         let plain = key.modifiers.is_empty();
         match key.code {
             KeyCode::Esc => {
-                self.list = None;
+                self.drop_list();
                 self.list_request = None;
                 true
             }
@@ -588,11 +591,12 @@ impl SqlEditor {
 
     fn update_list(&mut self, action: ListAction, catalog: Option<&Catalog>) {
         if !self.suggestions_enabled {
-            self.list = None;
+            self.drop_list();
             return;
         }
-        if action == ListAction::Close || (action == ListAction::Refresh && self.list.is_none()) {
-            self.list = None;
+        let open = self.list.is_some() || self.waiting.is_some();
+        if action == ListAction::Close || (action == ListAction::Refresh && !open) {
+            self.drop_list();
             return;
         }
         let cursor = self.state.cursor;
@@ -607,6 +611,11 @@ impl SqlEditor {
                 self.missing_columns.push(relation.clone());
             }
         }
+        self.waiting = completion
+            .missing_columns
+            .first()
+            .filter(|_| completion.items.is_empty())
+            .cloned();
         self.list = (!completion.items.is_empty()).then_some(SuggestionList {
             completion,
             // The list starts at the first local item; the AI rows wait above it.
@@ -672,8 +681,29 @@ impl SqlEditor {
 
     pub fn close_suggestions(&mut self) {
         self.list_area = Default::default();
-        self.list = None;
+        self.drop_list();
         self.list_request = None;
+    }
+
+    fn drop_list(&mut self) {
+        self.list = None;
+        self.waiting = None;
+    }
+
+    /// Returns the relation whose columns the list waits for.
+    pub fn waiting(&self) -> Option<&str> {
+        self.waiting
+            .as_ref()
+            .map(|relation| relation.relation.as_str())
+    }
+
+    /// Ends the wait for a relation after a failed read of its columns. A later catalog
+    /// does not open the list for the same request.
+    pub fn stop_waiting(&mut self, relation: &RelationRef) {
+        if self.waiting.as_ref() == Some(relation) {
+            self.waiting = None;
+            self.list_request = None;
+        }
     }
 
     /// Rebuilds the list after the catalog receives data. The list also opens
@@ -976,7 +1006,7 @@ impl SqlEditor {
     /// Handles a paste from the terminal. It does not touch the clipboard.
     pub fn on_paste(&mut self, text: &str) {
         self.restore_scroll_selection();
-        self.list = None;
+        self.drop_list();
         self.status = None;
         let text = if self.literal_text {
             std::borrow::Cow::Borrowed(text)
@@ -1031,10 +1061,10 @@ impl SqlEditor {
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
         if self.on_scrollbar_mouse(mouse) {
-            self.list = None;
+            self.drop_list();
             return;
         }
-        self.list = None;
+        self.drop_list();
         match mouse.kind {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 self.handler.on_mouse_event(mouse, &mut self.state);
@@ -1144,7 +1174,7 @@ impl SqlEditor {
         }
         self.leave_visual_mode();
         bar.refresh(&self.state.lines, self.state.cursor);
-        self.list = None;
+        self.drop_list();
         self.search = Some(bar);
         self.move_to_current_match();
     }

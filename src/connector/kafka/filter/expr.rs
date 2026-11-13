@@ -491,6 +491,37 @@ pub fn parse_path(word: &str) -> Option<(&str, Vec<Segment>)> {
     Some((root, path))
 }
 
+/// Writes one name of a field path, so that `parse_path` reads the same name. A name
+/// that can end a word or a path step gets double quotes, with `""` for one quote.
+pub fn path_name(name: &str) -> Cow<'_, str> {
+    let plain = !name.is_empty()
+        && !name.chars().any(|c| {
+            c.is_whitespace()
+                || c.is_control()
+                || matches!(
+                    c,
+                    '"' | '\''
+                        | ','
+                        | ';'
+                        | '*'
+                        | '.'
+                        | '['
+                        | ']'
+                        | '='
+                        | '!'
+                        | '<'
+                        | '>'
+                        | '('
+                        | ')'
+                )
+        });
+    if plain {
+        Cow::Borrowed(name)
+    } else {
+        Cow::Owned(format!("\"{}\"", name.replace('"', "\"\"")))
+    }
+}
+
 /// Reads a name between double quotes, after the opening quote. `""` is one quote.
 fn quoted_name(text: &str) -> Option<(String, &str)> {
     let mut name = String::new();

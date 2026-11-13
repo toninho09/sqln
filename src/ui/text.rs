@@ -1,6 +1,7 @@
 //! All interface text. This file keeps the text in one place for a later translation.
 
 use crate::catalog::Group;
+use crate::exec::{ProgressSnapshot, ReadEnd};
 use crate::export::ExportFormat;
 use crate::generate::Template;
 use crate::import::ImportFormat;
@@ -10,6 +11,9 @@ use crate::structure::SessionSignal;
 
 /// One command of the hint bar: a key and its effect. A note has an empty key.
 pub type HintPart = (&'static str, &'static str);
+
+/// The text between two parts of a summary line.
+pub const SUMMARY_GAP: &str = " · ";
 
 pub const EDIT_TITLE: &str = "Edit cell";
 pub const EDIT_REVIEW: &str = "Review table changes";
@@ -865,6 +869,71 @@ pub fn kafka_scanned(scanned: u64, matched: u64, stopped: bool) -> String {
     format!("Scanned {scanned} messages; {matched} matched.{end}")
 }
 
+/// The counts of a Kafka read that runs, by importance: a narrow screen cuts the end.
+pub fn kafka_progress(progress: &ProgressSnapshot, rate: Option<u64>) -> String {
+    let mut parts = vec![format!(
+        "{} scanned",
+        plural(wide(progress.scanned), "message")
+    )];
+    if progress.filtered {
+        parts.push(format!("{} matched", count(wide(progress.matched))));
+    }
+    if let Some(lag) = progress.lag {
+        parts.push(format!("lag {}", count(wide(lag))));
+    }
+    if let Some(rate) = rate {
+        parts.push(format!("{} msg/s", count(wide(rate))));
+    }
+    parts.push(byte_size(progress.bytes));
+    parts.join(SUMMARY_GAP)
+}
+
+/// The summary of a finite Kafka read that runs.
+pub fn kafka_reading(progress: &ProgressSnapshot, rate: Option<u64>) -> String {
+    let state = match progress.percent {
+        Some(percent) => format!("Reading {percent}%"),
+        None => "Reading".to_owned(),
+    };
+    format!("{state}{SUMMARY_GAP}{}", kafka_progress(progress, rate))
+}
+
+/// The counts at the end of a Kafka read, and the reason for the end.
+pub fn kafka_read_end(progress: &ProgressSnapshot) -> String {
+    let reason = match progress.end {
+        ReadEnd::None => "",
+        ReadEnd::End => " The read reached the end of each partition.",
+        ReadEnd::Limit => " The read stopped at LIMIT.",
+        ReadEnd::Scan => " The read stopped at the SCAN limit.",
+        ReadEnd::Stopped => " The read stopped before the end.",
+    };
+    format!(
+        "{} scanned, {}.{reason}",
+        plural(wide(progress.scanned), "message"),
+        byte_size(progress.bytes)
+    )
+}
+
+/// A size of data in the largest unit that keeps a value of 1 or more.
+pub fn byte_size(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KiB", "MiB", "GiB", "TiB"];
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64 / 1024.0;
+    let mut unit = 0;
+    // The value has one decimal, so 1023.96 shows as 1.0 of the next unit.
+    while value >= 1023.95 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    format!("{value:.1} {}", UNITS[unit])
+}
+
+/// A count of the connector as a count of the screen.
+fn wide(number: u64) -> usize {
+    usize::try_from(number).unwrap_or(usize::MAX)
+}
+
 pub fn redis_subscribed(channel: &str, count: &str) -> String {
     format!("Subscribed to {channel}. Subscriptions: {count}.")
 }
@@ -1439,6 +1508,11 @@ pub const TITLE_SCHEMA: &str = "Schema";
 pub const TITLE_DATABASE: &str = "Database";
 pub const SCHEMA_DEFAULT: &str = "(default of the connection)";
 pub const SCHEMA_LOADING: &str = "Reading the catalog.";
+
+/// The note of an empty suggestion list that waits for the columns of a relation.
+pub fn reading_columns(relation: &str) -> String {
+    format!("Reading the columns of {relation}.")
+}
 pub const CONTROL_RUN: &str = MENU_RUN;
 pub const CONTROL_SCRIPT: &str = MENU_SCRIPT;
 pub const CONTROL_STOP: &str = "Stop";
@@ -2253,6 +2327,11 @@ pub fn redis_unknown_type(kind: &str) -> String {
 
 pub fn rows_read(rows: usize) -> String {
     plural(rows, "row")
+}
+
+/// The rows of a read as a sentence, before more sentences.
+pub fn rows_read_sentence(rows: usize) -> String {
+    format!("{} read.", plural(rows, "row"))
 }
 
 /// The summary of a live result: the rows in the grid and the oldest rows that left it.

@@ -68,7 +68,7 @@ Main thread                        Tokio runtime
 | `batch` | One noninteractive instruction, saved-name resolution, terminal authorization, credentials, and CSV/JSON delivery |
 | `exec` | Executions, scripts, cap, and cancellation |
 | `pool` | Limit, queue, reservation, and cleaning |
-| `connector` | Contract and PostgreSQL, MySQL, SQLite, DuckDB, Redis/Valkey, and Kafka connectors, with the Schema Registry client |
+| `connector` | Contract and PostgreSQL, MySQL, SQLite, DuckDB, Redis/Valkey, and Kafka connectors, with the Schema Registry client and the field paths of a schema (`kafka/fields.rs`), which are the columns of a topic |
 | `grid` | Rows in one block each (`row`), widths, search, budget, TSV, and readable JSON shape (`json`) |
 | `export` | Export formats, temporary file, and modal form |
 | `import` | File readers, `INSERT` text, batches, the error log, and modal form |
@@ -465,6 +465,7 @@ One statement may deliver several results, such as `CALL` in MySQL, and the cap 
 `ResultSink` sends `ResultDone` at the end of each result.
 Dropping `ResultSink` returns the rows still in the batch to the budget.
 `ResultSink` applies the cap and the budget, and gathers the rows in batches of 200.
+`ResultSink::track` gives the screen a `ReadProgress` with the columns of the next result. The connector writes its atomic counts, and the screen reads them at each frame, so the counts never use the event queue. Kafka uses it for its reads.
 `ResultSink::notices` sends `ExecEvent::Notice` before the end of the statement. PostgreSQL keeps the notices in the connection task, with `poll_message`. MySQL reads `SHOW WARNINGS` when the count goes above 0. `MAX_NOTICES` limits both to 100 per statement.
 `Value` keeps `Null`, `Text`, `Number`, or `Binary`, always with the database text.
 `Conn::reset` keeps the current database, so a `USE` would stay in the session without the next step.
