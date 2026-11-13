@@ -1509,9 +1509,14 @@ pub const TITLE_DATABASE: &str = "Database";
 pub const SCHEMA_DEFAULT: &str = "(default of the connection)";
 pub const SCHEMA_LOADING: &str = "Reading the catalog.";
 
-/// The note of an empty suggestion list that waits for the columns of a relation.
-pub fn reading_columns(relation: &str) -> String {
-    format!("Reading the columns of {relation}.")
+/// The note of an empty suggestion list that waits for the columns of a relation. The
+/// columns of a Kafka topic are the fields of its schemas.
+pub fn reading_columns(relation: &str, dialect: crate::sql::Dialect) -> String {
+    if dialect == crate::sql::Dialect::Kafka {
+        format!("Reading the fields of {relation}.")
+    } else {
+        format!("Reading the columns of {relation}.")
+    }
 }
 pub const CONTROL_RUN: &str = MENU_RUN;
 pub const CONTROL_SCRIPT: &str = MENU_SCRIPT;

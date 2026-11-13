@@ -26,6 +26,7 @@ fn table(name: &str, columns: &[&str], foreign_keys: Vec<ForeignKey>) -> Relatio
         columns: Columns::Loaded(columns.iter().map(|column| (*column).to_owned()).collect()),
         foreign_keys,
         referencing: Vec::new(),
+        notes: Vec::new(),
     }
 }
 
@@ -67,6 +68,7 @@ fn catalog() -> Catalog {
                         columns: Columns::NotLoaded,
                         foreign_keys: Vec::new(),
                         referencing: Vec::new(),
+                        notes: Vec::new(),
                     },
                 ],
                 partial: false,

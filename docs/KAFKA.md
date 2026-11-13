@@ -321,13 +321,21 @@ Type `value.` or `key.` in a `SELECT`, a `CONSUME`, a `TAIL`, or the filter of a
 SELECT value.customer.name FROM orders WHERE value.items[*].sku = 'A1';
 ```
 
-1. The first path of a topic reads its schemas. The note `Reading the columns of <topic>.` shows below the cursor during the read.
-2. After the read, each field name shows at the next dot. A list item accepts `[*]`, `[0]`, or `.0` before the next dot.
+1. The first path of a topic reads its schemas. The note `Reading the fields of <topic>.` shows below the cursor during the read.
+2. After the read, each field name shows at the next dot, with the type of its schema, such as `null | record` or `int64`. A list item accepts `[*]`, `[0]`, or `.0` before the next dot.
 3. A name with a space or a dot gets double quotes when you accept it.
-4. Expand a topic in the navigator to see the same paths.
-5. Use **Refresh** on the catalog to read a new schema version.
+4. After `=`, `!=`, `IN (`, or `NOT IN (`, an enum field shows its values first, in the order of the schema. Type the start of a value, with or without `'`, to narrow the list.
+5. The item of an open `ANY` or `EVERY` gets the fields of the items of its list:
 
-The completion uses only subjects with the topic name. JSON without a schema, map keys, and the items of `ANY` and `EVERY` get no fields. A Protobuf schema gives the fields of its first message.
+   ```sql
+   SELECT * FROM orders
+   WHERE ANY line IN value.lines SATISFIES line.state = 'DONE' END;
+   ```
+
+6. Expand a topic in the navigator to see the same paths.
+7. Use **Refresh** on the catalog to read a new schema version.
+
+The completion uses only subjects with the topic name. JSON without a schema and map keys get no fields. A Protobuf schema gives the fields of its first message.
 
 ## Inspect consumer groups and lag
 

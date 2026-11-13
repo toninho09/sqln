@@ -58,6 +58,14 @@ pub fn group_foreign_keys(pairs: impl IntoIterator<Item = KeyColumn>) -> Vec<For
     keys
 }
 
+/// What a schema says about one column: a short type text, and the literals of the
+/// values that the column can hold, such as the symbols of an enum.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ColumnNote {
+    pub detail: String,
+    pub values: Vec<String>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Relation {
     pub name: String,
@@ -67,6 +75,9 @@ pub struct Relation {
     pub foreign_keys: Vec<ForeignKey>,
     /// The keys of other tables that reach this relation. They arrive with its columns.
     pub referencing: Vec<ForeignKey>,
+    /// Empty, or one note for each column, in the order of the columns. They arrive with
+    /// the columns.
+    pub notes: Vec<ColumnNote>,
 }
 
 /// The group of the explorer that holds an object. The order is the order of the tree.
@@ -245,7 +256,7 @@ impl Catalog {
     pub fn set_columns(
         &mut self,
         target: &RelationRef,
-        columns: Vec<String>,
+        (columns, notes): (Vec<String>, Vec<ColumnNote>),
         foreign_keys: Vec<ForeignKey>,
         referencing: Vec<ForeignKey>,
     ) {
@@ -261,6 +272,7 @@ impl Catalog {
         });
         if let Some(relation) = relation {
             relation.columns = Columns::Loaded(columns);
+            relation.notes = notes;
             relation.foreign_keys = foreign_keys;
             relation.referencing = referencing;
         }

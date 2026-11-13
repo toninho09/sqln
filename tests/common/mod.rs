@@ -21,6 +21,7 @@ pub fn sample_catalog() -> Catalog {
         columns: Columns::Loaded(columns.iter().map(|column| (*column).to_owned()).collect()),
         foreign_keys: Vec::new(),
         referencing: Vec::new(),
+        notes: Vec::new(),
     };
     Catalog {
         schemas: vec![

@@ -410,7 +410,7 @@ pub fn draw_table(
         frame.render_widget(Paragraph::new(note), notice);
     }
 
-    if tab.list.is_some() || tab.waiting() {
+    if tab.list.is_some() || tab.waiting().is_some() {
         let (field, first, input) = match tab.focus {
             TableFocus::Filter => (filter_text, filter_first, &tab.filter),
             _ => (order_text, order_first, &tab.order),
@@ -424,11 +424,15 @@ pub fn draw_table(
             .count();
         let offset = u16::try_from(start.saturating_sub(first)).unwrap_or(0);
         let anchor = Position::new(field.x.saturating_add(offset).min(field.right()), field.y);
-        match &tab.list {
-            Some(list) => {
+        match (&tab.list, tab.waiting()) {
+            (Some(list), _) => {
                 draw_suggestions(frame, area, anchor, list, theme);
             }
-            None => draw_waiting(frame, area, anchor, &tab.relation.relation, theme),
+            (None, Some(dialect)) => {
+                let note = text::reading_columns(&tab.relation.relation, dialect);
+                draw_waiting(frame, area, anchor, &note, theme);
+            }
+            (None, None) => {}
         }
     }
     TableLayout {

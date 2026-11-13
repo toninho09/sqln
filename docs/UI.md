@@ -834,7 +834,7 @@ In the navigator, a Kafka connection shows two schemas: `topics` and `groups`. I
 `Enter` on a topic opens a tab with the label `<topic> (topic)`. It shows the last 500 messages, newest first, in one page.
 The tab has a `WHERE` field with the Kafka filter, such as `value.status = 'failed'`, without `ORDER BY` and sorting. **Apply filters** reads again with the filter.
 `Enter` on a group opens a tab with the label `<group> (group)`. It shows the committed offset, the end offset, and the lag of each partition.
-In the console, Kafka accepts multiline `SELECT` statements, separated by semicolons, and native commands, one per line. `SELECT` uses the finite `CONSUME` read. `SELECT … EMIT CHANGES` and `TAIL` show `Live` until **Stop**, as a continuous Redis command. Both forms use the same filters and execution. SELECT completion offers message columns, catalog topics, and clause words. A `value.` or `key.` path offers the fields of the latest registry schema of the topic. See the [Kafka guide](KAFKA.md) for start positions, projections, and limits.
+In the console, Kafka accepts multiline `SELECT` statements, separated by semicolons, and native commands, one per line. `SELECT` uses the finite `CONSUME` read. `SELECT … EMIT CHANGES` and `TAIL` show `Live` until **Stop**, as a continuous Redis command. Both forms use the same filters and execution. SELECT completion offers message columns, catalog topics, and clause words. A `value.` or `key.` path offers the fields of the latest registry schema of the topic, with their types. A compared enum field offers its values, and an open `ANY` or `EVERY` item offers the fields of its list. See the [Kafka guide](KAFKA.md) for start positions, projections, and limits.
 
 ## 4. Connection form
 
@@ -1006,7 +1006,7 @@ Contexts that need separate handling:
 
 Autocomplete offers schemas, tables, views, columns, aliases, CTEs, and dialect keywords.
 Local lists also provide built-in types, functions with signatures, column options, and query clauses.
-A list that waits for the columns of a relation shows the note `Reading the columns of <relation>.` below the cursor, in the hint style. The note takes no keys and no clicks; a key that closes a list closes it. A failed read closes the note, and the status line gives the reason.
+A list that waits for the columns of a relation shows the note `Reading the columns of <relation>.` below the cursor, in the hint style. A Kafka list shows `Reading the fields of <topic>.`. The note takes no keys and no clicks; a key that closes a list closes it. A failed read closes the note, and the status line gives the reason.
 User-defined function completion stays out of scope.
 Without a catalog available, suggest the keywords of the dialect.
 The focus, tab, and execution shortcuts are defined in [KEYMAP.md](KEYMAP.md).

@@ -241,7 +241,8 @@ pub fn draw_editor(
         let layout = draw_suggestions(frame, area, anchor, list, theme);
         editor.set_list_area(layout);
     } else if let (Some(relation), Some(cursor)) = (editor.waiting(), cursor) {
-        draw_waiting(frame, area, cursor, relation, theme);
+        let note = text::reading_columns(relation, editor.dialect());
+        draw_waiting(frame, area, cursor, &note, theme);
     }
 }
 
@@ -457,6 +458,7 @@ fn draw_search_bar(frame: &mut Frame, area: Rect, search: &SearchBar) {
 fn kind_tag(kind: SuggestionKind) -> &'static str {
     match kind {
         SuggestionKind::Join => "fk ",
+        SuggestionKind::Value => "val",
         SuggestionKind::Column => "col",
         SuggestionKind::Alias => "als",
         SuggestionKind::Cte => "cte",
@@ -535,13 +537,10 @@ pub(crate) fn draw_waiting(
     frame: &mut Frame,
     bounds: Rect,
     anchor: Position,
-    relation: &str,
+    note: &str,
     theme: &Theme,
 ) {
-    let note = format!(
-        " {} ",
-        text::reading_columns(&crate::grid::printable(relation))
-    );
+    let note = format!(" {} ", crate::grid::printable(note));
     let width = Span::raw(note.as_str()).width();
     draw_anchored_list(frame, (bounds, anchor), (1, None, width), theme, |_, _| {
         vec![Span::styled(note.as_str(), theme.hint)]

@@ -165,6 +165,7 @@ fn the_keys_of_the_cursor_column_come_first_and_a_null_key_stays_out() {
             key_to(&["customer_id"], "public", "customers", &["id"]),
         ],
         referencing: vec![key_to(&["id"], "public", "items", &["order id"])],
+        notes: Vec::new(),
         ..Relation::default()
     };
     let columns = ["id", "customer_id", "shop"].map(str::to_owned);

@@ -225,6 +225,7 @@ fn large_catalog(tables: usize, columns: usize) -> Catalog {
             columns: Columns::Loaded(names.clone()),
             foreign_keys: Vec::new(),
             referencing: Vec::new(),
+            notes: Vec::new(),
         })
         .collect();
     Catalog {

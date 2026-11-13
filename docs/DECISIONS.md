@@ -15,12 +15,16 @@ This entry replaces decision 23 of "Kafka and Schema Registry" and the words "It
 |---|---|---|---|
 | Source | The latest schema of the subjects `<topic>-value` and `<topic>-key` in the Schema Registry. A topic without a subject or without a registry has no fields | A sample of messages | User choice. JSON without a schema has no suggestions |
 | Time of the read | The first `value.` or `key.` path of a topic in the editor or in the filter of a topic tab | The catalog read | User choice. Only the topics in use cost a read |
-| Note | While the read runs, an empty list shows `Reading the columns of <relation>.` below the cursor, in the hint style. The note takes no keys and no clicks. A key that closes a list also closes the note | A status message | User choice: the note is at the place of the list |
+| Note | While the read runs, an empty list shows `Reading the columns of <relation>.` below the cursor, in the hint style. A Kafka list shows `Reading the fields of <topic>.`. The note takes no keys and no clicks. A key that closes a list also closes the note | A status message | User choice: the note is at the place of the list |
 | Note scope | All connections: a SQL list that waits for the columns of a table shows the same note | Only Kafka | User choice. One rule in the editor and in the filter fields |
 | Store | The paths are the columns of the topic in the catalog, until **Refresh** of the catalog | A second cache | Reuses the column flow of SQL |
 | Navigator | An expanded topic shows its paths, and the expansion reads them | Only the completion | User choice |
 | Roots | `value` and `key` | Only `value` | User choice |
 | Failure | The status line gives the reason, and the note closes. A later path asks again | A silent empty list | No silent failure |
+| Type | Each field shows the type words of its schema format beside its name, such as `null \| record`, `int64`, or `repeated message` | Neutral JSON kinds | User choice |
+| Values | After `field =`, `field !=`, `field IN (`, and `field NOT IN (`, also after the items of the list, the list offers the values of an enum field first, in the order of the schema. A typed prefix narrows them, with or without the open quote `'`. After an open quote, only values show | Alphabetical order | User choice. The order of an enum often has a meaning |
+| Items | `ANY` and `EVERY` items that are open before the cursor get the fields of the items of their list, also when they are nested. `END` closes the last open item | No fields | Same paths as the list |
+| Literal | A Kafka text literal uses backslash escapes: `\'`, `\\`, `\n`, `\r`, `\t`, and `\xHH` for other control characters | Doubled quotes | SELECT and the line commands both read backslash escapes; only SELECT reads doubled quotes |
 
 Mapping rules: the paths follow the JSON of the decoder.
 
@@ -30,9 +34,17 @@ Mapping rules: the paths follow the JSON of the decoder.
 | Protobuf | The first message of the schema, as the index `[0]` of the wire format; JSON names, such as `orderId`; the fields of a `oneof`; `[*]` for repeated messages | Map; each `google.protobuf.*` type; enum and scalar types |
 | JSON Schema | `properties`; `[*]` for `items` and `prefixItems`; `$ref` to the same document or to a reference name; each schema of `allOf`, `anyOf`, `oneOf`, `then`, and `else` | `additionalProperties`, `patternProperties`, a remote `$ref` |
 
-Implementation limits: 10 steps after the root, 2000 paths for each root, and 100,000 visited schema nodes. A recursive type stops at its second use in one path.
+Type and value rules: a path that two schemas describe joins their type words with ` | ` and their values.
 
-Known limitations: only the subject names of the TopicNameStrategy; Protobuf uses only the first message; the items of `ANY` and `EVERY` get no fields; a new schema shows after **Refresh** of the catalog.
+| Format | Type words | Values |
+|---|---|---|
+| Avro | `null`, `boolean`, `int`, `long`, `float`, `double`, `bytes`, `string`, `record`, `enum`, `array`, `map`, `fixed`, and the logical names, such as `timestamp-millis`; a union joins its branches; a name gives the words of its type | The symbols of an enum, also in a union |
+| Protobuf | The scalar names, such as `int64`; `message`; `enum`; `map`; the short name of a `google.protobuf.*` type, such as `Timestamp`; `repeated` before the type of a list | The names of the enum values, as the decoder writes them |
+| JSON Schema | `type`, or its list joined; without `type`: `object`, `array`, or `enum` from the shape | The scalar items of `enum` and `const` |
+
+Implementation limits: 10 steps after the root, 2000 paths for each root, 100 values for each path, and 100,000 visited schema nodes. A recursive type stops at its second use in one path. The catalog keeps one note for each column; a source without notes keeps the default `Session::read_noted_columns`.
+
+Known limitations: only the subject names of the TopicNameStrategy; Protobuf uses only the first message; a new schema shows after **Refresh** of the catalog.
 
 ## Kafka read progress — 2026-11-13
 

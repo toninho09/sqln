@@ -33,7 +33,7 @@ use super::{
     Canceller, Capabilities, ConnectError, Connector, ExecError, MAX_NOTICES, Namespace,
     ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
-use crate::catalog::{Catalog, Columns, Relation, RelationKind, RelationRef, Schema};
+use crate::catalog::{Catalog, ColumnNote, Columns, Relation, RelationKind, RelationRef, Schema};
 use crate::exec::{Flow, ReadEnd, ReadProgress, ResultSink, percent};
 use crate::grid::{Row, RowWriter, Value};
 use crate::sql::Dialect;
@@ -1331,6 +1331,7 @@ impl Session for KafkaSession {
             columns: Columns::NotLoaded,
             foreign_keys: Vec::new(),
             referencing: Vec::new(),
+            notes: Vec::new(),
         };
         let mut topics: Vec<String> = self
             .metadata(None)
@@ -1368,32 +1369,42 @@ impl Session for KafkaSession {
         Ok(vec![TOPICS.to_owned(), GROUPS.to_owned()])
     }
 
-    /// The columns of a topic are the field paths of the latest schemas of its value and
-    /// its key, such as `value.customer.id`. A group and a topic without a schema have no
-    /// columns.
     async fn read_columns(
         &mut self,
         schema: &str,
         relation: &str,
     ) -> Result<Vec<String>, ExecError> {
+        Ok(self.read_noted_columns(schema, relation).await?.0)
+    }
+
+    /// The columns of a topic are the field paths of the latest schemas of its value and
+    /// its key, such as `value.customer.id`. Each note holds the type words and the enum
+    /// values of its path. A group and a topic without a schema have no columns.
+    async fn read_noted_columns(
+        &mut self,
+        schema: &str,
+        relation: &str,
+    ) -> Result<(Vec<String>, Vec<ColumnNote>), ExecError> {
         if schema != TOPICS {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
         if let Some(message) = &self.registry_error {
             return Err(ExecError::new(text::kafka_registry_unavailable(message)));
         }
         let Some(registry) = &self.registry else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         };
-        let mut paths = Vec::new();
+        let (mut paths, mut notes) = (Vec::new(), Vec::new());
         for root in ["value", "key"] {
             let subject = format!("{relation}-{root}");
             let latest = registry.latest(&subject).await.map_err(ExecError::new)?;
             if let Some(parsed) = latest {
-                paths.extend(fields::paths(root, &parsed));
+                let (found, found_notes) = fields::paths(root, &parsed);
+                paths.extend(found);
+                notes.extend(found_notes);
             }
         }
-        Ok(paths)
+        Ok((paths, notes))
     }
 }
 

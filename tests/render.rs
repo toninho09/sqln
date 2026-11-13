@@ -97,6 +97,28 @@ fn a_list_that_waits_for_columns_shows_a_note_below_the_cursor() {
 }
 
 #[test]
+fn a_kafka_list_that_waits_names_the_fields_of_the_topic() {
+    let mut f = Fixture::with_dialect("", KeyboardMode::Conventional, sqln::sql::Dialect::Kafka);
+    f.catalog = Catalog {
+        schemas: vec![Schema {
+            name: sqln::connector::kafka::TOPICS.to_owned(),
+            relations: vec![Relation {
+                name: "orders".to_owned(),
+                ..Relation::default()
+            }],
+            ..Schema::default()
+        }],
+        current_schema: None,
+    };
+    f.write("CONSUME orders WHERE value.");
+    let buffer = draw(&mut f.editor, &Theme::plain(), 80, 24);
+    let (_, word_y) = find(&buffer, "CONSUME orders");
+    let (_, note_y) = find(&buffer, "Reading the fields of orders.");
+    assert_eq!(note_y, word_y + 1, "{}", screen(&buffer));
+    assert!(!screen(&buffer).contains("Reading the columns"));
+}
+
+#[test]
 fn the_list_opens_above_the_cursor_on_the_last_rows() {
     let text = "\n".repeat(11) + "SELECT * FROM ";
     let mut f = Fixture::conventional(&text);
@@ -141,6 +163,7 @@ fn the_selected_row_stays_visible_in_a_long_list() {
                 columns: Columns::Loaded(columns),
                 foreign_keys: Vec::new(),
                 referencing: Vec::new(),
+                notes: Vec::new(),
             }],
             partial: false,
             objects: Vec::new(),
@@ -236,6 +259,7 @@ fn external_names_cannot_send_terminal_sequences() {
                 columns: Columns::NotLoaded,
                 foreign_keys: Vec::new(),
                 referencing: Vec::new(),
+                notes: Vec::new(),
             }],
             partial: false,
             objects: Vec::new(),

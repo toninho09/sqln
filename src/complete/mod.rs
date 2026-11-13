@@ -22,6 +22,8 @@ const MAX_ITEMS: usize = 50;
 pub enum SuggestionKind {
     /// The condition of a foreign key. It leads the list.
     Join,
+    /// A literal value of a field, such as the symbol of an enum.
+    Value,
     Column,
     Alias,
     Cte,
@@ -128,12 +130,6 @@ fn suggest_command(
         replace: cursor..cursor,
         ..Completion::default()
     };
-    if dialect == Dialect::Kafka
-        && typed.contains('.')
-        && let Some(completion) = kafka::suggest_line_path(line, cursor, catalog)
-    {
-        return completion;
-    }
     let replace = cursor - typed.len()..cursor;
     let mut builder = Builder::new(typed, None, dialect);
     match before.as_slice() {
@@ -151,10 +147,8 @@ fn suggest_command(
                 builder.add_command_name(&relation.name);
             }
         }
-        [_, _, ..] if dialect == Dialect::Kafka && plain(typed) => {
-            keywords::KAFKA_CLAUSES
-                .iter()
-                .for_each(|word| builder.add_keyword(word));
+        [_, _, ..] if dialect == Dialect::Kafka => {
+            return kafka::suggest_line(line, cursor, catalog);
         }
         _ => return empty,
     }
@@ -342,8 +336,9 @@ impl Builder {
         );
     }
 
-    /// Adds a name of a Kafka field path, with quotes only when the name needs them.
-    fn add_path_name(&mut self, name: &str) {
+    /// Adds a name of a Kafka field path, with quotes only when the name needs them, and
+    /// the type words of the schema.
+    fn add_path_name(&mut self, name: &str, detail: Option<&str>) {
         let Some(rank) = self.rank(name, true) else {
             return;
         };
@@ -354,6 +349,25 @@ impl Builder {
                 label: crate::grid::printable(name),
                 insert: crate::connector::kafka::filter::path_name(name).into_owned(),
                 kind: SuggestionKind::Column,
+                detail: detail
+                    .filter(|detail| !detail.is_empty())
+                    .map(crate::grid::printable),
+                cursor_offset: None,
+            },
+        );
+    }
+
+    /// Adds the literal of a value. The typed text matches the value without its quote.
+    fn add_value(&mut self, literal: &str) {
+        let Some(rank) = self.rank(literal.strip_prefix('\'').unwrap_or(literal), false) else {
+            return;
+        };
+        self.push(
+            rank,
+            Suggestion {
+                label: crate::grid::printable(literal),
+                insert: literal.to_owned(),
+                kind: SuggestionKind::Value,
                 detail: None,
                 cursor_offset: None,
             },
@@ -567,10 +581,16 @@ impl Builder {
             .iter()
             .enumerate()
             .map(|(index, item)| {
+                // Values keep the order of the schema.
+                let label = if item.suggestion.kind == SuggestionKind::Value {
+                    String::new()
+                } else {
+                    item.suggestion.label.to_lowercase()
+                };
                 (
                     item.rank,
                     item.suggestion.kind,
-                    item.suggestion.label.to_lowercase(),
+                    label,
                     item.suggestion.detail.as_deref(),
                     index,
                 )

@@ -19,7 +19,7 @@ use self::mysql::MySqlConnector;
 use self::postgres::PostgresConnector;
 use self::redis::RedisConnector;
 use self::target::{Engine, NetworkTarget};
-use crate::catalog::{Catalog, ForeignKey};
+use crate::catalog::{Catalog, ColumnNote, ForeignKey};
 use crate::command_log::TraceContext;
 use crate::exec::{ReadLimit, ResultSink};
 use crate::sql::Dialect;
@@ -272,6 +272,15 @@ pub trait Session: Send {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<String>, ExecError>;
+    /// Reads the columns of a relation with a note for each one. A source without notes
+    /// keeps this default, which gives no notes.
+    async fn read_noted_columns(
+        &mut self,
+        schema: &str,
+        relation: &str,
+    ) -> Result<(Vec<String>, Vec<ColumnNote>), ExecError> {
+        Ok((self.read_columns(schema, relation).await?, Vec::new()))
+    }
     /// Reads the keys that leave a relation. A source without keys keeps this default.
     async fn read_foreign_keys(
         &mut self,

@@ -6,7 +6,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use crossterm::event::{KeyCode, KeyEvent};
 
 use super::{App, DialogAction, Picker, PickerKind, SqlRequest};
-use crate::catalog::{Catalog, Columns, ForeignKey, RelationKind, RelationRef};
+use crate::catalog::{Catalog, ColumnNote, Columns, ForeignKey, RelationKind, RelationRef};
 use crate::connection::{
     CatalogState, Connection, ConnectionKey, Definition, Source, name_is_taken, refresh_labels,
 };
@@ -285,7 +285,7 @@ impl App {
         &mut self,
         id: ConnectionId,
         relation: &RelationRef,
-        columns: Result<Vec<String>, String>,
+        columns: Result<(Vec<String>, Vec<ColumnNote>), String>,
         (foreign_keys, referencing): (Vec<ForeignKey>, Vec<ForeignKey>),
     ) {
         let Some(connection) = self.connection_mut(id) else {

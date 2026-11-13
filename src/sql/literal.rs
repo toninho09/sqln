@@ -12,8 +12,31 @@ pub fn text_literal(value: &str, dialect: Dialect) -> String {
         Dialect::MySql if value.contains('\\') => {
             format!("_utf8mb4 {}", hex(value.as_bytes()))
         }
+        Dialect::Kafka => kafka_literal(value),
         _ => quote_literal(value, dialect),
     }
+}
+
+/// Writes a Kafka text with backslash escapes, which SELECT and the line commands both
+/// read. A doubled quote works only in SELECT.
+fn kafka_literal(value: &str) -> String {
+    let mut literal = String::with_capacity(value.len() + 2);
+    literal.push('\'');
+    for c in value.chars() {
+        match c {
+            '\'' | '\\' => {
+                literal.push('\\');
+                literal.push(c);
+            }
+            '\n' => literal.push_str("\\n"),
+            '\r' => literal.push_str("\\r"),
+            '\t' => literal.push_str("\\t"),
+            c if c.is_ascii_control() => literal.push_str(&format!("\\x{:02x}", u32::from(c))),
+            c => literal.push(c),
+        }
+    }
+    literal.push('\'');
+    literal
 }
 
 /// Writes hexadecimal digits as a literal of bytes.
@@ -43,4 +66,30 @@ pub fn value_literal(value: Value<'_>, dialect: Dialect) -> String {
 /// Returns true for text that SQL and JSON read as a number.
 pub fn is_number(text: &str) -> bool {
     serde_json::from_str::<serde_json::Number>(text).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::connector::kafka::command::{TokenKind, tokenize_mode};
+
+    #[test]
+    fn a_kafka_text_reads_back_in_select_and_in_line_commands() {
+        for value in [
+            "plain",
+            "it's",
+            "a\\b",
+            "two\nlines\tand\r",
+            "bell\u{7}",
+            "ação",
+        ] {
+            let literal = text_literal(value, Dialect::Kafka);
+            for select in [false, true] {
+                let tokens = tokenize_mode(&format!("key = {literal}"), select).unwrap();
+                let last = tokens.last().unwrap();
+                assert_eq!(last.kind, TokenKind::Text, "{literal}");
+                assert_eq!(last.text, value, "{literal} in select: {select}");
+            }
+        }
+    }
 }

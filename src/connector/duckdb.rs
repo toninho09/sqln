@@ -688,6 +688,7 @@ fn read_catalog(
                     columns: Columns::NotLoaded,
                     foreign_keys: Vec::new(),
                     referencing: Vec::new(),
+                    notes: Vec::new(),
                 })
             })?;
             relations.collect()

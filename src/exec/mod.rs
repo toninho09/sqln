@@ -15,7 +15,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedSender};
 
 pub use self::progress::{ProgressSnapshot, ReadEnd, ReadMeter, ReadProgress, percent};
 pub use self::sink::{Flow, ReadLimit, ResultSink};
-use crate::catalog::{Catalog, ForeignKey, RelationRef};
+use crate::catalog::{Catalog, ColumnNote, ForeignKey, RelationRef};
 use crate::command_log::{LogEvent, TraceContext};
 use crate::connection::DEFAULT_IDLE_SECONDS;
 use crate::connector::{
@@ -195,6 +195,8 @@ pub enum ExecEvent {
         connection: ConnectionId,
         relation: RelationRef,
         columns: Result<Vec<String>, String>,
+        /// Empty, or one note for each column.
+        notes: Vec<ColumnNote>,
         foreign_keys: Vec<ForeignKey>,
         /// The keys of other tables that reach the relation.
         referencing: Vec<ForeignKey>,
@@ -864,12 +866,12 @@ impl Manager {
         let events = self.events.clone();
         let trace = self.shared_trace(connection);
         self.runtime.spawn(async move {
-            let (columns, foreign_keys, referencing) =
+            let ((columns, notes), foreign_keys, referencing) =
                 match binding.pool.acquire_traced(trace).await {
                     Ok(mut lease) => {
                         let session = lease.session();
                         let (schema, name) = (&relation.schema, &relation.relation);
-                        let columns = session.read_columns(schema, name).await;
+                        let columns = session.read_noted_columns(schema, name).await;
                         // A failure here only costs the suggestions of `JOIN` and the key
                         // navigation.
                         let (keys, referencing) = match &columns {
@@ -880,7 +882,10 @@ impl Manager {
                             Err(_) => (Ok(Vec::new()), Ok(Vec::new())),
                         };
                         lease.release().await;
-                        let columns = columns.map_err(|error| error.message);
+                        let columns = match columns {
+                            Ok((columns, notes)) => (Ok(columns), notes),
+                            Err(error) => (Err(error.message), Vec::new()),
+                        };
                         (
                             columns,
                             keys.unwrap_or_default(),
@@ -891,7 +896,7 @@ impl Manager {
                         if let Some(refusal) = binding.refusal(&error) {
                             let _ = events.send(refusal).await;
                         }
-                        (Err(error.message), Vec::new(), Vec::new())
+                        ((Err(error.message), Vec::new()), Vec::new(), Vec::new())
                     }
                 };
             let _ = events
@@ -899,6 +904,7 @@ impl Manager {
                     connection,
                     relation,
                     columns,
+                    notes,
                     foreign_keys,
                     referencing,
                 })

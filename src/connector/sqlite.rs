@@ -396,6 +396,7 @@ fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> rusqlite::Re
                         columns: Columns::NotLoaded,
                         foreign_keys: Vec::new(),
                         referencing: Vec::new(),
+                        notes: Vec::new(),
                     })
                 })?
                 .collect::<rusqlite::Result<_>>()

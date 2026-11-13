@@ -132,8 +132,8 @@ pub struct TableTab {
     /// The data in use when a page stopped for lack of space. A load that finds no
     /// freed space does not ask the database.
     blocked_at: usize,
-    /// True when the list waits for columns that the catalog does not hold yet.
-    list_waits: bool,
+    /// The dialect of a list that waits for columns that the catalog does not hold yet.
+    list_waits: Option<Dialect>,
     /// True for a tab of the last session that read no rows yet, or a tab of sessions
     /// that must read them again after a signal.
     pub pending: bool,
@@ -365,7 +365,7 @@ impl TableTab {
             load: None,
             limit: ReadLimit::None,
             blocked_at: 0,
-            list_waits: false,
+            list_waits: None,
             pending: false,
             signal_note: None,
             auto_refresh: None,
@@ -947,7 +947,7 @@ impl TableTab {
             return Vec::new();
         };
         let edit = field.on_key(key);
-        self.list_waits = false;
+        self.list_waits = None;
         match edit {
             Edit::Wrote => self.update_list(dialect, catalog),
             Edit::Removed if self.list.is_some() => self.update_list(dialect, catalog),
@@ -969,7 +969,7 @@ impl TableTab {
         dialect: Dialect,
         catalog: Option<&Catalog>,
     ) -> Vec<RelationRef> {
-        if self.list.is_some() || self.list_waits {
+        if self.list.is_some() || self.list_waits.is_some() {
             return self.update_list(dialect, catalog);
         }
         Vec::new()
@@ -1004,7 +1004,7 @@ impl TableTab {
             end: shift(range.end),
         };
         let missing = completion.missing_columns.clone();
-        self.list_waits = !missing.is_empty();
+        self.list_waits = (!missing.is_empty()).then_some(dialect);
         self.list = (!completion.items.is_empty()).then_some(SuggestionList {
             ai: false,
             completion,
@@ -1015,18 +1015,20 @@ impl TableTab {
 
     fn drop_list(&mut self) {
         self.list = None;
-        self.list_waits = false;
+        self.list_waits = None;
     }
 
-    /// Returns true when the field shows no list because it waits for columns.
-    pub fn waiting(&self) -> bool {
-        self.list.is_none() && self.list_waits && self.focus != TableFocus::Grid
+    /// Returns the dialect of the field when it shows no list because it waits for
+    /// columns.
+    pub fn waiting(&self) -> Option<Dialect> {
+        self.list_waits
+            .filter(|_| self.list.is_none() && self.focus != TableFocus::Grid)
     }
 
     /// Ends the wait for a relation after a failed read of its columns.
     pub fn stop_waiting(&mut self, relation: &RelationRef) {
         if self.relation == *relation {
-            self.list_waits = false;
+            self.list_waits = None;
         }
     }
 

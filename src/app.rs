@@ -1289,9 +1289,11 @@ impl App {
                 connection,
                 relation,
                 columns,
+                notes,
                 foreign_keys,
                 referencing,
             } => {
+                let columns = columns.map(|columns| (columns, notes));
                 self.on_columns_loaded(connection, &relation, columns, (foreign_keys, referencing));
             }
             ExecEvent::ConnectionTested { test, result } => self.on_connection_tested(test, result),

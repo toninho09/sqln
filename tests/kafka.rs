@@ -364,6 +364,7 @@ fn catalog() -> Catalog {
         columns: Columns::NotLoaded,
         foreign_keys: Vec::new(),
         referencing: Vec::new(),
+        notes: Vec::new(),
     };
     Catalog {
         schemas: vec![
@@ -1269,27 +1270,41 @@ fn the_columns_of_a_topic_are_the_paths_of_its_latest_schemas() {
         &url,
         &format!("{topic}-value"),
         "AVRO",
-        r#"{"type":"record","name":"Person","namespace":"t","fields":[{"name":"name","type":"string"},{"name":"home","type":["null","t.Address"]}]}"#,
+        r#"{"type":"record","name":"Person","namespace":"t","fields":[{"name":"name","type":"string"},{"name":"home","type":["null","t.Address"]},{"name":"level","type":{"type":"enum","name":"Level","symbols":["LOW","HIGH"]}}]}"#,
         serde_json::json!([{"name": "t.Address", "subject": address_subject, "version": 1}]),
     );
     register(
         &url,
         &format!("{topic}-key"),
         "PROTOBUF",
-        r#"syntax = "proto3"; message Key { int64 order_id = 1; }"#,
+        r#"syntax = "proto3"; message Key { int64 order_id = 1; Kind kind = 2; } enum Kind { KIND_A = 0; KIND_B = 1; }"#,
         serde_json::json!([]),
     );
     let target = parse_uri(&format!("{uri}?registry={url}")).unwrap();
-    let (columns, without) = runtime().block_on(async {
+    let ((columns, notes), without) = runtime().block_on(async {
         let mut session = network_connector(target).connect().await.unwrap();
-        let columns = session.read_columns(TOPICS, &topic).await.unwrap();
+        let columns = session.read_noted_columns(TOPICS, &topic).await.unwrap();
         let without = session.read_columns(TOPICS, &unique("none")).await.unwrap();
         (columns, without)
     });
     assert_eq!(
         columns,
-        ["value.name", "value.home", "value.home.city", "key.orderId"]
+        [
+            "value.name",
+            "value.home",
+            "value.home.city",
+            "value.level",
+            "key.orderId",
+            "key.kind"
+        ]
     );
+    let details: Vec<&str> = notes.iter().map(|note| note.detail.as_str()).collect();
+    assert_eq!(
+        details,
+        ["string", "null | record", "string", "enum", "int64", "enum"]
+    );
+    assert_eq!(notes[3].values, ["'LOW'", "'HIGH'"]);
+    assert_eq!(notes[5].values, ["'KIND_A'", "'KIND_B'"]);
     assert!(
         without.is_empty(),
         "a topic without a subject has no fields"
