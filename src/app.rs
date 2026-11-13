@@ -301,6 +301,7 @@ struct Overlay {
     contents: WrappedText,
     footer: String,
     scroll: usize,
+    dragging: bool,
     /// The other form of a JSON value, with its footer. `f` shows it.
     other: Option<(String, String)>,
     /// The row of the grid that a row window shows. The side keys change it.
@@ -314,8 +315,10 @@ impl Overlay {
             let shown = self.contents.to_text();
             let old_footer = std::mem::replace(&mut self.footer, footer);
             self.contents = WrappedText::new(text);
+            self.contents.highlight_json();
             self.other = Some((shown, old_footer));
             self.scroll = 0;
+            self.dragging = false;
         }
     }
 }
@@ -401,6 +404,7 @@ struct ScreenLayout {
     /// The grid of the compare on screen.
     compare: Rect,
     compare_form: CompareLayout,
+    overlay: Rect,
     form: FormLayout,
     settings: SettingsLayout,
     export: ExportLayout,
@@ -1096,6 +1100,11 @@ impl App {
                     list.paste(&text);
                 }
             }
+            Event::Paste(text) if self.dialogs.is_empty() && self.overlay.is_some() => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.contents.paste_search(&text);
+                }
+            }
             Event::Paste(text) if self.dialogs.is_empty() && self.help.is_some() => {
                 if let Some(help) = &mut self.help {
                     help.paste(&text);
@@ -1114,19 +1123,7 @@ impl App {
             Event::Mouse(mouse) if self.edit_form.is_some() => self.on_edit_mouse(mouse),
             Event::Mouse(mouse) if self.import_form.is_some() => self.on_import_mouse(mouse),
             Event::Mouse(mouse) if self.compare_form.is_some() => self.on_compare_mouse(mouse),
-            Event::Mouse(mouse) if self.overlay.is_some() => {
-                if let Some(overlay) = &mut self.overlay {
-                    match mouse.kind {
-                        MouseEventKind::ScrollUp => {
-                            overlay.scroll = overlay.scroll.saturating_sub(3)
-                        }
-                        MouseEventKind::ScrollDown => {
-                            overlay.scroll = overlay.scroll.saturating_add(3)
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            Event::Mouse(mouse) if self.overlay.is_some() => self.on_overlay_mouse(mouse),
             Event::Mouse(mouse) if self.help.is_some() => {
                 if let Some(help) = &mut self.help {
                     match mouse.kind {
@@ -1201,7 +1198,13 @@ impl App {
             (None, Some(tab)) => tab.result.search_has_work(),
             (None, None) => self.console().search_has_work(),
         };
-        search || self.exports_have_work() || self.analysis_job.is_some()
+        search
+            || self
+                .overlay
+                .as_ref()
+                .is_some_and(|overlay| overlay.contents.search_has_work())
+            || self.exports_have_work()
+            || self.analysis_job.is_some()
     }
 
     /// Returns the time that the main loop can wait for a key. Events that arrive now
@@ -1228,6 +1231,7 @@ impl App {
             self.has_work() || ticked || authorized || probed || agent_changed || ai_changed;
         if changed {
             let deadline = Instant::now() + WORK_SLICE;
+            self.continue_overlay_search(Instant::now() + WORK_SLICE / 2);
             match (self.compare_active, self.table_active) {
                 (Some(index), _) => self.compares[index].result.continue_search(deadline),
                 (None, Some(index)) => self.tables[index].result.continue_search(deadline),
@@ -1694,6 +1698,7 @@ impl App {
                 connection: item.map_or("", |item| item.name.as_str()),
                 production: item.is_some_and(Connection::is_production),
                 schema: Some(&target.schema),
+                selected_characters: 0,
                 session: None,
                 transaction_age: None,
                 phase: tab.phase,
@@ -1718,6 +1723,7 @@ impl App {
                 connection: item.map_or("", |item| item.name.as_str()),
                 production: item.is_some_and(Connection::is_production),
                 schema: Some(tab.focus.schema()),
+                selected_characters: 0,
                 session: None,
                 transaction_age: None,
                 phase: tab.phase,
@@ -1745,6 +1751,7 @@ impl App {
                 connection: item.map_or("", |item| item.name.as_str()),
                 production: item.is_some_and(Connection::is_production),
                 schema: Some(&tab.relation.schema),
+                selected_characters: 0,
                 session: None,
                 transaction_age: None,
                 phase: tab.phase,
@@ -1766,6 +1773,7 @@ impl App {
             let status = StatusData {
                 panel,
                 connection: "",
+                selected_characters: 0,
                 production: false,
                 schema: None,
                 session: None,
@@ -1801,6 +1809,11 @@ impl App {
         let status = StatusData {
             panel,
             connection: connection.map_or(text::NO_DATABASE_LABEL, |item| item.name.as_str()),
+            selected_characters: if console.focus == Focus::Editor && !self.navigator_focused {
+                console.editor.selected_character_count()
+            } else {
+                0
+            },
             production: connection.is_some_and(Connection::is_production),
             schema: (namespace != Namespace::None)
                 .then(|| console.schema.as_deref().or(default_schema))
@@ -1900,6 +1913,8 @@ impl App {
                 ..
             } = overlay;
             *scroll = draw_overlay(frame, title, contents, footer, *scroll, &self.theme);
+            self.layout.overlay =
+                crate::ui::console::overlay_text_area(frame.area(), contents.search().is_some());
         }
         if let Some(help) = &mut self.help {
             draw_help(frame, help, &self.theme);

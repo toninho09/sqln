@@ -58,6 +58,7 @@ pub struct StatusData<'a> {
     pub data: (usize, usize),
     /// The row and the column of the cursor, from 1.
     pub position: Option<(usize, usize)>,
+    pub selected_characters: usize,
     /// The label of the MCP sessions with access, such as `MCP 1 all`.
     pub agent: Option<&'a str>,
     /// The seconds of the auto-refresh of the tab, when it is armed.
@@ -150,6 +151,7 @@ fn state_parts(data: &StatusData, theme: &Theme) -> Vec<(String, Style)> {
 
 /// The parts of the row that can go, in the order of their removal.
 struct Optional {
+    selection: Option<String>,
     position: Option<String>,
     data: Option<String>,
     pool: Option<String>,
@@ -160,6 +162,8 @@ struct Optional {
 impl Optional {
     fn new(data: &StatusData) -> Self {
         Self {
+            selection: (data.selected_characters > 0)
+                .then(|| text::selected_characters(data.selected_characters)),
             position: data.position.map(|(row, column)| format!("{row}:{column}")),
             data: Some(text::data_usage(
                 data.data.0.div_ceil(MIB),
@@ -186,6 +190,7 @@ impl Optional {
             + part(self.schema.as_ref())
             + part(self.usage().as_ref())
             + part(self.agent.as_ref())
+            + part(self.selection.as_ref())
     }
 
     /// Removes the next part. It returns false when no part remains.
@@ -195,6 +200,7 @@ impl Optional {
             &mut self.data,
             &mut self.pool,
             &mut self.schema,
+            &mut self.selection,
             &mut self.agent,
         ] {
             if part.take().is_some() {
@@ -249,6 +255,10 @@ pub fn draw_statusline(frame: &mut Frame, area: Rect, data: &StatusData, theme: 
     frame.render_widget(Paragraph::new(Line::from(left)), area);
 
     let mut right = Vec::new();
+    if let Some(selection) = optional.selection.take() {
+        right.push(Span::styled(selection, theme.status_detail));
+        right.push(Span::raw(GAP));
+    }
     if let Some(agent) = optional.agent.take() {
         right.push(Span::styled(agent, theme.status_warning));
         right.push(Span::raw(GAP));

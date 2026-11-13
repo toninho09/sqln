@@ -50,6 +50,15 @@ pub const EDIT_CLOSE_QUESTION: &str = "Apply or discard pending changes before c
 pub const EDIT_DISCARD_QUESTION: &str =
     "Discard all pending changes? This does not undo a database commit.";
 pub const EDIT_CELL_HINT: &str = "F2/Ctrl+S keep locally · Tab buttons · Esc cancel";
+pub fn selected_characters(number: usize) -> String {
+    let unit = if number == 1 {
+        "character"
+    } else {
+        "characters"
+    };
+    format!("{} {unit} selected", count(number))
+}
+
 pub const EDIT_REVIEW_HINT: &str = "F2/Ctrl+S apply · Up/Down scroll · Tab buttons · Esc cancel";
 pub const AUTO_REFRESH_TITLE: &str = "Auto-refresh";
 pub const AUTO_REFRESH_NEEDS_RUN: &str =
@@ -379,17 +388,32 @@ pub const HELP_ALL: &str = "All";
 pub const HELP_GROUP: &str = "Group";
 pub const HELP_GROUP_KEYS: &str = "Tab / Shift+Tab";
 
-pub const HINT_OVERLAY: &[HintPart] =
-    &[("Up/Down", "scroll"), ("Ctrl+C", "copy"), ("Esc", "close")];
+pub const HINT_OVERLAY_SEARCH: &[HintPart] = &[
+    ("Enter", "next"),
+    ("Shift+Enter", "previous"),
+    ("Ctrl+C", "copy"),
+    ("Esc", "close find"),
+];
+pub const HINT_OVERLAY: &[HintPart] = &[
+    ("Ctrl+F", "find"),
+    ("Up/Down", "scroll"),
+    ("Shift+arrows", "select"),
+    ("Ctrl+C", "copy"),
+    ("Esc", "close"),
+];
 pub const HINT_OVERLAY_ROW: &[HintPart] = &[
+    ("Ctrl+F", "find"),
     ("Left/Right", "row"),
     ("Up/Down", "scroll"),
+    ("Shift+arrows", "select"),
     ("Ctrl+C", "copy"),
     ("Esc", "close"),
 ];
 pub const HINT_OVERLAY_JSON: &[HintPart] = &[
+    ("Ctrl+F", "find"),
     ("f", "switch form"),
     ("Up/Down", "scroll"),
+    ("Shift+arrows", "select"),
     ("Ctrl+C", "copy"),
     ("Esc", "close"),
 ];
@@ -484,8 +508,47 @@ pub const MENU_NEXT_TAB: &str = "Next tab";
 pub const MENU_PREVIOUS_TAB: &str = "Previous tab";
 pub const MENU_RENAME: &str = "Rename the tab";
 pub const MENU_CLOSE_TAB: &str = "Close the tab";
-pub const MENU_RUN: &str = "Run the statement";
-pub const MENU_SCRIPT: &str = "Run the script";
+pub const MENU_RUN: &str = "Run statement";
+pub const MENU_SCRIPT: &str = "Run script";
+pub const MENU_SUBQUERY: &str = "Run subquery";
+pub const RUN_SELECTION: &str = "Run selection";
+
+pub fn run_label(selection: bool) -> &'static str {
+    if selection { RUN_SELECTION } else { MENU_RUN }
+}
+
+pub fn run_hint(selection: bool) -> &'static str {
+    if selection {
+        "run selection"
+    } else {
+        "run statement"
+    }
+}
+
+pub fn run_preview(
+    preview: Result<crate::editor::RunPreview, crate::editor::RunRefusal>,
+    selection: bool,
+    script: bool,
+) -> String {
+    let target = match preview {
+        Ok(preview) => {
+            let kind = if selection { "Selection" } else { "Statement" };
+            if preview.first_line == preview.last_line {
+                format!("{kind}: Line {}", preview.first_line)
+            } else {
+                format!("{kind}: Lines {}–{}", preview.first_line, preview.last_line)
+            }
+        }
+        Err(crate::editor::RunRefusal::CursorOutside) => "No statement at cursor".to_owned(),
+        Err(crate::editor::RunRefusal::NoStatement) => "No statement to run".to_owned(),
+        Err(crate::editor::RunRefusal::NoSubquery) => NO_SUBQUERY.to_owned(),
+    };
+    if script {
+        format!("{target} · Script: whole script")
+    } else {
+        target
+    }
+}
 pub const MENU_EXPLORER: &str = "Explorer commands";
 pub const MENU_CONTEXT: &str = "Panel commands";
 pub const MENU_OPEN: &str = "Open";
@@ -538,8 +601,8 @@ pub const MENU_QUIT: &str = "Quit";
 pub const WELCOME_NO_CONNECTION: &str = "No connection yet";
 pub const WELCOME_WRITE: &str = "Write SQL here";
 pub const WELCOME_ADD: &str = "Add a connection";
-pub const WELCOME_RUN: &str = "Run the statement";
-pub const WELCOME_SCRIPT: &str = "Run the script";
+pub const WELCOME_RUN: &str = MENU_RUN;
+pub const WELCOME_SCRIPT: &str = MENU_SCRIPT;
 pub const WELCOME_SUGGESTIONS: &str = "Show suggestions";
 pub const WELCOME_SUGGESTIONS_KEY: &str = "Ctrl+Space";
 pub const WELCOME_COMMANDS: &str = "Show all commands";
@@ -548,6 +611,11 @@ pub const WELCOME_KEYS: &str = "Show all keys";
 pub const HOME_NO_CONSOLE: &str = "No console is open";
 pub const HOME_EXPLORER: &str = "Show the explorer";
 pub const HOME_CONSOLE: &str = "Open a console";
+pub const HOME_CONNECT: &str = "Connect to a database";
+pub const HOME_OPEN_SQL: &str = "Open a SQL file";
+pub const HOME_SQL_NEEDS_CONNECTION: &str = "Add a connection before opening SQL files";
+pub const HOME_SAVED: &str = "Open saved work";
+pub const HOME_SAVED_CONSOLES: &str = "Saved consoles of selected connection";
 pub const HOME_SCRIPTS: &str = "Scripts without a connection";
 pub const HOME_SETTINGS: &str = "Open the settings";
 pub const HOME_QUIT: &str = "Quit SQLN";
@@ -629,6 +697,11 @@ pub const FORM_NEEDS_FILE: &str = "SQLite needs a file.";
 pub const FORM_REDIS_DATABASE: &str = "The Redis database must be a number.";
 pub const FORM_REDIS_SCHEMAS: &str = "Each Redis database must be a number.";
 pub const FORM_KAFKA_SOCKET: &str = "A Kafka connection needs a host name, not a socket.";
+pub const KAFKA_EVAL_MEMORY: &str = "The Kafka expression exceeds the temporary memory limit. Reduce the projection or increase the memory limit.";
+pub const KAFKA_EVAL_STOPPED: &str =
+    "The Kafka expression stops because the execution is canceled.";
+pub const KAFKA_BAD_GROUP: &str =
+    "The consumer group cannot hold a space or a control character. Remove them.";
 pub const FORM_REGISTRY_URL: &str =
     "The registry URL must start with http:// or https://. A registry user needs a URL.";
 pub const REDIS_SOCKET_TLS: &str = "A Unix socket does not use TLS. Turn off TLS.";
@@ -675,7 +748,10 @@ pub const REDIS_LIVE_BAD: &str =
     "The server sent a reply that SQLN cannot read. Run the command again.";
 
 pub const KAFKA_UNKNOWN_COMMAND: &str =
-    "Unknown Kafka command. Use TOPICS, PARTITIONS, CONSUME, TAIL, GROUPS, or GROUP.";
+    "Unknown Kafka command. Use SELECT, TOPICS, PARTITIONS, CONSUME, TAIL, GROUPS, or GROUP.";
+pub const KAFKA_SELECT_START: &str =
+    "START AT needs EARLIEST, LATEST, OFFSET n, or TIMESTAMP 'UTC time'.";
+pub const KAFKA_SELECT_CLAUSES: &str = "SELECT accepts PARTITION, START AT, WHERE, LIMIT, and SCAN. End a continuous read with EMIT CHANGES, without LIMIT or SCAN.";
 pub const KAFKA_EXTRA_WORDS: &str = "The command has more words than it accepts. Remove them.";
 pub const KAFKA_CONSUME_CLAUSES: &str =
     "CONSUME accepts PARTITION, FROM, WHERE, LIMIT, and SCAN after the topic.";
@@ -684,13 +760,30 @@ pub const KAFKA_REPEATED_CLAUSE: &str = "Each clause can occur one time. Remove 
 pub const KAFKA_BAD_START: &str = "FROM needs earliest, latest, an offset of 0 or more, or @ and a time, such as @2026-11-10T12:00:00Z.";
 pub const KAFKA_BAD_TEXT: &str = "The text has a bad escape or is not UTF-8.";
 pub const KAFKA_BAD_OPERATOR: &str = "Use != for not equal.";
-pub const KAFKA_NEEDS_FIELD: &str =
-    "The condition needs key, value, headers, or a field such as value.customer.id.";
-pub const KAFKA_NEEDS_OPERATOR: &str = "Use key = 'text', CONTAINS 'text', MATCHES 'regex', or value.field with =, !=, <, <=, >, or >=.";
+pub const KAFKA_NEEDS_FIELD: &str = "Use a message column, such as key or value, a field, such as value.customer.id, or a function, such as LOWER(value.name).";
+pub const KAFKA_NEEDS_OPERATOR: &str = "Put =, !=, <, <=, >, >=, IS NULL, IN, BETWEEN, LIKE, ILIKE, CONTAINS, or MATCHES after the value.";
+pub const KAFKA_NEEDS_LIST: &str = "Put a field that holds a list here, such as value.tags, or a list of values, such as ('a', 'b').";
+pub const KAFKA_NEEDS_NULL: &str = "Write IS NULL, IS NOT NULL, IS MISSING, or IS NOT MISSING.";
+pub const KAFKA_NEEDS_AND: &str = "Write BETWEEN low AND high, such as BETWEEN 1 AND 5.";
+pub const KAFKA_NEEDS_NUMBER: &str =
+    "This value is a number. Compare it with a number, such as SIZE(value.items) > 2.";
+pub const KAFKA_TEXT_OPERATOR: &str =
+    "CONTAINS, MATCHES, LIKE, and ILIKE read a text. Use =, <, or > for a number.";
+pub const KAFKA_BAD_TIME: &str =
+    "Compare timestamp with a UTC time, such as '2026-11-10T12:00:00Z' or '2026-11-10'.";
+pub const KAFKA_LIKE_END: &str =
+    "The LIKE pattern ends with a backslash. Write \\\\ for one backslash in the text.";
+pub const KAFKA_CAST_TYPE: &str =
+    "Write CAST(value AS NUMBER), CAST(value AS TEXT), or CAST(value AS BOOLEAN).";
+pub const KAFKA_ITEM_NAME: &str = "Give the item a new simple name that is not a message column, such as ANY item IN value.items.";
+pub const KAFKA_QUANTIFIER: &str =
+    "Write ANY item IN value.list SATISFIES condition END, or EVERY in place of ANY.";
+pub const KAFKA_SIZE_FIELD: &str =
+    "SIZE needs a value without [*] between parentheses, such as SIZE(value.items).";
 pub const KAFKA_NEEDS_TEXT: &str = "The condition needs a text between quotes.";
 pub const KAFKA_NEEDS_VALUE: &str =
-    "The condition needs a text between quotes, a number, true, false, or null.";
-pub const KAFKA_NO_CLOSE: &str = "The filter has a parenthesis that does not close.";
+    "Put a value here: a field, a text between quotes, a number, true, false, or null.";
+pub const KAFKA_NO_CLOSE: &str = "A parenthesis does not close. Add ).";
 pub const KAFKA_BAD_REGEX: &str =
     "The regular expression is not valid or is too large. Check its syntax.";
 pub const KAFKA_WHAT_TOPIC: &str = "a topic";
@@ -725,6 +818,14 @@ pub const KAFKA_REGISTRY_VAULT: &str = "SQLN cannot read the registry password f
 /// Names what a Kafka command needs at a position.
 pub fn kafka_needs(what: &str) -> String {
     format!("The command needs {what} here.")
+}
+
+pub fn kafka_function_needs(name: &str, many: bool) -> String {
+    if many {
+        format!("{name} needs one or more values between parentheses, with commas between them.")
+    } else {
+        format!("{name} needs one value between parentheses.")
+    }
 }
 
 pub fn kafka_registry_not_saved(error: &str) -> String {
@@ -846,6 +947,7 @@ pub const FIELD_CA: &str = "CA file";
 pub const FIELD_CLIENT_CERTIFICATE: &str = "Client certificate";
 pub const FIELD_CLIENT_KEY: &str = "Client key";
 pub const FIELD_SASL: &str = "SASL";
+pub const FIELD_CONSUMER_GROUP: &str = "Consumer group";
 pub const FIELD_REGISTRY_URL: &str = "Registry URL";
 pub const FIELD_REGISTRY_USER: &str = "Registry user";
 pub const FIELD_REGISTRY_PASSWORD: &str = "Registry password";
@@ -1337,8 +1439,8 @@ pub const TITLE_SCHEMA: &str = "Schema";
 pub const TITLE_DATABASE: &str = "Database";
 pub const SCHEMA_DEFAULT: &str = "(default of the connection)";
 pub const SCHEMA_LOADING: &str = "Reading the catalog.";
-pub const CONTROL_RUN: &str = "Run";
-pub const CONTROL_SCRIPT: &str = "Script";
+pub const CONTROL_RUN: &str = MENU_RUN;
+pub const CONTROL_SCRIPT: &str = MENU_SCRIPT;
 pub const CONTROL_STOP: &str = "Stop";
 /// The button at the right end of the main tabs. It quits as `Ctrl+W q`.
 pub const CONTROL_QUIT: &str = "Quit";
@@ -1355,6 +1457,18 @@ pub const DATABASE_LABEL: &str = "Database";
 pub const NO_DATABASE_LABEL: &str = "No database";
 pub const CURSOR_OUTSIDE: &str = "The cursor is outside a statement.";
 pub const NO_STATEMENT: &str = "The text has no statement to run.";
+pub const NO_SUBQUERY: &str =
+    "No complete SELECT or WITH subquery at the cursor. Move the cursor inside a subquery.";
+pub const SUBQUERY_UNAVAILABLE: &str = "Focus an idle SQL console to run a subquery.";
+
+pub fn subquery_question(line: usize, sql: &str, warning: Option<&str>) -> String {
+    let warning = warning
+        .map(|message| format!("{message}\n\n"))
+        .unwrap_or_default();
+    format!(
+        "{warning}Run only the subquery at line {line}?\n\n{sql}\n\nOuter aliases and CTE dependencies are not included."
+    )
+}
 pub const PLAN_REFUSED: &str = "This source has no query plan.";
 pub const PLAN_ANALYZE_REFUSED: &str = "SQLite cannot run a statement inside a plan.";
 pub const PLAN_ONE_STATEMENT: &str = "A plan needs one statement. Select only one.";
@@ -1691,6 +1805,7 @@ pub fn action_text(action: Action) -> &'static str {
         Action::AgentTasks => "Agent tasks of this session: stop a task",
         Action::Run => "Run the selection or the statement",
         Action::RunScript => "Run the script",
+        Action::RunSubquery => MENU_SUBQUERY,
         Action::Explain => "Show the plan of the statement",
         Action::ExplainAnalyze => "Run the statement and show its plan",
         Action::Stop => "Stop the script",

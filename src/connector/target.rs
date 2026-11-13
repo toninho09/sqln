@@ -113,11 +113,33 @@ pub struct Registry {
     pub password: Option<Secret>,
 }
 
+/// The consumer group of the Kafka reads when the connection sets no group.
+pub const KAFKA_READ_GROUP: &str = "sqln-read";
+
 /// The settings that only a Kafka connection uses. Other engines keep the default.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct KafkaOptions {
     pub sasl: Sasl,
     pub registry: Option<Box<Registry>>,
+    /// The consumer group id of the reads. `None` uses `KAFKA_READ_GROUP`.
+    pub group: Option<String>,
+}
+
+impl KafkaOptions {
+    /// Returns the consumer group id of the reads.
+    pub fn read_group(&self) -> &str {
+        self.group.as_deref().unwrap_or(KAFKA_READ_GROUP)
+    }
+}
+
+/// Reads the consumer group id of a Kafka connection. The spaces at the ends go; an empty
+/// text means the default group. A space or a control character inside is refused.
+pub fn consumer_group(text: &str) -> Result<Option<String>, &'static str> {
+    let text = text.trim();
+    if text.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(crate::ui::text::KAFKA_BAD_GROUP);
+    }
+    Ok(Some(text.to_owned()).filter(|text| !text.is_empty()))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -245,6 +267,7 @@ struct Parameters {
     socket: Option<PathBuf>,
     sasl: Option<Sasl>,
     registry: Option<String>,
+    group: Option<String>,
 }
 
 impl Parameters {
@@ -268,6 +291,7 @@ impl Parameters {
                     );
                 }
                 "registry" if !value.is_empty() => parameters.registry = Some(value),
+                "group" => parameters.group = consumer_group(&value)?,
                 other => return Err(format!("Unknown connection parameter: {other}")),
             }
         }
@@ -392,8 +416,12 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
     }
 
     let mut parameters = Parameters::parse(query)?;
-    if engine != Engine::Kafka && (parameters.sasl.is_some() || parameters.registry.is_some()) {
-        return Err("sasl and registry are valid only for kafka.".to_owned());
+    if engine != Engine::Kafka
+        && (parameters.sasl.is_some()
+            || parameters.registry.is_some()
+            || parameters.group.is_some())
+    {
+        return Err("sasl, registry, and group are valid only for kafka.".to_owned());
     }
     if engine == Engine::Kafka && parameters.socket.is_some() {
         return Err("A Kafka connection needs a host, not a socket.".to_owned());
@@ -407,6 +435,7 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
                 password: None,
             })
         }),
+        group: parameters.group.take(),
     };
     if matches!(scheme.as_str(), "rediss" | "valkeys" | "kafkas") {
         if parameters.tls_mode.as_deref() == Some("disable") {

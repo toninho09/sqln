@@ -30,8 +30,13 @@ pub fn draw_edit(frame: &mut Frame, form: &mut EditForm, theme: &Theme) -> EditL
         height,
     );
     let inner = open_modal(frame, area, &printable(&form.title), theme);
-    let [contents, note, controls] = Layout::vertical([
+    let validation = match &mut form.body {
+        Body::Cell { editor, .. } => editor.json_validation().cloned(),
+        _ => None,
+    };
+    let [contents, diagnostic, note, controls] = Layout::vertical([
         Constraint::Min(1),
+        Constraint::Length(u16::from(validation.is_some())),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
@@ -60,13 +65,41 @@ pub fn draw_edit(frame: &mut Frame, form: &mut EditForm, theme: &Theme) -> EditL
     } else {
         text::EDIT_CELL_HINT
     });
-    frame.render_widget(Paragraph::new(printable(hint)).style(theme.hint), note);
+    let count = match &form.body {
+        Body::Cell { editor, .. } => editor.selected_character_count(),
+        _ => 0,
+    };
+    let hint = if count > 0 {
+        format!("{} · {hint}", text::selected_characters(count))
+    } else {
+        hint.to_owned()
+    };
+    frame.render_widget(Paragraph::new(printable(&hint)).style(theme.hint), note);
+    if let Some(validation) = validation {
+        use crate::grid::json::Validation;
+        let (message, style) = match validation {
+            Validation::Valid => ("JSON valid".to_owned(), theme.hint),
+            Validation::Invalid {
+                line,
+                column,
+                reason,
+            } => (
+                format!("JSON error · line {line}, column {column}: {reason}. Correct the JSON."),
+                theme.error,
+            ),
+            Validation::TooLarge => (
+                "JSON check skipped: value exceeds 1 MiB. Reduce the value to check it.".to_owned(),
+                theme.hint,
+            ),
+        };
+        frame.render_widget(Paragraph::new(printable(&message)).style(style), diagnostic);
+    }
     let labels: Vec<&str> = if review {
         vec![text::EDIT_APPLY, text::OPTION_CANCEL]
     } else {
         vec![text::EDIT_KEEP, text::EDIT_SET_NULL, text::OPTION_CANCEL]
     };
-    let items: Vec<(usize, String, bool)> = labels
+    let mut items: Vec<(usize, String, bool)> = labels
         .into_iter()
         .enumerate()
         .map(|(index, label)| {
@@ -78,6 +111,18 @@ pub fn draw_edit(frame: &mut Frame, form: &mut EditForm, theme: &Theme) -> EditL
             (index + 1, theme.button(&mark), true)
         })
         .collect();
+    if !review {
+        let label = form.format_key.as_ref().map_or_else(
+            || "Format JSON".to_owned(),
+            |key| format!("Format JSON ({key})"),
+        );
+        let label = if form.focus == 4 {
+            format!("> {label} <")
+        } else {
+            label
+        };
+        items.push((4, theme.button(&label), true));
+    }
     let items = buttons::toolbar_items(items);
     let buttons = buttons::draw(frame, controls, RowOptions::TOOLBAR, &items, theme);
     EditLayout {

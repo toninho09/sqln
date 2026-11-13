@@ -1,6 +1,7 @@
 //! Text operations on `Lines`. A position counts characters, and an end is exclusive.
 
 use edtui::{Index2, Lines, RowIndex};
+use unicode_width::UnicodeWidthStr;
 
 use crate::sql::{Dialect, Token, tokenize};
 
@@ -216,23 +217,63 @@ pub fn word_right(lines: &Lines, position: Index2) -> Index2 {
     Index2::new(position.row, col)
 }
 
+/// Returns the display width with the tab width of the editor.
+pub(super) fn display_width(text: &str) -> usize {
+    let mut parts = text.split('\t');
+    parts.next().unwrap_or_default().width()
+        + parts
+            .map(|part| super::TAB_WIDTH + part.width())
+            .sum::<usize>()
+}
+
 /// The flat text of one revision, with its tokens and its position table.
 pub struct Snapshot {
     pub text: String,
     pub tokens: Vec<Token>,
+    pub json: Option<crate::grid::json::Highlights>,
+    pub json_validation: Option<crate::grid::json::Validation>,
+    pub max_width: usize,
+    pub statements: std::cell::OnceCell<Vec<crate::sql::Statement>>,
+    pub run_selection: Option<super::run::Selection>,
     line_starts: Vec<usize>,
+    character_starts: Vec<usize>,
 }
 
 impl Snapshot {
-    pub fn new(lines: &Lines, dialect: Dialect) -> Self {
+    pub fn new(lines: &Lines, dialect: Dialect, literal_text: bool) -> Self {
         let text = text_of(lines);
+        let max_width = text.split('\n').map(display_width).max().unwrap_or(0);
         let mut line_starts = vec![0];
         line_starts.extend(text.match_indices('\n').map(|(offset, _)| offset + 1));
-        let tokens = tokenize(&text, dialect);
+        let mut character = 0;
+        let character_starts = text
+            .split('\n')
+            .map(|line| {
+                let start = character;
+                character += line.chars().count() + 1;
+                start
+            })
+            .collect();
+        let json_validation = literal_text
+            .then(|| crate::grid::json::validation(&text))
+            .flatten();
+        let json = matches!(json_validation, Some(crate::grid::json::Validation::Valid))
+            .then(|| crate::grid::json::Highlights::validated(&text));
+        let tokens = if json.is_some() {
+            Vec::new()
+        } else {
+            tokenize(&text, dialect)
+        };
         Self {
             text,
             tokens,
+            json,
+            json_validation,
+            max_width,
+            statements: std::cell::OnceCell::new(),
+            run_selection: None,
             line_starts,
+            character_starts,
         }
     }
 
@@ -241,6 +282,14 @@ impl Snapshot {
             .get(row)
             .copied()
             .unwrap_or(self.text.len())
+    }
+
+    pub fn character_offset(&self, position: Index2) -> usize {
+        self.character_starts
+            .get(position.row)
+            .copied()
+            .unwrap_or(0)
+            + position.col
     }
 
     pub fn offset(&self, position: Index2) -> usize {
@@ -273,6 +322,30 @@ impl Snapshot {
             0 if offset > 0 => self.position(offset - 1),
             col => Index2::new(position.row, col.saturating_sub(1)),
         }
+    }
+
+    /// Lists JSON tokens on the visible character columns of a row.
+    pub fn row_json_tokens(
+        &self,
+        row: usize,
+        left: usize,
+        end: usize,
+    ) -> Vec<(crate::grid::json::Kind, usize, usize)> {
+        let Some(json) = &self.json else {
+            return Vec::new();
+        };
+        let start = self.offset(Index2::new(row, left));
+        let stop = self.offset(Index2::new(row, end));
+        let (mut at, mut col) = (start, left);
+        json.in_range(start..stop)
+            .map(|(range, kind)| {
+                col += self.text[at..range.start].chars().count();
+                let first = col;
+                col += self.text[range.clone()].chars().count();
+                at = range.end;
+                (kind, first, col - 1)
+            })
+            .collect()
     }
 
     /// Lists the tokens on the columns `left..end` of a row. Each one comes with its

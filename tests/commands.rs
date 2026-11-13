@@ -23,6 +23,244 @@ use sqln::store::{Root, Store};
 use sqln::ui::text;
 use sqln::ui::theme::Theme;
 
+#[test]
+fn run_discovery_and_mouse_execution_use_the_selected_scope_in_both_modes() {
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let mut s = Screen::new("run-scope", mode, &[("run", &["f8", "ctrl+w e"])]);
+        s.paste("SELECT 1 AS first;\nSELECT 2 AS second;");
+        s.app
+            .console_mut()
+            .editor
+            .set_cursor(edtui::Index2::new(0, 0));
+        if mode == KeyboardMode::Conventional {
+            s.app.on_event(Event::Key(shift(KeyCode::Down)));
+        } else {
+            s.code(KeyCode::Char('v'));
+            s.code(KeyCode::Char('$'));
+        }
+        let selected = s.app.console().editor.selection_range();
+        let shown = s.draw(80, 24);
+        for part in [
+            "[Run selection]",
+            "Selection: Line 1",
+            "Script: whole script",
+            "F8 run selection",
+        ] {
+            assert!(shown.contains(part), "{part}:\n{shown}");
+        }
+        let menu = s.app.prefix_menu();
+        assert!(
+            menu.iter()
+                .flat_map(|group| &group.keys)
+                .any(|(_, label)| *label == "Run selection")
+        );
+        let palette = s.palette("run");
+        assert!(palette.contains("Run selection"), "{palette}");
+        assert!(palette.contains("Run script"), "{palette}");
+        assert!(palette.contains("F8"), "{palette}");
+        s.code(KeyCode::Esc);
+        assert_eq!(s.app.console().editor.selection_range(), selected);
+        let shown = s.draw(80, 24);
+        let (row, line) = shown
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains("[Run selection]"))
+            .unwrap();
+        let column = line[..line.find("[Run selection]").unwrap()]
+            .chars()
+            .count();
+        s.app.on_event(Event::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: column as u16,
+            row: row as u16,
+            modifiers: KeyModifiers::NONE,
+        }));
+        s.wait(|app| !app.console().is_busy());
+        assert_eq!(s.app.console().results.len(), 1);
+        assert_eq!(s.app.console().results[0].table.columns[0], "first");
+    }
+}
+
+#[test]
+fn the_run_preview_reports_a_cursor_outside_sql_without_running_it() {
+    let mut s = Screen::new("run-outside", KeyboardMode::Conventional, &[]);
+    s.paste("SELECT 1;\n\nSELECT 2;");
+    s.app
+        .console_mut()
+        .editor
+        .set_cursor(edtui::Index2::new(1, 0));
+    let screen = s.draw(80, 24);
+    assert!(screen.contains("No statement at cursor"), "{screen}");
+    assert!(screen.contains("Script: whole script"), "{screen}");
+    assert!(s.app.console().results.is_empty());
+    s.code(KeyCode::F(5));
+    assert!(!s.app.console().is_busy());
+    assert!(s.app.console().results.is_empty());
+    assert!(s.draw(80, 24).contains(text::CURSOR_OUTSIDE));
+}
+
+#[test]
+fn subquery_commands_use_custom_keys_and_confirm_only_the_inner_sql_in_both_modes() {
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let mut s = Screen::new("subquery", mode, &[("runSubquery", &["f8", "ctrl+w u"])]);
+        s.paste("SELECT :outside + (SELECT 42 AS answer) AS outer_value;");
+        s.app
+            .console_mut()
+            .editor
+            .set_cursor(edtui::Index2::new(0, 26));
+        let cursor = s.app.console().editor.cursor();
+        let original = s.app.console().editor.text();
+        assert!(s.palette("run subquery").contains("F8"));
+        s.code(KeyCode::Esc);
+        assert!(
+            s.app
+                .prefix_menu()
+                .iter()
+                .flat_map(|group| &group.keys)
+                .any(|(_, label)| *label == text::MENU_SUBQUERY)
+        );
+        assert!(s.draw(160, 30).contains("F8 run subquery"));
+        s.code(KeyCode::F(8));
+        let shown = s.draw(80, 24);
+        for part in [
+            text::TITLE_CONFIRM_RUN,
+            "subquery at line 1",
+            "SELECT 42 AS answer",
+            "[Cancel]",
+            "[Run]",
+        ] {
+            assert!(shown.contains(part), "{part}:\n{shown}");
+        }
+        assert!(!s.app.console().is_busy());
+        assert!(s.app.console().results.is_empty());
+        s.code(KeyCode::F(8));
+        assert!(s.app.console().results.is_empty());
+        s.code(KeyCode::Esc);
+        assert_eq!(s.app.console().editor.text(), original);
+        assert_eq!(s.app.console().editor.cursor(), cursor);
+        s.prefix('u');
+        if mode == KeyboardMode::Vim {
+            let shown = s.draw(80, 24);
+            let (row, line) = shown
+                .lines()
+                .enumerate()
+                .find(|(_, line)| line.contains("[Run]"))
+                .unwrap();
+            let column = line[..line.find("[Run]").unwrap()].chars().count();
+            s.app.on_event(Event::Mouse(crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: column as u16,
+                row: row as u16,
+                modifiers: KeyModifiers::NONE,
+            }));
+        } else {
+            s.code(KeyCode::Right);
+            s.code(KeyCode::Enter);
+        }
+        s.wait(|app| !app.console().is_busy());
+        let results = &s.app.console().results;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].table.columns[0], "answer");
+        assert_eq!(results[0].table.rows[0].text(0).as_deref(), Some("42"));
+        assert_eq!(s.app.console().editor.text(), original);
+        assert_eq!(s.app.console().editor.cursor(), cursor);
+    }
+}
+
+#[test]
+fn subquery_refusal_never_runs_the_outer_statement() {
+    let mut s = Screen::new("subquery-missing", KeyboardMode::Conventional, &[]);
+    s.paste("SELECT 42 AS answer;");
+    s.app
+        .console_mut()
+        .editor
+        .set_cursor(edtui::Index2::new(0, 8));
+    s.choose("run subquery");
+    assert!(!s.app.console().is_busy());
+    assert!(s.app.console().results.is_empty());
+    assert!(s.draw(160, 24).contains(text::NO_SUBQUERY));
+}
+
+#[test]
+fn subquery_command_does_not_change_a_selection_when_cancelled() {
+    let mut s = Screen::new("subquery-selection", KeyboardMode::Conventional, &[]);
+    s.paste("SELECT (SELECT 42 AS answer) AS outer_value;");
+    s.app
+        .console_mut()
+        .editor
+        .set_cursor(edtui::Index2::new(0, 15));
+    s.app.on_event(Event::Key(shift(KeyCode::Right)));
+    let selection = s.app.console().editor.selection_range();
+    s.choose("run subquery");
+    assert!(s.draw(80, 24).contains("SELECT 42 AS answer"));
+    s.code(KeyCode::Enter);
+    assert!(s.app.console().results.is_empty());
+    assert_eq!(s.app.console().editor.selection_range(), selection);
+}
+
+#[test]
+fn subquery_confirmation_follows_the_unknown_transaction_guard() {
+    let mut s = Screen::new("subquery-unknown", KeyboardMode::Conventional, &[]);
+    s.paste("SELECT (SELECT 42 AS answer);");
+    s.app
+        .console_mut()
+        .editor
+        .set_cursor(edtui::Index2::new(0, 17));
+    s.app.console_mut().transaction = TransactionState::Unknown;
+    s.choose("run subquery");
+    assert!(s.draw(80, 24).contains(text::TITLE_UNKNOWN));
+    s.code(KeyCode::Right);
+    s.code(KeyCode::Enter);
+    assert!(s.draw(80, 24).contains("Run only the subquery"));
+    assert!(!s.app.console().is_busy());
+    assert!(s.app.console().results.is_empty());
+    s.code(KeyCode::Enter);
+    assert!(s.app.console().results.is_empty());
+}
+
+#[test]
+fn subquery_errors_use_messages_without_reconstructing_outer_aliases() {
+    let mut s = Screen::new("subquery-correlated", KeyboardMode::Conventional, &[]);
+    s.paste("SELECT * FROM items i WHERE EXISTS (SELECT i.id);");
+    s.app
+        .console_mut()
+        .editor
+        .set_cursor(edtui::Index2::new(0, 42));
+    s.choose("run subquery");
+    s.code(KeyCode::Right);
+    s.code(KeyCode::Enter);
+    s.wait(|app| !app.console().is_busy());
+    assert!(s.app.console().results.is_empty());
+    assert!(
+        s.app
+            .console()
+            .messages
+            .iter()
+            .any(|message| message.text.contains("no such column: i.id"))
+    );
+}
+
+#[test]
+fn subquery_command_stays_outside_results_and_command_sources() {
+    let mut s = Screen::new("subquery-focus", KeyboardMode::Conventional, &[]);
+    s.results("SELECT 1;");
+    assert!(!s.palette("run subquery").contains(text::MENU_SUBQUERY));
+    s.code(KeyCode::Esc);
+    s.prefix('k');
+    for dialect in [sqln::sql::Dialect::Redis, sqln::sql::Dialect::Kafka] {
+        s.app.console_mut().editor.set_dialect(dialect);
+        assert!(!s.palette("run subquery").contains(text::MENU_SUBQUERY));
+        s.code(KeyCode::Esc);
+        assert!(
+            !s.app
+                .prefix_menu()
+                .iter()
+                .flat_map(|group| &group.keys)
+                .any(|(_, label)| *label == text::MENU_SUBQUERY)
+        );
+    }
+}
+
 struct Screen {
     app: App,
     clipboard: Rc<RefCell<MemoryClipboard>>,
@@ -663,6 +901,26 @@ fn panel_pages_and_the_reserved_palette_hint_use_custom_keys() {
     s.app
         .on_event(Event::Key(crate::common::alt(KeyCode::Char('c'))));
     assert_eq!(s.clipboard.borrow().text, "1\n");
+}
+
+#[test]
+fn cell_selection_takes_priority_over_custom_background_shortcuts() {
+    let mut s = Screen::new(
+        "cell-selection-custom-keys",
+        KeyboardMode::Conventional,
+        &[("runScript", &["shift+right"]), ("gridCopy", &["alt+c"])],
+    );
+    s.results("SELECT 'text';");
+    s.code(KeyCode::Enter);
+    s.draw(80, 24);
+    s.app.on_event(Event::Key(shift(KeyCode::Right)));
+    s.control('c');
+    assert_eq!(s.clipboard.borrow().text, "t");
+    assert!(!s.app.console().is_busy());
+    s.code(KeyCode::Esc);
+    s.app
+        .on_event(Event::Key(crate::common::alt(KeyCode::Char('c'))));
+    assert_eq!(s.clipboard.borrow().text, "text\n");
 }
 
 #[test]

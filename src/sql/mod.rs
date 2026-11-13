@@ -8,6 +8,7 @@ pub mod literal;
 pub mod parameters;
 mod risk;
 mod statement;
+mod subquery;
 
 pub use classify::{
     changes_state, changes_without_result, counts_rows, first_keyword, is_continuous,
@@ -18,6 +19,7 @@ pub use format::format_statement;
 pub use lexer::{Lexer, Token, TokenKind, tokenize};
 pub use risk::run_risk;
 pub use statement::{Statement, split, split_tokens, statement_at};
+pub use subquery::subquery_at;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dialect {
@@ -27,13 +29,13 @@ pub enum Dialect {
     DuckDb,
     /// Redis and Valkey commands. This text is not SQL.
     Redis,
-    /// Kafka commands of SQLN, one for each line. This text is not SQL.
+    /// Kafka line commands and the SELECT subset of SQLN.
     Kafka,
 }
 
 impl Dialect {
-    /// Returns true for a source with commands instead of SQL: one command for each line,
-    /// and `#` at the start of a line for a comment.
+    /// Returns true for a source with native commands and `#` line comments.
+    /// Kafka also accepts SELECT, without the relational SQL features.
     pub fn is_command_line(self) -> bool {
         matches!(self, Dialect::Redis | Dialect::Kafka)
     }

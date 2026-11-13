@@ -10,7 +10,7 @@ use crate::data_edit::form::{Body, EditForm};
 use crate::data_edit::{DeleteToggle, Job, Outcome, Restore, SavedRow};
 use crate::exec::{ConsoleId, ExecEvent, ExecutionEnd};
 use crate::grid::Value;
-use crate::input::{Chord, Lookup, Region};
+use crate::input::{Action, Chord, Lookup, Region};
 use crate::sql::literal::is_number;
 use crate::table::EditAfter;
 use crate::ui::text;
@@ -333,6 +333,7 @@ impl App {
             focus: 0,
             keys: Vec::new(),
             note: None,
+            format_key: self.shown_key(Action::FormatSql),
         });
     }
 
@@ -606,12 +607,13 @@ impl App {
                                 console: id,
                                 title: format!("{} · {}", text::EDIT_REVIEW, tab.label()),
                                 body: Body::Review {
-                                    contents: WrappedText::new(contents),
+                                    contents: Box::new(WrappedText::new(contents)),
                                     scroll: 0,
                                 },
                                 focus: 0,
                                 keys: Vec::new(),
                                 note: None,
+                                format_key: None,
                             });
                         } else {
                             tab.edit_close = false;
@@ -762,6 +764,14 @@ impl App {
             return;
         }
         let review = matches!(form.body, Body::Review { .. });
+        if key.code == KeyCode::Esc
+            && let Body::Cell { editor, .. } = &mut self.edit_form.as_mut().unwrap().body
+            && editor.search().is_some()
+        {
+            editor.on_key(key, None);
+            return;
+        }
+        let form = self.edit_form.as_ref().unwrap();
         let escape = key.code == KeyCode::Esc
             && match &form.body {
                 Body::Cell { editor, .. } => !self.vim() || !editor.is_inserting(),
@@ -772,7 +782,7 @@ impl App {
             return;
         }
         if key.code == KeyCode::Tab || key.code == KeyCode::BackTab {
-            let count = if review { 3 } else { 4 };
+            let count = if review { 3 } else { 5 };
             let form = self.edit_form.as_mut().unwrap();
             form.focus = (form.focus
                 + if key.code == KeyCode::BackTab {
@@ -804,7 +814,14 @@ impl App {
                     } else {
                         let mut keys = std::mem::take(&mut form.keys);
                         keys.push(Chord::from_event(key));
-                        match self.keymap.sequence(Region::Editor, &keys) {
+                        let lookup = match self.keymap.sequence(Region::Editor, &keys) {
+                            Lookup::None => self.keymap.sequence(Region::Global, &keys),
+                            found => found,
+                        };
+                        match lookup {
+                            Lookup::Action(Action::FormatSql) => {
+                                form.note = editor.format_json().err().map(str::to_owned);
+                            }
                             Lookup::Action(action) => editor.on_command(action, None),
                             Lookup::Sequence => form.keys = keys,
                             Lookup::None => editor.on_key(key, None),
@@ -824,6 +841,14 @@ impl App {
     }
 
     fn edit_button(&mut self, button: usize) {
+        if button == 4 {
+            if let Some(form) = &mut self.edit_form
+                && let Body::Cell { editor, .. } = &mut form.body
+            {
+                form.note = editor.format_json().err().map(str::to_owned);
+            }
+            return;
+        }
         let Some(form) = &self.edit_form else { return };
         let id = form.console;
         match &form.body {
@@ -848,6 +873,13 @@ impl App {
     }
 
     pub(super) fn on_edit_mouse(&mut self, mouse: MouseEvent) {
+        if let Some(form) = &mut self.edit_form
+            && let Body::Cell { editor, .. } = &mut form.body
+            && editor.dragging_scrollbar()
+        {
+            editor.on_mouse(mouse);
+            return;
+        }
         let position = Position::new(mouse.column, mouse.row);
         if mouse.kind == MouseEventKind::Down(MouseButton::Left)
             && self.layout.edit.controls.contains(position)

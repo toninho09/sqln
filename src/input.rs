@@ -183,6 +183,7 @@ pub enum Action {
     AgentTasks,
     Run,
     RunScript,
+    RunSubquery,
     Explain,
     ExplainAnalyze,
     FormatSql,
@@ -480,6 +481,7 @@ const DEFAULTS: &[Item] = &[
         &["shift+f5", "ctrl+w s"],
         &[],
     ),
+    both(Action::RunSubquery, Region::Global, "runSubquery", &[], &[]),
     both(
         Action::FormatSql,
         Region::Global,

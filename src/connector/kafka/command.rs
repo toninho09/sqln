@@ -1,5 +1,7 @@
-//! The Kafka commands of SQLN. One line holds one command. The words of a command are
-//! case-insensitive, and a name with spaces or quotes goes between quotes.
+//! Kafka reads use SELECT or the line commands. Keywords ignore case.
+
+mod select;
+pub use select::Projection;
 
 use super::filter::{self, Filter};
 use crate::connector::ExecError;
@@ -13,7 +15,7 @@ pub enum TokenKind {
     Word,
     /// A text between quotes, without its quotes and with its escapes read.
     Text,
-    /// `=`, `!=`, `<`, `<=`, `>`, `>=`, `(`, or `)`.
+    /// `=`, `!=`, `<`, `<=`, `>`, `>=`, `(`, `)`, or `,`. In SELECT, also `;` and `*`.
     Operator,
 }
 
@@ -23,6 +25,8 @@ pub struct Token {
     pub text: String,
     /// The byte offset of the token in the line.
     pub start: usize,
+    /// The byte offset after the token.
+    pub end: usize,
 }
 
 impl Token {
@@ -44,7 +48,7 @@ pub fn error_at(message: impl Into<String>, offset: usize) -> ExecError {
 
 /// Reads a text between quotes from `start`. It returns the text and the position
 /// after the closing quote. A backslash escapes the next character, as in `redis-cli`.
-fn read_text(line: &str, start: usize) -> Result<(String, usize), ExecError> {
+fn read_text(line: &str, start: usize, select: bool) -> Result<(String, usize), ExecError> {
     let bytes = line.as_bytes();
     let quote = bytes[start];
     let mut text = Vec::new();
@@ -52,6 +56,10 @@ fn read_text(line: &str, start: usize) -> Result<(String, usize), ExecError> {
     while let Some(&byte) = bytes.get(pos) {
         pos += 1;
         match byte {
+            _ if byte == quote && select && bytes.get(pos) == Some(&quote) => {
+                text.push(quote);
+                pos += 1;
+            }
             _ if byte == quote => {
                 let text =
                     String::from_utf8(text).map_err(|_| error_at(text::KAFKA_BAD_TEXT, start))?;
@@ -85,8 +93,27 @@ fn is_operator_byte(byte: u8) -> bool {
     matches!(byte, b'=' | b'!' | b'<' | b'>' | b'(' | b')')
 }
 
-/// Splits a line in tokens. A word ends at a space, a quote, or an operator.
+/// Returns the position after the double quote that closes the name at `start`, as in
+/// `value."order id"`. `""` is one quote inside the name.
+fn quoted_name_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut pos = start + 1;
+    loop {
+        pos += bytes.get(pos..)?.iter().position(|byte| *byte == b'"')? + 1;
+        if bytes.get(pos) != Some(&b'"') {
+            return Some(pos);
+        }
+        pos += 1;
+    }
+}
+
+/// Splits a line in tokens. A word ends at a space, a quote, a comma, or an operator.
+/// In SELECT, `[*]` stays in its word, as in `value.items[*].sku`. A double quote after
+/// a dot starts a name inside the word, as in `value."order id"`.
 pub fn tokenize(line: &str) -> Result<Vec<Token>, ExecError> {
+    tokenize_mode(line, false)
+}
+
+pub(crate) fn tokenize_mode(line: &str, select: bool) -> Result<Vec<Token>, ExecError> {
     let bytes = line.as_bytes();
     let mut tokens = Vec::new();
     let mut pos = 0;
@@ -96,10 +123,29 @@ pub fn tokenize(line: &str) -> Result<Vec<Token>, ExecError> {
             pos += 1;
             continue;
         }
+        if byte == b'#'
+            && line[..pos]
+                .rsplit('\n')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .is_empty()
+        {
+            pos = line[pos..].find('\n').map_or(bytes.len(), |end| pos + end);
+            continue;
+        }
         let start = pos;
         let (kind, text) = match byte {
+            b',' => {
+                pos += 1;
+                (TokenKind::Operator, line[start..pos].to_owned())
+            }
+            b';' | b'*' if select => {
+                pos += 1;
+                (TokenKind::Operator, line[start..pos].to_owned())
+            }
             b'\'' | b'"' => {
-                let (text, end) = read_text(line, start)?;
+                let (text, end) = read_text(line, start, select)?;
                 pos = end;
                 (TokenKind::Text, text)
             }
@@ -113,17 +159,32 @@ pub fn tokenize(line: &str) -> Result<Vec<Token>, ExecError> {
                 (TokenKind::Operator, line[start..pos].to_owned())
             }
             _ => {
-                while pos < bytes.len()
-                    && !bytes[pos].is_ascii_whitespace()
-                    && !matches!(bytes[pos], b'\'' | b'"')
-                    && !is_operator_byte(bytes[pos])
-                {
+                while let Some(&byte) = bytes.get(pos) {
+                    if byte == b'"' && bytes[pos - 1] == b'.' {
+                        pos = quoted_name_end(bytes, pos)
+                            .ok_or_else(|| error_at(text::REDIS_BAD_QUOTES, pos))?;
+                        continue;
+                    }
+                    if byte.is_ascii_whitespace()
+                        || matches!(byte, b'\'' | b'"' | b',')
+                        || is_operator_byte(byte)
+                        || select
+                            && matches!(byte, b';' | b'*')
+                            && !(byte == b'*' && bytes[pos - 1] == b'[')
+                    {
+                        break;
+                    }
                     pos += 1;
                 }
                 (TokenKind::Word, line[start..pos].to_owned())
             }
         };
-        tokens.push(Token { kind, text, start });
+        tokens.push(Token {
+            kind,
+            text,
+            start,
+            end: pos,
+        });
     }
     Ok(tokens)
 }
@@ -148,6 +209,8 @@ pub struct Read {
     pub limit: Option<usize>,
     /// The most messages that the read receives.
     pub scan: Option<u64>,
+    /// `None` keeps all message columns.
+    pub projection: Option<Projection>,
 }
 
 #[derive(Debug)]
@@ -185,6 +248,11 @@ impl<'a> Cursor<'a> {
 
     pub fn peek(&self) -> Option<&'a Token> {
         self.tokens.get(self.index)
+    }
+
+    /// Returns the token `n` places after the next one.
+    pub fn peek_nth(&self, n: usize) -> Option<&'a Token> {
+        self.tokens.get(self.index + n)
     }
 
     pub fn advance(&mut self) -> Option<&'a Token> {
@@ -225,7 +293,7 @@ impl<'a> Cursor<'a> {
 }
 
 /// Reads the time of `@time`: RFC 3339, or a date and a time in UTC.
-fn parse_time(text: &str) -> Option<i64> {
+pub(super) fn parse_time(text: &str) -> Option<i64> {
     if let Ok(time) = chrono::DateTime::parse_from_rfc3339(text) {
         return Some(time.timestamp_millis());
     }
@@ -266,7 +334,7 @@ fn parse_start(cursor: &mut Cursor<'_>) -> Result<Start, ExecError> {
 }
 
 /// Reads the clauses of `CONSUME` and `TAIL`, in any order, each one time.
-fn parse_read(cursor: &mut Cursor<'_>, tail: bool) -> Result<Read, ExecError> {
+fn parse_read(cursor: &mut Cursor<'_>, tail: bool, select: bool) -> Result<Read, ExecError> {
     let topic = cursor.name(text::KAFKA_WHAT_TOPIC)?;
     let mut read = Read {
         topic,
@@ -275,17 +343,22 @@ fn parse_read(cursor: &mut Cursor<'_>, tail: bool) -> Result<Read, ExecError> {
         filter: None,
         limit: None,
         scan: None,
+        projection: None,
     };
     let mut seen: Vec<String> = Vec::new();
     while let Some(token) = cursor.advance() {
         let clause = token.text.to_ascii_uppercase();
         let allowed = match clause.as_str() {
-            "PARTITION" | "FROM" | "WHERE" => true,
+            "PARTITION" | "WHERE" => true,
+            "FROM" => !select,
+            "START" => select,
             "LIMIT" | "SCAN" => !tail,
             _ => false,
         };
         if token.kind != TokenKind::Word || !allowed {
-            let message = if tail {
+            let message = if select {
+                text::KAFKA_SELECT_CLAUSES
+            } else if tail {
                 text::KAFKA_TAIL_CLAUSES
             } else {
                 text::KAFKA_CONSUME_CLAUSES
@@ -308,6 +381,7 @@ fn parse_read(cursor: &mut Cursor<'_>, tail: bool) -> Result<Read, ExecError> {
                 read.partition = Some(partition);
             }
             "FROM" => read.start = parse_start(cursor)?,
+            "START" => read.start = select::parse_start(cursor)?,
             "WHERE" => read.filter = Some(filter::parse(cursor)?),
             "LIMIT" => {
                 let (limit, offset) = cursor.number::<usize>(text::KAFKA_WHAT_COUNT)?;
@@ -328,9 +402,14 @@ fn parse_read(cursor: &mut Cursor<'_>, tail: bool) -> Result<Read, ExecError> {
     Ok(read)
 }
 
-/// Reads one command line.
+/// Reads a SELECT statement or one command line.
 pub fn parse(line: &str) -> Result<Command, ExecError> {
-    let tokens = tokenize(line)?;
+    let select = crate::sql::first_keyword(line, crate::sql::Dialect::Kafka)
+        .is_some_and(|word| word.eq_ignore_ascii_case("SELECT"));
+    let mut tokens = tokenize_mode(line, select)?;
+    if select && tokens.last().is_some_and(|token| token.is_operator(";")) {
+        tokens.pop();
+    }
     let mut cursor = Cursor::new(&tokens, line.trim_end().len());
     let Some(first) = cursor.advance() else {
         return Err(ExecError::new(text::REDIS_NO_COMMAND));
@@ -344,8 +423,9 @@ pub fn parse(line: &str) -> Result<Command, ExecError> {
         "GROUPS" => Command::Groups,
         "PARTITIONS" => Command::Partitions(cursor.name(text::KAFKA_WHAT_TOPIC)?),
         "GROUP" => Command::Group(cursor.name(text::KAFKA_WHAT_GROUP)?),
-        "CONSUME" => Command::Consume(parse_read(&mut cursor, false)?),
-        "TAIL" => Command::Tail(parse_read(&mut cursor, true)?),
+        "SELECT" => select::parse(&mut cursor, line)?,
+        "CONSUME" => Command::Consume(parse_read(&mut cursor, false, false)?),
+        "TAIL" => Command::Tail(parse_read(&mut cursor, true, false)?),
         TOPIC_PAGE => {
             let topic = cursor.name(text::KAFKA_WHAT_TOPIC)?;
             let (count, _) = cursor.number::<usize>(text::KAFKA_WHAT_COUNT)?;

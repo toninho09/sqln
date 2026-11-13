@@ -15,7 +15,7 @@ use crate::connector::duckdb::DuckdbTarget;
 use crate::connector::sqlite::{SqliteTarget, validate_path};
 use crate::connector::target::{
     Address, ClientCertificate, Engine, KafkaOptions, NetworkTarget, Registry, Sasl, Secret, Tls,
-    TlsFiles, parse_uri,
+    TlsFiles, consumer_group, parse_uri,
 };
 use crate::exec::ConnectionId;
 use crate::mark_list::{MarkList, MarkRequest};
@@ -50,6 +50,8 @@ pub enum Field {
     RegistryUrl,
     RegistryUser,
     RegistryPassword,
+    /// The consumer group id of the Kafka reads.
+    ConsumerGroup,
     File,
     ForeignKeys,
     BusyTimeout,
@@ -397,6 +399,9 @@ impl ConnectionForm {
                 self.set(Field::RegistryPassword, password.expose().to_owned());
             }
         }
+        if let Some(group) = &target.kafka.group {
+            self.set(Field::ConsumerGroup, group.clone());
+        }
         match &target.address {
             Address::Tcp { host, port } => {
                 self.set(Field::Host, host.clone());
@@ -497,6 +502,9 @@ impl ConnectionForm {
         }
         if self.has_schemas() {
             fields.push(Field::Schemas);
+        }
+        if self.kind == Kind::Kafka {
+            fields.push(Field::ConsumerGroup);
         }
         fields.extend([Field::Pool, Field::ReadOnly, Field::Production]);
         if !self.kind.is_file() {
@@ -968,9 +976,12 @@ impl ConnectionForm {
             }
             None => None,
         };
+        let group = consumer_group(self.trimmed(Field::ConsumerGroup))
+            .map_err(|message| invalid(Field::ConsumerGroup, message))?;
         Ok(KafkaOptions {
             sasl: if self.use_uri { uri.sasl } else { self.sasl },
             registry,
+            group: group.or(uri.group),
         })
     }
 

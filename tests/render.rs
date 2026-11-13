@@ -290,6 +290,114 @@ fn the_horizontal_wheel_moves_the_view_of_the_editor() {
 }
 
 #[test]
+fn a_horizontal_scrollbar_appears_only_when_editor_columns_do_not_fit() {
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let mut short = Fixture::new("short\nlast", mode);
+        let buffer = draw(&mut short.editor, &Theme::ansi(), 40, 4);
+        assert!(!screen(&buffer).contains('▄'));
+        let mut long = Fixture::new(&format!("short\n{}", "x".repeat(200)), mode);
+        let buffer = draw(&mut long.editor, &Theme::ansi(), 40, 4);
+        assert!(line(&buffer, 3).contains('▄'), "{}", screen(&buffer));
+        assert!(line(&buffer, 3).contains('─'));
+        assert!(!line(&buffer, 0).contains('▄'));
+        assert_eq!(long.text(), format!("short\n{}", "x".repeat(200)));
+    }
+}
+
+#[test]
+fn horizontal_scrollbar_follows_the_wheel_in_both_keyboard_modes() {
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let text = "0123456789".repeat(20);
+        let mut f = Fixture::new(&text, mode);
+        let before = draw(&mut f.editor, &Theme::ansi(), 40, 4);
+        let first = line(&before, 3).chars().position(|c| c == '▄').unwrap();
+        for _ in 0..80 {
+            f.editor.on_mouse(MouseEvent {
+                kind: MouseEventKind::ScrollRight,
+                column: 10,
+                row: 1,
+                modifiers: KeyModifiers::NONE,
+            });
+        }
+        let after = draw(&mut f.editor, &Theme::ansi(), 40, 4);
+        let moved = line(&after, 3).chars().position(|c| c == '▄').unwrap();
+        assert!(moved > first, "{}", screen(&after));
+        assert_eq!(f.editor.scroll().0, 80);
+        assert_eq!(f.text(), text);
+        assert!(f.editor.state.cursor_screen_position().unwrap().y < 3);
+    }
+}
+
+#[test]
+fn horizontal_scrollbar_measures_unicode_and_tabs_by_display_width() {
+    for (text, shown, width) in [
+        ("é".repeat(20), false, 21),
+        ("日".repeat(15), false, 31),
+        ("日".repeat(18), true, 37),
+        ("👩‍💻".repeat(9), false, 19),
+        ("\t".repeat(9), true, 37),
+    ] {
+        let mut f = Fixture::conventional(&text);
+        let buffer = draw(&mut f.editor, &Theme::ansi(), 40, 4);
+        assert_eq!(screen(&buffer).contains('▄'), shown, "{text:?}");
+        assert_eq!(f.editor.horizontal_content_width(), width, "{text:?}");
+    }
+    let mut f = Fixture::conventional("日\téabcdef");
+    f.editor.set_cursor(Index2::new(0, 3));
+    f.editor.set_scroll(3, 0);
+    draw(&mut f.editor, &Theme::ansi(), 10, 4);
+    assert_eq!(f.editor.horizontal_scroll_position(), 7);
+}
+
+#[test]
+fn horizontal_scrollbar_updates_after_edits_undo_and_resize() {
+    let mut f = Fixture::conventional("short");
+    f.editor.disable_suggestions();
+    assert!(!screen(&draw(&mut f.editor, &Theme::plain(), 80, 24)).contains('▄'));
+    f.editor.on_paste(&"x".repeat(200));
+    let original = f.text();
+    for (width, shown) in [(80, true), (300, false), (80, true)] {
+        let buffer = draw(&mut f.editor, &Theme::plain(), width, 24);
+        assert_eq!(line(&buffer, 23).contains('▄'), shown);
+        assert_eq!(f.text(), original);
+        let cursor = f.editor.state.cursor_screen_position().unwrap();
+        assert!(cursor.x < width - 1 && cursor.y < 23);
+    }
+    f.press(ctrl('z'));
+    assert!(!screen(&draw(&mut f.editor, &Theme::plain(), 80, 24)).contains('▄'));
+    assert_eq!(f.text(), "short");
+}
+
+#[test]
+fn both_scrollbars_leave_the_cursor_and_selection_visible() {
+    let text = (0..30)
+        .map(|_| "x".repeat(200))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut f = Fixture::conventional(&text);
+    f.editor.set_cursor(Index2::new(29, 199));
+    f.press(shift(KeyCode::Left));
+    let selected = f.selected();
+    let cursor = f.editor.cursor();
+    let buffer = draw(&mut f.editor, &Theme::ansi(), 80, 24);
+    assert!(line(&buffer, 23).contains('▄'));
+    assert!((0..23).any(|row| buffer[(79, row)].symbol() == "▐"));
+    let position = f.editor.state.cursor_screen_position().unwrap();
+    assert!(position.x < 79 && position.y < 23);
+    assert_eq!(f.editor.cursor(), cursor);
+    assert_eq!(f.selected(), selected);
+    assert_eq!(f.text(), text);
+}
+
+#[test]
+fn horizontal_scrollbar_keeps_a_one_row_editor_usable() {
+    let mut f = Fixture::conventional(&"x".repeat(200));
+    let buffer = draw(&mut f.editor, &Theme::plain(), 40, 1);
+    assert!(!screen(&buffer).contains('▄'));
+    assert!(line(&buffer, 0).contains("xxxxx"));
+}
+
+#[test]
 fn a_jump_to_a_far_row_highlights_on_the_first_frame() {
     let text = "SELECT 1;\n".repeat(500);
     let mut f = Fixture::conventional(&text);
@@ -472,7 +580,7 @@ fn a_match_far_along_a_long_row_has_its_style() {
 }
 
 /// The first editor row of the application screen.
-const TOP: u16 = 2;
+const TOP: u16 = 3;
 /// The first text column of the application screen, with one digit in the line numbers.
 const LEFT: u16 = 5;
 
@@ -510,6 +618,154 @@ fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
         row,
         modifiers: KeyModifiers::NONE,
     })
+}
+
+#[test]
+fn console_horizontal_scrollbar_follows_mouse_events_without_running_sql() {
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let mut app = app(mode);
+        let text = "0123456789".repeat(30);
+        app.on_event(Event::Paste(text.clone()));
+        app.console_mut().editor.set_cursor(Index2::new(0, 0));
+        let before = draw_app(&mut app, 80, 24);
+        let (before_x, track_y) = find(&before, "▄");
+        for _ in 0..80 {
+            app.on_event(mouse(MouseEventKind::ScrollRight, LEFT + 5, TOP));
+        }
+        let after = draw_app(&mut app, 80, 24);
+        let (after_x, after_y) = find(&after, "▄");
+        assert!(after_x > before_x);
+        assert_eq!(after_y, track_y);
+        assert_eq!(app.console_mut().editor.scroll().0, 80);
+        assert_eq!(app.console_mut().editor.text(), text);
+        assert!(!app.console().is_busy());
+    }
+}
+
+#[test]
+fn scrollbar_thumb_drag_and_track_click_work_in_both_editor_modes() {
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let text = (0..80)
+            .map(|_| "x".repeat(200))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut f = Fixture::new(&text, mode);
+        let mut buffer = draw(&mut f.editor, &Theme::ansi(), 80, 24);
+        let horizontal = find(&buffer, "▄");
+        f.editor.on_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: horizontal.0,
+            row: horizontal.1,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(f.editor.dragging_scrollbar());
+        f.editor.on_mouse(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: horizontal.0,
+            row: horizontal.1,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(f.editor.scroll().0, 0, "grabbing the thumb does not jump");
+        f.editor.on_mouse(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: 200,
+            row: horizontal.1,
+            modifiers: KeyModifiers::NONE,
+        });
+        f.editor.on_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 200,
+            row: horizontal.1,
+            modifiers: KeyModifiers::NONE,
+        });
+        buffer = draw(&mut f.editor, &Theme::ansi(), 80, 24);
+        assert!(f.editor.scroll().0 > 100);
+        assert!(!f.editor.dragging_scrollbar());
+        let vertical = find(&buffer, "▐");
+        f.editor.on_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: vertical.0,
+            row: 22,
+            modifiers: KeyModifiers::NONE,
+        });
+        f.editor.on_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: vertical.0,
+            row: 22,
+            modifiers: KeyModifiers::NONE,
+        });
+        draw(&mut f.editor, &Theme::ansi(), 80, 24);
+        assert!(f.editor.scroll().1 > 20);
+        assert_eq!(f.text(), text);
+    }
+}
+
+#[test]
+fn console_scrollbar_drag_ends_outside_the_editor_and_resize_cancels_it() {
+    let mut app = app(KeyboardMode::Conventional);
+    app.on_event(Event::Paste("x".repeat(300)));
+    app.console_mut().editor.set_cursor(Index2::new(0, 0));
+    let buffer = draw_app(&mut app, 80, 24);
+    let (x, y) = find(&buffer, "▄");
+    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+    app.on_event(mouse(MouseEventKind::Drag(MouseButton::Left), 79, 23));
+    app.on_event(mouse(MouseEventKind::Up(MouseButton::Left), 79, 23));
+    assert!(!app.console_mut().editor.dragging_scrollbar());
+    assert!(app.console_mut().editor.scroll().0 > 100);
+    assert!(!app.console().is_busy());
+    let buffer = draw_app(&mut app, 80, 24);
+    let (x, y) = find(&buffer, "▄");
+    app.on_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+    draw_app(&mut app, 100, 30);
+    assert!(!app.console_mut().editor.dragging_scrollbar());
+}
+
+#[test]
+fn dragging_a_scrollbar_keeps_the_copy_selection_and_its_edit_range() {
+    let text = "0123456789".repeat(20);
+    let mut f = Fixture::conventional(&text);
+    f.press(shift(KeyCode::Right));
+    f.press(shift(KeyCode::Right));
+    let buffer = draw(&mut f.editor, &Theme::ansi(), 80, 24);
+    let (x, y) = find(&buffer, "▄");
+    f.editor.on_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    });
+    f.editor.on_mouse(MouseEvent {
+        kind: MouseEventKind::Drag(MouseButton::Left),
+        column: 79,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    });
+    f.editor.on_mouse(MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        column: 79,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    });
+    draw(&mut f.editor, &Theme::ansi(), 80, 24);
+    assert_eq!(f.selected().as_deref(), Some("01"));
+    assert_eq!(f.editor.selected_character_count(), 2);
+    f.press(ctrl('c'));
+    assert_eq!(f.clipboard_text(), "01");
+    f.write("z");
+    assert_eq!(f.text(), format!("z{}", &text[2..]));
+}
+
+#[test]
+fn console_status_shows_the_unicode_character_count_of_the_selection() {
+    let mut app = app(KeyboardMode::Conventional);
+    app.on_event(Event::Paste("ação 日本\nnext".into()));
+    send(&mut app, ctrl('a'));
+    let buffer = draw_app(&mut app, 80, 24);
+    assert!(
+        screen(&buffer).contains("12 characters selected"),
+        "{}",
+        screen(&buffer)
+    );
 }
 
 #[test]

@@ -161,6 +161,49 @@ fn split_lines(sql: &str, source: &mut impl TokenSource) -> Vec<Statement> {
     statements
 }
 
+/// SELECT ends at a semicolon. Other Kafka commands keep their line boundaries.
+fn split_kafka(sql: &str, source: &mut impl TokenSource) -> Vec<Statement> {
+    let mut statements = Vec::new();
+    let mut current: Option<Statement> = None;
+    let mut select = false;
+    while let Some(token) = source.next_token() {
+        if token.kind == TokenKind::Comment {
+            continue;
+        }
+        if !select
+            && current
+                .as_ref()
+                .is_some_and(|last| sql[last.end..token.start()].contains('\n'))
+        {
+            statements.push(current.take().unwrap());
+        }
+        let word = &sql[token.start()..token.end()];
+        if select && token.kind == TokenKind::Punctuation && word == ";" {
+            if let Some(mut statement) = current.take() {
+                statement.end_with_delimiter = token.end();
+                statement.terminated = true;
+                statements.push(statement);
+            }
+            select = false;
+            continue;
+        }
+        if let Some(statement) = &mut current {
+            statement.end = token.end();
+            statement.end_with_delimiter = token.end();
+        } else {
+            select = token.kind == TokenKind::Word && word.eq_ignore_ascii_case("SELECT");
+            current = Some(Statement {
+                start: token.start(),
+                end: token.end(),
+                end_with_delimiter: token.end(),
+                terminated: false,
+            });
+        }
+    }
+    statements.extend(current);
+    statements
+}
+
 /// Returns the byte after the delimiter at `start`, when the text holds it there.
 /// A delimiter that ends with a word character must end at a word boundary, so it
 /// cannot cut an identifier that starts with the same characters.
@@ -179,6 +222,9 @@ fn delimiter_end(sql: &str, delimiter: &str, start: usize) -> Option<usize> {
 }
 
 fn split_source(sql: &str, dialect: Dialect, source: &mut impl TokenSource) -> Vec<Statement> {
+    if dialect == Dialect::Kafka {
+        return split_kafka(sql, source);
+    }
     if dialect.is_command_line() {
         return split_lines(sql, source);
     }

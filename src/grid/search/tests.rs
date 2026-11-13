@@ -24,13 +24,11 @@ fn a_search_resumes_inside_a_multibyte_cell() {
 }
 
 #[test]
-fn a_long_prefix_fallback_also_yields_between_steps() {
+fn a_long_prefix_yields_between_steps_without_a_false_match() {
     let table = table(vec![Value::Text(&("a".repeat(5000) + "c"))]);
     let mut search = RowSearch::new((0, 0));
     search.push_str(&("a".repeat(5000) + "b"));
     search.scan_step(&table, 5000);
-    assert_eq!(search.offset, 5000);
-    search.scan_step(&table, CHARS_PER_STEP);
     assert_eq!(search.offset, 5000);
     assert!(search.has_work(&table));
     while search.has_work(&table) {

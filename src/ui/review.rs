@@ -64,11 +64,10 @@ fn draw_diff(buffer: &mut Buffer, area: Rect, editor: &mut SqlEditor, theme: &Th
         let row_area = Rect::new(text_x, y, width as u16, 1);
         let (number, mark) = gutter_of(*row);
         if let Some(number) = number {
-            buffer.set_stringn(
-                area.x + 1,
-                y,
-                format!("{number:>digits$}"),
-                digits,
+            super::draw_line_number(
+                buffer,
+                Rect::new(area.x, y, (digits as u16 + 2).min(area.width), 1),
+                number,
                 theme.gutter,
             );
         }
@@ -126,6 +125,7 @@ fn draw_diff(buffer: &mut Buffer, area: Rect, editor: &mut SqlEditor, theme: &Th
 /// Draws the editor with its ghost answers: each answer replaces its anchor line and
 /// ends with a row of buttons. The editor stays editable around them.
 fn draw_ghosts(buffer: &mut Buffer, area: Rect, editor: &mut SqlEditor, theme: &Theme) {
+    let preview = editor.statement_preview();
     let lines = editor.state.lines.len();
     let digits = lines.max(1).to_string().len();
     let gutter = (digits + 4).min(usize::from(area.width)) as u16;
@@ -162,12 +162,16 @@ fn draw_ghosts(buffer: &mut Buffer, area: Rect, editor: &mut SqlEditor, theme: &
         let row_area = Rect::new(text_x, y, width as u16, 1);
         let (number, mark) = ghost_gutter_of(*row, editor);
         if let Some(number) = number {
-            buffer.set_stringn(
-                area.x + 1,
-                y,
-                format!("{number:>digits$}"),
-                digits,
-                theme.gutter,
+            let style = if preview.is_some_and(|preview| preview.contains_line(number)) {
+                theme.gutter_target
+            } else {
+                theme.gutter
+            };
+            super::draw_line_number(
+                buffer,
+                Rect::new(area.x, y, (digits as u16 + 2).min(area.width), 1),
+                number,
+                style,
             );
         }
         if let Some((mark, style)) = mark_of(mark, theme) {

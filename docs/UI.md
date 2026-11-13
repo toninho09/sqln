@@ -121,7 +121,8 @@ The close of the last agent tab of a session with access asks **Close the agent 
 Tab labels use `MCP ·` for agent consoles and analyses, `MCP off ·` without access, `Direct ·` for direct edits, and `SQL ·` for SQL that the agent placed and the user did not open yet.
 Without placed SQL, an agent console has no editor: its Messages and result grids fill the console, with **Stop**, **Tasks N**, and **Access: level**.
 With placed SQL, an editor appears above them. The bar holds **Run**, **New console**, **Clear**, **Stop**, **Commit** and **Rollback** for an open transaction, **Tasks N**, and **Access: level**. The title row adds `SQL from agent`. There is no mode button: the tab runs in Auto mode.
-A narrow bar drops **Access** first, then **Tasks**. The palette keeps both commands.
+The console toolbar wraps complete buttons onto additional rows when the width is insufficient.
+**Tasks** stays before **Access**. Both commands remain available through the palette.
 
 ```text
  [Run]  [New console]  [Clear]  [Stop]  [Tasks 1]  [Access: Allow]
@@ -145,6 +146,14 @@ A narrow bar drops **Access** first, then **Tasks**. The palette keeps both comm
 See [MCP](MCP.md) for the operation and persistence rules.
 
 ## 1. Startup and console opening
+
+The home screen groups **Connect to a database** and **Open saved work**.
+Connection tasks include adding a connection, opening a console when the selected row supports it, and opening a SQL file.
+Without connections, it shows **Add a connection before opening SQL files**.
+Saved work uses separate entries for consoles of the selected connection and scripts without a connection.
+The screen shows effective shortcuts. A palette shortcut followed by `→` means to choose the named command there.
+Opening a SQL file keeps the existing connection choice and Copy/Link question. It runs no SQL.
+A short area removes the logo and header spacing before task rows. Startup and restore conditions stay unchanged.
 
 If `.sqln/` is not found in the current directory or the upper ones, ask about its creation.
 Accept creates the project in the current directory. Refuse keeps only the global scope.
@@ -203,6 +212,8 @@ Do not run or convert the SQL automatically.
 
 Editor and results appear together.
 The user can drag the divider and collapse the connection navigator.
+The result tab row keeps the selected result, Plan, or Messages tab visible after navigation and resizing.
+`<` and `>` mark hidden tabs. A click selects the nearest hidden tab on that side.
 
 ```text
 ▎ ◐ 12.345s  console-1 ×   ✓  orders ×   ✗  users (table) ×
@@ -353,7 +364,13 @@ Click a row number in a result or table grid to select the whole row, including 
 Copy uses the selected row. A cell click replaces the selection; `Esc` clears it.
 The border of a header accepts the drag on the three columns between two grid columns.
 
-**Scroll bars:** the editor and the grid reserve the last column.
+**Scroll bars:** the editor and the grid reserve the last column for the vertical bar.
+The editor shows a horizontal bar below the text when a line exceeds the visible width.
+Both editor bars accept clicks on the track and drags of the thumb.
+A click on the track moves the view to that position. A drag keeps the cursor visible.
+The console and the cell editor share these controls. Resizing cancels a scrollbar drag.
+Use the horizontal wheel or touchpad to move the view. Arrow keys keep their usual editor behavior.
+An editor with only one row keeps that row for text.
 The navigator uses its last column only with excess rows.
 
 The indicators stay in the free column, between the row number and the text:
@@ -410,7 +427,20 @@ Do not show final success of a statement before its read ends.
 
 Control rules:
 
-- **Run:** uses the selection or, without a selection, the statement under the cursor.
+- **Run selection** uses the selection. **Run statement** uses the statement under the cursor.
+- The toolbar, palette, prefix menu, and hints identify the current Run scope. **Run script** always uses the whole script.
+- **Run subquery**, in the command palette, runs the smallest complete parenthesized `SELECT` or `WITH` query at the cursor.
+- The action has no default shortcut. Assign `runSubquery` to show its effective key in menus and hints.
+- Its confirmation shows the source line and SQL prefix. It keeps the selection and does not add outer aliases or CTE dependencies.
+- The action uses the normal execution checks and results. Without a subquery, it explains the refusal and runs nothing.
+- A row above a nonempty, idle editor shows the executable one-based lines, such as `Selection: Lines 3–8 · Script: whole script`.
+- A cursor outside SQL or a selection without statements shows the reason instead of another target.
+- Preview and execution share statement resolution. The preview changes no text, cursor, selection, or execution state.
+- Without a selection, the gutter highlights the numbers and padding of the statement under the cursor. The highlight follows cursor movement and scrolling.
+- Blank gaps and comments outside statements show no target. The execution-mark column keeps its symbols and colors.
+- The gutter highlight stays separate from SQL text, literal cell editors, and inline diff review. Pending AI text does not change the target.
+- Themes use selection colors for the gutter target. Terminals without colors use bold text and reverse video.
+- Console toolbar buttons wrap onto additional rows when needed. Each full button keeps its own mouse area.
 - **Whole script:** runs the full text, stopping at the first error.
 - **Stop script:** interrupts the sequence without closing the console, erasing the text, or resolving the transaction automatically.
 - Do not send the next statements after accepting the stop; do not promise immediate interruption at the server.
@@ -525,8 +555,17 @@ The copy follows the TSV format confirmed in section 10 of the plan, without hea
 
 Only keyed, writable SQL table tabs offer cell editing.
 `F2` opens a modal value editor; `Enter` still opens the read-only value window.
+Valid JSON objects and arrays use the theme colors for keys, strings, numbers, booleans, and `null`.
+The editor updates these colors after an edit. Color detection reads up to 1 MiB and does not change text.
+The JSON status shows validity or the error line, column, and reason. Values above 1 MiB show a skipped-check label.
+The check does not add a save restriction; the existing column validation still applies.
+**Format JSON** uses the configured `formatSql` shortcut, `Ctrl+W f` by default, or its button.
+Formatting changes only whitespace, keeps key order and number digits, and creates one undo step.
+Formatting does not keep or save the value. A refusal keeps the text and shows the next action.
 The modal uses the selected keyboard mode. Global navigation and run shortcuts do not reach the application.
-`Tab` walks the editor and the Keep value, Set NULL, and Cancel buttons.
+`Tab` walks the editor and the Keep value, Set NULL, Cancel, and Format JSON buttons.
+The hint row shows the selected character count. The console status shows the same count when space permits.
+`Esc` closes an editor search before it closes the cell editor.
 `F2` or `Ctrl+S` keeps the value locally. In Vim insert mode, `Esc` first enters normal mode.
 Changed cells show a `*`, a different style, and underline. The summary names pending rows and cells.
 
@@ -794,7 +833,7 @@ In the navigator, a Kafka connection shows two schemas: `topics` and `groups`. I
 `Enter` on a topic opens a tab with the label `<topic> (topic)`. It shows the last 500 messages, newest first, in one page.
 The tab has a `WHERE` field with the Kafka filter, such as `value.status = 'failed'`, without `ORDER BY` and sorting. **Apply filters** reads again with the filter.
 `Enter` on a group opens a tab with the label `<group> (group)`. It shows the committed offset, the end offset, and the lag of each partition.
-In the console, each line is one Kafka command of SQLN. `TAIL` shows `Live` until **Stop**, as a continuous Redis command.
+In the console, Kafka accepts multiline `SELECT` statements, separated by semicolons, and native commands, one per line. `SELECT` uses the finite `CONSUME` read. `SELECT … EMIT CHANGES` and `TAIL` show `Live` until **Stop**, as a continuous Redis command. Both forms use the same filters and execution. SELECT completion offers message columns, catalog topics, and clause words. See the [Kafka guide](KAFKA.md) for start positions, projections, and limits.
 
 ## 4. Connection form
 
@@ -1333,7 +1372,20 @@ There is no commit as a default answer.
 
 A valid JSON object or array of up to 1 MiB opens formatted, and `f` switches between the formatted text and the original.
 The formatting only changes spaces: the keys keep the order, and the numbers keep the digits.
-`Ctrl+C` copies the visible shape, and the grid `Ctrl+C` copies the original value.
+Both JSON shapes use the theme colors for keys, strings, numbers, booleans, and `null`.
+Selection stays visible over these colors. Terminals without colors keep the plain theme styles.
+Drag the mouse or use `Shift+arrows` to select text. A click starts a new selection.
+Drag above or below the window to scroll while selecting.
+`Ctrl+C` copies the selected text, or the complete visible shape without a selection.
+Copy keeps original characters and line breaks. Automatic line wrap adds no line breaks to copied text.
+Selection stays after scrolling or resizing. Switching the JSON shape clears the selection.
+The footer shows the selected character count, including original line breaks.
+`Ctrl+F` opens a literal search without case. The configured editor Find key also opens it.
+`Enter` or `Down` goes to the next match. `Shift+Enter` or `Up` goes to the previous match.
+`Esc` closes the search before it closes the window. Search never changes text or the copy selection.
+The search reads in bounded steps and supports hexadecimal values without expanding the whole value.
+The search labels work in progress and the one-million-match limit. A `+` means the count is partial.
+The grid `Ctrl+C` copies the original value.
 The **Format JSON** option of the Settings dialog chooses the initial shape. The default is on.
 
 ### Row window
@@ -1352,6 +1404,7 @@ The **Format JSON** option of the Settings dialog chooses the initial shape. The
 
 `Left` and `Right` change row, without reading another page, and the grid cursor follows the row.
 The window keeps the scroll, so the same columns stay in view when comparing two rows.
+Mouse selection and `Shift+arrows` work as in the detail window. Changing rows clears the selection.
 Each value shows up to 4,096 columns and ends with `…` at the cut. `Enter` in the grid shows the whole value.
 The JSON stays compact in this window. `f` toggles formatting only in the cell value window.
 

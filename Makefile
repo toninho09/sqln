@@ -2,7 +2,7 @@
 
 Q = --quiet
 
-.PHONY: fmt lint test test-integration bench check
+.PHONY: fmt lint test test-integration bench check docs docs-serve
 
 # Format all source files.
 fmt:
@@ -34,3 +34,12 @@ bench:
 # Delivery gate: linters plus the full test suite. Slow; run once, at task end.
 check: lint
 	@scripts/test-summary.sh
+
+# Build the documentation site into book/book.
+docs:
+	@scripts/build-docs.sh
+
+# Serve the documentation site and open it in the browser.
+docs-serve:
+	@scripts/build-docs.sh
+	@mdbook serve book --open

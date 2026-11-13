@@ -68,6 +68,7 @@ impl App {
                         | Action::ToggleComment
                         | Action::Run
                         | Action::RunScript
+                        | Action::RunSubquery
                         | Action::Explain
                         | Action::ExplainAnalyze
                 ))

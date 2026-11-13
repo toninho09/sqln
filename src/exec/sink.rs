@@ -121,6 +121,11 @@ impl ResultSink {
         self.export = Some(writer);
     }
 
+    /// The configured ceiling for temporary connector buffers, including streaming output.
+    pub fn memory_limit(&self) -> usize {
+        self.budget.limit()
+    }
+
     /// Returns the token that ends the storage of rows.
     pub fn stop_token(&self) -> CancellationToken {
         self.stopping.clone()

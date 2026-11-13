@@ -6,6 +6,7 @@ mod common;
 mod bell;
 mod browser;
 mod clipboard;
+mod gutter_preview;
 mod help;
 mod hints;
 mod home;

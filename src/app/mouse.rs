@@ -49,9 +49,52 @@ pub(super) enum Drag {
 }
 
 impl App {
+    pub(super) fn on_overlay_mouse(&mut self, mouse: MouseEvent) {
+        let area = self.layout.overlay;
+        let Some(overlay) = &mut self.overlay else {
+            return;
+        };
+        let position = Position::new(mouse.column, mouse.row);
+        match mouse.kind {
+            MouseEventKind::ScrollUp => overlay.scroll = overlay.scroll.saturating_sub(3),
+            MouseEventKind::ScrollDown => overlay.scroll = overlay.scroll.saturating_add(3),
+            MouseEventKind::Down(MouseButton::Left) if area.contains(position) => {
+                overlay.dragging = true;
+                overlay.contents.select_at(
+                    overlay.scroll + usize::from(mouse.row - area.y),
+                    usize::from(mouse.column - area.x),
+                    mouse
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::SHIFT),
+                );
+            }
+            MouseEventKind::Drag(MouseButton::Left) if overlay.dragging && !area.is_empty() => {
+                if mouse.row < area.y {
+                    overlay.scroll = overlay.scroll.saturating_sub(1);
+                } else if mouse.row >= area.bottom() {
+                    overlay.scroll = overlay.scroll.saturating_add(1);
+                }
+                overlay.scroll = overlay.contents.last_row_at(overlay.scroll);
+                let row = mouse.row.clamp(area.y, area.bottom() - 1) - area.y;
+                let column = mouse.column.clamp(area.x, area.right()) - area.x;
+                overlay.contents.select_at(
+                    overlay.scroll + usize::from(row),
+                    usize::from(column),
+                    true,
+                );
+            }
+            MouseEventKind::Up(MouseButton::Left) => overlay.dragging = false,
+            _ => {}
+        }
+    }
+
     pub(super) fn on_mouse(&mut self, mouse: MouseEvent) {
         if self.form.is_some() {
             self.on_form_mouse(mouse);
+            return;
+        }
+        if self.editor_has_focus() && self.console().editor.dragging_scrollbar() {
+            self.console_mut().editor.on_mouse(mouse);
             return;
         }
         let position = Position::new(mouse.column, mouse.row);
@@ -198,7 +241,7 @@ impl App {
                 ));
             }
         } else if in_controls {
-            self.on_control_press(mouse.column);
+            self.on_control_press(position);
         } else if in_tabs {
             match tab_at(self.console(), self.layout.console.tabs, mouse.column) {
                 Some(tab) => self.console_mut().active = tab,
@@ -336,13 +379,13 @@ impl App {
         }
     }
 
-    fn on_control_press(&mut self, column: u16) {
+    fn on_control_press(&mut self, position: Position) {
         let control = self
             .layout
             .console
             .control_buttons
             .iter()
-            .find(|(_, rect)| column >= rect.x && column < rect.right());
+            .find(|(_, rect)| rect.contains(position));
         let Some((control, _)) = control else {
             return;
         };

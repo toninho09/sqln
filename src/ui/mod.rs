@@ -71,20 +71,70 @@ pub(crate) fn draw_scrollbar(
     position: usize,
     theme: &Theme,
 ) {
+    let _ = draw_scrollbar_oriented(
+        buffer,
+        area,
+        total,
+        visible,
+        position,
+        ScrollbarOrientation::VerticalRight,
+        theme,
+    );
+}
+
+fn draw_scrollbar_oriented(
+    buffer: &mut Buffer,
+    area: Rect,
+    total: usize,
+    visible: usize,
+    position: usize,
+    orientation: ScrollbarOrientation,
+    theme: &Theme,
+) -> Option<crate::editor::Scrollbar> {
     if total <= visible || area.height == 0 || area.width == 0 {
-        return;
+        return None;
     }
-    let mut state = ScrollbarState::new(total - visible)
+    let horizontal = orientation == ScrollbarOrientation::HorizontalBottom;
+    let (track, thumb) = match orientation {
+        ScrollbarOrientation::HorizontalBottom => ("─", "▄"),
+        _ => ("│", "▐"),
+    };
+    let mut state = ScrollbarState::new(total - visible + 1)
         .position(position)
         .viewport_content_length(visible);
-    Scrollbar::new(ScrollbarOrientation::VerticalRight)
+    Scrollbar::new(orientation)
         .begin_symbol(None)
         .end_symbol(None)
-        .track_symbol(Some("│"))
-        .thumb_symbol("▐")
+        .track_symbol(Some(track))
+        .thumb_symbol(thumb)
         .track_style(theme.scrollbar_track)
         .thumb_style(theme.scrollbar_thumb)
         .render(area, buffer, &mut state);
+    let area = if horizontal {
+        Rect::new(area.x, area.bottom() - 1, area.width, 1)
+    } else {
+        Rect::new(area.right() - 1, area.y, 1, area.height)
+    };
+    let length = if horizontal { area.width } else { area.height };
+    let mut marked = (0..length).filter(|offset| {
+        let at = if horizontal {
+            (area.x + offset, area.y)
+        } else {
+            (area.x, area.y + offset)
+        };
+        buffer[at].symbol() == thumb
+    });
+    let first = marked.next()?;
+    let last = marked.next_back().unwrap_or(first);
+    let first = usize::from(first);
+    let last = usize::from(last);
+    Some(crate::editor::Scrollbar::new(
+        area,
+        horizontal,
+        total - visible,
+        position,
+        first..last + 1,
+    ))
 }
 
 pub fn draw_editor(
@@ -115,13 +165,24 @@ pub fn draw_editor(
     }
 
     // The last column holds the scrollbar, so the text keeps its width in a long script.
-    let [text, scroll] =
+    let [mut text, mut scroll] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]).areas(text);
     // The application draws the line numbers, because EdTUI leaves no space around them.
     if editor.review().is_some() || editor.has_ghosts() {
+        editor.set_scrollbars(None, None);
         editor.set_text_area(gutterless(text, editor));
         review::draw(frame.buffer_mut(), text, editor, theme);
         return;
+    }
+    let text_width = gutterless(text, editor).width;
+    let total_width = editor.horizontal_content_width();
+    let mut horizontal = Rect::default();
+    if total_width > usize::from(text_width) && text_width > 0 && text.height > 1 {
+        let [contents, track] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(text);
+        text = contents;
+        scroll.height = text.height;
+        horizontal = gutterless(track, editor);
     }
     let text_area = gutterless(text, editor);
     editor.set_text_area(text_area);
@@ -148,14 +209,30 @@ pub fn draw_editor(
     draw_marks(frame, text, editor, theme);
     draw_ai_anchor(frame.buffer_mut(), text, editor, theme);
     let (_, top) = editor.state.viewport_offset();
-    draw_scrollbar(
+    let vertical_track = draw_scrollbar_oriented(
         frame.buffer_mut(),
         scroll,
         editor.state.lines.len(),
         usize::from(text.height),
         top,
+        ScrollbarOrientation::VerticalRight,
         theme,
     );
+
+    let horizontal_track = if !horizontal.is_empty() {
+        draw_scrollbar_oriented(
+            frame.buffer_mut(),
+            horizontal,
+            total_width,
+            usize::from(text_area.width),
+            editor.horizontal_scroll_position(),
+            ScrollbarOrientation::HorizontalBottom,
+            theme,
+        )
+    } else {
+        None
+    };
+    editor.set_scrollbars(vertical_track, horizontal_track);
 
     let anchor_shift = editor.list_anchor_chars();
     let cursor = editor.state.cursor_screen_position();
@@ -243,25 +320,49 @@ fn draw_current_line(buffer: &mut Buffer, area: Rect, editor: &SqlEditor, theme:
 }
 
 /// Writes the line numbers.
-fn draw_gutter(buffer: &mut Buffer, area: Rect, editor: &SqlEditor, focused: bool, theme: &Theme) {
+fn draw_gutter(
+    buffer: &mut Buffer,
+    area: Rect,
+    editor: &mut SqlEditor,
+    focused: bool,
+    theme: &Theme,
+) {
+    let preview = editor.statement_preview();
     let digits = usize::from((gutterless(area, editor).x - area.x).saturating_sub(GUTTER_COLUMNS));
     let (_, top) = editor.state.viewport_offset();
     let rows = editor.state.lines.len().max(1);
     for (y, row) in (area.y..area.bottom()).zip(top..rows) {
         let current = focused && row == editor.state.cursor.row;
-        let style = if current {
+        let style = if preview.is_some_and(|preview| preview.contains_line(row + 1)) {
+            theme.gutter_target
+        } else if current {
             theme.gutter_current
         } else {
             theme.gutter
         };
-        buffer.set_stringn(
-            area.x + 1,
-            y,
-            format!("{:>digits$}", row + 1),
-            digits,
+        draw_line_number(
+            buffer,
+            Rect::new(area.x, y, (digits as u16 + 2).min(area.width), 1),
+            row + 1,
             style,
         );
     }
+}
+
+/// Draws a line number and its padding, without the execution mark column.
+pub(super) fn draw_line_number(buffer: &mut Buffer, area: Rect, number: usize, style: Style) {
+    if area.width < 3 || area.height == 0 {
+        return;
+    }
+    let digits = usize::from(area.width - 2);
+    buffer.set_style(area, style);
+    buffer.set_stringn(
+        area.x + 1,
+        area.y,
+        format!("{number:>digits$}"),
+        digits,
+        style,
+    );
 }
 
 // Shows the anchor of a running completion: an animated mark in the first column of

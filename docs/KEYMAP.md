@@ -154,10 +154,17 @@ The prefix is the common path to both modes, and the terminal delivers that key.
 
 ## Global actions
 
+Run labels follow the editor state: **Run selection** with a selection, otherwise **Run statement**.
+**Run script** ignores the selection. Buttons, the palette, the prefix menu, and hints use these scopes.
+The preview row shows executable line numbers before execution. Existing shortcuts and confirmations stay unchanged.
+The home screen shows task shortcuts from the key map, including custom SQL-file shortcuts.
+For an unbound task, `→` after the palette shortcut means to choose the named command there.
+
 | Action | Shortcut | Alternative |
 |---|---|---|
 | Run | `Ctrl+Enter` | `F5` or `Ctrl+W e` |
 | Whole script | `Shift+F5` | `Ctrl+W s` |
+| Smallest subquery at the cursor | Command palette: **Run subquery** | Configurable shortcut |
 | Show the plan of the statement | `Ctrl+W E` | Command palette |
 | Run the statement and show its plan | `Ctrl+W A` | Command palette |
 | Stop script | `Ctrl+W x` | **Stop script** button |
@@ -167,6 +174,11 @@ The prefix is the common path to both modes, and the terminal delivers that key.
 | Help | `F1` | `Ctrl+W ?` |
 | Command palette | `Ctrl+P` | `Ctrl+W :` |
 | Quit | `Ctrl+W q` | Command palette |
+
+**Run subquery** ignores the selection and asks before it runs the smallest complete parenthesized `SELECT` or `WITH` query.
+It keeps the original text without the outer parentheses. It does not add outer aliases or CTE dependencies.
+Missing dependencies produce the normal database error. No matching subquery runs nothing.
+Use `runSubquery` to assign its shortcut in settings. It has no default shortcut.
 
 `Ctrl+Enter` needs keyboard enhancement in the terminal.
 At startup, the application detects that feature and shows the available path in the hint bar.
@@ -452,7 +464,11 @@ In analysis reports, the value window, and the row window, the keys are the same
 | Scroll | `Up` and `Down`, `j` and `k`, PageUp/PageDown, or the mouse wheel |
 | Toggle JSON formatting, in the value window only | `f` |
 | Change row, in the row window | `Left` and `Right`, or `h` and `l` |
-| Copy the visible text | `Ctrl+C` |
+| Select text | `Shift` + arrows or a mouse drag |
+| Find text in a value, row, or report window | `Ctrl+F` or the configured editor Find key |
+| Next or previous match while finding | `Enter` / `Shift+Enter`, or `Down` / `Up` |
+| Close the search first | `Esc` |
+| Copy selected text, or all text without a selection | `Ctrl+C` |
 | Close | `Esc` or `Enter` |
 
 Grid editing requires a writable table with a primary key. Key, identity, generated, and binary columns remain protected.
@@ -466,6 +482,9 @@ In the cell editor, `F2` or `Ctrl+S` keeps the value locally, without a database
 `Tab` selects the editor or buttons; the mouse selects and activates buttons.
 Conventional `Esc` cancels. In Vim insert mode, `Esc` first selects normal mode.
 The editor respects configured editor commands. Global application commands do not leave the modal.
+**Format JSON** uses the `formatSql` binding (`Ctrl+W f` by default) or its button, without keeping or saving the value.
+The JSON status names the error line and column. The check does not add a save restriction.
+`Esc` closes a search before it cancels editing. Selection counts use Unicode characters, not bytes.
 In the review, arrows and PageUp/PageDown scroll; `F2` or `Ctrl+S` applies; `Esc` cancels.
 Production asks for confirmation after review.
 
@@ -659,6 +678,7 @@ The initial focus always stays on the option with no effect on the database or t
 |---|---|
 | Click | Select an item and change focus |
 | Click on a tab | Switch tab |
+| Click on `<` or `>` in the result tab row | Select the nearest hidden tab on that side |
 | Click on the `×` of a tab | Close the tab, with the questions of `Ctrl+W c` |
 | Click on **Quit** | Quit, with the questions of `Ctrl+W q` |
 | Click on the `EXPLORER` title | Give focus to the navigator |
@@ -671,6 +691,9 @@ The initial focus always stays on the option with no effect on the database or t
 | Click on a row of the script question | Change the action of the row, or press the button |
 | Wheel | Scroll lists, editor, and grid |
 | Horizontal wheel or touchpad on the grid | Move the cursor one column for each event. The terminal must send horizontal wheel events |
+| Horizontal wheel or touchpad on the editor | Move the view one character for each event. Keep the cursor inside the view |
+| Click on an editor scrollbar track | Move the editor view to that position |
+| Drag an editor scrollbar thumb | Move the editor view, including outside the editor until release |
 | Drag on a divider | Resize the panels |
 | Drag on a header border | Resize the column width |
 | Drag on the grid | Select cells |

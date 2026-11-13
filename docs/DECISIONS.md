@@ -6,6 +6,110 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Visible result tabs
+
+The user approves keeping the selected result tab visible when the row is too narrow.
+
+- The result row follows the selected result, Plan, or Messages tab, including after resize or result closure.
+- `<` and `>` mark hidden tabs. A click selects the nearest hidden tab on that side.
+- Existing result navigation, custom shortcuts, conventional mode, and Vim mode stay unchanged.
+- Drawing and mouse hit testing share the same positions and original result indices.
+- Layout work stays bounded by the row width, not the number of results.
+- Navigation preserves editor text, cursor, and selection. It runs no SQL and changes no saved format.
+
+## Execute a subquery
+
+The user approves a separate action for the smallest subquery at the cursor.
+
+- **Run subquery** uses the command palette. The configurable action name is `runSubquery`.
+- The action has no default shortcut, so existing custom shortcuts stay valid.
+- The action extracts the smallest complete parenthesized `SELECT` or `WITH` query that contains the cursor.
+- It removes the outer parentheses and does not add aliases, parameters, or CTE dependencies.
+- A selection does not change this scope. Text, cursor, selection, and the normal Run scopes stay unchanged.
+- A confirmation shows the source line and the SQL prefix before execution. Cancel has initial focus.
+- Existing execution checks, production warnings, parameter binding, authentication, and transaction rules still apply.
+- Missing subqueries give a reason and a next action. The action never falls back to the whole statement.
+- Correlated references and missing CTE dependencies can fail. The database error uses the existing Messages path.
+- The action is available in an idle relational SQL editor, not in Redis or Kafka consoles.
+- Lexical token ranges identify candidates. The database remains responsible for SQL validation.
+- No saved format changes.
+
+## Execution scope and first tasks
+
+The user approves explicit execution labels and task-based startup guidance.
+
+- Run shows **Run selection** or **Run statement**. The script action shows **Run script**.
+- A row above a nonempty, idle editor shows the one-based executable line range and the whole-script scope.
+- Preview and execution share statement resolution. Text revisions cache statement ranges; selection changes update their own ranges.
+- Without a selection, the line-number column highlights the statement under the cursor, including its number padding.
+- The highlight follows the same executable line range. Blank gaps and comments outside statements show no target.
+- The execution-mark column stays separate. Text selection, literal cell editors, and inline diff review keep their existing styles.
+- Pending AI text does not change the target; the highlight follows the actual console text.
+- The highlight uses existing theme selection colors and bold text. Without colors, it uses reverse video and bold text.
+- Selections without statements and cursor positions outside statements keep the existing refusals. No confirmation or execution rule changes.
+- Console toolbars wrap complete buttons onto additional rows. Mouse hit areas include both coordinates.
+- This replaces the earlier narrow agent toolbar rule that hides Access before Tasks.
+- The home screen groups connection tasks and saved work. SQL file opening uses the existing palette command or its custom shortcut.
+- Without a connection, the home screen explains that SQL files require a connection first.
+- Saved consoles of the selected connection and scripts without a connection keep their separate lists.
+- A command without a shortcut shows the palette path and its command label. An arrow means to choose that command.
+- Startup conditions, focus, restored tabs, credentials, file choices, and execution protections stay unchanged.
+- These screens do not open database sessions or run SQL. Small areas remove the logo and header spacing before task rows.
+
+## Cell inspection and editor controls
+
+The user approves interactive scrollbars, cell search, JSON validation and formatting, and selected character counts.
+The user does not request independent scrolling without cursor movement.
+
+- Console and cell-editor scrollbars accept track clicks and thumb drags. Resize ends the drag.
+- Scrollbar input uses the existing cursor-in-view rule. It does not edit text, replace a selection, or run SQL.
+- Read-only text windows support literal, case-insensitive search with `Ctrl+F` and the effective editor Find key.
+- Enter/Down and Shift+Enter/Up walk matches. Escape closes the search before the window.
+- Search preserves the copy selection, uses bounded work, and reads hexadecimal digits without expanding the entire value.
+- Search stops at one million matches and labels the partial count. This matches the existing grid-search ceiling.
+- Cell JSON checks show validity or the error line, character column, and reason, within the existing 1 MiB input limit.
+- Checks do not add a save restriction. The existing column validation and save guards still apply.
+- The cell `formatSql` binding and the **Format JSON** button format JSON explicitly as one undo step.
+- Formatting preserves key order and digits, keeps text after refusal, and never keeps or saves the value automatically.
+- Value footers, cell-editor hints, and the console status show selected Unicode character counts, including line breaks.
+- Critical console status labels take priority over the selection count in a narrow terminal.
+
+## Horizontal scrollbar in the console editor
+
+The user requests a horizontal scrollbar with the same appearance rules as the vertical scrollbar.
+
+- A line wider than the text area shows a horizontal bar below the editor text.
+- Both bars use the existing theme styles. The horizontal bar shares the editor renderer with the cell editor.
+- The bar uses Unicode display width and the editor tab width. Text width is cached for each revision.
+- The existing horizontal wheel moves the view one character per event and keeps the cursor inside it.
+- Keyboard movement, selection, copy, editing, and execution keep their existing behavior.
+- An editor with only one row keeps its text row. Inline reviews keep their existing controls and layout.
+
+The editor already handles horizontal wheel events before this change.
+This entry replaces the editor exclusion in **Horizontal wheel on the grid — 2026-11-03**.
+
+## JSON colors in cell windows
+
+The user requests JSON colors in the read-only value window and the cell editor.
+
+- Both places share JSON token detection and the existing theme styles.
+- Keys use the identifier style. Strings use the string style. Numbers use the number style.
+- `true`, `false`, and `null` use the keyword style.
+- Only valid objects and arrays activate JSON colors. The editor checks each changed revision within the 1 MiB input limit.
+- The value window uses its validated original and formatted shapes, within the existing display limits.
+- Colors do not change text, key order, number digits, selection, copy, or save behavior.
+- The SQL console keeps its SQL colors. No new preference or saved format is needed.
+
+## Text selection in the cell window
+
+The user requests text selection with the mouse and approves `Shift+arrows` and selection-aware copy.
+
+- Drag selects text. A click sets a new selection start. `Shift+arrows` extends the selection.
+- `Ctrl+C` copies the selection. Without a selection, it copies the complete text in the current shape.
+- Copy preserves source characters and line breaks. Display wrapping adds no line breaks.
+- Scrolling and resizing keep the selection. A JSON shape change or a row change clears it.
+- Shared read-only text windows use the same selection and copy behavior. Existing scroll and row keys stay unchanged.
+
 ## Side of the explorer — 2026-11-10
 
 The user asks to choose the side of the explorer and approves the points below.
@@ -21,6 +125,140 @@ The user asks to choose the side of the explorer and approves the points below.
 | Home screen and hints | The path to the explorer uses the focus key of its side, such as `Ctrl+W l a` | Always `Ctrl+W h` | The shown key must act |
 | Divider | A drag of the divider changes the width on both sides; the console keeps its minimum width | — | Same rule as the left side |
 | Change | The save of Settings moves the explorer at once | A restart | Same rule as the other preferences |
+
+## Kafka SQL expressions — 2026-11-12
+
+The user asks for a Kafka filter that covers most of what `jq` does, with a syntax that SQL users know. The references are PartiQL and SQL++. The user approves the points below.
+The filter applies to `WHERE` in SELECT, CONSUME, TAIL, and the filter field of the topic tab. The expressions also apply to the SELECT columns.
+
+| Point | Approved rule | Rejected |
+|---|---|---|
+| Condition on one item | `ANY i IN value.items SATISFIES i.sku = 'a' AND i.qty > 2 END`; `EVERY … END` | `EXISTS(value.items[*] WHERE …)`; `ANY(value.items, i -> …)` |
+| Absent field | `IS [NOT] NULL` is true for an absent field or null. `IS [NOT] MISSING` is true only for an absent field. `value.x = null` keeps its rule | Only `IS NULL` |
+| Columns | The expressions apply to `WHERE` and to the SELECT columns | Only `WHERE` |
+| Special names | `value."order id"."a.b"`: double quotes after a dot. `""` is one quote. A text alone in double quotes stays a literal | `value['order id']` |
+
+Syntax:
+
+| Feature | Syntax | `jq` |
+|---|---|---|
+| Roots | `partition`, `offset`, `timestamp`, `key`, `value`, `headers`, `schema` | Fields of `kcat -J` |
+| Fields of the key and headers | `key.id`, `headers.trace` | `.key \| fromjson \| .id` |
+| Field and field | `value.paid < value.total`; a value on either side | `.paid < .total` |
+| Text of a field | `value.email CONTAINS 'x'`, `value.email MATCHES 'regex'` | `contains`, `test` |
+| LIKE | `[NOT] LIKE`, `[NOT] ILIKE`; `%`, `_`, and `\` before a literal character | `startswith`, `endswith` |
+| List of values | `value.status [NOT] IN ('a', 'b')` | `IN("a", "b")` |
+| Item of a list field | `'vip' IN value.tags`, with any value on the left | `index("vip")` |
+| Range | `[NOT] BETWEEN low AND high` | `. >= low and . <= high` |
+| Arithmetic | `+ - * / %`, with spaces before and after; `\|\|` joins texts | `+ - * / %` |
+| Functions | `LOWER`, `UPPER`, `LENGTH` (characters of a text), `SIZE` (items of a list), `COALESCE(a, b, …)`, `CAST(x AS NUMBER\|TEXT\|BOOLEAN)`, `TYPEOF(x)` | `ascii_downcase`, `length`, `//`, `tonumber`, `tostring`, `type` |
+| Time | `timestamp >= '2026-11-10T12:00:00Z'`, with the time reader of `START AT TIMESTAMP` | `.ts >= …` |
+
+Rules that follow from these choices:
+
+- The logic keeps two values. A comparison with an absent value or null is false, and `NOT` inverts the result. There is no three-valued logic.
+- `key` alone compares as text. `value` alone compares as decoded JSON. `CONTAINS`, `MATCHES`, `LIKE`, and `ILIKE` on `key`, `value`, or `headers` alone read the whole text. On another value, they read only a JSON text.
+- `key.x` decodes the key as JSON. `headers.x` reads the JSON object of the `headers` column.
+- With `[*]` on either side, one pair of values that matches is enough. `BETWEEN` needs one value inside the range. A column with `[*]` shows a JSON list. Arithmetic with `[*]` acts on each item.
+- Arithmetic accepts only numbers. Division by zero, another type, or an absent value gives an absent value. A whole result has no fraction. Whole numbers keep all their digits.
+- A `CAST` that fails gives an absent value. Null stays null. `TYPEOF` gives `null`, `boolean`, `number`, `string`, `array`, or `object`.
+- `EVERY` is true for an empty list. `ANY` and `EVERY` are false when the field is not a list. The item name is a new simple name, not a message column. `ANY` can be inside `ANY`.
+- `timestamp` next to a text converts the text when the filter loads. A bad time refuses before the read.
+- `partition`, `offset`, `timestamp`, `SIZE`, `LENGTH`, and arithmetic give numbers. A comparison of such a value with a text, `true`, `false`, or `null` refuses before the read. `CONTAINS`, `MATCHES`, `LIKE`, and `ILIKE` refuse such a value.
+- `PARTITION`, `OFFSET`, and `TIMESTAMP` stay clauses. At the start of a condition, the word is a root. After a complete condition, the word starts the next clause.
+- A column without `AS` uses its written text as the label. A message column alone keeps its value and type.
+- A key or a value without UTF-8 text is absent for the expressions.
+
+Compatibility:
+
+- `,` is an operator in the line commands too, for `IN (…)` and `COALESCE`. A group id with a comma needs quotes, such as `GROUP 'a,b'`.
+- `value.order-id` and `-5` stay words, because arithmetic needs spaces.
+- The text reader keeps its backslash escapes, so `LIKE '100\\%'` finds the text `100%`.
+- No saved format changes. Existing commands and saved scripts keep their syntax and results.
+- Conditions that the earlier entries refused now run: `key > 'a'`, `key.id = 1`, `'a' = value.b`, `SIZE(key)`, `'a' IN key`, and `SELECT key.field`.
+- Quoted names remove the known limitation of the array entry for a name that holds `[`. A backslash stays literal inside such a name. The script lexer and the command parser use the same rule.
+
+Out of scope: `..`, `[*]` on objects, `keys`, `to_entries`, objects built in a column, `map`, slices, `CASE`, date functions, aggregates, and ORDER BY.
+
+Implementation decisions:
+
+| Point | Decision | Reason |
+|---|---|---|
+| Module | `connector/kafka/filter/expr.rs` holds the expression tree, its parser, and its evaluation. `filter.rs` holds the conditions | The filter and the SELECT columns use one evaluation |
+| JSON reads | `Filter::needs` and the projection decode the key, the value, and the headers only when an expression reads their fields | A text filter does not parse JSON |
+| Parentheses | A parenthesis followed by an operator holds a value, as in `(value.a + 1) > 2`. Other parentheses group conditions | One pass, without backtracking |
+| `IN (…)` | `x IN (a, b)` is `x = a OR x = b`. Each comparison uses the same operand checks and timestamp conversion as `=` | Same results with `[*]` |
+| Evaluation | A visitor generates one value at a time, including Cartesian products. Conditions stop when their result is known | No fixed list length or operation cap |
+| Cancellation | Message evaluation runs in a blocking task. Paths, combinations, and quantifier items check the existing stop token | The runner can process Stop and its normal deadline while evaluation runs |
+| Temporary memory | `filter/evaluation.rs` bounds generated text and projection buffers by the configured memory limit, per read. Reservations leave scope on success, error, and cancellation | List combinations must not allocate their full intermediate results |
+| Delivery | The temporary ceiling also applies to live reads, export, and streaming. It does not cap total output | The user approves the same ceiling for temporary buffers in these modes |
+| Failure | A temporary-memory failure ends the statement with a reason and a next action. No partial row leaves the projection | Do not silently truncate a list |
+
+The temporary ceiling counts generated buffers, not the source message or its decoded JSON. Projection cells and the final row share this ceiling while they coexist. A visitor can stop before later combinations; it does not change result order, `COALESCE`, missing-field, or NULL rules. This delivery adds no setting or saved-format change.
+
+## Kafka consumer group — 2026-11-11
+
+The user asks for a consumer group setting, because some clusters permit only group ids with a specific prefix. The user approves the points below.
+This entry changes point 9 of the Kafka entry only for the group id. A read still never subscribes and never commits.
+
+| Point | Approved rule | Rejected |
+|---|---|---|
+| Value | The setting is the complete `group.id` of the reads. Without it, the reads use `sqln-read` | Prefix + `sqln-read`; prefix + separator + `sqln-read` |
+| Places | The **Consumer group** field of the Kafka form, `consumerGroup` in `config.json`, and `group=` in the connection text | Only the form and `config.json` |
+| Check | SQLN removes the spaces at the ends. An empty value means `sqln-read`. A space or a control character inside is refused | Kafka topic characters only; any text |
+
+Implementation decisions:
+
+| Point | Decision | Reason |
+|---|---|---|
+| Form and text | A field value replaces `group=` of the connection text. An empty field keeps `group=` | Same rule as the registry URL |
+| Format | `consumerGroup` is optional and `version` stays 1. A file with the field cannot load in an earlier SQLN, because entries refuse unknown fields | Same rule as `sasl` and `schemaRegistry` |
+| `GROUP <id>` | Still reads the offsets of `<id>`, not the setting | The command names its group |
+
+## Kafka array operators — 2026-11-11
+
+The user asks for array operators in the Kafka filter and SELECT, and approves the points below.
+The filter applies to `WHERE` in SELECT, CONSUME, TAIL, and the filter field of the topic tab.
+
+| Point | Approved rule | Rejected |
+|---|---|---|
+| Index | `value.items[0].sku`; `[-1]` is the last item. The form `value.items.0` stays | — |
+| Any item | `value.items[*].sku = 'a'` is true when one item matches. Several `[*]` are permitted | `ANY(value.items.sku)` |
+| Contains | `'vip' IN value.tags`, the same as `value.tags[*] = 'vip'` | `HAS`; `CONTAINS` with a path |
+| Size | `SIZE(value.items) > 2` in `WHERE`; `SIZE(value.items) [AS n]` as a column | `LENGTH`; `ARRAY_LENGTH` |
+| `[*]` in a column | JSON text of a list with the found values; no value gives NULL | Refuse `[*]` in SELECT |
+
+Rules that follow from these choices:
+
+- An index outside the list gives an absent field: the condition is false and the column is NULL.
+- `[*]` with an operator needs one item that matches, so `value.items[*].sku != 'a'` is true when one item differs. `NOT value.items[*].sku = 'a'` means that no item is `'a'`.
+- `[*]` and `IN` on a value that is not a list are false. `IN` compares with the type, as `=`.
+- `SIZE` counts only lists. Another type or an absent field gives a false condition and a NULL column. `SIZE` compares with a number and refuses `[*]` in its field.
+- Saved scripts keep their syntax. No saved format changes.
+
+Known limitation: a field name that holds `[` is read as an index.
+
+## Kafka SELECT queries
+
+The user approves SELECT syntax and keeps CONSUME and TAIL as alternative forms.
+This entry replaces the console and completion restrictions of the Kafka entry below.
+The read-only scope, consumer isolation, filters, and Schema Registry rules stay unchanged.
+
+| Point | Approved rule |
+|---|---|
+| Finite read | `SELECT * FROM topic` uses CONSUME: EARLIEST by default, with the high offsets captured at the start |
+| Continuous read | End SELECT with `EMIT CHANGES` to use TAIL: LATEST by default, until Stop, with the existing live row cap |
+| Start | `START AT EARLIEST`, `START AT LATEST`, `START AT OFFSET n`, or `START AT TIMESTAMP 'time'`; time follows the existing UTC and RFC 3339 parser |
+| Clauses | `PARTITION n`, `START AT …`, `WHERE …`, `LIMIT n`, and `SCAN n` occur at most once, in any order after the topic; EMIT CHANGES comes last and refuses LIMIT and SCAN |
+| Columns | `*`, or a comma-separated list of message columns and `value.field` paths, with optional `AS alias`; no expressions, joins, aggregates, or ORDER BY |
+| Scripts | SELECT can span lines and ends at a semicolon or the end of the script. A semicolon is required before another statement. Native commands keep one command per line. A line that starts with `#` is a comment |
+| Compatibility | Existing commands and saved scripts keep their syntax. Both forms use the same read execution. No saved format changes |
+| Completion | SELECT offers message columns, catalog topics, and its clause words. It uses no database reads |
+
+Projection implementation: a whole column keeps its original value and type.
+A JSON path preserves numbers, returns JSON text for objects and arrays, and returns NULL for absent or non-JSON values.
+JSON field names keep their case. Aliases change column labels only.
+SELECT accepts doubled quotes as well as the existing backslash escapes.
 
 ## Kafka and Schema Registry — 2026-11-10
 

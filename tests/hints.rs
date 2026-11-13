@@ -123,8 +123,8 @@ impl Screen {
 fn an_idle_editor_shows_how_to_run_and_how_to_get_help() {
     let mut s = Screen::conventional("editor");
     s.assert_shows(&[
-        "F5 run",
-        "Shift+F5 script",
+        "F5 run statement",
+        "Shift+F5 run script",
         "Ctrl+Space suggestions",
         "Ctrl+F find",
         "F1 keys",
@@ -145,7 +145,7 @@ fn the_way_to_the_results_fits_the_minimum_width_with_the_commands_to_run() {
     s.run("SELECT 1 AS one;");
     let row = s.hints_at(80);
     assert!(
-        row.starts_with("F5 run  Shift+F5 script  Ctrl+W j results"),
+        row.starts_with("F5 run statement  Shift+F5 run script  Ctrl+W j results"),
         "{row}"
     );
 }
@@ -190,7 +190,7 @@ fn no_transaction_hides_its_commands() {
 fn a_console_without_a_database_shows_the_way_to_a_connection_and_not_the_run() {
     let mut s = Screen::start(Options::default());
     s.assert_shows(&["Ctrl+W h navigator"]);
-    s.assert_hides(&["F5 run", "script"]);
+    s.assert_hides(&["F5 run statement", "script"]);
 }
 
 #[test]
@@ -399,8 +399,8 @@ fn a_column_row_shows_its_parent_and_opens_nothing() {
 // The `Ctrl+W` menu. `tests/table.rs` covers the table tabs and the sessions.
 
 const EDITOR_ROWS: &[&str] = &[
-    "e Run the statement",
-    "s Run the script",
+    "e Run statement",
+    "s Run script",
     "E Show the plan",
     "f Format the SQL",
     "/ Comment the rows",
@@ -468,18 +468,14 @@ fn the_menu_of_the_explorer_leaves_out_the_commands_of_the_console() {
 #[test]
 fn a_blank_editor_leaves_the_commands_of_a_text_out_of_the_menu() {
     let s = Screen::conventional("menu-blank");
-    s.menu_shows(&["e Run the statement", "s Run the script"]);
+    s.menu_shows(&["e Run statement", "s Run script"]);
     s.menu_hides(&["E Show the plan", "f Format the SQL", "/ Comment the rows"]);
 }
 
 #[test]
 fn a_console_without_a_connection_has_nothing_to_run_in_the_menu() {
     let s = Screen::start(Options::default());
-    s.menu_hides(&[
-        "e Run the statement",
-        "s Run the script",
-        "a Change connection",
-    ]);
+    s.menu_hides(&["e Run statement", "s Run script", "a Change connection"]);
 }
 
 #[test]
@@ -537,7 +533,7 @@ fn a_command_outside_the_menu_keeps_its_key() {
     let mut s = Screen::conventional("menu-hidden-key");
     s.write("SELECT 1;");
     s.prefix('h');
-    s.menu_hides(&["e Run the statement"]);
+    s.menu_hides(&["e Run statement"]);
     s.prefix('e');
     s.wait_for_run();
     assert!(!s.app.console().results.is_empty());

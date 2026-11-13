@@ -22,6 +22,7 @@ use crate::connector::duckdb::DuckdbTarget;
 use crate::connector::sqlite::{SqliteTarget, file_source};
 use crate::connector::target::{
     Address, ClientCertificate, Engine, KafkaOptions, NetworkTarget, Registry, Sasl, Tls, TlsFiles,
+    consumer_group,
 };
 use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode};
 use crate::export::ExportChoices;
@@ -462,6 +463,9 @@ pub struct ConnectionEntry {
     /// The Schema Registry of a Kafka connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema_registry: Option<RegistryEntry>,
+    /// The consumer group id of the Kafka reads. Missing means `sqln-read`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer_group: Option<String>,
 }
 
 /// The configuration of a scope that cannot load. The text names the file, and the
@@ -644,10 +648,17 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
             if engine == Engine::Kafka && !entry.schemas.is_empty() {
                 return Err("A Kafka connection has no schemas.".to_owned());
             }
-            if engine != Engine::Kafka && (entry.sasl.is_some() || entry.schema_registry.is_some())
+            if engine != Engine::Kafka
+                && (entry.sasl.is_some()
+                    || entry.schema_registry.is_some()
+                    || entry.consumer_group.is_some())
             {
-                return Err("sasl and schemaRegistry are valid only for kafka.".to_owned());
+                return Err(
+                    "sasl, schemaRegistry, and consumerGroup are valid only for kafka.".to_owned(),
+                );
             }
+            consumer_group(entry.consumer_group.as_deref().unwrap_or_default())
+                .map_err(|message| format!("consumerGroup: {message}"))?;
             if engine == Engine::Kafka
                 && entry
                     .host
@@ -757,6 +768,8 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
                             password: None,
                         })
                     }),
+                    group: consumer_group(entry.consumer_group.as_deref().unwrap_or_default())
+                        .unwrap_or_default(),
                 },
             })
         }
@@ -809,6 +822,7 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
         schemas: definition.schemas.clone(),
         sasl: None,
         schema_registry: None,
+        consumer_group: None,
     };
     match &definition.source {
         Source::Sqlite(target) => {
@@ -846,6 +860,7 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
                             url: registry.url.clone(),
                             username: Some(registry.user.clone()).filter(|user| !user.is_empty()),
                         });
+                entry.consumer_group.clone_from(&target.kafka.group);
             }
             match &target.address {
                 Address::Tcp { host, port } => {

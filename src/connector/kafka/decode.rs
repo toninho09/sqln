@@ -35,6 +35,15 @@ impl Decoded {
         }
     }
 
+    /// Returns the payload as JSON: the JSON of the registry, or a text that holds JSON.
+    pub fn json(&self) -> Option<std::borrow::Cow<'_, Json>> {
+        match self {
+            Decoded::Json { json, .. } => Some(std::borrow::Cow::Borrowed(json)),
+            Decoded::Text(text) => serde_json::from_str(text).ok().map(std::borrow::Cow::Owned),
+            Decoded::Null | Decoded::Bytes(_) => None,
+        }
+    }
+
     /// Returns the schema that decoded the payload, as `12 avro`.
     pub fn schema(&self) -> Option<String> {
         match self {
@@ -99,13 +108,14 @@ fn with_schema(parsed: &Parsed, payload: &[u8]) -> Result<Json, String> {
     let bad = || text::KAFKA_DECODE_FAILED.to_owned();
     match parsed {
         Parsed::Avro { schema, references } => {
-            let value = apache_avro::from_avro_datum_schemata(
-                schema,
-                references.iter().collect(),
-                &mut Cursor::new(payload),
-                None,
-            )
-            .map_err(|_| bad())?;
+            let reader = apache_avro::reader::datum::GenericDatumReader::builder(schema)
+                .writer_schemata(references.iter().collect())
+                .map_err(|_| bad())?
+                .build()
+                .map_err(|_| bad())?;
+            let value = reader
+                .read_value(&mut Cursor::new(payload))
+                .map_err(|_| bad())?;
             Json::try_from(value).map_err(|_| bad())
         }
         Parsed::Json => serde_json::from_slice(payload).map_err(|_| bad()),

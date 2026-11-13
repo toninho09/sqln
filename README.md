@@ -198,6 +198,11 @@ To save a connection, start `sqln` and add it through the navigator.
 
 Use `Tab` to move through form fields. Passwords stay in the session unless you explicitly select storage.
 
+The home screen groups connection tasks and saved work. It shows your effective shortcuts.
+Use the **Open a SQL file** command through the palette, or assign it a shortcut.
+SQL files require a connection. Opening a file does not execute it.
+Saved consoles and scripts without a connection keep separate lists.
+
 ### Run your first query
 
 For SQLite, PostgreSQL, or MySQL, enter:
@@ -207,6 +212,11 @@ SELECT 1 AS example;
 ```
 
 Press `F5`, or press `Ctrl+W`, then `e`, to run it.
+The action shows **Run selection** or **Run statement**, according to the editor selection.
+A row above the editor shows the executable line range. **Run script** always uses the whole script.
+**Run subquery**, in the command palette, asks before it runs the smallest parenthesized `SELECT` or `WITH` query at the cursor.
+It does not add outer aliases or CTE dependencies. The normal Run scopes stay unchanged.
+Without a selection, the line-number column highlights the statement under the cursor. Execution-state symbols stay visible.
 The results appear below the editor. Use `Ctrl+W j` to move down to the grid.
 
 For Redis or Valkey, use a command instead:
@@ -217,7 +227,42 @@ PING
 
 Each Redis command occupies one line. Redis consoles do not run SQL.
 
-For Kafka, each line is one SQLN command. Each command only reads:
+Kafka accepts a read-only SELECT subset. It does not need a SQL server or ksqlDB:
+
+```sql
+SELECT *
+FROM orders
+START AT EARLIEST
+WHERE value.status = 'failed'
+LIMIT 100
+SCAN 50000;
+
+SELECT timestamp, key, value.customer.id AS customer_id
+FROM orders
+EMIT CHANGES;
+
+SELECT key, value.items[*].sku AS skus, SIZE(value.items) AS count
+FROM orders
+WHERE 'vip' IN value.tags;
+
+SELECT key.id AS id, value.price * value.qty AS total, COALESCE(value.nick, value.name) AS name
+FROM orders
+WHERE ANY i IN value.items SATISFIES i.sku = 'a' AND i.qty > 2 END
+  AND headers.source IN ('web', 'app')
+  AND timestamp >= '2026-11-10T12:00:00Z';
+```
+
+- Plain SELECT uses a finite read, as CONSUME. It starts at EARLIEST by default.
+- EMIT CHANGES uses a continuous read, as TAIL. It starts at LATEST by default and waits until **Stop**.
+- Use `START AT OFFSET 1500` or `START AT TIMESTAMP '2026-11-10T12:00:00Z'` for another start. `PARTITION 2` restricts the read to one partition.
+- LIMIT caps matching rows. SCAN caps examined messages. EMIT CHANGES accepts neither; its live row cap removes the oldest rows.
+- Select `*` or a list of values, each with an optional `AS alias`. A value is a message column, a field such as `value.customer.id`, `key.id`, or `headers.trace`, a literal, arithmetic, or a function. Missing paths, tombstones, and values without JSON return NULL. Whole columns keep bytes and NULL unchanged.
+- A path reads list items: `value.items[0]`, `value.items[-1]` (the last item), and `value.items[*].sku`. A column with `[*]` shows a JSON list of the found values.
+- SELECT can span lines. End it with `;` before another statement. A final SELECT can omit `;`. Use `#` at the start of a line for comments.
+- A name with spaces, dots, or brackets goes between double quotes after the dot: `value."order id"`.
+- Filters still run locally. Joins, aggregates, and ORDER BY are not supported. Reads have no global order across partitions.
+
+The native commands remain available, one per line. Each command only reads:
 
 ```text
 TOPICS
@@ -231,10 +276,17 @@ GROUP billing
 
 - `CONSUME` reads to the last message of each partition at its start. `TAIL` waits for new messages until **Stop**.
 - `FROM` takes `earliest`, `latest`, an offset, or `@` and a UTC time.
-- The filter runs in SQLN, after the decoding: `key = 'text'`, `CONTAINS 'text'` (without case), `MATCHES 'regex'`, and `value.field` with `=`, `!=`, `<`, `<=`, `>`, or `>=`. Use `AND`, `OR`, `NOT`, and parentheses.
+- Both SELECT and the native commands use the same filter in SQLN, after the decoding. A condition compares two values with `=`, `!=`, `<`, `<=`, `>`, or `>=`, such as `value.paid < value.total` or `key = 'a'`. Use `AND`, `OR`, `NOT`, and parentheses.
+- Other conditions: `IS [NOT] NULL` (absent or null), `IS [NOT] MISSING` (absent), `[NOT] IN ('a', 'b')`, `'vip' IN value.tags`, `[NOT] BETWEEN 1 AND 5`, `[NOT] LIKE 'a%'`, `[NOT] ILIKE 'a%'` (without case), `CONTAINS 'text'` (without case), and `MATCHES 'regex'`.
+- `ANY i IN value.items SATISFIES <condition> END` is true when one item matches all of the condition. `EVERY … END` needs all items.
+- Values: `partition`, `offset`, `timestamp` (compare it with a UTC time in quotes), `key`, `value`, `headers`, `schema`, fields, `+ - * / %` with spaces, `||` for texts, `LOWER`, `UPPER`, `LENGTH`, `SIZE`, `COALESCE`, `CAST(x AS NUMBER|TEXT|BOOLEAN)`, and `TYPEOF`.
+- For lists, `value.items[*].sku = 'a'` is true when one item matches, `'vip' IN value.tags` finds an item, and `SIZE(value.items) > 2` counts the items.
+- Expressions generate values on demand. Large list combinations remain available, with Stop and the normal statement timeout. Generated text buffers use the configured memory limit, including live reads, export, and streaming. An oversized projection fails without a partial row; reduce it or increase the limit.
 - With a Schema Registry, Avro, JSON Schema, and Protobuf values become JSON. A value that does not decode stays as bytes, with a note in **Messages**.
 - SQLN never joins a consumer group and never commits an offset. `GROUP <id>` shows the committed offsets and the lag.
 - The explorer lists `topics` and `groups`. `Enter` on a topic opens its last 500 messages, newest first, with a filter field.
+
+See the [Kafka guide](docs/KAFKA.md) for a full walk-through with more examples.
 
 Press `Ctrl+P` for the command palette or `F1` for help in the main panels.
 
@@ -659,6 +711,7 @@ SQLN does not use an unverified TLS fallback. Even `sslmode=require` and `verify
 An explicit `sslmode=disable` removes TLS; use it only when the connection environment permits unencrypted traffic.
 `rediss`, `valkeys`, and `kafkas` always require verified TLS.
 Kafka takes `sasl=plain`, `sasl=scram-sha-256`, or `sasl=scram-sha-512` (the default) for a user, and `registry=<url>` for the Schema Registry.
+Kafka takes `group=<id>` for the consumer group id of the reads, such as a group with the prefix that the cluster permits. The form has the same **Consumer group** field. Without it, the reads use `sqln-read`. SQLN never joins the group and never commits.
 Without a CA file, Kafka verifies with the system roots only.
 
 ### Local data and diagnostics
@@ -925,11 +978,14 @@ Report the OS, terminal, SQLN version, and reproduction steps for a defect. Remo
 
 ## Documentation
 
+The rendered documentation site lives at <https://toninho09.github.io/sqln/>.
+
 - [Feature map](docs/FEATURE-MAP.md): features and their source files.
 - [Keyboard reference](docs/KEYMAP.md): complete navigation and shortcut guide.
 - [Architecture](docs/ARCHITECTURE.md): execution, storage, credentials, and module rules.
 - [Decisions](docs/DECISIONS.md): approved choices and tradeoffs.
 - [UI reference](docs/UI.md): interface structure and layouts.
+- [Kafka guide](docs/KAFKA.md): Kafka reads, filters, and examples.
 - [AI completion](docs/AI_COMPLETION.md): setup, providers, limits, and consent.
 - [Local MCP assistant](docs/MCP.md): client setup, tools, and security.
 - [Consolidated plan](docs/INITIAL_PLAN.md): scope, implementation state, and pending release checks.

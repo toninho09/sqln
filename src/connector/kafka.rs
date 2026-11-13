@@ -20,7 +20,7 @@ use rdkafka::{Offset, TopicPartitionList};
 use serde_json::Value as Json;
 use tokio_util::sync::CancellationToken;
 
-use self::client::{CALL_LIMIT, Consumer, READ_GROUP, Reader};
+use self::client::{CALL_LIMIT, Consumer, Reader};
 use self::command::{Command, Read, Start, TOPIC_PAGE};
 use self::decode::{Decoded, decode};
 use self::filter::{Filter, Message};
@@ -142,7 +142,7 @@ impl Connector for KafkaConnector {
     }
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
-        let config = client::config(&self.target, READ_GROUP)?;
+        let config = client::config(&self.target, self.target.kafka.read_group())?;
         let consumer = Arc::new(client::consumer(&config)?);
         // One metadata call checks the address, TLS, and the password.
         let check = consumer.clone();
@@ -330,8 +330,8 @@ impl Scan {
         windows: &[Window],
         bounded: bool,
     ) -> Result<Self, ExecError> {
-        let config =
-            client::config(target, READ_GROUP).map_err(|error| ExecError::new(error.message))?;
+        let config = client::config(target, target.kafka.read_group())
+            .map_err(|error| ExecError::new(error.message))?;
         let mut list = TopicPartitionList::new();
         let mut ends = HashMap::new();
         let mut open = HashSet::new();
@@ -433,9 +433,9 @@ impl Drop for Scan {
     }
 }
 
-/// Writes the headers as a JSON object. A repeated name holds a list. A value that is not
+/// Reads the headers as a JSON object. A repeated name holds a list. A value that is not
 /// UTF-8 becomes `0x` and its hex digits.
-fn headers_text(headers: &[(String, Option<Vec<u8>>)]) -> Option<String> {
+fn headers_json(headers: &[(String, Option<Vec<u8>>)]) -> Option<Json> {
     if headers.is_empty() {
         return None;
     }
@@ -461,7 +461,7 @@ fn headers_text(headers: &[(String, Option<Vec<u8>>)]) -> Option<String> {
             items.push(value);
         }
     }
-    Some(Json::Object(map).to_string())
+    Some(Json::Object(map))
 }
 
 fn timestamp_text(millis: i64) -> Option<String> {
@@ -648,10 +648,12 @@ impl KafkaSession {
     /// not match.
     async fn message_row(
         &self,
-        raw: &Raw,
-        filter: Option<&Filter>,
+        raw: Raw,
+        filter: Option<Arc<Filter>>,
+        projection: Option<Arc<command::Projection>>,
+        evaluation: &filter::Evaluation,
         notices: &mut Notices,
-    ) -> Option<Row> {
+    ) -> Result<Option<Row>, ExecError> {
         let registry = self.registry.as_deref();
         let (key, key_notice) = decode(raw.key.as_deref(), registry).await;
         let (value, value_notice) = decode(raw.value.as_deref(), registry).await;
@@ -659,51 +661,74 @@ impl KafkaSession {
             .into_iter()
             .chain(value_notice)
             .for_each(|notice| notices.add(notice));
-        let headers = headers_text(&raw.headers);
-        if let Some(filter) = filter {
-            let parsed;
-            let json = match &value {
-                Decoded::Json { json, .. } => Some(json),
-                Decoded::Text(text) if filter.reads_fields() => {
-                    parsed = serde_json::from_str::<Json>(text).ok();
-                    parsed.as_ref()
+        let expressions = filter.is_some() || projection.is_some();
+        let cancel_on_drop = evaluation.cancel_on_drop();
+        let evaluation = evaluation.clone();
+        let build = move || -> Result<Option<Row>, ExecError> {
+            evaluation.check()?;
+            let headers_json = headers_json(&raw.headers);
+            let headers = headers_json.as_ref().map(Json::to_string);
+            let schema = match (key.schema(), value.schema()) {
+                (None, None) => None,
+                (Some(key), None) => Some(format!("key {key}")),
+                (None, Some(value)) => Some(format!("value {value}")),
+                (Some(key), Some(value)) => Some(format!("key {key}, value {value}")),
+            };
+            if let Some(filter) = filter {
+                let needs = filter.needs();
+                let key_json = needs.key.then(|| key.json()).flatten();
+                let value_json = needs.value.then(|| value.json()).flatten();
+                let message = Message {
+                    partition: raw.partition.into(),
+                    offset: raw.offset,
+                    timestamp: raw.timestamp,
+                    key: key.text(),
+                    key_json: key_json.as_deref(),
+                    value: value.text(),
+                    json: value_json.as_deref(),
+                    headers: headers.as_deref(),
+                    headers_json: headers_json.as_ref(),
+                    schema: schema.as_deref(),
+                };
+                if !filter.matches(&message, &evaluation)? {
+                    return Ok(None);
                 }
-                _ => None,
-            };
-            let message = Message {
-                key: key.text(),
-                value: value.text(),
-                json,
-                headers: headers.as_deref().unwrap_or(""),
-            };
-            if !filter.matches(&message) {
-                return None;
             }
-        }
-        let schema = match (key.schema(), value.schema()) {
-            (None, None) => None,
-            (Some(key), None) => Some(format!("key {key}")),
-            (None, Some(value)) => Some(format!("value {value}")),
-            (Some(key), Some(value)) => Some(format!("key {key}, value {value}")),
+            let mut row = RowWriter::default();
+            row.push(Value::Number(&raw.partition.to_string()));
+            row.push(Value::Number(&raw.offset.to_string()));
+            match raw.timestamp.and_then(timestamp_text) {
+                Some(time) => row.push(Value::Text(&time)),
+                None => row.push(Value::Null),
+            }
+            push_decoded(&mut row, &key);
+            push_decoded(&mut row, &value);
+            match &headers {
+                Some(text) => row.push(Value::Text(text)),
+                None => row.push(Value::Null),
+            }
+            match &schema {
+                Some(text) => row.push(Value::Text(text)),
+                None => row.push(Value::Null),
+            }
+            let row = row.finish();
+            Ok(Some(match projection {
+                Some(projection) => projection.apply(row, &evaluation)?,
+                None => row,
+            }))
         };
-        let mut row = RowWriter::default();
-        row.push(Value::Number(&raw.partition.to_string()));
-        row.push(Value::Number(&raw.offset.to_string()));
-        match raw.timestamp.and_then(timestamp_text) {
-            Some(time) => row.push(Value::Text(&time)),
-            None => row.push(Value::Null),
-        }
-        push_decoded(&mut row, &key);
-        push_decoded(&mut row, &value);
-        match &headers {
-            Some(text) => row.push(Value::Text(text)),
-            None => row.push(Value::Null),
-        }
-        match &schema {
-            Some(text) => row.push(Value::Text(text)),
-            None => row.push(Value::Null),
-        }
-        Some(row.finish())
+        // The runner remains free to process Stop and the statement deadline.
+        // The visitor checks the stop token even when it produces no values.
+        let result = if expressions {
+            tokio::task::spawn_blocking(build)
+                .await
+                .map_err(|_| ExecError::new(text::KAFKA_CALL_FAILED))
+                .and_then(|result| result)
+        } else {
+            build()
+        };
+        cancel_on_drop.disarm();
+        result
     }
 
     fn registry_notice(&self, notices: &mut Notices) {
@@ -888,10 +913,17 @@ impl KafkaSession {
                 end: (!tail).then_some(*high),
             })
             .collect();
-        set_columns(&MESSAGE_COLUMNS, sink).await;
+        if let Some(projection) = &read.projection {
+            sink.set_columns(projection.names()).await;
+        } else {
+            set_columns(&MESSAGE_COLUMNS, sink).await;
+        }
         let mut notices = Notices::default();
         self.registry_notice(&mut notices);
         let stop = sink.stop_token();
+        let evaluation = filter::Evaluation::new(stop.clone(), sink.memory_limit());
+        let filter = read.filter.map(Arc::new);
+        let projection = read.projection.map(Arc::new);
         let mut scan = Scan::start(&self.target, &read.topic, &windows, !tail)?;
         let mut counts = Counts::default();
         let mut stopped = false;
@@ -899,10 +931,20 @@ impl KafkaSession {
             match scan.next(&stop).await? {
                 Next::Message(raw) => {
                     counts.scanned += 1;
-                    if let Some(row) = self
-                        .message_row(&raw, read.filter.as_ref(), &mut notices)
-                        .await
-                    {
+                    let row = self
+                        .message_row(
+                            raw,
+                            filter.clone(),
+                            projection.clone(),
+                            &evaluation,
+                            &mut notices,
+                        )
+                        .await;
+                    if evaluation.stopped() {
+                        stopped = true;
+                        break;
+                    }
+                    if let Some(row) = row? {
                         counts.matched += 1;
                         if sink.push(row).await != Flow::Continue {
                             break;
@@ -927,7 +969,7 @@ impl KafkaSession {
             }
         }
         drop(scan);
-        if read.filter.is_some() || read.scan.is_some() || stopped {
+        if filter.is_some() || read.scan.is_some() || stopped {
             notices.add(text::kafka_scanned(counts.scanned, counts.matched, stopped));
         }
         notices.send(sink).await;
@@ -951,6 +993,8 @@ impl KafkaSession {
         let mut notices = Notices::default();
         self.registry_notice(&mut notices);
         let stop = sink.stop_token();
+        let evaluation = filter::Evaluation::new(stop.clone(), sink.memory_limit());
+        let filter = filter.map(Arc::new);
         let mut ends: HashMap<i32, i64> = partitions
             .iter()
             .map(|(p, _, high)| (p.id, *high))
@@ -985,14 +1029,20 @@ impl KafkaSession {
                     Next::Message(raw) => {
                         counts.scanned += 1;
                         let time = raw.timestamp.unwrap_or(-1);
+                        let (partition, offset) = (raw.partition, raw.offset);
                         oldest
                             .entry(raw.partition)
                             .and_modify(|oldest| *oldest = (*oldest).min(time));
-                        if let Some(row) =
-                            self.message_row(&raw, filter.as_ref(), &mut notices).await
-                        {
+                        let row = self
+                            .message_row(raw, filter.clone(), None, &evaluation, &mut notices)
+                            .await;
+                        if evaluation.stopped() {
+                            stopped = true;
+                            break;
+                        }
+                        if let Some(row) = row? {
                             counts.matched += 1;
-                            found.push((time, raw.partition, raw.offset, row));
+                            found.push((time, partition, offset, row));
                         }
                     }
                     Next::Idle => {}
@@ -1160,12 +1210,11 @@ mod tests {
             ("tag".to_owned(), Some(vec![0xff])),
             ("empty".to_owned(), None),
         ];
-        let json: Json = serde_json::from_str(&headers_text(&headers).unwrap()).unwrap();
         assert_eq!(
-            json,
+            headers_json(&headers).unwrap(),
             serde_json::json!({"trace": "t1", "tag": ["a", "0xff"], "empty": null})
         );
-        assert_eq!(headers_text(&[]), None);
+        assert_eq!(headers_json(&[]), None);
     }
 
     #[test]

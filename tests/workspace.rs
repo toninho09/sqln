@@ -1193,7 +1193,7 @@ fn the_explorer_on_the_right_moves_its_panel_focus_keys_and_divider() {
 fn the_buttons_run_and_follow_the_state_of_the_console() {
     let mut f = Fixture::new("buttons", "CREATE TABLE t(a);");
     f.write("INSERT INTO t VALUES (1);");
-    f.click_text("[Run]");
+    f.click_text("[Run statement]");
     f.idle();
     assert_eq!(f.query(0, "SELECT count(*) FROM t"), 1);
 
@@ -1201,7 +1201,7 @@ fn the_buttons_run_and_follow_the_state_of_the_console() {
     assert!(f.app.console().manual);
     f.assert_sees("[Manual]");
     f.prefix('k');
-    f.click_text("[Run]");
+    f.click_text("[Run statement]");
     f.idle();
     f.pump_sees("Transaction open");
     assert_eq!(f.query(0, "SELECT count(*) FROM t"), 1);
@@ -1216,7 +1216,7 @@ fn the_buttons_run_and_follow_the_state_of_the_console() {
 fn the_stop_button_ends_a_script() {
     let mut f = Fixture::new("button-stop", "");
     f.app.console_mut().editor.on_paste(LONG);
-    f.click_text("[Script]");
+    f.click_text("[Run script]");
     f.pump_sees(" 1 ●");
     f.click_text("[Stop]");
     f.idle();
@@ -1848,7 +1848,7 @@ fn a_click_removes_a_message_and_the_pointer_and_the_wheel_do_not() {
 #[test]
 fn a_click_keeps_the_message_of_its_own_action() {
     let mut f = Fixture::new("message-own", "");
-    f.click_text("[Run]");
+    f.click_text("[Run statement]");
     f.assert_sees(REFUSAL);
 }
 

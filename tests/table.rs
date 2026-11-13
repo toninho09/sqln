@@ -1429,8 +1429,8 @@ impl Fixture {
 
 /// The rows of the first page that act only on a console.
 const CONSOLE_ROWS: &[&str] = &[
-    "e Run the statement",
-    "s Run the script",
+    "e Run statement",
+    "s Run script",
     "E Show the plan",
     "A Plan with a run",
     "f Format the SQL",
@@ -1509,12 +1509,12 @@ fn the_stop_row_needs_a_run_and_replaces_the_run_rows() {
     f.app
         .on_event(Event::Paste("SELECT 1 LIMIT 1 OFFSET 0;".to_owned()));
     assert!(!f.menu_has("x Stop"));
-    assert!(f.menu_has("e Run the statement"));
+    assert!(f.menu_has("e Run statement"));
     recorder.hold.store(true, Ordering::SeqCst);
     f.code(KeyCode::F(5));
     f.pump_until(|f| f.app.console_mut().is_busy());
     assert!(f.menu_has("x Stop"));
-    assert!(!f.menu_has("e Run the statement"));
+    assert!(!f.menu_has("e Run statement"));
     f.prefix('h');
     assert!(f.menu_has("x Stop"), "the session stays occupied");
     recorder.hold.store(false, Ordering::SeqCst);

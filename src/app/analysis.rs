@@ -212,6 +212,7 @@ impl App {
             contents: WrappedText::new("Calculating loaded rows...".into()),
             footer: "Esc cancel".into(),
             scroll: 0,
+            dragging: false,
             other: None,
             row: None,
         });
@@ -242,6 +243,7 @@ impl App {
                     contents: WrappedText::new(report.text),
                     footer: "Esc close | Up/Down scroll | Ctrl+C copy".into(),
                     scroll: 0,
+                    dragging: false,
                     other: None,
                     row: None,
                 });

@@ -576,6 +576,7 @@ impl App {
             // A compare has no editor, no transaction, no filter, and one result.
             Action::Run
             | Action::RunScript
+            | Action::RunSubquery
             | Action::Explain
             | Action::ExplainAnalyze
             | Action::FormatSql
