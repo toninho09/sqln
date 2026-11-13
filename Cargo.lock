@@ -4115,7 +4115,7 @@ dependencies = [
 
 [[package]]
 name = "sqln"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "apache-avro",
  "apple-native-keyring-store",
