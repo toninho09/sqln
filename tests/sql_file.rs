@@ -106,9 +106,11 @@ fn screen(app: &mut App) -> String {
 fn escape_cancels_the_open_without_creating_a_console() {
     let mut f = Fixture::new("cancel-open", "SELECT 1;\n");
     let count = f.app.consoles().len();
+    assert!(f.screen().contains("[Copy]"));
     f.code(KeyCode::Esc);
     assert_eq!(f.app.consoles().len(), count);
-    assert!(!f.screen().contains("Open a SQL file"));
+    assert!(!f.screen().contains("[Copy]"));
+    assert!(f.app.console().editor.is_blank());
 }
 
 #[test]

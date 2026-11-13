@@ -4,11 +4,14 @@
 mod common;
 
 mod analysis_ui;
+mod cell_search;
+mod cell_selection;
 mod command_log;
 mod commands;
 mod follow_key;
 mod guard;
 mod history;
+mod json_colors;
 mod operation;
 mod sql_file;
 

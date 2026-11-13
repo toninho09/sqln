@@ -6,6 +6,82 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Execution scope and first tasks
+
+The user approves explicit execution labels and task-based startup guidance.
+
+- Run shows **Run selection** or **Run statement**. The script action shows **Run script**.
+- A row above a nonempty, idle editor shows the one-based executable line range and the whole-script scope.
+- Preview and execution share statement resolution. Text revisions cache statement ranges; selection changes update their own ranges.
+- Without a selection, the line-number column highlights the statement under the cursor, including its number padding.
+- The highlight follows the same executable line range. Blank gaps and comments outside statements show no target.
+- The execution-mark column stays separate. Text selection, literal cell editors, and inline diff review keep their existing styles.
+- Pending AI text does not change the target; the highlight follows the actual console text.
+- The highlight uses existing theme selection colors and bold text. Without colors, it uses reverse video and bold text.
+- Selections without statements and cursor positions outside statements keep the existing refusals. No confirmation or execution rule changes.
+- Console toolbars wrap complete buttons onto additional rows. Mouse hit areas include both coordinates.
+- This replaces the earlier narrow agent toolbar rule that hides Access before Tasks.
+- The home screen groups connection tasks and saved work. SQL file opening uses the existing palette command or its custom shortcut.
+- Without a connection, the home screen explains that SQL files require a connection first.
+- Saved consoles of the selected connection and scripts without a connection keep their separate lists.
+- A command without a shortcut shows the palette path and its command label. An arrow means to choose that command.
+- Startup conditions, focus, restored tabs, credentials, file choices, and execution protections stay unchanged.
+- These screens do not open database sessions or run SQL. Small areas remove the logo and header spacing before task rows.
+
+## Cell inspection and editor controls
+
+The user approves interactive scrollbars, cell search, JSON validation and formatting, and selected character counts.
+The user does not request independent scrolling without cursor movement.
+
+- Console and cell-editor scrollbars accept track clicks and thumb drags. Resize ends the drag.
+- Scrollbar input uses the existing cursor-in-view rule. It does not edit text, replace a selection, or run SQL.
+- Read-only text windows support literal, case-insensitive search with `Ctrl+F` and the effective editor Find key.
+- Enter/Down and Shift+Enter/Up walk matches. Escape closes the search before the window.
+- Search preserves the copy selection, uses bounded work, and reads hexadecimal digits without expanding the entire value.
+- Search stops at one million matches and labels the partial count. This matches the existing grid-search ceiling.
+- Cell JSON checks show validity or the error line, character column, and reason, within the existing 1 MiB input limit.
+- Checks do not add a save restriction. The existing column validation and save guards still apply.
+- The cell `formatSql` binding and the **Format JSON** button format JSON explicitly as one undo step.
+- Formatting preserves key order and digits, keeps text after refusal, and never keeps or saves the value automatically.
+- Value footers, cell-editor hints, and the console status show selected Unicode character counts, including line breaks.
+- Critical console status labels take priority over the selection count in a narrow terminal.
+
+## Horizontal scrollbar in the console editor
+
+The user requests a horizontal scrollbar with the same appearance rules as the vertical scrollbar.
+
+- A line wider than the text area shows a horizontal bar below the editor text.
+- Both bars use the existing theme styles. The horizontal bar shares the editor renderer with the cell editor.
+- The bar uses Unicode display width and the editor tab width. Text width is cached for each revision.
+- The existing horizontal wheel moves the view one character per event and keeps the cursor inside it.
+- Keyboard movement, selection, copy, editing, and execution keep their existing behavior.
+- An editor with only one row keeps its text row. Inline reviews keep their existing controls and layout.
+
+The editor already handles horizontal wheel events before this change.
+This entry replaces the editor exclusion in **Horizontal wheel on the grid — 2026-11-03**.
+
+## JSON colors in cell windows
+
+The user requests JSON colors in the read-only value window and the cell editor.
+
+- Both places share JSON token detection and the existing theme styles.
+- Keys use the identifier style. Strings use the string style. Numbers use the number style.
+- `true`, `false`, and `null` use the keyword style.
+- Only valid objects and arrays activate JSON colors. The editor checks each changed revision within the 1 MiB input limit.
+- The value window uses its validated original and formatted shapes, within the existing display limits.
+- Colors do not change text, key order, number digits, selection, copy, or save behavior.
+- The SQL console keeps its SQL colors. No new preference or saved format is needed.
+
+## Text selection in the cell window
+
+The user requests text selection with the mouse and approves `Shift+arrows` and selection-aware copy.
+
+- Drag selects text. A click sets a new selection start. `Shift+arrows` extends the selection.
+- `Ctrl+C` copies the selection. Without a selection, it copies the complete text in the current shape.
+- Copy preserves source characters and line breaks. Display wrapping adds no line breaks.
+- Scrolling and resizing keep the selection. A JSON shape change or a row change clears it.
+- Shared read-only text windows use the same selection and copy behavior. Existing scroll and row keys stay unchanged.
+
 ## Side of the explorer — 2026-11-10
 
 The user asks to choose the side of the explorer and approves the points below.

@@ -198,6 +198,11 @@ To save a connection, start `sqln` and add it through the navigator.
 
 Use `Tab` to move through form fields. Passwords stay in the session unless you explicitly select storage.
 
+The home screen groups connection tasks and saved work. It shows your effective shortcuts.
+Use the **Open a SQL file** command through the palette, or assign it a shortcut.
+SQL files require a connection. Opening a file does not execute it.
+Saved consoles and scripts without a connection keep separate lists.
+
 ### Run your first query
 
 For SQLite, PostgreSQL, or MySQL, enter:
@@ -207,6 +212,9 @@ SELECT 1 AS example;
 ```
 
 Press `F5`, or press `Ctrl+W`, then `e`, to run it.
+The action shows **Run selection** or **Run statement**, according to the editor selection.
+A row above the editor shows the executable line range. **Run script** always uses the whole script.
+Without a selection, the line-number column highlights the statement under the cursor. Execution-state symbols stay visible.
 The results appear below the editor. Use `Ctrl+W j` to move down to the grid.
 
 For Redis or Valkey, use a command instead:

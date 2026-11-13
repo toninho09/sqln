@@ -23,6 +23,82 @@ use sqln::store::{Root, Store};
 use sqln::ui::text;
 use sqln::ui::theme::Theme;
 
+#[test]
+fn run_discovery_and_mouse_execution_use_the_selected_scope_in_both_modes() {
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let mut s = Screen::new("run-scope", mode, &[("run", &["f8", "ctrl+w e"])]);
+        s.paste("SELECT 1 AS first;\nSELECT 2 AS second;");
+        s.app
+            .console_mut()
+            .editor
+            .set_cursor(edtui::Index2::new(0, 0));
+        if mode == KeyboardMode::Conventional {
+            s.app.on_event(Event::Key(shift(KeyCode::Down)));
+        } else {
+            s.code(KeyCode::Char('v'));
+            s.code(KeyCode::Char('$'));
+        }
+        let selected = s.app.console().editor.selection_range();
+        let shown = s.draw(80, 24);
+        for part in [
+            "[Run selection]",
+            "Selection: Line 1",
+            "Script: whole script",
+            "F8 run selection",
+        ] {
+            assert!(shown.contains(part), "{part}:\n{shown}");
+        }
+        let menu = s.app.prefix_menu();
+        assert!(
+            menu.iter()
+                .flat_map(|group| &group.keys)
+                .any(|(_, label)| *label == "Run selection")
+        );
+        let palette = s.palette("run");
+        assert!(palette.contains("Run selection"), "{palette}");
+        assert!(palette.contains("Run script"), "{palette}");
+        assert!(palette.contains("F8"), "{palette}");
+        s.code(KeyCode::Esc);
+        assert_eq!(s.app.console().editor.selection_range(), selected);
+        let shown = s.draw(80, 24);
+        let (row, line) = shown
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains("[Run selection]"))
+            .unwrap();
+        let column = line[..line.find("[Run selection]").unwrap()]
+            .chars()
+            .count();
+        s.app.on_event(Event::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: column as u16,
+            row: row as u16,
+            modifiers: KeyModifiers::NONE,
+        }));
+        s.wait(|app| !app.console().is_busy());
+        assert_eq!(s.app.console().results.len(), 1);
+        assert_eq!(s.app.console().results[0].table.columns[0], "first");
+    }
+}
+
+#[test]
+fn the_run_preview_reports_a_cursor_outside_sql_without_running_it() {
+    let mut s = Screen::new("run-outside", KeyboardMode::Conventional, &[]);
+    s.paste("SELECT 1;\n\nSELECT 2;");
+    s.app
+        .console_mut()
+        .editor
+        .set_cursor(edtui::Index2::new(1, 0));
+    let screen = s.draw(80, 24);
+    assert!(screen.contains("No statement at cursor"), "{screen}");
+    assert!(screen.contains("Script: whole script"), "{screen}");
+    assert!(s.app.console().results.is_empty());
+    s.code(KeyCode::F(5));
+    assert!(!s.app.console().is_busy());
+    assert!(s.app.console().results.is_empty());
+    assert!(s.draw(80, 24).contains(text::CURSOR_OUTSIDE));
+}
+
 struct Screen {
     app: App,
     clipboard: Rc<RefCell<MemoryClipboard>>,
@@ -663,6 +739,26 @@ fn panel_pages_and_the_reserved_palette_hint_use_custom_keys() {
     s.app
         .on_event(Event::Key(crate::common::alt(KeyCode::Char('c'))));
     assert_eq!(s.clipboard.borrow().text, "1\n");
+}
+
+#[test]
+fn cell_selection_takes_priority_over_custom_background_shortcuts() {
+    let mut s = Screen::new(
+        "cell-selection-custom-keys",
+        KeyboardMode::Conventional,
+        &[("runScript", &["shift+right"]), ("gridCopy", &["alt+c"])],
+    );
+    s.results("SELECT 'text';");
+    s.code(KeyCode::Enter);
+    s.draw(80, 24);
+    s.app.on_event(Event::Key(shift(KeyCode::Right)));
+    s.control('c');
+    assert_eq!(s.clipboard.borrow().text, "t");
+    assert!(!s.app.console().is_busy());
+    s.code(KeyCode::Esc);
+    s.app
+        .on_event(Event::Key(crate::common::alt(KeyCode::Char('c'))));
+    assert_eq!(s.clipboard.borrow().text, "text\n");
 }
 
 #[test]

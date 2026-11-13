@@ -422,6 +422,7 @@ fn each_scheme_keeps_its_text_readable() {
             theme.label_explorer,
             theme.dialog_focus,
             theme.search_current,
+            theme.gutter_target,
             theme.header,
         ] {
             assert!(filled(style) >= SHORT, "{scheme:?} {style:?}");
@@ -816,13 +817,13 @@ fn a_tall_screen_has_a_title_and_a_short_screen_keeps_the_rows_of_the_panels() {
     );
     let short = screen.buffer(80, 24);
     assert_eq!(
-        rows(&short)[2].chars().nth(5 + 24 + 1),
+        rows(&short)[3].chars().nth(5 + 24 + 1),
         Some(' '),
-        "the editor starts on row 2"
+        "the editor follows the two toolbar rows"
     );
-    assert!(rows(&short)[2].contains('1'), "{}", rows(&short).join("\n"));
+    assert!(rows(&short)[3].contains('1'), "{}", rows(&short).join("\n"));
     assert!(
-        rows(&short)[1].contains("[Run]"),
+        rows(&short)[1].contains("[Run statement]"),
         "{}",
         rows(&short).join("\n")
     );
@@ -1090,7 +1091,7 @@ fn the_palette_filters_and_runs_a_command() {
     assert!(screen.screen(100, 30).contains("Commands"));
     screen.type_text("run script");
     let shown = screen.screen(100, 30);
-    assert!(shown.contains("Run the script"), "{shown}");
+    assert!(shown.contains("Run script"), "{shown}");
     assert!(!shown.contains("Close the tab"), "{shown}");
     screen.code(KeyCode::Enter);
     assert!(
@@ -1236,7 +1237,7 @@ fn the_palette_shows_a_panel_key_only_in_its_panel() {
 fn the_first_screen_shows_the_keys_and_the_first_character_ends_it() {
     let mut screen = Screen::new("welcome", Theme::plain(), KeyboardMode::Conventional);
     let shown = screen.screen(100, 30);
-    for text in ["SQLN", "Write SQL here", "Ctrl+P", "Run the script"] {
+    for text in ["SQLN", "Write SQL here", "Ctrl+P", "Run script"] {
         assert!(shown.contains(text), "{text}:\n{shown}");
     }
     screen.code(KeyCode::Char('s'));

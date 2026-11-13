@@ -218,6 +218,12 @@ impl App {
     }
 
     pub(super) fn command_label(&self, action: Action) -> &'static str {
+        if action == Action::Run {
+            return text::run_label(self.console().editor.selection_range().is_some());
+        }
+        if action == Action::RunScript {
+            return text::MENU_SCRIPT;
+        }
         if action == Action::AgentDirect {
             return if self.agent.direct(self.console().id) {
                 "Disable agent direct editing for this console"

@@ -601,7 +601,7 @@ fn an_unknown_transaction_needs_a_confirmation_before_the_next_run() {
     );
 
     press(&mut app, key(KeyCode::F(5)));
-    pump_until(&mut app, "[Run]");
+    pump_until(&mut app, "[Run statement]");
     press(&mut app, key(KeyCode::Tab));
     press(&mut app, key(KeyCode::Enter));
     pump_until(&mut app, "No transaction");

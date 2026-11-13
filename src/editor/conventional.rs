@@ -145,7 +145,7 @@ impl SqlEditor {
 
     pub(super) fn selected_range(&self) -> Option<(Index2, Index2)> {
         let anchor = self.anchor?;
-        let cursor = self.state.cursor;
+        let cursor = self.scroll_selection_end.unwrap_or(self.state.cursor);
         if anchor == cursor {
             None
         } else if anchor < cursor {

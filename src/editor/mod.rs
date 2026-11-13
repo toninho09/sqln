@@ -6,7 +6,11 @@ mod buffer;
 mod conventional;
 mod frame;
 pub mod review;
+mod run;
+pub use run::RunPreview;
+mod scroll;
 mod search;
+pub use scroll::Scrollbar;
 mod syntax;
 mod undo;
 
@@ -29,7 +33,7 @@ use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{CopyOutcome, EditorClipboard, SharedClipboard};
 use crate::complete::{Completion, suggest_in};
 use crate::input::{Action, SuggestionKeys};
-use crate::sql::{Dialect, format_statement, split, split_tokens, statement_at};
+use crate::sql::{Dialect, format_statement, split, split_tokens};
 use crate::ui::text;
 use crate::ui::theme::Theme;
 
@@ -180,6 +184,9 @@ pub struct SqlEditor {
     redo_depth: usize,
     page_height: usize,
     text_area: Option<Rect>,
+    scrollbars: [Option<Scrollbar>; 2],
+    scroll_drag: Option<scroll::Drag>,
+    scroll_selection_end: Option<Index2>,
     agent_page: std::cell::RefCell<agent::ReadCursor>,
     revision: u64,
     /// The last known text in Vim mode. EdTUI does not report its edits.
@@ -244,6 +251,9 @@ impl SqlEditor {
             redo_depth: 0,
             page_height: 20,
             text_area: None,
+            scrollbars: [None, None],
+            scroll_drag: None,
+            scroll_selection_end: None,
             agent_page: std::cell::RefCell::new(agent::ReadCursor::default()),
             revision: 0,
             vim_shadow,
@@ -357,11 +367,28 @@ impl SqlEditor {
         self.state.viewport_offset()
     }
 
+    /// Returns the widest line in display cells, including the insertion cursor.
+    pub fn horizontal_content_width(&mut self) -> usize {
+        let cursor_cell = usize::from(self.state.mode != EditorMode::Normal);
+        self.snapshot().max_width + cursor_cell
+    }
+
+    /// Returns the horizontal view offset in display cells.
+    pub fn horizontal_scroll_position(&mut self) -> usize {
+        let (left, _) = self.scroll();
+        let row = self.state.cursor.row;
+        let snapshot = self.snapshot();
+        let start = snapshot.line_start(row);
+        let end = snapshot.offset(Index2::new(row, left));
+        buffer::display_width(&snapshot.text[start..end])
+    }
+
     pub fn set_scroll(&mut self, column: usize, row: usize) {
         self.state.set_viewport_offset(column, row);
     }
 
     pub fn set_cursor(&mut self, cursor: Index2) {
+        self.scroll_selection_end = None;
         self.state.cursor = cursor;
         self.anchor = None;
         self.break_undo_group();
@@ -416,16 +443,20 @@ impl SqlEditor {
         self.sync_ghosts();
     }
 
-    fn snapshot(&mut self) -> &Snapshot {
+    fn snapshot(&mut self) -> &mut Snapshot {
         let revision = self.revision;
         // The old copy leaves first, so a key keeps one copy at its peak.
         let current = self
             .snapshot
             .take()
             .filter(|(cached, _)| *cached == revision);
-        let cached =
-            current.unwrap_or_else(|| (revision, Snapshot::new(&self.state.lines, self.dialect)));
-        &self.snapshot.insert(cached).1
+        let cached = current.unwrap_or_else(|| {
+            (
+                revision,
+                Snapshot::new(&self.state.lines, self.dialect, self.literal_text),
+            )
+        });
+        &mut self.snapshot.insert(cached).1
     }
 
     /// Handles a key for the open list. It returns false when other handlers must act.
@@ -486,6 +517,7 @@ impl SqlEditor {
     }
 
     pub fn on_key(&mut self, key: KeyEvent, catalog: Option<&Catalog>) {
+        self.restore_scroll_selection();
         self.status = None;
         if self.search.is_some() {
             self.on_search_key(key);
@@ -582,6 +614,7 @@ impl SqlEditor {
 
     /// Applies an editor command without key simulation.
     pub fn on_command(&mut self, action: Action, catalog: Option<&Catalog>) {
+        self.restore_scroll_selection();
         self.status = None;
         self.close_suggestions();
         let mode = self.state.mode;
@@ -673,40 +706,28 @@ impl SqlEditor {
         }
     }
 
-    /// Finds the statements of an execution, and it copies their text.
-    pub fn plan_run(&mut self, scope: RunScope) -> Result<RunPlan, RunRefusal> {
-        let dialect = self.dialect;
-        let selection = (scope == RunScope::Default)
-            .then(|| self.selection_range())
-            .flatten();
-        let cursor = self.state.cursor;
-        let snapshot = self.snapshot();
-        let text = snapshot.text.as_str();
+    pub fn json_validation(&mut self) -> Option<&crate::grid::json::Validation> {
+        self.snapshot().json_validation.as_ref()
+    }
 
-        let (base, found) = if let Some((start, end)) = selection {
-            let (start, end) = (snapshot.offset(start), snapshot.offset(end));
-            (start, split(&text[start..end], dialect))
-        } else if scope == RunScope::Script {
-            (0, split(text, dialect))
-        } else {
-            let statement = statement_at(text, dialect, snapshot.offset(cursor));
-            (0, vec![statement.ok_or(RunRefusal::CursorOutside)?])
-        };
-        if found.is_empty() {
-            return Err(RunRefusal::NoStatement);
+    /// Formats the complete cell as one undo step. This action never saves it.
+    pub fn format_json(&mut self) -> Result<(), &'static str> {
+        if !matches!(
+            self.json_validation(),
+            Some(crate::grid::json::Validation::Valid)
+        ) {
+            return Err("Cannot format JSON. Enter a valid object or array within 1 MiB.");
         }
-        let source = &text[base..];
-        Ok(RunPlan {
-            statements: found
-                .iter()
-                .map(|found| found.text(source).to_owned())
-                .collect(),
-            rows: found
-                .iter()
-                .map(|found| snapshot.position(base + found.start).row)
-                .collect(),
-            starts: found.iter().map(|found| base + found.start).collect(),
-        })
+        let source = &self.snapshot().text;
+        let formatted = crate::grid::json::pretty(source)
+            .ok_or("Formatted JSON exceeds the size limit. Reduce the value before formatting.")?;
+        if formatted == *source {
+            return Ok(());
+        }
+        let end = buffer::document_end(&self.state.lines);
+        self.replace_ranges(&[(Index2::new(0, 0), end, formatted.as_str())]);
+        self.leave_visual_mode();
+        Ok(())
     }
 
     /// Formats the statements of a run, as one undo step. Nothing changes after a refusal.
@@ -951,6 +972,7 @@ impl SqlEditor {
 
     /// Handles a paste from the terminal. It does not touch the clipboard.
     pub fn on_paste(&mut self, text: &str) {
+        self.restore_scroll_selection();
         self.list = None;
         self.status = None;
         let text = if self.literal_text {
@@ -1005,6 +1027,10 @@ impl SqlEditor {
     }
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        if self.on_scrollbar_mouse(mouse) {
+            self.list = None;
+            return;
+        }
         self.list = None;
         match mouse.kind {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
@@ -1020,6 +1046,7 @@ impl SqlEditor {
             }
             MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left) => {
                 if let Some(position) = self.pointer_position(mouse) {
+                    self.scroll_selection_end = None;
                     match self.keyboard {
                         KeyboardMode::Conventional => self.point_conventional(mouse, position),
                         KeyboardMode::Vim => self.point_vim(mouse, position),
@@ -1208,6 +1235,7 @@ impl SqlEditor {
     /// Replaces ranges as one undo step. The ranges come in the order of the text, and
     /// the cursor goes to the start of the first one.
     fn replace_ranges(&mut self, ranges: &[(Index2, Index2, &str)]) {
+        self.scroll_selection_end = None;
         match self.keyboard {
             KeyboardMode::Conventional => self.replace_ranges_in_one_step(ranges),
             KeyboardMode::Vim => {
@@ -1284,6 +1312,26 @@ impl SqlEditor {
         Window { top, left, ends }
     }
 
+    pub fn selected_character_count(&self) -> usize {
+        let Some((start, end)) = self.selection_range() else {
+            return 0;
+        };
+        if let Some((revision, snapshot)) = &self.snapshot
+            && *revision == self.revision
+        {
+            return snapshot
+                .character_offset(end)
+                .saturating_sub(snapshot.character_offset(start));
+        }
+        if start.row == end.row {
+            return end.col.saturating_sub(start.col);
+        }
+        let middle: usize = (start.row..end.row)
+            .map(|row| buffer::row(&self.state.lines, row).len() + 1)
+            .sum();
+        middle + end.col - start.col
+    }
+
     /// Finds the styles of the part of the text that the next frame shows, and returns
     /// the state to draw. Each row stops at the end of the window until that state drops,
     /// so the text is not complete during the draw.
@@ -1317,6 +1365,13 @@ impl SqlEditor {
             );
         }
         for (row, end) in window.rows() {
+            for (kind, first, last) in snapshot.row_json_tokens(row, window.left, end) {
+                styles.mark(
+                    Index2::new(row, first),
+                    Index2::new(row, last),
+                    theme.json_token_style(kind),
+                );
+            }
             for (token, first, last) in snapshot.row_tokens(row, window.left, end) {
                 let word = &snapshot.text[token.start()..token.end()];
                 let Some(style) = theme.sql_token_style(token.kind, word, dialect) else {

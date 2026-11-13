@@ -32,6 +32,7 @@ pub fn draw_welcome(frame: &mut Frame, area: Rect, welcome: &Welcome, theme: &Th
     // and the rows of keys under them.
     let logo = welcome.logo && usize::from(free) >= text::HOME_LOGO.len() + 3 + welcome.rows.len();
     let mut lines = Vec::new();
+    let header_rows = usize::from(free).saturating_sub(welcome.rows.len());
     if logo {
         for row in text::HOME_LOGO {
             lines.push(Line::styled(row, theme.welcome_title).centered());
@@ -39,15 +40,28 @@ pub fn draw_welcome(frame: &mut Frame, area: Rect, welcome: &Welcome, theme: &Th
         lines.push(Line::styled(text::HOME_VERSION, theme.hint).centered());
         lines.push(Line::styled(welcome.note, theme.hint).centered());
     } else {
-        lines.push(Line::styled(text::welcome_title(), theme.welcome_title));
-        lines.push(Line::styled(welcome.note, theme.hint));
+        if header_rows > 0 {
+            lines.push(Line::styled(text::welcome_title(), theme.welcome_title));
+        }
+        if header_rows > 1 {
+            lines.push(Line::styled(welcome.note, theme.hint));
+        }
     }
-    lines.push(Line::raw(""));
+    if logo || header_rows > 2 {
+        lines.push(Line::raw(""));
+    }
     for (key, label) in &welcome.rows {
-        lines.push(Line::from(vec![
-            Span::styled(format!("{key:>key_width$}"), theme.key),
-            Span::styled(format!("  {label}"), theme.hint),
-        ]));
+        if key.is_empty() {
+            lines.push(Line::styled(*label, theme.welcome_title));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{}{key}", " ".repeat(key_width - key.width())),
+                    theme.key,
+                ),
+                Span::styled(format!("  {label}"), theme.hint),
+            ]));
+        }
     }
     let width = u16::try_from(lines.iter().map(Line::width).max().unwrap_or(0)).unwrap_or(u16::MAX);
     let height = u16::try_from(lines.len()).unwrap_or(u16::MAX);

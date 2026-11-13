@@ -11,7 +11,7 @@ pub enum Body {
         editor: Box<SqlEditor>,
     },
     Review {
-        contents: WrappedText,
+        contents: Box<WrappedText>,
         scroll: usize,
     },
 }
@@ -24,4 +24,5 @@ pub struct EditForm {
     pub focus: usize,
     pub keys: Vec<crate::input::Chord>,
     pub note: Option<String>,
+    pub format_key: Option<String>,
 }

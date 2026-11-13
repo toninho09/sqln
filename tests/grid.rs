@@ -561,6 +561,94 @@ fn json_keeps_the_order_of_the_keys_and_each_digit() {
 }
 
 #[test]
+fn json_colors_classify_keys_strings_numbers_and_literals_without_changing_text() {
+    use sqln::grid::json::{Highlights, Kind};
+    let text =
+        r#" {"b":-12345678901234567890123.50e+2,"a":"x \" : 日本 \\","b":[true,false,null]} "#;
+    let highlights = Highlights::new(text).unwrap();
+    let tokens: Vec<_> = highlights
+        .in_range(0..text.len())
+        .map(|(range, kind)| (&text[range], kind))
+        .collect();
+    assert_eq!(
+        tokens,
+        [
+            (r#""b""#, Kind::Key),
+            ("-12345678901234567890123.50e+2", Kind::Number),
+            (r#""a""#, Kind::Key),
+            (r#""x \" : 日本 \\""#, Kind::String),
+            (r#""b""#, Kind::Key),
+            ("true", Kind::Literal),
+            ("false", Kind::Literal),
+            ("null", Kind::Literal),
+        ]
+    );
+}
+
+#[test]
+fn json_validation_reports_unicode_columns_and_limits() {
+    use sqln::grid::json::{Validation, validation};
+    match validation("{\"é\": }").unwrap() {
+        Validation::Invalid {
+            line,
+            column,
+            reason,
+        } => {
+            assert_eq!((line, column), (1, 7));
+            assert!(!reason.is_empty());
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(validation("{}"), Some(Validation::Valid)));
+    assert!(validation("plain text").is_none());
+    assert!(matches!(
+        validation(&format!("[\"{}\"]", "x".repeat(FORMAT_LIMIT))),
+        Some(Validation::TooLarge)
+    ));
+}
+
+#[test]
+fn json_colors_clip_tokens_to_visible_ranges_and_skip_empty_ranges() {
+    use sqln::grid::json::{Highlights, Kind};
+    let text = r#"{"key":"long string"}"#;
+    let highlights = Highlights::new(text).unwrap();
+    assert_eq!(
+        highlights.in_range(9..13).collect::<Vec<_>>(),
+        [(9..13, Kind::String)]
+    );
+    assert_eq!(highlights.in_range(10..10).count(), 0);
+    assert_eq!(highlights.in_range(text.len()..text.len()).count(), 0);
+    let text = "{\n \"key\"\n :\n \"value\"\n}";
+    let highlights = Highlights::new(text).unwrap();
+    assert_eq!(
+        highlights.in_range(0..text.len()).next().unwrap().1,
+        Kind::Key
+    );
+}
+
+#[test]
+fn json_colors_require_a_valid_object_or_array_within_the_input_limit() {
+    use sqln::grid::json::Highlights;
+    for text in [
+        "",
+        "text",
+        "1",
+        "\"\"",
+        "null",
+        "true",
+        "{",
+        "[1,]",
+        "{\"key\":}",
+    ] {
+        assert!(Highlights::new(text).is_none(), "{text}");
+    }
+    assert!(Highlights::new("[]").is_some());
+    assert!(Highlights::new("{}").is_some());
+    let long = format!("[\"{}\"]", "x".repeat(FORMAT_LIMIT));
+    assert!(Highlights::new(&long).is_none());
+}
+
+#[test]
 fn json_nests_and_keeps_empty_parts_on_one_row() {
     assert_eq!(
         pretty(r#"[ {"a": [1, 2], "b": { }}, [ ] ]"#).unwrap(),
@@ -695,6 +783,107 @@ fn a_narrow_window_gives_the_indent_to_the_text() {
         rows.iter().map(|(_, row)| row.as_str()).collect::<String>(),
         "name : one two three"
     );
+}
+
+#[test]
+fn text_selection_preserves_controls_and_original_line_breaks() {
+    let mut text = WrappedText::new("a\t日本\u{1b}\nb".into());
+    text.set_width(20);
+    text.select_at(0, 1, false);
+    text.select_at(1, 1, true);
+    assert_eq!(text.copy_text(), "\t日本\u{1b}\nb");
+    assert_eq!(text.row_selection(0), 1..9);
+    text.select_at(0, 3, false);
+    text.select_at(0, 4, true);
+    assert_eq!(
+        text.copy_text(),
+        "日",
+        "a click inside a wide character uses its start"
+    );
+}
+
+#[test]
+fn selection_of_empty_text_and_empty_lines_stays_valid() {
+    let mut empty = WrappedText::new(String::new());
+    empty.select_at(20, 40, false);
+    for (horizontal, vertical) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+        assert_eq!(empty.extend_selection(horizontal, vertical), 0);
+        assert_eq!(empty.copy_text(), "");
+    }
+    let mut lines = WrappedText::new("\n\nx".into());
+    lines.set_width(10);
+    lines.extend_selection(0, 1);
+    assert_eq!(lines.copy_text(), "\n");
+    lines.extend_selection(0, 1);
+    assert_eq!(lines.copy_text(), "\n\n");
+}
+
+#[test]
+fn binary_selection_copies_only_the_selected_digits() {
+    let mut text = WrappedText::from_source(Content::Hex(vec![0xAB, 0xCD].into()));
+    text.set_width(3);
+    text.select_at(0, 1, false);
+    text.select_at(1, 2, true);
+    assert_eq!(text.copy_text(), "xABC");
+    text.set_width(20);
+    assert_eq!(text.copy_text(), "xABC");
+    text.extend_selection(1, 0);
+    assert_eq!(text.copy_text(), "xABCD");
+}
+
+#[test]
+fn selecting_a_small_part_of_a_large_value_keeps_the_source() {
+    let mut text = WrappedText::new("x".repeat(100_000_000));
+    text.set_width(80);
+    text.select_at(0, 1, false);
+    text.select_at(1, 3, true);
+    assert_eq!(text.copy_text(), "x".repeat(82));
+    assert_eq!(text.row(2), Some("x".repeat(80).as_str()));
+}
+
+#[test]
+fn cell_search_bounds_work_and_can_cancel_a_large_scan() {
+    use std::time::Instant;
+    let mut text = WrappedText::new("x".repeat(1_000_000));
+    text.set_width(80);
+    text.open_search();
+    text.paste_search("missing");
+    assert_eq!(text.continue_search(Instant::now()), None);
+    assert!(text.search_has_work());
+    text.on_search_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyModifiers::NONE,
+    ));
+    assert!(!text.search_has_work());
+    assert!(text.search().is_none());
+}
+
+#[test]
+fn cell_search_reads_hexadecimal_without_expanding_the_complete_value() {
+    let mut text = WrappedText::from_source(Content::Hex(vec![0xAB, 0xCD, 0xAB, 0xCD].into()));
+    text.set_width(4);
+    text.open_search();
+    text.paste_search("abcd");
+    while text.search_has_work() {
+        text.continue_search(Instant::now() + Duration::from_secs(1));
+    }
+    assert_eq!(text.search().unwrap().matches, [2..6, 6..10]);
+    assert_eq!(text.copy_text(), "0xABCDABCD");
+}
+
+#[test]
+fn selected_character_count_keeps_unicode_line_breaks_and_resize() {
+    let mut text = WrappedText::new("ação 日本\nnext".into());
+    text.set_width(20);
+    text.select_at(0, 1, false);
+    text.select_at(1, 2, true);
+    assert_eq!(text.selected_character_count(), 9);
+    assert_eq!(
+        text.copy_text().chars().count(),
+        text.selected_character_count()
+    );
+    text.set_width(3);
+    assert_eq!(text.selected_character_count(), 9);
 }
 
 fn live_tab(cap: usize) -> ResultTab {

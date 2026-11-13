@@ -609,7 +609,7 @@ impl App {
                 json,
             } => {
                 let formatted = self.persist.as_ref().is_none_or(|item| item.format_json);
-                let (contents, footer, other) = match json {
+                let (mut contents, footer, other) = match json {
                     Some((json, json_footer)) if formatted => (
                         WrappedText::new(json),
                         json_footer,
@@ -622,12 +622,16 @@ impl App {
                     ),
                     None => (WrappedText::from_source(text.source()), footer, None),
                 };
+                if other.is_some() {
+                    contents.highlight_json();
+                }
                 self.overlay = Some(Overlay {
                     _analysis_memory: None,
                     title,
                     contents,
                     footer,
                     scroll: 0,
+                    dragging: false,
                     other,
                     row: None,
                 });
@@ -652,6 +656,7 @@ impl App {
             contents: WrappedText::with_indent(window.text, window.indent),
             footer: window.footer,
             scroll,
+            dragging: false,
             other: None,
             row: Some(row),
         });
@@ -1085,6 +1090,7 @@ impl App {
             contents: WrappedText::new(contents),
             footer: "Esc close | Up/Down scroll | Ctrl+C copy".into(),
             scroll: 0,
+            dragging: false,
             other: None,
             row: None,
         });
@@ -1280,14 +1286,84 @@ impl App {
         }
     }
 
+    pub(super) fn continue_overlay_search(&mut self, deadline: std::time::Instant) {
+        if let Some(overlay) = &mut self.overlay
+            && let Some(row) = overlay.contents.continue_search(deadline)
+        {
+            overlay.scroll = row;
+        }
+    }
+
     fn on_overlay_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if ctrl && key.code == KeyCode::Char('c') && self.pending_edit_guard() {
             return;
         }
+        let mut find = ctrl && key.code == KeyCode::Char('f');
+        let searching = self
+            .overlay
+            .as_ref()
+            .is_some_and(|overlay| overlay.contents.search().is_some());
+        if !searching && !find {
+            let mut keys = self
+                .pending_key
+                .take()
+                .map_or_else(Vec::new, |(_, keys)| keys);
+            if key.code == KeyCode::Esc && !keys.is_empty() {
+                return;
+            }
+            keys.push(Chord::from_event(key));
+            let mut partial = false;
+            for binding in self.keymap.keys(Action::EditorFind) {
+                let Ok(binding) = binding
+                    .split_whitespace()
+                    .map(Chord::parse)
+                    .collect::<Result<Vec<_>, _>>()
+                else {
+                    continue;
+                };
+                if binding == keys {
+                    find = true;
+                    break;
+                }
+                partial |= binding.starts_with(&keys);
+            }
+            if partial && !find {
+                self.pending_key = Some((Region::Editor, keys));
+                return;
+            }
+        }
         let Some(overlay) = &mut self.overlay else {
             return;
         };
+        if find {
+            self.pending_key = None;
+            overlay.dragging = false;
+            overlay.contents.open_search();
+            return;
+        }
+        if overlay.contents.on_search_key(key) {
+            return;
+        }
+        if key.modifiers.contains(KeyModifiers::SHIFT) {
+            let direction = match key.code {
+                KeyCode::Left => Some((-1, 0)),
+                KeyCode::Right => Some((1, 0)),
+                KeyCode::Up => Some((0, -1)),
+                KeyCode::Down => Some((0, 1)),
+                _ => None,
+            };
+            if let Some((horizontal, vertical)) = direction {
+                let row = overlay.contents.extend_selection(horizontal, vertical);
+                let height = usize::from(self.layout.overlay.height).max(1);
+                if row < overlay.scroll {
+                    overlay.scroll = row;
+                } else if row >= overlay.scroll + height {
+                    overlay.scroll = row + 1 - height;
+                }
+                return;
+            }
+        }
         match key.code {
             KeyCode::Esc | KeyCode::Enter => {
                 self.overlay = None;
@@ -1301,7 +1377,7 @@ impl App {
             KeyCode::Left | KeyCode::Char('h') => self.step_row_window(false),
             KeyCode::Right | KeyCode::Char('l') => self.step_row_window(true),
             KeyCode::Char('c') if ctrl => {
-                let contents = overlay.contents.to_text();
+                let contents = overlay.contents.copy_text();
                 self.copy(&contents);
             }
             _ => {}
@@ -1549,7 +1625,12 @@ impl App {
                     let mut fitting = actions.to_vec();
                     fitting.retain(|action| self.fits_cursor(*action));
                     let keys = self.prefix_keys(&fitting);
-                    (!keys.is_empty()).then_some((keys, *label))
+                    let label = if actions.first() == Some(&Run) {
+                        self.command_label(Run)
+                    } else {
+                        *label
+                    };
+                    (!keys.is_empty()).then_some((keys, label))
                 });
                 KeyGroup {
                     title,
@@ -1722,7 +1803,7 @@ impl App {
         if !self.console().editor.is_blank() {
             return None;
         }
-        let keyed = |action, label| self.shown_key(action).map(|key| (key, label));
+        let keyed = |action, label| self.welcome_command(action, label);
         let mut rows = Vec::new();
         let note = if self.connections.is_empty() {
             rows.extend(self.explorer_row(Action::NavigatorAdd, text::WELCOME_ADD));
@@ -1730,10 +1811,8 @@ impl App {
         } else {
             rows.extend(keyed(Action::Run, text::WELCOME_RUN));
             rows.extend(keyed(Action::RunScript, text::WELCOME_SCRIPT));
-            rows.push((
-                text::WELCOME_SUGGESTIONS_KEY.to_owned(),
-                text::WELCOME_SUGGESTIONS,
-            ));
+            rows.extend(keyed(Action::EditorSuggestions, text::WELCOME_SUGGESTIONS));
+            rows.extend(keyed(Action::OpenSqlFile, text::HOME_OPEN_SQL));
             text::WELCOME_WRITE
         };
         rows.extend(keyed(Action::OpenPalette, text::WELCOME_COMMANDS));
@@ -1747,18 +1826,29 @@ impl App {
 
     /// Returns the screen of the application without a tab.
     pub(super) fn home_screen(&self) -> Welcome {
-        let keyed = |action, label| self.shown_key(action).map(|key| (key, label));
+        let keyed = |action, label| self.welcome_command(action, label);
         let mut rows = Vec::new();
         if self.navigator.collapsed {
             rows.extend(keyed(Action::ToggleNavigator, text::HOME_EXPLORER));
         }
+        rows.push((String::new(), text::HOME_CONNECT));
         rows.extend(self.explorer_row(Action::NavigatorAdd, text::WELCOME_ADD));
         let note = if self.connections.is_empty() {
+            rows.push((String::new(), text::HOME_SQL_NEEDS_CONNECTION));
             text::WELCOME_NO_CONNECTION
         } else {
-            rows.extend(self.explorer_row(Action::NavigatorNewConsole, text::HOME_CONSOLE));
+            if self
+                .navigator
+                .current(&self.connections)
+                .is_some_and(|row| matches!(row.kind, RowKind::Connection | RowKind::Console))
+            {
+                rows.extend(self.explorer_row(Action::NavigatorOpen, text::HOME_CONSOLE));
+            }
+            rows.extend(keyed(Action::OpenSqlFile, text::HOME_OPEN_SQL));
             text::HOME_NO_CONSOLE
         };
+        rows.push((String::new(), text::HOME_SAVED));
+        rows.extend(self.explorer_row(Action::NavigatorNewConsole, text::HOME_SAVED_CONSOLES));
         rows.extend(self.explorer_row(Action::NavigatorScripts, text::HOME_SCRIPTS));
         rows.extend(keyed(Action::OpenSettings, text::HOME_SETTINGS));
         rows.extend(keyed(Action::OpenPalette, text::WELCOME_COMMANDS));
@@ -1771,11 +1861,33 @@ impl App {
         }
     }
 
-    /// Returns the key that moves to the explorer, then the key of an explorer command,
-    /// with its label. That path acts from any panel.
+    /// Shows a direct shortcut, or the palette followed by the command label.
+    fn welcome_command(
+        &self,
+        action: Action,
+        label: &'static str,
+    ) -> Option<(String, &'static str)> {
+        let available = if action.region() == Region::Navigator {
+            self.navigator_command_available(action)
+        } else {
+            self.command_available(action)
+        };
+        if !available && action != Action::OpenPalette {
+            return None;
+        }
+        match self.shown_key(action) {
+            Some(key) => Some((key, label)),
+            None => Some((
+                format!("{} →", self.shown_key(Action::OpenPalette)?),
+                self.command_label(action),
+            )),
+        }
+    }
+
+    /// Returns the path to an explorer command from any panel.
     fn explorer_row(&self, action: Action, label: &'static str) -> Option<(String, &'static str)> {
         let focus = self.shown_key(self.explorer_entry())?;
-        let key = self.shown_key(action)?;
+        let (key, label) = self.welcome_command(action, label)?;
         Some((format!("{focus} {key}"), label))
     }
 }

@@ -50,6 +50,15 @@ pub const EDIT_CLOSE_QUESTION: &str = "Apply or discard pending changes before c
 pub const EDIT_DISCARD_QUESTION: &str =
     "Discard all pending changes? This does not undo a database commit.";
 pub const EDIT_CELL_HINT: &str = "F2/Ctrl+S keep locally · Tab buttons · Esc cancel";
+pub fn selected_characters(number: usize) -> String {
+    let unit = if number == 1 {
+        "character"
+    } else {
+        "characters"
+    };
+    format!("{} {unit} selected", count(number))
+}
+
 pub const EDIT_REVIEW_HINT: &str = "F2/Ctrl+S apply · Up/Down scroll · Tab buttons · Esc cancel";
 pub const AUTO_REFRESH_TITLE: &str = "Auto-refresh";
 pub const AUTO_REFRESH_NEEDS_RUN: &str =
@@ -379,17 +388,32 @@ pub const HELP_ALL: &str = "All";
 pub const HELP_GROUP: &str = "Group";
 pub const HELP_GROUP_KEYS: &str = "Tab / Shift+Tab";
 
-pub const HINT_OVERLAY: &[HintPart] =
-    &[("Up/Down", "scroll"), ("Ctrl+C", "copy"), ("Esc", "close")];
+pub const HINT_OVERLAY_SEARCH: &[HintPart] = &[
+    ("Enter", "next"),
+    ("Shift+Enter", "previous"),
+    ("Ctrl+C", "copy"),
+    ("Esc", "close find"),
+];
+pub const HINT_OVERLAY: &[HintPart] = &[
+    ("Ctrl+F", "find"),
+    ("Up/Down", "scroll"),
+    ("Shift+arrows", "select"),
+    ("Ctrl+C", "copy"),
+    ("Esc", "close"),
+];
 pub const HINT_OVERLAY_ROW: &[HintPart] = &[
+    ("Ctrl+F", "find"),
     ("Left/Right", "row"),
     ("Up/Down", "scroll"),
+    ("Shift+arrows", "select"),
     ("Ctrl+C", "copy"),
     ("Esc", "close"),
 ];
 pub const HINT_OVERLAY_JSON: &[HintPart] = &[
+    ("Ctrl+F", "find"),
     ("f", "switch form"),
     ("Up/Down", "scroll"),
+    ("Shift+arrows", "select"),
     ("Ctrl+C", "copy"),
     ("Esc", "close"),
 ];
@@ -484,8 +508,45 @@ pub const MENU_NEXT_TAB: &str = "Next tab";
 pub const MENU_PREVIOUS_TAB: &str = "Previous tab";
 pub const MENU_RENAME: &str = "Rename the tab";
 pub const MENU_CLOSE_TAB: &str = "Close the tab";
-pub const MENU_RUN: &str = "Run the statement";
-pub const MENU_SCRIPT: &str = "Run the script";
+pub const MENU_RUN: &str = "Run statement";
+pub const MENU_SCRIPT: &str = "Run script";
+pub const RUN_SELECTION: &str = "Run selection";
+
+pub fn run_label(selection: bool) -> &'static str {
+    if selection { RUN_SELECTION } else { MENU_RUN }
+}
+
+pub fn run_hint(selection: bool) -> &'static str {
+    if selection {
+        "run selection"
+    } else {
+        "run statement"
+    }
+}
+
+pub fn run_preview(
+    preview: Result<crate::editor::RunPreview, crate::editor::RunRefusal>,
+    selection: bool,
+    script: bool,
+) -> String {
+    let target = match preview {
+        Ok(preview) => {
+            let kind = if selection { "Selection" } else { "Statement" };
+            if preview.first_line == preview.last_line {
+                format!("{kind}: Line {}", preview.first_line)
+            } else {
+                format!("{kind}: Lines {}–{}", preview.first_line, preview.last_line)
+            }
+        }
+        Err(crate::editor::RunRefusal::CursorOutside) => "No statement at cursor".to_owned(),
+        Err(crate::editor::RunRefusal::NoStatement) => "No statement to run".to_owned(),
+    };
+    if script {
+        format!("{target} · Script: whole script")
+    } else {
+        target
+    }
+}
 pub const MENU_EXPLORER: &str = "Explorer commands";
 pub const MENU_CONTEXT: &str = "Panel commands";
 pub const MENU_OPEN: &str = "Open";
@@ -538,8 +599,8 @@ pub const MENU_QUIT: &str = "Quit";
 pub const WELCOME_NO_CONNECTION: &str = "No connection yet";
 pub const WELCOME_WRITE: &str = "Write SQL here";
 pub const WELCOME_ADD: &str = "Add a connection";
-pub const WELCOME_RUN: &str = "Run the statement";
-pub const WELCOME_SCRIPT: &str = "Run the script";
+pub const WELCOME_RUN: &str = MENU_RUN;
+pub const WELCOME_SCRIPT: &str = MENU_SCRIPT;
 pub const WELCOME_SUGGESTIONS: &str = "Show suggestions";
 pub const WELCOME_SUGGESTIONS_KEY: &str = "Ctrl+Space";
 pub const WELCOME_COMMANDS: &str = "Show all commands";
@@ -548,6 +609,11 @@ pub const WELCOME_KEYS: &str = "Show all keys";
 pub const HOME_NO_CONSOLE: &str = "No console is open";
 pub const HOME_EXPLORER: &str = "Show the explorer";
 pub const HOME_CONSOLE: &str = "Open a console";
+pub const HOME_CONNECT: &str = "Connect to a database";
+pub const HOME_OPEN_SQL: &str = "Open a SQL file";
+pub const HOME_SQL_NEEDS_CONNECTION: &str = "Add a connection before opening SQL files";
+pub const HOME_SAVED: &str = "Open saved work";
+pub const HOME_SAVED_CONSOLES: &str = "Saved consoles of selected connection";
 pub const HOME_SCRIPTS: &str = "Scripts without a connection";
 pub const HOME_SETTINGS: &str = "Open the settings";
 pub const HOME_QUIT: &str = "Quit SQLN";
@@ -1371,8 +1437,8 @@ pub const TITLE_SCHEMA: &str = "Schema";
 pub const TITLE_DATABASE: &str = "Database";
 pub const SCHEMA_DEFAULT: &str = "(default of the connection)";
 pub const SCHEMA_LOADING: &str = "Reading the catalog.";
-pub const CONTROL_RUN: &str = "Run";
-pub const CONTROL_SCRIPT: &str = "Script";
+pub const CONTROL_RUN: &str = MENU_RUN;
+pub const CONTROL_SCRIPT: &str = MENU_SCRIPT;
 pub const CONTROL_STOP: &str = "Stop";
 /// The button at the right end of the main tabs. It quits as `Ctrl+W q`.
 pub const CONTROL_QUIT: &str = "Quit";

@@ -13,5 +13,6 @@ mod editor_undo;
 mod editor_vim;
 mod external_file;
 mod join_suggestions;
+mod run_preview;
 mod script_file;
 mod syntax_diagnostics;

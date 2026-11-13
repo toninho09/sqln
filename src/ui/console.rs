@@ -100,6 +100,7 @@ pub struct BarData<'a> {
 /// Lists the buttons of the console bar. A button that has no effect now looks disabled.
 fn control_items(console: &Console, bar: &BarData, theme: &Theme) -> Vec<(Control, String, bool)> {
     let idle = !console.is_busy();
+    let run_label = text::run_label(console.editor.selection_range().is_some());
     let open = idle && console.in_transaction();
     let icons = &theme.icons;
     let mode = if console.manual {
@@ -132,7 +133,7 @@ fn control_items(console: &Console, bar: &BarData, theme: &Theme) -> Vec<(Contro
     if bar.agent_sql {
         // Auto mode only. Commit and Rollback stay for a transaction that the user opened.
         let mut items = vec![
-            (Control::Run, theme.tool(icons.run, text::CONTROL_RUN), idle),
+            (Control::Run, theme.tool(icons.run, run_label), idle),
             (
                 Control::NewConsole,
                 theme.button(text::CONTROL_NEW_CONSOLE),
@@ -157,7 +158,7 @@ fn control_items(console: &Console, bar: &BarData, theme: &Theme) -> Vec<(Contro
         return items;
     }
     let mut items = vec![
-        (Control::Run, theme.tool(icons.run, text::CONTROL_RUN), idle),
+        (Control::Run, theme.tool(icons.run, run_label), idle),
         (
             Control::Script,
             theme.tool(icons.script, text::CONTROL_SCRIPT),
@@ -364,9 +365,30 @@ pub fn draw_console(
     focused: bool,
     theme: &Theme,
 ) -> ConsoleLayout {
-    const BAR_ROWS: u16 = 3;
     let title_rows = u16::from(bar.title);
-    let shared = area.height.saturating_sub(BAR_ROWS + title_rows);
+    let items = buttons::toolbar_items(control_items(console, bar, theme));
+    let mut control_rows = Vec::new();
+    let mut start = 0;
+    let mut used = 1usize;
+    for (index, (_, label, _)) in items.iter().enumerate() {
+        if index > start && used + label.width() > usize::from(area.width) {
+            control_rows.push(start..index);
+            start = index;
+            used = 1;
+        }
+        used += label.width() + usize::from(RowOptions::TOOLBAR.gap);
+    }
+    control_rows.push(start..items.len());
+    let control_height = u16::try_from(control_rows.len()).unwrap_or(1);
+    let bar_rows = control_height + 2;
+    let preview = (!bar.agent && !console.is_busy() && !console.editor.is_blank()).then(|| {
+        let selection = console.editor.selection_range().is_some();
+        text::run_preview(console.editor.run_preview(), selection, !bar.agent_sql)
+    });
+    let preview_rows = u16::from(preview.is_some() && area.height > bar_rows + title_rows + 1);
+    let shared = area
+        .height
+        .saturating_sub(bar_rows + title_rows + preview_rows);
     let parameter_rows = if bar.agent {
         0
     } else {
@@ -381,9 +403,19 @@ pub fn draw_console(
         .unwrap_or(0)
         .max(1)
     };
-    let [title, controls, editor, parameters, tabs, results, summary] = Layout::vertical([
+    let [
+        title,
+        controls,
+        target,
+        editor,
+        parameters,
+        tabs,
+        results,
+        summary,
+    ] = Layout::vertical([
         Constraint::Length(title_rows),
-        Constraint::Length(1),
+        Constraint::Length(control_height),
+        Constraint::Length(preview_rows),
         Constraint::Length(editor_rows),
         Constraint::Length(parameter_rows),
         Constraint::Length(1),
@@ -409,8 +441,20 @@ pub fn draw_console(
         let path = printable(&parts.join(" › "));
         draw_panel_title(frame, title, &path, editor_focused, theme);
     }
-    let items = buttons::toolbar_items(control_items(console, bar, theme));
-    let control_buttons = buttons::draw(frame, controls, RowOptions::TOOLBAR, &items, theme);
+    if let Some(preview) = preview {
+        frame.render_widget(Paragraph::new(preview).style(theme.hint), target);
+    }
+    let mut control_buttons = Vec::new();
+    for (row, range) in control_rows.into_iter().enumerate() {
+        let place = Rect::new(controls.x, controls.y + row as u16, controls.width, 1);
+        control_buttons.extend(buttons::draw(
+            frame,
+            place,
+            RowOptions::TOOLBAR,
+            &items[range],
+            theme,
+        ));
+    }
     if !bar.agent {
         draw_editor(frame, editor, &mut console.editor, editor_focused, theme);
     }
@@ -928,6 +972,16 @@ pub fn overlay_area(area: Rect) -> Rect {
     )
 }
 
+/// Returns the text area after the border and the optional search field.
+pub fn overlay_text_area(area: Rect, search: bool) -> Rect {
+    let mut inner = overlay_area(area).inner(ratatui::layout::Margin::new(1, 1));
+    if search && inner.height > 0 {
+        inner.y += 1;
+        inner.height -= 1;
+    }
+    inner
+}
+
 /// Draws a long text. It returns the first row, because the end of the text limits it.
 pub fn draw_overlay(
     frame: &mut Frame,
@@ -955,20 +1009,109 @@ pub fn draw_overlay_styled(
     let area = frame.area();
     let box_area = overlay_area(area);
     frame.render_widget(Clear, box_area);
+    let count = contents.selected_character_count();
+    let footer = if count > 0 {
+        format!("{} · {footer}", text::selected_characters(count))
+    } else {
+        footer.to_owned()
+    };
     let block = float_block(printable(title).trim(), theme)
-        .title_bottom(Line::from(printable(footer)).alignment(Alignment::Right));
-    let inner = block.inner(box_area);
+        .title_bottom(Line::from(printable(&footer)).alignment(Alignment::Right));
+    let inner = overlay_text_area(area, contents.search().is_some());
+    let border_inner = block.inner(box_area);
+    frame.render_widget(block, box_area);
+    if let Some(search) = contents.search() {
+        use super::kit::input::{FieldMode, FieldText, line};
+        let mut count = if search.input.text().is_empty() {
+            String::new()
+        } else {
+            text::search_count(
+                usize::from(!search.matches.is_empty()) + search.current,
+                search.matches.len(),
+                search.partial,
+            )
+        };
+        if search.has_work() {
+            count.push_str(" · searching");
+        } else if search.partial {
+            count.push_str(" · match limit");
+        }
+        let width = usize::from(border_inner.width)
+            .saturating_sub(7 + unicode_width::UnicodeWidthStr::width(count.as_str()));
+        let mut spans = vec![Span::raw("Find: ")];
+        spans.extend(
+            line(
+                FieldText {
+                    text: search.input.text(),
+                    cursor: search.input.cursor(),
+                    width,
+                    focused: true,
+                    mode: FieldMode::Text,
+                },
+                theme,
+            )
+            .spans,
+        );
+        spans.push(Span::styled(format!(" {count}"), theme.hint));
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)),
+            Rect {
+                height: border_inner.height.min(1),
+                ..border_inner
+            },
+        );
+    }
     contents.set_width(usize::from(inner.width));
     let scroll = contents.last_row_at(scroll);
     let rows = (scroll..scroll + usize::from(inner.height))
         .map_while(|index| {
-            let row = printable(contents.row(index)?);
+            let row = contents.row(index)?.to_owned();
+            let selected = contents.row_selection(index);
             let indent = contents.row_indent(index);
             let row_style = style(&contents.line_head(index, 3));
-            Some(Line::styled(format!("{:indent$}{row}", ""), row_style))
+            let json = contents.row_json_tokens(index);
+            let matches = contents.row_search_ranges(index);
+            let mut cuts = vec![0, row.len(), selected.start, selected.end];
+            cuts.extend(
+                json.iter()
+                    .map(|(range, _)| range.start)
+                    .chain(json.iter().map(|(range, _)| range.end)),
+            );
+            cuts.extend(
+                matches
+                    .iter()
+                    .map(|(range, _)| range.start)
+                    .chain(matches.iter().map(|(range, _)| range.end)),
+            );
+            cuts.sort_unstable();
+            cuts.dedup();
+            let mut spans = vec![Span::styled(format!("{:indent$}", ""), row_style)];
+            for pair in cuts.windows(2) {
+                let range = pair[0]..pair[1];
+                let mut shown = row_style;
+                if let Some((_, kind)) = json.iter().find(|(token, _)| token.contains(&range.start))
+                {
+                    shown = shown.patch(theme.json_token_style(*kind));
+                }
+                if let Some((_, current)) = matches
+                    .iter()
+                    .find(|(found, _)| found.contains(&range.start))
+                {
+                    shown = shown.patch(if *current {
+                        theme.search_current
+                    } else {
+                        theme.search_match
+                    });
+                }
+                if selected.contains(&range.start) {
+                    shown = shown.patch(theme.selection);
+                }
+                spans.push(Span::styled(printable(&row[range]), shown));
+            }
+            Some(Line::from(spans))
         })
         .collect::<Vec<_>>();
-    frame.render_widget(Paragraph::new(rows).block(block), box_area);
+    frame.render_widget(Paragraph::new(rows), inner);
     scroll
 }
 

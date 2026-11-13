@@ -61,7 +61,11 @@ impl Fixture {
     }
 
     fn screen(&mut self) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        self.screen_at(100, 30)
+    }
+
+    fn screen_at(&mut self, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|frame| self.app.draw(frame)).unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..buffer.area.height)
@@ -117,6 +121,163 @@ fn a_start_without_a_connection_shows_the_home_screen() {
     }
     assert!(!screen.contains(text::HOME_CONSOLE), "{screen}");
     assert!(!f.tab_row().contains("console-"), "{screen}");
+}
+
+#[test]
+fn the_home_screen_explains_the_connection_requirement_for_sql_files() {
+    let mut f = Fixture::start();
+    let screen = f.screen();
+    assert!(screen.contains("Connect to a database"), "{screen}");
+    assert!(
+        screen.contains("Add a connection before opening SQL files"),
+        "{screen}"
+    );
+    assert!(screen.contains("Open saved work"), "{screen}");
+    assert!(f.app.console().results.is_empty());
+}
+
+#[test]
+fn the_home_screen_offers_sql_files_and_saved_consoles_with_a_connection() {
+    let mut f = Fixture::sqlite("home-tasks");
+    f.prefix('c');
+    let screen = f.screen();
+    for part in [
+        "Connect to a database",
+        "Open a SQL file",
+        "Open saved work",
+        "Saved consoles of selected connection",
+    ] {
+        assert!(screen.contains(part), "{part}:\n{screen}");
+    }
+    assert!(screen.contains("Ctrl+P"), "{screen}");
+    assert!(f.app.console().results.is_empty());
+}
+
+#[test]
+fn home_tasks_fit_the_minimum_size_and_keep_custom_keys_in_both_modes() {
+    use sqln::editor::KeyboardMode;
+    use sqln::input::Keymap;
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let overrides = [
+            ("openSqlFile".to_owned(), vec!["f8".to_owned()]),
+            ("newConsole".to_owned(), vec!["f9".to_owned()]),
+        ]
+        .into_iter()
+        .collect();
+        let mut f = Fixture::with(Options {
+            database: Some(database("home-custom-tasks")),
+            keyboard: mode,
+            keymap: Some(Keymap::with_overrides(mode, &overrides).unwrap()),
+            ..Options::default()
+        });
+        f.prefix('c');
+        for (width, height) in [(80, 24), (120, 35), (80, 24)] {
+            f.app.on_event(Event::Resize(width, height));
+            let screen = f.screen_at(width, height);
+            for part in [
+                "F8  Open a SQL file",
+                "F9  Saved consoles of selected connection",
+                "Scripts without a connection",
+                "Open saved work",
+            ] {
+                assert!(screen.contains(part), "{part}:\n{screen}");
+            }
+            assert!(f.app.home());
+        }
+        f.code(KeyCode::F(8));
+        assert!(f.screen().contains(text::TITLE_BROWSER));
+        f.code(KeyCode::Esc);
+        assert!(f.app.home());
+        assert!(f.app.console().results.is_empty());
+    }
+}
+
+#[test]
+fn a_removed_home_task_shortcut_uses_the_palette_command_label() {
+    use sqln::editor::KeyboardMode;
+    use sqln::input::Keymap;
+    let overrides = [("newConsole".to_owned(), Vec::new())]
+        .into_iter()
+        .collect();
+    let mut f = Fixture::with(Options {
+        database: Some(database("home-removed-task-key")),
+        keymap: Some(Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap()),
+        ..Options::default()
+    });
+    f.prefix('c');
+    let screen = f.screen_at(80, 24);
+    assert!(
+        screen.contains("Ctrl+W h Ctrl+P →  New console"),
+        "{screen}"
+    );
+    assert!(!screen.contains("Ctrl+W h n"), "{screen}");
+}
+
+#[test]
+fn home_tasks_and_the_sql_file_browser_open_no_database_session() {
+    use crate::common::mock::MockConnector;
+    use sqln::sql::Dialect;
+    use std::sync::Arc;
+    let connector = MockConnector::new(
+        Dialect::Postgres,
+        Arc::new(|_, _| Box::pin(async { panic!("the task screen must not execute SQL") })),
+    );
+    let overrides = [("openSqlFile".to_owned(), vec!["f8".to_owned()])]
+        .into_iter()
+        .collect();
+    let mut f = Fixture::with(Options {
+        connector: Some(Arc::new(connector.clone())),
+        keymap: Some(
+            sqln::input::Keymap::with_overrides(
+                sqln::editor::KeyboardMode::Conventional,
+                &overrides,
+            )
+            .unwrap(),
+        ),
+        ..Options::default()
+    });
+    f.prefix('c');
+    f.screen_at(80, 24);
+    f.code(KeyCode::F(8));
+    assert!(f.screen().contains(text::TITLE_BROWSER));
+    f.code(KeyCode::Esc);
+    assert!(f.app.home());
+    assert_eq!(connector.opened(), 0);
+    assert!(connector.statements().is_empty());
+}
+
+#[test]
+fn home_tasks_keep_multiple_connections_and_cancel_the_file_connection_choice() {
+    use sqln::connection::Definition;
+    use sqln::connector::sqlite::SqliteTarget;
+    let other = database("home-other-connection");
+    let overrides = [("openSqlFile".to_owned(), vec!["f8".to_owned()])]
+        .into_iter()
+        .collect();
+    let mut f = Fixture::with(Options {
+        database: Some(database("home-first-connection")),
+        connections: vec![Definition::sqlite(SqliteTarget::new(&other))],
+        keymap: Some(
+            sqln::input::Keymap::with_overrides(
+                sqln::editor::KeyboardMode::Conventional,
+                &overrides,
+            )
+            .unwrap(),
+        ),
+        ..Options::default()
+    });
+    f.prefix('c');
+    let screen = f.screen_at(80, 24);
+    assert!(screen.contains("Open saved work"), "{screen}");
+    assert!(screen.contains("F8  Open a SQL file"), "{screen}");
+    f.code(KeyCode::F(8));
+    let screen = f.screen();
+    assert!(screen.contains(text::TITLE_SQL_FILE), "{screen}");
+    assert!(screen.contains("home-other-connection"), "{screen}");
+    f.code(KeyCode::Esc);
+    assert!(f.app.home());
+    assert_eq!(f.app.connections().len(), 2);
+    assert!(f.app.console().results.is_empty());
 }
 
 #[test]
@@ -276,7 +437,10 @@ fn a_new_console_of_the_explorer_ends_the_home_screen() {
     assert!(f.app.home());
     let screen = f.screen();
     assert!(screen.contains(text::HOME_NO_CONSOLE), "{screen}");
-    assert!(screen.contains("Ctrl+W h n  Open a console"), "{screen}");
+    assert!(
+        screen.contains("Ctrl+W h n  Saved consoles of selected connection"),
+        "{screen}"
+    );
     // The connection is the first row of the explorer.
     for _ in 0..10 {
         f.code(KeyCode::Up);

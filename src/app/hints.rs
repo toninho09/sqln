@@ -194,7 +194,9 @@ impl App {
             return Some(text::HINT_HELP);
         }
         if let Some(overlay) = &self.overlay {
-            return Some(if overlay.other.is_some() {
+            return Some(if overlay.contents.search().is_some() {
+                text::HINT_OVERLAY_SEARCH
+            } else if overlay.other.is_some() {
                 text::HINT_OVERLAY_JSON
             } else if overlay.row.is_some() {
                 text::HINT_OVERLAY_ROW
@@ -300,7 +302,10 @@ impl App {
         let console = self.console();
         if console.focus == Focus::Parameters {
             let mut items = self.hint_parts(&[
-                (Action::Run, "run"),
+                (
+                    Action::Run,
+                    text::run_hint(console.editor.selection_range().is_some()),
+                ),
                 (Action::FocusUp, "editor"),
                 (Action::OpenPalette, "commands"),
             ]);
@@ -355,8 +360,12 @@ impl App {
         let console = self.console();
         let mut commands = self.ending_commands().to_vec();
         commands.extend([
-            (Action::Run, "run", console.can_run()),
-            (Action::RunScript, "script", console.can_run()),
+            (
+                Action::Run,
+                text::run_hint(console.editor.selection_range().is_some()),
+                console.can_run(),
+            ),
+            (Action::RunScript, "run script", console.can_run()),
             (
                 Action::ChangeConnection,
                 "connection",
@@ -375,6 +384,7 @@ impl App {
                 "suggestions",
                 console.editor.is_inserting(),
             ),
+            (Action::Help, "keys", true),
             (Action::SqlDiagnostics, "warnings", true),
             (Action::FormatSql, "format", !console.editor.is_blank()),
             (Action::OpenHistory, "history", true),

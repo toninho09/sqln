@@ -133,6 +133,7 @@ fn style_of_state(age: Option<Duration>, theme: &Theme) -> Style {
         pool: None,
         data: (0, 1),
         position: None,
+        selected_characters: 0,
         agent: None,
         auto: None,
     };

@@ -1,7 +1,13 @@
 //! The rows of a text in a window. It reads a row when the view needs it, because a
 //! value can hold millions of characters and the window shows only a few of them.
 
+mod search;
+pub use search::TextSearch;
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::ops::Range;
 use std::sync::Arc;
+use std::time::Instant;
 
 use unicode_width::UnicodeWidthChar;
 
@@ -34,6 +40,34 @@ impl Content {
         }
     }
 
+    fn search_char(&self, at: usize) -> Option<(char, usize)> {
+        match self {
+            Self::Text(text) => text
+                .get(at..)?
+                .chars()
+                .next()
+                .map(|c| (c, at + c.len_utf8())),
+            Self::Hex(bytes) if at < 2 + bytes.len() * 2 => {
+                Some((hex_character(bytes, at), at + 1))
+            }
+            _ => None,
+        }
+    }
+
+    fn adjacent(&self, at: usize, forward: bool) -> usize {
+        match self {
+            Self::Text(text) if forward => {
+                text[at..].chars().next().map_or(at, |c| at + c.len_utf8())
+            }
+            Self::Text(text) => text[..at]
+                .char_indices()
+                .next_back()
+                .map_or(0, |(byte, _)| byte),
+            Self::Hex(bytes) if forward => (at + 1).min(2 + bytes.len() * 2),
+            Self::Hex(_) => at.saturating_sub(1),
+        }
+    }
+
     /// Returns the end of the row that starts at `start`, and the start of the next row.
     fn row_end(&self, start: usize, width: usize) -> (usize, Option<(usize, bool)>) {
         match self {
@@ -62,25 +96,29 @@ impl Content {
 
 const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";
 
+fn hex_character(bytes: &[u8], place: usize) -> char {
+    match place {
+        0 => '0',
+        1 => 'x',
+        _ => {
+            let byte = bytes[(place - 2) / 2];
+            let digit = if (place - 2).is_multiple_of(2) {
+                byte >> 4
+            } else {
+                byte & 15
+            };
+            char::from(HEX_DIGITS[usize::from(digit)])
+        }
+    }
+}
+
 /// Returns the digits of `range` of the text of `bytes`. A range that starts or ends
 /// between the two digits of a byte keeps the digits that the range holds.
 fn hex_range(bytes: &[u8], range: std::ops::Range<usize>) -> String {
     let end = range.end.min(2 + bytes.len() * 2);
     let mut out = String::with_capacity(end.saturating_sub(range.start));
     for place in range.start..end {
-        out.push(match place {
-            0 => '0',
-            1 => 'x',
-            _ => {
-                let byte = bytes[(place - 2) / 2];
-                let digit = if (place - 2).is_multiple_of(2) {
-                    byte >> 4
-                } else {
-                    byte & 15
-                };
-                char::from(HEX_DIGITS[usize::from(digit)])
-            }
-        });
+        out.push(hex_character(bytes, place));
     }
     out
 }
@@ -88,6 +126,15 @@ fn hex_range(bytes: &[u8], range: std::ops::Range<usize>) -> String {
 #[derive(Debug)]
 pub struct WrappedText {
     source: Content,
+    cursor: usize,
+    anchor: usize,
+    cursor_char: usize,
+    anchor_char: usize,
+    character_starts: Vec<usize>,
+    next_character: usize,
+    search: Option<TextSearch>,
+    search_target: Option<usize>,
+    json: Option<crate::grid::json::Highlights>,
     width: usize,
     /// The columns before a row that continues a line of the text.
     indent: usize,
@@ -141,6 +188,15 @@ impl WrappedText {
     pub fn from_source_with_indent(source: Content, indent: usize) -> Self {
         Self {
             source,
+            cursor: 0,
+            anchor: 0,
+            cursor_char: 0,
+            anchor_char: 0,
+            character_starts: Vec::new(),
+            next_character: 0,
+            search: None,
+            search_target: None,
+            json: None,
             width: 1,
             indent,
             rows: Vec::new(),
@@ -154,6 +210,205 @@ impl WrappedText {
         self.source.to_text()
     }
 
+    /// Returns the selected original text, or the complete text without a selection.
+    pub fn copy_text(&self) -> String {
+        if self.cursor == self.anchor {
+            self.to_text()
+        } else {
+            self.source.slice(self.selection())
+        }
+    }
+
+    pub fn selected_character_count(&self) -> usize {
+        self.cursor_char.abs_diff(self.anchor_char)
+    }
+
+    fn selection(&self) -> Range<usize> {
+        self.anchor.min(self.cursor)..self.anchor.max(self.cursor)
+    }
+
+    /// Returns the selected bytes inside a row that `row` read.
+    pub fn row_selection(&self, index: usize) -> Range<usize> {
+        let (start, end, _) = self.rows[index];
+        let selected = self.selection();
+        selected.start.clamp(start, end) - start..selected.end.clamp(start, end) - start
+    }
+
+    /// Places the cursor at a display column. `extend` keeps the selection anchor.
+    pub fn select_at(&mut self, row: usize, column: usize, extend: bool) {
+        let row = self.last_row_at(row);
+        let column = column.saturating_sub(self.row_indent(row));
+        let mut width = 0;
+        let mut byte = self.rows[row].0;
+        let mut characters = 0;
+        for c in self.texts[row].chars() {
+            let next = width + printable_char(c).width().unwrap_or(0);
+            if next > column {
+                break;
+            }
+            width = next;
+            byte += c.len_utf8();
+            characters += 1;
+        }
+        self.cursor = byte;
+        self.cursor_char = self.character_starts[row] + characters;
+        if !extend {
+            self.anchor = byte;
+            self.anchor_char = self.cursor_char;
+        }
+    }
+
+    /// Returns the row and display column of the cursor.
+    pub fn cursor_position(&mut self) -> (usize, usize) {
+        while self.next.is_some_and(|(start, _)| start <= self.cursor) {
+            self.row(self.rows.len());
+        }
+        let index = self
+            .rows
+            .partition_point(|row| row.0 <= self.cursor)
+            .saturating_sub(1);
+        let start = self.rows[index].0;
+        let end = self.cursor.min(self.rows[index].1);
+        let width: usize = self
+            .source
+            .slice(start..end)
+            .chars()
+            .map(|c| printable_char(c).width().unwrap_or(0))
+            .sum();
+        (index, self.row_indent(index) + width)
+    }
+
+    /// Extends the selection by one character or one displayed row.
+    pub fn extend_selection(&mut self, horizontal: isize, vertical: isize) -> usize {
+        if horizontal != 0 {
+            let next = self.source.adjacent(self.cursor, horizontal > 0);
+            if next != self.cursor {
+                self.cursor_char = self.cursor_char.saturating_add_signed(horizontal.signum());
+                self.cursor = next;
+            }
+        }
+        let (row, column) = self.cursor_position();
+        if vertical != 0 {
+            self.select_at(row.saturating_add_signed(vertical), column, true);
+        }
+        self.cursor_position().0
+    }
+
+    /// Adds JSON colors after the cell window validates the source.
+    pub(crate) fn highlight_json(&mut self) {
+        if let Content::Text(text) = &self.source {
+            self.json = Some(crate::grid::json::Highlights::validated(text));
+        }
+    }
+
+    /// Returns JSON token ranges relative to a row that `row` read.
+    pub fn row_json_tokens(&self, index: usize) -> Vec<(Range<usize>, crate::grid::json::Kind)> {
+        let (start, end, _) = self.rows[index];
+        self.json.as_ref().map_or_else(Vec::new, |json| {
+            json.in_range(start..end)
+                .map(|(range, kind)| (range.start - start..range.end - start, kind))
+                .collect()
+        })
+    }
+
+    pub fn search(&self) -> Option<&TextSearch> {
+        self.search.as_ref()
+    }
+
+    pub fn open_search(&mut self) {
+        if self.search.is_none() {
+            let mut search = TextSearch::default();
+            if (1..=256).contains(&self.selected_character_count()) {
+                let selected = self.copy_text();
+                if !selected.contains('\n') {
+                    search.input.set(&selected);
+                }
+            }
+            search.restart();
+            self.search = Some(search);
+        }
+    }
+
+    pub fn paste_search(&mut self, text: &str) {
+        if let Some(search) = &mut self.search {
+            search.input.insert(text);
+            search.restart();
+            self.search_target = None;
+        }
+    }
+
+    pub fn on_search_key(&mut self, key: KeyEvent) -> bool {
+        let Some(search) = &mut self.search else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.search = None;
+                self.search_target = None;
+            }
+            KeyCode::Enter | KeyCode::Down | KeyCode::Up => {
+                let forward =
+                    key.code != KeyCode::Up && !key.modifiers.contains(KeyModifiers::SHIFT);
+                self.search_target = search.advance(forward).map(|range| range.start);
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return false,
+            _ => {
+                let before = search.input.text().to_owned();
+                search.input.on_key(key);
+                if before != search.input.text() {
+                    search.restart();
+                    self.search_target = None;
+                }
+            }
+        }
+        true
+    }
+
+    pub fn search_has_work(&self) -> bool {
+        self.search_target.is_some() || self.search.as_ref().is_some_and(TextSearch::has_work)
+    }
+
+    pub fn continue_search(&mut self, deadline: Instant) -> Option<usize> {
+        if self.search_target.is_none()
+            && let Some(search) = &mut self.search
+            && let Some(byte) = search.scan(&self.source, deadline)
+        {
+            self.search_target = Some(byte);
+        }
+        let byte = self.search_target?;
+        while self.next.is_some_and(|(start, _)| start <= byte) {
+            if Instant::now() >= deadline {
+                return None;
+            }
+            self.row(self.rows.len());
+        }
+        self.search_target = None;
+        Some(
+            self.rows
+                .partition_point(|row| row.0 <= byte)
+                .saturating_sub(1),
+        )
+    }
+
+    pub fn row_search_ranges(&self, index: usize) -> Vec<(Range<usize>, bool)> {
+        let Some(search) = &self.search else {
+            return Vec::new();
+        };
+        let (start, end, _) = self.rows[index];
+        let first = search.matches.partition_point(|range| range.end <= start);
+        search.matches[first..]
+            .iter()
+            .enumerate()
+            .take_while(|(_, range)| range.start < end)
+            .map(|(index, range)| {
+                (
+                    (range.start.max(start) - start)..(range.end.min(end) - start),
+                    first + index == search.current,
+                )
+            })
+            .collect()
+    }
+
     /// Sets the columns of a row. The rows of another width stop being valid.
     pub fn set_width(&mut self, width: usize) {
         let width = width.max(1);
@@ -161,6 +416,8 @@ impl WrappedText {
             self.width = width;
             self.rows.clear();
             self.texts.clear();
+            self.character_starts.clear();
+            self.next_character = 0;
             self.next = Some((0, false));
         }
     }
@@ -172,6 +429,8 @@ impl WrappedText {
             let free = if continues { self.hanging() } else { 0 };
             let (end, next) = self.source.row_end(start, self.width - free);
             let text = self.source.slice(start..end);
+            self.character_starts.push(self.next_character);
+            self.next_character += text.chars().count() + next.map_or(0, |(start, _)| start - end);
             self.rows.push((start, end, continues));
             self.texts.push(text);
             self.next = next;

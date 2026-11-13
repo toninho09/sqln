@@ -1250,7 +1250,7 @@ fn the_agent_console_shows_messages_and_results_without_an_editor() {
     assert_eq!(h.app.console().id.to_string(), own);
     let screen = h.draw(80, 24);
     assert!(screen.contains("Messages"), "{screen}");
-    assert!(!screen.contains("[Run]"), "{screen}");
+    assert!(!screen.contains("[Run statement]"), "{screen}");
     h.key(KeyCode::Char('x'));
     h.app.on_event(Event::Paste("SELECT 2".into()));
     assert!(h.app.console().editor.text().is_empty());
@@ -2023,16 +2023,22 @@ fn the_agent_tab_with_sql_keeps_every_button_at_the_minimum_size() {
         .unwrap();
     assert_eq!(reply["status"], "placed");
     h.click_label("MCP · test agent");
-    // At 80x24 the explorer leaves 55 columns: the bar drops Access, and the palette keeps it.
+    // The toolbar wraps at 80x24 and keeps the session controls accessible.
     for (width, height) in [(80, 24), (120, 40), (80, 24)] {
         let screen = h.draw(width, height);
-        for label in ["[Run]", "[New console]", "[Clear]", "[Stop]", "[Tasks 0]"] {
+        for label in [
+            "[Run statement]",
+            "[New console]",
+            "[Clear]",
+            "[Stop]",
+            "[Tasks 0]",
+        ] {
             assert!(
                 screen.contains(label),
                 "{label} at {width}x{height}:\n{screen}"
             );
         }
-        assert_eq!(screen.contains("[Access: Allow]"), width > 80, "{screen}");
+        assert!(screen.contains("[Access: Allow]"), "{screen}");
     }
     h.key(KeyCode::F(12));
     assert!(h.draw(80, 24).contains("[Keep access]"));

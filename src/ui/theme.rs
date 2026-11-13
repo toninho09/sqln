@@ -170,6 +170,8 @@ pub struct Theme {
     /// The text row of the cursor. It adds a background only.
     pub cursor_line: Style,
     pub gutter_current: Style,
+    /// The line numbers of the statement that Run targets at the cursor.
+    pub gutter_target: Style,
     pub scrollbar_thumb: Style,
     pub scrollbar_track: Style,
     pub row_number: Style,
@@ -205,6 +207,16 @@ impl Theme {
             TokenKind::QuotedIdentifier => Some(self.identifier),
             TokenKind::Comment => Some(self.comment),
             _ => None,
+        }
+    }
+
+    pub fn json_token_style(&self, kind: crate::grid::json::Kind) -> Style {
+        use crate::grid::json::Kind;
+        match kind {
+            Kind::Key => self.identifier,
+            Kind::String => self.string,
+            Kind::Number => self.number,
+            Kind::Literal => self.keyword,
         }
     }
 
@@ -395,6 +407,7 @@ impl Theme {
             float_title: color(s.accent).add_modifier(bold),
             cursor_line: fill(s.current_line),
             gutter_current: color(s.text).add_modifier(bold),
+            gutter_target: Style::new().bg(s.selection).fg(s.strong).add_modifier(bold),
             scrollbar_thumb: color(s.accent),
             scrollbar_track: color(s.highlight),
             row_number: color(s.inactive),
@@ -493,6 +506,10 @@ impl Theme {
             float_title: color(Color::LightBlue).add_modifier(bold),
             cursor_line: Style::new(),
             gutter_current: Style::new().add_modifier(bold),
+            gutter_target: Style::new()
+                .bg(Color::Blue)
+                .fg(Color::White)
+                .add_modifier(bold),
             scrollbar_thumb: color(Color::LightBlue),
             scrollbar_track: color(Color::DarkGray),
             row_number: color(Color::DarkGray),
@@ -576,6 +593,7 @@ impl Theme {
             float_title: bold,
             cursor_line: none,
             gutter_current: bold,
+            gutter_target: reversed.add_modifier(Modifier::BOLD),
             scrollbar_thumb: none,
             scrollbar_track: dim,
             row_number: dim,
