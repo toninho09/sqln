@@ -13,6 +13,7 @@ sqln-sql = { path = "crates/sql" }
 sqln-connector = { path = "crates/connector" }
 sqln-store = { path = "crates/store" }
 sqln-exec = { path = "crates/exec" }
+sqln-ui = { path = "crates/ui" }
 apache-avro = { version = "0.22", default-features = false }
 arboard = { version = "3.7.0", default-features = false }
 async-trait = "0.1"
@@ -75,6 +76,7 @@ sqln-sql.workspace = true
 sqln-connector.workspace = true
 sqln-store.workspace = true
 sqln-exec.workspace = true
+sqln-ui.workspace = true
 base64.workspace = true
 crossterm.workspace = true
 edtui.workspace = true
@@ -82,10 +84,8 @@ ratatui.workspace = true
 rmcp.workspace = true
 schemars.workspace = true
 serde_json.workspace = true
-similar.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-unicode-segmentation.workspace = true
 unicode-width.workspace = true
 uuid.workspace = true
 zeroize.workspace = true

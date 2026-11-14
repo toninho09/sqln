@@ -39,7 +39,7 @@ pub fn height(panel: &Panel, available: u16) -> u16 {
     }
 }
 
-pub(crate) fn input_start(input: &LineInput, width: usize) -> usize {
+pub fn input_start(input: &LineInput, width: usize) -> usize {
     let mut used = 1;
     let mut start = input.byte_cursor();
     for (index, c) in input.text()[..start].char_indices().rev() {

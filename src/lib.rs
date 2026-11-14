@@ -1,27 +1,7 @@
 pub mod app;
 pub mod batch;
-pub mod browser;
-pub mod compare_tab;
-pub mod console;
-pub mod definition;
-pub mod diagram_tab;
-pub mod edit_form;
-pub mod editor;
-pub mod export_form;
-pub mod form;
-pub mod generate;
-pub mod help;
-pub mod history;
-pub mod import_form;
 pub mod mcp;
-pub mod navigator;
-pub mod palette;
-pub mod parameters;
-pub mod result;
-pub mod settings;
-pub mod table;
 pub mod terminal;
-pub mod ui;
 
 pub use sqln_connector::{connector, pool, trace, vault};
 pub use sqln_core::{
@@ -34,3 +14,8 @@ pub use sqln_exec::{
 };
 pub use sqln_sql::{sql, structure};
 pub use sqln_store::{creds, script_file, store, trust};
+pub use sqln_ui::{
+    browser, compare_tab, console, definition, diagram_tab, edit_form, editor, export_form, form,
+    generate, help, history, import_form, navigator, palette, parameters, result, settings, table,
+    ui,
+};

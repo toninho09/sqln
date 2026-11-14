@@ -4136,15 +4136,14 @@ dependencies = [
  "schemars",
  "serde_json",
  "signal-hook 0.4.6",
- "similar",
  "sqln-connector",
  "sqln-core",
  "sqln-exec",
  "sqln-sql",
  "sqln-store",
+ "sqln-ui",
  "tokio",
  "tokio-util",
- "unicode-segmentation",
  "unicode-width 0.2.3",
  "uuid",
  "zbus-secret-service-keyring-store",
@@ -4253,6 +4252,26 @@ dependencies = [
  "similar",
  "sqln-connector",
  "sqln-core",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "sqln-ui"
+version = "0.4.1"
+dependencies = [
+ "crossterm",
+ "edtui",
+ "ratatui",
+ "serde_json",
+ "similar",
+ "sqln-connector",
+ "sqln-core",
+ "sqln-exec",
+ "sqln-sql",
+ "sqln-store",
+ "unicode-segmentation",
+ "unicode-width 0.2.3",
  "uuid",
  "zeroize",
 ]
