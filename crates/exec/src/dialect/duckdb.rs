@@ -2,6 +2,7 @@
 
 use super::postgres::{ALTER_TABLE_ACTIONS, FUNCTIONS, KEYWORDS, STARTERS_EXTRA, TYPES};
 use super::{Features, Vocabulary};
+use crate::compare::Style;
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
 use crate::plan::PlanSyntax;
@@ -43,6 +44,10 @@ impl Features for DuckDb {
     }
 
     fn ai_comments_sql(&self, _: &str) -> Option<String> {
+        None
+    }
+
+    fn compare(&self) -> Option<Style> {
         None
     }
 }

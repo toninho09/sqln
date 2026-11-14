@@ -1,6 +1,7 @@
 //! Redis and Valkey commands. Only the command words apply.
 
 use super::{Features, Vocabulary};
+use crate::compare::Style;
 use crate::complete::keywords::REDIS;
 use crate::plan::PlanSyntax;
 
@@ -41,6 +42,10 @@ impl Features for Redis {
     }
 
     fn ai_comments_sql(&self, _: &str) -> Option<String> {
+        None
+    }
+
+    fn compare(&self) -> Option<Style> {
         None
     }
 }

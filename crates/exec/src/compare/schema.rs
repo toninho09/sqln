@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::{Style, style};
 use crate::grid::Row;
 use crate::sql::{Dialect, TokenKind, quote_identifier, tokenize};
 
@@ -100,7 +101,10 @@ pub fn build(dialect: Dialect, schema: &str, results: &[Vec<Row>]) -> SchemaMode
     let rows = |index: usize| results.get(index).map_or(&[][..], Vec::as_slice);
     read_columns(&mut model, rows(0));
     read_constraints(&mut model, dialect, rows(1));
-    let texts = (dialect == Dialect::Sqlite).then(|| sqlite_texts(rows(3)));
+    let texts = match style(dialect) {
+        Some(Style::Sqlite) => Some(sqlite_texts(rows(3))),
+        Some(Style::Postgres | Style::MySql) | None => None,
+    };
     read_indexes(&mut model, dialect, rows(2), texts.as_ref());
     if let Some(texts) = &texts {
         for table in model.tables.values_mut() {
@@ -208,8 +212,12 @@ fn read_constraints(model: &mut SchemaModel, dialect: Dialect, rows: &[Row]) {
             target_columns,
             definition,
         };
-        if dialect != Dialect::Postgres {
-            constraint.definition = constraint_text(&constraint, dialect);
+        // PostgreSQL gives the text of the constraint. The other sources give its parts.
+        match style(dialect) {
+            Some(Style::Postgres) => {}
+            Some(Style::MySql | Style::Sqlite) | None => {
+                constraint.definition = constraint_text(&constraint, dialect);
+            }
         }
         table.constraints.push(constraint);
     }
@@ -289,12 +297,12 @@ fn read_indexes(
             .iter()
             .map(|row| index_part(row, dialect))
             .unzip();
-        let definition = match dialect {
-            Dialect::Postgres => first
+        let definition = match style(dialect) {
+            Some(Style::Postgres) => first
                 .text(5)
                 .map(|text| postgres_index_text(&text))
                 .unwrap_or_default(),
-            Dialect::MySql => {
+            Some(Style::MySql) => {
                 let kind = first.text(5).unwrap_or_default();
                 let list = written.join(", ");
                 match kind.as_str() {
@@ -302,11 +310,11 @@ fn read_indexes(
                     _ => format!("({list})"),
                 }
             }
-            Dialect::Sqlite => texts
+            Some(Style::Sqlite) => texts
                 .and_then(|texts| texts.get(&("index", group.name.clone())))
                 .map(|text| after_parenthesis(text, dialect).to_owned())
                 .unwrap_or_default(),
-            Dialect::DuckDb | Dialect::Redis | Dialect::Kafka => String::new(),
+            None => String::new(),
         };
         table.indexes.push(Index {
             name: group.name,
@@ -322,8 +330,8 @@ fn read_indexes(
 /// and its order, or an expression. SQLite gives `NULL` for an expression, and its text
 /// holds the expression.
 fn index_part(row: &Row, dialect: Dialect) -> (String, String) {
-    match dialect {
-        Dialect::MySql => {
+    match style(dialect) {
+        Some(Style::MySql) => {
             let (part, mut written) = match (row.text(4), row.text(8)) {
                 (Some(column), _) => {
                     let written = quote_identifier(&column, dialect);
@@ -340,11 +348,11 @@ fn index_part(row: &Row, dialect: Dialect) -> (String, String) {
             }
             (part, written)
         }
-        Dialect::Postgres => {
+        Some(Style::Postgres) => {
             let part = row.text(4).unwrap_or_default();
             (unquoted(&part), part)
         }
-        _ => {
+        Some(Style::Sqlite) | None => {
             let part = row.text(4).unwrap_or_else(|| "<expression>".to_owned());
             (part.clone(), part)
         }
@@ -491,7 +499,8 @@ pub fn diff(source: &SchemaModel, target: &SchemaModel) -> Vec<Difference> {
     let rule = Rule {
         same_dialect: source.dialect == target.dialect,
         // A key of SQLite has no name of its own.
-        by_definition: source.dialect != target.dialect || source.dialect == Dialect::Sqlite,
+        by_definition: source.dialect != target.dialect
+            || style(source.dialect).is_some_and(|style| !style.named_keys()),
     };
     let names: BTreeSet<&String> = source.tables.keys().chain(target.tables.keys()).collect();
     let mut differences = Vec::new();

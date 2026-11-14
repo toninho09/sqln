@@ -1,6 +1,7 @@
 //! The completion words of PostgreSQL. DuckDB shares most of them.
 
 use super::{Features, Vocabulary};
+use crate::compare::Style;
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
 use crate::diagram::sql::{postgres_columns, postgres_keys};
@@ -135,5 +136,9 @@ impl Features for Postgres {
         Some(format!(
             "SELECT c.relname::text AS relation, a.attname::text AS column_name, pg_catalog.col_description(c.oid,a.attnum) AS comment FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped WHERE n.nspname={literal} AND c.relkind IN ('r','p','f','v','m') UNION ALL SELECT c.relname::text,NULL::text,pg_catalog.obj_description(c.oid,'pg_class') FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname={literal} AND c.relkind IN ('r','p','f','v','m')"
         ))
+    }
+
+    fn compare(&self) -> Option<Style> {
+        Some(Style::Postgres)
     }
 }

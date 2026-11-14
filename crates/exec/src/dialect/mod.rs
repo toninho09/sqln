@@ -9,6 +9,7 @@ mod postgres;
 mod redis;
 mod sqlite;
 
+use crate::compare::Style;
 use crate::plan::PlanSyntax;
 use crate::sql::Dialect;
 
@@ -57,6 +58,8 @@ pub trait Features: Sync {
     /// The query of the comments of a schema for AI metadata. `schema` is a literal
     /// already.
     fn ai_comments_sql(&self, schema: &str) -> Option<String>;
+    /// The style of a schema compare, or `None` when the source has no compare.
+    fn compare(&self) -> Option<Style>;
 }
 
 /// Returns the features of a dialect.

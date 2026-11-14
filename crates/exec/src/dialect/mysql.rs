@@ -1,6 +1,7 @@
 //! The completion words of MySQL.
 
 use super::{Features, Vocabulary};
+use crate::compare::Style;
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
 use crate::diagram::sql::{mysql_columns, mysql_keys};
@@ -164,5 +165,9 @@ impl Features for MySql {
         Some(format!(
             "SELECT TABLE_NAME AS relation,COLUMN_NAME AS column_name,COLUMN_COMMENT AS comment FROM information_schema.COLUMNS WHERE TABLE_SCHEMA={literal} UNION ALL SELECT TABLE_NAME,NULL,TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA={literal}"
         ))
+    }
+
+    fn compare(&self) -> Option<Style> {
+        Some(Style::MySql)
     }
 }

@@ -2,6 +2,7 @@
 //! depend on the position.
 
 use super::{Features, Vocabulary};
+use crate::compare::Style;
 use crate::complete::keywords::{KAFKA_CLAUSES, KAFKA_COMMANDS, KAFKA_SELECT_WORDS};
 use crate::plan::PlanSyntax;
 
@@ -42,6 +43,10 @@ impl Features for Kafka {
     }
 
     fn ai_comments_sql(&self, _: &str) -> Option<String> {
+        None
+    }
+
+    fn compare(&self) -> Option<Style> {
         None
     }
 }

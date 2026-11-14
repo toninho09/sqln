@@ -13,6 +13,7 @@
 //! On PostgreSQL the read runs with the schema in `search_path`, so the database writes
 //! the names of that schema without the schema.
 
+use super::{Style, style};
 use crate::catalog::RelationRef;
 use crate::sql::from_clause;
 use crate::sql::{Dialect, quote_identifier};
@@ -21,25 +22,24 @@ use crate::structure::name_literal;
 /// Returns the queries of the read of a schema. Redis has no tables.
 pub fn compare_sql(dialect: Dialect, schema: &str) -> Option<Vec<String>> {
     let literal = name_literal(schema, dialect);
-    match dialect {
-        Dialect::Postgres => Some(vec![
+    Some(match style(dialect)? {
+        Style::Postgres => vec![
             postgres_columns(&literal, ""),
             postgres_constraints(&literal, ""),
             postgres_indexes(&literal, ""),
-        ]),
-        Dialect::MySql => Some(vec![
+        ],
+        Style::MySql => vec![
             mysql_columns(&literal, ""),
             mysql_constraints(&literal),
             mysql_indexes(&literal),
-        ]),
-        Dialect::Sqlite => Some(vec![
+        ],
+        Style::Sqlite => vec![
             sqlite_columns(&literal, ""),
             sqlite_constraints(&literal),
             sqlite_indexes(&literal),
             sqlite_objects(&quote_identifier(schema, dialect)),
-        ]),
-        Dialect::DuckDb | Dialect::Redis | Dialect::Kafka => None,
-    }
+        ],
+    })
 }
 
 /// Returns the column query of one table, with the shape of the first query of
@@ -47,18 +47,11 @@ pub fn compare_sql(dialect: Dialect, schema: &str) -> Option<Vec<String>> {
 pub fn table_columns_sql(dialect: Dialect, schema: &str, table: &str) -> Option<String> {
     let literal = name_literal(schema, dialect);
     let name = name_literal(table, dialect);
-    match dialect {
-        Dialect::Postgres => Some(postgres_columns(
-            &literal,
-            &format!(" AND c.relname = {name}"),
-        )),
-        Dialect::MySql => Some(mysql_columns(
-            &literal,
-            &format!(" AND c.TABLE_NAME = {name}"),
-        )),
-        Dialect::Sqlite => Some(sqlite_columns(&literal, &format!(" AND t.name = {name}"))),
-        Dialect::DuckDb | Dialect::Redis | Dialect::Kafka => None,
-    }
+    Some(match style(dialect)? {
+        Style::Postgres => postgres_columns(&literal, &format!(" AND c.relname = {name}")),
+        Style::MySql => mysql_columns(&literal, &format!(" AND c.TABLE_NAME = {name}")),
+        Style::Sqlite => sqlite_columns(&literal, &format!(" AND t.name = {name}")),
+    })
 }
 
 /// Returns the queries of `compare_sql` for one table of PostgreSQL. The DDL of a table

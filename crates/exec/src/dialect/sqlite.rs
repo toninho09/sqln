@@ -1,6 +1,7 @@
 //! The completion words of SQLite.
 
 use super::{Features, Vocabulary};
+use crate::compare::Style;
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
 use crate::diagram::sql::{sqlite_columns, sqlite_keys};
@@ -96,5 +97,9 @@ impl Features for Sqlite {
     /// SQLite has no comment catalog.
     fn ai_comments_sql(&self, _: &str) -> Option<String> {
         None
+    }
+
+    fn compare(&self) -> Option<Style> {
+        Some(Style::Sqlite)
     }
 }
