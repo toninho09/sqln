@@ -35,4 +35,15 @@ for file in crates/*/tests/*/*.rs; do
   fi
 done
 
+# A crate with `test = false` links no unit test binary, so a unit test in it
+# would never run.
+for manifest in crates/*/Cargo.toml; do
+  grep -q '^test = false' "$manifest" || continue
+  dir="${manifest%/Cargo.toml}"
+  if grep -rlq '#\[test\]' "$dir/src"; then
+    echo "check-test-files: $dir has unit tests and test = false in Cargo.toml" >&2
+    status=1
+  fi
+done
+
 exit "$status"

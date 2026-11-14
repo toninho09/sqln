@@ -238,7 +238,7 @@ pub fn run(options: Options) -> Result<(), Error> {
         cap_in_sql: false,
         ..Settings::default()
     });
-    let connection = manager.add_connection(definition.connector(), settings);
+    let connection = manager.add_connection(crate::connector::open(&definition), settings);
     let console = manager
         .open_console(connection)
         .expect("The connection exists.");

@@ -33,16 +33,20 @@ This rule applies even when the tool suggests or requires that text.
 
 ## Module map
 
-The project is a Cargo workspace. Each crate depends only on the crates above it in this list:
+The project is a Cargo workspace. The crates form a graph without cycles. The text after `←` lists the workspace crates that a crate depends on:
 
 ```text
 crates/core/       sqln-core: data models, grid, text, result sinks, and key map.
-crates/sql/        sqln-sql: SQL analysis, formatting, and literals.
-crates/connector/  sqln-connector: drivers, pools, traces, and system vault.
-crates/store/      sqln-store: configuration, scripts, credentials, and persistence.
-crates/exec/       sqln-exec: execution, jobs, completion, and cancellation.
-crates/ui/         sqln-ui: drawing, themes, editor, and screen states.
-src/               sqln: application state, commands, coordination, and the binary.
+crates/sql/        sqln-sql: SQL analysis, formatting, and literals. ← core
+crates/session/    sqln-session: connector contract, targets, pools, traces, TLS. ← core, sql
+crates/vault/      sqln-vault: system vault. ← session
+crates/<driver>/   sqln-postgres, -mysql, -sqlite, -duckdb, -redis, -kafka: one driver each. ← core, sql, session (kafka: vault)
+crates/connector/  sqln-connector: facade of the contract and drivers, and the connector factory. ← drivers, store
+crates/store/      sqln-store: configuration, scripts, credentials, and persistence. ← core, session, vault
+crates/exec/       sqln-exec: jobs, completion, models, and execution event types. ← core, sql, session, store
+crates/runtime/    sqln-runtime: execution manager, console tasks, and pools in use. ← exec
+crates/ui/         sqln-ui: drawing, themes, editor, and screen states. ← exec
+src/               sqln: application state, commands, coordination, and the binary. ← all
 crates/testkit/    sqln-testkit: shared test helpers (keys, temporary paths, fake connector, editor fixture).
 tests/             Tests that need `sqln` (application or binary). Every file is a `[[test]]` target or a `mod` of a root file.
 ```
@@ -53,8 +57,10 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed module respons
 
 ## Architecture and execution
 
-- Keep drawing in `ui`, coordination in `app`, and driver types in `connector`. Keep `store` independent of `app` and `ui`.
+- Keep drawing in `ui`, coordination in `app`, and driver types in their driver crate. Keep `store` independent of `app` and `ui`.
 - Put new code in the lowest crate that has all its dependencies. Do not add a dependency on a higher crate; move the shared type down instead.
+- Keep driver libraries in their driver crate. Only `sqln-connector` and `sqln` depend on driver crates. Put code that needs no driver library in `sqln-session`.
+- Keep `Manager` and the console tasks in `sqln-runtime`. `sqln-ui` uses only the types of `sqln-exec`.
 - Keep models and transformations independent of the interface where possible. Reuse existing fields, lists, filters, and grids.
 - Never wait for the database on the interface thread. Use the existing executor and blocking-task support.
 - Bound work between frames and render only visible content.
@@ -94,7 +100,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed module respons
 
 ## Integration tests
 
-- Put a test in the lowest crate that has all its dependencies. Each crate has one test binary, `crates/<crate>/tests/sqln_<crate>/main.rs`, and each file in that folder is a `mod` of it. `scripts/check-test-files.sh` enforces it.
+- Put a test in the lowest crate that has all its dependencies. A test that needs a driver lists it as a dev-dependency. Each crate with integration tests has one test binary, `crates/<crate>/tests/sqln_<crate>/main.rs`, and each file in that folder is a `mod` of it. `scripts/check-test-files.sh` enforces it.
 - Put shared helpers in `sqln-testkit`. Helpers that need `App` stay in `tests/common`.
 - Database tests are in `tests/` and in the crate tests. See `compose.test.yaml` and `scripts/test-env.sh` for database services and connection settings.
 - For full TLS: use the sequence in [README.md](README.md#database-integration). It starts `--profile tls` and sets `SQLN_TEST_TLS=1`.

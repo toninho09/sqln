@@ -9,12 +9,12 @@ publish = false
 [dependencies]
 sqln-core.workspace = true
 sqln-sql.workspace = true
-sqln-connector.workspace = true
+sqln-session.workspace = true
 sqln-store.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 crossterm.workspace = true
-futures-util.workspace = true
+futures-util = { workspace = true, features = ["sink"] }
 reqwest.workspace = true
 rustls.workspace = true
 schemars.workspace = true
@@ -31,13 +31,5 @@ zeroize.workspace = true
 rustix.workspace = true
 
 [dev-dependencies]
-sqln-testkit = { workspace = true, features = ["mock"] }
-futures-util.workspace = true
-keyring-core.workspace = true
+sqln-testkit.workspace = true
 rusqlite.workspace = true
-
-[target.'cfg(target_os = "macos")'.dev-dependencies]
-apple-native-keyring-store.workspace = true
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-zbus-secret-service-keyring-store.workspace = true

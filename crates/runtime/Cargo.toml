@@ -1,0 +1,25 @@
+[package]
+name = "sqln-runtime"
+description = "The execution manager of SQLN: console tasks, pools, and jobs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+sqln-core.workspace = true
+sqln-sql.workspace = true
+sqln-session.workspace = true
+sqln-store.workspace = true
+sqln-exec.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+# The tests open real connectors. The library does not depend on the drivers.
+sqln-connector.workspace = true
+futures-util.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+sqln-testkit = { workspace = true, features = ["mock"] }
+rusqlite.workspace = true

@@ -1,0 +1,18 @@
+[package]
+name = "sqln-redis"
+description = "Redis and Valkey connector of SQLN"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+sqln-core.workspace = true
+sqln-sql.workspace = true
+sqln-session.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+redis.workspace = true
+rustls.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true

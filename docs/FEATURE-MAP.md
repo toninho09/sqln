@@ -4,7 +4,7 @@
 
 This document lists each feature of the application, its main files, and how it works.
 The [architecture](ARCHITECTURE.md) gives the deep rules; the [plan](INITIAL_PLAN.md) gives the functional rules.
-The file paths are relative to the `src/` folder of the crate that holds the module. The [architecture](ARCHITECTURE.md#2-crates-and-modules) lists the crate of each module.
+The file paths are relative to the `src/` folder of the crate that holds the module. The [architecture](ARCHITECTURE.md#2-crates-and-modules) lists the crate of each module. A driver file, such as `postgres.rs`, is in its driver crate, such as `crates/postgres/src`. The system vault is `crates/vault/src/lib.rs`.
 
 ## Map
 
@@ -14,7 +14,7 @@ The file paths are relative to the `src/` folder of the crate that holds the mod
 | 2 | Key map and discovery | `input.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `text.rs`, `ui/text.rs` |
 | 3 | Navigator and tree filter | `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs` |
 | 4 | Connections and connection form | `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs` |
-| 5 | Database connectors | `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/duckdb.rs`, `connector/redis.rs`, `connector/redis/live.rs`, `connector/kafka.rs`, `connector/kafka/*.rs`, `connector/words.rs`, `connector/tls.rs` |
+| 5 | Database connectors | `connector/mod.rs`, `connector/*.rs`, `connector/kafka/*.rs` (sqln-session), `postgres.rs`, `postgres/*.rs`, `mysql.rs`, `sqlite.rs`, `duckdb.rs`, `redis.rs`, `redis/live.rs`, `kafka.rs`, `kafka/*.rs` (driver crates), `connector.rs` (sqln-connector) |
 | 6 | Connection pool | `pool.rs` |
 | 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `sink.rs`, `progress.rs`, `console.rs` |
 | 7a | Query plan | `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs` |
@@ -22,7 +22,7 @@ The file paths are relative to the `src/` folder of the crate that holds the mod
 | 8 | Run protection | `app/guard.rs`, `sql/classify.rs` |
 | 9 | Transactions | `exec/runner.rs`, `ui/statusline.rs` |
 | 10 | SQL editor | `editor/mod.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
-| 10a | Query parameters | `parameters.rs`, `sql/parameters.rs`, `ui/parameters.rs`, `connector/postgres/text_io.rs`, `connector/postgres/parameters.rs`, `exec/runner.rs` |
+| 10a | Query parameters | `parameters.rs`, `sql/parameters.rs`, `ui/parameters.rs`, `postgres/text_io.rs`, `postgres/parameters.rs`, `exec/runner.rs` |
 | 11 | SQL analysis and formatter | `sql/lexer.rs`, `sql/statement.rs`, `sql/classify.rs`, `sql/format.rs` |
 | 12 | Autocomplete | `complete/mod.rs`, `complete/context.rs`, `complete/grammar.rs`, `complete/vocabulary.rs`, `complete/keywords.rs`, `catalog.rs` |
 | 13 | Catalog and structure tab | `catalog.rs`, `structure.rs` |
@@ -37,7 +37,7 @@ The file paths are relative to the `src/` folder of the crate that holds the mod
 | 17 | Query history | `history.rs`, `store/history.rs`, `app/history.rs`, `ui/history.rs` |
 | 18 | Folders and configuration | `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `settings.rs`, `ui/settings.rs` |
 | 19 | Console saving and saved consoles | `script_file.rs`, `script_file/external.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/sql_file.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs` |
-| 20 | Credentials and trust | `creds.rs`, `vault.rs`, `trust.rs`, `app/auth.rs`, `ui/auth.rs` |
+| 20 | Credentials and trust | `creds.rs`, `lib.rs` (sqln-vault), `trust.rs`, `app/auth.rs`, `ui/auth.rs` |
 | 21 | Appearance and themes | `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `wrap.rs` |
 | 23 | Local MCP assistant | `agent/`, `mcp.rs`, `app/agent/`, `editor/agent.rs`, `ui/agent.rs`; see [MCP](MCP.md) |
 | 24 | Auto-refresh | `app/auto_refresh.rs`, `console.rs`, `table.rs`, `app/persist.rs`, `app/commands.rs`, `ui/statusline.rs`, `ui/table.rs` |
@@ -73,7 +73,7 @@ Files: `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connecto
 
 ## 5. Database connectors
 
-Files: `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/duckdb.rs`, `connector/redis.rs`, `connector/redis/live.rs`, `connector/kafka.rs`, `connector/kafka/*.rs`, `connector/words.rs`, `connector/tls.rs`.
+Files: `connector/mod.rs`, `connector/*.rs`, `connector/kafka/*.rs` (sqln-session), `postgres.rs`, `postgres/*.rs`, `mysql.rs`, `sqlite.rs`, `duckdb.rs`, `redis.rs`, `redis/live.rs`, `kafka.rs`, `kafka/*.rs` (driver crates), `connector.rs` (sqln-connector).
 
 `Connector` declares the dialect and the `Capabilities`. `Session` runs one statement, delivers the rows to `ResultSink`, and reports the transaction state. Only this module knows driver types. PostgreSQL reads through the simple protocol, so each value keeps the database text. MySQL keeps the text and reads notices with `SHOW WARNINGS`. SQLite runs `rusqlite` on its own thread, because the driver is synchronous; DuckDB follows the same pattern with `duckdb`, and it reads the result through Arrow, so a list, a struct, and a timestamp keep the text of the database. The `:memory:` file text opens one database in memory, which lives in the only session of its pool: `Capabilities::single_session` limits the pool to one place, no idle timeout closes it, and the session returns clean instead of discarded, so temporary tables persist until a disconnect. Redis runs one command per line, with the quote rules of `connector::words::split_words`. Kafka keeps its native commands, one per line: `connector/kafka/command.rs` reads `TOPICS`, `PARTITIONS`, `CONSUME`, `TAIL`, `GROUPS`, and `GROUP`. `connector/kafka/command/select.rs` maps multiline `SELECT` and `SELECT … EMIT CHANGES` to the same finite and continuous reads, with column projections. `connector/kafka/filter.rs` checks each decoded message in the client, and `connector/kafka/filter/expr.rs` visits the values of the filter and of the SELECT columns on demand. `connector/kafka/filter/functions.rs` holds the Postgres functions, and `connector/kafka/filter/time.rs` reads intervals and `TO_CHAR` formats. `connector/kafka/filter/evaluation.rs` checks cancellation and bounds generated text buffers, including streaming output. A read assigns partitions to its own librdkafka consumer and never commits, so the cluster creates no group. `connector/kafka/registry.rs` reads Avro, JSON Schema, and Protobuf schemas by id, and `connector/kafka/decode.rs` turns the Confluent wire format into JSON. A continuous command (`sql::is_continuous`) grows a live result until **Stop**: Pub/Sub, `MONITOR`, `SYNC`, and `PSYNC` read on an own RESP2 connection in `connector/redis/live.rs`, and `XREAD` with `BLOCK` reads again on the session. TLS uses verification by default, except on `localhost`, loopback, and Unix sockets; `connector/tls` reads CA and client certificate files.
 
@@ -133,7 +133,7 @@ EdTUI holds the text. In the conventional mode, `editor/conventional` owns the s
 
 ## 10a. Query parameters
 
-Files: `parameters.rs`, `sql/parameters.rs`, `ui/parameters.rs`, `connector/postgres/text_io.rs`, `connector/postgres/parameters.rs`, `exec/runner.rs`.
+Files: `parameters.rs`, `sql/parameters.rs`, `ui/parameters.rs`, `postgres/text_io.rs`, `postgres/parameters.rs`, `exec/runner.rs`.
 
 `sql/parameters` finds `:name` occurrences with the shared lexer, outside quotes and comments, and `bind` rewrites each statement to the markers of the dialect with the values kept separate. Numbers keep their text and take a typed cast; PostgreSQL binds through the extended protocol, MySQL through prepared statements, and SQLite through `raw_bind_parameter`. The rewrite records each replacement range, so a database error offset maps back to the editor text.
 
@@ -282,7 +282,7 @@ The palette command `openSqlFile` and `--script` open an external `.sql` file as
 
 ## 20. Credentials and trust
 
-Files: `creds.rs`, `vault.rs`, `trust.rs`, `app/auth.rs`, `ui/auth.rs`.
+Files: `creds.rs`, `lib.rs` (sqln-vault), `trust.rs`, `app/auth.rs`, `ui/auth.rs`.
 
 `app/auth` is the gate before each operation that needs a session: execution, catalog, columns, pages, and connection test. It checks the trust on the destination and the project path, asks the confirmations, and then gets the password from the `credential` reference: `none`, `session`, `vault`, or `globalPlainText`. The vault account is the service `sqln` with scope, ID, engine, address, user, and TLS in the name; a change of any part asks for a new password. The blocking calls run one at a time on `Manager::spawn_blocking`, off the interface thread, and a token stops a cancelled job.
 

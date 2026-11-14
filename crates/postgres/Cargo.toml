@@ -1,0 +1,19 @@
+[package]
+name = "sqln-postgres"
+description = "PostgreSQL connector of SQLN"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+sqln-core.workspace = true
+sqln-sql.workspace = true
+sqln-session.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+socket2.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+tokio-postgres-rustls.workspace = true

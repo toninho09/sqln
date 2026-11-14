@@ -6,6 +6,31 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Driver crates, connector contract, and runtime — 2026-11-14
+
+The user asked for less dependency between the crates, so that a change recompiles less code. The user chose the full scope: a contract crate, a runtime crate, and one crate for each driver. This entry replaces the rejected alternative "One crate for each driver" of "Cargo workspace" below, and its layer order.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Contract | `sqln-session` holds the connector contract, the connection targets, `pool`, `trace`, `tls`, `words`, and the parts of the Kafka and Redis drivers that need no driver library | Keep them in `sqln-connector` | `store`, `exec`, and `ui` use only these parts, so a driver change does not recompile them |
+| Drivers | One crate for each driver: `sqln-postgres`, `sqln-mysql`, `sqln-sqlite`, `sqln-duckdb`, `sqln-redis`, `sqln-kafka`. Each one depends on `sqln-session` and on no other driver | One crate for all drivers | User choice. A change in one driver recompiles that driver, `sqln-connector`, and `sqln` |
+| Factory | `sqln-connector` is a facade with the old `connector` paths. `connector::open(&Definition)` replaces `Definition::connector()` | Keep the factory in `store` | Only `sqln` opens connectors, so only `sqln` depends on the drivers |
+| Vault | `sqln-vault` is its own crate | Keep it in a driver crate or in `store` | `store` and the Kafka driver both use it |
+| Runtime | `sqln-runtime` holds `Manager`, the console tasks, and the jobs. `sqln-exec` keeps the event, end, option, and request types | Keep `Manager` in `sqln-exec` | `sqln-ui` uses only the types, so a runtime change does not recompile `sqln-ui` |
+| Tests | A test that needs a driver lists the driver crate or `sqln-connector` as a dev-dependency | Move each such test to `sqln` | Only the test build depends on the driver |
+
+Measured on 8 CPUs, dev profile, one-line change, after this split:
+
+| Changed file | `cargo build` | `cargo test --workspace --no-run` |
+|---|---|---|
+| `postgres.rs` (driver) | 5.4–5.8 s (was 9.7 s for `connector`) | 17–18 s (was 30–34 s) |
+| `exec/runner.rs` (runtime) | 4.3–6.2 s | 13 s |
+| `compare` (exec models) | 7.9–10.4 s | 21 s |
+| `ui` | 5.1–5.8 s (was 7.7 s) | 19 s (was 24–25 s) |
+| `app` | 4.5–6.6 s (was 4.9 s) | 13–14 s (was 10–12 s) |
+
+A crate without unit tests has `test = false`, so the new crates add only the unit test binaries of the crates that have unit tests.
+
 ## Cargo workspace — 2026-11-14
 
 The user asked to split the project into separate crates, for a shorter compile time and for layers that the compiler checks. This entry replaces the rule "Start with a single Rust crate" of the [plan](INITIAL_PLAN.md).

@@ -133,7 +133,7 @@ pub fn kafka_snapshot(
                 .iter()
                 .find(|(topic, ..)| schema.name == TOPICS && topic == &relation.name);
             let metadata = paths.map_or_else(Vec::new, |(_, paths, notes)| {
-                crate::connector::kafka::fields::field_json(paths, notes)
+                crate::connector::kafka::field_json(paths, notes)
                     .into_iter()
                     .map(|values| json!({"section": "columns", "values": values}))
                     .collect()

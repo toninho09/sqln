@@ -4,12 +4,12 @@
 
 **Defined:** this document is approved.
 It details the architecture of the [plan](INITIAL_PLAN.md).
-The connector signature below is a summary, not the complete trait. See `crates/connector/src/connector/mod.rs` for the contract.
+The connector signature below is a summary, not the complete trait. See `crates/session/src/connector/mod.rs` for the contract.
 The facts about the drivers come from [RESULTS](RESULTS.md).
 
 ## 1. Overview
 
-The project is a Cargo workspace with seven crates in a fixed layer order. See [Crates and modules](#2-crates-and-modules).
+The project is a Cargo workspace. Its crates form a graph without cycles. See [Crates and modules](#2-crates-and-modules).
 The interface runs on the main thread and never waits for the database.
 Each console has its own task, owner of the reserved session. This document calls that task an actor.
 The execution manager keeps one pool per connection, and all connections use a single runtime and a single event channel.
@@ -27,23 +27,43 @@ Main thread                        Tokio runtime
 
 ## 2. Crates and modules
 
-Each crate depends only on the crates to its left. Cargo refuses a cycle, so the compiler keeps the order:
+Each crate depends only on the crates below it in this graph. Cargo refuses a cycle, so the compiler keeps the graph:
 
-`sqln-core` ← `sqln-sql` ← `sqln-connector` ← `sqln-store` ← `sqln-exec` ← `sqln-ui` ← `sqln`
+```text
+sqln-core ← sqln-sql ← sqln-session ─┬─ sqln-postgres, sqln-mysql, sqln-sqlite,
+sqln-vault                           │  sqln-duckdb, sqln-redis, sqln-kafka ──────┐
+                                     ├─ sqln-store ← sqln-exec ─┬─ sqln-ui ───────┤
+                                     │                          └─ sqln-runtime ──┤
+                                     └─ sqln-connector ────────────────────────────┴─ sqln
+```
 
-| Crate | Folder | Modules |
+| Crate | Folder | Contents |
 |---|---|---|
 | `sqln-core` | `crates/core` | `catalog`, `clipboard`, `filter_list`, `find`, `grid`, `input`, `limited`, `line_input`, `log`, `mark_list`, `message`, `progress`, `sink`, `text`, `wrap` |
 | `sqln-sql` | `crates/sql` | `sql`, `structure` |
-| `sqln-connector` | `crates/connector` | `connector`, `pool`, `trace`, `vault` |
+| `sqln-session` | `crates/session` | `connector` (the contract, connection targets, `tls`, `words`, and the parts of the Kafka and Redis drivers that need no driver library), `pool`, `trace` |
+| `sqln-vault` | `crates/vault` | The system vault. `sqln-store` and `sqln-kafka` use it |
+| `sqln-postgres`, `sqln-mysql`, `sqln-sqlite`, `sqln-duckdb`, `sqln-redis`, `sqln-kafka` | `crates/<driver>` | One connector each, with its driver library |
+| `sqln-connector` | `crates/connector` | Facade: `connector` joins the contract and the drivers at the old paths. `connector::open` opens the connector of a saved definition |
 | `sqln-store` | `crates/store` | `creds`, `script_file`, `store`, `trust` |
-| `sqln-exec` | `crates/exec` | `agent`, `ai`, `analysis`, `command_log`, `compare`, `complete`, `connection`, `data_edit`, `diagram`, `exec`, `export`, `import`, `plan` |
+| `sqln-exec` | `crates/exec` | `agent`, `ai`, `analysis`, `command_log`, `compare`, `complete`, `connection`, `data_edit`, `diagram`, `exec` (types only), `export`, `import`, `plan` |
+| `sqln-runtime` | `crates/runtime` | `exec`: the types of `sqln-exec` and `Manager`, with the console tasks and jobs |
 | `sqln-ui` | `crates/ui` | `browser`, `compare_tab`, `console`, `definition`, `diagram_tab`, `edit_form`, `editor`, `export_form`, `form`, `generate`, `help`, `history`, `import_form`, `navigator`, `palette`, `parameters`, `result`, `settings`, `table`, `ui` |
 | `sqln` | root, `src/` | `app`, `batch`, `mcp`, `terminal`, and the binary |
+
+A change recompiles the changed crate and the crates above it in the graph:
+
+- A driver: that driver, `sqln-connector`, and `sqln`.
+- `sqln-runtime`: `sqln-runtime` and `sqln`.
+- `sqln-ui`: `sqln-ui` and `sqln`.
+- `sqln-session` is below most crates, so a change there recompiles almost everything.
 
 The `sqln` crate re-exports every module at the root, so `sqln::grid` and `crate::grid` in `app` keep their paths.
 Each lower crate re-exports the modules of its dependencies with `pub(crate) use`, so its code keeps `crate::` paths.
 Only the crates in the table know their dependencies. A lower crate cannot name a type of a higher crate:
+
+- Only `sqln-connector` and `sqln` know the drivers. The other crates use the contract of `sqln-session`.
+- Only `sqln` knows `Manager`. `sqln-ui` uses the event and request types of `sqln-exec`.
 
 - A connector writes rows to `sink::ResultSink`, which sends `sink::SinkEvent`. `ExecEvent` implements `From<SinkEvent>`, so the channel and the event order do not change.
 - `trace::TraceContext` sends `trace::TraceEvent` in the same way.
@@ -55,9 +75,10 @@ A test helper that the unit tests of another crate need uses a `test-support` fe
 
 Each integration test is in the lowest crate that has all its dependencies:
 
-- A crate has one test binary, `tests/sqln_<crate>/main.rs`. `sqln-exec` also has the `vault_probe` target, a manual probe that the vault scripts run.
+- A crate with integration tests has one test binary, `tests/sqln_<crate>/main.rs`. `sqln-store` also has the `vault_probe` target, a manual probe that the vault scripts run.
+- A test that needs a driver lists the driver crate, or `sqln-connector`, as a dev-dependency. Only the test build depends on it.
 - `tests/` of the `sqln` crate holds the tests that use `App` or the `sqln` binary. They form one test binary, `sqln`, with `tests/sqln.rs` as its root. Run one file with its module name, for example `cargo test --test sqln -- servers::`.
-- The `sqln` binary and `sqln-testkit` have no unit test binary (`test = false`).
+- A crate without unit tests has `test = false`, so it links no unit test binary. `scripts/check-test-files.sh` fails if such a crate has a unit test.
 - `sqln-testkit` holds the shared helpers. Its `mock` feature adds the fake connector, and its `editor` feature adds the editor fixture. The macros `temp_dir!`, `temp_db!`, and `temp_db_path!` read the folder of the calling test binary.
 
 | Module | Responsibility |

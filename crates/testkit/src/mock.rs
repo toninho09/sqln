@@ -7,12 +7,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use futures_util::future::BoxFuture;
-use sqln_connector::connector::{
+use sqln_core::catalog::{Catalog, ColumnNote};
+use sqln_core::sink::ResultSink;
+use sqln_session::connector::{
     Canceller, Capabilities, ConnectError, Connector, ExecError, ResetOutcome, Session,
     SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
-use sqln_core::catalog::{Catalog, ColumnNote};
-use sqln_core::sink::ResultSink;
 use sqln_sql::sql::Dialect;
 
 /// A canceller that never answers: the default of the fake sessions.

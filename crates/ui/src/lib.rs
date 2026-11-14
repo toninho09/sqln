@@ -22,7 +22,6 @@ pub mod settings;
 pub mod table;
 pub mod ui;
 
-pub(crate) use sqln_connector::connector;
 pub(crate) use sqln_core::{
     catalog, clipboard, filter_list, find, grid, input, line_input, mark_list, message, text, wrap,
 };
@@ -30,5 +29,6 @@ pub(crate) use sqln_exec::{
     agent, ai, command_log, compare, complete, connection, data_edit, diagram, exec, export,
     import, plan,
 };
+pub(crate) use sqln_session::connector;
 pub(crate) use sqln_sql::{sql, structure};
 pub(crate) use sqln_store::{script_file, store};

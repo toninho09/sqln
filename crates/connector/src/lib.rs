@@ -1,10 +1,8 @@
-//! Database drivers, session pools, command traces, and access to the system vault.
-//! This crate depends only on `sqln-core` and `sqln-sql`.
+//! The connectors of SQLN in one place: the contract of `sqln-session` and the driver
+//! crates. Only the `sqln` crate depends on this crate, so a change in one driver
+//! recompiles that driver, this crate, and `sqln`.
 
 pub mod connector;
-pub mod pool;
-pub mod trace;
-pub mod vault;
 
-pub(crate) use sqln_core::{catalog, grid, limited, message, progress, sink, text};
-pub(crate) use sqln_sql::sql;
+pub use sqln_session::{pool, trace};
+pub use sqln_vault as vault;

@@ -6,5 +6,6 @@ pub mod script_file;
 pub mod store;
 pub mod trust;
 
-pub(crate) use sqln_connector::{connector, vault};
 pub(crate) use sqln_core::{grid, input, text};
+pub(crate) use sqln_session::connector;
+pub(crate) use sqln_vault as vault;

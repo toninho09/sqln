@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 sqln-core.workspace = true
 sqln-sql.workspace = true
-sqln-connector.workspace = true
+sqln-session.workspace = true
 sqln-store.workspace = true
 sqln-exec.workspace = true
 crossterm.workspace = true
@@ -23,8 +23,5 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-sqln-testkit = { workspace = true, features = ["mock", "editor"] }
-async-trait.workspace = true
-duckdb.workspace = true
-rusqlite.workspace = true
+sqln-testkit = { workspace = true, features = ["editor"] }
 tokio.workspace = true

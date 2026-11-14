@@ -8,7 +8,8 @@ publish = false
 
 [dependencies]
 sqln-core.workspace = true
-sqln-connector.workspace = true
+sqln-session.workspace = true
+sqln-vault.workspace = true
 keyring-core.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -23,3 +24,10 @@ test-support = []
 
 [dev-dependencies]
 sqln-testkit.workspace = true
+keyring-core.workspace = true
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+apple-native-keyring-store.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus-secret-service-keyring-store.workspace = true

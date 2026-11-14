@@ -570,9 +570,9 @@ impl App {
         ) {
             (Some(connector), ..) => connector.dialect(),
             (None, _, Some(_)) => Dialect::Sqlite,
-            (None, Some(definition), None) => definition.connector().dialect(),
+            (None, Some(definition), None) => crate::connector::open(definition).dialect(),
             (None, None, None) => stored.first().map_or(options.dialect, |item| {
-                item.definition.connector().dialect()
+                crate::connector::open(&item.definition).dialect()
             }),
         };
         let budget = Arc::new(Budget::new(options.settings.budget_bytes));

@@ -1,15 +1,13 @@
 //! The saved definition of a connection and the limits of its executions.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 use super::Scope;
 use super::config::DEFAULT_CAP_IN_SQL;
-use crate::connector::duckdb::{DuckdbConnector, DuckdbSource, DuckdbTarget};
-use crate::connector::sqlite::{SqliteConnector, SqliteTarget};
+use crate::connector::duckdb::{DuckdbSource, DuckdbTarget};
+use crate::connector::sqlite::SqliteTarget;
 use crate::connector::target::{Address, Engine, NetworkTarget, Tls};
-use crate::connector::{Connector, network_connector};
 use crate::grid::DEFAULT_LIMIT;
 
 pub const DEFAULT_POOL_LIMIT: usize = 5;
@@ -133,19 +131,6 @@ impl Definition {
             DuckdbSource::Memory => ":memory:".to_owned(),
         };
         Self::new(name, Source::Duckdb(target))
-    }
-
-    pub fn connector(&self) -> Arc<dyn Connector> {
-        match self.resolved_source() {
-            Source::Sqlite(target) => Arc::new(SqliteConnector::new(target)),
-            Source::Duckdb(target) => Arc::new(DuckdbConnector::new(DuckdbTarget {
-                // DuckDB applies read-only when the file opens, so the definition decides
-                // it here, in one place.
-                read_only: self.read_only,
-                ..target
-            })),
-            Source::Network(target) => network_connector(target),
-        }
     }
 
     /// Returns the limits of this connection on top of the application settings.

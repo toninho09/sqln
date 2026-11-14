@@ -46,7 +46,7 @@ impl App {
 
     pub(super) fn add_definition(&mut self, definition: Definition) -> Option<ConnectionId> {
         let name = definition.name.clone();
-        let connector = definition.connector();
+        let connector = crate::connector::open(&definition);
         self.add_connection(name, Some(definition), connector)
     }
 
@@ -1432,7 +1432,7 @@ impl App {
             self.set_form_error(text::FORM_CONNECTED.to_owned());
             return;
         }
-        let connector = definition.connector();
+        let connector = crate::connector::open(&definition);
         let settings = definition.settings(&self.settings);
         if let Some(manager) = &mut self.manager {
             manager.replace_connection(id, connector.clone(), settings);

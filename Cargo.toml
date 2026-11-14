@@ -10,9 +10,18 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 sqln-core = { path = "crates/core" }
 sqln-sql = { path = "crates/sql" }
+sqln-session = { path = "crates/session" }
+sqln-vault = { path = "crates/vault" }
+sqln-postgres = { path = "crates/postgres" }
+sqln-mysql = { path = "crates/mysql" }
+sqln-sqlite = { path = "crates/sqlite" }
+sqln-duckdb = { path = "crates/duckdb" }
+sqln-redis = { path = "crates/redis" }
+sqln-kafka = { path = "crates/kafka" }
 sqln-connector = { path = "crates/connector" }
 sqln-store = { path = "crates/store" }
 sqln-exec = { path = "crates/exec" }
+sqln-runtime = { path = "crates/runtime" }
 sqln-ui = { path = "crates/ui" }
 sqln-testkit = { path = "crates/testkit" }
 apache-avro = { version = "0.22", default-features = false }
@@ -83,6 +92,7 @@ sqln-sql.workspace = true
 sqln-connector.workspace = true
 sqln-store.workspace = true
 sqln-exec.workspace = true
+sqln-runtime.workspace = true
 sqln-ui.workspace = true
 base64.workspace = true
 crossterm.workspace = true
@@ -105,6 +115,7 @@ rustix.workspace = true
 sqln-store = { workspace = true, features = ["test-support"] }
 sqln-testkit = { workspace = true, features = ["mock", "editor"] }
 async-trait.workspace = true
+duckdb.workspace = true
 futures-util.workspace = true
 keyring-core.workspace = true
 rdkafka.workspace = true

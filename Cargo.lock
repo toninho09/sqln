@@ -4120,6 +4120,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "crossterm",
+ "duckdb",
  "edtui",
  "futures-util",
  "keyring-core",
@@ -4137,6 +4138,7 @@ dependencies = [
  "sqln-connector",
  "sqln-core",
  "sqln-exec",
+ "sqln-runtime",
  "sqln-sql",
  "sqln-store",
  "sqln-testkit",
@@ -4152,40 +4154,15 @@ dependencies = [
 name = "sqln-connector"
 version = "0.4.1"
 dependencies = [
- "apache-avro",
- "apple-native-keyring-store",
- "async-trait",
- "base64 0.23.1",
- "bytes",
- "chrono",
- "duckdb",
- "futures-util",
- "keyring-core",
- "mysql_async",
- "prost-reflect",
- "protox",
- "rdkafka",
- "redis",
- "regex",
- "reqwest",
- "rusqlite",
- "rustls",
- "rustls-native-certs",
- "secret-service",
- "serde",
- "serde_json",
- "socket2",
- "sqln-core",
- "sqln-sql",
- "tokio",
- "tokio-postgres",
- "tokio-postgres-rustls",
- "tokio-rustls",
- "tokio-util",
- "webpki-roots",
- "zbus",
- "zbus-secret-service-keyring-store",
- "zeroize",
+ "sqln-duckdb",
+ "sqln-kafka",
+ "sqln-mysql",
+ "sqln-postgres",
+ "sqln-redis",
+ "sqln-session",
+ "sqln-sqlite",
+ "sqln-store",
+ "sqln-vault",
 ]
 
 [[package]]
@@ -4205,15 +4182,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqln-duckdb"
+version = "0.4.1"
+dependencies = [
+ "async-trait",
+ "duckdb",
+ "sqln-core",
+ "sqln-session",
+ "sqln-sql",
+ "tokio",
+]
+
+[[package]]
 name = "sqln-exec"
 version = "0.4.1"
 dependencies = [
- "apple-native-keyring-store",
  "bytes",
  "chrono",
  "crossterm",
  "futures-util",
- "keyring-core",
  "reqwest",
  "rusqlite",
  "rustix",
@@ -4221,8 +4208,8 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "sqln-connector",
  "sqln-core",
+ "sqln-session",
  "sqln-sql",
  "sqln-store",
  "sqln-testkit",
@@ -4231,7 +4218,109 @@ dependencies = [
  "tokio-util",
  "unicode-width 0.2.3",
  "uuid",
- "zbus-secret-service-keyring-store",
+ "zeroize",
+]
+
+[[package]]
+name = "sqln-kafka"
+version = "0.4.1"
+dependencies = [
+ "apache-avro",
+ "async-trait",
+ "base64 0.23.1",
+ "chrono",
+ "prost-reflect",
+ "protox",
+ "rdkafka",
+ "regex",
+ "reqwest",
+ "serde_json",
+ "sqln-core",
+ "sqln-session",
+ "sqln-sql",
+ "sqln-vault",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "sqln-mysql"
+version = "0.4.1"
+dependencies = [
+ "async-trait",
+ "mysql_async",
+ "sqln-core",
+ "sqln-session",
+ "sqln-sql",
+ "tokio",
+]
+
+[[package]]
+name = "sqln-postgres"
+version = "0.4.1"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "futures-util",
+ "socket2",
+ "sqln-core",
+ "sqln-session",
+ "sqln-sql",
+ "tokio",
+ "tokio-postgres",
+ "tokio-postgres-rustls",
+]
+
+[[package]]
+name = "sqln-redis"
+version = "0.4.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "redis",
+ "rustls",
+ "sqln-core",
+ "sqln-session",
+ "sqln-sql",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
+name = "sqln-runtime"
+version = "0.4.1"
+dependencies = [
+ "futures-util",
+ "rusqlite",
+ "serde_json",
+ "sqln-connector",
+ "sqln-core",
+ "sqln-exec",
+ "sqln-session",
+ "sqln-sql",
+ "sqln-store",
+ "sqln-testkit",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
+name = "sqln-session"
+version = "0.4.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "regex",
+ "rustls",
+ "rustls-native-certs",
+ "serde",
+ "serde_json",
+ "sqln-core",
+ "sqln-sql",
+ "tokio",
+ "tokio-util",
+ "webpki-roots",
  "zeroize",
 ]
 
@@ -4246,18 +4335,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqln-sqlite"
+version = "0.4.1"
+dependencies = [
+ "async-trait",
+ "rusqlite",
+ "sqln-core",
+ "sqln-session",
+ "sqln-sql",
+ "tokio",
+]
+
+[[package]]
 name = "sqln-store"
 version = "0.4.1"
 dependencies = [
+ "apple-native-keyring-store",
  "keyring-core",
  "reqwest",
  "serde",
  "serde_json",
  "similar",
- "sqln-connector",
  "sqln-core",
+ "sqln-session",
  "sqln-testkit",
+ "sqln-vault",
  "uuid",
+ "zbus-secret-service-keyring-store",
  "zeroize",
 ]
 
@@ -4268,8 +4372,8 @@ dependencies = [
  "async-trait",
  "crossterm",
  "futures-util",
- "sqln-connector",
  "sqln-core",
+ "sqln-session",
  "sqln-sql",
  "sqln-ui",
 ]
@@ -4278,17 +4382,14 @@ dependencies = [
 name = "sqln-ui"
 version = "0.4.1"
 dependencies = [
- "async-trait",
  "crossterm",
- "duckdb",
  "edtui",
  "ratatui",
- "rusqlite",
  "serde_json",
  "similar",
- "sqln-connector",
  "sqln-core",
  "sqln-exec",
+ "sqln-session",
  "sqln-sql",
  "sqln-store",
  "sqln-testkit",
@@ -4296,6 +4397,19 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width 0.2.3",
  "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "sqln-vault"
+version = "0.4.1"
+dependencies = [
+ "apple-native-keyring-store",
+ "keyring-core",
+ "secret-service",
+ "sqln-session",
+ "zbus",
+ "zbus-secret-service-keyring-store",
  "zeroize",
 ]
 

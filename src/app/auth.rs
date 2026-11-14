@@ -840,7 +840,7 @@ impl App {
                 if let Some(manager) = &mut self.manager {
                     manager.replace_connection(
                         id,
-                        definition.connector(),
+                        crate::connector::open(&definition),
                         definition.settings(&self.settings),
                     );
                 }
@@ -972,7 +972,10 @@ impl App {
             Use::Import { console, step } => self.start_import_step(console, step),
             Use::Test { test, names } => {
                 let Some(definition) = definition else { return };
-                let (connector, limit) = (definition.connector(), definition.connect_timeout);
+                let (connector, limit) = (
+                    crate::connector::open(&definition),
+                    definition.connect_timeout,
+                );
                 manager.test_connection(test, connector, limit, names);
             }
             Use::Save => {}
@@ -1309,7 +1312,7 @@ impl App {
         if let Some(manager) = &self.manager {
             manager.test_connection(
                 test,
-                definition.connector(),
+                crate::connector::open(&definition),
                 definition.connect_timeout,
                 false,
             );

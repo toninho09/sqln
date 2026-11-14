@@ -3,8 +3,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sqln_connector::connector::target::{Address, Tls};
 use sqln_exec::connection::Source;
+use sqln_session::connector::target::{Address, Tls};
 use sqln_store::store::config::{self, Change, ConnectionEntry, CredentialName, KindName};
 use sqln_store::store::file::{self, Expect, WriteError};
 use sqln_store::store::scripts::{self, LineEnding, ScriptMeta};
@@ -646,9 +646,9 @@ fn a_change_creates_the_file_of_a_scope_without_one() {
 
 #[test]
 fn a_definition_round_trips_through_an_entry_without_the_password() {
-    use sqln_connector::connector::sqlite::SqliteTarget;
-    use sqln_connector::connector::target::{Engine, NetworkTarget, Secret};
     use sqln_exec::connection::Definition;
+    use sqln_session::connector::sqlite::SqliteTarget;
+    use sqln_session::connector::target::{Engine, NetworkTarget, Secret};
 
     let mut target = SqliteTarget::new("data/app.db");
     target.foreign_keys = Some(true);

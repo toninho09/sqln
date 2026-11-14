@@ -1336,7 +1336,7 @@ fn bindings(values: &[agent::Binding]) -> Result<Vec<crate::sql::parameters::Par
 
 /// Writes the field paths of a Kafka topic for the agent. An empty list says why.
 fn fields_value(topic: &str, paths: &[String], notes: &[crate::catalog::ColumnNote]) -> Value {
-    let fields = crate::connector::kafka::fields::field_json(paths, notes);
+    let fields = crate::connector::kafka::field_json(paths, notes);
     let mut value = json!({"topic": topic, "fields": fields});
     if paths.is_empty() {
         value["message"] = json!(text::AGENT_KAFKA_NO_FIELDS);

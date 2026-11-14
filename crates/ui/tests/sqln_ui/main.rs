@@ -4,12 +4,9 @@
 mod ai_editor;
 mod analysis;
 mod browser;
-mod command_log;
 mod compare_data;
 mod complete_syntax;
-mod data_edit_exec;
 mod definition;
-mod duckdb;
 mod editor_conventional;
 mod editor_search;
 mod editor_suggestions;
