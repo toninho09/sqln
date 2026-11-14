@@ -94,7 +94,7 @@ impl Compound {
             return false;
         }
         if word.eq_ignore_ascii_case("BEGIN") {
-            if dialect != Dialect::Postgres || next_word.eq_ignore_ascii_case("ATOMIC") {
+            if !dialect.syntax().begin_needs_atomic || next_word.eq_ignore_ascii_case("ATOMIC") {
                 self.depth += 1;
             }
         } else if word.eq_ignore_ascii_case("CASE") {
@@ -132,7 +132,7 @@ pub fn split(sql: &str, dialect: Dialect) -> Vec<Statement> {
 /// Splits text that has its tokens already, so a key does not analyze the text twice.
 /// In MySQL, `DELIMITER` changes how the text after it reads, so the text needs a new read.
 pub fn split_tokens(sql: &str, dialect: Dialect, tokens: &[Token]) -> Vec<Statement> {
-    if dialect == Dialect::MySql {
+    if dialect.syntax().delimiter_command {
         return split(sql, dialect);
     }
     split_source(sql, dialect, &mut TokenSlice { tokens, index: 0 })
@@ -240,7 +240,7 @@ fn split_source(sql: &str, dialect: Dialect, source: &mut impl TokenSource) -> V
         }
         let word = &sql[token.start()..token.end()];
 
-        if dialect == Dialect::MySql
+        if dialect.syntax().delimiter_command
             && start.is_none()
             && token.kind == TokenKind::Word
             && word.eq_ignore_ascii_case("DELIMITER")

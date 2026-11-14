@@ -1,50 +1,29 @@
 //! The literals of the SQL that SQLN writes: text, bytes, and numbers.
 
-use super::{Dialect, escape_literal, quote_literal};
+use super::dialect::BinaryLiteral;
+use super::{Dialect, quote_literal};
 use crate::grid::{Value, hex};
 
 /// Writes text as a literal that does not change with the session. PostgreSQL uses the
 /// `E` form, and MySQL uses the hexadecimal form for text with a backslash.
 pub fn text_literal(value: &str, dialect: Dialect) -> String {
-    match dialect {
-        Dialect::Postgres => escape_literal(value),
-        // The hexadecimal form does not change with `NO_BACKSLASH_ESCAPES`.
-        Dialect::MySql if value.contains('\\') => {
-            format!("_utf8mb4 {}", hex(value.as_bytes()))
-        }
-        Dialect::Kafka => kafka_literal(value),
-        _ => quote_literal(value, dialect),
-    }
-}
-
-/// Writes a Kafka text with backslash escapes, which SELECT and the line commands both
-/// read. A doubled quote works only in SELECT.
-fn kafka_literal(value: &str) -> String {
-    let mut literal = String::with_capacity(value.len() + 2);
-    literal.push('\'');
-    for c in value.chars() {
-        match c {
-            '\'' | '\\' => {
-                literal.push('\\');
-                literal.push(c);
-            }
-            '\n' => literal.push_str("\\n"),
-            '\r' => literal.push_str("\\r"),
-            '\t' => literal.push_str("\\t"),
-            c if c.is_ascii_control() => literal.push_str(&format!("\\x{:02x}", u32::from(c))),
-            c => literal.push(c),
-        }
-    }
-    literal.push('\'');
-    literal
+    dialect.sql().text_literal(value)
 }
 
 /// Writes hexadecimal digits as a literal of bytes.
 pub fn binary_literal(digits: &str, dialect: Dialect) -> String {
-    if dialect == Dialect::Postgres {
-        escape_literal(&format!("\\x{digits}"))
-    } else {
-        format!("X'{digits}'")
+    match dialect.syntax().binary_literal {
+        BinaryLiteral::HexText => text_literal(&format!("\\x{digits}"), dialect),
+        BinaryLiteral::XQuote => format!("X'{digits}'"),
+    }
+}
+
+/// Writes hexadecimal digits as a plain literal of bytes, which depends on the session
+/// settings of PostgreSQL. An exported file uses this form.
+pub fn plain_binary_literal(digits: &str, dialect: Dialect) -> String {
+    match dialect.syntax().binary_literal {
+        BinaryLiteral::HexText => quote_literal(&format!("\\x{digits}"), dialect),
+        BinaryLiteral::XQuote => format!("X'{digits}'"),
     }
 }
 

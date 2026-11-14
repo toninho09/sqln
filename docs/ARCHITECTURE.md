@@ -533,6 +533,16 @@ The variant serves presentation only, such as aligning numbers.
 `Value::binary` classifies binary bytes once, before they reach the interface. The wrapper preserves the original bytes.
 A preview reads only the visible prefix. TSV encoding borrows selected values without cloning the selection.
 
+### Dialects
+
+`Dialect` names the language of a source. Per-dialect behavior stays in one place, so a new dialect does not need changes in the code that uses it.
+
+- `sqln_sql::sql::dialect` has one file for each dialect. Each file implements `SqlDialect`, and `Dialect::sql()` is the only `match` that chooses the file.
+- `Syntax` holds the lexical rules (comments, quotes, escapes, parameter markers) and the rules that SQLN uses to write SQL (identifier quote, literals, booleans). The lexer reads it once for each text, not for each token.
+- `SqlDialect` holds the behavior that data cannot express: the `sqlparser` dialect, the text literal, and the marker of a named parameter.
+- The traits have no default methods. The compiler shows each item that a new dialect must decide.
+- Code outside these modules reads the rules and does not compare `Dialect` values. The exception is the command-line paths of Redis and Kafka, which use `Dialect::is_command_line`.
+
 ## 5. Script execution
 
 1. The console requests the execution and receives an `ExecutionId`.

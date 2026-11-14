@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::clipboard::base64;
 use crate::grid::{Value, delimited_text, hex, push_cell};
-use crate::sql::literal::is_number;
+use crate::sql::literal::{is_number, plain_binary_literal};
 use crate::sql::{Dialect, quote_identifier, quote_literal};
 use crate::store::file;
 
@@ -73,12 +73,7 @@ fn sql_value(value: Value<'_>, dialect: Dialect) -> Cow<'_, str> {
         Value::Text(text) | Value::Number(text) => quote_literal(text, dialect).into(),
         Value::Binary(bytes) => {
             let digits = hex(&bytes);
-            let digits = digits.trim_start_matches("0x");
-            if dialect == Dialect::Postgres {
-                format!("'\\x{digits}'").into()
-            } else {
-                format!("X'{digits}'").into()
-            }
+            plain_binary_literal(digits.trim_start_matches("0x"), dialect).into()
         }
     }
 }

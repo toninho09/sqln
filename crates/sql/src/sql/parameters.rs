@@ -91,7 +91,7 @@ pub fn is_number(text: &str) -> bool {
 }
 
 /// MySQL binds strings, not decimal values. A typed cast keeps decimal precision.
-fn mysql_number(text: &str) -> Result<(String, usize, usize), String> {
+pub(crate) fn mysql_number(text: &str) -> Result<(String, usize, usize), String> {
     let (negative, unsigned) = text.strip_prefix('-').map_or((false, text), |t| (true, t));
     let (mantissa, exponent) = unsigned.split_once(['e', 'E']).unwrap_or((unsigned, "0"));
     let exponent: i32 = exponent
@@ -184,16 +184,9 @@ pub fn bind(sql: &str, dialect: Dialect, values: &[Parameter]) -> Result<BoundSq
         }
         result.sql.push_str(&sql[end..occurrence.range.start]);
         let start = result.sql.len();
-        let marker = match (dialect, parameter.kind) {
-            (Dialect::Postgres, _) => format!("${}", result.parameters.len() + 1),
-            (Dialect::Sqlite, Kind::Number) => "CAST(? AS NUMERIC)".to_owned(),
-            (Dialect::MySql, Kind::Number) => {
-                let (value, precision, scale) = mysql_number(&parameter.value)?;
-                parameter.value = value;
-                format!("CAST(? AS DECIMAL({precision},{scale}))")
-            }
-            _ => "?".to_owned(),
-        };
+        let marker = dialect
+            .sql()
+            .parameter_marker(result.parameters.len() + 1, &mut parameter)?;
         result.sql.push_str(&marker);
         result
             .replacements
@@ -213,15 +206,16 @@ pub fn bind(sql: &str, dialect: Dialect, values: &[Parameter]) -> Result<BoundSq
                     text
                 });
         let tokens = tokenize(&masked, dialect);
+        let syntax = dialect.syntax();
         if tokens.iter().any(|token| {
             token.kind == TokenKind::Punctuation
                 && match &masked[token.start()..token.end()] {
-                    "?" => dialect != Dialect::Postgres,
+                    "?" => syntax.question_marker,
                     "$" => masked
                         .as_bytes()
                         .get(token.end())
                         .is_some_and(u8::is_ascii_alphanumeric),
-                    "@" => dialect == Dialect::Sqlite,
+                    "@" => syntax.at_marker,
                     _ => false,
                 }
         }) {

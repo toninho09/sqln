@@ -76,7 +76,7 @@ impl Structure {
 
 /// Writes a name of the catalog as a literal.
 pub fn name_literal(name: &str, dialect: Dialect) -> String {
-    if dialect == Dialect::Postgres {
+    if dialect.syntax().escaped_name_literal {
         escape_literal(name)
     } else {
         quote_literal(name, dialect)

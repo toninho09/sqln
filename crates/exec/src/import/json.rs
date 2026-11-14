@@ -41,11 +41,7 @@ impl<'de> Deserialize<'de> for Pairs<'de> {
 
 /// The text of `true` and `false` in a database.
 fn booleans(dialect: Dialect) -> (&'static str, &'static str) {
-    if dialect == Dialect::Postgres {
-        ("true", "false")
-    } else {
-        ("1", "0")
-    }
+    dialect.syntax().booleans
 }
 
 /// Reads an object from valid text.

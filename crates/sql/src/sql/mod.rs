@@ -2,6 +2,7 @@
 
 mod classify;
 pub mod diagnostics;
+pub mod dialect;
 mod format;
 mod lexer;
 pub mod literal;
@@ -69,14 +70,7 @@ impl Dialect {
 
 /// Shares parser dialect selection between assistant policy and local syntax checks.
 pub fn parser_dialect(dialect: Dialect) -> Option<&'static dyn sqlparser::dialect::Dialect> {
-    use sqlparser::dialect::{DuckDbDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
-    Some(match dialect {
-        Dialect::Postgres => &PostgreSqlDialect {},
-        Dialect::MySql => &MySqlDialect {},
-        Dialect::Sqlite => &SQLiteDialect {},
-        Dialect::DuckDb => &DuckDbDialect {},
-        Dialect::Redis | Dialect::Kafka => return None,
-    })
+    dialect.sql().parser()
 }
 
 /// Wraps a name in `open` quotes and doubles the quotes inside the name.
@@ -96,21 +90,22 @@ pub fn quote_with(name: &str, open: char) -> String {
 
 /// Writes a name with the identifier quotes of the dialect. It always quotes.
 pub fn quote_identifier(name: &str, dialect: Dialect) -> String {
-    quote_with(name, if dialect == Dialect::MySql { '`' } else { '"' })
+    quote_with(name, dialect.syntax().identifier_quote)
 }
 
 /// Returns the relation as the `FROM` clause writes it.
 pub fn from_clause(relation: &crate::catalog::RelationRef, dialect: Dialect) -> String {
     // DuckDB names a schema of an attached database as `catalog.schema`, and each part
     // needs its own quotes.
-    let schema = match dialect {
-        Dialect::DuckDb => relation
+    let schema = if dialect.syntax().dotted_schema {
+        relation
             .schema
             .split('.')
             .map(|part| quote_identifier(part, dialect))
             .collect::<Vec<_>>()
-            .join("."),
-        _ => quote_identifier(&relation.schema, dialect),
+            .join(".")
+    } else {
+        quote_identifier(&relation.schema, dialect)
     };
     format!("{schema}.{}", quote_identifier(&relation.relation, dialect))
 }
@@ -124,7 +119,7 @@ pub fn escape_literal(text: &str) -> String {
 /// Writes text as a string literal of the dialect. MySQL also reads a backslash as an escape.
 pub fn quote_literal(text: &str, dialect: Dialect) -> String {
     let literal = quote_with(text, '\'');
-    if dialect == Dialect::MySql {
+    if dialect.syntax().literal_backslash {
         literal.replace('\\', "\\\\")
     } else {
         literal

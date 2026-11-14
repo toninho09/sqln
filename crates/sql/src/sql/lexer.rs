@@ -1,4 +1,5 @@
 use super::Dialect;
+use super::dialect::{Backslash, Syntax};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TokenKind {
@@ -36,6 +37,7 @@ impl Token {
 pub struct Lexer<'a> {
     sql: &'a str,
     dialect: Dialect,
+    syntax: &'static Syntax,
     pub pos: usize,
     previous: Option<Token>,
     kafka_select: bool,
@@ -47,6 +49,7 @@ impl<'a> Lexer<'a> {
         Self {
             sql,
             dialect,
+            syntax: dialect.syntax(),
             pos: 0,
             previous: None,
             kafka_select: false,
@@ -58,47 +61,50 @@ impl<'a> Lexer<'a> {
         use TokenKind::{Comment, Punctuation, QuotedIdentifier, String};
 
         let bytes = self.sql.as_bytes();
-        let dialect = self.dialect;
+        let syntax = self.syntax;
         let byte = bytes[start];
 
-        if dialect.is_command_line() {
+        if self.dialect.is_command_line() {
             return self.read_command_token(start);
         }
         if bytes[start..].starts_with(b"--")
-            && (dialect != Dialect::MySql
+            && (!syntax.dash_comment_needs_space
                 || bytes.get(start + 2).is_none_or(u8::is_ascii_whitespace))
         {
             return (Comment, skip_line(bytes, start), false);
         }
-        if dialect == Dialect::MySql && byte == b'#' {
+        if syntax.hash_comment && byte == b'#' {
             return (Comment, skip_line(bytes, start), false);
         }
         if bytes[start..].starts_with(b"/*") {
-            let (end, closed) = skip_block_comment(bytes, start, dialect == Dialect::Postgres);
+            let (end, closed) = skip_block_comment(bytes, start, syntax.nested_block_comment);
             return (Comment, end, closed);
         }
 
         match byte {
             b'\'' => {
-                let backslash = dialect == Dialect::MySql
-                    || (dialect == Dialect::Postgres && self.after_escape_prefix(start));
+                let backslash = match syntax.string_backslash {
+                    Backslash::Never => false,
+                    Backslash::Always => true,
+                    Backslash::AfterEscapePrefix => self.after_escape_prefix(start),
+                };
                 let (end, closed) = skip_quoted(bytes, start, b'\'', backslash);
                 (String, end, closed)
             }
             b'"' => {
-                let mysql = dialect == Dialect::MySql;
-                let (end, closed) = skip_quoted(bytes, start, b'"', mysql);
-                (if mysql { String } else { QuotedIdentifier }, end, closed)
+                let string = syntax.double_quote_string;
+                let (end, closed) = skip_quoted(bytes, start, b'"', string);
+                (if string { String } else { QuotedIdentifier }, end, closed)
             }
-            b'`' if dialect != Dialect::Postgres => {
+            b'`' if syntax.backtick_identifier => {
                 let (end, closed) = skip_quoted(bytes, start, b'`', false);
                 (QuotedIdentifier, end, closed)
             }
-            b'[' if dialect == Dialect::Sqlite => {
+            b'[' if syntax.bracket_identifier => {
                 let (end, closed) = skip_bracket(bytes, start);
                 (QuotedIdentifier, end, closed)
             }
-            b'$' if dialect == Dialect::Postgres && !self.after_word(start) => {
+            b'$' if syntax.dollar_quote && !self.after_word(start) => {
                 match dollar_tag_end(bytes, start) {
                     Some(tag_end) => {
                         let (end, closed) = skip_dollar_quote(bytes, start, tag_end);

@@ -681,7 +681,7 @@ fn needs_quotes(name: &str, dialect: Dialect) -> bool {
         .next()
         .is_some_and(|first| first.is_ascii_alphabetic() || first == '_');
     let continues_well = chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
-    let case_ok = dialect != Dialect::Postgres || !name.chars().any(|c| c.is_ascii_uppercase());
+    let case_ok = !dialect.syntax().folds_to_lower || !name.chars().any(|c| c.is_ascii_uppercase());
     !(starts_well && continues_well && case_ok) || is_reserved(name)
 }
 
@@ -690,8 +690,7 @@ pub fn quote_name(name: &str, dialect: Dialect, typed_quote: Option<char>) -> St
     let open = match (typed_quote, dialect) {
         (Some(open), _) => open,
         (None, _) if !needs_quotes(name, dialect) => return name.to_owned(),
-        (None, Dialect::MySql) => '`',
-        (None, _) => '"',
+        (None, _) => dialect.syntax().identifier_quote,
     };
     if open == '[' {
         return format!("[{name}]");
@@ -703,7 +702,7 @@ pub fn quote_name(name: &str, dialect: Dialect, typed_quote: Option<char>) -> St
 /// `catalog.schema` name, and one identifier cannot write it, because the engine would
 /// read the dot inside the quotes: the parts are written one by one.
 pub fn quote_schema(name: &str, dialect: Dialect, typed_quote: Option<char>) -> String {
-    if dialect != Dialect::DuckDb {
+    if !dialect.syntax().dotted_schema {
         return quote_name(name, dialect, typed_quote);
     }
     name.split('.')
