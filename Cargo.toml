@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 sqln-core = { path = "crates/core" }
+sqln-sql = { path = "crates/sql" }
 apache-avro = { version = "0.22", default-features = false }
 arboard = { version = "3.7.0", default-features = false }
 async-trait = "0.1"
@@ -67,6 +68,7 @@ autotests = false
 
 [dependencies]
 sqln-core.workspace = true
+sqln-sql.workspace = true
 apache-avro.workspace = true
 arboard.workspace = true
 async-trait.workspace = true

@@ -8,16 +8,20 @@ use tokio_postgres::types::{Format, FromSql, IsNull, ToSql, to_sql_checked};
 use super::*;
 use crate::sql::parameters::{Kind, Parameter};
 
-impl ToSql for Parameter {
+/// Binds one query parameter as text. `NULL` binds no value.
+#[derive(Debug)]
+struct Bound<'a>(&'a Parameter);
+
+impl ToSql for Bound<'_> {
     fn to_sql(
         &self,
         _ty: &Type,
         out: &mut BytesMut,
     ) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
-        if self.kind == Kind::Null {
+        if self.0.kind == Kind::Null {
             return Ok(IsNull::Yes);
         }
-        out.extend_from_slice(self.value.as_bytes());
+        out.extend_from_slice(self.0.value.as_bytes());
         Ok(IsNull::No)
     }
     fn accepts(_ty: &Type) -> bool {
@@ -114,7 +118,7 @@ impl PostgresSession {
         }
         let stream = self
             .client
-            .query_raw(&statement, parameters.iter())
+            .query_raw(&statement, parameters.iter().map(Bound))
             .await
             .map_err(map_error)?;
         let mut stream = pin!(stream);

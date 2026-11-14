@@ -42,7 +42,7 @@ impl Dialect {
 }
 
 /// Shares parser dialect selection between assistant policy and local syntax checks.
-pub(crate) fn parser_dialect(dialect: Dialect) -> Option<&'static dyn sqlparser::dialect::Dialect> {
+pub fn parser_dialect(dialect: Dialect) -> Option<&'static dyn sqlparser::dialect::Dialect> {
     use sqlparser::dialect::{DuckDbDialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
     Some(match dialect {
         Dialect::Postgres => &PostgreSqlDialect {},

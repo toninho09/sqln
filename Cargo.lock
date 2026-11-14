@@ -4150,6 +4150,7 @@ dependencies = [
  "similar",
  "socket2",
  "sqln-core",
+ "sqln-sql",
  "sqlparser",
  "tokio",
  "tokio-postgres",
@@ -4179,6 +4180,15 @@ dependencies = [
  "tokio-util",
  "unicode-width 0.2.3",
  "zeroize",
+]
+
+[[package]]
+name = "sqln-sql"
+version = "0.4.1"
+dependencies = [
+ "serde_json",
+ "sqln-core",
+ "sqlparser",
 ]
 
 [[package]]

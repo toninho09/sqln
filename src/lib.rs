@@ -36,9 +36,7 @@ pub mod pool;
 pub mod result;
 pub mod script_file;
 pub mod settings;
-pub mod sql;
 pub mod store;
-pub mod structure;
 pub mod table;
 pub mod terminal;
 pub mod trace;
@@ -50,3 +48,4 @@ pub use sqln_core::{
     catalog, clipboard, filter_list, find, grid, input, limited, line_input, log, mark_list,
     message, progress, sink, text, wrap,
 };
+pub use sqln_sql::{sql, structure};
