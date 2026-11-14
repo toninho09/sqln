@@ -34,6 +34,32 @@ pub enum Dialect {
 }
 
 impl Dialect {
+    pub const ALL: [Dialect; 6] = [
+        Dialect::Postgres,
+        Dialect::MySql,
+        Dialect::Sqlite,
+        Dialect::DuckDb,
+        Dialect::Redis,
+        Dialect::Kafka,
+    ];
+
+    /// Returns the name of the dialect on the command line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Dialect::Postgres => "postgres",
+            Dialect::MySql => "mysql",
+            Dialect::Sqlite => "sqlite",
+            Dialect::DuckDb => "duckdb",
+            Dialect::Redis => "redis",
+            Dialect::Kafka => "kafka",
+        }
+    }
+
+    /// Finds the dialect of a command-line name.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|dialect| dialect.name() == name)
+    }
+
     /// Returns true for a source with native commands and `#` line comments.
     /// Kafka also accepts SELECT, without the relational SQL features.
     pub fn is_command_line(self) -> bool {

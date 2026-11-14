@@ -117,15 +117,9 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
                 }
             }
             "--dialect" => {
-                cli.dialect = Some(match args.next().as_deref() {
-                    Some("postgres") => Dialect::Postgres,
-                    Some("mysql") => Dialect::MySql,
-                    Some("sqlite") => Dialect::Sqlite,
-                    Some("duckdb") => Dialect::DuckDb,
-                    Some("redis") => Dialect::Redis,
-                    Some("kafka") => Dialect::Kafka,
-                    other => return Err(format!("Unknown dialect: {}", other.unwrap_or(""))),
-                });
+                let name = args.next().unwrap_or_default();
+                cli.dialect =
+                    Some(Dialect::parse(&name).ok_or_else(|| format!("Unknown dialect: {name}"))?);
             }
             other if other.starts_with('-') => return Err(format!("Unknown option: {other}")),
             _ if cli.target.is_some() => return Err(text::ONE_TARGET.to_owned()),

@@ -182,12 +182,7 @@ pub fn run(options: Options) -> Result<(), Error> {
     let dialect = match &definition.source {
         Source::Sqlite(_) => Dialect::Sqlite,
         Source::Duckdb(_) => Dialect::DuckDb,
-        Source::Network(target) => match target.engine {
-            crate::connector::target::Engine::Postgres => Dialect::Postgres,
-            crate::connector::target::Engine::MySql => Dialect::MySql,
-            crate::connector::target::Engine::Redis => Dialect::Redis,
-            crate::connector::target::Engine::Kafka => Dialect::Kafka,
-        },
+        Source::Network(target) => target.engine.dialect(),
     };
     let statements: Vec<String> = sql::split(&options.sql, dialect)
         .iter()

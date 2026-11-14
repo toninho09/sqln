@@ -7,7 +7,7 @@ use super::Scope;
 use super::config::DEFAULT_CAP_IN_SQL;
 use crate::connector::duckdb::{DuckdbSource, DuckdbTarget};
 use crate::connector::sqlite::SqliteTarget;
-use crate::connector::target::{Address, Engine, NetworkTarget, Tls};
+use crate::connector::target::{Address, NetworkTarget, Tls};
 use crate::grid::DEFAULT_LIMIT;
 
 pub const DEFAULT_POOL_LIMIT: usize = 5;
@@ -218,12 +218,7 @@ impl Definition {
                     Tls::Disabled => "no TLS",
                     Tls::Verify(_) => "TLS",
                 };
-                let engine = match target.engine {
-                    Engine::Postgres => "PostgreSQL",
-                    Engine::MySql => "MySQL",
-                    Engine::Redis => "Redis/Valkey",
-                    Engine::Kafka => "Kafka",
-                };
+                let engine = target.engine.label();
                 let place = match &target.address {
                     Address::Tcp { host, port } => format!("{host}:{port}"),
                     Address::Socket(path) => path.display().to_string(),

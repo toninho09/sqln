@@ -8,6 +8,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use crate::sql::Dialect;
+use crate::text;
+
 /// A password. Debug hides its value, and drop clears its memory.
 #[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct Secret(String);
@@ -38,6 +41,26 @@ pub enum Engine {
 }
 
 impl Engine {
+    /// Returns the dialect of the statements of this source.
+    pub fn dialect(self) -> Dialect {
+        match self {
+            Engine::Postgres => Dialect::Postgres,
+            Engine::MySql => Dialect::MySql,
+            Engine::Redis => Dialect::Redis,
+            Engine::Kafka => Dialect::Kafka,
+        }
+    }
+
+    /// Returns the name of the source for the user.
+    pub fn label(self) -> &'static str {
+        match self {
+            Engine::Postgres => text::VALUE_POSTGRES,
+            Engine::MySql => text::VALUE_MYSQL,
+            Engine::Redis => text::VALUE_REDIS,
+            Engine::Kafka => text::VALUE_KAFKA,
+        }
+    }
+
     pub fn default_port(self) -> u16 {
         match self {
             Engine::Postgres => 5432,
