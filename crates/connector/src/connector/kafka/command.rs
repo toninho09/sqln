@@ -113,7 +113,7 @@ pub fn tokenize(line: &str) -> Result<Vec<Token>, ExecError> {
     tokenize_mode(line, false)
 }
 
-pub(crate) fn tokenize_mode(line: &str, select: bool) -> Result<Vec<Token>, ExecError> {
+pub fn tokenize_mode(line: &str, select: bool) -> Result<Vec<Token>, ExecError> {
     let bytes = line.as_bytes();
     let mut tokens = Vec::new();
     let mut pos = 0;

@@ -13,8 +13,8 @@ use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
 
 use super::{
-    Binding, Command, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, ResultSink,
-    RunRequest, Settings, StatementKey, StatementStatus, StreamControl, context,
+    Binding, Command, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ResultSink, RunRequest,
+    Settings, StatementKey, StatementStatus, StreamControl, context,
 };
 use crate::command_log::TraceContext;
 use crate::connector::{ExecError, StatementEnd, TransactionCommand, TransactionState};
@@ -703,11 +703,5 @@ fn statement_status(
             },
             None,
         ) => (StatementStatus::Error(error.message), None),
-    }
-}
-
-impl StatementEnd {
-    pub fn reached_limit(&self) -> bool {
-        self.limit != ReadLimit::None
     }
 }

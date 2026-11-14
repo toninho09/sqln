@@ -7,7 +7,7 @@ pub mod postgres;
 pub mod redis;
 pub mod sqlite;
 pub mod target;
-pub(crate) mod tls;
+pub mod tls;
 pub mod words;
 
 use std::sync::Arc;
@@ -158,6 +158,12 @@ pub struct StatementEnd {
     /// Rows that the statement changed, for a statement without a result.
     pub changed: Option<u64>,
     pub limit: ReadLimit,
+}
+
+impl StatementEnd {
+    pub fn reached_limit(&self) -> bool {
+        self.limit != ReadLimit::None
+    }
 }
 
 /// Asks the database to stop the statement in progress. It uses no session state,
