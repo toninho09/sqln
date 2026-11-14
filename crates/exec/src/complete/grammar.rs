@@ -407,7 +407,7 @@ fn query(tokens: &[Token], text: &str, dialect: Dialect, fallback: &Position) ->
         if !is_word(text, last, &["ASC", "DESC", "FIRST", "LAST"]) {
             result.extend(["ASC", "DESC"]);
         }
-        if dialect != Dialect::MySql && !is_word(text, last, &["FIRST", "LAST"]) {
+        if features(dialect).vocabulary().nulls_order && !is_word(text, last, &["FIRST", "LAST"]) {
             result.extend(["NULLS FIRST", "NULLS LAST"]);
         }
     }
