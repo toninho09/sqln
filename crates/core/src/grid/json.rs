@@ -95,7 +95,7 @@ impl Highlights {
     }
 
     /// Reads text that the cell window already validates before formatting.
-    pub(crate) fn validated(text: &str) -> Self {
+    pub fn validated(text: &str) -> Self {
         let mut tokens = Vec::new();
         if text.len() > FORMATTED_LIMIT {
             return Self { tokens };

@@ -13,7 +13,7 @@ dir="$(mktemp -d)"
 status=0
 
 # Build only; the binaries run separately below.
-if ! cargo test --no-run --message-format=json "$@" >"$dir/build.json" 2>"$dir/build.err"; then
+if ! cargo test --workspace --no-run --message-format=json "$@" >"$dir/build.json" 2>"$dir/build.err"; then
   cat "$dir/build.err"
   rm -rf "$dir"
   exit 1

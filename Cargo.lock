@@ -4149,6 +4149,7 @@ dependencies = [
  "signal-hook 0.4.6",
  "similar",
  "socket2",
+ "sqln-core",
  "sqlparser",
  "tokio",
  "tokio-postgres",
@@ -4161,6 +4162,22 @@ dependencies = [
  "webpki-roots",
  "zbus",
  "zbus-secret-service-keyring-store",
+ "zeroize",
+]
+
+[[package]]
+name = "sqln-core"
+version = "0.4.1"
+dependencies = [
+ "arboard",
+ "base64 0.23.1",
+ "crossterm",
+ "edtui",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "unicode-width 0.2.3",
  "zeroize",
 ]
 

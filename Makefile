@@ -6,13 +6,13 @@ Q = --quiet
 
 # Format all source files.
 fmt:
-	@cargo fmt
+	@cargo fmt --all
 
 # Run the linters. Use the test profile to reuse dependency builds.
 lint:
-	@cargo fmt --check
+	@cargo fmt --all --check
 	@scripts/check-test-files.sh
-	@cargo clippy --all-targets --profile test $(Q) -- -D warnings
+	@cargo clippy --workspace --all-targets --profile test $(Q) -- -D warnings
 
 # Run the tests in tests/. The database tests skip without the Docker stack.
 test:

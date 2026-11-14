@@ -150,7 +150,7 @@ pub struct WrappedText {
 
 /// Returns the end of the row that starts at `start`, and the start of the next row.
 /// A row breaks after a space when it can, so that a word stays in one piece.
-pub(crate) fn row_end(text: &str, start: usize, width: usize) -> (usize, Option<(usize, bool)>) {
+pub fn row_end(text: &str, start: usize, width: usize) -> (usize, Option<(usize, bool)>) {
     let mut used = 0;
     let mut after_space = None;
     for (offset, c) in text[start..].char_indices() {
@@ -295,7 +295,7 @@ impl WrappedText {
     }
 
     /// Adds JSON colors after the cell window validates the source.
-    pub(crate) fn highlight_json(&mut self) {
+    pub fn highlight_json(&mut self) {
         if let Content::Text(text) = &self.source {
             self.json = Some(crate::grid::json::Highlights::validated(text));
         }
