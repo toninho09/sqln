@@ -4,12 +4,12 @@
 
 **Defined:** this document is approved.
 It details the architecture of the [plan](INITIAL_PLAN.md).
-The connector signature below is a summary, not the complete trait. See `src/connector/mod.rs` for the contract.
+The connector signature below is a summary, not the complete trait. See `crates/connector/src/connector/mod.rs` for the contract.
 The facts about the drivers come from [RESULTS](RESULTS.md).
 
 ## 1. Overview
 
-The project is a single Rust crate.
+The project is a Cargo workspace with seven crates in a fixed layer order. See [Crates and modules](#2-crates-and-modules).
 The interface runs on the main thread and never waits for the database.
 Each console has its own task, owner of the reserved session. This document calls that task an actor.
 The execution manager keeps one pool per connection, and all connections use a single runtime and a single event channel.
@@ -25,7 +25,33 @@ Main thread                        Tokio runtime
                                      Own thread: rusqlite
 ```
 
-## 2. Modules
+## 2. Crates and modules
+
+Each crate depends only on the crates to its left. Cargo refuses a cycle, so the compiler keeps the order:
+
+`sqln-core` ← `sqln-sql` ← `sqln-connector` ← `sqln-store` ← `sqln-exec` ← `sqln-ui` ← `sqln`
+
+| Crate | Folder | Modules |
+|---|---|---|
+| `sqln-core` | `crates/core` | `catalog`, `clipboard`, `filter_list`, `find`, `grid`, `input`, `limited`, `line_input`, `log`, `mark_list`, `message`, `progress`, `sink`, `text`, `wrap` |
+| `sqln-sql` | `crates/sql` | `sql`, `structure` |
+| `sqln-connector` | `crates/connector` | `connector`, `pool`, `trace`, `vault` |
+| `sqln-store` | `crates/store` | `creds`, `script_file`, `store`, `trust` |
+| `sqln-exec` | `crates/exec` | `agent`, `ai`, `analysis`, `command_log`, `compare`, `complete`, `connection`, `data_edit`, `diagram`, `exec`, `export`, `import`, `plan` |
+| `sqln-ui` | `crates/ui` | `browser`, `compare_tab`, `console`, `definition`, `diagram_tab`, `edit_form`, `editor`, `export_form`, `form`, `generate`, `help`, `history`, `import_form`, `navigator`, `palette`, `parameters`, `result`, `settings`, `table`, `ui` |
+| `sqln` | root, `src/` | `app`, `batch`, `mcp`, `terminal`, and the binary |
+
+The `sqln` crate re-exports every module at the root, so `sqln::grid` and `crate::grid` in `app` keep their paths.
+Each lower crate re-exports the modules of its dependencies with `pub(crate) use`, so its code keeps `crate::` paths.
+Only the crates in the table know their dependencies. A lower crate cannot name a type of a higher crate:
+
+- A connector writes rows to `sink::ResultSink`, which sends `sink::SinkEvent`. `ExecEvent` implements `From<SinkEvent>`, so the channel and the event order do not change.
+- `trace::TraceContext` sends `trace::TraceEvent` in the same way.
+- `store` owns the saved types: connection definitions and execution limits (`store::connection`), AI settings (`store::ai`), and the export and import choices (`store::choices`). The modules that use them re-export them.
+- `text` holds the interface text. `ui::text` re-exports it and adds the text that needs interface types.
+- The state of a screen, tab, or dialog is in `sqln-ui`, such as `compare_tab` and `export_form`. Its job model stays in `sqln-exec`.
+
+A test helper that the unit tests of another crate need uses a `test-support` feature, which only a dev-dependency enables.
 
 | Module | Responsibility |
 |---|---|
@@ -53,7 +79,9 @@ Main thread                        Tokio runtime
 | `generate` | SQL templates of the navigator |
 | `console` | Editor, results, messages, and state of a console |
 | `parameters` | Panel of the query parameters of one console: fields, kinds, values, and Set state |
-| `command_log` | In-memory command history, bounded text, tracing, and the Messages viewport |
+| `command_log` | In-memory command history and the Messages viewport |
+| `trace` | Command traces: `TraceContext`, spans, and the traced canceller |
+| `limited` | Bounded text for events and logs |
 | `plan` | Query plan commands, database output readers, and tree rows |
 | `mark_list` | Searchable list with a mark for each selected name |
 | `result` | Grid of one result with cursor and search, used by consoles and tables |
@@ -62,22 +90,25 @@ Main thread                        Tokio runtime
 | `table` | Table tab: pages, fields, sorting, suggestions, and query |
 | `data_edit` | Pending rows, budgeted snapshots, key predicates, update SQL, review, and cursor restoration |
 | `structure` | Catalog queries of the structure tab, per database, scope, and section |
-| `diagram` | ER diagram: catalog queries, model, layout of boxes and lines, Mermaid text, and the state of a diagram tab |
-| `compare` | Structure and data compare: catalog queries, model of a schema, differences, sync DDL, rows by key, the dialog, and the state of a compare tab |
+| `diagram` | ER diagram: catalog queries, model, layout of boxes and lines, Mermaid text. `diagram_tab` holds the state of a diagram tab |
+| `compare` | Structure and data compare: catalog queries, model of a schema, differences, sync DDL, rows by key, and the dialog. `compare_tab` holds the state of a compare tab |
 | `line_input` | Single-line text field, used by the filter bar fields |
 | `batch` | One noninteractive instruction, saved-name resolution, terminal authorization, credentials, and CSV/JSON delivery |
 | `exec` | Executions, scripts, cap, and cancellation |
+| `sink` | Result sink, statement keys, and read limits |
+| `progress` | Read counts that the screen shows during a read |
 | `pool` | Limit, queue, reservation, and cleaning |
 | `connector` | Contract and PostgreSQL, MySQL, SQLite, DuckDB, Redis/Valkey, and Kafka connectors, with the Schema Registry client and the field paths of a schema (`kafka/fields.rs`), which are the columns of a topic |
 | `grid` | Rows in one block each (`row`), widths, search, budget, TSV, and readable JSON shape (`json`) |
-| `export` | Export formats, temporary file, and modal form |
-| `import` | File readers, `INSERT` text, batches, the error log, and modal form |
+| `export` | Export formats and temporary file. `export_form` holds the modal form |
+| `import` | File readers, `INSERT` text, batches, and the error log. `import_form` holds the modal form |
 | `find` | Text comparison of the two searches |
 | `clipboard` | System clipboard and OSC 52 |
 | `terminal` | Terminal setup and restore |
 | `store` | Folders of the scopes, `config.json`, console scripts, `workspace.json`, atomic writes, and locks |
 | `script_file` | Saved state of a console: hash, line ending, save wait, and write problem |
-| `creds` | Vault and session passwords, with `zeroize` |
+| `creds` | Credential identities, session passwords, and the vault adapters, with `zeroize` |
+| `vault` | System vault access, without provider text in its errors |
 | `trust` | Confirmed destinations and known paths |
 | `settings` | Form of the preferences per scope, with the autocomplete provider fields |
 | `log` | Optional event log, without SQL or values |

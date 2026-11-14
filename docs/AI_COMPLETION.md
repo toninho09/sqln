@@ -116,7 +116,7 @@ Each request starts with one system message: the common rules, then the language
 
 - The common rules tell the model to write only the text at the cursor, without Markdown, to use only the names of the metadata, and to write names and enum values with the case of the metadata.
 - A SQL dialect adds one line: its name and its identifier quotes.
-- Kafka adds the Kafka syntax guide in `src/connector/kafka/guide.md`: the SELECT clauses, the commands, the paths, the functions, and the forms that SQLN refuses. A test parses each example of the guide.
+- Kafka adds the Kafka syntax guide in `crates/connector/src/connector/kafka/guide.md`: the SELECT clauses, the commands, the paths, the functions, and the forms that SQLN refuses. A test parses each example of the guide.
 
 The system message of one dialect never changes, so it keeps the prompt cache of the provider.
 Its size comes out of the metadata budget. A test keeps the Kafka system message at 8 KiB or less.

@@ -1586,7 +1586,7 @@ The bar keys are in [KEYMAP.md](KEYMAP.md).
 
 ## UI kit
 
-The screens share `src/ui/kit`. A new modal, field, button, or list uses the kit instead of drawing its own chrome or choosing theme fields directly.
+The screens share `crates/ui/src/ui/kit`. A new modal, field, button, or list uses the kit instead of drawing its own chrome or choosing theme fields directly.
 
 | Piece | Shared base | Allowed differences |
 |---|---|---|

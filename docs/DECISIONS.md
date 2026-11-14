@@ -6,6 +6,34 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Cargo workspace — 2026-11-14
+
+The user asked to split the project into separate crates, for a shorter compile time and for layers that the compiler checks. This entry replaces the rule "Start with a single Rust crate" of the [plan](INITIAL_PLAN.md).
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Goal | Compile time and layers that the compiler checks | Optional connectors; reuse as a library | User choice |
+| Crates | `sqln-core`, `sqln-sql`, `sqln-connector`, `sqln-store`, `sqln-exec`, `sqln-ui`, and `sqln`, in this layer order | One crate for each driver | The drivers share the session contract, and the user did not ask for optional connectors (YAGNI) |
+| Paths | The `sqln` crate re-exports every module, and each lower crate re-exports its dependencies with `pub(crate) use` | Change every `crate::` and `sqln::` path | The tests and the code keep their paths |
+| Lower layers | A connector sends `SinkEvent` and `TraceEvent`. `ExecEvent` implements `From` for both | Move `ExecEvent` to the connector crate | `ExecEvent` holds job types of higher layers. The sink boxes one future per batch of rows, not per row |
+| Saved types | Connection definitions, execution limits, AI settings, and export and import choices move to `store` | Move `store::config` up to `sqln-exec` | The saved formats stay in one crate. No saved format changes |
+| Screen states | The tab and form states of compare, diagram, data edit, export, and import move to `sqln-ui` as top-level modules | Keep them in the job modules | They use interface types. Their job models stay in `sqln-exec` |
+| Version | `[workspace.package]` holds one version for all crates | One version per crate | `text` reads `CARGO_PKG_VERSION`, and the crates ship together |
+| Publication | Each internal crate has `publish = false` | Publish the crates | The project does not publish to crates.io |
+| Test helpers | A helper that the unit tests of another crate need uses a `test-support` feature of its crate | Make the helper always public | The helper stays out of the release binary |
+
+Measured result on 8 CPUs, dev profile, one-line change, before and after the split:
+
+| Changed file | `cargo build` | `cargo test --no-run` |
+|---|---|---|
+| `app` | 13.3 s → 4.9 s | 44.3 s → 45.2 s |
+| `ui` | 8.8 s → 7.7 s | 45.0 s → 48.7 s |
+| `connector` | 13.0 s → 9.7 s | 50.5 s → 45.8 s |
+| `sql` | 13.9 s → 12.7 s | 52.5 s → 47.5 s |
+| `grid` | 9.4 s → 13.7 s | — |
+
+The link of the 22 test binaries takes most of `cargo test --no-run`, and the split does not change it. A change in a low crate recompiles each crate above it.
+
 ## Kafka AI completion, MCP reads, and topic filter — 2026-11-13
 
 The user asks for prompts that tell the AI completion and the MCP agents how to build correct Kafka queries, and for a limit on the context of a cluster with many topics. The user approves the points below.

@@ -4,21 +4,21 @@
 
 This document lists each feature of the application, its main files, and how it works.
 The [architecture](ARCHITECTURE.md) gives the deep rules; the [plan](INITIAL_PLAN.md) gives the functional rules.
-The file paths are relative to `src/`.
+The file paths are relative to the `src/` folder of the crate that holds the module. The [architecture](ARCHITECTURE.md#2-crates-and-modules) lists the crate of each module.
 
 ## Map
 
 | # | Feature | Main files |
 |---|---|---|
 | 1 | Application shell and main loop | `app.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs` |
-| 2 | Key map and discovery | `input.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `ui/text.rs` |
+| 2 | Key map and discovery | `input.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `text.rs`, `ui/text.rs` |
 | 3 | Navigator and tree filter | `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs` |
 | 4 | Connections and connection form | `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs` |
 | 5 | Database connectors | `connector/mod.rs`, `connector/postgres.rs`, `connector/mysql.rs`, `connector/sqlite.rs`, `connector/duckdb.rs`, `connector/redis.rs`, `connector/redis/live.rs`, `connector/kafka.rs`, `connector/kafka/*.rs`, `connector/words.rs`, `connector/tls.rs` |
 | 6 | Connection pool | `pool.rs` |
-| 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs` |
+| 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `sink.rs`, `progress.rs`, `console.rs` |
 | 7a | Query plan | `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs` |
-| 7b | Messages command history | `command_log.rs`, `console.rs`, `ui/messages.rs`, `exec/runner.rs` |
+| 7b | Messages command history | `command_log.rs`, `trace.rs`, `limited.rs`, `console.rs`, `ui/messages.rs`, `exec/runner.rs` |
 | 8 | Run protection | `app/guard.rs`, `sql/classify.rs` |
 | 9 | Transactions | `exec/runner.rs`, `ui/statusline.rs` |
 | 10 | SQL editor | `editor/mod.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
@@ -28,17 +28,17 @@ The file paths are relative to `src/`.
 | 13 | Catalog and structure tab | `catalog.rs`, `structure.rs` |
 | 13d | DDL of an object | `definition.rs`, `app/definition.rs`, `compare/ddl.rs`, `compare/sql.rs` |
 | 13a | Server sessions | `structure.rs`, `table.rs`, `app/tables.rs` |
-| 13b | ER diagram | `diagram/mod.rs`, `diagram/sql.rs`, `diagram/layout.rs`, `diagram/mermaid.rs`, `diagram/tab.rs`, `ui/diagram.rs`, `app/diagram.rs` |
-| 13c | Structure and data compare | `compare/mod.rs`, `compare/sql.rs`, `compare/schema.rs`, `compare/ddl.rs`, `compare/data.rs`, `compare/form.rs`, `compare/tab.rs`, `ui/compare.rs`, `app/compare.rs` |
+| 13b | ER diagram | `diagram/mod.rs`, `diagram/sql.rs`, `diagram/layout.rs`, `diagram/mermaid.rs`, `diagram_tab.rs`, `ui/diagram.rs`, `app/diagram.rs` |
+| 13c | Structure and data compare | `compare/mod.rs`, `compare/sql.rs`, `compare/schema.rs`, `compare/ddl.rs`, `compare/data.rs`, `compare/form.rs`, `compare_tab.rs`, `ui/compare.rs`, `app/compare.rs` |
 | 14 | Results grid | `result.rs`, `grid/mod.rs`, `grid/row.rs`, `grid/budget.rs`, `grid/search.rs`, `grid/tsv.rs`, `grid/json.rs`, `clipboard.rs` |
 | 15 | Table view and key navigation | `table.rs`, `app/tables.rs`, `ui/table.rs` |
-| 16 | Export and file explorer | `export/mod.rs`, `export/form.rs`, `ui/export.rs`, `app/export.rs`, `browser.rs`, `ui/browser.rs`, `app/browse.rs` |
-| 16a | Import | `import/mod.rs`, `import/delimited.rs`, `import/json.rs`, `import/statement.rs`, `import/feed.rs`, `import/form.rs`, `exec/runner/import.rs`, `app/import.rs`, `ui/import.rs` |
+| 16 | Export and file explorer | `export/mod.rs`, `export_form.rs`, `ui/export.rs`, `app/export.rs`, `browser.rs`, `ui/browser.rs`, `app/browse.rs` |
+| 16a | Import | `import/mod.rs`, `import/delimited.rs`, `import/json.rs`, `import/statement.rs`, `import/feed.rs`, `import_form.rs`, `exec/runner/import.rs`, `app/import.rs`, `ui/import.rs` |
 | 17 | Query history | `history.rs`, `store/history.rs`, `app/history.rs`, `ui/history.rs` |
 | 18 | Folders and configuration | `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `settings.rs`, `ui/settings.rs` |
 | 19 | Console saving and saved consoles | `script_file.rs`, `script_file/external.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/sql_file.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs` |
-| 20 | Credentials and trust | `creds.rs`, `trust.rs`, `app/auth.rs`, `ui/auth.rs` |
-| 21 | Appearance and themes | `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs` |
+| 20 | Credentials and trust | `creds.rs`, `vault.rs`, `trust.rs`, `app/auth.rs`, `ui/auth.rs` |
+| 21 | Appearance and themes | `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `wrap.rs` |
 | 23 | Local MCP assistant | `agent/`, `mcp.rs`, `app/agent/`, `editor/agent.rs`, `ui/agent.rs`; see [MCP](MCP.md) |
 | 24 | Auto-refresh | `app/auto_refresh.rs`, `console.rs`, `table.rs`, `app/persist.rs`, `app/commands.rs`, `ui/statusline.rs`, `ui/table.rs` |
 | 25 | Batch execution | `batch.rs`, `batch/auth.rs`, `batch/output.rs`, `main.rs`, `exec/runner.rs`, `export/mod.rs` |
@@ -52,7 +52,7 @@ Files: `app.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, 
 
 ## 2. Key map and discovery
 
-Files: `input.rs`, `app/commands.rs`, `app/keys.rs`, `app/hints.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `ui/text.rs`.
+Files: `input.rs`, `app/commands.rs`, `app/keys.rs`, `app/hints.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `text.rs`, `ui/text.rs`.
 
 `input` maps each key to an action in each focus region. It supports multi-key sequences and reads the user `keymap` rules from `config.json`. `Ctrl+W` opens the prefix menu (`ui/which_key`) with the second keys in groups. `fits_cursor` keeps the commands that have an effect now and belong to the panel of the cursor, and the keys of the other commands keep their action. `Ctrl+W Tab` opens its explorer page: `explorer_commands` lists what acts on the current row, and a key of the page goes through the `Navigator` region of the key map, so the page needs no bindings of its own. `Ctrl+W Space` opens the functional commands of the current panel with effective local shortcuts. `app/commands` shares availability, ordering, and target labels between discovery paths; `Action` remains the catalog. The palette includes editor and grid commands and keeps actions without shortcuts. Explorer row actions require explorer focus; add connection and scripts remain global. `filter_list` matches label, key, action name, and technical aliases. The normal hint row reserves the palette shortcut and fits more whole commands as width grows. The same list filter core serves the history window. `ui/text` keeps all interface text in one file. A new console without text shows the first screen (`ui/welcome`), with the main keys, and the first character ends it. Without a tab, the same widget draws the home screen with a logo: the active console is then the hidden console, `App::home` is true, and `home_allows` keeps only the explorer commands and the commands that need no tab.
 
@@ -87,7 +87,7 @@ Each connection definition has one pool. The default limit is five. The pool ser
 
 ## 7. Script execution
 
-Files: `exec/mod.rs`, `exec/runner.rs`, `exec/sink.rs`, `console.rs`.
+Files: `exec/mod.rs`, `exec/runner.rs`, `sink.rs`, `progress.rs`, `console.rs`.
 
 The console sends a copy of the text and receives an `ExecutionId`. `sql` separates the statements, and the pool delivers a reservation or queues the request. Each console has one task (`exec/runner`) that owns the reserved session. The task runs one statement at a time, applies the row cap plus one row, and asks the transaction state after each statement. With `cap_in_sql`, `sql::with_row_limit` adds that number as `LIMIT` to a plain read without its own limit, and `ExecEvent::LimitAdded` reports it. On error, timeout, or stop, the sequence ends. `exec/sink` batches 200 rows, applies the cap and the budget, and sends notices before the end of the statement; a cap cancellation is not a statement error.
 
@@ -95,7 +95,7 @@ Stop triggers the `Canceller` and starts a 5 s deadline. The task keeps reading 
 
 ## 7b. Messages command history
 
-Files: `command_log.rs`, `console.rs`, `ui/messages.rs`, `exec/runner.rs`.
+Files: `command_log.rs`, `trace.rs`, `limited.rs`, `console.rs`, `ui/messages.rs`, `exec/runner.rs`.
 
 Each console keeps a 10 MiB in-memory command history. New runs and connection changes keep it; closing the console discards it.
 Records show effective commands, separate parameters, results, and elapsed time. Oversized text has an explicit truncation marker.
@@ -185,7 +185,7 @@ Files: `structure.rs`, `table.rs`, `app/tables.rs`.
 
 ## 13b. ER diagram
 
-Files: `diagram/mod.rs`, `diagram/sql.rs`, `diagram/layout.rs`, `diagram/mermaid.rs`, `diagram/tab.rs`, `ui/diagram.rs`, `app/diagram.rs`.
+Files: `diagram/mod.rs`, `diagram/sql.rs`, `diagram/layout.rs`, `diagram/mermaid.rs`, `diagram_tab.rs`, `ui/diagram.rs`, `app/diagram.rs`.
 
 `d` in the navigator, or `Ctrl+W D`, opens a `Tab::Diagram`, a third kind of main tab. `row_diagram` and `diagram_target` give the target and the reason of a refusal, so the key, the hint row, and the menu agree. A connection without its catalog waits in `pending_diagrams`, and the catalog read opens the diagram of the current schema. Each connection keeps its place in the list, so a second request does not cancel the first. The tab has its own executor task, so the read has the time limit, `Ctrl+W x`, the pool queue, the password, and the budget of a page. `diagram/sql` writes two queries per database: the columns of each table of a schema with their place in the primary key, and each pair of columns of the foreign keys that leave or reach the schema. One execution runs both, with no row cap, and the tab parses the rows only at the end. `Model::build` joins the pairs of each key by table and name, gives a SQLite key without target columns the primary key of its target, and makes a stub of each table of another schema. A table focus keeps the table and the tables that its keys join.
 
@@ -195,7 +195,7 @@ Files: `diagram/mod.rs`, `diagram/sql.rs`, `diagram/layout.rs`, `diagram/mermaid
 
 ## 13c. Structure and data compare
 
-Files: `compare/mod.rs`, `compare/sql.rs`, `compare/schema.rs`, `compare/ddl.rs`, `compare/data.rs`, `compare/form.rs`, `compare/tab.rs`, `ui/compare.rs`, `app/compare.rs`.
+Files: `compare/mod.rs`, `compare/sql.rs`, `compare/schema.rs`, `compare/ddl.rs`, `compare/data.rs`, `compare/form.rs`, `compare_tab.rs`, `ui/compare.rs`, `app/compare.rs`.
 
 `c` in the explorer, or `Ctrl+W v` in any panel, opens the dialog. `compare_here` gives the source of `Ctrl+W v`: the row of the explorer with the focus, the sides of a compare tab, the focus of a diagram, the table of a table tab, or the current schema of a console. The row gives the source: a connection gives its current schema, a schema gives itself, and a table or a column gives its table. A table starts a data compare, and a connection or a schema starts a structure compare. The target is the next connection, with the same schema and table, and each field can change. The dialog reads the catalog of a connection that has none. A connection, a schema, and a table field open a `FieldList` with the focus: the names that the text keeps (`filter_list::holds_words`), and a mark. The application gives each schema its tables (`SchemaChoice`), without views. `draw_anchored_list` in `ui/mod.rs` draws the list, as it draws the suggestions of the editor. Redis, Valkey, a view, and a console row refuse with a reason.
 
@@ -223,7 +223,7 @@ Files: `table.rs`, `app/tables.rs`, `ui/table.rs`.
 
 ## 15a. Grid editing
 
-Files: `data_edit.rs`, `data_edit/form.rs`, `app/data_edit.rs`, `exec/runner/data_edit.rs`, `ui/data_edit.rs`, `ui/console.rs`.
+Files: `data_edit.rs`, `edit_form.rs`, `app/data_edit.rs`, `exec/runner/data_edit.rs`, `ui/data_edit.rs`, `ui/console.rs`.
 
 Table tabs offer local updates, inserts, and deletes through `Action`, gated by connector capabilities and table metadata.
 The compare column reader supplies the primary key and protected-column information.
@@ -245,13 +245,13 @@ The `autoRefresh` action, listed by the palette and the grid page of `Ctrl+W Spa
 
 ## 16. Export
 
-Files: `export/mod.rs`, `export/form.rs`, `ui/export.rs`, `app/export.rs`, `browser.rs`, `ui/browser.rs`, `app/browse.rs`.
+Files: `export/mod.rs`, `export_form.rs`, `ui/export.rs`, `app/export.rs`, `browser.rs`, `ui/browser.rs`, `app/browse.rs`.
 
 The dialog holds the choices and writes nothing. The formats are CSV, TSV, JSON, JSON Lines, and SQL inserts. The rows come from the selection, the loaded rows, or all rows; a full read of all rows needs a new read only when the grid does not hold each row. The options cover header, delimiter, null text, BOM, grouping, and batch. A confirmation writes the choices to `preferences.export` in the global file. `app/export` runs the flow: dialog, questions, rows, and the end of the file. The file explorer of `browser` serves the path fields of the export and of the connection form; `Ctrl+O` or the `...` button opens it.
 
 ## 16a. Import
 
-Files: `import/mod.rs`, `import/delimited.rs`, `import/json.rs`, `import/statement.rs`, `import/feed.rs`, `import/form.rs`, `exec/runner/import.rs`, `app/import.rs`, `ui/import.rs`.
+Files: `import/mod.rs`, `import/delimited.rs`, `import/json.rs`, `import/statement.rs`, `import/feed.rs`, `import_form.rs`, `exec/runner/import.rs`, `app/import.rs`, `ui/import.rs`.
 
 `I` opens the import dialog for an existing writable SQL table. CSV, TSV, JSON, and JSON Lines use column mapping and a preview. SQL files open as consoles instead; opening them does not run them.
 The executor writes batches with no SQL time limit. All or nothing rolls back on failure; By batch keeps completed batches.
@@ -282,7 +282,7 @@ The palette command `openSqlFile` and `--script` open an external `.sql` file as
 
 ## 20. Credentials and trust
 
-Files: `creds.rs`, `trust.rs`, `app/auth.rs`, `ui/auth.rs`.
+Files: `creds.rs`, `vault.rs`, `trust.rs`, `app/auth.rs`, `ui/auth.rs`.
 
 `app/auth` is the gate before each operation that needs a session: execution, catalog, columns, pages, and connection test. It checks the trust on the destination and the project path, asks the confirmations, and then gets the password from the `credential` reference: `none`, `session`, `vault`, or `globalPlainText`. The vault account is the service `sqln` with scope, ID, engine, address, user, and TLS in the name; a change of any part asks for a new password. The blocking calls run one at a time on `Manager::spawn_blocking`, off the interface thread, and a token stops a cancelled job.
 
@@ -290,7 +290,7 @@ A vault failure offers retry, session use, or cancel, never silent plain text. W
 
 ## 21. Appearance and themes
 
-Files: `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `ui/wrap.rs`, `store/themes.rs`, `settings/themes.rs`.
+Files: `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `wrap.rs`, `store/themes.rs`, `settings/themes.rs`.
 
 The themes are `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-latte`, `gruvbox`, `nord`, `dracula`, `one-dark`, `monokai`, `solarized-dark`, `solarized-light`, `github-dark`, `rose-pine`, `high-contrast`, `high-contrast-light`, `everforest`, `kanagawa`, `night-owl`, `rose-pine-dawn`, `everforest-light`, and `ember`, and the custom themes of the `themes` folder of each scope, created and edited in `Settings > Appearance` with a live preview. The RGB schemes need a truecolor terminal, and `NO_COLOR` removes the colors. Each connection can select a theme and an icon. The icons come in Unicode and Nerd Font sets. The status line shows the focus, the connection, the state, and the use of resources. `ui/wrap` wraps the text of a window row by row, on demand.
 

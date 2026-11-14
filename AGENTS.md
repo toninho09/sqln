@@ -33,25 +33,27 @@ This rule applies even when the tool suggests or requires that text.
 
 ## Module map
 
-The project has one Rust crate. Main modules:
+The project is a Cargo workspace. Each crate depends only on the crates above it in this list:
 
 ```text
-src/
-├── app/        Application state, commands, and coordination.
-├── ui/         Drawing, text, and themes.
-├── connector/  Drivers and database access.
-├── exec/       Execution, result delivery, and cancellation.
-├── sql/        SQL analysis, formatting, and literals.
-├── grid/       Data, selection, search, and memory budget.
-└── store/      Configuration, scripts, and persistence.
-tests/          Behavior and integration tests. Every file is a `[[test]]` target or a `mod` of a root file; `scripts/check-test-files.sh` enforces it.
+crates/core/       sqln-core: data models, grid, text, result sinks, and key map.
+crates/sql/        sqln-sql: SQL analysis, formatting, and literals.
+crates/connector/  sqln-connector: drivers, pools, traces, and system vault.
+crates/store/      sqln-store: configuration, scripts, credentials, and persistence.
+crates/exec/       sqln-exec: execution, jobs, completion, and cancellation.
+crates/ui/         sqln-ui: drawing, themes, editor, and screen states.
+src/               sqln: application state, commands, coordination, and the binary.
+tests/             Behavior and integration tests. Every file is a `[[test]]` target or a `mod` of a root file; `scripts/check-test-files.sh` enforces it.
 ```
+
+The `sqln` crate re-exports every module, so `sqln::<module>` paths stay valid.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed module responsibilities.
 
 ## Architecture and execution
 
 - Keep drawing in `ui`, coordination in `app`, and driver types in `connector`. Keep `store` independent of `app` and `ui`.
+- Put new code in the lowest crate that has all its dependencies. Do not add a dependency on a higher crate; move the shared type down instead.
 - Keep models and transformations independent of the interface where possible. Reuse existing fields, lists, filters, and grids.
 - Never wait for the database on the interface thread. Use the existing executor and blocking-task support.
 - Bound work between frames and render only visible content.
@@ -81,8 +83,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed module respons
 ## Makefile commands
 
 - `make fmt`: formats the code.
-- `make lint`: runs `cargo fmt --check`, `cargo clippy`, and `scripts/check-test-files.sh`.
-- `make test`: runs tests in `tests/`. Database tests skip when their databases are unavailable.
+- `make lint`: runs `cargo fmt --all --check`, `cargo clippy --workspace`, and `scripts/check-test-files.sh`.
+- `make test`: runs the tests of all workspace crates. Database tests skip when their databases are unavailable.
 - `make test-integration`: starts Docker databases, loads `scripts/test-env.sh`, runs tests, and stops the databases.
 - `make bench`: runs performance and memory reports, then release-mode latency tests.
 - `make docs`: builds the documentation site into `book/book`.

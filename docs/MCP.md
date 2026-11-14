@@ -167,7 +167,7 @@ The bridge does not retain more than 64 tasks per session. It evicts completed t
 ### Consoles and queries
 
 The agent writes SQL in the dialect of the connection: `get_context` gives the `dialect` of each connection.
-A Kafka connection does not accept standard SQL. When `get_context` lists a Kafka connection, its reply holds `syntax.Kafka`: the Kafka syntax guide in `src/connector/kafka/guide.md`, the same text that the AI completion sends.
+A Kafka connection does not accept standard SQL. When `get_context` lists a Kafka connection, its reply holds `syntax.Kafka`: the Kafka syntax guide in `crates/connector/src/connector/kafka/guide.md`, the same text that the AI completion sends.
 The server instructions tell the agent to follow that guide, to bind each Kafka read with `LIMIT`, `SCAN`, or `START AT`, and to call `describe` before it writes SQL.
 
 `query` uses the session's agent console for that connection.
