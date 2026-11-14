@@ -7,7 +7,7 @@ use ratatui::layout::{Position, Rect};
 
 use super::{App, MAX_EDITOR_RATIO, MIN_EDITOR_RATIO};
 use crate::console::Focus;
-use crate::export::form::Field;
+use crate::export_form::Field;
 use crate::filter_list::ListRequest;
 use crate::form::FormRequest;
 use crate::input::Action;

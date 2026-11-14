@@ -12,7 +12,7 @@ use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 
 use crate::connector::target::{Address, NetworkTarget, Tls};
 use crate::connector::{ConnectError, ExecError, describe, tls};
-use crate::ui::text;
+use crate::text;
 
 /// A call to the cluster that gets no answer in this time fails.
 pub const CALL_LIMIT: Duration = Duration::from_secs(10);

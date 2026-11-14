@@ -12,7 +12,7 @@ use super::time::{self, Piece};
 use super::{Operator, compare, regex};
 use crate::connector::ExecError;
 use crate::connector::kafka::command::{Token, error_at};
-use crate::ui::text;
+use crate::text;
 
 /// The value that an argument without a value gives to a function that ignores nulls.
 static NULL: Json = Json::Null;

@@ -4,11 +4,11 @@ use std::path::Path;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{Delimiter, ExportChoices, ExportFormat, ExportOptions, NullText, file_name};
+use crate::export::{Delimiter, ExportChoices, ExportFormat, ExportOptions, NullText, file_name};
 use crate::line_input::LineInput;
 use crate::settings::next_choice;
 use crate::sql::Dialect;
-use crate::ui::text;
+use crate::text;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {

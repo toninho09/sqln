@@ -9,7 +9,7 @@ use super::kit::buttons::{self, RowOptions};
 use super::kit::modal::open_modal;
 use super::theme::Theme;
 use super::{draw_editor, text};
-use crate::data_edit::form::{Body, EditForm};
+use crate::edit_form::{Body, EditForm};
 use crate::grid::printable;
 
 #[derive(Clone, Debug, Default)]

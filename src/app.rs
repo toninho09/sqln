@@ -52,24 +52,24 @@ use crate::browser::FileBrowser;
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{SharedClipboard, SystemClipboard};
 use crate::compare::form::CompareForm;
-use crate::compare::tab::CompareTab;
+use crate::compare_tab::CompareTab;
 use crate::connection::{Connection, Definition};
 use crate::connector::{Connector, Namespace, TransactionCommand};
 use crate::console::{AfterTransaction, Console, Focus, Phase};
 use crate::creds::{Identity, PlainFile};
 use crate::definition::Target;
-use crate::diagram::tab::DiagramTab;
+use crate::diagram_tab::DiagramTab;
 use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, Settings};
 use crate::export::ExportChoices;
-use crate::export::form::ExportForm;
+use crate::export_form::ExportForm;
 use crate::form::ConnectionForm;
 use crate::generate::Template;
 use crate::grid::Budget;
 use crate::help::Help;
 use crate::history::HistoryList;
 use crate::import::ImportChoices;
-use crate::import::form::ImportForm;
+use crate::import_form::ImportForm;
 use crate::input::{Chord, Keymap, Region, SuggestionKeys};
 use crate::navigator::Navigator;
 use crate::palette::Palette;
@@ -508,7 +508,7 @@ pub struct App {
     settings_form: Option<SettingsForm>,
     export_form: Option<ExportForm>,
     import_form: Option<ImportForm>,
-    edit_form: Option<crate::data_edit::form::EditForm>,
+    edit_form: Option<crate::edit_form::EditForm>,
     compare_form: Option<CompareForm>,
     /// The file browser of the focused path field in a dialog or in the form.
     browser: Option<FileBrowser>,
@@ -1078,8 +1078,8 @@ impl App {
                 }
             }
             Event::Paste(text) if self.dialogs.is_empty() && self.edit_form.is_some() => {
-                if let Some(crate::data_edit::form::EditForm {
-                    body: crate::data_edit::form::Body::Cell { editor, .. },
+                if let Some(crate::edit_form::EditForm {
+                    body: crate::edit_form::Body::Cell { editor, .. },
                     ..
                 }) = &mut self.edit_form
                 {

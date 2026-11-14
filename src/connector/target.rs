@@ -139,7 +139,7 @@ impl KafkaOptions {
 pub fn consumer_group(text: &str) -> Result<Option<String>, &'static str> {
     let text = text.trim();
     if text.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        return Err(crate::ui::text::KAFKA_BAD_GROUP);
+        return Err(crate::text::KAFKA_BAD_GROUP);
     }
     Ok(Some(text.to_owned()).filter(|text| !text.is_empty()))
 }
@@ -155,7 +155,7 @@ pub fn topic_filter(text: &str) -> Result<Vec<String>, &'static str> {
         .filter(|item| !item.is_empty())
     {
         if item == "!" || item.chars().any(|c| c.is_whitespace() || c.is_control()) {
-            return Err(crate::ui::text::KAFKA_BAD_TOPICS);
+            return Err(crate::text::KAFKA_BAD_TOPICS);
         }
         patterns.push(item.to_owned());
     }

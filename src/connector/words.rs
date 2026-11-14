@@ -2,7 +2,7 @@
 //! consoles read each line with these rules.
 
 use super::ExecError;
-use crate::ui::text;
+use crate::text;
 
 fn bad_line(offset: usize) -> ExecError {
     ExecError {

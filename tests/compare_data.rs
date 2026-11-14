@@ -187,9 +187,9 @@ fn a_value_becomes_a_literal_of_the_target() {
 
 /// Gives a data compare of `main.t` the rows of its two column reads, and returns the tab
 /// at the step of the source rows.
-fn data_tab(budget: &Budget) -> sqln::compare::tab::CompareTab {
-    use sqln::compare::tab::{CompareTab, SideRead};
+fn data_tab(budget: &Budget) -> sqln::compare_tab::CompareTab {
     use sqln::compare::{Kind, Side};
+    use sqln::compare_tab::{CompareTab, SideRead};
     use sqln::exec::{ExecEvent, ExecutionEnd, StatementKey};
 
     let side = |connection| Side {

@@ -26,6 +26,8 @@ use crate::sql::{Dialect, TokenKind, quote_identifier, split, tokenize};
 use crate::structure::{Scope, Section, SessionSignal, Structure, signal_sql, structure_sql};
 use crate::ui::text;
 
+pub use crate::sql::from_clause;
+
 /// The part of a table tab that receives the keys.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TableFocus {
@@ -144,22 +146,6 @@ pub struct TableTab {
     pub auto_refresh: Option<crate::console::AutoRefresh>,
     /// The execution of the last auto-refresh, so a failure turns it off.
     pub auto_execution: Option<ExecutionId>,
-}
-
-/// Returns the relation as the `FROM` clause writes it.
-pub fn from_clause(relation: &RelationRef, dialect: Dialect) -> String {
-    // DuckDB names a schema of an attached database as `catalog.schema`, and each part
-    // needs its own quotes.
-    let schema = match dialect {
-        Dialect::DuckDb => relation
-            .schema
-            .split('.')
-            .map(|part| quote_identifier(part, dialect))
-            .collect::<Vec<_>>()
-            .join("."),
-        _ => quote_identifier(&relation.schema, dialect),
-    };
-    format!("{schema}.{}", quote_identifier(&relation.relation, dialect))
 }
 
 /// Returns true when the text is one statement without an open token. A semicolon,

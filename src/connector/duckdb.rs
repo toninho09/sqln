@@ -18,14 +18,14 @@ use super::{
     StatementEnd, TransactionCommand, TransactionState,
 };
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
-use crate::command_log::{self, TraceContext};
-use crate::exec::{Flow, ResultSink};
 use crate::grid::{RowWriter, Value};
+use crate::sink::{Flow, ResultSink};
 use crate::sql::{
     Dialect, TokenKind, changes_state, changes_without_result, counts_rows, is_plain_read,
     quote_identifier, tokenize,
 };
-use crate::ui::text;
+use crate::text;
+use crate::trace::{self, TraceContext};
 
 const MAIN_SCHEMA: &str = "main";
 
@@ -382,9 +382,8 @@ fn serve(
             }
             Request::Run(sql, parameters, sink, reply) => {
                 let command = crate::sql::parameters::command(&sql, &parameters);
-                let result = command_log::observe_blocking(&trace, command, || {
-                    run(conn, &sql, &parameters, sink)
-                });
+                let result =
+                    trace::observe_blocking(&trace, command, || run(conn, &sql, &parameters, sink));
                 transaction = next_state(transaction, &sql, &result);
                 let _ = reply.send(result);
             }
@@ -397,7 +396,7 @@ fn serve(
                     TransactionCommand::Commit => "COMMIT",
                     TransactionCommand::Rollback => "ROLLBACK",
                 };
-                let result = command_log::observe_blocking(&trace, sql, || conn.execute_batch(sql))
+                let result = trace::observe_blocking(&trace, sql, || conn.execute_batch(sql))
                     .map_err(exec_error);
                 if result.is_ok() {
                     transaction = match command {
@@ -432,7 +431,7 @@ fn apply_context(
         Some(schema) => format!("SET schema = {}", quote_identifier(schema, Dialect::DuckDb)),
         None => "RESET schema".to_owned(),
     };
-    command_log::observe_blocking(trace, &sql, || conn.execute_batch(&sql)).map_err(exec_error)
+    trace::observe_blocking(trace, &sql, || conn.execute_batch(&sql)).map_err(exec_error)
 }
 
 /// The presentation of a column. DuckDB reports each result column with an Arrow type.
@@ -643,7 +642,7 @@ fn read_catalog(
          ELSE current_database() || '.' || current_schema() END"
     );
     let current: Option<String> =
-        command_log::observe_blocking(trace, &sql, || conn.query_row(&sql, [], |row| row.get(0)))?;
+        trace::observe_blocking(trace, &sql, || conn.query_row(&sql, [], |row| row.get(0)))?;
     // `duckdb_schemas`, `duckdb_tables`, and `duckdb_views` list the objects of every
     // database the session attached, and a schema name alone cannot reach one of its
     // schemas: a schema of another database keeps the `catalog.schema` name. The
@@ -656,7 +655,7 @@ fn read_catalog(
            AND schema_name NOT IN ('information_schema', 'pg_catalog') \
          ORDER BY 1"
     );
-    let names: Vec<(String, String, String)> = command_log::observe_blocking(trace, &sql, || {
+    let names: Vec<(String, String, String)> = trace::observe_blocking(trace, &sql, || {
         let mut statement = conn.prepare(&sql)?;
         let names = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         names.collect()
@@ -674,7 +673,7 @@ fn read_catalog(
              WHERE database_name = {catalog} AND schema_name = {schema} AND NOT internal \
              ORDER BY 1"
         );
-        let relations = command_log::observe_blocking(trace, &sql, || {
+        let relations = trace::observe_blocking(trace, &sql, || {
             let mut statement = conn.prepare(&sql)?;
             let relations = statement.query_map([], |row| {
                 let kind: String = row.get(1)?;
@@ -720,7 +719,7 @@ fn read_columns(
     let sql = "SELECT column_name FROM duckdb_columns() \
                WHERE database_name = ?3 AND schema_name = ?2 AND table_name = ?1 \
                ORDER BY column_index";
-    command_log::observe_blocking(
+    trace::observe_blocking(
         trace,
         format_args!("{sql}\nParameters: ?1={relation:?}, ?2={schema:?}, ?3={catalog:?}"),
         || {
@@ -739,7 +738,7 @@ impl Canceller for Interrupt {
         self.cancel_traced(None).await
     }
     async fn cancel_traced(&self, trace: Option<TraceContext>) -> Result<(), String> {
-        command_log::observe(trace, "duckdb_interrupt", async {
+        trace::observe(trace, "duckdb_interrupt", async {
             self.0.interrupt();
             Ok(())
         })
@@ -790,7 +789,7 @@ impl Session for DuckdbSession {
     }
 
     fn canceller(&self) -> Arc<dyn Canceller> {
-        command_log::canceller(self.interrupt.clone(), &self.trace)
+        trace::canceller(self.interrupt.clone(), &self.trace)
     }
 
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError> {

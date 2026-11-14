@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 
 use super::{Encoding, ImportFormat, Input, Item, ReadOptions};
-use crate::ui::text;
+use crate::text;
 
 /// The characters of the bytes 0x80 to 0x9F. The other bytes match their code points.
 /// An unused byte keeps its code point, as the WHATWG table does.

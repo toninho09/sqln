@@ -1,17 +1,17 @@
 //! A diagram tab: the read of the two queries, the model, the picture, the view, and the
 //! selected table.
 
-use super::layout::{Direction, Layout};
-use super::sql::{diagram_sql, parse_column, parse_key};
-use super::{Focus, Model, mermaid};
 use crate::catalog::RelationRef;
 use crate::console::{Message, MessageLevel, Phase, RunClock};
+use crate::diagram::layout::{Direction, Layout};
+use crate::diagram::sql::{diagram_sql, parse_column, parse_key};
+use crate::diagram::{Focus, Model, mermaid};
 use crate::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, StatementStatus,
 };
 use crate::grid::{Budget, Row};
 use crate::sql::Dialect;
-use crate::ui::text;
+use crate::text;
 
 /// The columns and the rows of one step of `Shift` and an arrow.
 const PAN_COLUMNS: i64 = 8;

@@ -13,7 +13,7 @@ use crate::console::Phase;
 use crate::diagram::Focus;
 use crate::diagram::layout::Direction;
 use crate::diagram::sql::diagram_sql;
-use crate::diagram::tab::DiagramTab;
+use crate::diagram_tab::DiagramTab;
 use crate::exec::{ConnectionId, RunOptions};
 use crate::input::{Action, Region};
 use crate::navigator::{Row, RowKind};

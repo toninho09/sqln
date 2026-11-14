@@ -5,7 +5,7 @@ use chrono::{DateTime, Datelike, Timelike, Utc};
 
 use super::evaluation::Text;
 use crate::connector::ExecError;
-use crate::ui::text;
+use crate::text;
 
 /// The units of an interval, in milliseconds. Months and years have no fixed length.
 const UNITS: [(&[&str], f64); 6] = [

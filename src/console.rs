@@ -18,6 +18,8 @@ pub use crate::result::{GridAction, ResultTab};
 use crate::script_file::ScriptFile;
 use crate::ui::text;
 
+pub use crate::message::{Message, MessageLevel};
+
 /// How a run ended, for the mark of its tab.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunEnd {
@@ -131,43 +133,6 @@ pub enum Focus {
     Editor,
     Parameters,
     Results,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MessageLevel {
-    Info,
-    /// A notice or a warning of the database.
-    Warning,
-    Error,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Message {
-    pub level: MessageLevel,
-    pub text: String,
-}
-
-impl Message {
-    pub fn info(text: impl Into<String>) -> Self {
-        Self {
-            level: MessageLevel::Info,
-            text: text.into(),
-        }
-    }
-
-    pub fn warning(text: impl Into<String>) -> Self {
-        Self {
-            level: MessageLevel::Warning,
-            text: text.into(),
-        }
-    }
-
-    pub fn error(text: impl Into<String>) -> Self {
-        Self {
-            level: MessageLevel::Error,
-            text: text.into(),
-        }
-    }
 }
 
 /// The next step after a commit or a rollback that a dialog asked for.

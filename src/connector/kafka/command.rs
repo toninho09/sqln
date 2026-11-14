@@ -5,7 +5,7 @@ pub use select::Projection;
 
 use super::filter::{self, Filter};
 use crate::connector::ExecError;
-use crate::ui::text;
+use crate::text;
 
 /// The first word of the text that a topic tab sends. It is not a console command.
 pub const TOPIC_PAGE: &str = "SQLN.TOPIC";
@@ -455,6 +455,28 @@ pub fn parse(line: &str) -> Result<Command, ExecError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sql::Dialect;
+    use crate::sql::literal::text_literal;
+
+    #[test]
+    fn a_kafka_text_reads_back_in_select_and_in_line_commands() {
+        for value in [
+            "plain",
+            "it's",
+            "a\\b",
+            "two\nlines\tand\r",
+            "bell\u{7}",
+            "ação",
+        ] {
+            let literal = text_literal(value, Dialect::Kafka);
+            for select in [false, true] {
+                let tokens = tokenize_mode(&format!("key = {literal}"), select).unwrap();
+                let last = tokens.last().unwrap();
+                assert_eq!(last.kind, TokenKind::Text, "{literal}");
+                assert_eq!(last.text, value, "{literal} in select: {select}");
+            }
+        }
+    }
 
     fn consume(line: &str) -> Read {
         match parse(line).unwrap() {

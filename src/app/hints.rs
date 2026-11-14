@@ -5,12 +5,12 @@
 
 use super::App;
 use crate::compare::form as compare_form;
-use crate::compare::tab::CompareTab;
+use crate::compare_tab::CompareTab;
 use crate::console::Focus;
-use crate::diagram::tab::DiagramTab;
-use crate::export::form as export_form;
+use crate::diagram_tab::DiagramTab;
+use crate::export_form;
 use crate::form::{Field, FieldStyle};
-use crate::import::form as import_form;
+use crate::import_form;
 use crate::input::{Action, Chord, Lookup, Region};
 use crate::navigator::{Navigator, RowKind};
 use crate::settings;

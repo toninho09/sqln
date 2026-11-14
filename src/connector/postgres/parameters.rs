@@ -50,7 +50,7 @@ impl PostgresSession {
         self.canceller.requested.store(false, Ordering::SeqCst);
         self.take_notices();
         let command = crate::sql::parameters::command(sql, parameters);
-        let result = crate::command_log::observe(
+        let result = crate::trace::observe(
             self.trace.clone(),
             command,
             self.read_bound(sql, parameters, &mut sink),

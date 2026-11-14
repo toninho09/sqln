@@ -775,7 +775,7 @@ fn a_disconnected_history_consumer_does_not_stop_the_database_command() {
     let path = crate::common::temp_db("command-log-no-consumer");
     rusqlite::Connection::open(&path).unwrap();
     let connector = SqliteConnector::new(SqliteTarget::new(path));
-    let (events, inbox) = mpsc::channel(8);
+    let (events, inbox) = mpsc::channel::<ExecEvent>(8);
     drop(inbox);
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {

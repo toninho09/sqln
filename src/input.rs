@@ -8,7 +8,13 @@ use std::collections::HashMap;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
 
-use crate::editor::KeyboardMode;
+/// The key scheme of the editor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyboardMode {
+    #[default]
+    Conventional,
+    Vim,
+}
 
 /// The keys that accept the item of a suggestion list.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

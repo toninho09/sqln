@@ -682,7 +682,7 @@ fn object_text(object: &Object) -> String {
 /// Returns the short text of an object for the grid.
 pub fn summary(object: &Object) -> String {
     match object {
-        Object::Table(table) => crate::ui::text::compare_columns(table.columns.len()),
+        Object::Table(table) => crate::text::compare_columns(table.columns.len()),
         Object::Column(column) => {
             let mut text = column.ty.clone();
             if let Some(auto) = &column.auto {

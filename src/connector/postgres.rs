@@ -36,14 +36,14 @@ use crate::catalog::{
     Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
     add_objects, group_foreign_keys,
 };
-use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, RowWriter, Value};
+use crate::sink::{Flow, ResultSink};
 use crate::sql::literal::text_literal;
 use crate::sql::{
     Dialect, counts_rows, is_plain_read, quote_identifier, reads_or_writes_stdio,
     removes_prepared_statements,
 };
-use crate::ui::text;
+use crate::text;
 
 /// The two clocks differ only inside a transaction. The simple protocol gives each
 /// call its own statement time, and a failed transaction refuses this call.
@@ -378,7 +378,7 @@ impl PostgresCanceller {
         &self,
         stream: S,
         host: &str,
-        trace: Option<crate::command_log::TraceContext>,
+        trace: Option<crate::trace::TraceContext>,
     ) -> Result<(), String>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -391,7 +391,7 @@ impl PostgresCanceller {
         let connect =
             <MakeRustlsConnect as MakeTlsConnect<UntilClosed<S>>>::make_tls_connect(&mut tls, host)
                 .map_err(|error| error.to_string())?;
-        crate::command_log::observe(
+        crate::trace::observe(
             trace,
             "PostgreSQL CancelRequest",
             self.token.cancel_query_raw(stream, connect),
@@ -400,7 +400,7 @@ impl PostgresCanceller {
         .map_err(|error| describe(&error))
     }
 
-    async fn send(&self, trace: Option<crate::command_log::TraceContext>) -> Result<(), String> {
+    async fn send(&self, trace: Option<crate::trace::TraceContext>) -> Result<(), String> {
         match &self.address {
             Address::Tcp { host, port } => {
                 let stream = TcpStream::connect((host.as_str(), *port))
@@ -425,10 +425,7 @@ impl Canceller for PostgresCanceller {
         self.cancel_traced(None).await
     }
 
-    async fn cancel_traced(
-        &self,
-        trace: Option<crate::command_log::TraceContext>,
-    ) -> Result<(), String> {
+    async fn cancel_traced(&self, trace: Option<crate::trace::TraceContext>) -> Result<(), String> {
         self.requested.store(true, Ordering::SeqCst);
         match timeout(SESSION_LIMIT, self.send(trace)).await {
             Ok(result) => result,
@@ -569,7 +566,7 @@ impl Notices {
 
 struct PostgresSession {
     client: Client,
-    trace: Option<crate::command_log::TraceContext>,
+    trace: Option<crate::trace::TraceContext>,
     canceller: Arc<PostgresCanceller>,
     transaction: TransactionState,
     notices: Arc<Mutex<Notices>>,
@@ -597,11 +594,11 @@ impl PostgresSession {
             return Ok(Vec::new());
         }
         let command =
-            crate::command_log::limited(format_args!("PostgreSQL Parse/Describe (prepare)\n{sql}"));
-        match crate::command_log::observe(
+            crate::limited::limited(format_args!("PostgreSQL Parse/Describe (prepare)\n{sql}"));
+        match crate::trace::observe(
             self.trace
                 .as_ref()
-                .map(crate::command_log::TraceContext::internal),
+                .map(crate::trace::TraceContext::internal),
             command,
             self.client.prepare(sql),
         )
@@ -623,7 +620,7 @@ impl PostgresSession {
         kinds: &[ColumnKind],
         sink: &mut ResultSink,
     ) -> Result<Outcome, ExecError> {
-        crate::command_log::observe(
+        crate::trace::observe(
             self.trace.clone(),
             sql,
             self.read_untraced(sql, kinds, sink),
@@ -690,10 +687,10 @@ impl PostgresSession {
         }
         match timeout(
             SESSION_LIMIT,
-            crate::command_log::observe(
+            crate::trace::observe(
                 self.trace
                     .as_ref()
-                    .map(crate::command_log::TraceContext::internal),
+                    .map(crate::trace::TraceContext::internal),
                 TRANSACTION_PROBE,
                 self.client.simple_query(TRANSACTION_PROBE),
             ),
@@ -719,10 +716,10 @@ impl PostgresSession {
     }
 
     async fn text_rows(&self, sql: &str) -> Result<Vec<Vec<Option<String>>>, ExecError> {
-        let messages = crate::command_log::observe(
+        let messages = crate::trace::observe(
             self.trace
                 .as_ref()
-                .map(crate::command_log::TraceContext::internal),
+                .map(crate::trace::TraceContext::internal),
             sql,
             self.client.simple_query(sql),
         )
@@ -746,12 +743,12 @@ impl PostgresSession {
 
 #[async_trait]
 impl Session for PostgresSession {
-    fn set_trace_context(&mut self, trace: Option<crate::command_log::TraceContext>) {
+    fn set_trace_context(&mut self, trace: Option<crate::trace::TraceContext>) {
         self.trace = trace;
     }
 
     fn canceller(&self) -> Arc<dyn Canceller> {
-        crate::command_log::canceller(self.canceller.clone(), &self.trace)
+        crate::trace::canceller(self.canceller.clone(), &self.trace)
     }
 
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError> {
@@ -765,7 +762,7 @@ impl Session for PostgresSession {
         if sql.is_empty() {
             return Ok(());
         }
-        crate::command_log::observe(self.trace.clone(), &sql, self.client.batch_execute(&sql))
+        crate::trace::observe(self.trace.clone(), &sql, self.client.batch_execute(&sql))
             .await
             .map_err(|error| exec_error(&error, &sql))
     }
@@ -817,7 +814,7 @@ impl Session for PostgresSession {
             TransactionCommand::Commit => "COMMIT",
             TransactionCommand::Rollback => "ROLLBACK",
         };
-        crate::command_log::observe(self.trace.clone(), sql, self.client.batch_execute(sql))
+        crate::trace::observe(self.trace.clone(), sql, self.client.batch_execute(sql))
             .await
             .map_err(|error| exec_error(&error, sql))?;
         if command == TransactionCommand::Begin {
@@ -838,7 +835,7 @@ impl Session for PostgresSession {
                 .map(|name| format!("DEALLOCATE {};", quote_identifier(&name, Dialect::Postgres)))
                 .collect();
             sql.push_str(CLEANUP_SQL);
-            crate::command_log::observe(self.trace.clone(), &sql, self.client.batch_execute(&sql))
+            crate::trace::observe(self.trace.clone(), &sql, self.client.batch_execute(&sql))
                 .await
                 .ok()
         };
@@ -899,8 +896,8 @@ impl Session for PostgresSession {
         relation: &str,
     ) -> Result<Vec<String>, ExecError> {
         let command =
-            crate::command_log::limited(super::relation_command(COLUMNS_SQL, schema, relation));
-        let rows = crate::command_log::observe(
+            crate::limited::limited(super::relation_command(COLUMNS_SQL, schema, relation));
+        let rows = crate::trace::observe(
             self.trace.clone(),
             command,
             self.client.query(COLUMNS_SQL, &[&schema, &relation]),
@@ -941,8 +938,8 @@ impl PostgresSession {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<ForeignKey>, ExecError> {
-        let command = crate::command_log::limited(super::relation_command(sql, schema, relation));
-        let rows = crate::command_log::observe(
+        let command = crate::limited::limited(super::relation_command(sql, schema, relation));
+        let rows = crate::trace::observe(
             self.trace.clone(),
             command,
             self.client.query(sql, &[&schema, &relation]),

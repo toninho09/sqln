@@ -17,7 +17,7 @@ use super::theme::Theme;
 use crate::console::Phase;
 use crate::diagram::Focus;
 use crate::diagram::layout::{Placed, glyph, stub_name};
-use crate::diagram::tab::DiagramTab;
+use crate::diagram_tab::DiagramTab;
 use crate::grid::printable;
 
 pub struct DiagramBar<'a> {

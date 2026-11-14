@@ -113,9 +113,7 @@ impl SaveRequest {
                 let (hash, lock) = if moved {
                     let lock = scripts::lock(&self.root, &self.meta.id)
                         .map_err(|error| WriteError::Failed(error.to_string()))?
-                        .ok_or_else(|| {
-                            WriteError::Failed(crate::ui::text::SCRIPT_BUSY.to_owned())
-                        })?;
+                        .ok_or_else(|| WriteError::Failed(crate::text::SCRIPT_BUSY.to_owned()))?;
                     let hash = scripts::move_to(from, &self.root, &self.meta)
                         .map_err(WriteError::Failed)?;
                     (Some(hash), Some(lock))

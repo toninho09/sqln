@@ -9,9 +9,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use super::{RedisCommand, open_stream, set_columns};
 use crate::connector::ExecError;
 use crate::connector::target::NetworkTarget;
-use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, RowWriter, Value};
-use crate::ui::text;
+use crate::sink::{Flow, ResultSink};
+use crate::text;
 
 /// The longest line of a reply, without its value.
 const MAX_LINE: usize = 64 * 1024;
@@ -302,7 +302,7 @@ fn error_of(frame: Frame) -> Result<Frame, ExecError> {
 pub(super) async fn run(
     target: &NetworkTarget,
     words: &[Vec<u8>],
-    trace: Option<crate::command_log::TraceContext>,
+    trace: Option<crate::trace::TraceContext>,
     sink: &mut ResultSink,
 ) -> Result<bool, ExecError> {
     let stop = sink.stop_token();
@@ -317,7 +317,7 @@ pub(super) async fn run(
 async fn follow(
     target: &NetworkTarget,
     words: &[Vec<u8>],
-    trace: Option<crate::command_log::TraceContext>,
+    trace: Option<crate::trace::TraceContext>,
     sink: &mut ResultSink,
     shown: &mut bool,
 ) -> Result<(), ExecError> {
@@ -337,7 +337,7 @@ async fn follow(
         error_of(reader.frame().await?.0)?;
     }
     let refs: Vec<&[u8]> = words.iter().map(Vec::as_slice).collect();
-    crate::command_log::observe(trace, RedisCommand(&refs), send(&mut write, &refs)).await?;
+    crate::trace::observe(trace, RedisCommand(&refs), send(&mut write, &refs)).await?;
     let name = String::from_utf8_lossy(&words[0]).to_ascii_uppercase();
     match name.as_str() {
         "MONITOR" => monitor(&mut reader, sink, shown).await,
@@ -511,8 +511,8 @@ async fn replicate<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::exec::{ExecEvent, StatementKey};
     use crate::grid::Budget;
+    use crate::sink::{SinkEvent, StatementKey};
 
     /// A reply list with no items must not stop the subscriber.
     #[test]
@@ -541,8 +541,8 @@ mod tests {
             let mut found = Vec::new();
             while let Ok(event) = inbox.try_recv() {
                 match event {
-                    ExecEvent::Columns { .. } => found.push("columns".to_owned()),
-                    ExecEvent::Rows { rows, .. } => found.push(rows[0].get(4).unwrap().display()),
+                    SinkEvent::Columns { .. } => found.push("columns".to_owned()),
+                    SinkEvent::Rows { rows, .. } => found.push(rows[0].get(4).unwrap().display()),
                     _ => {}
                 }
             }

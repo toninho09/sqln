@@ -4,7 +4,7 @@
 use crate::clipboard::base64_bytes;
 use crate::sql::literal::{binary_literal, bytes_literal, text_literal};
 use crate::sql::{Dialect, quote_identifier};
-use crate::ui::text;
+use crate::text;
 
 /// The size of a statement, without its first row. MySQL refuses a statement above
 /// `max_allowed_packet`, and its smallest default is 4 MiB.

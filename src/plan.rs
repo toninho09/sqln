@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::grid::{ResultTable, Row, RowWriter, Value};
 use crate::sql::Dialect;
-use crate::ui::text;
+use crate::text;
 
 /// The cells of the bar in the `Share` column.
 const BAR_CELLS: usize = 10;

@@ -10,7 +10,7 @@ use serde_json::value::RawValue;
 
 use super::{ImportFormat, Input, Item, KEY_OBJECTS, ReadOptions};
 use crate::sql::Dialect;
-use crate::ui::text;
+use crate::text;
 
 /// The pairs of one object, in the order of the file.
 struct Pairs<'a>(Vec<(String, &'a RawValue)>);

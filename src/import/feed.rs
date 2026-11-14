@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use super::statement::{MAX_STATEMENT_BYTES, Target};
 use super::{BadRow, FileReader, ImportJob, ImportMode, ImportProgress, Item, file_size};
-use crate::ui::text;
+use crate::text;
 
 /// A row that waits for the database.
 #[derive(Clone, Debug, PartialEq, Eq)]

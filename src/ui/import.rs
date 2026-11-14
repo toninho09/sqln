@@ -17,8 +17,8 @@ use super::text;
 use super::theme::Theme;
 use crate::export::NullText;
 use crate::grid::printable_start;
-use crate::import::form::{Field, ImportForm, Section};
 use crate::import::{Encoding, ImportMode, Item};
+use crate::import_form::{Field, ImportForm, Section};
 
 const WIDTH: u16 = 78;
 /// The columns of a label. `Rows per batch` needs them, with one space.

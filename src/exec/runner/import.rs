@@ -15,7 +15,7 @@ use crate::exec::ImportRequest;
 use crate::import::feed::{Feed, LotEnd, Pending};
 use crate::import::{BadRow, ImportMode};
 use crate::pool::Lease;
-use crate::ui::text;
+use crate::text;
 
 type SharedFeed = Arc<Mutex<Feed>>;
 

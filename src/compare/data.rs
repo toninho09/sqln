@@ -10,7 +10,7 @@ use super::schema::{Column, Table};
 use crate::grid::{Budget, Row, Value, row_cost};
 use crate::sql::literal::value_literal;
 use crate::sql::{Dialect, quote_identifier};
-use crate::ui::text;
+use crate::text;
 
 /// The largest power of ten that a number keeps in its decimal form. A larger exponent
 /// compares as text.

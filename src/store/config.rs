@@ -12,24 +12,24 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::error::Category;
 
-use super::file::{self, Expect};
-use super::{Root, Scope, Store};
-use crate::connection::{
+use super::choices::{ExportChoices, ImportChoices};
+use super::connection::{
     DEFAULT_BUSY_SECONDS, DEFAULT_IDLE_SECONDS, DEFAULT_POOL_LIMIT, DEFAULT_SQL_SECONDS,
     Definition, Source,
 };
+use super::file::{self, Expect};
+use super::{Root, Scope, Store};
 use crate::connector::duckdb::DuckdbTarget;
 use crate::connector::sqlite::{SqliteTarget, file_source};
 use crate::connector::target::{
     Address, ClientCertificate, Engine, KafkaOptions, NetworkTarget, Registry, Sasl, Tls, TlsFiles,
     consumer_group, topic_filter,
 };
-use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode};
-use crate::export::ExportChoices;
-use crate::import::ImportChoices;
-use crate::input::{Keymap, SuggestionKeys};
+use crate::input::{KeyboardMode, Keymap, SuggestionKeys};
 
 pub const VERSION: u32 = 1;
+/// The default limit of the undo history of one console, in the conventional mode.
+pub const DEFAULT_UNDO_LIMIT: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -279,7 +279,7 @@ pub struct Keymaps {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Preferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ai_completion: Option<crate::ai::Preferences>,
+    pub ai_completion: Option<super::ai::Preferences>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyboard_mode: Option<KeyboardName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -497,7 +497,7 @@ pub struct Stored {
 /// The configuration of both scopes, after the precedence.
 #[derive(Debug)]
 pub struct Config {
-    pub ai_completion: crate::ai::Preferences,
+    pub ai_completion: super::ai::Preferences,
     pub keyboard: KeyboardMode,
     pub page_size: Option<usize>,
     pub row_cap: Option<usize>,
@@ -668,7 +668,7 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
             // character, or `!` alone is refused.
             for pattern in &entry.topics {
                 if topic_filter(pattern).ok().as_deref() != Some(std::slice::from_ref(pattern)) {
-                    return Err(format!("topics: {}", crate::ui::text::KAFKA_BAD_TOPICS));
+                    return Err(format!("topics: {}", crate::text::KAFKA_BAD_TOPICS));
                 }
             }
             if engine == Engine::Kafka
@@ -1043,7 +1043,7 @@ fn combine(
         })
         .collect();
     Ok(Config {
-        ai_completion: crate::ai::Preferences::resolve(
+        ai_completion: super::ai::Preferences::resolve(
             global.ai_completion.as_ref(),
             project.and_then(|p| p.ai_completion.as_ref()),
         ),

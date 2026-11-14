@@ -1,44 +1,17 @@
 //! Pending table changes and SQL that identifies rows by their original primary key.
 
-pub mod form;
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::catalog::RelationRef;
 use crate::compare::schema::{self, Table};
 use crate::grid::{Budget, Reservation, ResultTable, Row, RowWriter, Value, printable, row_cost};
+use crate::sql::from_clause;
 use crate::sql::literal::value_literal;
 use crate::sql::{Dialect, quote_identifier};
-use crate::table::from_clause;
-use crate::ui::text;
+use crate::text;
 
-/// A row whose memory reservation ends with its last owner.
-#[derive(Debug)]
-pub struct SavedRow {
-    pub row: Row,
-    bytes: usize,
-    budget: Arc<Budget>,
-}
-
-impl SavedRow {
-    pub fn reserve(row: Row, budget: &Arc<Budget>) -> Result<Arc<Self>, String> {
-        let Reservation::Accepted(bytes) = budget.reserve(&row) else {
-            return Err(text::EDIT_BUDGET.to_owned());
-        };
-        Ok(Arc::new(Self {
-            row,
-            bytes,
-            budget: budget.clone(),
-        }))
-    }
-}
-
-impl Drop for SavedRow {
-    fn drop(&mut self) {
-        self.budget.release(self.bytes);
-    }
-}
+pub use crate::grid::SavedRow;
 
 #[derive(Debug)]
 pub struct PendingRow {
@@ -188,11 +161,7 @@ impl Edits {
         table.bytes = table.bytes - old_bytes + bytes;
         let pending = match self.rows.entry(row) {
             std::collections::btree_map::Entry::Vacant(entry) => entry.insert(PendingRow {
-                original: Arc::new(SavedRow {
-                    row: old,
-                    bytes: old_bytes,
-                    budget: budget.clone(),
-                }),
+                original: SavedRow::adopt(old, old_bytes, budget),
                 current: snapshot.clone(),
                 columns: BTreeSet::new(),
             }),
@@ -303,9 +272,9 @@ impl Edits {
                 self.rows.insert(row, pending);
                 return Err(text::TABLE_BUSY.to_owned());
             }
-            let mut saved = Arc::try_unwrap(pending.original).expect("the owner count is checked");
-            let bytes = std::mem::take(&mut saved.bytes);
-            let current = std::mem::replace(&mut table.rows[row], std::mem::take(&mut saved.row));
+            let saved = Arc::try_unwrap(pending.original).expect("the owner count is checked");
+            let (saved, bytes) = saved.take();
+            let current = std::mem::replace(&mut table.rows[row], saved);
             let current_bytes = row_cost(&current);
             budget.release(current_bytes);
             table.bytes = table.bytes - current_bytes + bytes;
@@ -338,9 +307,9 @@ impl Edits {
             return Err(text::TABLE_BUSY.to_owned());
         }
         for (index, pending) in std::mem::take(&mut self.rows) {
-            let mut saved = Arc::try_unwrap(pending.original).expect("the owner count is checked");
-            let bytes = std::mem::take(&mut saved.bytes);
-            let old = std::mem::replace(&mut table.rows[index], std::mem::take(&mut saved.row));
+            let saved = Arc::try_unwrap(pending.original).expect("the owner count is checked");
+            let (saved, bytes) = saved.take();
+            let old = std::mem::replace(&mut table.rows[index], saved);
             let old_bytes = row_cost(&old);
             budget.release(old_bytes);
             table.bytes = table.bytes - old_bytes + bytes;

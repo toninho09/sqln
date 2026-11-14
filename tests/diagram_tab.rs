@@ -407,7 +407,7 @@ fn rows(texts: &[&[&str]]) -> Vec<Row> {
 
 #[test]
 fn a_read_returns_its_rows_to_the_budget_at_the_end_and_at_the_close() {
-    use sqln::diagram::tab::DiagramTab;
+    use sqln::diagram_tab::DiagramTab;
 
     let budget = Budget::new(1 << 20);
     let focus = Focus::Schema("main".to_owned());

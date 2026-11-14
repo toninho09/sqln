@@ -22,10 +22,10 @@ use super::{
     SessionContext, StatementEnd, TransactionCommand, TransactionState, describe, tls,
 };
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, RelationRef, Schema};
-use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, RowWriter, Value};
+use crate::sink::{Flow, ResultSink};
 use crate::sql::Dialect;
-use crate::ui::text;
+use crate::text;
 
 pub mod live;
 
@@ -176,11 +176,11 @@ impl Connector for RedisConnector {
 
     async fn connect_traced(
         &self,
-        trace: Option<crate::command_log::TraceContext>,
+        trace: Option<crate::trace::TraceContext>,
     ) -> Result<Box<dyn Session>, ConnectError> {
         let mut conn = open(&self.target).await?;
         // An account without this right can run commands, but Stop then closes the session.
-        let client = crate::command_log::observe(
+        let client = crate::trace::observe(
             trace.clone(),
             "CLIENT ID",
             redis::cmd("CLIENT").arg("ID").query_async(&mut conn),
@@ -209,11 +209,11 @@ struct RedisCanceller {
 
 impl RedisCanceller {
     /// The server can stop only a command that waits. Other commands answer 0.
-    async fn unblock(&self, trace: Option<crate::command_log::TraceContext>) -> Result<(), String> {
+    async fn unblock(&self, trace: Option<crate::trace::TraceContext>) -> Result<(), String> {
         let client = self.client.ok_or(text::REDIS_NO_STOP)?;
         let mut conn = open(&self.target).await.map_err(|error| error.message)?;
-        let command = crate::command_log::limited(format_args!("CLIENT UNBLOCK {client} ERROR"));
-        let stopped: i64 = crate::command_log::observe(
+        let command = crate::limited::limited(format_args!("CLIENT UNBLOCK {client} ERROR"));
+        let stopped: i64 = crate::trace::observe(
             trace,
             command,
             redis::cmd("CLIENT")
@@ -238,10 +238,7 @@ impl Canceller for RedisCanceller {
         self.cancel_traced(None).await
     }
 
-    async fn cancel_traced(
-        &self,
-        trace: Option<crate::command_log::TraceContext>,
-    ) -> Result<(), String> {
+    async fn cancel_traced(&self, trace: Option<crate::trace::TraceContext>) -> Result<(), String> {
         match timeout(SESSION_LIMIT, self.unblock(trace)).await {
             Ok(result) => result,
             Err(_) => Err("The cancel request got no answer.".to_owned()),
@@ -454,7 +451,7 @@ impl std::fmt::Display for RedisCommand<'_> {
 }
 
 struct RedisSession {
-    trace: Option<crate::command_log::TraceContext>,
+    trace: Option<crate::trace::TraceContext>,
     conn: MultiplexedConnection,
     canceller: Arc<RedisCanceller>,
     /// The database of the connection. A cleanup returns to it.
@@ -470,13 +467,13 @@ impl RedisSession {
     async fn ask_traced(
         &mut self,
         words: &[&[u8]],
-        trace: Option<crate::command_log::TraceContext>,
+        trace: Option<crate::trace::TraceContext>,
     ) -> Result<Reply, ExecError> {
         let mut command = Cmd::new();
         for word in words {
             command.arg(*word);
         }
-        crate::command_log::observe(
+        crate::trace::observe(
             trace,
             RedisCommand(words),
             command.query_async(&mut self.conn),
@@ -506,7 +503,7 @@ impl RedisSession {
                 &[b"COMMAND", b"INFO", name],
                 self.trace
                     .as_ref()
-                    .map(crate::command_log::TraceContext::internal),
+                    .map(crate::trace::TraceContext::internal),
             )
             .await
         else {
@@ -865,7 +862,7 @@ impl RedisSession {
             "DISCARD\nCLIENT SETNAME \"\"\nCLIENT TRACKING OFF\nCLIENT NO-EVICT OFF\nCLIENT NO-TOUCH OFF\nUNWATCH\nSELECT {}",
             self.database
         );
-        let replies: Result<Vec<RedisResult<Reply>>, _> = crate::command_log::observe(
+        let replies: Result<Vec<RedisResult<Reply>>, _> = crate::trace::observe(
             self.trace.clone(),
             command,
             pipe.query_async(&mut self.conn),
@@ -877,12 +874,12 @@ impl RedisSession {
 
 #[async_trait]
 impl Session for RedisSession {
-    fn set_trace_context(&mut self, trace: Option<crate::command_log::TraceContext>) {
+    fn set_trace_context(&mut self, trace: Option<crate::trace::TraceContext>) {
         self.trace = trace;
     }
 
     fn canceller(&self) -> Arc<dyn Canceller> {
-        crate::command_log::canceller(self.canceller.clone(), &self.trace)
+        crate::trace::canceller(self.canceller.clone(), &self.trace)
     }
 
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError> {

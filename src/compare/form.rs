@@ -9,7 +9,7 @@ use crate::exec::ConnectionId;
 use crate::filter_list::{holds_words, words_of};
 use crate::line_input::{Edit, LineInput};
 use crate::sql::Dialect;
-use crate::ui::text;
+use crate::text;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {

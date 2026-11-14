@@ -67,29 +67,3 @@ pub fn value_literal(value: Value<'_>, dialect: Dialect) -> String {
 pub fn is_number(text: &str) -> bool {
     serde_json::from_str::<serde_json::Number>(text).is_ok()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::connector::kafka::command::{TokenKind, tokenize_mode};
-
-    #[test]
-    fn a_kafka_text_reads_back_in_select_and_in_line_commands() {
-        for value in [
-            "plain",
-            "it's",
-            "a\\b",
-            "two\nlines\tand\r",
-            "bell\u{7}",
-            "ação",
-        ] {
-            let literal = text_literal(value, Dialect::Kafka);
-            for select in [false, true] {
-                let tokens = tokenize_mode(&format!("key = {literal}"), select).unwrap();
-                let last = tokens.last().unwrap();
-                assert_eq!(last.kind, TokenKind::Text, "{literal}");
-                assert_eq!(last.text, value, "{literal} in select: {select}");
-            }
-        }
-    }
-}

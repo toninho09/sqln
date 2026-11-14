@@ -6,7 +6,6 @@ pub mod ddl;
 pub mod form;
 pub mod schema;
 pub mod sql;
-pub mod tab;
 
 use crate::exec::ConnectionId;
 

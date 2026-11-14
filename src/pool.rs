@@ -8,9 +8,9 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout};
 
-use crate::command_log::TraceContext;
 use crate::connector::{ConnectError, Connector, ResetOutcome, Session};
 use crate::sql::Dialect;
+use crate::trace::TraceContext;
 
 /// The right to use one place of the pool, with a session or without one.
 enum Grant {

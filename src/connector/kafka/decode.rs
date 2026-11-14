@@ -8,7 +8,7 @@ use prost_reflect::{DynamicMessage, MessageDescriptor};
 use serde_json::Value as Json;
 
 use super::registry::{Parsed, RegistryClient, main_file};
-use crate::ui::text;
+use crate::text;
 
 /// A decoded key or value.
 pub enum Decoded {

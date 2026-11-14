@@ -11,10 +11,10 @@ use super::{
 use crate::compare::sql::table_columns_sql;
 use crate::connector::TransactionState;
 use crate::data_edit::{Change, Failure, Job, Metadata, Outcome};
-use crate::exec::sink::Captured;
 use crate::pool::Lease;
+use crate::sink::Captured;
 use crate::sql::{Dialect, literal::text_literal};
-use crate::ui::text;
+use crate::text;
 
 fn failure(message: impl Into<String>) -> Failure {
     Failure {

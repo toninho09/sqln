@@ -2,7 +2,7 @@
 
 use crate::editor::SqlEditor;
 use crate::exec::ConsoleId;
-use crate::ui::wrap::WrappedText;
+use crate::wrap::WrappedText;
 
 pub enum Body {
     Cell {

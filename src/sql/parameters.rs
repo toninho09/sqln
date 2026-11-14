@@ -234,7 +234,7 @@ pub fn bind(sql: &str, dialect: Dialect, values: &[Parameter]) -> Result<BoundSq
 /// Command history keeps values separate from SQL. Diagnostic logs must not use this text.
 pub fn command(sql: &str, parameters: &[Parameter]) -> String {
     use std::fmt::Write;
-    let mut text = crate::command_log::LimitedText::new(crate::command_log::HISTORY_BYTES - 1024);
+    let mut text = crate::limited::LimitedText::new(crate::limited::HISTORY_BYTES - 1024);
     let _ = write!(text, "{sql}");
     if !parameters.is_empty() && write!(text, "\nParameters:").is_ok() {
         for (index, value) in parameters.iter().enumerate() {

@@ -14,7 +14,7 @@ use super::settings::WIDTH;
 use super::text;
 use super::theme::Theme;
 use crate::export::NullText;
-use crate::export::form::{ExportForm, Field, RowChoice};
+use crate::export_form::{ExportForm, Field, RowChoice};
 
 /// The columns of a label. `Rows per INSERT` needs them, with one space.
 const LABEL_WIDTH: u16 = super::kit::form::LabelWidth::Narrow.columns();

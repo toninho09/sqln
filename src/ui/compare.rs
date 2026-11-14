@@ -21,7 +21,7 @@ use super::theme::Theme;
 use super::{draw_anchored_list, text};
 use crate::compare::Kind;
 use crate::compare::form::{CompareForm, Field};
-use crate::compare::tab::CompareTab;
+use crate::compare_tab::CompareTab;
 use crate::console::Phase;
 use crate::grid::printable;
 use crate::line_input::LineInput;

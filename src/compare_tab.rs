@@ -6,21 +6,21 @@
 //! columns of both tables, then each row of the source, and then the rows of the target,
 //! which meet the source rows as they arrive.
 
-use super::data::{DataCompare, RowChange, plan};
-use super::ddl::script;
-use super::schema::{
+use crate::catalog::RelationRef;
+use crate::compare::data::{DataCompare, RowChange, plan};
+use crate::compare::ddl::script;
+use crate::compare::schema::{
     Change, ConstraintKind, Difference, Object, SchemaModel, Table, build, diff, summary,
 };
-use super::sql::{compare_sql, rows_sql, table_columns_sql};
-use super::{Kind, Side};
-use crate::catalog::RelationRef;
+use crate::compare::sql::{compare_sql, rows_sql, table_columns_sql};
+use crate::compare::{Kind, Side};
 use crate::console::{Message, MessageLevel, Phase, RunClock};
 use crate::exec::{ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, StatementStatus};
 use crate::grid::{Budget, Reservation, Row, Value};
 use crate::result::ResultTab;
 use crate::sql::Dialect;
-use crate::table::from_clause;
-use crate::ui::text;
+use crate::sql::from_clause;
+use crate::text;
 
 /// The read of one side.
 pub struct SideRead {

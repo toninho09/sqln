@@ -1,9 +1,11 @@
 //! The global budget of grid data. It counts the bytes that the rows keep in memory.
 
 use std::mem::size_of;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{Row, Value};
+use crate::text;
 
 pub const DEFAULT_LIMIT: usize = 268_435_456;
 
@@ -89,5 +91,47 @@ impl Budget {
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                 Some(used.saturating_sub(bytes))
             });
+    }
+}
+
+/// A row whose memory reservation ends with its last owner.
+#[derive(Debug)]
+pub struct SavedRow {
+    pub row: Row,
+    bytes: usize,
+    budget: Arc<Budget>,
+}
+
+impl SavedRow {
+    pub fn reserve(row: Row, budget: &Arc<Budget>) -> Result<Arc<Self>, String> {
+        let Reservation::Accepted(bytes) = budget.reserve(&row) else {
+            return Err(text::EDIT_BUDGET.to_owned());
+        };
+        Ok(Arc::new(Self {
+            row,
+            bytes,
+            budget: budget.clone(),
+        }))
+    }
+
+    /// Takes a row whose bytes the budget already holds.
+    pub fn adopt(row: Row, bytes: usize, budget: &Arc<Budget>) -> Arc<Self> {
+        Arc::new(Self {
+            row,
+            bytes,
+            budget: budget.clone(),
+        })
+    }
+
+    /// Returns the row and its reserved bytes. The caller keeps the reservation.
+    pub fn take(mut self) -> (Row, usize) {
+        let bytes = std::mem::take(&mut self.bytes);
+        (std::mem::take(&mut self.row), bytes)
+    }
+}
+
+impl Drop for SavedRow {
+    fn drop(&mut self) {
+        self.budget.release(self.bytes);
     }
 }

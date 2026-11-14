@@ -5,7 +5,7 @@ use crate::connector::ExecError;
 use crate::connector::kafka::filter::Text;
 use crate::connector::kafka::filter::{self, Context, Evaluation, Expr, Message, Meta, Needs};
 use crate::grid::{Row, RowWriter, Value};
-use crate::ui::text;
+use crate::text;
 use serde_json::Value as Json;
 
 /// Where a column takes its cells.

@@ -14,9 +14,9 @@
 //! the names of that schema without the schema.
 
 use crate::catalog::RelationRef;
+use crate::sql::from_clause;
 use crate::sql::{Dialect, quote_identifier};
 use crate::structure::name_literal;
-use crate::table::from_clause;
 
 /// Returns the queries of the read of a schema. Redis has no tables.
 pub fn compare_sql(dialect: Dialect, schema: &str) -> Option<Vec<String>> {

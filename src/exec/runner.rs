@@ -62,7 +62,7 @@ struct Delivery {
     export: Option<ExportWriter>,
     stream: bool,
     timed: bool,
-    capture: Option<super::sink::Capture>,
+    capture: Option<crate::sink::Capture>,
     parameters: Vec<crate::sql::parameters::Parameter>,
     /// True for a continuous statement: no time limit, a live result, and a stop that
     /// only the connector handles.
@@ -373,7 +373,7 @@ impl ConsoleTask {
             && active.session().transaction_state().await != TransactionState::None
         {
             message = Some(if agent_run {
-                crate::ui::text::AGENT_ROLLED_BACK.to_owned()
+                crate::text::AGENT_ROLLED_BACK.to_owned()
             } else {
                 "The statement leaves an open transaction. SQLN rolls it back.".to_owned()
             });
@@ -426,7 +426,7 @@ impl ConsoleTask {
                 self.finish(
                     execution,
                     ExecutionEnd::Refused,
-                    Some(crate::ui::text::TABLE_BUSY.to_owned()),
+                    Some(crate::text::TABLE_BUSY.to_owned()),
                 )
                 .await;
             }
@@ -671,9 +671,9 @@ fn continuous_refusal(
         .iter()
         .position(|sql| is_continuous(sql, dialect))?;
     if !live {
-        Some(crate::ui::text::CONTINUOUS_CONSOLE_ONLY)
+        Some(crate::text::CONTINUOUS_CONSOLE_ONLY)
     } else if position + 1 < statements.len() {
-        Some(crate::ui::text::CONTINUOUS_NOT_LAST)
+        Some(crate::text::CONTINUOUS_NOT_LAST)
     } else {
         None
     }

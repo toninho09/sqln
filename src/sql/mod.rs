@@ -73,6 +73,22 @@ pub fn quote_identifier(name: &str, dialect: Dialect) -> String {
     quote_with(name, if dialect == Dialect::MySql { '`' } else { '"' })
 }
 
+/// Returns the relation as the `FROM` clause writes it.
+pub fn from_clause(relation: &crate::catalog::RelationRef, dialect: Dialect) -> String {
+    // DuckDB names a schema of an attached database as `catalog.schema`, and each part
+    // needs its own quotes.
+    let schema = match dialect {
+        Dialect::DuckDb => relation
+            .schema
+            .split('.')
+            .map(|part| quote_identifier(part, dialect))
+            .collect::<Vec<_>>()
+            .join("."),
+        _ => quote_identifier(&relation.schema, dialect),
+    };
+    format!("{schema}.{}", quote_identifier(&relation.relation, dialect))
+}
+
 /// Writes a PostgreSQL literal in the `E` form, which does not change with
 /// `standard_conforming_strings`. Other text cannot end this literal early.
 pub fn escape_literal(text: &str) -> String {

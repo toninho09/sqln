@@ -20,9 +20,9 @@ use self::postgres::PostgresConnector;
 use self::redis::RedisConnector;
 use self::target::{Engine, NetworkTarget};
 use crate::catalog::{Catalog, ColumnNote, ForeignKey};
-use crate::command_log::TraceContext;
-use crate::exec::{ReadLimit, ResultSink};
+use crate::sink::{ReadLimit, ResultSink};
 use crate::sql::Dialect;
+use crate::trace::TraceContext;
 
 /// The database notices that one statement keeps. A loop of notices must not fill the
 /// memory, so a later notice only adds to a count.

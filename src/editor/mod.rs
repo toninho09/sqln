@@ -32,6 +32,7 @@ use self::undo::UndoHistory;
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{CopyOutcome, EditorClipboard, SharedClipboard};
 use crate::complete::{Completion, suggest_in};
+pub use crate::input::KeyboardMode;
 use crate::input::{Action, SuggestionKeys};
 use crate::sql::{Dialect, format_statement, split, split_tokens};
 use crate::ui::text;
@@ -67,13 +68,6 @@ fn last_column(line: &[char], left: usize, width: usize) -> usize {
         used < width
     });
     left + fitting.count()
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum KeyboardMode {
-    #[default]
-    Conventional,
-    Vim,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

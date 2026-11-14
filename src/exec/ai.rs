@@ -1,11 +1,11 @@
 //! AI metadata uses a separate pool lease and never a user's transaction.
-use super::sink::Captured;
 use super::{Manager, ResultSink, StatementKey};
 use crate::ai::schema::{Builder, Event, kafka_snapshot};
 use crate::catalog::RelationRef;
 use crate::connector::kafka::TOPICS;
 use crate::connector::{Session, SessionContext};
 use crate::grid::Budget;
+use crate::sink::Captured;
 use crate::sql::Dialect;
 use crate::structure::{Scope, Section, structure_sql};
 use std::sync::{Arc, Mutex, mpsc};

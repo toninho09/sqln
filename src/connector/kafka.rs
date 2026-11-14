@@ -34,10 +34,11 @@ use super::{
     ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
 use crate::catalog::{Catalog, ColumnNote, Columns, Relation, RelationKind, RelationRef, Schema};
-use crate::exec::{Flow, ReadEnd, ReadProgress, ResultSink, percent};
 use crate::grid::{Row, RowWriter, Value};
+use crate::progress::{ReadEnd, ReadProgress, percent};
+use crate::sink::{Flow, ResultSink};
 use crate::sql::Dialect;
-use crate::ui::text;
+use crate::text;
 
 pub use self::registry::account as registry_account;
 
@@ -96,7 +97,7 @@ pub fn page_text(relation: &RelationRef, filter: &str, count: usize) -> String {
 /// Reads a registry password from the system vault.
 fn system_vault() -> VaultRead {
     Arc::new(|account: &str| {
-        crate::creds::SystemVault::new()
+        crate::vault::SystemVault::new()
             .read_api_key(account)
             .map_err(|error| text::kafka_registry_vault_error(&error.to_string()))
     })

@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 
 use crate::connector::target::{Registry, Secret, TlsFiles};
 use crate::connector::tls;
-use crate::ui::text;
+use crate::text;
 
 /// The largest answer of the registry.
 const RESPONSE_LIMIT: usize = 4 * 1024 * 1024;

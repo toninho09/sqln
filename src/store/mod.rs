@@ -3,7 +3,10 @@
 //!
 //! The layout of the files is in `docs/ARCHITECTURE.md`.
 
+pub mod ai;
+pub mod choices;
 pub mod config;
+pub mod connection;
 pub mod file;
 pub mod history;
 pub mod scripts;

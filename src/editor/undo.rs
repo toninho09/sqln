@@ -11,8 +11,7 @@ use edtui::{EditorState, Index2, Lines};
 
 use super::buffer::{replace_range, text_in};
 
-/// The default limit of the history of one console.
-pub const DEFAULT_UNDO_LIMIT: usize = 64 * 1024 * 1024;
+pub use crate::store::config::DEFAULT_UNDO_LIMIT;
 /// The stack of EdTUI keeps this number of entries.
 const EDTUI_STEPS: usize = 100;
 

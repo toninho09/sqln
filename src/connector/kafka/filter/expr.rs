@@ -13,7 +13,7 @@ pub type Check<'a> = dyn FnMut(&Json) -> Result<bool, ExecError> + 'a;
 use crate::connector::ExecError;
 use crate::connector::kafka::MESSAGE_COLUMNS;
 use crate::connector::kafka::command::{Cursor, Token, TokenKind, error_at};
-use crate::ui::text;
+use crate::text;
 
 /// The start of a field: a message column, or the item of `ANY` and `EVERY`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

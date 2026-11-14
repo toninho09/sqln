@@ -4,7 +4,6 @@
 pub mod layout;
 pub mod mermaid;
 pub mod sql;
-pub mod tab;
 
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -10,7 +10,7 @@ mod tsv;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub use self::binary::Binary;
-pub use self::budget::{Budget, DEFAULT_LIMIT, Reservation, row_cost};
+pub use self::budget::{Budget, DEFAULT_LIMIT, Reservation, SavedRow, row_cost};
 pub use self::row::{Row, RowWriter};
 pub use self::search::RowSearch;
 pub use self::tsv::{delimited_text, hex, push_cell};

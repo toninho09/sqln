@@ -549,7 +549,7 @@ fn large_diagram(count: usize) -> sqln::diagram::Model {
 #[cfg_attr(debug_assertions, ignore = "the target applies to an optimized build")]
 fn the_layout_and_the_frame_of_a_large_diagram_stay_under_the_target() {
     use sqln::diagram::Focus;
-    use sqln::diagram::tab::DiagramTab;
+    use sqln::diagram_tab::DiagramTab;
     use sqln::ui::diagram::{DiagramBar, draw_diagram};
 
     let mut tab = DiagramTab::new(1, 1, Focus::Schema("app".to_owned()), 1);

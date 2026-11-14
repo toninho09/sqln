@@ -5,16 +5,16 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::statement::{Target, TargetColumn, is_binary_type};
-use super::{
+use crate::export::{Delimiter, NullText, resolve_path};
+use crate::import::statement::{Target, TargetColumn, is_binary_type};
+use crate::import::{
     DEFAULT_ERROR_LIMIT, Encoding, ImportChoices, ImportFormat, ImportJob, ImportMode,
     ImportProgress, Item, Probe, ReadOptions, log_path,
 };
-use crate::export::{Delimiter, NullText, resolve_path};
 use crate::line_input::LineInput;
 use crate::settings::{next_choice, next_optional};
 use crate::sql::Dialect;
-use crate::ui::text;
+use crate::text;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Section {

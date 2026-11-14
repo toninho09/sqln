@@ -19,10 +19,10 @@ use crate::catalog::{
     Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
     add_objects, group_foreign_keys,
 };
-use crate::command_log::{self, TraceContext};
-use crate::exec::{Flow, ResultSink};
 use crate::grid::{RowWriter, Value};
+use crate::sink::{Flow, ResultSink};
 use crate::sql::{Dialect, quote_identifier};
+use crate::trace::{self, TraceContext};
 
 const MAIN_SCHEMA: &str = "main";
 
@@ -134,7 +134,7 @@ fn open(target: &SqliteTarget, trace: &Option<TraceContext>) -> Result<Connectio
             "PRAGMA foreign_keys = {}",
             if enabled { "ON" } else { "OFF" }
         );
-        command_log::observe_blocking(trace, &sql, || conn.execute_batch(&sql)).map_err(failed)?;
+        trace::observe_blocking(trace, &sql, || conn.execute_batch(&sql)).map_err(failed)?;
     }
     Ok(conn)
 }
@@ -241,13 +241,13 @@ fn serve(conn: &Connection, inbox: &Receiver<Request>, mut trace: Option<TraceCo
                     if context.read_only { "ON" } else { "OFF" }
                 );
                 let _ = reply.send(
-                    command_log::observe_blocking(&trace, &sql, || conn.execute_batch(&sql))
+                    trace::observe_blocking(&trace, &sql, || conn.execute_batch(&sql))
                         .map_err(exec_error),
                 );
             }
             Request::Run(sql, parameters, sink, reply) => {
                 let command = crate::sql::parameters::command(&sql, &parameters);
-                let _ = reply.send(command_log::observe_blocking(&trace, command, || {
+                let _ = reply.send(trace::observe_blocking(&trace, command, || {
                     run(conn, &sql, &parameters, sink)
                 }));
             }
@@ -261,7 +261,7 @@ fn serve(conn: &Connection, inbox: &Receiver<Request>, mut trace: Option<TraceCo
                     TransactionCommand::Rollback => "ROLLBACK",
                 };
                 let _ = reply.send(
-                    command_log::observe_blocking(&trace, sql, || conn.execute_batch(sql))
+                    trace::observe_blocking(&trace, sql, || conn.execute_batch(sql))
                         .map_err(exec_error),
                 );
             }
@@ -365,7 +365,7 @@ fn run(
 
 fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> rusqlite::Result<Catalog> {
     let sql = "SELECT name FROM pragma_database_list WHERE name <> 'temp'";
-    let names: Vec<String> = command_log::observe_blocking(trace, sql, || {
+    let names: Vec<String> = trace::observe_blocking(trace, sql, || {
         let mut names = conn.prepare(sql)?;
         names
             .query_map([], |row| row.get(0))?
@@ -381,7 +381,7 @@ fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> rusqlite::Re
              ORDER BY name",
             quote_identifier(&name, Dialect::Sqlite),
         );
-        let relations = command_log::observe_blocking(trace, &sql, || {
+        let relations = trace::observe_blocking(trace, &sql, || {
             let mut statement = conn.prepare(&sql)?;
             statement
                 .query_map([], |row| {
@@ -405,7 +405,7 @@ fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> rusqlite::Re
             "SELECT name, tbl_name FROM {}.sqlite_schema WHERE type = 'trigger'",
             quote_identifier(&name, Dialect::Sqlite),
         );
-        let triggers: Vec<[String; 4]> = command_log::observe_blocking(trace, &sql, || {
+        let triggers: Vec<[String; 4]> = trace::observe_blocking(trace, &sql, || {
             let mut statement = conn.prepare(&sql)?;
             statement
                 .query_map([], |row| {
@@ -434,7 +434,7 @@ fn read_columns(
     trace: &Option<TraceContext>,
 ) -> rusqlite::Result<Vec<String>> {
     let sql = "SELECT name FROM pragma_table_info(?1, ?2)";
-    command_log::observe_blocking(
+    trace::observe_blocking(
         trace,
         format_args!("{sql}\nParameters: ?1={relation:?}, ?2={schema:?}"),
         || {
@@ -477,7 +477,7 @@ fn read_keys(
     relation: &str,
     trace: &Option<TraceContext>,
 ) -> rusqlite::Result<Vec<ForeignKey>> {
-    command_log::observe_blocking(
+    trace::observe_blocking(
         trace,
         format_args!("{sql}\nParameters: ?1={relation:?}, ?2={schema:?}"),
         || {
@@ -507,7 +507,7 @@ impl Canceller for Interrupt {
         self.cancel_traced(None).await
     }
     async fn cancel_traced(&self, trace: Option<TraceContext>) -> Result<(), String> {
-        command_log::observe(trace, "sqlite3_interrupt", async {
+        trace::observe(trace, "sqlite3_interrupt", async {
             self.0.interrupt();
             Ok(())
         })
@@ -546,7 +546,7 @@ impl Session for SqliteSession {
     }
 
     fn canceller(&self) -> Arc<dyn Canceller> {
-        command_log::canceller(self.interrupt.clone(), &self.trace)
+        trace::canceller(self.interrupt.clone(), &self.trace)
     }
 
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError> {

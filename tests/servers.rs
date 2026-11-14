@@ -1781,7 +1781,7 @@ fn sink() -> ResultSink {
 }
 
 fn sink_with_cap(cap: usize) -> ResultSink {
-    let (events, inbox) = tokio::sync::mpsc::channel(1024);
+    let (events, inbox) = tokio::sync::mpsc::channel::<ExecEvent>(1024);
     std::mem::forget(inbox);
     let key = StatementKey {
         console: 1,

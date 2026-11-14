@@ -1,8 +1,6 @@
 //! Writes rows to a file. `Encoder` holds the formats, and `ExportWriter` owns the
 //! temporary file that the rows go to.
 
-pub mod form;
-
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -11,117 +9,17 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use serde::{Deserialize, Serialize};
-
 use crate::clipboard::base64;
 use crate::grid::{Value, delimited_text, hex, push_cell};
 use crate::sql::literal::is_number;
 use crate::sql::{Dialect, quote_identifier, quote_literal};
 use crate::store::file;
 
-const DEFAULT_BATCH: usize = 100;
+pub use crate::store::choices::{Delimiter, ExportChoices, ExportFormat, NullText};
+
 const BOM: &[u8] = "\u{feff}".as_bytes();
 /// The bytes that wait in memory. A write to the file costs more than some bytes.
 const WRITE_BUFFER: usize = 256 * 1024;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ExportFormat {
-    #[default]
-    Csv,
-    Tsv,
-    Json,
-    JsonLines,
-    SqlInsert,
-}
-
-impl ExportFormat {
-    pub const ALL: [Self; 5] = [
-        Self::Csv,
-        Self::Tsv,
-        Self::Json,
-        Self::JsonLines,
-        Self::SqlInsert,
-    ];
-
-    pub fn extension(self) -> &'static str {
-        match self {
-            Self::Csv => "csv",
-            Self::Tsv => "tsv",
-            Self::Json => "json",
-            Self::JsonLines => "jsonl",
-            Self::SqlInsert => "sql",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Delimiter {
-    #[default]
-    Comma,
-    Semicolon,
-    Pipe,
-}
-
-impl Delimiter {
-    pub const ALL: [Self; 3] = [Self::Comma, Self::Semicolon, Self::Pipe];
-
-    pub fn symbol(self) -> u8 {
-        match self {
-            Self::Comma => b',',
-            Self::Semicolon => b';',
-            Self::Pipe => b'|',
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum NullText {
-    #[default]
-    Empty,
-    Word,
-}
-
-impl NullText {
-    pub fn text(self) -> &'static str {
-        match self {
-            Self::Empty => "",
-            Self::Word => "NULL",
-        }
-    }
-}
-
-/// What the modal remembers. `config.json` keeps these values in `preferences.export`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, default, rename_all = "camelCase")]
-pub struct ExportChoices {
-    pub format: ExportFormat,
-    pub header: bool,
-    pub delimiter: Delimiter,
-    pub null_text: NullText,
-    pub bom: bool,
-    pub grouped: bool,
-    pub batch: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub folder: Option<PathBuf>,
-}
-
-impl Default for ExportChoices {
-    fn default() -> Self {
-        Self {
-            format: ExportFormat::default(),
-            header: true,
-            delimiter: Delimiter::default(),
-            null_text: NullText::default(),
-            bom: false,
-            grouped: false,
-            batch: DEFAULT_BATCH,
-            folder: None,
-        }
-    }
-}
 
 /// How one file is written.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -415,6 +313,16 @@ impl PartialEq for ExportWriter {
 }
 
 impl Eq for ExportWriter {}
+
+impl crate::sink::RowOutput for ExportWriter {
+    fn start_rows(&self, columns: &[String]) {
+        self.start(columns);
+    }
+
+    fn write(&self, row: &crate::grid::Row) -> bool {
+        self.write_row(row.cells())
+    }
+}
 
 impl ExportWriter {
     /// Creates the temporary file beside the destination, and the missing folders.

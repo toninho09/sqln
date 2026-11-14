@@ -31,7 +31,7 @@ pub mod text;
 pub mod theme;
 pub mod welcome;
 pub mod which_key;
-pub mod wrap;
+pub use crate::wrap;
 
 use edtui::{EditorTheme, EditorView, LineNumbers};
 use ratatui::Frame;

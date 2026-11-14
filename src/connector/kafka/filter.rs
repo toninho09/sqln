@@ -17,7 +17,7 @@ use serde_json::{Number, Value as Json};
 pub use self::expr::{Context, Expr, Needs, Root, Segment, parse_path, path_name};
 use super::command::{Cursor, Token, TokenKind, error_at, parse_time};
 use crate::connector::ExecError;
-use crate::ui::text;
+use crate::text;
 
 /// The functions of a filter and of the SELECT columns, with `CAST`, for the completion
 /// and the keywords.

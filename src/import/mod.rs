@@ -3,7 +3,6 @@
 
 mod delimited;
 pub mod feed;
-pub mod form;
 mod json;
 pub mod statement;
 
@@ -19,7 +18,9 @@ use self::delimited::DelimitedReader;
 use self::json::JsonReader;
 use self::statement::Target;
 use crate::export::{Delimiter, NullText};
+
 use crate::sql::Dialect;
+pub use crate::store::choices::{DEFAULT_BATCH, Encoding, ImportChoices};
 
 const BOM: &[u8] = "\u{feff}".as_bytes();
 const READ_BUFFER: usize = 256 * 1024;
@@ -29,7 +30,6 @@ pub const PREVIEW_ROWS: usize = 50;
 const PROBE_BYTES: u64 = 16 * 1024 * 1024;
 /// The objects that give the columns of a JSON file.
 pub const KEY_OBJECTS: usize = 1000;
-pub const DEFAULT_BATCH: usize = 100;
 pub const DEFAULT_ERROR_LIMIT: usize = 1000;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,18 +61,6 @@ impl ImportFormat {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Encoding {
-    #[default]
-    Utf8,
-    Windows1252,
-}
-
-impl Encoding {
-    pub const ALL: [Self; 2] = [Self::Utf8, Self::Windows1252];
-}
-
 /// What the import does with a row that fails.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ImportMode {
@@ -84,33 +72,6 @@ pub enum ImportMode {
 
 impl ImportMode {
     pub const ALL: [Self; 3] = [Self::AllOrNothing, Self::ByBatch, Self::LogErrors];
-}
-
-/// What the dialog remembers. `config.json` keeps these values in `preferences.import`.
-/// The failure mode stays out, because two modes leave partial data.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, default, rename_all = "camelCase")]
-pub struct ImportChoices {
-    pub encoding: Encoding,
-    pub header: bool,
-    pub delimiter: Delimiter,
-    pub null_text: NullText,
-    pub batch: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub folder: Option<PathBuf>,
-}
-
-impl Default for ImportChoices {
-    fn default() -> Self {
-        Self {
-            encoding: Encoding::default(),
-            header: true,
-            delimiter: Delimiter::default(),
-            null_text: NullText::default(),
-            batch: DEFAULT_BATCH,
-            folder: None,
-        }
-    }
 }
 
 /// How one file is read.

@@ -7,7 +7,7 @@ use tokio_util::sync::{CancellationToken, DropGuard};
 
 use crate::connector::ExecError;
 use crate::grid::Budget;
-use crate::ui::text;
+use crate::text;
 
 #[derive(Clone)]
 pub struct Evaluation {

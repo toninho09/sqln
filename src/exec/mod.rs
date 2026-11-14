@@ -1,9 +1,7 @@
 //! Executions. Each console has one task, and that task owns the reserved session.
 
 mod ai;
-mod progress;
 mod runner;
-mod sink;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -13,71 +11,25 @@ use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedSender};
 
-pub use self::progress::{ProgressSnapshot, ReadEnd, ReadMeter, ReadProgress, percent};
-pub use self::sink::{Flow, ReadLimit, ResultSink};
 use crate::catalog::{Catalog, ColumnNote, ForeignKey, RelationRef};
-use crate::command_log::{LogEvent, TraceContext};
-use crate::connection::DEFAULT_IDLE_SECONDS;
+use crate::command_log::{LogEvent, TraceContext, TraceEvent};
 use crate::connector::{
     ConnectError, Connector, SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
 use crate::export::ExportWriter;
-use crate::grid::{Budget, DEFAULT_LIMIT, Row};
+use crate::grid::{Budget, Row};
 use crate::import::ImportJob;
 use crate::pool::Pool;
-use crate::store::config::DEFAULT_CAP_IN_SQL;
+pub use crate::progress::{ProgressSnapshot, ReadEnd, ReadMeter, ReadProgress, percent};
+pub use crate::sink::{
+    ConnectionId, ConsoleId, ExecutionId, Flow, ReadLimit, ResultSink, SinkEvent, SinkMessage,
+    StatementKey,
+};
+pub use crate::store::connection::Settings;
 
 const EVENT_CAPACITY: usize = 256;
 const CONNECT_LIMIT_ENDED: &str = "The connection time limit ended.";
 const DISCONNECT_CHECK: Duration = Duration::from_millis(5);
-
-pub type ConnectionId = u64;
-pub type ConsoleId = u64;
-pub type ExecutionId = u64;
-
-/// Identifies a statement. The interface ignores events of an old execution.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub struct StatementKey {
-    pub console: ConsoleId,
-    pub execution: ExecutionId,
-    pub index: usize,
-}
-
-#[derive(Clone, Debug)]
-pub struct Settings {
-    pub row_cap: usize,
-    /// The rows of one page in a table tab.
-    pub page_size: usize,
-    /// `None` runs without a time limit.
-    pub sql_timeout: Option<Duration>,
-    /// An idle session of the pool closes after this time. `None` keeps it open.
-    pub idle_timeout: Option<Duration>,
-    pub connect_timeout: Duration,
-    /// The time that a statement has to answer after a cancellation.
-    pub stop_grace: Duration,
-    pub max_connections: usize,
-    pub budget_bytes: usize,
-    pub read_only: bool,
-    /// True adds `LIMIT` with the row cap to a plain read without its own limit.
-    pub cap_in_sql: bool,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            row_cap: 1_000,
-            page_size: 100,
-            sql_timeout: Some(Duration::from_secs(30)),
-            idle_timeout: Some(Duration::from_secs(DEFAULT_IDLE_SECONDS)),
-            connect_timeout: Duration::from_secs(30),
-            stop_grace: Duration::from_secs(5),
-            max_connections: 5,
-            budget_bytes: DEFAULT_LIMIT,
-            read_only: false,
-            cap_in_sql: DEFAULT_CAP_IN_SQL,
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatementStatus {
@@ -219,6 +171,44 @@ pub enum ExecEvent {
     IdleClosed {
         connection: ConnectionId,
     },
+}
+
+impl From<SinkEvent> for ExecEvent {
+    fn from(event: SinkEvent) -> Self {
+        match event {
+            SinkEvent::Columns {
+                key,
+                columns,
+                live,
+                progress,
+            } => ExecEvent::Columns {
+                key,
+                columns,
+                live,
+                progress,
+            },
+            SinkEvent::Rows { key, rows, bytes } => ExecEvent::Rows { key, rows, bytes },
+            SinkEvent::ResultDone { key, rows, limit } => {
+                ExecEvent::ResultDone { key, rows, limit }
+            }
+            SinkEvent::Notice { key, text } => ExecEvent::Notice { key, text },
+        }
+    }
+}
+
+impl From<TraceEvent> for ExecEvent {
+    fn from(TraceEvent { target, event }: TraceEvent) -> Self {
+        ExecEvent::CommandLog { target, event }
+    }
+}
+
+impl SinkMessage for ExecEvent {
+    fn unsent_bytes(&self) -> usize {
+        match self {
+            ExecEvent::Rows { bytes, .. } => *bytes,
+            _ => 0,
+        }
+    }
 }
 
 impl ExecEvent {

@@ -20,8 +20,8 @@ use crate::catalog::{
     Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
     add_objects, group_foreign_keys,
 };
-use crate::exec::{Flow, ResultSink};
 use crate::grid::{Row, RowWriter, Value};
+use crate::sink::{Flow, ResultSink};
 use crate::sql::{Dialect, counts_rows, is_plain_read, quote_identifier};
 
 /// `ER_QUERY_INTERRUPTED`: `KILL QUERY` stopped the statement.
@@ -177,11 +177,11 @@ struct MySqlCanceller {
 impl MySqlCanceller {
     async fn kill_query(
         &self,
-        trace: Option<crate::command_log::TraceContext>,
+        trace: Option<crate::trace::TraceContext>,
     ) -> Result<(), DriverError> {
         let mut conn = Conn::new(self.options.clone()).await?;
         let sql = format!("KILL QUERY {}", self.connection);
-        crate::command_log::observe(trace, &sql, conn.query_drop(&sql)).await?;
+        crate::trace::observe(trace, &sql, conn.query_drop(&sql)).await?;
         conn.disconnect().await
     }
 }
@@ -192,10 +192,7 @@ impl Canceller for MySqlCanceller {
         self.cancel_traced(None).await
     }
 
-    async fn cancel_traced(
-        &self,
-        trace: Option<crate::command_log::TraceContext>,
-    ) -> Result<(), String> {
+    async fn cancel_traced(&self, trace: Option<crate::trace::TraceContext>) -> Result<(), String> {
         match timeout(SESSION_LIMIT, self.kill_query(trace)).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(error)) => Err(describe(&error)),
@@ -305,7 +302,7 @@ struct Outcome {
 }
 
 struct MySqlSession {
-    trace: Option<crate::command_log::TraceContext>,
+    trace: Option<crate::trace::TraceContext>,
     /// `Drop` takes this value. All other code finds it here.
     conn: Option<Conn>,
     canceller: Arc<MySqlCanceller>,
@@ -323,7 +320,7 @@ impl MySqlSession {
     /// MySQL cannot leave a database, so a session without a database closes.
     async fn clean(&mut self) -> bool {
         if !matches!(
-            crate::command_log::observe(
+            crate::trace::observe(
                 self.trace.clone(),
                 "COM_RESET_CONNECTION",
                 self.conn().reset()
@@ -333,7 +330,7 @@ impl MySqlSession {
         ) {
             return false;
         }
-        let current: Option<Option<String>> = match crate::command_log::observe(
+        let current: Option<Option<String>> = match crate::trace::observe(
             self.trace.clone(),
             "SELECT DATABASE()",
             self.conn().query_first("SELECT DATABASE()"),
@@ -351,7 +348,7 @@ impl MySqlSession {
             return false;
         };
         let sql = format!("USE {}", quote_identifier(database, Dialect::MySql));
-        crate::command_log::observe(self.trace.clone(), &sql, self.conn().query_drop(&sql))
+        crate::trace::observe(self.trace.clone(), &sql, self.conn().query_drop(&sql))
             .await
             .is_ok()
     }
@@ -377,7 +374,7 @@ impl MySqlSession {
     }
 
     async fn read(&mut self, sql: &str, sink: &mut ResultSink) -> Result<Outcome, ExecError> {
-        crate::command_log::observe(self.trace.clone(), sql, self.read_untraced(sql, sink)).await
+        crate::trace::observe(self.trace.clone(), sql, self.read_untraced(sql, sink)).await
     }
 
     async fn read_untraced(
@@ -462,10 +459,10 @@ impl MySqlSession {
         let request = format!("SHOW WARNINGS LIMIT {MAX_NOTICES}");
         let rows = timeout(
             SESSION_LIMIT,
-            crate::command_log::observe(
+            crate::trace::observe(
                 self.trace
                     .as_ref()
-                    .map(crate::command_log::TraceContext::internal),
+                    .map(crate::trace::TraceContext::internal),
                 &request,
                 self.conn().query(&request),
             ),
@@ -491,10 +488,10 @@ impl MySqlSession {
         if !self.status_is_current {
             match timeout(
                 SESSION_LIMIT,
-                crate::command_log::observe(
+                crate::trace::observe(
                     self.trace
                         .as_ref()
-                        .map(crate::command_log::TraceContext::internal),
+                        .map(crate::trace::TraceContext::internal),
                     STATUS_REQUEST,
                     self.conn().query_drop(STATUS_REQUEST),
                 ),
@@ -520,24 +517,24 @@ impl MySqlSession {
 
 #[async_trait]
 impl Session for MySqlSession {
-    fn set_trace_context(&mut self, trace: Option<crate::command_log::TraceContext>) {
+    fn set_trace_context(&mut self, trace: Option<crate::trace::TraceContext>) {
         self.trace = trace;
     }
 
     fn canceller(&self) -> Arc<dyn Canceller> {
-        crate::command_log::canceller(self.canceller.clone(), &self.trace)
+        crate::trace::canceller(self.canceller.clone(), &self.trace)
     }
 
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError> {
         if context.read_only {
             let sql = "SET SESSION TRANSACTION READ ONLY";
-            crate::command_log::observe(self.trace.clone(), sql, self.conn().query_drop(sql))
+            crate::trace::observe(self.trace.clone(), sql, self.conn().query_drop(sql))
                 .await
                 .map_err(|error| exec_error(&error, sql))?;
         }
         if let Some(schema) = &context.schema {
             let sql = format!("USE {}", quote_identifier(schema, Dialect::MySql));
-            crate::command_log::observe(self.trace.clone(), &sql, self.conn().query_drop(&sql))
+            crate::trace::observe(self.trace.clone(), &sql, self.conn().query_drop(&sql))
                 .await
                 .map_err(|error| exec_error(&error, &sql))?;
         }
@@ -569,7 +566,7 @@ impl Session for MySqlSession {
             .collect();
         self.running = true;
         let command = crate::sql::parameters::command(sql, parameters);
-        let read = crate::command_log::observe(self.trace.clone(), command, async {
+        let read = crate::trace::observe(self.trace.clone(), command, async {
             let free = self.transaction == TransactionState::None;
             let canceller = self.canceller();
             let result = self
@@ -595,7 +592,7 @@ impl Session for MySqlSession {
             TransactionCommand::Rollback => "ROLLBACK",
         };
         let done =
-            crate::command_log::observe(self.trace.clone(), sql, self.conn().query_drop(sql)).await;
+            crate::trace::observe(self.trace.clone(), sql, self.conn().query_drop(sql)).await;
         self.status_is_current = done.is_ok();
         done.map_err(|error| exec_error(&error, sql))?;
         if command == TransactionCommand::Begin {
@@ -615,7 +612,7 @@ impl Session for MySqlSession {
         matches!(
             timeout(
                 SESSION_LIMIT,
-                crate::command_log::observe(self.trace.clone(), "COM_PING", self.conn().ping())
+                crate::trace::observe(self.trace.clone(), "COM_PING", self.conn().ping())
             )
             .await,
             Ok(Ok(()))
@@ -623,7 +620,7 @@ impl Session for MySqlSession {
     }
 
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError> {
-        let rows: Vec<(String, Option<String>, Option<String>)> = crate::command_log::observe(
+        let rows: Vec<(String, Option<String>, Option<String>)> = crate::trace::observe(
             self.trace.clone(),
             CATALOG_SQL,
             self.conn().query(CATALOG_SQL),
@@ -652,7 +649,7 @@ impl Session for MySqlSession {
                 });
             }
         }
-        let objects: Vec<(String, String, String, String)> = crate::command_log::observe(
+        let objects: Vec<(String, String, String, String)> = crate::trace::observe(
             self.trace.clone(),
             OBJECTS_SQL,
             self.conn().query(OBJECTS_SQL),
@@ -665,7 +662,7 @@ impl Session for MySqlSession {
         add_objects(&mut schemas, objects);
         let sql = "SELECT DATABASE()";
         let current: Option<Option<String>> =
-            crate::command_log::observe(self.trace.clone(), sql, self.conn().query_first(sql))
+            crate::trace::observe(self.trace.clone(), sql, self.conn().query_first(sql))
                 .await
                 .map_err(|error| exec_error(&error, sql))?;
         Ok(Catalog {
@@ -680,8 +677,8 @@ impl Session for MySqlSession {
         relation: &str,
     ) -> Result<Vec<String>, ExecError> {
         let command =
-            crate::command_log::limited(super::relation_command(COLUMNS_SQL, schema, relation));
-        crate::command_log::observe(
+            crate::limited::limited(super::relation_command(COLUMNS_SQL, schema, relation));
+        crate::trace::observe(
             self.trace.clone(),
             command,
             self.conn().exec(COLUMNS_SQL, (schema, relation)),
@@ -740,8 +737,8 @@ impl MySqlSession {
         schema: &str,
         relation: &str,
     ) -> Result<Vec<ForeignKey>, ExecError> {
-        let command = crate::command_log::limited(super::relation_command(sql, schema, relation));
-        let rows: Vec<(String, String, String, String, String)> = crate::command_log::observe(
+        let command = crate::limited::limited(super::relation_command(sql, schema, relation));
+        let rows: Vec<(String, String, String, String, String)> = crate::trace::observe(
             self.trace.clone(),
             command,
             self.conn().exec(sql, (schema, relation)),

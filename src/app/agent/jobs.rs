@@ -1111,7 +1111,7 @@ impl App {
             .and_then(|manager| manager.open_console(connection))
             .ok_or_else(missing)?;
         let opened = self.next_tab_place();
-        let mut tab = crate::diagram::tab::DiagramTab::new(console, connection, focus, opened);
+        let mut tab = crate::diagram_tab::DiagramTab::new(console, connection, focus, opened);
         let Some(statements) = tab.statements(dialect) else {
             self.close_agent_consoles(&[console]);
             return Err(supported());
@@ -1173,7 +1173,7 @@ impl App {
                 return Err(supported());
             }
         }
-        let mut reads: Vec<crate::compare::tab::SideRead> = Vec::new();
+        let mut reads: Vec<crate::compare_tab::SideRead> = Vec::new();
         for side in sides {
             let connection = side.connection;
             let read = self
@@ -1181,7 +1181,7 @@ impl App {
                 .map(|item| (item.dialect, text::agent_tab_label(item.plain_name())))
                 .and_then(|(dialect, name)| {
                     let console = self.manager.as_mut()?.open_console(connection)?;
-                    Some(crate::compare::tab::SideRead::new(
+                    Some(crate::compare_tab::SideRead::new(
                         console, side, dialect, name,
                     ))
                 });
@@ -1200,7 +1200,7 @@ impl App {
             return Err(missing());
         };
         let opened = self.next_tab_place();
-        let mut tab = crate::compare::tab::CompareTab::new(opened, kind, sides, removals);
+        let mut tab = crate::compare_tab::CompareTab::new(opened, kind, sides, removals);
         let requests = (0..2)
             .map(|side| {
                 let read = &tab.sides[side];
