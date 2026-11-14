@@ -11,7 +11,7 @@ pub mod external;
 pub use external::ExternalFile;
 
 use worker::PendingSave;
-pub(crate) use worker::SaveWorker;
+pub use worker::SaveWorker;
 
 use std::io;
 use std::time::{Duration, Instant, SystemTime};
@@ -307,7 +307,7 @@ impl ScriptFile {
         }
     }
 
-    pub(crate) fn meta_written(&self) -> bool {
+    pub fn meta_written(&self) -> bool {
         self.meta_written
     }
 
@@ -315,7 +315,7 @@ impl ScriptFile {
         self.pending.is_some()
     }
 
-    pub(crate) fn start_save(
+    pub fn start_save(
         &mut self,
         worker: &SaveWorker,
         root: &Root,
@@ -352,13 +352,13 @@ impl ScriptFile {
         }
     }
 
-    pub(crate) fn start_metadata(&mut self, worker: &SaveWorker, root: &Root) {
+    pub fn start_metadata(&mut self, worker: &SaveWorker, root: &Root) {
         let mut request = self.request(root, String::new(), false);
         request.mode = SaveMode::Metadata;
         self.start_request(worker, request, self.saved_revision);
     }
 
-    pub(crate) fn start_relocate(
+    pub fn start_relocate(
         &mut self,
         worker: &SaveWorker,
         from: &Root,
@@ -394,10 +394,7 @@ impl ScriptFile {
     }
 
     /// Applies a finished write without waiting for the worker.
-    pub(crate) fn poll_save(
-        &mut self,
-        now: Instant,
-    ) -> Option<(Result<(), Trouble>, Option<String>)> {
+    pub fn poll_save(&mut self, now: Instant) -> Option<(Result<(), Trouble>, Option<String>)> {
         let pending = self.pending.as_ref()?;
         let result = match pending.receiver.as_ref()?.try_recv() {
             Ok(result) => result,
@@ -415,7 +412,7 @@ impl ScriptFile {
         ))
     }
 
-    pub(crate) fn wait_save(&mut self, now: Instant) -> Result<(), Trouble> {
+    pub fn wait_save(&mut self, now: Instant) -> Result<(), Trouble> {
         let Some(mut pending) = self.pending.take() else {
             return Ok(());
         };

@@ -10,10 +10,16 @@ use std::thread::{self, JoinHandle};
 use super::{SaveReply as Reply, SaveRequest};
 type Job = (SaveRequest, mpsc::Sender<Reply>);
 
-pub(crate) struct SaveWorker {
+pub struct SaveWorker {
     sender: Option<mpsc::SyncSender<Job>>,
     thread: Option<JoinHandle<()>>,
     busy: Arc<AtomicBool>,
+}
+
+impl Default for SaveWorker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SaveWorker {
@@ -40,8 +46,9 @@ impl SaveWorker {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn gated() -> (Self, mpsc::Receiver<()>, mpsc::Sender<()>) {
+    /// Returns a worker that waits before its first job, for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn gated() -> (Self, mpsc::Receiver<()>, mpsc::Sender<()>) {
         let (started, start) = mpsc::channel();
         let (release, wait) = mpsc::channel();
         let mut first = true;

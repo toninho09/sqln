@@ -4143,6 +4143,7 @@ dependencies = [
  "sqln-connector",
  "sqln-core",
  "sqln-sql",
+ "sqln-store",
  "sqlparser",
  "tokio",
  "tokio-util",
@@ -4216,6 +4217,21 @@ dependencies = [
  "serde_json",
  "sqln-core",
  "sqlparser",
+]
+
+[[package]]
+name = "sqln-store"
+version = "0.4.1"
+dependencies = [
+ "keyring-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "similar",
+ "sqln-connector",
+ "sqln-core",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]

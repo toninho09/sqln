@@ -957,10 +957,7 @@ fn combined_overrides(
 }
 
 /// Checks both modes before the settings dialog writes a file.
-pub(crate) fn validate_keymaps(
-    global: &Preferences,
-    project: Option<&Preferences>,
-) -> Result<(), String> {
+pub fn validate_keymaps(global: &Preferences, project: Option<&Preferences>) -> Result<(), String> {
     for (mode, name) in [
         (KeyboardMode::Conventional, "Conventional"),
         (KeyboardMode::Vim, "Vim"),

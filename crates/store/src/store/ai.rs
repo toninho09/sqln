@@ -169,3 +169,81 @@ impl Default for Provider {
         }
     }
 }
+
+impl Provider {
+    pub fn endpoint(&self) -> Result<String, String> {
+        // The empty endpoint uses the OpenRouter base.
+        let base = if self.base_url.trim().is_empty() {
+            "https://openrouter.ai/api/v1"
+        } else {
+            self.base_url.trim()
+        };
+        let url = reqwest::Url::parse(base).map_err(|_| "The API endpoint is not a valid URL.")?;
+        let local = url.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .trim_matches(['[', ']'])
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        });
+        if !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || url.host_str().is_none()
+            || !(url.scheme() == "https" || (url.scheme() == "http" && local))
+        {
+            return Err(
+                "Use HTTPS, or HTTP on loopback, without URL credentials, query, or fragment."
+                    .into(),
+            );
+        }
+        Ok(url.as_str().trim_end_matches('/').to_owned())
+    }
+    fn api_base(&self) -> Result<String, String> {
+        let endpoint = self.endpoint()?;
+        // A full completion URL is accepted once. The legacy FIM route maps
+        // to the chat route on the same base.
+        let base = endpoint
+            .strip_suffix("/chat/completions")
+            .or_else(|| endpoint.strip_suffix("/completions"))
+            .unwrap_or(&endpoint);
+        Ok(base.to_owned())
+    }
+    pub fn completion_url(&self) -> Result<String, String> {
+        Ok(format!("{}/chat/completions", self.api_base()?))
+    }
+    pub fn models_url(&self) -> Result<String, String> {
+        let base = self.api_base()?;
+        Ok(format!("{base}/models"))
+    }
+    pub fn validate(&self) -> Result<(), String> {
+        let endpoint = self.endpoint()?;
+        self.api_base()?;
+        if self.model.trim().is_empty() || self.model.chars().any(char::is_control) {
+            return Err("Set a valid model identifier.".into());
+        }
+        if !(16..=4096).contains(&self.max_output_tokens)
+            || self.context_window_tokens > 1_048_576
+            || self.context_window_tokens < self.max_output_tokens + 2048
+            || !(1..=600).contains(&self.timeout_seconds)
+        {
+            return Err("Set context above output + 2048, output between 16 and 4096, and timeout between 1 and 600 seconds.".into());
+        }
+        match &self.credential {
+            Credential::None if self.kind != Kind::Compatible => {
+                Err("Select a vault key or a key file.".into())
+            }
+            Credential::Vault {
+                endpoint: saved,
+                id,
+            } if saved != &endpoint || id.is_empty() => Err(
+                "This key belongs to another endpoint. Configure a key for this endpoint.".into(),
+            ),
+            Credential::File { path } if path.trim().is_empty() => {
+                Err("Set the key file path.".into())
+            }
+            _ => Ok(()),
+        }
+    }
+}
