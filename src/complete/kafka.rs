@@ -7,6 +7,9 @@ use crate::connector::kafka::filter::{Segment, parse_path};
 use crate::connector::kafka::{MESSAGE_COLUMNS, TOPICS, command, filter};
 use crate::sql::Dialect;
 
+/// The words of `CASE` and `INTERVAL`, in the columns and in the filter.
+const EXPRESSION_WORDS: [&str; 5] = ["CASE", "WHEN", "THEN", "ELSE", "INTERVAL"];
+
 /// Suggests the words of a SELECT statement from `start` to `end`. A field path, as
 /// `value.customer.`, reads the topic after `FROM`, also when `FROM` follows the cursor.
 pub(super) fn suggest(
@@ -43,6 +46,7 @@ pub(super) fn suggest(
     let has = |word| clauses.iter().any(|token| token.is_word(word));
     let clause_last_is = |word| !clauses.is_empty() && last_is(word);
     let mut words: Vec<&str> = Vec::new();
+    let mut functions = false;
     if from.is_some_and(|index| index + 1 == tokens.len()) {
         for relation in catalog
             .and_then(|catalog| catalog.schema(TOPICS))
@@ -55,7 +59,8 @@ pub(super) fn suggest(
             || last.is_some_and(|token| token.is_operator(",") || token.is_operator("("))
         {
             words.extend(MESSAGE_COLUMNS);
-            words.extend(filter::FUNCTION_NAMES);
+            words.extend(EXPRESSION_WORDS);
+            functions = true;
             words.push("*");
         } else if !last_is("AS") {
             if !last.is_some_and(|token| token.is_operator("*"))
@@ -109,7 +114,8 @@ pub(super) fn suggest(
                 "TRUE",
                 "FALSE",
             ]);
-            words.extend(filter::FUNCTION_NAMES);
+            words.extend(EXPRESSION_WORDS);
+            functions = true;
         }
         for clause in ["PARTITION", "START", "WHERE", "LIMIT", "SCAN", "EMIT"] {
             if !has(clause) && !(clause == "EMIT" && (has("LIMIT") || has("SCAN"))) {
@@ -120,7 +126,17 @@ pub(super) fn suggest(
     for word in words {
         builder.add_keyword(word);
     }
+    if functions {
+        add_functions(&mut builder);
+    }
     builder.finish(cursor - typed.len()..cursor, typed)
+}
+
+/// Adds the function names after the other words.
+fn add_functions(builder: &mut Builder) {
+    for name in filter::function_names() {
+        builder.add_late_keyword(name);
+    }
 }
 
 /// Suggests the words after the topic of a line command: field paths, the values of a
@@ -132,15 +148,7 @@ pub(super) fn suggest_line(line: &str, cursor: usize, catalog: Option<&Catalog>)
             ..Completion::default()
         };
     };
-    let topic = match typed.tokens.as_slice() {
-        [command, topic, ..]
-            if (command.is_word("CONSUME") || command.is_word("TAIL"))
-                && matches!(topic.kind, TokenKind::Word | TokenKind::Text) =>
-        {
-            Some(topic.text.as_str())
-        }
-        _ => None,
-    };
+    let topic = command_topic(&typed.tokens, &["CONSUME", "TAIL"]);
     if let Some(completion) = suggest_field(&typed, cursor, topic, catalog) {
         return completion;
     }
@@ -154,6 +162,7 @@ pub(super) fn suggest_line(line: &str, cursor: usize, catalog: Option<&Catalog>)
         for word in keywords::KAFKA_CLAUSES {
             builder.add_keyword(word);
         }
+        add_functions(&mut builder);
     }
     builder.finish(cursor - typed.word.len()..cursor, typed.word)
 }
@@ -235,6 +244,48 @@ fn from_index(tokens: &[Token]) -> Option<usize> {
                 .is_none_or(|before| !tokens[before].is_word("AS")))
         .then_some(index)
     })
+}
+
+/// Returns the topic after the first word of a command, when the word is in `commands`.
+fn command_topic<'a>(tokens: &'a [Token], commands: &[&str]) -> Option<&'a str> {
+    match tokens {
+        [command, topic, ..]
+            if commands.iter().any(|word| command.is_word(word))
+                && matches!(topic.kind, TokenKind::Word | TokenKind::Text) =>
+        {
+            Some(topic.text.as_str())
+        }
+        _ => None,
+    }
+}
+
+/// Returns the topic of the Kafka statement at the cursor: the name after the `FROM` of a
+/// SELECT, or after `CONSUME`, `TAIL`, or `PARTITIONS`. A name that the user types at the
+/// cursor comes back as typed, so the caller can find the topics that start with it.
+pub(crate) fn statement_topic(sql: &str, cursor: usize) -> Option<String> {
+    let statements = crate::sql::split(sql, Dialect::Kafka);
+    let statement = statements.iter().rev().find(|statement| {
+        statement.start < cursor && (cursor <= statement.end || !statement.terminated)
+    })?;
+    let text = statement.text(sql);
+    let select = crate::sql::first_keyword(text, Dialect::Kafka)
+        .is_some_and(|word| word.eq_ignore_ascii_case("SELECT"));
+    // An open quote stops the tokens of the full statement. The text before the cursor,
+    // then the text before its last quote, still give the topic.
+    let typed = &sql[statement.start..cursor.max(statement.start)];
+    let tokens = command::tokenize_mode(text, select)
+        .or_else(|_| command::tokenize_mode(typed, select))
+        .or_else(|error| {
+            let quote = typed.rfind(['\'', '"']).ok_or(error)?;
+            command::tokenize_mode(&typed[..quote], select)
+        })
+        .ok()?;
+    let topic = if select {
+        from_topic(&tokens)
+    } else {
+        command_topic(&tokens, &["CONSUME", "TAIL", "PARTITIONS"])
+    };
+    topic.map(str::to_owned)
 }
 
 /// Returns the topic after the `FROM` of a SELECT.
@@ -421,7 +472,7 @@ fn compared_field(tokens: &[Token]) -> Option<&Token> {
 fn same_step(typed: &Segment, known: &Segment) -> bool {
     match (typed, known) {
         (Segment::Name(typed), Segment::Name(known)) => typed == known,
-        (Segment::Any | Segment::Index(_), Segment::Any) => true,
+        (Segment::Any | Segment::Index(_) | Segment::Slice(..), Segment::Any) => true,
         (Segment::Name(typed), Segment::Any) => typed.parse::<i64>().is_ok(),
         _ => false,
     }

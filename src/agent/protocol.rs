@@ -176,6 +176,8 @@ pub enum Operation {
         column: Option<usize>,
     },
     /// Execute SQL on a connection in this session's agent console and return its results.
+    /// Write `sql` in the dialect of the connection: a Kafka connection follows syntax.Kafka
+    /// of get_context, and refuses TAIL and EMIT CHANGES because they do not end.
     /// Without full access, only known reads run. Use `edit_console` for SQL that the user must run.
     Query {
         connection_id: String,
@@ -197,7 +199,7 @@ pub enum Operation {
         explain: Option<ExplainMode>,
         rows: Option<usize>,
     },
-    /// Place SQL for the user, or edit a console.
+    /// Place SQL for the user, or edit a console. Write the SQL in the dialect of the connection.
     /// Without `console_id`, send `connection_id` and `sql`: SQLN shows the SQL in your agent tab,
     /// where the user reviews, changes, and runs it. Nothing executes. If the user changed the
     /// SQL of the tab, the new SQL waits for the user's review.
@@ -215,6 +217,8 @@ pub enum Operation {
         sql: Option<String>,
     },
     /// Read the catalog of a connection, or the DDL of one object.
+    /// For a Kafka topic, send `schema: "topics"` and an `object` with the topic name and the
+    /// kind `table`: the reply lists the field paths of its Schema Registry schemas.
     /// Set `er_diagram` to read an ER diagram of `schema`, or of the `object` table.
     Describe {
         connection_id: String,

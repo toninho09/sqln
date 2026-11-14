@@ -308,6 +308,12 @@ pub(super) fn parse_time(text: &str) -> Option<i64> {
     Some(naive.and_utc().timestamp_millis())
 }
 
+/// Writes a time in UTC with milliseconds, as the `timestamp` column shows it.
+pub(crate) fn time_text(millis: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp_millis(millis)
+        .map(|time| time.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+}
+
 fn parse_start(cursor: &mut Cursor<'_>) -> Result<Start, ExecError> {
     let offset = cursor.offset();
     let bad = || error_at(text::KAFKA_BAD_START, offset);

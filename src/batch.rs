@@ -112,7 +112,7 @@ fn resolve(options: &Options) -> Result<(Definition, Option<config::Stored>), Er
             allow_create: false,
             read_only: false,
         }),
-        OpenTarget::Network(target) => Definition::new(target.label(), Source::Network(target)),
+        OpenTarget::Network(target) => Definition::new(target.label(), Source::Network(*target)),
     };
     Ok((definition, None))
 }

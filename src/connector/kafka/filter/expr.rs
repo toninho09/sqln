@@ -5,8 +5,9 @@ use std::borrow::Cow;
 
 use serde_json::{Number, Value as Json};
 
-use super::Message;
 use super::evaluation::{Evaluation, Text};
+use super::functions::{self, Function, Prepared};
+use super::{Filter, Message, time};
 
 pub type Check<'a> = dyn FnMut(&Json) -> Result<bool, ExecError> + 'a;
 use crate::connector::ExecError;
@@ -67,6 +68,16 @@ pub enum Segment {
     Index(i64),
     /// `[*]`: each item of a list.
     Any,
+    /// `[a:b]`: each item from `a` to before `b`. A negative position counts from the end.
+    /// No position means the start or the end of the list.
+    Slice(Option<i64>, Option<i64>),
+}
+
+impl Segment {
+    /// Returns true when the step reads each item of a range: `[*]` or `[a:b]`.
+    pub fn is_many(&self) -> bool {
+        matches!(self, Segment::Any | Segment::Slice(..))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,25 +89,6 @@ pub enum Op {
     Remainder,
     Concat,
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Function {
-    Lower,
-    Upper,
-    Length,
-    Size,
-    Coalesce,
-    TypeOf,
-}
-
-const FUNCTIONS: [(&str, Function); 6] = [
-    ("LOWER", Function::Lower),
-    ("UPPER", Function::Upper),
-    ("LENGTH", Function::Length),
-    ("SIZE", Function::Size),
-    ("COALESCE", Function::Coalesce),
-    ("TYPEOF", Function::TypeOf),
-];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type {
@@ -111,14 +103,16 @@ const TYPES: [(&str, Type); 3] = [
     ("BOOLEAN", Type::Boolean),
 ];
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Expr {
     /// A message column, or a field of the JSON of a root.
     Field(Root, Vec<Segment>),
     Literal(Json),
     Binary(Op, Box<Expr>, Box<Expr>),
-    Call(Function, Vec<Expr>),
+    Call(Function, Vec<Expr>, Option<Box<Prepared>>),
     Cast(Box<Expr>, Type),
+    /// `CASE WHEN condition THEN value … ELSE value END`. Without `ELSE`, the value is null.
+    Case(Vec<(Filter, Expr)>, Option<Box<Expr>>),
 }
 
 /// The parts of the message that need JSON.
@@ -190,38 +184,20 @@ impl Expr {
                     }
                 })
             }),
-            Expr::Call(Function::Coalesce, arguments) => {
-                for argument in arguments {
-                    let mut found = false;
-                    let stopped = argument.visit(context, &mut |value| {
-                        if value.is_null() {
-                            return Ok(false);
-                        }
-                        found = true;
-                        check(value)
-                    })?;
-                    if found {
-                        return Ok(stopped);
+            Expr::Call(function, arguments, prepared) => {
+                functions::visit(*function, arguments, prepared.as_deref(), context, check)
+            }
+            Expr::Case(branches, otherwise) => {
+                for (condition, value) in branches {
+                    if condition.matches_in(context)? {
+                        return value.visit(context, check);
                     }
                 }
-                Ok(false)
+                match otherwise {
+                    Some(value) => value.visit(context, check),
+                    None => check(&Json::Null),
+                }
             }
-            Expr::Call(function, arguments) => arguments[0].visit(context, &mut |value| {
-                if let (Function::Lower | Function::Upper, Json::String(value)) = (function, value)
-                {
-                    let (text, _memory) = context
-                        .evaluation
-                        .case(value, *function == Function::Upper)?;
-                    return check(&Json::String(text));
-                }
-                let _memory = context
-                    .evaluation
-                    .reserve(if *function == Function::TypeOf { 7 } else { 0 })?;
-                match function.apply(value) {
-                    Some(value) => check(&value),
-                    None => Ok(false),
-                }
-            }),
             Expr::Cast(inner, kind) => inner.visit(context, &mut |value| {
                 if *kind == Type::Text && !value.is_null() && !value.is_string() {
                     let mut text = Text::new(context.evaluation)?;
@@ -237,14 +213,16 @@ impl Expr {
         }
     }
 
-    /// Returns true when a field path has `[*]`, so the expression can give many values.
+    /// Returns true when a field path has `[*]` or a slice, so the expression can give
+    /// many values.
     pub fn has_any(&self) -> bool {
         match self {
-            Expr::Field(_, path) => path.contains(&Segment::Any),
+            Expr::Field(_, path) => path.iter().any(Segment::is_many),
             Expr::Literal(_) => false,
             Expr::Binary(_, left, right) => left.has_any() || right.has_any(),
-            Expr::Call(_, arguments) => arguments.iter().any(Expr::has_any),
+            Expr::Call(function, arguments, _) => function.has_any(arguments),
             Expr::Cast(inner, _) => inner.has_any(),
+            Expr::Case(..) => self.results().any(Expr::has_any),
         }
     }
 
@@ -255,14 +233,33 @@ impl Expr {
                 matches!(root, Root::Partition | Root::Offset | Root::Timestamp)
             }
             Expr::Binary(op, _, _) => *op != Op::Concat,
-            Expr::Call(function, _) => matches!(function, Function::Length | Function::Size),
+            Expr::Call(function, arguments, _) => function.number_only(arguments),
             Expr::Cast(_, kind) => *kind == Type::Number,
             Expr::Literal(_) => false,
+            Expr::Case(..) => self.results().all(Expr::number_only),
         }
     }
 
-    pub fn is_timestamp(&self) -> bool {
-        matches!(self, Expr::Field(Root::Timestamp, _))
+    /// Returns true when the expression gives a time: milliseconds since 1970, in UTC. A
+    /// text next to a time becomes a time, and a column shows a time as UTC text.
+    pub fn is_time(&self) -> bool {
+        match self {
+            Expr::Field(root, _) => *root == Root::Timestamp,
+            Expr::Binary(Op::Add, left, right) => left.is_time() != right.is_time(),
+            Expr::Binary(Op::Subtract, left, right) => left.is_time() && !right.is_time(),
+            Expr::Call(function, arguments, _) => function.is_time(arguments),
+            Expr::Case(..) => self.results().all(Expr::is_time),
+            _ => false,
+        }
+    }
+
+    /// The values that a `CASE` can give. A `CASE` without `ELSE` can also give null.
+    fn results(&self) -> impl Iterator<Item = &Expr> {
+        let (branches, otherwise) = match self {
+            Expr::Case(branches, otherwise) => (&branches[..], otherwise.as_deref()),
+            _ => (&[][..], None),
+        };
+        branches.iter().map(|(_, value)| value).chain(otherwise)
     }
 
     /// Returns `key`, `value`, or `headers` without a path. A text condition reads the
@@ -288,8 +285,18 @@ impl Expr {
                 left.needs(needs);
                 right.needs(needs);
             }
-            Expr::Call(_, arguments) => arguments.iter().for_each(|argument| argument.needs(needs)),
+            Expr::Call(Function::OctetLength, arguments, _)
+                if functions::raw_part(&arguments[0]).is_some() => {}
+            Expr::Call(_, arguments, _) => {
+                arguments.iter().for_each(|argument| argument.needs(needs));
+            }
             Expr::Cast(inner, _) => inner.needs(needs),
+            Expr::Case(branches, _) => {
+                for (condition, _) in branches {
+                    condition.add_needs(needs);
+                }
+                self.results().for_each(|value| value.needs(needs));
+            }
         }
     }
 }
@@ -355,9 +362,13 @@ fn any_field(
     evaluation.check()?;
     match path.split_first() {
         None => check(json),
-        Some((Segment::Any, rest)) => {
+        Some((segment @ (Segment::Any | Segment::Slice(..)), rest)) => {
             if let Json::Array(items) = json {
-                for item in items {
+                let range = match segment {
+                    Segment::Slice(start, end) => slice_range(items.len(), *start, *end),
+                    _ => 0..items.len(),
+                };
+                for item in &items[range] {
                     if any_field(item, rest, evaluation, check)? {
                         return Ok(true);
                     }
@@ -372,8 +383,22 @@ fn any_field(
     }
 }
 
+/// The items of a slice. A negative position counts from the end. A range that ends
+/// before its start is empty.
+fn slice_range(length: usize, start: Option<i64>, end: Option<i64>) -> std::ops::Range<usize> {
+    let position = |value: i64| match usize::try_from(value) {
+        Ok(value) => value.min(length),
+        Err(_) => {
+            length.saturating_sub(usize::try_from(value.unsigned_abs()).unwrap_or(usize::MAX))
+        }
+    };
+    let start = start.map_or(0, position);
+    let end = end.map_or(length, position).max(start);
+    start..end
+}
+
 /// A finite number as JSON. A whole number has no fraction.
-fn number(value: f64) -> Option<Json> {
+pub(super) fn number(value: f64) -> Option<Json> {
     if value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0 {
         return Some(Json::from(value as i64));
     }
@@ -420,29 +445,6 @@ impl Op {
     }
 }
 
-impl Function {
-    fn apply(self, value: &Json) -> Option<Json> {
-        match (self, value) {
-            (Function::Lower, Json::String(text)) => Some(Json::String(text.to_lowercase())),
-            (Function::Upper, Json::String(text)) => Some(Json::String(text.to_uppercase())),
-            (Function::Length, Json::String(text)) => Some(Json::from(text.chars().count())),
-            (Function::Size, Json::Array(items)) => Some(Json::from(items.len())),
-            (Function::TypeOf, value) => Some(Json::String(
-                match value {
-                    Json::Null => "null",
-                    Json::Bool(_) => "boolean",
-                    Json::Number(_) => "number",
-                    Json::String(_) => "string",
-                    Json::Array(_) => "array",
-                    Json::Object(_) => "object",
-                }
-                .to_owned(),
-            )),
-            _ => None,
-        }
-    }
-}
-
 impl Type {
     /// Converts a value. A value that does not convert is absent; null stays null.
     fn cast(self, value: Cow<'_, Json>) -> Option<Cow<'_, Json>> {
@@ -481,9 +483,14 @@ pub fn parse_path(word: &str) -> Option<(&str, Vec<Segment>)> {
             rest = next;
         } else {
             let (inside, next) = rest.strip_prefix('[')?.split_once(']')?;
-            path.push(match inside {
-                "*" => Segment::Any,
-                _ => Segment::Index(inside.parse().ok()?),
+            let position = |text: &str| match text {
+                "" => Some(None),
+                text => text.parse().ok().map(Some),
+            };
+            path.push(match inside.split_once(':') {
+                _ if inside == "*" => Segment::Any,
+                Some((start, end)) => Segment::Slice(position(start)?, position(end)?),
+                None => Segment::Index(inside.parse().ok()?),
             });
             rest = next;
         }
@@ -634,10 +641,53 @@ fn primary(cursor: &mut Cursor<'_>, vars: &[String]) -> Result<Expr, ExecError> 
     if let Some(number) = parse_number(&token.text) {
         return Ok(Expr::Literal(number));
     }
+    if token.is_word("CASE") && !vars.iter().any(|name| token.is_word(name)) {
+        return case(cursor, vars);
+    }
+    if token.is_word("INTERVAL")
+        && let Some(literal) = cursor.peek().filter(|next| next.kind == TokenKind::Text)
+    {
+        cursor.advance();
+        return time::interval(&literal.text)
+            .map(|millis| Expr::Literal(Json::from(millis)))
+            .map_err(|message| error_at(message, literal.start));
+    }
     if cursor.peek().is_some_and(|next| next.is_operator("(")) {
         return call(cursor, token, vars);
     }
     field(token, vars)
+}
+
+/// Reads `CASE WHEN condition THEN value … [ELSE value] END`, after `CASE`.
+fn case(cursor: &mut Cursor<'_>, vars: &[String]) -> Result<Expr, ExecError> {
+    let expect = |cursor: &mut Cursor<'_>, word: &str| {
+        let offset = cursor.offset();
+        if cursor.advance().is_some_and(|token| token.is_word(word)) {
+            Ok(())
+        } else {
+            Err(error_at(text::KAFKA_CASE, offset))
+        }
+    };
+    let mut scope = vars.to_vec();
+    let mut branches = Vec::new();
+    expect(cursor, "WHEN")?;
+    loop {
+        let condition = super::parse_or(cursor, &mut scope)?;
+        expect(cursor, "THEN")?;
+        branches.push((condition, parse(cursor, vars)?));
+        if !cursor.peek().is_some_and(|token| token.is_word("WHEN")) {
+            break;
+        }
+        cursor.advance();
+    }
+    let otherwise = if cursor.peek().is_some_and(|token| token.is_word("ELSE")) {
+        cursor.advance();
+        Some(Box::new(parse(cursor, vars)?))
+    } else {
+        None
+    };
+    expect(cursor, "END")?;
+    Ok(Expr::Case(branches, otherwise))
 }
 
 /// Reads a function or `CAST`, after its name.
@@ -658,15 +708,13 @@ fn call(cursor: &mut Cursor<'_>, name: &Token, vars: &[String]) -> Result<Expr, 
         close(cursor)?;
         return Ok(Expr::Cast(Box::new(inner), kind));
     }
-    let function = FUNCTIONS
-        .iter()
-        .find(|(word, _)| name.is_word(word))
-        .map(|(_, function)| *function)
-        .ok_or_else(|| error_at(text::KAFKA_NEEDS_FIELD, name.start))?;
+    let spec =
+        functions::find(name).ok_or_else(|| error_at(text::KAFKA_NEEDS_FIELD, name.start))?;
     let mut arguments = Vec::new();
-    let first = cursor.offset();
+    let mut offsets = Vec::new();
     if !cursor.peek().is_some_and(|token| token.is_operator(")")) {
         loop {
+            offsets.push(cursor.offset());
             arguments.push(parse(cursor, vars)?);
             if !cursor.peek().is_some_and(|token| token.is_operator(",")) {
                 break;
@@ -675,15 +723,12 @@ fn call(cursor: &mut Cursor<'_>, name: &Token, vars: &[String]) -> Result<Expr, 
         }
     }
     close(cursor)?;
-    let many = function == Function::Coalesce;
-    if arguments.is_empty() || !many && arguments.len() > 1 {
+    if arguments.len() < spec.min || arguments.len() > spec.max {
         return Err(error_at(
-            text::kafka_function_needs(&name.text, many),
+            text::kafka_function_needs(&name.text, spec.min, spec.max),
             name.start,
         ));
     }
-    if function == Function::Size && arguments[0].has_any() {
-        return Err(error_at(text::KAFKA_SIZE_FIELD, first));
-    }
-    Ok(Expr::Call(function, arguments))
+    let prepared = functions::prepare(spec.function, &arguments, &offsets)?;
+    Ok(Expr::Call(spec.function, arguments, prepared))
 }

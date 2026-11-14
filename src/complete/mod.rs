@@ -12,6 +12,7 @@ mod vocabulary;
 use std::ops::Range;
 
 use self::context::{Analysis, Cte, JoinOn, Position, Reference, analyze};
+pub(crate) use self::kafka::statement_topic;
 use self::keywords::is_reserved;
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, RelationRef, Schema};
 use crate::sql::{Dialect, Statement, quote_with, split};
@@ -261,10 +262,21 @@ impl Builder {
         self.add_word(word, SuggestionKind::Keyword);
     }
 
+    /// Adds a word after the other words with the same match. A long list of such words,
+    /// such as the Kafka functions, then does not hide the columns and the clause words.
+    fn add_late_keyword(&mut self, word: &str) {
+        if let Some(rank) = self.rank(word, false) {
+            self.push_word(rank.saturating_add(2), word, SuggestionKind::Keyword);
+        }
+    }
+
     fn add_word(&mut self, word: &str, kind: SuggestionKind) {
-        let Some(rank) = self.rank(word, false) else {
-            return;
-        };
+        if let Some(rank) = self.rank(word, false) {
+            self.push_word(rank, word, kind);
+        }
+    }
+
+    fn push_word(&mut self, rank: u8, word: &str, kind: SuggestionKind) {
         let text = if self.uppercase_keywords {
             word.to_owned()
         } else {

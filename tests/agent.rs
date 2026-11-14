@@ -1,5 +1,7 @@
 //! Assistant behavior through the private IPC, input events, and the existing executor.
 
+mod kafka;
+
 use crossterm::event::{Event, KeyCode};
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::{Value, json};
@@ -953,7 +955,7 @@ fn network_connectors_apply_and_clean_the_agent_read_only_context() {
         let mut options = Options {
             connections: vec![sqln::connection::Definition::new(
                 variable,
-                sqln::connection::Source::Network(target),
+                sqln::connection::Source::Network(*target),
             )],
             ..Default::default()
         };
@@ -1623,7 +1625,7 @@ fn network_full_access_writes_and_never_leaves_a_transaction() {
         let mut options = Options {
             connections: vec![Definition::new(
                 variable,
-                sqln::connection::Source::Network(target),
+                sqln::connection::Source::Network(*target),
             )],
             ..Default::default()
         };

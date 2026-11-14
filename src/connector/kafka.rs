@@ -23,11 +23,11 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use self::client::{CALL_LIMIT, Consumer, Reader};
-use self::command::{Command, Read, Start, TOPIC_PAGE};
+use self::command::{Command, Read, Start, TOPIC_PAGE, time_text};
 use self::decode::{Decoded, decode};
-use self::filter::{Filter, Message};
+use self::filter::{Filter, Message, Meta};
 use self::registry::{RegistryClient, VaultRead};
-use super::target::NetworkTarget;
+use super::target::{NetworkTarget, topic_visible};
 use super::words::command_word;
 use super::{
     Canceller, Capabilities, ConnectError, Connector, ExecError, MAX_NOTICES, Namespace,
@@ -41,6 +41,9 @@ use crate::ui::text;
 
 pub use self::registry::account as registry_account;
 
+/// The syntax guide of the Kafka language, for the AI completion and the MCP agents.
+/// A test parses each example and checks that each function is in the guide.
+pub const GUIDE: &str = include_str!("kafka/guide.md");
 /// The schema of the explorer that lists the topics.
 pub const TOPICS: &str = "topics";
 /// The schema of the explorer that lists the consumer groups.
@@ -625,11 +628,6 @@ fn headers_json(headers: &[(String, Option<Vec<u8>>)]) -> Option<Json> {
     Some(Json::Object(map))
 }
 
-fn timestamp_text(millis: i64) -> Option<String> {
-    chrono::DateTime::from_timestamp_millis(millis)
-        .map(|time| time.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
-}
-
 fn push_decoded(row: &mut RowWriter, decoded: &Decoded) {
     match decoded {
         Decoded::Null => row.push(Value::Null),
@@ -815,6 +813,11 @@ impl KafkaSession {
         let evaluation = evaluation.clone();
         let build = move || -> Result<Option<Row>, ExecError> {
             evaluation.check()?;
+            let meta = Meta {
+                now: chrono::Utc::now().timestamp_millis(),
+                key_bytes: raw.key.as_ref().map(Vec::len),
+                value_bytes: raw.value.as_ref().map(Vec::len),
+            };
             let headers_json = headers_json(&raw.headers);
             let headers = headers_json.as_ref().map(Json::to_string);
             let schema = match (key.schema(), value.schema()) {
@@ -838,6 +841,7 @@ impl KafkaSession {
                     headers: headers.as_deref(),
                     headers_json: headers_json.as_ref(),
                     schema: schema.as_deref(),
+                    meta,
                 };
                 if !filter.matches(&message, &evaluation)? {
                     return Ok(None);
@@ -846,7 +850,7 @@ impl KafkaSession {
             let mut row = RowWriter::default();
             row.push(Value::Number(&raw.partition.to_string()));
             row.push(Value::Number(&raw.offset.to_string()));
-            match raw.timestamp.and_then(timestamp_text) {
+            match raw.timestamp.and_then(time_text) {
                 Some(time) => row.push(Value::Text(&time)),
                 None => row.push(Value::Null),
             }
@@ -862,7 +866,7 @@ impl KafkaSession {
             }
             let row = row.finish();
             Ok(Some(match projection {
-                Some(projection) => projection.apply(row, &evaluation)?,
+                Some(projection) => projection.apply(row, meta, &evaluation)?,
                 None => row,
             }))
         };
@@ -1339,6 +1343,9 @@ impl Session for KafkaSession {
             .into_iter()
             .map(|topic| topic.name)
             .filter(|name| !is_internal(name))
+            // The topic filter of the connection changes only the catalog: TOPICS and
+            // the reads still reach the other topics.
+            .filter(|name| topic_visible(&self.target.kafka.topics, name))
             .collect();
         topics.sort();
         let mut groups: Vec<String> = self

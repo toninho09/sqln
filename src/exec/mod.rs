@@ -344,6 +344,16 @@ pub(crate) struct AgentRun {
 #[derive(Debug)]
 pub enum AgentMetadata {
     Catalog(Catalog),
+    /// The field paths of a Kafka topic, with a note for each path.
+    Fields(Vec<String>, Vec<ColumnNote>),
+}
+
+/// What an agent metadata read reads.
+pub(crate) enum MetadataRead {
+    /// The catalog of these schemas. An empty list reads all schemas.
+    Catalog(Vec<String>),
+    /// The field paths of one Kafka topic.
+    Fields(String),
 }
 
 pub struct RunRequest {
@@ -742,7 +752,7 @@ impl Manager {
         console: ConsoleId,
         connection: ConnectionId,
         job: String,
-        schemas: Vec<String>,
+        request: MetadataRead,
         cancel: tokio_util::sync::CancellationToken,
     ) {
         let binding = self.connections.get(&connection).cloned();
@@ -765,7 +775,10 @@ impl Manager {
                 };
                 let metadata = async {
                     lease.session().apply_context(&SessionContext { read_only: true, ..Default::default() }).await.map_err(|error| error.message)?;
-                    lease.session().read_catalog_of(&schemas).await.map(AgentMetadata::Catalog).map_err(|error| error.message)
+                    match &request {
+                        MetadataRead::Catalog(schemas) => lease.session().read_catalog_of(schemas).await.map(AgentMetadata::Catalog),
+                        MetadataRead::Fields(topic) => lease.session().read_noted_columns(crate::connector::kafka::TOPICS, topic).await.map(|(paths, notes)| AgentMetadata::Fields(paths, notes)),
+                    }.map_err(|error| error.message)
                 };
                 let limit = binding.settings().sql_timeout;
                 let result = match limit {

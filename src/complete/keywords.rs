@@ -1,3 +1,4 @@
+use crate::connector::kafka::filter;
 use crate::sql::Dialect;
 
 const COMMON: &[&str] = &[
@@ -534,15 +535,16 @@ const KAFKA_SELECT_WORDS: &[&str] = &[
     "CHANGES",
 ];
 
+/// The words of the Kafka filter and clauses. `filter::function_names` adds the functions.
 pub const KAFKA_CLAUSES: &[&str] = &[
     "AND",
     "ANY",
     "BETWEEN",
     "BOOLEAN",
-    "CAST",
-    "COALESCE",
+    "CASE",
     "CONTAINS",
     "EARLIEST",
+    "ELSE",
     "END",
     "EVERY",
     "FALSE",
@@ -550,13 +552,12 @@ pub const KAFKA_CLAUSES: &[&str] = &[
     "HEADERS",
     "ILIKE",
     "IN",
+    "INTERVAL",
     "IS",
     "KEY",
     "LATEST",
-    "LENGTH",
     "LIKE",
     "LIMIT",
-    "LOWER",
     "MATCHES",
     "MISSING",
     "NOT",
@@ -567,12 +568,11 @@ pub const KAFKA_CLAUSES: &[&str] = &[
     "SATISFIES",
     "SCAN",
     "SCHEMA",
-    "SIZE",
     "TEXT",
+    "THEN",
     "TRUE",
-    "TYPEOF",
-    "UPPER",
     "VALUE",
+    "WHEN",
     "WHERE",
 ];
 
@@ -598,7 +598,16 @@ pub fn all(dialect: Dialect) -> impl Iterator<Item = &'static str> {
     } else {
         &[]
     };
-    common.iter().chain(specific(dialect)).chain(extra).copied()
+    let functions = (dialect == Dialect::Kafka)
+        .then(filter::function_names)
+        .into_iter()
+        .flatten();
+    common
+        .iter()
+        .chain(specific(dialect))
+        .chain(extra)
+        .copied()
+        .chain(functions)
 }
 
 pub fn starters(dialect: Dialect) -> impl Iterator<Item = &'static str> {

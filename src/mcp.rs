@@ -314,7 +314,7 @@ impl ServerHandler for Bridge {
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.server_info.name = "sqln".into();
         info.server_info.version = env!("CARGO_PKG_VERSION").into();
-        info.instructions = Some("Call request_access first: it waits until the user decides in SQLN. instance_id is optional when one SQLN instance is open; with several, call list_instances and ask the user if the target is not clear. Then call get_context for connections and tabs. query runs SQL in your own console and returns its rows. Tools wait for the end of their task; call job when a reply says that the task continues. Without full access, only reads run: send other SQL with edit_console for the user to review and run. Use exact IDs and revisions.".into());
+        info.instructions = Some("Call request_access first: it waits until the user decides in SQLN. instance_id is optional when one SQLN instance is open; with several, call list_instances and ask the user if the target is not clear. Then call get_context for connections and tabs. Write SQL in the dialect of its connection. A Kafka connection does not accept standard SQL: follow syntax.Kafka of get_context, and bind each Kafka read with LIMIT, SCAN, or START AT. Before you write SQL, call describe for the tables, columns, topics, and topic fields; do not guess names. query runs SQL in your own console and returns its rows. Tools wait for the end of their task; call job when a reply says that the task continues. Without full access, only reads run: send other SQL with edit_console for the user to review and run. Use exact IDs and revisions.".into());
         info
     }
     fn get_tool(&self, name: &str) -> Option<Tool> {

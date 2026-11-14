@@ -134,13 +134,13 @@ Each agent tab has an **Access: level** button (`agentSession`). It opens the sa
 |---|---|
 | `list_instances` | Lists open SQLN instances. |
 | `request_access` | Asks for access and waits for the decision. A second call reads the state. |
-| `get_context` | Reads the access level, the active tab, the connections, the open tabs, and this session's pending proposals. |
+| `get_context` | Reads the access level, the active tab, the connections, the open tabs, and this session's pending proposals. With a Kafka connection, it adds `syntax.Kafka`. |
 | `read_console` | Reads console text and its revision. `messages: true` adds the console Messages. |
 | `read_result` | Reads loaded rows. With `row` and `column`, it reads one large cell in blocks. |
 | `query` | Executes SQL on a connection, in the session's agent console, and returns the results. |
 | `run_console` | Executes the text or a range of a user console, and returns the results. |
 | `edit_console` | Places SQL in the agent tab for you to review and run, or edits a console. |
-| `describe` | Reads the catalog, the DDL of one object, or an ER diagram. |
+| `describe` | Reads the catalog, the DDL of one object, an ER diagram, or the fields of a Kafka topic. |
 | `compare` | Compares structure or data within one SQLN instance. |
 | `job` | Continues to wait for a task or a proposal, reads the next artifact page, or cancels a task. |
 
@@ -165,6 +165,10 @@ States include `validating`, `ready`, `waiting_confirmation`, `waiting_credentia
 The bridge does not retain more than 64 tasks per session. It evicts completed tasks first.
 
 ### Consoles and queries
+
+The agent writes SQL in the dialect of the connection: `get_context` gives the `dialect` of each connection.
+A Kafka connection does not accept standard SQL. When `get_context` lists a Kafka connection, its reply holds `syntax.Kafka`: the Kafka syntax guide in `src/connector/kafka/guide.md`, the same text that the AI completion sends.
+The server instructions tell the agent to follow that guide, to bind each Kafka read with `LIMIT`, `SCAN`, or `START AT`, and to call `describe` before it writes SQL.
 
 `query` uses the session's agent console for that connection.
 The session's first agent tab opens when you allow access, or at once for a client with remembered access. It has no connection yet, and your focus stays.
@@ -219,7 +223,7 @@ Native session protection also applies:
 | MySQL | `SET SESSION TRANSACTION READ ONLY` |
 | SQLite | `PRAGMA query_only = ON` |
 | Redis/Valkey | Known read command plus the server's `readonly` flag |
-| Kafka | No agent read. The assistant refuses each Kafka command |
+| Kafka | Known command only: SELECT, `CONSUME`, `TOPICS`, `PARTITIONS`, `GROUPS`, and `GROUP`. Each one only reads. A statement that does not parse refuses with `invalid_sql`, its reason, its byte position, and a pointer to `syntax.Kafka`. `TAIL` and `EMIT CHANGES` refuse in every access level, because they do not end |
 
 These restrictions belong to each agent execution. They do not change saved connection settings.
 Pool cleanup removes the context before another execution reuses a session. Unknown cleanup discards the session.
@@ -282,6 +286,8 @@ Editing SQL, accepting a proposal, or opening a console never executes it.
 A small cached catalog returns directly. Other catalog reads return a JSON artifact.
 With `object` (`name`, `kind`, `identity`) and `schema`, it reads the DDL.
 `kind` accepts `table`, `view`, `function`, `procedure`, `sequence`, `trigger`, `enum`, and `domain` where supported.
+For a Kafka topic, send `schema: "topics"` and an `object` with the topic name and the kind `table`. The JSON artifact holds `topic` and `fields`: each field has a `path`, its `type`, and the `values` of an enum. An empty list has a `message` with the reason, such as a connection without a Schema Registry.
+The Kafka catalog follows the topic filter of the connection.
 For a PostgreSQL routine, `identity` identifies its arguments. For a trigger, it identifies the table.
 With `er_diagram: true` and `schema`, it reads an ER diagram of the schema, or of the `object` table.
 Source capabilities and existing version limits apply.

@@ -374,6 +374,8 @@ enum Output {
     Diagram(ConsoleId),
     Compare(ConsoleId),
     Catalog(ConnectionId, u64),
+    /// The field paths of a Kafka topic.
+    Fields(String),
 }
 struct Proposal {
     session: String,
@@ -897,7 +899,7 @@ impl App {
             .into_iter()
             .filter(|id| self.agent.proposals[id].session == session)
             .collect();
-        Ok(json!({
+        let mut reply = json!({
             "session_id": session,
             "access": level.protocol_name(),
             "database_access": if level == Level::Full { "read_write" } else { "read_only" },
@@ -909,7 +911,17 @@ impl App {
             "next_offset": tabs["next_offset"],
             "tabs_total": tabs["total"],
             "pending_proposals": proposals,
-        }))
+        });
+        // A Kafka connection does not accept standard SQL, so the agent gets its guide.
+        if self
+            .connections
+            .iter()
+            .take(CONTEXT_CONNECTIONS)
+            .any(|connection| connection.dialect == crate::sql::Dialect::Kafka)
+        {
+            reply["syntax"] = json!({"Kafka": crate::connector::kafka::GUIDE});
+        }
+        Ok(reply)
     }
 
     fn agent_access(&self, session: &str) -> Value {
@@ -1265,7 +1277,7 @@ impl App {
             "statements": job.statements,
             "results": results,
             "artifact": artifact,
-            "artifact_format": if matches!(job.output, Output::Catalog(..) | Output::Diagram(_)) { "json" } else { "text" },
+            "artifact_format": if matches!(job.output, Output::Catalog(..) | Output::Diagram(_) | Output::Fields(_)) { "json" } else { "text" },
         }))
     }
 

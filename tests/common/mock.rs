@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use futures_util::future::BoxFuture;
-use sqln::catalog::Catalog;
+use sqln::catalog::{Catalog, ColumnNote};
 use sqln::connector::{
     Canceller, Capabilities, ConnectError, Connector, ExecError, ResetOutcome, Session,
     SessionContext, StatementEnd, TransactionCommand, TransactionState,
@@ -40,6 +40,9 @@ pub enum Connect {
     Hangs,
 }
 
+/// The name of a relation, its columns, and a note for each column.
+type NotedColumns = (String, Vec<String>, Vec<ColumnNote>);
+
 struct Inner {
     dialect: Dialect,
     connect: Mutex<Connect>,
@@ -49,6 +52,9 @@ struct Inner {
     /// The statements that reached the sessions, in order.
     statements: Mutex<Vec<String>>,
     capabilities: Capabilities,
+    catalog: Mutex<Catalog>,
+    /// The columns of each relation, with a note for each column, by relation name.
+    columns: Mutex<Vec<NotedColumns>>,
 }
 
 /// A connector whose sessions answer what a handler chooses.
@@ -74,7 +80,23 @@ impl MockConnector {
             opened: AtomicUsize::new(0),
             statements: Mutex::new(Vec::new()),
             capabilities,
+            catalog: Mutex::new(Catalog::default()),
+            columns: Mutex::new(Vec::new()),
         }))
+    }
+
+    /// Sets the catalog that the sessions read. The default catalog is empty.
+    pub fn set_catalog(&self, catalog: Catalog) {
+        *self.0.catalog.lock().unwrap() = catalog;
+    }
+
+    /// Sets the columns of a relation, with a note for each column.
+    pub fn set_columns(&self, relation: &str, columns: Vec<String>, notes: Vec<ColumnNote>) {
+        self.0
+            .columns
+            .lock()
+            .unwrap()
+            .push((relation.to_owned(), columns, notes));
     }
 
     /// Sets what a connection attempt does. A test may change it while it runs.
@@ -160,10 +182,30 @@ impl Session for MockSession {
     }
 
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError> {
-        Ok(Catalog::default())
+        Ok(self.inner.catalog.lock().unwrap().clone())
     }
 
-    async fn read_columns(&mut self, _: &str, _: &str) -> Result<Vec<String>, ExecError> {
-        Ok(Vec::new())
+    async fn read_columns(
+        &mut self,
+        schema: &str,
+        relation: &str,
+    ) -> Result<Vec<String>, ExecError> {
+        Ok(self.read_noted_columns(schema, relation).await?.0)
+    }
+
+    async fn read_noted_columns(
+        &mut self,
+        _: &str,
+        relation: &str,
+    ) -> Result<(Vec<String>, Vec<ColumnNote>), ExecError> {
+        Ok(self
+            .inner
+            .columns
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(name, ..)| name == relation)
+            .map(|(_, columns, notes)| (columns.clone(), notes.clone()))
+            .unwrap_or_default())
     }
 }

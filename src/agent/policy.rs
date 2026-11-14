@@ -19,6 +19,27 @@ pub fn validate(statements: &[String], dialect: Dialect) -> Result<(), Error> {
         return Err(refused());
     }
     for sql in statements {
+        if dialect == Dialect::Kafka {
+            // Each known Kafka command only reads. The runner refuses `TAIL` and
+            // `EMIT CHANGES` outside a console, so an agent read always ends.
+            if !crate::sql::is_known_kafka_read(sql) {
+                return Err(refused());
+            }
+            crate::connector::kafka::command::parse(sql).map_err(|error| {
+                let at = error
+                    .offset
+                    .map(|offset| format!(" Position: byte {offset} of the statement."))
+                    .unwrap_or_default();
+                Error::new(
+                    "invalid_sql",
+                    &format!(
+                        "The Kafka statement does not parse: {}{at} Follow syntax.Kafka of get_context.",
+                        error.message
+                    ),
+                )
+            })?;
+            continue;
+        }
         if dialect == Dialect::Redis {
             // The connector also checks the server's readonly flag at execution time.
             if !crate::sql::is_known_redis_read(sql) {

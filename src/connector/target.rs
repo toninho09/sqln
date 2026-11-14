@@ -123,6 +123,8 @@ pub struct KafkaOptions {
     pub registry: Option<Box<Registry>>,
     /// The consumer group id of the reads. `None` uses `KAFKA_READ_GROUP`.
     pub group: Option<String>,
+    /// The patterns of the topics that the catalog shows. Empty shows all topics.
+    pub topics: Vec<String>,
 }
 
 impl KafkaOptions {
@@ -140,6 +142,60 @@ pub fn consumer_group(text: &str) -> Result<Option<String>, &'static str> {
         return Err(crate::ui::text::KAFKA_BAD_GROUP);
     }
     Ok(Some(text.to_owned()).filter(|text| !text.is_empty()))
+}
+
+/// Reads the topic patterns of a Kafka connection: a list with commas, such as
+/// `orders.*, !*.dlq`. The spaces at the ends of each item go, and an empty item goes.
+/// A space or a control character inside a pattern is refused, and `!` needs a pattern.
+pub fn topic_filter(text: &str) -> Result<Vec<String>, &'static str> {
+    let mut patterns = Vec::new();
+    for item in text
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
+        if item == "!" || item.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err(crate::ui::text::KAFKA_BAD_TOPICS);
+        }
+        patterns.push(item.to_owned());
+    }
+    Ok(patterns)
+}
+
+/// Returns true when the patterns show the topic. `*` matches any text, and the case of
+/// the letters must match, as in Kafka. Without an include pattern, all topics match the
+/// includes. A pattern that starts with `!` then removes its topics.
+pub fn topic_visible(patterns: &[String], name: &str) -> bool {
+    let (excludes, includes): (Vec<&str>, Vec<&str>) = patterns
+        .iter()
+        .map(String::as_str)
+        .partition(|pattern| pattern.starts_with('!'));
+    (includes.is_empty() || includes.iter().any(|pattern| glob(pattern, name)))
+        && !excludes.iter().any(|pattern| glob(&pattern[1..], name))
+}
+
+/// Matches a name with a pattern where `*` is any text, also an empty text. A UTF-8
+/// character of the pattern matches only the same character, so bytes are sufficient.
+fn glob(pattern: &str, name: &str) -> bool {
+    let (pattern, name) = (pattern.as_bytes(), name.as_bytes());
+    let (mut p, mut n) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while n < name.len() {
+        if pattern.get(p) == Some(&b'*') {
+            star = Some((p, n));
+            p += 1;
+        } else if pattern.get(p) == Some(&name[n]) {
+            p += 1;
+            n += 1;
+        } else if let Some((at, from)) = star {
+            star = Some((at, from + 1));
+            p = at + 1;
+            n = from + 1;
+        } else {
+            return false;
+        }
+    }
+    pattern[p..].iter().all(|byte| *byte == b'*')
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -201,7 +257,8 @@ pub enum OpenTarget {
     File(PathBuf),
     /// A DuckDB file or one database in memory. The text is empty for memory.
     Duckdb(String),
-    Network(NetworkTarget),
+    /// Boxed, because a network target is much larger than a path.
+    Network(Box<NetworkTarget>),
 }
 
 /// The scheme that marks a DuckDB target.
@@ -216,7 +273,7 @@ pub fn open_target(text: &str) -> Result<OpenTarget, String> {
         return Ok(OpenTarget::Duckdb(rest.to_owned()));
     }
     if text.contains("://") {
-        parse_uri(text).map(OpenTarget::Network)
+        parse_uri(text).map(|target| OpenTarget::Network(Box::new(target)))
     } else {
         Ok(OpenTarget::File(PathBuf::from(text)))
     }
@@ -268,6 +325,7 @@ struct Parameters {
     sasl: Option<Sasl>,
     registry: Option<String>,
     group: Option<String>,
+    topics: Vec<String>,
 }
 
 impl Parameters {
@@ -292,6 +350,7 @@ impl Parameters {
                 }
                 "registry" if !value.is_empty() => parameters.registry = Some(value),
                 "group" => parameters.group = consumer_group(&value)?,
+                "topics" => parameters.topics = topic_filter(&value)?,
                 other => return Err(format!("Unknown connection parameter: {other}")),
             }
         }
@@ -419,9 +478,10 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
     if engine != Engine::Kafka
         && (parameters.sasl.is_some()
             || parameters.registry.is_some()
-            || parameters.group.is_some())
+            || parameters.group.is_some()
+            || !parameters.topics.is_empty())
     {
-        return Err("sasl, registry, and group are valid only for kafka.".to_owned());
+        return Err("sasl, registry, group, and topics are valid only for kafka.".to_owned());
     }
     if engine == Engine::Kafka && parameters.socket.is_some() {
         return Err("A Kafka connection needs a host, not a socket.".to_owned());
@@ -436,6 +496,7 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
             })
         }),
         group: parameters.group.take(),
+        topics: std::mem::take(&mut parameters.topics),
     };
     if matches!(scheme.as_str(), "rediss" | "valkeys" | "kafkas") {
         if parameters.tls_mode.as_deref() == Some("disable") {

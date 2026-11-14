@@ -6,6 +6,85 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Kafka AI completion, MCP reads, and topic filter — 2026-11-13
+
+The user asks for prompts that tell the AI completion and the MCP agents how to build correct Kafka queries, and for a limit on the context of a cluster with many topics. The user approves the points below.
+This entry replaces decision 24 of "Kafka and Schema Registry", the Scope row of "Explicit AI SQL completion" for Kafka, and the Kafka row of the read-only protection of the MCP guide.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| AI completion | Kafka consoles offer the AI completion. Redis stays out | Keep Kafka out | User choice |
+| MCP reads | Without full access, `query` and `run_console` run the known Kafka commands: SELECT, `CONSUME`, `TOPICS`, `PARTITIONS`, `GROUPS`, and `GROUP`. `TAIL` and `EMIT CHANGES` refuse in every access level, because they do not end | Keep the refusal of each Kafka command | User choice. Each Kafka command only reads |
+| Field paths | The AI request and the MCP `describe` get the field paths of the Schema Registry, with their types and enum values | Topic names only | User choice. Without fields, the model guesses paths |
+| Large clusters | Two limits: an automatic focus on the topic of the statement, and a topic filter of the connection | One of the two | User choice |
+| Focus | A known topic after `FROM`, `CONSUME`, `TAIL`, or `PARTITIONS` goes alone, with its fields. Without a known topic, the request sends the names of the topics, then of the groups, as the context permits, first the names that start with the typed text | All topics in each request | Approved with the plan. A statement reads one topic |
+| Filter syntax | A list with commas. `*` matches any text. A pattern that starts with `!` removes its topics. Without an include pattern, all topics match before the excludes. The case of the letters must match | Only includes; a regular expression | User choice |
+| Filter effect | Visibility only: the catalog, the navigator, the local completion, the AI completion, and the MCP `describe`. A read of another topic still runs, and `TOPICS` lists all topics | Also refuse the reads of other topics | User choice. Same rule as the schema filter of SQL connections; `TOPICS` is a query, not the catalog |
+| Filter places | The **Topics** field of the Kafka form, `topics` in `config.json`, and `topics=` in the connection text | Form and `config.json` only | User choice. Same places as the consumer group |
+| Groups | The filter applies to topics only | Topics and groups | User choice. A group name does not hold the topic name |
+
+Implementation decisions:
+
+| Point | Decision | Reason |
+|---|---|---|
+| One guide | `src/connector/kafka/guide.md` is the compact syntax guide. The AI completion sends it after the common rules, and `get_context` returns it as `syntax.Kafka` when a listed connection is Kafka. A test parses each example and checks that the guide names each function. The Kafka system message, the rules and the guide, stays at 8 KiB or less. The guide holds no rule of the agent tools: the MCP instructions and the `query` description say that `TAIL` and `EMIT CHANGES` refuse | DRY. [Kafka](KAFKA.md) stays the guide for people |
+| AI rules | The system message holds the common rules, then the language of the dialect: one line for a SQL dialect, or the Kafka guide. The metadata budget subtracts its size, which is fixed for each dialect | The leading bytes stay stable for the prompt cache |
+| Case of values | The common rules tell the model to write names and enum values exactly as metadata writes them. The guide says that `=` and `IN` compare text with its case, and that `CONTAINS`, `ILIKE`, and `MATCHES` with `(?i)` ignore case | The Kafka filter compares text with its case, so `'failed'` does not match `'FAILED'` |
+| Empty fields | The request omits an empty `metadata` list, an empty `targets` list, and an absent `schema`, for all dialects | The model reads fewer bytes without a loss of facts |
+| AI fields cache | One snapshot holds the fields of at most 4 topics, the newest last. A request on a known topic without fields reads the snapshot again. A name that the catalog does not know reads no fields | Parallel requests on different topics do not cancel the reads of each other |
+| Omitted count | With a focus topic, the other topics do not count as omitted context | The reduced-context notice stays for a context that does not fit |
+| Registry failure | The AI request sends the topic without fields. The local completion of the editor shows the error | The completion still works without the registry |
+| MCP syntax error | Without full access, a Kafka statement that does not parse refuses with `invalid_sql`, the reason, the byte position, and a pointer to `syntax.Kafka` | The agent can correct its query |
+| MCP fields | `describe` with `schema: "topics"` and an object of kind `table` returns `{topic, fields}` as a JSON artifact. An empty list has a message with the reason. Other Kafka objects refuse with the supported form | No protocol change: `VERSION` stays 2 |
+| Compatibility | `topics` is optional, and `version` stays 1. Older SQLN binaries refuse a file with `topics`, because they refuse unknown fields | Same rule as the other optional keys |
+
+## Kafka Postgres functions — 2026-11-13
+
+The user asks for the Postgres functions that are useful to read topics, without aggregates, `ORDER BY`, `JOIN`, `unnest`, the jsonb operators, and hash functions. The user approves the points below.
+This entry removes `CASE`, date functions, `keys`, and slices from the "Out of scope" line of "Kafka SQL expressions — 2026-11-12". The other rules of that entry stay: two-valued logic, `[*]` values one at a time, absent and null, the temporary memory limit, Stop, and the timeout.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| Slices | `value.items[a:b]`: the first item is 0, and the item at `b` is not in the slice. A negative position counts from the end. `[:b]` and `[a:]` are permitted | 1-based with the end included, as Postgres arrays | User choice. Same base as `[0]` and `[-1]` |
+| `NOW()` | SQLN reads the clock one time for each message. The filter and the columns of one message get the same value | One time for the full read, as a Postgres transaction | User choice. `NOW() - timestamp` gives the real age in `EMIT CHANGES` |
+| Epoch to time | `TO_TIMESTAMP(x)` reads seconds, as Postgres. `TO_TIMESTAMP_MS(x)` reads milliseconds | One unit | User choice |
+| Time to epoch | `EPOCH(t)` gives seconds, with a fraction. `EPOCH_MS(t)` gives whole milliseconds | No reverse function | User choice |
+| Intervals | A number of milliseconds, also in a column | Text such as `00:05:12` | User choice. The grid sorts and compares a number |
+| Syntax | Only the forms with commas, which Postgres also accepts: `SUBSTRING(x, 2, 3)`, `TRIM(x, 'ab')` | `SUBSTRING(x FROM 2 FOR 3)`, `TRIM(BOTH … FROM x)` | Approved with the plan. One argument syntax |
+| `CASE` | Only `CASE WHEN condition THEN value … [ELSE value] END`. A condition accepts the full filter, also `ANY … END`. Without `ELSE` and without a match, the value is null | `CASE x WHEN a THEN …` | Approved with the plan |
+| Text arguments | The regular expression and the replacement of `REGEXP_REPLACE`, its flags, the format of `TO_CHAR`, and the texts of `ARRAY_TO_STRING` are texts between quotes. SQLN checks them before the read | Any value | Approved with the plan. A bad pattern refuses before the read |
+| Wrong type | A strict function gives no value for a wrong type, null, or an absent value, as `LOWER`. Text functions read only a JSON text; use `CAST(x AS TEXT)` | Automatic conversion | Approved with the plan. Same rule as the existing functions |
+| `OCTET_LENGTH` | With `key` or `value` alone: the bytes that Kafka sent, before the decoding. With another text: its UTF-8 bytes | The bytes of the decoded text | Approved with the plan. Finds the messages near `message.max.bytes` |
+| `KEYS` | A list of the names in alphabetical order | The order of the message | Approved with the plan. The JSON of SQLN does not keep the order |
+| Interval units | `ms`, `s`, `min`, `h`, `d`, and `week`, with their long and plural forms. Months, years, and `m` alone refuse | 30 days for a month | Approved with the plan. Their length changes; `m` can be a minute or a month |
+| Time zone | UTC | The local zone | Same rule as `timestamp` |
+
+Functions:
+
+| Group | Functions and rules |
+|---|---|
+| Text | `SPLIT_PART(x, sep, n)`: `n` starts at 1, a negative `n` counts from the end, and a part outside the text gives `''`. `SUBSTRING(x, start [, count])` counts characters with the Postgres rule for a start before 1. `SUBSTRING(x, 'regex')` gives the first group or the match, and null without a match. `LEFT` and `RIGHT` with a negative count remove characters from the other end. `TRIM`, `LTRIM`, and `RTRIM` remove spaces, or the characters of the second value. `REPLACE` replaces each match. `REGEXP_REPLACE(x, 'regex', 'replacement' [, 'flags'])` replaces the first match, or each match with `g`; `i` ignores case; `\1` to `\9` and `\&` in the replacement are written `'\\1'` because of the backslash escapes. `CONCAT` and `CONCAT_WS` ignore null and absent values, and write another type as JSON text |
+| Numbers | `ABS`, `FLOOR`, `CEIL`, and `ROUND(x [, places])`. `ROUND` rounds half away from zero on the decimal text of the number, so `ROUND(2.675, 2)` gives 2.68. Whole numbers keep all digits. `GREATEST` and `LEAST` ignore null and absent values; mixed types give no value |
+| Conditions | `NULLIF(a, b)` and `CASE` |
+| Lists | A slice reads its items as `[*]` does: a column shows a JSON list, one item that matches is enough, an empty slice gives NULL, and `SIZE` refuses it. `KEYS(x)` gives the names of an object. `ARRAY_TO_STRING(list, 'sep' [, 'null text'])` joins the items of a list or all values of a path with `[*]` or a slice |
+| Time | A time is a number of milliseconds since 1970, as `timestamp` in an expression. `NOW()`, `TO_TIMESTAMP`, `TO_TIMESTAMP_MS`, time plus or minus an interval, and `COALESCE`, `NULLIF`, `GREATEST`, `LEAST`, or `CASE` of times give a time. A time minus a time gives an interval. A column shows a time as `YYYY-MM-DDTHH:MM:SS.sssZ`, as the `timestamp` column. A text next to a time becomes a time before the read. `INTERVAL '1 hour 30 minutes'` is a number of milliseconds. `EPOCH`, `EPOCH_MS`, and `TO_CHAR` refuse a value that is not a time. `TO_CHAR` reads `YYYY YY MM DD HH24 HH12 HH MI SS MS US AM PM Mon Month Dy Day TZ`; names have no padding; text between double quotes and other characters stay the same |
+
+Compatibility:
+
+- No saved format changes. Existing commands and saved scripts keep their syntax and results.
+- An `ANY` or `EVERY` item named `case` keeps its meaning; `CASE` starts an expression only when no item has that name.
+- The completion has a limit of 50 items, so the function names come after the other words with the same match. An empty filter list shows the message columns and the condition words first.
+
+Implementation decisions:
+
+| Point | Decision | Reason |
+|---|---|---|
+| Modules | `filter/functions.rs` holds the function table, the argument checks, and the evaluation. `filter/time.rs` reads intervals and `TO_CHAR` formats | `expr.rs` keeps the expression tree and the parser |
+| One table | The completion, the keyword colors, and the parser read the names and the argument counts from one table | DRY |
+| Arguments | One visitor generates the combinations of the argument values without a list. `CONCAT`, `CONCAT_WS`, `GREATEST`, and `LEAST` give null for an argument without a value | Same Cartesian rule as arithmetic |
+| Message facts | `filter::Meta` holds `NOW()` and the received bytes of the key and the value. The read creates it one time for each message and gives it to the filter and to the columns | The row does not keep these facts |
+| Memory | Functions that generate text or lists use the temporary memory limit | Same rule as `\|\|` and `CAST` |
+
 ## Kafka schema field completion — 2026-11-13
 
 The user asks for the completion of the fields of Avro, Protobuf, and JSON Schema values, and approves the points below.
@@ -353,7 +432,7 @@ It also reopens the rule "Search: literal text, no regular expression" only for 
 | 21. Schema Registry | Optional fields of a Kafka connection: URL, user, and password. `config.json` gets `"schemaRegistry": {"url", "username"}` and `"sasl"`; `version` stays 1. The password follows the **Credential** choice of the form: **Vault** writes it to the system vault, **Session** keeps it in memory | Always the vault | The user authorizes each secret storage |
 | 22. Schema cache | By id, for the life of the connector | Expiry | A schema id never changes |
 | 23. Completion | Fixed list of commands, then the topics or groups of the catalog, then the clause words. Replaced for field paths by "Kafka schema field completion — 2026-11-13" | — | Topics are few, unlike Redis keys |
-| 24. AI and MCP | No AI completion and no MCP read for Kafka | — | Same rule as Redis |
+| 24. AI and MCP | No AI completion and no MCP read for Kafka. Replaced by "Kafka AI completion, MCP reads, and topic filter — 2026-11-13" | — | Same rule as Redis |
 
 Implementation decisions:
 
@@ -631,7 +710,7 @@ This adds optional `preferences.aiCompletion` settings. Existing configuration r
 | Point | Decision |
 |---|---|
 | Entry | AI row above local autocomplete items. Up selects it from the first local item; the configured suggestion acceptance key starts the request. No separate default shortcut. |
-| Scope | Consoles associated with PostgreSQL, MySQL, and SQLite. No Redis, unbound consoles, chat, agent tools, or generated SQL execution. |
+| Scope | Consoles associated with PostgreSQL, MySQL, and SQLite. No Redis, unbound consoles, chat, agent tools, or generated SQL execution. Kafka consoles join with "Kafka AI completion, MCP reads, and topic filter — 2026-11-13". |
 | Providers | One OpenAI-compatible Chat Completions provider, with OpenRouter as the default endpoint. Optional local servers run outside SQLN. The removed DeepSeek and protocol settings are legacy values that old files may still carry. |
 | Provider URL | Accept an API base or a full completion URL. Add the route only once; a legacy full FIM URL maps to the chat route on the same base. Model discovery uses `/models`. An empty endpoint uses OpenRouter. A real API and terminal test confirms these routes. |
 | Context | Cache the complete accessible structural schema. Respect connection schema filters. Refresh rebuilds a previously loaded snapshot; no polling for external changes. Never read records for completion. |

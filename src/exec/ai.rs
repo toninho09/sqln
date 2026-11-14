@@ -1,10 +1,12 @@
 //! AI metadata uses a separate pool lease and never a user's transaction.
 use super::sink::Captured;
 use super::{Manager, ResultSink, StatementKey};
-use crate::ai::schema::{Builder, Event};
+use crate::ai::schema::{Builder, Event, kafka_snapshot};
 use crate::catalog::RelationRef;
+use crate::connector::kafka::TOPICS;
 use crate::connector::{Session, SessionContext};
 use crate::grid::Budget;
+use crate::sql::Dialect;
 use crate::structure::{Scope, Section, structure_sql};
 use std::sync::{Arc, Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -43,11 +45,14 @@ async fn query(
     Ok(result)
 }
 impl Manager {
+    /// Reads the metadata of the AI completion. A Kafka read gets the field paths of
+    /// `topics` only: a statement reads one topic, and a cluster can have many topics.
     pub fn load_ai_schema(
         &self,
         connection: u64,
         generation: u64,
         schemas: Vec<String>,
+        topics: Vec<String>,
         cancel: CancellationToken,
         sender: mpsc::Sender<Event>,
     ) {
@@ -70,6 +75,17 @@ impl Manager {
                 let read=async {
                     lease.session().apply_context(&SessionContext {read_only:true,..Default::default()}).await.map_err(|_| "Cannot prepare the metadata session.")?;
                     let catalog=lease.session().read_catalog_of(&schemas).await.map_err(|_| "Cannot read the catalog. Check access and refresh.")?;
+                    if dialect==Dialect::Kafka {
+                        let mut fields=Vec::new();
+                        for topic in topics.iter().filter(|topic| catalog.relation(Some(TOPICS),topic).is_some()) {
+                            // A registry failure sends the topic without fields; the
+                            // completion of the editor shows that error.
+                            if let Ok((paths,notes))=lease.session().read_noted_columns(TOPICS,topic).await {
+                                fields.push((topic.clone(),paths,notes));
+                            }
+                        }
+                        return kafka_snapshot(&catalog,&fields,&budget).map(Arc::new);
+                    }
                     let mut builder=Builder::new(&catalog,&budget)?;
                     for schema in &catalog.schemas {
                         lease.session().apply_context(&SessionContext {read_only:true,schema:Some(schema.name.clone()),only_schema:true}).await.map_err(|_| "Cannot select the metadata schema.")?;

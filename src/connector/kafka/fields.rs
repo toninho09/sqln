@@ -27,6 +27,28 @@ const STEP_LIMIT: usize = 100_000;
 /// The most values in the note of one path.
 const VALUE_LIMIT: usize = 100;
 
+/// Writes each field path with its note as JSON, for the AI completion and the MCP
+/// agents: the `path`, the `type` words, and the `values` of an enum.
+pub fn field_json(paths: &[String], notes: &[ColumnNote]) -> Vec<Json> {
+    paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let mut field = Map::new();
+            field.insert("path".into(), Json::from(path.as_str()));
+            if let Some(note) = notes.get(index) {
+                if !note.detail.is_empty() {
+                    field.insert("type".into(), Json::from(note.detail.as_str()));
+                }
+                if !note.values.is_empty() {
+                    field.insert("values".into(), Json::from(note.values.clone()));
+                }
+            }
+            Json::Object(field)
+        })
+        .collect()
+}
+
 /// Returns the field paths of a schema below `root`, such as `value.customer.id`, with a
 /// note for each path. Each path that has fields below it also comes first as a path.
 pub fn paths(root: &str, parsed: &Parsed) -> (Vec<String>, Vec<ColumnNote>) {

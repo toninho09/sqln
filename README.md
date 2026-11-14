@@ -279,8 +279,10 @@ GROUP billing
 - Both SELECT and the native commands use the same filter in SQLN, after the decoding. A condition compares two values with `=`, `!=`, `<`, `<=`, `>`, or `>=`, such as `value.paid < value.total` or `key = 'a'`. Use `AND`, `OR`, `NOT`, and parentheses.
 - Other conditions: `IS [NOT] NULL` (absent or null), `IS [NOT] MISSING` (absent), `[NOT] IN ('a', 'b')`, `'vip' IN value.tags`, `[NOT] BETWEEN 1 AND 5`, `[NOT] LIKE 'a%'`, `[NOT] ILIKE 'a%'` (without case), `CONTAINS 'text'` (without case), and `MATCHES 'regex'`.
 - `ANY i IN value.items SATISFIES <condition> END` is true when one item matches all of the condition. `EVERY … END` needs all items.
-- Values: `partition`, `offset`, `timestamp` (compare it with a UTC time in quotes), `key`, `value`, `headers`, `schema`, fields, `+ - * / %` with spaces, `||` for texts, `LOWER`, `UPPER`, `LENGTH`, `SIZE`, `COALESCE`, `CAST(x AS NUMBER|TEXT|BOOLEAN)`, and `TYPEOF`.
-- For lists, `value.items[*].sku = 'a'` is true when one item matches, `'vip' IN value.tags` finds an item, and `SIZE(value.items) > 2` counts the items.
+- Values: `partition`, `offset`, `timestamp` (compare it with a UTC time in quotes), `key`, `value`, `headers`, `schema`, fields, `+ - * / %` with spaces, `||` for texts, `CAST(x AS NUMBER|TEXT|BOOLEAN)`, and `CASE WHEN … THEN … ELSE … END`.
+- Functions, with the rules of Postgres: `LOWER`, `UPPER`, `LENGTH`, `SIZE`, `COALESCE`, `TYPEOF`, `SPLIT_PART`, `SUBSTRING`, `LEFT`, `RIGHT`, `TRIM`, `LTRIM`, `RTRIM`, `REPLACE`, `REGEXP_REPLACE`, `CONCAT`, `CONCAT_WS`, `OCTET_LENGTH`, `ABS`, `ROUND`, `FLOOR`, `CEIL`, `GREATEST`, `LEAST`, `NULLIF`, `KEYS`, and `ARRAY_TO_STRING`.
+- Time: `NOW()`, `INTERVAL '1 hour'`, `TO_TIMESTAMP` (seconds), `TO_TIMESTAMP_MS`, `EPOCH`, `EPOCH_MS`, and `TO_CHAR`, such as `timestamp >= NOW() - INTERVAL '1 hour'`. A time column shows UTC text; an interval shows milliseconds.
+- For lists, `value.items[*].sku = 'a'` is true when one item matches, `value.items[0:2]` reads a slice, `'vip' IN value.tags` finds an item, and `SIZE(value.items) > 2` counts the items.
 - Expressions generate values on demand. Large list combinations remain available, with Stop and the normal statement timeout. Generated text buffers use the configured memory limit, including live reads, export, and streaming. An oversized projection fails without a partial row; reduce it or increase the limit.
 - With a Schema Registry, Avro, JSON Schema, and Protobuf values become JSON. A value that does not decode stays as bytes, with a note in **Messages**.
 - SQLN never joins a consumer group and never commits an offset. `GROUP <id>` shows the committed offsets and the lag.
@@ -352,6 +354,7 @@ Change **Autocomplete** in Settings if you prefer `Enter` or both keys to accept
 Open suggestions, press `Up` from the first local item to select **Complete with AI…**, and use the acceptance key.
 The answer shows as ghost text in the editor. Press `Tab` to accept it and `Esc` to reject it. Completion works at the cursor only and never runs generated SQL.
 One OpenAI-compatible chat endpoint serves the requests, with OpenRouter as the default. Local servers use their OpenAI-compatible base. Keys use the system vault or a rotating key file.
+It works in SQL and Kafka consoles. A Kafka request sends the syntax guide of the SQLN Kafka language and the fields of the topic at the cursor.
 See [AI completion](docs/AI_COMPLETION.md) for consent, context limits, and configuration.
 
 ### Navigator
@@ -712,6 +715,7 @@ An explicit `sslmode=disable` removes TLS; use it only when the connection envir
 `rediss`, `valkeys`, and `kafkas` always require verified TLS.
 Kafka takes `sasl=plain`, `sasl=scram-sha-256`, or `sasl=scram-sha-512` (the default) for a user, and `registry=<url>` for the Schema Registry.
 Kafka takes `group=<id>` for the consumer group id of the reads, such as a group with the prefix that the cluster permits. The form has the same **Consumer group** field. Without it, the reads use `sqln-read`. SQLN never joins the group and never commits.
+Kafka takes `topics=<patterns>` to show only some topics in the catalog, such as `topics=orders.*,!*.dlq`. The form has the same **Topics** field. Reads of other topics still run.
 Without a CA file, Kafka verifies with the system roots only.
 
 ### Local data and diagnostics

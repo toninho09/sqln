@@ -1,6 +1,6 @@
 //! Structural metadata transforms. Database readers live in the executor.
 use super::{Memory, Object, Snapshot};
-use crate::catalog::Catalog;
+use crate::catalog::{Catalog, ColumnNote};
 use crate::grid::{Budget, Row};
 use crate::sql::Dialect;
 use serde_json::{Value, json};
@@ -107,6 +107,47 @@ impl Builder {
             _memory: self.memory,
         }
     }
+}
+
+/// The field paths of one Kafka topic, with a note for each path.
+pub type TopicFields = (String, Vec<String>, Vec<ColumnNote>);
+
+/// Builds the snapshot of a Kafka connection: one object for each topic and each group of
+/// the catalog. Only the topics in `fields` get their field paths, in the `columns`
+/// section, so a reduced context keeps them.
+pub fn kafka_snapshot(
+    catalog: &Catalog,
+    fields: &[TopicFields],
+    budget: &Arc<Budget>,
+) -> Result<Snapshot, String> {
+    use crate::connector::kafka::{GROUPS, TOPICS};
+    let mut objects = Vec::new();
+    for schema in &catalog.schemas {
+        let kind = match schema.name.as_str() {
+            TOPICS => "Topic",
+            GROUPS => "Group",
+            _ => continue,
+        };
+        for relation in &schema.relations {
+            let paths = fields
+                .iter()
+                .find(|(topic, ..)| schema.name == TOPICS && topic == &relation.name);
+            let metadata = paths.map_or_else(Vec::new, |(_, paths, notes)| {
+                crate::connector::kafka::fields::field_json(paths, notes)
+                    .into_iter()
+                    .map(|values| json!({"section": "columns", "values": values}))
+                    .collect()
+            });
+            objects.push(Object {
+                schema: schema.name.clone(),
+                name: relation.name.clone(),
+                kind: kind.to_owned(),
+                metadata,
+                targets: Vec::new(),
+            });
+        }
+    }
+    Snapshot::new(objects, budget)
 }
 
 /// Comments supplement existing structural readers. SQLite has no comment catalog.

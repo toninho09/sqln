@@ -706,6 +706,9 @@ pub const KAFKA_EVAL_STOPPED: &str =
     "The Kafka expression stops because the execution is canceled.";
 pub const KAFKA_BAD_GROUP: &str =
     "The consumer group cannot hold a space or a control character. Remove them.";
+pub const AGENT_KAFKA_DESCRIBE: &str = "A Kafka describe reads the fields of one topic. Send schema \"topics\" and an object with the topic name and the kind table, or send no object to read the catalog.";
+pub const AGENT_KAFKA_NO_FIELDS: &str = "This topic has no fields: the connection has no Schema Registry, or the registry has no subject <topic>-value or <topic>-key. Read some messages with SELECT ... LIMIT to see the values.";
+pub const KAFKA_BAD_TOPICS: &str = "Separate the topic patterns with commas, such as orders.*, !*.dlq. A pattern cannot hold a space or a control character, and ! needs a pattern.";
 pub const FORM_REGISTRY_URL: &str =
     "The registry URL must start with http:// or https://. A registry user needs a URL.";
 pub const REDIS_SOCKET_TLS: &str = "A Unix socket does not use TLS. Turn off TLS.";
@@ -774,7 +777,15 @@ pub const KAFKA_NEEDS_NUMBER: &str =
 pub const KAFKA_TEXT_OPERATOR: &str =
     "CONTAINS, MATCHES, LIKE, and ILIKE read a text. Use =, <, or > for a number.";
 pub const KAFKA_BAD_TIME: &str =
-    "Compare timestamp with a UTC time, such as '2026-11-10T12:00:00Z' or '2026-11-10'.";
+    "Compare a time with a UTC time, such as '2026-11-10T12:00:00Z' or '2026-11-10'.";
+pub const KAFKA_NEEDS_TIME: &str = "This function needs a time, such as timestamp or NOW(). Convert a number with TO_TIMESTAMP(seconds) or TO_TIMESTAMP_MS(milliseconds).";
+pub const KAFKA_NEEDS_LITERAL: &str =
+    "Put a text between quotes here, such as ','. SQLN reads it before the read starts.";
+pub const KAFKA_BAD_INTERVAL: &str = "Write an interval with numbers and units, such as INTERVAL '1 hour 30 minutes'. The units are ms, s, min, h, d, and week.";
+pub const KAFKA_INTERVAL_MONTH: &str = "An interval cannot use months or years, because their length changes. Use days, such as INTERVAL '30 days'.";
+pub const KAFKA_BAD_FLAGS: &str =
+    "REGEXP_REPLACE accepts the flags g (all matches) and i (ignore case), such as 'gi'.";
+pub const KAFKA_CASE: &str = "Write CASE WHEN condition THEN value, more WHEN parts if necessary, an optional ELSE value, and END.";
 pub const KAFKA_LIKE_END: &str =
     "The LIKE pattern ends with a backslash. Write \\\\ for one backslash in the text.";
 pub const KAFKA_CAST_TYPE: &str =
@@ -824,12 +835,32 @@ pub fn kafka_needs(what: &str) -> String {
     format!("The command needs {what} here.")
 }
 
-pub fn kafka_function_needs(name: &str, many: bool) -> String {
-    if many {
-        format!("{name} needs one or more values between parentheses, with commas between them.")
+/// Tells how many values a function takes. `max` is `usize::MAX` for no limit.
+pub fn kafka_function_needs(name: &str, min: usize, max: usize) -> String {
+    let count = |value: usize| match value {
+        1 => "one".to_owned(),
+        2 => "two".to_owned(),
+        3 => "three".to_owned(),
+        4 => "four".to_owned(),
+        other => other.to_string(),
+    };
+    let values = if min == 1 && max == 1 {
+        "value"
     } else {
-        format!("{name} needs one value between parentheses.")
-    }
+        "values"
+    };
+    let amount = match (min, max) {
+        (0, 0) => return format!("{name} takes no values. Write {name}()."),
+        (min, usize::MAX) => format!("{} or more", count(min)),
+        (min, max) if min == max => count(min),
+        (min, max) => format!("{} to {}", count(min), count(max)),
+    };
+    let commas = if max > 1 {
+        ", with commas between them"
+    } else {
+        ""
+    };
+    format!("{name} needs {amount} {values} between parentheses{commas}.")
 }
 
 pub fn kafka_registry_not_saved(error: &str) -> String {
@@ -1017,6 +1048,7 @@ pub const FIELD_CLIENT_CERTIFICATE: &str = "Client certificate";
 pub const FIELD_CLIENT_KEY: &str = "Client key";
 pub const FIELD_SASL: &str = "SASL";
 pub const FIELD_CONSUMER_GROUP: &str = "Consumer group";
+pub const FIELD_TOPICS: &str = "Topics";
 pub const FIELD_REGISTRY_URL: &str = "Registry URL";
 pub const FIELD_REGISTRY_USER: &str = "Registry user";
 pub const FIELD_REGISTRY_PASSWORD: &str = "Registry password";

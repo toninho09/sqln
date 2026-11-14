@@ -3,6 +3,8 @@
 
 mod evaluation;
 mod expr;
+mod functions;
+mod time;
 
 pub use self::evaluation::Evaluation;
 pub(crate) use self::evaluation::Text;
@@ -17,10 +19,11 @@ use super::command::{Cursor, Token, TokenKind, error_at, parse_time};
 use crate::connector::ExecError;
 use crate::ui::text;
 
-/// The functions of a filter and of the SELECT columns, for the completion.
-pub const FUNCTION_NAMES: [&str; 7] = [
-    "CAST", "COALESCE", "LENGTH", "LOWER", "SIZE", "TYPEOF", "UPPER",
-];
+/// The functions of a filter and of the SELECT columns, with `CAST`, for the completion
+/// and the keywords.
+pub fn function_names() -> impl Iterator<Item = &'static str> {
+    std::iter::once("CAST").chain(functions::FUNCTIONS.iter().map(|spec| spec.name))
+}
 
 /// The largest compiled regular expression. A larger one stops the read before it starts.
 const REGEX_LIMIT: usize = 1 << 20;
@@ -35,7 +38,7 @@ pub enum Operator {
     GreaterOrEqual,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Condition {
     /// One value of the left side and one value of the right side match.
     Compare {
@@ -60,12 +63,22 @@ pub enum Condition {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Filter {
     Condition(Condition),
     Not(Box<Filter>),
     And(Box<Filter>, Box<Filter>),
     Or(Box<Filter>, Box<Filter>),
+}
+
+/// Facts of one message that its text does not keep.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Meta {
+    /// The time when SQLN examines the message, in milliseconds since 1970. `NOW()` gives it.
+    pub now: i64,
+    /// The bytes of the key and of the value that Kafka sent, before the decoding.
+    pub key_bytes: Option<usize>,
+    pub value_bytes: Option<usize>,
 }
 
 /// The parts of one message that a filter reads. A key or a value without UTF-8 text has
@@ -85,6 +98,7 @@ pub struct Message<'a> {
     pub headers: Option<&'a str>,
     pub headers_json: Option<&'a Json>,
     pub schema: Option<&'a str>,
+    pub meta: Meta,
 }
 
 /// Reads a filter. It stops before a word that does not continue the filter, such as
@@ -187,7 +201,7 @@ fn text_operand(cursor: &mut Cursor<'_>) -> Result<(String, usize), ExecError> {
 }
 
 /// Reads an expression and checks it against the other side of the condition. A text
-/// next to `timestamp` becomes a time. A value that gives only numbers refuses a text,
+/// next to a time becomes a time. A value that gives only numbers refuses a text,
 /// `true`, `false`, and `null`.
 fn operand(
     cursor: &mut Cursor<'_>,
@@ -201,7 +215,7 @@ fn operand(
 
 fn check_operand(other: &Expr, value: Expr, offset: usize) -> Result<Expr, ExecError> {
     match value {
-        Expr::Literal(Json::String(time)) if other.is_timestamp() => parse_time(&time)
+        Expr::Literal(Json::String(time)) if other.is_time() => parse_time(&time)
             .map(|time| Expr::Literal(Json::from(time)))
             .ok_or_else(|| error_at(text::KAFKA_BAD_TIME, offset)),
         Expr::Literal(ref json) if other.number_only() && !json.is_number() => {
@@ -1206,7 +1220,11 @@ mod tests {
 
     #[test]
     fn intermediate_text_buffers_refuse_the_limit_and_release_their_reservations() {
-        let json = serde_json::json!({"s": "a".repeat(64), "obj": {"s": "b".repeat(64)}});
+        let json = serde_json::json!({
+            "s": "a".repeat(64),
+            "obj": {"s": "b".repeat(64)},
+            "list": ["a".repeat(32), "b".repeat(32)],
+        });
         let message = Message {
             json: Some(&json),
             ..Message::default()
@@ -1218,6 +1236,13 @@ mod tests {
             "value.s CONTAINS 'a'",
             "CAST(value.obj AS TEXT) = 'a'",
             "LOWER(value.s || 'x') = 'a'",
+            "REPLACE(value.s, 'a', 'bb') = 'a'",
+            "REGEXP_REPLACE(value.s, 'a', 'bb', 'g') = 'a'",
+            "CONCAT(value.s, 'x') = 'a'",
+            "LEFT(value.s, 40) = 'a'",
+            "ARRAY_TO_STRING(value.list, ',') = 'a'",
+            "ARRAY_TO_STRING(value.list[*], ',') = 'a'",
+            "KEYS(value.obj) = 'a'",
         ] {
             let error = filter(condition)
                 .unwrap()

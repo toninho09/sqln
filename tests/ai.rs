@@ -2,6 +2,7 @@ mod common;
 
 mod agent;
 mod ai_editor;
+mod ai_kafka;
 mod ai_schema;
 mod mcp;
 
@@ -465,7 +466,7 @@ fn referenced_objects_keep_the_canonical_order_and_list_in_focus() {
         "{user}"
     );
     let system = prepared.body["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("focus field"));
+    assert!(system.contains("context.focus"), "{system}");
 }
 #[test]
 fn invalid_endpoints_and_credential_destination_changes_are_refused() {
@@ -544,7 +545,7 @@ fn the_request_field_travels_only_when_present() {
     let user = prepared.body["messages"][1]["content"].as_str().unwrap();
     assert!(user.contains("\"request\":\"add ORDER BY id\""), "{user}");
     let system = prepared.body["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("request field"));
+    assert!(system.contains("context.request"), "{system}");
 }
 #[test]
 fn a_long_request_counts_against_the_context_limit() {

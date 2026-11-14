@@ -23,9 +23,15 @@ use std::sync::{Arc, mpsc};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+/// The most Kafka topics whose field paths one snapshot holds. Parallel requests on
+/// different topics then share one snapshot and do not cancel the reads of each other.
+const FIELD_TOPICS: usize = 4;
+
 struct Cache {
     generation: u64,
     fingerprint: (u64, u64, Option<u64>),
+    /// The Kafka topics whose field paths the snapshot holds, the newest last.
+    topics: Vec<String>,
     snapshot: Option<Arc<Snapshot>>,
     cancel: CancellationToken,
     loading: bool,
@@ -38,6 +44,8 @@ struct Run {
     connection: ConnectionId,
     generation: u64,
     target: Target,
+    /// The Kafka topic of the statement at the cursor, as typed.
+    focus: Option<String>,
     provider: Provider,
     scope: String,
     base: PathBuf,
@@ -135,7 +143,7 @@ impl App {
             && self.editor_has_focus()
             && self
                 .active_connection()
-                .is_some_and(|c| !c.dialect.is_command_line())
+                .is_some_and(|c| c.dialect != crate::sql::Dialect::Redis)
             && !self.console().is_busy()
             && !self.association_pending(self.console().id)
             && self.console().editor.review().is_none()
@@ -313,31 +321,54 @@ impl App {
     }
     pub(super) fn refresh_ai_schema(&mut self, id: ConnectionId) {
         if self.ai.preferences.enabled() && self.ai.caches.get(&id).is_some_and(|c| c.warmed) {
-            self.ensure_ai_schema(id);
+            self.ensure_ai_schema(id, None);
             if let Some(cache) = self.ai.caches.get_mut(&id) {
                 cache.background = true;
             }
         }
     }
-    fn ensure_ai_schema(&mut self, id: ConnectionId) -> u64 {
+    /// Returns the generation of the snapshot of a connection, and starts a read when the
+    /// cache is old or lacks the fields of `topic`. A name that the catalog does not
+    /// know, such as a topic name that the user still types, reads no fields.
+    fn ensure_ai_schema(&mut self, id: ConnectionId, topic: Option<&str>) -> u64 {
         let fingerprint = self.ai_fingerprint(id).unwrap_or_default();
+        let topic = topic.filter(|topic| {
+            self.connection(id)
+                .and_then(|c| c.catalog.as_ref())
+                .is_none_or(|catalog| {
+                    catalog
+                        .relation(Some(crate::connector::kafka::TOPICS), topic)
+                        .is_some()
+                })
+        });
         if let Some(cache) = self.ai.caches.get(&id)
             && cache.fingerprint == fingerprint
             && (cache.loading || cache.snapshot.is_some())
+            && topic.is_none_or(|topic| cache.topics.iter().any(|known| known == topic))
         {
             return cache.generation;
         }
         self.ai.serial += 1;
         let generation = self.ai.serial;
         let warmed = self.ai.caches.get(&id).is_some_and(|c| c.warmed);
+        let mut topics = Vec::new();
         if let Some(old) = self.ai.caches.remove(&id) {
             old.cancel.cancel();
+            topics = old.topics;
+        }
+        if let Some(topic) = topic {
+            topics.retain(|known| known != topic);
+            topics.push(topic.to_owned());
+            if topics.len() > FIELD_TOPICS {
+                topics.remove(0);
+            }
         }
         self.ai.caches.insert(
             id,
             Cache {
                 generation,
                 fingerprint,
+                topics,
                 snapshot: None,
                 cancel: CancellationToken::new(),
                 loading: true,
@@ -372,6 +403,7 @@ impl App {
                 id,
                 generation,
                 schemas,
+                cache.topics.clone(),
                 cache.cancel.clone(),
                 self.ai.schema_sender.clone(),
             );
@@ -488,6 +520,7 @@ impl App {
         let mut target = self.console_mut().editor.ai_target(effective_schema);
         // The request of the user travels with the context. Empty text sends none.
         target.context.instruction = instruction.filter(|text| !text.trim().is_empty());
+        let focus = ai::focus_topic(&target.context);
         let console_id = self.console().id;
         // The AI completion works at the cursor only: a selection never starts it.
         if self.console().editor.selection_range().is_some() {
@@ -564,6 +597,7 @@ impl App {
             connection,
             generation: 0,
             target,
+            focus,
             provider,
             scope,
             base,
@@ -617,8 +651,8 @@ impl App {
             self.show_dialog("Send SQL and schema to AI",format!("Connection: {connection}\nEndpoint: {endpoint}\nCredential: {credential}\n\nSQLN sends SQL near the cursor and schema metadata. Both can contain sensitive information. Table records are not included.\n\nAllow this connection and destination for this project?"),vec![("Cancel",DialogAction::AiCancel(id)),("Allow",DialogAction::AiAllow(id))]);
             return;
         }
-        let connection = run.connection;
-        let generation = self.ensure_ai_schema(connection);
+        let (connection, focus) = (run.connection, run.focus.clone());
+        let generation = self.ensure_ai_schema(connection, focus.as_deref());
         if let Some(run) = self.ai.runs.iter_mut().find(|r| r.id == id) {
             run.consent = true;
             run.generation = generation;

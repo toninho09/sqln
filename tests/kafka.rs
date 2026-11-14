@@ -7,10 +7,14 @@
 mod common;
 #[path = "kafka/fields.rs"]
 mod fields;
+#[path = "kafka/guide.rs"]
+mod guide;
 #[path = "kafka/progress.rs"]
 mod progress;
 #[path = "kafka/select.rs"]
 mod select;
+#[path = "kafka/topics.rs"]
+mod topics;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -410,7 +414,8 @@ fn the_list_holds_commands_then_names_then_clauses() {
         .into_iter()
         .map(|item| item.0)
         .collect();
-    assert_eq!(clauses, ["WHERE"]);
+    // The line list holds all filter words, and WHEN starts a CASE in the filter.
+    assert_eq!(clauses, ["WHEN", "WHERE"]);
     assert!(labels("TOPICS x").is_empty(), "TOPICS takes no name");
     assert_eq!(labels("SEL"), [("SELECT".to_owned(), "SELECT".to_owned())]);
 }

@@ -1,9 +1,9 @@
 //! SELECT maps to the same finite and continuous reads as CONSUME and TAIL.
 
-use super::{Command, Cursor, Start, TokenKind, error_at, parse_read, parse_time};
+use super::{Command, Cursor, Start, TokenKind, error_at, parse_read, parse_time, time_text};
 use crate::connector::ExecError;
 use crate::connector::kafka::filter::Text;
-use crate::connector::kafka::filter::{self, Context, Evaluation, Expr, Message, Needs};
+use crate::connector::kafka::filter::{self, Context, Evaluation, Expr, Message, Meta, Needs};
 use crate::grid::{Row, RowWriter, Value};
 use crate::ui::text;
 use serde_json::Value as Json;
@@ -13,8 +13,9 @@ use serde_json::Value as Json;
 enum Source {
     /// A message column, with its original value and type.
     Column(usize),
-    /// A value of the message, such as a field of the decoded value.
-    Expr(Expr),
+    /// A value of the message, such as a field of the decoded value. A time shows as
+    /// UTC text.
+    Expr { expr: Expr, time: bool },
 }
 
 #[derive(Debug)]
@@ -54,7 +55,9 @@ impl Projection {
             .collect()
     }
 
-    pub fn apply(&self, row: Row, evaluation: &Evaluation) -> Result<Row, ExecError> {
+    /// Computes the columns of one message. `meta` holds the facts that the row does not
+    /// keep, such as the received bytes.
+    pub fn apply(&self, row: Row, meta: Meta, evaluation: &Evaluation) -> Result<Row, ExecError> {
         evaluation.check()?;
         let cells: Vec<_> = row.cells().collect();
         let text = |index: usize| match cells.get(index) {
@@ -85,6 +88,7 @@ impl Projection {
             headers: text(5),
             headers_json: headers_json.as_ref(),
             schema: text(6),
+            meta,
         };
         let context = Context {
             message: &message,
@@ -96,7 +100,7 @@ impl Projection {
             evaluation.check()?;
             let cell = match &column.source {
                 Source::Column(index) => Cell::Original(cells[*index]),
-                Source::Expr(expr) => {
+                Source::Expr { expr, time } => {
                     let mut text = Text::new(evaluation)?;
                     let list = expr.has_any();
                     let mut found = false;
@@ -106,6 +110,12 @@ impl Projection {
                         text.push(b"[")?;
                     }
                     expr.visit(context, &mut |value| {
+                        let shown = if *time {
+                            value.as_i64().and_then(time_text).map(Json::String)
+                        } else {
+                            None
+                        };
+                        let value = shown.as_ref().unwrap_or(value);
                         if list {
                             if found {
                                 text.push(b",")?;
@@ -160,9 +170,15 @@ fn source(cursor: &mut Cursor<'_>, line: &str) -> Result<(Source, String), ExecE
     let source = match expr {
         Expr::Field(root, path) if path.is_empty() => match root.index() {
             Some(index) => Source::Column(index),
-            None => Source::Expr(Expr::Field(root, path)),
+            None => Source::Expr {
+                expr: Expr::Field(root, path),
+                time: false,
+            },
         },
-        expr => Source::Expr(expr),
+        expr => Source::Expr {
+            time: expr.is_time(),
+            expr,
+        },
     };
     Ok((source, written))
 }
@@ -198,7 +214,7 @@ fn projection(cursor: &mut Cursor<'_>, line: &str) -> Result<Option<Projection>,
             expect(cursor, "FROM")?;
             let mut needs = Needs::default();
             for column in &columns {
-                if let Source::Expr(expr) = &column.source {
+                if let Source::Expr { expr, .. } = &column.source {
                     expr.needs(&mut needs);
                 }
             }
@@ -279,7 +295,9 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        read.projection.unwrap().apply(row, evaluation)
+        read.projection
+            .unwrap()
+            .apply(row, Meta::default(), evaluation)
     }
 
     #[test]

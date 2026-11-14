@@ -45,7 +45,14 @@ fn run(
 }
 fn read(manager: &Manager, connection: u64, schemas: Vec<String>) -> Arc<Snapshot> {
     let (sender, receiver) = mpsc::channel();
-    manager.load_ai_schema(connection, 1, schemas, CancellationToken::new(), sender);
+    manager.load_ai_schema(
+        connection,
+        1,
+        schemas,
+        Vec::new(),
+        CancellationToken::new(),
+        sender,
+    );
     loop {
         if let Event::Loaded(id, 1, result) = receiver
             .recv_timeout(Duration::from_secs(30))

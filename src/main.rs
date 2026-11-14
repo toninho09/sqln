@@ -178,7 +178,7 @@ fn open(options: &mut Options, target: &str) -> Result<(), String> {
             let name = target.label();
             options
                 .connections
-                .push(Definition::new(name, Source::Network(target)));
+                .push(Definition::new(name, Source::Network(*target)));
         }
     }
     options.session_target = true;
