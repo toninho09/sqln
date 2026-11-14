@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use serde_json::Value as Json;
 use unicode_width::UnicodeWidthStr;
 
+use crate::dialect::features;
 use crate::grid::{ResultTable, Row, RowWriter, Value};
 use crate::sql::Dialect;
 use crate::text;
@@ -26,6 +27,26 @@ const POSTGRES_DETAILS: [&str; 8] = [
     "Group Key",
 ];
 
+/// The plan of a source: the text before the statement, and the form of the answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlanSyntax {
+    pub explain: &'static str,
+    /// The text that also runs the statement, or `None` when the source cannot do it.
+    pub analyze: Option<&'static str>,
+    pub format: PlanFormat,
+}
+
+/// The form of the plan that a database returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanFormat {
+    /// One JSON document, as `EXPLAIN (FORMAT JSON)` of PostgreSQL.
+    PostgresJson,
+    /// One text tree, as `EXPLAIN FORMAT=TREE` of MySQL.
+    MySqlTree,
+    /// One row for each node, as `EXPLAIN QUERY PLAN` of SQLite.
+    SqliteRows,
+}
+
 /// The plan that one execution of a console asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Explain {
@@ -37,14 +58,8 @@ impl Explain {
     /// Returns `None` for a source without this plan. With `analyze`, the database runs
     /// the statement. SQLite cannot do this, and Redis has no plan.
     pub fn new(dialect: Dialect, analyze: bool) -> Option<Self> {
-        let prefix = match (dialect, analyze) {
-            (Dialect::Postgres, false) => "EXPLAIN (FORMAT JSON) ",
-            (Dialect::Postgres, true) => "EXPLAIN (ANALYZE, FORMAT JSON) ",
-            (Dialect::MySql, false) => "EXPLAIN FORMAT=TREE ",
-            (Dialect::MySql, true) => "EXPLAIN ANALYZE ",
-            (Dialect::Sqlite, false) => "EXPLAIN QUERY PLAN ",
-            _ => return None,
-        };
+        let plan = features(dialect).plan()?;
+        let prefix = if analyze { plan.analyze? } else { plan.explain };
         Some(Self { dialect, prefix })
     }
 
@@ -104,12 +119,10 @@ struct Column {
 /// text that this module cannot read.
 pub fn plan_view(dialect: Dialect, raw: &ResultTable) -> Option<PlanView> {
     let first_cell = || raw.rows.first()?.get(0).map(Value::full_text);
-    let reading = match dialect {
-        Dialect::Postgres => read_postgres(&first_cell()?)?,
-        Dialect::MySql => read_mysql(&first_cell()?)?,
-        Dialect::Sqlite => read_sqlite(raw)?,
-        Dialect::Redis | Dialect::Kafka => return None,
-        Dialect::DuckDb => return None,
+    let reading = match features(dialect).plan()?.format {
+        PlanFormat::PostgresJson => read_postgres(&first_cell()?)?,
+        PlanFormat::MySqlTree => read_mysql(&first_cell()?)?,
+        PlanFormat::SqliteRows => read_sqlite(raw)?,
     };
     let shares = shares(&reading.nodes);
     let columns = columns(&reading.nodes, &shares);

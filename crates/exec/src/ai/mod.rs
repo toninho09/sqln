@@ -107,22 +107,7 @@ const RULES: &str = "You complete SQL in the SQLN editor. The user message holds
 
 /// Returns the system message of a dialect. One dialect always gives the same text.
 pub fn instruction(dialect: Dialect) -> String {
-    let language = match dialect {
-        Dialect::Postgres => {
-            "Write PostgreSQL SQL. Quote an identifier with double quotes only when it needs quotes."
-        }
-        Dialect::MySql => {
-            "Write MySQL SQL. Quote an identifier with backticks only when it needs quotes."
-        }
-        Dialect::Sqlite => {
-            "Write SQLite SQL. Quote an identifier with double quotes only when it needs quotes."
-        }
-        Dialect::DuckDb => {
-            "Write DuckDB SQL. Quote an identifier with double quotes only when it needs quotes."
-        }
-        Dialect::Redis => "Write Redis commands, one command on each line.",
-        Dialect::Kafka => crate::connector::kafka::GUIDE,
-    };
+    let language = crate::dialect::features(dialect).ai_language();
     format!("{RULES}\n\n{language}")
 }
 

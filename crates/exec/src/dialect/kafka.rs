@@ -3,6 +3,7 @@
 
 use super::{Features, Vocabulary};
 use crate::complete::keywords::{KAFKA_CLAUSES, KAFKA_COMMANDS, KAFKA_SELECT_WORDS};
+use crate::plan::PlanSyntax;
 
 pub struct Kafka;
 
@@ -26,5 +27,21 @@ const VOCABULARY: Vocabulary = Vocabulary {
 impl Features for Kafka {
     fn vocabulary(&self) -> &'static Vocabulary {
         &VOCABULARY
+    }
+
+    fn plan(&self) -> Option<&'static PlanSyntax> {
+        None
+    }
+
+    fn diagram_sql(&self, _: &str) -> Option<[String; 2]> {
+        None
+    }
+
+    fn ai_language(&self) -> &'static str {
+        crate::connector::kafka::GUIDE
+    }
+
+    fn ai_comments_sql(&self, _: &str) -> Option<String> {
+        None
     }
 }

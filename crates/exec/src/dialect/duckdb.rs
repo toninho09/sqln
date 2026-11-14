@@ -4,6 +4,7 @@ use super::postgres::{ALTER_TABLE_ACTIONS, FUNCTIONS, KEYWORDS, STARTERS_EXTRA, 
 use super::{Features, Vocabulary};
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
+use crate::plan::PlanSyntax;
 
 pub struct DuckDb;
 
@@ -27,5 +28,21 @@ const VOCABULARY: Vocabulary = Vocabulary {
 impl Features for DuckDb {
     fn vocabulary(&self) -> &'static Vocabulary {
         &VOCABULARY
+    }
+
+    fn plan(&self) -> Option<&'static PlanSyntax> {
+        None
+    }
+
+    fn diagram_sql(&self, _: &str) -> Option<[String; 2]> {
+        None
+    }
+
+    fn ai_language(&self) -> &'static str {
+        "Write DuckDB SQL. Quote an identifier with double quotes only when it needs quotes."
+    }
+
+    fn ai_comments_sql(&self, _: &str) -> Option<String> {
+        None
     }
 }

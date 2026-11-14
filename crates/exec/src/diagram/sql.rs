@@ -3,6 +3,7 @@
 //! of the foreign keys that leave or reach the schema.
 
 use crate::catalog::RelationRef;
+use crate::dialect::features;
 use crate::grid::Row;
 use crate::sql::Dialect;
 use crate::structure::name_literal;
@@ -11,17 +12,11 @@ use super::{ColumnRow, KeyRow};
 
 /// Returns the column query and the key query of a schema. Redis has no tables.
 pub fn diagram_sql(dialect: Dialect, schema: &str) -> Option<[String; 2]> {
-    let schema = name_literal(schema, dialect);
-    match dialect {
-        Dialect::Postgres => Some([postgres_columns(&schema), postgres_keys(&schema)]),
-        Dialect::MySql => Some([mysql_columns(&schema), mysql_keys(&schema)]),
-        Dialect::Sqlite => Some([sqlite_columns(&schema), sqlite_keys(&schema)]),
-        Dialect::DuckDb | Dialect::Redis | Dialect::Kafka => None,
-    }
+    features(dialect).diagram_sql(&name_literal(schema, dialect))
 }
 
 /// The partitions of a table stay out, and the key of a partitioned table appears once.
-fn postgres_columns(schema: &str) -> String {
+pub(crate) fn postgres_columns(schema: &str) -> String {
     format!(
         "SELECT n.nspname::text AS schema, c.relname::text AS relation, \
          a.attname::text AS name, pg_catalog.format_type(a.atttypid, a.atttypmod) AS type, \
@@ -39,7 +34,7 @@ fn postgres_columns(schema: &str) -> String {
     )
 }
 
-fn postgres_keys(schema: &str) -> String {
+pub(crate) fn postgres_keys(schema: &str) -> String {
     format!(
         "SELECT n.nspname::text AS schema, c.relname::text AS relation, \
          k.conname::text AS key_name, a.attname::text AS column_name, \
@@ -61,7 +56,7 @@ fn postgres_keys(schema: &str) -> String {
     )
 }
 
-fn mysql_columns(schema: &str) -> String {
+pub(crate) fn mysql_columns(schema: &str) -> String {
     format!(
         "SELECT c.TABLE_SCHEMA AS `schema`, c.TABLE_NAME AS relation, c.COLUMN_NAME AS name, \
          c.COLUMN_TYPE AS type, LOWER(c.IS_NULLABLE) AS nullable, \
@@ -77,7 +72,7 @@ fn mysql_columns(schema: &str) -> String {
     )
 }
 
-fn mysql_keys(schema: &str) -> String {
+pub(crate) fn mysql_keys(schema: &str) -> String {
     format!(
         "SELECT TABLE_SCHEMA AS `schema`, TABLE_NAME AS relation, CONSTRAINT_NAME AS key_name, \
          COLUMN_NAME AS column_name, REFERENCED_TABLE_SCHEMA AS target_schema, \
@@ -93,7 +88,7 @@ fn mysql_keys(schema: &str) -> String {
 const SQLITE_TABLES: &str = "\
     t.type = 'table' AND t.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'";
 
-fn sqlite_columns(schema: &str) -> String {
+pub(crate) fn sqlite_columns(schema: &str) -> String {
     format!(
         "SELECT t.schema AS \"schema\", t.name AS relation, c.name AS name, c.type AS type, \
          CASE WHEN c.\"notnull\" = 0 THEN 'yes' ELSE 'no' END AS nullable, \
@@ -107,7 +102,7 @@ fn sqlite_columns(schema: &str) -> String {
 
 /// A key of SQLite reads a table of its own file. A key without target columns reads
 /// the primary key of the target, so its target column is `NULL`.
-fn sqlite_keys(schema: &str) -> String {
+pub(crate) fn sqlite_keys(schema: &str) -> String {
     format!(
         "SELECT t.schema AS \"schema\", t.name AS relation, f.id AS key_name, \
          f.\"from\" AS column_name, t.schema AS target_schema, f.\"table\" AS target_relation, \

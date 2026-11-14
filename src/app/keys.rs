@@ -19,7 +19,7 @@ use crate::navigator::RowKind;
 use crate::palette::{Command, Palette, PaletteRequest};
 use crate::plan::Explain;
 use crate::settings::SettingsRequest;
-use crate::sql::{Dialect, first_keyword, is_plain_read};
+use crate::sql::{first_keyword, is_plain_read};
 use crate::store::config::ExplorerSide;
 use crate::structure::has_sessions;
 use crate::table::TableFocus;
@@ -972,8 +972,9 @@ impl App {
         let dialect = self.connection(connection).map(|item| item.dialect);
         let explain = dialect.and_then(|dialect| Explain::new(dialect, analyze));
         let Some(explain) = explain else {
-            let sqlite = analyze && dialect == Some(Dialect::Sqlite);
-            return Err(if sqlite {
+            // The source has a plan, but it cannot run the statement in it.
+            let no_analyze = analyze && dialect.and_then(|d| Explain::new(d, false)).is_some();
+            return Err(if no_analyze {
                 text::PLAN_ANALYZE_REFUSED
             } else {
                 text::PLAN_REFUSED

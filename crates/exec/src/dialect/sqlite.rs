@@ -3,6 +3,8 @@
 use super::{Features, Vocabulary};
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
+use crate::diagram::sql::{sqlite_columns, sqlite_keys};
+use crate::plan::{PlanFormat, PlanSyntax};
 
 pub struct Sqlite;
 
@@ -50,6 +52,13 @@ const FUNCTIONS: &[(&str, &str)] = &[
     ("JSON_EXTRACT", "JSON_EXTRACT(document, path, ...)"),
 ];
 
+/// SQLite cannot run the statement in a plan.
+const PLAN: PlanSyntax = PlanSyntax {
+    explain: "EXPLAIN QUERY PLAN ",
+    analyze: None,
+    format: PlanFormat::SqliteRows,
+};
+
 const VOCABULARY: Vocabulary = Vocabulary {
     keywords: &[COMMON, KEYWORDS],
     starters: &[STARTERS, STARTERS_EXTRA],
@@ -70,5 +79,22 @@ const VOCABULARY: Vocabulary = Vocabulary {
 impl Features for Sqlite {
     fn vocabulary(&self) -> &'static Vocabulary {
         &VOCABULARY
+    }
+
+    fn plan(&self) -> Option<&'static PlanSyntax> {
+        Some(&PLAN)
+    }
+
+    fn diagram_sql(&self, schema: &str) -> Option<[String; 2]> {
+        Some([sqlite_columns(schema), sqlite_keys(schema)])
+    }
+
+    fn ai_language(&self) -> &'static str {
+        "Write SQLite SQL. Quote an identifier with double quotes only when it needs quotes."
+    }
+
+    /// SQLite has no comment catalog.
+    fn ai_comments_sql(&self, _: &str) -> Option<String> {
+        None
     }
 }

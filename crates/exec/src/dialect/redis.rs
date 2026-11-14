@@ -2,6 +2,7 @@
 
 use super::{Features, Vocabulary};
 use crate::complete::keywords::REDIS;
+use crate::plan::PlanSyntax;
 
 pub struct Redis;
 
@@ -25,5 +26,21 @@ const VOCABULARY: Vocabulary = Vocabulary {
 impl Features for Redis {
     fn vocabulary(&self) -> &'static Vocabulary {
         &VOCABULARY
+    }
+
+    fn plan(&self) -> Option<&'static PlanSyntax> {
+        None
+    }
+
+    fn diagram_sql(&self, _: &str) -> Option<[String; 2]> {
+        None
+    }
+
+    fn ai_language(&self) -> &'static str {
+        "Write Redis commands, one command on each line."
+    }
+
+    fn ai_comments_sql(&self, _: &str) -> Option<String> {
+        None
     }
 }

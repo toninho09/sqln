@@ -9,6 +9,7 @@ mod postgres;
 mod redis;
 mod sqlite;
 
+use crate::plan::PlanSyntax;
 use crate::sql::Dialect;
 
 /// The words that completion offers for a dialect. A slice of lists keeps shared lists
@@ -47,6 +48,15 @@ pub struct Vocabulary {
 /// each item.
 pub trait Features: Sync {
     fn vocabulary(&self) -> &'static Vocabulary;
+    /// The plan of a statement, or `None` when the source has no plan.
+    fn plan(&self) -> Option<&'static PlanSyntax>;
+    /// The column query and the key query of a diagram. `schema` is a literal already.
+    fn diagram_sql(&self, schema: &str) -> Option<[String; 2]>;
+    /// The line of the AI system message that names the language.
+    fn ai_language(&self) -> &'static str;
+    /// The query of the comments of a schema for AI metadata. `schema` is a literal
+    /// already.
+    fn ai_comments_sql(&self, schema: &str) -> Option<String>;
 }
 
 /// Returns the features of a dialect.

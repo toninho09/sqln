@@ -152,14 +152,6 @@ pub fn kafka_snapshot(
 
 /// Comments supplement existing structural readers. SQLite has no comment catalog.
 pub fn comments_sql(dialect: Dialect, schema: &str) -> Option<String> {
-    let literal = crate::structure::name_literal(schema, dialect);
-    match dialect {
-        Dialect::Postgres => Some(format!(
-            "SELECT c.relname::text AS relation, a.attname::text AS column_name, pg_catalog.col_description(c.oid,a.attnum) AS comment FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped WHERE n.nspname={literal} AND c.relkind IN ('r','p','f','v','m') UNION ALL SELECT c.relname::text,NULL::text,pg_catalog.obj_description(c.oid,'pg_class') FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname={literal} AND c.relkind IN ('r','p','f','v','m')"
-        )),
-        Dialect::MySql => Some(format!(
-            "SELECT TABLE_NAME AS relation,COLUMN_NAME AS column_name,COLUMN_COMMENT AS comment FROM information_schema.COLUMNS WHERE TABLE_SCHEMA={literal} UNION ALL SELECT TABLE_NAME,NULL,TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA={literal}"
-        )),
-        _ => None,
-    }
+    crate::dialect::features(dialect)
+        .ai_comments_sql(&crate::structure::name_literal(schema, dialect))
 }

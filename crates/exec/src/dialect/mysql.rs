@@ -3,6 +3,8 @@
 use super::{Features, Vocabulary};
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
+use crate::diagram::sql::{mysql_columns, mysql_keys};
+use crate::plan::{PlanFormat, PlanSyntax};
 
 pub struct MySql;
 
@@ -118,6 +120,12 @@ const ALTER_TABLE_ACTIONS: &[&str] = &[
     "DROP FOREIGN KEY",
 ];
 
+const PLAN: PlanSyntax = PlanSyntax {
+    explain: "EXPLAIN FORMAT=TREE ",
+    analyze: Some("EXPLAIN ANALYZE "),
+    format: PlanFormat::MySqlTree,
+};
+
 const VOCABULARY: Vocabulary = Vocabulary {
     keywords: &[COMMON, KEYWORDS],
     starters: &[STARTERS, STARTERS_EXTRA],
@@ -138,5 +146,23 @@ const VOCABULARY: Vocabulary = Vocabulary {
 impl Features for MySql {
     fn vocabulary(&self) -> &'static Vocabulary {
         &VOCABULARY
+    }
+
+    fn plan(&self) -> Option<&'static PlanSyntax> {
+        Some(&PLAN)
+    }
+
+    fn diagram_sql(&self, schema: &str) -> Option<[String; 2]> {
+        Some([mysql_columns(schema), mysql_keys(schema)])
+    }
+
+    fn ai_language(&self) -> &'static str {
+        "Write MySQL SQL. Quote an identifier with backticks only when it needs quotes."
+    }
+
+    fn ai_comments_sql(&self, literal: &str) -> Option<String> {
+        Some(format!(
+            "SELECT TABLE_NAME AS relation,COLUMN_NAME AS column_name,COLUMN_COMMENT AS comment FROM information_schema.COLUMNS WHERE TABLE_SCHEMA={literal} UNION ALL SELECT TABLE_NAME,NULL,TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA={literal}"
+        ))
     }
 }
