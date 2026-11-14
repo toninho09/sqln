@@ -3063,7 +3063,7 @@ fn shortcut_recording_saves_only_the_global_scope_and_works_after_restart() {
     ] {
         session.code(code);
     }
-    session.assert_sees("Keys · Conventional");
+    session.assert_sees("Help · Conventional");
     let mut restarted = Session::start(&store);
     for code in [
         KeyCode::F(8),
@@ -3073,7 +3073,7 @@ fn shortcut_recording_saves_only_the_global_scope_and_works_after_restart() {
     ] {
         restarted.code(code);
     }
-    restarted.assert_sees("Keys · Conventional");
+    restarted.assert_sees("Help · Conventional");
 }
 
 #[test]
@@ -3101,7 +3101,7 @@ fn shortcut_recording_with_mouse_confirmation_saves_enter_in_the_project() {
     for code in [KeyCode::F(8), KeyCode::Enter, KeyCode::Char('a')] {
         restarted.code(code);
     }
-    restarted.assert_sees("Keys · Conventional");
+    restarted.assert_sees("Help · Conventional");
 }
 
 #[test]

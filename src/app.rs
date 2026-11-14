@@ -38,7 +38,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{Event, KeyEventKind, MouseEventKind, poll, read};
+use crossterm::event::{Event, KeyEventKind, MouseButton, MouseEventKind, poll, read};
 use edtui::EditorMode;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -1135,6 +1135,9 @@ impl App {
                     match mouse.kind {
                         MouseEventKind::ScrollUp => help.scroll = help.scroll.saturating_sub(3),
                         MouseEventKind::ScrollDown => help.scroll = help.scroll.saturating_add(3),
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            help.click(mouse.column, mouse.row);
+                        }
                         _ => {}
                     }
                 }

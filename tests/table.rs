@@ -1113,6 +1113,9 @@ fn the_help_of_a_structure_tab_lists_only_the_keys_that_act() {
     let (mut f, _) = Fixture::recorded(Recorder::default());
     f.structure_of_table("users");
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     let screen = f.screen_at(100, 70);
     assert!(screen.contains("Next section"), "{screen}");
     assert!(!screen.contains("Next page of rows"), "{screen}");
@@ -1125,6 +1128,9 @@ fn the_help_of_a_table_tab_lists_the_structure_key() {
     let (mut f, _) = Fixture::recorded(Recorder::default());
     f.open_table("users");
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     let screen = f.screen_at(100, 70);
     assert!(screen.contains("Next page of rows"), "{screen}");
     assert!(
@@ -2623,7 +2629,10 @@ fn the_help_of_a_table_lists_its_own_keys() {
     f.open_table("users");
     f.grid();
     f.code(KeyCode::F(1));
-    f.assert_sees("Keys · Conventional · Table");
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
+    f.assert_sees("Help · Conventional · Table");
     f.code(KeyCode::Down);
     f.assert_sees("Sort by the column");
     f.assert_not_sees("Close the result");
@@ -2634,7 +2643,10 @@ fn the_help_of_a_table_lists_its_own_keys() {
     f.code(KeyCode::Esc);
     f.focus_filter();
     f.code(KeyCode::F(1));
-    f.assert_sees("Keys · Conventional · Filter");
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
+    f.assert_sees("Help · Conventional · Filter");
     f.assert_sees("Apply the filters");
 }
 
@@ -2646,7 +2658,10 @@ fn the_help_of_a_console_hides_the_keys_of_a_table() {
     });
     f.prefix('j');
     f.code(KeyCode::F(1));
-    f.assert_sees("Keys · Conventional · Results");
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
+    f.assert_sees("Help · Conventional · Results");
     f.assert_sees("Close the result");
     f.assert_not_sees("Load more rows");
 }
@@ -4181,11 +4196,17 @@ fn the_list_of_keys_names_the_pages_in_a_table_and_the_results_in_a_console() {
     let (mut f, _) = paged(250);
     f.grid();
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     f.assert_sees("Next page of rows");
     f.code(KeyCode::Esc);
     f.click_text("console-1");
     f.prefix('j');
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     f.assert_sees("Next result");
 }
 
@@ -4339,6 +4360,9 @@ fn a_failed_count_shows_the_error_and_keeps_the_rows() {
 fn the_help_lists_the_count_only_while_it_can_act() {
     let (mut f, _) = counted_table(250);
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     for _ in 0..6 {
         f.code(KeyCode::Down);
     }
@@ -4347,6 +4371,9 @@ fn the_help_lists_the_count_only_while_it_can_act() {
 
     let (mut f, _) = counted_table(5);
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     for _ in 0..6 {
         f.code(KeyCode::Down);
     }

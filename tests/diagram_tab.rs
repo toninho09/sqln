@@ -377,6 +377,9 @@ fn the_hint_row_and_f1_name_the_keys_of_the_diagram() {
         "{hint}"
     );
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     let screen = f.screen();
     assert!(screen.contains("Diagram"), "{screen}");
     assert!(screen.contains("Select the table above"), "{screen}");

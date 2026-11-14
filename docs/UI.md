@@ -229,7 +229,7 @@ The result tab row keeps the selected result, Plan, or Messages tab visible afte
                  │  2 │  2 │ Bruno  │ true                             │
                  │ 1,000 rows · row cap reached
  EDITOR  app  public  Auto · No transaction · Idle  Pool 0/5 · Data 1/256 MiB  3:14
- F5 run  Shift+F5 script  Ctrl+Space suggestions  Ctrl+F find  F1 keys
+ F5 run  Shift+F5 script  Ctrl+Space suggestions  Ctrl+F find  F1 help
 ```
 
 With `"preferences": { "icons": "nerd" }` in `config.json`, the database logo comes before the name, and `pg` leaves the line.
@@ -1412,32 +1412,45 @@ The JSON stays compact in this window. `f` toggles formatting only in the cell v
 
 ### Help screen
 
-`F1` shows the effective shortcuts of the active mode and the focused panel.
+`F1` opens a window with a sidebar. The sidebar lists the pages: the five guide topics, **All keys**, then each key group.
+`F1` always opens on the first topic. The sidebar scrolls the smallest number of rows that keeps the open page in view.
+
+The guide topics are: **Connect**, **Run SQL**, **Tables**, **Kafka**, and **Scripts**.
+Each topic has a title, a short text, steps, and examples. Each step shows the effective key of the active mode and the custom shortcuts.
+A step of the explorer starts with the focus key, such as `Ctrl+W h a`. A command without a key shows the palette path, such as `Ctrl+P → Export the result to a file`.
+The **Kafka** topic shows SELECT examples: `TOPICS`, `PARTITIONS`, `LIMIT`, `SCAN`, `PARTITION`, `START AT`, `WHERE` on the value, the key, the headers, and the metadata, `IS MISSING`, and `EMIT CHANGES`.
+
+**All keys** and the groups show the effective shortcuts of the active mode and the focused panel.
 The reference groups the panel keys, execution, transactions, connections, tabs, panels, and application commands.
 Empty groups do not appear. The key column has a separate style. Long keys and descriptions wrap without cuts.
 
-Type words to filter by group, command, or shortcut. Each word must match, without case sensitivity.
-`Tab` and `Shift+Tab` select a group, or **All**. The filter stays when the group changes.
+Type words to filter the open page. Each word must match, without case sensitivity.
+On a topic, the filter keeps the steps and examples that match. The title and the text of the topic always show.
+On a key page, the filter matches group, command, or shortcut. A key page never shows the guide text.
+`Tab` and `Shift+Tab` open the next or the previous page. A click on a sidebar row opens its page. The filter stays when the page changes.
 `Up` and `Down` scroll one row. `PageUp` and `PageDown` scroll one page. The mouse wheel also scrolls.
 `Ctrl+Home` and `Ctrl+End` go to the start and end. `Home` and `End` move the search cursor.
-`Ctrl+U` clears the filter. `Ctrl+C` copies the reference. `Esc`, `Enter`, and `F1` close it without running commands.
-The footer shows the matching command count and the visible row range. A scrollbar shows the position.
+`Ctrl+U` clears the filter. `Ctrl+C` copies the open page. `Esc`, `Enter`, and `F1` close it without running commands.
+The footer shows the count of matching items or commands and the visible row range. A scrollbar shows the position.
 
 ```text
-╭─ Keys · Conventional · Editor ──────────────────────────╮
-│ > Type a command or shortcut to filter                  │
-│ Group: All · Tab / Shift+Tab                            │
-│ Editor (5)                                             │
-│ Ctrl+Space                Suggestions                  │
-│ Ctrl+F                    Find and replace             │
-│ Ctrl+Z, Ctrl+Y            Undo, redo                    │
-│ Tab                       Accept the suggestion        │
-│ Esc                       Close the list               │
-│                                                        │
-│ Run (8)                                                │
-│ ctrl+enter, f5, ctrl+w e   Run the selection or the     │
-│                           statement                    │
-╰───────────────────────────── 42 commands · 1–10/56 ─────╯
+╭ Help · Conventional · Editor ───────────────────────────────────────────────╮
+│                │ >  Type a word to filter the guide                          │
+│   Connect      │                                                             │
+│   Run SQL      │ 4. Read Kafka with SELECT                                   │
+│   Tables       │ A Kafka connection uses kafka://host:9092, or kafkas://     │
+│ > Kafka        │ with TLS. SQLN reads the messages in the client with a ...  │
+│   Scripts      │                                                             │
+│   All keys     │ Enter                     Open the last 500 messages of the │
+│   Editor       │                           selected topic                    │
+│   Run          │ F5                        Run the statement at the cursor   │
+│   Transaction  │                                                             │
+│   Connection   │ List the topics                                             │
+│   Tabs         │   TOPICS                                                    │
+│   Panels       │                                                             │
+│   Application  │ Watch the new messages until you stop the read              │
+│                │   SELECT * FROM orders EMIT CHANGES;                        │
+╰────────────────┴──────────────────────────────────────── 17 items · 1–16/52 ─╯
 ```
 
 ### Prefix menu
@@ -1504,7 +1517,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
                         │                 Ctrl+W h s  Scripts without a connection
                         │                   Ctrl+W ,  Open the settings
                         │                     Ctrl+P  Show all commands
-                        │                         F1  Show all keys
+                        │                         F1  Show help
                         │                   Ctrl+W q  Quit SQLN
 ```
 
@@ -1525,7 +1538,7 @@ The first typed character removes the screen.
              Shift+F5  Run the script
            Ctrl+Space  Show suggestions
                Ctrl+P  Show all commands
-                   F1  Show all keys
+                   F1  Show help
 ```
 
 Without a connection, the screen shows **No connection yet** and the path `Ctrl+W h a`.

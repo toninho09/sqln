@@ -127,7 +127,7 @@ fn an_idle_editor_shows_how_to_run_and_how_to_get_help() {
         "Shift+F5 run script",
         "Ctrl+Space suggestions",
         "Ctrl+F find",
-        "F1 keys",
+        "F1 help",
     ]);
     s.assert_hides(&["results", "commit", "stop"]);
 }

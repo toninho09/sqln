@@ -63,9 +63,18 @@ impl SidebarModal {
     }
 }
 
-/// Draws the line between the sidebar and the fields. The line joins the window border.
+/// Draws the line between the sidebar and the fields. The line joins the window border
+/// only where the border line shows, so a long title stays whole.
 pub fn draw_divider(frame: &mut Frame, window: Rect, x: u16, theme: &Theme) {
     for y in window.y..window.bottom() {
+        let edge = y == window.y || y + 1 == window.bottom();
+        let line = frame
+            .buffer_mut()
+            .cell((x, y))
+            .map(|cell| cell.symbol() == "─");
+        if edge && line != Some(true) {
+            continue;
+        }
         let symbol = if y == window.y {
             "┬"
         } else if y + 1 == window.bottom() {

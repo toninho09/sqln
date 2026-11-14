@@ -335,7 +335,7 @@ In the structure tab of a table, `[` and `]` switch the section. In the other ta
 `d` opens the ER diagram of the row. A schema shows all its tables. A table shows the table and the tables that its foreign keys join, one step away. A column shows the diagram of its table. A connection shows its current schema: before its catalog, `d` reads the catalog, and the diagram opens when it arrives. A view, and Redis or Valkey, refuse it with a reason.
 `c` opens the dialog of a compare, with the row as the source: a connection gives its current schema, and a table or a column gives its table. A table starts a data compare, and a connection or a schema starts a structure compare. A view, a console row, and Redis or Valkey refuse it with a reason. The hint line can show `c compare` where the command is available, if the terminal has enough width. The key is also in the `Ctrl+W Tab` page, and `Ctrl+W v` acts from any panel.
 The hint line changes with the cursor row and terminal width. It reserves the palette shortcut and fits whole commands in priority order.
-`Ctrl+W Tab` lists the bound explorer commands, and `F1` shows the key reference. The connection commands appear on the connection line, but the keys act on any line of it, except `r` and `Delete` on a console row.
+`Ctrl+W Tab` lists the bound explorer commands, and `F1` shows the guide and the key reference. The connection commands appear on the connection line, but the keys act on any line of it, except `r` and `Delete` on a console row.
 The labels say the object of the command, such as `n new console` and `a add connection`.
 A command that does not fit leaves the line, and the key keeps acting.
 

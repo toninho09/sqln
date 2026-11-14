@@ -382,15 +382,183 @@ pub const HINT_DIALOG: &[HintPart] = &[
 ];
 pub const HINT_HELP: &[HintPart] = &[
     ("Type", "search"),
-    ("Tab", "group"),
+    ("Tab", "page"),
     ("Up/Down", "scroll"),
     ("PgUp/PgDn", "page"),
     ("Esc", "close"),
 ];
 pub const HELP_SEARCH: &str = "Type a command or shortcut to filter";
-pub const HELP_ALL: &str = "All";
-pub const HELP_GROUP: &str = "Group";
-pub const HELP_GROUP_KEYS: &str = "Tab / Shift+Tab";
+pub const HELP_ALL: &str = "All keys";
+pub const HELP_GUIDE_SEARCH: &str = "Type a word to filter the guide";
+/// One topic of the getting-started guide. The help shows the effective key of each step.
+/// An example is a text and a statement.
+pub struct GuideText {
+    /// The short name in the sidebar.
+    pub name: &'static str,
+    pub title: &'static str,
+    pub intro: &'static str,
+    pub steps: &'static [(Action, &'static str)],
+    pub examples: &'static [(&'static str, &'static str)],
+}
+
+pub const GUIDE: &[GuideText] = &[
+    GuideText {
+        name: "Connect",
+        title: "1. Connect to a database",
+        intro: "A connection holds the address of a database: a URI, such as postgres://user@host/db, or the path of a SQLite file. A console is a SQL editor on one connection.",
+        steps: &[
+            (Action::NavigatorAdd, "Add a connection"),
+            (
+                Action::NavigatorNewConsole,
+                "Open a console on the selected connection",
+            ),
+            (Action::ChooseSchema, "Choose the schema of the console"),
+            (
+                Action::ChangeConnection,
+                "Change the connection of the console",
+            ),
+        ],
+        examples: &[],
+    },
+    GuideText {
+        name: "Run SQL",
+        title: "2. Run SQL and read the results",
+        intro: "Write SQL in the console. The results show below the editor. The interface stays active while a query runs, and you can stop the query.",
+        steps: &[
+            (
+                Action::Run,
+                "Run the statement at the cursor, or the selection",
+            ),
+            (Action::RunScript, "Run all the statements of the console"),
+            (Action::Stop, "Stop the query"),
+            (Action::FocusDown, "Go to the results"),
+            (Action::FocusUp, "Go to the editor"),
+            (
+                Action::GridOpenValue,
+                "In the results, show the full value of the cell",
+            ),
+            (Action::GridCopy, "In the results, copy the selected cells"),
+            (Action::GridExport, "Export the result to a file"),
+            (Action::ToggleMode, "Use autocommit or a manual transaction"),
+            (Action::Commit, "Commit the transaction"),
+            (Action::Rollback, "Roll back the transaction"),
+        ],
+        examples: &[],
+    },
+    GuideText {
+        name: "Tables",
+        title: "3. Explore the tables",
+        intro: "The explorer shows the connections, schemas, tables, and columns. A table opens in a tab. In the tab, you can filter, sort, and edit the rows.",
+        steps: &[
+            (Action::ToggleNavigator, "Show or hide the explorer"),
+            (Action::NavigatorOpen, "Open the selected console or table"),
+            (
+                Action::NavigatorStructure,
+                "Show the structure of the selected table",
+            ),
+            (
+                Action::NavigatorDiagram,
+                "Show the ER diagram of the selected schema",
+            ),
+            (
+                Action::GridFocusFilter,
+                "In a table tab, write a WHERE filter",
+            ),
+            (Action::GridEditCell, "In a table tab, edit the cell"),
+            (Action::GridSaveEdits, "Review and save the changes"),
+        ],
+        examples: &[],
+    },
+    GuideText {
+        name: "Kafka",
+        title: "4. Read Kafka with SELECT",
+        intro: "A Kafka connection uses kafka://host:9092, or kafkas:// with TLS. SQLN reads the messages in the client with a SELECT subset: joins, aggregates, and ORDER BY are not supported. A plain SELECT reads the retained messages and stops at the last one. docs/KAFKA.md has the full syntax.",
+        steps: &[
+            (
+                Action::NavigatorOpen,
+                "Open the last 500 messages of the selected topic",
+            ),
+            (Action::Run, "Run the statement at the cursor"),
+            (Action::Stop, "Stop the read"),
+        ],
+        examples: &[
+            ("List the topics", "TOPICS"),
+            (
+                "List the partitions of a topic, with their offsets",
+                "PARTITIONS orders",
+            ),
+            (
+                "Read the retained messages from the first offset",
+                "SELECT * FROM orders;",
+            ),
+            (
+                "Read up to 100 messages that match",
+                "SELECT * FROM orders LIMIT 100;",
+            ),
+            (
+                "Examine at most 50,000 messages, with or without a match",
+                "SELECT * FROM orders WHERE value.status = 'failed' LIMIT 100 SCAN 50000;",
+            ),
+            ("Read one partition", "SELECT * FROM orders PARTITION 2;"),
+            (
+                "Start at an offset",
+                "SELECT * FROM orders START AT OFFSET 1500;",
+            ),
+            (
+                "Start at a time",
+                "SELECT * FROM orders START AT TIMESTAMP '2026-11-10T12:00:00Z';",
+            ),
+            (
+                "Filter on a field of the value",
+                "SELECT * FROM orders WHERE value.total > 1000;",
+            ),
+            (
+                "Filter on the key",
+                "SELECT * FROM orders WHERE key = 'customer-42';",
+            ),
+            (
+                "Filter on a header",
+                "SELECT * FROM orders WHERE headers.source = 'web';",
+            ),
+            (
+                "Filter on the metadata",
+                "SELECT * FROM orders WHERE partition = 2 AND offset > 1500;",
+            ),
+            (
+                "Find the messages without a field",
+                "SELECT * FROM orders WHERE value.notes IS MISSING;",
+            ),
+            (
+                "Watch the new messages until you stop the read",
+                "SELECT * FROM orders EMIT CHANGES;",
+            ),
+        ],
+    },
+    GuideText {
+        name: "Scripts",
+        title: "5. Scripts, commands, and settings",
+        intro: "SQLN saves each console automatically as a script. The settings change the keyboard mode (conventional or Vim), the shortcuts, the theme, and the AI completion. The docs folder explains Kafka, AI, and MCP.",
+        steps: &[
+            (Action::EditorSave, "Save the console now"),
+            (
+                Action::NavigatorScripts,
+                "Open the scripts without a connection",
+            ),
+            (Action::OpenSqlFile, "Open a SQL file as a console"),
+            (Action::OpenPalette, "Find and run a command"),
+            (
+                Action::ContextCommands,
+                "Show the commands of the current panel",
+            ),
+            (
+                Action::ExplorerCommands,
+                "Show the commands of the explorer",
+            ),
+            (Action::OpenSettings, "Open the settings"),
+        ],
+        examples: &[],
+    },
+];
 
 pub const HINT_OVERLAY_SEARCH: &[HintPart] = &[
     ("Enter", "next"),
@@ -485,6 +653,7 @@ pub const TITLE_PALETTE: &str = "Commands";
 pub const TITLE_PREFIX: &str = "Ctrl+W";
 pub const TITLE_EXPLORER_MENU: &str = "Ctrl+W · Explorer";
 pub const NO_COMMANDS: &str = "No command matches";
+pub const NO_ITEMS: &str = "No step or example matches";
 
 pub const STATUS_EDITOR: &str = "EDITOR";
 pub const STATUS_NORMAL: &str = "NORMAL";
@@ -610,7 +779,7 @@ pub const WELCOME_SCRIPT: &str = MENU_SCRIPT;
 pub const WELCOME_SUGGESTIONS: &str = "Show suggestions";
 pub const WELCOME_SUGGESTIONS_KEY: &str = "Ctrl+Space";
 pub const WELCOME_COMMANDS: &str = "Show all commands";
-pub const WELCOME_KEYS: &str = "Show all keys";
+pub const WELCOME_KEYS: &str = "Show help";
 
 pub const HOME_NO_CONSOLE: &str = "No console is open";
 pub const HOME_EXPLORER: &str = "Show the explorer";
@@ -1812,7 +1981,7 @@ pub const TITLE_RUNNING: &str = "Execution in progress";
 pub const TITLE_TRANSACTION: &str = "Open transaction";
 pub const TITLE_NO_ANSWER: &str = "No answer from the database";
 pub const TITLE_UNKNOWN: &str = "Transaction state unknown";
-pub const TITLE_KEYS: &str = "Keys";
+pub const TITLE_KEYS: &str = "Help";
 pub const BODY_RUNNING: &str =
     "Stop the execution and close? The statement in progress must end first.";
 pub const BODY_TRANSACTION_CLOSE: &str =
@@ -2169,8 +2338,8 @@ pub fn keys_title(mode: &str, region: &str) -> String {
     format!(" {TITLE_KEYS} · {mode} · {region} ")
 }
 
-pub fn help_footer(commands: usize, first: usize, last: usize, total: usize) -> String {
-    format!(" {} · {first}–{last}/{total} ", plural(commands, "command"))
+pub fn help_footer(count: usize, noun: &str, first: usize, last: usize, total: usize) -> String {
+    format!(" {} · {first}–{last}/{total} ", plural(count, noun))
 }
 
 /// Writes one row of the help screen.

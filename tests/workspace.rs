@@ -1236,18 +1236,27 @@ fn the_help_screen_follows_the_panel_and_the_mode() {
     let path = database("help", "");
     let mut f = Fixture::open(vec![path], KeyboardMode::Vim);
     f.code(KeyCode::F(1));
-    f.assert_sees("Keys · Vim · Editor");
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
+    f.assert_sees("Help · Vim · Editor");
     f.assert_sees("Open the suggestions");
     f.code(KeyCode::Esc);
     f.navigator();
     f.code(KeyCode::F(1));
-    f.assert_sees("Keys · Vim · Navigator");
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
+    f.assert_sees("Help · Vim · Navigator");
     f.assert_sees("Add a connection");
     f.assert_not_sees("Open the suggestions");
     f.code(KeyCode::Esc);
     f.prefix('j');
     f.prefix('?');
-    f.assert_sees("Keys · Vim · Results");
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
+    f.assert_sees("Help · Vim · Results");
     f.assert_sees("Copy as TSV");
     f.assert_sees("ctrl+c, y");
 }

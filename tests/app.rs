@@ -1114,10 +1114,16 @@ fn ddl_in_the_application_updates_the_catalog() {
 fn the_keys_screen_opens_and_closes() {
     let mut f = Fixture::new("keys");
     f.press(key(KeyCode::F(1)));
+    for _ in sqln::ui::text::GUIDE {
+        f.press(key(KeyCode::Tab));
+    }
     f.assert_sees("Run the selection");
     f.press(key(KeyCode::Esc));
     assert!(!f.sees("Run the selection"));
     f.prefix('?');
+    for _ in sqln::ui::text::GUIDE {
+        f.press(key(KeyCode::Tab));
+    }
     f.assert_sees("Run the selection");
 }
 

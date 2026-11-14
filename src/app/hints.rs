@@ -67,7 +67,7 @@ impl App {
             return self.hint_parts(&[
                 (explorer, "explorer"),
                 (Action::OpenPalette, "commands"),
-                (Action::Help, "keys"),
+                (Action::Help, "help"),
                 (Action::Quit, "quit"),
             ]);
         }
@@ -221,7 +221,7 @@ impl App {
             (Action::PreviousTab, "previous tab"),
             (Action::CloseTab, "close tab"),
             (Action::OpenSettings, "settings"),
-            (Action::Help, "keys"),
+            (Action::Help, "help"),
         ];
         for (action, label) in extras {
             if self.fits_cursor(action) {
@@ -384,7 +384,7 @@ impl App {
                 "suggestions",
                 console.editor.is_inserting(),
             ),
-            (Action::Help, "keys", true),
+            (Action::Help, "help", true),
             (
                 Action::RunSubquery,
                 "run subquery",
@@ -450,7 +450,7 @@ impl App {
             (Action::DiagramKeysOnly, keys, boxes),
             (Action::DiagramCopy, "mermaid", boxes),
             (Action::DiagramReload, "reload", !tab.is_busy()),
-            (Action::Help, "keys", true),
+            (Action::Help, "help", true),
         ])
     }
 
@@ -478,7 +478,7 @@ impl App {
             (Action::GridOpenValue, "value", rows),
             (Action::GridReload, "reload", !tab.is_busy()),
             (Action::GridExport, "export", true),
-            (Action::Help, "keys", true),
+            (Action::Help, "help", true),
         ])
     }
 

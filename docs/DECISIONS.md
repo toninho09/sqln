@@ -1554,7 +1554,7 @@ Implementation decisions:
 | Label | `ER diagram` | `Show the ER diagram` | The long label fills the 19 columns of a row and touches the next column |
 | Palette | `Ctrl+W D` replaces the explorer entry | Both entries | One entry acts on the row in the explorer, as the sessions do |
 | Structure tab | A structure of a table uses its table. Other structures and the sessions use the current schema | Refuse | Each tab of a source with tables has a target |
-| Width | At 80 columns, the hint row of a connection keeps each command | Leave out `F1 keys` | The row fits |
+| Width | At 80 columns, the hint row of a connection keeps each command | Leave out `F1 help` | The row fits |
 
 ## ER diagram — 2026-11-03
 
@@ -2537,3 +2537,20 @@ The user asked for theme creation in Settings, with a full palette editor, both 
 | Missing theme | The choice falls back to `auto`, with a note in the status bar | Keep the last colors or quit | The data is not critical, and the note names the theme and the fallback |
 | External change | The poll hashes a manifest of the folder names and contents, and the existing reload question covers the themes | Reload without a question | The rule of `config.json` applies, and `ReloadConfig` already reloads both |
 | Per-connection theme | The connection form cycles the built-in themes and the customs of both scopes | The connection picks its own scope only | The resolution is the merged catalog, and a project can share a theme that a global connection uses |
+
+## Getting-started guide in the help — 2026-11-13
+
+The user asked for a help screen for users who are lost. `F1` already showed only the key reference.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Kind | A getting-started guide with topics, short texts, and steps | Context help per panel; an interactive tour | User choice |
+| Place | Guide pages inside `F1`, with no new shortcut | A new command; a link on the home screen only | User choice |
+| Topics | Connect and open a console; run SQL and results; explorer and tables; Kafka SELECT; scripts, palette, and settings | More topics, such as AI | User choice. The Kafka topic was added later on the same day |
+| First page | `F1` always opens on the first topic | Open on **All keys**; guide only without a connection | User choice |
+| Sidebar | The window has a sidebar with one row per page: each topic, **All keys**, then each key group. It replaces the `Group:` row | Only the topics in the sidebar | User choice. One list for all pages. `Tab`, `Shift+Tab`, and a click open a page |
+| Search | The filter acts on the open page. On a topic, it keeps the matching steps and examples, and the title and text stay | The filter hides the sidebar pages without a match | User choice. A key page never shows the guide text |
+| Kafka topic | Always shown. It covers basic SELECT (`LIMIT`, `SCAN`, `PARTITION`, `START AT`), `WHERE` filters, `EMIT CHANGES`, and `TOPICS` and `PARTITIONS` | Only with a saved Kafka connection | User choice |
+| Divider and title | The sidebar divider joins the border only where the border line shows | Cut the title | The help title is longer than the sidebar, and the join hid one letter |
+| Keys of the steps | The effective key of the mode and the custom shortcuts. An explorer step starts with the focus key. A command without a key shows the palette path | Fixed key texts | The guide must stay correct with Vim mode and custom shortcuts |
+| Labels | The title is `Help · <mode> · <panel>`. The hint row shows `F1 help`, and the welcome screen shows **Show help** | Keep `Keys` and `F1 keys` | `F1` no longer opens on the keys. The width does not change |

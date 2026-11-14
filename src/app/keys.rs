@@ -14,7 +14,7 @@ use crate::editor::{FormatOutcome, KeyboardMode, RunPlan, RunRefusal, RunScope};
 use crate::exec::{ConnectionId, RunOptions};
 use crate::form::FormRequest;
 use crate::grid::printable;
-use crate::help::Help;
+use crate::help::{GuideTopic, Help};
 use crate::input::{Action, Chord, Lookup, Region};
 use crate::navigator::RowKind;
 use crate::palette::{Command, Palette, PaletteRequest};
@@ -837,7 +837,45 @@ impl App {
         } else {
             text::MODE_CONVENTIONAL
         };
-        self.help = Some(Help::new(text::keys_title(mode, name), groups));
+        self.help = Some(Help::new(
+            text::keys_title(mode, name),
+            self.guide_topics(),
+            groups,
+        ));
+    }
+
+    /// Returns the guide with the effective key of each step.
+    fn guide_topics(&self) -> Vec<GuideTopic> {
+        text::GUIDE
+            .iter()
+            .map(|topic| GuideTopic {
+                name: topic.name,
+                title: topic.title,
+                intro: topic.intro,
+                steps: topic
+                    .steps
+                    .iter()
+                    .map(|(action, label)| (self.guide_key(*action), *label))
+                    .collect(),
+                examples: topic.examples,
+            })
+            .collect()
+    }
+
+    /// Returns the effective key of a guide step. An explorer command starts with the
+    /// focus key. A command without a key shows the palette path.
+    fn guide_key(&self, action: Action) -> String {
+        let Some(key) = self.shown_key(action) else {
+            let palette = self.shown_key(Action::OpenPalette).unwrap_or_default();
+            return format!("{palette} → {}", self.command_label(action));
+        };
+        if action.region() != Region::Navigator {
+            return key;
+        }
+        match self.shown_key(self.explorer_entry()) {
+            Some(focus) => format!("{focus} {key}"),
+            None => key,
+        }
     }
 
     fn help_keys(&self, region: Region) -> Vec<(String, &'static str)> {
