@@ -120,7 +120,7 @@ fn the_speed_needs_one_second_between_two_measures() {
 /// A console whose connector tracks `progress`, sends one row, and waits for `release`
 /// or for a stop. F6 runs and F7 stops.
 fn progress_screen(progress: Arc<ReadProgress>, release: Arc<Notify>) -> Screen {
-    let handler: common::mock::RunHandler = Arc::new(move |_, mut sink| {
+    let handler: crate::common::mock::RunHandler = Arc::new(move |_, mut sink| {
         let progress = progress.clone();
         let release = release.clone();
         Box::pin(async move {
@@ -143,7 +143,10 @@ fn progress_screen(progress: Arc<ReadProgress>, release: Arc<Notify>) -> Screen 
             })
         })
     });
-    let connector = Arc::new(common::mock::MockConnector::new(Dialect::Kafka, handler));
+    let connector = Arc::new(crate::common::mock::MockConnector::new(
+        Dialect::Kafka,
+        handler,
+    ));
     let overrides = [
         ("run".to_owned(), vec!["f6".to_owned()]),
         ("stop".to_owned(), vec!["f7".to_owned()]),
@@ -169,7 +172,9 @@ fn progress_screen(progress: Arc<ReadProgress>, release: Arc<Notify>) -> Screen 
 fn run(screen: &mut Screen, sql: &str) {
     use crossterm::event::KeyCode;
     screen.app.on_event(Event::Paste(sql.to_owned()));
-    screen.app.on_event(Event::Key(common::key(KeyCode::F(6))));
+    screen
+        .app
+        .on_event(Event::Key(crate::common::key(KeyCode::F(6))));
 }
 
 fn wait_idle(screen: &mut Screen) {
@@ -246,7 +251,9 @@ fn a_live_read_shows_its_lag_and_gives_no_reason_at_the_stop() {
     }
     let wide = screen.screen_at(120, 35);
     assert!(wide.contains("1 msg/s · 2.0 KiB"), "{wide}");
-    screen.app.on_event(Event::Key(common::key(KeyCode::F(7))));
+    screen
+        .app
+        .on_event(Event::Key(crate::common::key(KeyCode::F(7))));
     wait_idle(&mut screen);
     let text = screen.screen_at(120, 35);
     assert!(

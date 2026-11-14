@@ -21,3 +21,10 @@ unicode-segmentation.workspace = true
 unicode-width.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+sqln-testkit = { workspace = true, features = ["mock", "editor"] }
+async-trait.workspace = true
+duckdb.workspace = true
+rusqlite.workspace = true
+tokio.workspace = true

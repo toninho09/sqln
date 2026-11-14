@@ -33,7 +33,7 @@ impl Screen {
     }
 
     fn new(name: &str, keyboard: KeyboardMode) -> Self {
-        let path = temp_db(&format!("hints-{name}"));
+        let path = temp_db!(&format!("hints-{name}"));
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(SETUP)

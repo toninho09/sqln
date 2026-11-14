@@ -29,7 +29,7 @@ struct Run {
 impl Run {
     /// Opens a file with three rows, through a definition that `change` can edit.
     fn new(name: &str, change: impl FnOnce(&mut Definition)) -> Self {
-        let path = temp_db(name);
+        let path = temp_db!(name);
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch("CREATE TABLE t (a INT); INSERT INTO t VALUES (1), (2), (3);")

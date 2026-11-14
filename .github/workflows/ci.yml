@@ -91,7 +91,7 @@ jobs:
         run: |
           . scripts/test-env.sh
           export SQLN_TEST_TLS=1
-          cargo test --locked --test servers --test auth --test refused --test redis
+          cargo test --locked --test sqln -- servers:: auth:: refused:: redis::
 
       - name: Show database logs on failure
         if: failure()

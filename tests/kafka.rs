@@ -4,7 +4,6 @@
 //
 // Each server test uses its own topics and groups, so the tests can run at the same time.
 
-mod common;
 #[path = "kafka/fields.rs"]
 mod fields;
 #[path = "kafka/guide.rs"]
@@ -18,7 +17,7 @@ mod topics;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crossterm::event::Event;
@@ -232,7 +231,7 @@ fn the_form_of_kafka_has_sasl_and_registry_fields_and_no_database() {
 fn the_form_keeps_the_registry_and_its_session_password() {
     let mut form = kafka_form();
     form.focus_on(Field::Sasl);
-    form.on_key(common::key(crossterm::event::KeyCode::Right), false);
+    form.on_key(crate::common::key(crossterm::event::KeyCode::Right), false);
     assert_eq!(
         form.sasl,
         Sasl::Plain,
@@ -318,7 +317,7 @@ fn a_saved_kafka_connection_keeps_sasl_and_registry_without_secrets() {
 #[test]
 fn the_settings_refuse_kafka_fields_on_other_engines() {
     let refused = |config: &str| {
-        let dir = common::temp_dir(&format!("kafka-store-{}", uuid::Uuid::new_v4()));
+        let dir = crate::common::temp_dir!(&format!("kafka-store-{}", uuid::Uuid::new_v4()));
         let store = sqln::store::Store {
             global: sqln::store::Root::global(dir.join("global")),
             project: None,
@@ -550,6 +549,10 @@ fn produce(uri: &str, topic: &str, messages: &[Out<'_>]) {
 }
 
 /// Lists the groups of the cluster. A group list creates no group.
+/// Held by the tests that create a consumer group or compare the list of groups, so a
+/// new group of one test does not change the list of another.
+static GROUP_LIST: Mutex<()> = Mutex::new(());
+
 fn group_names(uri: &str) -> Vec<String> {
     let consumer: BaseConsumer = ClientConfig::new()
         .set("bootstrap.servers", bootstrap(uri))
@@ -778,6 +781,7 @@ fn topics_and_partitions_show_the_cluster() {
 #[test]
 fn consume_reads_to_the_end_of_each_partition_and_creates_no_group() {
     let Some(uri) = kafka_uri() else { return };
+    let _groups = GROUP_LIST.lock().unwrap_or_else(|e| e.into_inner());
     let topic = unique("consume");
     create_topic(&uri, &topic, 2);
     let mut with_header = Out::new(0, "k1", b"first");
@@ -1016,6 +1020,7 @@ fn a_tail_outside_a_console_is_refused() {
 #[test]
 fn group_shows_committed_offsets_and_lag_without_joining() {
     let Some(uri) = kafka_uri() else { return };
+    let _groups = GROUP_LIST.lock().unwrap_or_else(|e| e.into_inner());
     let topic = unique("lag");
     let group = unique("group");
     create_topic(&uri, &topic, 2);
@@ -1391,10 +1396,10 @@ fn a_topic_tab_shows_a_filter_without_an_order_on_a_small_screen() {
     create_topic(&uri, &topic, 1);
     produce(&uri, &topic, &[Out::new(0, "k", b"tab-value")]);
     let mut screen = Screen::open(&uri);
-    common::select_row(&mut screen.app, 0, &[RowKind::Table], &topic);
-    screen
-        .app
-        .on_event(Event::Key(common::key(crossterm::event::KeyCode::Enter)));
+    crate::common::select_row(&mut screen.app, 0, &[RowKind::Table], &topic);
+    screen.app.on_event(Event::Key(crate::common::key(
+        crossterm::event::KeyCode::Enter,
+    )));
     let deadline = Instant::now() + Duration::from_secs(30);
     while screen.app.table().is_none_or(|tab| tab.loaded() == 0) {
         screen.app.drain_events();

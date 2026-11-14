@@ -43,7 +43,8 @@ crates/store/      sqln-store: configuration, scripts, credentials, and persiste
 crates/exec/       sqln-exec: execution, jobs, completion, and cancellation.
 crates/ui/         sqln-ui: drawing, themes, editor, and screen states.
 src/               sqln: application state, commands, coordination, and the binary.
-tests/             Behavior and integration tests. Every file is a `[[test]]` target or a `mod` of a root file; `scripts/check-test-files.sh` enforces it.
+crates/testkit/    sqln-testkit: shared test helpers (keys, temporary paths, fake connector, editor fixture).
+tests/             Tests that need `sqln` (application or binary). Every file is a `[[test]]` target or a `mod` of a root file.
 ```
 
 The `sqln` crate re-exports every module, so `sqln::<module>` paths stay valid.
@@ -93,7 +94,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed module respons
 
 ## Integration tests
 
-- Tests live in `tests/`. See `compose.test.yaml` and `scripts/test-env.sh` for database services and connection settings.
+- Put a test in the lowest crate that has all its dependencies. Each crate has one test binary, `crates/<crate>/tests/sqln_<crate>/main.rs`, and each file in that folder is a `mod` of it. `scripts/check-test-files.sh` enforces it.
+- Put shared helpers in `sqln-testkit`. Helpers that need `App` stay in `tests/common`.
+- Database tests are in `tests/` and in the crate tests. See `compose.test.yaml` and `scripts/test-env.sh` for database services and connection settings.
 - For full TLS: use the sequence in [README.md](README.md#database-integration). It starts `--profile tls` and sets `SQLN_TEST_TLS=1`.
 
 ## Replies

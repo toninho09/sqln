@@ -222,9 +222,9 @@ fn the_focus_topic_belongs_to_kafka_only() {
 }
 
 fn kafka_app(dialect: Dialect, provider: Provider) -> App {
-    let handler: common::mock::RunHandler =
+    let handler: crate::common::mock::RunHandler =
         Arc::new(|_, _| Box::pin(async { Ok(StatementEnd::default()) }));
-    let connector = common::mock::MockConnector::new(dialect, handler);
+    let connector = crate::common::mock::MockConnector::new(dialect, handler);
     let relation = |name: &str| Relation {
         name: name.into(),
         ..Relation::default()

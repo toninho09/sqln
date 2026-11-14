@@ -53,6 +53,13 @@ Only the crates in the table know their dependencies. A lower crate cannot name 
 
 A test helper that the unit tests of another crate need uses a `test-support` feature, which only a dev-dependency enables.
 
+Each integration test is in the lowest crate that has all its dependencies:
+
+- A crate has one test binary, `tests/sqln_<crate>/main.rs`. `sqln-exec` also has the `vault_probe` target, a manual probe that the vault scripts run.
+- `tests/` of the `sqln` crate holds the tests that use `App` or the `sqln` binary. They form one test binary, `sqln`, with `tests/sqln.rs` as its root. Run one file with its module name, for example `cargo test --test sqln -- servers::`.
+- The `sqln` binary and `sqln-testkit` have no unit test binary (`test = false`).
+- `sqln-testkit` holds the shared helpers. Its `mock` feature adds the fake connector, and its `editor` feature adds the editor fixture. The macros `temp_dir!`, `temp_db!`, and `temp_db_path!` read the folder of the calling test binary.
+
 | Module | Responsibility |
 |---|---|
 | `agent` | Transport-independent assistant operations, read policy, private instance registry, and IPC |

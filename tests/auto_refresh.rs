@@ -5,8 +5,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-mod common;
-
 use crossterm::event::{Event, KeyCode};
 use ratatui::{Terminal, backend::TestBackend};
 use sqln::app::{App, Options};
@@ -16,7 +14,7 @@ use sqln::connector::sqlite::SqliteTarget;
 use sqln::ui::text;
 use sqln::ui::theme::Theme;
 
-use common::{ctrl, key, open_table, temp_db};
+use crate::common::{ctrl, key, open_table, temp_db};
 
 struct Fixture {
     app: App,
@@ -25,7 +23,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Self {
-        let path = temp_db(name);
+        let path = temp_db!(name);
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(

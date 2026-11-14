@@ -41,7 +41,7 @@ impl Fixture {
 
     /// Adds tables to the schema of the tests.
     fn with(name: &str, more: &str) -> Self {
-        let path = temp_db(name);
+        let path = temp_db!(name);
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(&format!("{SETUP}{more}"))
@@ -490,7 +490,7 @@ fn hostile_names_reach_neither_the_screen_nor_the_copy() {
 
 #[test]
 fn the_vim_keys_select_the_tables() {
-    let path = temp_db("diagram-vim");
+    let path = temp_db!("diagram-vim");
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch(SETUP)
@@ -585,7 +585,7 @@ fn two_connections_that_wait_for_their_catalogs_open_both_diagrams() {
     use sqln::connector::sqlite::SqliteTarget;
 
     let definitions = ["diagram-wait-a", "diagram-wait-b"].map(|name| {
-        let path = temp_db(name);
+        let path = temp_db!(name);
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(SETUP)

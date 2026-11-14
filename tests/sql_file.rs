@@ -25,12 +25,12 @@ struct Fixture {
 impl Fixture {
     /// Starts the application with a database and a `.sql` file that asks to open.
     fn new(name: &str, text: &str) -> Self {
-        let path = temp_db(&format!("sql-file-{name}"));
+        let path = temp_db!(&format!("sql-file-{name}"));
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch("CREATE TABLE t(a);")
             .unwrap();
-        let sql = temp_dir(&format!("sql-file-{name}")).join("query.sql");
+        let sql = temp_dir!(&format!("sql-file-{name}")).join("query.sql");
         fs::write(&sql, text).unwrap();
         let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
         let app = App::new(
@@ -250,12 +250,12 @@ fn a_clean_link_closes_without_a_question() {
 
 #[test]
 fn a_file_that_cannot_open_shows_the_reason() {
-    let path = temp_db("sql-file-broken");
+    let path = temp_db!("sql-file-broken");
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch("CREATE TABLE t(a);")
         .unwrap();
-    let sql = temp_dir("sql-file-broken").join("broken.sql");
+    let sql = temp_dir!("sql-file-broken").join("broken.sql");
     fs::write(&sql, b"\xff\xfeS\x00").unwrap();
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
     let mut app = App::new(
@@ -276,7 +276,7 @@ fn a_file_that_cannot_open_shows_the_reason() {
 #[test]
 fn the_command_opens_the_file_browser_and_escape_cancels() {
     use sqln::input::Keymap;
-    let path = temp_db("sql-file-browser");
+    let path = temp_db!("sql-file-browser");
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch("CREATE TABLE t(a);")

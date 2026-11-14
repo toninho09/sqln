@@ -1,11 +1,9 @@
 // The target is under 50 ms per key. Run it with `make bench`: the tests must run one at a
 // time, because tests that run together take time from each other and fail.
 
-mod common;
-
 use std::time::{Duration, Instant};
 
-use common::{Fixture, ctrl, key, shift};
+use crate::common::{Fixture, ctrl, key, shift};
 use crossterm::event::{Event, KeyCode};
 use edtui::Index2;
 use ratatui::Terminal;
@@ -24,7 +22,7 @@ fn sqlite_app(name: &str, settings: Settings) -> App {
 
     use sqln::clipboard::MemoryClipboard;
 
-    let path = common::temp_db(name);
+    let path = crate::common::temp_db!(name);
     rusqlite::Connection::open(&path).unwrap();
     let options = Options {
         database: Some(path),
@@ -272,7 +270,7 @@ fn table_page_keys_and_frames_stay_under_the_target() {
     use sqln::clipboard::MemoryClipboard;
     use sqln::exec::Settings;
 
-    let path = common::temp_db("latency-table-pages");
+    let path = crate::common::temp_db!("latency-table-pages");
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch(
@@ -293,7 +291,7 @@ fn table_page_keys_and_frames_stay_under_the_target() {
     let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
     let mut app = App::new(options, clipboard, Theme::ansi());
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    common::open_table(&mut app, 0, "pages");
+    crate::common::open_table(&mut app, 0, "pages");
     for page in 0..5 {
         if page > 0 {
             app.on_event(Event::Key(key(KeyCode::Char('m'))));
@@ -328,7 +326,7 @@ fn large_navigator(name: &str) -> sqln::app::App {
     use sqln::app::{App, Options};
     use sqln::clipboard::MemoryClipboard;
 
-    let path = common::temp_db(name);
+    let path = crate::common::temp_db!(name);
     let mut setup = String::from("BEGIN;");
     for index in 0..20_000 {
         setup.push_str(&format!("CREATE TABLE table_{index}(a, b, c);"));
@@ -420,8 +418,8 @@ fn the_autosave_of_a_large_script_stays_under_the_target() {
     use sqln::clipboard::MemoryClipboard;
     use sqln::store::{Root, Store};
 
-    let base = common::temp_dir("latency-autosave");
-    let db = common::temp_db("latency-autosave");
+    let base = crate::common::temp_dir!("latency-autosave");
+    let db = crate::common::temp_db!("latency-autosave");
     rusqlite::Connection::open(&db).unwrap();
     let global = Root::global(base.join("global"));
     std::fs::create_dir_all(&global.dir).unwrap();

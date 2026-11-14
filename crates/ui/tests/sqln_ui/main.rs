@@ -1,0 +1,27 @@
+// Root of the test binary of sqln-ui: editors, grids, forms, and drawing. Each file in
+// this folder is a mod below; scripts/check-test-files.sh enforces it.
+
+mod ai_editor;
+mod analysis;
+mod browser;
+mod command_log;
+mod compare_data;
+mod complete_syntax;
+mod data_edit_exec;
+mod definition;
+mod duckdb;
+mod editor_conventional;
+mod editor_search;
+mod editor_suggestions;
+mod editor_undo;
+mod editor_vim;
+mod export;
+mod format;
+mod grid;
+mod gutter_preview;
+mod kit;
+mod messages;
+mod run_preview;
+mod run_subquery;
+mod shortcuts;
+mod store;

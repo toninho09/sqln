@@ -1098,7 +1098,7 @@ fn the_keys_of_the_hint_bar_fit_the_minimum_width() {
 fn the_explorer_page_shows_the_keys_of_the_key_map() {
     let overrides = HashMap::from([("navigatorStructure".to_owned(), vec!["u".to_owned()])]);
     let keymap = Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap();
-    let database = crate::common::temp_db("explorer-key-map");
+    let database = crate::common::temp_db!("explorer-key-map");
     rusqlite::Connection::open(&database)
         .unwrap()
         .execute_batch("CREATE TABLE t(a);")
@@ -1119,7 +1119,7 @@ fn the_hint_bar_shows_the_keys_of_the_key_map() {
         ("nextTab".to_owned(), vec!["ctrl+w u".to_owned()]),
     ]);
     let keymap = Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap();
-    let database = crate::common::temp_db("hint-key-map");
+    let database = crate::common::temp_db!("hint-key-map");
     rusqlite::Connection::open(&database)
         .unwrap()
         .execute_batch("CREATE TABLE t(a);")

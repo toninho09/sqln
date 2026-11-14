@@ -148,8 +148,11 @@ fn other_roots_and_unknown_topics_get_no_fields() {
 
 #[test]
 fn a_kafka_console_waits_for_the_fields_then_lists_them() {
-    let mut f =
-        common::Fixture::with_dialect("", sqln::editor::KeyboardMode::Conventional, Dialect::Kafka);
+    let mut f = crate::common::Fixture::with_dialect(
+        "",
+        sqln::editor::KeyboardMode::Conventional,
+        Dialect::Kafka,
+    );
     f.catalog = catalog();
     f.write("CONSUME orders WHERE value.");
     assert!(f.editor.suggestions().is_none());
@@ -293,14 +296,14 @@ fn an_open_item_of_any_or_every_gets_the_fields_of_its_list() {
 #[test]
 fn an_accepted_value_writes_its_literal_in_both_editor_modes() {
     for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
-        let mut f = common::Fixture::with_dialect("", keyboard, Dialect::Kafka);
+        let mut f = crate::common::Fixture::with_dialect("", keyboard, Dialect::Kafka);
         f.catalog = loaded();
         if keyboard == KeyboardMode::Vim {
             f.write("i");
         }
         f.write("CONSUME orders WHERE value.state = 'M");
         assert_eq!(f.labels(), ["'MEDIUM'"]);
-        f.press(common::key(KeyCode::Tab));
+        f.press(crate::common::key(KeyCode::Tab));
         assert_eq!(f.text(), "CONSUME orders WHERE value.state = 'MEDIUM'");
     }
 }
@@ -317,7 +320,7 @@ fn the_filter_of_a_topic_tab_waits_with_the_kafka_dialect() {
     let mut missing = Vec::new();
     for c in "value.".chars() {
         missing = tab.on_field_key(
-            common::key(KeyCode::Char(c)),
+            crate::common::key(KeyCode::Char(c)),
             Dialect::Kafka,
             Some(&catalog()),
         );

@@ -54,7 +54,7 @@ fn write_config(root: &Root, preferences: &str, connections: &[String]) {
 
 /// A store with a global folder and a project folder.
 fn store(name: &str) -> (Store, PathBuf) {
-    let base = temp_dir(name);
+    let base = temp_dir!(name);
     let project = Root::project(&base.join("project"));
     fs::create_dir_all(&project.dir).unwrap();
     (
@@ -92,7 +92,7 @@ fn saved_file(store: &Store) -> PathBuf {
 
 /// A store without a project.
 fn global_only(name: &str) -> (Store, PathBuf) {
-    let base = temp_dir(name);
+    let base = temp_dir!(name);
     (
         Store {
             global: Root::global(base.join("global")),

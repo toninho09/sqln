@@ -20,3 +20,6 @@ zeroize.workspace = true
 [features]
 # Test helpers for the unit tests of other workspace crates.
 test-support = []
+
+[dev-dependencies]
+sqln-testkit.workspace = true

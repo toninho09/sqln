@@ -55,7 +55,7 @@ fn each_dialect_name_is_valid() {
 
 #[test]
 fn a_log_that_does_not_open_stops_the_start() {
-    let base = temp_dir("log-refused");
+    let base = temp_dir!("log-refused");
     let output = Command::new(env!("CARGO_BIN_EXE_sqln"))
         .arg("--log")
         .arg(&base)
@@ -69,7 +69,7 @@ fn a_log_that_does_not_open_stops_the_start() {
 
 #[test]
 fn a_panic_report_holds_the_place_and_never_a_message() {
-    let base = temp_dir("panic-report");
+    let base = temp_dir!("panic-report");
     let path = write_panic_report(&base, Some("src/app.rs:10:5")).unwrap();
     let report = fs::read_to_string(&path).unwrap();
     assert!(report.starts_with("sqln "), "{report}");
@@ -86,7 +86,7 @@ fn a_panic_report_holds_the_place_and_never_a_message() {
 
 #[test]
 fn the_log_writes_lines_with_the_time_and_only_the_owner_can_read_it() {
-    let base = temp_dir("log-file");
+    let base = temp_dir!("log-file");
     let path = base.join("sqln.log");
     sqln::log::open(&path).unwrap();
     sqln::log::event("execution finished: Completed");

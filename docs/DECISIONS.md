@@ -21,6 +21,8 @@ The user asked to split the project into separate crates, for a shorter compile 
 | Version | `[workspace.package]` holds one version for all crates | One version per crate | `text` reads `CARGO_PKG_VERSION`, and the crates ship together |
 | Publication | Each internal crate has `publish = false` | Publish the crates | The project does not publish to crates.io |
 | Test helpers | A helper that the unit tests of another crate need uses a `test-support` feature of its crate | Make the helper always public | The helper stays out of the release binary |
+| Integration tests | Each test is in the lowest crate that has all its dependencies, with one test binary per crate. Shared helpers are in `sqln-testkit` | Keep all tests in `tests/` of `sqln`; one binary per test file | User choice. A change in `app` does not link the tests of the lower crates |
+| Test binaries | One integration test binary per crate. Only `vault_probe` stays alone. CI and the Makefile select a file with its module name | One binary per group of files | User choice. Each binary adds link time. Temporary folders include the test module, so tests in one binary do not share a folder |
 
 Measured result on 8 CPUs, dev profile, one-line change, before and after the split:
 
@@ -33,6 +35,17 @@ Measured result on 8 CPUs, dev profile, one-line change, before and after the sp
 | `grid` | 9.4 s → 13.7 s | — |
 
 The link of the 22 test binaries takes most of `cargo test --no-run`, and the split does not change it. A change in a low crate recompiles each crate above it.
+
+`cargo test --workspace --no-run` after the move of the integration tests to their crates (28 integration test binaries), and after the merge into one binary per crate (8 integration test binaries, and no unit test binary for `main.rs` and `sqln-testkit`):
+
+| Changed file | Before the move | After the move | After the merge |
+|---|---|---|---|
+| `app` | 45.2 s | 39 s | 10–12 s |
+| `ui` | 48.7 s | 49–56 s | 24–25 s |
+| `connector` | 45.8 s | 57–60 s | 30–34 s |
+| `sql` | 47.5 s | 58–59 s | 30–33 s |
+
+The run of the test suite (`scripts/test-summary.sh`, without the build) goes from 15.5 s to 18–19 s, because more tests share one binary.
 
 ## Kafka AI completion, MCP reads, and topic filter — 2026-11-13
 

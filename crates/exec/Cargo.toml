@@ -29,3 +29,15 @@ zeroize.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true
+
+[dev-dependencies]
+sqln-testkit = { workspace = true, features = ["mock"] }
+futures-util.workspace = true
+keyring-core.workspace = true
+rusqlite.workspace = true
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+apple-native-keyring-store.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus-secret-service-keyring-store.workspace = true

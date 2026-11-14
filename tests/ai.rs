@@ -1,12 +1,7 @@
-mod common;
-
-mod agent;
-mod ai_editor;
+#[path = "ai_kafka.rs"]
 mod ai_kafka;
-mod ai_schema;
-mod mcp;
 
-use common::{ctrl, key, shift};
+use crate::common::{ctrl, key, shift};
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use edtui::Index2;
 use ratatui::{Terminal, backend::TestBackend};
@@ -173,7 +168,7 @@ fn pump(app: &mut App, condition: impl Fn(&str) -> bool) -> String {
     }
 }
 fn app(name: &str, provider: Provider) -> App {
-    let path = common::temp_db(name);
+    let path = crate::common::temp_db!(name);
     rusqlite::Connection::open(&path).unwrap().execute_batch("CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT); CREATE VIEW active_users AS SELECT name FROM users;").unwrap();
     App::new(
         Options {
@@ -263,7 +258,7 @@ fn ghost_at_first_line(app: &mut App, text: &str) {
 
 #[test]
 fn ai_is_above_local_items_but_not_initially_selected() {
-    let mut f = common::Fixture::conventional("sel");
+    let mut f = crate::common::Fixture::conventional("sel");
     f.editor.set_cursor(Index2::new(0, 3));
     f.editor.set_ai_available(true);
     f.press(ctrl(' '));
@@ -280,7 +275,7 @@ fn ai_is_above_local_items_but_not_initially_selected() {
 }
 #[test]
 fn the_request_row_sits_above_the_plain_ai_row() {
-    let mut f = common::Fixture::conventional("sel");
+    let mut f = crate::common::Fixture::conventional("sel");
     f.editor.set_cursor(Index2::new(0, 3));
     f.editor.set_ai_available(true);
     f.press(ctrl(' '));
@@ -301,7 +296,7 @@ fn the_request_row_sits_above_the_plain_ai_row() {
 }
 #[test]
 fn explicit_ai_only_list_handles_repeated_arrows_without_panics() {
-    let mut f = common::Fixture::conventional("-- describe a query");
+    let mut f = crate::common::Fixture::conventional("-- describe a query");
     f.editor.set_cursor(Index2::new(0, 19));
     f.editor.set_ai_available(true);
     f.press(ctrl(' '));
@@ -320,7 +315,7 @@ fn explicit_ai_only_list_handles_repeated_arrows_without_panics() {
 }
 #[test]
 fn typing_no_local_match_does_not_open_an_ai_only_list() {
-    let mut f = common::Fixture::conventional("");
+    let mut f = crate::common::Fixture::conventional("");
     f.editor.set_ai_available(true);
     f.write("zzzzzz");
     assert!(f.editor.suggestions().is_none());
@@ -328,7 +323,7 @@ fn typing_no_local_match_does_not_open_an_ai_only_list() {
 #[test]
 fn a_replacement_preserves_unicode_and_is_one_undo_step() {
     for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
-        let mut f = common::Fixture::new("SELECT café;", keyboard);
+        let mut f = crate::common::Fixture::new("SELECT café;", keyboard);
         if keyboard == KeyboardMode::Vim {
             f.press(key(KeyCode::Char('i')));
         }
@@ -352,7 +347,7 @@ fn a_replacement_preserves_unicode_and_is_one_undo_step() {
 }
 #[test]
 fn an_application_uses_the_anchor_not_the_cursor() {
-    let mut f = common::Fixture::conventional("SELECT \nFROM t");
+    let mut f = crate::common::Fixture::conventional("SELECT \nFROM t");
     f.editor.set_cursor(Index2::new(0, 7));
     let target = f.editor.ai_target(None);
     f.editor.set_cursor(Index2::new(1, 6));
@@ -955,7 +950,7 @@ async fn a_cancelled_http_request_does_not_produce_a_proposal() {
 }
 #[test]
 fn key_files_reject_invalid_content_and_support_rotating_symlinks() {
-    let dir = common::temp_dir("ai-rotating-key");
+    let dir = crate::common::temp_dir!("ai-rotating-key");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("key");
     for bytes in [vec![], b"key\nother".to_vec(), vec![255], vec![b'x'; 65537]] {
@@ -997,7 +992,7 @@ fn api_vault_keys_use_an_isolated_service_and_endpoint_identity() {
 }
 #[test]
 fn consent_is_private_and_changes_with_project_endpoint_or_key_reference() {
-    let root = common::temp_dir("ai-consent");
+    let root = crate::common::temp_dir!("ai-consent");
     let dest = ai::trust::Destination {
         project: Some(root.join("project")),
         connection: "connection-id".into(),
@@ -1081,7 +1076,7 @@ fn a_warmed_schema_stays_cached_until_refresh_then_contains_external_ddl() {
     approve(&mut app);
     pump(&mut app, ghost);
     app.on_event(Event::Key(key(KeyCode::Esc)));
-    let path = common::temp_db_path("ai-cache");
+    let path = crate::common::temp_db_path!("ai-cache");
     rusqlite::Connection::open(path)
         .unwrap()
         .execute_batch("CREATE TABLE later_object(id INTEGER)")
@@ -1366,7 +1361,7 @@ fn a_selection_refuses_ai_completion_and_keeps_the_selection() {
 
 #[test]
 fn an_explicit_list_hides_the_ai_row_under_a_selection() {
-    let mut f = common::Fixture::conventional("SELECT name FROM users");
+    let mut f = crate::common::Fixture::conventional("SELECT name FROM users");
     f.editor.set_ai_available(true);
     // Without a selection, the explicit list carries the AI row.
     f.press(ctrl(' '));

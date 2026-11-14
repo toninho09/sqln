@@ -23,7 +23,7 @@ struct Tree {
 }
 
 fn database(name: &str) -> std::path::PathBuf {
-    let path = temp_db(name);
+    let path = temp_db!(name);
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch(

@@ -48,7 +48,7 @@ struct Fixture {
 }
 
 fn database(name: &str, setup: &str) -> PathBuf {
-    let path = temp_db(name);
+    let path = temp_db!(name);
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch(setup)
@@ -681,7 +681,7 @@ fn r_reads_the_catalog_again() {
 
 #[test]
 fn a_catalog_failure_shows_in_the_tree_and_a_refresh_can_repair_it() {
-    let path = temp_db("bad");
+    let path = temp_db!("bad");
     let mut f = Fixture::open(
         vec![database("first-file", ""), path.clone()],
         KeyboardMode::Conventional,
@@ -877,7 +877,7 @@ fn the_form_refuses_a_missing_name_and_a_repeated_name() {
 #[test]
 fn a_new_file_needs_an_explicit_answer() {
     let mut f = Fixture::new("form-create", "");
-    let path = temp_db("form-created-file");
+    let path = temp_db!("form-created-file");
     f.fill_sqlite("created", &path);
     f.save();
     f.assert_sees("Create it?");
@@ -913,7 +913,7 @@ fn the_test_button_reports_the_answer_of_the_connection() {
     f.code(KeyCode::Enter);
     f.pump_sees("The connection works.");
 
-    let missing = temp_db("form-missing-file");
+    let missing = temp_db!("form-missing-file");
     f.focus_form(Field::File);
     for _ in 0..path.to_str().unwrap().chars().count() {
         f.code(KeyCode::Backspace);

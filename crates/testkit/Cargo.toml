@@ -1,0 +1,27 @@
+[package]
+name = "sqln-testkit"
+description = "Shared helpers for the integration tests of SQLN"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# The crate holds test helpers and no tests.
+test = false
+doctest = false
+
+[dependencies]
+sqln-core.workspace = true
+sqln-sql.workspace = true
+sqln-connector = { workspace = true, optional = true }
+sqln-ui = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+crossterm.workspace = true
+futures-util = { workspace = true, optional = true }
+
+[features]
+# The fake connector.
+mock = ["dep:sqln-connector", "dep:async-trait", "dep:futures-util"]
+# The editor fixture.
+editor = ["dep:sqln-ui"]

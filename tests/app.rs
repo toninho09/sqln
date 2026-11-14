@@ -1,26 +1,19 @@
 // End-to-end tests: keys enter the application, SQL runs in a real SQLite file,
 // and the screen shows the result.
 
-mod common;
-
-mod analysis_ui;
+#[path = "cell_search.rs"]
 mod cell_search;
+#[path = "cell_selection.rs"]
 mod cell_selection;
-mod command_log;
-mod commands;
-mod follow_key;
-mod guard;
-mod history;
+#[path = "json_colors.rs"]
 mod json_colors;
-mod operation;
-mod sql_file;
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, shift, temp_db};
+use crate::common::{ctrl, key, shift, temp_db};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -62,7 +55,7 @@ impl Fixture {
 
     /// Opens a database that exists and that holds the text of `setup`.
     fn with(name: &str, keyboard: KeyboardMode, settings: Settings, setup: &str) -> Self {
-        let path = temp_db(name);
+        let path = temp_db!(name);
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(setup)
@@ -183,7 +176,7 @@ impl Fixture {
 
 #[test]
 fn a_missing_file_asks_first_and_cancel_is_the_default() {
-    let path = temp_db("create-cancel");
+    let path = temp_db!("create-cancel");
     let mut f = Fixture::at(&path, KeyboardMode::Conventional, Settings::default());
     f.assert_sees("Create it?");
     f.press(key(KeyCode::Enter));
@@ -195,7 +188,7 @@ fn a_missing_file_asks_first_and_cancel_is_the_default() {
 
 #[test]
 fn escape_also_keeps_the_file_absent() {
-    let path = temp_db("create-escape");
+    let path = temp_db!("create-escape");
     let mut f = Fixture::at(&path, KeyboardMode::Conventional, Settings::default());
     f.press(key(KeyCode::Esc));
     assert!(!path.exists());
@@ -203,7 +196,7 @@ fn escape_also_keeps_the_file_absent() {
 
 #[test]
 fn an_explicit_choice_creates_the_file() {
-    let path = temp_db("create-yes");
+    let path = temp_db!("create-yes");
     let mut f = Fixture::at(&path, KeyboardMode::Conventional, Settings::default());
     f.press(key(KeyCode::Tab));
     f.press(key(KeyCode::Enter));
@@ -591,12 +584,12 @@ fn alt_arrows_reach_the_limits_of_the_grid() {
     let mut f = Fixture::new("grid-limits");
     f.run_script("SELECT 1 AS a, 2 AS b UNION ALL SELECT 3, 4;");
     f.prefix('j');
-    f.press(common::alt(KeyCode::Down));
-    f.press(common::alt(KeyCode::Right));
+    f.press(crate::common::alt(KeyCode::Down));
+    f.press(crate::common::alt(KeyCode::Right));
     let view = f.app.console_mut().results[0].view;
     assert_eq!((view.row, view.col), (1, 1));
-    f.press(common::alt(KeyCode::Up));
-    f.press(common::alt(KeyCode::Left));
+    f.press(crate::common::alt(KeyCode::Up));
+    f.press(crate::common::alt(KeyCode::Left));
     let view = f.app.console_mut().results[0].view;
     assert_eq!((view.row, view.col), (0, 0));
 }
@@ -2045,7 +2038,7 @@ fn a_table_writes_its_filter_and_its_name() {
         ..Settings::default()
     };
     let mut f = Fixture::with("export-tab", KeyboardMode::Conventional, settings, TEN_ROWS);
-    common::open_table(&mut f.app, 0, "t");
+    crate::common::open_table(&mut f.app, 0, "t");
     f.wait_for_table();
     f.prefix('k');
     f.type_text("v > 7");
@@ -2079,7 +2072,7 @@ fn two_tabs_can_export_and_one_destination_is_refused() {
     f.export_to(&path);
     f.wait_for_rows();
 
-    common::open_table(&mut f.app, 0, "t");
+    crate::common::open_table(&mut f.app, 0, "t");
     f.wait_for_table();
     f.prefix('j');
     f.press(key(KeyCode::Char('e')));
@@ -2114,7 +2107,7 @@ fn closing_a_table_removes_the_file_of_its_export() {
     };
     let setup = "CREATE TABLE t (x INTEGER); WITH RECURSIVE c AS (SELECT 1 AS x UNION ALL SELECT x + 1 FROM c WHERE x < 200000) INSERT INTO t SELECT x FROM c;";
     let mut f = Fixture::with("export-close", KeyboardMode::Conventional, settings, setup);
-    common::open_table(&mut f.app, 0, "t");
+    crate::common::open_table(&mut f.app, 0, "t");
     f.wait_for_table();
     f.prefix('j');
     f.press(key(KeyCode::Char('e')));
@@ -2325,7 +2318,7 @@ fn the_comment_keys_reach_the_editor_and_stay_out_of_a_table() {
     assert_eq!(text(&mut f), "-- SELECT 1;");
 
     f.run_script("SELECT 1;");
-    common::open_table(&mut f.app, 0, "t");
+    crate::common::open_table(&mut f.app, 0, "t");
     f.wait_for_table();
     f.prefix('/');
     assert_eq!(text(&mut f), "SELECT 1;");
@@ -2341,7 +2334,7 @@ fn a_real_table_counts_its_rows() {
          WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 150)
          INSERT INTO t SELECT x FROM n;",
     );
-    common::open_table(&mut f.app, 0, "t");
+    crate::common::open_table(&mut f.app, 0, "t");
     f.wait_for_table();
     f.press(key(KeyCode::Char('c')));
     f.wait_for_table();

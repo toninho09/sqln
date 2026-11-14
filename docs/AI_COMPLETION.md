@@ -216,7 +216,7 @@ An opt-in test runs the real binary in a pseudoterminal against a real OpenAI-co
 It requests a proposal, accepts it, checks the saved SQL, and verifies that acceptance does not execute SQL.
 
 1. Put the API key in a private file outside the repository.
-2. Run `SQLN_TEST_AI_KEY_FILE=/absolute/path/to/key SQLN_TEST_AI_MODEL=<model> cargo test --test terminal ai_chat_completion_runs_through_the_real_terminal -- --ignored --exact`. Set `SQLN_TEST_AI_BASE_URL` to use another endpoint; the default endpoint is OpenRouter.
+2. Run `SQLN_TEST_AI_KEY_FILE=/absolute/path/to/key SQLN_TEST_AI_MODEL=<model> cargo test --test sqln terminal::ai_chat_completion_runs_through_the_real_terminal -- --ignored --exact`. Set `SQLN_TEST_AI_BASE_URL` to use another endpoint; the default endpoint is OpenRouter.
 3. Remove the key file when it is no longer needed.
 
 The test uses a temporary configuration and a synthetic SQLite database. It does not modify the supplied key file.

@@ -375,7 +375,7 @@ fn connection_note(app: &App) -> Option<RowNote> {
 
 #[test]
 fn a_connection_with_a_list_shows_a_note_in_the_tree() {
-    let path = crate::common::temp_db("visible-note");
+    let path = crate::common::temp_db!("visible-note");
     let mut definition = Definition::sqlite(SqliteTarget::new(&path));
     definition.name = "db".into();
     let app = app_with(definition.clone());

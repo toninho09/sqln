@@ -140,7 +140,7 @@ fn a_saved_kafka_connection_keeps_the_topic_filter() {
 #[test]
 fn the_settings_refuse_a_wrong_topic_filter() {
     let refused = |config: &str| {
-        let dir = common::temp_dir(&format!("kafka-topics-{}", uuid::Uuid::new_v4()));
+        let dir = crate::common::temp_dir!(&format!("kafka-topics-{}", uuid::Uuid::new_v4()));
         let store = sqln::store::Store {
             global: sqln::store::Root::global(dir.join("global")),
             project: None,

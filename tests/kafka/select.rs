@@ -447,10 +447,11 @@ fn multiline_select_completion_and_run_selection_work_in_both_editor_modes() {
     use edtui::Index2;
     use sqln::editor::RunScope;
     for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
-        let mut fixture = common::Fixture::with_dialect("SELECT *\nFROM ", mode, Dialect::Kafka);
+        let mut fixture =
+            crate::common::Fixture::with_dialect("SELECT *\nFROM ", mode, Dialect::Kafka);
         fixture.catalog = catalog();
         if mode == KeyboardMode::Vim {
-            fixture.press(common::key(KeyCode::Char('i')));
+            fixture.press(crate::common::key(KeyCode::Char('i')));
         }
         fixture.editor.set_cursor(Index2::new(1, 5));
         fixture.write("ord");
@@ -460,9 +461,9 @@ fn multiline_select_completion_and_run_selection_work_in_both_editor_modes() {
             .position(|name| name == "orders")
             .unwrap();
         for _ in 0..selected {
-            fixture.press(common::key(KeyCode::Down));
+            fixture.press(crate::common::key(KeyCode::Down));
         }
-        fixture.press(common::key(KeyCode::Tab));
+        fixture.press(crate::common::key(KeyCode::Tab));
         assert_eq!(fixture.text(), "SELECT *\nFROM orders");
         let run = fixture.editor.plan_run(RunScope::Default).unwrap();
         assert_eq!(run.statements, ["SELECT *\nFROM orders"]);
@@ -475,7 +476,7 @@ fn a_select_live_result_uses_custom_run_and_stop_keys_at_minimum_size() {
     use sqln::connector::StatementEnd;
     use sqln::input::Keymap;
     for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
-        let handler: common::mock::RunHandler = Arc::new(|sql, mut sink| {
+        let handler: crate::common::mock::RunHandler = Arc::new(|sql, mut sink| {
             Box::pin(async move {
                 assert!(matches!(parse(&sql).unwrap(), Command::Tail(_)));
                 sink.set_columns(vec!["key".to_owned()]).await;
@@ -492,7 +493,10 @@ fn a_select_live_result_uses_custom_run_and_stop_keys_at_minimum_size() {
                 })
             })
         });
-        let connector = Arc::new(common::mock::MockConnector::new(Dialect::Kafka, handler));
+        let connector = Arc::new(crate::common::mock::MockConnector::new(
+            Dialect::Kafka,
+            handler,
+        ));
         let overrides = [
             ("run".to_owned(), vec!["f6".to_owned()]),
             ("stop".to_owned(), vec!["f7".to_owned()]),
@@ -514,14 +518,18 @@ fn a_select_live_result_uses_custom_run_and_stop_keys_at_minimum_size() {
         };
         let sql = "SELECT key\nFROM orders\nEMIT CHANGES;";
         screen.app.on_event(Event::Paste(sql.to_owned()));
-        screen.app.on_event(Event::Key(common::key(KeyCode::F(6))));
+        screen
+            .app
+            .on_event(Event::Key(crate::common::key(KeyCode::F(6))));
         screen.wait_for("1 row received. Live.");
         for (width, height) in [(80, 24), (120, 35), (80, 24)] {
             let text = screen.screen_at(width, height);
             assert!(text.contains("Live"), "{text}");
             assert!(text.contains("visible-event"), "{text}");
         }
-        screen.app.on_event(Event::Key(common::key(KeyCode::F(7))));
+        screen
+            .app
+            .on_event(Event::Key(crate::common::key(KeyCode::F(7))));
         let deadline = Instant::now() + Duration::from_secs(10);
         while screen.app.console().is_busy() {
             screen.app.drain_events();
@@ -693,7 +701,7 @@ fn projection_memory_failures_keep_the_session_and_do_not_send_partial_rows() {
         },
     );
     let statement = format!("SELECT value.items[*] + value.items[*] FROM {topic}");
-    let path = common::temp_dir("kafka-expression-export").join("rows.csv");
+    let path = crate::common::temp_dir!("kafka-expression-export").join("rows.csv");
     let writer =
         sqln::export::ExportWriter::create(&path, sqln::export::ExportOptions::default()).unwrap();
     // These delivery modes skip grid storage but still bound temporary expression buffers.

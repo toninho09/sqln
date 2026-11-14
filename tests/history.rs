@@ -33,7 +33,7 @@ struct Session {
 impl Session {
     /// Opens a saved SQLite connection, with `preferences` in its configuration.
     fn new(name: &str, preferences: &str) -> Self {
-        let base = temp_dir(name);
+        let base = temp_dir!(name);
         let global = Root::global(base.join("global"));
         fs::create_dir_all(&global.dir).unwrap();
         let database = base.join("data.db");
@@ -145,7 +145,7 @@ fn write_entries(root: &Root, entries: &[Entry]) {
 }
 
 fn empty_root(name: &str) -> Root {
-    Root::global(temp_dir(name).join("global"))
+    Root::global(temp_dir!(name).join("global"))
 }
 
 #[test]
@@ -337,7 +337,7 @@ fn the_settings_stop_the_notes_at_once() {
 
 #[test]
 fn a_connection_without_a_saved_definition_leaves_no_notes() {
-    let base = temp_dir("history-session");
+    let base = temp_dir!("history-session");
     let global = Root::global(base.join("global"));
     let definition = Definition::sqlite(SqliteTarget::new(base.join("data.db")));
     let options = Options {

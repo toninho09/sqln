@@ -46,7 +46,7 @@ impl Fixture {
 
     /// Opens the two connections with `preferences` in the configuration.
     fn with(name: &str, source: &str, target: &str, preferences: &str) -> Self {
-        let base = temp_dir(name);
+        let base = temp_dir!(name);
         let global = Root::global(base.join("global"));
         fs::create_dir_all(&global.dir).unwrap();
         let files = [("source", source), ("target", target)].map(|(file, sql)| {

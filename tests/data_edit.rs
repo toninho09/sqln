@@ -154,7 +154,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str, keyboard: KeyboardMode) -> Self {
-        let path = temp_db(name);
+        let path = temp_db!(name);
         rusqlite::Connection::open(&path).unwrap().execute_batch(
             "CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT, amount NUMERIC, required TEXT NOT NULL, computed TEXT GENERATED ALWAYS AS (value || '!') STORED);
              INSERT INTO items (id, value, amount, required) VALUES (1, 'old', 12.5, 'yes'), (2, 'second', 4, 'yes');

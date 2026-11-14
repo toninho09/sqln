@@ -1,8 +1,6 @@
 // The table view: tabs, pages, the filter bar, sorting, the budget, and the pool.
 // The queries come from a recording connector. The data tests use real SQLite files.
 
-mod common;
-
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -10,9 +8,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::common::sample_catalog;
+use crate::common::{ctrl, key, shift, temp_db};
 use async_trait::async_trait;
-use common::sample_catalog;
-use common::{ctrl, key, shift, temp_db};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -610,7 +608,7 @@ impl Fixture {
 
     /// Selects a row of the navigator and opens it, with `Enter`.
     fn open_table_of(&mut self, connection: usize, name: &str) {
-        common::open_table(&mut self.app, connection, name);
+        crate::common::open_table(&mut self.app, connection, name);
     }
 
     fn open_table(&mut self, name: &str) {
@@ -658,7 +656,7 @@ impl Fixture {
 }
 
 fn database(name: &str, setup: &str) -> PathBuf {
-    let path = temp_db(name);
+    let path = temp_db!(name);
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch(setup)
@@ -686,7 +684,7 @@ fn first_cell(f: &Fixture) -> String {
 impl Fixture {
     /// Presses `i` on a row of the navigator.
     fn structure_of(&mut self, kinds: &[RowKind], name: &str) {
-        common::select_row(&mut self.app, 0, kinds, name);
+        crate::common::select_row(&mut self.app, 0, kinds, name);
         self.code(KeyCode::Char('i'));
         self.loaded();
     }
@@ -823,7 +821,7 @@ fn a_click_on_a_section_reads_it() {
 fn a_section_cannot_change_during_a_read() {
     let (mut f, recorder) = Fixture::recorded(Recorder::default());
     recorder.hold.store(true, Ordering::SeqCst);
-    common::select_row(&mut f.app, 0, &[RowKind::Table], "users");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Table], "users");
     f.code(KeyCode::Char('i'));
     f.pump_until(|f| f.app.table().is_some_and(|tab| tab.is_busy()));
     f.code(KeyCode::Char(']'));
@@ -836,7 +834,7 @@ fn a_section_cannot_change_during_a_read() {
 #[test]
 fn i_on_a_column_shows_the_structure_of_its_table() {
     let mut f = structure_files("structure-column");
-    common::select_row(&mut f.app, 0, &[RowKind::Table], "items");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Table], "items");
     f.code(KeyCode::Right);
     f.pump_until(|f| {
         let connections = f.app.connections();
@@ -958,7 +956,7 @@ impl Fixture {
 fn a_busy_table_puts_the_stop_key_first() {
     let (mut f, recorder) = Fixture::recorded(Recorder::default());
     recorder.hold.store(true, Ordering::SeqCst);
-    common::open_table(&mut f.app, 0, "users");
+    crate::common::open_table(&mut f.app, 0, "users");
     f.pump_until(|f| f.app.table().is_some_and(|tab| tab.is_busy()));
     let row = f.hints_at(80);
     assert!(row.starts_with("Ctrl+W x stop"), "{row}");
@@ -1063,12 +1061,12 @@ fn a_structure_tab_hides_the_load_key_without_more_rows() {
 #[test]
 fn a_connection_shows_the_disconnect_key_only_with_sessions() {
     let (mut f, _) = Fixture::recorded(Recorder::default());
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
     let disconnect = "D Disconnect".to_owned();
-    assert!(!common::explorer_page(&f.app).contains(&disconnect));
+    assert!(!crate::common::explorer_page(&f.app).contains(&disconnect));
     f.open_table("users");
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
-    assert!(common::explorer_page(&f.app).contains(&disconnect));
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    assert!(crate::common::explorer_page(&f.app).contains(&disconnect));
 }
 
 #[test]
@@ -1077,8 +1075,8 @@ fn a_redis_row_hides_the_structure_key() {
         redis: true,
         ..Recorder::default()
     });
-    common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
-    let page = common::explorer_page(&f.app);
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
+    let page = crate::common::explorer_page(&f.app);
     assert!(
         !page.contains(&"i Show the structure".to_owned()),
         "{page:?}"
@@ -1159,7 +1157,7 @@ fn a_redis_source_refuses_the_structure_with_a_reason() {
         redis: true,
         ..Recorder::default()
     });
-    common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
     f.code(KeyCode::Char('i'));
     assert!(f.app.tables().is_empty());
     assert_eq!(recorder.count(), 0);
@@ -1184,7 +1182,7 @@ fn a_key_of_redis_refuses_the_structure_in_its_grid() {
 
 impl Fixture {
     fn open_sessions(&mut self) {
-        common::select_row(&mut self.app, 0, &[RowKind::Schema], "public");
+        crate::common::select_row(&mut self.app, 0, &[RowKind::Schema], "public");
         self.press(shift(KeyCode::Char('S')));
         self.loaded();
     }
@@ -1244,7 +1242,7 @@ fn a_source_without_sessions_refuses_with_a_reason() {
         redis: true,
         ..Recorder::default()
     });
-    common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
     f.press(shift(KeyCode::Char('S')));
     assert!(f.app.tables().is_empty());
     assert_eq!(recorder.count(), 0);
@@ -1453,7 +1451,7 @@ impl Fixture {
     }
 
     fn menu_has(&self, row: &str) -> bool {
-        let rows = common::prefix_page(&self.app);
+        let rows = crate::common::prefix_page(&self.app);
         rows.iter().any(|item| item == row)
     }
 }
@@ -1590,7 +1588,7 @@ fn ctrl_w_s_refuses_a_source_without_sessions() {
 #[test]
 fn the_page_runs_a_command_from_any_focus_on_the_row_of_the_explorer() {
     let (mut f, recorder) = Fixture::recorded(two_sessions());
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
     f.prefix('l');
     assert!(!f.app.hint().contains("Ctrl+W commands"), "the focus left");
     f.open_explorer_page();
@@ -1604,7 +1602,7 @@ fn the_page_runs_a_command_from_any_focus_on_the_row_of_the_explorer() {
 #[test]
 fn the_page_keeps_the_keys_of_the_explorer() {
     let (mut f, _) = Fixture::recorded(two_sessions());
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
     let consoles = f.app.consoles().len();
     f.open_explorer_page();
     f.code(KeyCode::Char('n'));
@@ -1615,7 +1613,7 @@ fn the_page_keeps_the_keys_of_the_explorer() {
 #[test]
 fn the_delete_key_of_the_page_asks_first() {
     let (mut f, _) = Fixture::recorded(two_sessions());
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
     f.open_explorer_page();
     f.code(KeyCode::Delete);
     f.assert_sees("Remove");
@@ -1636,7 +1634,7 @@ fn esc_closes_the_page_and_runs_nothing() {
 #[test]
 fn a_key_without_a_command_on_the_row_closes_the_page() {
     let (mut f, recorder) = Fixture::recorded(two_sessions());
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
     let before = recorder.count();
     f.open_explorer_page();
     // `g` acts only on a table or a view.
@@ -1658,7 +1656,7 @@ fn the_next_key_after_the_page_is_a_normal_key() {
 fn the_keys_of_ctrl_w_keep_their_meaning_with_the_focus_in_the_explorer() {
     let (mut f, _) = Fixture::recorded(two_sessions());
     f.open_table("users");
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
     let consoles = f.app.consoles().len();
     let before = f.app.tables()[0].opened;
     // `Ctrl+W n` is the next tab, and not the new console of the key `n`.
@@ -1672,8 +1670,8 @@ fn the_keys_of_ctrl_w_keep_their_meaning_with_the_focus_in_the_explorer() {
 #[test]
 fn the_vim_mode_uses_its_own_key_in_the_page() {
     let (mut f, _) = Fixture::recorded_in(two_sessions(), Settings::default(), KeyboardMode::Vim);
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
-    assert!(common::explorer_page(&f.app).contains(&"x Remove connection".to_owned()));
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    assert!(crate::common::explorer_page(&f.app).contains(&"x Remove connection".to_owned()));
     f.open_explorer_page();
     f.code(KeyCode::Char('x'));
     f.assert_sees("Remove");

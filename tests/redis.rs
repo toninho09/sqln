@@ -3,14 +3,12 @@
 //
 // Each test uses its own keys, so the tests can run at the same time.
 
-mod common;
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::ctrl;
+use crate::common::ctrl;
 use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -362,7 +360,7 @@ async fn a_socket_refuses_tls() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_missing_socket_reports_an_error() {
-    let path = common::temp_dir("redis-no-socket").join("none.sock");
+    let path = crate::common::temp_dir!("redis-no-socket").join("none.sock");
     let target = parse_uri(&format!("redis:///0?socket={}", path.display())).unwrap();
     let error = network_connector(target).connect().await.err().unwrap();
     assert!(!error.message.is_empty());
@@ -1208,7 +1206,7 @@ fn run_on_screen(screen: &mut Screen, command: &str) {
     let app = &mut screen.app;
     app.on_event(Event::Key(ctrl('a')));
     app.on_event(Event::Paste(command.to_owned()));
-    app.on_event(Event::Key(common::key(KeyCode::F(5))));
+    app.on_event(Event::Key(crate::common::key(KeyCode::F(5))));
     let deadline = Instant::now() + Duration::from_secs(20);
     app.drain_events();
     while app.console().is_busy() {
@@ -1252,10 +1250,10 @@ fn the_form_of_an_open_connection_marks_a_database_and_the_tree_follows() {
         let mut screen = Screen::open(&uri);
         run_on_screen(&mut screen, "PING");
         let app = &mut screen.app;
-        common::select_row(app, 0, &[RowKind::Connection], "cache");
-        app.on_event(Event::Key(common::key(KeyCode::Char('e'))));
+        crate::common::select_row(app, 0, &[RowKind::Connection], "cache");
+        app.on_event(Event::Key(crate::common::key(KeyCode::Char('e'))));
         assert!(app.form().unwrap().display_only);
-        common::focus_form_field(app, Field::Schemas);
+        crate::common::focus_form_field(app, Field::Schemas);
         app.on_event(Event::Key(ctrl('o')));
         let deadline = Instant::now() + Duration::from_secs(20);
         while app.form().unwrap().test.is_some() {
@@ -1266,12 +1264,12 @@ fn the_form_of_an_open_connection_marks_a_database_and_the_tree_follows() {
         let open = app.form().unwrap().schema_list.as_ref().expect("the list");
         assert!(open.list.list().items().contains(&"13".to_owned()));
         for code in [KeyCode::Char('1'), KeyCode::Char('3'), KeyCode::Char(' ')] {
-            app.on_event(Event::Key(common::key(code)));
+            app.on_event(Event::Key(crate::common::key(code)));
         }
-        app.on_event(Event::Key(common::key(KeyCode::Enter)));
+        app.on_event(Event::Key(crate::common::key(KeyCode::Enter)));
         assert_eq!(app.form().unwrap().text(Field::Schemas), "13");
-        common::focus_form_field(app, Field::Save);
-        app.on_event(Event::Key(common::key(KeyCode::Enter)));
+        crate::common::focus_form_field(app, Field::Save);
+        app.on_event(Event::Key(crate::common::key(KeyCode::Enter)));
         assert!(app.form().is_none());
         let definition = app.connections()[0].definition.as_ref().unwrap();
         assert_eq!(definition.schemas, ["13"]);
@@ -1297,7 +1295,7 @@ fn a_live_result_shows_its_state_and_rows_on_a_small_screen() {
         let app = &mut screen.app;
         app.on_event(Event::Key(ctrl('a')));
         app.on_event(Event::Paste("SUBSCRIBE live:ui".to_owned()));
-        app.on_event(Event::Key(common::key(KeyCode::F(5))));
+        app.on_event(Event::Key(crate::common::key(KeyCode::F(5))));
         screen.wait_for_at(80, 24, "0 rows received. Live.");
         let shown = screen.screen_at(80, 24);
         let status = shown.lines().rev().nth(1).unwrap();
@@ -1310,7 +1308,7 @@ fn a_live_result_shows_its_state_and_rows_on_a_small_screen() {
 
         let app = &mut screen.app;
         app.on_event(Event::Key(ctrl('w')));
-        app.on_event(Event::Key(common::key(KeyCode::Char('x'))));
+        app.on_event(Event::Key(crate::common::key(KeyCode::Char('x'))));
         let deadline = Instant::now() + Duration::from_secs(20);
         while app.console().is_busy() {
             app.drain_events();
@@ -1336,7 +1334,7 @@ fn a_key_opens_in_a_tab_without_sql_fields() {
         ]);
 
         let mut screen = Screen::open(&uri.replace("/0", "/1"));
-        common::open_table(&mut screen.app, 0, "tab:list");
+        crate::common::open_table(&mut screen.app, 0, "tab:list");
         screen.wait_for("second");
         let shown = screen.screen();
         assert!(shown.contains("tab:list (key)"), "{shown}");
@@ -1347,7 +1345,9 @@ fn a_key_opens_in_a_tab_without_sql_fields() {
         }
 
         // A click or a key cannot move the focus to a field that is not on the screen.
-        screen.app.on_event(Event::Key(common::key(KeyCode::Up)));
+        screen
+            .app
+            .on_event(Event::Key(crate::common::key(KeyCode::Up)));
         assert_eq!(screen.app.table().unwrap().focus, TableFocus::Grid);
         h.run_ok(&["SELECT 1", "FLUSHDB"]);
     }
@@ -1362,17 +1362,17 @@ fn a_console_runs_commands_and_ignores_the_manual_mode() {
         screen.app.on_event(Event::Key(ctrl('w')));
         screen
             .app
-            .on_event(Event::Key(common::key(KeyCode::Char('m'))));
+            .on_event(Event::Key(crate::common::key(KeyCode::Char('m'))));
         assert!(screen.app.console().manual);
 
         for c in "ECHO hello-console".chars() {
-            let event = common::key(KeyCode::Char(c));
+            let event = crate::common::key(KeyCode::Char(c));
             screen.app.on_event(Event::Key(event));
         }
         screen.app.on_event(Event::Key(ctrl('w')));
         screen
             .app
-            .on_event(Event::Key(common::key(KeyCode::Char('e'))));
+            .on_event(Event::Key(crate::common::key(KeyCode::Char('e'))));
         screen.wait_for("hello-console");
         screen.wait_for("1 row");
     }
