@@ -173,6 +173,28 @@ fn the_consumer_group_field_shows_in_the_smallest_screen() {
     assert!(shown.contains("team-a.reader"), "{shown}");
 }
 
+#[test]
+fn the_options_of_kafka_have_no_sql_names_and_no_read_only() {
+    let mut form = kafka_form();
+    form.select_section(Field::SqlTimeout.group());
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal
+        .draw(|frame| {
+            sqln::ui::form::draw_form(frame, &form, &Theme::plain());
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let shown: String = buffer
+        .content
+        .chunks(usize::from(buffer.area.width))
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>() + "\n")
+        .collect();
+    assert!(shown.contains("Statement (s, 0 = none)"), "{shown}");
+    assert!(!shown.contains("SQL"), "{shown}");
+    assert!(!shown.contains("Read only"), "{shown}");
+    assert!(!form.fields().contains(&Field::ReadOnly));
+}
+
 fn kafka_form() -> ConnectionForm {
     let mut form = ConnectionForm::new();
     form.kind = Kind::Kafka;

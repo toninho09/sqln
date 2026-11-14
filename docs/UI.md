@@ -867,7 +867,7 @@ The form has a sidebar, as the Settings dialog has. Each section shows its own f
 | Address | Host, Port, and Database; or the URI; or the SQLite file |
 | Credentials | User, Password, and Credential |
 | Security | TLS, CA file, client certificate, and client key |
-| Options | Schemas (Databases in MySQL and Redis), SQLite foreign keys and busy limit, Pool, Read only, Production, Connect limit, SQL limit, Idle limit, Theme, and Icon |
+| Options | Schemas (Databases in MySQL and Redis), SQLite foreign keys and busy limit, Kafka consumer group and topics, Pool, Read only (not in Kafka), Production, Connect limit, Statement limit, Idle limit, Theme, and Icon |
 
 A section without fields stays out of the sidebar, so SQLite has no Credentials and no Security. DuckDB shows File and Schemas, and it has no busy timeout or foreign keys.
 The buttons stay at the bottom of each section.

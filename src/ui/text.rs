@@ -1228,7 +1228,7 @@ pub const FIELD_POOL: &str = "Pool limit";
 pub const FIELD_READ_ONLY: &str = "Read only";
 pub const FIELD_PRODUCTION: &str = "Production";
 pub const FIELD_CONNECT: &str = "Connect limit (seconds)";
-pub const FIELD_SQL_TIMEOUT: &str = "SQL limit (s, 0 = none)";
+pub const FIELD_SQL_TIMEOUT: &str = "Statement (s, 0 = none)";
 pub const FIELD_IDLE_TIMEOUT: &str = "Idle limit (s, 0 = none)";
 pub const BUTTON_TEST: &str = "Test connection";
 pub const BUTTON_SAVE: &str = "Save";

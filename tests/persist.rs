@@ -887,7 +887,7 @@ fn the_sql_limit_of_a_connection_saves_and_zero_means_no_limit() {
     session.go_to_connection("one");
     session.code(KeyCode::Char('e'));
     session.focus_form(Field::SqlTimeout);
-    session.assert_sees("SQL limit");
+    session.assert_sees("Statement (s, 0 = none)");
     erase_field(&mut session, 2);
     session.write("0");
     session.press_form_button(Field::Save);
@@ -942,7 +942,7 @@ fn a_bad_sql_limit_keeps_the_form_open() {
     // The error opens the section of the field and puts the focus on it.
     let form = session.app.form().expect("the form stays open");
     assert_eq!(form.focus, Field::SqlTimeout);
-    session.assert_sees("SQL limit (s, 0 = none) needs a number.");
+    session.assert_sees("Statement (s, 0 = none) needs a number.");
     // The file did not change.
     assert!(
         !fs::read_to_string(store.global.config_file())

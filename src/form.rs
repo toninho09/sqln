@@ -509,7 +509,12 @@ impl ConnectionForm {
         if self.kind == Kind::Kafka {
             fields.extend([Field::ConsumerGroup, Field::Topics]);
         }
-        fields.extend([Field::Pool, Field::ReadOnly, Field::Production]);
+        fields.push(Field::Pool);
+        // SQLN only reads from Kafka, so the flag has no effect there.
+        if self.kind != Kind::Kafka {
+            fields.push(Field::ReadOnly);
+        }
+        fields.push(Field::Production);
         if !self.kind.is_file() {
             fields.push(Field::ConnectTimeout);
         }

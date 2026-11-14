@@ -1451,7 +1451,7 @@ const FORM_LABELS: [&str; 20] = [
     "Read only",
     "Production",
     "Connect limit",
-    "SQL limit",
+    "Statement (s, 0 = none)",
 ];
 
 #[test]
