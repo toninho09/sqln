@@ -339,7 +339,7 @@ pub enum AgentMetadata {
 }
 
 /// What an agent metadata read reads.
-pub(crate) enum MetadataRead {
+pub enum MetadataRead {
     /// The catalog of these schemas. An empty list reads all schemas.
     Catalog(Vec<String>),
     /// The field paths of one Kafka topic.
@@ -680,7 +680,7 @@ impl Manager {
         execution
     }
 
-    pub(crate) fn run_agent(
+    pub fn run_agent(
         &self,
         console: ConsoleId,
         statements: Vec<String>,
@@ -737,7 +737,7 @@ impl Manager {
         execution
     }
 
-    pub(crate) fn agent_metadata(
+    pub fn agent_metadata(
         &self,
         console: ConsoleId,
         connection: ConnectionId,

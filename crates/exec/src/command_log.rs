@@ -37,7 +37,7 @@ struct CommandInfo {
 }
 
 #[derive(Debug)]
-pub(crate) struct Completion {
+pub struct Completion {
     pub span: Range<usize>,
     pub detail_start: usize,
     pub elapsed: Duration,
@@ -45,20 +45,20 @@ pub(crate) struct Completion {
 }
 
 #[derive(Debug)]
-pub(crate) struct Summary {
+pub struct Summary {
     pub span: Range<usize>,
     pub state: CommandState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ViewKey {
+pub struct ViewKey {
     pub width: usize,
     pub compact: bool,
     pub marks: [usize; 3],
 }
 
 #[derive(Debug)]
-pub(crate) struct Entry {
+pub struct Entry {
     pub id: u64,
     pub key: Option<StatementKey>,
     pub message: Message,
@@ -147,7 +147,7 @@ impl History {
     pub fn iter(&self) -> impl Iterator<Item = &Message> {
         self.entries.iter().map(|entry| &entry.message)
     }
-    pub(crate) fn agent_messages(&self) -> impl Iterator<Item = &Message> {
+    pub fn agent_messages(&self) -> impl Iterator<Item = &Message> {
         self.entries
             .iter()
             .filter(|entry| self.show_system_commands || !entry.system)
@@ -437,7 +437,7 @@ impl History {
         )
     }
 
-    pub(crate) fn visible<R>(
+    pub fn visible<R>(
         &mut self,
         scroll: &mut usize,
         height: usize,

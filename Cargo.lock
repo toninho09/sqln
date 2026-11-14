@@ -4120,8 +4120,6 @@ dependencies = [
  "apple-native-keyring-store",
  "async-trait",
  "base64 0.23.1",
- "bytes",
- "chrono",
  "crossterm",
  "duckdb",
  "edtui",
@@ -4136,15 +4134,14 @@ dependencies = [
  "rustix",
  "rustls",
  "schemars",
- "serde",
  "serde_json",
  "signal-hook 0.4.6",
  "similar",
  "sqln-connector",
  "sqln-core",
+ "sqln-exec",
  "sqln-sql",
  "sqln-store",
- "sqlparser",
  "tokio",
  "tokio-util",
  "unicode-segmentation",
@@ -4207,6 +4204,32 @@ dependencies = [
  "tokio",
  "tokio-util",
  "unicode-width 0.2.3",
+ "zeroize",
+]
+
+[[package]]
+name = "sqln-exec"
+version = "0.4.1"
+dependencies = [
+ "bytes",
+ "chrono",
+ "crossterm",
+ "futures-util",
+ "reqwest",
+ "rustix",
+ "rustls",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sqln-connector",
+ "sqln-core",
+ "sqln-sql",
+ "sqln-store",
+ "sqlparser",
+ "tokio",
+ "tokio-util",
+ "unicode-width 0.2.3",
+ "uuid",
  "zeroize",
 ]
 
