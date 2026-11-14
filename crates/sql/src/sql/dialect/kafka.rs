@@ -2,7 +2,9 @@
 //! command-line paths, and most rules here are not read.
 
 use super::{BASE, SqlDialect, Syntax};
+use crate::catalog::RelationRef;
 use crate::sql::parameters::Parameter;
+use crate::structure::{Scope, Section, SessionSignal};
 
 pub struct Kafka;
 
@@ -39,5 +41,13 @@ impl SqlDialect for Kafka {
 
     fn parameter_marker(&self, _: usize, _: &mut Parameter) -> Result<String, String> {
         Ok("?".to_owned())
+    }
+
+    fn structure_sql(&self, _: Scope, _: &RelationRef, _: Section) -> Option<String> {
+        None
+    }
+
+    fn signal_sql(&self, _: SessionSignal, _: u64) -> Option<String> {
+        None
     }
 }

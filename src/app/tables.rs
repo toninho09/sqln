@@ -9,7 +9,7 @@ use crate::exec::{ConnectionId, ConsoleId};
 use crate::input::Action;
 use crate::navigator::{Row, RowKind};
 use crate::sql::Dialect;
-use crate::structure::{Scope, Section, SessionSignal, Structure, structure_sql};
+use crate::structure::{Scope, Section, SessionSignal, Structure, has_sessions, structure_sql};
 use crate::table::{Follow, PageRequest, TableFocus, TableTab, follow_choices};
 use crate::ui::text;
 use crate::ui::{TabView, compare, diagram, main_tab_label, run_badge, table};
@@ -21,11 +21,6 @@ pub(super) enum Tab {
     Table(usize),
     Diagram(usize),
     Compare(usize),
-}
-
-/// Returns true for a source with a list of sessions.
-pub(super) fn has_sessions(dialect: Dialect) -> bool {
-    matches!(dialect, Dialect::Postgres | Dialect::MySql)
 }
 
 impl App {

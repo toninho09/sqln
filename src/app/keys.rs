@@ -4,7 +4,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::compare::compare_has;
 use super::guard::short;
-use super::tables::has_sessions;
 use super::{App, DialogAction, Overlay};
 use crate::catalog::Catalog;
 use crate::connection::Connection;
@@ -22,6 +21,7 @@ use crate::plan::Explain;
 use crate::settings::SettingsRequest;
 use crate::sql::{Dialect, first_keyword, is_plain_read};
 use crate::store::config::ExplorerSide;
+use crate::structure::has_sessions;
 use crate::table::TableFocus;
 use crate::ui::kit::measure::fit;
 use crate::ui::kit::prompt::TextAction;

@@ -11,6 +11,8 @@ mod sqlite;
 
 use super::Dialect;
 use super::parameters::Parameter;
+use crate::catalog::RelationRef;
+use crate::structure::{Scope, Section, SessionSignal};
 
 /// How a `'` string reads a backslash.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,6 +82,16 @@ pub trait SqlDialect: Sync {
     /// Writes the native marker of a named parameter. `number` starts at 1. It can change
     /// the value to the form that the marker needs.
     fn parameter_marker(&self, number: usize, parameter: &mut Parameter) -> Result<String, String>;
+    /// The catalog query of a structure section, or `None` when the source does not
+    /// have that section.
+    fn structure_sql(
+        &self,
+        scope: Scope,
+        relation: &RelationRef,
+        section: Section,
+    ) -> Option<String>;
+    /// The statement of a session signal, or `None` when the source has no signals.
+    fn signal_sql(&self, signal: SessionSignal, session: u64) -> Option<String>;
 }
 
 impl Dialect {
