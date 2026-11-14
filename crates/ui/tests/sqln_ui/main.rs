@@ -6,7 +6,6 @@ mod analysis;
 mod browser;
 mod compare_data;
 mod complete_syntax;
-mod definition;
 mod editor_conventional;
 mod editor_search;
 mod editor_suggestions;

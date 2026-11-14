@@ -11,9 +11,10 @@ use super::{
 use crate::compare::sql::table_columns_sql;
 use crate::connector::TransactionState;
 use crate::data_edit::{Change, Failure, Job, Metadata, Outcome};
+use crate::dialect::{Family, family};
 use crate::pool::Lease;
 use crate::sink::Captured;
-use crate::sql::{Dialect, literal::text_literal};
+use crate::sql::literal::text_literal;
 use crate::text;
 
 fn failure(message: impl Into<String>) -> Failure {
@@ -91,7 +92,7 @@ impl ConsoleTask {
         commands: &mut UnboundedReceiver<Command>,
     ) -> Result<Metadata, Failure> {
         let dialect = self.binding.pool.dialect();
-        if dialect == Dialect::MySql {
+        if family(dialect).is_some_and(Family::checks_table_engine) {
             let sql = format!(
                 "SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} AND TABLE_NAME = {} AND TABLE_TYPE = 'BASE TABLE'",
                 text_literal(&relation.schema, dialect),
@@ -246,11 +247,8 @@ impl ConsoleTask {
                 if metadata.dialect != self.binding.pool.dialect() || changes.is_empty() {
                     return Err(failure(text::EDIT_NO_CHANGES));
                 }
-                let begin = if metadata.dialect == Dialect::Sqlite {
-                    "BEGIN IMMEDIATE"
-                } else {
-                    "BEGIN"
-                };
+                let family = family(metadata.dialect);
+                let begin = family.map_or("BEGIN", Family::edit_begin);
                 self.edit_statement(lease, key, begin, 1, commands).await?;
                 let columns: Vec<_> = metadata
                     .table
@@ -294,7 +292,8 @@ impl ConsoleTask {
                             let result = self.edit_statement(lease, key, &sql, 1, commands).await?;
                             // The lock proves identity even when MySQL reports no changed value.
                             if !(matches!(result.changed, Some(1))
-                                || metadata.dialect == Dialect::MySql && result.changed == Some(0))
+                                || family.is_some_and(Family::counts_changed_values)
+                                    && result.changed == Some(0))
                             {
                                 return Err(failure(text::EDIT_CONFLICT));
                             }

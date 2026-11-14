@@ -1,7 +1,6 @@
 //! Redis and Valkey commands. Only the command words apply.
 
-use super::{Features, Vocabulary};
-use crate::compare::Style;
+use super::{Family, Features, Vocabulary};
 use crate::complete::keywords::REDIS;
 use crate::plan::PlanSyntax;
 
@@ -45,7 +44,7 @@ impl Features for Redis {
         None
     }
 
-    fn compare(&self) -> Option<Style> {
+    fn family(&self) -> Option<Family> {
         None
     }
 }

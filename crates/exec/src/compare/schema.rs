@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Style, style};
+use crate::dialect::{Family, family};
 use crate::grid::Row;
 use crate::sql::{Dialect, TokenKind, quote_identifier, tokenize};
 
@@ -101,9 +101,9 @@ pub fn build(dialect: Dialect, schema: &str, results: &[Vec<Row>]) -> SchemaMode
     let rows = |index: usize| results.get(index).map_or(&[][..], Vec::as_slice);
     read_columns(&mut model, rows(0));
     read_constraints(&mut model, dialect, rows(1));
-    let texts = match style(dialect) {
-        Some(Style::Sqlite) => Some(sqlite_texts(rows(3))),
-        Some(Style::Postgres | Style::MySql) | None => None,
+    let texts = match family(dialect) {
+        Some(Family::Sqlite) => Some(sqlite_texts(rows(3))),
+        Some(Family::Postgres | Family::MySql) | None => None,
     };
     read_indexes(&mut model, dialect, rows(2), texts.as_ref());
     if let Some(texts) = &texts {
@@ -213,9 +213,9 @@ fn read_constraints(model: &mut SchemaModel, dialect: Dialect, rows: &[Row]) {
             definition,
         };
         // PostgreSQL gives the text of the constraint. The other sources give its parts.
-        match style(dialect) {
-            Some(Style::Postgres) => {}
-            Some(Style::MySql | Style::Sqlite) | None => {
+        match family(dialect) {
+            Some(Family::Postgres) => {}
+            Some(Family::MySql | Family::Sqlite) | None => {
                 constraint.definition = constraint_text(&constraint, dialect);
             }
         }
@@ -297,12 +297,12 @@ fn read_indexes(
             .iter()
             .map(|row| index_part(row, dialect))
             .unzip();
-        let definition = match style(dialect) {
-            Some(Style::Postgres) => first
+        let definition = match family(dialect) {
+            Some(Family::Postgres) => first
                 .text(5)
                 .map(|text| postgres_index_text(&text))
                 .unwrap_or_default(),
-            Some(Style::MySql) => {
+            Some(Family::MySql) => {
                 let kind = first.text(5).unwrap_or_default();
                 let list = written.join(", ");
                 match kind.as_str() {
@@ -310,7 +310,7 @@ fn read_indexes(
                     _ => format!("({list})"),
                 }
             }
-            Some(Style::Sqlite) => texts
+            Some(Family::Sqlite) => texts
                 .and_then(|texts| texts.get(&("index", group.name.clone())))
                 .map(|text| after_parenthesis(text, dialect).to_owned())
                 .unwrap_or_default(),
@@ -330,8 +330,8 @@ fn read_indexes(
 /// and its order, or an expression. SQLite gives `NULL` for an expression, and its text
 /// holds the expression.
 fn index_part(row: &Row, dialect: Dialect) -> (String, String) {
-    match style(dialect) {
-        Some(Style::MySql) => {
+    match family(dialect) {
+        Some(Family::MySql) => {
             let (part, mut written) = match (row.text(4), row.text(8)) {
                 (Some(column), _) => {
                     let written = quote_identifier(&column, dialect);
@@ -348,11 +348,11 @@ fn index_part(row: &Row, dialect: Dialect) -> (String, String) {
             }
             (part, written)
         }
-        Some(Style::Postgres) => {
+        Some(Family::Postgres) => {
             let part = row.text(4).unwrap_or_default();
             (unquoted(&part), part)
         }
-        Some(Style::Sqlite) | None => {
+        Some(Family::Sqlite) | None => {
             let part = row.text(4).unwrap_or_else(|| "<expression>".to_owned());
             (part.clone(), part)
         }
@@ -500,7 +500,7 @@ pub fn diff(source: &SchemaModel, target: &SchemaModel) -> Vec<Difference> {
         same_dialect: source.dialect == target.dialect,
         // A key of SQLite has no name of its own.
         by_definition: source.dialect != target.dialect
-            || style(source.dialect).is_some_and(|style| !style.named_keys()),
+            || family(source.dialect).is_some_and(|family| !family.named_keys()),
     };
     let names: BTreeSet<&String> = source.tables.keys().chain(target.tables.keys()).collect();
     let mut differences = Vec::new();

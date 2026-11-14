@@ -4,6 +4,6 @@
 pub mod exec;
 
 pub(crate) use sqln_core::{catalog, grid, sink, text};
-pub(crate) use sqln_exec::{agent, ai, command_log, compare, data_edit, export, import};
+pub(crate) use sqln_exec::{agent, ai, command_log, compare, data_edit, dialect, export, import};
 pub(crate) use sqln_session::{connector, pool};
 pub(crate) use sqln_sql::{sql, structure};

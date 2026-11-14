@@ -10,6 +10,7 @@ pub mod compare;
 pub mod complete;
 pub mod connection;
 pub mod data_edit;
+pub mod definition;
 pub mod diagram;
 pub mod dialect;
 pub mod exec;

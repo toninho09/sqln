@@ -1,7 +1,6 @@
 //! The completion words of PostgreSQL. DuckDB shares most of them.
 
-use super::{Features, Vocabulary};
-use crate::compare::Style;
+use super::{Family, Features, Vocabulary};
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
 use crate::diagram::sql::{postgres_columns, postgres_keys};
@@ -138,7 +137,7 @@ impl Features for Postgres {
         ))
     }
 
-    fn compare(&self) -> Option<Style> {
-        Some(Style::Postgres)
+    fn family(&self) -> Option<Family> {
+        Some(Family::Postgres)
     }
 }

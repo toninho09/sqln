@@ -4,7 +4,6 @@
 pub mod browser;
 pub mod compare_tab;
 pub mod console;
-pub mod definition;
 pub mod diagram_tab;
 pub mod edit_form;
 pub mod editor;

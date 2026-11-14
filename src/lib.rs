@@ -9,14 +9,13 @@ pub use sqln_core::{
     message, progress, sink, text, wrap,
 };
 pub use sqln_exec::{
-    agent, ai, analysis, command_log, compare, complete, connection, data_edit, diagram, dialect,
-    export, import, plan,
+    agent, ai, analysis, command_log, compare, complete, connection, data_edit, definition,
+    diagram, dialect, export, import, plan,
 };
 pub use sqln_runtime::exec;
 pub use sqln_sql::{sql, structure};
 pub use sqln_store::{creds, script_file, store, trust};
 pub use sqln_ui::{
-    browser, compare_tab, console, definition, diagram_tab, edit_form, editor, export_form, form,
-    generate, help, history, import_form, navigator, palette, parameters, result, settings, table,
-    ui,
+    browser, compare_tab, console, diagram_tab, edit_form, editor, export_form, form, generate,
+    help, history, import_form, navigator, palette, parameters, result, settings, table, ui,
 };

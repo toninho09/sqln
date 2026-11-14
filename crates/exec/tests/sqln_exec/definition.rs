@@ -4,13 +4,13 @@ use std::collections::BTreeMap;
 
 use sqln_core::catalog::{Object, ObjectKind, RelationKind, RelationRef};
 use sqln_core::grid::{Row, Value};
+use sqln_core::text;
 use sqln_exec::compare::ddl::create_text;
 use sqln_exec::compare::schema::{
     Column, Constraint, ConstraintKind, Index, SchemaModel, Table, Target as KeyTarget,
 };
+use sqln_exec::definition::{Target, definition_sql, definition_text};
 use sqln_sql::sql::Dialect;
-use sqln_ui::definition::{Target, definition_sql, definition_text};
-use sqln_ui::ui::text;
 
 fn object(name: &str, kind: ObjectKind, detail: &str) -> Target {
     Target::object("public", &Object::new(name.into(), kind, detail.into()))

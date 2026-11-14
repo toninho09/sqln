@@ -67,6 +67,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed module respons
 - Reject stale execution events. Preserve pool, cancellation, timeout, and memory-budget contracts.
 - Drop sessions whose state or cleanup is unknown.
 - Reuse shared SQL identifier and literal helpers per dialect.
+- Put per-dialect behavior in `sqln_sql::sql::dialect` and `sqln_exec::dialect`. Do not compare `Dialect` values outside them, except on the command-line paths of Redis and Kafka. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#dialects).
 - Use connector `Capabilities` to control which features the interface offers.
 
 ## Security and persistence

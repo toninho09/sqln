@@ -46,9 +46,9 @@ sqln-vault                           â”‚  sqln-duckdb, sqln-redis, sqln-kafka â”
 | `sqln-postgres`, `sqln-mysql`, `sqln-sqlite`, `sqln-duckdb`, `sqln-redis`, `sqln-kafka` | `crates/<driver>` | One connector each, with its driver library |
 | `sqln-connector` | `crates/connector` | Facade: `connector` joins the contract and the drivers at the old paths. `connector::open` opens the connector of a saved definition |
 | `sqln-store` | `crates/store` | `creds`, `script_file`, `store`, `trust` |
-| `sqln-exec` | `crates/exec` | `agent`, `ai`, `analysis`, `command_log`, `compare`, `complete`, `connection`, `data_edit`, `diagram`, `exec` (types only), `export`, `import`, `plan` |
+| `sqln-exec` | `crates/exec` | `agent`, `ai`, `analysis`, `command_log`, `compare`, `complete`, `connection`, `data_edit`, `definition`, `diagram`, `dialect`, `exec` (types only), `export`, `import`, `plan` |
 | `sqln-runtime` | `crates/runtime` | `exec`: the types of `sqln-exec` and `Manager`, with the console tasks and jobs |
-| `sqln-ui` | `crates/ui` | `browser`, `compare_tab`, `console`, `definition`, `diagram_tab`, `edit_form`, `editor`, `export_form`, `form`, `generate`, `help`, `history`, `import_form`, `navigator`, `palette`, `parameters`, `result`, `settings`, `table`, `ui` |
+| `sqln-ui` | `crates/ui` | `browser`, `compare_tab`, `console`, `diagram_tab`, `edit_form`, `editor`, `export_form`, `form`, `generate`, `help`, `history`, `import_form`, `navigator`, `palette`, `parameters`, `result`, `settings`, `table`, `ui` |
 | `sqln` | root, `src/` | `app`, `batch`, `mcp`, `terminal`, and the binary |
 
 A change recompiles the changed crate and the crates above it in the graph:
@@ -541,9 +541,18 @@ A preview reads only the visible prefix. TSV encoding borrows selected values wi
 - `Syntax` holds the lexical rules (comments, quotes, escapes, parameter markers) and the rules that SQLN uses to write SQL (identifier quote, literals, booleans). The lexer reads it once for each text, not for each token.
 - `SqlDialect` holds the behavior that data cannot express: the `sqlparser` dialect, the text literal, the marker of a named parameter, the catalog queries of the structure tab, and the session signals. `None` means that the source does not have the feature, and the interface hides it (for example, `structure::has_sessions`).
 - `sqln_exec::dialect` has one file for each dialect too. Each file implements `Features`, and `dialect::features()` is the only `match` that chooses the file. `Vocabulary` holds the completion words: keywords, statement starters, types, functions, and the grammar choices (`ILIKE`, `ALTER TABLE` actions, column options, `NULLS FIRST`, the extra join). `Features` also gives the plan (`PlanSyntax`: the `EXPLAIN` texts and the `PlanFormat` of the answer), the diagram queries, and the AI language line and comment query. Long per-dialect code, such as a plan reader, can stay in its feature module as a function. The dialect file chooses it.
-- A schema compare has many small differences, so the dialect file chooses a `compare::Style` (`Postgres`, `MySql`, or `Sqlite`) and `compare` matches on the style. A dialect like MySQL takes an existing style. A new style needs a new arm in each `match` of `compare`, and the compiler shows each one. A source without a style has no compare queries, so it has no model and no script.
+- The schema compare, the DDL of an object (`definition`), and the data edit have many small differences, so the dialect file chooses a `dialect::Family` (`Postgres`, `MySql`, or `Sqlite`), and these modules match on the family. A dialect like MySQL takes an existing family. A new family needs a new arm in each `match` on `Family`, and the compiler shows each one. A source without a family (DuckDB, Redis, Kafka) has no compare queries, no DDL, and no data edit.
 - The traits have no default methods. The compiler shows each item that a new dialect must decide.
 - Code outside these modules reads the rules and does not compare `Dialect` values. The exception is the command-line paths of Redis and Kafka, which use `Dialect::is_command_line`.
+
+#### Add a database
+
+1. Create the driver crate `crates/<driver>/` and implement `Connector` and `Session`. Set its `Capabilities`.
+2. Add the `Engine` variant (network) or a `Source` variant (file), and connect it in `sqln_connector::connector`.
+3. Add the `Dialect` variant. The compiler then shows the two dispatch matches and the `Engine` sites.
+4. Add `crates/sql/src/sql/dialect/<name>.rs` with its `Syntax` and `SqlDialect`.
+5. Add `crates/exec/src/dialect/<name>.rs` with its `Vocabulary` and `Features`. Choose an existing `Family`, or `None`.
+6. Add the database service to `compose.test.yaml` and the integration tests of the driver crate.
 
 ## 5. Script execution
 

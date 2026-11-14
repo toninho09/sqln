@@ -1,8 +1,7 @@
 //! Kafka line commands and the SELECT subset. `complete::kafka` adds the words that
 //! depend on the position.
 
-use super::{Features, Vocabulary};
-use crate::compare::Style;
+use super::{Family, Features, Vocabulary};
 use crate::complete::keywords::{KAFKA_CLAUSES, KAFKA_COMMANDS, KAFKA_SELECT_WORDS};
 use crate::plan::PlanSyntax;
 
@@ -46,7 +45,7 @@ impl Features for Kafka {
         None
     }
 
-    fn compare(&self) -> Option<Style> {
+    fn family(&self) -> Option<Family> {
         None
     }
 }

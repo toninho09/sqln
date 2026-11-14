@@ -1,7 +1,6 @@
 //! The completion words of SQLite.
 
-use super::{Features, Vocabulary};
-use crate::compare::Style;
+use super::{Family, Features, Vocabulary};
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
 use crate::diagram::sql::{sqlite_columns, sqlite_keys};
@@ -99,7 +98,7 @@ impl Features for Sqlite {
         None
     }
 
-    fn compare(&self) -> Option<Style> {
-        Some(Style::Sqlite)
+    fn family(&self) -> Option<Family> {
+        Some(Family::Sqlite)
     }
 }

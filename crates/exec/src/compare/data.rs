@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use super::schema::{Column, Table};
-use super::{Style, style};
+use crate::dialect::{Family, family};
 use crate::grid::{Budget, Row, Value, row_cost};
 use crate::sql::literal::value_literal;
 use crate::sql::{Dialect, quote_identifier};
@@ -47,7 +47,7 @@ pub fn plan(source: &Table, target: &Table, dialect: Dialect) -> Result<Plan, St
         return Err(text::compare_missing_column(&column.name));
     }
     let always = |column: &Column| {
-        style(dialect).is_some_and(Style::always_identity)
+        family(dialect).is_some_and(Family::always_identity)
             && column.auto.as_deref() == Some(ALWAYS_IDENTITY)
     };
     let in_key = |column: &Column| source.primary.contains(&column.name);

@@ -1,8 +1,7 @@
 //! The completion words of DuckDB. It uses the PostgreSQL lists.
 
 use super::postgres::{ALTER_TABLE_ACTIONS, FUNCTIONS, KEYWORDS, STARTERS_EXTRA, TYPES};
-use super::{Features, Vocabulary};
-use crate::compare::Style;
+use super::{Family, Features, Vocabulary};
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
 use crate::plan::PlanSyntax;
@@ -47,7 +46,7 @@ impl Features for DuckDb {
         None
     }
 
-    fn compare(&self) -> Option<Style> {
+    fn family(&self) -> Option<Family> {
         None
     }
 }

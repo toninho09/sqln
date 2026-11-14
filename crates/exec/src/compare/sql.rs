@@ -13,8 +13,8 @@
 //! On PostgreSQL the read runs with the schema in `search_path`, so the database writes
 //! the names of that schema without the schema.
 
-use super::{Style, style};
 use crate::catalog::RelationRef;
+use crate::dialect::{Family, family};
 use crate::sql::from_clause;
 use crate::sql::{Dialect, quote_identifier};
 use crate::structure::name_literal;
@@ -22,18 +22,18 @@ use crate::structure::name_literal;
 /// Returns the queries of the read of a schema. Redis has no tables.
 pub fn compare_sql(dialect: Dialect, schema: &str) -> Option<Vec<String>> {
     let literal = name_literal(schema, dialect);
-    Some(match style(dialect)? {
-        Style::Postgres => vec![
+    Some(match family(dialect)? {
+        Family::Postgres => vec![
             postgres_columns(&literal, ""),
             postgres_constraints(&literal, ""),
             postgres_indexes(&literal, ""),
         ],
-        Style::MySql => vec![
+        Family::MySql => vec![
             mysql_columns(&literal, ""),
             mysql_constraints(&literal),
             mysql_indexes(&literal),
         ],
-        Style::Sqlite => vec![
+        Family::Sqlite => vec![
             sqlite_columns(&literal, ""),
             sqlite_constraints(&literal),
             sqlite_indexes(&literal),
@@ -47,10 +47,10 @@ pub fn compare_sql(dialect: Dialect, schema: &str) -> Option<Vec<String>> {
 pub fn table_columns_sql(dialect: Dialect, schema: &str, table: &str) -> Option<String> {
     let literal = name_literal(schema, dialect);
     let name = name_literal(table, dialect);
-    Some(match style(dialect)? {
-        Style::Postgres => postgres_columns(&literal, &format!(" AND c.relname = {name}")),
-        Style::MySql => mysql_columns(&literal, &format!(" AND c.TABLE_NAME = {name}")),
-        Style::Sqlite => sqlite_columns(&literal, &format!(" AND t.name = {name}")),
+    Some(match family(dialect)? {
+        Family::Postgres => postgres_columns(&literal, &format!(" AND c.relname = {name}")),
+        Family::MySql => mysql_columns(&literal, &format!(" AND c.TABLE_NAME = {name}")),
+        Family::Sqlite => sqlite_columns(&literal, &format!(" AND t.name = {name}")),
     })
 }
 

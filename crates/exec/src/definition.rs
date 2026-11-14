@@ -4,11 +4,12 @@
 
 use crate::catalog::{Object, ObjectKind, RelationKind, RelationRef};
 use crate::compare::{ddl, schema, sql::postgres_table_sql};
+use crate::dialect::{Family, family};
 use crate::grid::Row;
 use crate::sql::literal::text_literal;
 use crate::sql::{Dialect, quote_identifier};
 use crate::structure::name_literal;
-use crate::ui::text;
+use crate::text;
 
 /// What a DDL describes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,12 +79,14 @@ impl Target {
 
 /// Returns true when SQLN writes the text of the object from the catalog.
 fn is_written(dialect: Dialect, kind: Kind) -> bool {
-    dialect == Dialect::Postgres
-        && matches!(
+    match family(dialect) {
+        Some(Family::Postgres) => matches!(
             kind,
             Kind::Table
                 | Kind::Object(ObjectKind::Sequence | ObjectKind::Enum | ObjectKind::Domain)
-        )
+        ),
+        Some(Family::MySql | Family::Sqlite) | None => false,
+    }
 }
 
 /// Returns the queries that read the DDL of an object. A source or a kind without DDL
@@ -91,9 +94,9 @@ fn is_written(dialect: Dialect, kind: Kind) -> bool {
 pub fn definition_sql(dialect: Dialect, target: &Target) -> Option<Vec<String>> {
     let (schema, name, detail) = target.literals(dialect);
     let one = |sql: String| Some(vec![sql]);
-    match (dialect, target.kind) {
-        (Dialect::Postgres, Kind::Table) => Some(postgres_table_sql(&target.schema, &target.name)),
-        (Dialect::Postgres, Kind::View) => one(format!(
+    match (family(dialect)?, target.kind) {
+        (Family::Postgres, Kind::Table) => Some(postgres_table_sql(&target.schema, &target.name)),
+        (Family::Postgres, Kind::View) => one(format!(
             "SELECT CASE c.relkind WHEN 'm' THEN 'CREATE MATERIALIZED VIEW ' \
                ELSE 'CREATE OR REPLACE VIEW ' END \
              || pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(c.relname) \
@@ -102,7 +105,7 @@ pub fn definition_sql(dialect: Dialect, target: &Target) -> Option<Vec<String>> 
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
              WHERE n.nspname = {schema} AND c.relname = {name} AND c.relkind IN ('v', 'm')"
         )),
-        (Dialect::Postgres, Kind::Object(ObjectKind::Function | ObjectKind::Procedure)) => {
+        (Family::Postgres, Kind::Object(ObjectKind::Function | ObjectKind::Procedure)) => {
             one(format!(
                 "SELECT pg_catalog.pg_get_functiondef(p.oid) \
                  FROM pg_catalog.pg_proc p \
@@ -111,14 +114,14 @@ pub fn definition_sql(dialect: Dialect, target: &Target) -> Option<Vec<String>> 
                  AND pg_catalog.pg_get_function_identity_arguments(p.oid) = {detail}"
             ))
         }
-        (Dialect::Postgres, Kind::Object(ObjectKind::Trigger)) => one(format!(
+        (Family::Postgres, Kind::Object(ObjectKind::Trigger)) => one(format!(
             "SELECT pg_catalog.pg_get_triggerdef(t.oid, true) \
              FROM pg_catalog.pg_trigger t \
              JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid \
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
              WHERE n.nspname = {schema} AND c.relname = {detail} AND t.tgname = {name}"
         )),
-        (Dialect::Postgres, Kind::Object(ObjectKind::Sequence)) => one(format!(
+        (Family::Postgres, Kind::Object(ObjectKind::Sequence)) => one(format!(
             "SELECT pg_catalog.format_type(q.seqtypid, NULL), q.seqincrement::text, \
              q.seqmin::text, q.seqmax::text, q.seqstart::text, q.seqcache::text, \
              CASE WHEN q.seqcycle THEN 'yes' ELSE 'no' END, \
@@ -136,7 +139,7 @@ pub fn definition_sql(dialect: Dialect, target: &Target) -> Option<Vec<String>> 
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
              WHERE n.nspname = {schema} AND c.relname = {name}"
         )),
-        (Dialect::Postgres, Kind::Object(ObjectKind::Enum)) => one(format!(
+        (Family::Postgres, Kind::Object(ObjectKind::Enum)) => one(format!(
             "SELECT e.enumlabel::text \
              FROM pg_catalog.pg_enum e \
              JOIN pg_catalog.pg_type t ON t.oid = e.enumtypid \
@@ -145,7 +148,7 @@ pub fn definition_sql(dialect: Dialect, target: &Target) -> Option<Vec<String>> 
              ORDER BY e.enumsortorder"
         )),
         // A domain gives one row per check, or one row without a check.
-        (Dialect::Postgres, Kind::Object(ObjectKind::Domain)) => one(format!(
+        (Family::Postgres, Kind::Object(ObjectKind::Domain)) => one(format!(
             "SELECT pg_catalog.format_type(t.typbasetype, t.typtypmod), t.typdefault, \
              CASE WHEN t.typnotnull THEN 'yes' ELSE 'no' END, k.conname::text, \
              pg_catalog.pg_get_constraintdef(k.oid) \
@@ -155,7 +158,7 @@ pub fn definition_sql(dialect: Dialect, target: &Target) -> Option<Vec<String>> 
              WHERE n.nspname = {schema} AND t.typname = {name} AND t.typtype = 'd' \
              ORDER BY k.conname"
         )),
-        (Dialect::MySql, kind) => {
+        (Family::MySql, kind) => {
             let statement = match kind {
                 Kind::Table => "TABLE",
                 Kind::View => "VIEW",
@@ -169,7 +172,7 @@ pub fn definition_sql(dialect: Dialect, target: &Target) -> Option<Vec<String>> 
                 target.qualified(dialect)
             ))
         }
-        (Dialect::Sqlite, kind) => {
+        (Family::Sqlite, kind) => {
             let schema = quote_identifier(&target.schema, dialect);
             let filter = match kind {
                 Kind::Table => {
@@ -186,7 +189,6 @@ pub fn definition_sql(dialect: Dialect, target: &Target) -> Option<Vec<String>> 
                  ORDER BY type <> 'table', name"
             ))
         }
-        _ => None,
     }
 }
 
@@ -200,31 +202,31 @@ pub fn definition_text(
 ) -> Result<String, &'static str> {
     let rows = |index: usize| results.get(index).map_or(&[][..], Vec::as_slice);
     let first = rows(0).first();
-    let body = match (dialect, target.kind) {
-        (Dialect::Postgres, Kind::Table) => {
+    let body = match (family(dialect), target.kind) {
+        (Some(Family::Postgres), Kind::Table) => {
             let model = schema::build(dialect, &target.schema, results);
             ddl::create_text(&model, &target.name).ok_or(text::DEFINITION_MISSING)?
         }
-        (Dialect::Postgres, Kind::Object(ObjectKind::Sequence)) => {
+        (Some(Family::Postgres), Kind::Object(ObjectKind::Sequence)) => {
             sequence_text(target, first.ok_or(text::DEFINITION_MISSING)?)
         }
-        (Dialect::Postgres, Kind::Object(ObjectKind::Enum)) => {
+        (Some(Family::Postgres), Kind::Object(ObjectKind::Enum)) => {
             if rows(0).is_empty() {
                 return Err(text::DEFINITION_MISSING);
             }
             enum_text(target, rows(0))
         }
-        (Dialect::Postgres, Kind::Object(ObjectKind::Domain)) => {
+        (Some(Family::Postgres), Kind::Object(ObjectKind::Domain)) => {
             if rows(0).is_empty() {
                 return Err(text::DEFINITION_MISSING);
             }
             domain_text(target, rows(0))
         }
-        (Dialect::Postgres, _) => {
+        (Some(Family::Postgres), _) => {
             let row = first.ok_or(text::DEFINITION_MISSING)?;
             statement(&row.text(0).ok_or(text::DEFINITION_MISSING)?)
         }
-        (Dialect::MySql, kind) => {
+        (Some(Family::MySql), kind) => {
             let row = first.ok_or(text::DEFINITION_MISSING)?;
             // The text has the second place in `SHOW CREATE TABLE` and `SHOW CREATE VIEW`,
             // and the third in the others: MySQL and MariaDB give the same columns.
@@ -235,7 +237,7 @@ pub fn definition_text(
             };
             statement(&row.text(column).ok_or(text::DEFINITION_PRIVILEGE)?)
         }
-        (Dialect::Sqlite, _) => {
+        (Some(Family::Sqlite), _) => {
             let texts: Vec<String> = rows(0)
                 .iter()
                 .filter_map(|row| row.text(0))
@@ -246,8 +248,7 @@ pub fn definition_text(
             }
             texts.join("\n\n")
         }
-        (Dialect::Redis | Dialect::Kafka, _) => return Err(text::DEFINITION_MISSING),
-        (Dialect::DuckDb, _) => return Err(text::DEFINITION_MISSING),
+        (None, _) => return Err(text::DEFINITION_MISSING),
     };
     let mut header = format!(
         "-- {} {}.{} · {connection}\n",

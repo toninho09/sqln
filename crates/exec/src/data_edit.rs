@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::catalog::RelationRef;
 use crate::compare::schema::{self, Table};
+use crate::dialect::{Family, family};
 use crate::grid::{Budget, Reservation, ResultTable, Row, RowWriter, Value, printable, row_cost};
 use crate::sql::from_clause;
 use crate::sql::literal::value_literal;
@@ -462,11 +463,8 @@ impl Metadata {
     }
 
     pub fn lock_sql(&self, original: &Row) -> Result<String, String> {
-        let lock = if self.dialect == Dialect::Sqlite {
-            ""
-        } else {
-            " FOR UPDATE"
-        };
+        // A source without a family has no column query, so it never builds a `Metadata`.
+        let lock = family(self.dialect).map_or(" FOR UPDATE", Family::row_lock);
         Ok(format!(
             "SELECT * FROM {} WHERE {}{lock}",
             from_clause(&self.relation, self.dialect),
@@ -554,19 +552,12 @@ impl Metadata {
             }
         }
         if places.is_empty() {
-            // Every column uses its default. MySQL wants the empty column list, and
-            // the other dialects have the `DEFAULT VALUES` form.
-            return Ok(if self.dialect == Dialect::MySql {
-                format!(
-                    "INSERT INTO {} () VALUES ();",
-                    from_clause(&self.relation, self.dialect)
-                )
-            } else {
-                format!(
-                    "INSERT INTO {} DEFAULT VALUES;",
-                    from_clause(&self.relation, self.dialect)
-                )
-            });
+            // Every column uses its default.
+            let table = from_clause(&self.relation, self.dialect);
+            return Ok(family(self.dialect).map_or_else(
+                || format!("INSERT INTO {table} DEFAULT VALUES;"),
+                |family| family.insert_defaults(&table),
+            ));
         }
         Ok(format!(
             "INSERT INTO {} ({}) VALUES ({});",

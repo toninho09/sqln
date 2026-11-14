@@ -9,9 +9,92 @@ mod postgres;
 mod redis;
 mod sqlite;
 
-use crate::compare::Style;
 use crate::plan::PlanSyntax;
 use crate::sql::Dialect;
+
+/// The SQL family whose catalog reads, DDL, and data edits a dialect follows: the schema
+/// compare, the DDL of an object, and the edit of table rows. A dialect chooses one family
+/// in its file, or `None` when it has none of these features. A new family needs a new arm
+/// in each `match` on `Family`, and the compiler shows each one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Family {
+    Postgres,
+    MySql,
+    /// `ALTER TABLE` adds only simple columns, and a rebuild makes each other change.
+    Sqlite,
+}
+
+impl Family {
+    /// The script runs in one transaction, with the schema in `search_path`.
+    pub fn transactional_ddl(self) -> bool {
+        match self {
+            Family::Postgres => true,
+            Family::MySql | Family::Sqlite => false,
+        }
+    }
+
+    /// Each key has a name of its own.
+    pub fn named_keys(self) -> bool {
+        match self {
+            Family::Postgres | Family::MySql => true,
+            Family::Sqlite => false,
+        }
+    }
+
+    /// The clause after a read that locks its row until the end of a data edit.
+    pub fn row_lock(self) -> &'static str {
+        match self {
+            Family::Postgres | Family::MySql => " FOR UPDATE",
+            // SQLite locks the whole database with `BEGIN IMMEDIATE`.
+            Family::Sqlite => "",
+        }
+    }
+
+    /// The statement that starts the transaction of a data edit.
+    pub fn edit_begin(self) -> &'static str {
+        match self {
+            Family::Postgres | Family::MySql => "BEGIN",
+            Family::Sqlite => "BEGIN IMMEDIATE",
+        }
+    }
+
+    /// An update that keeps each value reports zero changed rows, as in MySQL.
+    pub fn counts_changed_values(self) -> bool {
+        match self {
+            Family::MySql => true,
+            Family::Postgres | Family::Sqlite => false,
+        }
+    }
+
+    /// A data edit needs a transactional table engine (InnoDB), as in MySQL.
+    pub fn checks_table_engine(self) -> bool {
+        match self {
+            Family::MySql => true,
+            Family::Postgres | Family::Sqlite => false,
+        }
+    }
+
+    /// Writes an insert where every column takes its default.
+    pub fn insert_defaults(self, table: &str) -> String {
+        match self {
+            Family::MySql => format!("INSERT INTO {table} () VALUES ();"),
+            Family::Postgres | Family::Sqlite => format!("INSERT INTO {table} DEFAULT VALUES;"),
+        }
+    }
+
+    /// A column can be `GENERATED ALWAYS AS IDENTITY`, which refuses an explicit value.
+    pub fn always_identity(self) -> bool {
+        match self {
+            Family::Postgres => true,
+            Family::MySql | Family::Sqlite => false,
+        }
+    }
+}
+
+/// Returns the family of a dialect, or `None` for a source without these features.
+pub fn family(dialect: Dialect) -> Option<Family> {
+    features(dialect).family()
+}
 
 /// The words that completion offers for a dialect. A slice of lists keeps shared lists
 /// in one place.
@@ -58,8 +141,8 @@ pub trait Features: Sync {
     /// The query of the comments of a schema for AI metadata. `schema` is a literal
     /// already.
     fn ai_comments_sql(&self, schema: &str) -> Option<String>;
-    /// The style of a schema compare, or `None` when the source has no compare.
-    fn compare(&self) -> Option<Style>;
+    /// The family of the catalog reads, DDL, and data edits, or `None`.
+    fn family(&self) -> Option<Family>;
 }
 
 /// Returns the features of a dialect.

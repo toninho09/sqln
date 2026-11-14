@@ -1,7 +1,6 @@
 //! The completion words of MySQL.
 
-use super::{Features, Vocabulary};
-use crate::compare::Style;
+use super::{Family, Features, Vocabulary};
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
 use crate::diagram::sql::{mysql_columns, mysql_keys};
@@ -167,7 +166,7 @@ impl Features for MySql {
         ))
     }
 
-    fn compare(&self) -> Option<Style> {
-        Some(Style::MySql)
+    fn family(&self) -> Option<Family> {
+        Some(Family::MySql)
     }
 }

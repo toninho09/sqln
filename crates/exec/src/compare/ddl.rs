@@ -7,7 +7,7 @@ use super::schema::{
     Change, Column, Constraint, ConstraintKind, Difference, Index, Object, SchemaModel, Table,
     after_parenthesis, quoted_list, target_text,
 };
-use super::{Style, style};
+use crate::dialect::{Family, family};
 use crate::sql::{Dialect, quote_identifier};
 
 /// The prefix of the new table of a SQLite rebuild.
@@ -21,8 +21,8 @@ pub fn script(
     differences: &[Difference],
     removals: bool,
 ) -> String {
-    // A source without a compare style has no model, so it gives an empty script.
-    let Some(style) = style(target.dialect) else {
+    // A source without a family has no model, so it gives an empty script.
+    let Some(family) = family(target.dialect) else {
         return String::new();
     };
     if differences.is_empty() {
@@ -30,14 +30,14 @@ pub fn script(
     }
     let mut writer = Writer {
         dialect: target.dialect,
-        style,
+        family,
         schema: target.schema.clone(),
         removals,
         lines: Vec::new(),
     };
-    match style {
-        Style::Sqlite => sqlite_script(&mut writer, source, target, differences),
-        Style::Postgres | Style::MySql => server_script(&mut writer, differences),
+    match family {
+        Family::Sqlite => sqlite_script(&mut writer, source, target, differences),
+        Family::Postgres | Family::MySql => server_script(&mut writer, differences),
     }
     writer.lines.join("\n")
 }
@@ -50,7 +50,7 @@ pub fn create_text(model: &SchemaModel, name: &str) -> Option<String> {
     let table = model.tables.get(name)?;
     let mut writer = Writer {
         dialect: model.dialect,
-        style: style(model.dialect)?,
+        family: family(model.dialect)?,
         schema: model.schema.clone(),
         removals: false,
         lines: Vec::new(),
@@ -73,7 +73,7 @@ pub fn create_text(model: &SchemaModel, name: &str) -> Option<String> {
 
 struct Writer {
     dialect: Dialect,
-    style: Style,
+    family: Family,
     schema: String,
     removals: bool,
     lines: Vec<String>,
@@ -144,7 +144,7 @@ fn created(differences: &[Difference]) -> Vec<&Table> {
 /// PostgreSQL and MySQL: drops first, then the new tables, the columns, the keys, and the
 /// foreign keys last, so a foreign key always finds its target.
 fn server_script(writer: &mut Writer, differences: &[Difference]) {
-    let transaction = writer.style.transactional_ddl();
+    let transaction = writer.family.transactional_ddl();
     if transaction {
         writer.statement("BEGIN".to_owned());
         let schema = writer.name(&writer.schema);
@@ -240,18 +240,19 @@ fn drop_object(writer: &mut Writer, difference: &Difference) {
     };
     let table = writer.table(&difference.table);
     let sql = match object {
-        Object::Index(index) => match writer.style {
-            Style::MySql => format!("DROP INDEX {} ON {table}", writer.name(&index.name)),
-            Style::Postgres | Style::Sqlite => format!("DROP INDEX {}", writer.table(&index.name)),
+        Object::Index(index) => match writer.family {
+            Family::MySql => format!("DROP INDEX {} ON {table}", writer.name(&index.name)),
+            Family::Postgres | Family::Sqlite => {
+                format!("DROP INDEX {}", writer.table(&index.name))
+            }
         },
         Object::Constraint(constraint) => {
             let name = writer.name(&constraint.name);
-            let drop = match (writer.style, constraint.kind) {
-                (Style::MySql, ConstraintKind::Foreign) => "DROP FOREIGN KEY",
-                (Style::MySql, ConstraintKind::Check) => "DROP CHECK",
-                (Style::MySql, ConstraintKind::Unique) | (Style::Postgres | Style::Sqlite, _) => {
-                    "DROP CONSTRAINT"
-                }
+            let drop = match (writer.family, constraint.kind) {
+                (Family::MySql, ConstraintKind::Foreign) => "DROP FOREIGN KEY",
+                (Family::MySql, ConstraintKind::Check) => "DROP CHECK",
+                (Family::MySql, ConstraintKind::Unique)
+                | (Family::Postgres | Family::Sqlite, _) => "DROP CONSTRAINT",
             };
             format!("ALTER TABLE {table} {drop} {name}")
         }
@@ -268,10 +269,10 @@ fn drop_object(writer: &mut Writer, difference: &Difference) {
 /// a key without a source key leaves here.
 fn drop_primary_key(writer: &mut Writer, difference: &Difference) {
     let table = writer.table(&difference.table);
-    let sql = match (writer.style, &difference.target, difference.change) {
-        (Style::MySql, Some(_), Change::Drop) => format!("ALTER TABLE {table} DROP PRIMARY KEY"),
+    let sql = match (writer.family, &difference.target, difference.change) {
+        (Family::MySql, Some(_), Change::Drop) => format!("ALTER TABLE {table} DROP PRIMARY KEY"),
         (
-            Style::Postgres,
+            Family::Postgres,
             Some(Object::PrimaryKey {
                 name: Some(name), ..
             }),
@@ -281,7 +282,7 @@ fn drop_primary_key(writer: &mut Writer, difference: &Difference) {
         }
         // MySQL changes a key in `add_primary_key`, a key of PostgreSQL without a name
         // has nothing to drop, and SQLite rebuilds the table.
-        (Style::MySql | Style::Postgres | Style::Sqlite, _, _) => return,
+        (Family::MySql | Family::Postgres | Family::Sqlite, _, _) => return,
     };
     if difference.change == Change::Drop {
         writer.removal(sql);
@@ -296,15 +297,15 @@ fn add_primary_key(writer: &mut Writer, difference: &Difference) {
     };
     let table = writer.table(&difference.table);
     let list = quoted_list(columns, writer.dialect);
-    let sql = match (writer.style, difference.change, name) {
-        (Style::MySql, Change::Alter, _) => {
+    let sql = match (writer.family, difference.change, name) {
+        (Family::MySql, Change::Alter, _) => {
             format!("ALTER TABLE {table} DROP PRIMARY KEY, ADD PRIMARY KEY ({list})")
         }
-        (Style::Postgres, _, Some(name)) => format!(
+        (Family::Postgres, _, Some(name)) => format!(
             "ALTER TABLE {table} ADD CONSTRAINT {} PRIMARY KEY ({list})",
             writer.name(name)
         ),
-        (Style::MySql | Style::Postgres | Style::Sqlite, _, _) => {
+        (Family::MySql | Family::Postgres | Family::Sqlite, _, _) => {
             format!("ALTER TABLE {table} ADD PRIMARY KEY ({list})")
         }
     };
@@ -329,9 +330,9 @@ fn add_object(writer: &mut Writer, table: &str, object: &Object) {
 /// Returns the text of a constraint after its name. A foreign key of MySQL names the
 /// schema of the target, because the text of the read has no schema.
 fn constraint_body(writer: &Writer, constraint: &Constraint) -> String {
-    let names_schema = match writer.style {
-        Style::MySql => constraint.kind == ConstraintKind::Foreign,
-        Style::Postgres | Style::Sqlite => false,
+    let names_schema = match writer.family {
+        Family::MySql => constraint.kind == ConstraintKind::Foreign,
+        Family::Postgres | Family::Sqlite => false,
     };
     if !names_schema {
         return constraint.definition.clone();
@@ -355,12 +356,12 @@ fn index_text(writer: &Writer, table: &str, index: &Index) -> String {
     let unique = if index.unique { "UNIQUE " } else { "" };
     let name = writer.name(&index.name);
     let table = writer.table(table);
-    match writer.style {
-        Style::Postgres => format!(
+    match writer.family {
+        Family::Postgres => format!(
             "CREATE {unique}INDEX {name} ON {table} USING {}",
             index.definition
         ),
-        Style::MySql => {
+        Family::MySql => {
             let (kind, list) = match index.definition.split_once(' ') {
                 Some((kind, list)) if !index.definition.starts_with('(') => {
                     (format!("{kind} "), list)
@@ -370,7 +371,7 @@ fn index_text(writer: &Writer, table: &str, index: &Index) -> String {
             format!("CREATE {unique}{kind}INDEX {name} ON {table} {list}")
         }
         // SQLite writes its indexes from their SQL text in `sqlite_script`.
-        Style::Sqlite => String::new(),
+        Family::Sqlite => String::new(),
     }
 }
 
@@ -384,9 +385,9 @@ fn create_table(writer: &mut Writer, table: &Table) {
         .collect();
     if !table.primary.is_empty() {
         let list = quoted_list(&table.primary, writer.dialect);
-        let name = match writer.style {
-            Style::Postgres => table.primary_name.as_ref(),
-            Style::MySql | Style::Sqlite => None,
+        let name = match writer.family {
+            Family::Postgres => table.primary_name.as_ref(),
+            Family::MySql | Family::Sqlite => None,
         };
         parts.push(match name {
             Some(name) => format!("CONSTRAINT {} PRIMARY KEY ({list})", writer.name(name)),
@@ -414,8 +415,8 @@ fn create_table(writer: &mut Writer, table: &Table) {
 /// Writes the definition of a column in the dialect.
 pub fn column_text(column: &Column, dialect: Dialect) -> String {
     let name = quote_identifier(&column.name, dialect);
-    match style(dialect) {
-        Some(Style::Postgres) => {
+    match family(dialect) {
+        Some(Family::Postgres) => {
             let serial = column.auto.as_deref() == Some("serial");
             if let Some(ty) = serial.then(|| serial_type(&column.ty)).flatten() {
                 return format!("{name} {ty} NOT NULL");
@@ -432,7 +433,7 @@ pub fn column_text(column: &Column, dialect: Dialect) -> String {
             }
             text
         }
-        Some(Style::MySql) => {
+        Some(Family::MySql) => {
             let mut text = format!("{name} {}", column.ty);
             for clause in [&column.charset, &column.generated].into_iter().flatten() {
                 text.push_str(&format!(" {clause}"));
@@ -450,7 +451,7 @@ pub fn column_text(column: &Column, dialect: Dialect) -> String {
             }
             text
         }
-        Some(Style::Sqlite) | None => {
+        Some(Family::Sqlite) | None => {
             let mut text = format!("{name} {}", column.ty);
             if let Some(default) = &column.default {
                 text.push_str(&format!(" DEFAULT {default}"));
@@ -476,7 +477,7 @@ fn serial_type(ty: &str) -> Option<&'static str> {
 /// Changes a column of the target to the column of the source.
 fn alter_column(writer: &mut Writer, table: &str, from: &Column, to: &Column) {
     let qualified = writer.table(table);
-    if let Style::MySql = writer.style {
+    if let Family::MySql = writer.family {
         let sql = format!(
             "ALTER TABLE {qualified} MODIFY COLUMN {}",
             column_text(from, writer.dialect)
