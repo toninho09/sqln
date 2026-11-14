@@ -9,8 +9,8 @@ pub use sqln_core::{
     message, progress, sink, text, wrap,
 };
 pub use sqln_exec::{
-    agent, ai, analysis, command_log, compare, complete, connection, data_edit, diagram, export,
-    import, plan,
+    agent, ai, analysis, command_log, compare, complete, connection, data_edit, diagram, dialect,
+    export, import, plan,
 };
 pub use sqln_runtime::exec;
 pub use sqln_sql::{sql, structure};

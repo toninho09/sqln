@@ -7,7 +7,7 @@ mod kafka;
 pub mod keywords;
 #[cfg(test)]
 mod tests;
-mod vocabulary;
+pub(crate) mod vocabulary;
 
 use std::ops::Range;
 

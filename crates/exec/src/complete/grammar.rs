@@ -1,6 +1,7 @@
 //! Context rules for incomplete definitions, casts, and query clauses.
 
 use super::context::{Position, is_identifier, is_punctuation, is_word};
+use crate::dialect::features;
 use crate::sql::{Dialect, Token};
 
 fn words(words: &[&'static str]) -> Position {
@@ -99,7 +100,7 @@ fn operators(dialect: Dialect) -> Vec<&'static str> {
         "IS NULL",
         "IS NOT NULL",
     ];
-    if dialect == Dialect::Postgres {
+    if features(dialect).vocabulary().ilike {
         words.extend(["ILIKE", "NOT ILIKE"]);
     }
     words
@@ -129,6 +130,7 @@ fn table_name_end(tokens: &[Token], text: &str, mut index: usize) -> Option<usiz
 }
 
 fn definition(tokens: &[Token], text: &str, dialect: Dialect, opens: &[usize]) -> Option<Position> {
+    let vocabulary = features(dialect).vocabulary();
     let creates = is_word(text, tokens.first(), &["CREATE"]);
     let alters = is_word(text, tokens.first(), &["ALTER"]);
     if !creates && !alters {
@@ -172,32 +174,10 @@ fn definition(tokens: &[Token], text: &str, dialect: Dialect, opens: &[usize]) -
 
     let tail = &tokens[end..];
     if tail.is_empty() {
-        return Some(words(match dialect {
-            Dialect::Postgres | Dialect::DuckDb => &[
-                "ADD COLUMN",
-                "DROP COLUMN",
-                "ALTER COLUMN",
-                "RENAME COLUMN",
-                "RENAME TO",
-                "ADD CONSTRAINT",
-                "DROP CONSTRAINT",
-            ],
-            Dialect::MySql => &[
-                "ADD COLUMN",
-                "DROP COLUMN",
-                "MODIFY COLUMN",
-                "CHANGE COLUMN",
-                "RENAME COLUMN",
-                "RENAME TO",
-                "ADD CONSTRAINT",
-                "DROP FOREIGN KEY",
-            ],
-            Dialect::Sqlite => &["ADD COLUMN", "DROP COLUMN", "RENAME COLUMN", "RENAME TO"],
-            Dialect::Redis | Dialect::Kafka => &[],
-        }));
+        return Some(words(vocabulary.alter_table_actions));
     }
     if is_word(text, tail.first(), &["ADD"])
-        || (dialect == Dialect::MySql && is_word(text, tail.first(), &["MODIFY", "CHANGE"]))
+        || (vocabulary.modify_column && is_word(text, tail.first(), &["MODIFY", "CHANGE"]))
     {
         let mut start = 1;
         if is_word(text, tail.get(start), &["COLUMN"]) {
@@ -219,7 +199,7 @@ fn definition(tokens: &[Token], text: &str, dialect: Dialect, opens: &[usize]) -
             return Some(Position::NewName);
         }
     }
-    if dialect == Dialect::Postgres && is_word(text, tail.first(), &["ALTER"]) {
+    if vocabulary.alter_column_type && is_word(text, tail.first(), &["ALTER"]) {
         if !opens.is_empty()
             && tail
                 .iter()
@@ -296,24 +276,18 @@ fn column(tokens: &[Token], text: &str, dialect: Dialect) -> Position {
         "REFERENCES",
         "COLLATE",
     ];
-    match dialect {
-        Dialect::Postgres if integer => options.push("GENERATED ALWAYS AS IDENTITY"),
-        Dialect::MySql => {
-            options.push("COMMENT");
-            if integer {
-                options.extend(["AUTO_INCREMENT", "UNSIGNED"]);
-            }
-        }
-        Dialect::Sqlite => {
-            if tokens
-                .iter()
-                .any(|token| is_word(text, Some(token), &["INTEGER"]))
-                && is_word(text, tokens.last(), &["KEY"])
-            {
-                options.push("AUTOINCREMENT");
-            }
-        }
-        Dialect::Postgres | Dialect::DuckDb | Dialect::Redis | Dialect::Kafka => {}
+    let vocabulary = features(dialect).vocabulary();
+    options.extend(vocabulary.column_options);
+    if integer {
+        options.extend(vocabulary.integer_options);
+    }
+    if vocabulary.integer_key_autoincrement
+        && tokens
+            .iter()
+            .any(|token| is_word(text, Some(token), &["INTEGER"]))
+        && is_word(text, tokens.last(), &["KEY"])
+    {
+        options.push("AUTOINCREMENT");
     }
     options.retain(|option| {
         let word = option.split_whitespace().next().unwrap_or(option);
@@ -351,7 +325,7 @@ fn query(tokens: &[Token], text: &str, dialect: Dialect, fallback: &Position) ->
     if is_word(text, last, &["GROUP", "ORDER"]) {
         return Some(words(&["BY"]));
     }
-    if is_word(text, last, &["NULLS"]) && dialect != Dialect::MySql {
+    if is_word(text, last, &["NULLS"]) && features(dialect).vocabulary().nulls_order {
         return Some(words(&["FIRST", "LAST"]));
     }
     if is_word(text, last, &["IS"]) {
@@ -371,7 +345,7 @@ fn query(tokens: &[Token], text: &str, dialect: Dialect, fallback: &Position) ->
         return Some(words(&["JOIN"]));
     }
     if is_word(text, last, &["NOT"]) && !matches!(fallback, Position::NewName) {
-        return Some(words(if dialect == Dialect::Postgres {
+        return Some(words(if features(dialect).vocabulary().ilike {
             &["IN", "LIKE", "ILIKE", "BETWEEN"]
         } else {
             &["IN", "LIKE", "BETWEEN"]
@@ -414,11 +388,7 @@ fn query(tokens: &[Token], text: &str, dialect: Dialect, fallback: &Position) ->
             "CROSS JOIN",
             "WHERE",
         ]);
-        if dialect != Dialect::MySql {
-            result.push("FULL JOIN");
-        } else {
-            result.push("STRAIGHT_JOIN");
-        }
+        result.push(features(dialect).vocabulary().join_extra);
     }
     if is_word(
         text,

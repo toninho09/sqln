@@ -1,7 +1,8 @@
 use crate::connector::kafka::filter;
+use crate::dialect::features;
 use crate::sql::Dialect;
 
-const COMMON: &[&str] = &[
+pub(crate) const COMMON: &[&str] = &[
     "ADD",
     "ALL",
     "ALTER",
@@ -83,102 +84,7 @@ const COMMON: &[&str] = &[
     "WITH",
 ];
 
-const POSTGRES: &[&str] = &[
-    "ARRAY",
-    "CONCURRENTLY",
-    "COPY",
-    "CTID",
-    "DISCARD",
-    "EXTENSION",
-    "FETCH",
-    "FILTER",
-    "GRANT",
-    "ILIKE",
-    "LATERAL",
-    "MATERIALIZED",
-    "NOTIFY",
-    "NULLS",
-    "ONLY",
-    "OVER",
-    "PARTITION",
-    "REINDEX",
-    "RETURNING",
-    "REVOKE",
-    "SCHEMA",
-    "SEQUENCE",
-    "SHOW",
-    "SIMILAR",
-    "TRUNCATE",
-    "VACUUM",
-    "WINDOW",
-];
-
-const MYSQL: &[&str] = &[
-    "AUTO_INCREMENT",
-    "CALL",
-    "CHANGE",
-    "CHARSET",
-    "COLLATE",
-    "DATABASE",
-    "DATABASES",
-    "DELIMITER",
-    "DESCRIBE",
-    "DUPLICATE",
-    "ENGINE",
-    "EVENT",
-    "FORCE",
-    "GRANT",
-    "IGNORE",
-    "KILL",
-    "LOCK",
-    "MODIFY",
-    "PROCEDURE",
-    "REGEXP",
-    "RENAME",
-    "REPLACE",
-    "RETURNS",
-    "REVOKE",
-    "RLIKE",
-    "SHOW",
-    "STATUS",
-    "STRAIGHT_JOIN",
-    "TABLES",
-    "TRUNCATE",
-    "UNLOCK",
-    "UNSIGNED",
-    "USE",
-    "ZEROFILL",
-];
-
-const SQLITE: &[&str] = &[
-    "ABORT",
-    "ATTACH",
-    "AUTOINCREMENT",
-    "CONFLICT",
-    "DATABASE",
-    "DEFERRED",
-    "DETACH",
-    "EXCLUSIVE",
-    "GLOB",
-    "IMMEDIATE",
-    "INDEXED",
-    "MATCH",
-    "PRAGMA",
-    "RAISE",
-    "REGEXP",
-    "REINDEX",
-    "RENAME",
-    "REPLACE",
-    "RETURNING",
-    "ROWID",
-    "TEMP",
-    "TEMPORARY",
-    "VACUUM",
-    "VIRTUAL",
-    "WITHOUT",
-];
-
-const STARTERS: &[&str] = &[
+pub(crate) const STARTERS: &[&str] = &[
     "ALTER",
     "ANALYZE",
     "BEGIN",
@@ -196,22 +102,8 @@ const STARTERS: &[&str] = &[
     "WITH",
 ];
 
-const POSTGRES_STARTERS: &[&str] = &["COPY", "GRANT", "REVOKE", "SHOW", "TRUNCATE", "VACUUM"];
-const MYSQL_STARTERS: &[&str] = &[
-    "CALL",
-    "DELIMITER",
-    "DESCRIBE",
-    "GRANT",
-    "REPLACE",
-    "REVOKE",
-    "SHOW",
-    "TRUNCATE",
-    "USE",
-];
-const SQLITE_STARTERS: &[&str] = &["ATTACH", "DETACH", "PRAGMA", "REPLACE", "VACUUM"];
-
 /// The first word of the Redis and Valkey commands.
-const REDIS: &[&str] = &[
+pub(crate) const REDIS: &[&str] = &[
     "ACL",
     "APPEND",
     "BGREWRITEAOF",
@@ -525,7 +417,7 @@ pub const KAFKA_COMMANDS: &[&str] = &[
 ];
 
 /// The words after a Kafka command: the clauses, the start positions, and the filter.
-const KAFKA_SELECT_WORDS: &[&str] = &[
+pub(crate) const KAFKA_SELECT_WORDS: &[&str] = &[
     "AS",
     "START",
     "AT",
@@ -576,49 +468,26 @@ pub const KAFKA_CLAUSES: &[&str] = &[
     "WHERE",
 ];
 
-fn specific(dialect: Dialect) -> &'static [&'static str] {
-    match dialect {
-        Dialect::Postgres | Dialect::DuckDb => POSTGRES,
-        Dialect::MySql => MYSQL,
-        Dialect::Sqlite => SQLITE,
-        Dialect::Redis => REDIS,
-        Dialect::Kafka => KAFKA_CLAUSES,
-    }
-}
-
-/// Redis and Kafka use their own word lists.
+/// Kafka also completes the names of its filter functions.
 pub fn all(dialect: Dialect) -> impl Iterator<Item = &'static str> {
-    let common = match dialect {
-        Dialect::Redis => &[][..],
-        Dialect::Kafka => KAFKA_COMMANDS,
-        _ => COMMON,
-    };
-    let extra = if dialect == Dialect::Kafka {
-        KAFKA_SELECT_WORDS
-    } else {
-        &[]
-    };
     let functions = (dialect == Dialect::Kafka)
         .then(filter::function_names)
         .into_iter()
         .flatten();
-    common
+    features(dialect)
+        .vocabulary()
+        .keywords
         .iter()
-        .chain(specific(dialect))
-        .chain(extra)
-        .copied()
+        .flat_map(|list| list.iter().copied())
         .chain(functions)
 }
 
 pub fn starters(dialect: Dialect) -> impl Iterator<Item = &'static str> {
-    let (common, specific) = match dialect {
-        Dialect::Postgres | Dialect::DuckDb => (STARTERS, POSTGRES_STARTERS),
-        Dialect::MySql => (STARTERS, MYSQL_STARTERS),
-        Dialect::Sqlite => (STARTERS, SQLITE_STARTERS),
-        Dialect::Redis => (&[][..], REDIS),
-        Dialect::Kafka => (&[][..], KAFKA_COMMANDS),
-    };
-    common.iter().chain(specific).copied()
+    features(dialect)
+        .vocabulary()
+        .starters
+        .iter()
+        .flat_map(|list| list.iter().copied())
 }
 
 pub fn is_keyword(word: &str, dialect: Dialect) -> bool {

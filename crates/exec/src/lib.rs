@@ -11,6 +11,7 @@ pub mod complete;
 pub mod connection;
 pub mod data_edit;
 pub mod diagram;
+pub mod dialect;
 pub mod exec;
 pub mod export;
 pub mod import;
