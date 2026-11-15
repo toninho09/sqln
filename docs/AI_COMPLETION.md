@@ -1,6 +1,6 @@
 # AI SQL completion
 
-AI completion is optional and off by default. It supports consoles associated with PostgreSQL, MySQL, SQLite, DuckDB, and Kafka. Redis consoles do not offer it.
+AI completion is optional and off by default. It supports consoles associated with PostgreSQL, MySQL, SQLite, DuckDB, Kafka, and Databricks. Redis consoles do not offer it.
 It does not execute generated SQL. It does not use MCP sessions or agent access.
 
 ## Configure

@@ -153,7 +153,7 @@ The vault calls are synchronous, but `Manager::spawn_blocking` runs them off the
 `app` applies the key priority and the mouse. `app/modal.rs` lists the windows over the screen in one order: the first open window gets the keys, the mouse, the paste, and the hint, and it is drawn on top. To add a window, add a `Modal` variant; the compiler then names each `match` that needs it.
 `App::screen` holds the tab on screen as one `Screen` value. `sqln_ui::tab_item::TabItem` is the shared contract of the table, diagram, and compare tabs; `App::close_item` closes any of them with the same steps.
 The `DEFAULTS` table of `input` limits a grid action to some grids with `only(...)`; `Action::on_grid` reads it.
-`app/auth.rs`, `app/keys.rs`, `app/modal.rs`, `app/hints.rs`, `app/mouse.rs`, `app/close.rs`, `app/connections.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs`, `app/session.rs`, `app/conflicts.rs`, `app/history.rs`, `app/guard.rs`, `app/export.rs`, and `app/browse.rs` divide that code.
+`app/agent`, `app/ai.rs`, `app/analysis.rs`, `app/auth.rs`, `app/auto_refresh.rs`, `app/browse.rs`, `app/close.rs`, `app/commands.rs`, `app/compare.rs`, `app/conflicts.rs`, `app/connections.rs`, `app/data_edit.rs`, `app/definition.rs`, `app/diagram.rs`, `app/export.rs`, `app/guard.rs`, `app/hints.rs`, `app/history.rs`, `app/import.rs`, `app/keys.rs`, `app/modal.rs`, `app/mouse.rs`, `app/persist.rs`, `app/review.rs`, `app/scripts.rs`, `app/session.rs`, `app/sql_file.rs`, and `app/tables.rs` divide that code.
 `store` keeps the folders and files. It does not depend on `app` or `ui`.
 Its configuration reader uses driver-independent connector target types.
 
@@ -489,6 +489,7 @@ trait Session: Send {
     fn canceller(&self) -> Arc<dyn Canceller>;
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError>;
     async fn run(&mut self, sql: &str, sink: ResultSink) -> Result<StatementEnd, ExecError>;
+    async fn run_parameters(&mut self, sql: &str, parameters: &[Parameter], sink: ResultSink) -> Result<StatementEnd, ExecError>;
     async fn transaction_state(&mut self) -> TransactionState;
     async fn control(&mut self, command: TransactionCommand) -> Result<(), ExecError>;
     async fn reset(&mut self) -> ResetOutcome;
@@ -497,6 +498,7 @@ trait Session: Send {
     async fn read_catalog_of(&mut self, schemas: &[String]) -> Result<Catalog, ExecError>;
     async fn read_schema_names(&mut self) -> Result<Vec<String>, ExecError>;
     async fn read_columns(&mut self, schema: &str, relation: &str) -> Result<Vec<String>, ExecError>;
+    async fn read_noted_columns(&mut self, schema: &str, relation: &str) -> Result<(Vec<String>, Vec<ColumnNote>), ExecError>;
     async fn read_foreign_keys(&mut self, schema: &str, relation: &str) -> Result<Vec<ForeignKey>, ExecError>;
     async fn read_referencing_keys(&mut self, schema: &str, relation: &str) -> Result<Vec<ForeignKey>, ExecError>;
 }
@@ -508,7 +510,7 @@ The `async-trait` crate makes `Box<dyn Session>` possible.
 `read_catalog_of` keeps the configured schemas and the current schema. Redis skips reads of hidden databases.
 `read_schema_names` supplies the connection form list. Redis uses `INFO keyspace` without scanning keys. `catalog::add_objects` gives each row to its schema and puts the objects in the order of the tree.
 The DDL of an object runs in a task of the pool that only that read uses (`app/definition`). The task closes at the end of the read, and the text goes to a new console.
-`Capabilities` declares whether the source has transactions, whether the console chooses a schema or a database, and whether the table tab accepts filter and order in SQL.
+`Capabilities` declares whether the source has transactions, whether the console chooses a schema or a database, whether the table tab accepts filter and order in SQL, whether the table tab submits pending changes (`data_edit`), whether consoles accept named scalar parameters (`parameters`), and whether the pool keeps one session only (`single_session`).
 Cancellation and pagination enter that declaration when a source needs them, because the connectors use the same contract on those points.
 Each console has a Tokio task, which keeps the session between executions while the transaction stays open.
 The task keeps the future of `run` alive after a cancellation, to read the database response.
@@ -701,7 +703,8 @@ No scope receives `password`. The plain-text authorized password stays in `crede
     "mcp": true,
     "mcpDefaultAccess": "ask",
     "mcpMaxAccess": "full",
-    "mcpRememberClients": true
+    "mcpRememberClients": true,
+    "aiCompletion": { "enabled": false }
   },
   "connections": [
     {
