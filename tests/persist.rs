@@ -1746,6 +1746,20 @@ fn ctrl_s_opens_the_question_again_for_a_script_in_conflict() {
 }
 
 #[test]
+fn the_conflicts_question_opens_on_top_of_the_settings() {
+    let (mut session, store, id) = session_with_saved_console("p-conflict-over-settings");
+    session.prefix(',');
+    session.assert_sees("Shortcuts");
+    fs::write(script_path(&store.global, &id), "SELECT 'theirs';").unwrap();
+    session.wait(1_000);
+    // The question is drawn on top, and it gets the keys.
+    session.assert_sees("Scripts changed outside SQLN");
+    session.code(KeyCode::Esc);
+    session.assert_not_sees("Scripts changed outside SQLN");
+    session.assert_sees("Shortcuts");
+}
+
+#[test]
 fn a_row_shows_the_action_that_the_user_chose() {
     let (mut session, _, _) = question_about_a_changed_script("p-conflict-labels", "{}");
     session.assert_sees("< choose >");

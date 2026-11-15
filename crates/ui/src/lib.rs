@@ -18,6 +18,7 @@ pub mod palette;
 pub mod parameters;
 pub mod result;
 pub mod settings;
+pub mod tab_item;
 pub mod table;
 pub mod ui;
 

@@ -6,6 +6,15 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Tab close and modal order — 2026-11-14
+
+The user asked for simpler code to add tabs, windows, and grid commands. The change found two rules that the code applied in different ways, and the user chose one rule for each.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Close of the tab on screen | A table, diagram, or compare tab that closes on screen gives the screen to the tab at the same place of the tab row, whatever its kind. With an empty row, the explorer takes the focus | A closed table gives the screen to another table first | User choice. One rule for all tabs that are not consoles |
+| Order of the windows | One order decides which window gets the keys, the mouse, the paste, and the hint, and which window is drawn on top: the question dialog, the password, the script conflicts, the palette, the history, the name, the file browser, the settings, the export, the cell edit, the import, the compare, the picker, the help, the text window, and the connection form | Different orders for keys, mouse, paste, and drawing | User choice. The window on top always gets the input. The conflicts question, which opens at any time, is on top of a form |
+
 ## Driver crates, connector contract, and runtime — 2026-11-14
 
 The user asked for less dependency between the crates, so that a change recompiles less code. The user chose the full scope: a contract crate, a runtime crate, and one crate for each driver. This entry replaces the rejected alternative "One crate for each driver" of "Cargo workspace" below, and its layer order.

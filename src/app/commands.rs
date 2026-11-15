@@ -2,7 +2,7 @@
 
 use super::App;
 use crate::console::Focus;
-use crate::input::{Action, Region};
+use crate::input::{Action, Grid, Region};
 use crate::navigator::{Navigator, RowKind};
 use crate::table::TableFocus;
 use crate::ui::kit::measure::fit;
@@ -24,7 +24,7 @@ impl App {
         if self.home() {
             return None;
         }
-        if self.diagram_active.is_some() {
+        if self.diagram_index().is_some() {
             return Some(Region::Diagram);
         }
         if self.review_active() && self.console().editor.review().is_some() {
@@ -111,13 +111,14 @@ impl App {
         ) {
             return self.analysis_available(action);
         }
-        if self.diagram_active.is_some() {
+        if self.diagram_index().is_some() {
             return false;
         }
-        if self.compare_active.is_some() && !self.compare_command_available(action) {
+        if self.compare_index().is_some() && !self.compare_command_available(action) {
             return false;
         }
-        if action.is_compare_only() {
+        // An action that only a compare has.
+        if !action.on_grid(Grid::Console) && !action.on_grid(Grid::Table) {
             return self.compare_command_available(action);
         }
         let result = self.active_result();
@@ -177,7 +178,7 @@ impl App {
                                 tab.page() + 1 < tab.loaded_pages() || tab.has_more
                             })
                 }
-                None => self.compare_active.is_none() && !self.console().results.is_empty(),
+                None => self.compare_index().is_none() && !self.console().results.is_empty(),
             },
             GridApply => tab.is_some_and(|tab| tab.filters && !tab.is_busy()),
             GridClearFilters => tab.is_some_and(|tab| {
@@ -344,8 +345,8 @@ impl App {
             Some(Region::Editor) => text::REGION_EDITOR,
             Some(Region::Diagram) => text::REGION_DIAGRAM,
             Some(Region::Review) => text::REGION_REVIEW,
-            _ if self.compare_active.is_some() => text::REGION_COMPARE,
-            _ if self.table_active.is_some() => text::REGION_TABLE,
+            _ if self.compare_index().is_some() => text::REGION_COMPARE,
+            _ if self.table_index().is_some() => text::REGION_TABLE,
             _ => text::REGION_GRID,
         };
         let target = if let Some(tab) = self.table() {

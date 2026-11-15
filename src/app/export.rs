@@ -105,7 +105,7 @@ impl App {
     }
 
     pub(super) fn active_result(&self) -> Option<&ResultTab> {
-        if self.diagram_active.is_some() {
+        if self.diagram_index().is_some() {
             return None;
         }
         if let Some(tab) = self.compare() {

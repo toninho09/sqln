@@ -3501,6 +3501,30 @@ fn the_close_mark_of_the_last_table_shows_the_home_screen() {
     assert!(!f.app.should_quit());
 }
 
+#[test]
+fn closing_the_table_on_screen_shows_the_tab_at_its_place_in_the_row() {
+    let setup = format!("{} CREATE TABLE u(id INTEGER);", numbered(3));
+    let mut f = Fixture::sqlite("close-place", &setup, Settings::default());
+    f.open_table("t");
+    // A second console stands between the two tables in the tab row.
+    f.prefix('h');
+    for _ in 0..20 {
+        f.code(KeyCode::Up);
+    }
+    f.code(KeyCode::Char('n'));
+    f.code(KeyCode::Enter);
+    assert_eq!(f.app.console().name, "console-2");
+    f.open_table("u");
+    f.click_text("t (table)");
+    assert_eq!(f.app.table().unwrap().relation.relation, "t");
+    f.close_tab("t (table)");
+    assert!(
+        f.app.table().is_none(),
+        "the console at the place of t takes the screen"
+    );
+    assert_eq!(f.app.console().name, "console-2");
+}
+
 // ---- the state of a run in the tab row ----
 
 /// The connector of these tests reads the page of a statement.

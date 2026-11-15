@@ -6,7 +6,7 @@ use ratatui::layout::Position;
 
 use super::App;
 use super::auth::Use;
-use super::tables::Tab;
+use super::tables::{Screen, Tab};
 use crate::catalog::RelationKind;
 use crate::compare::form::{Choice, CompareForm, CompareRequest, SchemaChoice};
 use crate::compare::{Kind, Side};
@@ -15,7 +15,7 @@ use crate::connection::CatalogState;
 use crate::console::Phase;
 use crate::diagram::Focus;
 use crate::exec::{ConnectionId, ConsoleId, RunOptions};
-use crate::input::Action;
+use crate::input::{Action, Grid};
 use crate::navigator::{Row, RowKind};
 use crate::structure::Scope;
 use crate::ui::text;
@@ -37,11 +37,11 @@ impl App {
 
     /// Returns the compare tab on screen.
     pub fn compare(&self) -> Option<&CompareTab> {
-        self.compare_active.map(|index| &self.compares[index])
+        self.compare_index().map(|index| &self.compares[index])
     }
 
     pub(super) fn compare_mut(&mut self) -> Option<&mut CompareTab> {
-        self.compare_active.map(|index| &mut self.compares[index])
+        self.compare_index().map(|index| &mut self.compares[index])
     }
 
     pub fn compare_form(&self) -> Option<&CompareForm> {
@@ -355,18 +355,16 @@ impl App {
     pub(super) fn select_compare(&mut self, index: usize) {
         if index < self.compares.len() {
             self.console_mut().editor.close_suggestions();
-            if self.compare_active != Some(index) {
+            if self.compare_index() != Some(index) {
                 self.leave_tab();
             }
-            self.table_active = None;
-            self.diagram_active = None;
-            self.compare_active = Some(index);
+            self.screen = Screen::Compare(index);
         }
     }
 
     /// Reads both sides of the compare on screen again.
     pub(super) fn read_compare(&mut self) {
-        let Some(index) = self.compare_active else {
+        let Some(index) = self.compare_index() else {
             return;
         };
         let tab = &self.compares[index];
@@ -475,7 +473,7 @@ impl App {
     }
 
     fn stop_compare(&mut self) {
-        let Some(index) = self.compare_active else {
+        let Some(index) = self.compare_index() else {
             return;
         };
         if self.cancel_agent_console(self.compares[index].sides[0].id) {
@@ -504,64 +502,13 @@ impl App {
     /// Closes a compare tab, and its rows leave the budget. The tab at the same place of
     /// the tab row takes the screen.
     pub(super) fn close_compare(&mut self, index: usize) {
-        if index >= self.compares.len() {
-            return;
-        }
-        self.cancel_agent_console(self.compares[index].sides[0].id);
-        for read in &self.compares[index].sides {
-            self.agent.forget_console(read.id);
-        }
-        let place = self
-            .tab_order()
-            .iter()
-            .position(|tab| *tab == Tab::Compare(index));
-        let ids: Vec<ConsoleId> = self.compares[index]
-            .sides
-            .iter()
-            .map(|read| read.id)
-            .collect();
-        for id in &ids {
-            self.cancel_auth_console(*id);
-        }
-        let mut tab = self.compares.remove(index);
-        tab.release(&self.budget);
-        if let Some(manager) = &mut self.manager {
-            for id in ids {
-                manager.close_console(id);
-            }
-        }
-        match self.compare_active {
-            Some(active) if active == index => {
-                self.compare_active = None;
-                let order = self.tab_order();
-                if order.is_empty() {
-                    self.focus_navigator();
-                } else if let Some(place) = place {
-                    self.select_tab(place.min(order.len() - 1));
-                }
-            }
-            Some(active) if active > index => self.compare_active = Some(active - 1),
-            _ => {}
-        }
-    }
-
-    /// Closes the compare tabs that use a connection that the user removed.
-    pub(super) fn close_compares_of(&mut self, connection: ConnectionId) {
-        for index in (0..self.compares.len()).rev() {
-            let uses = self.compares[index]
-                .sides
-                .iter()
-                .any(|read| read.side.connection == connection);
-            if uses {
-                self.close_compare(index);
-            }
-        }
+        self.close_item(Tab::Compare(index), |app| &mut app.compares);
     }
 
     /// Applies an action to the compare on screen. It returns false for an action that the
     /// grid of the compare shares with the other grids.
     pub(super) fn perform_on_compare(&mut self, action: Action) -> bool {
-        let Some(index) = self.compare_active else {
+        let Some(index) = self.compare_index() else {
             return false;
         };
         match action {
@@ -589,12 +536,8 @@ impl App {
             | Action::RenameConsole
             | Action::ChangeConnection
             | Action::FocusUp
-            | Action::FocusDown
-            | Action::GridImport
-            | Action::GridCloseResult
-            | Action::GridPreviousResult
-            | Action::GridNextResult => {}
-            action if action.is_table_only() => {}
+            | Action::FocusDown => {}
+            action if !action.on_grid(Grid::Compare) => {}
             _ => return false,
         }
         true
@@ -606,7 +549,7 @@ impl App {
             return false;
         };
         match action {
-            _ if !compare_has(action) => false,
+            _ if !action.on_grid(Grid::Compare) => false,
             Action::CompareScript | Action::CompareCopy => self.compare_script().is_ok(),
             Action::GridReload => !tab.is_busy(),
             Action::GridOpenRow => !tab.result.table.rows.is_empty(),
@@ -643,18 +586,5 @@ impl App {
             return;
         };
         self.open_text_console(target.connection, Some(target.schema), &script);
-    }
-}
-
-/// Returns true for an action of the grid that a compare has: not the import, the filter,
-/// the pages, the sessions, or the list of results.
-pub(super) fn compare_has(action: Action) -> bool {
-    match action {
-        Action::GridReload => true,
-        Action::GridImport
-        | Action::GridCloseResult
-        | Action::GridPreviousResult
-        | Action::GridNextResult => false,
-        action => !action.is_table_only(),
     }
 }

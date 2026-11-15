@@ -2,9 +2,9 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::compare::compare_has;
 use super::guard::short;
-use super::{App, DialogAction, Overlay};
+use super::modal::Modal;
+use super::{App, DialogAction, Overlay, Screen};
 use crate::catalog::Catalog;
 use crate::connection::Connection;
 use crate::connector::{Namespace, TransactionCommand, TransactionState};
@@ -14,7 +14,7 @@ use crate::exec::{ConnectionId, RunOptions};
 use crate::form::FormRequest;
 use crate::grid::printable;
 use crate::help::{GuideTopic, Help};
-use crate::input::{Action, Chord, Lookup, Region};
+use crate::input::{Action, Chord, Grid, Lookup, Region};
 use crate::navigator::RowKind;
 use crate::palette::{Command, Palette, PaletteRequest};
 use crate::plan::Explain;
@@ -74,7 +74,7 @@ impl App {
         if self.navigator_focused {
             return (!self.navigator.filter_is_editing()).then_some(Region::Navigator);
         }
-        if self.diagram_active.is_some() {
+        if self.diagram_index().is_some() {
             return Some(Region::Diagram);
         }
         if let Some(tab) = self.compare() {
@@ -90,10 +90,10 @@ impl App {
 
     /// Returns true when the grid of the tab on screen has the focus.
     pub(super) fn grid_has_focus(&self) -> bool {
-        if self.navigator_focused || self.diagram_active.is_some() {
+        if self.navigator_focused || self.diagram_index().is_some() {
             return false;
         }
-        if self.compare_active.is_some() {
+        if self.compare_index().is_some() {
             return true;
         }
         match self.table() {
@@ -103,77 +103,51 @@ impl App {
     }
 
     /// Applies the key priority of `docs/KEYMAP.md`.
-    pub(super) fn on_key(&mut self, key: KeyEvent) {
-        if !self.dialogs.is_empty() {
-            self.on_dialog_key(key);
-            return;
+    /// Gives a key to a window over the screen.
+    fn on_modal_key(&mut self, modal: Modal, key: KeyEvent) {
+        match modal {
+            Modal::Dialog => self.on_dialog_key(key),
+            Modal::Password => self.on_password_key(key),
+            Modal::Conflicts => self.on_conflicts_key(key),
+            Modal::Palette => self.on_palette_key(key),
+            Modal::History => self.on_history_key(key),
+            Modal::Rename => self.on_name_key(key),
+            Modal::Browser => self.on_browser_key(key),
+            Modal::Settings => self.on_settings_key(key),
+            Modal::Export => self.on_export_key(key),
+            Modal::Edit => self.on_edit_key(key),
+            Modal::Import => self.on_import_key(key),
+            Modal::Compare => self.on_compare_key(key),
+            Modal::Picker => self.on_picker_key(key),
+            Modal::Help => self.on_help_key(key),
+            Modal::Overlay => self.on_overlay_key(key),
+            Modal::Form => self.on_form_key(key),
         }
-        if self.auth.prompt.is_some() {
-            self.on_password_key(key);
+    }
+
+    fn on_help_key(&mut self, key: KeyEvent) {
+        let Some(help) = &mut self.help else {
+            return;
+        };
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            let contents = help.text();
+            self.copy(&contents);
+        } else if help.on_key(key) {
+            self.help = None;
+        }
+    }
+
+    pub(super) fn on_key(&mut self, key: KeyEvent) {
+        // The AI prompts get the keys under the question dialog and the password.
+        if let Some(modal @ (Modal::Dialog | Modal::Password)) = self.top_modal() {
+            self.on_modal_key(modal, key);
             return;
         }
         if self.on_ai_key(key) {
             return;
         }
-        if self.conflicts.is_some() {
-            self.on_conflicts_key(key);
-            return;
-        }
-        if self.palette.is_some() {
-            self.on_palette_key(key);
-            return;
-        }
-        if self.history.is_some() {
-            self.on_history_key(key);
-            return;
-        }
-        if self.rename.is_some() {
-            self.on_name_key(key);
-            return;
-        }
-        if self.browser.is_some() {
-            self.on_browser_key(key);
-            return;
-        }
-        if self.settings_form.is_some() {
-            self.on_settings_key(key);
-            return;
-        }
-        if self.export_form.is_some() {
-            self.on_export_key(key);
-            return;
-        }
-        if self.edit_form.is_some() {
-            self.on_edit_key(key);
-            return;
-        }
-        if self.import_form.is_some() {
-            self.on_import_key(key);
-            return;
-        }
-        if self.compare_form.is_some() {
-            self.on_compare_key(key);
-            return;
-        }
-        if self.picker.is_some() {
-            self.on_picker_key(key);
-            return;
-        }
-        if let Some(help) = &mut self.help {
-            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                let contents = help.text();
-                self.copy(&contents);
-            } else if help.on_key(key) {
-                self.help = None;
-            }
-            return;
-        }
-        if self.overlay.is_some() {
-            self.on_overlay_key(key);
-            return;
-        }
-        if self.form.is_some() {
-            self.on_form_key(key);
+        if let Some(modal) = self.top_modal() {
+            self.on_modal_key(modal, key);
             return;
         }
         let in_editor = !self.navigator_focused
@@ -278,12 +252,12 @@ impl App {
             None if self.navigator_focused => self.on_tree_filter_key(key),
             // The home screen has no text field.
             None if self.home() => {}
-            None if self.compare_active.is_some() => {
+            None if self.compare_index().is_some() => {
                 if let Some(tab) = self.compare_mut() {
                     tab.result.on_search_key(key);
                 }
             }
-            None if self.table_active.is_some() => self.on_table_text_key(key),
+            None if self.table_index().is_some() => self.on_table_text_key(key),
             None if self.console().focus == Focus::Results => self.console_mut().on_search_key(key),
             None => self.on_editor_key(key),
         }
@@ -485,13 +459,13 @@ impl App {
             self.perform_analysis(action);
             return;
         }
-        if self.diagram_active.is_some() && self.perform_on_diagram(action) {
-            return;
-        }
-        if self.compare_active.is_some() && self.perform_on_compare(action) {
-            return;
-        }
-        if self.table_active.is_some() && self.perform_on_table(action) {
+        let done = match self.screen {
+            Screen::Diagram(_) => self.perform_on_diagram(action),
+            Screen::Compare(_) => self.perform_on_compare(action),
+            Screen::Table(_) => self.perform_on_table(action),
+            Screen::Console => false,
+        };
+        if done {
             return;
         }
         match action {
@@ -601,10 +575,12 @@ impl App {
     fn on_grid_action(&mut self, action: Action, extend: bool) {
         let budget = self.budget.clone();
         let vim = self.vim();
-        let outcome = match (self.compare_active, self.table_active) {
-            (Some(index), _) => self.compares[index].result.on_action(action, extend, vim),
-            (None, Some(index)) => self.tables[index].result.on_action(action, extend, vim),
-            (None, None) => self.console_mut().on_results_action(action, extend),
+        let outcome = match self.screen {
+            Screen::Compare(index) => self.compares[index].result.on_action(action, extend, vim),
+            Screen::Table(index) => self.tables[index].result.on_action(action, extend, vim),
+            Screen::Console | Screen::Diagram(_) => {
+                self.console_mut().on_results_action(action, extend)
+            }
         };
         match outcome {
             GridAction::None => {}
@@ -685,10 +661,10 @@ impl App {
         } else {
             row.saturating_sub(1)
         };
-        let result = match (self.compare_active, self.table_active) {
-            (Some(index), _) => Some(&mut self.compares[index].result),
-            (None, Some(index)) => Some(&mut self.tables[index].result),
-            (None, None) => {
+        let result = match self.screen {
+            Screen::Compare(index) => Some(&mut self.compares[index].result),
+            Screen::Table(index) => Some(&mut self.tables[index].result),
+            Screen::Console | Screen::Diagram(_) => {
                 let console = &mut self.consoles[self.active];
                 console.results.get_mut(console.active)
             }
@@ -744,16 +720,8 @@ impl App {
 
     /// The user saw the end of the run of the tab on screen, so its mark goes.
     pub(super) fn leave_tab(&mut self) {
-        if let Some(tab) = self.diagram_mut() {
-            tab.run.seen();
-            return;
-        }
-        if let Some(tab) = self.compare_mut() {
-            tab.run.seen();
-            return;
-        }
-        match self.table_mut() {
-            Some(tab) => tab.run.seen(),
+        match self.screen_item_mut() {
+            Some(tab) => tab.run_mut().seen(),
             None => self.console_mut().run.seen(),
         }
     }
@@ -765,15 +733,13 @@ impl App {
                 self.leave_tab();
             }
             self.active = index;
-            self.table_active = None;
-            self.diagram_active = None;
-            self.compare_active = None;
+            self.screen = Screen::Console;
             self.sync_command_history();
         }
     }
 
     fn open_keys(&mut self) {
-        let in_table = self.table_active.is_some() || self.compare_active.is_some();
+        let in_table = self.table_index().is_some() || self.compare_index().is_some();
         // The explorer is the only panel of the home screen.
         let panel = if self.navigator_focused || self.home() {
             Some(Region::Navigator)
@@ -786,7 +752,7 @@ impl App {
             Some(Region::Navigator) => (Some(Region::Navigator), text::REGION_NAVIGATOR),
             Some(Region::Diagram) => (Some(Region::Diagram), text::REGION_DIAGRAM),
             Some(Region::Review) => (Some(Region::Review), text::REGION_REVIEW),
-            Some(_) if self.compare_active.is_some() => (Some(Region::Grid), text::REGION_COMPARE),
+            Some(_) if self.compare_index().is_some() => (Some(Region::Grid), text::REGION_COMPARE),
             Some(_) if in_table => (Some(Region::Grid), text::REGION_TABLE),
             Some(_) => (Some(Region::Grid), text::REGION_GRID),
             None if in_table => (None, text::REGION_FILTER),
@@ -886,26 +852,19 @@ impl App {
     }
 
     fn help_actions(&self, region: Region) -> Vec<(Action, String, &'static str)> {
-        let in_table = self.table_active.is_some() || self.compare_active.is_some();
+        let grid = match self.screen {
+            Screen::Table(_) => Grid::Table,
+            Screen::Compare(_) => Grid::Compare,
+            Screen::Console | Screen::Diagram(_) => Grid::Console,
+        };
+        let in_table = grid != Grid::Console;
         let sections = self.table().is_some_and(|tab| tab.section().is_some());
-        let in_compare = self.compare_active.is_some();
         self.keymap
             .actions(region)
             .filter(|action| {
-                // A compare shows only the grid keys that it has.
-                if in_compare && action.region() == Region::Grid {
-                    compare_has(*action)
-                } else {
-                    !action.is_compare_only()
-                }
-            })
-            .filter(|action| {
-                if in_table {
-                    !action.is_console_only()
-                        && (!action.is_table_only() || self.command_available(*action))
-                } else {
-                    !action.is_table_only()
-                }
+                // Each grid shows only the keys that it has. A key of the table shows only
+                // when it has an effect now.
+                action.on_grid(grid) && (!action.is_table_only() || self.command_available(*action))
             })
             .filter_map(|action| {
                 let keys = self.keymap.keys(action);
@@ -1552,7 +1511,9 @@ impl App {
     /// Returns true when `Ctrl+W k` or `Ctrl+W j` moves the focus from the panel of the
     /// cursor to another panel of the tab on screen.
     fn focus_moves(&self, up: bool) -> bool {
-        if self.navigator_focused || self.diagram_active.is_some() || self.compare_active.is_some()
+        if self.navigator_focused
+            || self.diagram_index().is_some()
+            || self.compare_index().is_some()
         {
             return false;
         }
@@ -1768,11 +1729,11 @@ impl App {
                     connection.is_some_and(|item| Explain::new(item.dialect, analyze).is_some());
                 !in_table && idle && plans
             }
-            Action::Stop => match (self.compare(), self.diagram(), self.table()) {
-                (Some(tab), _, _) => tab.is_busy(),
-                (None, Some(tab), _) => tab.is_busy(),
-                (None, None, Some(tab)) => tab.is_busy(),
-                (None, None, None) => !idle,
+            Action::Stop => match self.screen {
+                Screen::Compare(index) => self.compares[index].is_busy(),
+                Screen::Diagram(index) => self.diagrams[index].is_busy(),
+                Screen::Table(index) => self.tables[index].is_busy(),
+                Screen::Console => !idle,
             },
             Action::ToggleMode => !in_table && idle && transactions && !self.agent.owns(console.id),
             Action::Commit => {

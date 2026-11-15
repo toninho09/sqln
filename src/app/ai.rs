@@ -1317,24 +1317,7 @@ impl App {
         }
     }
     fn ai_obscured(&self) -> bool {
-        !self.dialogs.is_empty()
-            || self.auth.prompt.is_some()
-            || self.conflicts.is_some()
-            || self.palette.is_some()
-            || self.history.is_some()
-            || self.rename.is_some()
-            || self.browser.is_some()
-            || self.settings_form.is_some()
-            || self.form.is_some()
-            || self.export_form.is_some()
-            || self.edit_form.is_some()
-            || self.import_form.is_some()
-            || self.compare_form.is_some()
-            || self.help.is_some()
-            || self.overlay.is_some()
-            || self.picker.is_some()
-            || self.command_page.is_some()
-            || self.pending_key.is_some()
+        self.top_modal().is_some() || self.command_page.is_some() || self.pending_key.is_some()
     }
     pub(super) fn on_ai_key(&mut self, key: KeyEvent) -> bool {
         if let Some(prompt) = &mut self.ai.request {

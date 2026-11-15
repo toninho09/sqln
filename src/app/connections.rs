@@ -924,9 +924,7 @@ impl App {
                 self.unbind_console(index);
             }
         }
-        self.close_tables_of(id);
-        self.close_diagrams_of(id);
-        self.close_compares_of(id);
+        self.close_tabs_using(id);
         self.cancel_definitions_of(id);
         if let Some(manager) = &mut self.manager {
             manager.remove_connection(id);

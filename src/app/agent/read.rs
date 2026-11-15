@@ -2,6 +2,7 @@
 
 use super::{App, Error, Reply, id, missing};
 use crate::agent::{PAGE_BYTES, TEXT_BYTES};
+use crate::app::Screen;
 use crate::grid::Value as Cell;
 use crate::result::ResultTab;
 use base64::Engine;
@@ -9,15 +10,13 @@ use serde_json::{Value, json};
 
 impl App {
     pub(super) fn agent_active_tab(&self) -> String {
-        if let Some(index) = self.compare_active {
-            self.compares[index].sides[0].id.to_string()
-        } else if let Some(index) = self.diagram_active {
-            self.diagrams[index].id.to_string()
-        } else if let Some(index) = self.table_active {
-            self.tables[index].id.to_string()
-        } else {
-            self.console().id.to_string()
-        }
+        let id = match self.screen {
+            Screen::Compare(index) => self.compares[index].sides[0].id,
+            Screen::Diagram(index) => self.diagrams[index].id,
+            Screen::Table(index) => self.tables[index].id,
+            Screen::Console => self.console().id,
+        };
+        id.to_string()
     }
 
     pub(super) fn agent_connections(&self, offset: usize, limit: usize) -> Reply {

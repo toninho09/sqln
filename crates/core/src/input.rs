@@ -386,43 +386,20 @@ impl Action {
             )
     }
 
-    /// Returns true for an action that only the grid of a table has.
+    /// Returns true when the grid has the action.
+    pub fn on_grid(self, grid: Grid) -> bool {
+        let grids = self.item().grids;
+        match grid {
+            Grid::Console => grids.console,
+            Grid::Table => grids.table,
+            Grid::Compare => grids.compare,
+        }
+    }
+
+    /// Returns true for an action that the grid of a table has and the results of a
+    /// console do not have.
     pub fn is_table_only(self) -> bool {
-        matches!(
-            self,
-            Action::GridEditCell
-                | Action::GridSetNull
-                | Action::GridNewRow
-                | Action::GridDeleteRow
-                | Action::GridReviewEdits
-                | Action::GridSaveEdits
-                | Action::GridDiscardEdits
-                | Action::GridApply
-                | Action::GridClearFilters
-                | Action::GridFocusFilter
-                | Action::GridFocusOrder
-                | Action::GridSortColumn
-                | Action::GridLoadMore
-                | Action::GridCountRows
-                | Action::GridStructure
-                | Action::GridReload
-                | Action::GridCancelQuery
-                | Action::GridEndSession
-                | Action::GridFollowKey
-        )
-    }
-
-    /// Returns true for an action that only the grid of a compare has.
-    pub fn is_compare_only(self) -> bool {
-        matches!(self, Action::CompareScript | Action::CompareCopy)
-    }
-
-    /// Returns true for an action that only the results of a console have.
-    pub fn is_console_only(self) -> bool {
-        matches!(
-            self,
-            Action::GridCloseResult | Action::GridKeepPrevious | Action::GridComparePrevious
-        )
+        self.on_grid(Grid::Table) && !self.on_grid(Grid::Console)
     }
 
     /// Returns true for a move that Shift changes into a selection.
@@ -453,6 +430,43 @@ struct Item {
     vim_keys: &'static [&'static str],
     /// True when `keys` applies only to the conventional mode.
     conventional_only: bool,
+    /// The grids that have the action. An action outside the grid has all of them.
+    grids: Grids,
+}
+
+/// The grids that have an action: the results of a console, a table tab, and a compare
+/// tab.
+#[derive(Clone, Copy)]
+struct Grids {
+    console: bool,
+    table: bool,
+    compare: bool,
+}
+
+impl Grids {
+    const ALL: Self = Self::new(true, true, true);
+    const CONSOLE: Self = Self::new(true, false, false);
+    /// The grids with a list of results and an import: a console and a table.
+    const RESULTS: Self = Self::new(true, true, false);
+    const TABLE: Self = Self::new(false, true, false);
+    const RELOAD: Self = Self::new(false, true, true);
+    const COMPARE: Self = Self::new(false, false, true);
+
+    const fn new(console: bool, table: bool, compare: bool) -> Self {
+        Self {
+            console,
+            table,
+            compare,
+        }
+    }
+}
+
+/// A grid of results.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grid {
+    Console,
+    Table,
+    Compare,
 }
 
 const fn both(
@@ -469,6 +483,14 @@ const fn both(
         keys,
         vim_keys,
         conventional_only: false,
+        grids: Grids::ALL,
+    }
+}
+
+impl Item {
+    /// Limits the action to some grids.
+    const fn only(self, grids: Grids) -> Self {
+        Self { grids, ..self }
     }
 }
 
@@ -630,6 +652,7 @@ const DEFAULTS: &[Item] = &[
         keys: &["ctrl+z"],
         vim_keys: &["u"],
         conventional_only: true,
+        grids: Grids::ALL,
     },
     Item {
         action: Action::EditorRedo,
@@ -638,6 +661,7 @@ const DEFAULTS: &[Item] = &[
         keys: &["ctrl+y"],
         vim_keys: &["ctrl+r"],
         conventional_only: true,
+        grids: Grids::ALL,
     },
     Item {
         action: Action::EditorSelectAll,
@@ -646,6 +670,7 @@ const DEFAULTS: &[Item] = &[
         keys: &["ctrl+a"],
         vim_keys: &["g g V G"],
         conventional_only: true,
+        grids: Grids::ALL,
     },
     Item {
         action: Action::EditorCopy,
@@ -654,6 +679,7 @@ const DEFAULTS: &[Item] = &[
         keys: &["ctrl+c"],
         vim_keys: &["y"],
         conventional_only: true,
+        grids: Grids::ALL,
     },
     Item {
         action: Action::EditorCut,
@@ -662,6 +688,7 @@ const DEFAULTS: &[Item] = &[
         keys: &["ctrl+x"],
         vim_keys: &["d"],
         conventional_only: true,
+        grids: Grids::ALL,
     },
     Item {
         action: Action::EditorPaste,
@@ -670,6 +697,7 @@ const DEFAULTS: &[Item] = &[
         keys: &["ctrl+v"],
         vim_keys: &["p"],
         conventional_only: true,
+        grids: Grids::ALL,
     },
     both(
         Action::FocusParameters,
@@ -891,6 +919,7 @@ const DEFAULTS: &[Item] = &[
         keys: &["delete"],
         vim_keys: &["x"],
         conventional_only: true,
+        grids: Grids::ALL,
     },
     both(
         Action::NavigatorAdd,
@@ -1104,22 +1133,25 @@ const DEFAULTS: &[Item] = &[
         "gridCloseResult",
         &["x", "delete"],
         &[],
-    ),
+    )
+    .only(Grids::CONSOLE),
     both(
         Action::GridPreviousResult,
         Region::Grid,
         "gridPreviousResult",
         &["["],
         &[],
-    ),
+    )
+    .only(Grids::RESULTS),
     both(
         Action::GridNextResult,
         Region::Grid,
         "gridNextResult",
         &["]"],
         &[],
-    ),
-    both(Action::GridApply, Region::Grid, "gridApply", &[], &[]),
+    )
+    .only(Grids::RESULTS),
+    both(Action::GridApply, Region::Grid, "gridApply", &[], &[]).only(Grids::TABLE),
     both(Action::AutoRefresh, Region::Grid, "autoRefresh", &[], &[]),
     both(
         Action::GridClearFilters,
@@ -1127,124 +1159,141 @@ const DEFAULTS: &[Item] = &[
         "gridClearFilters",
         &[],
         &[],
-    ),
+    )
+    .only(Grids::TABLE),
     both(
         Action::GridFocusFilter,
         Region::Grid,
         "focusFilter",
         &["f"],
         &[],
-    ),
+    )
+    .only(Grids::TABLE),
     both(
         Action::GridFocusOrder,
         Region::Grid,
         "focusOrder",
         &["o"],
         &[],
-    ),
+    )
+    .only(Grids::TABLE),
     both(
         Action::GridSortColumn,
         Region::Grid,
         "sortColumn",
         &["s"],
         &[],
-    ),
-    both(Action::GridLoadMore, Region::Grid, "loadMore", &["m"], &[]),
+    )
+    .only(Grids::TABLE),
+    both(Action::GridLoadMore, Region::Grid, "loadMore", &["m"], &[]).only(Grids::TABLE),
     both(
         Action::GridCountRows,
         Region::Grid,
         "gridCountRows",
         &["c"],
         &[],
-    ),
+    )
+    .only(Grids::TABLE),
     both(Action::GridExport, Region::Grid, "gridExport", &["e"], &[]),
-    both(Action::GridImport, Region::Grid, "gridImport", &["I"], &[]),
+    both(Action::GridImport, Region::Grid, "gridImport", &["I"], &[]).only(Grids::RESULTS),
     both(
         Action::GridEditCell,
         Region::Grid,
         "gridEditCell",
         &["f2"],
         &[],
-    ),
+    )
+    .only(Grids::TABLE),
     both(
         Action::GridSetNull,
         Region::Grid,
         "gridSetNull",
         &["ctrl+n"],
         &[],
-    ),
-    both(Action::GridNewRow, Region::Grid, "gridNewRow", &["n"], &[]),
+    )
+    .only(Grids::TABLE),
+    both(Action::GridNewRow, Region::Grid, "gridNewRow", &["n"], &[]).only(Grids::TABLE),
     both(
         Action::GridDeleteRow,
         Region::Grid,
         "gridDeleteRow",
         &["d"],
         &[],
-    ),
+    )
+    .only(Grids::TABLE),
     both(
         Action::GridReviewEdits,
         Region::Grid,
         "gridReviewEdits",
         &["ctrl+r"],
         &[],
-    ),
+    )
+    .only(Grids::TABLE),
     both(
         Action::GridSaveEdits,
         Region::Grid,
         "gridSaveEdits",
         &["ctrl+s"],
         &[],
-    ),
+    )
+    .only(Grids::TABLE),
     both(
         Action::GridDiscardEdits,
         Region::Grid,
         "gridDiscardEdits",
         &["ctrl+d"],
         &[],
-    ),
+    )
+    .only(Grids::TABLE),
     both(
         Action::GridStructure,
         Region::Grid,
         "gridStructure",
         &["i"],
         &[],
-    ),
-    both(Action::GridReload, Region::Grid, "gridReload", &["R"], &[]),
+    )
+    .only(Grids::TABLE),
+    both(Action::GridReload, Region::Grid, "gridReload", &["R"], &[]).only(Grids::RELOAD),
     both(
         Action::GridFollowKey,
         Region::Grid,
         "gridFollowKey",
         &["F"],
         &[],
-    ),
+    )
+    .only(Grids::TABLE),
     both(
         Action::GridCancelQuery,
         Region::Grid,
         "gridCancelQuery",
         &["q"],
         &[],
-    ),
+    )
+    .only(Grids::TABLE),
     both(
         Action::GridEndSession,
         Region::Grid,
         "gridEndSession",
         &["K"],
         &[],
-    ),
+    )
+    .only(Grids::TABLE),
     both(
         Action::CompareScript,
         Region::Grid,
         "compareScript",
         &["S"],
         &[],
-    ),
+    )
+    .only(Grids::COMPARE),
     both(
         Action::CompareCopy,
         Region::Grid,
         "compareCopy",
         &["Y"],
         &[],
-    ),
+    )
+    .only(Grids::COMPARE),
     both(
         Action::GridProfile,
         Region::Grid,
@@ -1259,14 +1308,16 @@ const DEFAULTS: &[Item] = &[
         "gridKeepPrevious",
         &["B"],
         &[],
-    ),
+    )
+    .only(Grids::CONSOLE),
     both(
         Action::GridComparePrevious,
         Region::Grid,
         "gridComparePrevious",
         &["D"],
         &[],
-    ),
+    )
+    .only(Grids::CONSOLE),
     both(
         Action::DiagramUp,
         Region::Diagram,

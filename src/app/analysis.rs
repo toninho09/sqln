@@ -24,7 +24,7 @@ impl App {
         if action == Action::GridKeepPrevious {
             return self.console_on_screen() && !self.console().is_busy();
         }
-        if self.diagram_active.is_some() || self.compare_active.is_some() {
+        if self.diagram_index().is_some() || self.compare_index().is_some() {
             return false;
         }
         let idle = self

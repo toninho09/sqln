@@ -48,7 +48,7 @@ sqln-vault                           â”‚  sqln-duckdb, sqln-redis, sqln-kafka â”
 | `sqln-store` | `crates/store` | `creds`, `script_file`, `store`, `trust` |
 | `sqln-exec` | `crates/exec` | `agent`, `ai`, `analysis`, `command_log`, `compare`, `complete`, `connection`, `data_edit`, `definition`, `diagram`, `dialect`, `exec` (types only), `export`, `import`, `plan` |
 | `sqln-runtime` | `crates/runtime` | `exec`: the types of `sqln-exec` and `Manager`, with the console tasks and jobs |
-| `sqln-ui` | `crates/ui` | `browser`, `compare_tab`, `console`, `diagram_tab`, `edit_form`, `editor`, `export_form`, `form`, `generate`, `help`, `history`, `import_form`, `navigator`, `palette`, `parameters`, `result`, `settings`, `table`, `ui` |
+| `sqln-ui` | `crates/ui` | `browser`, `compare_tab`, `console`, `diagram_tab`, `edit_form`, `editor`, `export_form`, `form`, `generate`, `help`, `history`, `import_form`, `navigator`, `palette`, `parameters`, `result`, `settings`, `tab_item`, `table`, `ui` |
 | `sqln` | root, `src/` | `app`, `batch`, `mcp`, `terminal`, and the binary |
 
 A change recompiles the changed crate and the crates above it in the graph:
@@ -149,7 +149,10 @@ Only `connector` knows native driver types.
 `creds` offers identities, session passwords, and the vault adapters.
 `trust` offers the reading and the writing of global confirmations.
 The vault calls are synchronous, but `Manager::spawn_blocking` runs them off the interface thread.
-`app` applies the key priority and the mouse. `app/auth.rs`, `app/keys.rs`, `app/hints.rs`, `app/mouse.rs`, `app/close.rs`, `app/connections.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs`, `app/session.rs`, `app/conflicts.rs`, `app/history.rs`, `app/guard.rs`, `app/export.rs`, and `app/browse.rs` divide that code.
+`app` applies the key priority and the mouse. `app/modal.rs` lists the windows over the screen in one order: the first open window gets the keys, the mouse, the paste, and the hint, and it is drawn on top. To add a window, add a `Modal` variant; the compiler then names each `match` that needs it.
+`App::screen` holds the tab on screen as one `Screen` value. `sqln_ui::tab_item::TabItem` is the shared contract of the table, diagram, and compare tabs; `App::close_item` closes any of them with the same steps.
+The `DEFAULTS` table of `input` limits a grid action to some grids with `only(...)`; `Action::on_grid` reads it.
+`app/auth.rs`, `app/keys.rs`, `app/modal.rs`, `app/hints.rs`, `app/mouse.rs`, `app/close.rs`, `app/connections.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs`, `app/session.rs`, `app/conflicts.rs`, `app/history.rs`, `app/guard.rs`, `app/export.rs`, and `app/browse.rs` divide that code.
 `store` keeps the folders and files. It does not depend on `app` or `ui`.
 Its configuration reader uses driver-independent connector target types.
 

@@ -9,7 +9,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
 use sqln::editor::KeyboardMode;
-use sqln::input::{Action, Chord, Keymap, Lookup, Region};
+use sqln::input::{Action, Chord, Grid, Keymap, Lookup, Region};
 use sqln::ui::theme::Theme;
 
 fn chord(text: &str) -> Chord {
@@ -108,11 +108,12 @@ fn the_grid_has_the_keys_of_the_table_view_in_both_modes() {
                 "{text}"
             );
             assert!(action.is_table_only());
-            assert!(!action.is_console_only());
+            assert!(action.on_grid(Grid::Table));
         }
     }
-    assert!(Action::GridCloseResult.is_console_only());
-    assert!(!Action::GridCopy.is_table_only() && !Action::GridCopy.is_console_only());
+    assert!(Action::GridCloseResult.on_grid(Grid::Console));
+    assert!(!Action::GridCloseResult.on_grid(Grid::Table));
+    assert!(!Action::GridCopy.is_table_only() && Action::GridCopy.on_grid(Grid::Table));
 }
 
 #[test]
