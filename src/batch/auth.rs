@@ -145,12 +145,15 @@ pub(super) fn authenticate(
     let terminal: Option<std::fs::File> = None;
     // A Kafka user always authenticates with SASL, so it always needs a password.
     let sasl = target.engine == crate::connector::target::Engine::Kafka && !target.user.is_empty();
-    if let Some(mut terminal) = terminal.filter(|_| target.engine.needs_user() || reference || sasl)
+    if let Some(mut terminal) =
+        terminal.filter(|_| target.engine.needs_password() || reference || sasl)
     {
-        target.password = crate::terminal::read_password_to(
-            &format!("Password for {}: ", printable(&target.user)),
-            &mut terminal,
-        )?;
+        let prompt = if target.engine == crate::connector::target::Engine::Databricks {
+            crate::ui::text::TOKEN_PROMPT.to_owned()
+        } else {
+            format!("Password for {}: ", printable(&target.user))
+        };
+        target.password = crate::terminal::read_password_to(&prompt, &mut terminal)?;
     } else if reference {
         return Err(Error::failed(
             "The saved credential is not available. Set --password-file or SQLN_PASSWORD.",

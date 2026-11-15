@@ -16,15 +16,11 @@ use sqln::{
     ui::text,
     ui::theme::Theme,
 };
+use sqln_testkit::http::HttpServer;
 use std::{
     cell::RefCell,
-    io::{Read, Write},
-    net::TcpListener,
     rc::Rc,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use unicode_width::UnicodeWidthStr;
@@ -32,8 +28,7 @@ use unicode_width::UnicodeWidthStr;
 struct Server {
     url: String,
     requests: Arc<Mutex<Vec<String>>>,
-    stop: Arc<AtomicBool>,
-    thread: Option<std::thread::JoinHandle<()>>,
+    _http: HttpServer,
 }
 impl Server {
     fn new(text: &str, delay: Duration) -> Self {
@@ -43,74 +38,11 @@ impl Server {
         Self::response(200, body, delay)
     }
     fn response(status: u16, body: String, delay: Duration) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let url = format!("http://{}/v1", listener.local_addr().unwrap());
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let captured = requests.clone();
-        let stop = Arc::new(AtomicBool::new(false));
-        let done = stop.clone();
-        let thread = std::thread::spawn(move || {
-            while !done.load(Ordering::Relaxed) {
-                let (mut socket, _) = match listener.accept() {
-                    Ok(v) => v,
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(2));
-                        continue;
-                    }
-                    Err(_) => break,
-                };
-                socket.set_nonblocking(false).unwrap();
-                socket
-                    .set_write_timeout(Some(Duration::from_secs(3)))
-                    .unwrap();
-                socket
-                    .set_read_timeout(Some(Duration::from_secs(3)))
-                    .unwrap();
-                let mut request = Vec::new();
-                let mut buffer = [0u8; 8192];
-                loop {
-                    let n = match socket.read(&mut buffer) {
-                        Ok(n) if n > 0 => n,
-                        _ => break,
-                    };
-                    request.extend_from_slice(&buffer[..n]);
-                    if let Some(end) = request.windows(4).position(|s| s == b"\r\n\r\n") {
-                        let header = String::from_utf8_lossy(&request[..end]);
-                        let size = header
-                            .lines()
-                            .find_map(|line| {
-                                line.to_lowercase()
-                                    .strip_prefix("content-length:")
-                                    .and_then(|s| s.trim().parse::<usize>().ok())
-                            })
-                            .unwrap_or(0);
-                        if request.len() >= end + 4 + size {
-                            break;
-                        }
-                    }
-                }
-                if request.is_empty() {
-                    continue;
-                }
-                captured
-                    .lock()
-                    .unwrap()
-                    .push(String::from_utf8(request).unwrap());
-                std::thread::sleep(delay);
-                let _ = write!(
-                    socket,
-                    "HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-            }
-        });
+        let http = HttpServer::start(move |_| (status, body.clone().into_bytes()), delay);
         Self {
-            url,
-            requests,
-            stop,
-            thread: Some(thread),
+            url: format!("{}/v1", http.url),
+            requests: http.requests.clone(),
+            _http: http,
         }
     }
     fn provider(&self) -> Provider {
@@ -119,14 +51,6 @@ impl Server {
             model: "test-model".into(),
             base_url: self.url.clone(),
             ..Provider::default()
-        }
-    }
-}
-impl Drop for Server {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(t) = self.thread.take() {
-            t.join().unwrap();
         }
     }
 }

@@ -97,6 +97,7 @@ fn definition() -> Definition {
             database: None,
             tls: Tls::Disabled,
             kafka: Default::default(),
+            databricks: Default::default(),
         }),
     )
 }

@@ -21,3 +21,4 @@ sqln-sqlite.workspace = true
 sqln-duckdb.workspace = true
 sqln-redis.workspace = true
 sqln-kafka.workspace = true
+sqln-databricks.workspace = true

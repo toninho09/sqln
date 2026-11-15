@@ -1,9 +1,11 @@
 //! Shared helpers for the integration tests of the workspace crates: key events,
-//! temporary paths, a fixed catalog, a fake connector (`mock`), and an editor
-//! fixture (`editor`).
+//! temporary paths, a fixed catalog, a fake connector (`mock`), an editor fixture
+//! (`editor`), and a fake HTTP server (`http`).
 
 #[cfg(feature = "editor")]
 mod fixture;
+#[cfg(feature = "http")]
+pub mod http;
 #[cfg(feature = "mock")]
 pub mod mock;
 

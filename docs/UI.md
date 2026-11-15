@@ -394,7 +394,7 @@ The mark leaves with the next edit, and an edit during the execution prevents th
 
 The active SQL console checks syntax after 400 ms without a text or dialect change.
 The check runs locally, outside the interface thread. It executes no SQL and reads no parameter values.
-PostgreSQL, MySQL, SQLite, and DuckDB use the bundled `sqlparser` dialects. Redis, Valkey, and Kafka have no SQL check.
+PostgreSQL, MySQL, SQLite, DuckDB, and Databricks use the bundled `sqlparser` dialects. Redis, Valkey, and Kafka have no SQL check.
 The existing lexer still serves highlighting, autocomplete, and incomplete editor text.
 
 Located warnings underline tokens without moving the cursor or changing the selection.
@@ -870,6 +870,7 @@ The form has a sidebar, as the Settings dialog has. Each section shows its own f
 | Options | Schemas (Databases in MySQL and Redis), SQLite foreign keys and busy limit, Kafka consumer group and topics, Pool, Read only (not in Kafka), Production, Connect limit, Statement limit, Idle limit, Theme, and Icon |
 
 A section without fields stays out of the sidebar, so SQLite has no Credentials and no Security. DuckDB shows File and Schemas, and it has no busy timeout or foreign keys.
+Databricks shows Catalog and Warehouse in Address, and Token in place of User and Password. The Schemas field holds `catalog.schema` names.
 The buttons stay at the bottom of each section.
 All sections keep the height of the largest section, so the window does not move. The width starts at 76 columns, grows to 140 columns on a larger screen, and leaves 8 columns free.
 The form of a connected connection also has the sidebar: General holds the name, and Options holds the schemas, the theme, the icon, and the production mark.

@@ -242,3 +242,40 @@ fn the_tls_schemes_always_use_tls() {
     let error = parse_uri("rediss://h?sslmode=disable").unwrap_err();
     assert!(error.contains("always uses TLS"), "{error}");
 }
+
+#[test]
+fn a_databricks_text_gives_the_token_the_catalog_and_the_warehouse() {
+    let target =
+        parse_uri("databricks://:dapi-token@adb-1.azuredatabricks.net/main?warehouse=abc123")
+            .unwrap();
+    assert_eq!(target.engine, Engine::Databricks);
+    assert_eq!(target.user, "");
+    assert_eq!(target.password, Some(Secret::new("dapi-token")));
+    assert_eq!(target.database.as_deref(), Some("main"));
+    assert_eq!(target.databricks.warehouse, "abc123");
+    assert_eq!(
+        target.address,
+        Address::Tcp {
+            host: "adb-1.azuredatabricks.net".into(),
+            port: 443
+        }
+    );
+    assert_eq!(target.tls, Tls::Verify(TlsFiles::default()));
+
+    let target = parse_uri("databricks://h?warehouse=abc").unwrap();
+    assert_eq!(target.database, None);
+}
+
+#[test]
+fn a_databricks_warehouse_is_required_and_belongs_only_to_databricks() {
+    for uri in [
+        "databricks://:t@h/main",
+        "databricks://:t@h/main?warehouse=",
+        // The id goes into the path of a request.
+        "databricks://:t@h/main?warehouse=a%2F..",
+        "databricks://:t@h?warehouse=a&socket=/tmp/s",
+        "postgres://u@h/d?warehouse=abc",
+    ] {
+        assert!(parse_uri(uri).is_err(), "{uri}");
+    }
+}

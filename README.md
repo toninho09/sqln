@@ -5,7 +5,7 @@ A terminal database client with several connections, SQL consoles, and table tab
 SQLN brings an editor, a database navigator, and a results grid into one terminal.
 Use familiar editor keys or Vim mode. Keep scripts with a project, or use global connections across projects.
 
-**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, and Kafka with the Schema Registry.
+**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, Kafka with the Schema Registry, and Databricks SQL warehouses.
 
 > SQLN is in development. This repository supports source installation and unsigned workflow binaries.
 > Review the [known limitations](#known-limitations) before use with important data.
@@ -175,10 +175,12 @@ sqln 'mysql://alice@localhost/my_database'
 sqln 'redis://localhost/0'
 sqln 'valkey://localhost/0'
 sqln 'kafka://localhost:9092'
+sqln 'databricks://adb-1234.azuredatabricks.net/main?warehouse=abc123'
 ```
 
 For PostgreSQL and MySQL, SQLN asks for a password when the URI omits it in an interactive terminal.
 For password-protected Redis, Valkey, or Kafka with SASL, use the connection form to enter the password without shell-history exposure.
+For Databricks, type a personal access token in the **Token** field of the form. The path of the connection text is the start catalog, and `warehouse=<id>` is the SQL warehouse.
 
 A command-line connection lasts for the session only. It does not create a saved connection or saved consoles for that target.
 To save a connection, start `sqln` and add it through the navigator.
@@ -745,7 +747,7 @@ sqln mcp
 ```
 
 `target` is one SQLite file path, one DuckDB target with the `duckdb:` scheme, or one connection URI. SQLN asks before creating a missing file.
-Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, `valkeys`, `kafka`, and `kafkas`.
+Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, `valkeys`, `kafka`, `kafkas`, and `databricks`.
 
 | Option | Purpose |
 |---|---|
@@ -762,7 +764,7 @@ Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `red
 | `--log <file>` | Write the event log |
 | `-h`, `--help` | Show command-line help |
 | `-V`, `--version` | Show the version |
-| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, or `kafka` for an unconnected console; development option |
+| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, or `databricks` for an unconnected console; development option |
 
 ### Execution without the terminal interface
 
@@ -847,6 +849,7 @@ A positional `.sql` path is not a script-opening argument; positional file targe
 - DuckDB opens a database file, and it refuses a `CSV`, `Parquet`, or `JSON` file: read those from a database with `read_csv`, `read_parquet`, or `read_json`, because a driver open of one of them would start a database in memory that loses its tables when the console ends.
 - DuckDB lacks schema compare, ER diagram, the DDL window, `EXPLAIN`, grid editing, and foreign-key reads. A read-only DuckDB connection opens the file with `access_mode = READ_ONLY`; the global read-only preference refuses a write in the connector instead, because a DuckDB connection cannot change its access mode. The bundled build compiles DuckDB and makes the first build long.
 - A DuckDB console can `ATTACH` other databases. Their schemas appear in the navigator with the `catalog.schema` name, and SQLN opens their tables with the catalog name, because a schema name alone cannot reach them. An `ATTACH` is not saved in the database file: it ends when the connection closes. A local DuckDB schema whose own name has a dot does not open, because SQLN reads the dot as the catalog separator.
+- Databricks connections read and run SQL only: they have no transactions, grid editing, query parameters, `EXPLAIN`, ER diagram, or schema compare. They accept a personal access token only. The API keeps no session, so `SET` and `USE` in a console do not reach the next statement; choose the schema in the navigator. The navigator lists Unity Catalog schemas as `catalog.schema`, without `hive_metastore`.
 - Grid editing changes, inserts, and deletes rows of keyed table tabs. Use SQL for binary values or other grids.
 - A console linked to an external `.sql` file lives in the session only: closing SQLN closes it, and the file keeps its text. The file must be UTF-8, and the link has no autosave: `Ctrl+S` and the close questions write it.
 - There is no integrated SSH tunnel, IAM authentication, or Kerberos authentication.

@@ -2,6 +2,7 @@
 //! only `match` that chooses it. Code outside this module reads these rules and does not
 //! compare `Dialect` values, so a new dialect needs only a new file and a new arm.
 
+mod databricks;
 mod duckdb;
 mod kafka;
 mod mysql;
@@ -60,6 +61,9 @@ pub struct Syntax {
     pub identifier_quote: char,
     /// A string literal also reads a backslash as an escape, so SQLN doubles it.
     pub literal_backslash: bool,
+    /// A `'` inside a string literal takes a backslash, because two quotes start a second
+    /// literal, as in Databricks.
+    pub backslash_quote: bool,
     /// A name of the catalog uses the escape form of `escape_literal`.
     pub escaped_name_literal: bool,
     pub binary_literal: BinaryLiteral,
@@ -104,6 +108,7 @@ impl Dialect {
             Dialect::DuckDb => &duckdb::DuckDb,
             Dialect::Redis => &redis::Redis,
             Dialect::Kafka => &kafka::Kafka,
+            Dialect::Databricks => &databricks::Databricks,
         }
     }
 
@@ -130,6 +135,7 @@ const BASE: Syntax = Syntax {
     at_marker: false,
     identifier_quote: '"',
     literal_backslash: false,
+    backslash_quote: false,
     escaped_name_literal: false,
     binary_literal: BinaryLiteral::XQuote,
     booleans: ("1", "0"),

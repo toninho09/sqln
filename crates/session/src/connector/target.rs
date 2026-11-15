@@ -38,6 +38,7 @@ pub enum Engine {
     MySql,
     Redis,
     Kafka,
+    Databricks,
 }
 
 impl Engine {
@@ -48,6 +49,7 @@ impl Engine {
             Engine::MySql => Dialect::MySql,
             Engine::Redis => Dialect::Redis,
             Engine::Kafka => Dialect::Kafka,
+            Engine::Databricks => Dialect::Databricks,
         }
     }
 
@@ -58,6 +60,7 @@ impl Engine {
             Engine::MySql => text::VALUE_MYSQL,
             Engine::Redis => text::VALUE_REDIS,
             Engine::Kafka => text::VALUE_KAFKA,
+            Engine::Databricks => text::VALUE_DATABRICKS,
         }
     }
 
@@ -67,21 +70,29 @@ impl Engine {
             Engine::MySql => 3306,
             Engine::Redis => 6379,
             Engine::Kafka => 9092,
+            Engine::Databricks => 443,
         }
     }
 
-    /// Returns false for a source that works without a user name.
+    /// Returns false for a source that works without a user name. Databricks reads only
+    /// the token, in the password.
     pub fn needs_user(self) -> bool {
-        !matches!(self, Engine::Redis | Engine::Kafka)
+        !matches!(self, Engine::Redis | Engine::Kafka | Engine::Databricks)
+    }
+
+    /// Returns true when the command line asks for a password that the connection text
+    /// does not hold. Databricks has no user, but it always needs its token.
+    pub fn needs_password(self) -> bool {
+        self.needs_user() || self == Engine::Databricks
     }
 
     /// Returns true when the database name has a valid form for this source. Kafka has
-    /// no databases.
+    /// no databases. The database of Databricks is its start catalog.
     pub fn accepts_database(self, name: &str) -> bool {
         match self {
             Engine::Redis => name.parse::<u32>().is_ok(),
             Engine::Kafka => false,
-            Engine::Postgres | Engine::MySql => true,
+            Engine::Postgres | Engine::MySql | Engine::Databricks => true,
         }
     }
 
@@ -155,6 +166,26 @@ impl KafkaOptions {
     pub fn read_group(&self) -> &str {
         self.group.as_deref().unwrap_or(KAFKA_READ_GROUP)
     }
+}
+
+/// The settings that only a Databricks connection uses. Other engines keep the default.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DatabricksOptions {
+    /// The id of the SQL warehouse that runs the statements.
+    pub warehouse: String,
+}
+
+/// Reads the warehouse id of a Databricks connection. The id goes into the path of a
+/// request, so only ASCII letters and digits are valid.
+pub fn warehouse_id(text: &str) -> Result<String, &'static str> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(text::DATABRICKS_NO_WAREHOUSE);
+    }
+    if !text.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(text::DATABRICKS_BAD_WAREHOUSE);
+    }
+    Ok(text.to_owned())
 }
 
 /// Reads the consumer group id of a Kafka connection. The spaces at the ends go; an empty
@@ -272,6 +303,7 @@ pub struct NetworkTarget {
     pub database: Option<String>,
     pub tls: Tls,
     pub kafka: KafkaOptions,
+    pub databricks: DatabricksOptions,
 }
 
 /// What the command line opens.
@@ -349,6 +381,7 @@ struct Parameters {
     registry: Option<String>,
     group: Option<String>,
     topics: Vec<String>,
+    warehouse: Option<String>,
 }
 
 impl Parameters {
@@ -374,6 +407,7 @@ impl Parameters {
                 "registry" if !value.is_empty() => parameters.registry = Some(value),
                 "group" => parameters.group = consumer_group(&value)?,
                 "topics" => parameters.topics = topic_filter(&value)?,
+                "warehouse" => parameters.warehouse = Some(warehouse_id(&value)?),
                 other => return Err(format!("Unknown connection parameter: {other}")),
             }
         }
@@ -469,7 +503,12 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
         "mysql" | "mariadb" => Engine::MySql,
         "redis" | "rediss" | "valkey" | "valkeys" => Engine::Redis,
         "kafka" | "kafkas" => Engine::Kafka,
-        _ => return Err("The scheme must be postgres, mysql, redis, or kafka.".to_owned()),
+        "databricks" => Engine::Databricks,
+        _ => {
+            return Err(
+                "The scheme must be postgres, mysql, redis, kafka, or databricks.".to_owned(),
+            );
+        }
     };
     let (location, query) = rest.split_once('?').unwrap_or((rest, ""));
     let (authority, path) = location.split_once('/').unwrap_or((location, ""));
@@ -509,6 +548,15 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
     if engine == Engine::Kafka && parameters.socket.is_some() {
         return Err("A Kafka connection needs a host, not a socket.".to_owned());
     }
+    let databricks = match (engine, parameters.warehouse.take()) {
+        (Engine::Databricks, Some(warehouse)) => DatabricksOptions { warehouse },
+        (Engine::Databricks, None) => return Err(text::DATABRICKS_NO_WAREHOUSE.to_owned()),
+        (_, Some(_)) => return Err("warehouse is valid only for databricks.".to_owned()),
+        (_, None) => DatabricksOptions::default(),
+    };
+    if engine == Engine::Databricks && parameters.socket.is_some() {
+        return Err("A Databricks connection needs a host, not a socket.".to_owned());
+    }
     let kafka = KafkaOptions {
         sasl: parameters.sasl.take().unwrap_or_default(),
         registry: parameters.registry.take().map(|url| {
@@ -547,5 +595,6 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
         database,
         tls,
         kafka,
+        databricks,
     })
 }

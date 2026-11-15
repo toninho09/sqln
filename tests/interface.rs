@@ -294,6 +294,7 @@ fn the_kind_field_names_each_source() {
     let names = [
         "PostgreSQL",
         "MySQL",
+        "Databricks",
         "SQLite",
         "Redis/Valkey",
         "DuckDB",
@@ -1666,8 +1667,10 @@ fn a_click_selects_a_field_in_each_placement() {
 /// Opens the form of a new SQLite connection, with the focus on its file.
 fn sqlite_form_screen(name: &str) -> Screen {
     let mut screen = form_screen(name, Theme::plain());
-    screen.code(KeyCode::Right);
-    screen.code(KeyCode::Right);
+    // `Right` goes from PostgreSQL through MySQL and Databricks to SQLite.
+    for _ in 0..3 {
+        screen.code(KeyCode::Right);
+    }
     focus_field(&mut screen, Field::File);
     screen
 }

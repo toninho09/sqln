@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use sqln::app::{Options, run};
 use sqln::connection::{Definition, Source};
 use sqln::connector::duckdb::{DuckdbTarget, file_source as duckdb_source};
-use sqln::connector::target::{OpenTarget, open_target};
+use sqln::connector::target::{Engine, OpenTarget, open_target};
 use sqln::export::ExportFormat;
 use sqln::sql::Dialect;
 use sqln::store::Scope;
@@ -165,9 +165,14 @@ fn open(options: &mut Options, target: &str) -> Result<(), String> {
             options.connections.push(Definition::duckdb(target));
         }
         OpenTarget::Network(mut target) => {
-            if target.password.is_none() && target.engine.needs_user() && stdin().is_terminal() {
-                target.password = read_password(&text::password_prompt(&target.user))
-                    .map_err(|error| error.to_string())?;
+            if target.password.is_none() && target.engine.needs_password() && stdin().is_terminal()
+            {
+                let prompt = if target.engine == Engine::Databricks {
+                    text::TOKEN_PROMPT.to_owned()
+                } else {
+                    text::password_prompt(&target.user)
+                };
+                target.password = read_password(&prompt).map_err(|error| error.to_string())?;
             }
             let name = target.label();
             options

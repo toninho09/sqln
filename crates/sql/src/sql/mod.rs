@@ -32,16 +32,19 @@ pub enum Dialect {
     Redis,
     /// Kafka line commands and the SELECT subset of SQLN.
     Kafka,
+    /// Databricks SQL on a SQL warehouse.
+    Databricks,
 }
 
 impl Dialect {
-    pub const ALL: [Dialect; 6] = [
+    pub const ALL: [Dialect; 7] = [
         Dialect::Postgres,
         Dialect::MySql,
         Dialect::Sqlite,
         Dialect::DuckDb,
         Dialect::Redis,
         Dialect::Kafka,
+        Dialect::Databricks,
     ];
 
     /// Returns the name of the dialect on the command line.
@@ -53,6 +56,7 @@ impl Dialect {
             Dialect::DuckDb => "duckdb",
             Dialect::Redis => "redis",
             Dialect::Kafka => "kafka",
+            Dialect::Databricks => "databricks",
         }
     }
 
@@ -117,11 +121,17 @@ pub fn escape_literal(text: &str) -> String {
 }
 
 /// Writes text as a string literal of the dialect. MySQL also reads a backslash as an escape.
+/// Databricks also writes a `'` inside the text with a backslash.
 pub fn quote_literal(text: &str, dialect: Dialect) -> String {
-    let literal = quote_with(text, '\'');
-    if dialect.syntax().literal_backslash {
-        literal.replace('\\', "\\\\")
+    let syntax = dialect.syntax();
+    let text = if syntax.literal_backslash {
+        std::borrow::Cow::Owned(text.replace('\\', "\\\\"))
     } else {
-        literal
+        std::borrow::Cow::Borrowed(text)
+    };
+    if syntax.backslash_quote {
+        format!("'{}'", text.replace('\'', "\\'"))
+    } else {
+        quote_with(&text, '\'')
     }
 }

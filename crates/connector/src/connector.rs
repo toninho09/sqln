@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 pub use sqln_session::connector::*;
 
+use self::databricks::DatabricksConnector;
 use self::duckdb::{DuckdbConnector, DuckdbTarget};
 use self::kafka::KafkaConnector;
 use self::mysql::MySqlConnector;
@@ -42,6 +43,10 @@ pub mod kafka {
     pub use sqln_session::connector::kafka::*;
 }
 
+pub mod databricks {
+    pub use sqln_databricks::*;
+}
+
 /// Opens the connector of a network address.
 pub fn network_connector(target: NetworkTarget) -> Arc<dyn Connector> {
     match target.engine {
@@ -49,6 +54,7 @@ pub fn network_connector(target: NetworkTarget) -> Arc<dyn Connector> {
         Engine::MySql => Arc::new(MySqlConnector::new(target)),
         Engine::Redis => Arc::new(RedisConnector::new(target)),
         Engine::Kafka => Arc::new(KafkaConnector::new(target)),
+        Engine::Databricks => Arc::new(DatabricksConnector::new(target)),
     }
 }
 

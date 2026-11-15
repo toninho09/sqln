@@ -14,8 +14,8 @@ use crate::connection::{
 use crate::connector::duckdb::DuckdbTarget;
 use crate::connector::sqlite::{SqliteTarget, validate_path};
 use crate::connector::target::{
-    Address, ClientCertificate, Engine, KafkaOptions, NetworkTarget, Registry, Sasl, Secret, Tls,
-    TlsFiles, consumer_group, parse_uri, topic_filter,
+    Address, ClientCertificate, DatabricksOptions, Engine, KafkaOptions, NetworkTarget, Registry,
+    Sasl, Secret, Tls, TlsFiles, consumer_group, parse_uri, topic_filter, warehouse_id,
 };
 use crate::exec::ConnectionId;
 use crate::mark_list::{MarkList, MarkRequest};
@@ -54,6 +54,8 @@ pub enum Field {
     ConsumerGroup,
     /// The patterns of the topics that the Kafka catalog shows.
     Topics,
+    /// The SQL warehouse id of a Databricks connection.
+    Warehouse,
     File,
     ForeignKeys,
     BusyTimeout,
@@ -106,9 +108,12 @@ impl Field {
     pub fn group(self) -> Group {
         match self {
             Field::Kind | Field::Name | Field::Scope | Field::Entry => Group::General,
-            Field::Uri | Field::Host | Field::Port | Field::Database | Field::File => {
-                Group::Address
-            }
+            Field::Uri
+            | Field::Host
+            | Field::Port
+            | Field::Database
+            | Field::Warehouse
+            | Field::File => Group::Address,
             Field::User | Field::Password | Field::Sasl | Field::Credential => Group::Credentials,
             Field::Tls | Field::CaFile | Field::ClientCertificate | Field::ClientKey => {
                 Group::Security
@@ -166,6 +171,7 @@ pub enum Kind {
     Redis,
     Duckdb,
     Kafka,
+    Databricks,
 }
 
 impl Kind {
@@ -176,6 +182,7 @@ impl Kind {
             Kind::MySql => Some(Engine::MySql),
             Kind::Redis => Some(Engine::Redis),
             Kind::Kafka => Some(Engine::Kafka),
+            Kind::Databricks => Some(Engine::Databricks),
             Kind::Sqlite | Kind::Duckdb => None,
         }
     }
@@ -392,7 +399,9 @@ impl ConnectionForm {
             Engine::MySql => Kind::MySql,
             Engine::Redis => Kind::Redis,
             Engine::Kafka => Kind::Kafka,
+            Engine::Databricks => Kind::Databricks,
         };
+        self.set(Field::Warehouse, target.databricks.warehouse.clone());
         self.sasl = target.kafka.sasl;
         if let Some(registry) = &target.kafka.registry {
             self.set(Field::RegistryUrl, registry.url.clone());
@@ -483,7 +492,13 @@ impl ConnectionForm {
                 if self.kind != Kind::Kafka {
                     fields.push(Field::Database);
                 }
-                fields.extend([Field::User, Field::Password]);
+                // Databricks reads only the token, in the password field.
+                if self.kind == Kind::Databricks {
+                    fields.push(Field::Warehouse);
+                } else {
+                    fields.push(Field::User);
+                }
+                fields.push(Field::Password);
                 if self.kind == Kind::Kafka {
                     fields.push(Field::Sasl);
                 }
@@ -623,6 +638,7 @@ impl ConnectionForm {
                 let order = [
                     Kind::Postgres,
                     Kind::MySql,
+                    Kind::Databricks,
                     Kind::Sqlite,
                     Kind::Redis,
                     Kind::Duckdb,
@@ -937,6 +953,9 @@ impl ConnectionForm {
         if engine == Engine::Kafka && host.starts_with('/') {
             return Err(invalid(Field::Host, text::FORM_KAFKA_SOCKET));
         }
+        if engine == Engine::Databricks && host.starts_with('/') {
+            return Err(invalid(Field::Host, text::FORM_DATABRICKS_SOCKET));
+        }
         Ok(NetworkTarget {
             engine,
             address,
@@ -945,7 +964,18 @@ impl ConnectionForm {
             database: database.map(str::to_owned),
             tls,
             kafka: self.kafka_options(engine, None)?,
+            databricks: self.databricks_options(engine)?,
         })
+    }
+
+    /// Reads the Databricks fields. Other engines get the default.
+    fn databricks_options(&self, engine: Engine) -> Result<DatabricksOptions, Invalid> {
+        if engine != Engine::Databricks {
+            return Ok(DatabricksOptions::default());
+        }
+        let warehouse = warehouse_id(self.trimmed(Field::Warehouse))
+            .map_err(|message| invalid(Field::Warehouse, message))?;
+        Ok(DatabricksOptions { warehouse })
     }
 
     /// Reads the Kafka fields. A registry of the connection text stays when the field is

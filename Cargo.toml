@@ -18,6 +18,7 @@ sqln-sqlite = { path = "crates/sqlite" }
 sqln-duckdb = { path = "crates/duckdb" }
 sqln-redis = { path = "crates/redis" }
 sqln-kafka = { path = "crates/kafka" }
+sqln-databricks = { path = "crates/databricks" }
 sqln-connector = { path = "crates/connector" }
 sqln-store = { path = "crates/store" }
 sqln-exec = { path = "crates/exec" }
@@ -25,6 +26,10 @@ sqln-runtime = { path = "crates/runtime" }
 sqln-ui = { path = "crates/ui" }
 sqln-testkit = { path = "crates/testkit" }
 apache-avro = { version = "0.22", default-features = false }
+arrow-array = { version = "60.1.0", default-features = false }
+arrow-cast = { version = "60.1.0", default-features = false }
+arrow-ipc = { version = "60.1.0", default-features = false }
+arrow-schema = { version = "60.1.0", default-features = false }
 arboard = { version = "3.7.0", default-features = false }
 async-trait = "0.1"
 bytes = "1"
@@ -113,7 +118,7 @@ rustix.workspace = true
 
 [dev-dependencies]
 sqln-store = { workspace = true, features = ["test-support"] }
-sqln-testkit = { workspace = true, features = ["mock", "editor"] }
+sqln-testkit = { workspace = true, features = ["mock", "editor", "http"] }
 async-trait.workspace = true
 duckdb.workspace = true
 futures-util.workspace = true

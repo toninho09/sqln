@@ -6,6 +6,25 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Databricks SQL connector — 2026-11-15
+
+The user asked for SQL queries on Databricks. The user chose the scope below. This entry adds `sqln-databricks` to the driver list of "Driver crates, connector contract, and runtime".
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Protocol | The SQL Statement Execution API 2.0 over HTTPS, with `reqwest` | ODBC (needs the Simba driver), Thrift | No Rust driver exists. The workspace already uses `reqwest` |
+| Authentication | A personal access token only. It is the password of the connection, in the vault or in the session | OAuth | User choice |
+| Warehouse | The `warehouse` field (`warehouse=<id>` in the connection text) is required. The id has only ASCII letters and digits, because it goes into a request path | A full HTTP path | One value, and no path text from the user |
+| Catalogs | The explorer shows the schemas of all catalogs. Each schema name is `catalog.schema`, also for the start catalog. The **Catalog** field is the catalog of a session without a schema | Plain names for the start catalog, as DuckDB | User choice to navigate between catalogs. The structure queries need the catalog of each schema |
+| Metastore | Catalog reads use `system.information_schema` (Unity Catalog). `hive_metastore` does not show in the explorer, but its tables still run in a console | `SHOW` commands for each catalog and schema | User choice. One query for each read |
+| Scope | Read and run only: no transactions, no grid edit, no parameters, no plan, no diagram, no compare | Full feature set | User choice |
+| Session state | The API keeps no session. Each request carries the catalog and the schema of the session. `SET` and `USE` in a console do not reach the next statement | A session of the warehouse | The API has no session |
+| Results | `EXTERNAL_LINKS` with `ARROW_STREAM`, one part in memory at a time, inside the memory limit. The download of a link never sends the token. An expired link gets a new link one time | `INLINE` with its 25 MiB limit | User choice |
+| Cancel | `POST /statements/{id}/cancel`. A cancel that arrives before the id waits for it. The first request waits 5 seconds at most | `wait_timeout: 0s` | Fewer requests for a short statement |
+| Read only | The connector refuses a write with the shared check, as DuckDB does | Nothing | The API has no read-only session |
+| Tests | A fake HTTP server in `sqln-testkit` (`http` feature). The AI tests use it too | A real workspace | User choice. No container exists for Databricks |
+| Form | **Databricks** comes after MySQL in the **Type** choice. It has **Catalog**, **Warehouse**, and **Token**, and no **User** | Last in the choice | The SQL servers stay together. `Left` from PostgreSQL still reaches Kafka, DuckDB, Redis, and SQLite; `Right` needs one more step to SQLite |
+
 ## Tab close and modal order — 2026-11-14
 
 The user asked for simpler code to add tabs, windows, and grid commands. The change found two rules that the code applied in different ways, and the user chose one rule for each.

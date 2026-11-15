@@ -85,6 +85,7 @@ impl Identity {
             Engine::MySql => "mysql",
             Engine::Redis => "redis",
             Engine::Kafka => "kafka",
+            Engine::Databricks => "databricks",
         };
         let address =
             serde_json::to_string(&self.destination.address).map_err(|_| VaultError::Failed)?;
@@ -430,6 +431,7 @@ mod tests {
                 database: None,
                 tls: Tls::Disabled,
                 kafka: Default::default(),
+                databricks: Default::default(),
             }),
         );
         let identity = Identity::of(&key, &definition).unwrap();

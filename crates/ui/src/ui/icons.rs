@@ -52,6 +52,7 @@ pub struct Icons {
     pub duckdb: &'static str,
     pub redis: &'static str,
     pub kafka: &'static str,
+    pub databricks: &'static str,
     /// The marks of a key column in a diagram box. A column in both keys shows the first.
     pub primary_key: &'static str,
     pub foreign_key: &'static str,
@@ -123,6 +124,7 @@ impl Icons {
             duckdb: "dk",
             redis: "rd",
             kafka: "kf",
+            databricks: "dx",
             primary_key: "PK",
             foreign_key: "FK",
             arrow_left: "<",
@@ -170,6 +172,7 @@ impl Icons {
             duckdb: "dk",
             redis: "rd",
             kafka: "kf",
+            databricks: "dx",
             primary_key: "◆",
             foreign_key: "◇",
             arrow_left: "◀",
@@ -218,6 +221,8 @@ impl Icons {
             redis: "\u{e76d}",
             // Nerd Fonts has no Kafka logo in the dev set, so the database symbol stands in.
             kafka: "\u{f1c0}",
+            // Nerd Fonts has no Databricks logo in the dev set, so the database symbol stands in.
+            databricks: "\u{f1c0}",
             primary_key: "\u{f084}",
             foreign_key: "\u{f0c1}",
             arrow_left: "◀",
@@ -249,11 +254,12 @@ impl Icons {
             Engine::DuckDb => self.duckdb,
             Engine::Redis => self.redis,
             Engine::Kafka => self.kafka,
+            Engine::Databricks => self.databricks,
         }
     }
 
     /// Returns each symbol of the set, for the checks of the column width.
-    pub fn all(&self) -> [&'static str; 43] {
+    pub fn all(&self) -> [&'static str; 44] {
         [
             self.run,
             self.script,
@@ -294,6 +300,7 @@ impl Icons {
             self.duckdb,
             self.redis,
             self.kafka,
+            self.databricks,
             self.primary_key,
             self.foreign_key,
             self.arrow_left,

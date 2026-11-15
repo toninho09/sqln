@@ -57,7 +57,7 @@ pub struct FormLayout {
 
 fn label(kind: Kind, field: Field) -> &'static str {
     match field {
-        Field::Schemas if kind == Kind::Postgres => text::FIELD_SCHEMAS,
+        Field::Schemas if matches!(kind, Kind::Postgres | Kind::Databricks) => text::FIELD_SCHEMAS,
         Field::Schemas => text::FIELD_DATABASES,
         Field::Kind => text::FIELD_KIND,
         Field::Name => text::FIELD_NAME,
@@ -66,8 +66,10 @@ fn label(kind: Kind, field: Field) -> &'static str {
         Field::Uri => text::FIELD_URI,
         Field::Host => text::FIELD_HOST,
         Field::Port => text::FIELD_PORT,
+        Field::Database if kind == Kind::Databricks => text::FIELD_CATALOG,
         Field::Database => text::FIELD_DATABASE,
         Field::User => text::FIELD_USER,
+        Field::Password if kind == Kind::Databricks => text::FIELD_TOKEN,
         Field::Password => text::FIELD_PASSWORD,
         Field::Credential => text::FIELD_CREDENTIAL,
         Field::Tls => text::FIELD_TLS,
@@ -80,6 +82,7 @@ fn label(kind: Kind, field: Field) -> &'static str {
         Field::RegistryPassword => text::FIELD_REGISTRY_PASSWORD,
         Field::ConsumerGroup => text::FIELD_CONSUMER_GROUP,
         Field::Topics => text::FIELD_TOPICS,
+        Field::Warehouse => text::FIELD_WAREHOUSE,
         Field::File => text::FIELD_FILE,
         Field::ForeignKeys => text::FIELD_FOREIGN_KEYS,
         Field::BusyTimeout => text::FIELD_BUSY,
@@ -108,6 +111,7 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
             Kind::Kafka => text::VALUE_KAFKA,
             Kind::Sqlite => text::VALUE_SQLITE,
             Kind::Duckdb => text::VALUE_DUCKDB,
+            Kind::Databricks => text::VALUE_DATABRICKS,
         },
         Field::Scope if form.scope == Scope::Project => text::VALUE_SCOPE_PROJECT,
         Field::Scope => text::VALUE_SCOPE_GLOBAL,

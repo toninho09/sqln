@@ -47,6 +47,7 @@ fn identity() -> Identity {
             database: None,
             tls: Tls::Verify(TlsFiles::default()),
             kafka: Default::default(),
+            databricks: Default::default(),
         }),
     );
     Identity::of(&key, &definition).expect("A network definition has an identity.")

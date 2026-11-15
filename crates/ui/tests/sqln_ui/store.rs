@@ -502,6 +502,21 @@ fn the_rules_of_the_content_make_a_file_invalid() {
             "schemas":["0","sales"]}]}"#,
             "schemas",
         ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"databricks",
+            "host":"h"}]}"#,
+            "warehouse",
+        ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"databricks",
+            "host":"h","warehouse":"a/b"}]}"#,
+            "warehouse",
+        ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"mysql","host":"h",
+            "username":"u","warehouse":"abc"}]}"#,
+            "warehouse",
+        ),
     ];
     for (index, (text, word)) in cases.into_iter().enumerate() {
         let (store, _) = store_in(&format!("rules-{index}"));
@@ -688,6 +703,7 @@ fn a_definition_round_trips_through_an_entry_without_the_password() {
         database: Some("d".into()),
         tls: Tls::Disabled,
         kafka: Default::default(),
+        databricks: Default::default(),
     };
     let mut definition = Definition::new("remote", Source::Network(network));
     definition.sql_timeout = None;
@@ -717,6 +733,42 @@ fn a_definition_round_trips_through_an_entry_without_the_password() {
     );
     assert!(target.password.is_none());
     assert_eq!(target.tls, Tls::Disabled);
+}
+
+#[test]
+fn a_databricks_definition_keeps_its_warehouse_and_catalog_in_the_entry() {
+    use sqln_exec::connection::Definition;
+    use sqln_session::connector::target::{Engine, Secret, parse_uri};
+
+    let mut target =
+        parse_uri("databricks://:dapi-secret@adb-1.net/main?warehouse=abc123").unwrap();
+    target.password = Some(Secret::new("dapi-secret"));
+    let definition = Definition::new("lake", Source::Network(target));
+    let entry = config::to_entry("id-3", &definition);
+    assert_eq!(entry.kind, KindName::Databricks);
+    let text = serde_json::to_string(&entry).unwrap();
+    assert!(!text.contains("dapi-secret"), "{text}");
+    assert!(text.contains("\"kind\":\"databricks\""), "{text}");
+    assert!(text.contains("\"warehouse\":\"abc123\""), "{text}");
+    assert!(!text.contains("username"), "{text}");
+    let back = config::to_definition(&entry, PathBuf::from("/base"));
+    let Source::Network(back) = &back.source else {
+        panic!("network")
+    };
+    assert_eq!(back.engine, Engine::Databricks);
+    assert_eq!(back.databricks.warehouse, "abc123");
+    assert_eq!(back.database.as_deref(), Some("main"));
+    assert!(back.password.is_none());
+}
+
+#[test]
+fn an_entry_of_another_kind_writes_no_warehouse() {
+    use sqln_exec::connection::Definition;
+    use sqln_session::connector::target::parse_uri;
+
+    let target = parse_uri("postgres://u@h/d").unwrap();
+    let entry = config::to_entry("id-4", &Definition::new("pg", Source::Network(target)));
+    assert!(!serde_json::to_string(&entry).unwrap().contains("warehouse"));
 }
 
 // ---- scripts ----

@@ -22,8 +22,8 @@ use super::{Root, Scope, Store};
 use crate::connector::duckdb::DuckdbTarget;
 use crate::connector::sqlite::{SqliteTarget, file_source};
 use crate::connector::target::{
-    Address, ClientCertificate, Engine, KafkaOptions, NetworkTarget, Registry, Sasl, Tls, TlsFiles,
-    consumer_group, topic_filter,
+    Address, ClientCertificate, DatabricksOptions, Engine, KafkaOptions, NetworkTarget, Registry,
+    Sasl, Tls, TlsFiles, consumer_group, topic_filter, warehouse_id,
 };
 use crate::input::{KeyboardMode, Keymap, SuggestionKeys};
 
@@ -337,6 +337,7 @@ pub enum KindName {
     Duckdb,
     Redis,
     Kafka,
+    Databricks,
 }
 
 impl KindName {
@@ -347,6 +348,7 @@ impl KindName {
             KindName::Mysql => Some(Engine::MySql),
             KindName::Redis => Some(Engine::Redis),
             KindName::Kafka => Some(Engine::Kafka),
+            KindName::Databricks => Some(Engine::Databricks),
             KindName::Sqlite | KindName::Duckdb => None,
         }
     }
@@ -469,6 +471,9 @@ pub struct ConnectionEntry {
     /// The patterns of the topics that a Kafka catalog shows. Empty shows all topics.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub topics: Vec<String>,
+    /// The SQL warehouse id of a Databricks connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warehouse: Option<String>,
 }
 
 /// The configuration of a scope that cannot load. The text names the file, and the
@@ -662,6 +667,14 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
                         .to_owned(),
                 );
             }
+            match (engine, entry.warehouse.as_deref()) {
+                (Engine::Databricks, warehouse) => {
+                    warehouse_id(warehouse.unwrap_or_default())
+                        .map_err(|message| format!("warehouse: {message}"))?;
+                }
+                (_, Some(_)) => return Err("warehouse is valid only for databricks.".to_owned()),
+                (_, None) => {}
+            }
             consumer_group(entry.consumer_group.as_deref().unwrap_or_default())
                 .map_err(|message| format!("consumerGroup: {message}"))?;
             // Each item is one pattern, so an item with a comma, a space, a control
@@ -671,13 +684,16 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
                     return Err(format!("topics: {}", crate::text::KAFKA_BAD_TOPICS));
                 }
             }
-            if engine == Engine::Kafka
+            if matches!(engine, Engine::Kafka | Engine::Databricks)
                 && entry
                     .host
                     .as_deref()
                     .is_some_and(|host| host.starts_with('/'))
             {
-                return Err("A Kafka connection needs a host name, not a socket.".to_owned());
+                return Err(format!(
+                    "A {} connection needs a host name, not a socket.",
+                    engine.label()
+                ));
             }
             if let Some(registry) = &entry.schema_registry
                 && !registry.url.starts_with("http://")
@@ -784,6 +800,9 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
                         .unwrap_or_default(),
                     topics: entry.topics.clone(),
                 },
+                databricks: DatabricksOptions {
+                    warehouse: entry.warehouse.clone().unwrap_or_default(),
+                },
             })
         }
     };
@@ -837,6 +856,7 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
         schema_registry: None,
         consumer_group: None,
         topics: Vec::new(),
+        warehouse: None,
     };
     match &definition.source {
         Source::Sqlite(target) => {
@@ -862,7 +882,11 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
                 Engine::MySql => KindName::Mysql,
                 Engine::Redis => KindName::Redis,
                 Engine::Kafka => KindName::Kafka,
+                Engine::Databricks => KindName::Databricks,
             };
+            if target.engine == Engine::Databricks {
+                entry.warehouse = Some(target.databricks.warehouse.clone());
+            }
             if target.engine == Engine::Kafka {
                 entry.sasl = Some(target.kafka.sasl);
                 entry.schema_registry =

@@ -18,6 +18,10 @@ pub const DEFAULT_IDLE_SECONDS: u64 = 300;
 pub const DEFAULT_BUSY_SECONDS: u64 = 5;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "The application keeps few definitions, and a box would change each use of the network target."
+)]
 pub enum Source {
     Sqlite(SqliteTarget),
     Duckdb(DuckdbTarget),

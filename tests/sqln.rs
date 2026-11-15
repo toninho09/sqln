@@ -17,6 +17,7 @@ mod commands;
 mod compare_tab;
 mod data_edit;
 mod data_edit_exec;
+mod databricks;
 mod diagram_tab;
 mod duckdb;
 mod follow_key;

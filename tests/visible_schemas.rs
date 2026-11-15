@@ -93,6 +93,7 @@ fn network(engine: Engine) -> Definition {
         database: None,
         tls: Tls::Disabled,
         kafka: Default::default(),
+        databricks: Default::default(),
     };
     Definition::new("remote", Source::Network(target))
 }

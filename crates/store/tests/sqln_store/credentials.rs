@@ -34,6 +34,7 @@ fn definition() -> Definition {
             database: Some("app_db".into()),
             tls: Tls::Verify(TlsFiles::default()),
             kafka: Default::default(),
+            databricks: Default::default(),
         }),
     )
 }

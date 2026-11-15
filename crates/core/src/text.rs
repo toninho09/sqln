@@ -578,9 +578,38 @@ pub const FORM_NEEDS_FILE: &str = "SQLite needs a file.";
 pub const FORM_REDIS_DATABASE: &str = "The Redis database must be a number.";
 pub const FORM_REDIS_SCHEMAS: &str = "Each Redis database must be a number.";
 pub const FORM_KAFKA_SOCKET: &str = "A Kafka connection needs a host name, not a socket.";
+pub const FORM_DATABRICKS_SOCKET: &str =
+    "A Databricks connection needs the host name of the workspace, not a socket.";
 pub const KAFKA_EVAL_MEMORY: &str = "The Kafka expression exceeds the temporary memory limit. Reduce the projection or increase the memory limit.";
 pub const KAFKA_EVAL_STOPPED: &str =
     "The Kafka expression stops because the execution is canceled.";
+pub const DATABRICKS_BAD_WAREHOUSE: &str =
+    "The warehouse id must have only letters and digits. Copy it from the SQL warehouse page.";
+pub const DATABRICKS_READ_ONLY: &str = "This connection is read only. Databricks keeps no session state, so SQLN refuses the write here.";
+pub const DATABRICKS_NO_TRANSACTIONS: &str =
+    "Databricks connections do not support transactions in SQLN. Run each statement alone.";
+pub const DATABRICKS_NO_TOKEN: &str =
+    "A Databricks connection needs a personal access token. Type the token in the password field.";
+pub const DATABRICKS_REFUSED: &str =
+    "Databricks refused the token. Make a new personal access token and try again.";
+pub const DATABRICKS_NO_SUCH_WAREHOUSE: &str =
+    "Databricks does not know this warehouse id. Copy the id from the SQL warehouse page.";
+pub const DATABRICKS_CANCELED: &str = "Databricks canceled the statement.";
+pub const DATABRICKS_CLOSED: &str =
+    "Databricks closed the statement before SQLN read its result. Run it again.";
+pub const DATABRICKS_BAD_ANSWER: &str = "Databricks sent an answer that SQLN cannot read.";
+pub const DATABRICKS_UNSAFE_LINK: &str =
+    "Databricks sent a result link without TLS. SQLN does not download it.";
+pub fn databricks_status(status: u16) -> String {
+    format!("Databricks answered with HTTP status {status}.")
+}
+pub fn databricks_chunk_too_large(bytes: u64, limit: usize) -> String {
+    format!(
+        "A result part of Databricks has {bytes} bytes, and the memory limit is {limit} bytes. Add LIMIT, or increase the memory limit."
+    )
+}
+pub const DATABRICKS_NO_WAREHOUSE: &str =
+    "A Databricks connection needs a warehouse id. Set warehouse=<id>.";
 pub const KAFKA_BAD_GROUP: &str =
     "The consumer group cannot hold a space or a control character. Remove them.";
 pub const AGENT_KAFKA_DESCRIBE: &str = "A Kafka describe reads the fields of one topic. Send schema \"topics\" and an object with the topic name and the kind table, or send no object to read the catalog.";
@@ -860,6 +889,9 @@ pub const FIELD_URI: &str = "URI";
 pub const FIELD_HOST: &str = "Host or socket";
 pub const FIELD_PORT: &str = "Port";
 pub const FIELD_DATABASE: &str = "Database";
+pub const FIELD_CATALOG: &str = "Catalog";
+pub const FIELD_WAREHOUSE: &str = "Warehouse";
+pub const FIELD_TOKEN: &str = "Token";
 pub const FIELD_SCHEMAS: &str = "Schemas";
 pub const FIELD_DATABASES: &str = "Databases";
 pub const FIELD_USER: &str = "User";
@@ -946,6 +978,7 @@ pub const VALUE_POSTGRES: &str = "PostgreSQL";
 pub const VALUE_MYSQL: &str = "MySQL";
 pub const VALUE_REDIS: &str = "Redis/Valkey";
 pub const VALUE_KAFKA: &str = "Kafka";
+pub const VALUE_DATABRICKS: &str = "Databricks";
 pub const VALUE_SQLITE: &str = "SQLite";
 pub const VALUE_DUCKDB: &str = "DuckDB";
 pub const VALUE_SCOPE_PROJECT: &str = "Project";
@@ -2461,6 +2494,7 @@ pub fn run_risk(risk: &RunRisk) -> String {
 pub fn password_prompt(user: &str) -> String {
     format!("Password for {user} (Enter for none): ")
 }
+pub const TOKEN_PROMPT: &str = "Databricks personal access token: ";
 
 // Files: the configuration, the project, and the saved consoles.
 pub const TITLE_CREATE_PROJECT: &str = "Create project";
