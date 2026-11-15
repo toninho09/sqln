@@ -443,7 +443,7 @@ impl Session for DatabricksSession {
     ) -> Result<Vec<String>, ExecError> {
         let (catalog, schema) = split_schema(schema);
         let literal = |name: &str| quote_literal(name, Dialect::Databricks);
-        let catalog = catalog.map_or_else(|| "current_catalog()".to_owned(), &literal);
+        let catalog = catalog.map_or_else(|| "current_catalog()".to_owned(), literal);
         let rows = self
             .query(&format!(
                 "SELECT column_name FROM system.information_schema.columns \
