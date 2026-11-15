@@ -1,8 +1,11 @@
 //! Redis and Valkey commands. Only the command words apply.
 
-use super::{Family, Features, Vocabulary};
+use super::{Engine, Family, Features, Vocabulary};
+use crate::catalog::Catalog;
+use crate::complete::Completion;
 use crate::complete::keywords::REDIS;
 use crate::plan::PlanSyntax;
+use crate::sql::Statement;
 
 pub struct Redis;
 
@@ -28,6 +31,24 @@ impl Features for Redis {
         &VOCABULARY
     }
 
+    fn command_argument(&self, _: &str, _: Option<&Catalog>) -> Option<Vec<String>> {
+        None
+    }
+
+    fn command_line(&self, _: &str, _: usize, _: Option<&Catalog>) -> Option<Completion> {
+        None
+    }
+
+    fn select_statement(
+        &self,
+        _: &str,
+        _: &Statement,
+        _: usize,
+        _: Option<&Catalog>,
+    ) -> Option<Completion> {
+        None
+    }
+
     fn plan(&self) -> Option<&'static PlanSyntax> {
         None
     }
@@ -42,6 +63,10 @@ impl Features for Redis {
 
     fn ai_comments_sql(&self, _: &str) -> Option<String> {
         None
+    }
+
+    fn engine(&self) -> Engine {
+        Engine::Redis
     }
 
     fn family(&self) -> Option<Family> {

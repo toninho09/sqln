@@ -1,10 +1,13 @@
 //! The completion words of PostgreSQL. DuckDB shares most of them.
 
-use super::{Family, Features, Vocabulary};
+use super::{Engine, Family, Features, Vocabulary};
+use crate::catalog::Catalog;
+use crate::complete::Completion;
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
 use crate::diagram::sql::{postgres_columns, postgres_keys};
 use crate::plan::{PlanFormat, PlanSyntax};
+use crate::sql::Statement;
 
 pub struct Postgres;
 
@@ -119,6 +122,24 @@ impl Features for Postgres {
         &VOCABULARY
     }
 
+    fn command_argument(&self, _: &str, _: Option<&Catalog>) -> Option<Vec<String>> {
+        None
+    }
+
+    fn command_line(&self, _: &str, _: usize, _: Option<&Catalog>) -> Option<Completion> {
+        None
+    }
+
+    fn select_statement(
+        &self,
+        _: &str,
+        _: &Statement,
+        _: usize,
+        _: Option<&Catalog>,
+    ) -> Option<Completion> {
+        None
+    }
+
     fn plan(&self) -> Option<&'static PlanSyntax> {
         Some(&PLAN)
     }
@@ -135,6 +156,10 @@ impl Features for Postgres {
         Some(format!(
             "SELECT c.relname::text AS relation, a.attname::text AS column_name, pg_catalog.col_description(c.oid,a.attnum) AS comment FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped WHERE n.nspname={literal} AND c.relkind IN ('r','p','f','v','m') UNION ALL SELECT c.relname::text,NULL::text,pg_catalog.obj_description(c.oid,'pg_class') FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname={literal} AND c.relkind IN ('r','p','f','v','m')"
         ))
+    }
+
+    fn engine(&self) -> Engine {
+        Engine::Postgres
     }
 
     fn family(&self) -> Option<Family> {

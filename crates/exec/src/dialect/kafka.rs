@@ -1,9 +1,12 @@
 //! Kafka line commands and the SELECT subset. `complete::kafka` adds the words that
 //! depend on the position.
 
-use super::{Family, Features, Vocabulary};
+use super::{Engine, Family, Features, Vocabulary};
+use crate::catalog::Catalog;
+use crate::complete::Completion;
 use crate::complete::keywords::{KAFKA_CLAUSES, KAFKA_COMMANDS, KAFKA_SELECT_WORDS};
 use crate::plan::PlanSyntax;
+use crate::sql::{Dialect, Statement};
 
 pub struct Kafka;
 
@@ -29,6 +32,44 @@ impl Features for Kafka {
         &VOCABULARY
     }
 
+    fn command_argument(&self, command: &str, catalog: Option<&Catalog>) -> Option<Vec<String>> {
+        let schema = crate::connector::kafka::argument_schema(command)?;
+        let names =
+            catalog
+                .and_then(|catalog| catalog.schema(schema))
+                .map_or(Vec::new(), |schema| {
+                    schema
+                        .relations
+                        .iter()
+                        .map(|relation| relation.name.clone())
+                        .collect()
+                });
+        Some(names)
+    }
+
+    fn command_line(
+        &self,
+        line: &str,
+        cursor: usize,
+        catalog: Option<&Catalog>,
+    ) -> Option<Completion> {
+        Some(crate::complete::kafka::suggest_line(line, cursor, catalog))
+    }
+
+    fn select_statement(
+        &self,
+        sql: &str,
+        statement: &Statement,
+        cursor: usize,
+        catalog: Option<&Catalog>,
+    ) -> Option<Completion> {
+        let select = crate::sql::first_keyword(statement.text(sql), Dialect::Kafka)
+            .is_some_and(|word| word.eq_ignore_ascii_case("SELECT"));
+        select.then(|| {
+            crate::complete::kafka::suggest(sql, (statement.start, statement.end), cursor, catalog)
+        })
+    }
+
     fn plan(&self) -> Option<&'static PlanSyntax> {
         None
     }
@@ -43,6 +84,10 @@ impl Features for Kafka {
 
     fn ai_comments_sql(&self, _: &str) -> Option<String> {
         None
+    }
+
+    fn engine(&self) -> Engine {
+        Engine::Kafka
     }
 
     fn family(&self) -> Option<Family> {

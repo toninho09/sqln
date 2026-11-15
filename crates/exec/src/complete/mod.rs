@@ -3,7 +3,7 @@
 
 mod context;
 mod grammar;
-mod kafka;
+pub(crate) mod kafka;
 pub mod keywords;
 #[cfg(test)]
 mod tests;
@@ -15,6 +15,7 @@ use self::context::{Analysis, Cte, JoinOn, Position, Reference, analyze};
 pub(crate) use self::kafka::statement_topic;
 use self::keywords::is_reserved;
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, RelationRef, Schema};
+use crate::dialect::features;
 use crate::sql::{Dialect, Statement, quote_with, split};
 
 const MAX_ITEMS: usize = 50;
@@ -72,14 +73,15 @@ pub fn suggest_in(
     dialect: Dialect,
     catalog: Option<&Catalog>,
 ) -> Completion {
-    if dialect == Dialect::Kafka
-        && let Some(statement) = statements.iter().rev().find(|statement| {
-            statement.start < cursor && (cursor <= statement.end || !statement.terminated)
-        })
-        && crate::sql::first_keyword(statement.text(sql), dialect)
-            .is_some_and(|word| word.eq_ignore_ascii_case("SELECT"))
+    // A SELECT statement of a command line completes in its own way, and the other
+    // lines complete as commands.
+    let at_cursor = statements.iter().rev().find(|statement| {
+        statement.start < cursor && (cursor <= statement.end || !statement.terminated)
+    });
+    if let Some(completion) = at_cursor
+        .and_then(|statement| features(dialect).select_statement(sql, statement, cursor, catalog))
     {
-        return kafka::suggest(sql, (statement.start, statement.end), cursor, catalog);
+        return completion;
     }
     if dialect.is_command_line() {
         return suggest_command(sql, cursor, dialect, catalog);
@@ -110,8 +112,9 @@ pub fn suggest_in(
     completion
 }
 
-/// Suggests a command at the start of a line. A Redis argument has no suggestions. A
-/// Kafka argument gets the topics or groups of the catalog, then the clause words.
+/// Suggests a command at the start of a line. The dialect file decides the words of an
+/// argument: Kafka offers the topics or groups of the catalog, then the clause words,
+/// and Redis offers none.
 fn suggest_command(
     sql: &str,
     cursor: usize,
@@ -137,19 +140,18 @@ fn suggest_command(
         [] if plain(typed) => {
             keywords::starters(dialect).for_each(|word| builder.add_keyword(word));
         }
-        [command] if dialect == Dialect::Kafka => {
-            let Some(schema) = crate::connector::kafka::argument_schema(command) else {
+        [command] => {
+            let Some(names) = features(dialect).command_argument(command, catalog) else {
                 return empty;
             };
-            for relation in catalog
-                .and_then(|catalog| catalog.schema(schema))
-                .map_or(&[][..], |schema| schema.relations.as_slice())
-            {
-                builder.add_command_name(&relation.name);
+            for name in &names {
+                builder.add_command_name(name);
             }
         }
-        [_, _, ..] if dialect == Dialect::Kafka => {
-            return kafka::suggest_line(line, cursor, catalog);
+        [_, _, ..] => {
+            return features(dialect)
+                .command_line(line, cursor, catalog)
+                .unwrap_or(empty);
         }
         _ => return empty,
     }

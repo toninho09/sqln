@@ -1,10 +1,13 @@
 //! The completion words of MySQL.
 
-use super::{Family, Features, Vocabulary};
+use super::{Engine, Family, Features, Vocabulary};
+use crate::catalog::Catalog;
+use crate::complete::Completion;
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
 use crate::diagram::sql::{mysql_columns, mysql_keys};
 use crate::plan::{PlanFormat, PlanSyntax};
+use crate::sql::Statement;
 
 pub struct MySql;
 
@@ -148,6 +151,24 @@ impl Features for MySql {
         &VOCABULARY
     }
 
+    fn command_argument(&self, _: &str, _: Option<&Catalog>) -> Option<Vec<String>> {
+        None
+    }
+
+    fn command_line(&self, _: &str, _: usize, _: Option<&Catalog>) -> Option<Completion> {
+        None
+    }
+
+    fn select_statement(
+        &self,
+        _: &str,
+        _: &Statement,
+        _: usize,
+        _: Option<&Catalog>,
+    ) -> Option<Completion> {
+        None
+    }
+
     fn plan(&self) -> Option<&'static PlanSyntax> {
         Some(&PLAN)
     }
@@ -164,6 +185,10 @@ impl Features for MySql {
         Some(format!(
             "SELECT TABLE_NAME AS relation,COLUMN_NAME AS column_name,COLUMN_COMMENT AS comment FROM information_schema.COLUMNS WHERE TABLE_SCHEMA={literal} UNION ALL SELECT TABLE_NAME,NULL,TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA={literal}"
         ))
+    }
+
+    fn engine(&self) -> Engine {
+        Engine::MySql
     }
 
     fn family(&self) -> Option<Family> {

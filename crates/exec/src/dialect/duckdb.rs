@@ -1,10 +1,13 @@
 //! The completion words of DuckDB. It uses the PostgreSQL lists.
 
 use super::postgres::{ALTER_TABLE_ACTIONS, FUNCTIONS, KEYWORDS, STARTERS_EXTRA, TYPES};
-use super::{Family, Features, Vocabulary};
+use super::{Engine, Family, Features, Vocabulary};
+use crate::catalog::Catalog;
+use crate::complete::Completion;
 use crate::complete::keywords::{COMMON, STARTERS};
 use crate::complete::vocabulary::COMMON_FUNCTIONS;
 use crate::plan::PlanSyntax;
+use crate::sql::Statement;
 
 pub struct DuckDb;
 
@@ -30,6 +33,24 @@ impl Features for DuckDb {
         &VOCABULARY
     }
 
+    fn command_argument(&self, _: &str, _: Option<&Catalog>) -> Option<Vec<String>> {
+        None
+    }
+
+    fn command_line(&self, _: &str, _: usize, _: Option<&Catalog>) -> Option<Completion> {
+        None
+    }
+
+    fn select_statement(
+        &self,
+        _: &str,
+        _: &Statement,
+        _: usize,
+        _: Option<&Catalog>,
+    ) -> Option<Completion> {
+        None
+    }
+
     fn plan(&self) -> Option<&'static PlanSyntax> {
         None
     }
@@ -44,6 +65,10 @@ impl Features for DuckDb {
 
     fn ai_comments_sql(&self, _: &str) -> Option<String> {
         None
+    }
+
+    fn engine(&self) -> Engine {
+        Engine::DuckDb
     }
 
     fn family(&self) -> Option<Family> {

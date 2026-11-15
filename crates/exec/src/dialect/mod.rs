@@ -1,6 +1,7 @@
-//! The features of each dialect in executions: the completion words now, and the other
-//! per-dialect SQL later. Each dialect has one file here, and `features` is the only
-//! `match` that chooses it. The lexical rules are in `sqln_sql::sql::dialect`.
+//! The features of each dialect in executions: the completion of words and command
+//! lines, the plan, the diagram, the AI rules, and the family of the catalog reads. Each
+//! dialect has one file here, and `features` is the only `match` that chooses it. The
+//! lexical rules are in `sqln_sql::sql::dialect`.
 
 mod duckdb;
 mod kafka;
@@ -9,8 +10,10 @@ mod postgres;
 mod redis;
 mod sqlite;
 
+use crate::catalog::Catalog;
+use crate::complete::Completion;
 use crate::plan::PlanSyntax;
-use crate::sql::Dialect;
+use crate::sql::{Dialect, Statement};
 
 /// The SQL family whose catalog reads, DDL, and data edits a dialect follows: the schema
 /// compare, the DDL of an object, and the edit of table rows. A dialect chooses one family
@@ -96,6 +99,18 @@ pub fn family(dialect: Dialect) -> Option<Family> {
     features(dialect).family()
 }
 
+/// The engine of a dialect, which names its mark in the icon set of a theme. A new
+/// engine needs a new arm in each `match` on `Engine`, and the compiler shows each one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Engine {
+    Postgres,
+    MySql,
+    Sqlite,
+    DuckDb,
+    Redis,
+    Kafka,
+}
+
 /// The words that completion offers for a dialect. A slice of lists keeps shared lists
 /// in one place.
 #[derive(Clone, Copy, Debug)]
@@ -132,6 +147,26 @@ pub struct Vocabulary {
 /// each item.
 pub trait Features: Sync {
     fn vocabulary(&self) -> &'static Vocabulary;
+    /// The names of the catalog that complete the argument of a command word, or `None`
+    /// when the source does not complete command arguments.
+    fn command_argument(&self, command: &str, catalog: Option<&Catalog>) -> Option<Vec<String>>;
+    /// The completion of a command line with two or more words before the word at the
+    /// cursor, or `None` when the source has none.
+    fn command_line(
+        &self,
+        line: &str,
+        cursor: usize,
+        catalog: Option<&Catalog>,
+    ) -> Option<Completion>;
+    /// The completion of a SELECT statement of the command line, or `None` for a source
+    /// without a SELECT subset.
+    fn select_statement(
+        &self,
+        sql: &str,
+        statement: &Statement,
+        cursor: usize,
+        catalog: Option<&Catalog>,
+    ) -> Option<Completion>;
     /// The plan of a statement, or `None` when the source has no plan.
     fn plan(&self) -> Option<&'static PlanSyntax>;
     /// The column query and the key query of a diagram. `schema` is a literal already.
@@ -141,6 +176,8 @@ pub trait Features: Sync {
     /// The query of the comments of a schema for AI metadata. `schema` is a literal
     /// already.
     fn ai_comments_sql(&self, schema: &str) -> Option<String>;
+    /// The engine of the dialect, which names its mark in the icon set of a theme.
+    fn engine(&self) -> Engine;
     /// The family of the catalog reads, DDL, and data edits, or `None`.
     fn family(&self) -> Option<Family>;
 }

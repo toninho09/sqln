@@ -12,7 +12,7 @@ const EXPRESSION_WORDS: [&str; 5] = ["CASE", "WHEN", "THEN", "ELSE", "INTERVAL"]
 
 /// Suggests the words of a SELECT statement from `start` to `end`. A field path, as
 /// `value.customer.`, reads the topic after `FROM`, also when `FROM` follows the cursor.
-pub(super) fn suggest(
+pub(crate) fn suggest(
     sql: &str,
     (start, end): (usize, usize),
     cursor: usize,
@@ -141,7 +141,7 @@ fn add_functions(builder: &mut Builder) {
 
 /// Suggests the words after the topic of a line command: field paths, the values of a
 /// compared field, and the clause words. The filter of a topic tab uses this form.
-pub(super) fn suggest_line(line: &str, cursor: usize, catalog: Option<&Catalog>) -> Completion {
+pub(crate) fn suggest_line(line: &str, cursor: usize, catalog: Option<&Catalog>) -> Completion {
     let Some(typed) = Typed::read(line, false) else {
         return Completion {
             replace: cursor..cursor,

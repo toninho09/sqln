@@ -1,6 +1,7 @@
 //! The symbols of the interface. Each character fills one terminal column.
 
 use crate::catalog::Group;
+use crate::dialect::{Engine, features};
 use crate::sql::Dialect;
 use crate::store::config::ConnectionIcon;
 
@@ -236,13 +237,18 @@ impl Icons {
 
     /// Returns the mark of a database engine.
     pub fn engine(&self, dialect: Dialect) -> &'static str {
-        match dialect {
-            Dialect::Postgres => self.postgres,
-            Dialect::MySql => self.mysql,
-            Dialect::Sqlite => self.sqlite,
-            Dialect::DuckDb => self.duckdb,
-            Dialect::Redis => self.redis,
-            Dialect::Kafka => self.kafka,
+        self.engine_mark(features(dialect).engine())
+    }
+
+    /// Returns the mark of one engine.
+    fn engine_mark(&self, engine: Engine) -> &'static str {
+        match engine {
+            Engine::Postgres => self.postgres,
+            Engine::MySql => self.mysql,
+            Engine::Sqlite => self.sqlite,
+            Engine::DuckDb => self.duckdb,
+            Engine::Redis => self.redis,
+            Engine::Kafka => self.kafka,
         }
     }
 
