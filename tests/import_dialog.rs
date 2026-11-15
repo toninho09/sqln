@@ -35,7 +35,7 @@ impl Fixture {
     }
 
     fn with(name: &str, change: impl FnOnce(&mut Definition)) -> Self {
-        let database = temp_db(name);
+        let database = temp_db!(name);
         rusqlite::Connection::open(&database)
             .unwrap()
             .execute_batch(SETUP)
@@ -50,7 +50,7 @@ impl Fixture {
         Self {
             app: App::new(options, clipboard, Theme::plain()),
             database,
-            folder: temp_dir(name),
+            folder: temp_dir!(name),
         }
     }
 

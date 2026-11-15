@@ -112,7 +112,7 @@ fn resolve(options: &Options) -> Result<(Definition, Option<config::Stored>), Er
             allow_create: false,
             read_only: false,
         }),
-        OpenTarget::Network(target) => Definition::new(target.label(), Source::Network(target)),
+        OpenTarget::Network(target) => Definition::new(target.label(), Source::Network(*target)),
     };
     Ok((definition, None))
 }
@@ -182,12 +182,7 @@ pub fn run(options: Options) -> Result<(), Error> {
     let dialect = match &definition.source {
         Source::Sqlite(_) => Dialect::Sqlite,
         Source::Duckdb(_) => Dialect::DuckDb,
-        Source::Network(target) => match target.engine {
-            crate::connector::target::Engine::Postgres => Dialect::Postgres,
-            crate::connector::target::Engine::MySql => Dialect::MySql,
-            crate::connector::target::Engine::Redis => Dialect::Redis,
-            crate::connector::target::Engine::Kafka => Dialect::Kafka,
-        },
+        Source::Network(target) => target.engine.dialect(),
     };
     let statements: Vec<String> = sql::split(&options.sql, dialect)
         .iter()
@@ -238,7 +233,7 @@ pub fn run(options: Options) -> Result<(), Error> {
         cap_in_sql: false,
         ..Settings::default()
     });
-    let connection = manager.add_connection(definition.connector(), settings);
+    let connection = manager.add_connection(crate::connector::open(&definition), settings);
     let console = manager
         .open_console(connection)
         .expect("The connection exists.");

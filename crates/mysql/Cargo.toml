@@ -1,0 +1,20 @@
+[package]
+name = "sqln-mysql"
+description = "MySQL connector of SQLN"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# The crate has no unit tests, so it links no test binary. Remove this line when
+# you add one.
+test = false
+
+[dependencies]
+sqln-core.workspace = true
+sqln-sql.workspace = true
+sqln-session.workspace = true
+async-trait.workspace = true
+mysql_async.workspace = true
+tokio.workspace = true

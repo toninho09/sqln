@@ -33,7 +33,7 @@ impl Screen {
     }
 
     fn new(name: &str, keyboard: KeyboardMode) -> Self {
-        let path = temp_db(&format!("hints-{name}"));
+        let path = temp_db!(&format!("hints-{name}"));
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(SETUP)
@@ -127,7 +127,7 @@ fn an_idle_editor_shows_how_to_run_and_how_to_get_help() {
         "Shift+F5 run script",
         "Ctrl+Space suggestions",
         "Ctrl+F find",
-        "F1 keys",
+        "F1 help",
     ]);
     s.assert_hides(&["results", "commit", "stop"]);
 }

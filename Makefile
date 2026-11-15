@@ -6,15 +6,15 @@ Q = --quiet
 
 # Format all source files.
 fmt:
-	@cargo fmt
+	@cargo fmt --all
 
 # Run the linters. Use the test profile to reuse dependency builds.
 lint:
-	@cargo fmt --check
+	@cargo fmt --all --check
 	@scripts/check-test-files.sh
-	@cargo clippy --all-targets --profile test $(Q) -- -D warnings
+	@cargo clippy --workspace --all-targets --profile test $(Q) -- -D warnings
 
-# Run the tests in tests/. The database tests skip without the Docker stack.
+# Run the tests of all workspace crates. The database tests skip without the Docker stack.
 test:
 	@scripts/test-summary.sh --tests
 
@@ -25,11 +25,11 @@ test-integration:
 	docker compose -f compose.test.yaml down; \
 	exit $$status
 
-# Print the performance and memory reports, then run the targets in tests/latency.rs (release build). Slow; run only on request.
+# Print the performance and memory reports, then run the tests in tests/latency.rs (release build). Slow; run only on request.
 bench:
 	@cargo bench --bench hot_paths
 	@cargo bench --bench memory
-	@cargo test --release --test latency -- --nocapture --test-threads=1
+	@cargo test --release --test sqln -- latency:: --nocapture --test-threads=1
 
 # Delivery gate: linters plus the full test suite. Slow; run once, at task end.
 check: lint

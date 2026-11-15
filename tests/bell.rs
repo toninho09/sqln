@@ -42,10 +42,10 @@ fn a_stop_a_short_run_and_a_run_without_an_end_do_not_ring() {
 
 /// Opens a database file with a global file that holds these preferences.
 fn app_with(name: &str, preferences: &str) -> App {
-    let base = temp_dir(name);
+    let base = temp_dir!(name);
     let global = Root::global(base.join("global"));
     fs::create_dir_all(&global.dir).unwrap();
-    let file = temp_db(&format!("{name}.db"));
+    let file = temp_db!(&format!("{name}.db"));
     rusqlite::Connection::open(&file)
         .unwrap()
         .execute_batch("CREATE TABLE t (a INT)")
@@ -111,7 +111,7 @@ fn the_bell_follows_the_time_of_the_option() {
         assert!(Instant::now() < deadline, "the catalog did not load");
         std::thread::sleep(Duration::from_millis(1));
     }
-    let holder = hold_database(temp_db_path("bell-limit.db"), Duration::from_millis(1200));
+    let holder = hold_database(temp_db_path!("bell-limit.db"), Duration::from_millis(1200));
     run(&mut app, "SELECT count(*) FROM t");
     holder.join().unwrap();
     let last = app.console().run.last.expect("the run has a time");
@@ -137,7 +137,7 @@ fn the_value_zero_stops_the_bell() {
 #[test]
 fn the_default_is_ten_seconds_and_a_project_has_priority() {
     assert_eq!(config::DEFAULT_BELL_AFTER_SECONDS, 10);
-    let base = temp_dir("bell-scope");
+    let base = temp_dir!("bell-scope");
     let project = Root::project(&base.join("project"));
     let global = Root::global(base.join("global"));
     let write = |root: &Root, value: u64| {

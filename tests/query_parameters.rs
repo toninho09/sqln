@@ -220,7 +220,7 @@ struct Screen {
 }
 impl Screen {
     fn new(name: &str, keyboard: KeyboardMode) -> Self {
-        let path = temp_db(name);
+        let path = temp_db!(name);
         rusqlite::Connection::open(&path).unwrap();
         Self {
             app: App::new(
@@ -452,7 +452,7 @@ impl Harness {
 }
 
 fn native_sources(name: &str) -> Vec<(Dialect, Arc<dyn Connector>)> {
-    let mut target = SqliteTarget::new(temp_db(name));
+    let mut target = SqliteTarget::new(temp_db!(name));
     target.allow_create = true;
     let mut sources: Vec<(Dialect, Arc<dyn Connector>)> =
         vec![(Dialect::Sqlite, Arc::new(SqliteConnector::new(target)))];

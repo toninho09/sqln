@@ -2,8 +2,6 @@
 // panic. A pseudoterminal takes the place of the terminal.
 #![cfg(unix)]
 
-mod common;
-
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::fd::BorrowedFd;
@@ -14,7 +12,7 @@ use std::process::{Child, Command, ExitStatus};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use common::temp_dir;
+use crate::common::temp_dir;
 use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
 use rustix::io::{FdFlags, fcntl_setfd};
 use rustix::process::{Pid, Signal, ioctl_tiocsctty, kill_process, setsid};
@@ -275,7 +273,7 @@ fn batch_confirmation_uses_the_terminal_without_opening_the_tui() {
 
 #[test]
 fn batch_password_question_uses_the_terminal_with_redirected_streams() {
-    let home = temp_dir("batch-password-redirected");
+    let home = temp_dir!("batch-password-redirected");
     let mut command = in_home(&home, "/bin/sh");
     command.env_remove("SQLN_PASSWORD").args([
         "-c",
@@ -303,7 +301,7 @@ fn batch_password_question_uses_the_terminal_with_redirected_streams() {
 
 #[test]
 fn batch_password_question_hides_text_and_restores_the_terminal() {
-    let home = temp_dir("batch-password");
+    let home = temp_dir!("batch-password");
     let mut command = program_in_shell(
         &home,
         &[
@@ -336,7 +334,7 @@ fn assert_ended_with_echo(terminal: &mut Terminal, status: i32) {
 
 /// Returns a home folder with a saved SQLite connection, so a console has a script.
 fn home_with_connection(name: &str) -> PathBuf {
-    let home = temp_dir(name);
+    let home = temp_dir!(name);
     let root = Root::global(home.join("sqln"));
     fs::create_dir_all(&root.dir).unwrap();
     let database = home.join("one.db");
@@ -427,7 +425,7 @@ fn ai_chat_completion_runs_through_the_real_terminal() {
 
 #[test]
 fn a_start_and_a_quit_leave_the_terminal_as_it_was() {
-    let home = temp_dir("terminal-quit");
+    let home = temp_dir!("terminal-quit");
     let log = home.join("sqln.log");
     let arguments = ["--log", log.to_str().unwrap()];
     let mut terminal = Terminal::start(program_in_shell(&home, &arguments));
@@ -448,7 +446,7 @@ fn a_start_and_a_quit_leave_the_terminal_as_it_was() {
 
 #[test]
 fn a_terminal_with_reports_of_keys_gets_their_request_and_their_end() {
-    let home = temp_dir("terminal-key-reports");
+    let home = temp_dir!("terminal-key-reports");
     let mut terminal = Terminal::start(program_in_shell(&home, &[]));
     terminal.answer(KEY_REPORTS);
     terminal.wait_for(KEY_REPORTS_ON);
@@ -473,7 +471,7 @@ fn a_signal_saves_the_text_and_restores_the_terminal() {
 
 #[test]
 fn the_program_stops_when_its_terminal_closes() {
-    let home = temp_dir("terminal-closed");
+    let home = temp_dir!("terminal-closed");
     let mut terminal = started(&home);
     terminal.close();
     terminal.wait_for_end();
@@ -481,7 +479,7 @@ fn the_program_stops_when_its_terminal_closes() {
 
 #[test]
 fn a_password_stays_off_the_terminal() {
-    let home = temp_dir("terminal-password");
+    let home = temp_dir!("terminal-password");
     let mut terminal = Terminal::start(program(&home, &["postgres://ana@127.0.0.1:1/shop"]));
     terminal.wait_for(&text::password_prompt("ana"));
     terminal.wait_for_raw_mode();
@@ -496,7 +494,7 @@ fn a_password_stays_off_the_terminal() {
 #[test]
 fn escape_and_ctrl_c_stop_the_start_at_the_password() {
     for (name, key) in [("escape", b"\x1b"), ("ctrl-c", b"\x03")] {
-        let home = temp_dir(&format!("terminal-password-{name}"));
+        let home = temp_dir!(&format!("terminal-password-{name}"));
         let target = ["postgres://ana@127.0.0.1:1/shop"];
         let mut terminal = Terminal::start(program_in_shell(&home, &target));
         terminal.wait_for(&text::password_prompt("ana"));
@@ -520,10 +518,13 @@ fn a_session_that_panics() {
 
 #[test]
 fn a_panic_restores_the_terminal_first_and_writes_a_report() {
-    let folder = temp_dir("terminal-panic");
+    let folder = temp_dir!("terminal-panic");
+    // A test name starts with its module path, without the crate name.
+    let module = module_path!().split_once("::").unwrap().1;
+    let session = format!("{module}::a_session_that_panics");
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args(["a_session_that_panics", "--exact", "--nocapture"])
+        .args([session.as_str(), "--exact", "--nocapture"])
         .env(PANIC_FOLDER, &folder);
     let mut terminal = Terminal::start(command);
     terminal.answer(NO_KEY_REPORTS);

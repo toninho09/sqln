@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use super::{App, DialogAction};
+use super::{App, DialogAction, Screen};
 use crate::connector::{TransactionCommand, TransactionState};
 use crate::console::{AfterTransaction, Signal};
 use crate::exec::ConsoleId;
@@ -198,11 +198,11 @@ impl App {
         }
         if replaced && self.console_on_screen() {
             if !self.tables.is_empty() {
-                self.table_active = Some(0);
+                self.screen = Screen::Table(0);
             } else if !self.diagrams.is_empty() {
-                self.diagram_active = Some(0);
+                self.screen = Screen::Diagram(0);
             } else if !self.compares.is_empty() {
-                self.compare_active = Some(0);
+                self.screen = Screen::Compare(0);
             } else {
                 self.focus_navigator();
             }

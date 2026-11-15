@@ -1,0 +1,314 @@
+use super::Dialect;
+use super::dialect::{Backslash, Syntax};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TokenKind {
+    /// A keyword or an identifier without quotes.
+    Word,
+    Number,
+    String,
+    QuotedIdentifier,
+    Comment,
+    /// One ASCII character, such as an operator or a delimiter.
+    Punctuation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Token {
+    pub kind: TokenKind,
+    /// False for an unterminated token and for a line comment.
+    pub closed: bool,
+    // The editor keeps one token for each word of a script, so each byte counts.
+    start: u32,
+    end: u32,
+}
+
+impl Token {
+    pub fn start(&self) -> usize {
+        self.start as usize
+    }
+
+    pub fn end(&self) -> usize {
+        self.end as usize
+    }
+}
+
+/// Produces tokens from text. A statement splitter can set `pos` to skip text.
+pub struct Lexer<'a> {
+    sql: &'a str,
+    dialect: Dialect,
+    syntax: &'static Syntax,
+    pub pos: usize,
+    previous: Option<Token>,
+    kafka_select: bool,
+    command_start: bool,
+}
+
+impl<'a> Lexer<'a> {
+    pub fn new(sql: &'a str, dialect: Dialect) -> Self {
+        Self {
+            sql,
+            dialect,
+            syntax: dialect.syntax(),
+            pos: 0,
+            previous: None,
+            kafka_select: false,
+            command_start: true,
+        }
+    }
+
+    fn read_token(&self, start: usize) -> (TokenKind, usize, bool) {
+        use TokenKind::{Comment, Punctuation, QuotedIdentifier, String};
+
+        let bytes = self.sql.as_bytes();
+        let syntax = self.syntax;
+        let byte = bytes[start];
+
+        if self.dialect.is_command_line() {
+            return self.read_command_token(start);
+        }
+        if bytes[start..].starts_with(b"--")
+            && (!syntax.dash_comment_needs_space
+                || bytes.get(start + 2).is_none_or(u8::is_ascii_whitespace))
+        {
+            return (Comment, skip_line(bytes, start), false);
+        }
+        if syntax.hash_comment && byte == b'#' {
+            return (Comment, skip_line(bytes, start), false);
+        }
+        if bytes[start..].starts_with(b"/*") {
+            let (end, closed) = skip_block_comment(bytes, start, syntax.nested_block_comment);
+            return (Comment, end, closed);
+        }
+
+        match byte {
+            b'\'' => {
+                let backslash = match syntax.string_backslash {
+                    Backslash::Never => false,
+                    Backslash::Always => true,
+                    Backslash::AfterEscapePrefix => self.after_escape_prefix(start),
+                };
+                let (end, closed) = skip_quoted(bytes, start, b'\'', backslash);
+                (String, end, closed)
+            }
+            b'"' => {
+                let string = syntax.double_quote_string;
+                let (end, closed) = skip_quoted(bytes, start, b'"', string);
+                (if string { String } else { QuotedIdentifier }, end, closed)
+            }
+            b'`' if syntax.backtick_identifier => {
+                let (end, closed) = skip_quoted(bytes, start, b'`', false);
+                (QuotedIdentifier, end, closed)
+            }
+            b'[' if syntax.bracket_identifier => {
+                let (end, closed) = skip_bracket(bytes, start);
+                (QuotedIdentifier, end, closed)
+            }
+            b'$' if syntax.dollar_quote && !self.after_word(start) => {
+                match dollar_tag_end(bytes, start) {
+                    Some(tag_end) => {
+                        let (end, closed) = skip_dollar_quote(bytes, start, tag_end);
+                        (String, end, closed)
+                    }
+                    None => (Punctuation, start + 1, true),
+                }
+            }
+            _ => read_plain(bytes, start),
+        }
+    }
+
+    /// Reads a token of a command line. A `#` starts a comment only at the start of a
+    /// line, because `#` is a valid part of a key. Only Kafka SELECT permits multiline quotes.
+    fn read_command_token(&self, start: usize) -> (TokenKind, usize, bool) {
+        let bytes = self.sql.as_bytes();
+        let line_end = skip_line(bytes, start);
+        match bytes[start] {
+            b'#' if self.starts_line(start) => (TokenKind::Comment, line_end, false),
+            quote @ (b'"' | b'\'') => {
+                let end = if self.kafka_select {
+                    bytes.len()
+                } else {
+                    line_end
+                };
+                let name = self.dialect == Dialect::Kafka
+                    && quote == b'"'
+                    && start > 0
+                    && bytes[start - 1] == b'.';
+                let (end, closed) = skip_quoted(&bytes[..end], start, quote, !name);
+                let kind = if name {
+                    TokenKind::QuotedIdentifier
+                } else {
+                    TokenKind::String
+                };
+                (kind, end, closed)
+            }
+            _ => read_plain(bytes, start),
+        }
+    }
+
+    fn starts_line(&self, start: usize) -> bool {
+        self.sql[..start]
+            .bytes()
+            .rev()
+            .find(|byte| !matches!(byte, b' ' | b'\t' | b'\r'))
+            .is_none_or(|byte| byte == b'\n')
+    }
+
+    fn after_word(&self, start: usize) -> bool {
+        start > 0 && is_word_byte(self.sql.as_bytes()[start - 1])
+    }
+
+    /// Returns true for the PostgreSQL form `E'text'`.
+    fn after_escape_prefix(&self, start: usize) -> bool {
+        self.previous.is_some_and(|token| {
+            token.end() == start
+                && token.kind == TokenKind::Word
+                && self.sql[token.start()..token.end()].eq_ignore_ascii_case("e")
+        })
+    }
+}
+
+impl Iterator for Lexer<'_> {
+    type Item = Token;
+
+    fn next(&mut self) -> Option<Token> {
+        let bytes = self.sql.as_bytes();
+        while self.pos < bytes.len() && bytes[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+        if self.pos >= bytes.len() {
+            return None;
+        }
+        let start = self.pos;
+        let (kind, end, closed) = self.read_token(start);
+        // A text of 4 GiB ends here. The rest stays one piece without tokens.
+        let token = Token {
+            kind,
+            closed,
+            start: u32::try_from(start).ok()?,
+            end: u32::try_from(end).ok()?,
+        };
+        if self.dialect == Dialect::Kafka && kind != TokenKind::Comment {
+            let starts_command = self.command_start
+                || (!self.kafka_select
+                    && self
+                        .previous
+                        .is_some_and(|previous| self.sql[previous.end()..start].contains('\n')));
+            if starts_command {
+                self.kafka_select =
+                    kind == TokenKind::Word && self.sql[start..end].eq_ignore_ascii_case("SELECT");
+                self.command_start = false;
+            }
+            if self.kafka_select && kind == TokenKind::Punctuation && &self.sql[start..end] == ";" {
+                self.kafka_select = false;
+                self.command_start = true;
+            }
+        }
+        self.pos = end;
+        self.previous = Some(token);
+        Some(token)
+    }
+}
+
+pub fn tokenize(sql: &str, dialect: Dialect) -> Vec<Token> {
+    let mut tokens: Vec<Token> = Lexer::new(sql, dialect).collect();
+    // The editor keeps this list until the next edit.
+    tokens.shrink_to_fit();
+    tokens
+}
+
+pub(super) fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80
+}
+
+/// Reads a word, a number, or one character.
+fn read_plain(bytes: &[u8], start: usize) -> (TokenKind, usize, bool) {
+    let byte = bytes[start];
+    if !is_word_byte(byte) {
+        return (TokenKind::Punctuation, start + 1, true);
+    }
+    let mut end = start;
+    while end < bytes.len() && is_word_byte(bytes[end]) {
+        end += 1;
+    }
+    let kind = if byte.is_ascii_digit() {
+        TokenKind::Number
+    } else {
+        TokenKind::Word
+    };
+    (kind, end, true)
+}
+
+fn skip_quoted(bytes: &[u8], open: usize, quote: u8, backslash: bool) -> (usize, bool) {
+    let mut pos = open + 1;
+    while pos < bytes.len() {
+        let byte = bytes[pos];
+        if backslash && byte == b'\\' {
+            pos += 2;
+        } else if byte == quote {
+            if bytes.get(pos + 1) == Some(&quote) {
+                pos += 2;
+            } else {
+                return (pos + 1, true);
+            }
+        } else {
+            pos += 1;
+        }
+    }
+    (bytes.len(), false)
+}
+
+fn skip_bracket(bytes: &[u8], open: usize) -> (usize, bool) {
+    match bytes[open..].iter().position(|byte| *byte == b']') {
+        Some(offset) => (open + offset + 1, true),
+        None => (bytes.len(), false),
+    }
+}
+
+fn skip_block_comment(bytes: &[u8], open: usize, nested: bool) -> (usize, bool) {
+    let mut depth = 1;
+    let mut pos = open + 2;
+    while pos < bytes.len() {
+        if nested && bytes[pos..].starts_with(b"/*") {
+            depth += 1;
+            pos += 2;
+        } else if bytes[pos..].starts_with(b"*/") {
+            depth -= 1;
+            pos += 2;
+            if depth == 0 {
+                return (pos, true);
+            }
+        } else {
+            pos += 1;
+        }
+    }
+    (bytes.len(), false)
+}
+
+fn skip_line(bytes: &[u8], open: usize) -> usize {
+    bytes[open..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map_or(bytes.len(), |offset| open + offset)
+}
+
+fn dollar_tag_end(bytes: &[u8], open: usize) -> Option<usize> {
+    let mut pos = open + 1;
+    while pos < bytes.len() && is_word_byte(bytes[pos]) {
+        pos += 1;
+    }
+    let tag_starts_with_digit = bytes.get(open + 1).is_some_and(u8::is_ascii_digit);
+    (bytes.get(pos) == Some(&b'$') && !tag_starts_with_digit).then_some(pos + 1)
+}
+
+fn skip_dollar_quote(bytes: &[u8], open: usize, tag_end: usize) -> (usize, bool) {
+    let tag = &bytes[open..tag_end];
+    let mut pos = tag_end;
+    while pos + tag.len() <= bytes.len() {
+        if &bytes[pos..pos + tag.len()] == tag {
+            return (pos + tag.len(), true);
+        }
+        pos += 1;
+    }
+    (bytes.len(), false)
+}

@@ -4,13 +4,20 @@
 //
 // Each server test uses its own topics and groups, so the tests can run at the same time.
 
-mod common;
+#[path = "kafka/fields.rs"]
+mod fields;
+#[path = "kafka/guide.rs"]
+mod guide;
+#[path = "kafka/progress.rs"]
+mod progress;
 #[path = "kafka/select.rs"]
 mod select;
+#[path = "kafka/topics.rs"]
+mod topics;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crossterm::event::Event;
@@ -165,6 +172,28 @@ fn the_consumer_group_field_shows_in_the_smallest_screen() {
     assert!(shown.contains("team-a.reader"), "{shown}");
 }
 
+#[test]
+fn the_options_of_kafka_have_no_sql_names_and_no_read_only() {
+    let mut form = kafka_form();
+    form.select_section(Field::SqlTimeout.group());
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal
+        .draw(|frame| {
+            sqln::ui::form::draw_form(frame, &form, &Theme::plain());
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let shown: String = buffer
+        .content
+        .chunks(usize::from(buffer.area.width))
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>() + "\n")
+        .collect();
+    assert!(shown.contains("Statement (s, 0 = none)"), "{shown}");
+    assert!(!shown.contains("SQL"), "{shown}");
+    assert!(!shown.contains("Read only"), "{shown}");
+    assert!(!form.fields().contains(&Field::ReadOnly));
+}
+
 fn kafka_form() -> ConnectionForm {
     let mut form = ConnectionForm::new();
     form.kind = Kind::Kafka;
@@ -202,7 +231,7 @@ fn the_form_of_kafka_has_sasl_and_registry_fields_and_no_database() {
 fn the_form_keeps_the_registry_and_its_session_password() {
     let mut form = kafka_form();
     form.focus_on(Field::Sasl);
-    form.on_key(common::key(crossterm::event::KeyCode::Right), false);
+    form.on_key(crate::common::key(crossterm::event::KeyCode::Right), false);
     assert_eq!(
         form.sasl,
         Sasl::Plain,
@@ -288,7 +317,7 @@ fn a_saved_kafka_connection_keeps_sasl_and_registry_without_secrets() {
 #[test]
 fn the_settings_refuse_kafka_fields_on_other_engines() {
     let refused = |config: &str| {
-        let dir = common::temp_dir(&format!("kafka-store-{}", uuid::Uuid::new_v4()));
+        let dir = crate::common::temp_dir!(&format!("kafka-store-{}", uuid::Uuid::new_v4()));
         let store = sqln::store::Store {
             global: sqln::store::Root::global(dir.join("global")),
             project: None,
@@ -360,6 +389,7 @@ fn catalog() -> Catalog {
         columns: Columns::NotLoaded,
         foreign_keys: Vec::new(),
         referencing: Vec::new(),
+        notes: Vec::new(),
     };
     Catalog {
         schemas: vec![
@@ -405,7 +435,8 @@ fn the_list_holds_commands_then_names_then_clauses() {
         .into_iter()
         .map(|item| item.0)
         .collect();
-    assert_eq!(clauses, ["WHERE"]);
+    // The line list holds all filter words, and WHEN starts a CASE in the filter.
+    assert_eq!(clauses, ["WHEN", "WHERE"]);
     assert!(labels("TOPICS x").is_empty(), "TOPICS takes no name");
     assert_eq!(labels("SEL"), [("SELECT".to_owned(), "SELECT".to_owned())]);
 }
@@ -518,6 +549,10 @@ fn produce(uri: &str, topic: &str, messages: &[Out<'_>]) {
 }
 
 /// Lists the groups of the cluster. A group list creates no group.
+/// Held by the tests that create a consumer group or compare the list of groups, so a
+/// new group of one test does not change the list of another.
+static GROUP_LIST: Mutex<()> = Mutex::new(());
+
 fn group_names(uri: &str) -> Vec<String> {
     let consumer: BaseConsumer = ClientConfig::new()
         .set("bootstrap.servers", bootstrap(uri))
@@ -549,6 +584,8 @@ struct Run {
     notices: Vec<String>,
     statuses: Vec<StatementStatus>,
     end: Option<ExecutionEnd>,
+    /// The counts that the read sent with its columns.
+    progress: Option<Arc<sqln::exec::ReadProgress>>,
 }
 
 impl Run {
@@ -621,7 +658,12 @@ impl Harness {
         let mut run = Run::default();
         loop {
             match self.next() {
-                ExecEvent::Columns { columns, .. } => run.columns.push(columns),
+                ExecEvent::Columns {
+                    columns, progress, ..
+                } => {
+                    run.columns.push(columns);
+                    run.progress = run.progress.take().or(progress);
+                }
                 ExecEvent::Rows { rows, .. } => run.rows.extend(rows),
                 ExecEvent::Notice { text, .. } => run.notices.push(text),
                 ExecEvent::StatementFinished { status, .. } => run.statuses.push(status),
@@ -739,6 +781,7 @@ fn topics_and_partitions_show_the_cluster() {
 #[test]
 fn consume_reads_to_the_end_of_each_partition_and_creates_no_group() {
     let Some(uri) = kafka_uri() else { return };
+    let _groups = GROUP_LIST.lock().unwrap_or_else(|e| e.into_inner());
     let topic = unique("consume");
     create_topic(&uri, &topic, 2);
     let mut with_header = Out::new(0, "k1", b"first");
@@ -977,6 +1020,7 @@ fn a_tail_outside_a_console_is_refused() {
 #[test]
 fn group_shows_committed_offsets_and_lag_without_joining() {
     let Some(uri) = kafka_uri() else { return };
+    let _groups = GROUP_LIST.lock().unwrap_or_else(|e| e.into_inner());
     let topic = unique("lag");
     let group = unique("group");
     create_topic(&uri, &topic, 2);
@@ -1081,6 +1125,11 @@ fn a_topic_page_reads_the_newest_matches_first() {
     assert_eq!(run.column("key"), ["1199", "1198", "1197", "1196", "1195"]);
     let run = h.run_ok(&format!("SQLN.TOPIC {topic} 5 WHERE value.n < 100"));
     assert_eq!(run.column("key"), ["99", "98", "97", "96", "95"]);
+    // The matches are the oldest messages, so the page scans each message once.
+    let counts = run.progress.as_ref().unwrap().snapshot();
+    assert!(counts.filtered);
+    assert_eq!((counts.scanned, counts.matched), (1_200, 100));
+    assert_eq!((counts.percent, counts.lag), (None, None));
     let run = h.run_ok(&format!("SQLN.TOPIC {topic} 0"));
     assert!(run.rows.is_empty());
 }
@@ -1235,6 +1284,65 @@ fn the_registry_decodes_avro_protobuf_and_json_schema() {
     );
 }
 
+#[test]
+fn the_columns_of_a_topic_are_the_paths_of_its_latest_schemas() {
+    let (Some(uri), Some(url)) = (kafka_uri(), registry_url()) else {
+        return;
+    };
+    let topic = unique("fields");
+    let address_subject = unique("address");
+    register(
+        &url,
+        &address_subject,
+        "AVRO",
+        r#"{"type":"record","name":"Address","namespace":"t","fields":[{"name":"city","type":"string"}]}"#,
+        serde_json::json!([]),
+    );
+    register(
+        &url,
+        &format!("{topic}-value"),
+        "AVRO",
+        r#"{"type":"record","name":"Person","namespace":"t","fields":[{"name":"name","type":"string"},{"name":"home","type":["null","t.Address"]},{"name":"level","type":{"type":"enum","name":"Level","symbols":["LOW","HIGH"]}}]}"#,
+        serde_json::json!([{"name": "t.Address", "subject": address_subject, "version": 1}]),
+    );
+    register(
+        &url,
+        &format!("{topic}-key"),
+        "PROTOBUF",
+        r#"syntax = "proto3"; message Key { int64 order_id = 1; Kind kind = 2; } enum Kind { KIND_A = 0; KIND_B = 1; }"#,
+        serde_json::json!([]),
+    );
+    let target = parse_uri(&format!("{uri}?registry={url}")).unwrap();
+    let ((columns, notes), without) = runtime().block_on(async {
+        let mut session = network_connector(target).connect().await.unwrap();
+        let columns = session.read_noted_columns(TOPICS, &topic).await.unwrap();
+        let without = session.read_columns(TOPICS, &unique("none")).await.unwrap();
+        (columns, without)
+    });
+    assert_eq!(
+        columns,
+        [
+            "value.name",
+            "value.home",
+            "value.home.city",
+            "value.level",
+            "key.orderId",
+            "key.kind"
+        ]
+    );
+    let details: Vec<&str> = notes.iter().map(|note| note.detail.as_str()).collect();
+    assert_eq!(
+        details,
+        ["string", "null | record", "string", "enum", "int64", "enum"]
+    );
+    assert_eq!(notes[3].values, ["'LOW'", "'HIGH'"]);
+    assert_eq!(notes[5].values, ["'KIND_A'", "'KIND_B'"]);
+    assert!(
+        without.is_empty(),
+        "a topic without a subject has no fields"
+    );
+}
+
 struct Screen {
     app: App,
 }
@@ -1288,10 +1396,10 @@ fn a_topic_tab_shows_a_filter_without_an_order_on_a_small_screen() {
     create_topic(&uri, &topic, 1);
     produce(&uri, &topic, &[Out::new(0, "k", b"tab-value")]);
     let mut screen = Screen::open(&uri);
-    common::select_row(&mut screen.app, 0, &[RowKind::Table], &topic);
-    screen
-        .app
-        .on_event(Event::Key(common::key(crossterm::event::KeyCode::Enter)));
+    crate::common::select_row(&mut screen.app, 0, &[RowKind::Table], &topic);
+    screen.app.on_event(Event::Key(crate::common::key(
+        crossterm::event::KeyCode::Enter,
+    )));
     let deadline = Instant::now() + Duration::from_secs(30);
     while screen.app.table().is_none_or(|tab| tab.loaded() == 0) {
         screen.app.drain_events();

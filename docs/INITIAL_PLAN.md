@@ -16,7 +16,7 @@ Dated test results below remain historical records, not results for the current 
 - The technical tests ran before the implementation. [docs/RESULTS.md](RESULTS.md) records their results: 109 tests passed with real databases.
 - The local Git repository exists.
 - The product implementation was authorized on 2026-10-30.
-- The application works with SQLite, PostgreSQL, MySQL, Redis, and Valkey, with several consoles and several connections.
+- The application works with SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, Kafka, and Databricks, with several consoles and several connections.
 - The navigator, the tabs, the dividers, the key map, and the connection form exist.
 - The table view exists, with pages, the `WHERE` and `ORDER BY` bar, sorting, and stop.
 - The configuration and the saving exist: global and project `config.json`, automatic saving of the consoles, and reopening.
@@ -48,13 +48,13 @@ Dated test results below remain historical records, not results for the current 
 | Console saving | `.sql` and `.json` files per console, save 500 ms after the last edit, `Ctrl+S`, atomic write, failure with alert, close confirmation, and file lock | Section 12 |
 | Saved consoles | List when asking for a console, reopening with cursor and scroll, choice per file on a change outside SQLN, scripts without connection, attach, and delete | Section 12 |
 | Local state | `workspace.json` with cursor, scroll, and layout, outside Git | Section 11 |
-| Capabilities | Each connector declares transactions, database or schema choice, and SQL filter in the table tab | Section 3 |
+| Capabilities | Each connector declares transactions, database or schema choice, SQL filter and pending changes in the table tab, named parameters, and the single-session limit | Section 3 |
 | Credentials | First use, trust, masked password, session, vault, authorized plain text, migration, refused password with suspension, and separate deletion | Sections 3 and 13 |
 | Consoles | Rename with `Ctrl+W N` and in the list; change the connection with `Ctrl+W a` | Section 12 |
 | Settings | `Ctrl+W ,` dialog per scope, with inherited values and removal of a project definition | Section 11 |
 | Tabs | Consoles and tables in the opening order; closing the last console with an open table does not create another | Section 10 |
 | Operation | `--log`, shutdown signals, panic report, and binary without the example catalog | Sections 5 and 6 |
-| Appearance | `auto`, `astrodark`, `ansi`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-latte`, `gruvbox`, and `nord` themes, per-connection theme and icon, Unicode or Nerd Font symbols, status bar, panel titles, scroll bars, and windows with a rounded border | Section 5 and `docs/DECISIONS.md` |
+| Appearance | The built-in themes of `docs/UI.md`, per-connection theme and icon, Unicode or Nerd Font symbols, status bar, panel titles, scroll bars, and windows with a rounded border | Section 5 and `docs/DECISIONS.md` |
 | Discovery | `Ctrl+W` menu, command palette with `Ctrl+P`, and welcome screen | Section 5 and `docs/KEYMAP.md` |
 | Command-line target | `sqln file.db` and `sqln postgres://...`, with the connection only in the session | `docs/DECISIONS.md` |
 | Run protection | Question before `UPDATE` or `DELETE` without `WHERE`, `PROD` badge, and confirmation in production | `docs/DECISIONS.md` |
@@ -300,7 +300,7 @@ To run it, authorize the access to the vault of this machine with the command be
 It creates and removes a test credential with a random ID in the `sqln` service.
 
 ```sh
-SQLN_TEST_SYSTEM_VAULT=1 cargo test --test credentials native_vault_round_trip -- --ignored
+SQLN_TEST_SYSTEM_VAULT=1 cargo test -p sqln-store --test sqln_store credentials::native_vault_round_trip -- --ignored
 ```
 
 The scripts below repeat the lock, denied access, absence, and error scenarios.
@@ -2201,7 +2201,7 @@ Connectors
 The autocomplete uses the editor text and the cached catalog.
 The catalog read respects the same pool of the connection.
 
-The current contracts are in [docs/ARCHITECTURE.md](ARCHITECTURE.md) and in `src/connector/mod.rs`.
+The current contracts are in [docs/ARCHITECTURE.md](ARCHITECTURE.md) and in `crates/session/src/connector/mod.rs`.
 
 ## 15. Verification scenarios
 

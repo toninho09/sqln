@@ -12,8 +12,8 @@ use crate::exec::{
 };
 use crate::export::time_stamp;
 use crate::grid::{Row as GridRow, Value};
-use crate::import::form::{ImportAction, ImportForm, ImportTable, ProbeRequest, TableColumn};
 use crate::import::{ImportJob, ImportProgress, Probe, probe};
+use crate::import_form::{ImportAction, ImportForm, ImportTable, ProbeRequest, TableColumn};
 use crate::input::Action;
 use crate::navigator::{Row, RowKind};
 use crate::structure::{Scope, Section, structure_sql};

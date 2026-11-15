@@ -41,7 +41,7 @@ impl Fixture {
 
     /// Adds tables to the schema of the tests.
     fn with(name: &str, more: &str) -> Self {
-        let path = temp_db(name);
+        let path = temp_db!(name);
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(&format!("{SETUP}{more}"))
@@ -377,6 +377,9 @@ fn the_hint_row_and_f1_name_the_keys_of_the_diagram() {
         "{hint}"
     );
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     let screen = f.screen();
     assert!(screen.contains("Diagram"), "{screen}");
     assert!(screen.contains("Select the table above"), "{screen}");
@@ -404,7 +407,7 @@ fn rows(texts: &[&[&str]]) -> Vec<Row> {
 
 #[test]
 fn a_read_returns_its_rows_to_the_budget_at_the_end_and_at_the_close() {
-    use sqln::diagram::tab::DiagramTab;
+    use sqln::diagram_tab::DiagramTab;
 
     let budget = Budget::new(1 << 20);
     let focus = Focus::Schema("main".to_owned());
@@ -487,7 +490,7 @@ fn hostile_names_reach_neither_the_screen_nor_the_copy() {
 
 #[test]
 fn the_vim_keys_select_the_tables() {
-    let path = temp_db("diagram-vim");
+    let path = temp_db!("diagram-vim");
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch(SETUP)
@@ -582,7 +585,7 @@ fn two_connections_that_wait_for_their_catalogs_open_both_diagrams() {
     use sqln::connector::sqlite::SqliteTarget;
 
     let definitions = ["diagram-wait-a", "diagram-wait-b"].map(|name| {
-        let path = temp_db(name);
+        let path = temp_db!(name);
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(SETUP)

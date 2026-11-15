@@ -4,7 +4,7 @@
 set -eu
 
 cd "$(dirname "$0")/.."
-BIN="$PWD/$(cargo test --test vault_probe --no-run 2>&1 | sed -n 's/.*(\(target[^)]*\)).*/\1/p')"
+BIN="$PWD/$(cargo test -p sqln-store --test vault_probe --no-run 2>&1 | sed -n 's/.*(\(target[^)]*\)).*/\1/p')"
 
 HOME_DIR="$(mktemp -d)"
 trap 'rm -rf "$HOME_DIR"' EXIT

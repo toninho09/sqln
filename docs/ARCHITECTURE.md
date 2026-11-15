@@ -4,12 +4,12 @@
 
 **Defined:** this document is approved.
 It details the architecture of the [plan](INITIAL_PLAN.md).
-The connector signature below is a summary, not the complete trait. See `src/connector/mod.rs` for the contract.
+The connector signature below is a summary, not the complete trait. See `crates/session/src/connector/mod.rs` for the contract.
 The facts about the drivers come from [RESULTS](RESULTS.md).
 
 ## 1. Overview
 
-The project is a single Rust crate.
+The project is a Cargo workspace. Its crates form a graph without cycles. See [Crates and modules](#2-crates-and-modules).
 The interface runs on the main thread and never waits for the database.
 Each console has its own task, owner of the reserved session. This document calls that task an actor.
 The execution manager keeps one pool per connection, and all connections use a single runtime and a single event channel.
@@ -25,7 +25,62 @@ Main thread                        Tokio runtime
                                      Own thread: rusqlite
 ```
 
-## 2. Modules
+## 2. Crates and modules
+
+Each crate depends only on the crates below it in this graph. Cargo refuses a cycle, so the compiler keeps the graph:
+
+```text
+sqln-core ← sqln-sql ← sqln-session ─┬─ sqln-postgres, sqln-mysql, sqln-sqlite,
+sqln-vault                           │  sqln-duckdb, sqln-redis, sqln-kafka,
+                                     │  sqln-databricks ──────────────────────────┐
+                                     ├─ sqln-store ← sqln-exec ─┬─ sqln-ui ───────┤
+                                     │                          └─ sqln-runtime ──┤
+                                     └─ sqln-connector ────────────────────────────┴─ sqln
+```
+
+| Crate | Folder | Contents |
+|---|---|---|
+| `sqln-core` | `crates/core` | `catalog`, `clipboard`, `filter_list`, `find`, `grid`, `input`, `limited`, `line_input`, `log`, `mark_list`, `message`, `progress`, `sink`, `text`, `wrap` |
+| `sqln-sql` | `crates/sql` | `sql`, `structure` |
+| `sqln-session` | `crates/session` | `connector` (the contract, connection targets, `tls`, `words`, and the parts of the Kafka and Redis drivers that need no driver library), `pool`, `trace` |
+| `sqln-vault` | `crates/vault` | The system vault. `sqln-store` and `sqln-kafka` use it |
+| `sqln-postgres`, `sqln-mysql`, `sqln-sqlite`, `sqln-duckdb`, `sqln-redis`, `sqln-kafka`, `sqln-databricks` | `crates/<driver>` | One connector each, with its driver library. `sqln-databricks` uses `reqwest` and the Arrow crates |
+| `sqln-connector` | `crates/connector` | Facade: `connector` joins the contract and the drivers at the old paths. `connector::open` opens the connector of a saved definition |
+| `sqln-store` | `crates/store` | `creds`, `script_file`, `store`, `trust` |
+| `sqln-exec` | `crates/exec` | `agent`, `ai`, `analysis`, `command_log`, `compare`, `complete`, `connection`, `data_edit`, `definition`, `diagram`, `dialect`, `exec` (types only), `export`, `import`, `plan` |
+| `sqln-runtime` | `crates/runtime` | `exec`: the types of `sqln-exec` and `Manager`, with the console tasks and jobs |
+| `sqln-ui` | `crates/ui` | `browser`, `compare_tab`, `console`, `diagram_tab`, `edit_form`, `editor`, `export_form`, `form`, `generate`, `help`, `history`, `import_form`, `navigator`, `palette`, `parameters`, `result`, `settings`, `tab_item`, `table`, `ui` |
+| `sqln` | root, `src/` | `app`, `batch`, `mcp`, `terminal`, and the binary |
+
+A change recompiles the changed crate and the crates above it in the graph:
+
+- A driver: that driver, `sqln-connector`, and `sqln`.
+- `sqln-runtime`: `sqln-runtime` and `sqln`.
+- `sqln-ui`: `sqln-ui` and `sqln`.
+- `sqln-session` is below most crates, so a change there recompiles almost everything.
+
+The `sqln` crate re-exports every module at the root, so `sqln::grid` and `crate::grid` in `app` keep their paths.
+Each lower crate re-exports the modules of its dependencies with `pub(crate) use`, so its code keeps `crate::` paths.
+Only the crates in the table know their dependencies. A lower crate cannot name a type of a higher crate:
+
+- Only `sqln-connector` and `sqln` know the drivers. The other crates use the contract of `sqln-session`.
+- Only `sqln` knows `Manager`. `sqln-ui` uses the event and request types of `sqln-exec`.
+
+- A connector writes rows to `sink::ResultSink`, which sends `sink::SinkEvent`. `ExecEvent` implements `From<SinkEvent>`, so the channel and the event order do not change.
+- `trace::TraceContext` sends `trace::TraceEvent` in the same way.
+- `store` owns the saved types: connection definitions and execution limits (`store::connection`), AI settings (`store::ai`), and the export and import choices (`store::choices`). The modules that use them re-export them.
+- `text` holds the interface text. `ui::text` re-exports it and adds the text that needs interface types.
+- The state of a screen, tab, or dialog is in `sqln-ui`, such as `compare_tab` and `export_form`. Its job model stays in `sqln-exec`.
+
+A test helper that the unit tests of another crate need uses a `test-support` feature, which only a dev-dependency enables.
+
+Each integration test is in the lowest crate that has all its dependencies:
+
+- A crate with integration tests has one test binary, `tests/sqln_<crate>/main.rs`. `sqln-store` also has the `vault_probe` target, a manual probe that the vault scripts run.
+- A test that needs a driver lists the driver crate, or `sqln-connector`, as a dev-dependency. Only the test build depends on it.
+- `tests/` of the `sqln` crate holds the tests that use `App` or the `sqln` binary. They form one test binary, `sqln`, with `tests/sqln.rs` as its root. Run one file with its module name, for example `cargo test --test sqln -- servers::`.
+- A crate without unit tests has `test = false`, so it links no unit test binary. `scripts/check-test-files.sh` fails if such a crate has a unit test.
+- `sqln-testkit` holds the shared helpers. Its `mock` feature adds the fake connector, and its `editor` feature adds the editor fixture. The macros `temp_dir!`, `temp_db!`, and `temp_db_path!` read the folder of the calling test binary.
 
 | Module | Responsibility |
 |---|---|
@@ -38,7 +93,7 @@ Main thread                        Tokio runtime
 | `app/commands` | Shared command availability, contextual lists, priority, and target labels; `Action` remains the catalog |
 | `palette` | State and word filter of functional commands, including action names and technical aliases; `ui` draws it |
 | `filter_list` | Filtered list core, used by the palette, the history window, and the compare dialog lists |
-| `help` | State of the `F1` key reference: groups, filter, and scroll |
+| `help` | State of the `F1` help: guide topics, key groups, sidebar page, filter, and scroll |
 | `browser` | State of the file explorer of the path fields: folder, rows, and filter |
 | `input` | Key map: regions, actions, sequences, and `keymap` rules |
 | `navigator` | Tree of connections, consoles, schemas, relations, columns, and other database objects |
@@ -53,7 +108,9 @@ Main thread                        Tokio runtime
 | `generate` | SQL templates of the navigator |
 | `console` | Editor, results, messages, and state of a console |
 | `parameters` | Panel of the query parameters of one console: fields, kinds, values, and Set state |
-| `command_log` | In-memory command history, bounded text, tracing, and the Messages viewport |
+| `command_log` | In-memory command history and the Messages viewport |
+| `trace` | Command traces: `TraceContext`, spans, and the traced canceller |
+| `limited` | Bounded text for events and logs |
 | `plan` | Query plan commands, database output readers, and tree rows |
 | `mark_list` | Searchable list with a mark for each selected name |
 | `result` | Grid of one result with cursor and search, used by consoles and tables |
@@ -62,22 +119,25 @@ Main thread                        Tokio runtime
 | `table` | Table tab: pages, fields, sorting, suggestions, and query |
 | `data_edit` | Pending rows, budgeted snapshots, key predicates, update SQL, review, and cursor restoration |
 | `structure` | Catalog queries of the structure tab, per database, scope, and section |
-| `diagram` | ER diagram: catalog queries, model, layout of boxes and lines, Mermaid text, and the state of a diagram tab |
-| `compare` | Structure and data compare: catalog queries, model of a schema, differences, sync DDL, rows by key, the dialog, and the state of a compare tab |
+| `diagram` | ER diagram: catalog queries, model, layout of boxes and lines, Mermaid text. `diagram_tab` holds the state of a diagram tab |
+| `compare` | Structure and data compare: catalog queries, model of a schema, differences, sync DDL, rows by key, and the dialog. `compare_tab` holds the state of a compare tab |
 | `line_input` | Single-line text field, used by the filter bar fields |
 | `batch` | One noninteractive instruction, saved-name resolution, terminal authorization, credentials, and CSV/JSON delivery |
 | `exec` | Executions, scripts, cap, and cancellation |
+| `sink` | Result sink, statement keys, and read limits |
+| `progress` | Read counts that the screen shows during a read |
 | `pool` | Limit, queue, reservation, and cleaning |
-| `connector` | Contract and PostgreSQL, MySQL, SQLite, DuckDB, Redis/Valkey, and Kafka connectors, with the Schema Registry client |
+| `connector` | Contract and PostgreSQL, MySQL, SQLite, DuckDB, Redis/Valkey, Kafka, and Databricks connectors, with the Schema Registry client and the field paths of a schema (`kafka/fields.rs`), which are the columns of a topic |
 | `grid` | Rows in one block each (`row`), widths, search, budget, TSV, and readable JSON shape (`json`) |
-| `export` | Export formats, temporary file, and modal form |
-| `import` | File readers, `INSERT` text, batches, the error log, and modal form |
+| `export` | Export formats and temporary file. `export_form` holds the modal form |
+| `import` | File readers, `INSERT` text, batches, and the error log. `import_form` holds the modal form |
 | `find` | Text comparison of the two searches |
 | `clipboard` | System clipboard and OSC 52 |
 | `terminal` | Terminal setup and restore |
 | `store` | Folders of the scopes, `config.json`, console scripts, `workspace.json`, atomic writes, and locks |
 | `script_file` | Saved state of a console: hash, line ending, save wait, and write problem |
-| `creds` | Vault and session passwords, with `zeroize` |
+| `creds` | Credential identities, session passwords, and the vault adapters, with `zeroize` |
+| `vault` | System vault access, without provider text in its errors |
 | `trust` | Confirmed destinations and known paths |
 | `settings` | Form of the preferences per scope, with the autocomplete provider fields |
 | `log` | Optional event log, without SQL or values |
@@ -90,7 +150,10 @@ Only `connector` knows native driver types.
 `creds` offers identities, session passwords, and the vault adapters.
 `trust` offers the reading and the writing of global confirmations.
 The vault calls are synchronous, but `Manager::spawn_blocking` runs them off the interface thread.
-`app` applies the key priority and the mouse. `app/auth.rs`, `app/keys.rs`, `app/hints.rs`, `app/mouse.rs`, `app/close.rs`, `app/connections.rs`, `app/tables.rs`, `app/persist.rs`, `app/scripts.rs`, `app/session.rs`, `app/conflicts.rs`, `app/history.rs`, `app/guard.rs`, `app/export.rs`, and `app/browse.rs` divide that code.
+`app` applies the key priority and the mouse. `app/modal.rs` lists the windows over the screen in one order: the first open window gets the keys, the mouse, the paste, and the hint, and it is drawn on top. To add a window, add a `Modal` variant; the compiler then names each `match` that needs it.
+`App::screen` holds the tab on screen as one `Screen` value. `sqln_ui::tab_item::TabItem` is the shared contract of the table, diagram, and compare tabs; `App::close_item` closes any of them with the same steps.
+The `DEFAULTS` table of `input` limits a grid action to some grids with `only(...)`; `Action::on_grid` reads it.
+`app/agent`, `app/ai.rs`, `app/analysis.rs`, `app/auth.rs`, `app/auto_refresh.rs`, `app/browse.rs`, `app/close.rs`, `app/commands.rs`, `app/compare.rs`, `app/conflicts.rs`, `app/connections.rs`, `app/data_edit.rs`, `app/definition.rs`, `app/diagram.rs`, `app/export.rs`, `app/guard.rs`, `app/hints.rs`, `app/history.rs`, `app/import.rs`, `app/keys.rs`, `app/modal.rs`, `app/mouse.rs`, `app/persist.rs`, `app/review.rs`, `app/scripts.rs`, `app/session.rs`, `app/sql_file.rs`, and `app/tables.rs` divide that code.
 `store` keeps the folders and files. It does not depend on `app` or `ui`.
 Its configuration reader uses driver-independent connector target types.
 
@@ -141,7 +204,7 @@ It does not use the default platform verifier or additional bundled roots.
 
 AI completion is separate from MCP. `app/ai` captures the editor interval and revisions, checks destination consent, and coordinates the request. The suggestion list holds two AI rows: the plain row starts a request at once, and the request row opens a one-line modal whose text travels as `request` in the body. `editor/ai` exposes immutable targets and applies a proposal through the existing single-undo edit path. Local `complete` suggestions remain independent of providers.
 
-`exec/ai` reads complete structural metadata through the credential gate and an independent pool lease. Snapshots count against the shared budget and follow catalog refresh generations. Unknown session states close their leases. `ai` serializes OpenAI-compatible chat requests, reduces oversized context deterministically, and bounds HTTP responses. Credential files are read again for each request. Vault keys use a separate `sqln-ai` service. Calls, preparation, and diff construction stay off the interface thread.
+`exec/ai` reads complete structural metadata through the credential gate and an independent pool lease. A Kafka snapshot holds the topics and groups of the catalog, and the field paths of the recent focus topics only. `ai::instruction` writes the system message: the common rules, then the language of the dialect, which is the guide of `connector/kafka/guide.md` for Kafka. `ai::focus_topic` finds the topic of the statement at the cursor through `complete::statement_topic`. Snapshots count against the shared budget and follow catalog refresh generations. Unknown session states close their leases. `ai` serializes OpenAI-compatible chat requests, reduces oversized context deterministically, and bounds HTTP responses. Credential files are read again for each request. Vault keys use a separate `sqln-ai` service. Calls, preparation, and diff construction stay off the interface thread.
 
 `ui/ai` renders the request dialog, the waiting states, and scoped settings. A response shows ghost text at the cursor of its console, through the [inline review](#inline-review) model. A review changes the buffer only when the user accepts a change, with checked revisions and no execution. Pending responses never take another dialog's focus.
 
@@ -426,6 +489,7 @@ trait Session: Send {
     fn canceller(&self) -> Arc<dyn Canceller>;
     async fn apply_context(&mut self, context: &SessionContext) -> Result<(), ExecError>;
     async fn run(&mut self, sql: &str, sink: ResultSink) -> Result<StatementEnd, ExecError>;
+    async fn run_parameters(&mut self, sql: &str, parameters: &[Parameter], sink: ResultSink) -> Result<StatementEnd, ExecError>;
     async fn transaction_state(&mut self) -> TransactionState;
     async fn control(&mut self, command: TransactionCommand) -> Result<(), ExecError>;
     async fn reset(&mut self) -> ResetOutcome;
@@ -434,6 +498,7 @@ trait Session: Send {
     async fn read_catalog_of(&mut self, schemas: &[String]) -> Result<Catalog, ExecError>;
     async fn read_schema_names(&mut self) -> Result<Vec<String>, ExecError>;
     async fn read_columns(&mut self, schema: &str, relation: &str) -> Result<Vec<String>, ExecError>;
+    async fn read_noted_columns(&mut self, schema: &str, relation: &str) -> Result<(Vec<String>, Vec<ColumnNote>), ExecError>;
     async fn read_foreign_keys(&mut self, schema: &str, relation: &str) -> Result<Vec<ForeignKey>, ExecError>;
     async fn read_referencing_keys(&mut self, schema: &str, relation: &str) -> Result<Vec<ForeignKey>, ExecError>;
 }
@@ -445,7 +510,7 @@ The `async-trait` crate makes `Box<dyn Session>` possible.
 `read_catalog_of` keeps the configured schemas and the current schema. Redis skips reads of hidden databases.
 `read_schema_names` supplies the connection form list. Redis uses `INFO keyspace` without scanning keys. `catalog::add_objects` gives each row to its schema and puts the objects in the order of the tree.
 The DDL of an object runs in a task of the pool that only that read uses (`app/definition`). The task closes at the end of the read, and the text goes to a new console.
-`Capabilities` declares whether the source has transactions, whether the console chooses a schema or a database, and whether the table tab accepts filter and order in SQL.
+`Capabilities` declares whether the source has transactions, whether the console chooses a schema or a database, whether the table tab accepts filter and order in SQL, whether the table tab submits pending changes (`data_edit`), whether consoles accept named scalar parameters (`parameters`), and whether the pool keeps one session only (`single_session`).
 Cancellation and pagination enter that declaration when a source needs them, because the connectors use the same contract on those points.
 Each console has a Tokio task, which keeps the session between executions while the transaction stays open.
 The task keeps the future of `run` alive after a cancellation, to read the database response.
@@ -459,12 +524,16 @@ Closing the connection is the only case that abandons that future.
 | DuckDB | `InterruptHandle` | Drop the connection, because a temporary table only goes away with a new connection | The session keeps it: the driver reports `is_autocommit` as a constant |
 | Redis/Valkey | `CLIENT UNBLOCK` on a temporary connection; no effect, close the session | `DISCARD`, the `CLIENT` name and modes, `UNWATCH`, and back to the database of the connection, in one round trip | Always `None`: the source has no manual transaction |
 | Kafka | Nothing: the read watches the stop token of the sink | Nothing: each read owns its consumer | Always `None`: each command only reads |
+| Databricks | `POST /statements/{id}/cancel`; `run` polls the status to the final state | Back to the catalog of the connection, without a schema | Always `None`: the API has no session |
+
+Databricks sends each statement with `EXTERNAL_LINKS` and `ARROW_STREAM`. The session polls the status, then downloads one result part at a time, inside `ResultSink::memory_limit`, and sends the rows of each Arrow batch before the next download. A second client downloads the links, so the token never goes to cloud storage.
 
 `run` sends one statement, delivers the rows to `ResultSink`, and obeys the `Flow::Stop` return.
 One statement may deliver several results, such as `CALL` in MySQL, and the cap applies to each one.
 `ResultSink` sends `ResultDone` at the end of each result.
 Dropping `ResultSink` returns the rows still in the batch to the budget.
 `ResultSink` applies the cap and the budget, and gathers the rows in batches of 200.
+`ResultSink::track` gives the screen a `ReadProgress` with the columns of the next result. The connector writes its atomic counts, and the screen reads them at each frame, so the counts never use the event queue. Kafka uses it for its reads.
 `ResultSink::notices` sends `ExecEvent::Notice` before the end of the statement. PostgreSQL keeps the notices in the connection task, with `poll_message`. MySQL reads `SHOW WARNINGS` when the count goes above 0. `MAX_NOTICES` limits both to 100 per statement.
 `Value` keeps `Null`, `Text`, `Number`, or `Binary`, always with the database text.
 `Conn::reset` keeps the current database, so a `USE` would stay in the session without the next step.
@@ -472,6 +541,27 @@ The cleaning reads `DATABASE()` and goes back to the database of the connection.
 The variant serves presentation only, such as aligning numbers.
 `Value::binary` classifies binary bytes once, before they reach the interface. The wrapper preserves the original bytes.
 A preview reads only the visible prefix. TSV encoding borrows selected values without cloning the selection.
+
+### Dialects
+
+`Dialect` names the language of a source. Per-dialect behavior stays in one place, so a new dialect does not need changes in the code that uses it.
+
+- `sqln_sql::sql::dialect` has one file for each dialect. Each file implements `SqlDialect`, and `Dialect::sql()` is the only `match` that chooses the file.
+- `Syntax` holds the lexical rules (comments, quotes, escapes, parameter markers) and the rules that SQLN uses to write SQL (identifier quote, literals, booleans). The lexer reads it once for each text, not for each token.
+- `SqlDialect` holds the behavior that data cannot express: the `sqlparser` dialect, the text literal, the marker of a named parameter, the catalog queries of the structure tab, and the session signals. `None` means that the source does not have the feature, and the interface hides it (for example, `structure::has_sessions`).
+- `sqln_exec::dialect` has one file for each dialect too. Each file implements `Features`, and `dialect::features()` is the only `match` that chooses the file. `Vocabulary` holds the completion words: keywords, statement starters, types, functions, and the grammar choices (`ILIKE`, `ALTER TABLE` actions, column options, `NULLS FIRST`, the extra join). `Features` also gives the completion of command arguments, command lines, and SELECT statements of the command line, the plan (`PlanSyntax`: the `EXPLAIN` texts and the `PlanFormat` of the answer), the diagram queries, the AI language line and comment query, and the `Engine`, which names the mark of the icon set. Long per-dialect code, such as a plan reader or the Kafka line completion, can stay in its feature module as a function. The dialect file chooses it.
+- The schema compare, the DDL of an object (`definition`), and the data edit have many small differences, so the dialect file chooses a `dialect::Family` (`Postgres`, `MySql`, or `Sqlite`), and these modules match on the family. A dialect like MySQL takes an existing family. A new family needs a new arm in each `match` on `Family`, and the compiler shows each one. A source without a family (DuckDB, Redis, Kafka, Databricks) has no compare queries, no DDL, and no data edit.
+- The traits have no default methods. The compiler shows each item that a new dialect must decide.
+- Code outside these modules reads the rules and does not compare `Dialect` values. The exception is the command-line paths of Redis and Kafka, which use `Dialect::is_command_line`.
+
+#### Add a database
+
+1. Create the driver crate `crates/<driver>/` and implement `Connector` and `Session`. Set its `Capabilities`.
+2. Add the `Engine` variant (network) or a `Source` variant (file), and connect it in `sqln_connector::connector`.
+3. Add the `Dialect` variant. The compiler then shows the two dispatch matches and the `Engine` sites.
+4. Add `crates/sql/src/sql/dialect/<name>.rs` with its `Syntax` and `SqlDialect`.
+5. Add `crates/exec/src/dialect/<name>.rs` with its `Vocabulary` and `Features`. Choose an existing `Family`, or `None`.
+6. Add the database service to `compose.test.yaml` and the integration tests of the driver crate.
 
 ## 5. Script execution
 
@@ -522,7 +612,7 @@ Redis opens its own connection for Pub/Sub, `MONITOR`, `SYNC`, and `PSYNC`, with
 
 Kafka `TAIL` assigns the partitions to its own consumer, without a commit, and waits for messages until the stop token. It calls `ResultSink::flush` after 200 ms without a message.
 
-Kafka evaluates message expressions in a blocking task, so the runner can process cancellation and its statement deadline. The expression visitor generates Cartesian combinations on demand and checks the stop token during traversal. `connector/kafka/filter/evaluation.rs` bounds temporary generated text and projection buffers per read, using `ResultSink::memory_limit`. This ceiling applies to live, export, and streaming delivery too; it does not cap total output. Projection serialization writes each list item directly into a bounded text buffer and sends no partial row on failure.
+Kafka evaluates message expressions in a blocking task, so the runner can process cancellation and its statement deadline. The expression visitor generates Cartesian combinations on demand and checks the stop token during traversal. `connector/kafka/filter/evaluation.rs` bounds temporary generated text and projection buffers per read, using `ResultSink::memory_limit`. `filter/functions.rs` holds the function table, the argument checks, and the function evaluation; the parser, the completion, and the keyword colors read the names from that table. `filter/time.rs` reads `INTERVAL` texts and `TO_CHAR` formats. `filter::Meta` carries `NOW()` and the received bytes of each message to the filter and the projection. This ceiling applies to live, export, and streaming delivery too; it does not cap total output. Projection serialization writes each list item directly into a bounded text buffer and sends no partial row on failure.
 
 `Canceller::cancel` returns after the database handles the request.
 In PostgreSQL, that requires reading until the server closes the request connection.
@@ -613,7 +703,8 @@ No scope receives `password`. The plain-text authorized password stays in `crede
     "mcp": true,
     "mcpDefaultAccess": "ask",
     "mcpMaxAccess": "full",
-    "mcpRememberClients": true
+    "mcpRememberClients": true,
+    "aiCompletion": { "enabled": false }
   },
   "connections": [
     {
@@ -651,7 +742,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
 
 | Field | Values |
 |---|---|
-| `kind` | `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, or `kafka` |
+| `kind` | `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, or `databricks` |
 | `credential` | `vault`, `session`, `globalPlainText`, or `none` |
 | `tls.mode` | `verify` or `disabled` |
 | `theme` | Optional. A value of `theme` of `preferences`. Without the field, the connection uses the default theme |
@@ -660,6 +751,8 @@ No scope receives `password`. The plain-text authorized password stays in `crede
 | `sasl` | Optional, only for `kafka`. `plain`, `scram-sha-256`, or `scram-sha-512`. Without the field, a Kafka user uses `scram-sha-512` |
 | `schemaRegistry` | Optional, only for `kafka`. `url` (`http://` or `https://`) and an optional `username`. The password stays in the system vault or in the session |
 | `consumerGroup` | Optional, only for `kafka`. The `group.id` of the reads, without spaces or control characters. Without the field, the reads use `sqln-read`. SQLN never joins the group and never commits |
+| `warehouse` | Required for `databricks`, and refused for other kinds. The SQL warehouse id, with only ASCII letters and digits. `host` is the workspace host, `database` is the optional start catalog, and the token is the password |
+| `topics` | Optional, only for `kafka`. A list of topic patterns that the catalog shows: `*` matches any text, and `!` at the start removes topics. Without the field, or with an empty list, the catalog shows all topics. Reads of other topics still run |
 
 The `globalPlainText` value exists only in the global scope.
 The value `sqlTimeoutSeconds: null` runs without a deadline, and the absence of the field means 30 seconds.

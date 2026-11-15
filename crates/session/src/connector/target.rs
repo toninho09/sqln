@@ -1,0 +1,600 @@
+//! The address of a network database. A connection text enters here, so that the
+//! form and the command line follow the same rules.
+
+use std::fmt;
+use std::net::IpAddr;
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
+
+use crate::sql::Dialect;
+use crate::text;
+
+/// A password. Debug hides its value, and drop clears its memory.
+#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Secret(***)")
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Engine {
+    Postgres,
+    MySql,
+    Redis,
+    Kafka,
+    Databricks,
+}
+
+impl Engine {
+    /// Returns the dialect of the statements of this source.
+    pub fn dialect(self) -> Dialect {
+        match self {
+            Engine::Postgres => Dialect::Postgres,
+            Engine::MySql => Dialect::MySql,
+            Engine::Redis => Dialect::Redis,
+            Engine::Kafka => Dialect::Kafka,
+            Engine::Databricks => Dialect::Databricks,
+        }
+    }
+
+    /// Returns the name of the source for the user.
+    pub fn label(self) -> &'static str {
+        match self {
+            Engine::Postgres => text::VALUE_POSTGRES,
+            Engine::MySql => text::VALUE_MYSQL,
+            Engine::Redis => text::VALUE_REDIS,
+            Engine::Kafka => text::VALUE_KAFKA,
+            Engine::Databricks => text::VALUE_DATABRICKS,
+        }
+    }
+
+    pub fn default_port(self) -> u16 {
+        match self {
+            Engine::Postgres => 5432,
+            Engine::MySql => 3306,
+            Engine::Redis => 6379,
+            Engine::Kafka => 9092,
+            Engine::Databricks => 443,
+        }
+    }
+
+    /// Returns false for a source that works without a user name. Databricks reads only
+    /// the token, in the password.
+    pub fn needs_user(self) -> bool {
+        !matches!(self, Engine::Redis | Engine::Kafka | Engine::Databricks)
+    }
+
+    /// Returns true when the command line asks for a password that the connection text
+    /// does not hold. Databricks has no user, but it always needs its token.
+    pub fn needs_password(self) -> bool {
+        self.needs_user() || self == Engine::Databricks
+    }
+
+    /// Returns true when the database name has a valid form for this source. Kafka has
+    /// no databases. The database of Databricks is its start catalog.
+    pub fn accepts_database(self, name: &str) -> bool {
+        match self {
+            Engine::Redis => name.parse::<u32>().is_ok(),
+            Engine::Kafka => false,
+            Engine::Postgres | Engine::MySql | Engine::Databricks => true,
+        }
+    }
+
+    /// Returns the reason that `accepts_database` refuses a name.
+    pub fn database_error(self) -> &'static str {
+        match self {
+            Engine::Kafka => "A Kafka connection has no database.",
+            _ => "The Redis database must be a number.",
+        }
+    }
+}
+
+/// The SASL mechanism of a Kafka connection with a user.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Sasl {
+    #[serde(rename = "plain")]
+    Plain,
+    #[serde(rename = "scram-sha-256")]
+    ScramSha256,
+    #[default]
+    #[serde(rename = "scram-sha-512")]
+    ScramSha512,
+}
+
+impl Sasl {
+    pub const ALL: [Sasl; 3] = [Sasl::Plain, Sasl::ScramSha256, Sasl::ScramSha512];
+
+    /// Returns the name of the mechanism for librdkafka and for the connection text.
+    pub fn name(self) -> &'static str {
+        match self {
+            Sasl::Plain => "PLAIN",
+            Sasl::ScramSha256 => "SCRAM-SHA-256",
+            Sasl::ScramSha512 => "SCRAM-SHA-512",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|sasl| sasl.name().eq_ignore_ascii_case(text))
+    }
+}
+
+/// The Schema Registry of a Kafka connection. A saved password stays in the system vault,
+/// and the connector reads it there when `password` is empty.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Registry {
+    pub url: String,
+    /// Empty for a registry without authentication.
+    pub user: String,
+    /// The password of this session, from the form.
+    pub password: Option<Secret>,
+}
+
+/// The consumer group of the Kafka reads when the connection sets no group.
+pub const KAFKA_READ_GROUP: &str = "sqln-read";
+
+/// The settings that only a Kafka connection uses. Other engines keep the default.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KafkaOptions {
+    pub sasl: Sasl,
+    pub registry: Option<Box<Registry>>,
+    /// The consumer group id of the reads. `None` uses `KAFKA_READ_GROUP`.
+    pub group: Option<String>,
+    /// The patterns of the topics that the catalog shows. Empty shows all topics.
+    pub topics: Vec<String>,
+}
+
+impl KafkaOptions {
+    /// Returns the consumer group id of the reads.
+    pub fn read_group(&self) -> &str {
+        self.group.as_deref().unwrap_or(KAFKA_READ_GROUP)
+    }
+}
+
+/// The settings that only a Databricks connection uses. Other engines keep the default.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DatabricksOptions {
+    /// The id of the SQL warehouse that runs the statements.
+    pub warehouse: String,
+}
+
+/// Reads the warehouse id of a Databricks connection. The id goes into the path of a
+/// request, so only ASCII letters and digits are valid.
+pub fn warehouse_id(text: &str) -> Result<String, &'static str> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(text::DATABRICKS_NO_WAREHOUSE);
+    }
+    if !text.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(text::DATABRICKS_BAD_WAREHOUSE);
+    }
+    Ok(text.to_owned())
+}
+
+/// Reads the consumer group id of a Kafka connection. The spaces at the ends go; an empty
+/// text means the default group. A space or a control character inside is refused.
+pub fn consumer_group(text: &str) -> Result<Option<String>, &'static str> {
+    let text = text.trim();
+    if text.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(crate::text::KAFKA_BAD_GROUP);
+    }
+    Ok(Some(text.to_owned()).filter(|text| !text.is_empty()))
+}
+
+/// Reads the topic patterns of a Kafka connection: a list with commas, such as
+/// `orders.*, !*.dlq`. The spaces at the ends of each item go, and an empty item goes.
+/// A space or a control character inside a pattern is refused, and `!` needs a pattern.
+pub fn topic_filter(text: &str) -> Result<Vec<String>, &'static str> {
+    let mut patterns = Vec::new();
+    for item in text
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
+        if item == "!" || item.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err(crate::text::KAFKA_BAD_TOPICS);
+        }
+        patterns.push(item.to_owned());
+    }
+    Ok(patterns)
+}
+
+/// Returns true when the patterns show the topic. `*` matches any text, and the case of
+/// the letters must match, as in Kafka. Without an include pattern, all topics match the
+/// includes. A pattern that starts with `!` then removes its topics.
+pub fn topic_visible(patterns: &[String], name: &str) -> bool {
+    let (excludes, includes): (Vec<&str>, Vec<&str>) = patterns
+        .iter()
+        .map(String::as_str)
+        .partition(|pattern| pattern.starts_with('!'));
+    (includes.is_empty() || includes.iter().any(|pattern| glob(pattern, name)))
+        && !excludes.iter().any(|pattern| glob(&pattern[1..], name))
+}
+
+/// Matches a name with a pattern where `*` is any text, also an empty text. A UTF-8
+/// character of the pattern matches only the same character, so bytes are sufficient.
+fn glob(pattern: &str, name: &str) -> bool {
+    let (pattern, name) = (pattern.as_bytes(), name.as_bytes());
+    let (mut p, mut n) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while n < name.len() {
+        if pattern.get(p) == Some(&b'*') {
+            star = Some((p, n));
+            p += 1;
+        } else if pattern.get(p) == Some(&name[n]) {
+            p += 1;
+            n += 1;
+        } else if let Some((at, from)) = star {
+            star = Some((at, from + 1));
+            p = at + 1;
+            n = from + 1;
+        } else {
+            return false;
+        }
+    }
+    pattern[p..].iter().all(|byte| *byte == b'*')
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Address {
+    Tcp { host: String, port: u16 },
+    Socket(PathBuf),
+}
+
+impl Address {
+    /// Returns true for an address that can go without TLS.
+    pub fn is_local(&self) -> bool {
+        match self {
+            Address::Socket(_) => true,
+            Address::Tcp { host, .. } => {
+                host.eq_ignore_ascii_case("localhost")
+                    || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TlsFiles {
+    /// Without a file, the system roots verify the server.
+    pub ca: Option<PathBuf>,
+    pub client: Option<ClientCertificate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClientCertificate {
+    pub certificate: PathBuf,
+    pub key: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Tls {
+    Disabled,
+    Verify(TlsFiles),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkTarget {
+    pub engine: Engine,
+    pub address: Address,
+    pub user: String,
+    pub password: Option<Secret>,
+    pub database: Option<String>,
+    pub tls: Tls,
+    pub kafka: KafkaOptions,
+    pub databricks: DatabricksOptions,
+}
+
+/// What the command line opens.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenTarget {
+    File(PathBuf),
+    /// A DuckDB file or one database in memory. The text is empty for memory.
+    Duckdb(String),
+    /// Boxed, because a network target is much larger than a path.
+    Network(Box<NetworkTarget>),
+}
+
+/// The scheme that marks a DuckDB target.
+const DUCKDB_SCHEME: &str = "duckdb:";
+
+/// Reads the target of the command line. A text with a scheme is a URI, a text with the
+/// `duckdb:` scheme is a DuckDB target, and any other text is the path of a SQLite file.
+pub fn open_target(text: &str) -> Result<OpenTarget, String> {
+    if let Some(rest) = text.strip_prefix(DUCKDB_SCHEME) {
+        // `duckdb:` names the empty text, and `duckdb::memory:` keeps `:memory:`. Both
+        // open one database in memory.
+        return Ok(OpenTarget::Duckdb(rest.to_owned()));
+    }
+    if text.contains("://") {
+        parse_uri(text).map(|target| OpenTarget::Network(Box::new(target)))
+    } else {
+        Ok(OpenTarget::File(PathBuf::from(text)))
+    }
+}
+
+impl NetworkTarget {
+    /// Returns a name for the interface. It never holds the password.
+    pub fn label(&self) -> String {
+        let place = match &self.address {
+            Address::Tcp { host, port } => format!("{host}:{port}"),
+            Address::Socket(path) => path.display().to_string(),
+        };
+        match &self.database {
+            Some(database) => format!("{place}/{database}"),
+            None => place,
+        }
+    }
+}
+
+fn percent_decode(text: &str, name: &str) -> Result<String, String> {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+        let code = bytes
+            .get(index + 1..index + 3)
+            .and_then(|code| std::str::from_utf8(code).ok())
+            .and_then(|code| u8::from_str_radix(code, 16).ok())
+            .ok_or_else(|| format!("The {name} has a bad percent code."))?;
+        decoded.push(code);
+        index += 3;
+    }
+    String::from_utf8(decoded).map_err(|_| format!("The {name} is not valid UTF-8."))
+}
+
+/// The values of the query part of a connection text.
+#[derive(Default)]
+struct Parameters {
+    tls_mode: Option<String>,
+    ca: Option<PathBuf>,
+    certificate: Option<PathBuf>,
+    key: Option<PathBuf>,
+    socket: Option<PathBuf>,
+    sasl: Option<Sasl>,
+    registry: Option<String>,
+    group: Option<String>,
+    topics: Vec<String>,
+    warehouse: Option<String>,
+}
+
+impl Parameters {
+    fn parse(query: &str) -> Result<Self, String> {
+        let mut parameters = Self::default();
+        for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+            let value = percent_decode(value, name)?;
+            match name {
+                "sslmode" => parameters.tls_mode = Some(value.to_ascii_lowercase()),
+                "sslrootcert" => parameters.ca = Some(value.into()),
+                "sslcert" => parameters.certificate = Some(value.into()),
+                "sslkey" => parameters.key = Some(value.into()),
+                "host" | "socket" if value.starts_with('/') => {
+                    parameters.socket = Some(value.into());
+                }
+                "sasl" => {
+                    parameters.sasl = Some(
+                        Sasl::parse(&value)
+                            .ok_or("sasl must be plain, scram-sha-256, or scram-sha-512.")?,
+                    );
+                }
+                "registry" if !value.is_empty() => parameters.registry = Some(value),
+                "group" => parameters.group = consumer_group(&value)?,
+                "topics" => parameters.topics = topic_filter(&value)?,
+                "warehouse" => parameters.warehouse = Some(warehouse_id(&value)?),
+                other => return Err(format!("Unknown connection parameter: {other}")),
+            }
+        }
+        Ok(parameters)
+    }
+
+    /// Without `sslmode`, a local address uses no TLS and another address verifies.
+    fn tls(self, address: &Address) -> Result<Tls, String> {
+        let wanted = match self.tls_mode.as_deref() {
+            None => !address.is_local(),
+            Some("disable") => false,
+            Some("require" | "verify-ca" | "verify-full") => true,
+            Some(mode) => {
+                return Err(format!(
+                    "sslmode={mode} can fall back to a connection without TLS. \
+                     Use disable or verify-full."
+                ));
+            }
+        };
+        let client = match (self.certificate, self.key) {
+            (Some(certificate), Some(key)) => Some(ClientCertificate { certificate, key }),
+            (None, None) => None,
+            _ => return Err("A client certificate needs sslcert and sslkey.".to_owned()),
+        };
+        if wanted {
+            return Ok(Tls::Verify(TlsFiles {
+                ca: self.ca,
+                client,
+            }));
+        }
+        if self.ca.is_some() || client.is_some() {
+            return Err("TLS files need a connection with TLS.".to_owned());
+        }
+        Ok(Tls::Disabled)
+    }
+}
+
+fn split_port(place: &str) -> Result<(&str, Option<u16>), String> {
+    let (host, port) = match place.strip_prefix('[') {
+        Some(rest) => {
+            let (host, after) = rest.split_once(']').ok_or("The IPv6 address has no end.")?;
+            (host, after.strip_prefix(':'))
+        }
+        None => match place.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (place, None),
+        },
+    };
+    let port = port
+        .filter(|port| !port.is_empty())
+        .map(|port| {
+            port.parse()
+                .map_err(|_| "The port is not valid.".to_owned())
+        })
+        .transpose()?;
+    Ok((host, port))
+}
+
+/// Replaces each character of the password of a connection text, so that a screen can
+/// show the text. The cursor of a field stays valid, because the length does not change.
+pub fn hide_uri_password(uri: &str, mask: char) -> String {
+    let Some((scheme, rest)) = uri.split_once("://") else {
+        return uri.to_owned();
+    };
+    let authority_end = rest.find(['/', '?']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(authority_end);
+    let Some((credentials, place)) = authority.rsplit_once('@') else {
+        return match authority.split_once(':') {
+            // The user can be in the middle of the password, before the `@`.
+            Some((user, typed)) if !typed.is_empty() && !tail.starts_with('/') => {
+                let hidden: String = typed.chars().map(|_| mask).collect();
+                format!("{scheme}://{user}:{hidden}{tail}")
+            }
+            _ => uri.to_owned(),
+        };
+    };
+    let Some((user, password)) = credentials.split_once(':') else {
+        return uri.to_owned();
+    };
+    let hidden: String = password.chars().map(|_| mask).collect();
+    format!("{scheme}://{user}:{hidden}@{place}{tail}")
+}
+
+/// Reads `postgres://user:password@host:port/database?sslmode=verify-full`.
+/// The error text never holds the text of the input, because it can hold a password.
+pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
+    let (scheme, rest) = uri
+        .split_once("://")
+        .ok_or("The connection text needs a scheme.")?;
+    let scheme = scheme.to_ascii_lowercase();
+    let engine = match scheme.as_str() {
+        "postgres" | "postgresql" => Engine::Postgres,
+        "mysql" | "mariadb" => Engine::MySql,
+        "redis" | "rediss" | "valkey" | "valkeys" => Engine::Redis,
+        "kafka" | "kafkas" => Engine::Kafka,
+        "databricks" => Engine::Databricks,
+        _ => {
+            return Err(
+                "The scheme must be postgres, mysql, redis, kafka, or databricks.".to_owned(),
+            );
+        }
+    };
+    let (location, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let (authority, path) = location.split_once('/').unwrap_or((location, ""));
+    // A password can hold `@` only in percent form, so the last one ends the user part.
+    let (credentials, place) = authority.rsplit_once('@').unwrap_or(("", authority));
+    let (user, password) = match credentials.split_once(':') {
+        Some((user, password)) => (user, Some(password)),
+        None => (credentials, None),
+    };
+    let user = percent_decode(user, "user")?;
+    if user.is_empty() && engine.needs_user() {
+        return Err("The connection text needs a user.".to_owned());
+    }
+    let password = password
+        .map(|password| percent_decode(password, "password"))
+        .transpose()?
+        .map(Secret::new);
+    let database = (!path.is_empty())
+        .then(|| percent_decode(path, "database"))
+        .transpose()?;
+    if database
+        .as_deref()
+        .is_some_and(|name| !engine.accepts_database(name))
+    {
+        return Err(engine.database_error().to_owned());
+    }
+
+    let mut parameters = Parameters::parse(query)?;
+    if engine != Engine::Kafka
+        && (parameters.sasl.is_some()
+            || parameters.registry.is_some()
+            || parameters.group.is_some()
+            || !parameters.topics.is_empty())
+    {
+        return Err("sasl, registry, group, and topics are valid only for kafka.".to_owned());
+    }
+    if engine == Engine::Kafka && parameters.socket.is_some() {
+        return Err("A Kafka connection needs a host, not a socket.".to_owned());
+    }
+    let databricks = match (engine, parameters.warehouse.take()) {
+        (Engine::Databricks, Some(warehouse)) => DatabricksOptions { warehouse },
+        (Engine::Databricks, None) => return Err(text::DATABRICKS_NO_WAREHOUSE.to_owned()),
+        (_, Some(_)) => return Err("warehouse is valid only for databricks.".to_owned()),
+        (_, None) => DatabricksOptions::default(),
+    };
+    if engine == Engine::Databricks && parameters.socket.is_some() {
+        return Err("A Databricks connection needs a host, not a socket.".to_owned());
+    }
+    let kafka = KafkaOptions {
+        sasl: parameters.sasl.take().unwrap_or_default(),
+        registry: parameters.registry.take().map(|url| {
+            Box::new(Registry {
+                url,
+                user: String::new(),
+                password: None,
+            })
+        }),
+        group: parameters.group.take(),
+        topics: std::mem::take(&mut parameters.topics),
+    };
+    if matches!(scheme.as_str(), "rediss" | "valkeys" | "kafkas") {
+        if parameters.tls_mode.as_deref() == Some("disable") {
+            return Err("This scheme always uses TLS, so sslmode=disable is not valid.".to_owned());
+        }
+        parameters.tls_mode = Some("verify-full".to_owned());
+    }
+    let (host, port) = split_port(place)?;
+    let host = percent_decode(host, "host")?;
+    let address = match parameters.socket.take() {
+        Some(path) if host.is_empty() => Address::Socket(path),
+        Some(_) => return Err("Use a host or a socket, not both.".to_owned()),
+        None if host.is_empty() => return Err("The connection text needs a host.".to_owned()),
+        None => Address::Tcp {
+            host,
+            port: port.unwrap_or(engine.default_port()),
+        },
+    };
+    let tls = parameters.tls(&address)?;
+    Ok(NetworkTarget {
+        engine,
+        address,
+        user,
+        password,
+        database,
+        tls,
+        kafka,
+        databricks,
+    })
+}

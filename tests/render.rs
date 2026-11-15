@@ -77,6 +77,48 @@ fn the_list_opens_below_the_cursor_at_the_start_of_the_word() {
 }
 
 #[test]
+fn a_list_that_waits_for_columns_shows_a_note_below_the_cursor() {
+    for theme in [Theme::plain(), Theme::ansi()] {
+        let mut f = Fixture::conventional("SELECT  FROM users u");
+        f.catalog.schemas[0].relations[0].columns = Columns::NotLoaded;
+        f.editor.set_cursor(Index2::new(0, 7));
+        f.write("u.");
+        let buffer = draw(&mut f.editor, &theme, 80, 24);
+        let (_, word_y) = find(&buffer, "SELECT u.");
+        let (_, note_y) = find(&buffer, "Reading the columns of users.");
+        assert_eq!(note_y, word_y + 1, "{}", screen(&buffer));
+
+        f.catalog.schemas[0].relations[0].columns = Columns::Loaded(vec!["id".to_owned()]);
+        f.editor.refresh_suggestions(Some(&f.catalog));
+        let buffer = draw(&mut f.editor, &theme, 80, 24);
+        assert!(!screen(&buffer).contains("Reading the columns"));
+        find(&buffer, "id");
+    }
+}
+
+#[test]
+fn a_kafka_list_that_waits_names_the_fields_of_the_topic() {
+    let mut f = Fixture::with_dialect("", KeyboardMode::Conventional, sqln::sql::Dialect::Kafka);
+    f.catalog = Catalog {
+        schemas: vec![Schema {
+            name: sqln::connector::kafka::TOPICS.to_owned(),
+            relations: vec![Relation {
+                name: "orders".to_owned(),
+                ..Relation::default()
+            }],
+            ..Schema::default()
+        }],
+        current_schema: None,
+    };
+    f.write("CONSUME orders WHERE value.");
+    let buffer = draw(&mut f.editor, &Theme::plain(), 80, 24);
+    let (_, word_y) = find(&buffer, "CONSUME orders");
+    let (_, note_y) = find(&buffer, "Reading the fields of orders.");
+    assert_eq!(note_y, word_y + 1, "{}", screen(&buffer));
+    assert!(!screen(&buffer).contains("Reading the columns"));
+}
+
+#[test]
 fn the_list_opens_above_the_cursor_on_the_last_rows() {
     let text = "\n".repeat(11) + "SELECT * FROM ";
     let mut f = Fixture::conventional(&text);
@@ -121,6 +163,7 @@ fn the_selected_row_stays_visible_in_a_long_list() {
                 columns: Columns::Loaded(columns),
                 foreign_keys: Vec::new(),
                 referencing: Vec::new(),
+                notes: Vec::new(),
             }],
             partial: false,
             objects: Vec::new(),
@@ -216,6 +259,7 @@ fn external_names_cannot_send_terminal_sequences() {
                 columns: Columns::NotLoaded,
                 foreign_keys: Vec::new(),
                 referencing: Vec::new(),
+                notes: Vec::new(),
             }],
             partial: false,
             objects: Vec::new(),
@@ -1054,7 +1098,7 @@ fn the_keys_of_the_hint_bar_fit_the_minimum_width() {
 fn the_explorer_page_shows_the_keys_of_the_key_map() {
     let overrides = HashMap::from([("navigatorStructure".to_owned(), vec!["u".to_owned()])]);
     let keymap = Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap();
-    let database = crate::common::temp_db("explorer-key-map");
+    let database = crate::common::temp_db!("explorer-key-map");
     rusqlite::Connection::open(&database)
         .unwrap()
         .execute_batch("CREATE TABLE t(a);")
@@ -1075,7 +1119,7 @@ fn the_hint_bar_shows_the_keys_of_the_key_map() {
         ("nextTab".to_owned(), vec!["ctrl+w u".to_owned()]),
     ]);
     let keymap = Keymap::with_overrides(KeyboardMode::Conventional, &overrides).unwrap();
-    let database = crate::common::temp_db("hint-key-map");
+    let database = crate::common::temp_db!("hint-key-map");
     rusqlite::Connection::open(&database)
         .unwrap()
         .execute_batch("CREATE TABLE t(a);")
@@ -1084,7 +1128,7 @@ fn the_hint_bar_shows_the_keys_of_the_key_map() {
     let hint = app.hint();
     assert!(hint.contains("F6 run"), "{hint}");
     assert!(!hint.starts_with("F5"), "{hint}");
-    assert!(!hint.contains("keys"), "{hint}");
+    assert!(!hint.contains("help"), "{hint}");
     // The menu names the next tab only with a second tab.
     press_prefix(&mut app, 'h');
     app.on_event(Event::Key(key(KeyCode::Char('n'))));

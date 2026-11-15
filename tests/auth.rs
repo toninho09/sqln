@@ -1,5 +1,3 @@
-mod common;
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
@@ -8,7 +6,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key, temp_dir};
+use crate::common::{ctrl, key, temp_dir};
 use crossterm::event::{Event, KeyCode};
 use ratatui::{Terminal, backend::TestBackend};
 use sqln::app::{App, Options};
@@ -99,6 +97,7 @@ fn definition() -> Definition {
             database: None,
             tls: Tls::Disabled,
             kafka: Default::default(),
+            databricks: Default::default(),
         }),
     )
 }
@@ -117,7 +116,7 @@ impl Fixture {
     }
 
     fn with_definition(definition: Definition, credential: CredentialName, trusted: bool) -> Self {
-        let base = temp_dir(&format!("auth-{}", uuid::Uuid::new_v4()));
+        let base = temp_dir!(&format!("auth-{}", uuid::Uuid::new_v4()));
         let store = Store {
             global: Root::global(base.join("global")),
             project: None,
@@ -274,7 +273,7 @@ impl Fixture {
         target.password.as_ref().map(Secret::expose)
     }
     fn focus(&mut self, field: Field) {
-        common::focus_form_field(&mut self.app, field);
+        crate::common::focus_form_field(&mut self.app, field);
     }
     fn edit(&mut self) {
         self.prefix('h');

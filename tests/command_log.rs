@@ -437,7 +437,7 @@ struct Harness {
 
 impl Harness {
     fn new(name: &str) -> Self {
-        let path = crate::common::temp_db(name);
+        let path = crate::common::temp_db!(name);
         rusqlite::Connection::open(&path).unwrap();
         let connector = Arc::new(SqliteConnector::new(SqliteTarget::new(path)));
         Self::connect(connector)
@@ -608,7 +608,7 @@ fn imports_leave_no_commands_in_any_console_on_success_failure_or_stop() {
         h.run(h.first, "CREATE TABLE t(a TEXT)", false);
         let before = texts(&h.histories[&h.first_history]);
         let path =
-            crate::common::temp_db(&format!("command-log-input-{outcome}")).with_extension("csv");
+            crate::common::temp_db!(&format!("command-log-input-{outcome}")).with_extension("csv");
         if outcome != "failure" {
             std::fs::write(&path, "a\nx\ny\n").unwrap();
         }
@@ -648,7 +648,7 @@ fn imports_leave_no_commands_in_any_console_on_success_failure_or_stop() {
 #[test]
 fn shared_commands_do_not_enter_an_active_console_of_another_connection() {
     let mut h = Harness::new("command-log-other-connection");
-    let path = crate::common::temp_db("command-log-other-db");
+    let path = crate::common::temp_db!("command-log-other-db");
     rusqlite::Connection::open(&path).unwrap();
     let connection = h.manager.add_connection(
         Arc::new(SqliteConnector::new(SqliteTarget::new(path))),
@@ -748,7 +748,7 @@ impl sqln::connector::Session for ReusableSession {
 
 #[test]
 fn a_reused_session_changes_its_destination_before_the_health_check() {
-    let path = crate::common::temp_db("command-log-reuse");
+    let path = crate::common::temp_db!("command-log-reuse");
     rusqlite::Connection::open(&path).unwrap();
     let connector = Arc::new(ReusableConnector {
         inner: SqliteConnector::new(SqliteTarget::new(path)),
@@ -772,10 +772,10 @@ fn a_reused_session_changes_its_destination_before_the_health_check() {
 
 #[test]
 fn a_disconnected_history_consumer_does_not_stop_the_database_command() {
-    let path = crate::common::temp_db("command-log-no-consumer");
+    let path = crate::common::temp_db!("command-log-no-consumer");
     rusqlite::Connection::open(&path).unwrap();
     let connector = SqliteConnector::new(SqliteTarget::new(path));
-    let (events, inbox) = mpsc::channel(8);
+    let (events, inbox) = mpsc::channel::<ExecEvent>(8);
     drop(inbox);
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {

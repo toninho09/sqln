@@ -4,7 +4,7 @@ use super::artifact::{diagram_bytes, diagram_value};
 use super::*;
 use crate::app::auth::Use;
 use crate::catalog::{ObjectKind, RelationRef};
-use crate::exec::{AgentMetadata, ExecEvent, ExecutionEnd, StatementStatus};
+use crate::exec::{AgentMetadata, ExecEvent, ExecutionEnd, MetadataRead, StatementStatus};
 use crate::sql::{Dialect, split};
 use crate::ui::text;
 use serde_json::{Value, json};
@@ -490,18 +490,22 @@ impl App {
             }
         } else {
             let connection = job.connections[0].0;
-            let schemas = self
-                .connections
-                .iter()
-                .find(|item| item.id == connection)
-                .and_then(|item| item.definition.as_ref())
-                .map(|definition| definition.schemas.clone())
-                .unwrap_or_default();
+            let request = match &job.output {
+                Output::Fields(topic) => MetadataRead::Fields(topic.clone()),
+                _ => MetadataRead::Catalog(
+                    self.connections
+                        .iter()
+                        .find(|item| item.id == connection)
+                        .and_then(|item| item.definition.as_ref())
+                        .map(|definition| definition.schemas.clone())
+                        .unwrap_or_default(),
+                ),
+            };
             manager.agent_metadata(
                 console,
                 connection,
                 id.to_owned(),
-                schemas,
+                request,
                 job.cancel.clone(),
             );
         }
@@ -817,8 +821,8 @@ impl App {
                     self.complete_agent_job(&id, None);
                     continue;
                 }
-                // A catalog read has no execution, so it never waits here.
-                Output::Catalog(..) => Ok(None),
+                // A metadata read has no execution, so it never waits here.
+                Output::Catalog(..) | Output::Fields(_) => Ok(None),
                 Output::Ddl(target, name, dialect) => {
                     let (target, name, dialect) = (target.clone(), name.clone(), *dialect);
                     let console = job.consoles[0];
@@ -921,6 +925,20 @@ impl App {
         }
     }
 
+    /// Reads the field paths of a Kafka topic from its Schema Registry schemas.
+    fn agent_fields(&mut self, session: &str, connection: ConnectionId, topic: &str) -> Reply {
+        let console = self.agent_console(session, connection, None)?;
+        self.agent_target(console)?;
+        let job = self.new_agent_job(
+            session,
+            vec![console],
+            vec![connection],
+            None,
+            Output::Fields(topic.to_owned()),
+        )?;
+        self.agent_job_reply(session, &job)
+    }
+
     pub(in crate::app) fn agent_catalog(
         &mut self,
         session: &str,
@@ -991,6 +1009,14 @@ impl App {
                 self.on_catalog_loaded(connection, read, Ok(catalog));
                 serde_json::to_string(&value).map_err(|_| "Cannot encode the catalog.".to_owned())
             }
+            Ok(AgentMetadata::Fields(paths, notes)) => {
+                let Output::Fields(topic) = &job.output else {
+                    self.fail_agent_job(id, "The metadata response has the wrong type.");
+                    return;
+                };
+                serde_json::to_string(&fields_value(topic, &paths, &notes))
+                    .map_err(|_| "Cannot encode the fields.".to_owned())
+            }
             Err(message) => Err(message),
         };
         match text.and_then(|text| Text::new(text, &self.budget).map_err(|error| error.message)) {
@@ -1011,6 +1037,12 @@ impl App {
         identity: Option<&str>,
     ) -> Reply {
         let item = self.connection(connection).ok_or_else(missing)?;
+        if item.dialect == Dialect::Kafka {
+            if schema != crate::connector::kafka::TOPICS || kind != "table" {
+                return Err(Error::new("unsupported", text::AGENT_KAFKA_DESCRIBE));
+            }
+            return self.agent_fields(session, connection, name);
+        }
         let target = crate::definition::Target {
             schema: schema.into(),
             name: name.into(),
@@ -1079,7 +1111,7 @@ impl App {
             .and_then(|manager| manager.open_console(connection))
             .ok_or_else(missing)?;
         let opened = self.next_tab_place();
-        let mut tab = crate::diagram::tab::DiagramTab::new(console, connection, focus, opened);
+        let mut tab = crate::diagram_tab::DiagramTab::new(console, connection, focus, opened);
         let Some(statements) = tab.statements(dialect) else {
             self.close_agent_consoles(&[console]);
             return Err(supported());
@@ -1141,7 +1173,7 @@ impl App {
                 return Err(supported());
             }
         }
-        let mut reads: Vec<crate::compare::tab::SideRead> = Vec::new();
+        let mut reads: Vec<crate::compare_tab::SideRead> = Vec::new();
         for side in sides {
             let connection = side.connection;
             let read = self
@@ -1149,7 +1181,7 @@ impl App {
                 .map(|item| (item.dialect, text::agent_tab_label(item.plain_name())))
                 .and_then(|(dialect, name)| {
                     let console = self.manager.as_mut()?.open_console(connection)?;
-                    Some(crate::compare::tab::SideRead::new(
+                    Some(crate::compare_tab::SideRead::new(
                         console, side, dialect, name,
                     ))
                 });
@@ -1168,7 +1200,7 @@ impl App {
             return Err(missing());
         };
         let opened = self.next_tab_place();
-        let mut tab = crate::compare::tab::CompareTab::new(opened, kind, sides, removals);
+        let mut tab = crate::compare_tab::CompareTab::new(opened, kind, sides, removals);
         let requests = (0..2)
             .map(|side| {
                 let read = &tab.sides[side];
@@ -1230,6 +1262,7 @@ pub(super) fn task_kind(output: &Output) -> &'static str {
         Output::Diagram(_) => "Diagram",
         Output::Compare(_) => "Comparison",
         Output::Catalog(..) => "Catalog read",
+        Output::Fields(_) => "Field read",
     }
 }
 
@@ -1300,6 +1333,17 @@ fn bindings(values: &[agent::Binding]) -> Result<Vec<crate::sql::parameters::Par
         })
         .collect()
 }
+
+/// Writes the field paths of a Kafka topic for the agent. An empty list says why.
+fn fields_value(topic: &str, paths: &[String], notes: &[crate::catalog::ColumnNote]) -> Value {
+    let fields = crate::connector::kafka::field_json(paths, notes);
+    let mut value = json!({"topic": topic, "fields": fields});
+    if paths.is_empty() {
+        value["message"] = json!(text::AGENT_KAFKA_NO_FIELDS);
+    }
+    value
+}
+
 fn catalog_value(catalog: &crate::catalog::Catalog) -> Value {
     json!({"current_schema":catalog.current_schema,"schemas":catalog.schemas.iter().map(|schema|json!({"name":schema.name,"relations":schema.relations.iter().map(|relation|json!({"name":relation.name,"kind":format!("{:?}",relation.kind).to_ascii_lowercase(),"columns":match &relation.columns {crate::catalog::Columns::Loaded(columns)=>Some(columns),_=>None}})).collect::<Vec<_>>(),"objects":schema.objects.iter().map(|object|json!({"name":object.name,"kind":format!("{:?}",object.kind).to_ascii_lowercase(),"detail":object.detail})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
 }

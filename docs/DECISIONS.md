@@ -6,6 +6,241 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Databricks SQL connector — 2026-11-15
+
+The user asked for SQL queries on Databricks. The user chose the scope below. This entry adds `sqln-databricks` to the driver list of "Driver crates, connector contract, and runtime".
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Protocol | The SQL Statement Execution API 2.0 over HTTPS, with `reqwest` | ODBC (needs the Simba driver), Thrift | No Rust driver exists. The workspace already uses `reqwest` |
+| Authentication | A personal access token only. It is the password of the connection, in the vault or in the session | OAuth | User choice |
+| Warehouse | The `warehouse` field (`warehouse=<id>` in the connection text) is required. The id has only ASCII letters and digits, because it goes into a request path | A full HTTP path | One value, and no path text from the user |
+| Catalogs | The explorer shows the schemas of all catalogs. Each schema name is `catalog.schema`, also for the start catalog. The **Catalog** field is the catalog of a session without a schema | Plain names for the start catalog, as DuckDB | User choice to navigate between catalogs. The structure queries need the catalog of each schema |
+| Metastore | Catalog reads use `system.information_schema` (Unity Catalog). `hive_metastore` does not show in the explorer, but its tables still run in a console | `SHOW` commands for each catalog and schema | User choice. One query for each read |
+| Scope | Read and run only: no transactions, no grid edit, no parameters, no plan, no diagram, no compare | Full feature set | User choice |
+| Session state | The API keeps no session. Each request carries the catalog and the schema of the session. `SET` and `USE` in a console do not reach the next statement | A session of the warehouse | The API has no session |
+| Results | `EXTERNAL_LINKS` with `ARROW_STREAM`, one part in memory at a time, inside the memory limit. The download of a link never sends the token. An expired link gets a new link one time | `INLINE` with its 25 MiB limit | User choice |
+| Cancel | `POST /statements/{id}/cancel`. A cancel that arrives before the id waits for it. The first request waits 5 seconds at most | `wait_timeout: 0s` | Fewer requests for a short statement |
+| Read only | The connector refuses a write with the shared check, as DuckDB does | Nothing | The API has no read-only session |
+| Tests | A fake HTTP server in `sqln-testkit` (`http` feature). The AI tests use it too | A real workspace | User choice. No container exists for Databricks |
+| Form | **Databricks** comes after MySQL in the **Type** choice. It has **Catalog**, **Warehouse**, and **Token**, and no **User** | Last in the choice | The SQL servers stay together. `Left` from PostgreSQL still reaches Kafka, DuckDB, Redis, and SQLite; `Right` needs one more step to SQLite |
+
+## Tab close and modal order — 2026-11-14
+
+The user asked for simpler code to add tabs, windows, and grid commands. The change found two rules that the code applied in different ways, and the user chose one rule for each.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Close of the tab on screen | A table, diagram, or compare tab that closes on screen gives the screen to the tab at the same place of the tab row, whatever its kind. With an empty row, the explorer takes the focus | A closed table gives the screen to another table first | User choice. One rule for all tabs that are not consoles |
+| Order of the windows | One order decides which window gets the keys, the mouse, the paste, and the hint, and which window is drawn on top: the question dialog, the password, the script conflicts, the palette, the history, the name, the file browser, the settings, the export, the cell edit, the import, the compare, the picker, the help, the text window, and the connection form | Different orders for keys, mouse, paste, and drawing | User choice. The window on top always gets the input. The conflicts question, which opens at any time, is on top of a form |
+
+## Driver crates, connector contract, and runtime — 2026-11-14
+
+The user asked for less dependency between the crates, so that a change recompiles less code. The user chose the full scope: a contract crate, a runtime crate, and one crate for each driver. This entry replaces the rejected alternative "One crate for each driver" of "Cargo workspace" below, and its layer order.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Contract | `sqln-session` holds the connector contract, the connection targets, `pool`, `trace`, `tls`, `words`, and the parts of the Kafka and Redis drivers that need no driver library | Keep them in `sqln-connector` | `store`, `exec`, and `ui` use only these parts, so a driver change does not recompile them |
+| Drivers | One crate for each driver: `sqln-postgres`, `sqln-mysql`, `sqln-sqlite`, `sqln-duckdb`, `sqln-redis`, `sqln-kafka`. Each one depends on `sqln-session` and on no other driver | One crate for all drivers | User choice. A change in one driver recompiles that driver, `sqln-connector`, and `sqln` |
+| Factory | `sqln-connector` is a facade with the old `connector` paths. `connector::open(&Definition)` replaces `Definition::connector()` | Keep the factory in `store` | Only `sqln` opens connectors, so only `sqln` depends on the drivers |
+| Vault | `sqln-vault` is its own crate | Keep it in a driver crate or in `store` | `store` and the Kafka driver both use it |
+| Runtime | `sqln-runtime` holds `Manager`, the console tasks, and the jobs. `sqln-exec` keeps the event, end, option, and request types | Keep `Manager` in `sqln-exec` | `sqln-ui` uses only the types, so a runtime change does not recompile `sqln-ui` |
+| Tests | A test that needs a driver lists the driver crate or `sqln-connector` as a dev-dependency | Move each such test to `sqln` | Only the test build depends on the driver |
+
+Measured on 8 CPUs, dev profile, one-line change, after this split:
+
+| Changed file | `cargo build` | `cargo test --workspace --no-run` |
+|---|---|---|
+| `postgres.rs` (driver) | 5.4–5.8 s (was 9.7 s for `connector`) | 17–18 s (was 30–34 s) |
+| `exec/runner.rs` (runtime) | 4.3–6.2 s | 13 s |
+| `compare` (exec models) | 7.9–10.4 s | 21 s |
+| `ui` | 5.1–5.8 s (was 7.7 s) | 19 s (was 24–25 s) |
+| `app` | 4.5–6.6 s (was 4.9 s) | 13–14 s (was 10–12 s) |
+
+A crate without unit tests has `test = false`, so the new crates add only the unit test binaries of the crates that have unit tests.
+
+## Cargo workspace — 2026-11-14
+
+The user asked to split the project into separate crates, for a shorter compile time and for layers that the compiler checks. This entry replaces the rule "Start with a single Rust crate" of the [plan](INITIAL_PLAN.md).
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Goal | Compile time and layers that the compiler checks | Optional connectors; reuse as a library | User choice |
+| Crates | `sqln-core`, `sqln-sql`, `sqln-connector`, `sqln-store`, `sqln-exec`, `sqln-ui`, and `sqln`, in this layer order | One crate for each driver | The drivers share the session contract, and the user did not ask for optional connectors (YAGNI) |
+| Paths | The `sqln` crate re-exports every module, and each lower crate re-exports its dependencies with `pub(crate) use` | Change every `crate::` and `sqln::` path | The tests and the code keep their paths |
+| Lower layers | A connector sends `SinkEvent` and `TraceEvent`. `ExecEvent` implements `From` for both | Move `ExecEvent` to the connector crate | `ExecEvent` holds job types of higher layers. The sink boxes one future per batch of rows, not per row |
+| Saved types | Connection definitions, execution limits, AI settings, and export and import choices move to `store` | Move `store::config` up to `sqln-exec` | The saved formats stay in one crate. No saved format changes |
+| Screen states | The tab and form states of compare, diagram, data edit, export, and import move to `sqln-ui` as top-level modules | Keep them in the job modules | They use interface types. Their job models stay in `sqln-exec` |
+| Version | `[workspace.package]` holds one version for all crates | One version per crate | `text` reads `CARGO_PKG_VERSION`, and the crates ship together |
+| Publication | Each internal crate has `publish = false` | Publish the crates | The project does not publish to crates.io |
+| Test helpers | A helper that the unit tests of another crate need uses a `test-support` feature of its crate | Make the helper always public | The helper stays out of the release binary |
+| Integration tests | Each test is in the lowest crate that has all its dependencies, with one test binary per crate. Shared helpers are in `sqln-testkit` | Keep all tests in `tests/` of `sqln`; one binary per test file | User choice. A change in `app` does not link the tests of the lower crates |
+| Test binaries | One integration test binary per crate. Only `vault_probe` stays alone. CI and the Makefile select a file with its module name | One binary per group of files | User choice. Each binary adds link time. Temporary folders include the test module, so tests in one binary do not share a folder |
+
+Measured result on 8 CPUs, dev profile, one-line change, before and after the split:
+
+| Changed file | `cargo build` | `cargo test --no-run` |
+|---|---|---|
+| `app` | 13.3 s → 4.9 s | 44.3 s → 45.2 s |
+| `ui` | 8.8 s → 7.7 s | 45.0 s → 48.7 s |
+| `connector` | 13.0 s → 9.7 s | 50.5 s → 45.8 s |
+| `sql` | 13.9 s → 12.7 s | 52.5 s → 47.5 s |
+| `grid` | 9.4 s → 13.7 s | — |
+
+The link of the 22 test binaries takes most of `cargo test --no-run`, and the split does not change it. A change in a low crate recompiles each crate above it.
+
+`cargo test --workspace --no-run` after the move of the integration tests to their crates (28 integration test binaries), and after the merge into one binary per crate (8 integration test binaries, and no unit test binary for `main.rs` and `sqln-testkit`):
+
+| Changed file | Before the move | After the move | After the merge |
+|---|---|---|---|
+| `app` | 45.2 s | 39 s | 10–12 s |
+| `ui` | 48.7 s | 49–56 s | 24–25 s |
+| `connector` | 45.8 s | 57–60 s | 30–34 s |
+| `sql` | 47.5 s | 58–59 s | 30–33 s |
+
+The run of the test suite (`scripts/test-summary.sh`, without the build) goes from 15.5 s to 18–19 s, because more tests share one binary.
+
+## Kafka AI completion, MCP reads, and topic filter — 2026-11-13
+
+The user asks for prompts that tell the AI completion and the MCP agents how to build correct Kafka queries, and for a limit on the context of a cluster with many topics. The user approves the points below.
+This entry replaces decision 24 of "Kafka and Schema Registry", the Scope row of "Explicit AI SQL completion" for Kafka, and the Kafka row of the read-only protection of the MCP guide.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| AI completion | Kafka consoles offer the AI completion. Redis stays out | Keep Kafka out | User choice |
+| MCP reads | Without full access, `query` and `run_console` run the known Kafka commands: SELECT, `CONSUME`, `TOPICS`, `PARTITIONS`, `GROUPS`, and `GROUP`. `TAIL` and `EMIT CHANGES` refuse in every access level, because they do not end | Keep the refusal of each Kafka command | User choice. Each Kafka command only reads |
+| Field paths | The AI request and the MCP `describe` get the field paths of the Schema Registry, with their types and enum values | Topic names only | User choice. Without fields, the model guesses paths |
+| Large clusters | Two limits: an automatic focus on the topic of the statement, and a topic filter of the connection | One of the two | User choice |
+| Focus | A known topic after `FROM`, `CONSUME`, `TAIL`, or `PARTITIONS` goes alone, with its fields. Without a known topic, the request sends the names of the topics, then of the groups, as the context permits, first the names that start with the typed text | All topics in each request | Approved with the plan. A statement reads one topic |
+| Filter syntax | A list with commas. `*` matches any text. A pattern that starts with `!` removes its topics. Without an include pattern, all topics match before the excludes. The case of the letters must match | Only includes; a regular expression | User choice |
+| Filter effect | Visibility only: the catalog, the navigator, the local completion, the AI completion, and the MCP `describe`. A read of another topic still runs, and `TOPICS` lists all topics | Also refuse the reads of other topics | User choice. Same rule as the schema filter of SQL connections; `TOPICS` is a query, not the catalog |
+| Filter places | The **Topics** field of the Kafka form, `topics` in `config.json`, and `topics=` in the connection text | Form and `config.json` only | User choice. Same places as the consumer group |
+| Groups | The filter applies to topics only | Topics and groups | User choice. A group name does not hold the topic name |
+
+Implementation decisions:
+
+| Point | Decision | Reason |
+|---|---|---|
+| One guide | `src/connector/kafka/guide.md` is the compact syntax guide. The AI completion sends it after the common rules, and `get_context` returns it as `syntax.Kafka` when a listed connection is Kafka. A test parses each example and checks that the guide names each function. The Kafka system message, the rules and the guide, stays at 8 KiB or less. The guide holds no rule of the agent tools: the MCP instructions and the `query` description say that `TAIL` and `EMIT CHANGES` refuse | DRY. [Kafka](KAFKA.md) stays the guide for people |
+| AI rules | The system message holds the common rules, then the language of the dialect: one line for a SQL dialect, or the Kafka guide. The metadata budget subtracts its size, which is fixed for each dialect | The leading bytes stay stable for the prompt cache |
+| Case of values | The common rules tell the model to write names and enum values exactly as metadata writes them. The guide says that `=` and `IN` compare text with its case, and that `CONTAINS`, `ILIKE`, and `MATCHES` with `(?i)` ignore case | The Kafka filter compares text with its case, so `'failed'` does not match `'FAILED'` |
+| Empty fields | The request omits an empty `metadata` list, an empty `targets` list, and an absent `schema`, for all dialects | The model reads fewer bytes without a loss of facts |
+| AI fields cache | One snapshot holds the fields of at most 4 topics, the newest last. A request on a known topic without fields reads the snapshot again. A name that the catalog does not know reads no fields | Parallel requests on different topics do not cancel the reads of each other |
+| Omitted count | With a focus topic, the other topics do not count as omitted context | The reduced-context notice stays for a context that does not fit |
+| Registry failure | The AI request sends the topic without fields. The local completion of the editor shows the error | The completion still works without the registry |
+| MCP syntax error | Without full access, a Kafka statement that does not parse refuses with `invalid_sql`, the reason, the byte position, and a pointer to `syntax.Kafka` | The agent can correct its query |
+| MCP fields | `describe` with `schema: "topics"` and an object of kind `table` returns `{topic, fields}` as a JSON artifact. An empty list has a message with the reason. Other Kafka objects refuse with the supported form | No protocol change: `VERSION` stays 2 |
+| Compatibility | `topics` is optional, and `version` stays 1. Older SQLN binaries refuse a file with `topics`, because they refuse unknown fields | Same rule as the other optional keys |
+
+## Kafka Postgres functions — 2026-11-13
+
+The user asks for the Postgres functions that are useful to read topics, without aggregates, `ORDER BY`, `JOIN`, `unnest`, the jsonb operators, and hash functions. The user approves the points below.
+This entry removes `CASE`, date functions, `keys`, and slices from the "Out of scope" line of "Kafka SQL expressions — 2026-11-12". The other rules of that entry stay: two-valued logic, `[*]` values one at a time, absent and null, the temporary memory limit, Stop, and the timeout.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| Slices | `value.items[a:b]`: the first item is 0, and the item at `b` is not in the slice. A negative position counts from the end. `[:b]` and `[a:]` are permitted | 1-based with the end included, as Postgres arrays | User choice. Same base as `[0]` and `[-1]` |
+| `NOW()` | SQLN reads the clock one time for each message. The filter and the columns of one message get the same value | One time for the full read, as a Postgres transaction | User choice. `NOW() - timestamp` gives the real age in `EMIT CHANGES` |
+| Epoch to time | `TO_TIMESTAMP(x)` reads seconds, as Postgres. `TO_TIMESTAMP_MS(x)` reads milliseconds | One unit | User choice |
+| Time to epoch | `EPOCH(t)` gives seconds, with a fraction. `EPOCH_MS(t)` gives whole milliseconds | No reverse function | User choice |
+| Intervals | A number of milliseconds, also in a column | Text such as `00:05:12` | User choice. The grid sorts and compares a number |
+| Syntax | Only the forms with commas, which Postgres also accepts: `SUBSTRING(x, 2, 3)`, `TRIM(x, 'ab')` | `SUBSTRING(x FROM 2 FOR 3)`, `TRIM(BOTH … FROM x)` | Approved with the plan. One argument syntax |
+| `CASE` | Only `CASE WHEN condition THEN value … [ELSE value] END`. A condition accepts the full filter, also `ANY … END`. Without `ELSE` and without a match, the value is null | `CASE x WHEN a THEN …` | Approved with the plan |
+| Text arguments | The regular expression and the replacement of `REGEXP_REPLACE`, its flags, the format of `TO_CHAR`, and the texts of `ARRAY_TO_STRING` are texts between quotes. SQLN checks them before the read | Any value | Approved with the plan. A bad pattern refuses before the read |
+| Wrong type | A strict function gives no value for a wrong type, null, or an absent value, as `LOWER`. Text functions read only a JSON text; use `CAST(x AS TEXT)` | Automatic conversion | Approved with the plan. Same rule as the existing functions |
+| `OCTET_LENGTH` | With `key` or `value` alone: the bytes that Kafka sent, before the decoding. With another text: its UTF-8 bytes | The bytes of the decoded text | Approved with the plan. Finds the messages near `message.max.bytes` |
+| `KEYS` | A list of the names in alphabetical order | The order of the message | Approved with the plan. The JSON of SQLN does not keep the order |
+| Interval units | `ms`, `s`, `min`, `h`, `d`, and `week`, with their long and plural forms. Months, years, and `m` alone refuse | 30 days for a month | Approved with the plan. Their length changes; `m` can be a minute or a month |
+| Time zone | UTC | The local zone | Same rule as `timestamp` |
+
+Functions:
+
+| Group | Functions and rules |
+|---|---|
+| Text | `SPLIT_PART(x, sep, n)`: `n` starts at 1, a negative `n` counts from the end, and a part outside the text gives `''`. `SUBSTRING(x, start [, count])` counts characters with the Postgres rule for a start before 1. `SUBSTRING(x, 'regex')` gives the first group or the match, and null without a match. `LEFT` and `RIGHT` with a negative count remove characters from the other end. `TRIM`, `LTRIM`, and `RTRIM` remove spaces, or the characters of the second value. `REPLACE` replaces each match. `REGEXP_REPLACE(x, 'regex', 'replacement' [, 'flags'])` replaces the first match, or each match with `g`; `i` ignores case; `\1` to `\9` and `\&` in the replacement are written `'\\1'` because of the backslash escapes. `CONCAT` and `CONCAT_WS` ignore null and absent values, and write another type as JSON text |
+| Numbers | `ABS`, `FLOOR`, `CEIL`, and `ROUND(x [, places])`. `ROUND` rounds half away from zero on the decimal text of the number, so `ROUND(2.675, 2)` gives 2.68. Whole numbers keep all digits. `GREATEST` and `LEAST` ignore null and absent values; mixed types give no value |
+| Conditions | `NULLIF(a, b)` and `CASE` |
+| Lists | A slice reads its items as `[*]` does: a column shows a JSON list, one item that matches is enough, an empty slice gives NULL, and `SIZE` refuses it. `KEYS(x)` gives the names of an object. `ARRAY_TO_STRING(list, 'sep' [, 'null text'])` joins the items of a list or all values of a path with `[*]` or a slice |
+| Time | A time is a number of milliseconds since 1970, as `timestamp` in an expression. `NOW()`, `TO_TIMESTAMP`, `TO_TIMESTAMP_MS`, time plus or minus an interval, and `COALESCE`, `NULLIF`, `GREATEST`, `LEAST`, or `CASE` of times give a time. A time minus a time gives an interval. A column shows a time as `YYYY-MM-DDTHH:MM:SS.sssZ`, as the `timestamp` column. A text next to a time becomes a time before the read. `INTERVAL '1 hour 30 minutes'` is a number of milliseconds. `EPOCH`, `EPOCH_MS`, and `TO_CHAR` refuse a value that is not a time. `TO_CHAR` reads `YYYY YY MM DD HH24 HH12 HH MI SS MS US AM PM Mon Month Dy Day TZ`; names have no padding; text between double quotes and other characters stay the same |
+
+Compatibility:
+
+- No saved format changes. Existing commands and saved scripts keep their syntax and results.
+- An `ANY` or `EVERY` item named `case` keeps its meaning; `CASE` starts an expression only when no item has that name.
+- The completion has a limit of 50 items, so the function names come after the other words with the same match. An empty filter list shows the message columns and the condition words first.
+
+Implementation decisions:
+
+| Point | Decision | Reason |
+|---|---|---|
+| Modules | `filter/functions.rs` holds the function table, the argument checks, and the evaluation. `filter/time.rs` reads intervals and `TO_CHAR` formats | `expr.rs` keeps the expression tree and the parser |
+| One table | The completion, the keyword colors, and the parser read the names and the argument counts from one table | DRY |
+| Arguments | One visitor generates the combinations of the argument values without a list. `CONCAT`, `CONCAT_WS`, `GREATEST`, and `LEAST` give null for an argument without a value | Same Cartesian rule as arithmetic |
+| Message facts | `filter::Meta` holds `NOW()` and the received bytes of the key and the value. The read creates it one time for each message and gives it to the filter and to the columns | The row does not keep these facts |
+| Memory | Functions that generate text or lists use the temporary memory limit | Same rule as `\|\|` and `CAST` |
+
+## Kafka schema field completion — 2026-11-13
+
+The user asks for the completion of the fields of Avro, Protobuf, and JSON Schema values, and approves the points below.
+This entry replaces decision 23 of "Kafka and Schema Registry" and the words "It uses no database reads" of the Completion row of "Kafka SELECT queries".
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| Source | The latest schema of the subjects `<topic>-value` and `<topic>-key` in the Schema Registry. A topic without a subject or without a registry has no fields | A sample of messages | User choice. JSON without a schema has no suggestions |
+| Time of the read | The first `value.` or `key.` path of a topic in the editor or in the filter of a topic tab | The catalog read | User choice. Only the topics in use cost a read |
+| Note | While the read runs, an empty list shows `Reading the columns of <relation>.` below the cursor, in the hint style. A Kafka list shows `Reading the fields of <topic>.`. The note takes no keys and no clicks. A key that closes a list also closes the note | A status message | User choice: the note is at the place of the list |
+| Note scope | All connections: a SQL list that waits for the columns of a table shows the same note | Only Kafka | User choice. One rule in the editor and in the filter fields |
+| Store | The paths are the columns of the topic in the catalog, until **Refresh** of the catalog | A second cache | Reuses the column flow of SQL |
+| Navigator | An expanded topic shows its paths, and the expansion reads them | Only the completion | User choice |
+| Roots | `value` and `key` | Only `value` | User choice |
+| Failure | The status line gives the reason, and the note closes. A later path asks again | A silent empty list | No silent failure |
+| Type | Each field shows the type words of its schema format beside its name, such as `null \| record`, `int64`, or `repeated message` | Neutral JSON kinds | User choice |
+| Values | After `field =`, `field !=`, `field IN (`, and `field NOT IN (`, also after the items of the list, the list offers the values of an enum field first, in the order of the schema. A typed prefix narrows them, with or without the open quote `'`. After an open quote, only values show | Alphabetical order | User choice. The order of an enum often has a meaning |
+| Items | `ANY` and `EVERY` items that are open before the cursor get the fields of the items of their list, also when they are nested. `END` closes the last open item | No fields | Same paths as the list |
+| Literal | A Kafka text literal uses backslash escapes: `\'`, `\\`, `\n`, `\r`, `\t`, and `\xHH` for other control characters | Doubled quotes | SELECT and the line commands both read backslash escapes; only SELECT reads doubled quotes |
+
+Mapping rules: the paths follow the JSON of the decoder.
+
+| Format | Fields | No fields below |
+|---|---|---|
+| Avro | Record fields; each branch of a union; `[*]` for the items of an array; named types and references | Map, enum, fixed, primitive and logical types |
+| Protobuf | The first message of the schema, as the index `[0]` of the wire format; JSON names, such as `orderId`; the fields of a `oneof`; `[*]` for repeated messages | Map; each `google.protobuf.*` type; enum and scalar types |
+| JSON Schema | `properties`; `[*]` for `items` and `prefixItems`; `$ref` to the same document or to a reference name; each schema of `allOf`, `anyOf`, `oneOf`, `then`, and `else` | `additionalProperties`, `patternProperties`, a remote `$ref` |
+
+Type and value rules: a path that two schemas describe joins their type words with ` | ` and their values.
+
+| Format | Type words | Values |
+|---|---|---|
+| Avro | `null`, `boolean`, `int`, `long`, `float`, `double`, `bytes`, `string`, `record`, `enum`, `array`, `map`, `fixed`, and the logical names, such as `timestamp-millis`; a union joins its branches; a name gives the words of its type | The symbols of an enum, also in a union |
+| Protobuf | The scalar names, such as `int64`; `message`; `enum`; `map`; the short name of a `google.protobuf.*` type, such as `Timestamp`; `repeated` before the type of a list | The names of the enum values, as the decoder writes them |
+| JSON Schema | `type`, or its list joined; without `type`: `object`, `array`, or `enum` from the shape | The scalar items of `enum` and `const` |
+
+Implementation limits: 10 steps after the root, 2000 paths for each root, 100 values for each path, and 100,000 visited schema nodes. A recursive type stops at its second use in one path. The catalog keeps one note for each column; a source without notes keeps the default `Session::read_noted_columns`.
+
+Known limitations: only the subject names of the TopicNameStrategy; Protobuf uses only the first message; a new schema shows after **Refresh** of the catalog.
+
+## Kafka read progress — 2026-11-13
+
+The user asks for the count of consumed messages while a Kafka command runs, and approves the choices below.
+
+| Point | Approved decision | Rejected | Reason |
+|---|---|---|---|
+| Place | The summary line under the grid of the console result and of the topic tab | The status line | Each result has its own counts. The status line has less space at 80 columns |
+| Counts | Scanned messages; matched messages, only with a filter; bytes of the keys, values, and headers | Matched messages without a filter | Without a filter, the two counts are equal |
+| Percent | Only for a finite read: the largest part of its three ends, the offsets to the high offset of each partition at the start, `SCAN`, and `LIMIT` | A percent for `TAIL` | `TAIL` has no end |
+| Speed | `msg/s` of the scanned messages in the last second. The screen measures it at each frame; the first speed comes after one second | An average of the whole read | An average hides a pause of `TAIL` |
+| Lag | Only for `TAIL`: the sum of the high offset minus the next offset of each partition. A check of the high offsets runs each 2 seconds on a task, and the read never waits for it. A failed check removes the lag | Statistics of librdkafka; a check that stops the read | The statistics give the lag only for committed offsets, and SQLN never commits |
+| End | The console summary adds the counts and the reason: the end of each partition, `LIMIT`, the `SCAN` limit, or a stop. `TAIL` gives no reason, because it always ends with **Stop**. The topic tab shows the counts only while it loads | Keep `N rows read.` | The user choice |
+| Delivery | The connector writes atomic counters, and `ExecEvent::Columns` carries them once | One event for each change | Same reason as the export progress: the event queue has 256 places |
+
+These choices follow the rules above on the points the rules left open.
+
+| Subject | Choice | Reason |
+|---|---|---|
+| Order of the parts | State, scanned, matched, lag, speed, bytes | A narrow screen cuts the end of the line |
+| Notice in **Messages** | `Scanned N messages; M matched.` stays, with the rule 12 of "Kafka and Schema Registry" | The Messages history keeps it |
+| Row cap or data budget | The summary of the grid gives the reason, and the Kafka text adds only the counts | The grid text already explains the limit |
+
 ## Visible result tabs
 
 The user approves keeping the selected result tab visible when the row is too narrow.
@@ -253,7 +488,7 @@ The read-only scope, consumer isolation, filters, and Schema Registry rules stay
 | Columns | `*`, or a comma-separated list of message columns and `value.field` paths, with optional `AS alias`; no expressions, joins, aggregates, or ORDER BY |
 | Scripts | SELECT can span lines and ends at a semicolon or the end of the script. A semicolon is required before another statement. Native commands keep one command per line. A line that starts with `#` is a comment |
 | Compatibility | Existing commands and saved scripts keep their syntax. Both forms use the same read execution. No saved format changes |
-| Completion | SELECT offers message columns, catalog topics, and its clause words. It uses no database reads |
+| Completion | SELECT offers message columns, catalog topics, and its clause words. It uses no database reads. See "Kafka schema field completion — 2026-11-13" for field paths |
 
 Projection implementation: a whole column keeps its original value and type.
 A JSON path preserves numbers, returns JSON text for objects and arrays, and returns NULL for absent or non-JSON values.
@@ -290,8 +525,8 @@ It also reopens the rule "Search: literal text, no regular expression" only for 
 | 20. Lag | `GROUP <id>`: `topic`, `partition`, `committed`, `end`, `lag`, `member`. `GROUPS`: `group`, `state`, `protocol`, `members` | — | Read only |
 | 21. Schema Registry | Optional fields of a Kafka connection: URL, user, and password. `config.json` gets `"schemaRegistry": {"url", "username"}` and `"sasl"`; `version` stays 1. The password follows the **Credential** choice of the form: **Vault** writes it to the system vault, **Session** keeps it in memory | Always the vault | The user authorizes each secret storage |
 | 22. Schema cache | By id, for the life of the connector | Expiry | A schema id never changes |
-| 23. Completion | Fixed list of commands, then the topics or groups of the catalog, then the clause words | — | Topics are few, unlike Redis keys |
-| 24. AI and MCP | No AI completion and no MCP read for Kafka | — | Same rule as Redis |
+| 23. Completion | Fixed list of commands, then the topics or groups of the catalog, then the clause words. Replaced for field paths by "Kafka schema field completion — 2026-11-13" | — | Topics are few, unlike Redis keys |
+| 24. AI and MCP | No AI completion and no MCP read for Kafka. Replaced by "Kafka AI completion, MCP reads, and topic filter — 2026-11-13" | — | Same rule as Redis |
 
 Implementation decisions:
 
@@ -569,7 +804,7 @@ This adds optional `preferences.aiCompletion` settings. Existing configuration r
 | Point | Decision |
 |---|---|
 | Entry | AI row above local autocomplete items. Up selects it from the first local item; the configured suggestion acceptance key starts the request. No separate default shortcut. |
-| Scope | Consoles associated with PostgreSQL, MySQL, and SQLite. No Redis, unbound consoles, chat, agent tools, or generated SQL execution. |
+| Scope | Consoles associated with PostgreSQL, MySQL, and SQLite. No Redis, unbound consoles, chat, agent tools, or generated SQL execution. Kafka consoles join with "Kafka AI completion, MCP reads, and topic filter — 2026-11-13". |
 | Providers | One OpenAI-compatible Chat Completions provider, with OpenRouter as the default endpoint. Optional local servers run outside SQLN. The removed DeepSeek and protocol settings are legacy values that old files may still carry. |
 | Provider URL | Accept an API base or a full completion URL. Add the route only once; a legacy full FIM URL maps to the chat route on the same base. Model discovery uses `/models`. An empty endpoint uses OpenRouter. A real API and terminal test confirms these routes. |
 | Context | Cache the complete accessible structural schema. Respect connection schema filters. Refresh rebuilds a previously loaded snapshot; no polling for external changes. Never read records for completion. |
@@ -1413,7 +1648,7 @@ Implementation decisions:
 | Label | `ER diagram` | `Show the ER diagram` | The long label fills the 19 columns of a row and touches the next column |
 | Palette | `Ctrl+W D` replaces the explorer entry | Both entries | One entry acts on the row in the explorer, as the sessions do |
 | Structure tab | A structure of a table uses its table. Other structures and the sessions use the current schema | Refuse | Each tab of a source with tables has a target |
-| Width | At 80 columns, the hint row of a connection keeps each command | Leave out `F1 keys` | The row fits |
+| Width | At 80 columns, the hint row of a connection keeps each command | Leave out `F1 help` | The row fits |
 
 ## ER diagram — 2026-11-03
 
@@ -2396,3 +2631,20 @@ The user asked for theme creation in Settings, with a full palette editor, both 
 | Missing theme | The choice falls back to `auto`, with a note in the status bar | Keep the last colors or quit | The data is not critical, and the note names the theme and the fallback |
 | External change | The poll hashes a manifest of the folder names and contents, and the existing reload question covers the themes | Reload without a question | The rule of `config.json` applies, and `ReloadConfig` already reloads both |
 | Per-connection theme | The connection form cycles the built-in themes and the customs of both scopes | The connection picks its own scope only | The resolution is the merged catalog, and a project can share a theme that a global connection uses |
+
+## Getting-started guide in the help — 2026-11-13
+
+The user asked for a help screen for users who are lost. `F1` already showed only the key reference.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Kind | A getting-started guide with topics, short texts, and steps | Context help per panel; an interactive tour | User choice |
+| Place | Guide pages inside `F1`, with no new shortcut | A new command; a link on the home screen only | User choice |
+| Topics | Connect and open a console; run SQL and results; explorer and tables; Kafka SELECT; scripts, palette, and settings | More topics, such as AI | User choice. The Kafka topic was added later on the same day |
+| First page | `F1` always opens on the first topic | Open on **All keys**; guide only without a connection | User choice |
+| Sidebar | The window has a sidebar with one row per page: each topic, **All keys**, then each key group. It replaces the `Group:` row | Only the topics in the sidebar | User choice. One list for all pages. `Tab`, `Shift+Tab`, and a click open a page |
+| Search | The filter acts on the open page. On a topic, it keeps the matching steps and examples, and the title and text stay | The filter hides the sidebar pages without a match | User choice. A key page never shows the guide text |
+| Kafka topic | Always shown. It covers basic SELECT (`LIMIT`, `SCAN`, `PARTITION`, `START AT`), `WHERE` filters, `EMIT CHANGES`, and `TOPICS` and `PARTITIONS` | Only with a saved Kafka connection | User choice |
+| Divider and title | The sidebar divider joins the border only where the border line shows | Cut the title | The help title is longer than the sidebar, and the join hid one letter |
+| Keys of the steps | The effective key of the mode and the custom shortcuts. An explorer step starts with the focus key. A command without a key shows the palette path | Fixed key texts | The guide must stay correct with Vim mode and custom shortcuts |
+| Labels | The title is `Help · <mode> · <panel>`. The hint row shows `F1 help`, and the welcome screen shows **Show help** | Keep `Keys` and `F1 keys` | `F1` no longer opens on the keys. The width does not change |

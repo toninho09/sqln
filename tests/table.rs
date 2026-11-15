@@ -1,8 +1,6 @@
 // The table view: tabs, pages, the filter bar, sorting, the budget, and the pool.
 // The queries come from a recording connector. The data tests use real SQLite files.
 
-mod common;
-
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -10,16 +8,16 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::common::sample_catalog;
+use crate::common::{ctrl, key, shift, temp_db};
 use async_trait::async_trait;
-use common::sample_catalog;
-use common::{ctrl, key, shift, temp_db};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use sqln::app::{App, Options};
-use sqln::catalog::{Catalog, RelationRef};
+use sqln::catalog::{Catalog, Columns, RelationRef};
 use sqln::clipboard::MemoryClipboard;
 use sqln::connection::Definition;
 use sqln::connector::sqlite::SqliteTarget;
@@ -29,7 +27,7 @@ use sqln::connector::{
 };
 use sqln::console::Phase;
 use sqln::editor::KeyboardMode;
-use sqln::exec::{Flow, ReadLimit, ResultSink, Settings};
+use sqln::exec::{Flow, ReadLimit, ReadProgress, ResultSink, Settings};
 use sqln::grid::{Row, Value};
 use sqln::input::SuggestionKeys;
 use sqln::navigator::RowKind;
@@ -211,6 +209,14 @@ struct Recorder {
     redis: bool,
     /// The answer of the database to a signal. `f` means that the session is gone.
     signal_answer: Option<&'static str>,
+    /// The counts that a page sends with its columns, as a Kafka read does.
+    progress: Option<Arc<ReadProgress>>,
+    /// True gives a catalog without columns, and `read_columns` waits for
+    /// `columns_release`.
+    lazy_columns: bool,
+    columns_release: Notify,
+    /// True makes `read_columns` fail.
+    fail_columns: bool,
 }
 
 impl Recorder {
@@ -332,6 +338,9 @@ impl Session for RecordingSession {
             });
         }
         let (limit, offset) = page_of(sql);
+        if let Some(progress) = &self.0.progress {
+            sink.track(progress.clone());
+        }
         sink.set_columns(COLUMNS.iter().map(|name| (*name).to_owned()).collect())
             .await;
         let mut sent = 0;
@@ -377,10 +386,24 @@ impl Session for RecordingSession {
     }
 
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError> {
-        Ok(sample_catalog())
+        let mut catalog = sample_catalog();
+        if self.0.lazy_columns {
+            for schema in &mut catalog.schemas {
+                for relation in &mut schema.relations {
+                    relation.columns = Columns::NotLoaded;
+                }
+            }
+        }
+        Ok(catalog)
     }
 
     async fn read_columns(&mut self, _: &str, _: &str) -> Result<Vec<String>, ExecError> {
+        if self.0.lazy_columns {
+            self.0.columns_release.notified().await;
+        }
+        if self.0.fail_columns {
+            return Err(ExecError::new("The columns are not available."));
+        }
         Ok(COLUMNS.iter().map(|name| (*name).to_owned()).collect())
     }
 }
@@ -585,7 +608,7 @@ impl Fixture {
 
     /// Selects a row of the navigator and opens it, with `Enter`.
     fn open_table_of(&mut self, connection: usize, name: &str) {
-        common::open_table(&mut self.app, connection, name);
+        crate::common::open_table(&mut self.app, connection, name);
     }
 
     fn open_table(&mut self, name: &str) {
@@ -633,7 +656,7 @@ impl Fixture {
 }
 
 fn database(name: &str, setup: &str) -> PathBuf {
-    let path = temp_db(name);
+    let path = temp_db!(name);
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch(setup)
@@ -661,7 +684,7 @@ fn first_cell(f: &Fixture) -> String {
 impl Fixture {
     /// Presses `i` on a row of the navigator.
     fn structure_of(&mut self, kinds: &[RowKind], name: &str) {
-        common::select_row(&mut self.app, 0, kinds, name);
+        crate::common::select_row(&mut self.app, 0, kinds, name);
         self.code(KeyCode::Char('i'));
         self.loaded();
     }
@@ -798,7 +821,7 @@ fn a_click_on_a_section_reads_it() {
 fn a_section_cannot_change_during_a_read() {
     let (mut f, recorder) = Fixture::recorded(Recorder::default());
     recorder.hold.store(true, Ordering::SeqCst);
-    common::select_row(&mut f.app, 0, &[RowKind::Table], "users");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Table], "users");
     f.code(KeyCode::Char('i'));
     f.pump_until(|f| f.app.table().is_some_and(|tab| tab.is_busy()));
     f.code(KeyCode::Char(']'));
@@ -811,7 +834,7 @@ fn a_section_cannot_change_during_a_read() {
 #[test]
 fn i_on_a_column_shows_the_structure_of_its_table() {
     let mut f = structure_files("structure-column");
-    common::select_row(&mut f.app, 0, &[RowKind::Table], "items");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Table], "items");
     f.code(KeyCode::Right);
     f.pump_until(|f| {
         let connections = f.app.connections();
@@ -933,7 +956,7 @@ impl Fixture {
 fn a_busy_table_puts_the_stop_key_first() {
     let (mut f, recorder) = Fixture::recorded(Recorder::default());
     recorder.hold.store(true, Ordering::SeqCst);
-    common::open_table(&mut f.app, 0, "users");
+    crate::common::open_table(&mut f.app, 0, "users");
     f.pump_until(|f| f.app.table().is_some_and(|tab| tab.is_busy()));
     let row = f.hints_at(80);
     assert!(row.starts_with("Ctrl+W x stop"), "{row}");
@@ -1038,12 +1061,12 @@ fn a_structure_tab_hides_the_load_key_without_more_rows() {
 #[test]
 fn a_connection_shows_the_disconnect_key_only_with_sessions() {
     let (mut f, _) = Fixture::recorded(Recorder::default());
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
     let disconnect = "D Disconnect".to_owned();
-    assert!(!common::explorer_page(&f.app).contains(&disconnect));
+    assert!(!crate::common::explorer_page(&f.app).contains(&disconnect));
     f.open_table("users");
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
-    assert!(common::explorer_page(&f.app).contains(&disconnect));
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    assert!(crate::common::explorer_page(&f.app).contains(&disconnect));
 }
 
 #[test]
@@ -1052,8 +1075,8 @@ fn a_redis_row_hides_the_structure_key() {
         redis: true,
         ..Recorder::default()
     });
-    common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
-    let page = common::explorer_page(&f.app);
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
+    let page = crate::common::explorer_page(&f.app);
     assert!(
         !page.contains(&"i Show the structure".to_owned()),
         "{page:?}"
@@ -1088,6 +1111,9 @@ fn the_help_of_a_structure_tab_lists_only_the_keys_that_act() {
     let (mut f, _) = Fixture::recorded(Recorder::default());
     f.structure_of_table("users");
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     let screen = f.screen_at(100, 70);
     assert!(screen.contains("Next section"), "{screen}");
     assert!(!screen.contains("Next page of rows"), "{screen}");
@@ -1100,6 +1126,9 @@ fn the_help_of_a_table_tab_lists_the_structure_key() {
     let (mut f, _) = Fixture::recorded(Recorder::default());
     f.open_table("users");
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     let screen = f.screen_at(100, 70);
     assert!(screen.contains("Next page of rows"), "{screen}");
     assert!(
@@ -1128,7 +1157,7 @@ fn a_redis_source_refuses_the_structure_with_a_reason() {
         redis: true,
         ..Recorder::default()
     });
-    common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
     f.code(KeyCode::Char('i'));
     assert!(f.app.tables().is_empty());
     assert_eq!(recorder.count(), 0);
@@ -1153,7 +1182,7 @@ fn a_key_of_redis_refuses_the_structure_in_its_grid() {
 
 impl Fixture {
     fn open_sessions(&mut self) {
-        common::select_row(&mut self.app, 0, &[RowKind::Schema], "public");
+        crate::common::select_row(&mut self.app, 0, &[RowKind::Schema], "public");
         self.press(shift(KeyCode::Char('S')));
         self.loaded();
     }
@@ -1213,7 +1242,7 @@ fn a_source_without_sessions_refuses_with_a_reason() {
         redis: true,
         ..Recorder::default()
     });
-    common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
     f.press(shift(KeyCode::Char('S')));
     assert!(f.app.tables().is_empty());
     assert_eq!(recorder.count(), 0);
@@ -1422,7 +1451,7 @@ impl Fixture {
     }
 
     fn menu_has(&self, row: &str) -> bool {
-        let rows = common::prefix_page(&self.app);
+        let rows = crate::common::prefix_page(&self.app);
         rows.iter().any(|item| item == row)
     }
 }
@@ -1559,7 +1588,7 @@ fn ctrl_w_s_refuses_a_source_without_sessions() {
 #[test]
 fn the_page_runs_a_command_from_any_focus_on_the_row_of_the_explorer() {
     let (mut f, recorder) = Fixture::recorded(two_sessions());
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
     f.prefix('l');
     assert!(!f.app.hint().contains("Ctrl+W commands"), "the focus left");
     f.open_explorer_page();
@@ -1573,7 +1602,7 @@ fn the_page_runs_a_command_from_any_focus_on_the_row_of_the_explorer() {
 #[test]
 fn the_page_keeps_the_keys_of_the_explorer() {
     let (mut f, _) = Fixture::recorded(two_sessions());
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
     let consoles = f.app.consoles().len();
     f.open_explorer_page();
     f.code(KeyCode::Char('n'));
@@ -1584,7 +1613,7 @@ fn the_page_keeps_the_keys_of_the_explorer() {
 #[test]
 fn the_delete_key_of_the_page_asks_first() {
     let (mut f, _) = Fixture::recorded(two_sessions());
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
     f.open_explorer_page();
     f.code(KeyCode::Delete);
     f.assert_sees("Remove");
@@ -1605,7 +1634,7 @@ fn esc_closes_the_page_and_runs_nothing() {
 #[test]
 fn a_key_without_a_command_on_the_row_closes_the_page() {
     let (mut f, recorder) = Fixture::recorded(two_sessions());
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
     let before = recorder.count();
     f.open_explorer_page();
     // `g` acts only on a table or a view.
@@ -1627,7 +1656,7 @@ fn the_next_key_after_the_page_is_a_normal_key() {
 fn the_keys_of_ctrl_w_keep_their_meaning_with_the_focus_in_the_explorer() {
     let (mut f, _) = Fixture::recorded(two_sessions());
     f.open_table("users");
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
     let consoles = f.app.consoles().len();
     let before = f.app.tables()[0].opened;
     // `Ctrl+W n` is the next tab, and not the new console of the key `n`.
@@ -1641,8 +1670,8 @@ fn the_keys_of_ctrl_w_keep_their_meaning_with_the_focus_in_the_explorer() {
 #[test]
 fn the_vim_mode_uses_its_own_key_in_the_page() {
     let (mut f, _) = Fixture::recorded_in(two_sessions(), Settings::default(), KeyboardMode::Vim);
-    common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
-    assert!(common::explorer_page(&f.app).contains(&"x Remove connection".to_owned()));
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Connection], "server");
+    assert!(crate::common::explorer_page(&f.app).contains(&"x Remove connection".to_owned()));
     f.open_explorer_page();
     f.code(KeyCode::Char('x'));
     f.assert_sees("Remove");
@@ -2428,6 +2457,51 @@ fn a_stop_in_the_middle_of_the_first_page_keeps_the_rows_and_the_next_page_conti
 }
 
 #[test]
+fn the_counts_of_a_read_show_in_the_summary_while_the_page_loads() {
+    // The sink sends a batch at 200 rows, so the page must be larger than that.
+    let settings = Settings {
+        page_size: 300,
+        ..Settings::default()
+    };
+    let progress = Arc::new(ReadProgress::new(true));
+    let recorder = Recorder {
+        rows: 1_000,
+        mid_rows: 250,
+        progress: Some(progress.clone()),
+        ..Recorder::default()
+    };
+    let (mut f, recorder) = Fixture::recorded_with(recorder, settings);
+    recorder.mid_hold.store(true, Ordering::SeqCst);
+    f.open_table_of(0, "users");
+    f.pump_until(|f| f.app.table().is_some_and(|tab| tab.loaded() == 200));
+    for _ in 0..3 {
+        progress.add_scanned(1024);
+    }
+    progress.add_matched();
+    let start = Instant::now();
+    f.app.tick_at(start);
+    for _ in 0..250 {
+        progress.add_scanned(1024);
+    }
+    f.app.tick_at(start + Duration::from_secs(1));
+    for (width, height) in [(80, 24), (120, 35)] {
+        let text = f.screen_at(width, height);
+        assert!(text.contains("loading · 253 messages scanned"), "{text}");
+    }
+    let wide = f.screen_at(120, 35);
+    assert!(
+        wide.contains("253 messages scanned · 1 matched · 250 msg/s · 253.0 KiB"),
+        "{wide}"
+    );
+    recorder.mid_hold.store(false, Ordering::SeqCst);
+    recorder.release.notify_one();
+    f.loaded();
+    let text = f.screen_at(120, 35);
+    assert!(!text.contains("messages scanned"), "{text}");
+    assert!(text.contains("300 rows loaded"), "{text}");
+}
+
+#[test]
 fn a_page_can_be_larger_than_the_row_cap_of_the_consoles() {
     let settings = Settings {
         page_size: 1_500,
@@ -2553,7 +2627,10 @@ fn the_help_of_a_table_lists_its_own_keys() {
     f.open_table("users");
     f.grid();
     f.code(KeyCode::F(1));
-    f.assert_sees("Keys · Conventional · Table");
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
+    f.assert_sees("Help · Conventional · Table");
     f.code(KeyCode::Down);
     f.assert_sees("Sort by the column");
     f.assert_not_sees("Close the result");
@@ -2564,7 +2641,10 @@ fn the_help_of_a_table_lists_its_own_keys() {
     f.code(KeyCode::Esc);
     f.focus_filter();
     f.code(KeyCode::F(1));
-    f.assert_sees("Keys · Conventional · Filter");
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
+    f.assert_sees("Help · Conventional · Filter");
     f.assert_sees("Apply the filters");
 }
 
@@ -2576,7 +2656,10 @@ fn the_help_of_a_console_hides_the_keys_of_a_table() {
     });
     f.prefix('j');
     f.code(KeyCode::F(1));
-    f.assert_sees("Keys · Conventional · Results");
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
+    f.assert_sees("Help · Conventional · Results");
     f.assert_sees("Close the result");
     f.assert_not_sees("Load more rows");
 }
@@ -2961,6 +3044,7 @@ fn the_extra_row_of_a_page_leaves_the_budget_with_the_exact_cost() {
             key,
             columns: vec!["v".to_owned()],
             live: None,
+            progress: None,
         },
         &budget,
     );
@@ -3415,6 +3499,30 @@ fn the_close_mark_of_the_last_table_shows_the_home_screen() {
     f.close_tab("t (table)");
     assert!(f.app.home());
     assert!(!f.app.should_quit());
+}
+
+#[test]
+fn closing_the_table_on_screen_shows_the_tab_at_its_place_in_the_row() {
+    let setup = format!("{} CREATE TABLE u(id INTEGER);", numbered(3));
+    let mut f = Fixture::sqlite("close-place", &setup, Settings::default());
+    f.open_table("t");
+    // A second console stands between the two tables in the tab row.
+    f.prefix('h');
+    for _ in 0..20 {
+        f.code(KeyCode::Up);
+    }
+    f.code(KeyCode::Char('n'));
+    f.code(KeyCode::Enter);
+    assert_eq!(f.app.console().name, "console-2");
+    f.open_table("u");
+    f.click_text("t (table)");
+    assert_eq!(f.app.table().unwrap().relation.relation, "t");
+    f.close_tab("t (table)");
+    assert!(
+        f.app.table().is_none(),
+        "the console at the place of t takes the screen"
+    );
+    assert_eq!(f.app.console().name, "console-2");
 }
 
 // ---- the state of a run in the tab row ----
@@ -4110,11 +4218,17 @@ fn the_list_of_keys_names_the_pages_in_a_table_and_the_results_in_a_console() {
     let (mut f, _) = paged(250);
     f.grid();
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     f.assert_sees("Next page of rows");
     f.code(KeyCode::Esc);
     f.click_text("console-1");
     f.prefix('j');
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     f.assert_sees("Next result");
 }
 
@@ -4268,6 +4382,9 @@ fn a_failed_count_shows_the_error_and_keeps_the_rows() {
 fn the_help_lists_the_count_only_while_it_can_act() {
     let (mut f, _) = counted_table(250);
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     for _ in 0..6 {
         f.code(KeyCode::Down);
     }
@@ -4276,6 +4393,9 @@ fn the_help_lists_the_count_only_while_it_can_act() {
 
     let (mut f, _) = counted_table(5);
     f.code(KeyCode::F(1));
+    for _ in sqln::ui::text::GUIDE {
+        f.code(KeyCode::Tab);
+    }
     for _ in 0..6 {
         f.code(KeyCode::Down);
     }
@@ -4302,4 +4422,65 @@ fn the_row_window_works_in_a_table_and_stops_at_the_loaded_rows() {
     f.assert_sees("name : name1");
     f.code(KeyCode::Esc);
     assert_eq!(f.app.table().unwrap().result.view.row, 1);
+}
+
+// ---- the note of a list that waits for columns ----
+
+fn lazy_filter(fail_columns: bool) -> (Fixture, Arc<Recorder>) {
+    let recorder = Arc::new(Recorder {
+        rows: 5,
+        lazy_columns: true,
+        fail_columns,
+        ..Recorder::default()
+    });
+    let options = Options {
+        connector: Some(Arc::new(RecordingConnector(recorder.clone()))),
+        label: Some("server".to_owned()),
+        ..Options::default()
+    };
+    let mut f = Fixture::start(options);
+    f.open_table("users");
+    f.type_filter("users.");
+    f.pump_until(|f| {
+        f.screen_at(80, 24)
+            .contains("Reading the columns of users.")
+    });
+    (f, recorder)
+}
+
+#[test]
+fn the_filter_shows_a_note_until_the_columns_arrive() {
+    let (mut f, recorder) = lazy_filter(false);
+    assert!(f.app.table().unwrap().list.is_none());
+    recorder.columns_release.notify_one();
+    f.pump_until(|f| f.app.table().unwrap().list.is_some());
+    let screen = f.screen_at(80, 24);
+    assert!(!screen.contains("Reading the columns"), "{screen}");
+    assert!(screen.contains("name"), "{screen}");
+}
+
+#[test]
+fn a_failed_column_read_ends_the_note_and_gives_the_reason() {
+    let (mut f, recorder) = lazy_filter(true);
+    recorder.columns_release.notify_one();
+    f.pump_until(|f| !f.screen_at(80, 24).contains("Reading the columns"));
+    f.assert_sees("The columns are not available.");
+    assert!(f.app.table().unwrap().list.is_none());
+}
+
+#[test]
+fn escape_closes_the_note_of_the_filter() {
+    let (mut f, recorder) = lazy_filter(false);
+    f.code(KeyCode::Esc);
+    assert!(!f.screen_at(80, 24).contains("Reading the columns"));
+    recorder.columns_release.notify_one();
+    f.pump_until(|f| {
+        let catalog = f.app.connections()[0].catalog.as_ref().unwrap();
+        let (_, users) = catalog.relation(Some("public"), "users").unwrap();
+        users.columns != Columns::NotLoaded
+    });
+    assert!(
+        f.app.table().unwrap().list.is_none(),
+        "Esc ended the request"
+    );
 }

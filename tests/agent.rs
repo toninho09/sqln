@@ -1,5 +1,7 @@
 //! Assistant behavior through the private IPC, input events, and the existing executor.
 
+mod kafka;
+
 use crossterm::event::{Event, KeyCode};
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::{Value, json};
@@ -21,7 +23,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 fn seeded_db(name: &str) -> PathBuf {
-    let path = crate::common::temp_db(&format!("agent-{name}"));
+    let path = crate::common::temp_db!(&format!("agent-{name}"));
     let db = rusqlite::Connection::open(&path).unwrap();
     db.execute_batch("CREATE TABLE things(id INTEGER PRIMARY KEY, name TEXT, data BLOB); INSERT INTO things VALUES(1, 'one', X'00ff'),(2, 'two', NULL);").unwrap();
     path
@@ -953,7 +955,7 @@ fn network_connectors_apply_and_clean_the_agent_read_only_context() {
         let mut options = Options {
             connections: vec![sqln::connection::Definition::new(
                 variable,
-                sqln::connection::Source::Network(target),
+                sqln::connection::Source::Network(*target),
             )],
             ..Default::default()
         };
@@ -1623,7 +1625,7 @@ fn network_full_access_writes_and_never_leaves_a_transaction() {
         let mut options = Options {
             connections: vec![Definition::new(
                 variable,
-                sqln::connection::Source::Network(target),
+                sqln::connection::Source::Network(*target),
             )],
             ..Default::default()
         };
@@ -2254,7 +2256,7 @@ fn agent_log(h: &Harness) -> String {
 #[test]
 fn saved_mcp_settings_lower_the_access_close_and_open_the_endpoint_at_once() {
     use sqln::store::{Root, Store};
-    let base = crate::common::temp_dir("agent-mcp-live");
+    let base = crate::common::temp_dir!("agent-mcp-live");
     let project = Root::project(&base.join("project"));
     std::fs::create_dir_all(&project.dir).unwrap();
     let store = Store {

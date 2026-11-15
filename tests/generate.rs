@@ -90,7 +90,7 @@ struct Tree {
 
 impl Tree {
     fn new(name: &str) -> Self {
-        let path = temp_db(name);
+        let path = temp_db!(name);
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(

@@ -1,6 +1,6 @@
 # AI SQL completion
 
-AI completion is optional and off by default. It supports consoles associated with PostgreSQL, MySQL, SQLite, and DuckDB.
+AI completion is optional and off by default. It supports consoles associated with PostgreSQL, MySQL, SQLite, DuckDB, Kafka, and Databricks. Redis consoles do not offer it.
 It does not execute generated SQL. It does not use MCP sessions or agent access.
 
 ## Configure
@@ -110,6 +110,18 @@ Remote endpoints require HTTPS. Plain HTTP is allowed only for loopback.
 URLs cannot contain credentials, query strings, or fragments. SQLN does not follow HTTP redirects.
 Requests do not stream, retry automatically, or switch providers after a failure.
 
+## The system message
+
+Each request starts with one system message: the common rules, then the language of the dialect.
+
+- The common rules tell the model to write only the text at the cursor, without Markdown, to use only the names of the metadata, and to write names and enum values with the case of the metadata.
+- A SQL dialect adds one line: its name and its identifier quotes.
+- Kafka adds the Kafka syntax guide in `crates/session/src/connector/kafka/guide.md`: the SELECT clauses, the commands, the paths, the functions, and the forms that SQLN refuses. A test parses each example of the guide.
+
+The system message of one dialect never changes, so it keeps the prompt cache of the provider.
+Its size comes out of the metadata budget. A test keeps the Kafka system message at 8 KiB or less.
+The context and the metadata omit empty lists and an absent schema.
+
 ## Schema and limits
 
 The first completion reads the complete accessible structure of the configured schemas.
@@ -127,6 +139,20 @@ External database changes require a refresh; SQLN does not poll for them.
 Reads use the existing pool, authorization, cancellation, and database timeout.
 A user's reserved transaction session is never reused for metadata.
 
+### Kafka
+
+A Kafka snapshot holds the topics and the consumer groups of the catalog. The topic filter of the connection applies, so a hidden topic does not go. See [Kafka](KAFKA.md#connect).
+
+A Kafka statement reads one topic, so each request focuses on the topic of the statement at the cursor:
+
+1. SQLN reads the name after `FROM`, `CONSUME`, `TAIL`, or `PARTITIONS`.
+2. A known topic goes alone, with the field paths of its Schema Registry schemas: the types and the enum values.
+3. Without a known topic, the request sends the names of the topics, then of the groups, as the context permits. The names that start with the typed text come first, such as `pay` in `SELECT * FROM pay`.
+
+The snapshot holds the fields of the 4 topics of the latest requests. A request on another topic reads the snapshot again: one metadata read and the schemas of each kept topic.
+A topic without a registry schema goes without fields. A registry failure also sends the topic without fields; the local completion of the editor shows the error.
+With a focus topic, the other topics do not count as omitted context.
+
 Default limits:
 
 | Limit | Default |
@@ -141,7 +167,7 @@ Default limits:
 Context sizing conservatively counts UTF-8 bytes and protocol overhead. It is not the model's exact tokenizer.
 Set the context window no higher than the selected model supports.
 When the full schema does not fit, SQLN reduces context automatically.
-The metadata budget derives from provider limits alone, so one snapshot and one provider configuration produce one identical metadata section for every request.
+The metadata budget derives from provider limits and the dialect alone, so one snapshot and one provider configuration produce one identical metadata section for every request. Kafka is the exception: the focus topic and the typed start of a topic name choose and order the objects.
 Objects keep one canonical schema and name order; a whole object comes first, then its column metadata alone, then only its names, as space runs out.
 The `focus` field of the request lists, in the same order, the schema objects that the SQL references and their direct foreign-key targets.
 **Reduced context** identifies this state and gives included and omitted object counts.
@@ -190,7 +216,7 @@ An opt-in test runs the real binary in a pseudoterminal against a real OpenAI-co
 It requests a proposal, accepts it, checks the saved SQL, and verifies that acceptance does not execute SQL.
 
 1. Put the API key in a private file outside the repository.
-2. Run `SQLN_TEST_AI_KEY_FILE=/absolute/path/to/key SQLN_TEST_AI_MODEL=<model> cargo test --test terminal ai_chat_completion_runs_through_the_real_terminal -- --ignored --exact`. Set `SQLN_TEST_AI_BASE_URL` to use another endpoint; the default endpoint is OpenRouter.
+2. Run `SQLN_TEST_AI_KEY_FILE=/absolute/path/to/key SQLN_TEST_AI_MODEL=<model> cargo test --test sqln terminal::ai_chat_completion_runs_through_the_real_terminal -- --ignored --exact`. Set `SQLN_TEST_AI_BASE_URL` to use another endpoint; the default endpoint is OpenRouter.
 3. Remove the key file when it is no longer needed.
 
 The test uses a temporary configuration and a synthetic SQLite database. It does not modify the supplied key file.

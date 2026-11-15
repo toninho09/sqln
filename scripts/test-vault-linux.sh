@@ -29,8 +29,9 @@ container)
     chmod 700 "$XDG_RUNTIME_DIR"
     apt-get -qq update
     apt-get -qq install --no-install-recommends dbus > /dev/null
-    cargo test --locked --lib creds:: 2>&1 | grep -E '^test '
-    BIN="$(cargo test --locked --test vault_probe --no-run 2>&1 | sed -n 's/.*(\(.*vault_probe[^)]*\)).*/\1/p')"
+    cargo test --locked -p sqln-vault --lib 2>&1 | grep -E '^test '
+    cargo test --locked -p sqln-store --lib creds:: 2>&1 | grep -E '^test '
+    BIN="$(cargo test --locked -p sqln-store --test vault_probe --no-run 2>&1 | sed -n 's/.*(\(.*vault_probe[^)]*\)).*/\1/p')"
     export BIN
     probe "No session bus" read,write,delete
     dbus-run-session -- sh "$0" no-service

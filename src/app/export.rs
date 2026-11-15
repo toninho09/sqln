@@ -9,8 +9,8 @@ use crate::console::{Console, Phase, RunClock, Signal};
 use crate::exec::{
     ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, RunOptions, StatementStatus,
 };
-use crate::export::form::{AllRows, ExportForm, ExportRequest, ExportSource, RowChoice};
 use crate::export::{ExportOptions, ExportWriter, resolve_path, time_stamp};
+use crate::export_form::{AllRows, ExportForm, ExportRequest, ExportSource, RowChoice};
 use crate::grid::printable;
 use crate::input::Action;
 use crate::result::ResultTab;
@@ -105,7 +105,7 @@ impl App {
     }
 
     pub(super) fn active_result(&self) -> Option<&ResultTab> {
-        if self.diagram_active.is_some() {
+        if self.diagram_index().is_some() {
             return None;
         }
         if let Some(tab) = self.compare() {

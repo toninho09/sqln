@@ -388,7 +388,7 @@ impl Session for FaultSession {
 }
 
 fn faulty(name: &str, fault: Fault) -> (Harness, std::path::PathBuf, Arc<AtomicBool>) {
-    let path = crate::common::temp_db(name);
+    let path = crate::common::temp_db!(name);
     rusqlite::Connection::open(&path).unwrap().execute_batch("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT); INSERT INTO items VALUES (1, 'old'), (2, 'second');").unwrap();
     let entered = Arc::new(AtomicBool::new(false));
     let connector = Arc::new(FaultConnector {

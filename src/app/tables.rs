@@ -5,14 +5,17 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::guard::short;
 use super::{App, DialogAction, FRAMES_PER_PICTURE, Picker, PickerKind};
 use crate::catalog::{Columns, Relation, RelationRef};
+use crate::console::{Phase, RunClock};
 use crate::exec::{ConnectionId, ConsoleId};
 use crate::input::Action;
 use crate::navigator::{Row, RowKind};
 use crate::sql::Dialect;
-use crate::structure::{Scope, Section, SessionSignal, Structure, structure_sql};
+use crate::structure::{Scope, Section, SessionSignal, Structure, has_sessions, structure_sql};
+use crate::tab_item::TabItem;
 use crate::table::{Follow, PageRequest, TableFocus, TableTab, follow_choices};
 use crate::ui::text;
-use crate::ui::{TabView, compare, diagram, main_tab_label, run_badge, table};
+use crate::ui::theme::Theme;
+use crate::ui::{TabView, main_tab_label, run_badge};
 
 /// One tab of the tab row, with its index in the list of its kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,9 +26,14 @@ pub(super) enum Tab {
     Compare(usize),
 }
 
-/// Returns true for a source with a list of sessions.
-pub(super) fn has_sessions(dialect: Dialect) -> bool {
-    matches!(dialect, Dialect::Postgres | Dialect::MySql)
+/// The tab on screen. `Console` shows the active console.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Screen {
+    #[default]
+    Console,
+    Table(usize),
+    Diagram(usize),
+    Compare(usize),
 }
 
 impl App {
@@ -35,11 +43,45 @@ impl App {
 
     /// Returns the table tab on screen.
     pub fn table(&self) -> Option<&TableTab> {
-        self.table_active.map(|index| &self.tables[index])
+        self.table_index().map(|index| &self.tables[index])
     }
 
     pub(super) fn table_mut(&mut self) -> Option<&mut TableTab> {
-        self.table_active.map(|index| &mut self.tables[index])
+        self.table_index().map(|index| &mut self.tables[index])
+    }
+
+    /// Returns the index of the table tab on screen.
+    pub(super) fn table_index(&self) -> Option<usize> {
+        match self.screen {
+            Screen::Table(index) => Some(index),
+            _ => None,
+        }
+    }
+
+    /// Returns the index of the diagram tab on screen.
+    pub(super) fn diagram_index(&self) -> Option<usize> {
+        match self.screen {
+            Screen::Diagram(index) => Some(index),
+            _ => None,
+        }
+    }
+
+    /// Returns the index of the compare tab on screen.
+    pub(super) fn compare_index(&self) -> Option<usize> {
+        match self.screen {
+            Screen::Compare(index) => Some(index),
+            _ => None,
+        }
+    }
+
+    /// Returns the tab on screen when it is not a console.
+    pub(super) fn screen_item_mut(&mut self) -> Option<&mut dyn TabItem> {
+        match self.screen {
+            Screen::Table(index) => Some(&mut self.tables[index]),
+            Screen::Diagram(index) => Some(&mut self.diagrams[index]),
+            Screen::Compare(index) => Some(&mut self.compares[index]),
+            Screen::Console => None,
+        }
     }
 
     /// Lists the tab row in the order of opening. Consoles and tables stay in one row.
@@ -50,25 +92,10 @@ impl App {
             .enumerate()
             .filter(|(_, console)| !console.hidden);
         let consoles = consoles.map(|(index, console)| (console.opened, Tab::Console(index)));
-        let tables = self
-            .tables
-            .iter()
-            .enumerate()
-            .map(|(index, tab)| (tab.opened, Tab::Table(index)));
-        let diagrams = self
-            .diagrams
-            .iter()
-            .enumerate()
-            .map(|(index, tab)| (tab.opened, Tab::Diagram(index)));
-        let compares = self
-            .compares
-            .iter()
-            .enumerate()
-            .map(|(index, tab)| (tab.opened, Tab::Compare(index)));
         let mut order: Vec<(u64, Tab)> = consoles
-            .chain(tables)
-            .chain(diagrams)
-            .chain(compares)
+            .chain(opened(&self.tables, Tab::Table))
+            .chain(opened(&self.diagrams, Tab::Diagram))
+            .chain(opened(&self.compares, Tab::Compare))
             .collect();
         // Agent tabs come last, in the order of opening.
         order.sort_by_key(|(opened, tab)| (self.agent_tab(*tab), *opened));
@@ -100,18 +127,9 @@ impl App {
                     let label = main_tab_label(self.theme.icons.console, &name, unsaved);
                     (label, console.phase, &console.run)
                 }
-                Tab::Table(index) => {
-                    let tab = &self.tables[index];
-                    (table::tab_label(tab, &self.theme), tab.phase, &tab.run)
-                }
-                Tab::Diagram(index) => {
-                    let tab = &self.diagrams[index];
-                    (diagram::tab_label(tab, &self.theme), tab.phase, &tab.run)
-                }
-                Tab::Compare(index) => {
-                    let tab = &self.compares[index];
-                    (compare::tab_label(tab, &self.theme), tab.phase, &tab.run)
-                }
+                Tab::Table(index) => item_view(&self.tables[index], &self.theme),
+                Tab::Diagram(index) => item_view(&self.diagrams[index], &self.theme),
+                Tab::Compare(index) => item_view(&self.compares[index], &self.theme),
             };
             let picture = self.run_frame / FRAMES_PER_PICTURE;
             TabView {
@@ -125,11 +143,11 @@ impl App {
 
     /// Returns the position of the tab on screen in the tab row.
     pub(super) fn active_tab(&self) -> usize {
-        let active = match (self.compare_active, self.diagram_active, self.table_active) {
-            (Some(index), _, _) => Tab::Compare(index),
-            (None, Some(index), _) => Tab::Diagram(index),
-            (None, None, Some(index)) => Tab::Table(index),
-            (None, None, None) => Tab::Console(self.active),
+        let active = match self.screen {
+            Screen::Compare(index) => Tab::Compare(index),
+            Screen::Diagram(index) => Tab::Diagram(index),
+            Screen::Table(index) => Tab::Table(index),
+            Screen::Console => Tab::Console(self.active),
         };
         self.tab_order()
             .iter()
@@ -163,12 +181,10 @@ impl App {
     pub(super) fn select_table(&mut self, index: usize) {
         if index < self.tables.len() {
             self.console_mut().editor.close_suggestions();
-            if self.table_active != Some(index) {
+            if self.table_index() != Some(index) {
                 self.leave_tab();
             }
-            self.diagram_active = None;
-            self.compare_active = None;
-            self.table_active = Some(index);
+            self.screen = Screen::Table(index);
             if self.tables[index].pending {
                 if self.tables[index].edit_reload {
                     self.reload_saved_table();
@@ -518,7 +534,7 @@ impl App {
     pub(super) fn finish_session_signal(&mut self, index: usize) {
         if let Some(note) = self.tables[index].signal_note.take() {
             self.status = Some(note.to_owned());
-            if self.table_active == Some(index) {
+            if self.table_index() == Some(index) {
                 self.apply_table();
             }
         }
@@ -638,7 +654,7 @@ impl App {
         if request.is_some() && self.config_blocked() {
             return;
         }
-        let (Some(request), Some(index)) = (request, self.table_active) else {
+        let (Some(request), Some(index)) = (request, self.table_index()) else {
             return;
         };
         let tab = &self.tables[index];
@@ -764,7 +780,7 @@ impl App {
     }
 
     pub(super) fn stop_table(&mut self) {
-        let Some(index) = self.table_active else {
+        let Some(index) = self.table_index() else {
             return;
         };
         if self.stop_export(self.tables[index].id) {
@@ -791,40 +807,71 @@ impl App {
         if self.edit_close_guard(index) {
             return;
         }
-        self.cancel_auth_console(self.tables[index].id);
         self.discard_export(self.tables[index].id);
-        let tab = self.tables.remove(index);
-        self.budget.release(tab.result.table.bytes);
-        if let Some(manager) = &mut self.manager {
-            manager.close_console(tab.id);
-        }
-        // The tab on the right takes the place of a closed tab on screen. At the end of
-        // the row, the tab on the left takes it, and then the console.
-        self.table_active = match self.table_active {
-            Some(active) if active == index => (index < self.tables.len())
-                .then_some(index)
-                .or(index.checked_sub(1)),
-            Some(active) if active > index => Some(active - 1),
-            other => other,
+        self.close_item(Tab::Table(index), |app| &mut app.tables);
+    }
+
+    /// Closes a tab that is not a console: its tasks stop, and its rows leave the
+    /// budget. When the tab was on screen, the tab at the same place of the tab row
+    /// takes the screen.
+    pub(super) fn close_item<T: TabItem>(&mut self, tab: Tab, list: fn(&mut Self) -> &mut Vec<T>) {
+        let index = match tab {
+            Tab::Table(index) | Tab::Diagram(index) | Tab::Compare(index) => index,
+            Tab::Console(_) => return,
         };
-        // Behind the hidden console, a diagram takes the screen, or the home screen
-        // appears.
-        if self.home() {
-            if !self.diagrams.is_empty() {
-                self.diagram_active = Some(0);
-            } else if !self.compares.is_empty() {
-                self.compare_active = Some(0);
-            } else {
-                self.focus_navigator();
+        if index >= list(self).len() {
+            return;
+        }
+        let place = self.tab_order().iter().position(|item| *item == tab);
+        let ids = list(self)[index].console_ids();
+        self.cancel_agent_console(ids[0]);
+        for id in &ids {
+            self.agent.forget_console(*id);
+            self.cancel_auth_console(*id);
+        }
+        let mut item = list(self).remove(index);
+        item.release(&self.budget);
+        if let Some(manager) = &mut self.manager {
+            for id in ids {
+                manager.close_console(id);
             }
+        }
+        let active = match (tab, &mut self.screen) {
+            (Tab::Table(_), Screen::Table(active))
+            | (Tab::Diagram(_), Screen::Diagram(active))
+            | (Tab::Compare(_), Screen::Compare(active)) => Some(active),
+            _ => None,
+        };
+        match active {
+            Some(active) if *active == index => {
+                self.screen = Screen::Console;
+                let order = self.tab_order();
+                if order.is_empty() {
+                    self.focus_navigator();
+                } else if let Some(place) = place {
+                    self.select_tab(place.min(order.len() - 1));
+                }
+            }
+            Some(active) if *active > index => *active -= 1,
+            _ => {}
         }
     }
 
-    /// Closes the table tabs of a connection that the user removed.
-    pub(super) fn close_tables_of(&mut self, connection: ConnectionId) {
+    /// Closes the tabs that use a connection that the user removed.
+    pub(super) fn close_tabs_using(&mut self, connection: ConnectionId) {
         for index in (0..self.tables.len()).rev() {
-            if self.tables[index].connection == connection {
+            if self.tables[index].uses(connection) {
                 self.close_table(index);
+            }
+        }
+        for index in (0..self.diagrams.len()).rev() {
+            if self.diagrams[index].uses(connection) {
+                self.close_diagram(index);
+            }
+        }
+        for index in (0..self.compares.len()).rev() {
+            if self.compares[index].uses(connection) {
+                self.close_compare(index);
             }
         }
     }
@@ -865,7 +912,7 @@ impl App {
             Action::GridEndSession => self.ask_session_signal(SessionSignal::EndSession),
             Action::Stop => self.stop_table(),
             Action::CloseTab => {
-                if let Some(index) = self.table_active {
+                if let Some(index) = self.table_index() {
                     self.close_table(index);
                 }
             }
@@ -929,7 +976,7 @@ impl App {
 
     /// Edits the focused field, or it opens the list when there is no key.
     fn edit_table_field(&mut self, key: Option<KeyEvent>) {
-        let Some(index) = self.table_active else {
+        let Some(index) = self.table_index() else {
             return;
         };
         let connection = self.tables[index].connection;
@@ -975,4 +1022,17 @@ impl App {
             self.request_relation_columns(connection, missing);
         }
     }
+}
+
+/// Lists the tabs of one kind with their places in the order of opening.
+fn opened<T: TabItem>(items: &[T], tab: fn(usize) -> Tab) -> impl Iterator<Item = (u64, Tab)> {
+    items
+        .iter()
+        .enumerate()
+        .map(move |(index, item)| (item.opened(), tab(index)))
+}
+
+/// Returns the label, the phase, and the run of a tab that is not a console.
+fn item_view<'a>(item: &'a dyn TabItem, theme: &Theme) -> (String, Phase, &'a RunClock) {
+    (item.label(theme), item.phase(), item.run())
 }

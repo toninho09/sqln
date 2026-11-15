@@ -4,13 +4,14 @@
 //! screen shows. A command stays out of a list when its key does nothing in that state.
 
 use super::App;
+use super::modal::Modal;
 use crate::compare::form as compare_form;
-use crate::compare::tab::CompareTab;
+use crate::compare_tab::CompareTab;
 use crate::console::Focus;
-use crate::diagram::tab::DiagramTab;
-use crate::export::form as export_form;
+use crate::diagram_tab::DiagramTab;
+use crate::export_form;
 use crate::form::{Field, FieldStyle};
-use crate::import::form as import_form;
+use crate::import_form;
 use crate::input::{Action, Chord, Lookup, Region};
 use crate::navigator::{Navigator, RowKind};
 use crate::settings;
@@ -67,7 +68,7 @@ impl App {
             return self.hint_parts(&[
                 (explorer, "explorer"),
                 (Action::OpenPalette, "commands"),
-                (Action::Help, "keys"),
+                (Action::Help, "help"),
                 (Action::Quit, "quit"),
             ]);
         }
@@ -101,66 +102,30 @@ impl App {
         }
     }
 
-    /// Returns the commands of the window that receives the keys. The order of the
-    /// checks is the order of `on_key`, so the row names the keys that act.
+    /// Returns the commands of the window that receives the keys.
     fn window_hint(&self) -> Option<&'static [text::HintPart]> {
-        if !self.dialogs.is_empty() {
-            return Some(text::HINT_DIALOG);
-        }
-        if self.auth.prompt.is_some() {
-            return Some(text::AUTH_PASSWORD_HINT);
-        }
-        if self.conflicts.is_some() {
-            return Some(text::HINT_CONFLICTS);
-        }
-        if self.palette.is_some() {
-            return Some(text::HINT_PALETTE);
-        }
-        if self.history.is_some() {
-            return Some(text::HINT_HISTORY);
-        }
-        if self.rename.is_some() {
-            return Some(text::HINT_NAME);
-        }
-        if self.browser.is_some() {
-            return Some(text::HINT_BROWSER);
-        }
-        if let Some(form) = &self.settings_form {
-            if form.shortcuts.is_recording() {
-                return Some(if form.shortcuts.mouse_confirm {
-                    text::HINT_RECORD_MOUSE
-                } else {
-                    text::HINT_RECORD_KEYS
-                });
-            }
-            if form.shortcuts.is_editing()
-                && settings::SECTIONS[form.section]
-                    .fields
-                    .contains(&settings::Field::ShortcutCommands)
-            {
-                return Some(text::HINT_SHORTCUT_EDIT);
-            }
-            return Some(match form.focus {
-                settings::Field::ShortcutCommands => text::HINT_SHORTCUT_COMMANDS,
-                settings::Field::Themes => text::HINT_THEME_LIST,
-                settings::Field::ThemeColors => text::HINT_THEME_COLORS,
-                settings::Field::Sections => text::HINT_SETTINGS_SECTIONS,
-                settings::Field::Save | settings::Field::Cancel => text::HINT_FORM_BUTTON,
-                field if form.input(field).is_some() => text::HINT_SETTINGS_TEXT,
-                _ => text::HINT_FORM,
-            });
-        }
-        if let Some(form) = &self.export_form {
-            return Some(match form.focus {
+        self.top_modal().and_then(|modal| self.modal_hint(modal))
+    }
+
+    /// Returns the commands of a window over the screen.
+    fn modal_hint(&self, modal: Modal) -> Option<&'static [text::HintPart]> {
+        match modal {
+            Modal::Dialog => Some(text::HINT_DIALOG),
+            Modal::Password => Some(text::AUTH_PASSWORD_HINT),
+            Modal::Conflicts => Some(text::HINT_CONFLICTS),
+            Modal::Palette => Some(text::HINT_PALETTE),
+            Modal::History => Some(text::HINT_HISTORY),
+            Modal::Rename => Some(text::HINT_NAME),
+            Modal::Browser => Some(text::HINT_BROWSER),
+            Modal::Settings => self.settings_form.as_ref().map(settings_hint),
+            Modal::Export => self.export_form.as_ref().map(|form| match form.focus {
                 export_form::Field::Formats => text::HINT_EXPORT_FORMATS,
                 export_form::Field::File => text::HINT_FORM_PATH,
                 export_form::Field::Export | export_form::Field::Cancel => text::HINT_FORM_BUTTON,
                 field if form.input(field).is_some() => text::HINT_FORM_TEXT,
                 _ => text::HINT_FORM,
-            });
-        }
-        if let Some(form) = &self.compare_form {
-            return Some(match form.focus {
+            }),
+            Modal::Compare => self.compare_form.as_ref().map(|form| match form.focus {
                 _ if form.list_shown() => text::HINT_FORM_LIST,
                 compare_form::Field::Compare | compare_form::Field::Cancel => {
                     text::HINT_FORM_BUTTON
@@ -169,10 +134,8 @@ impl App {
                     text::HINT_FORM_TEXT
                 }
                 _ => text::HINT_FORM,
-            });
-        }
-        if let Some(form) = &self.import_form {
-            return Some(match form.focus {
+            }),
+            Modal::Import => self.import_form.as_ref().map(|form| match form.focus {
                 import_form::Field::Sections => text::HINT_IMPORT_SECTIONS,
                 field if field.is_path() => text::HINT_FORM_PATH,
                 import_form::Field::Columns => text::HINT_IMPORT_COLUMNS,
@@ -180,38 +143,35 @@ impl App {
                 import_form::Field::Import | import_form::Field::Cancel => text::HINT_FORM_BUTTON,
                 field if form.input(field).is_some() => text::HINT_FORM_TEXT,
                 _ => text::HINT_FORM,
-            });
-        }
-        if self.picker.is_some() {
-            let on_script = self.picker_script().is_some();
-            return Some(if on_script {
+            }),
+            Modal::Picker => Some(if self.picker_script().is_some() {
                 text::HINT_PICKER
             } else {
                 text::HINT_CHOOSE
-            });
+            }),
+            Modal::Help => Some(text::HINT_HELP),
+            Modal::Overlay => self.overlay.as_ref().map(|overlay| {
+                if overlay.contents.search().is_some() {
+                    text::HINT_OVERLAY_SEARCH
+                } else if overlay.other.is_some() {
+                    text::HINT_OVERLAY_JSON
+                } else if overlay.row.is_some() {
+                    text::HINT_OVERLAY_ROW
+                } else {
+                    text::HINT_OVERLAY
+                }
+            }),
+            Modal::Form => self.form.as_ref().map(|form| match form.focus.style() {
+                _ if form.schema_list.is_some() => text::HINT_MARK_LIST,
+                _ if form.focus.is_path() => text::HINT_FORM_PATH,
+                _ if form.focus == Field::Schemas => text::HINT_FORM_SCHEMAS,
+                FieldStyle::Text | FieldStyle::Secret => text::HINT_FORM_TEXT,
+                FieldStyle::Button => text::HINT_FORM_BUTTON,
+                FieldStyle::Choice | FieldStyle::Flag => text::HINT_FORM,
+            }),
+            // The cell edit has its own commands in its window.
+            Modal::Edit => None,
         }
-        if self.help.is_some() {
-            return Some(text::HINT_HELP);
-        }
-        if let Some(overlay) = &self.overlay {
-            return Some(if overlay.contents.search().is_some() {
-                text::HINT_OVERLAY_SEARCH
-            } else if overlay.other.is_some() {
-                text::HINT_OVERLAY_JSON
-            } else if overlay.row.is_some() {
-                text::HINT_OVERLAY_ROW
-            } else {
-                text::HINT_OVERLAY
-            });
-        }
-        self.form.as_ref().map(|form| match form.focus.style() {
-            _ if form.schema_list.is_some() => text::HINT_MARK_LIST,
-            _ if form.focus.is_path() => text::HINT_FORM_PATH,
-            _ if form.focus == Field::Schemas => text::HINT_FORM_SCHEMAS,
-            FieldStyle::Text | FieldStyle::Secret => text::HINT_FORM_TEXT,
-            FieldStyle::Button => text::HINT_FORM_BUTTON,
-            FieldStyle::Choice | FieldStyle::Flag => text::HINT_FORM,
-        })
     }
 
     fn with_commands(&self, mut items: Vec<HintItem>) -> Vec<HintItem> {
@@ -221,7 +181,7 @@ impl App {
             (Action::PreviousTab, "previous tab"),
             (Action::CloseTab, "close tab"),
             (Action::OpenSettings, "settings"),
-            (Action::Help, "keys"),
+            (Action::Help, "help"),
         ];
         for (action, label) in extras {
             if self.fits_cursor(action) {
@@ -384,7 +344,7 @@ impl App {
                 "suggestions",
                 console.editor.is_inserting(),
             ),
-            (Action::Help, "keys", true),
+            (Action::Help, "help", true),
             (
                 Action::RunSubquery,
                 "run subquery",
@@ -450,7 +410,7 @@ impl App {
             (Action::DiagramKeysOnly, keys, boxes),
             (Action::DiagramCopy, "mermaid", boxes),
             (Action::DiagramReload, "reload", !tab.is_busy()),
-            (Action::Help, "keys", true),
+            (Action::Help, "help", true),
         ])
     }
 
@@ -478,7 +438,7 @@ impl App {
             (Action::GridOpenValue, "value", rows),
             (Action::GridReload, "reload", !tab.is_busy()),
             (Action::GridExport, "export", true),
-            (Action::Help, "keys", true),
+            (Action::Help, "help", true),
         ])
     }
 
@@ -620,5 +580,32 @@ impl App {
             ),
         ]);
         self.hints_when(&commands)
+    }
+}
+
+/// Returns the commands of the settings window.
+fn settings_hint(form: &settings::SettingsForm) -> &'static [text::HintPart] {
+    if form.shortcuts.is_recording() {
+        return if form.shortcuts.mouse_confirm {
+            text::HINT_RECORD_MOUSE
+        } else {
+            text::HINT_RECORD_KEYS
+        };
+    }
+    if form.shortcuts.is_editing()
+        && settings::SECTIONS[form.section]
+            .fields
+            .contains(&settings::Field::ShortcutCommands)
+    {
+        return text::HINT_SHORTCUT_EDIT;
+    }
+    match form.focus {
+        settings::Field::ShortcutCommands => text::HINT_SHORTCUT_COMMANDS,
+        settings::Field::Themes => text::HINT_THEME_LIST,
+        settings::Field::ThemeColors => text::HINT_THEME_COLORS,
+        settings::Field::Sections => text::HINT_SETTINGS_SECTIONS,
+        settings::Field::Save | settings::Field::Cancel => text::HINT_FORM_BUTTON,
+        field if form.input(field).is_some() => text::HINT_SETTINGS_TEXT,
+        _ => text::HINT_FORM,
     }
 }

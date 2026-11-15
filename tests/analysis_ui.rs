@@ -28,7 +28,7 @@ impl Screen {
         settings: Settings,
         overrides: &[(&str, &[&str])],
     ) -> Self {
-        let path = temp_db(&format!("analysis-{name}"));
+        let path = temp_db!(&format!("analysis-{name}"));
         rusqlite::Connection::open(&path).unwrap();
         let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
         let overrides = overrides

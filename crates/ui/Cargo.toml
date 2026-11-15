@@ -1,0 +1,27 @@
+[package]
+name = "sqln-ui"
+description = "Drawing, themes, editor, and the screen states of SQLN"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+sqln-core.workspace = true
+sqln-sql.workspace = true
+sqln-session.workspace = true
+sqln-store.workspace = true
+sqln-exec.workspace = true
+crossterm.workspace = true
+edtui.workspace = true
+ratatui.workspace = true
+serde_json.workspace = true
+similar.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+sqln-testkit = { workspace = true, features = ["editor"] }
+tokio.workspace = true

@@ -1,14 +1,35 @@
-[package]
-name = "sqln"
-version = "0.4.1"
-edition = "2024"
-description = "Terminal database client with several SQL consoles"
-license = "MIT OR Apache-2.0"
-exclude = ["spikes/", "scripts/", "book/", "compose.test.yaml"]
-autotests = false
+[workspace]
+members = ["crates/*"]
+resolver = "3"
 
-[dependencies]
+[workspace.package]
+version = "0.5.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+sqln-core = { path = "crates/core" }
+sqln-sql = { path = "crates/sql" }
+sqln-session = { path = "crates/session" }
+sqln-vault = { path = "crates/vault" }
+sqln-postgres = { path = "crates/postgres" }
+sqln-mysql = { path = "crates/mysql" }
+sqln-sqlite = { path = "crates/sqlite" }
+sqln-duckdb = { path = "crates/duckdb" }
+sqln-redis = { path = "crates/redis" }
+sqln-kafka = { path = "crates/kafka" }
+sqln-databricks = { path = "crates/databricks" }
+sqln-connector = { path = "crates/connector" }
+sqln-store = { path = "crates/store" }
+sqln-exec = { path = "crates/exec" }
+sqln-runtime = { path = "crates/runtime" }
+sqln-ui = { path = "crates/ui" }
+sqln-testkit = { path = "crates/testkit" }
 apache-avro = { version = "0.22", default-features = false }
+arrow-array = { version = "60.1.0", default-features = false }
+arrow-cast = { version = "60.1.0", default-features = false }
+arrow-ipc = { version = "60.1.0", default-features = false }
+arrow-schema = { version = "60.1.0", default-features = false }
 arboard = { version = "3.7.0", default-features = false }
 async-trait = "0.1"
 bytes = "1"
@@ -47,21 +68,66 @@ unicode-width = "0.2.3"
 uuid = { version = "1", features = ["v4"] }
 webpki-roots = "1"
 zeroize = { version = "1.9", features = ["derive"] }
-
-[target.'cfg(unix)'.dependencies]
 signal-hook = "0.4"
 rustix = { version = "1", default-features = false, features = ["std", "event", "process", "fs"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
 secret-service = { version = "5.2", default-features = false }
 # Match the zbus types exposed by secret-service and the keyring store.
 zbus = { version = "5", default-features = false }
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-async-io-crypto-rust"] }
 
+[package]
+name = "sqln"
+version.workspace = true
+edition.workspace = true
+description = "Terminal database client with several SQL consoles"
+license.workspace = true
+exclude = ["spikes/", "scripts/", "book/", "compose.test.yaml"]
+autotests = false
+
+[[bin]]
+name = "sqln"
+path = "src/main.rs"
+# main.rs has no unit tests. The tests in tests/ run this binary.
+test = false
+
+[dependencies]
+sqln-core.workspace = true
+sqln-sql.workspace = true
+sqln-connector.workspace = true
+sqln-store.workspace = true
+sqln-exec.workspace = true
+sqln-runtime.workspace = true
+sqln-ui.workspace = true
+base64.workspace = true
+crossterm.workspace = true
+edtui.workspace = true
+ratatui.workspace = true
+rmcp.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+unicode-width.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+signal-hook.workspace = true
+rustix.workspace = true
+
 [dev-dependencies]
+sqln-store = { workspace = true, features = ["test-support"] }
+sqln-testkit = { workspace = true, features = ["mock", "editor", "http"] }
+async-trait.workspace = true
+duckdb.workspace = true
+futures-util.workspace = true
+keyring-core.workspace = true
+rdkafka.workspace = true
+redis.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+rustls.workspace = true
 rmcp = { version = "3.9", default-features = false, features = ["client", "transport-child-process"] }
 tokio = { version = "1.54", features = ["rt-multi-thread", "sync", "time", "macros"] }
 
@@ -69,97 +135,8 @@ tokio = { version = "1.54", features = ["rt-multi-thread", "sync", "time", "macr
 rustix = { version = "1", default-features = false, features = ["std", "process", "pty", "termios"] }
 
 [[test]]
-name = "ai"
-path = "tests/ai.rs"
-
-[[test]]
-name = "app"
-path = "tests/app.rs"
-
-[[test]]
-name = "batch"
-path = "tests/batch.rs"
-
-[[test]]
-name = "auto_refresh"
-path = "tests/auto_refresh.rs"
-
-[[test]]
-name = "diagram"
-path = "tests/diagram.rs"
-
-[[test]]
-name = "duckdb"
-path = "tests/duckdb.rs"
-
-[[test]]
-name = "editing"
-path = "tests/editing.rs"
-
-[[test]]
-name = "exec"
-path = "tests/exec.rs"
-
-[[test]]
-name = "grid"
-path = "tests/grid.rs"
-
-[[test]]
-name = "settings"
-path = "tests/settings.rs"
-
-[[test]]
-name = "sql"
-path = "tests/sql.rs"
-
-[[test]]
-name = "store"
-path = "tests/store.rs"
-
-[[test]]
-name = "ui"
-path = "tests/ui.rs"
-
-# Targets that scripts, CI, or documents refer to by name; they stay alone.
-[[test]]
-name = "auth"
-path = "tests/auth.rs"
-
-[[test]]
-name = "credentials"
-path = "tests/credentials.rs"
-
-[[test]]
-name = "latency"
-path = "tests/latency.rs"
-
-[[test]]
-name = "kafka"
-path = "tests/kafka.rs"
-
-[[test]]
-name = "redis"
-path = "tests/redis.rs"
-
-[[test]]
-name = "refused"
-path = "tests/refused.rs"
-
-[[test]]
-name = "servers"
-path = "tests/servers.rs"
-
-[[test]]
-name = "table"
-path = "tests/table.rs"
-
-[[test]]
-name = "terminal"
-path = "tests/terminal.rs"
-
-[[test]]
-name = "vault_probe"
-path = "tests/vault_probe.rs"
+name = "sqln"
+path = "tests/sqln.rs"
 
 [[bench]]
 name = "hot_paths"

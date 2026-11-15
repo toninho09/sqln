@@ -3,14 +3,12 @@
 //
 // Each test uses its own tables, so the tests can run at the same time.
 
-mod common;
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{ctrl, key};
+use crate::common::{ctrl, key};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -1781,7 +1779,7 @@ fn sink() -> ResultSink {
 }
 
 fn sink_with_cap(cap: usize) -> ResultSink {
-    let (events, inbox) = tokio::sync::mpsc::channel(1024);
+    let (events, inbox) = tokio::sync::mpsc::channel::<ExecEvent>(1024);
     std::mem::forget(inbox);
     let key = StatementKey {
         console: 1,
@@ -2229,7 +2227,7 @@ impl Screen {
     }
 
     fn focus_form(&mut self, field: Field) {
-        common::focus_form_field(&mut self.app, field);
+        crate::common::focus_form_field(&mut self.app, field);
     }
 
     fn choose_schema(&mut self, name: Option<&str>) {
@@ -2371,7 +2369,7 @@ fn the_application_runs_a_script_and_completes_real_names() {
 impl Screen {
     /// Opens a table of the first connection and waits for its first page.
     fn open_table(&mut self, name: &str) {
-        common::open_table(&mut self.app, 0, name);
+        crate::common::open_table(&mut self.app, 0, name);
         self.wait_table();
     }
 
@@ -3518,7 +3516,7 @@ impl Server {
 }
 
 fn import_file(name: &str, text: &str) -> std::path::PathBuf {
-    let path = common::temp_dir(name).join("data.txt");
+    let path = crate::common::temp_dir!(name).join("data.txt");
     std::fs::write(&path, text).unwrap();
     path
 }
@@ -3645,8 +3643,9 @@ fn a_file_of_an_export_returns_the_same_rows_on_each_server() {
             (ExportFormatOf::Json, ImportFormat::Json, true),
         ] {
             h.run_ok(&[&format!("DELETE FROM {to}")]);
-            let path = common::temp_dir(&format!("server-trip-{:?}-{format:?}", server.kind))
-                .join("data.txt");
+            let path =
+                crate::common::temp_dir!(&format!("server-trip-{:?}-{format:?}", server.kind))
+                    .join("data.txt");
             let options = ExportOptions {
                 format: export.format(),
                 ..ExportOptions::default()

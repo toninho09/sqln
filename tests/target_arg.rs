@@ -50,7 +50,7 @@ fn screen(app: &mut App) -> String {
 
 /// A global folder whose configuration names one saved SQLite connection.
 fn store_with_saved_connection(name: &str, saved: &Path) -> (Store, Root) {
-    let base = temp_dir(name);
+    let base = temp_dir!(name);
     let global = Root::global(base.join("global"));
     fs::create_dir_all(&global.dir).unwrap();
     let text = format!(
@@ -126,8 +126,8 @@ fn the_help_names_the_target() {
 
 #[test]
 fn the_first_console_uses_the_target_and_not_the_saved_connection() {
-    let saved = temp_db("target-saved.db");
-    let target = temp_db("target-file.db");
+    let saved = temp_db!("target-saved.db");
+    let target = temp_db!("target-file.db");
     fs::write(&saved, "").unwrap();
     fs::write(&target, "").unwrap();
     let (store, _) = store_with_saved_connection("target-first", &saved);
@@ -158,8 +158,8 @@ fn a_network_target_needs_no_saved_definition() {
 
 #[test]
 fn a_session_target_writes_no_file_of_the_configuration() {
-    let saved = temp_db("target-keep-saved.db");
-    let target = temp_db("target-keep-file.db");
+    let saved = temp_db!("target-keep-saved.db");
+    let target = temp_db!("target-keep-file.db");
     fs::write(&saved, "").unwrap();
     fs::write(&target, "").unwrap();
     let (store, global) = store_with_saved_connection("target-keep", &saved);
@@ -192,9 +192,9 @@ fn a_session_target_writes_no_file_of_the_configuration() {
 
 #[test]
 fn a_session_target_offers_no_project() {
-    let target = temp_db("target-offer.db");
+    let target = temp_db!("target-offer.db");
     fs::write(&target, "").unwrap();
-    let base = temp_dir("target-offer");
+    let base = temp_dir!("target-offer");
     let mut app = app_with(Options {
         database: Some(target),
         session_target: true,
@@ -210,9 +210,9 @@ fn a_session_target_offers_no_project() {
 
 #[test]
 fn a_missing_file_asks_first_and_then_binds_the_console() {
-    let saved = temp_db("target-missing-saved.db");
+    let saved = temp_db!("target-missing-saved.db");
     fs::write(&saved, "").unwrap();
-    let target = temp_dir("target-missing").join("new.db");
+    let target = temp_dir!("target-missing").join("new.db");
     let (store, _) = store_with_saved_connection("target-missing-store", &saved);
     let mut app = app_with(Options {
         database: Some(target.clone()),

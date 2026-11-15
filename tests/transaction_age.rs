@@ -44,7 +44,7 @@ fn screen(app: &mut App, width: u16) -> String {
 }
 
 fn app_in_transaction(name: &str) -> App {
-    let path = temp_db(name);
+    let path = temp_db!(name);
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch("CREATE TABLE t (a INT)")

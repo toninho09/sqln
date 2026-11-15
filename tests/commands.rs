@@ -268,7 +268,7 @@ struct Screen {
 
 impl Screen {
     fn new(name: &str, mode: KeyboardMode, overrides: &[(&str, &[&str])]) -> Self {
-        let path = crate::common::temp_db(&format!("commands-{name}"));
+        let path = crate::common::temp_db!(&format!("commands-{name}"));
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(
@@ -403,7 +403,7 @@ impl States {
     /// Opens two saved SQLite connections: `source` with rows to read and to edit,
     /// and `target` with a table that differs, for a compare.
     fn new(name: &str) -> Self {
-        let base = crate::common::temp_dir(&format!("palette-{name}"));
+        let base = crate::common::temp_dir!(&format!("palette-{name}"));
         let global = Root::global(base.join("global"));
         std::fs::create_dir_all(&global.dir).unwrap();
         let source = "\

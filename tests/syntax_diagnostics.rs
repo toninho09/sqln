@@ -399,7 +399,7 @@ fn warning_underlines_preserve_cursor_selection_and_use_no_color() {
 #[test]
 fn app_checks_both_modes_and_opens_full_warnings_with_a_custom_shortcut() {
     for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
-        let database = temp_db(&format!("syntax-{keyboard:?}"));
+        let database = temp_db!(&format!("syntax-{keyboard:?}"));
         rusqlite::Connection::open(&database).unwrap();
         let keymap = Keymap::with_overrides(
             keyboard,

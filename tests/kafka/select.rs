@@ -1,6 +1,6 @@
 use super::*;
 use sqln::connector::kafka::command::{Command, Read, Start, parse};
-use sqln::connector::kafka::filter::Evaluation;
+use sqln::connector::kafka::filter::{Evaluation, Message, Meta};
 use sqln::sql::{split_tokens, statement_at, tokenize};
 
 fn read(sql: &str, live: bool) -> Read {
@@ -211,7 +211,7 @@ fn projections_keep_types_bytes_null_and_exact_json_numbers() {
     let projection = read("SELECT key, offset, value.id AS id, value.name AS name, value.null, value.missing, value.items.0, value.items.1, timestamp, headers, schema FROM orders", false).projection.unwrap();
     assert_eq!(&projection.names()[..4], ["key", "offset", "id", "name"]);
     let row = projection
-        .apply(source.clone(), &Evaluation::default())
+        .apply(source.clone(), Meta::default(), &Evaluation::default())
         .unwrap();
     assert_eq!(row.get(0), source.get(3));
     assert_eq!(row.get(1), Some(Value::Number("9007199254740993")));
@@ -231,7 +231,9 @@ fn projections_keep_types_bytes_null_and_exact_json_numbers() {
         let projection = read("SELECT value, value.id FROM orders", false)
             .projection
             .unwrap();
-        let row = projection.apply(source, &Evaluation::default()).unwrap();
+        let row = projection
+            .apply(source, Meta::default(), &Evaluation::default())
+            .unwrap();
         assert_eq!(row.get(0), Some(value));
         assert_eq!(row.get(1), Some(Value::Null));
     }
@@ -271,7 +273,9 @@ fn array_columns_read_items_any_item_lists_and_sizes() {
             "SIZE(value.name)",
         ]
     );
-    let row = projection.apply(source, &Evaluation::default()).unwrap();
+    let row = projection
+        .apply(source, Meta::default(), &Evaluation::default())
+        .unwrap();
     assert_eq!(row.get(0), Some(Value::Text("a")));
     assert_eq!(row.get(1), Some(Value::Text("a")));
     assert_eq!(row.get(2), Some(Value::Text(r#"{"n":2}"#)));
@@ -323,7 +327,7 @@ fn columns_accept_expressions_functions_and_fields_of_the_key_and_headers() {
         ]
     );
     let row = projection
-        .apply(source.clone(), &Evaluation::default())
+        .apply(source.clone(), Meta::default(), &Evaluation::default())
         .unwrap();
     assert_eq!(row.get(0), Some(Value::Number("10")));
     assert_eq!(row.get(1), Some(Value::Text("[2,6]")));
@@ -372,7 +376,6 @@ fn select_completion_uses_the_statement_and_the_catalog_without_sql_tables() {
     let words = labels("SELECT * FROM orders WHERE ");
     for word in [
         "IN",
-        "SIZE",
         "IS",
         "MISSING",
         "BETWEEN",
@@ -382,10 +385,14 @@ fn select_completion_uses_the_statement_and_the_catalog_without_sql_tables() {
         "EVERY",
         "SATISFIES",
         "END",
-        "COALESCE",
         "TIMESTAMP",
         "OFFSET",
     ] {
+        assert!(words.iter().any(|item| item.0 == word), "{word}: {words:?}");
+    }
+    // The list has a cap, so the functions come after the other words.
+    for (typed, word) in [("SI", "SIZE"), ("COA", "COALESCE")] {
+        let words = labels(&format!("SELECT * FROM orders WHERE {typed}"));
         assert!(words.iter().any(|item| item.0 == word), "{word}: {words:?}");
     }
     assert!(
@@ -440,10 +447,11 @@ fn multiline_select_completion_and_run_selection_work_in_both_editor_modes() {
     use edtui::Index2;
     use sqln::editor::RunScope;
     for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
-        let mut fixture = common::Fixture::with_dialect("SELECT *\nFROM ", mode, Dialect::Kafka);
+        let mut fixture =
+            crate::common::Fixture::with_dialect("SELECT *\nFROM ", mode, Dialect::Kafka);
         fixture.catalog = catalog();
         if mode == KeyboardMode::Vim {
-            fixture.press(common::key(KeyCode::Char('i')));
+            fixture.press(crate::common::key(KeyCode::Char('i')));
         }
         fixture.editor.set_cursor(Index2::new(1, 5));
         fixture.write("ord");
@@ -453,9 +461,9 @@ fn multiline_select_completion_and_run_selection_work_in_both_editor_modes() {
             .position(|name| name == "orders")
             .unwrap();
         for _ in 0..selected {
-            fixture.press(common::key(KeyCode::Down));
+            fixture.press(crate::common::key(KeyCode::Down));
         }
-        fixture.press(common::key(KeyCode::Tab));
+        fixture.press(crate::common::key(KeyCode::Tab));
         assert_eq!(fixture.text(), "SELECT *\nFROM orders");
         let run = fixture.editor.plan_run(RunScope::Default).unwrap();
         assert_eq!(run.statements, ["SELECT *\nFROM orders"]);
@@ -468,7 +476,7 @@ fn a_select_live_result_uses_custom_run_and_stop_keys_at_minimum_size() {
     use sqln::connector::StatementEnd;
     use sqln::input::Keymap;
     for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
-        let handler: common::mock::RunHandler = Arc::new(|sql, mut sink| {
+        let handler: crate::common::mock::RunHandler = Arc::new(|sql, mut sink| {
             Box::pin(async move {
                 assert!(matches!(parse(&sql).unwrap(), Command::Tail(_)));
                 sink.set_columns(vec!["key".to_owned()]).await;
@@ -485,7 +493,10 @@ fn a_select_live_result_uses_custom_run_and_stop_keys_at_minimum_size() {
                 })
             })
         });
-        let connector = Arc::new(common::mock::MockConnector::new(Dialect::Kafka, handler));
+        let connector = Arc::new(crate::common::mock::MockConnector::new(
+            Dialect::Kafka,
+            handler,
+        ));
         let overrides = [
             ("run".to_owned(), vec!["f6".to_owned()]),
             ("stop".to_owned(), vec!["f7".to_owned()]),
@@ -507,14 +518,18 @@ fn a_select_live_result_uses_custom_run_and_stop_keys_at_minimum_size() {
         };
         let sql = "SELECT key\nFROM orders\nEMIT CHANGES;";
         screen.app.on_event(Event::Paste(sql.to_owned()));
-        screen.app.on_event(Event::Key(common::key(KeyCode::F(6))));
+        screen
+            .app
+            .on_event(Event::Key(crate::common::key(KeyCode::F(6))));
         screen.wait_for("1 row received. Live.");
         for (width, height) in [(80, 24), (120, 35), (80, 24)] {
             let text = screen.screen_at(width, height);
             assert!(text.contains("Live"), "{text}");
             assert!(text.contains("visible-event"), "{text}");
         }
-        screen.app.on_event(Event::Key(common::key(KeyCode::F(7))));
+        screen
+            .app
+            .on_event(Event::Key(crate::common::key(KeyCode::F(7))));
         let deadline = Instant::now() + Duration::from_secs(10);
         while screen.app.console().is_busy() {
             screen.app.drain_events();
@@ -686,7 +701,7 @@ fn projection_memory_failures_keep_the_session_and_do_not_send_partial_rows() {
         },
     );
     let statement = format!("SELECT value.items[*] + value.items[*] FROM {topic}");
-    let path = common::temp_dir("kafka-expression-export").join("rows.csv");
+    let path = crate::common::temp_dir!("kafka-expression-export").join("rows.csv");
     let writer =
         sqln::export::ExportWriter::create(&path, sqln::export::ExportOptions::default()).unwrap();
     // These delivery modes skip grid storage but still bound temporary expression buffers.
@@ -762,4 +777,389 @@ fn select_emit_changes_keeps_live_delivery_stop_and_session_reuse() {
     assert_eq!(h.collect(execution).end, Some(ExecutionEnd::Stopped));
     assert_eq!(h.run_ok("TOPICS").columns.len(), 1);
     assert_eq!(group_names(&uri), before);
+}
+
+/// The cells of a projection for one message, as text. NULL is `None`.
+fn cells(sql: &str, source: [Value<'_>; 7], meta: Meta) -> Vec<Option<String>> {
+    let projection = read(sql, false).projection.unwrap();
+    let row = projection
+        .apply(source.into_iter().collect(), meta, &Evaluation::default())
+        .unwrap();
+    (0..projection.names().len())
+        .map(|index| match row.get(index) {
+            Some(Value::Text(text) | Value::Number(text)) => Some(text.to_owned()),
+            Some(Value::Null) => None,
+            other => panic!("unexpected cell {other:?}"),
+        })
+        .collect()
+}
+
+fn value_row(value: &str) -> [Value<'_>; 7] {
+    [
+        Value::Number("0"),
+        Value::Number("0"),
+        Value::Null,
+        Value::Null,
+        Value::Text(value),
+        Value::Null,
+        Value::Null,
+    ]
+}
+
+fn texts(values: &[Option<&str>]) -> Vec<Option<String>> {
+    values
+        .iter()
+        .map(|value| value.map(str::to_owned))
+        .collect()
+}
+
+/// Checks the filter of a SELECT on one message.
+fn matches(condition: &str, json: &str, timestamp: i64, meta: Meta) -> bool {
+    let read = read(&format!("SELECT * FROM t WHERE {condition}"), false);
+    let json: serde_json::Value = serde_json::from_str(json).unwrap();
+    let message = Message {
+        timestamp: Some(timestamp),
+        json: Some(&json),
+        meta,
+        ..Message::default()
+    };
+    read.filter
+        .unwrap()
+        .matches(&message, &Evaluation::default())
+        .unwrap()
+}
+
+#[test]
+fn text_functions_follow_postgres() {
+    let mut source = value_row(
+        r#"{"name":"  Ana Silva  ","code":"ABC-123-XYZ","nick":"","email":"Ana@Example.com","n":5,"tags":["a",null],"note":null}"#,
+    );
+    source[3] = Value::Text("tenant-7:customer:42");
+    let sql = r#"SELECT SPLIT_PART(key, ':', 1), SPLIT_PART(key, ':', -1), SPLIT_PART(key, ':', 9),
+        SUBSTRING(value.code, 5, 3), SUBSTRING(value.code, 0, 3), SUBSTRING(value.code, 9),
+        SUBSTRING(value.code, '[0-9]+'), SUBSTRING(value.code, '-([A-Z]+)$'), SUBSTRING(value.code, 'q'),
+        LEFT(value.code, 3), RIGHT(value.code, -8), LEFT(value.code, -8),
+        TRIM(value.name), LTRIM(value.name), RTRIM('xxAnaxx', 'x'),
+        REPLACE(value.code, '-', '/'), REGEXP_REPLACE(value.code, '[A-Z]', '*'),
+        REGEXP_REPLACE(value.code, '([A-Z]+)-([0-9]+)', '\\2-\\1', 'g'),
+        REGEXP_REPLACE(value.email, 'example', 'X', 'gi'),
+        CONCAT(value.n, '-', value.note, value.missing, true), CONCAT_WS(', ', value.tags[0], value.note, value.n),
+        OCTET_LENGTH('é'), NULLIF(value.nick, ''), COALESCE(NULLIF(value.nick, ''), 'none'),
+        LOWER(value.n), SPLIT_PART(key, ':', 0)
+        FROM orders"#;
+    assert_eq!(
+        cells(sql, source, Meta::default()),
+        texts(&[
+            Some("tenant-7"),
+            Some("42"),
+            Some(""),
+            Some("123"),
+            Some("AB"),
+            Some("XYZ"),
+            Some("123"),
+            Some("XYZ"),
+            None,
+            Some("ABC"),
+            Some("XYZ"),
+            Some("ABC"),
+            Some("Ana Silva"),
+            Some("Ana Silva  "),
+            Some("xxAna"),
+            Some("ABC/123/XYZ"),
+            Some("*BC-123-XYZ"),
+            Some("123-ABC-XYZ"),
+            Some("Ana@X.com"),
+            Some("5-true"),
+            Some("a, 5"),
+            Some("2"),
+            None,
+            Some("none"),
+            None,
+            None,
+        ])
+    );
+}
+
+#[test]
+fn number_and_condition_functions_follow_postgres() {
+    let source =
+        value_row(r#"{"price":2.675,"neg":-7.5,"big":1234,"a":3,"b":9,"s":"x","list":[1,2]}"#);
+    let sql = "SELECT ABS(value.neg), ABS(-3), ROUND(value.price, 2), ROUND(2.5), ROUND(-2.5),
+        ROUND(value.big, -2), ROUND(1250, -2), ROUND(value.big, 1), FLOOR(value.neg), CEIL(value.neg),
+        GREATEST(value.a, value.b, value.missing, null), LEAST(value.a, value.b),
+        GREATEST(value.a, value.s), GREATEST(value.missing),
+        CASE WHEN value.a > 5 THEN 'big' WHEN value.a > 1 THEN 'mid' ELSE 'small' END,
+        CASE WHEN value.a > 5 THEN 1 END,
+        CASE WHEN ANY i IN value.list SATISFIES i = 2 END THEN 'has 2' END,
+        ROUND(value.s)
+        FROM orders";
+    assert_eq!(
+        cells(sql, source, Meta::default()),
+        texts(&[
+            Some("7.5"),
+            Some("3"),
+            Some("2.68"),
+            Some("3"),
+            Some("-3"),
+            Some("1200"),
+            Some("1300"),
+            Some("1234"),
+            Some("-8"),
+            Some("-7"),
+            Some("9"),
+            Some("3"),
+            None,
+            None,
+            Some("mid"),
+            None,
+            Some("has 2"),
+            None,
+        ])
+    );
+    let json = r#"{"a":3,"tags":["x"]}"#;
+    let meta = Meta::default();
+    assert!(matches(
+        "CASE WHEN value.a > 1 THEN 'mid' ELSE 'low' END = 'mid'",
+        json,
+        0,
+        meta
+    ));
+    assert!(matches(
+        "ANY case IN value.tags SATISFIES case = 'x' END",
+        json,
+        0,
+        meta
+    ));
+    assert!(matches(
+        "ANY t IN value.tags SATISFIES CASE WHEN t = 'x' THEN 1 ELSE 0 END = 1 END",
+        json,
+        0,
+        meta
+    ));
+}
+
+#[test]
+fn slices_keys_and_joined_lists_read_list_items() {
+    let source = value_row(
+        r#"{"items":[{"sku":"a"},{"sku":"b"},{"sku":"c"},{"sku":"d"}],"tags":["x",null,"y"],"obj":{"b":1,"a":2},"s":"x"}"#,
+    );
+    let sql =
+        "SELECT value.items[0:2].sku, value.items[-2:].sku, value.items[:1], value.items[3:1],
+        KEYS(value.obj), SIZE(KEYS(value.obj)), KEYS(value.s),
+        ARRAY_TO_STRING(value.tags, ','), ARRAY_TO_STRING(value.tags, ',', '*'),
+        ARRAY_TO_STRING(value.items[*].sku, '|'), ARRAY_TO_STRING(value.items[1:3].sku, '|'),
+        ARRAY_TO_STRING(value.s, ',')
+        FROM orders";
+    assert_eq!(
+        cells(sql, source, Meta::default()),
+        texts(&[
+            Some(r#"["a","b"]"#),
+            Some(r#"["c","d"]"#),
+            Some(r#"[{"sku":"a"}]"#),
+            None,
+            Some(r#"["a","b"]"#),
+            Some("2"),
+            None,
+            Some("x,y"),
+            Some("x,*,y"),
+            Some("a|b|c|d"),
+            Some("b|c"),
+            None,
+        ])
+    );
+    let json = r#"{"items":[{"sku":"a"},{"sku":"b"},{"sku":"c"}]}"#;
+    let meta = Meta::default();
+    assert!(matches("value.items[0:2].sku = 'b'", json, 0, meta));
+    assert!(!matches("value.items[0:2].sku = 'c'", json, 0, meta));
+    assert!(matches("value.items[-1:].sku = 'c'", json, 0, meta));
+    let error = parse("SELECT SIZE(value.items[0:2]) FROM t").unwrap_err();
+    assert_eq!(error.offset, Some(12));
+}
+
+#[test]
+fn time_functions_use_utc_milliseconds_and_show_times_as_text() {
+    // NOW() is 2026-01-02T00:00:00Z. The message is 30 minutes older.
+    let meta = Meta {
+        now: 1_767_312_000_000,
+        ..Meta::default()
+    };
+    let mut source =
+        value_row(r#"{"sec":1767312000,"ms":1767312000123,"text":"x","list":[0,1000]}"#);
+    source[2] = Value::Text("2026-01-01T23:30:00.000Z");
+    let sql = "SELECT NOW(), NOW() - timestamp AS age, timestamp + INTERVAL '1 hour' AS later,
+        TO_TIMESTAMP(value.sec), TO_TIMESTAMP_MS(value.ms), TO_TIMESTAMP(value.ms / 1000),
+        EPOCH(timestamp), EPOCH_MS(timestamp), EPOCH(TO_TIMESTAMP_MS(value.ms)),
+        TO_CHAR(timestamp, 'YYYY-MM-DD HH24:MI'), INTERVAL '90 min', TO_TIMESTAMP(value.text),
+        TO_TIMESTAMP_MS(value.list[*]), COALESCE(TO_TIMESTAMP(value.missing), NOW())
+        FROM orders";
+    assert_eq!(
+        cells(sql, source, meta),
+        texts(&[
+            Some("2026-01-02T00:00:00.000Z"),
+            Some("1800000"),
+            Some("2026-01-02T00:30:00.000Z"),
+            Some("2026-01-02T00:00:00.000Z"),
+            Some("2026-01-02T00:00:00.123Z"),
+            Some("2026-01-02T00:00:00.123Z"),
+            Some("1767310200"),
+            Some("1767310200000"),
+            Some("1767312000.123"),
+            Some("2026-01-01 23:30"),
+            Some("5400000"),
+            None,
+            Some(r#"["1970-01-01T00:00:00.000Z","1970-01-01T00:00:01.000Z"]"#),
+            Some("2026-01-02T00:00:00.000Z"),
+        ])
+    );
+    let json = r#"{"ms":1767312000123}"#;
+    let timestamp = 1_767_310_200_000;
+    assert!(matches(
+        "timestamp >= NOW() - INTERVAL '1 hour'",
+        json,
+        timestamp,
+        meta
+    ));
+    assert!(!matches(
+        "timestamp >= NOW() - INTERVAL '10 minutes'",
+        json,
+        timestamp,
+        meta
+    ));
+    assert!(matches(
+        "TO_TIMESTAMP_MS(value.ms) >= '2026-01-02'",
+        json,
+        timestamp,
+        meta
+    ));
+    assert!(!matches(
+        "TO_TIMESTAMP_MS(value.ms) < '2026-01-02T00:00:00.100Z'",
+        json,
+        timestamp,
+        meta
+    ));
+    assert!(matches(
+        "EPOCH_MS(NOW()) - value.ms = -123",
+        json,
+        timestamp,
+        meta
+    ));
+}
+
+#[test]
+fn octet_length_counts_received_bytes_of_the_key_and_the_value() {
+    let meta = Meta {
+        key_bytes: Some(3),
+        value_bytes: Some(40),
+        ..Meta::default()
+    };
+    let mut source = value_row(r#"{"name":"Zoë"}"#);
+    source[3] = Value::binary(&[0xff, 0x00, 0x01]);
+    let sql = "SELECT OCTET_LENGTH(key), OCTET_LENGTH(value), OCTET_LENGTH(value.name) FROM orders";
+    assert_eq!(
+        cells(sql, source, meta),
+        texts(&[Some("3"), Some("40"), Some("4")])
+    );
+    assert_eq!(
+        cells(sql, value_row("{}"), Meta::default()),
+        texts(&[None, None, None])
+    );
+    assert!(matches("OCTET_LENGTH(value) > 39", "{}", 0, meta));
+    assert!(!matches("OCTET_LENGTH(value) > 40", "{}", 0, meta));
+}
+
+#[test]
+fn function_errors_give_the_reason_and_the_position_before_the_read() {
+    for (sql, offset, words) in [
+        ("SELECT LEFT(value.a) FROM t", 7, "two values"),
+        ("SELECT NOW(1) FROM t", 7, "takes no values"),
+        ("SELECT CONCAT_WS(',') FROM t", 7, "two or more values"),
+        ("SELECT SUBSTRING(value.a) FROM t", 7, "two to three values"),
+        (
+            "SELECT REGEXP_REPLACE(value.a, value.b, 'x') FROM t",
+            31,
+            "text between quotes",
+        ),
+        (
+            "SELECT SUBSTRING(value.a, '(') FROM t",
+            26,
+            "regular expression",
+        ),
+        (
+            "SELECT REGEXP_REPLACE(value.a, 'x', 'y', 'z') FROM t",
+            41,
+            "flags",
+        ),
+        ("SELECT INTERVAL '1 month' FROM t", 16, "months"),
+        ("SELECT INTERVAL '1 fortnight' FROM t", 16, "units"),
+        ("SELECT EPOCH(value.x) FROM t", 13, "needs a time"),
+        ("SELECT TO_CHAR(value.t, 'YYYY') FROM t", 15, "needs a time"),
+        (
+            "SELECT TO_CHAR(timestamp, value.f) FROM t",
+            26,
+            "text between quotes",
+        ),
+        (
+            "SELECT ARRAY_TO_STRING(value.a, value.b) FROM t",
+            32,
+            "text between quotes",
+        ),
+        (
+            "SELECT CASE WHEN value.a = 1 THEN 2 FROM t",
+            36,
+            "CASE WHEN",
+        ),
+        (
+            "SELECT CASE value.a WHEN 1 THEN 2 END FROM t",
+            12,
+            "CASE WHEN",
+        ),
+    ] {
+        let error = parse(sql).unwrap_err();
+        assert_eq!(error.offset, Some(offset), "{sql}: {error:?}");
+        assert!(error.message.contains(words), "{sql}: {error:?}");
+    }
+    let error = parse("CONSUME t WHERE TRIM(value.a, 'x', 'y') = 'a'").unwrap_err();
+    assert!(error.message.contains("one to two values"), "{error:?}");
+}
+
+#[test]
+fn new_function_names_complete_and_highlight() {
+    let columns = labels("SELECT ");
+    let filter = labels("SELECT * FROM orders WHERE ");
+    for word in [
+        "SPLIT_PART",
+        "TO_TIMESTAMP_MS",
+        "EPOCH",
+        "CASE",
+        "INTERVAL",
+        "NOW",
+    ] {
+        assert!(columns.iter().any(|item| item.0 == word), "{word}");
+        let typed = labels(&format!("SELECT * FROM orders WHERE {}", &word[..2]));
+        assert!(typed.iter().any(|item| item.0 == word), "{word}: {typed:?}");
+    }
+    for word in ["CASE", "WHEN", "THEN", "ELSE", "END", "VALUE", "TIMESTAMP"] {
+        assert!(
+            filter.iter().any(|item| item.0 == word),
+            "{word}: {filter:?}"
+        );
+    }
+    let typed = labels("SELECT * FROM orders WHERE S");
+    let position = |word: &str| typed.iter().position(|item| item.0 == word).unwrap();
+    assert!(position("SCHEMA") < position("SIZE"), "{typed:?}");
+    assert!(
+        labels("CONSUME orders WHERE REGEXP_R")
+            .iter()
+            .any(|item| item.0 == "REGEXP_REPLACE")
+    );
+    for word in ["split_part", "CAST", "COALESCE", "CASE", "INTERVAL"] {
+        assert!(
+            sqln::complete::keywords::is_keyword(word, Dialect::Kafka),
+            "{word}"
+        );
+    }
+    assert!(!sqln::complete::keywords::is_keyword(
+        "SPLIT_PART",
+        Dialect::Postgres
+    ));
 }

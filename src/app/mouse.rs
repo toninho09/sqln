@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
 
-use super::{App, MAX_EDITOR_RATIO, MIN_EDITOR_RATIO};
+use super::{App, MAX_EDITOR_RATIO, MIN_EDITOR_RATIO, Screen};
 use crate::console::Focus;
-use crate::export::form::Field;
+use crate::export_form::Field;
 use crate::filter_list::ListRequest;
 use crate::form::FormRequest;
 use crate::input::Action;
@@ -127,15 +127,16 @@ impl App {
 
     /// Returns the result grid that the mouse acts on, with its area on the screen.
     fn active_grid(&mut self) -> Option<(&mut ResultTab, Rect)> {
-        if self.diagram_active.is_some() {
-            return None;
-        }
-        if let Some(index) = self.compare_active {
-            let tab = &mut self.compares[index];
-            return tab.done.then_some((&mut tab.result, self.layout.compare));
-        }
-        if let Some(index) = self.table_active {
-            return Some((&mut self.tables[index].result, self.layout.table.grid));
+        match self.screen {
+            Screen::Diagram(_) => return None,
+            Screen::Compare(index) => {
+                let tab = &mut self.compares[index];
+                return tab.done.then_some((&mut tab.result, self.layout.compare));
+            }
+            Screen::Table(index) => {
+                return Some((&mut self.tables[index].result, self.layout.table.grid));
+            }
+            Screen::Console => {}
         }
         let area = self.layout.console.results;
         let console = &mut self.consoles[self.active];
@@ -172,14 +173,13 @@ impl App {
             self.on_navigator_press(mouse);
         } else if layout.navigator_title.contains(position) {
             self.focus_navigator();
-        } else if self.diagram_active.is_some() {
-            self.on_diagram_press(mouse, position);
-        } else if self.compare_active.is_some() {
-            self.on_compare_press(mouse, position);
-        } else if self.table_active.is_some() {
-            self.on_table_press(mouse, position);
         } else {
-            self.on_console_press(mouse, position);
+            match self.screen {
+                Screen::Diagram(_) => self.on_diagram_press(mouse, position),
+                Screen::Compare(_) => self.on_compare_press(mouse, position),
+                Screen::Table(_) => self.on_table_press(mouse, position),
+                Screen::Console => self.on_console_press(mouse, position),
+            }
         }
     }
 
@@ -406,7 +406,7 @@ impl App {
     }
 
     fn on_wheel(&mut self, mouse: MouseEvent, position: Position) {
-        if self.diagram_active.is_some() && self.on_diagram_wheel(mouse, position) {
+        if self.diagram_index().is_some() && self.on_diagram_wheel(mouse, position) {
             return;
         }
         let (rows, columns) = match mouse.kind {

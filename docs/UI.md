@@ -229,7 +229,7 @@ The result tab row keeps the selected result, Plan, or Messages tab visible afte
                  │  2 │  2 │ Bruno  │ true                             │
                  │ 1,000 rows · row cap reached
  EDITOR  app  public  Auto · No transaction · Idle  Pool 0/5 · Data 1/256 MiB  3:14
- F5 run  Shift+F5 script  Ctrl+Space suggestions  Ctrl+F find  F1 keys
+ F5 run  Shift+F5 script  Ctrl+Space suggestions  Ctrl+F find  F1 help
 ```
 
 With `"preferences": { "icons": "nerd" }` in `config.json`, the database logo comes before the name, and `pg` leaves the line.
@@ -253,6 +253,7 @@ The next execution changes the badge. Consoles and tables use the same badges.
 
 **Time:** the status bar shows `Running 12.345s` during the execution and `Idle (last 2.440s)` after.
 A continuous command, such as `SUBSCRIBE` on Redis, shows `Live 12.345s`, and its summary shows the rows received and dropped. After **Stop**, its grid stays on screen.
+A Kafka read shows its counts in the summary while it runs: percent, scanned and matched messages, lag, speed, and size. See the [Kafka guide](KAFKA.md#follow-the-progress-of-a-read).
 The time has three decimal places, and the screen updates every 100 ms only during an execution. Long times use `1m 05.123s` and `1h 02m 05.123s`.
 The time starts with the execution, so the wait for a password does not count.
 
@@ -393,7 +394,7 @@ The mark leaves with the next edit, and an edit during the execution prevents th
 
 The active SQL console checks syntax after 400 ms without a text or dialect change.
 The check runs locally, outside the interface thread. It executes no SQL and reads no parameter values.
-PostgreSQL, MySQL, SQLite, and DuckDB use the bundled `sqlparser` dialects. Redis, Valkey, and Kafka have no SQL check.
+PostgreSQL, MySQL, SQLite, DuckDB, and Databricks use the bundled `sqlparser` dialects. Redis, Valkey, and Kafka have no SQL check.
 The existing lexer still serves highlighting, autocomplete, and incomplete editor text.
 
 Located warnings underline tokens without moving the cursor or changing the selection.
@@ -833,7 +834,7 @@ In the navigator, a Kafka connection shows two schemas: `topics` and `groups`. I
 `Enter` on a topic opens a tab with the label `<topic> (topic)`. It shows the last 500 messages, newest first, in one page.
 The tab has a `WHERE` field with the Kafka filter, such as `value.status = 'failed'`, without `ORDER BY` and sorting. **Apply filters** reads again with the filter.
 `Enter` on a group opens a tab with the label `<group> (group)`. It shows the committed offset, the end offset, and the lag of each partition.
-In the console, Kafka accepts multiline `SELECT` statements, separated by semicolons, and native commands, one per line. `SELECT` uses the finite `CONSUME` read. `SELECT … EMIT CHANGES` and `TAIL` show `Live` until **Stop**, as a continuous Redis command. Both forms use the same filters and execution. SELECT completion offers message columns, catalog topics, and clause words. See the [Kafka guide](KAFKA.md) for start positions, projections, and limits.
+In the console, Kafka accepts multiline `SELECT` statements, separated by semicolons, and native commands, one per line. `SELECT` uses the finite `CONSUME` read. `SELECT … EMIT CHANGES` and `TAIL` show `Live` until **Stop**, as a continuous Redis command. Both forms use the same filters and execution. SELECT completion offers message columns, catalog topics, and clause words. A `value.` or `key.` path offers the fields of the latest registry schema of the topic, with their types. A compared enum field offers its values, and an open `ANY` or `EVERY` item offers the fields of its list. See the [Kafka guide](KAFKA.md) for start positions, projections, and limits.
 
 ## 4. Connection form
 
@@ -866,9 +867,10 @@ The form has a sidebar, as the Settings dialog has. Each section shows its own f
 | Address | Host, Port, and Database; or the URI; or the SQLite file |
 | Credentials | User, Password, and Credential |
 | Security | TLS, CA file, client certificate, and client key |
-| Options | Schemas (Databases in MySQL and Redis), SQLite foreign keys and busy limit, Pool, Read only, Production, Connect limit, SQL limit, Idle limit, Theme, and Icon |
+| Options | Schemas (Databases in MySQL and Redis), SQLite foreign keys and busy limit, Kafka consumer group and topics, Pool, Read only (not in Kafka), Production, Connect limit, Statement limit, Idle limit, Theme, and Icon |
 
 A section without fields stays out of the sidebar, so SQLite has no Credentials and no Security. DuckDB shows File and Schemas, and it has no busy timeout or foreign keys.
+Databricks shows Catalog and Warehouse in Address, and Token in place of User and Password. The Schemas field holds `catalog.schema` names.
 The buttons stay at the bottom of each section.
 All sections keep the height of the largest section, so the window does not move. The width starts at 76 columns, grows to 140 columns on a larger screen, and leaves 8 columns free.
 The form of a connected connection also has the sidebar: General holds the name, and Options holds the schemas, the theme, the icon, and the production mark.
@@ -1005,6 +1007,7 @@ Contexts that need separate handling:
 
 Autocomplete offers schemas, tables, views, columns, aliases, CTEs, and dialect keywords.
 Local lists also provide built-in types, functions with signatures, column options, and query clauses.
+A list that waits for the columns of a relation shows the note `Reading the columns of <relation>.` below the cursor, in the hint style. A Kafka list shows `Reading the fields of <topic>.`. The note takes no keys and no clicks; a key that closes a list closes it. A failed read closes the note, and the status line gives the reason.
 User-defined function completion stays out of scope.
 Without a catalog available, suggest the keywords of the dialect.
 The focus, tab, and execution shortcuts are defined in [KEYMAP.md](KEYMAP.md).
@@ -1410,32 +1413,45 @@ The JSON stays compact in this window. `f` toggles formatting only in the cell v
 
 ### Help screen
 
-`F1` shows the effective shortcuts of the active mode and the focused panel.
+`F1` opens a window with a sidebar. The sidebar lists the pages: the five guide topics, **All keys**, then each key group.
+`F1` always opens on the first topic. The sidebar scrolls the smallest number of rows that keeps the open page in view.
+
+The guide topics are: **Connect**, **Run SQL**, **Tables**, **Kafka**, and **Scripts**.
+Each topic has a title, a short text, steps, and examples. Each step shows the effective key of the active mode and the custom shortcuts.
+A step of the explorer starts with the focus key, such as `Ctrl+W h a`. A command without a key shows the palette path, such as `Ctrl+P → Export the result to a file`.
+The **Kafka** topic shows SELECT examples: `TOPICS`, `PARTITIONS`, `LIMIT`, `SCAN`, `PARTITION`, `START AT`, `WHERE` on the value, the key, the headers, and the metadata, `IS MISSING`, and `EMIT CHANGES`.
+
+**All keys** and the groups show the effective shortcuts of the active mode and the focused panel.
 The reference groups the panel keys, execution, transactions, connections, tabs, panels, and application commands.
 Empty groups do not appear. The key column has a separate style. Long keys and descriptions wrap without cuts.
 
-Type words to filter by group, command, or shortcut. Each word must match, without case sensitivity.
-`Tab` and `Shift+Tab` select a group, or **All**. The filter stays when the group changes.
+Type words to filter the open page. Each word must match, without case sensitivity.
+On a topic, the filter keeps the steps and examples that match. The title and the text of the topic always show.
+On a key page, the filter matches group, command, or shortcut. A key page never shows the guide text.
+`Tab` and `Shift+Tab` open the next or the previous page. A click on a sidebar row opens its page. The filter stays when the page changes.
 `Up` and `Down` scroll one row. `PageUp` and `PageDown` scroll one page. The mouse wheel also scrolls.
 `Ctrl+Home` and `Ctrl+End` go to the start and end. `Home` and `End` move the search cursor.
-`Ctrl+U` clears the filter. `Ctrl+C` copies the reference. `Esc`, `Enter`, and `F1` close it without running commands.
-The footer shows the matching command count and the visible row range. A scrollbar shows the position.
+`Ctrl+U` clears the filter. `Ctrl+C` copies the open page. `Esc`, `Enter`, and `F1` close it without running commands.
+The footer shows the count of matching items or commands and the visible row range. A scrollbar shows the position.
 
 ```text
-╭─ Keys · Conventional · Editor ──────────────────────────╮
-│ > Type a command or shortcut to filter                  │
-│ Group: All · Tab / Shift+Tab                            │
-│ Editor (5)                                             │
-│ Ctrl+Space                Suggestions                  │
-│ Ctrl+F                    Find and replace             │
-│ Ctrl+Z, Ctrl+Y            Undo, redo                    │
-│ Tab                       Accept the suggestion        │
-│ Esc                       Close the list               │
-│                                                        │
-│ Run (8)                                                │
-│ ctrl+enter, f5, ctrl+w e   Run the selection or the     │
-│                           statement                    │
-╰───────────────────────────── 42 commands · 1–10/56 ─────╯
+╭ Help · Conventional · Editor ───────────────────────────────────────────────╮
+│                │ >  Type a word to filter the guide                          │
+│   Connect      │                                                             │
+│   Run SQL      │ 4. Read Kafka with SELECT                                   │
+│   Tables       │ A Kafka connection uses kafka://host:9092, or kafkas://     │
+│ > Kafka        │ with TLS. SQLN reads the messages in the client with a ...  │
+│   Scripts      │                                                             │
+│   All keys     │ Enter                     Open the last 500 messages of the │
+│   Editor       │                           selected topic                    │
+│   Run          │ F5                        Run the statement at the cursor   │
+│   Transaction  │                                                             │
+│   Connection   │ List the topics                                             │
+│   Tabs         │   TOPICS                                                    │
+│   Panels       │                                                             │
+│   Application  │ Watch the new messages until you stop the read              │
+│                │   SELECT * FROM orders EMIT CHANGES;                        │
+╰────────────────┴──────────────────────────────────────── 17 items · 1–16/52 ─╯
 ```
 
 ### Prefix menu
@@ -1494,7 +1510,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
                         │                         \___ \| | | | |   |  \| |
                         │                          ___) | |_| | |___| |\  |
                         │                         |____/ \__\_\_____|_| \_|
-                        │                                   0.4.0
+                        │                                   0.5.0
                         │                            No console is open
                         │
                         │                 Ctrl+W h a  Add a connection
@@ -1502,13 +1518,13 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
                         │                 Ctrl+W h s  Scripts without a connection
                         │                   Ctrl+W ,  Open the settings
                         │                     Ctrl+P  Show all commands
-                        │                         F1  Show all keys
+                        │                         F1  Show help
                         │                   Ctrl+W q  Quit SQLN
 ```
 
 Without a connection, the screen shows **No connection yet**, without the **Open a console** row.
 With the explorer hidden, the first row is `Ctrl+W b` **Show the explorer**, the status line shows `HOME`,
-and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.4.0` instead.
+and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.5.0` instead.
 
 ### Welcome screen
 
@@ -1516,14 +1532,14 @@ The screen appears over an editor without text. It keeps no state and captures n
 The first typed character removes the screen.
 
 ```text
-           SQLN 0.4.0
+           SQLN 0.5.0
            Write SQL here
 
                    F5  Run the statement
              Shift+F5  Run the script
            Ctrl+Space  Show suggestions
                Ctrl+P  Show all commands
-                   F1  Show all keys
+                   F1  Show help
 ```
 
 Without a connection, the screen shows **No connection yet** and the path `Ctrl+W h a`.
@@ -1571,7 +1587,7 @@ The bar keys are in [KEYMAP.md](KEYMAP.md).
 
 ## UI kit
 
-The screens share `src/ui/kit`. A new modal, field, button, or list uses the kit instead of drawing its own chrome or choosing theme fields directly.
+The screens share `crates/ui/src/ui/kit`. A new modal, field, button, or list uses the kit instead of drawing its own chrome or choosing theme fields directly.
 
 | Piece | Shared base | Allowed differences |
 |---|---|---|

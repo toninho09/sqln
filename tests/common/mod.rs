@@ -1,156 +1,13 @@
-#![allow(dead_code)]
+//! Helpers that drive the whole application. The helpers of the lower crates come
+//! from `sqln-testkit`.
 
-pub mod mock;
+#![allow(dead_code, unused_imports)]
 
-use std::cell::RefCell;
-use std::rc::Rc;
+pub use sqln_testkit::*;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode};
 use sqln::app::App;
-use sqln::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
-use sqln::clipboard::MemoryClipboard;
-use sqln::editor::{KeyboardMode, SqlEditor};
-use sqln::sql::Dialect;
 use sqln::ui::which_key::KeyGroup;
-
-/// A fixed catalog for a test without a database.
-pub fn sample_catalog() -> Catalog {
-    let relation = |name: &str, kind, columns: &[&str]| Relation {
-        name: name.to_owned(),
-        kind,
-        columns: Columns::Loaded(columns.iter().map(|column| (*column).to_owned()).collect()),
-        foreign_keys: Vec::new(),
-        referencing: Vec::new(),
-    };
-    Catalog {
-        schemas: vec![
-            Schema {
-                name: "public".to_owned(),
-                relations: vec![
-                    relation(
-                        "users",
-                        RelationKind::Table,
-                        &["id", "name", "email", "created_at"],
-                    ),
-                    relation(
-                        "orders",
-                        RelationKind::Table,
-                        &["id", "user_id", "total", "status"],
-                    ),
-                    relation("active_users", RelationKind::View, &["id", "name"]),
-                    relation(
-                        "Order Items",
-                        RelationKind::Table,
-                        &["order_id", "sku", "quantity"],
-                    ),
-                ],
-                partial: false,
-                objects: Vec::new(),
-            },
-            Schema {
-                name: "sales".to_owned(),
-                relations: vec![relation(
-                    "invoices",
-                    RelationKind::Table,
-                    &["number", "due_date"],
-                )],
-                partial: false,
-                objects: Vec::new(),
-            },
-        ],
-        current_schema: Some("public".to_owned()),
-    }
-}
-
-pub fn key(code: KeyCode) -> KeyEvent {
-    KeyEvent::new(code, KeyModifiers::NONE)
-}
-
-pub fn shift(code: KeyCode) -> KeyEvent {
-    KeyEvent::new(code, KeyModifiers::SHIFT)
-}
-
-pub fn alt(code: KeyCode) -> KeyEvent {
-    KeyEvent::new(code, KeyModifiers::ALT)
-}
-
-pub fn ctrl(c: char) -> KeyEvent {
-    KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
-}
-
-pub struct Fixture {
-    pub editor: SqlEditor,
-    pub clipboard: Rc<RefCell<MemoryClipboard>>,
-    pub catalog: Catalog,
-}
-
-impl Fixture {
-    pub fn new(text: &str, keyboard: KeyboardMode) -> Self {
-        Self::with_dialect(text, keyboard, Dialect::Postgres)
-    }
-
-    pub fn with_dialect(text: &str, keyboard: KeyboardMode, dialect: Dialect) -> Self {
-        let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
-        let editor = SqlEditor::new(text, keyboard, dialect, clipboard.clone());
-        Self {
-            editor,
-            clipboard,
-            catalog: sample_catalog(),
-        }
-    }
-
-    pub fn conventional(text: &str) -> Self {
-        Self::new(text, KeyboardMode::Conventional)
-    }
-
-    pub fn vim(text: &str) -> Self {
-        Self::new(text, KeyboardMode::Vim)
-    }
-
-    /// Sends one key through the path that the application uses.
-    pub fn press(&mut self, key: KeyEvent) {
-        if !self
-            .editor
-            .on_list_key(key, sqln::input::SuggestionKeys::Tab)
-        {
-            self.editor.on_key(key, Some(&self.catalog));
-        }
-    }
-
-    pub fn press_all(&mut self, keys: &[KeyEvent]) {
-        for key in keys {
-            self.press(*key);
-        }
-    }
-
-    pub fn write(&mut self, text: &str) {
-        for c in text.chars() {
-            self.press(key(KeyCode::Char(c)));
-        }
-    }
-
-    pub fn text(&self) -> String {
-        self.editor.text()
-    }
-
-    pub fn labels(&self) -> Vec<String> {
-        self.editor.suggestions().map_or_else(Vec::new, |list| {
-            list.completion
-                .items
-                .iter()
-                .map(|item| item.label.clone())
-                .collect()
-        })
-    }
-
-    pub fn clipboard_text(&self) -> String {
-        self.clipboard.borrow().text.clone()
-    }
-
-    pub fn selected(&self) -> Option<String> {
-        self.editor.selected_text()
-    }
-}
 
 /// Lists the rows of a page of the `Ctrl+W` menu, as `key label`.
 fn menu_rows(groups: Vec<KeyGroup>) -> Vec<String> {
@@ -169,23 +26,6 @@ pub fn explorer_page(app: &App) -> Vec<String> {
 /// Lists the rows of the first page of the `Ctrl+W` menu, as `key label`.
 pub fn prefix_page(app: &App) -> Vec<String> {
     menu_rows(app.prefix_menu())
-}
-
-/// Returns the path of a database of one test. The file may exist.
-pub fn temp_db_path(name: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join(env!("CARGO_CRATE_NAME"))
-        .join(format!("{name}.db"))
-}
-
-/// Returns a path for a database of one test. The file does not exist.
-pub fn temp_db(name: &str) -> std::path::PathBuf {
-    let path = temp_db_path(name);
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    for suffix in ["", "-journal", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-    }
-    path
 }
 
 /// Opens a table with the keys of the navigator. `Enter` on its row does it.
@@ -254,16 +94,6 @@ pub fn select_row(
         }
     }
     panic!("{name} is not in the navigator");
-}
-
-/// Returns an empty folder that belongs to one test.
-pub fn temp_dir(name: &str) -> std::path::PathBuf {
-    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join(env!("CARGO_CRATE_NAME"))
-        .join(format!("dir-{name}"));
-    let _ = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path).unwrap();
-    path
 }
 
 /// Moves the focus of the connection form to a field with the keys of a user. A field of

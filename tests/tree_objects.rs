@@ -26,7 +26,7 @@ struct Tree {
 
 /// A database with two triggers. The second connection has no trigger.
 fn database(name: &str, triggers: bool) -> std::path::PathBuf {
-    let path = temp_db(name);
+    let path = temp_db!(name);
     let connection = rusqlite::Connection::open(&path).unwrap();
     connection
         .execute_batch(

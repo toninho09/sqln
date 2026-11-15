@@ -20,6 +20,8 @@ mod hints;
 mod history;
 mod import;
 mod keys;
+mod modal;
+use modal::Modal;
 mod mouse;
 mod persist;
 mod review;
@@ -27,6 +29,7 @@ mod scripts;
 mod session;
 mod sql_file;
 mod tables;
+use tables::Screen;
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -38,7 +41,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{Event, KeyEventKind, MouseEventKind, poll, read};
+use crossterm::event::{Event, KeyEventKind, MouseButton, MouseEvent, MouseEventKind, poll, read};
 use edtui::EditorMode;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -52,24 +55,24 @@ use crate::browser::FileBrowser;
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{SharedClipboard, SystemClipboard};
 use crate::compare::form::CompareForm;
-use crate::compare::tab::CompareTab;
+use crate::compare_tab::CompareTab;
 use crate::connection::{Connection, Definition};
 use crate::connector::{Connector, Namespace, TransactionCommand};
 use crate::console::{AfterTransaction, Console, Focus, Phase};
 use crate::creds::{Identity, PlainFile};
 use crate::definition::Target;
-use crate::diagram::tab::DiagramTab;
+use crate::diagram_tab::DiagramTab;
 use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, Settings};
 use crate::export::ExportChoices;
-use crate::export::form::ExportForm;
+use crate::export_form::ExportForm;
 use crate::form::ConnectionForm;
 use crate::generate::Template;
 use crate::grid::Budget;
 use crate::help::Help;
 use crate::history::HistoryList;
 use crate::import::ImportChoices;
-use crate::import::form::ImportForm;
+use crate::import_form::ImportForm;
 use crate::input::{Chord, Keymap, Region, SuggestionKeys};
 use crate::navigator::Navigator;
 use crate::palette::Palette;
@@ -433,17 +436,12 @@ pub struct App {
     tables: Vec<TableTab>,
     /// The count of opened tabs.
     tabs_opened: u64,
-    /// The table tab on screen, or `None` when the active console is on screen.
-    table_active: Option<usize>,
+    /// The tab on screen.
+    screen: Screen,
     /// The diagram tabs. The tab row mixes them with the other tabs in the order of opening.
     diagrams: Vec<DiagramTab>,
-    /// The diagram tab on screen. At most one of `table_active`, this, and
-    /// `compare_active` has a value.
-    diagram_active: Option<usize>,
     /// The compare tabs. The tab row mixes them with the other tabs in the order of opening.
     compares: Vec<CompareTab>,
-    /// The compare tab on screen.
-    compare_active: Option<usize>,
     connections: Vec<Connection>,
     navigator: Navigator,
     navigator_focused: bool,
@@ -508,7 +506,7 @@ pub struct App {
     settings_form: Option<SettingsForm>,
     export_form: Option<ExportForm>,
     import_form: Option<ImportForm>,
-    edit_form: Option<crate::data_edit::form::EditForm>,
+    edit_form: Option<crate::edit_form::EditForm>,
     compare_form: Option<CompareForm>,
     /// The file browser of the focused path field in a dialog or in the form.
     browser: Option<FileBrowser>,
@@ -570,9 +568,9 @@ impl App {
         ) {
             (Some(connector), ..) => connector.dialect(),
             (None, _, Some(_)) => Dialect::Sqlite,
-            (None, Some(definition), None) => definition.connector().dialect(),
+            (None, Some(definition), None) => crate::connector::open(definition).dialect(),
             (None, None, None) => stored.first().map_or(options.dialect, |item| {
-                item.definition.connector().dialect()
+                crate::connector::open(&item.definition).dialect()
             }),
         };
         let budget = Arc::new(Budget::new(options.settings.budget_bytes));
@@ -588,11 +586,9 @@ impl App {
             active: 0,
             tables: Vec::new(),
             tabs_opened: 0,
-            table_active: None,
+            screen: Screen::Console,
             diagrams: Vec::new(),
-            diagram_active: None,
             compares: Vec::new(),
-            compare_active: None,
             connections: Vec::new(),
             navigator: Navigator::default(),
             navigator_focused: false,
@@ -964,6 +960,12 @@ impl App {
     /// transaction needs a new frame.
     fn advance_clock(&mut self, now: Instant) -> bool {
         self.clock = now;
+        for console in &mut self.consoles {
+            console.sample_progress(now);
+        }
+        for table in &mut self.tables {
+            table.sample_progress(now);
+        }
         let time = now.saturating_duration_since(self.started);
         let frame = usize::try_from(time.as_millis() / RUN_FRAME.as_millis()).unwrap_or(0);
         // An agent task updates the time of its card, and the card appears after a delay.
@@ -1011,23 +1013,10 @@ impl App {
         }
     }
 
+    /// Returns true when a window blocks the screen and the background work. The
+    /// connection form does not block them.
     fn modal_is_open(&self) -> bool {
-        !self.dialogs.is_empty()
-            || self.ai.modal()
-            || self.conflicts.is_some()
-            || self.overlay.is_some()
-            || self.help.is_some()
-            || self.picker.is_some()
-            || self.palette.is_some()
-            || self.history.is_some()
-            || self.rename.is_some()
-            || self.settings_form.is_some()
-            || self.export_form.is_some()
-            || self.import_form.is_some()
-            || self.edit_form.is_some()
-            || self.compare_form.is_some()
-            || self.browser.is_some()
-            || self.auth.prompt.is_some()
+        self.ai.modal() || self.top_modal().is_some_and(|modal| modal != Modal::Form)
     }
 
     fn route_event(&mut self, event: Event) {
@@ -1043,98 +1032,124 @@ impl App {
                 return;
             }
         }
-        let blocked = self.modal_is_open();
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
-            Event::Paste(text) if self.dialogs.is_empty() && self.auth.prompt.is_some() => {
+            Event::Paste(text) => match self.top_modal() {
+                Some(modal) if modal != Modal::Form => self.on_modal_paste(modal, &text),
+                _ if !self.modal_is_open() => self.on_paste(&text),
+                _ => {}
+            },
+            Event::Mouse(mouse) => match self.top_modal() {
+                Some(modal) if modal != Modal::Form => self.on_modal_mouse(modal, mouse),
+                _ if !self.modal_is_open() => self.on_mouse(mouse),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    /// Gives a paste to a window over the screen. A window without text ignores it.
+    fn on_modal_paste(&mut self, modal: Modal, text: &str) {
+        match modal {
+            Modal::Password => {
                 if let Some(prompt) = &mut self.auth.prompt {
-                    prompt.paste(&text);
+                    prompt.paste(text);
                 }
             }
-            Event::Paste(text) if self.dialogs.is_empty() && self.rename.is_some() => {
+            Modal::Rename => {
                 if let Some(prompt) = &mut self.rename {
-                    prompt.paste(&text);
+                    prompt.paste(text);
                 }
             }
-            Event::Paste(text) if self.dialogs.is_empty() && self.browser.is_some() => {
+            Modal::Browser => {
                 if let Some(browser) = &mut self.browser {
-                    browser.paste(&text);
+                    browser.paste(text);
                 }
             }
-            Event::Paste(text) if self.dialogs.is_empty() && self.settings_form.is_some() => {
+            Modal::Settings => {
                 if let Some(form) = &mut self.settings_form {
-                    form.paste(&text);
+                    form.paste(text);
                 }
             }
-            Event::Paste(text) if self.dialogs.is_empty() && self.export_form.is_some() => {
+            Modal::Export => {
                 if let Some(form) = &mut self.export_form {
-                    form.paste(&text);
+                    form.paste(text);
                 }
             }
-            Event::Paste(text) if self.dialogs.is_empty() && self.edit_form.is_some() => {
-                if let Some(crate::data_edit::form::EditForm {
-                    body: crate::data_edit::form::Body::Cell { editor, .. },
+            Modal::Edit => {
+                if let Some(crate::edit_form::EditForm {
+                    body: crate::edit_form::Body::Cell { editor, .. },
                     ..
                 }) = &mut self.edit_form
                 {
-                    editor.on_paste(&text);
+                    editor.on_paste(text);
                 }
             }
-            Event::Paste(text) if self.dialogs.is_empty() && self.import_form.is_some() => {
+            Modal::Import => {
                 if let Some(form) = &mut self.import_form {
-                    form.paste(&text);
+                    form.paste(text);
                 }
             }
-            Event::Paste(text) if self.dialogs.is_empty() && self.compare_form.is_some() => {
+            Modal::Compare => {
                 if let Some(form) = &mut self.compare_form {
-                    form.paste(&text);
+                    form.paste(text);
                 }
             }
-            Event::Paste(text) if self.dialogs.is_empty() && self.palette.is_some() => {
+            Modal::Palette => {
                 if let Some(palette) = &mut self.palette {
-                    palette.paste(&text);
+                    palette.paste(text);
                 }
             }
-            Event::Paste(text) if self.dialogs.is_empty() && self.history.is_some() => {
+            Modal::History => {
                 if let Some(list) = &mut self.history {
-                    list.paste(&text);
+                    list.paste(text);
                 }
             }
-            Event::Paste(text) if self.dialogs.is_empty() && self.overlay.is_some() => {
+            Modal::Overlay => {
                 if let Some(overlay) = &mut self.overlay {
-                    overlay.contents.paste_search(&text);
+                    overlay.contents.paste_search(text);
                 }
             }
-            Event::Paste(text) if self.dialogs.is_empty() && self.help.is_some() => {
+            Modal::Help => {
                 if let Some(help) = &mut self.help {
-                    help.paste(&text);
+                    help.paste(text);
                 }
             }
-            Event::Paste(text) if !blocked => self.on_paste(&text),
-            Event::Mouse(mouse) if !self.dialogs.is_empty() => self.on_dialog_mouse(mouse),
-            Event::Mouse(mouse) if self.auth.prompt.is_some() => self.on_password_mouse(mouse),
-            Event::Mouse(mouse) if self.conflicts.is_some() => self.on_conflicts_mouse(mouse),
-            Event::Mouse(mouse) if self.browser.is_some() => self.on_browser_mouse(mouse),
-            Event::Mouse(mouse) if self.picker.is_some() => self.on_picker_mouse(mouse),
-            Event::Mouse(mouse) if self.palette.is_some() => self.on_palette_mouse(mouse),
-            Event::Mouse(mouse) if self.history.is_some() => self.on_history_mouse(mouse),
-            Event::Mouse(mouse) if self.settings_form.is_some() => self.on_settings_mouse(mouse),
-            Event::Mouse(mouse) if self.export_form.is_some() => self.on_export_mouse(mouse),
-            Event::Mouse(mouse) if self.edit_form.is_some() => self.on_edit_mouse(mouse),
-            Event::Mouse(mouse) if self.import_form.is_some() => self.on_import_mouse(mouse),
-            Event::Mouse(mouse) if self.compare_form.is_some() => self.on_compare_mouse(mouse),
-            Event::Mouse(mouse) if self.overlay.is_some() => self.on_overlay_mouse(mouse),
-            Event::Mouse(mouse) if self.help.is_some() => {
+            // The screen handles the paste of the connection form.
+            Modal::Dialog | Modal::Conflicts | Modal::Picker | Modal::Form => {}
+        }
+    }
+
+    /// Gives a mouse event to a window over the screen.
+    fn on_modal_mouse(&mut self, modal: Modal, mouse: MouseEvent) {
+        match modal {
+            Modal::Dialog => self.on_dialog_mouse(mouse),
+            Modal::Password => self.on_password_mouse(mouse),
+            Modal::Conflicts => self.on_conflicts_mouse(mouse),
+            Modal::Browser => self.on_browser_mouse(mouse),
+            Modal::Picker => self.on_picker_mouse(mouse),
+            Modal::Palette => self.on_palette_mouse(mouse),
+            Modal::History => self.on_history_mouse(mouse),
+            Modal::Settings => self.on_settings_mouse(mouse),
+            Modal::Export => self.on_export_mouse(mouse),
+            Modal::Edit => self.on_edit_mouse(mouse),
+            Modal::Import => self.on_import_mouse(mouse),
+            Modal::Compare => self.on_compare_mouse(mouse),
+            Modal::Overlay => self.on_overlay_mouse(mouse),
+            Modal::Help => {
                 if let Some(help) = &mut self.help {
                     match mouse.kind {
                         MouseEventKind::ScrollUp => help.scroll = help.scroll.saturating_sub(3),
                         MouseEventKind::ScrollDown => help.scroll = help.scroll.saturating_add(3),
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            help.click(mouse.column, mouse.row);
+                        }
                         _ => {}
                     }
                 }
             }
-            Event::Mouse(mouse) if !blocked => self.on_mouse(mouse),
-            _ => {}
+            // The screen handles the mouse of the connection form.
+            Modal::Rename | Modal::Form => {}
         }
     }
 
@@ -1150,7 +1165,7 @@ impl App {
             return;
         }
         // A diagram and the home screen have no text field.
-        if self.diagram_active.is_some() || self.home() {
+        if self.diagram_index().is_some() || self.home() {
             return;
         }
         if let Some(tab) = self.compare_mut() {
@@ -1232,10 +1247,12 @@ impl App {
         if changed {
             let deadline = Instant::now() + WORK_SLICE;
             self.continue_overlay_search(Instant::now() + WORK_SLICE / 2);
-            match (self.compare_active, self.table_active) {
-                (Some(index), _) => self.compares[index].result.continue_search(deadline),
-                (None, Some(index)) => self.tables[index].result.continue_search(deadline),
-                (None, None) => self.console_mut().continue_search(deadline),
+            match self.screen {
+                Screen::Compare(index) => self.compares[index].result.continue_search(deadline),
+                Screen::Table(index) => self.tables[index].result.continue_search(deadline),
+                Screen::Console | Screen::Diagram(_) => {
+                    self.console_mut().continue_search(deadline)
+                }
             }
             self.continue_exports(deadline);
             self.continue_analysis(deadline);
@@ -1283,9 +1300,11 @@ impl App {
                 connection,
                 relation,
                 columns,
+                notes,
                 foreign_keys,
                 referencing,
             } => {
+                let columns = columns.map(|columns| (columns, notes));
                 self.on_columns_loaded(connection, &relation, columns, (foreign_keys, referencing));
             }
             ExecEvent::ConnectionTested { test, result } => self.on_connection_tested(test, result),
@@ -1399,16 +1418,12 @@ impl App {
             draw_rule(frame, rule, &self.theme);
         }
         let main = self.draw_side(frame, body);
-        if self.compare_active.is_some() {
-            self.draw_active_compare(frame, main, tall);
-        } else if self.diagram_active.is_some() {
-            self.draw_active_diagram(frame, main, tall);
-        } else if self.table_active.is_some() {
-            self.draw_active_table(frame, main, tall);
-        } else if self.home() {
-            self.draw_home(frame, main);
-        } else {
-            self.draw_active_console(frame, main, tall);
+        match self.screen {
+            Screen::Compare(_) => self.draw_active_compare(frame, main, tall),
+            Screen::Diagram(_) => self.draw_active_diagram(frame, main, tall),
+            Screen::Table(_) => self.draw_active_table(frame, main, tall),
+            Screen::Console if self.home() => self.draw_home(frame, main),
+            Screen::Console => self.draw_active_console(frame, main, tall),
         }
         if let Some(bar) = agent_bar {
             self.layout.agent_bar = crate::ui::agent::draw_bar(frame, notice, &bar, &self.theme);
@@ -1534,7 +1549,7 @@ impl App {
     }
 
     fn draw_active_table(&mut self, frame: &mut Frame, area: Rect, tall: bool) {
-        let Some(index) = self.table_active else {
+        let Some(index) = self.table_index() else {
             return;
         };
         let connection = self.tables[index].connection;
@@ -1558,7 +1573,7 @@ impl App {
     }
 
     fn draw_active_compare(&mut self, frame: &mut Frame, area: Rect, tall: bool) {
-        let Some(index) = self.compare_active else {
+        let Some(index) = self.compare_index() else {
             return;
         };
         let focused = !self.navigator_focused;
@@ -1573,7 +1588,7 @@ impl App {
     }
 
     fn draw_active_diagram(&mut self, frame: &mut Frame, area: Rect, tall: bool) {
-        let Some(index) = self.diagram_active else {
+        let Some(index) = self.diagram_index() else {
             return;
         };
         let connection = self.diagrams[index].connection;
@@ -1604,10 +1619,10 @@ impl App {
                 StatusPanel::Explorer
             };
         }
-        if self.diagram_active.is_some() {
+        if self.diagram_index().is_some() {
             return StatusPanel::Diagram;
         }
-        if self.compare_active.is_some() {
+        if self.compare_index().is_some() {
             return StatusPanel::Table;
         }
         if self.home() {
@@ -1877,89 +1892,138 @@ impl App {
             let title = text::TITLE_PREFIX;
             draw_which_key(frame, bounds, title, &self.prefix_menu(), &self.theme);
         }
-        if let Some(form) = &self.form {
-            self.layout.form = draw_form(frame, form, &self.theme);
+        // The windows are drawn from the bottom to the top. The AI prompts are under the
+        // question dialog.
+        for modal in Modal::ALL.into_iter().rev() {
+            if modal == Modal::Dialog {
+                self.draw_ai_prompts(frame);
+            }
+            self.draw_modal(frame, modal);
         }
-        if let Some(picker) = &self.picker {
-            let items: Vec<&str> = picker.items.iter().map(String::as_str).collect();
-            self.layout.picker = draw_picker(
-                frame,
-                &picker.title,
-                &items,
-                picker.cursor,
-                picker.loading,
-                &self.theme,
-            );
-        }
-        if let Some(conflicts) = &self.conflicts {
-            let rows: Vec<ConflictRowView> = conflicts
-                .rows
-                .iter()
-                .map(|row| ConflictRowView {
-                    name: &row.name,
-                    removed: row.removed,
-                    choice: row.choice.map(|choice| row.options()[choice]),
-                })
-                .collect();
-            self.layout.conflicts =
-                draw_conflicts(frame, &rows, conflicts.cursor, conflicts.note, &self.theme);
-        }
-        if let Some(overlay) = &mut self.overlay {
-            let Overlay {
-                title,
-                contents,
-                footer,
-                scroll,
-                ..
-            } = overlay;
-            *scroll = draw_overlay(frame, title, contents, footer, *scroll, &self.theme);
-            self.layout.overlay =
-                crate::ui::console::overlay_text_area(frame.area(), contents.search().is_some());
-        }
-        if let Some(help) = &mut self.help {
-            draw_help(frame, help, &self.theme);
-        }
-        if let Some(palette) = &self.palette {
-            self.layout.palette = draw_palette(frame, palette, &self.theme);
-        }
-        if let Some(list) = &self.history {
-            self.layout.history = draw_history(frame, list, &self.theme);
-        }
-        if let Some(form) = &self.settings_form {
-            self.layout.settings = draw_settings(frame, form, &self.theme);
-        }
-        if let Some(form) = &self.export_form {
-            self.layout.export = draw_export(frame, form, &self.theme);
-        }
-        if let Some(form) = &mut self.edit_form {
-            self.layout.edit = crate::ui::data_edit::draw_edit(frame, form, &self.theme);
-        }
-        if let Some(form) = &self.import_form {
-            self.layout.import = draw_import(frame, form, &self.theme);
-        }
-        if let Some(form) = &self.compare_form {
-            self.layout.compare_form = draw_compare_form(frame, form, &self.theme);
-        }
-        if let Some(browser) = &self.browser {
-            self.layout.browser = draw_browser(frame, browser, &self.theme);
-        }
-        if let Some(prompt) = &self.rename {
-            draw_name(frame, prompt, &self.theme);
-        }
-        if let Some(prompt) = &self.auth.prompt {
-            self.layout.password = crate::ui::auth::draw_password(frame, prompt, &self.theme);
-        }
-        self.draw_ai_prompts(frame);
-        if let Some(dialog) = self.dialogs.front() {
-            let labels: Vec<&str> = dialog.options.iter().map(|(label, _)| *label).collect();
-            self.layout.dialog = draw_dialog(
-                frame,
-                &dialog.title,
-                &dialog.body,
-                &labels,
-                dialog.focus,
-                &self.theme,
-            );
+    }
+
+    /// Draws a window over the screen when it is open.
+    fn draw_modal(&mut self, frame: &mut Frame, modal: Modal) {
+        match modal {
+            Modal::Form => {
+                if let Some(form) = &self.form {
+                    self.layout.form = draw_form(frame, form, &self.theme);
+                }
+            }
+            Modal::Picker => {
+                if let Some(picker) = &self.picker {
+                    let items: Vec<&str> = picker.items.iter().map(String::as_str).collect();
+                    self.layout.picker = draw_picker(
+                        frame,
+                        &picker.title,
+                        &items,
+                        picker.cursor,
+                        picker.loading,
+                        &self.theme,
+                    );
+                }
+            }
+            Modal::Conflicts => {
+                if let Some(conflicts) = &self.conflicts {
+                    let rows: Vec<ConflictRowView> = conflicts
+                        .rows
+                        .iter()
+                        .map(|row| ConflictRowView {
+                            name: &row.name,
+                            removed: row.removed,
+                            choice: row.choice.map(|choice| row.options()[choice]),
+                        })
+                        .collect();
+                    self.layout.conflicts =
+                        draw_conflicts(frame, &rows, conflicts.cursor, conflicts.note, &self.theme);
+                }
+            }
+            Modal::Overlay => {
+                if let Some(overlay) = &mut self.overlay {
+                    let Overlay {
+                        title,
+                        contents,
+                        footer,
+                        scroll,
+                        ..
+                    } = overlay;
+                    *scroll = draw_overlay(frame, title, contents, footer, *scroll, &self.theme);
+                    self.layout.overlay = crate::ui::console::overlay_text_area(
+                        frame.area(),
+                        contents.search().is_some(),
+                    );
+                }
+            }
+            Modal::Help => {
+                if let Some(help) = &mut self.help {
+                    draw_help(frame, help, &self.theme);
+                }
+            }
+            Modal::Palette => {
+                if let Some(palette) = &self.palette {
+                    self.layout.palette = draw_palette(frame, palette, &self.theme);
+                }
+            }
+            Modal::History => {
+                if let Some(list) = &self.history {
+                    self.layout.history = draw_history(frame, list, &self.theme);
+                }
+            }
+            Modal::Settings => {
+                if let Some(form) = &self.settings_form {
+                    self.layout.settings = draw_settings(frame, form, &self.theme);
+                }
+            }
+            Modal::Export => {
+                if let Some(form) = &self.export_form {
+                    self.layout.export = draw_export(frame, form, &self.theme);
+                }
+            }
+            Modal::Edit => {
+                if let Some(form) = &mut self.edit_form {
+                    self.layout.edit = crate::ui::data_edit::draw_edit(frame, form, &self.theme);
+                }
+            }
+            Modal::Import => {
+                if let Some(form) = &self.import_form {
+                    self.layout.import = draw_import(frame, form, &self.theme);
+                }
+            }
+            Modal::Compare => {
+                if let Some(form) = &self.compare_form {
+                    self.layout.compare_form = draw_compare_form(frame, form, &self.theme);
+                }
+            }
+            Modal::Browser => {
+                if let Some(browser) = &self.browser {
+                    self.layout.browser = draw_browser(frame, browser, &self.theme);
+                }
+            }
+            Modal::Rename => {
+                if let Some(prompt) = &self.rename {
+                    draw_name(frame, prompt, &self.theme);
+                }
+            }
+            Modal::Password => {
+                if let Some(prompt) = &self.auth.prompt {
+                    self.layout.password =
+                        crate::ui::auth::draw_password(frame, prompt, &self.theme);
+                }
+            }
+            Modal::Dialog => {
+                if let Some(dialog) = self.dialogs.front() {
+                    let labels: Vec<&str> =
+                        dialog.options.iter().map(|(label, _)| *label).collect();
+                    self.layout.dialog = draw_dialog(
+                        frame,
+                        &dialog.title,
+                        &dialog.body,
+                        &labels,
+                        dialog.focus,
+                        &self.theme,
+                    );
+                }
+            }
         }
     }
 }

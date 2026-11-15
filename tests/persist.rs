@@ -54,7 +54,7 @@ fn write_config(root: &Root, preferences: &str, connections: &[String]) {
 
 /// A store with a global folder and a project folder.
 fn store(name: &str) -> (Store, PathBuf) {
-    let base = temp_dir(name);
+    let base = temp_dir!(name);
     let project = Root::project(&base.join("project"));
     fs::create_dir_all(&project.dir).unwrap();
     (
@@ -92,7 +92,7 @@ fn saved_file(store: &Store) -> PathBuf {
 
 /// A store without a project.
 fn global_only(name: &str) -> (Store, PathBuf) {
-    let base = temp_dir(name);
+    let base = temp_dir!(name);
     (
         Store {
             global: Root::global(base.join("global")),
@@ -723,8 +723,10 @@ fn a_new_connection_goes_to_the_project_file_by_default_without_a_password() {
     session.code(KeyCode::Char('a'));
     session.assert_sees("Scope");
     session.assert_sees("Project");
-    session.code(KeyCode::Right);
-    session.code(KeyCode::Right);
+    // `Right` goes from PostgreSQL through MySQL and Databricks to SQLite.
+    for _ in 0..3 {
+        session.code(KeyCode::Right);
+    }
     session.focus_form(Field::Name);
     session.write("saved");
     session.focus_form(Field::File);
@@ -780,8 +782,9 @@ fn two_scopes_can_use_the_same_name_and_one_scope_cannot() {
         session.press(ctrl('w'));
         session.code(KeyCode::Char('h'));
         session.code(KeyCode::Char('a'));
-        session.code(KeyCode::Right);
-        session.code(KeyCode::Right);
+        for _ in 0..3 {
+            session.code(KeyCode::Right);
+        }
         session.focus_form(Field::Name);
         session.write("SAME");
         session.focus_form(Field::Scope);
@@ -887,7 +890,7 @@ fn the_sql_limit_of_a_connection_saves_and_zero_means_no_limit() {
     session.go_to_connection("one");
     session.code(KeyCode::Char('e'));
     session.focus_form(Field::SqlTimeout);
-    session.assert_sees("SQL limit");
+    session.assert_sees("Statement (s, 0 = none)");
     erase_field(&mut session, 2);
     session.write("0");
     session.press_form_button(Field::Save);
@@ -942,7 +945,7 @@ fn a_bad_sql_limit_keeps_the_form_open() {
     // The error opens the section of the field and puts the focus on it.
     let form = session.app.form().expect("the form stays open");
     assert_eq!(form.focus, Field::SqlTimeout);
-    session.assert_sees("SQL limit (s, 0 = none) needs a number.");
+    session.assert_sees("Statement (s, 0 = none) needs a number.");
     // The file did not change.
     assert!(
         !fs::read_to_string(store.global.config_file())
@@ -1743,6 +1746,20 @@ fn ctrl_s_opens_the_question_again_for_a_script_in_conflict() {
     session.assert_not_sees("Scripts changed outside SQLN");
     session.press(ctrl('s'));
     session.assert_sees("Scripts changed outside SQLN");
+}
+
+#[test]
+fn the_conflicts_question_opens_on_top_of_the_settings() {
+    let (mut session, store, id) = session_with_saved_console("p-conflict-over-settings");
+    session.prefix(',');
+    session.assert_sees("Shortcuts");
+    fs::write(script_path(&store.global, &id), "SELECT 'theirs';").unwrap();
+    session.wait(1_000);
+    // The question is drawn on top, and it gets the keys.
+    session.assert_sees("Scripts changed outside SQLN");
+    session.code(KeyCode::Esc);
+    session.assert_not_sees("Scripts changed outside SQLN");
+    session.assert_sees("Shortcuts");
 }
 
 #[test]
@@ -3063,7 +3080,7 @@ fn shortcut_recording_saves_only_the_global_scope_and_works_after_restart() {
     ] {
         session.code(code);
     }
-    session.assert_sees("Keys · Conventional");
+    session.assert_sees("Help · Conventional");
     let mut restarted = Session::start(&store);
     for code in [
         KeyCode::F(8),
@@ -3073,7 +3090,7 @@ fn shortcut_recording_saves_only_the_global_scope_and_works_after_restart() {
     ] {
         restarted.code(code);
     }
-    restarted.assert_sees("Keys · Conventional");
+    restarted.assert_sees("Help · Conventional");
 }
 
 #[test]
@@ -3101,7 +3118,7 @@ fn shortcut_recording_with_mouse_confirmation_saves_enter_in_the_project() {
     for code in [KeyCode::F(8), KeyCode::Enter, KeyCode::Char('a')] {
         restarted.code(code);
     }
-    restarted.assert_sees("Keys · Conventional");
+    restarted.assert_sees("Help · Conventional");
 }
 
 #[test]

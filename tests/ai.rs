@@ -1,11 +1,7 @@
-mod common;
+#[path = "ai_kafka.rs"]
+mod ai_kafka;
 
-mod agent;
-mod ai_editor;
-mod ai_schema;
-mod mcp;
-
-use common::{ctrl, key, shift};
+use crate::common::{ctrl, key, shift};
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use edtui::Index2;
 use ratatui::{Terminal, backend::TestBackend};
@@ -20,15 +16,11 @@ use sqln::{
     ui::text,
     ui::theme::Theme,
 };
+use sqln_testkit::http::HttpServer;
 use std::{
     cell::RefCell,
-    io::{Read, Write},
-    net::TcpListener,
     rc::Rc,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use unicode_width::UnicodeWidthStr;
@@ -36,8 +28,7 @@ use unicode_width::UnicodeWidthStr;
 struct Server {
     url: String,
     requests: Arc<Mutex<Vec<String>>>,
-    stop: Arc<AtomicBool>,
-    thread: Option<std::thread::JoinHandle<()>>,
+    _http: HttpServer,
 }
 impl Server {
     fn new(text: &str, delay: Duration) -> Self {
@@ -47,74 +38,11 @@ impl Server {
         Self::response(200, body, delay)
     }
     fn response(status: u16, body: String, delay: Duration) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let url = format!("http://{}/v1", listener.local_addr().unwrap());
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let captured = requests.clone();
-        let stop = Arc::new(AtomicBool::new(false));
-        let done = stop.clone();
-        let thread = std::thread::spawn(move || {
-            while !done.load(Ordering::Relaxed) {
-                let (mut socket, _) = match listener.accept() {
-                    Ok(v) => v,
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(2));
-                        continue;
-                    }
-                    Err(_) => break,
-                };
-                socket.set_nonblocking(false).unwrap();
-                socket
-                    .set_write_timeout(Some(Duration::from_secs(3)))
-                    .unwrap();
-                socket
-                    .set_read_timeout(Some(Duration::from_secs(3)))
-                    .unwrap();
-                let mut request = Vec::new();
-                let mut buffer = [0u8; 8192];
-                loop {
-                    let n = match socket.read(&mut buffer) {
-                        Ok(n) if n > 0 => n,
-                        _ => break,
-                    };
-                    request.extend_from_slice(&buffer[..n]);
-                    if let Some(end) = request.windows(4).position(|s| s == b"\r\n\r\n") {
-                        let header = String::from_utf8_lossy(&request[..end]);
-                        let size = header
-                            .lines()
-                            .find_map(|line| {
-                                line.to_lowercase()
-                                    .strip_prefix("content-length:")
-                                    .and_then(|s| s.trim().parse::<usize>().ok())
-                            })
-                            .unwrap_or(0);
-                        if request.len() >= end + 4 + size {
-                            break;
-                        }
-                    }
-                }
-                if request.is_empty() {
-                    continue;
-                }
-                captured
-                    .lock()
-                    .unwrap()
-                    .push(String::from_utf8(request).unwrap());
-                std::thread::sleep(delay);
-                let _ = write!(
-                    socket,
-                    "HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-            }
-        });
+        let http = HttpServer::start(move |_| (status, body.clone().into_bytes()), delay);
         Self {
-            url,
-            requests,
-            stop,
-            thread: Some(thread),
+            url: format!("{}/v1", http.url),
+            requests: http.requests.clone(),
+            _http: http,
         }
     }
     fn provider(&self) -> Provider {
@@ -123,14 +51,6 @@ impl Server {
             model: "test-model".into(),
             base_url: self.url.clone(),
             ..Provider::default()
-        }
-    }
-}
-impl Drop for Server {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(t) = self.thread.take() {
-            t.join().unwrap();
         }
     }
 }
@@ -172,7 +92,7 @@ fn pump(app: &mut App, condition: impl Fn(&str) -> bool) -> String {
     }
 }
 fn app(name: &str, provider: Provider) -> App {
-    let path = common::temp_db(name);
+    let path = crate::common::temp_db!(name);
     rusqlite::Connection::open(&path).unwrap().execute_batch("CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT); CREATE VIEW active_users AS SELECT name FROM users;").unwrap();
     App::new(
         Options {
@@ -262,7 +182,7 @@ fn ghost_at_first_line(app: &mut App, text: &str) {
 
 #[test]
 fn ai_is_above_local_items_but_not_initially_selected() {
-    let mut f = common::Fixture::conventional("sel");
+    let mut f = crate::common::Fixture::conventional("sel");
     f.editor.set_cursor(Index2::new(0, 3));
     f.editor.set_ai_available(true);
     f.press(ctrl(' '));
@@ -279,7 +199,7 @@ fn ai_is_above_local_items_but_not_initially_selected() {
 }
 #[test]
 fn the_request_row_sits_above_the_plain_ai_row() {
-    let mut f = common::Fixture::conventional("sel");
+    let mut f = crate::common::Fixture::conventional("sel");
     f.editor.set_cursor(Index2::new(0, 3));
     f.editor.set_ai_available(true);
     f.press(ctrl(' '));
@@ -300,7 +220,7 @@ fn the_request_row_sits_above_the_plain_ai_row() {
 }
 #[test]
 fn explicit_ai_only_list_handles_repeated_arrows_without_panics() {
-    let mut f = common::Fixture::conventional("-- describe a query");
+    let mut f = crate::common::Fixture::conventional("-- describe a query");
     f.editor.set_cursor(Index2::new(0, 19));
     f.editor.set_ai_available(true);
     f.press(ctrl(' '));
@@ -319,7 +239,7 @@ fn explicit_ai_only_list_handles_repeated_arrows_without_panics() {
 }
 #[test]
 fn typing_no_local_match_does_not_open_an_ai_only_list() {
-    let mut f = common::Fixture::conventional("");
+    let mut f = crate::common::Fixture::conventional("");
     f.editor.set_ai_available(true);
     f.write("zzzzzz");
     assert!(f.editor.suggestions().is_none());
@@ -327,7 +247,7 @@ fn typing_no_local_match_does_not_open_an_ai_only_list() {
 #[test]
 fn a_replacement_preserves_unicode_and_is_one_undo_step() {
     for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
-        let mut f = common::Fixture::new("SELECT café;", keyboard);
+        let mut f = crate::common::Fixture::new("SELECT café;", keyboard);
         if keyboard == KeyboardMode::Vim {
             f.press(key(KeyCode::Char('i')));
         }
@@ -351,7 +271,7 @@ fn a_replacement_preserves_unicode_and_is_one_undo_step() {
 }
 #[test]
 fn an_application_uses_the_anchor_not_the_cursor() {
-    let mut f = common::Fixture::conventional("SELECT \nFROM t");
+    let mut f = crate::common::Fixture::conventional("SELECT \nFROM t");
     f.editor.set_cursor(Index2::new(0, 7));
     let target = f.editor.ai_target(None);
     f.editor.set_cursor(Index2::new(1, 6));
@@ -465,7 +385,7 @@ fn referenced_objects_keep_the_canonical_order_and_list_in_focus() {
         "{user}"
     );
     let system = prepared.body["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("focus field"));
+    assert!(system.contains("context.focus"), "{system}");
 }
 #[test]
 fn invalid_endpoints_and_credential_destination_changes_are_refused() {
@@ -544,7 +464,7 @@ fn the_request_field_travels_only_when_present() {
     let user = prepared.body["messages"][1]["content"].as_str().unwrap();
     assert!(user.contains("\"request\":\"add ORDER BY id\""), "{user}");
     let system = prepared.body["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("request field"));
+    assert!(system.contains("context.request"), "{system}");
 }
 #[test]
 fn a_long_request_counts_against_the_context_limit() {
@@ -954,7 +874,7 @@ async fn a_cancelled_http_request_does_not_produce_a_proposal() {
 }
 #[test]
 fn key_files_reject_invalid_content_and_support_rotating_symlinks() {
-    let dir = common::temp_dir("ai-rotating-key");
+    let dir = crate::common::temp_dir!("ai-rotating-key");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("key");
     for bytes in [vec![], b"key\nother".to_vec(), vec![255], vec![b'x'; 65537]] {
@@ -996,7 +916,7 @@ fn api_vault_keys_use_an_isolated_service_and_endpoint_identity() {
 }
 #[test]
 fn consent_is_private_and_changes_with_project_endpoint_or_key_reference() {
-    let root = common::temp_dir("ai-consent");
+    let root = crate::common::temp_dir!("ai-consent");
     let dest = ai::trust::Destination {
         project: Some(root.join("project")),
         connection: "connection-id".into(),
@@ -1080,7 +1000,7 @@ fn a_warmed_schema_stays_cached_until_refresh_then_contains_external_ddl() {
     approve(&mut app);
     pump(&mut app, ghost);
     app.on_event(Event::Key(key(KeyCode::Esc)));
-    let path = common::temp_db_path("ai-cache");
+    let path = crate::common::temp_db_path!("ai-cache");
     rusqlite::Connection::open(path)
         .unwrap()
         .execute_batch("CREATE TABLE later_object(id INTEGER)")
@@ -1365,7 +1285,7 @@ fn a_selection_refuses_ai_completion_and_keeps_the_selection() {
 
 #[test]
 fn an_explicit_list_hides_the_ai_row_under_a_selection() {
-    let mut f = common::Fixture::conventional("SELECT name FROM users");
+    let mut f = crate::common::Fixture::conventional("SELECT name FROM users");
     f.editor.set_ai_available(true);
     // Without a selection, the explicit list carries the AI row.
     f.press(ctrl(' '));

@@ -5,7 +5,7 @@ A terminal database client with several connections, SQL consoles, and table tab
 SQLN brings an editor, a database navigator, and a results grid into one terminal.
 Use familiar editor keys or Vim mode. Keep scripts with a project, or use global connections across projects.
 
-**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, and Kafka with the Schema Registry.
+**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, Kafka with the Schema Registry, and Databricks SQL warehouses.
 
 > SQLN is in development. This repository supports source installation and unsigned workflow binaries.
 > Review the [known limitations](#known-limitations) before use with important data.
@@ -175,10 +175,12 @@ sqln 'mysql://alice@localhost/my_database'
 sqln 'redis://localhost/0'
 sqln 'valkey://localhost/0'
 sqln 'kafka://localhost:9092'
+sqln 'databricks://adb-1234.azuredatabricks.net/main?warehouse=abc123'
 ```
 
 For PostgreSQL and MySQL, SQLN asks for a password when the URI omits it in an interactive terminal.
 For password-protected Redis, Valkey, or Kafka with SASL, use the connection form to enter the password without shell-history exposure.
+For Databricks, type a personal access token in the **Token** field of the form. The path of the connection text is the start catalog, and `warehouse=<id>` is the SQL warehouse.
 
 A command-line connection lasts for the session only. It does not create a saved connection or saved consoles for that target.
 To save a connection, start `sqln` and add it through the navigator.
@@ -279,8 +281,10 @@ GROUP billing
 - Both SELECT and the native commands use the same filter in SQLN, after the decoding. A condition compares two values with `=`, `!=`, `<`, `<=`, `>`, or `>=`, such as `value.paid < value.total` or `key = 'a'`. Use `AND`, `OR`, `NOT`, and parentheses.
 - Other conditions: `IS [NOT] NULL` (absent or null), `IS [NOT] MISSING` (absent), `[NOT] IN ('a', 'b')`, `'vip' IN value.tags`, `[NOT] BETWEEN 1 AND 5`, `[NOT] LIKE 'a%'`, `[NOT] ILIKE 'a%'` (without case), `CONTAINS 'text'` (without case), and `MATCHES 'regex'`.
 - `ANY i IN value.items SATISFIES <condition> END` is true when one item matches all of the condition. `EVERY … END` needs all items.
-- Values: `partition`, `offset`, `timestamp` (compare it with a UTC time in quotes), `key`, `value`, `headers`, `schema`, fields, `+ - * / %` with spaces, `||` for texts, `LOWER`, `UPPER`, `LENGTH`, `SIZE`, `COALESCE`, `CAST(x AS NUMBER|TEXT|BOOLEAN)`, and `TYPEOF`.
-- For lists, `value.items[*].sku = 'a'` is true when one item matches, `'vip' IN value.tags` finds an item, and `SIZE(value.items) > 2` counts the items.
+- Values: `partition`, `offset`, `timestamp` (compare it with a UTC time in quotes), `key`, `value`, `headers`, `schema`, fields, `+ - * / %` with spaces, `||` for texts, `CAST(x AS NUMBER|TEXT|BOOLEAN)`, and `CASE WHEN … THEN … ELSE … END`.
+- Functions, with the rules of Postgres: `LOWER`, `UPPER`, `LENGTH`, `SIZE`, `COALESCE`, `TYPEOF`, `SPLIT_PART`, `SUBSTRING`, `LEFT`, `RIGHT`, `TRIM`, `LTRIM`, `RTRIM`, `REPLACE`, `REGEXP_REPLACE`, `CONCAT`, `CONCAT_WS`, `OCTET_LENGTH`, `ABS`, `ROUND`, `FLOOR`, `CEIL`, `GREATEST`, `LEAST`, `NULLIF`, `KEYS`, and `ARRAY_TO_STRING`.
+- Time: `NOW()`, `INTERVAL '1 hour'`, `TO_TIMESTAMP` (seconds), `TO_TIMESTAMP_MS`, `EPOCH`, `EPOCH_MS`, and `TO_CHAR`, such as `timestamp >= NOW() - INTERVAL '1 hour'`. A time column shows UTC text; an interval shows milliseconds.
+- For lists, `value.items[*].sku = 'a'` is true when one item matches, `value.items[0:2]` reads a slice, `'vip' IN value.tags` finds an item, and `SIZE(value.items) > 2` counts the items.
 - Expressions generate values on demand. Large list combinations remain available, with Stop and the normal statement timeout. Generated text buffers use the configured memory limit, including live reads, export, and streaming. An oversized projection fails without a partial row; reduce it or increase the limit.
 - With a Schema Registry, Avro, JSON Schema, and Protobuf values become JSON. A value that does not decode stays as bytes, with a note in **Messages**.
 - SQLN never joins a consumer group and never commits an offset. `GROUP <id>` shows the committed offsets and the lag.
@@ -352,6 +356,7 @@ Change **Autocomplete** in Settings if you prefer `Enter` or both keys to accept
 Open suggestions, press `Up` from the first local item to select **Complete with AI…**, and use the acceptance key.
 The answer shows as ghost text in the editor. Press `Tab` to accept it and `Esc` to reject it. Completion works at the cursor only and never runs generated SQL.
 One OpenAI-compatible chat endpoint serves the requests, with OpenRouter as the default. Local servers use their OpenAI-compatible base. Keys use the system vault or a rotating key file.
+It works in SQL and Kafka consoles. A Kafka request sends the syntax guide of the SQLN Kafka language and the fields of the topic at the cursor.
 See [AI completion](docs/AI_COMPLETION.md) for consent, context limits, and configuration.
 
 ### Navigator
@@ -712,6 +717,7 @@ An explicit `sslmode=disable` removes TLS; use it only when the connection envir
 `rediss`, `valkeys`, and `kafkas` always require verified TLS.
 Kafka takes `sasl=plain`, `sasl=scram-sha-256`, or `sasl=scram-sha-512` (the default) for a user, and `registry=<url>` for the Schema Registry.
 Kafka takes `group=<id>` for the consumer group id of the reads, such as a group with the prefix that the cluster permits. The form has the same **Consumer group** field. Without it, the reads use `sqln-read`. SQLN never joins the group and never commits.
+Kafka takes `topics=<patterns>` to show only some topics in the catalog, such as `topics=orders.*,!*.dlq`. The form has the same **Topics** field. Reads of other topics still run.
 Without a CA file, Kafka verifies with the system roots only.
 
 ### Local data and diagnostics
@@ -741,7 +747,7 @@ sqln mcp
 ```
 
 `target` is one SQLite file path, one DuckDB target with the `duckdb:` scheme, or one connection URI. SQLN asks before creating a missing file.
-Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, `valkeys`, `kafka`, and `kafkas`.
+Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, `valkeys`, `kafka`, `kafkas`, and `databricks`.
 
 | Option | Purpose |
 |---|---|
@@ -758,7 +764,7 @@ Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `red
 | `--log <file>` | Write the event log |
 | `-h`, `--help` | Show command-line help |
 | `-V`, `--version` | Show the version |
-| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, or `kafka` for an unconnected console; development option |
+| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, or `databricks` for an unconnected console; development option |
 
 ### Execution without the terminal interface
 
@@ -843,6 +849,7 @@ A positional `.sql` path is not a script-opening argument; positional file targe
 - DuckDB opens a database file, and it refuses a `CSV`, `Parquet`, or `JSON` file: read those from a database with `read_csv`, `read_parquet`, or `read_json`, because a driver open of one of them would start a database in memory that loses its tables when the console ends.
 - DuckDB lacks schema compare, ER diagram, the DDL window, `EXPLAIN`, grid editing, and foreign-key reads. A read-only DuckDB connection opens the file with `access_mode = READ_ONLY`; the global read-only preference refuses a write in the connector instead, because a DuckDB connection cannot change its access mode. The bundled build compiles DuckDB and makes the first build long.
 - A DuckDB console can `ATTACH` other databases. Their schemas appear in the navigator with the `catalog.schema` name, and SQLN opens their tables with the catalog name, because a schema name alone cannot reach them. An `ATTACH` is not saved in the database file: it ends when the connection closes. A local DuckDB schema whose own name has a dot does not open, because SQLN reads the dot as the catalog separator.
+- Databricks connections read and run SQL only: they have no transactions, grid editing, query parameters, `EXPLAIN`, ER diagram, or schema compare. They accept a personal access token only. The API keeps no session, so `SET` and `USE` in a console do not reach the next statement; choose the schema in the navigator. The navigator lists Unity Catalog schemas as `catalog.schema`, without `hive_metastore`.
 - Grid editing changes, inserts, and deletes rows of keyed table tabs. Use SQL for binary values or other grids.
 - A console linked to an external `.sql` file lives in the session only: closing SQLN closes it, and the file keeps its text. The file must be UTF-8, and the link has no autosave: `Ctrl+S` and the close questions write it.
 - There is no integrated SSH tunnel, IAM authentication, or Kerberos authentication.

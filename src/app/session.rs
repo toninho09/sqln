@@ -1,7 +1,7 @@
 //! The tabs of the last session: the list at the exit and the reopening at the start.
 
 use super::App;
-use super::tables::Tab;
+use super::tables::{Screen, Tab};
 use crate::catalog::RelationRef;
 use crate::exec::ConsoleId;
 use crate::input::Action;
@@ -111,10 +111,10 @@ impl App {
             Some(Reopened::Console(id)) => {
                 if let Some(index) = self.console_index(id) {
                     self.active = index;
-                    self.table_active = None;
+                    self.screen = Screen::Console;
                 }
             }
-            Some(Reopened::Table(index)) => self.table_active = Some(index),
+            Some(Reopened::Table(index)) => self.screen = Screen::Table(index),
             None => {}
         }
     }

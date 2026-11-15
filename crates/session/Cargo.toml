@@ -1,0 +1,22 @@
+[package]
+name = "sqln-session"
+description = "Connector contract, connection targets, session pools, and command traces of SQLN"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+sqln-core.workspace = true
+sqln-sql.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+regex.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+webpki-roots.workspace = true
+zeroize.workspace = true

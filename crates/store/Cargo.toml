@@ -1,0 +1,33 @@
+[package]
+name = "sqln-store"
+description = "Configuration, scripts, credentials, and persistence of SQLN"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+sqln-core.workspace = true
+sqln-session.workspace = true
+sqln-vault.workspace = true
+keyring-core.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+similar.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[features]
+# Test helpers for the unit tests of other workspace crates.
+test-support = []
+
+[dev-dependencies]
+sqln-testkit.workspace = true
+keyring-core.workspace = true
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+apple-native-keyring-store.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus-secret-service-keyring-store.workspace = true

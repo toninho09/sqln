@@ -188,7 +188,7 @@ fn grid(report: &Report) {
         view.copy(&large.table).map(|text| text.len())
     });
     let columns = names(3);
-    let path = temp_dir("memory-export").join("rows.csv");
+    let path = temp_dir!("memory-export").join("rows.csv");
     report.measure("grid/export 1,000,000 rows to a CSV file", None, || {
         let options = ExportOptions {
             format: ExportFormat::Csv,
@@ -282,6 +282,7 @@ fn catalog(tables: usize, columns: usize) -> Catalog {
             columns: Columns::Loaded(names.clone()),
             foreign_keys: Vec::new(),
             referencing: Vec::new(),
+            notes: Vec::new(),
         })
         .collect();
     Catalog {
@@ -311,7 +312,7 @@ fn lists(report: &Report) {
 }
 
 fn database(name: &str) -> PathBuf {
-    let path = temp_db(name);
+    let path = temp_db!(name);
     rusqlite::Connection::open(&path).unwrap();
     path
 }

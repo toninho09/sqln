@@ -1,0 +1,21 @@
+[package]
+name = "sqln-vault"
+description = "System vault access of SQLN"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+sqln-session.workspace = true
+keyring-core.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service.workspace = true
+# Match the zbus types exposed by secret-service and the keyring store.
+zbus.workspace = true
+zbus-secret-service-keyring-store.workspace = true

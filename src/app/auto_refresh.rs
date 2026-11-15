@@ -28,7 +28,7 @@ impl App {
         if self.console_on_screen() {
             self.console().connection.is_some()
         } else {
-            self.table_active.is_some()
+            self.table_index().is_some()
         }
     }
 
@@ -185,7 +185,7 @@ impl App {
     }
 
     fn table_auto_tick(&mut self, now: Instant) -> bool {
-        let Some(index) = self.table_active else {
+        let Some(index) = self.table_index() else {
             return false;
         };
         let connection = self.tables[index].connection;

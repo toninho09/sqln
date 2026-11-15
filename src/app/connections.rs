@@ -6,7 +6,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use crossterm::event::{KeyCode, KeyEvent};
 
 use super::{App, DialogAction, Picker, PickerKind, SqlRequest};
-use crate::catalog::{Catalog, Columns, ForeignKey, RelationKind, RelationRef};
+use crate::catalog::{Catalog, ColumnNote, Columns, ForeignKey, RelationKind, RelationRef};
 use crate::connection::{
     CatalogState, Connection, ConnectionKey, Definition, Source, name_is_taken, refresh_labels,
 };
@@ -46,7 +46,7 @@ impl App {
 
     pub(super) fn add_definition(&mut self, definition: Definition) -> Option<ConnectionId> {
         let name = definition.name.clone();
-        let connector = definition.connector();
+        let connector = crate::connector::open(&definition);
         self.add_connection(name, Some(definition), connector)
     }
 
@@ -285,7 +285,7 @@ impl App {
         &mut self,
         id: ConnectionId,
         relation: &RelationRef,
-        columns: Result<Vec<String>, String>,
+        columns: Result<(Vec<String>, Vec<ColumnNote>), String>,
         (foreign_keys, referencing): (Vec<ForeignKey>, Vec<ForeignKey>),
     ) {
         let Some(connection) = self.connection_mut(id) else {
@@ -305,6 +305,17 @@ impl App {
                 self.status = Some(message);
                 self.pending_sql = None;
                 self.pending_follow = None;
+                // A refresh would ask for the same columns again, so the lists only stop.
+                for console in &mut self.consoles {
+                    if console.connection == Some(id) {
+                        console.editor.stop_waiting(relation);
+                    }
+                }
+                for table in &mut self.tables {
+                    if table.connection == id {
+                        table.stop_waiting(relation);
+                    }
+                }
             }
         }
         self.continue_follow(id, relation);
@@ -913,9 +924,7 @@ impl App {
                 self.unbind_console(index);
             }
         }
-        self.close_tables_of(id);
-        self.close_diagrams_of(id);
-        self.close_compares_of(id);
+        self.close_tabs_using(id);
         self.cancel_definitions_of(id);
         if let Some(manager) = &mut self.manager {
             manager.remove_connection(id);
@@ -1421,7 +1430,7 @@ impl App {
             self.set_form_error(text::FORM_CONNECTED.to_owned());
             return;
         }
-        let connector = definition.connector();
+        let connector = crate::connector::open(&definition);
         let settings = definition.settings(&self.settings);
         if let Some(manager) = &mut self.manager {
             manager.replace_connection(id, connector.clone(), settings);

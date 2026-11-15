@@ -1,0 +1,56 @@
+// Root of the test binary of the sqln crate: the tests that drive the application
+// or the binary. Each file in tests/ is a mod below or a mod of one of them;
+// scripts/check-test-files.sh enforces it.
+
+mod common;
+
+mod agent;
+mod ai;
+mod analysis_ui;
+mod app;
+mod auth;
+mod auto_refresh;
+mod batch;
+mod bell;
+mod command_log;
+mod commands;
+mod compare_tab;
+mod data_edit;
+mod data_edit_exec;
+mod databricks;
+mod diagram_tab;
+mod duckdb;
+mod follow_key;
+mod generate;
+mod guard;
+mod help;
+mod hints;
+mod history;
+mod home;
+mod import_dialog;
+mod interface;
+mod kafka;
+mod keymap;
+mod latency;
+mod mcp;
+mod modals;
+mod no_answer;
+mod notices;
+mod operation;
+mod persist;
+mod plan;
+mod query_parameters;
+mod redis;
+mod refused;
+mod render;
+mod servers;
+mod sql_file;
+mod syntax_diagnostics;
+mod table;
+mod target_arg;
+mod terminal;
+mod transaction_age;
+mod tree_filter;
+mod tree_objects;
+mod visible_schemas;
+mod workspace;

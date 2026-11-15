@@ -1,0 +1,24 @@
+[package]
+name = "sqln-connector"
+description = "All connectors of SQLN: the contract and the driver crates"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# The crate has no unit tests, so it links no test binary. Remove this line when
+# you add one.
+test = false
+
+[dependencies]
+sqln-session.workspace = true
+sqln-store.workspace = true
+sqln-vault.workspace = true
+sqln-postgres.workspace = true
+sqln-mysql.workspace = true
+sqln-sqlite.workspace = true
+sqln-duckdb.workspace = true
+sqln-redis.workspace = true
+sqln-kafka.workspace = true
+sqln-databricks.workspace = true

@@ -38,7 +38,7 @@ struct Screen {
 
 impl Screen {
     fn new(name: &str, theme: Theme, keyboard: KeyboardMode) -> Self {
-        let path = temp_db(&format!("interface-{name}"));
+        let path = temp_db!(&format!("interface-{name}"));
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(SETUP)
@@ -294,6 +294,7 @@ fn the_kind_field_names_each_source() {
     let names = [
         "PostgreSQL",
         "MySQL",
+        "Databricks",
         "SQLite",
         "Redis/Valkey",
         "DuckDB",
@@ -450,7 +451,7 @@ fn each_scheme_keeps_its_text_readable() {
 
 /// Draws one SQLite connection with a short name, and returns the screen.
 fn screen_with_connection(name: &str, theme: Theme) -> String {
-    let path = temp_db(&format!("interface-{name}"));
+    let path = temp_db!(&format!("interface-{name}"));
     let connector = Arc::new(sqln::connector::sqlite::SqliteConnector::new(
         sqln::connector::sqlite::SqliteTarget::new(path),
     ));
@@ -780,7 +781,7 @@ fn a_button_has_the_same_width_in_each_theme() {
 #[test]
 fn external_names_send_no_sequence_through_the_new_rows() {
     let name = "bad\x1b[31mname\x07";
-    let path = temp_db("interface-control-name");
+    let path = temp_db!("interface-control-name");
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch(SETUP)
@@ -1451,7 +1452,7 @@ const FORM_LABELS: [&str; 20] = [
     "Read only",
     "Production",
     "Connect limit",
-    "SQL limit",
+    "Statement (s, 0 = none)",
 ];
 
 #[test]
@@ -1666,8 +1667,10 @@ fn a_click_selects_a_field_in_each_placement() {
 /// Opens the form of a new SQLite connection, with the focus on its file.
 fn sqlite_form_screen(name: &str) -> Screen {
     let mut screen = form_screen(name, Theme::plain());
-    screen.code(KeyCode::Right);
-    screen.code(KeyCode::Right);
+    // `Right` goes from PostgreSQL through MySQL and Databricks to SQLite.
+    for _ in 0..3 {
+        screen.code(KeyCode::Right);
+    }
     focus_field(&mut screen, Field::File);
     screen
 }
@@ -1686,7 +1689,7 @@ fn open_section(screen: &mut Screen, (width, height): (u16, u16), title: &str) {
 
 #[test]
 fn the_file_browser_fills_the_file_of_a_sqlite_connection() {
-    let dir = temp_dir("form-browse");
+    let dir = temp_dir!("form-browse");
     std::fs::write(dir.join("shop.db"), "").unwrap();
     let dir = dir.canonicalize().unwrap();
     let mut screen = sqlite_form_screen("form-browse");
@@ -1706,7 +1709,7 @@ fn the_file_browser_fills_the_file_of_a_sqlite_connection() {
 
 #[test]
 fn use_this_folder_leaves_the_file_of_a_connection_ready_for_a_name() {
-    let dir = temp_dir("form-browse-folder").canonicalize().unwrap();
+    let dir = temp_dir!("form-browse-folder").canonicalize().unwrap();
     let mut screen = sqlite_form_screen("form-browse-folder");
     screen.write(&format!("{}/", dir.display()));
     screen.app.on_event(Event::Key(ctrl('o')));
@@ -1885,7 +1888,7 @@ fn each_kind_of_note_has_its_own_color() {
 
 #[test]
 fn a_working_connection_gives_a_success_note_and_a_test_in_progress_does_not() {
-    let path = temp_db("form-success");
+    let path = temp_db!("form-success");
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch(SETUP)
@@ -1922,7 +1925,7 @@ fn a_working_connection_gives_a_success_note_and_a_test_in_progress_does_not() {
 }
 
 fn themed_store(name: &str, preferences: &str) -> (Store, Root) {
-    let base = temp_dir(name);
+    let base = temp_dir!(name);
     let global = Root::global(base.join("global"));
     fs::create_dir_all(&global.dir).unwrap();
     let text = format!(r#"{{"version":1,"preferences":{preferences},"connections":[]}}"#);

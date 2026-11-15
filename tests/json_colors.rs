@@ -117,7 +117,7 @@ fn mouse_selection_stays_above_json_colors_and_copies_only_selected_text() {
 }
 
 fn open_editor(f: &mut Fixture) {
-    common::open_table(&mut f.app, 0, "items");
+    crate::common::open_table(&mut f.app, 0, "items");
     f.pump_until(|f| {
         f.app
             .table()
@@ -218,7 +218,7 @@ fn cell_editor_keeps_json_colors_after_horizontal_scroll() {
 #[test]
 fn sql_consoles_keep_sql_colors_for_json_inside_a_string() {
     let theme = Theme::astrodark();
-    let mut editor = common::Fixture::conventional(r#"SELECT '{"key":12}';"#);
+    let mut editor = crate::common::Fixture::conventional(r#"SELECT '{"key":12}';"#);
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     terminal
         .draw(|frame| {

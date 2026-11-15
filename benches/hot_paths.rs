@@ -225,6 +225,7 @@ fn large_catalog(tables: usize, columns: usize) -> Catalog {
             columns: Columns::Loaded(names.clone()),
             foreign_keys: Vec::new(),
             referencing: Vec::new(),
+            notes: Vec::new(),
         })
         .collect();
     Catalog {
@@ -531,7 +532,7 @@ fn grid(bench: &mut Bench) {
 }
 
 fn history_root(name: &str) -> Root {
-    let root = Root::global(temp_dir(name));
+    let root = Root::global(temp_dir!(name));
     let mut lines = Vec::new();
     while lines.len() < 8 * MIB {
         let entry = Entry {
@@ -553,7 +554,7 @@ fn history_rows() -> Vec<HistoryRow> {
 }
 
 fn folder_of_files(name: &str, files: usize) -> PathBuf {
-    let folder = temp_dir(name);
+    let folder = temp_dir!(name);
     for index in 0..files {
         File::create(folder.join(format!("file_{index}.db"))).unwrap();
     }
@@ -561,7 +562,7 @@ fn folder_of_files(name: &str, files: usize) -> PathBuf {
 }
 
 fn script_root(name: &str, count: usize) -> Root {
-    let root = Root::global(temp_dir(name));
+    let root = Root::global(temp_dir!(name));
     fs::create_dir_all(root.consoles_dir()).unwrap();
     for index in 0..count {
         let id = format!("script-{index}");
@@ -639,7 +640,7 @@ fn database_options(path: &Path) -> Options {
 }
 
 fn sqlite_database(name: &str) -> PathBuf {
-    let path = temp_db(name);
+    let path = temp_db!(name);
     rusqlite::Connection::open(&path).unwrap();
     path
 }
@@ -887,7 +888,7 @@ fn export(bench: &mut Bench) {
             },
         );
     }
-    let path = temp_dir("bench-export").join("rows.csv");
+    let path = temp_dir!("bench-export").join("rows.csv");
     bench.rate(
         "export/write 200,000 rows to a CSV file",
         (ROWS, "rows"),

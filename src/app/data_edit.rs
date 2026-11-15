@@ -6,8 +6,8 @@ use ratatui::layout::Position;
 use super::auth::Use;
 use super::{App, DialogAction};
 use crate::console::Phase;
-use crate::data_edit::form::{Body, EditForm};
 use crate::data_edit::{DeleteToggle, Job, Outcome, Restore, SavedRow};
+use crate::edit_form::{Body, EditForm};
 use crate::exec::{ConsoleId, ExecEvent, ExecutionEnd};
 use crate::grid::Value;
 use crate::input::{Action, Chord, Lookup, Region};
@@ -576,7 +576,7 @@ impl App {
                         uncertain: false,
                     }),
                 );
-                let can_show_review = self.table_active == Some(index)
+                let can_show_review = self.table_index() == Some(index)
                     && !self.modal_is_open()
                     && self.form.is_none();
                 let tab = &mut self.tables[index];
@@ -634,7 +634,7 @@ impl App {
                         } else {
                             tab.pending = true;
                             tab.edit_reload = true;
-                            if self.table_active == Some(index) {
+                            if self.table_index() == Some(index) {
                                 self.reload_saved_table();
                             }
                         }
@@ -697,7 +697,7 @@ impl App {
                     }
                 } else if reload {
                     tab.pending = true;
-                    if self.table_active == Some(index) {
+                    if self.table_index() == Some(index) {
                         self.reload_saved_table();
                     }
                 }

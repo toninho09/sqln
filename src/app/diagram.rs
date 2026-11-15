@@ -6,14 +6,14 @@ use ratatui::layout::Position;
 use super::App;
 use super::auth::Use;
 use super::mouse::Drag;
-use super::tables::Tab;
+use super::tables::{Screen, Tab};
 use crate::catalog::RelationKind;
 use crate::connection::CatalogState;
 use crate::console::Phase;
 use crate::diagram::Focus;
 use crate::diagram::layout::Direction;
 use crate::diagram::sql::diagram_sql;
-use crate::diagram::tab::DiagramTab;
+use crate::diagram_tab::DiagramTab;
 use crate::exec::{ConnectionId, RunOptions};
 use crate::input::{Action, Region};
 use crate::navigator::{Row, RowKind};
@@ -39,19 +39,17 @@ impl App {
 
     /// Returns the diagram tab on screen.
     pub fn diagram(&self) -> Option<&DiagramTab> {
-        self.diagram_active.map(|index| &self.diagrams[index])
+        self.diagram_index().map(|index| &self.diagrams[index])
     }
 
     pub(super) fn diagram_mut(&mut self) -> Option<&mut DiagramTab> {
-        self.diagram_active.map(|index| &mut self.diagrams[index])
+        self.diagram_index().map(|index| &mut self.diagrams[index])
     }
 
     /// Returns true when the console on screen receives the keys of a console: no table,
     /// no diagram, and no compare is on screen.
     pub(super) fn console_on_screen(&self) -> bool {
-        self.table_active.is_none()
-            && self.diagram_active.is_none()
-            && self.compare_active.is_none()
+        self.screen == Screen::Console
     }
 
     /// Returns true when the home screen is on screen: no tab is open, and the active
@@ -179,7 +177,7 @@ impl App {
 
     /// Returns true when `Ctrl+W D` opens a new diagram or selects another tab.
     pub(super) fn can_open_diagram_here(&self) -> bool {
-        self.diagram_active.is_none() && self.diagram_target().is_ok()
+        self.diagram_index().is_none() && self.diagram_target().is_ok()
     }
 
     /// Opens the diagram that `Ctrl+W D` names.
@@ -260,12 +258,10 @@ impl App {
     pub(super) fn select_diagram(&mut self, index: usize) {
         if index < self.diagrams.len() {
             self.console_mut().editor.close_suggestions();
-            if self.diagram_active != Some(index) {
+            if self.diagram_index() != Some(index) {
                 self.leave_tab();
             }
-            self.table_active = None;
-            self.compare_active = None;
-            self.diagram_active = Some(index);
+            self.screen = Screen::Diagram(index);
         }
     }
 
@@ -320,7 +316,7 @@ impl App {
     }
 
     fn stop_diagram(&mut self) {
-        let Some(index) = self.diagram_active else {
+        let Some(index) = self.diagram_index() else {
             return;
         };
         if self.cancel_agent_console(self.diagrams[index].id) {
@@ -342,49 +338,13 @@ impl App {
     /// Closes a diagram tab, and the rows of a read in progress leave the budget. The tab
     /// at the same place of the tab row takes the screen.
     pub(super) fn close_diagram(&mut self, index: usize) {
-        if index >= self.diagrams.len() {
-            return;
-        }
-        let place = self
-            .tab_order()
-            .iter()
-            .position(|tab| *tab == Tab::Diagram(index));
-        self.cancel_agent_console(self.diagrams[index].id);
-        self.agent.forget_console(self.diagrams[index].id);
-        self.cancel_auth_console(self.diagrams[index].id);
-        let mut tab = self.diagrams.remove(index);
-        tab.release(&self.budget);
-        if let Some(manager) = &mut self.manager {
-            manager.close_console(tab.id);
-        }
-        match self.diagram_active {
-            Some(active) if active == index => {
-                self.diagram_active = None;
-                let order = self.tab_order();
-                if order.is_empty() {
-                    self.focus_navigator();
-                } else if let Some(place) = place {
-                    self.select_tab(place.min(order.len() - 1));
-                }
-            }
-            Some(active) if active > index => self.diagram_active = Some(active - 1),
-            _ => {}
-        }
-    }
-
-    /// Closes the diagram tabs of a connection that the user removed.
-    pub(super) fn close_diagrams_of(&mut self, connection: ConnectionId) {
-        for index in (0..self.diagrams.len()).rev() {
-            if self.diagrams[index].connection == connection {
-                self.close_diagram(index);
-            }
-        }
+        self.close_item(Tab::Diagram(index), |app| &mut app.diagrams);
     }
 
     /// Applies an action to the diagram on screen. It returns false for an action that
     /// does not belong to the diagram.
     pub(super) fn perform_on_diagram(&mut self, action: Action) -> bool {
-        let Some(index) = self.diagram_active else {
+        let Some(index) = self.diagram_index() else {
             return false;
         };
         let tab = &mut self.diagrams[index];

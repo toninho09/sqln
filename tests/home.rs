@@ -94,7 +94,7 @@ impl Fixture {
 }
 
 fn database(name: &str) -> PathBuf {
-    let path = temp_db(name);
+    let path = temp_db!(name);
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch("CREATE TABLE t(id INTEGER PRIMARY KEY);")
@@ -316,7 +316,7 @@ fn a_start_with_a_connection_keeps_its_console() {
 #[test]
 fn a_start_with_a_file_of_the_command_line_keeps_its_console() {
     let mut f = Fixture::with(Options {
-        database: Some(temp_db("home-start-missing")),
+        database: Some(temp_db!("home-start-missing")),
         session_target: true,
         start_home: true,
         ..Options::default()
@@ -506,7 +506,7 @@ fn a_small_area_shows_the_name_instead_of_the_logo() {
 
 #[test]
 fn a_quit_on_the_home_screen_starts_there_again() {
-    let base = temp_dir("home-session");
+    let base = temp_dir!("home-session");
     let store = Store {
         global: Root::global(base.join("global")),
         project: None,

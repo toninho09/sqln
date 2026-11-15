@@ -420,7 +420,7 @@ struct Run {
 
 impl Run {
     fn with(name: &str, change: impl FnOnce(&mut Definition)) -> Self {
-        let path = temp_db(name);
+        let path = temp_db!(name);
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(

@@ -157,7 +157,7 @@ impl Harness {
 
 /// A sink that keeps the row cap of the tests away.
 fn sink() -> ResultSink {
-    let (events, inbox) = tokio::sync::mpsc::channel(1024);
+    let (events, inbox) = tokio::sync::mpsc::channel::<ExecEvent>(1024);
     std::mem::forget(inbox);
     let key = sqln::exec::StatementKey {
         console: 1,

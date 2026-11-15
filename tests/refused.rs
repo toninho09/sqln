@@ -1,8 +1,6 @@
 // The answer to a refused password, with real servers. Load `scripts/test-env.sh` first.
 // Without the variables, these tests print "skipped".
 
-mod common;
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
@@ -11,7 +9,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use common::{key, temp_dir};
+use crate::common::{key, temp_dir};
 use crossterm::event::{Event, KeyCode};
 use ratatui::{Terminal, backend::TestBackend};
 use sqln::app::{App, Options};
@@ -76,7 +74,7 @@ impl Fixture {
         let mut target: NetworkTarget = parse_uri(uri).unwrap();
         let password = target.password.take().unwrap().expose().to_owned();
         let definition = Definition::new("real", Source::Network(target));
-        let base = temp_dir(&format!("refused-{}", uuid::Uuid::new_v4()));
+        let base = temp_dir!(&format!("refused-{}", uuid::Uuid::new_v4()));
         let store = Store {
             global: Root::global(base.join("global")),
             project: None,
@@ -265,7 +263,7 @@ fn a_refusal_stops_the_catalog_until_an_action_of_the_user() {
         assert!(!f.screen().contains("refused the last password"));
         assert_eq!(f.app.connections()[0].catalog_state, CatalogState::Failed);
         // The navigator refresh is an action of the user, so it asks for a password.
-        f.app.on_event(Event::Key(common::ctrl('w')));
+        f.app.on_event(Event::Key(crate::common::ctrl('w')));
         f.code(KeyCode::Char('h'));
         f.code(KeyCode::Char('r'));
         f.sees("refused the last password");
