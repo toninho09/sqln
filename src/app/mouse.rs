@@ -6,7 +6,9 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
 
 use super::{App, MAX_EDITOR_RATIO, MIN_EDITOR_RATIO, Screen};
+use crate::arrange::{self, Target};
 use crate::console::Focus;
+use crate::exec::ConnectionId;
 use crate::export_form::Field;
 use crate::filter_list::ListRequest;
 use crate::form::FormRequest;
@@ -14,10 +16,12 @@ use crate::input::Action;
 use crate::navigator::{MIN_WIDTH, Navigator, RowKind};
 use crate::result::ResultTab;
 use crate::settings::{Field as SettingsField, SettingsRequest};
+use crate::store::Scope;
 use crate::store::config::ExplorerSide;
 use crate::table::TableFocus;
 use crate::ui::console::Control;
 use crate::ui::navigator::TREE_PAD;
+use crate::ui::text;
 use crate::ui::{
     MainTab, TableControl, column_edge_at, grid_cell_at, grid_row_number_at, header_column_at,
     section_at, tab_at,
@@ -46,6 +50,24 @@ pub(super) enum Drag {
         column: u16,
         row: u16,
     },
+    /// A connection or a folder of the explorer. A folder is named by its first
+    /// connection. `over` is the place under the pointer, after the pointer leaves the
+    /// first row.
+    Tree {
+        connection: ConnectionId,
+        folder: bool,
+        origin: usize,
+        over: Option<DropAt>,
+    },
+}
+
+/// The place under the pointer while the mouse moves an item of the explorer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DropAt {
+    /// A row of the tree.
+    Row(usize),
+    /// The empty area below the last row: the end of the scope of the item.
+    End,
 }
 
 impl App {
@@ -110,7 +132,7 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Left) => self.on_press(mouse, position),
             MouseEventKind::Drag(MouseButton::Left) if self.drag.is_some() => self.on_drag(mouse),
-            MouseEventKind::Up(_) if self.drag.is_some() => self.drag = None,
+            MouseEventKind::Up(_) if self.drag.is_some() => self.end_drag(),
             MouseEventKind::Drag(MouseButton::Left) if self.grid_has_focus() => {
                 self.point_at_cell(mouse, true);
             }
@@ -366,10 +388,20 @@ impl App {
         };
         self.navigator.select_index(index, &self.connections);
         // The mark of a branch stands after the indent of its row.
-        let mark = usize::from(area.x + TREE_PAD) + row.depth() * 2;
+        let mark = usize::from(area.x + TREE_PAD) + row.indent() * 2;
         if usize::from(mouse.column) == mark && Navigator::is_branch(&row) {
             self.toggle(&row);
-        } else if self.is_double_click(mouse) {
+            return;
+        }
+        if matches!(row.kind, RowKind::Connection | RowKind::Folder) {
+            self.drag = Some(Drag::Tree {
+                connection: self.connections[row.connection].id,
+                folder: row.kind == RowKind::Folder,
+                origin: index,
+                over: None,
+            });
+        }
+        if self.is_double_click(mouse) {
             match row.kind {
                 RowKind::Table | RowKind::View => self.open_table(&row),
                 RowKind::Console => self.open_tree_console(&row),
@@ -460,6 +492,7 @@ impl App {
                 self.navigator.width = width.clamp(MIN_WIDTH.min(limit), limit);
             }
             Some(Drag::Diagram { .. }) => self.drag_diagram(mouse),
+            Some(Drag::Tree { .. }) => self.drag_tree(mouse),
             Some(Drag::Editor) => {
                 let area = self.layout.console.split;
                 if area.height > 0 {
@@ -471,6 +504,123 @@ impl App {
             }
             None => {}
         }
+    }
+
+    /// Returns the item of a drag in the explorer.
+    fn drag_source(&self) -> Option<Target> {
+        let Some(Drag::Tree {
+            connection, folder, ..
+        }) = self.drag
+        else {
+            return None;
+        };
+        let index = self.connection_index(connection)?;
+        if folder {
+            arrange::folder_of(&self.connections[index]).map(Target::Folder)
+        } else {
+            Some(Target::Connection(index))
+        }
+    }
+
+    /// Marks the place under the pointer, and says what the release does.
+    fn drag_tree(&mut self, mouse: MouseEvent) {
+        let area = self.layout.navigator;
+        let rows = self.navigator.rows(&self.connections);
+        let place = area
+            .contains(Position::new(mouse.column, mouse.row))
+            .then(|| self.navigator.top + usize::from(mouse.row - area.y))
+            .map(|index| {
+                if index < rows.len() {
+                    DropAt::Row(index)
+                } else {
+                    DropAt::End
+                }
+            });
+        let Some(Drag::Tree { origin, over, .. }) = &mut self.drag else {
+            return;
+        };
+        // The first row starts no move, so a click stays a click.
+        if over.is_none() && place == Some(DropAt::Row(*origin)) {
+            return;
+        }
+        *over = place;
+        let source = self.drag_source();
+        let global = source
+            .as_ref()
+            .and_then(|source| arrange::scope_of(&self.connections, source).ok())
+            .map(|scope| scope == Scope::Global);
+        self.navigator.drop_target = match place {
+            Some(DropAt::Row(index)) => Some(index),
+            _ => None,
+        };
+        self.navigator.drop_end = match (place, global) {
+            (Some(DropAt::End), Some(global)) => Some(text::drop_end_row(global)),
+            _ => None,
+        };
+        let (Some(source), Some(place)) = (source, place) else {
+            self.status = Some(text::DROP_OUTSIDE.to_owned());
+            return;
+        };
+        let name = |target: &Target| match target {
+            Target::Connection(index) => self.connections[*index].name.clone(),
+            Target::Folder(folder) => arrange::folder_label(&self.connections, folder),
+        };
+        let DropAt::Row(index) = place else {
+            self.status = Some(
+                match (arrange::drop_at_end(&self.connections, &source), global) {
+                    (Ok(_), Some(global)) => text::drop_end(&name(&source), global),
+                    (Err(reason), _) => reason.to_owned(),
+                    (Ok(_), None) => text::MOVE_NOT_SAVED.to_owned(),
+                },
+            );
+            return;
+        };
+        let row = rows[index];
+        let target = row
+            .folder(&self.connections)
+            .map_or(Target::Connection(row.connection), Target::Folder);
+        self.status = Some(
+            match arrange::drop_on(&self.connections, &source, &target) {
+                Err(reason) => reason.to_owned(),
+                Ok(_) => match (&source, &target) {
+                    (Target::Connection(index), Target::Folder(folder))
+                        if arrange::leaves_folder(&self.connections, *index, folder) =>
+                    {
+                        text::drop_out(&name(&source), &name(&target))
+                    }
+                    (Target::Connection(_), Target::Folder(_)) => {
+                        text::drop_into(&name(&source), &name(&target))
+                    }
+                    _ => text::drop_at(&name(&source), &name(&target)),
+                },
+            },
+        );
+    }
+
+    /// Ends a drag. A drag in the explorer moves its item to the marked place.
+    fn end_drag(&mut self) {
+        let source = self.drag_source();
+        let over = match self.drag.take() {
+            Some(Drag::Tree { over, .. }) => over,
+            _ => return,
+        };
+        self.navigator.drop_target = None;
+        self.navigator.drop_end = None;
+        let (Some(source), Some(place)) = (source, over) else {
+            if over.is_none() && self.status.as_deref() == Some(text::DROP_OUTSIDE) {
+                self.status = None;
+            }
+            return;
+        };
+        let row = match place {
+            DropAt::Row(index) => match self.navigator.rows(&self.connections).get(index) {
+                Some(row) => Some(*row),
+                None => return,
+            },
+            DropAt::End => None,
+        };
+        self.status = None;
+        self.drop_tree_item(&source, row.as_ref());
     }
 
     fn start_column_drag(&mut self, mouse: MouseEvent) -> bool {

@@ -6,6 +6,24 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Connection order and folders — 2026-11-16
+
+The user asked to change the order of the connections in the explorer and to group them in folders, in the most friendly way. The user chose the points below.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Folder model | Each connection has an optional `folder` name. A folder exists while it holds a connection. One level only | A `folders` list with empty folders; nested folders | User choice. Less code and fewer rules |
+| Scopes | The global connections come first, then the project connections. Each folder belongs to one scope. A name in both scopes shows `(global)` or `(local)`, as connection names do. A move never crosses the scope, and the refusal says why | Folders that join both scopes; free order across scopes | A global item and a project item cannot change places, because each file keeps its own list |
+| Storage | The order is the order of `connections` in `config.json`, and `folder` is a field of the entry. `version` stays 1. An earlier SQLN refuses a file with `folder` | `workspace.json` | User choice. The project file shares the order with the team. Same rule as `consumerGroup` |
+| Keys | `navigatorMoveUp` and `navigatorMoveDown`: `Alt+Up` and `Alt+Down` in both maps, and also `K` and `J` in the Vim mode. `navigatorMoveToFolder`: `m` | `K` and `J` in both maps | User choice |
+| Neighbors | A move swaps the item with the item above or below it at the same level: in its folder, or at the top level of its scope. A folder moves as one block. At an edge, the move refuses and names `m` and the mouse | A move that enters or leaves a folder | A predictable step. `m` and the mouse change the folder |
+| Folder list | `m` lists **+ New folder**, **No folder** (for a connection in a folder), and the other folders of the scope. A connection that enters a folder goes to its end. **No folder** puts it after its folder | Free text only | One list for all cases |
+| Mouse | A drag starts on a connection or folder row and begins when the pointer leaves that row, so a click and a double click stay as before. The target row shows `>`, and the status line says what the release does or why it refuses. A folder row takes a connection at its end. The row of its own folder takes a connection out of the folder, at the place of the folder, so a connection can leave a folder when the scope has no loose connection. The empty area below the last row takes the item to the end of its scope, at the top level: a connection leaves its folder, and a folder moves with its connections. While the pointer is there, the first empty row shows `> End of global` or `> End of project`. When the tree fills the panel, no empty area stays, and the row of the folder takes a connection out. Another row gives the item its place: above it when the item moves up, below it when the item moves down. A connection takes the folder of a connection row, and a folder takes the place of the top-level item of the row | Release always above the row | The last place stays reachable |
+| Folder row | `e` renames the folder. A name that another folder of the scope uses joins the two folders. `Delete` removes the folder after a question, and its connections stay at its place without a folder. Other connection commands refuse with a reason | Rename refuses a used name | User choice for `e` and `Delete`. A join is the result that the name asks for |
+| Open state | A folder starts open. The closed folders go to `closedFolders` of `workspace.json`, with the layout | Session only | User choice |
+| Form | **Folder** in the General section, after **Name**, also for a connected connection. An empty field gives no folder | No form field | A connection can get a folder when it is created |
+| Filter | The filtered tree shows no folder row and refuses a move with a reason | Folder rows in the filtered tree | The filter lists only the matches |
+
 ## Databricks SQL connector — 2026-11-15
 
 The user asked for SQL queries on Databricks. The user chose the scope below. This entry adds `sqln-databricks` to the driver list of "Driver crates, connector contract, and runtime".

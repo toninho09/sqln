@@ -186,7 +186,7 @@ impl App {
             .unwrap_or_default()
     }
 
-    fn connection_index(&self, id: ConnectionId) -> Option<usize> {
+    pub(super) fn connection_index(&self, id: ConnectionId) -> Option<usize> {
         self.connections
             .iter()
             .position(|connection| connection.id == id)
@@ -395,6 +395,19 @@ impl App {
             self.status = Some(text::NO_SELECTED_CONNECTION.to_owned());
             return;
         };
+        if row.kind == RowKind::Folder
+            && !matches!(
+                action,
+                Action::NavigatorUp
+                    | Action::NavigatorDown
+                    | Action::NavigatorCollapse
+                    | Action::NavigatorExpand
+                    | Action::NavigatorOpen
+            )
+        {
+            self.on_folder_action(action, &row);
+            return;
+        }
         let id = self.connections[row.connection].id;
         match action {
             Action::NavigatorUp => self.navigator.move_by(-1, &self.connections),
@@ -437,6 +450,9 @@ impl App {
                 self.delete_tree_console(&row);
             }
             Action::NavigatorDelete => self.confirm_removal(id),
+            Action::NavigatorMoveUp => self.move_tree_item(&row, true),
+            Action::NavigatorMoveDown => self.move_tree_item(&row, false),
+            Action::NavigatorMoveToFolder => self.open_folder_list(&row),
             _ => {}
         }
     }
@@ -1085,6 +1101,14 @@ impl App {
                     self.go_follow(connection, choices.swap_remove(cursor));
                 }
             }
+            PickerKind::Folder {
+                connection,
+                mut choices,
+            } => {
+                if cursor < choices.len() {
+                    self.choose_folder(connection, choices.swap_remove(cursor));
+                }
+            }
             PickerKind::Generate {
                 request,
                 templates,
@@ -1205,9 +1229,23 @@ impl App {
         let editing = form.editing;
         if form.display_only {
             let name = form.text(Field::Name).trim().to_owned();
-            let (theme, icon, production) = (form.theme.clone(), form.icon, form.production);
-            match form.schemas() {
-                Ok(schemas) => self.save_display(name, theme, icon, production, schemas),
+            let display = Display {
+                name,
+                theme: form.theme.clone(),
+                icon: form.icon,
+                production: form.production,
+                folder: None,
+                schemas: Vec::new(),
+            };
+            match form
+                .folder()
+                .and_then(|folder| Ok((folder, form.schemas()?)))
+            {
+                Ok((folder, schemas)) => self.save_display(Display {
+                    folder,
+                    schemas,
+                    ..display
+                }),
                 Err(invalid) => self.show_invalid(invalid),
             }
             return;
@@ -1300,14 +1338,15 @@ impl App {
 
     /// Saves the values that need no new session. The sessions stay open. A change of
     /// the visible schemas reads the catalog again.
-    fn save_display(
-        &mut self,
-        name: String,
-        theme: Option<ThemeName>,
-        icon: Option<ConnectionIcon>,
-        production: bool,
-        schemas: Vec<String>,
-    ) {
+    fn save_display(&mut self, display: Display) {
+        let Display {
+            name,
+            theme,
+            icon,
+            production,
+            folder,
+            schemas,
+        } = display;
         let Some(id) = self.form.as_ref().and_then(|form| form.editing) else {
             return;
         };
@@ -1336,6 +1375,7 @@ impl App {
             definition.theme = theme;
             definition.icon = icon;
             definition.production = production;
+            definition.folder = folder;
             definition.schemas = schemas;
             if let Some(key) = &key
                 && let Err(message) = self.save_connection(key, definition, credential)
@@ -1406,6 +1446,7 @@ impl App {
                 connection.key = key;
                 connection.credential = credential;
             }
+            crate::arrange::sort_by_scope(&mut self.connections);
             refresh_labels(&mut self.connections);
             if editing.is_none() {
                 self.navigator.select_connection(id);
@@ -1547,4 +1588,14 @@ fn name_taken() -> Invalid {
         field: Field::Name,
         message: text::FORM_NAME_TAKEN.to_owned(),
     }
+}
+
+/// The values that the form of a connected connection can change.
+struct Display {
+    name: String,
+    theme: Option<ThemeName>,
+    icon: Option<ConnectionIcon>,
+    production: bool,
+    folder: Option<String>,
+    schemas: Vec<String>,
 }

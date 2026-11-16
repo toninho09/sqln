@@ -5,6 +5,7 @@
 pub mod agent;
 pub mod ai;
 pub mod analysis;
+pub mod arrange;
 pub mod command_log;
 pub mod compare;
 pub mod complete;

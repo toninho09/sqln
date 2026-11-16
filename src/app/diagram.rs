@@ -95,6 +95,7 @@ impl App {
             RowKind::View => return Err(text::DIAGRAM_VIEW),
             RowKind::Consoles | RowKind::Console => return Err(text::DIAGRAM_CONSOLE),
             RowKind::Group(_) | RowKind::Object(_) => return Err(text::NOT_FOR_OBJECT),
+            RowKind::Folder => return Err(text::NOT_FOR_FOLDER),
         };
         self.focus_target(item.id, focus)
     }

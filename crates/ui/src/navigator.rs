@@ -9,11 +9,13 @@ use std::collections::{HashMap, HashSet};
 
 use crossterm::event::KeyEvent;
 
+use crate::arrange::{self, Item};
 use crate::catalog::{Columns, Group, Object, RelationKind, RelationRef, Schema};
 use crate::connection::{CatalogState, Connection};
 use crate::exec::ConnectionId;
 use crate::filter_list::{holds_words, words_of};
 use crate::line_input::{Edit, LineInput};
+use crate::store::config::FolderRef;
 use crate::ui::text;
 
 pub const DEFAULT_WIDTH: u16 = 24;
@@ -22,6 +24,8 @@ const PAGE_ROWS: isize = 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowKind {
+    /// A folder of saved connections. `Row::connection` is its first connection.
+    Folder,
     Connection,
     /// The node above the consoles of a connection.
     Consoles,
@@ -45,16 +49,32 @@ pub struct Row {
     pub schema: usize,
     pub relation: usize,
     pub column: usize,
+    /// True for the rows of a connection in a folder.
+    pub in_folder: bool,
 }
 
 impl Row {
+    /// Returns the level of the row below its connection.
     pub fn depth(&self) -> usize {
         match self.kind {
-            RowKind::Connection => 0,
+            RowKind::Folder | RowKind::Connection => 0,
             RowKind::Consoles | RowKind::Schema => 1,
             RowKind::Console | RowKind::Table | RowKind::View | RowKind::Group(_) => 2,
             RowKind::Column | RowKind::Object(_) => 3,
         }
+    }
+
+    /// Returns the level of the row on screen. A folder adds one level.
+    pub fn indent(&self) -> usize {
+        self.depth() + usize::from(self.in_folder)
+    }
+
+    /// Returns the folder of a folder row.
+    pub fn folder(&self, connections: &[Connection]) -> Option<FolderRef> {
+        if self.kind != RowKind::Folder {
+            return None;
+        }
+        arrange::folder_of(&connections[self.connection])
     }
 
     /// Returns the group of a group row or of an object row.
@@ -88,7 +108,7 @@ impl Row {
     }
 
     fn catalog_schema<'a>(&self, connections: &'a [Connection]) -> Option<&'a Schema> {
-        if self.in_consoles() {
+        if self.in_consoles() || self.kind == RowKind::Folder {
             return None;
         }
         connections[self.connection]
@@ -103,6 +123,7 @@ impl Row {
         let schema = self.catalog_schema(connections);
         let relation = schema.and_then(|schema| schema.relations.get(self.relation));
         match self.kind {
+            RowKind::Folder => connections[self.connection].folder().unwrap_or(""),
             RowKind::Connection => &connections[self.connection].name,
             RowKind::Consoles => text::NODE_CONSOLES,
             RowKind::Console => connections[self.connection]
@@ -137,6 +158,13 @@ impl Row {
     }
 
     fn key(&self, connections: &[Connection]) -> Key {
+        if self.kind == RowKind::Folder {
+            return Key {
+                connection: connections[self.connection].id,
+                folder: self.folder(connections),
+                ..Key::default()
+            };
+        }
         if self.in_consoles() {
             return Key {
                 connection: connections[self.connection].id,
@@ -164,6 +192,7 @@ impl Row {
         let name = || Some(self.name(connections).to_owned());
         Key {
             connection: connections[self.connection].id,
+            folder: None,
             consoles: false,
             schema: schema_name,
             group: None,
@@ -182,6 +211,8 @@ impl Row {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Key {
     connection: ConnectionId,
+    /// The folder of a folder row. There, `connection` is its first connection.
+    folder: Option<FolderRef>,
     /// True on the `Consoles` node and below it. There, `relation` is the console name.
     consoles: bool,
     schema: Option<String>,
@@ -263,8 +294,14 @@ pub struct Navigator {
     pub collapsed: bool,
     /// The first visible row.
     pub top: usize,
+    /// The row under the pointer while the mouse moves an item.
+    pub drop_target: Option<usize>,
+    /// The text of the row below the tree while the pointer is there in a move.
+    pub drop_end: Option<&'static str>,
     cursor: Key,
     expansion: HashMap<ConnectionId, Expansion>,
+    /// The folders that the user closed. The other folders are open.
+    closed_folders: HashSet<FolderRef>,
     filter: Option<TreeFilter>,
 }
 
@@ -274,8 +311,11 @@ impl Default for Navigator {
             width: DEFAULT_WIDTH,
             collapsed: false,
             top: 0,
+            drop_target: None,
+            drop_end: None,
             cursor: Key::default(),
             expansion: HashMap::new(),
+            closed_folders: HashSet::new(),
             filter: None,
         }
     }
@@ -336,6 +376,7 @@ fn filtered_rows(connections: &[Connection], words: &[String]) -> Vec<Row> {
             schema: 0,
             relation: 0,
             column: 0,
+            in_folder: false,
         };
         let first = rows.len();
         for (schema, schema_item) in catalog.schemas.iter().enumerate() {
@@ -387,85 +428,179 @@ impl Navigator {
         };
     }
 
+    /// Puts the cursor on a folder. `first` is a connection of the folder, for the case
+    /// where the folder is gone.
+    pub fn select_folder(&mut self, folder: FolderRef, first: ConnectionId) {
+        self.cursor = Key {
+            connection: first,
+            folder: Some(folder),
+            ..Key::default()
+        };
+    }
+
+    /// Returns true when the cursor is on a folder row.
+    pub fn cursor_is_folder(&self) -> bool {
+        self.cursor.folder.is_some()
+    }
+
+    /// Returns the closed folders that still exist, in a fixed order.
+    pub fn closed_folders(&self, connections: &[Connection]) -> Vec<FolderRef> {
+        arrange::top_items(connections)
+            .into_iter()
+            .filter_map(|item| match item {
+                Item::Folder { folder, .. } if self.closed_folders.contains(&folder) => {
+                    Some(folder)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn set_closed_folders(&mut self, folders: impl IntoIterator<Item = FolderRef>) {
+        self.closed_folders = folders.into_iter().collect();
+    }
+
+    /// Keeps a closed folder closed after a new name.
+    pub fn rename_folder(&mut self, old: &FolderRef, new: &FolderRef) {
+        if self.closed_folders.remove(old) {
+            self.closed_folders.insert(new.clone());
+        }
+        if self.cursor.folder.as_ref() == Some(old) {
+            self.cursor.folder = Some(new.clone());
+        }
+    }
+
     /// Lists the visible rows.
     pub fn rows(&self, connections: &[Connection]) -> Vec<Row> {
         if let Some(words) = self.filter_words() {
             return filtered_rows(connections, &words);
         }
         let mut rows = Vec::with_capacity(connections.len());
-        for (connection, item) in connections.iter().enumerate() {
-            let row = Row {
-                kind: RowKind::Connection,
-                connection,
-                schema: 0,
-                relation: 0,
-                column: 0,
-            };
-            rows.push(row);
-            let Some(open) = self.expansion.get(&item.id).filter(|open| open.open) else {
-                continue;
-            };
-            if !item.consoles.is_empty() {
-                rows.push(Row {
-                    kind: RowKind::Consoles,
-                    ..row
-                });
-            }
-            if open.consoles {
-                rows.extend((0..item.consoles.len()).map(|relation| Row {
-                    kind: RowKind::Console,
-                    relation,
-                    ..row
-                }));
-            }
-            let Some(catalog) = &item.catalog else {
-                continue;
-            };
-            for (schema, schema_item) in catalog.schemas.iter().enumerate() {
-                rows.push(Row {
-                    kind: RowKind::Schema,
-                    schema,
-                    ..row
-                });
-                let Some(relations) = open.schemas.get(&schema_item.name) else {
-                    continue;
-                };
-                for (relation, relation_item) in schema_item.relations.iter().enumerate() {
+        for item in arrange::top_items(connections) {
+            match item {
+                Item::Connection(connection) => {
+                    self.push_connection(&mut rows, connections, connection, false);
+                }
+                Item::Folder { folder, members } => {
                     rows.push(Row {
-                        kind: row_kind(relation_item.kind),
-                        schema,
-                        relation,
-                        ..row
+                        kind: RowKind::Folder,
+                        connection: members[0],
+                        schema: 0,
+                        relation: 0,
+                        column: 0,
+                        in_folder: false,
                     });
-                    if !relations.contains(&relation_item.name) {
-                        continue;
-                    }
-                    if let Columns::Loaded(columns) = &relation_item.columns {
-                        for column in 0..columns.len() {
-                            rows.push(Row {
-                                kind: RowKind::Column,
-                                schema,
-                                relation,
-                                column,
-                                ..row
-                            });
+                    if !self.closed_folders.contains(&folder) {
+                        for connection in members {
+                            self.push_connection(&mut rows, connections, connection, true);
                         }
                     }
                 }
-                let groups = open.groups.get(&schema_item.name);
-                let parent = Row { schema, ..row };
-                let open_group = |group| groups.is_some_and(|groups| groups.contains(&group));
-                push_groups(&mut rows, parent, schema_item, open_group, |_| true);
             }
         }
         rows
     }
 
+    /// Adds the rows of one connection and of its open items.
+    fn push_connection(
+        &self,
+        rows: &mut Vec<Row>,
+        connections: &[Connection],
+        connection: usize,
+        in_folder: bool,
+    ) {
+        let item = &connections[connection];
+        let row = Row {
+            kind: RowKind::Connection,
+            connection,
+            schema: 0,
+            relation: 0,
+            column: 0,
+            in_folder,
+        };
+        rows.push(row);
+        let Some(open) = self.expansion.get(&item.id).filter(|open| open.open) else {
+            return;
+        };
+        if !item.consoles.is_empty() {
+            rows.push(Row {
+                kind: RowKind::Consoles,
+                ..row
+            });
+        }
+        if open.consoles {
+            rows.extend((0..item.consoles.len()).map(|relation| Row {
+                kind: RowKind::Console,
+                relation,
+                ..row
+            }));
+        }
+        let Some(catalog) = &item.catalog else {
+            return;
+        };
+        for (schema, schema_item) in catalog.schemas.iter().enumerate() {
+            rows.push(Row {
+                kind: RowKind::Schema,
+                schema,
+                ..row
+            });
+            let Some(relations) = open.schemas.get(&schema_item.name) else {
+                continue;
+            };
+            for (relation, relation_item) in schema_item.relations.iter().enumerate() {
+                rows.push(Row {
+                    kind: row_kind(relation_item.kind),
+                    schema,
+                    relation,
+                    ..row
+                });
+                if !relations.contains(&relation_item.name) {
+                    continue;
+                }
+                if let Columns::Loaded(columns) = &relation_item.columns {
+                    for column in 0..columns.len() {
+                        rows.push(Row {
+                            kind: RowKind::Column,
+                            schema,
+                            relation,
+                            column,
+                            ..row
+                        });
+                    }
+                }
+            }
+            let groups = open.groups.get(&schema_item.name);
+            let parent = Row { schema, ..row };
+            let open_group = |group| groups.is_some_and(|groups| groups.contains(&group));
+            push_groups(rows, parent, schema_item, open_group, |_| true);
+        }
+    }
+
     /// Returns the position of the cursor. A removed item gives its closest parent.
     pub fn cursor_index(&self, rows: &[Row], connections: &[Connection]) -> usize {
+        if let Some(folder) = &self.cursor.folder
+            && let Some(index) = rows
+                .iter()
+                .position(|row| row.folder(connections).as_ref() == Some(folder))
+        {
+            return index;
+        }
         let mut best = (0, 0);
+        // A connection in a closed folder gives its folder.
+        let mut folder_row = None;
         for (index, row) in rows.iter().enumerate() {
             if connections[row.connection].id != self.cursor.connection {
+                if row.kind == RowKind::Folder && folder_row.is_none() {
+                    let holds = connections.iter().any(|item| {
+                        item.id == self.cursor.connection
+                            && arrange::folder_of(item) == row.folder(connections)
+                    });
+                    folder_row = holds.then_some(index);
+                }
+                continue;
+            }
+            if row.kind == RowKind::Folder {
+                folder_row = Some(index);
                 continue;
             }
             let levels = self.cursor.matching_levels(row, connections);
@@ -475,6 +610,9 @@ impl Navigator {
             if levels > best.0 {
                 best = (levels, index);
             }
+        }
+        if best.0 == 0 {
+            return folder_row.unwrap_or(0);
         }
         best.1
     }
@@ -611,6 +749,9 @@ impl Navigator {
             return;
         }
         self.top = 0;
+        if let Some(folder) = row.and_then(|row| arrange::folder_of(&connections[row.connection])) {
+            self.closed_folders.remove(&folder);
+        }
         if let Some(row) = row
             && let Some(schema) = row.catalog_schema(connections)
         {
@@ -630,6 +771,9 @@ impl Navigator {
     }
 
     pub fn is_open(&self, row: &Row, connections: &[Connection]) -> bool {
+        if let Some(folder) = row.folder(connections) {
+            return !self.closed_folders.contains(&folder);
+        }
         if self.is_filtered() {
             return matches!(
                 row.kind,
@@ -656,12 +800,16 @@ impl Navigator {
                     .get(&schema.name)
                     .is_some_and(|groups| groups.contains(&group))
             }),
-            RowKind::Console | RowKind::Column | RowKind::Object(_) => false,
+            RowKind::Folder | RowKind::Console | RowKind::Column | RowKind::Object(_) => false,
         }
     }
 
     /// Opens a row. The caller reads what the row needs.
     pub fn expand(&mut self, row: &Row, connections: &[Connection]) {
+        if let Some(folder) = row.folder(connections) {
+            self.closed_folders.remove(&folder);
+            return;
+        }
         let open = self
             .expansion
             .entry(connections[row.connection].id)
@@ -690,11 +838,16 @@ impl Navigator {
                         .insert(group);
                 }
             }
-            RowKind::Console | RowKind::Column | RowKind::Object(_) => {}
+            RowKind::Folder | RowKind::Console | RowKind::Column | RowKind::Object(_) => {}
         }
     }
 
     pub fn collapse(&mut self, row: &Row, connections: &[Connection]) {
+        if let Some(folder) = row.folder(connections) {
+            self.closed_folders.insert(folder);
+            self.cursor = row.key(connections);
+            return;
+        }
         let Some(open) = self.expansion.get_mut(&connections[row.connection].id) else {
             return;
         };
@@ -719,7 +872,7 @@ impl Navigator {
                     groups.remove(&group);
                 }
             }
-            RowKind::Console | RowKind::Column | RowKind::Object(_) => {}
+            RowKind::Folder | RowKind::Console | RowKind::Column | RowKind::Object(_) => {}
         }
     }
 
@@ -727,7 +880,12 @@ impl Navigator {
     pub fn select_parent(&mut self, row: &Row, connections: &[Connection]) {
         let mut key = row.key(connections);
         match row.kind {
-            RowKind::Connection => {}
+            RowKind::Folder => {}
+            RowKind::Connection => {
+                if row.in_folder {
+                    key.folder = arrange::folder_of(&connections[row.connection]);
+                }
+            }
             RowKind::Consoles => key.consoles = false,
             RowKind::Schema => key.schema = None,
             RowKind::Group(_) => key.group = None,
@@ -776,6 +934,14 @@ impl Navigator {
     /// Writes the state of a row after its name.
     pub fn suffix(&self, row: &Row, connections: &[Connection]) -> Option<RowNote> {
         match row.kind {
+            RowKind::Folder => {
+                let folder = row.folder(connections)?;
+                let members = connections
+                    .iter()
+                    .filter(|item| arrange::folder_of(item).as_ref() == Some(&folder))
+                    .count();
+                Some(RowNote::Count(members))
+            }
             RowKind::Connection => {
                 let connection = &connections[row.connection];
                 match connection.catalog_state {

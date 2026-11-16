@@ -439,7 +439,7 @@ impl App {
         open.chain(saved).collect()
     }
 
-    fn name_note(&mut self, note: &str) {
+    pub(super) fn name_note(&mut self, note: &str) {
         if let Some(prompt) = &mut self.rename {
             prompt.note = Some(note.to_owned());
         }
@@ -447,6 +447,9 @@ impl App {
 
     /// Applies a new name. The identity, the files, and the connection stay.
     pub(super) fn accept_name(&mut self, name: String) {
+        if self.accept_folder_name(&name) {
+            return;
+        }
         if name.is_empty() {
             self.name_note(text::NAME_EMPTY);
             return;
@@ -471,6 +474,8 @@ impl App {
                     .map(|item| item.id);
                 (connection, None, Some(entry.meta.id.clone()))
             }
+            // `accept_folder_name` applies the names of folders.
+            NameTarget::NewFolder(_) | NameTarget::Folder(_) => return,
         };
         let taken = self.names_in_use(connection, skip, id.as_deref());
         if taken
@@ -488,10 +493,12 @@ impl App {
                 .console_index(*console)
                 .map(|index| self.consoles[index].name.clone()),
             NameTarget::Script(entry) => Some(entry.meta.name.clone()),
+            NameTarget::NewFolder(_) | NameTarget::Folder(_) => None,
         };
         let result = match prompt.target {
             NameTarget::Console(console) => self.rename_console(console, &name),
             NameTarget::Script(entry) => self.rename_script(&entry, &name).map(|_| false),
+            NameTarget::NewFolder(_) | NameTarget::Folder(_) => return,
         };
         if result.is_ok()
             && let Some(old) = old

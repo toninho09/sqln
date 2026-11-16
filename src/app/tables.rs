@@ -392,7 +392,7 @@ impl App {
                 let name = relation.relation.clone();
                 (Scope::Relation, relation, name)
             }
-            RowKind::Consoles | RowKind::Console => return,
+            RowKind::Folder | RowKind::Consoles | RowKind::Console => return,
             RowKind::Group(_) | RowKind::Object(_) => {
                 self.status = Some(text::NOT_FOR_OBJECT.to_owned());
                 return;

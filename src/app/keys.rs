@@ -566,6 +566,9 @@ impl App {
             | Action::NavigatorGenerate
             | Action::NavigatorImport
             | Action::NavigatorCopyName
+            | Action::NavigatorMoveUp
+            | Action::NavigatorMoveDown
+            | Action::NavigatorMoveToFolder
             | Action::NavigatorFilter
             | Action::NavigatorClearFilter => self.on_navigator_action(action),
             _ => self.on_grid_action(action, extend),
@@ -1463,6 +1466,9 @@ impl App {
                     (&[NavigatorDisconnect], text::MENU_DISCONNECT),
                     (&[NavigatorDeletePassword], text::MENU_DELETE_PASSWORD),
                     (&[NavigatorSessions], text::MENU_SESSIONS),
+                    (&[NavigatorMoveUp], text::MENU_MOVE_UP),
+                    (&[NavigatorMoveDown], text::MENU_MOVE_DOWN),
+                    (&[NavigatorMoveToFolder], text::MENU_MOVE_TO_FOLDER),
                 ],
             ),
             (
@@ -1483,10 +1489,12 @@ impl App {
             ),
         ];
         let acting = self.explorer_commands();
-        let on_console = self
+        let kind = self
             .navigator
             .current(&self.connections)
-            .is_some_and(|row| row.kind == RowKind::Console);
+            .map(|row| row.kind);
+        let on_console = kind == Some(RowKind::Console);
+        let on_folder = kind == Some(RowKind::Folder);
         groups
             .iter()
             .map(|(title, rows)| {
@@ -1496,6 +1504,8 @@ impl App {
                     let label = match action {
                         NavigatorRefresh if on_console => text::MENU_RENAME_CONSOLE,
                         NavigatorDelete if on_console => text::MENU_REMOVE_CONSOLE,
+                        NavigatorEdit if on_folder => text::MENU_RENAME_FOLDER,
+                        NavigatorDelete if on_folder => text::MENU_REMOVE_FOLDER,
                         _ => *label,
                     };
                     Some((self.shown_key(*action)?, label))

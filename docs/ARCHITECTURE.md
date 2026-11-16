@@ -47,7 +47,7 @@ sqln-vault                           │  sqln-duckdb, sqln-redis, sqln-kafka,
 | `sqln-postgres`, `sqln-mysql`, `sqln-sqlite`, `sqln-duckdb`, `sqln-redis`, `sqln-kafka`, `sqln-databricks` | `crates/<driver>` | One connector each, with its driver library. `sqln-databricks` uses `reqwest` and the Arrow crates |
 | `sqln-connector` | `crates/connector` | Facade: `connector` joins the contract and the drivers at the old paths. `connector::open` opens the connector of a saved definition |
 | `sqln-store` | `crates/store` | `creds`, `script_file`, `store`, `trust` |
-| `sqln-exec` | `crates/exec` | `agent`, `ai`, `analysis`, `command_log`, `compare`, `complete`, `connection`, `data_edit`, `definition`, `diagram`, `dialect`, `exec` (types only), `export`, `import`, `plan` |
+| `sqln-exec` | `crates/exec` | `agent`, `ai`, `analysis`, `arrange`, `command_log`, `compare`, `complete`, `connection`, `data_edit`, `definition`, `diagram`, `dialect`, `exec` (types only), `export`, `import`, `plan` |
 | `sqln-runtime` | `crates/runtime` | `exec`: the types of `sqln-exec` and `Manager`, with the console tasks and jobs |
 | `sqln-ui` | `crates/ui` | `browser`, `compare_tab`, `console`, `diagram_tab`, `edit_form`, `editor`, `export_form`, `form`, `generate`, `help`, `history`, `import_form`, `navigator`, `palette`, `parameters`, `result`, `settings`, `tab_item`, `table`, `ui` |
 | `sqln` | root, `src/` | `app`, `batch`, `mcp`, `terminal`, and the binary |
@@ -115,6 +115,8 @@ Each integration test is in the lowest crate that has all its dependencies:
 | `mark_list` | Searchable list with a mark for each selected name |
 | `result` | Grid of one result with cursor and search, used by consoles and tables |
 | `analysis` | Bounded jobs for column profiles, ordered text charts, and loaded-result differences; shared-budget scratch data and reports |
+| `arrange` | Order of the saved connections and their folders: top-level items, moves, folder names, and the new order of one file |
+| `app/folders` | Keys, folder list, folder names, and folder removal of the explorer |
 | `app/analysis` | Analysis command availability, column and key choices, job coordination, and report windows |
 | `table` | Table tab: pages, fields, sorting, suggestions, and query |
 | `data_edit` | Pending rows, budgeted snapshots, key predicates, update SQL, review, and cursor restoration |
@@ -747,6 +749,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
 | `tls.mode` | `verify` or `disabled` |
 | `theme` | Optional. A value of `theme` of `preferences`. Without the field, the connection uses the default theme |
 | `icon` | Optional. `warning`, `skull`, `radiation`, `flag`, `crown`, `flask`, `star`, `diamond`, `tools`, `gear`, `home`, `heart`, `snowflake`, or `check`. Without the field, the connection uses the database icon |
+| `folder` | Optional. The folder of the connection in the explorer, without spaces at the ends and without control characters. The order of `connections` is the order of the explorer |
 | `schemas` | Optional. The schemas, or the Redis databases, that the catalog keeps. The current schema always stays. Without the field, or with an empty list, the catalog keeps all. Kafka refuses the field |
 | `sasl` | Optional, only for `kafka`. `plain`, `scram-sha-256`, or `scram-sha-512`. Without the field, a Kafka user uses `scram-sha-512` |
 | `schemaRegistry` | Optional, only for `kafka`. `url` (`http://` or `https://`) and an optional `username`. The password stays in the system vault or in the session |

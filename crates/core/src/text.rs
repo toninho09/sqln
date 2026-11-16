@@ -445,6 +445,11 @@ pub const COMMAND_TOGGLE_ROW: &str = "Open or close the row";
 pub const GROUP_SELECTION_VIEW: &str = "Selection and view";
 pub const GROUP_TABLE_RESULTS: &str = "Table and results";
 pub const MENU_SESSIONS: &str = "Sessions";
+pub const MENU_MOVE_UP: &str = "Move up";
+pub const MENU_MOVE_DOWN: &str = "Move down";
+pub const MENU_MOVE_TO_FOLDER: &str = "Move to folder";
+pub const MENU_RENAME_FOLDER: &str = "Rename folder";
+pub const MENU_REMOVE_FOLDER: &str = "Remove folder";
 pub const MENU_NEW_CONSOLE: &str = "New console";
 pub const MENU_SCRIPTS: &str = "Scripts";
 pub const MENU_REFRESH: &str = "Read the catalog";
@@ -558,6 +563,49 @@ pub const NO_SCHEMA_CHOICE: &str = "This database has no schema or database choi
 pub const SCHEMA_BUSY: &str = "End the execution and the transaction before the change.";
 pub const NO_DEFINITION: &str = "This connection has no definition to edit.";
 pub const NO_SELECTED_CONNECTION: &str = "Select a connection.";
+pub const MOVE_FOLDER_EDGE: &str =
+    "This connection is at the edge of its folder. Press m or drag it to leave the folder.";
+pub const MOVE_SCOPE_EDGE: &str =
+    "This item is at the edge of its scope. The global and the project connections stay apart.";
+pub const MOVE_OTHER_SCOPE: &str =
+    "An item cannot move to the other scope. Each scope keeps its connections in its own file.";
+pub const MOVE_NOT_SAVED: &str = "Only a saved connection can move.";
+pub const MARK_DROP: &str = ">";
+pub const DROP_OUTSIDE: &str = "Release on a row of the explorer to move the item.";
+
+pub fn drop_into(item: &str, folder: &str) -> String {
+    format!("Release to move {item} into the folder {folder}.")
+}
+
+/// The row below the tree that takes an item to the end of its scope.
+pub fn drop_end_row(global: bool) -> &'static str {
+    if global {
+        "End of global"
+    } else {
+        "End of project"
+    }
+}
+
+pub fn drop_end(item: &str, global: bool) -> String {
+    let scope = if global { "global" } else { "project" };
+    format!("Release to move {item} to the end of the {scope} connections.")
+}
+
+pub fn drop_out(item: &str, folder: &str) -> String {
+    format!("Release to move {item} out of the folder {folder}.")
+}
+
+pub fn drop_at(item: &str, target: &str) -> String {
+    format!("Release to move {item} to the place of {target}.")
+}
+pub const MOVE_FILTERED: &str =
+    "The filtered tree cannot change the order. Clear the filter first.";
+
+pub fn arrange_failed(error: &str) -> String {
+    format!("The order was not saved: {error}. Fix the file and try again.")
+}
+pub const NOT_FOR_FOLDER: &str =
+    "This command acts on a connection. Open the folder and select a connection.";
 pub const DISCONNECTED: &str = "Disconnected.";
 pub const SESSION_IN_USE: &str = "A session is still in use. It closes at its end.";
 pub const NOT_CONNECTED: &str = "This connection has no open session.";
@@ -882,6 +930,7 @@ pub const FORM_CONNECTED: &str =
     "This connection is connected. Disconnect it to change access, TLS, or the pool.";
 pub const FIELD_KIND: &str = "Type";
 pub const FIELD_NAME: &str = "Name";
+pub const FIELD_FOLDER: &str = "Folder";
 pub const FIELD_AI_REQUEST: &str = "Request";
 pub const FIELD_SCOPE: &str = "Scope";
 pub const FIELD_ENTRY: &str = "Entry";
@@ -999,6 +1048,22 @@ pub fn default_value(value: &str) -> String {
 pub const TITLE_NEW_CONNECTION: &str = "New connection";
 pub const TITLE_REMOVE_CONNECTION: &str = "Remove connection";
 pub const TITLE_RENAME: &str = "Rename console";
+pub const TITLE_NEW_FOLDER: &str = "New folder";
+pub const TITLE_RENAME_FOLDER: &str = "Rename folder";
+pub const TITLE_REMOVE_FOLDER: &str = "Remove folder";
+pub const OPTION_REMOVE_FOLDER: &str = "Remove folder";
+pub const FOLDER_NEW: &str = "+ New folder";
+pub const FOLDER_NONE: &str = "No folder";
+
+pub fn title_move_to_folder(name: &str) -> String {
+    format!("Move {name} to")
+}
+
+pub fn remove_folder(name: &str) -> String {
+    format!(
+        "Remove the folder {name}? Its connections stay at the same place, without a folder. No connection is removed."
+    )
+}
 pub const TITLE_AI_REQUEST: &str = "Complete with AI with a request";
 pub const NOTE_AI_REQUEST: &str = "Optional. An empty input sends a plain completion.";
 pub const TITLE_SETTINGS: &str = "Settings";

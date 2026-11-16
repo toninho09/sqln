@@ -330,6 +330,7 @@ impl App {
             }
             DialogAction::AutoRefresh(seconds) => self.choose_auto_refresh(seconds),
             DialogAction::RemoveConnection(connection) => self.remove_connection(connection),
+            DialogAction::Ungroup(folder) => self.ungroup(&folder),
             DialogAction::CreateProject => self.create_project(),
             DialogAction::ReloadConfig => self.reload_config(),
             DialogAction::IgnoreConfigChange => self.ignore_config_change(),

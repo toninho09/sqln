@@ -51,6 +51,7 @@ mod target_arg;
 mod terminal;
 mod transaction_age;
 mod tree_filter;
+mod tree_folders;
 mod tree_objects;
 mod visible_schemas;
 mod workspace;

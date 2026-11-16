@@ -456,6 +456,9 @@ pub struct ConnectionEntry {
     pub theme: Option<ThemeName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<ConnectionIcon>,
+    /// The folder of the connection in the explorer. Missing puts it at the top level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
     /// The schemas, or the Redis databases, that the explorer shows. Empty shows all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub schemas: Vec<String>,
@@ -611,6 +614,26 @@ fn validate(file: &ConfigFile, scope: Scope) -> Result<(), String> {
     Ok(())
 }
 
+/// A folder of the explorer. Each folder belongs to the file of one scope.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FolderRef {
+    pub scope: Scope,
+    pub name: String,
+}
+
+/// Returns the reason that a folder name is not valid.
+pub fn folder_error(name: &str) -> Option<&'static str> {
+    if name.trim().is_empty() {
+        Some("A folder needs a name.")
+    } else if name.trim() != name {
+        Some("A folder name cannot start or end with a space.")
+    } else if name.chars().any(char::is_control) {
+        Some("A folder name cannot hold control characters.")
+    } else {
+        None
+    }
+}
+
 fn non_empty(value: Option<&String>) -> bool {
     value.is_some_and(|text| !text.trim().is_empty())
 }
@@ -630,6 +653,9 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
     .contains(&Some(0))
     {
         return Err("A timeout needs 1 or more seconds.".to_owned());
+    }
+    if let Some(error) = entry.folder.as_deref().and_then(folder_error) {
+        return Err(format!("folder: {error}"));
     }
     match entry.kind.engine() {
         None => {
@@ -818,6 +844,7 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
     definition.base = Some(base);
     definition.theme = entry.theme.clone();
     definition.icon = entry.icon;
+    definition.folder.clone_from(&entry.folder);
     definition.schemas.clone_from(&entry.schemas);
     definition
 }
@@ -851,6 +878,7 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
         idle_timeout_seconds: definition.idle_timeout.map(|time| time.as_secs()),
         theme: definition.theme.clone(),
         icon: definition.icon,
+        folder: definition.folder.clone(),
         schemas: definition.schemas.clone(),
         sasl: None,
         schema_registry: None,
@@ -1141,6 +1169,9 @@ fn combine(
 pub enum Change {
     Upsert(Box<ConnectionEntry>),
     Remove(String),
+    /// The new order of the connections, each with its folder. The connections that the
+    /// list does not name stay after them, in the order of the file.
+    Arrange(Vec<(String, Option<String>)>),
 }
 
 /// Applies a change to the file of a scope. It reads the file again under a lock,
@@ -1158,7 +1189,21 @@ pub fn change_connections(root: &Root, scope: Scope, change: Change) -> Result<u
             }
         }
         Change::Remove(id) => config.connections.retain(|item| item.id != id),
+        Change::Arrange(order) => arrange(&mut config.connections, &order),
     })
+}
+
+/// Puts the named entries first, in the order of the list, with their folders.
+fn arrange(entries: &mut Vec<ConnectionEntry>, order: &[(String, Option<String>)]) {
+    let mut rest = std::mem::take(entries);
+    for (id, folder) in order {
+        if let Some(index) = rest.iter().position(|entry| entry.id == *id) {
+            let mut entry = rest.remove(index);
+            entry.folder.clone_from(folder);
+            entries.push(entry);
+        }
+    }
+    entries.append(&mut rest);
 }
 
 /// Reads the preferences that the file of a scope declares.

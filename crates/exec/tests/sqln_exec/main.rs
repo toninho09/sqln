@@ -2,6 +2,7 @@
 // definitions, and diagrams.
 // Each file in this folder is a mod below; scripts/check-test-files.sh enforces it.
 
+mod arrange;
 mod compare_schema;
 mod complete;
 mod definition;

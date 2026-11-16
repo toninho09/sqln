@@ -507,13 +507,16 @@ impl App {
         let kind = row.as_ref().map(|row| row.kind);
         let console = kind == Some(RowKind::Console);
         let connection = kind == Some(RowKind::Connection);
+        let folder = kind == Some(RowKind::Folder);
         let relation = matches!(kind, Some(RowKind::Table | RowKind::View));
         let enter = match kind {
             Some(RowKind::Connection) => "console",
             Some(RowKind::Console) => "open console",
             Some(RowKind::View) => "open view",
             Some(RowKind::Object(_)) => "ddl",
-            Some(RowKind::Schema | RowKind::Consoles | RowKind::Group(_)) => "open",
+            Some(RowKind::Schema | RowKind::Consoles | RowKind::Group(_) | RowKind::Folder) => {
+                "open"
+            }
             _ => "open table",
         };
         let mut commands = if self.console_on_screen() {
@@ -551,7 +554,11 @@ impl App {
                 row.as_ref().is_some_and(|row| !Navigator::is_branch(row)),
             ),
             (Action::NavigatorRefresh, "refresh", !console),
-            (Action::NavigatorEdit, "edit", true),
+            (
+                Action::NavigatorEdit,
+                if folder { "rename folder" } else { "edit" },
+                true,
+            ),
             (
                 Action::NavigatorFilter,
                 "filter",
@@ -560,6 +567,9 @@ impl App {
             (Action::NavigatorStructure, "struct", !relation),
             (Action::NavigatorSessions, "sessions", true),
             (Action::NavigatorCopyName, "copy name", true),
+            (Action::NavigatorMoveToFolder, "move to folder", true),
+            (Action::NavigatorMoveUp, "move up", true),
+            (Action::NavigatorMoveDown, "move down", true),
             (Action::NavigatorGenerate, "sql/ddl", true),
             (Action::NavigatorDiagram, "diagram", true),
             (Action::NavigatorCompare, "compare", true),
@@ -573,6 +583,8 @@ impl App {
                 Action::NavigatorDelete,
                 if console {
                     "remove console"
+                } else if folder {
+                    "remove folder"
                 } else {
                     "remove connection"
                 },

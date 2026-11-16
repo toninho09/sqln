@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use super::history::HistoryLog;
 use super::{App, DialogAction, Options};
+use crate::arrange::Arrangement;
 use crate::connection::{Connection, ConnectionKey, Definition, refresh_labels};
 use crate::editor::{KeyboardMode, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId};
@@ -276,6 +277,7 @@ impl App {
             });
             connection.credential = item.credential;
         }
+        crate::arrange::sort_by_scope(&mut self.connections);
         refresh_labels(&mut self.connections);
         Some(id)
     }
@@ -385,6 +387,17 @@ impl App {
     /// until it disconnects, because a load never changes an active connection.
     fn apply_connections(&mut self, items: Vec<Stored>) {
         let mut keys = HashSet::new();
+        let order: HashMap<ConnectionKey, usize> = items
+            .iter()
+            .enumerate()
+            .map(|(place, item)| {
+                let key = ConnectionKey {
+                    scope: item.scope,
+                    id: item.id.clone(),
+                };
+                (key, place)
+            })
+            .collect();
         for item in items {
             let key = ConnectionKey {
                 scope: item.scope,
@@ -413,6 +426,13 @@ impl App {
                 self.drop_connection(id);
             }
         }
+        // The list follows the files, also after a change by another program. A
+        // connection without a file stays first, and one that left the files goes last.
+        self.connections
+            .sort_by_key(|connection| match &connection.key {
+                None => 0,
+                Some(key) => order.get(key).map_or(usize::MAX, |place| place + 1),
+            });
         refresh_labels(&mut self.connections);
         self.refresh_tree_consoles();
     }
@@ -433,6 +453,7 @@ impl App {
             // These values need no new session, so they apply to a connection in use too.
             current.theme = definition.theme.clone();
             current.icon = definition.icon;
+            current.folder.clone_from(&definition.folder);
             if same_credential {
                 definition.keep_password_of(current);
             }
@@ -460,6 +481,32 @@ impl App {
             entry.credential = credential;
         }
         self.change_config(key.scope, Change::Upsert(Box::new(entry)))
+    }
+
+    /// Writes a new order of the connections of one scope, then shows it. A refusal or a
+    /// failed write changes nothing and shows the reason. It returns true on success.
+    pub(super) fn arrange(&mut self, arrangement: Result<Arrangement, &'static str>) -> bool {
+        let arrangement = match arrangement {
+            Ok(arrangement) => arrangement,
+            Err(reason) => {
+                self.status = Some(reason.to_owned());
+                return false;
+            }
+        };
+        if arrangement == crate::arrange::current(&self.connections, arrangement.scope) {
+            return true;
+        }
+        if self.config_blocked() {
+            return false;
+        }
+        let change = Change::Arrange(arrangement.order.clone());
+        if let Err(message) = self.change_config(arrangement.scope, change) {
+            self.status = Some(text::arrange_failed(&message));
+            return false;
+        }
+        crate::arrange::apply(&mut self.connections, &arrangement);
+        refresh_labels(&mut self.connections);
+        true
     }
 
     pub(super) fn change_config(&mut self, scope: Scope, change: Change) -> Result<(), String> {
@@ -1234,9 +1281,15 @@ impl App {
             self.status = Some(text::WORKSPACE_UNREADABLE.to_owned());
         }
         let [project, global] = roots.map(|root| root.map(|root| workspace::load(&root)));
-        let layout = project
-            .and_then(|item| item.layout)
-            .or_else(|| global.and_then(|item| item.layout));
+        // The same file as the layout holds the closed folders.
+        let saved = project
+            .filter(|item| item.layout.is_some())
+            .or(global.filter(|item| item.layout.is_some()));
+        if let Some(saved) = &saved {
+            self.navigator
+                .set_closed_folders(saved.closed_folders.iter().cloned());
+        }
+        let layout = saved.and_then(|item| item.layout);
         let Some(layout) = layout else { return };
         self.navigator.collapsed = layout.navigator_collapsed;
         self.navigator.width = layout.navigator_width.max(crate::navigator::MIN_WIDTH);
@@ -1262,7 +1315,11 @@ impl App {
             navigator_width: self.navigator.width,
             editor_ratio: f64::from(self.editor_ratio) / 100.0,
         };
-        let _ = workspace::update(&root, |workspace| workspace.layout = Some(layout));
+        let closed = self.navigator.closed_folders(&self.connections);
+        let _ = workspace::update(&root, |workspace| {
+            workspace.layout = Some(layout);
+            workspace.closed_folders = closed;
+        });
     }
 
     /// Writes the identity file again after a change of the schema of a console.

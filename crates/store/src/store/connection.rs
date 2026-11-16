@@ -48,6 +48,8 @@ pub struct Definition {
     pub theme: Option<super::config::ThemeName>,
     /// The icon in the list of connections. `None` uses the icon of the database.
     pub icon: Option<super::config::ConnectionIcon>,
+    /// The folder of the connection in the explorer. `None` puts it at the top level.
+    pub folder: Option<String>,
     /// The schemas, or the Redis databases, that the catalog keeps. An empty list keeps
     /// all. The current schema always stays.
     pub schemas: Vec<String>,
@@ -67,6 +69,7 @@ impl Definition {
             base: None,
             theme: None,
             icon: None,
+            folder: None,
             schemas: Vec::new(),
         }
     }

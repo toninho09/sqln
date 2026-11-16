@@ -808,7 +808,8 @@ fn two_scopes_can_use_the_same_name_and_one_scope_cannot() {
         .iter()
         .map(|c| c.name.clone())
         .collect();
-    assert_eq!(names, ["same (local)", "SAME (global)"]);
+    // The global connections come first, as in the explorer.
+    assert_eq!(names, ["SAME (global)", "same (local)"]);
 }
 
 #[test]

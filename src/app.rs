@@ -15,6 +15,7 @@ mod data_edit;
 mod definition;
 mod diagram;
 mod export;
+mod folders;
 mod guard;
 mod hints;
 mod history;
@@ -252,6 +253,8 @@ enum DialogAction {
     /// The interval of the auto-refresh of the tab on screen. `None` turns it off.
     AutoRefresh(Option<u64>),
     RemoveConnection(ConnectionId),
+    /// Removes a folder of the explorer. Its connections stay.
+    Ungroup(crate::store::config::FolderRef),
     CreateProject,
     ReloadConfig,
     IgnoreConfigChange,
@@ -358,6 +361,11 @@ enum PickerKind {
     Follow {
         connection: ConnectionId,
         choices: Vec<Follow>,
+    },
+    /// The folders of the scope of a connection, with a new folder first.
+    Folder {
+        connection: ConnectionId,
+        choices: Vec<folders::FolderChoice>,
     },
     /// The templates of a relation, then the DDL entry of a relation or an object.
     Generate {

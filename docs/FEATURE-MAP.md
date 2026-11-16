@@ -12,7 +12,7 @@ The file paths are relative to the `src/` folder of the crate that holds the mod
 |---|---|---|
 | 1 | Application shell and main loop | `app.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs` |
 | 2 | Key map and discovery | `input.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `text.rs`, `ui/text.rs` |
-| 3 | Navigator and tree filter | `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs` |
+| 3 | Navigator and tree filter | `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs`, `arrange.rs`, `app/folders.rs` |
 | 4 | Connections and connection form | `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs` |
 | 5 | Database connectors | `connector/mod.rs`, `connector/*.rs`, `connector/kafka/*.rs` (sqln-session), `postgres.rs`, `postgres/*.rs`, `mysql.rs`, `sqlite.rs`, `duckdb.rs`, `redis.rs`, `redis/live.rs`, `kafka.rs`, `kafka/*.rs`, `databricks.rs`, `databricks/*.rs` (driver crates), `connector.rs` (sqln-connector) |
 | 6 | Connection pool | `pool.rs` |
@@ -58,9 +58,11 @@ Files: `input.rs`, `app/commands.rs`, `app/keys.rs`, `app/hints.rs`, `ui/which_k
 
 ## 3. Navigator and tree filter
 
-Files: `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs`.
+Files: `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs`, `arrange.rs`, `app/folders.rs`.
 
 The navigator shows the tree of connections, consoles, schemas, relations, columns, and the groups of the other objects of a schema. `Connection::consoles` holds the console rows, so a read of the tree does not read the disk. `refresh_tree_consoles` rebuilds them after a change of a console, only for the connections open in the tree. `/` filters the tree in memory, from the loaded catalogs, and opens no connection. `g` lists the SQL templates of a relation and the **DDL** entry, and the application inserts the generated text. `y` copies the row name without quotes. An object copy omits routine arguments and the table of a trigger.
+
+`RowKind::Folder` is a folder of saved connections, with its first connection as `Row::connection`. `arrange::top_items` puts a folder at the place of its first connection and gathers its other connections, in one scope. `Row::in_folder` adds one indent level, and `Row::depth` stays the level below the connection, so the cursor key does not change. Each move gives an `Arrangement`: the new order of one file. `App::arrange` writes it with `Change::Arrange`, and then applies it in memory. A refusal or a failed write changes nothing. `apply_connections` sorts the list in the order of the files, so a reload shows the new order. The closed folders go to `workspace.json` with the layout.
 
 `RowKind::Group` is a group of one kind (`catalog::Group`) under a schema, and `RowKind::Object` is one object of `Schema::objects`, with `Row::relation` as its place. `push_groups` adds the groups after the relations, and a group without objects stays out. The cursor key keeps the group and the label of the object, which is unique in its group (`Object::label`), so the cursor stays on an overload after a new read.
 

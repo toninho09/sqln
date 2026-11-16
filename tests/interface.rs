@@ -1592,7 +1592,7 @@ fn the_form_of_a_connected_connection_has_its_own_sections() {
     let definition = sqln::connection::Definition::sqlite(target);
     let mut form = ConnectionForm::editing(1, &definition, true);
     assert_eq!(form.sections(), [Group::General, Group::Options]);
-    assert_eq!(form.section_fields(), [Field::Name]);
+    assert_eq!(form.section_fields(), [Field::Name, Field::Folder]);
     form.select_section(Group::Options);
     assert_eq!(
         form.section_fields(),

@@ -67,6 +67,7 @@ impl App {
             RowKind::View => Err(text::COMPARE_VIEW),
             RowKind::Consoles | RowKind::Console => Err(text::COMPARE_CONSOLE),
             RowKind::Group(_) | RowKind::Object(_) => Err(text::NOT_FOR_OBJECT),
+            RowKind::Folder => Err(text::NOT_FOR_FOLDER),
         }
     }
 

@@ -57,8 +57,26 @@ impl App {
             .as_ref()
             .is_some_and(|row| matches!(row.kind, RowKind::Group(_) | RowKind::Object(_)));
         let filtered = self.navigator.is_filtered();
+        let on_folder = on_kind(RowKind::Folder);
+        let saved = item.is_some_and(|item| item.key.is_some());
+        if on_folder {
+            return match action {
+                NavigatorExpand => !self
+                    .navigator
+                    .is_open(row.as_ref().unwrap(), &self.connections),
+                NavigatorCollapse => self
+                    .navigator
+                    .is_open(row.as_ref().unwrap(), &self.connections),
+                NavigatorAdd | NavigatorScripts | NavigatorOpen | NavigatorEdit
+                | NavigatorDelete | NavigatorMoveUp | NavigatorMoveDown | NavigatorCopyName => true,
+                NavigatorFilter => !self.navigator.collapsed,
+                NavigatorClearFilter => self.navigator.filter_input().is_some(),
+                _ => false,
+            };
+        }
         match action {
             NavigatorAdd | NavigatorScripts => true,
+            NavigatorMoveUp | NavigatorMoveDown | NavigatorMoveToFolder => on_connection && saved,
             NavigatorOpen => row.as_ref().is_some_and(|row| row.kind != RowKind::Column),
             NavigatorNewConsole | NavigatorRefresh | NavigatorCopyName => row.is_some(),
             NavigatorExpand => {
@@ -456,6 +474,7 @@ fn command_priority(action: Action) -> u8 {
         NavigatorFilter => 11,
         NavigatorSessions => 12,
         NavigatorCopyName => 13,
+        NavigatorMoveUp | NavigatorMoveDown | NavigatorMoveToFolder => 15,
         NavigatorGenerate => 14,
         EditorFind | EditorSuggestions | DiagramKeysOnly => 6,
         EditorSave => 30,
