@@ -445,6 +445,8 @@ pub fn action_text(action: Action) -> &'static str {
         Action::EditorSuggestions => "Open the suggestions",
         Action::EditorAiComplete => "Complete with AI",
         Action::EditorAiCompleteRequest => "Complete with AI with a request",
+        Action::AiExplainError => "Explain the last error with AI",
+        Action::AiExplainPlan => "Explain the plan with AI",
         Action::EditorAiAccept => "Accept the AI proposal",
         Action::EditorAiReject => "Reject the AI proposal",
         Action::EditorAiCancel => "Cancel AI completion",

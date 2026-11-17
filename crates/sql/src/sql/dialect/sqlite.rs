@@ -46,6 +46,7 @@ impl SqlDialect for Sqlite {
             (Scope::Relation, Section::Columns) => columns(&schema, &table),
             (Scope::Relation, Section::Indexes) => indexes(&schema, &table),
             (Scope::Relation, Section::ForeignKeys) => foreign_keys(&schema, &table),
+            (Scope::Relation, Section::Statistics) => return None,
             (Scope::Schema, _) => all_columns(Some(&schema)),
             (Scope::Connection, _) => all_columns(None),
             (Scope::Sessions, _) => return None,

@@ -2728,6 +2728,48 @@ fn a_hostile_name_stays_a_name_in_the_structure_queries() {
 }
 
 #[test]
+fn table_statistics_reads_one_metric_per_row() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let dialect = match server.kind {
+            Kind::Postgres => Dialect::Postgres,
+            Kind::MySql => Dialect::MySql,
+        };
+        h.run_ok(&[
+            "DROP TABLE IF EXISTS s_stats",
+            "CREATE TABLE s_stats (id int)",
+        ]);
+        h.manager.load_catalog(h.connection, 0, Vec::new());
+        let schema = loop {
+            if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
+                break catalog.unwrap().current_schema.unwrap();
+            }
+        };
+        let target = RelationRef {
+            schema,
+            relation: "s_stats".into(),
+        };
+        let sql = structure_sql(dialect, Scope::Relation, &target, Section::Statistics).unwrap();
+        let run = h.run_ok(&[&sql]);
+        assert_eq!(run.columns.first().unwrap(), &["name", "value"]);
+        let metrics: Vec<String> = run
+            .rows
+            .iter()
+            .map(|row| row.get(0).unwrap().full_text().to_owned())
+            .collect();
+        assert_eq!(metrics.first().map(String::as_str), Some("estimated rows"));
+        let expected = match server.kind {
+            Kind::Postgres => 12,
+            Kind::MySql => 8,
+        };
+        assert_eq!(metrics.len(), expected, "{:?}: {metrics:?}", server.kind);
+        let has_size = metrics.iter().any(|metric| metric.ends_with("size"));
+        assert!(has_size, "{:?}: {metrics:?}", server.kind);
+        h.run_ok(&["DROP TABLE s_stats"]);
+    }
+}
+
+#[test]
 fn a_table_view_pages_filters_and_orders_rows_of_each_server() {
     for server in servers() {
         let mut s = Screen::open(&server);

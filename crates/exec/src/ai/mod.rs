@@ -2,6 +2,7 @@
 
 pub mod client;
 pub mod credentials;
+pub mod explain;
 pub mod schema;
 pub mod trust;
 
@@ -56,6 +57,11 @@ impl Drop for Memory {
 }
 
 impl Snapshot {
+    /// The reserved memory of this metadata snapshot.
+    pub fn memory_bytes(&self) -> usize {
+        self._memory.bytes
+    }
+
     pub fn new(
         objects: Vec<Object>,
         budget: &std::sync::Arc<crate::grid::Budget>,

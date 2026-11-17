@@ -314,7 +314,7 @@ fn the_filter_of_a_topic_tab_waits_with_the_kafka_dialect() {
         schema: TOPICS.to_owned(),
         relation: "orders".to_owned(),
     };
-    let mut tab = TableTab::new(7, 1, relation.clone(), false, 100);
+    let mut tab = TableTab::new(7, 1, relation.clone(), false, Dialect::Kafka, 100);
     tab.filter_only = true;
     tab.focus = TableFocus::Filter;
     let mut missing = Vec::new();

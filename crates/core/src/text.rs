@@ -469,6 +469,8 @@ pub const MENU_COPY_NAME: &str = "Copy the name";
 pub const MENU_FILTER: &str = "Filter the tables";
 pub const MENU_EXPLAIN: &str = "Show the plan";
 pub const MENU_EXPLAIN_ANALYZE: &str = "Plan with a run";
+pub const MENU_AI_EXPLAIN_ERROR: &str = "Explain error (AI)";
+pub const MENU_AI_EXPLAIN_PLAN: &str = "Explain plan (AI)";
 pub const MENU_STOP: &str = "Stop";
 pub const MENU_MODE: &str = "Auto or manual";
 pub const MENU_COMMIT: &str = "Commit";
@@ -1066,6 +1068,16 @@ pub fn remove_folder(name: &str) -> String {
 }
 pub const TITLE_AI_REQUEST: &str = "Complete with AI with a request";
 pub const NOTE_AI_REQUEST: &str = "Optional. An empty input sends a plain completion.";
+pub const AI_EXPLAIN_ERROR_TITLE: &str = "AI error explanation";
+pub const AI_EXPLAIN_PLAN_TITLE: &str = "AI plan explanation";
+pub const AI_EXPLAIN_NO_ERROR: &str =
+    "No failed statement for the current connection. Run a statement and try again.";
+pub const AI_EXPLAIN_NO_PLAN: &str =
+    "No query plan on screen. Show the plan of a statement and try again.";
+pub const AI_EXPLAIN_DISABLED: &str = "AI is unavailable. Enable it in Settings > Autocomplete.";
+pub const AI_EXPLAIN_NO_PROVIDER: &str = "Configure a provider in Settings > Autocomplete.";
+pub const AI_EXPLAIN_BUSY: &str =
+    "An AI explanation of this console already runs. Wait for its answer or cancel it.";
 pub const TITLE_SETTINGS: &str = "Settings";
 pub const TITLE_CHANGE_CONNECTION: &str = "Change connection";
 pub const OPTION_CHANGE: &str = "Change connection";
@@ -1521,6 +1533,7 @@ pub fn limit_added(rows: usize) -> String {
 pub const SECTION_COLUMNS: &str = "Columns";
 pub const SECTION_INDEXES: &str = "Indexes";
 pub const SECTION_FOREIGN_KEYS: &str = "Foreign keys";
+pub const SECTION_STATISTICS: &str = "Statistics";
 pub const ALL_SCHEMAS: &str = "all schemas";
 pub const STRUCTURE_REFUSED: &str = "This source has no structure. Keys have no columns.";
 pub const SESSIONS_REFUSED: &str = "SQLN lists sessions only on PostgreSQL and MySQL.";

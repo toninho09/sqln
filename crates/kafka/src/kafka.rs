@@ -37,6 +37,7 @@ use crate::progress::{ReadEnd, ReadProgress, percent};
 use crate::sink::{Flow, ResultSink};
 use crate::sql::Dialect;
 use crate::text;
+use sqln_session::trace::{self, TraceContext};
 
 pub use self::registry::account as registry_account;
 
@@ -125,6 +126,7 @@ impl Connector for KafkaConnector {
             }
         })?;
         Ok(Box::new(KafkaSession {
+            trace: None,
             target: self.target.clone(),
             consumer,
             registry: self.registry.clone(),
@@ -655,6 +657,7 @@ async fn push_rows(rows: Vec<Row>, sink: &mut ResultSink) -> bool {
 }
 
 struct KafkaSession {
+    trace: Option<TraceContext>,
     target: NetworkTarget,
     consumer: Arc<Consumer>,
     registry: Option<Arc<RegistryClient>>,
@@ -1251,6 +1254,10 @@ impl KafkaSession {
 
 #[async_trait]
 impl Session for KafkaSession {
+    fn set_trace_context(&mut self, trace: Option<TraceContext>) {
+        self.trace = trace;
+    }
+
     fn canceller(&self) -> Arc<dyn Canceller> {
         Arc::new(KafkaCanceller)
     }
@@ -1261,7 +1268,7 @@ impl Session for KafkaSession {
     }
 
     async fn run(&mut self, sql: &str, mut sink: ResultSink) -> Result<StatementEnd, ExecError> {
-        let read = self.run_command(sql, &mut sink).await;
+        let read = trace::observe(self.trace.clone(), sql, self.run_command(sql, &mut sink)).await;
         let (rows, limit) = sink.finish().await;
         read.map(|has_columns| StatementEnd {
             rows,
@@ -1376,6 +1383,75 @@ mod tests {
     use super::*;
     use crate::catalog::RelationRef;
     use crate::connector::kafka::page_text;
+
+    #[tokio::test]
+    async fn a_failed_user_command_emits_its_command_and_error_without_a_broker() {
+        use crate::connector::target::parse_uri;
+        use crate::sink::{SinkEvent, StatementKey};
+        use sqln_session::trace::{LogEvent, TraceEvent};
+
+        let target = parse_uri("kafka://127.0.0.1:1").unwrap();
+        let config = client::config(&target, target.kafka.read_group()).unwrap();
+        let mut session = KafkaSession {
+            trace: None,
+            target,
+            consumer: Arc::new(client::consumer(&config).unwrap()),
+            registry: None,
+            registry_error: None,
+        };
+        let key = StatementKey {
+            console: 1,
+            execution: 2,
+            index: 0,
+        };
+        let (events, mut traces) = tokio::sync::mpsc::channel::<TraceEvent>(8);
+        let mut trace = TraceContext::new(1, 1, "Kafka".into(), false, events);
+        trace.key = Some(key);
+        trace.user = true;
+        trace.dialect = Dialect::Kafka;
+        session.set_trace_context(Some(trace));
+        let (events, _rows) = tokio::sync::mpsc::channel::<SinkEvent>(8);
+        let sink = ResultSink::new(key, events, Arc::new(crate::grid::Budget::new(4096)), 10);
+        let command = "INVALID command";
+        let error = session.run(command, sink).await.unwrap_err();
+        let TraceEvent {
+            event:
+                LogEvent::Started {
+                    id,
+                    key: recorded_key,
+                    user,
+                    dialect,
+                    text,
+                    header_len,
+                    ..
+                },
+            ..
+        } = traces.try_recv().unwrap()
+        else {
+            panic!("the command starts a trace");
+        };
+        assert_eq!(recorded_key, Some(key));
+        assert!(user);
+        assert_eq!(dialect, Dialect::Kafka);
+        assert_eq!(&text[header_len..], command);
+        let TraceEvent {
+            event:
+                LogEvent::Finished {
+                    id: finished,
+                    level,
+                    text,
+                    ..
+                },
+            ..
+        } = traces.try_recv().unwrap()
+        else {
+            panic!("the failed command ends its trace");
+        };
+        assert_eq!(finished, id);
+        assert_eq!(level, sqln_core::message::MessageLevel::Error);
+        assert!(text.contains(&error.to_string()), "{text}");
+        assert!(traces.try_recv().is_err());
+    }
 
     #[test]
     fn an_assignment_lists_each_partition_of_each_topic() {

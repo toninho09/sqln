@@ -158,6 +158,7 @@ impl App {
         let console = &mut self.consoles[index];
         console.id = id;
         console.connection = Some(connection);
+        console.messages.start_association();
         if let Some(name) = fresh {
             console.name = name;
         }

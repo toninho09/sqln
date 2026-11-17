@@ -51,6 +51,7 @@ impl SqlDialect for Postgres {
             (Scope::Relation, Section::Columns) => columns(&schema, &table),
             (Scope::Relation, Section::Indexes) => indexes(&schema, &table),
             (Scope::Relation, Section::ForeignKeys) => foreign_keys(&schema, &table),
+            (Scope::Relation, Section::Statistics) => statistics(&schema, &table),
             (Scope::Schema, _) => all_columns(Some(&schema)),
             (Scope::Connection, _) => all_columns(None),
             (Scope::Sessions, _) => SESSIONS.to_owned(),
@@ -165,5 +166,35 @@ fn foreign_keys(schema: &str, table: &str) -> String {
          JOIN pg_catalog.pg_namespace rn ON rn.oid = r.relnamespace \
          WHERE k.contype = 'f' AND n.nspname = {schema} AND c.relname = {table} \
          ORDER BY k.conname"
+    )
+}
+
+/// The statistics of a table: sizes from the catalog, and counts and dates from the
+/// statistics view. A view has no statistics row, so its counts read as `NULL`.
+fn statistics(schema: &str, table: &str) -> String {
+    format!(
+        "SELECT v.name, v.value \
+         FROM pg_catalog.pg_class c \
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+         LEFT JOIN pg_catalog.pg_stat_user_tables s ON s.relid = c.oid \
+         CROSS JOIN LATERAL (VALUES \
+           (1, 'estimated rows', NULLIF(c.reltuples, -1)::bigint::text), \
+           (2, 'estimated live rows', s.n_live_tup::text), \
+           (3, 'estimated dead rows', s.n_dead_tup::text), \
+           (4, 'total size', pg_catalog.pg_size_pretty( \
+             pg_catalog.pg_total_relation_size(c.oid))), \
+           (5, 'table size', pg_catalog.pg_size_pretty( \
+             pg_catalog.pg_relation_size(c.oid))), \
+           (6, 'indexes size', pg_catalog.pg_size_pretty( \
+             pg_catalog.pg_indexes_size(c.oid))), \
+           (7, 'sequential scans', s.seq_scan::text), \
+           (8, 'index scans', s.idx_scan::text), \
+           (9, 'last vacuum', s.last_vacuum::text), \
+           (10, 'last analyze', s.last_analyze::text), \
+           (11, 'last autovacuum', s.last_autovacuum::text), \
+           (12, 'last autoanalyze', s.last_autoanalyze::text) \
+         ) AS v(place, name, value) \
+         WHERE n.nspname = {schema} AND c.relname = {table} \
+         ORDER BY v.place"
     )
 }

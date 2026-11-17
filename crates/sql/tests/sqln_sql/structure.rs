@@ -205,8 +205,8 @@ fn a_hostile_name_stays_a_name() {
         .execute_batch(&format!("CREATE TABLE \"{name}\" (id INT);"))
         .unwrap();
     let target = relation("main", name);
-    for section in Section::ALL {
-        sqlite_grid(&connection, Scope::Relation, &target, section);
+    for section in Section::sections(Dialect::Sqlite) {
+        sqlite_grid(&connection, Scope::Relation, &target, *section);
     }
     let (_, rows) = sqlite_grid(&connection, Scope::Relation, &target, Section::Columns);
     assert_eq!(rows[0][0], "id");
@@ -232,6 +232,56 @@ fn mysql_doubles_a_backslash_in_a_name() {
     let target = relation("app", "t\\'x");
     let sql = structure_sql(Dialect::MySql, Scope::Relation, &target, Section::Indexes).unwrap();
     assert!(sql.contains(r"TABLE_NAME = 't\\''x'"), "{sql}");
+}
+
+#[test]
+fn postgres_reads_one_metric_per_row_with_a_stable_order() {
+    let target = relation("app", "orders");
+    let sql = structure_sql(
+        Dialect::Postgres,
+        Scope::Relation,
+        &target,
+        Section::Statistics,
+    )
+    .unwrap();
+    assert!(sql.contains("CROSS JOIN LATERAL (VALUES"), "{sql}");
+    assert!(sql.contains("'estimated rows'"), "{sql}");
+    assert!(sql.contains("pg_catalog.pg_size_pretty"), "{sql}");
+    assert!(sql.contains("ORDER BY v.place"), "{sql}");
+    assert!(sql.contains(r"n.nspname = E'app'"), "{sql}");
+    assert!(sql.contains(r"c.relname = E'orders'"), "{sql}");
+    assert!(sql.trim_end().ends_with("ORDER BY v.place"), "{sql}");
+}
+
+#[test]
+fn mysql_reads_one_metric_per_row_with_a_stable_order() {
+    let target = relation("app", "orders");
+    let sql = structure_sql(
+        Dialect::MySql,
+        Scope::Relation,
+        &target,
+        Section::Statistics,
+    )
+    .unwrap();
+    assert!(sql.contains("FROM information_schema.TABLES t"), "{sql}");
+    assert!(
+        sql.contains("WHEN 'estimated rows' THEN CAST(t.TABLE_ROWS AS CHAR)"),
+        "{sql}"
+    );
+    assert!(sql.contains("ORDER BY n.place"), "{sql}");
+    assert!(sql.contains(r"t.TABLE_SCHEMA = 'app'"), "{sql}");
+    assert!(sql.contains(r"t.TABLE_NAME = 'orders'"), "{sql}");
+}
+
+#[test]
+fn sqlite_duckdb_and_databricks_have_no_statistics_section() {
+    let target = relation("main", "orders");
+    for dialect in [Dialect::Sqlite, Dialect::DuckDb, Dialect::Databricks] {
+        assert_eq!(
+            structure_sql(dialect, Scope::Relation, &target, Section::Statistics),
+            None
+        );
+    }
 }
 
 #[test]
@@ -282,9 +332,40 @@ fn redis_has_no_structure() {
 
 #[test]
 fn the_sections_turn_in_a_circle() {
-    assert_eq!(Section::Columns.step(true), Section::Indexes);
-    assert_eq!(Section::ForeignKeys.step(true), Section::Columns);
-    assert_eq!(Section::Columns.step(false), Section::ForeignKeys);
+    let shown = Section::ALL;
+    assert_eq!(Section::Columns.step(&shown, true), Section::Indexes);
+    assert_eq!(Section::Statistics.step(&shown, true), Section::Columns);
+    assert_eq!(
+        Section::Columns.step(&Section::WITHOUT_STATISTICS, true),
+        Section::Indexes
+    );
+    assert_eq!(
+        Section::ForeignKeys.step(&Section::WITHOUT_STATISTICS, true),
+        Section::Columns
+    );
+    assert_eq!(Section::Columns.step(&shown, false), Section::Statistics);
+    assert_eq!(
+        Section::Columns.step(&Section::WITHOUT_STATISTICS, false),
+        Section::ForeignKeys
+    );
+}
+
+#[test]
+fn a_source_without_a_statistics_read_hides_the_statistics_section() {
+    assert_eq!(Section::sections(Dialect::Postgres), &Section::ALL);
+    assert_eq!(Section::sections(Dialect::MySql), &Section::ALL);
+    assert_eq!(
+        Section::sections(Dialect::Sqlite),
+        &Section::WITHOUT_STATISTICS
+    );
+    assert_eq!(
+        Section::sections(Dialect::DuckDb),
+        &Section::WITHOUT_STATISTICS
+    );
+    assert_eq!(
+        Section::sections(Dialect::Databricks),
+        &Section::WITHOUT_STATISTICS
+    );
 }
 
 #[test]

@@ -471,6 +471,8 @@ impl App {
         match action {
             Action::EditorAiComplete => self.start_ai_with(None),
             Action::EditorAiCompleteRequest => self.open_ai_request(),
+            Action::AiExplainError => self.start_ai_explain_error(),
+            Action::AiExplainPlan => self.start_ai_explain_plan(),
             Action::EditorAiAccept => self.decide_ghost(true),
             Action::EditorAiReject => self.decide_ghost(false),
             Action::EditorAiCancel => self.cancel_ai(),
@@ -613,6 +615,7 @@ impl App {
                 }
                 self.overlay = Some(Overlay {
                     _analysis_memory: None,
+                    _ai_memory: None,
                     title,
                     contents,
                     footer,
@@ -638,6 +641,7 @@ impl App {
         let Some(window) = window else { return };
         self.overlay = Some(Overlay {
             _analysis_memory: None,
+            _ai_memory: None,
             title: window.title,
             contents: WrappedText::with_indent(window.text, window.indent),
             footer: window.footer,
@@ -1102,6 +1106,7 @@ impl App {
         self.console_mut().editor.close_suggestions();
         self.overlay = Some(Overlay {
             _analysis_memory: None,
+            _ai_memory: None,
             title: text::SYNTAX_TITLE.into(),
             contents: WrappedText::new(contents),
             footer: "Esc close | Up/Down scroll | Ctrl+C copy".into(),
@@ -1135,6 +1140,9 @@ impl App {
 
     pub(super) fn stop(&mut self, index: usize) {
         let id = self.consoles[index].id;
+        if self.cancel_ai_explanation(id) {
+            return;
+        }
         if self.cancel_agent_console(id) {
             if self.consoles[index].closing && !self.consoles[index].is_busy() {
                 self.close_step(id);
@@ -1608,6 +1616,8 @@ impl App {
                     (&[RunSubquery], text::MENU_SUBQUERY),
                     (&[Explain], text::MENU_EXPLAIN),
                     (&[ExplainAnalyze], text::MENU_EXPLAIN_ANALYZE),
+                    (&[AiExplainError], text::MENU_AI_EXPLAIN_ERROR),
+                    (&[AiExplainPlan], text::MENU_AI_EXPLAIN_PLAN),
                     (&[Stop], text::MENU_STOP),
                     (&[FormatSql], text::MENU_FORMAT),
                     (&[SqlDiagnostics], text::SYNTAX_TITLE),
@@ -1678,6 +1688,8 @@ impl App {
             action,
             Action::EditorAiComplete
                 | Action::EditorAiCompleteRequest
+                | Action::AiExplainError
+                | Action::AiExplainPlan
                 | Action::EditorAiAccept
                 | Action::EditorAiReject
                 | Action::EditorAiCancel
@@ -1743,7 +1755,7 @@ impl App {
                 Screen::Compare(index) => self.compares[index].is_busy(),
                 Screen::Diagram(index) => self.diagrams[index].is_busy(),
                 Screen::Table(index) => self.tables[index].is_busy(),
-                Screen::Console => !idle,
+                Screen::Console => !idle || self.ai_explanation_running(console.id),
             },
             Action::ToggleMode => !in_table && idle && transactions && !self.agent.owns(console.id),
             Action::Commit => {

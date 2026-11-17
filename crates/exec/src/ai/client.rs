@@ -1,6 +1,7 @@
 //! Bounded HTTP calls. External response bodies never enter error messages.
 use super::{Prepared, Provider};
 use crate::connector::target::Secret;
+use serde_json::Value;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -62,6 +63,34 @@ async fn receive(mut response: reqwest::Response) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// Sends a bounded chat request. Both completion and explanation use this transport.
+async fn answer(
+    provider: &Provider,
+    prepared: &Prepared,
+    key: Option<&Secret>,
+) -> Result<(String, Option<String>), String> {
+    let mut request = client(provider)?
+        .post(provider.completion_url()?)
+        .json(&prepared.body);
+    if let Some(key) = key {
+        request = request.bearer_auth(key.expose());
+    }
+    let bytes = receive(request.send().await.map_err(request_error)?).await?;
+    let json: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| "The API returns invalid JSON. Check its protocol.")?;
+    let choice = json
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .ok_or("The API returns no choice. Check the model and protocol.")?;
+    let text = choice
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .ok_or("The API returns no answer text. Choose a chat model.")?;
+    let reason = choice.get("finish_reason").and_then(Value::as_str);
+    Ok((text.to_owned(), reason.map(str::to_owned)))
+}
+
 pub async fn complete(
     provider: &Provider,
     prepared: &Prepared,
@@ -70,31 +99,8 @@ pub async fn complete(
     cancel: &CancellationToken,
 ) -> Result<String, String> {
     let operation = async {
-        let mut request = client(provider)?
-            .post(provider.completion_url()?)
-            .json(&prepared.body);
-        if let Some(key) = key {
-            request = request.bearer_auth(key.expose());
-        }
-        let bytes = receive(request.send().await.map_err(request_error)?).await?;
-        let json: serde_json::Value = serde_json::from_slice(&bytes)
-            .map_err(|_| "The API returns invalid JSON. Check its protocol.")?;
-        let choice = json
-            .get("choices")
-            .and_then(|c| c.get(0))
-            .ok_or("The API returns no choice. Check the model and protocol.")?;
-        let value = choice
-            .get("message")
-            .and_then(|m| m.get("content"))
-            .and_then(serde_json::Value::as_str)
-            .ok_or("The API returns no SQL text. Choose a chat model.")?;
-        super::replacement(
-            value,
-            choice
-                .get("finish_reason")
-                .and_then(serde_json::Value::as_str),
-            original,
-        )
+        let (text, reason) = answer(provider, prepared, key).await?;
+        super::replacement(&text, reason.as_deref(), original)
     };
     tokio::select! { result = operation => result, () = cancel.cancelled() => Err("AI completion cancelled.".into()) }
 }
@@ -113,4 +119,26 @@ pub async fn test(
         Ok(())
     };
     tokio::select! { result = operation => result, () = cancel.cancelled() => Err("AI connection test cancelled.".into()) }
+}
+
+/// Sends one chat question. The caller shows the answer in a window, never in the editor.
+pub async fn ask(
+    provider: &Provider,
+    prepared: &Prepared,
+    key: Option<&Secret>,
+    cancel: &CancellationToken,
+) -> Result<String, String> {
+    let operation = async {
+        let (text, reason) = answer(provider, prepared, key).await?;
+        if reason.as_deref() != Some("stop") {
+            return Err(
+                "The AI answer is incomplete. Increase Output tokens or try another model.".into(),
+            );
+        }
+        if text.trim().is_empty() {
+            return Err("The API returns an empty answer. Choose a chat model.".into());
+        }
+        Ok(text)
+    };
+    tokio::select! { result = operation => result, () = cancel.cancelled() => Err("AI explanation cancelled.".into()) }
 }

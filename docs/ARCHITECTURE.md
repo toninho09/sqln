@@ -102,7 +102,7 @@ Each integration test is in the lowest crate that has all its dependencies:
 | `editor` | EdTUI, conventional layer, search, and replace |
 | `sql` | Tokenizer, statement separation, subquery ranges, statement classes, and local syntax diagnostics |
 | `complete` | Local autocomplete suggestions |
-| `ai` | One OpenAI-compatible chat protocol, credentials, context, and metadata transforms. The Settings dialog edits the provider fields |
+| `ai` | One OpenAI-compatible chat protocol, credentials, bounded completion and explanation prompts, and metadata transforms. The Settings dialog edits the provider fields |
 | `catalog` | In-memory cache; schemas, tables, routines, sequences, triggers, and types first, columns and foreign keys on demand |
 | `definition` | DDL of one object: the queries per database and the text with its header |
 | `generate` | SQL templates of the navigator |

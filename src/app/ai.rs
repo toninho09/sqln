@@ -1,10 +1,11 @@
 //! Explicit completion coordination. SQL execution and MCP authorization stay separate.
-use super::{App, DialogAction};
+use super::{App, DialogAction, Overlay};
 use crate::ai::{self, Credential, Memory, Preferences, Provider, Snapshot};
 use crate::connector::target::Secret;
 use crate::creds::SystemVault;
 use crate::editor::ai::Target;
 use crate::exec::{ConnectionId, ConsoleId};
+use crate::grid::ResultTable;
 use crate::input::Action;
 use crate::settings::themes::ThemeChanges;
 use crate::store::Scope;
@@ -14,6 +15,7 @@ use crate::ui::ai::RequestPrompt;
 use crate::ui::auth::{PasswordAction, PasswordPrompt};
 use crate::ui::kit::prompt::TextAction;
 use crate::ui::text;
+use crate::ui::wrap::WrappedText;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use edtui::Index2;
 use ratatui::{Frame, layout::Rect, widgets::Paragraph};
@@ -43,7 +45,7 @@ struct Run {
     console: ConsoleId,
     connection: ConnectionId,
     generation: u64,
-    target: Target,
+    kind: RunKind,
     /// The Kafka topic of the statement at the cursor, as typed.
     focus: Option<String>,
     provider: Provider,
@@ -57,11 +59,22 @@ struct Run {
     consent: bool,
     message: &'static str,
     session: Option<Secret>,
+    completed: Option<Completed>,
     _memory: Memory,
+}
+
+/// What a run asks the provider for.
+#[derive(Clone)]
+enum RunKind {
+    /// Ghost text at the anchor of the editor.
+    Completion(Target),
+    /// An explanation of an error or a plan. The answer shows in a text window.
+    Explain(ai::explain::Explanation),
 }
 /// A response under review in the editor of its console.
 struct Completed {
     text: String,
+    memory: Option<Memory>,
 }
 enum Work {
     Consent(u64, Result<bool, String>),
@@ -151,15 +164,53 @@ impl App {
     pub(super) fn ai_action_available(&self, action: Action) -> bool {
         match action {
             Action::EditorAiComplete | Action::EditorAiCompleteRequest => self.ai_eligible(),
+            Action::AiExplainError => {
+                self.ai_explain_available() && self.console().messages.has_user_error()
+            }
+            Action::AiExplainPlan => self.ai_explain_available() && self.console().shows_plan(),
             Action::EditorAiAccept | Action::EditorAiReject => {
                 self.console().editor.has_ghosts() && self.review_active()
             }
             Action::EditorAiCancel => {
                 self.ai.runs.iter().any(|r| r.console == self.console().id)
-                    && self.editor_has_focus()
+                    && (self.editor_has_focus() || self.ai_explanation_running(self.console().id))
             }
             _ => false,
         }
+    }
+
+    pub(super) fn ai_explanation_running(&self, console: ConsoleId) -> bool {
+        self.ai
+            .runs
+            .iter()
+            .any(|run| run.console == console && matches!(run.kind, RunKind::Explain(_)))
+    }
+
+    pub(super) fn cancel_ai_explanation(&mut self, console: ConsoleId) -> bool {
+        let id = self
+            .ai
+            .runs
+            .iter()
+            .find(|run| run.console == console && matches!(run.kind, RunKind::Explain(_)))
+            .map(|run| run.id);
+        if let Some(id) = id {
+            self.cancel_ai_id(id);
+            self.status = Some("AI explanation cancelled.".into());
+        }
+        id.is_some()
+    }
+
+    /// Returns true when the console can ask for an AI explanation. Every source
+    /// qualifies, Redis and Kafka included: the request explains text, not SQL edits.
+    fn ai_explain_available(&self) -> bool {
+        self.console_on_screen()
+            && !self.home()
+            && self.ai.preferences.enabled()
+            && self.ai.preferences.provider.is_some()
+            && self.console().connection.is_some()
+            && !self.console().is_busy()
+            && self.console().editor.review().is_none()
+            && !self.association_pending(self.console().id)
     }
     pub(super) fn set_ai_preferences(&mut self, preferences: Preferences) {
         if self.ai.preferences != preferences {
@@ -189,7 +240,8 @@ impl App {
         self.console_mut().editor.set_ai_available(eligible);
         // A ghost run follows its own console: tab changes, busy consoles, schema
         // refreshes, and cursor moves keep it. A closed console, a lost connection, a
-        // diff review, or a changed requested line ends the run at once.
+        // diff review, or a changed requested line ends the run at once. An explanation
+        // run needs only its console: its answer shows in a window, not in the editor.
         let mut stale = Vec::new();
         for run in &self.ai.runs {
             let dead = !self.ai.preferences.enabled()
@@ -197,12 +249,20 @@ impl App {
                     .consoles
                     .iter()
                     .find(|c| c.id == run.console)
-                    .is_none_or(|console| {
-                        console.connection != Some(run.connection)
-                            || console.editor.review().is_some()
-                            // An edit of the requested line ends the request at once:
-                            // the answer would not show.
-                            || console.editor.ai_line_row(&run.target).is_none()
+                    .is_none_or(|console| match &run.kind {
+                        RunKind::Completion(target) => {
+                            console.connection != Some(run.connection)
+                                || console.editor.review().is_some()
+                                // An edit of the requested line ends the request at once:
+                                // the answer would not show.
+                                || console.editor.ai_line_row(target).is_none()
+                        }
+                        RunKind::Explain(_) => {
+                            console.connection != Some(run.connection)
+                                || !self.console_on_screen()
+                                || self.console().id != run.console
+                                || console.is_busy()
+                        }
                     });
             if dead {
                 stale.push(run.id);
@@ -224,15 +284,14 @@ impl App {
         // where each answer will land while editing other lines.
         let mut pendings: Vec<(ConsoleId, Index2, Instant)> = Vec::new();
         for run in &self.ai.runs {
+            let RunKind::Completion(target) = &run.kind else {
+                continue;
+            };
             let Some(console) = self.consoles.iter().find(|c| c.id == run.console) else {
                 continue;
             };
-            if let Some(row) = console.editor.ai_line_row(&run.target) {
-                pendings.push((
-                    run.console,
-                    Index2::new(row, run.target.start.col),
-                    run.started,
-                ));
+            if let Some(row) = console.editor.ai_line_row(target) {
+                pendings.push((run.console, Index2::new(row, target.start.col), run.started));
             }
         }
         for console in &mut self.consoles {
@@ -251,7 +310,8 @@ impl App {
         };
         let run = self.ai.runs.remove(index);
         run.cancel.cancel();
-        if let Some(cache) = self.ai.caches.get_mut(&run.connection)
+        if matches!(run.kind, RunKind::Completion(_))
+            && let Some(cache) = self.ai.caches.get_mut(&run.connection)
             && cache.loading
             && !cache.background
         {
@@ -536,13 +596,17 @@ impl App {
             .runs
             .iter()
             .filter(|r| r.console == console_id)
-            .filter(|r| {
+            .filter_map(|r| match &r.kind {
+                RunKind::Completion(target) => Some((r.id, target)),
+                RunKind::Explain(_) => None,
+            })
+            .filter(|(_, target)| {
                 self.consoles
                     .iter()
                     .find(|c| c.id == console_id)
-                    .is_some_and(|c| c.editor.ai_line_row(&r.target) == Some(row))
+                    .is_some_and(|c| c.editor.ai_line_row(target) == Some(row))
             })
-            .map(|r| r.id)
+            .map(|(id, _)| id)
             .collect();
         for id in same_line {
             self.cancel_ai_id(id);
@@ -577,7 +641,141 @@ impl App {
             self.status = Some(e);
             return;
         }
-        let c = self.connection(connection).expect("eligible connection");
+        self.push_ai_run(
+            RunKind::Completion(target),
+            focus,
+            provider,
+            (scope, base, project),
+            connection,
+            memory,
+        );
+    }
+
+    /// Starts the explanation of the newest error of the console.
+    pub(super) fn start_ai_explain_error(&mut self) {
+        let Some(explanation) = self.explain_error_source() else {
+            return;
+        };
+        self.start_ai_explain(explanation);
+    }
+
+    /// Starts the explanation of the plan on screen.
+    pub(super) fn start_ai_explain_plan(&mut self) {
+        let Some(explanation) = self.explain_plan_source() else {
+            return;
+        };
+        self.start_ai_explain(explanation);
+    }
+
+    fn explain_error_source(&mut self) -> Option<ai::explain::Explanation> {
+        if !self.ai_explain_ready() {
+            return None;
+        }
+        let console = self.console();
+        let Some((dialect, statement, error)) = console.messages.last_error() else {
+            self.status = Some(text::AI_EXPLAIN_NO_ERROR.to_owned());
+            return None;
+        };
+        Some(ai::explain::Explanation::error(dialect, statement, error))
+    }
+
+    fn explain_plan_source(&mut self) -> Option<ai::explain::Explanation> {
+        if !self.ai_explain_ready() {
+            return None;
+        }
+        let console = self.console();
+        if !console.shows_plan() {
+            self.status = Some(text::AI_EXPLAIN_NO_PLAN.to_owned());
+            return None;
+        }
+        let Some(statement) = console.plan_statement() else {
+            self.status = Some(text::AI_EXPLAIN_NO_PLAN.to_owned());
+            return None;
+        };
+        let plan = plan_text(&console.results[console.active].table);
+        Some(ai::explain::Explanation::plan(
+            console.editor.dialect(),
+            statement,
+            &plan,
+        ))
+    }
+
+    /// The checks that every explanation shares.
+    fn ai_explain_ready(&mut self) -> bool {
+        if self.config_blocked() {
+            return false;
+        }
+        if !self.ai.preferences.enabled() {
+            self.status = Some(text::AI_EXPLAIN_DISABLED.to_owned());
+            return false;
+        }
+        if !self.console_on_screen() || self.home() || self.console().is_busy() {
+            self.status = Some("Open an idle console and try again.".into());
+            return false;
+        }
+        if self.console().connection.is_none() {
+            self.status = Some(text::NO_CONNECTION.to_owned());
+            return false;
+        }
+        true
+    }
+
+    fn start_ai_explain(&mut self, explanation: ai::explain::Explanation) {
+        let Some(provider) = self.ai.preferences.provider.clone() else {
+            self.status = Some(text::AI_EXPLAIN_NO_PROVIDER.to_owned());
+            return;
+        };
+        if let Err(error) = provider.validate() {
+            self.status = Some(error);
+            return;
+        }
+        let (scope, base, project) = match self.ai_location() {
+            Ok(values) => values,
+            Err(error) => {
+                self.status = Some(error);
+                return;
+            }
+        };
+        let connection = self.console().connection.expect("a checked connection");
+        let console = self.console().id;
+        // One explanation of a console at a time: the answer opens a window, and a
+        // second request would replace it unseen.
+        if self
+            .ai
+            .runs
+            .iter()
+            .any(|r| r.console == console && matches!(r.kind, RunKind::Explain(_)))
+        {
+            self.status = Some(text::AI_EXPLAIN_BUSY.to_owned());
+            return;
+        }
+        let mut memory = Memory::new(&self.budget);
+        if let Err(error) = memory.charge(explanation.memory_bytes()) {
+            self.status = Some(error);
+            return;
+        }
+        self.push_ai_run(
+            RunKind::Explain(explanation),
+            None,
+            provider,
+            (scope, base, project),
+            connection,
+            memory,
+        );
+    }
+
+    /// Adds one run and starts its consent check. The caller did the checks of its kind.
+    fn push_ai_run(
+        &mut self,
+        kind: RunKind,
+        focus: Option<String>,
+        provider: Provider,
+        location: (String, PathBuf, Option<PathBuf>),
+        connection: ConnectionId,
+        memory: Memory,
+    ) {
+        let (scope, base, project) = location;
+        let c = self.connection(connection).expect("a live connection");
         let identity = c
             .key
             .as_ref()
@@ -596,7 +794,7 @@ impl App {
             console: self.console().id,
             connection,
             generation: 0,
-            target,
+            kind,
             focus,
             provider,
             scope,
@@ -608,10 +806,17 @@ impl App {
             consent: false,
             message: "Checking AI consent",
             session: None,
+            completed: None,
             _memory: memory,
         };
         self.console_mut().editor.close_suggestions();
+        let explanation = matches!(run.kind, RunKind::Explain(_));
         self.ai.runs.push(run);
+        // SQL completion consent does not cover error text or plan predicates.
+        if explanation {
+            self.ai_consent_ready(id, false);
+            return;
+        }
         if self.ai.approved.contains(&destination) {
             self.ai_consent_ready(id, true);
             return;
@@ -648,15 +853,58 @@ impl App {
                     )
                 ),
             };
-            self.show_dialog("Send SQL and schema to AI",format!("Connection: {connection}\nEndpoint: {endpoint}\nCredential: {credential}\n\nSQLN sends SQL near the cursor and schema metadata. Both can contain sensitive information. Table records are not included.\n\nAllow this connection and destination for this project?"),vec![("Cancel",DialogAction::AiCancel(id)),("Allow",DialogAction::AiAllow(id))]);
+            let question = if matches!(run.kind, RunKind::Explain(_)) {
+                "\n\nAllow this request?"
+            } else {
+                "\n\nAllow this connection and destination for this project?"
+            };
+            let (title, body) = match &run.kind {
+                RunKind::Completion(_) => (
+                    "Send SQL and schema to AI",
+                    "SQLN sends SQL near the cursor and schema metadata. Both can contain sensitive information. Table records are not included.".to_owned(),
+                ),
+                RunKind::Explain(explanation) => (
+                    if explanation.label() == "error" {
+                        "Send the error to AI"
+                    } else {
+                        "Send the plan to AI"
+                    },
+                    match explanation.label() {
+                        "error" => "SQLN sends the failed statement, error text, and loaded schema metadata. They can contain sensitive information and literal values. No result rows are sent.".to_owned(),
+                        _ => "SQLN sends the statement, query plan, and loaded schema metadata. They can contain sensitive information and literal values. No result rows are sent.".to_owned(),
+                    },
+                ),
+            };
+            self.show_dialog(
+                title,
+                format!(
+                    "Connection: {connection}\nEndpoint: {endpoint}\nCredential: {credential}\n\n{body}{question}"
+                ),
+                vec![
+                    ("Cancel", DialogAction::AiCancel(id)),
+                    ("Allow", DialogAction::AiAllow(id)),
+                ],
+            );
             return;
         }
         let (connection, focus) = (run.connection, run.focus.clone());
-        let generation = self.ensure_ai_schema(connection, focus.as_deref());
-        if let Some(run) = self.ai.runs.iter_mut().find(|r| r.id == id) {
-            run.consent = true;
-            run.generation = generation;
-            run.message = "Reading schema";
+        match run.kind {
+            RunKind::Completion(_) => {
+                let generation = self.ensure_ai_schema(connection, focus.as_deref());
+                if let Some(run) = self.ai.runs.iter_mut().find(|r| r.id == id) {
+                    run.consent = true;
+                    run.generation = generation;
+                    run.message = "Reading schema";
+                }
+            }
+            RunKind::Explain(_) => {
+                // The explanation sends the metadata that is already loaded. It starts
+                // no schema read of its own.
+                if let Some(run) = self.ai.runs.iter_mut().find(|r| r.id == id) {
+                    run.consent = true;
+                    run.message = "AI thinking";
+                }
+            }
         }
         self.continue_ai();
     }
@@ -664,6 +912,10 @@ impl App {
         let Some(run) = self.ai.runs.iter().find(|r| r.id == id) else {
             return;
         };
+        if matches!(run.kind, RunKind::Explain(_)) {
+            self.ai_consent_ready(id, true);
+            return;
+        }
         let destination = run.destination.clone();
         let root = self.persist.as_ref().map(|p| p.store.global.dir.clone());
         let sender = self.ai.sender.clone();
@@ -680,23 +932,20 @@ impl App {
         while self.continue_one_ai() {}
     }
     fn continue_one_ai(&mut self) -> bool {
-        let Some(run) = self
-            .ai
-            .runs
-            .iter()
-            .find(|r| r.consent && !r.sending && !r.cancel.is_cancelled())
-        else {
+        let Some(run) = self.ai.runs.iter().find(|r| {
+            r.consent
+                && !r.sending
+                && !r.cancel.is_cancelled()
+                && (matches!(r.kind, RunKind::Explain(_))
+                    || self
+                        .ai
+                        .caches
+                        .get(&r.connection)
+                        .and_then(|cache| cache.snapshot.as_ref())
+                        .is_some())
+        }) else {
             return false;
         };
-        if self
-            .ai
-            .caches
-            .get(&run.connection)
-            .and_then(|c| c.snapshot.as_ref())
-            .is_none()
-        {
-            return false;
-        }
         let (provider, scope, base, id) = (
             run.provider.clone(),
             run.scope.clone(),
@@ -737,45 +986,50 @@ impl App {
         true
     }
     fn send_ai(&mut self, id: u64, key: Option<Secret>) {
-        let Some(run) = self.ai.runs.iter_mut().find(|r| r.id == id) else {
+        let Some(run) = self.ai.runs.iter().find(|r| r.id == id) else {
             return;
         };
-        let Some(snapshot) = self
+        let kind = run.kind.clone();
+        let provider = run.provider.clone();
+        let connection = run.connection;
+        let cancel = run.cancel.clone();
+        let snapshot = self
             .ai
             .caches
-            .get(&run.connection)
-            .and_then(|c| c.snapshot.clone())
-        else {
-            return;
-        };
-        run.message = "AI thinking";
-        let (provider, context, cancel) = (
-            run.provider.clone(),
-            run.target.context.clone(),
-            run.cancel.clone(),
-        );
+            .get(&connection)
+            .and_then(|c| c.snapshot.clone());
+        if let Some(run) = self.ai.runs.iter_mut().find(|r| r.id == id) {
+            run.message = "AI thinking";
+        }
         let sender = self.ai.sender.clone();
         let budget = self.budget.clone();
-        let context_budget = budget.clone();
-        if let Some(manager) = &self.manager {
-            manager.spawn_ai(async move {
-                let prepared = tokio::task::spawn_blocking(move || {
-                    let mut hold = Memory::new(&context_budget);
-                    hold.charge(
-                        context.prefix.len()
-                            + context.original.len()
-                            + context.suffix.len()
-                            + provider.context_window_tokens * 2,
-                    )?;
-                    let prepared = ai::prepare(&provider, &context, &snapshot)?;
-                    Ok::<_, String>((provider, context, prepared, hold))
-                })
-                .await
-                .map_err(|_| "Cannot prepare AI context. Try a smaller selection.".to_owned())
-                .and_then(|r| r);
-                let result = match prepared {
-                    Ok((provider, context, prepared, _hold)) => {
-                        match ai::client::complete(
+        let Some(manager) = &self.manager else {
+            return;
+        };
+        match kind {
+            RunKind::Completion(target) => {
+                let Some(snapshot) = snapshot else {
+                    return;
+                };
+                let context = target.context;
+                let context_budget = budget.clone();
+                manager.spawn_ai(async move {
+                    let prepared = tokio::task::spawn_blocking(move || {
+                        let mut hold = Memory::new(&context_budget);
+                        hold.charge(
+                            context.prefix.len()
+                                + context.original.len()
+                                + context.suffix.len()
+                                + provider.context_window_tokens * 2,
+                        )?;
+                        let prepared = ai::prepare(&provider, &context, &snapshot)?;
+                        Ok::<_, String>((provider, context, prepared, hold))
+                    })
+                    .await
+                    .map_err(|_| "Cannot prepare AI context. Try a smaller selection.".to_owned())
+                    .and_then(|r| r);
+                    let result = match prepared {
+                        Ok((provider, context, prepared, _hold)) => match ai::client::complete(
                             &provider,
                             &prepared,
                             key.as_ref(),
@@ -784,23 +1038,67 @@ impl App {
                         )
                         .await
                         {
-                            Ok(text) => Ok(Completed { text }),
+                            Ok(text) => Ok(Completed { text, memory: None }),
                             Err(e) => Err(e),
-                        }
+                        },
+                        Err(e) => Err(e),
+                    };
+                    let _ = sender.send(Work::Done(id, result));
+                });
+            }
+            RunKind::Explain(explanation) => {
+                let mut hold = Memory::new(&budget);
+                let working = explanation.memory_bytes()
+                    + snapshot
+                        .as_ref()
+                        .map_or(0, |snapshot| snapshot.memory_bytes())
+                    + provider.context_window_tokens * 4
+                    + ai::client::RESPONSE_LIMIT * 4;
+                if let Err(error) = hold.charge(working) {
+                    let _ = sender.send(Work::Done(id, Err(error)));
+                    return;
+                }
+                manager.spawn_ai(async move {
+                    let prepared = tokio::task::spawn_blocking(move || {
+                        let prepared = explanation.prepare(&provider, snapshot.as_deref())?;
+                        Ok::<_, String>((provider, prepared, hold))
+                    })
+                    .await;
+                    let result = async {
+                        let (provider, prepared, _hold) = prepared.map_err(
+                            |_| "Cannot prepare the explanation. Reduce the context and try again.",
+                        )??;
+                        let text =
+                            ai::client::ask(&provider, &prepared, key.as_ref(), &cancel).await?;
+                        let mut memory = Memory::new(&budget);
+                        memory
+                            .charge(text.capacity().saturating_add(WrappedText::cache_memory_bound(&text)))
+                            .map_err(|_| "The AI answer exceeds the memory budget. Reduce Output tokens or increase the memory budget.")?;
+                        Ok(Completed {
+                            text,
+                            memory: Some(memory),
+                        })
                     }
-                    Err(e) => Err(e),
-                };
-                let _ = sender.send(Work::Done(id, result));
-            });
+                    .await;
+                    let _ = sender.send(Work::Done(id, result));
+                });
+            }
         }
     }
     /// Shows a response in the editor: ghost text at its anchor for an insertion, an
-    /// inline diff for a replacement.
+    /// inline diff for a replacement. An explanation shows in a text window.
     fn show_ai_proposal(&mut self, id: u64, completed: Completed) {
         let Some(run) = self.ai.runs.iter().find(|r| r.id == id) else {
             return;
         };
-        let (console, target) = (run.console, run.target.clone());
+        let (console, target) = match run.kind {
+            RunKind::Completion(ref target) => (run.console, target.clone()),
+            RunKind::Explain(ref explanation) => {
+                let label = explanation.label();
+                self.show_ai_explanation(label, completed);
+                return;
+            }
+        };
         let Some(index) = self.console_index(console) else {
             self.cancel_ai_id(id);
             return;
@@ -817,6 +1115,46 @@ impl App {
         self.consoles[index].editor.set_ghost_keys(keys);
         self.consoles[index].editor.start_ghost(at, &completed.text);
     }
+
+    /// Shows an AI explanation in the text window of the application.
+    fn show_ai_explanation(&mut self, label: &str, completed: Completed) {
+        let title = if label == "error" {
+            text::AI_EXPLAIN_ERROR_TITLE
+        } else {
+            text::AI_EXPLAIN_PLAN_TITLE
+        };
+        self.console_mut().editor.close_suggestions();
+        self.overlay = Some(Overlay {
+            _analysis_memory: None,
+            _ai_memory: completed.memory,
+            title: title.to_owned(),
+            contents: WrappedText::new(completed.text),
+            footer: "Esc close | Up/Down scroll | Ctrl+C copy".into(),
+            scroll: 0,
+            dragging: false,
+            other: None,
+            row: None,
+        });
+    }
+    /// Keeps the answer pending until no window or input prompt needs the focus.
+    fn show_ready_ai_explanation(&mut self) -> bool {
+        if self.ai_obscured()
+            || self.ai.modal()
+            || self.ai_input_active()
+            || self.console().editor.review().is_some()
+        {
+            return false;
+        }
+        let Some(run) = self.ai.runs.iter_mut().find(|run| run.completed.is_some()) else {
+            return false;
+        };
+        let id = run.id;
+        let completed = run.completed.take().expect("a pending answer");
+        self.show_ai_proposal(id, completed);
+        self.cancel_ai_id(id);
+        true
+    }
+
     pub(super) fn ai_retry(&mut self, id: u64) {
         if let Some(run) = self.ai.runs.iter_mut().find(|r| r.id == id) {
             run.sending = false;
@@ -848,21 +1186,26 @@ impl App {
     /// Escapes at the line of the cursor: the run of that line ends, and a ghost
     /// there closes. A line without either keeps everything.
     pub(super) fn escape_ghost(&mut self) {
+        if self.cancel_ai_explanation(self.console().id) {
+            return;
+        }
         let row = self.console().editor.cursor().row;
         let console = self.console().id;
         let ids: Vec<u64> = self
             .ai
             .runs
             .iter()
-            .filter(|r| {
-                r.console == console
-                    && self
-                        .consoles
-                        .iter()
-                        .find(|c| c.id == console)
-                        .is_some_and(|c| c.editor.ai_line_row(&r.target) == Some(row))
+            .filter_map(|r| match (&r.kind, r.console == console) {
+                (RunKind::Completion(target), true) => Some((r.id, target)),
+                _ => None,
             })
-            .map(|r| r.id)
+            .filter(|(_, target)| {
+                self.consoles
+                    .iter()
+                    .find(|c| c.id == console)
+                    .is_some_and(|c| c.editor.ai_line_row(target) == Some(row))
+            })
+            .map(|(id, _)| id)
             .collect();
         if !ids.is_empty() {
             for id in ids {
@@ -977,20 +1320,26 @@ impl App {
                         ],
                     ),
                 },
-                Work::Done(id, result) if self.ai.runs.iter().any(|r| r.id == id) => {
-                    match result {
-                        Ok(completed) => {
+                Work::Done(id, result) if self.ai.runs.iter().any(|r| r.id == id) => match result {
+                    Ok(completed) => {
+                        if let Some(run) = self
+                            .ai
+                            .runs
+                            .iter_mut()
+                            .find(|run| run.id == id && matches!(run.kind, RunKind::Explain(_)))
+                        {
+                            run.completed = Some(completed);
+                            run.message = "Answer ready";
+                        } else {
                             self.show_ai_proposal(id, completed);
-                            // The answer ended the run; its answer now waits in the
-                            // editor.
                             self.cancel_ai_id(id);
-                        }
-                        Err(e) => {
-                            self.cancel_ai_id(id);
-                            self.status = Some(e);
                         }
                     }
-                }
+                    Err(e) => {
+                        self.cancel_ai_id(id);
+                        self.status = Some(e);
+                    }
+                },
                 Work::Form(token, result) if token == self.ai.form_token => {
                     if let Some(form) = &mut self.settings_form {
                         form.ai_busy = false;
@@ -1036,7 +1385,7 @@ impl App {
             }
         }
         self.continue_ai();
-        changed
+        self.show_ready_ai_explanation() || changed
     }
     /// Closes the settings and stops a vault write or a test of the provider.
     pub(super) fn close_settings(&mut self) {
@@ -1319,6 +1668,23 @@ impl App {
     fn ai_obscured(&self) -> bool {
         self.top_modal().is_some() || self.command_page.is_some() || self.pending_key.is_some()
     }
+
+    /// Returns true when a field on the current screen receives text input.
+    fn ai_input_active(&self) -> bool {
+        if self.navigator_focused {
+            return self.navigator.filter_is_editing();
+        }
+        if !self.console_on_screen() {
+            return false;
+        }
+        let console = self.console();
+        match console.focus {
+            crate::console::Focus::Editor => console.editor.search().is_some(),
+            crate::console::Focus::Results => console.search_is_open(),
+            crate::console::Focus::Parameters => true,
+        }
+    }
+
     pub(super) fn on_ai_key(&mut self, key: KeyEvent) -> bool {
         if let Some(prompt) = &mut self.ai.request {
             match prompt.on_key(key) {
@@ -1351,7 +1717,7 @@ impl App {
             }
             return true;
         }
-        if self.ai_obscured() {
+        if self.ai_obscured() || self.ai_input_active() {
             return false;
         }
         if let crate::input::Lookup::Action(action) = self.keymap.lookup(
@@ -1371,7 +1737,7 @@ impl App {
         }
         if key.code == KeyCode::Esc
             && self.ai.runs.iter().any(|r| r.console == self.console().id)
-            && self.editor_has_focus()
+            && (self.editor_has_focus() || self.ai_explanation_running(self.console().id))
         {
             self.escape_ghost();
             return true;
@@ -1501,4 +1867,33 @@ impl App {
             self.layout.password = crate::ui::auth::draw_password(frame, prompt, &self.theme);
         }
     }
+}
+
+/// Writes the plan tree of the grid as text: one line per row, the cells joined with
+/// " | ". The first line names the columns.
+fn plan_text(table: &ResultTable) -> String {
+    use crate::grid::Value;
+    use std::fmt::Write;
+    let mut text = crate::limited::LimitedText::new(ai::explain::DETAIL_LIMIT);
+    for column in &table.columns {
+        if write!(text, "{column} | ").is_err() {
+            return text.finish();
+        }
+    }
+    for row in &table.rows {
+        if writeln!(text).is_err() {
+            break;
+        }
+        for cell in row.cells() {
+            let value = match cell {
+                Value::Text(value) | Value::Number(value) => value,
+                Value::Null => "NULL",
+                Value::Binary(_) => "[binary]",
+            };
+            if write!(text, "{value} | ").is_err() {
+                return text.finish();
+            }
+        }
+    }
+    text.finish()
 }

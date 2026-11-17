@@ -302,7 +302,8 @@ impl App {
         if layout.controls.contains(position) {
             self.on_table_control_press(mouse.column);
         } else if layout.sections.contains(position) {
-            if let Some(section) = section_at(layout.sections, mouse.column) {
+            let sections = self.table().map(|tab| tab.sections()).unwrap_or(&[]);
+            if let Some(section) = section_at(sections, layout.sections, mouse.column) {
                 self.focus_table(TableFocus::Grid);
                 self.show_section(section);
             }

@@ -611,8 +611,15 @@ impl App {
 
     /// Moves to the next or the previous section. A tab without sections moves a page.
     fn step_table(&mut self, forward: bool) {
-        match self.table().and_then(TableTab::section) {
-            Some(section) => self.show_section(section.step(forward)),
+        let next = self.table().and_then(|tab| {
+            let shown = tab.sections();
+            (!shown.is_empty()).then(|| {
+                let current = tab.section().unwrap_or(shown[0]);
+                current.step(shown, forward)
+            })
+        });
+        match next {
+            Some(section) => self.show_section(section),
             None if forward => self.next_table_page(),
             None => self.previous_table_page(),
         }
@@ -626,7 +633,8 @@ impl App {
         relation: RelationRef,
         view: bool,
     ) -> TableTab {
-        let kafka = self.dialect_of(connection) == Some(Dialect::Kafka);
+        let dialect = self.dialect_of(connection).unwrap_or(Dialect::Sqlite);
+        let kafka = dialect == Dialect::Kafka;
         let page_size = if kafka {
             crate::connector::kafka::TOPIC_TAB_MESSAGES
         } else {
@@ -634,7 +642,7 @@ impl App {
         };
         let topic = kafka && relation.schema == crate::connector::kafka::TOPICS;
         let group = kafka && relation.schema == crate::connector::kafka::GROUPS;
-        let mut tab = TableTab::new(id, connection, relation, view, page_size);
+        let mut tab = TableTab::new(id, connection, relation, view, dialect, page_size);
         tab.opened = self.next_tab_place();
         tab.filters = topic
             || self

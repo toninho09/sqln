@@ -69,7 +69,9 @@ An edit proposal opens as an [inline review](#inline-review) in its console. The
 
 ## Inline review
 
-AI responses and agent edit proposals show in the editor, as in an IDE.
+AI completion responses and agent edit proposals show in the editor, as in an IDE.
+
+AI explanations use a text window instead. **Explain the last error with AI** (`Ctrl+W M`) and **Explain the plan with AI** (`Ctrl+W T`) also appear in the command palette. Each request asks for consent to send its statement, error or plan, and already loaded schema metadata. The response never changes the editor or runs SQL. A connection change keeps earlier errors visible but excludes them from AI explanations. The response waits during active searches, parameter input, and navigator filter input. `Esc` first closes the active input. `Esc` closes the response, arrows scroll it, and `Ctrl+C` copies it. See [AI explanations](AI_COMPLETION.md#explain-an-error-or-a-plan).
 
 An AI insertion shows ghost text at the requested place, in the hint style. The text of the console does not change before acceptance. A dedicated row after each ghost text holds its buttons; a ghost has no bar. Several answers can wait at once, each on its own line.
 The suggestion list offers two AI rows: **Complete with AI…** and, above it, **Complete with AI with a request…**. The request row opens a modal of one line; `Enter` sends the request with the completion, `Esc` cancels, and an empty input sends a plain completion.
@@ -593,7 +595,7 @@ The table tab and the structure tab stay open together.
 │ [console-1] [users (table)] [users (structure)]                                        │
 │ app · users · structure                                                                │
 │ [✓ Reload]  [↓ Load more]  [■ Stop]                                                    │
-│ ─ Columns ─ Indexes ─ Foreign keys ──────────────────────────────────────────────────  │
+│ ─ Columns ─ Indexes ─ Foreign keys ─ Statistics ─────────────────────────────────────  │
 │ name    type     nullable  default  key                                                │
 │ id      integer  no                 PK                                                 │
 │ email   text     no                                                                    │
@@ -602,7 +604,7 @@ The table tab and the structure tab stay open together.
 
 | Navigator row | Content |
 |---|---|
-| Table, view, or column | Three sections: columns, indexes, and foreign keys |
+| Table, view, or column | Four sections: columns, indexes, foreign keys, and statistics |
 | Schema | All the columns of the schema, without sections |
 | Connection | All the columns of the schemas the navigator shows, without sections |
 
@@ -611,6 +613,7 @@ The table tab and the structure tab stay open together.
 | Table columns | `name`, `type`, `nullable`, `default`, `key` |
 | Indexes | `name`, `columns`, `unique` |
 | Foreign keys | `name`, `columns`, `references`, `on_update`, `on_delete` |
+| Statistics | `name`, `value`, one metric per row |
 | Schema or connection | `schema`, `relation`, `name`, `type`, `nullable`, `default` |
 
 - The title of a connection shows `all schemas` in the place of the name.
@@ -618,6 +621,11 @@ The table tab and the structure tab stay open together.
 - `[` and `]`, or a click on the section name, switch the section. The switch rereads the grid.
 - On a schema or a connection, `[` and `]` change the page.
 - **Reload** rereads the grid. DDL does not update the tab on its own.
+- The statistics section exists on PostgreSQL and MySQL. PostgreSQL shows sizes from
+  `pg_size_pretty`, estimates from the catalog, and scan counts and dates from
+  `pg_stat_user_tables`. MySQL shows the estimates and sizes of `information_schema.TABLES`.
+  The count of rows is an estimate, not a `COUNT`: the section runs no count query.
+  SQLite, DuckDB, and Databricks connections show no statistics section.
 - The grid uses the pagination, the budget, the search, the copy, and the export of the table tab.
 - The export has no target table, as in a console.
 - The tab does not come back in the next session.

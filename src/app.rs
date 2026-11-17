@@ -303,6 +303,7 @@ struct Dialog {
 
 struct Overlay {
     _analysis_memory: Option<crate::analysis::Memory>,
+    _ai_memory: Option<crate::ai::Memory>,
     title: String,
     contents: WrappedText,
     footer: String,

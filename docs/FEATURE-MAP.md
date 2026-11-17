@@ -163,11 +163,17 @@ Files: `ai/`, `app/ai.rs`, `editor/ai.rs`, `exec/ai.rs`, `ui/ai.rs`.
 
 The editor adds an explicit Action above local suggestions: the plain row starts a request at once, and the request row above it opens a one-line modal whose text travels as `request` in the body. `app/ai` captures a revision-checked interval, obtains local consent, and coordinates schema reads and HTTP requests. `exec/ai` reads complete structural snapshots through an authorized pool lease. The memory cache follows catalog refresh generations. `ai` prepares bounded context for the OpenAI-compatible chat protocol, with a system message of common rules and the language of the dialect (the Kafka guide of `connector/kafka/guide.md` for Kafka), with OpenRouter as the default endpoint, and carries the reasoning effort of the provider in the request body. The editor shows ghost text at the cursor only. Several ghosts wait at once, bounded by the Max simultaneous setting, with parallel requests. Each acceptance is one undo step and never runs SQL. Global and project settings use vault references or rotating key-file paths. A Kafka request focuses on the topic of the statement at the cursor, with `complete::statement_topic`, and sends the field paths of that topic only. See [AI completion](AI_COMPLETION.md).
 
+## 12b. AI explanations
+
+Files: `ai/explain.rs`, `ai/client.rs`, `command_log.rs`, `app/ai.rs`, `console.rs`.
+
+`aiExplainError` (`Ctrl+W M`) explains the newest failed user command since the console's current connection association. A connection change keeps earlier history but excludes its errors from explanations. `aiExplainPlan` (`Ctrl+W T`) explains the plan grid with the original executed statement, not the current editor text. Both use the configured AI provider and ask for consent on each request. Redis and Valkey qualify for error explanations. The request includes an already loaded AI schema snapshot, but starts no schema read. Preparation runs in a blocking task with context and memory limits. The answer opens a text window and never changes or executes SQL. A new execution, tab change, close, or cancellation rejects a late answer. See [AI explanations](AI_COMPLETION.md#explain-an-error-or-a-plan).
+
 ## 13. Catalog and structure tab
 
 Files: `catalog.rs`, `structure.rs`.
 
-The catalog is a cache in memory, outside the disk. Schemas and tables load first; columns and foreign keys load on demand. A key failure does not fail the columns. The structure tab runs the catalog queries of `structure`, per database, scope, and section.
+The catalog is a cache in memory, outside the disk. Schemas and tables load first; columns and foreign keys load on demand. A key failure does not fail the columns. The structure tab runs the catalog queries of `structure`, per database, scope, and section. `Section::sections` lists the sections of a dialect: PostgreSQL and MySQL add the statistics section, with one metric per row (`name`, `value`); SQLite, DuckDB, and Databricks show no statistics section. The statistics run no `COUNT`: the count of rows is an estimate of the database (`reltuples` and `pg_stat_user_tables` on PostgreSQL, `information_schema.TABLES` on MySQL), and the sizes come from the catalog or the storage engine.
 
 ## 13d. DDL of an object
 

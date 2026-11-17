@@ -107,6 +107,8 @@ Grid Apply controls its own short transaction.
 | `s` | Whole script |
 | `E` | Show the plan of the statement |
 | `A` | Run the statement and show its plan |
+| `M` | Explain the last error with AI, when available |
+| `T` | Explain the plan on screen with AI, when available |
 | `x` | Stop the script or the table query |
 | `f` | Format the SQL |
 | `/` | Comment or uncomment the lines |
@@ -167,6 +169,8 @@ For an unbound task, `→` after the palette shortcut means to choose the named 
 | Smallest subquery at the cursor | Command palette: **Run subquery** | Configurable shortcut |
 | Show the plan of the statement | `Ctrl+W E` | Command palette |
 | Run the statement and show its plan | `Ctrl+W A` | Command palette |
+| Explain the last error with AI | `Ctrl+W M` | Command palette |
+| Explain the plan on screen with AI | `Ctrl+W T` | Command palette |
 | Stop script | `Ctrl+W x` | **Stop script** button |
 | Format the SQL | `Ctrl+W f` | Command palette |
 | Comment or uncomment the lines | `Ctrl+W /` | `Ctrl+/` or command palette |

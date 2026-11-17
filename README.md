@@ -40,11 +40,13 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Catalog autocomplete.** Complete schemas, tables, views, columns, aliases, SQL keywords, built-in types, and functions with signatures.
 - **SQL tools.** Format statements, toggle comments, and generate SQL templates from the navigator.
 - **Local syntax warnings.** Check SQL after a typing pause, without executing it. Open full warnings from the command palette.
+- **AI explanations.** Ask the configured AI provider to explain the last error of a console, or the plan on screen. The answer shows in a window, never in the editor.
 - **Query parameters.** Write `:name` values, fill the panel under the editor, and run with native bindings that keep values out of the SQL text.
 - **Table browsing.** Apply SQL filters, sort columns, move between pages, and count rows on request.
 - **Grid editing.** Change, insert, and delete table rows locally, review the SQL, and apply checked changes in one transaction.
 - **Key navigation.** Go from a row to the row that its foreign key reads, or to the rows of other tables that read it.
 - **Database objects.** See routines, sequences, triggers, and types in the navigator, and open the DDL of an object in a new console.
+- **Table statistics.** See sizes, row estimates, scan counts, and maintenance dates of a table in its structure tab. PostgreSQL and MySQL only.
 - **Results inspection.** Select cells, search loaded rows, inspect a row vertically, and format JSON values.
 - **Local analysis.** Profile a column, draw text charts, and compare two console executions without another query.
 - **Export.** Write CSV, TSV, JSON, JSON Lines, or SQL inserts from the export dialog.

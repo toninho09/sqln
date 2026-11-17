@@ -1,3 +1,5 @@
+#[path = "ai_explain.rs"]
+mod ai_explain;
 #[path = "ai_kafka.rs"]
 mod ai_kafka;
 
@@ -92,6 +94,10 @@ fn pump(app: &mut App, condition: impl Fn(&str) -> bool) -> String {
     }
 }
 fn app(name: &str, provider: Provider) -> App {
+    app_with_options(name, provider, Options::default())
+}
+
+fn app_with_options(name: &str, provider: Provider, options: Options) -> App {
     let path = crate::common::temp_db!(name);
     rusqlite::Connection::open(&path).unwrap().execute_batch("CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT); CREATE VIEW active_users AS SELECT name FROM users;").unwrap();
     App::new(
@@ -102,7 +108,7 @@ fn app(name: &str, provider: Provider) -> App {
                 max_simultaneous: None,
                 provider: Some(provider),
             },
-            ..Options::default()
+            ..options
         },
         Rc::new(RefCell::new(MemoryClipboard::default())),
         Theme::plain(),

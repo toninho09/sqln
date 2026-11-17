@@ -98,6 +98,8 @@ pub struct TableTab {
     pub connection: ConnectionId,
     pub relation: RelationRef,
     pub is_view: bool,
+    /// The dialect of the connection of the tab. It decides the sections of a structure.
+    pub dialect: Dialect,
     /// False for a tab without SQL text: a value of a key, or a structure.
     pub filters: bool,
     /// True for a tab with a filter and without an order: a Kafka topic.
@@ -316,6 +318,7 @@ impl TableTab {
         connection: ConnectionId,
         relation: RelationRef,
         is_view: bool,
+        dialect: Dialect,
         page_size: usize,
     ) -> Self {
         Self {
@@ -324,6 +327,7 @@ impl TableTab {
             connection,
             relation,
             is_view,
+            dialect,
             filters: true,
             filter_only: false,
             kind_word: None,
@@ -501,6 +505,15 @@ impl TableTab {
     pub fn section(&self) -> Option<Section> {
         let structure = self.structure.as_ref()?;
         structure.has_sections().then_some(structure.section)
+    }
+
+    /// Returns the sections that the structure of this tab can show, in order. A tab
+    /// without sections shows an empty list.
+    pub fn sections(&self) -> &'static [Section] {
+        match &self.structure {
+            Some(item) if item.has_sections() => Section::sections(self.dialect),
+            _ => &[],
+        }
     }
 
     /// Changes the section. The next query of the tab reads it.

@@ -24,16 +24,25 @@ pub enum SessionSignal {
 }
 
 /// One grid of a structure tab. Only the scope `Relation` has more than `Columns`.
+/// `Statistics` needs a source with a statistics read.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Section {
     #[default]
     Columns,
     Indexes,
     ForeignKeys,
+    Statistics,
 }
 
 impl Section {
-    pub const ALL: [Self; 3] = [Self::Columns, Self::Indexes, Self::ForeignKeys];
+    pub const ALL: [Self; 4] = [
+        Self::Columns,
+        Self::Indexes,
+        Self::ForeignKeys,
+        Self::Statistics,
+    ];
+    /// The sections of a source without a statistics read.
+    pub const WITHOUT_STATISTICS: [Self; 3] = [Self::Columns, Self::Indexes, Self::ForeignKeys];
 
     /// Returns the position of the section in `ALL`.
     pub fn index(self) -> usize {
@@ -43,11 +52,28 @@ impl Section {
             .unwrap_or(0)
     }
 
-    /// Returns the section after this one, or before it, in a circle.
-    pub fn step(self, forward: bool) -> Self {
-        let count = Self::ALL.len();
+    /// Returns the sections that a source can show, in order. The list is a prefix of
+    /// `ALL`, so the place of a section in it never changes.
+    pub fn sections(dialect: Dialect) -> &'static [Self] {
+        if has_statistics(dialect) {
+            &Self::ALL
+        } else {
+            &Self::WITHOUT_STATISTICS
+        }
+    }
+
+    /// Returns the section after this one in `list`, or before it, in a circle.
+    pub fn step(self, list: &[Self], forward: bool) -> Self {
+        if list.is_empty() {
+            return self;
+        }
+        let count = list.len();
+        let at = list
+            .iter()
+            .position(|section| *section == self)
+            .unwrap_or(0);
         let distance = if forward { 1 } else { count - 1 };
-        Self::ALL[(self.index() + distance) % count]
+        list[(at + distance) % count]
     }
 }
 
@@ -107,6 +133,17 @@ pub fn has_sessions(dialect: Dialect) -> bool {
         Scope::Sessions,
         &RelationRef::default(),
         Section::Columns,
+    )
+    .is_some()
+}
+
+/// Returns true for a source with a statistics read of a table.
+pub fn has_statistics(dialect: Dialect) -> bool {
+    structure_sql(
+        dialect,
+        Scope::Relation,
+        &RelationRef::default(),
+        Section::Statistics,
     )
     .is_some()
 }

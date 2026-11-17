@@ -176,6 +176,26 @@ impl WrappedText {
         Self::from_source(Content::Text(text))
     }
 
+    /// Bounds row caches, match ranges, and source-sized copies at any display width.
+    /// The caller also reserves the source capacity. JSON and search input need separate reservations.
+    pub fn cache_memory_bound(text: &str) -> usize {
+        // Each character can start a row at width one. A final newline adds an empty row.
+        // Vec growth can keep twice the requested capacity, with a minimum capacity of four.
+        let capacity = text
+            .chars()
+            .count()
+            .saturating_add(1)
+            .max(4)
+            .saturating_mul(2);
+        let row_bytes = size_of::<(usize, usize, bool)>()
+            + size_of::<String>()
+            + size_of::<usize>()
+            + size_of::<Range<usize>>();
+        capacity
+            .saturating_mul(row_bytes)
+            .saturating_add(text.len().saturating_mul(2))
+    }
+
     pub fn with_indent(text: String, indent: usize) -> Self {
         Self::from_source_with_indent(Content::Text(text), indent)
     }
@@ -474,6 +494,53 @@ impl WrappedText {
             index
         } else {
             self.rows.len().saturating_sub(1)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cache_bytes(text: &WrappedText) -> usize {
+        text.rows.capacity() * size_of::<(usize, usize, bool)>()
+            + text.texts.capacity() * size_of::<String>()
+            + text.character_starts.capacity() * size_of::<usize>()
+            + text.texts.iter().map(String::capacity).sum::<usize>()
+            + text.search().map_or(0, |search| {
+                search.matches.capacity() * size_of::<Range<usize>>()
+            })
+    }
+
+    #[test]
+    fn the_memory_bound_covers_short_lines_search_and_resize() {
+        for source in [
+            String::new(),
+            "\n".repeat(8192),
+            "x\n".repeat(8192),
+            "é 日本 x\n".repeat(2048),
+        ] {
+            let bound = WrappedText::cache_memory_bound(&source);
+            let mut text = WrappedText::new(source.clone());
+            for width in [80, 1, 120, 2, 80] {
+                text.set_width(width);
+                let mut index = 0;
+                while text.row(index).is_some() {
+                    index += 1;
+                }
+                text.open_search();
+                text.paste_search("x");
+                while text.search_has_work() {
+                    text.continue_search(Instant::now() + std::time::Duration::from_secs(1));
+                }
+                assert!(cache_bytes(&text) <= bound, "width {width}");
+                assert_eq!(text.copy_text(), source);
+                text.select_at(0, 0, false);
+                text.extend_selection(1, 0);
+                assert!(text.selected_character_count() <= 1);
+                text.select_at(0, 0, false);
+                text.on_search_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+            }
         }
     }
 }

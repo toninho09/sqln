@@ -6,6 +6,22 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Table statistics and AI explanations
+
+The user requested table statistics and AI explanations of errors and plans. The user chose SQL transmission with consent, Redis support, already loaded schema metadata, and both palette commands and fixed shortcuts.
+
+| Point | Implementation |
+|---|---|
+| Statistics | The structure tab adds Statistics on PostgreSQL and MySQL. Each row names one metric. Counts are estimates; the read starts no `COUNT(*)` or maintenance operation |
+| Error | Explain the newest failed user command since the current connection association, with its effective statement and error text. A connection change keeps earlier history visible but excludes its errors from AI explanations, even after a return to that connection |
+| Plan | Explain the plan on screen with its original executed statement, not later editor changes. Never run `EXPLAIN` or `EXPLAIN ANALYZE` to answer this request |
+| Metadata | Include an AI schema snapshot only when already loaded. Apply the context limit and mark reduced metadata |
+| Consent | Each explanation asks for approval. Existing completion approval does not cover error text or plan predicates |
+| Provider | Reuse the configured provider, credentials, and limits. Keep MCP authorization separate |
+| Output | Show bounded text in the existing text window. Wait while another window or input prompt is open, including active editor and grid searches, parameter fields, and the navigator filter. Esc first closes the active input. Reserve text and worst-case display caches before showing the answer. Never apply or execute generated SQL |
+| Commands | `aiExplainError`: `Ctrl+W M`; `aiExplainPlan`: `Ctrl+W T`. Both appear in the palette and support custom bindings |
+| Cancellation | Esc, Stop, tab changes, console closure, and a new execution cancel the explanation and reject late responses |
+
 ## Connection order and folders — 2026-11-16
 
 The user asked to change the order of the connections in the explorer and to group them in folders, in the most friendly way. The user chose the points below.

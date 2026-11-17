@@ -208,6 +208,7 @@ impl App {
         self.analysis_job = Some(job);
         self.overlay = Some(Overlay {
             _analysis_memory: None,
+            _ai_memory: None,
             title: "Result analysis".into(),
             contents: WrappedText::new("Calculating loaded rows...".into()),
             footer: "Esc cancel".into(),
@@ -239,6 +240,7 @@ impl App {
                 let report = job.finish();
                 self.overlay = Some(Overlay {
                     _analysis_memory: Some(report.memory),
+                    _ai_memory: None,
                     title: report.title,
                     contents: WrappedText::new(report.text),
                     footer: "Esc close | Up/Down scroll | Ctrl+C copy".into(),
