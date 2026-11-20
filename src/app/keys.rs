@@ -178,7 +178,7 @@ impl App {
                 .modifiers
                 .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         {
-            Chord::parse("ctrl+y").unwrap()
+            Chord::ctrl('y')
         } else {
             chord
         };
@@ -258,7 +258,7 @@ impl App {
         if region != Region::Navigator && self.context_region() != Some(region) {
             return;
         }
-        if chord == Chord::parse("esc").unwrap() {
+        if chord == Chord::ESC {
             return;
         }
         match self.keymap.lookup(region, chord) {
@@ -287,7 +287,7 @@ impl App {
         {
             return;
         }
-        if keys.last() == Some(&Chord::parse("esc").unwrap()) {
+        if keys.last() == Some(&Chord::ESC) {
             return;
         }
         let mut found = self.keymap.sequence(region, &keys);

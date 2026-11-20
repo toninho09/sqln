@@ -39,6 +39,7 @@ impl Home {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         // SAFETY: setsid is the only operation after fork.
+        #[allow(unsafe_code)]
         unsafe {
             command.pre_exec(|| {
                 rustix::process::setsid()?;

@@ -367,6 +367,10 @@ impl Drop for MySqlSession {
 }
 
 impl MySqlSession {
+    #[expect(
+        clippy::expect_used,
+        reason = "only the drop of the session takes the connection"
+    )]
     fn conn(&mut self) -> &mut Conn {
         self.conn
             .as_mut()

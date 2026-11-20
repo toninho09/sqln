@@ -52,6 +52,7 @@ impl Default for ExportOptions {
     }
 }
 
+#[expect(clippy::expect_used, reason = "a string always has a JSON form")]
 fn json_string(text: &str) -> String {
     serde_json::to_string(text).expect("a string always has a JSON form")
 }

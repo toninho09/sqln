@@ -25,3 +25,6 @@ zeroize.workspace = true
 [dev-dependencies]
 sqln-testkit = { workspace = true, features = ["editor"] }
 tokio.workspace = true
+
+[lints]
+workspace = true

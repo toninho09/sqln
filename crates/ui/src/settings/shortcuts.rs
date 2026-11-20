@@ -312,7 +312,11 @@ impl SettingsForm {
             self.finish_shortcut();
         } else {
             match Chord::from_event(key).text() {
-                Ok(key) => self.shortcuts.recording.as_mut().unwrap().push(key),
+                Ok(key) => {
+                    if let Some(recording) = self.shortcuts.recording.as_mut() {
+                        recording.push(key);
+                    }
+                }
                 Err(message) => self.note = Some(message),
             }
         }
@@ -325,7 +329,9 @@ impl SettingsForm {
     }
 
     fn finish_shortcut(&mut self) {
-        let keys = self.shortcuts.recording.as_ref().unwrap();
+        let Some(keys) = self.shortcuts.recording.as_ref() else {
+            return;
+        };
         if keys.is_empty() {
             self.note = Some(text::SHORTCUT_EMPTY.to_owned());
             return;

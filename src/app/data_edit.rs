@@ -148,12 +148,9 @@ impl App {
                 relation: tab.relation.clone(),
                 dialect,
             };
-            self.tabs
-                .tables
-                .iter_mut()
-                .find(|tab| tab.id == id)
-                .unwrap()
-                .edit_after = Some(EditAfter::Cell { row, col, null });
+            if let Some(tab) = self.tabs.tables.iter_mut().find(|tab| tab.id == id) {
+                tab.edit_after = Some(EditAfter::Cell { row, col, null });
+            }
             self.authorize(connection, Use::Edit { console: id, job });
         } else {
             self.open_cell_editor(id, row, col, null);
@@ -182,12 +179,9 @@ impl App {
                 relation: tab.relation.clone(),
                 dialect,
             };
-            self.tabs
-                .tables
-                .iter_mut()
-                .find(|tab| tab.id == id)
-                .unwrap()
-                .edit_after = Some(EditAfter::NewRow);
+            if let Some(tab) = self.tabs.tables.iter_mut().find(|tab| tab.id == id) {
+                tab.edit_after = Some(EditAfter::NewRow);
+            }
             self.authorize(connection, Use::Edit { console: id, job });
         } else {
             self.append_new_row(id);
@@ -237,12 +231,9 @@ impl App {
                 relation: tab.relation.clone(),
                 dialect,
             };
-            self.tabs
-                .tables
-                .iter_mut()
-                .find(|tab| tab.id == id)
-                .unwrap()
-                .edit_after = Some(EditAfter::Delete { row });
+            if let Some(tab) = self.tabs.tables.iter_mut().find(|tab| tab.id == id) {
+                tab.edit_after = Some(EditAfter::Delete { row });
+            }
             self.authorize(connection, Use::Edit { console: id, job });
         } else {
             self.toggle_delete_row_at(id, row);
@@ -293,10 +284,9 @@ impl App {
     }
 
     fn open_cell_editor(&mut self, id: ConsoleId, row: usize, col: usize, null: bool) {
-        if self.table().is_none_or(|tab| tab.id != id) {
+        let Some(tab) = self.table().filter(|tab| tab.id == id) else {
             return;
-        }
-        let tab = self.table().unwrap();
+        };
         let Some(metadata) = &tab.edit_metadata else {
             return;
         };
@@ -520,12 +510,9 @@ impl App {
             columns: tab.result.table.columns.clone(),
             primary: metadata.table.primary.clone(),
         });
-        self.tabs
-            .tables
-            .iter_mut()
-            .find(|tab| tab.id == id)
-            .unwrap()
-            .edit_restore = restore;
+        if let Some(tab) = self.tabs.tables.iter_mut().find(|tab| tab.id == id) {
+            tab.edit_restore = restore;
+        }
         self.authorize(
             connection,
             Use::Edit {
@@ -766,18 +753,23 @@ impl App {
         };
         let id = form.console;
         if key.code == KeyCode::Esc && !form.keys.is_empty() {
-            self.modals.edit_form.as_mut().unwrap().keys.clear();
+            if let Some(form) = self.modals.edit_form.as_mut() {
+                form.keys.clear();
+            }
             return;
         }
         let review = matches!(form.body, Body::Review { .. });
         if key.code == KeyCode::Esc
-            && let Body::Cell { editor, .. } = &mut self.modals.edit_form.as_mut().unwrap().body
+            && let Some(form) = self.modals.edit_form.as_mut()
+            && let Body::Cell { editor, .. } = &mut form.body
             && editor.search().is_some()
         {
             editor.on_key(key, None);
             return;
         }
-        let form = self.modals.edit_form.as_ref().unwrap();
+        let Some(form) = self.modals.edit_form.as_ref() else {
+            return;
+        };
         let escape = key.code == KeyCode::Esc
             && match &form.body {
                 Body::Cell { editor, .. } => !self.vim() || !editor.is_inserting(),
@@ -789,14 +781,15 @@ impl App {
         }
         if key.code == KeyCode::Tab || key.code == KeyCode::BackTab {
             let count = if review { 3 } else { 5 };
-            let form = self.modals.edit_form.as_mut().unwrap();
-            form.focus = (form.focus
-                + if key.code == KeyCode::BackTab {
-                    count - 1
-                } else {
-                    1
-                })
-                % count;
+            if let Some(form) = self.modals.edit_form.as_mut() {
+                form.focus = (form.focus
+                    + if key.code == KeyCode::BackTab {
+                        count - 1
+                    } else {
+                        1
+                    })
+                    % count;
+            }
             return;
         }
         if key.code == KeyCode::F(2)

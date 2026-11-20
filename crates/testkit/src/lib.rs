@@ -1,6 +1,7 @@
 //! Shared helpers for the integration tests of the workspace crates: key events,
 //! temporary paths, a fixed catalog, a fake connector (`mock`), an editor fixture
 //! (`editor`), and a fake HTTP server (`http`).
+#![allow(clippy::unwrap_used, clippy::expect_used)] // Test code: a panic is a failure.
 
 #[cfg(feature = "editor")]
 mod fixture;

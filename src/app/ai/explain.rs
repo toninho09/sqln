@@ -128,7 +128,10 @@ impl App {
                 return;
             }
         };
-        let connection = self.console().connection.expect("a checked connection");
+        let Some(connection) = self.console().connection else {
+            self.status = Some(text::NO_CONNECTION.to_owned());
+            return;
+        };
         let console = self.console().id;
         // One explanation of a console at a time: the answer opens a window, and a
         // second request would replace it unseen.
@@ -190,7 +193,9 @@ impl App {
             return false;
         };
         let id = run.id;
-        let completed = run.completed.take().expect("a pending answer");
+        let Some(completed) = run.completed.take() else {
+            return false;
+        };
         self.show_ai_proposal(id, completed);
         self.cancel_ai_id(id);
         true

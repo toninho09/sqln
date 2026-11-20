@@ -690,13 +690,13 @@ impl App {
             self.open_conflicts();
             return;
         }
-        self.persist
-            .as_mut()
-            .unwrap()
-            .saves
-            .entry(self.tabs.consoles[index].id)
-            .or_default()
-            .manual = true;
+        if let Some(persist) = self.persist.as_mut() {
+            persist
+                .saves
+                .entry(self.tabs.consoles[index].id)
+                .or_default()
+                .manual = true;
+        }
         self.start_console_save(index, false);
     }
 
@@ -755,7 +755,9 @@ impl App {
         if let Some(intent) = intent.as_ref() {
             if intent.metadata && !overwrite && file.meta_written() {
                 file.start_metadata(&persist.worker, root);
-                persist.saves.get_mut(&console.id).unwrap().metadata = false;
+                if let Some(intent) = persist.saves.get_mut(&console.id) {
+                    intent.metadata = false;
+                }
                 return;
             }
             if intent.associate.is_some() && !file.is_dirty(console.editor.revision()) {
@@ -771,11 +773,10 @@ impl App {
                 meta.connection_scope = key.scope;
                 meta.schema = None;
                 file.start_relocate(&persist.worker, root, to, key.scope, meta);
-                persist
-                    .saves
-                    .get_mut(&console.id)
-                    .unwrap()
-                    .association_running = intent.associate;
+                let associate = intent.associate;
+                if let Some(intent) = persist.saves.get_mut(&console.id) {
+                    intent.association_running = associate;
+                }
                 return;
             }
         }
@@ -849,7 +850,9 @@ impl App {
                     intent.associate = None;
                 }
                 let name = self.tabs.consoles[index].name.clone();
-                self.tabs.consoles[index].file.as_mut().unwrap().meta.name = name;
+                if let Some(file) = self.tabs.consoles[index].file.as_mut() {
+                    file.meta.name = name;
+                }
                 if let Some(target) = self.connection(connection) {
                     let dialect = target.dialect;
                     let name = target.name.clone();
@@ -865,7 +868,9 @@ impl App {
                     && !self.tabs.consoles[index].discard_text
                     && (intent.manual || intent.close))
             {
-                self.persist.as_mut().unwrap().saves.insert(id, intent);
+                if let Some(persist) = self.persist.as_mut() {
+                    persist.saves.insert(id, intent);
+                }
                 continue;
             }
             if intent.rename.is_some() {
@@ -891,21 +896,17 @@ impl App {
             self.status = Some(text::ASSOCIATE_SAVE_FIRST.to_owned());
             return;
         }
-        self.persist
-            .as_mut()
-            .unwrap()
-            .saves
-            .entry(console.id)
-            .or_default()
-            .associate = Some(connection);
+        if let Some(persist) = self.persist.as_mut() {
+            persist.saves.entry(console.id).or_default().associate = Some(connection);
+        }
         self.start_console_save(index, false);
     }
 
     pub(super) fn queue_metadata(&mut self, index: usize, rename: Option<(String, String)>) {
-        let intent = self
-            .persist
-            .as_mut()
-            .unwrap()
+        let Some(persist) = self.persist.as_mut() else {
+            return;
+        };
+        let intent = persist
             .saves
             .entry(self.tabs.consoles[index].id)
             .or_default();
@@ -1101,7 +1102,9 @@ impl App {
         if self.tabs.consoles[index].discard_text {
             let console = &self.tabs.consoles[index];
             let saving = console.file.as_ref().is_some_and(|file| file.is_saving());
-            let persist = self.persist.as_mut().unwrap();
+            let Some(persist) = self.persist.as_mut() else {
+                return true;
+            };
             persist.saves.remove(&console.id);
             if saving {
                 persist.saves.entry(console.id).or_default().close = true;
@@ -1141,13 +1144,13 @@ impl App {
     }
 
     fn queue_save_close(&mut self, index: usize) {
-        self.persist
-            .as_mut()
-            .unwrap()
-            .saves
-            .entry(self.tabs.consoles[index].id)
-            .or_default()
-            .close = true;
+        if let Some(persist) = self.persist.as_mut() {
+            persist
+                .saves
+                .entry(self.tabs.consoles[index].id)
+                .or_default()
+                .close = true;
+        }
         self.start_console_save(index, false);
     }
 
@@ -1218,11 +1221,9 @@ impl App {
                     let console = &mut self.tabs.consoles[index];
                     let text = console.editor.text();
                     let revision = console.editor.revision();
-                    let _ = console
-                        .file
-                        .as_mut()
-                        .unwrap()
-                        .overwrite(root, &text, revision);
+                    if let Some(file) = console.file.as_mut() {
+                        let _ = file.overwrite(root, &text, revision);
+                    }
                 }
             }
             let console = &self.tabs.consoles[index];
@@ -1383,13 +1384,13 @@ impl App {
             return;
         };
         let _ = root;
-        self.persist
-            .as_mut()
-            .unwrap()
-            .saves
-            .entry(self.tabs.consoles[index].id)
-            .or_default()
-            .overwrite = true;
+        if let Some(persist) = self.persist.as_mut() {
+            persist
+                .saves
+                .entry(self.tabs.consoles[index].id)
+                .or_default()
+                .overwrite = true;
+        }
         self.start_console_save(index, false);
     }
 

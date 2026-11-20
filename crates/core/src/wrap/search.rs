@@ -70,7 +70,10 @@ impl TextSearch {
                 }
                 self.offset = next;
                 if found {
-                    self.matches.push(*self.starts.front().unwrap()..next);
+                    // The start of the match was just pushed.
+                    if let Some(&start) = self.starts.front() {
+                        self.matches.push(start..next);
+                    }
                     self.matcher.reset();
                     if first {
                         return self.matches.first().map(|range| range.start);

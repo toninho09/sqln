@@ -31,7 +31,12 @@ impl Formats {
             self.header.push(byte);
             if self.header.len() == 5 {
                 self.kind = self.header[0];
-                let length = u32::from_be_bytes(self.header[1..5].try_into().unwrap());
+                let length = u32::from_be_bytes([
+                    self.header[1],
+                    self.header[2],
+                    self.header[3],
+                    self.header[4],
+                ]);
                 self.remaining = length
                     .checked_sub(4)
                     .ok_or_else(|| io::Error::other("Invalid PostgreSQL frame length."))?

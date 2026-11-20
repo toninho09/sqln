@@ -199,9 +199,13 @@ impl App {
             Some(draft),
             output,
         )?;
-        self.agent.jobs.get_mut(&job).expect("new job").rows = rows;
+        if let Some(item) = self.agent.jobs.get_mut(&job) {
+            item.rows = rows;
+        }
         if let Some(statements) = statements {
-            self.agent.jobs.get_mut(&job).expect("new job").state = "validating";
+            if let Some(item) = self.agent.jobs.get_mut(&job) {
+                item.state = "validating";
+            }
             let sender = self.agent.sender.clone();
             let key = job.clone();
             self.manager
@@ -368,7 +372,9 @@ impl App {
             .and_then(|draft| self.run_warning(connection, &draft.plan));
         if let Some(body) = question {
             let session = self.agent.jobs[&id].session.clone();
-            self.agent.jobs.get_mut(&id).expect("ready job").state = "waiting_confirmation";
+            if let Some(item) = self.agent.jobs.get_mut(&id) {
+                item.state = "waiting_confirmation";
+            }
             self.show_dialog(
                 text::TITLE_CONFIRM_RUN,
                 text::agent_run_question(&self.agent.client(&session), &body),
@@ -443,7 +449,9 @@ impl App {
             self.fail_agent_job(id, "The execution manager is not available.");
             return;
         };
-        let job = self.agent.jobs.get_mut(id).expect("checked job");
+        let Some(job) = self.agent.jobs.get_mut(id) else {
+            return;
+        };
         job.state = "running";
         if let Some(draft) = job.draft.take() {
             let statements = draft.explain.as_ref().map_or_else(
@@ -601,7 +609,9 @@ impl App {
                 }
                 match result {
                     Ok(statements) => {
-                        let job = self.agent.jobs.get_mut(&id).expect("checked job");
+                        let Some(job) = self.agent.jobs.get_mut(&id) else {
+                            return;
+                        };
                         if let Some(statements) = statements
                             && let Some(draft) = &mut job.draft
                         {
@@ -717,7 +727,9 @@ impl App {
                 results.push(json!({"tab_id":console.to_string(),"result":0,"generation":tab.result.table.generation.to_string()}));
             }
         }
-        self.agent.jobs.get_mut(id).expect("completed job").results = results;
+        if let Some(item) = self.agent.jobs.get_mut(id) {
+            item.results = results;
+        }
     }
 
     fn complete_agent_job(&mut self, id: &str, artifact: Option<Text>) {
@@ -727,7 +739,9 @@ impl App {
         if job.state != "building_artifact" && !job.executions.is_empty() {
             self.capture_agent_results(id);
         }
-        let job = self.agent.jobs.get_mut(id).expect("checked job");
+        let Some(job) = self.agent.jobs.get_mut(id) else {
+            return;
+        };
         let native = job.executions.is_empty();
         job.artifact = artifact;
         job.state = "completed";
@@ -893,11 +907,15 @@ impl App {
             match result {
                 Ok(Some(work)) => {
                     self.capture_agent_results(&id);
-                    self.agent.jobs.get_mut(&id).expect("checked job").state = "building_artifact";
-                    self.manager
-                        .as_ref()
-                        .expect("active job manager")
-                        .spawn_blocking(work);
+                    if let Some(item) = self.agent.jobs.get_mut(&id) {
+                        item.state = "building_artifact";
+                    }
+                    match self.manager.as_ref() {
+                        Some(manager) => manager.spawn_blocking(work),
+                        None => {
+                            self.fail_agent_job(&id, "The execution manager is not available.");
+                        }
+                    }
                 }
                 Ok(None) => {}
                 Err(error) => self.fail_agent_job(&id, &error.message),
@@ -1146,7 +1164,9 @@ impl App {
         let notice = text::agent_opened(&self.agent.client(session), &tab.label());
         self.agent_notice(session, Some(connection), notice);
         self.tabs.diagrams.push(tab);
-        self.agent.jobs.get_mut(&job).expect("new job").state = "waiting_credentials";
+        if let Some(item) = self.agent.jobs.get_mut(&job) {
+            item.state = "waiting_credentials";
+        }
         self.authorize(
             connection,
             Use::Diagram {
@@ -1247,9 +1267,10 @@ impl App {
         let connection = tab.sides[0].side.connection;
         self.agent_notice(session, Some(connection), notice);
         self.tabs.compares.push(tab);
-        let item = self.agent.jobs.get_mut(&job).expect("new job");
-        item.state = "waiting_credentials";
-        item.rows = rows;
+        if let Some(item) = self.agent.jobs.get_mut(&job) {
+            item.state = "waiting_credentials";
+            item.rows = rows;
+        }
         for (console, connection, schema, statements) in requests {
             self.authorize(
                 connection,

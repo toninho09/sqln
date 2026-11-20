@@ -1423,10 +1423,13 @@ impl App {
         // The file of the scope comes first, so a failed write leaves the form open.
         let key = match editing {
             Some(id) => self.connection(id).and_then(|item| item.key.clone()),
-            None => self.form_scope().map(|scope| ConnectionKey {
-                scope,
-                id: self.modals.form.as_ref().unwrap().connection_id.clone(),
-            }),
+            None => self
+                .form_scope()
+                .zip(self.modals.form.as_ref())
+                .map(|(scope, form)| ConnectionKey {
+                    scope,
+                    id: form.connection_id.clone(),
+                }),
         };
         let mut credential = self
             .modals
@@ -1467,8 +1470,9 @@ impl App {
                 self.navigator.select_connection(id);
                 self.navigator_focused = !self.navigator.collapsed;
             }
-            let generation = self.connection(id).unwrap().generation;
-            self.auth.local.insert(id, (generation, editing.is_none()));
+            if let Some(generation) = self.connection(id).map(|item| item.generation) {
+                self.auth.local.insert(id, (generation, editing.is_none()));
+            }
         }
         self.modals.form = None;
         if let Some(id) = id {

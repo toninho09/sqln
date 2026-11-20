@@ -107,15 +107,10 @@ fn draw_diff(buffer: &mut Buffer, area: Rect, editor: &mut SqlEditor, theme: &Th
         }
     }
     let bar = Rect::new(area.x, area.bottom() - 1, area.width, 1);
-    if area.height > 1 || rows.is_empty() {
-        draw_bar(
-            buffer,
-            bar,
-            editor.review().expect("review"),
-            keys,
-            &mut targets,
-            theme,
-        );
+    if (area.height > 1 || rows.is_empty())
+        && let Some(review) = editor.review()
+    {
+        draw_bar(buffer, bar, review, keys, &mut targets, theme);
     }
     if let Some(review) = editor.review_mut() {
         review.targets = targets;
@@ -327,6 +322,10 @@ fn emphasis(style: Style) -> Style {
 }
 
 /// Returns the characters of a row of a diff from column `left`, with their styles.
+#[expect(
+    clippy::expect_used,
+    reason = "the screen draws a review only while it is open"
+)]
 fn row_cells(
     editor: &mut SqlEditor,
     row: Row,

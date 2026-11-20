@@ -31,3 +31,6 @@ apple-native-keyring-store.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 zbus-secret-service-keyring-store.workspace = true
+
+[lints]
+workspace = true

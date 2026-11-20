@@ -170,7 +170,10 @@ impl App {
                     self.analysis_picker(Step::Y(kind, x), cursor);
                     return;
                 }
-                let result = self.active_result().unwrap();
+                let Some(result) = self.active_result() else {
+                    self.status = Some(STALE_ERROR.into());
+                    return;
+                };
                 let job = Job::chart(
                     &result.table,
                     x,
@@ -191,7 +194,10 @@ impl App {
                 self.analysis_picker(Step::Keys(keys), cursor);
             }
             Step::Keys(keys) => {
-                let result = self.active_result().unwrap();
+                let Some(result) = self.active_result() else {
+                    self.status = Some(STALE_ERROR.into());
+                    return;
+                };
                 let Some(previous) = self.console().previous_result.as_ref() else {
                     self.status = Some(STALE_ERROR.into());
                     return;

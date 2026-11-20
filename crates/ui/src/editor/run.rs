@@ -35,8 +35,14 @@ impl SqlEditor {
     /// Returns a preview without copying SQL or changing the editor state.
     pub fn run_preview(&mut self) -> Result<RunPreview, RunRefusal> {
         self.with_run(RunScope::Default, |snapshot, statements| RunPreview {
-            first_line: snapshot.row_of(statements[0].start) + 1,
-            last_line: snapshot.row_of(statements.last().unwrap().end.saturating_sub(1)) + 1,
+            first_line: statements
+                .first()
+                .map_or(0, |first| snapshot.row_of(first.start))
+                + 1,
+            last_line: statements
+                .last()
+                .map_or(0, |last| snapshot.row_of(last.end.saturating_sub(1)))
+                + 1,
         })
     }
 
@@ -91,9 +97,7 @@ impl SqlEditor {
             snapshot
                 .run_selection
                 .as_ref()
-                .unwrap()
-                .statements
-                .as_slice()
+                .map_or(&[][..], |selection| selection.statements.as_slice())
         } else {
             let statements = snapshot
                 .statements

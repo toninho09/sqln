@@ -287,7 +287,9 @@ impl App {
             let mut options = vec![(text::AGENT_KEEP, DialogAction::Dismiss)];
             let max = self.agent.settings.max_access;
             for grant in [Grant::Allow, Grant::All, Grant::Full] {
-                let level = grant.level().expect("a grant with access");
+                let Some(level) = grant.level() else {
+                    continue;
+                };
                 if level != session.level && level <= max {
                     options.push((level.choice(), DialogAction::AgentAccess(id.into(), grant)));
                 }
@@ -638,29 +640,31 @@ impl App {
                 _hold: Some(hold),
             },
         );
-        if !self.ensure_manager() {
+        let manager = if self.ensure_manager() {
+            self.manager.as_ref()
+        } else {
+            None
+        };
+        let Some(manager) = manager else {
             self.agent.proposals.remove(&proposal);
             return Err(Error::new(
                 "execution_unavailable",
                 "Cannot start the edit review worker.",
             ));
-        }
-        self.manager
-            .as_ref()
-            .expect("manager")
-            .spawn_blocking(move || {
-                let _scratch = scratch;
-                let after = edited(&before.value, &changes);
-                let hunks = diff_hunks(
-                    &before.value,
-                    &after,
-                    0,
-                    std::time::Duration::from_millis(250),
-                );
-                let bytes = hunks.iter().map(|hunk| hunk.bytes()).sum();
-                let result = agent::Hold::new(bytes, &budget).map(|hold| (hunks, hold));
-                let _ = sender.send(Work::Diff(key, result));
-            });
+        };
+        manager.spawn_blocking(move || {
+            let _scratch = scratch;
+            let after = edited(&before.value, &changes);
+            let hunks = diff_hunks(
+                &before.value,
+                &after,
+                0,
+                std::time::Duration::from_millis(250),
+            );
+            let bytes = hunks.iter().map(|hunk| hunk.bytes()).sum();
+            let result = agent::Hold::new(bytes, &budget).map(|hold| (hunks, hold));
+            let _ = sender.send(Work::Diff(key, result));
+        });
         Ok(json!({"job_id":proposal,"kind":"proposal","status":"building"}))
     }
 }

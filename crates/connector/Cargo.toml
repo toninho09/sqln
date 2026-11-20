@@ -34,3 +34,6 @@ duckdb = ["dep:sqln-duckdb"]
 redis = ["dep:sqln-redis"]
 kafka = ["dep:sqln-kafka"]
 databricks = ["dep:sqln-databricks"]
+
+[lints]
+workspace = true

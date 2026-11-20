@@ -127,6 +127,10 @@ struct Target {
 }
 
 impl Target {
+    #[expect(
+        clippy::expect_used,
+        reason = "only network definitions enter authorization"
+    )]
     fn identity(&self) -> Identity {
         Identity::of(&self.key, &self.definition)
             .expect("Only network definitions enter authorization.")
@@ -580,7 +584,10 @@ impl App {
             changed = true;
             match reply {
                 Reply::Trust(Ok(required)) if required.any() => {
-                    let target = &self.auth.active.as_ref().unwrap().target;
+                    let Some(attempt) = self.auth.active.as_ref() else {
+                        continue;
+                    };
+                    let target = &attempt.target;
                     let path = target.project.as_ref().map_or(String::new(), |path| {
                         format!(
                             "\n{}: {}",
@@ -784,7 +791,9 @@ impl App {
                 attempt.target.definition.clone(),
             );
             if self.save_connection(&key, &definition, wanted).is_err() {
-                self.auth.active.as_mut().unwrap().step = Step::Reference;
+                if let Some(attempt) = self.auth.active.as_mut() {
+                    attempt.step = Step::Reference;
+                }
                 self.show_dialog(
                     text::TITLE_VAULT,
                     text::AUTH_REFERENCE_FAILED.to_owned(),
@@ -796,11 +805,17 @@ impl App {
                 );
                 return;
             }
-            let id = self.auth.active.as_ref().unwrap().target.connection;
+            let id = self
+                .auth
+                .active
+                .as_ref()
+                .and_then(|attempt| attempt.target.connection);
             if let Some(connection) = id.and_then(|id| self.connection_mut(id)) {
                 connection.credential = wanted;
             }
-            self.auth.active.as_mut().unwrap().target.credential = wanted;
+            if let Some(attempt) = self.auth.active.as_mut() {
+                attempt.target.credential = wanted;
+            }
         }
         let password = self
             .auth
@@ -1162,21 +1177,24 @@ impl App {
             DialogAction::AuthPlain(_) => self.auth_step(Step::WritePlain),
             DialogAction::AuthMigrate(_) => self.auth_step(Step::Migrate),
             DialogAction::AuthRemovePlain(_) => {
-                self.auth.active.as_mut().unwrap().save_reference = true;
+                if let Some(attempt) = self.auth.active.as_mut() {
+                    attempt.save_reference = true;
+                }
                 self.auth_step(Step::RemovePlain);
             }
-            DialogAction::AuthRetry(_) => match self.auth.active.as_ref().unwrap().step {
-                Step::Reference => self.persist_auth_reference(),
-                step => self.auth_step(step),
-            },
+            DialogAction::AuthRetry(_) => {
+                match self.auth.active.as_ref().map(|attempt| attempt.step) {
+                    Some(Step::Reference) => self.persist_auth_reference(),
+                    Some(step) => self.auth_step(step),
+                    None => {}
+                }
+            }
             DialogAction::AuthSession(_) => {
                 if self
                     .auth
                     .active
                     .as_ref()
-                    .unwrap()
-                    .target
-                    .password()
+                    .and_then(|attempt| attempt.target.password())
                     .is_some()
                 {
                     self.cache_auth_session();
@@ -1230,7 +1248,9 @@ impl App {
                     return;
                 }
                 self.auth.prompt = None;
-                let attempt = self.auth.active.as_mut().unwrap();
+                let Some(attempt) = self.auth.active.as_mut() else {
+                    return;
+                };
                 attempt.target.set_password(Some(password));
                 attempt.save_reference = save;
                 if attempt.target.refused {

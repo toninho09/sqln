@@ -108,7 +108,8 @@ fn escape(value: &str) -> String {
         if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
             result.push(char::from(byte));
         } else {
-            write!(result, "%{byte:02X}").expect("Writing to a String cannot fail.");
+            // Writing to a String cannot fail.
+            let _ = write!(result, "%{byte:02X}");
         }
     }
     result

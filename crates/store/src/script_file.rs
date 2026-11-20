@@ -404,7 +404,7 @@ impl ScriptFile {
                 Err(WriteError::Failed("The save worker stopped.".into())),
             ),
         };
-        let mut pending = self.pending.take().unwrap();
+        let mut pending = self.pending.take()?;
         pending.receiver.take();
         Some((
             self.apply_save(result, pending.revision, now),
@@ -416,7 +416,11 @@ impl ScriptFile {
         let Some(mut pending) = self.pending.take() else {
             return Ok(());
         };
-        let result = pending.receiver.take().unwrap().recv().unwrap_or_else(|_| {
+        let result = pending
+            .receiver
+            .take()
+            .and_then(|receiver| receiver.recv().ok());
+        let result = result.unwrap_or_else(|| {
             (
                 None,
                 Err(WriteError::Failed("The save worker stopped.".into())),

@@ -423,6 +423,7 @@ fn negate(negated: bool, filter: Filter) -> Filter {
 
 /// Reads the rest of `IN`: a list of values between parentheses, or a field that holds
 /// a list. `x IN (a, b)` is `x = a OR x = b`.
+#[expect(clippy::expect_used, reason = "the loop adds one value or more")]
 fn in_condition(
     cursor: &mut Cursor<'_>,
     vars: &[String],

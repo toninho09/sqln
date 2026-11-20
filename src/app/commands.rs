@@ -61,12 +61,12 @@ impl App {
         let saved = item.is_some_and(|item| item.key.is_some());
         if on_folder {
             return match action {
-                NavigatorExpand => !self
-                    .navigator
-                    .is_open(row.as_ref().unwrap(), &self.connections),
-                NavigatorCollapse => self
-                    .navigator
-                    .is_open(row.as_ref().unwrap(), &self.connections),
+                NavigatorExpand => row
+                    .as_ref()
+                    .is_some_and(|row| !self.navigator.is_open(row, &self.connections)),
+                NavigatorCollapse => row
+                    .as_ref()
+                    .is_some_and(|row| self.navigator.is_open(row, &self.connections)),
                 NavigatorAdd | NavigatorScripts | NavigatorOpen | NavigatorEdit
                 | NavigatorDelete | NavigatorMoveUp | NavigatorMoveDown | NavigatorCopyName => true,
                 NavigatorFilter => !self.navigator.collapsed,

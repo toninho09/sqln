@@ -212,11 +212,7 @@ impl App {
                 }
             }
         }
-        if self
-            .keymap
-            .lookup(Region::Global, Chord::parse("ctrl+w").unwrap())
-            == Lookup::Sequence
-        {
+        if self.keymap.lookup(Region::Global, Chord::ctrl('w')) == Lookup::Sequence {
             items.extend(HintItem::of(text::HINT_PREFIX_MENU));
         }
         items.extend(self.hint_parts(&[(Action::OpenPalette, "commands")]));

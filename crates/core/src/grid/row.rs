@@ -117,6 +117,7 @@ impl<'a> Cells<'a> {
 
 /// A check of the text here costs a third of the time of a copy or of an export.
 #[inline]
+#[allow(unsafe_code)]
 fn text_of(bytes: &[u8]) -> &str {
     // SAFETY: `RowWriter::push` writes the bytes of a `str` under each kind that calls
     // this function, `Cells` reads whole cells, and nothing else changes a row.

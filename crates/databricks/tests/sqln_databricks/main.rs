@@ -1,4 +1,5 @@
 //! Tests of the Databricks connector against a fake SQL Statement Execution API.
+#![allow(clippy::unwrap_used, clippy::expect_used)] // Test code: a panic is a failure.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

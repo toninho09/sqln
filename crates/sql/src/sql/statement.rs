@@ -175,7 +175,7 @@ fn split_kafka(sql: &str, source: &mut impl TokenSource) -> Vec<Statement> {
                 .as_ref()
                 .is_some_and(|last| sql[last.end..token.start()].contains('\n'))
         {
-            statements.push(current.take().unwrap());
+            statements.extend(current.take());
         }
         let word = &sql[token.start()..token.end()];
         if select && token.kind == TokenKind::Punctuation && word == ";" {

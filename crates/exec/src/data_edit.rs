@@ -245,6 +245,7 @@ impl Edits {
 
     /// Toggles the delete mark of one row. A row with cell changes returns to its
     /// original values, because the delete wins. A pending insert row leaves the grid.
+    #[expect(clippy::expect_used, reason = "the owner count is checked first")]
     pub fn toggle_delete(
         &mut self,
         table: &mut ResultTable,
@@ -256,11 +257,9 @@ impl Edits {
             // The rows after the removed one take its place.
             let later: Vec<usize> = self.inserts.range(row + 1..).map(|(key, _)| *key).collect();
             for key in later {
-                let value = self
-                    .inserts
-                    .remove(&key)
-                    .expect("the key comes from the map");
-                self.inserts.insert(key - 1, value);
+                if let Some(value) = self.inserts.remove(&key) {
+                    self.inserts.insert(key - 1, value);
+                }
             }
             table.invalidate();
             return Ok(DeleteToggle::RemovedInsert);
@@ -299,6 +298,7 @@ impl Edits {
         }
     }
 
+    #[expect(clippy::expect_used, reason = "the owner count is checked first")]
     pub fn discard(&mut self, table: &mut ResultTable, budget: &Arc<Budget>) -> Result<(), String> {
         if self
             .rows

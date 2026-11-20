@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)] // Test code: a panic is a failure.
 // Root of the test binary of the sqln crate: the tests that drive the application
 // or the binary. Each file in tests/ is a mod below or a mod of one of them;
 // scripts/check-test-files.sh enforces it.

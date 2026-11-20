@@ -16,3 +16,6 @@ redis.workspace = true
 rustls.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
+
+[lints]
+workspace = true

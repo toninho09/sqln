@@ -182,8 +182,7 @@ impl App {
         };
         let id = console.id;
         let name = console.name.clone();
-        if external.trouble.as_ref().is_some_and(Trouble::needs_choice) {
-            let problem = external.trouble.clone().unwrap();
+        if let Some(problem) = external.trouble.clone().filter(Trouble::needs_choice) {
             self.ask_external_conflict(id, &problem);
             return;
         }

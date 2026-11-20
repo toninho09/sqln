@@ -1,5 +1,6 @@
 //! A manual probe of the native vault. It prints the outcome of each step, and it uses
 //! a fixed value that is not a secret. `docs/RESULTS.md` explains how to run it.
+#![allow(clippy::unwrap_used, clippy::expect_used)] // Test code: a panic is a failure.
 
 use std::sync::Arc;
 

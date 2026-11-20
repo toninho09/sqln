@@ -572,7 +572,13 @@ impl ConsoleTask {
                     });
                     return (Waited::Finished { result, reusable }, reason);
                 }
-                sent = async { request.as_mut().expect("the guard checks the request").await },
+                sent = async {
+                    // The guard skips this branch without a request.
+                    match request.as_mut() {
+                        Some(request) => request.await,
+                        None => std::future::pending().await,
+                    }
+                },
                     if request.is_some() =>
                 {
                     request = None;

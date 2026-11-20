@@ -120,6 +120,10 @@ impl SystemVault {
     }
 
     /// Returns the vault entry of an account of a service.
+    #[expect(
+        clippy::expect_used,
+        reason = "a successful initialization sets the store"
+    )]
     pub fn service_entry(
         &self,
         service: &str,

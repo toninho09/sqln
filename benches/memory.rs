@@ -6,6 +6,8 @@
 //! Each measure counts the real size of each block of the allocator, so a small value
 //! costs its full block. The columns do not include the pages that the allocator keeps
 //! free. This report never fails.
+#![allow(clippy::unwrap_used, clippy::expect_used)] // Test code: a panic is a failure.
+#![allow(unsafe_code)] // The counting allocator wraps the system allocator.
 
 #[path = "../tests/common/mod.rs"]
 mod common;

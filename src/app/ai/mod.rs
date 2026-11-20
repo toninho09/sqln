@@ -538,7 +538,10 @@ impl App {
                 return;
             }
         };
-        let connection = self.console().connection.expect("eligible connection");
+        let Some(connection) = self.console().connection else {
+            self.status = Some(crate::ui::text::NO_CONNECTION.to_owned());
+            return;
+        };
         let effective_schema = self.console().schema.clone().or_else(|| {
             self.active_connection()
                 .and_then(|c| c.default_schema.clone())
@@ -629,17 +632,31 @@ impl App {
         memory: Memory,
     ) {
         let (scope, base, project) = location;
-        let c = self.connection(connection).expect("a live connection");
+        let Some(c) = self.connection(connection) else {
+            self.status = Some(crate::ui::text::NOT_CONNECTED.to_owned());
+            return;
+        };
         let identity = c
             .key
             .as_ref()
             .map(|k| format!("{:?}/{}", k.scope, k.id))
             .unwrap_or_else(|| format!("session/{connection}"));
+        let endpoint = match provider.endpoint() {
+            Ok(endpoint) => endpoint,
+            Err(error) => {
+                self.status = Some(error);
+                return;
+            }
+        };
+        let Ok(credential) = serde_json::to_string(&provider.credential) else {
+            self.status = Some("The AI credential setting cannot be read.".to_owned());
+            return;
+        };
         let destination = ai::trust::Destination {
             project,
             connection: identity,
-            endpoint: provider.endpoint().expect("validated"),
-            credential: serde_json::to_string(&provider.credential).expect("credential"),
+            endpoint,
+            credential,
         };
         self.ai.serial += 1;
         let id = self.ai.serial;
@@ -1458,8 +1475,9 @@ impl App {
                     .password
                     .iter()
                     .find(|(_, r)| r.contains((mouse.column, mouse.row).into()))
+                && let Some(prompt) = self.ai.prompt.as_mut()
             {
-                let action = self.ai.prompt.as_mut().unwrap().click(*field);
+                let action = prompt.click(*field);
                 match action {
                     PasswordAction::Cancel => self.cancel_ai(),
                     PasswordAction::Submit { password, .. } => {

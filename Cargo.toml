@@ -7,6 +7,15 @@ version = "0.5.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
+
 [workspace.dependencies]
 sqln-core = { path = "crates/core" }
 sqln-sql = { path = "crates/sql" }
@@ -111,6 +120,9 @@ tokio-util.workspace = true
 unicode-width.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
+
+[lints]
+workspace = true
 
 [features]
 # Each feature adds one database driver. `cargo build --no-default-features --features

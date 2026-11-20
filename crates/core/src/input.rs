@@ -45,6 +45,20 @@ pub struct Chord {
 }
 
 impl Chord {
+    /// The Esc key, without modifiers.
+    pub const ESC: Self = Self {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+    };
+
+    /// Ctrl and a lowercase character, the form of `Chord::parse("ctrl+<c>")`.
+    pub const fn ctrl(c: char) -> Self {
+        Self {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers::CONTROL,
+        }
+    }
+
     pub fn from_event(key: KeyEvent) -> Self {
         let mut modifiers =
             key.modifiers & (KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT);
@@ -345,6 +359,7 @@ pub enum Action {
 }
 
 impl Action {
+    #[expect(clippy::unwrap_used, reason = "DEFAULTS has an item for each action")]
     fn item(self) -> &'static Item {
         DEFAULTS.iter().find(|item| item.action == self).unwrap()
     }
@@ -1568,6 +1583,7 @@ struct Bindings {
 }
 
 impl Keymap {
+    #[expect(clippy::expect_used, reason = "the default keys are constant")]
     pub fn new(mode: KeyboardMode) -> Self {
         Self::with_overrides(mode, &HashMap::new()).expect("the default keys have no conflict")
     }

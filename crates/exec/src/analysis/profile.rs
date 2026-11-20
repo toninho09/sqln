@@ -191,6 +191,10 @@ struct DistinctValue {
 
 impl Distinct {
     /// Hashes or compares at most one chunk before the job checks its frame deadline.
+    #[expect(
+        clippy::unwrap_used,
+        reason = "the profile reads only columns of the table"
+    )]
     fn step(
         &mut self,
         table: &ResultTable,

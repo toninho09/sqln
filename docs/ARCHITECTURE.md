@@ -82,6 +82,8 @@ Each integration test is in the lowest crate that has all its dependencies:
 - A crate without unit tests has `test = false`, so it links no unit test binary. `scripts/check-test-files.sh` fails if such a crate has a unit test.
 - `sqln-testkit` holds the shared helpers. Its `mock` feature adds the fake connector, and its `editor` feature adds the editor fixture. The macros `temp_dir!`, `temp_db!`, and `temp_db_path!` read the folder of the calling test binary.
 
+Every crate uses the lints of `[workspace.lints]`. They deny `unsafe_code`, `unwrap_used`, `expect_used`, `dbg_macro`, and `todo`. Production code handles a missing value with `let ... else`, or with a status message when the user waits for a result. A real invariant uses `#[expect(clippy::expect_used, reason = "...")]` on the function. Test code may unwrap: `clippy.toml` allows it in `#[test]` functions, and the roots of the test binaries, the benches, and `sqln-testkit` allow it for their helpers. Each `unsafe` block has a local `#[allow(unsafe_code)]` and a `SAFETY` comment.
+
 | Module | Responsibility |
 |---|---|
 | `agent` | Transport-independent assistant operations, read policy, private instance registry, and IPC |

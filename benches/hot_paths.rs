@@ -8,6 +8,7 @@
 //! A rate runs out of the interface thread, so the report gives only its speed.
 //!
 //! Set the variables of `scripts/test-env.sh` to read from the Docker servers too.
+#![allow(clippy::unwrap_used, clippy::expect_used)] // Test code: a panic is a failure.
 
 #[path = "../tests/common/mod.rs"]
 mod common;

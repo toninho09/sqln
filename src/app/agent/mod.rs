@@ -1198,8 +1198,10 @@ impl App {
         if cancel {
             self.cancel_agent_job(id);
         }
-        if let Some(rows) = rows {
-            self.agent.jobs.get_mut(id).expect("checked job").rows = rows_of(Some(rows));
+        if let Some(rows) = rows
+            && let Some(item) = self.agent.jobs.get_mut(id)
+        {
+            item.rows = rows_of(Some(rows));
         }
         self.agent_job_page(session, id, artifact_offset)
     }
