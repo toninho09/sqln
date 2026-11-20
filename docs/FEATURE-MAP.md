@@ -10,14 +10,14 @@ The file paths are relative to the `src/` folder of the crate that holds the mod
 
 | # | Feature | Main files |
 |---|---|---|
-| 1 | Application shell and main loop | `app.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs` |
-| 2 | Key map and discovery | `input.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `text.rs`, `ui/text.rs` |
+| 1 | Application shell and main loop | `app.rs`, `app/main_loop.rs`, `app/events.rs`, `app/draw.rs`, `app/modal.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs` |
+| 2 | Key map and discovery | `input.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `app/menus.rs`, `app/key_help.rs`, `text/`, `ui/text.rs` |
 | 3 | Navigator and tree filter | `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs`, `arrange.rs`, `app/folders.rs` |
 | 4 | Connections and connection form | `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs` |
 | 5 | Database connectors | `connector/mod.rs`, `connector/*.rs`, `connector/kafka/*.rs` (sqln-session), `postgres.rs`, `postgres/*.rs`, `mysql.rs`, `sqlite.rs`, `duckdb.rs`, `redis.rs`, `redis/live.rs`, `kafka.rs`, `kafka/*.rs`, `databricks.rs`, `databricks/*.rs` (driver crates), `connector.rs` (sqln-connector) |
 | 6 | Connection pool | `pool.rs` |
 | 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `sink.rs`, `progress.rs`, `console.rs` |
-| 7a | Query plan | `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs` |
+| 7a | Query plan | `plan.rs`, `console.rs`, `result.rs`, `app/run_sql.rs` |
 | 7b | Messages command history | `command_log.rs`, `trace.rs`, `limited.rs`, `console.rs`, `ui/messages.rs`, `exec/runner.rs` |
 | 8 | Run protection | `app/guard.rs`, `sql/classify.rs` |
 | 9 | Transactions | `exec/runner.rs`, `ui/statusline.rs` |
@@ -46,13 +46,13 @@ The file paths are relative to the `src/` folder of the crate that holds the mod
 
 ## 1. Application shell and main loop
 
-Files: `app.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs`.
+Files: `app.rs`, `app/main_loop.rs`, `app/events.rs`, `app/draw.rs`, `app/modal.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs`.
 
 `run` owns the application state and the screen. The main loop waits for a key for up to 20 ms, and then drains execution events for up to 8 ms per frame. The application draws only after a change. `app/keys` applies the key priority of [KEYMAP](KEYMAP.md), and `app/mouse` handles clicks, the wheel, and the drag of dividers and columns. `app/hints` builds the hint row from the state on screen. `app/close` asks the exit questions in order, one console at a time, and applies each answer at once. `terminal` sets up the terminal and restores it at exit and on panic.
 
 ## 2. Key map and discovery
 
-Files: `input.rs`, `app/commands.rs`, `app/keys.rs`, `app/hints.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `text.rs`, `ui/text.rs`.
+Files: `input.rs`, `app/commands.rs`, `app/keys.rs`, `app/menus.rs`, `app/key_help.rs`, `app/hints.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `text/`, `ui/text.rs`.
 
 `input` maps each key to an action in each focus region. It supports multi-key sequences and reads the user `keymap` rules from `config.json`. `Ctrl+W` opens the prefix menu (`ui/which_key`) with the second keys in groups. `fits_cursor` keeps the commands that have an effect now and belong to the panel of the cursor, and the keys of the other commands keep their action. `Ctrl+W Tab` opens its explorer page: `explorer_commands` lists what acts on the current row, and a key of the page goes through the `Navigator` region of the key map, so the page needs no bindings of its own. `Ctrl+W Space` opens the functional commands of the current panel with effective local shortcuts. `app/commands` shares availability, ordering, and target labels between discovery paths; `Action` remains the catalog. The palette includes editor and grid commands and keeps actions without shortcuts. Explorer row actions require explorer focus; add connection and scripts remain global. `filter_list` matches label, key, action name, and technical aliases. The normal hint row reserves the palette shortcut and fits more whole commands as width grows. The same list filter core serves the history window. `ui/text` keeps all interface text in one file. A new console without text shows the first screen (`ui/welcome`), with the main keys, and the first character ends it. Without a tab, the same widget draws the home screen with a logo: the active console is then the hidden console, `App::home` is true, and `home_allows` keeps only the explorer commands and the commands that need no tab.
 
@@ -107,7 +107,7 @@ The view follows new records only at the end. This history is separate from diag
 
 ## 7a. Query plan
 
-Files: `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs`.
+Files: `plan.rs`, `console.rs`, `result.rs`, `app/run_sql.rs`.
 
 `Ctrl+W E` and `Ctrl+W A` follow the path of a run with a `RunTarget::Plan`. `plan::Explain` adds the prefix of the dialect, and the editor marks keep the text of the user. A plan needs one statement, and a statement with `EXPLAIN` is refused.
 
@@ -159,13 +159,13 @@ Files: `complete/mod.rs`, `complete/context.rs`, `complete/grammar.rs`, `complet
 
 ## 12a. AI completion
 
-Files: `ai/`, `app/ai.rs`, `editor/ai.rs`, `exec/ai.rs`, `ui/ai.rs`.
+Files: `ai/`, `app/ai/mod.rs`, `editor/ai.rs`, `exec/ai.rs`, `ui/ai.rs`.
 
 The editor adds an explicit Action above local suggestions: the plain row starts a request at once, and the request row above it opens a one-line modal whose text travels as `request` in the body. `app/ai` captures a revision-checked interval, obtains local consent, and coordinates schema reads and HTTP requests. `exec/ai` reads complete structural snapshots through an authorized pool lease. The memory cache follows catalog refresh generations. `ai` prepares bounded context for the OpenAI-compatible chat protocol, with a system message of common rules and the language of the dialect (the Kafka guide of `connector/kafka/guide.md` for Kafka), with OpenRouter as the default endpoint, and carries the reasoning effort of the provider in the request body. The editor shows ghost text at the cursor only. Several ghosts wait at once, bounded by the Max simultaneous setting, with parallel requests. Each acceptance is one undo step and never runs SQL. Global and project settings use vault references or rotating key-file paths. A Kafka request focuses on the topic of the statement at the cursor, with `complete::statement_topic`, and sends the field paths of that topic only. See [AI completion](AI_COMPLETION.md).
 
 ## 12b. AI explanations
 
-Files: `ai/explain.rs`, `ai/client.rs`, `command_log.rs`, `app/ai.rs`, `console.rs`.
+Files: `ai/explain.rs`, `ai/client.rs`, `command_log.rs`, `app/ai/explain.rs`, `console.rs`.
 
 `aiExplainError` (`Ctrl+W M`) explains the newest failed user command since the console's current connection association. A connection change keeps earlier history but excludes its errors from explanations. `aiExplainPlan` (`Ctrl+W T`) explains the plan grid with the original executed statement, not the current editor text. Both use the configured AI provider and ask for consent on each request. Redis and Valkey qualify for error explanations. The request includes an already loaded AI schema snapshot, but starts no schema read. Preparation runs in a blocking task with context and memory limits. The answer opens a text window and never changes or executes SQL. A new execution, tab change, close, or cancellation rejects a late answer. See [AI explanations](AI_COMPLETION.md#explain-an-error-or-a-plan).
 
