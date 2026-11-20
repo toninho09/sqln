@@ -31,6 +31,7 @@ In the order of the original record. Undated entries are the early records or ca
 
 | Date | Decision | Area |
 |---|---|---|
+| 2026-11-20 | [Release profile and global allocator](decisions/build-and-workspace.md#release-profile-and-global-allocator--2026-11-20) | Build and workspace |
 | 2026-11-19 | [sccache in CI](decisions/build-and-workspace.md#sccache-in-ci--2026-11-19) | Build and workspace |
 | 2026-11-19 | [Main loop woken by events](decisions/build-and-workspace.md#main-loop-woken-by-events--2026-11-19) | Build and workspace |
 | 2026-11-19 | [No second run of failed tests](decisions/build-and-workspace.md#no-second-run-of-failed-tests--2026-11-19) | Build and workspace |

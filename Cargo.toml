@@ -173,7 +173,17 @@ harness = false
 name = "memory"
 harness = false
 
+[[bench]]
+name = "rss"
+harness = false
+
 # Tests inherit this profile. Keep debug assertions and incremental compilation enabled.
 [profile.dev]
 opt-level = 1
 debug = 0
+
+# Releases optimize across crates. Unwinding stays, because the main loop saves the text after a panic.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

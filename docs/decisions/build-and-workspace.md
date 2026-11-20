@@ -2,6 +2,17 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## Release profile and global allocator — 2026-11-20
+
+`[profile.release]` had no settings, so releases had no cross-crate optimization and 16 codegen units. The user chose fat LTO, and a new allocator only if a measure proves it.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Release | `lto = "fat"`, `codegen-units = 1`, `strip = "symbols"` | `lto = "thin"` | The user chose the faster binary over a faster release build |
+| Panics | Unwinding stays | `panic = "abort"` | The main loop catches a panic to save the text of the consoles |
+| Allocator | The system allocator stays | `mimalloc` 0.1.52 with its default options | `benches/rss.rs`, 4 grids of 1,000,000 rows filled by producer threads in 3 rounds: the system allocator peaked at 406 MiB and kept 10 to 52 MiB after the grids closed; `mimalloc` peaked at 424 MiB and kept 330 to 424 MiB. With `MIMALLOC_PURGE_DELAY=0` it peaked at 324 MiB and kept 16 to 19 MiB, but that option needs an `unsafe` call at start; it needs a decision of the user |
+| Measure | `benches/rss.rs` reads `VmRSS` and `VmHWM` on Linux; `make bench` runs it | The counting allocator of `benches/memory.rs` | Only the resident memory shows what an allocator keeps |
+
 ## sccache in CI — 2026-11-19
 
 The user chose a compiler cache over changes to the bundled DuckDB and the vendored OpenSSL. This complements "Build time and duplicate crates": the features and what a user needs on the system stay the same.

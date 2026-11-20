@@ -29,6 +29,7 @@ test-integration:
 bench:
 	@cargo bench --bench hot_paths
 	@cargo bench --bench memory
+	@cargo bench --bench rss
 	@cargo test --release --test sqln -- latency:: --nocapture --test-threads=1
 
 # Delivery gate: linters plus the full test suite. Slow; run once, at task end.
