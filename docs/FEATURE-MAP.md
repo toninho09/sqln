@@ -11,9 +11,9 @@ The file paths are relative to the `src/` folder of the crate that holds the mod
 | # | Feature | Main files |
 |---|---|---|
 | 1 | Application shell and main loop | `app.rs`, `app/main_loop.rs`, `app/events.rs`, `app/draw.rs`, `app/modal.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs` |
-| 2 | Key map and discovery | `input.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `app/menus.rs`, `app/key_help.rs`, `text/`, `ui/text.rs` |
+| 2 | Key map and discovery | `input.rs`, `input/*.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `app/menus.rs`, `app/key_help.rs`, `text/`, `ui/text.rs` |
 | 3 | Navigator and tree filter | `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs`, `arrange.rs`, `app/folders.rs` |
-| 4 | Connections and connection form | `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs` |
+| 4 | Connections and connection form | `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `app/connections/*.rs`, `connector/target.rs` |
 | 5 | Database connectors | `connector/mod.rs`, `connector/*.rs`, `connector/kafka/*.rs` (sqln-session), `postgres.rs`, `postgres/*.rs`, `mysql.rs`, `sqlite.rs`, `duckdb.rs`, `redis.rs`, `redis/live.rs`, `kafka.rs`, `kafka/*.rs`, `databricks.rs`, `databricks/*.rs` (driver crates), `connector.rs` (sqln-connector) |
 | 6 | Connection pool | `pool.rs` |
 | 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `sink.rs`, `progress.rs`, `console.rs` |
@@ -21,7 +21,7 @@ The file paths are relative to the `src/` folder of the crate that holds the mod
 | 7b | Messages command history | `command_log.rs`, `trace.rs`, `limited.rs`, `console.rs`, `ui/messages.rs`, `exec/runner.rs` |
 | 8 | Run protection | `app/guard.rs`, `sql/classify.rs` |
 | 9 | Transactions | `exec/runner.rs`, `ui/statusline.rs` |
-| 10 | SQL editor | `editor/mod.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
+| 10 | SQL editor | `editor/mod.rs`, `editor/suggestions.rs`, `editor/marks.rs`, `editor/pointer.rs`, `editor/replace.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
 | 10a | Query parameters | `parameters.rs`, `sql/parameters.rs`, `ui/parameters.rs`, `postgres/text_io.rs`, `postgres/parameters.rs`, `exec/runner.rs` |
 | 11 | SQL analysis and formatter | `sql/lexer.rs`, `sql/statement.rs`, `sql/classify.rs`, `sql/format.rs` |
 | 12 | Autocomplete | `complete/mod.rs`, `complete/context.rs`, `complete/grammar.rs`, `complete/vocabulary.rs`, `complete/keywords.rs`, `complete/kafka.rs`, `catalog.rs` |
@@ -35,9 +35,9 @@ The file paths are relative to the `src/` folder of the crate that holds the mod
 | 16 | Export and file explorer | `export/mod.rs`, `export_form.rs`, `ui/export.rs`, `app/export.rs`, `browser.rs`, `ui/browser.rs`, `app/browse.rs` |
 | 16a | Import | `import/mod.rs`, `import/delimited.rs`, `import/json.rs`, `import/statement.rs`, `import/feed.rs`, `import_form.rs`, `exec/runner/import.rs`, `app/import.rs`, `ui/import.rs` |
 | 17 | Query history | `history.rs`, `store/history.rs`, `app/history.rs`, `ui/history.rs` |
-| 18 | Folders and configuration | `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `settings.rs`, `ui/settings.rs` |
+| 18 | Folders and configuration | `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `app/persist/saves.rs`, `settings.rs`, `ui/settings.rs` |
 | 19 | Console saving and saved consoles | `script_file.rs`, `script_file/external.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/sql_file.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs` |
-| 20 | Credentials and trust | `creds.rs`, `lib.rs` (sqln-vault), `trust.rs`, `app/auth.rs`, `ui/auth.rs` |
+| 20 | Credentials and trust | `creds.rs`, `lib.rs` (sqln-vault), `trust.rs`, `app/auth.rs`, `app/auth/*.rs`, `ui/auth.rs` |
 | 21 | Appearance and themes | `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `wrap.rs` |
 | 23 | Local MCP assistant | `agent/`, `mcp.rs`, `app/agent/`, `editor/agent.rs`, `ui/agent.rs`; see [MCP](MCP.md) |
 | 24 | Auto-refresh | `app/auto_refresh.rs`, `console.rs`, `table.rs`, `app/persist.rs`, `app/commands.rs`, `ui/statusline.rs`, `ui/table.rs` |
@@ -68,7 +68,7 @@ The navigator shows the tree of connections, consoles, schemas, relations, colum
 
 ## 4. Connections and connection form
 
-Files: `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs`.
+Files: `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `app/connections/*.rs`, `connector/target.rs`.
 
 `Definition` holds the connection settings, and `Source` selects a SQLite file, a DuckDB file, or a network target.
 `ConnectionKey` holds the saved connection ID and its global or project scope. The form holds text only and builds a definition on request. `app/connections` owns the catalogs and the actions of the navigator and the form. A file or a URI from the command line enters `connector/target`; that connection lives for the session only and writes no file. `p` in the navigator erases the saved password, and the removal of a connection offers that deletion separately.
@@ -276,7 +276,7 @@ Plans, imports, internal reads, oversized statements, and immediate repeats stay
 
 ## 18. Folders and configuration
 
-Files: `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `settings.rs`, `ui/settings.rs`.
+Files: `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `app/persist/saves.rs`, `settings.rs`, `ui/settings.rs`.
 
 The store has the global folder and, when it exists, the project `.sqln/` folder; `--project` chooses another project. The load reads both files, and one error blocks the start with the file and the position in the message. Each write of `config.json` takes `locks/config.lock`, rereads the file, applies the change, and writes atomically: exclusive temporary, permission `0600` on Unix, sync, and rename. `app/persist` checks each second for external changes and offers **Reload**. The settings dialog edits the preferences of one scope, shows the inherited values, and removes a project definition.
 
@@ -290,7 +290,7 @@ The palette command `openSqlFile` and `--script` open an external `.sql` file as
 
 ## 20. Credentials and trust
 
-Files: `creds.rs`, `lib.rs` (sqln-vault), `trust.rs`, `app/auth.rs`, `ui/auth.rs`.
+Files: `creds.rs`, `lib.rs` (sqln-vault), `trust.rs`, `app/auth.rs`, `app/auth/*.rs`, `ui/auth.rs`.
 
 `app/auth` is the gate before each operation that needs a session: execution, catalog, columns, pages, and connection test. It checks the trust on the destination and the project path, asks the confirmations, and then gets the password from the `credential` reference: `none`, `session`, `vault`, or `globalPlainText`. The vault account is the service `sqln` with scope, ID, engine, address, user, and TLS in the name; a change of any part asks for a new password. The blocking calls run one at a time on `Manager::spawn_blocking`, off the interface thread, and a token stops a cancelled job.
 
