@@ -404,8 +404,7 @@ impl App {
             (Action::GridAutoWidth, "auto width", true),
             (Action::GridProfile, "profile", true),
             (Action::GridChart, "chart", true),
-            (Action::GridComparePrevious, "differences", true),
-            (Action::GridKeepPrevious, "retain previous", true),
+            (Action::GridComparePrevious, "compare", true),
             (Action::GridCloseResult, "close result", true),
         ]);
         self.hints_when(&commands)

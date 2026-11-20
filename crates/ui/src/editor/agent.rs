@@ -101,6 +101,11 @@ impl SqlEditor {
                 .map(|part| snapshot.position(base + part.start).row)
                 .collect(),
             starts: parts.iter().map(|part| base + part.start).collect(),
+            ordinals: super::run::script_ordinals(
+                snapshot,
+                dialect,
+                parts.iter().map(|part| base + part.start),
+            ),
         })
     }
 

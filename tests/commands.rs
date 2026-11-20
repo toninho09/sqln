@@ -619,16 +619,16 @@ fn the_palette_offers_every_command_in_some_state() {
     s.prefix('j');
     s.keep_offered(&mut missing);
 
-    // A selection in the grid, then a second run that keeps the previous result.
+    // A selection in the grid, then a second tab with the same columns to compare.
     s.control('p');
     s.paste("start or end the selection");
     s.code(KeyCode::Enter);
     s.keep_offered(&mut missing);
     s.code(KeyCode::Esc);
-    s.press('B');
     s.prefix('k');
-    s.code(KeyCode::F(5));
-    s.wait(|app| !app.console().is_busy());
+    s.set_sql("SELECT id, label FROM items;\nSELECT id, label FROM items;");
+    s.app.on_event(Event::Key(shift(KeyCode::F(5))));
+    s.wait(|app| !app.console().is_busy() && app.console().results.len() == 2);
     s.prefix('j');
     s.keep_offered(&mut missing);
 

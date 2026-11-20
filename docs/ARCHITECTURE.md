@@ -577,7 +577,7 @@ A preview reads only the visible prefix. TSV encoding borrows selected values wi
 ## 5. Script execution
 
 1. The console requests the execution and receives an `ExecutionId`.
-2. The application clears the previous results and frees the budget, except one complete result when local comparison retention is on.
+2. The console keeps its result tabs. Each statement replaces the tabs of its number, from `RunPlan::ordinals`, when it makes its first grid or ends without one, and the replaced tabs leave the budget.
 3. The editor delivers a copy of the text.
 4. `sql` separates the statements and keeps their positions.
 5. `pool` delivers a reservation, or the execution enters the queue.

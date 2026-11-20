@@ -41,6 +41,7 @@ impl App {
                                 statements,
                                 rows: vec![0; count],
                                 starts: vec![0; count],
+                                ordinals: Vec::new(),
                             };
                         }
                         job.state = "ready";

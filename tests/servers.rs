@@ -2983,7 +2983,7 @@ fn the_mysql_delimiter_creates_a_routine_from_the_editor() {
          DELIMITER ;\n\
          CALL app_delimited();",
     );
-    s.wait_for("Result 2");
+    s.wait_for(" #3.2 ");
     s.wait_for("second_set");
     s.press(key(KeyCode::Char('[')));
     s.prefix('j');

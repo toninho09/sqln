@@ -14,7 +14,7 @@ use crate::exec::{
 use crate::grid::{Budget, Row};
 use crate::input::Action;
 use crate::plan::{Explain, plan_view};
-pub use crate::result::{GridAction, ResultTab};
+pub use crate::result::{GridAction, ResultSource, ResultTab};
 use crate::script_file::ScriptFile;
 use crate::ui::text;
 
@@ -176,11 +176,9 @@ pub struct Console {
     /// True for the empty console that stays after the last tab of a console closes.
     /// The application needs one console, and the tab row does not show this one.
     pub hidden: bool,
+    /// The results in the order of their numbers. A run replaces only the tabs of the
+    /// statements that it runs.
     pub results: Vec<ResultTab>,
-    /// Retains one complete result when the next execution starts.
-    pub retain_result: bool,
-    pub previous_result: Option<crate::grid::ResultTable>,
-    pub comparison_ready: bool,
     pub messages: History,
     /// The index of a result. The value `results.len()` selects **Messages**.
     pub active: usize,
@@ -199,15 +197,25 @@ pub struct Console {
     pub closing: bool,
     pub pending_transaction: Option<(TransactionCommand, AfterTransaction)>,
     execution: Option<ExecutionId>,
-    /// True while the last result receives rows.
+    /// True while the result of `filling` receives rows.
     reading: bool,
-    results_made: usize,
+    /// The place of the tab that receives the rows of the current execution.
+    filling: Option<(usize, bool, usize)>,
+    /// The place of the last tab that the current execution made.
+    last_made: Option<(usize, bool, usize)>,
+    /// The grids of each statement of the current execution.
+    grids: Vec<usize>,
+    /// The place in the editor text of each statement of the current execution.
+    ordinals: Vec<usize>,
     /// True when a statement already reported the stop.
     stop_reported: bool,
     /// The auto-refresh of this console, armed by the user.
     pub auto_refresh: Option<AutoRefresh>,
     /// The statements of the last run, which an auto-refresh repeats.
     pub auto_snapshot: Option<Vec<String>>,
+    /// The places in the editor text of the statements of `auto_snapshot`, so a
+    /// repetition replaces the same tabs.
+    pub auto_ordinals: Vec<usize>,
     /// The execution of the last auto-refresh, so a failure turns it off.
     pub auto_execution: Option<ExecutionId>,
     /// The plan that the current execution shows, in place of its statement.
@@ -250,9 +258,6 @@ impl Console {
             opened: 0,
             hidden: false,
             results: Vec::new(),
-            retain_result: false,
-            previous_result: None,
-            comparison_ready: false,
             messages: History::default(),
             active: 0,
             focus: Focus::Editor,
@@ -268,10 +273,14 @@ impl Console {
             pending_transaction: None,
             execution: None,
             reading: false,
-            results_made: 0,
+            filling: None,
+            last_made: None,
+            grids: Vec::new(),
+            ordinals: Vec::new(),
             stop_reported: false,
             auto_refresh: None,
             auto_snapshot: None,
+            auto_ordinals: Vec::new(),
             auto_execution: None,
             explain: None,
             first_not_executed: None,
@@ -286,7 +295,9 @@ impl Console {
 
     /// Measures the speed of the read that runs, and writes its summary.
     pub fn sample_progress(&mut self, now: Instant) {
-        if let Some(result) = self.results.last_mut().filter(|_| self.reading) {
+        if self.reading
+            && let Some(result) = self.filling_mut()
+        {
             result.sample_progress(now);
         }
     }
@@ -320,12 +331,9 @@ impl Console {
             .map(|since| now.saturating_duration_since(since))
     }
 
-    /// Returns the statement of a result, for a new read of its rows.
-    pub fn statement_of(&self, result: &ResultTab) -> Option<&str> {
-        if self.explain.is_some() {
-            return None;
-        }
-        self.statements.get(result.statement).map(String::as_str)
+    /// Returns the statement of a result, for a new read of its rows. A plan has none.
+    pub fn statement_of<'a>(&self, result: &'a ResultTab) -> Option<&'a str> {
+        (!result.explained && !result.source.sql.is_empty()).then_some(result.source.sql.as_str())
     }
 
     /// Returns the text of a statement of the current execution.
@@ -339,16 +347,76 @@ impl Console {
     /// Returns the original statement of the plan on screen, not the current editor text.
     pub fn plan_statement(&self) -> Option<&str> {
         let result = self.results.get(self.active).filter(|result| result.plan)?;
-        self.statements.get(result.statement).map(String::as_str)
+        Some(result.source.sql.as_str())
     }
 
-    /// Returns true when the last execution held one statement.
-    pub fn ran_alone(&self) -> bool {
-        self.statements.len() == 1
+    /// Returns the result that receives the rows of the current execution.
+    fn filling_mut(&mut self) -> Option<&mut ResultTab> {
+        let place = self.filling?;
+        let index = self.index_of(place)?;
+        self.results.get_mut(index)
     }
 
-    pub fn ran_schema(&self) -> Option<&str> {
-        self.ran_schema.as_deref()
+    /// Returns the index of the tab at a place of the row.
+    fn index_of(&self, place: (usize, bool, usize)) -> Option<usize> {
+        let index = self
+            .results
+            .partition_point(|result| result.place() < place);
+        self.results
+            .get(index)
+            .is_some_and(|result| result.place() == place)
+            .then_some(index)
+    }
+
+    /// Removes the tabs of one statement number, and keeps the selected tab.
+    fn remove_group(&mut self, number: usize, explained: bool, budget: &Budget) {
+        let mut index = 0;
+        while index < self.results.len() {
+            let result = &self.results[index];
+            if result.number == number && result.explained == explained {
+                let result = self.results.remove(index);
+                budget.release(result.table.bytes);
+                if index < self.active {
+                    self.active -= 1;
+                }
+            } else {
+                index += 1;
+            }
+        }
+        self.active = self.active.min(self.results.len());
+    }
+
+    /// Puts a tab at its place in the row, and keeps the selected tab.
+    fn insert_result(&mut self, result: ResultTab) -> usize {
+        let place = result.place();
+        let index = self.results.partition_point(|other| other.place() < place);
+        self.results.insert(index, result);
+        if index <= self.active {
+            self.active += 1;
+        }
+        index
+    }
+
+    /// Returns the bytes of the tabs that a run of `plan` replaces.
+    fn replaced_bytes(&self, plan: &RunPlan, explained: bool) -> usize {
+        let numbers: std::collections::HashSet<usize> = (0..plan.statements.len())
+            .map(|index| plan.ordinal(index) + 1)
+            .collect();
+        self.results
+            .iter()
+            .filter(|result| result.explained == explained && numbers.contains(&result.number))
+            .map(|result| result.table.bytes)
+            .sum()
+    }
+
+    /// Returns true when the data budget has no room for a run of `plan`. The tabs that
+    /// the run replaces leave the budget, so their bytes count as free.
+    pub fn run_blocked(&self, plan: &RunPlan, explained: bool, budget: &Budget) -> bool {
+        let limit = budget.limit();
+        let free = limit
+            .saturating_sub(budget.used())
+            .saturating_add(self.replaced_bytes(plan, explained));
+        free < (limit / 100).max(1)
     }
 
     pub fn showing_messages(&self) -> bool {
@@ -380,20 +448,17 @@ impl Console {
         plan: &RunPlan,
         budget: &Budget,
     ) {
-        // Credential preparation can call this twice for the same request.
-        if self.phase != Phase::Waiting || !self.results.is_empty() {
-            self.discard_previous(budget);
-            if self.retain_result && self.comparison_ready && self.results.len() == 1 {
-                self.previous_result = self.results.pop().map(|result| result.table);
-            }
-        }
-        self.comparison_ready = false;
-        for result in self.results.drain(..) {
-            budget.release(result.table.bytes);
-        }
+        // The tabs of other statements stay. Each statement replaces its own tab when
+        // it ends or makes its first grid.
+        let _ = budget;
         self.reset_message_context();
-        self.active = 0;
-        self.results_made = 0;
+        self.filling = None;
+        self.last_made = None;
+        self.reading = false;
+        self.grids = vec![0; plan.statements.len()];
+        self.ordinals = (0..plan.statements.len())
+            .map(|index| plan.ordinal(index))
+            .collect();
         self.stop_reported = false;
         self.first_not_executed = None;
         self.execution = execution;
@@ -405,32 +470,15 @@ impl Console {
 
     /// Ends the results of the last connection. The text stays.
     pub fn clear_results(&mut self, budget: &Budget) {
-        self.discard_previous(budget);
-        self.comparison_ready = false;
         self.ran_parameters.clear();
         for result in self.results.drain(..) {
             budget.release(result.table.bytes);
         }
         self.reset_message_context();
         self.active = 0;
-        self.results_made = 0;
+        self.filling = None;
+        self.last_made = None;
         self.editor.clear_marks();
-    }
-
-    /// Releases the retained result without changing the retention choice.
-    pub fn discard_previous(&mut self, budget: &Budget) {
-        if let Some(previous) = self.previous_result.take() {
-            budget.release(previous.bytes);
-        }
-    }
-
-    /// Cancels result comparison and records the reason when retention is active.
-    pub fn cancel_comparison(&mut self, reason: &str, budget: &Budget) {
-        self.discard_previous(budget);
-        self.comparison_ready = false;
-        if self.retain_result {
-            self.push_message(MessageLevel::Warning, format!("Result comparison canceled: {reason}. Use one complete data result and try again."));
-        }
     }
 
     /// Returns the number of warnings in Messages.
@@ -485,19 +533,12 @@ impl Console {
                 live,
                 progress,
             } if self.is_current(key.execution) => {
-                self.results_made += 1;
-                self.reading = true;
-                let mut result = ResultTab::new(self.results_made, columns);
-                result.statement = key.index;
-                result.live = live;
-                result.progress = progress.map(ReadMeter::new);
-                result.show_progress();
-                self.results.push(result);
+                self.on_columns(key, columns, live, progress.map(ReadMeter::new), budget);
             }
             ExecEvent::Rows { key, rows, bytes } => self.on_rows(key, rows, bytes, budget),
             ExecEvent::ResultDone { key, rows, limit } if self.is_current(key.execution) => {
                 self.reading = false;
-                if let Some(result) = self.results.last_mut() {
+                if let Some(result) = self.filling_mut() {
                     let progress = result.progress.take().map(|meter| meter.snapshot());
                     result.summary = match (result.live, progress) {
                         (Some(_), None) => {
@@ -545,7 +586,7 @@ impl Console {
                 error_offset,
             } if self.is_current(key.execution) => {
                 self.message_key = Some(key);
-                self.on_statement_finished(key.index, status, end);
+                self.on_statement_finished(key.index, status, end, budget);
                 if let Some(offset) = error_offset {
                     let prefix = self.explain.map_or(0, |explain| explain.prefix_len());
                     self.editor
@@ -582,7 +623,10 @@ impl Console {
     /// Shows the rows of a plan as a tree. The text of the database stays after a read
     /// that stopped at a limit, a text that SQLN cannot read, or a full budget.
     fn show_plan(&mut self, limit: ReadLimit, budget: &Budget) {
-        let (Some(explain), Some(result)) = (self.explain, self.results.last_mut()) else {
+        let Some(explain) = self.explain else {
+            return;
+        };
+        let Some(result) = self.filling_mut() else {
             return;
         };
         let view = plan_view(explain.dialect, &result.table).filter(|_| limit == ReadLimit::None);
@@ -593,8 +637,9 @@ impl Console {
 
     fn on_rows(&mut self, key: StatementKey, rows: Vec<Row>, bytes: usize, budget: &Budget) {
         // An old execution has no grid, so its data leaves the budget.
-        match self.results.last_mut() {
-            Some(result) if self.execution == Some(key.execution) => match result.live {
+        let current = self.execution == Some(key.execution);
+        match self.filling_mut() {
+            Some(result) if current => match result.live {
                 Some(cap) => result.append_live(rows, cap, budget),
                 None => result.table.append(rows, bytes),
             },
@@ -604,13 +649,69 @@ impl Console {
         }
     }
 
+    /// Makes the tab of a new grid. The first grid of a statement replaces the tabs that
+    /// an earlier run of the same statement number left.
+    fn on_columns(
+        &mut self,
+        key: StatementKey,
+        columns: Vec<String>,
+        live: Option<usize>,
+        progress: Option<ReadMeter>,
+        budget: &Budget,
+    ) {
+        self.reading = true;
+        let number = self.ordinals.get(key.index).copied().unwrap_or(key.index) + 1;
+        let explained = self.explain.is_some();
+        let made = self.grids.get(key.index).copied().unwrap_or(0);
+        if made == 0 {
+            self.remove_group(number, explained, budget);
+        }
+        if let Some(count) = self.grids.get_mut(key.index) {
+            *count += 1;
+        }
+        let mut result = ResultTab::new(number, columns);
+        result.part = made + 1;
+        result.explained = explained;
+        result.statement = key.index;
+        result.source = ResultSource {
+            sql: self.statements.get(key.index).cloned().unwrap_or_default(),
+            schema: self.ran_schema.clone(),
+            parameters: self.ran_parameters.clone(),
+            alone: self.statements.len() == 1,
+        };
+        result.live = live;
+        result.progress = progress;
+        result.show_progress();
+        let place = result.place();
+        let first = self.last_made.is_none();
+        let index = self.insert_result(result);
+        // The first grid of a run comes on screen, as the grid of a new run did before.
+        if first {
+            self.active = index;
+        }
+        self.filling = Some(place);
+        self.last_made = Some(place);
+    }
+
     fn on_statement_finished(
         &mut self,
         index: usize,
         status: StatementStatus,
         end: Option<StatementEnd>,
+        budget: &Budget,
     ) {
         self.reading = false;
+        self.filling = None;
+        // A statement that ran and gave no grid leaves no tab of an earlier run, because
+        // that tab would no longer describe this statement.
+        let ran = !matches!(
+            status,
+            StatementStatus::Running | StatementStatus::NotExecuted
+        );
+        if ran && self.grids.get(index) == Some(&0) {
+            let number = self.ordinals.get(index).copied().unwrap_or(index) + 1;
+            self.remove_group(number, self.explain.is_some(), budget);
+        }
         match status {
             StatementStatus::Running => {}
             StatementStatus::Success => self.on_statement_success(index, end.unwrap_or_default()),
@@ -699,30 +800,8 @@ impl Console {
         message: Option<String>,
         budget: &Budget,
     ) -> Signal {
-        self.comparison_ready = end == ExecutionEnd::Completed
-            && self.results_made == 1
-            && self.results.len() == 1
-            && self.results[0].is_complete()
-            && !self.results[0].plan
-            && self.explain.is_none();
-        if self.retain_result && !self.comparison_ready {
-            let reason = if end != ExecutionEnd::Completed {
-                "the execution failed, stopped, or did not start"
-            } else if self.results_made != 1 || self.results.len() != 1 {
-                "the execution does not have exactly one result"
-            } else if self.explain.is_some() || self.results[0].plan {
-                "query plans are not data results"
-            } else {
-                match self.results[0].limit {
-                    ReadLimit::Budget | ReadLimit::ValueTooLarge => {
-                        "the memory limit stopped the result"
-                    }
-                    ReadLimit::RowCap => "the row limit stopped the result",
-                    ReadLimit::None => "the result is incomplete",
-                }
-            };
-            self.cancel_comparison(reason, budget);
-        }
+        let _ = budget;
+        let last = self.last_made.and_then(|place| self.index_of(place));
         if end == ExecutionEnd::Refused {
             // A refused execution started no statement. The console must not wait for
             // an end that already came, so its state returns to idle.
@@ -740,7 +819,7 @@ impl Console {
         self.run.finish(end);
         // A stopped statement can report a success, so only the end of the execution
         // tells that the last result can miss rows.
-        if let Some(result) = self.results.last_mut() {
+        if let Some(result) = last.and_then(|index| self.results.get_mut(index)) {
             result.cut_short = end != ExecutionEnd::Completed;
         }
         if let Some(message) = message {
@@ -753,9 +832,8 @@ impl Console {
         // after the stop request. **Messages** must still explain the end.
         // A stop is the normal end of a live result, so its grid stays on screen.
         let live_stopped = end == ExecutionEnd::Stopped
-            && self
-                .results
-                .last()
+            && last
+                .and_then(|index| self.results.get(index))
                 .is_some_and(|result| result.live.is_some());
         if live_stopped {
             self.push_message(MessageLevel::Info, text::LIVE_STOPPED.to_owned());
@@ -768,13 +846,13 @@ impl Console {
         self.phase = Phase::Idle;
         self.execution = None;
         self.reading = false;
-        // A script that ends normally shows its last result. Any other end shows
-        // **Messages**, because that tab explains the end.
+        self.filling = None;
+        // A script that ends normally shows the last result of this run. Any other end,
+        // or a run without a grid, shows **Messages**, because that tab explains the end.
         let shows_result = end == ExecutionEnd::Completed || live_stopped;
-        self.active = if shows_result && !self.results.is_empty() {
-            self.results.len() - 1
-        } else {
-            self.results.len()
+        self.active = match last {
+            Some(index) if shows_result => index,
+            _ => self.results.len(),
         };
         let schema_changed = self.statements.iter().any(|sql| {
             ["CREATE", "ALTER", "DROP"]
@@ -792,7 +870,10 @@ impl Console {
     }
 
     pub fn can_close_result(&self) -> bool {
-        self.active < self.results.len() && !(self.reading && self.active + 1 == self.results.len())
+        self.active < self.results.len()
+            && !(self.reading
+                && self.filling.is_some()
+                && self.filling == self.results.get(self.active).map(ResultTab::place))
     }
 
     /// Closes the active result and frees its budget. It returns false while the
@@ -805,7 +886,6 @@ impl Console {
             return false;
         }
         let result = self.results.remove(self.active);
-        self.comparison_ready = false;
         budget.release(result.table.bytes);
         true
     }

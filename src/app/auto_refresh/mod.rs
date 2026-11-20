@@ -172,8 +172,8 @@ impl App {
         };
         let plan = RunPlan {
             statements,
-            rows: Vec::new(),
-            starts: Vec::new(),
+            ordinals: self.tabs.consoles[index].auto_ordinals.clone(),
+            ..RunPlan::default()
         };
         let Some(manager) = &self.manager else {
             return false;

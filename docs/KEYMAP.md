@@ -447,8 +447,7 @@ If the vault fails, the session option does not offer global storage in plain te
 | Open the row vertically | `r` | `r` |
 | Profile the current column | `p` | `p` |
 | Draw a bar or line chart | `b` | `b` |
-| Toggle previous-result retention, console only | `B` | `B` |
-| Compare two complete executions, console only | `D` | `D` |
+| Compare with another result tab, console only | `D` | `D` |
 | Search in the loaded rows | `Ctrl+F` | `/` |
 | Shrink and grow the column | `<` and `>` | `<` and `>` |
 | Automatic column width | `=` | `=` |
@@ -463,11 +462,11 @@ If the vault fails, the session option does not offer global storage in plain te
 Without a selection, `Ctrl+C` copies the current cell.
 The result that still receives rows does not close, and the **Messages** tab does not either.
 
-The analysis actions are `gridProfile`, `gridChart`, `gridKeepPrevious`, and `gridComparePrevious`.
+The analysis actions are `gridProfile`, `gridChart`, and `gridComparePrevious`. A saved `gridKeepPrevious` key still loads, without effect.
 The palette, panel menu, and hints use the effective shortcuts and the same availability checks.
 Profiles and charts read loaded rows only. Pending edits block them.
 Charts ask for Bar or Line, then X and Y columns. They preserve order and show repeated X occurrences separately.
-Comparison asks for key columns: Enter toggles a column, and the first row starts the comparison.
+Comparison asks for another complete result tab with the same columns, then for key columns: Enter toggles a column, and the first row starts the comparison.
 Esc cancels any choice. Mouse clicks select choices. Retention is optional and keeps one previous complete result in memory.
 Only one complete data result per execution can be compared; duplicate keys cancel the report.
 Failures and memory limits show a reason and cancel without partial output or another query.

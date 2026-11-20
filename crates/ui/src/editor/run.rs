@@ -17,6 +17,27 @@ impl RunPreview {
     }
 }
 
+/// Returns the place in the whole text of the statement that holds each offset. A
+/// selection or a subquery takes the number of the statement around it.
+pub(super) fn script_ordinals(
+    snapshot: &Snapshot,
+    dialect: crate::sql::Dialect,
+    starts: impl IntoIterator<Item = usize>,
+) -> Vec<usize> {
+    let statements = snapshot
+        .statements
+        .get_or_init(|| split_tokens(&snapshot.text, dialect, &snapshot.tokens));
+    let last = statements.len().saturating_sub(1);
+    starts
+        .into_iter()
+        .map(|start| {
+            statements
+                .partition_point(|item| item.end_with_delimiter <= start)
+                .min(last)
+        })
+        .collect()
+}
+
 pub(super) struct Selection {
     start: usize,
     end: usize,
@@ -48,7 +69,13 @@ impl SqlEditor {
 
     /// Finds the statements of an execution, and it copies their text.
     pub fn plan_run(&mut self, scope: RunScope) -> Result<RunPlan, RunRefusal> {
+        let dialect = self.dialect;
         self.with_run(scope, |snapshot, statements| RunPlan {
+            ordinals: script_ordinals(
+                snapshot,
+                dialect,
+                statements.iter().map(|statement| statement.start),
+            ),
             statements: statements
                 .iter()
                 .map(|statement| statement.text(&snapshot.text).to_owned())

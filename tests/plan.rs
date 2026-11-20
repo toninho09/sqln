@@ -497,8 +497,8 @@ fn the_key_shows_the_plan_of_the_statement_in_a_plan_tab() {
     run.write("SELECT * FROM t JOIN u ON u.a = t.a");
     run.explain();
     let screen = run.screen();
-    assert!(screen.contains("Plan"), "{screen}");
-    assert!(!screen.contains("Result 1"), "{screen}");
+    assert!(screen.contains(" Plan #1 "), "{screen}");
+    assert!(!screen.contains("─ #1 "), "{screen}");
     assert!(screen.contains("SCAN u"), "{screen}");
     assert!(
         screen.contains("SEARCH t USING INTEGER PRIMARY KEY"),
@@ -591,15 +591,25 @@ fn a_bad_statement_marks_its_own_text_in_the_editor() {
 }
 
 #[test]
-fn a_normal_run_after_a_plan_shows_a_normal_result() {
+fn a_normal_run_after_a_plan_keeps_the_plan_in_its_own_tab() {
     let mut run = Run::new("plan-then-run.db");
     run.write("SELECT a FROM t");
     run.explain();
     assert!(run.app.console().results[0].plan);
     run.app.on_event(Event::Key(key(KeyCode::F(5))));
     run.idle();
-    let result = &run.app.console().results[0];
-    assert!(!result.plan);
-    assert_eq!(result.table.rows.len(), 2);
-    assert!(run.screen().contains("Result 1"));
+    let results = &run.app.console().results;
+    assert_eq!(results.len(), 2);
+    assert!(!results[0].plan);
+    assert_eq!(results[0].table.rows.len(), 2);
+    assert!(results[1].plan);
+    assert_eq!(run.app.console().active, 0);
+    let screen = run.screen();
+    assert!(screen.contains(" #1 "), "{screen}");
+    assert!(screen.contains(" Plan #1 "), "{screen}");
+    // A new plan replaces only the plan tab.
+    run.explain();
+    let results = &run.app.console().results;
+    assert_eq!(results.len(), 2);
+    assert!(results[1].plan);
 }

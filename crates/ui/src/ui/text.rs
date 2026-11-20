@@ -531,8 +531,7 @@ pub fn action_text(action: Action) -> &'static str {
         Action::GridOpenRow => "Open the row",
         Action::GridProfile => "Show the column profile",
         Action::GridChart => "Show a text chart",
-        Action::GridKeepPrevious => "Keep the previous result for comparison",
-        Action::GridComparePrevious => "Compare with the previous execution",
+        Action::GridComparePrevious => "Compare with another result tab",
         Action::GridCountRows => "Count the rows",
         Action::GridFind => "Find in the loaded rows",
         Action::GridNarrow => "Make the column narrow",
@@ -608,8 +607,7 @@ pub fn panel_command_text(action: Action) -> &'static str {
         GridOpenRow => "Open row",
         GridProfile => "Column profile",
         GridChart => "Text chart",
-        GridKeepPrevious => "Retain previous",
-        GridComparePrevious => "Execution diff",
+        GridComparePrevious => "Compare results",
         GridFind => "Find",
         GridNarrow => "Narrow column",
         GridWiden => "Widen column",
@@ -662,9 +660,7 @@ pub fn command_aliases(action: Action) -> &'static str {
         Action::GridCopy => "copy cell selection clipboard tsv",
         Action::GridProfile => "profile column null distinct min max histogram statistics",
         Action::GridChart => "chart graph bar line numeric",
-        Action::GridKeepPrevious | Action::GridComparePrevious => {
-            "diff compare previous execution snapshot"
-        }
+        Action::GridComparePrevious => "diff compare result tab execution snapshot",
         Action::NavigatorRefresh => "refresh reload catalog rename console",
         Action::GridFocusFilter => "where filter",
         Action::GridFocusOrder | Action::GridSortColumn => "order by sort",

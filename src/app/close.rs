@@ -186,8 +186,7 @@ impl App {
             self.keep_hidden_console();
         }
         self.save_editor_states(Some(index));
-        let mut console = self.tabs.consoles.remove(index);
-        console.discard_previous(&self.budget);
+        let console = self.tabs.consoles.remove(index);
         for result in &console.results {
             self.budget.release(result.table.bytes);
         }

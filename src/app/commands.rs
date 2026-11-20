@@ -124,10 +124,7 @@ impl App {
 
     pub(super) fn grid_command_available(&self, action: Action) -> bool {
         use Action::*;
-        if matches!(
-            action,
-            GridProfile | GridChart | GridKeepPrevious | GridComparePrevious
-        ) {
+        if matches!(action, GridProfile | GridChart | GridComparePrevious) {
             return self.analysis_available(action);
         }
         if self.diagram_index().is_some() {
@@ -255,13 +252,6 @@ impl App {
             };
         }
         use Action::*;
-        if action == GridKeepPrevious {
-            return if self.console().retain_result {
-                "Stop keeping the previous result"
-            } else {
-                "Keep the previous result for comparison"
-            };
-        }
         if action == GridOpenValue && self.table().is_some_and(|tab| tab.pending) {
             return text::COMMAND_LOAD_GRID;
         }
@@ -313,7 +303,7 @@ impl App {
             } else if let Some(tab) = self.compare() {
                 tab.label()
             } else if action.region() == Region::Grid {
-                text::command_result_target(&self.console().name, self.active_result()?.number)
+                text::command_result_target(&self.console().name, &self.active_result()?.label())
             } else {
                 self.console().name.clone()
             }
@@ -400,7 +390,6 @@ impl App {
                 GridApply,
                 GridClearFilters,
                 AutoRefresh,
-                GridKeepPrevious,
             ]);
         }
         actions.extend(Action::in_region(Region::Global).filter(|action| {
@@ -465,7 +454,7 @@ fn command_priority(action: Action) -> u8 {
         GridFocusFilter => 9,
         GridSortColumn => 10,
         GridOpenRow => 11,
-        GridProfile | GridChart | GridKeepPrevious | GridComparePrevious => 14,
+        GridProfile | GridChart | GridComparePrevious => 14,
         GridFollowKey => 12,
         GridLoadMore => 13,
         NavigatorStructure => 7,
@@ -498,7 +487,7 @@ fn command_group(action: Action) -> &'static str {
         EditorUndo | EditorRedo | EditorSelectAll | EditorCopy | EditorCut | EditorPaste
         | GridSelectAll | GridToggleSelection | GridClearSelection | GridNarrow | GridWiden
         | GridAutoWidth => text::GROUP_SELECTION_VIEW,
-        GridProfile | GridChart | GridKeepPrevious | GridComparePrevious => text::GROUP_ANALYSIS,
+        GridProfile | GridChart | GridComparePrevious => text::GROUP_ANALYSIS,
         GridFocusFilter | GridFocusOrder | GridSortColumn | GridLoadMore | GridCountRows
         | GridPreviousResult | GridNextResult | GridReload | GridCancelQuery | GridEndSession => {
             text::GROUP_TABLE_RESULTS

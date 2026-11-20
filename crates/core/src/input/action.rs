@@ -127,7 +127,6 @@ pub enum Action {
     GridOpenRow,
     GridProfile,
     GridChart,
-    GridKeepPrevious,
     GridComparePrevious,
     GridFind,
     GridNarrow,

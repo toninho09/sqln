@@ -859,14 +859,6 @@ pub(super) const DEFAULTS: &[Item] = &[
     ),
     both(Action::GridChart, Region::Grid, "gridChart", &["b"], &[]),
     both(
-        Action::GridKeepPrevious,
-        Region::Grid,
-        "gridKeepPrevious",
-        &["B"],
-        &[],
-    )
-    .only(Grids::CONSOLE),
-    both(
         Action::GridComparePrevious,
         Region::Grid,
         "gridComparePrevious",

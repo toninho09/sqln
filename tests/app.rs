@@ -499,14 +499,35 @@ fn messages_do_not_claim_that_a_skipped_command_reaches_the_database() {
 }
 
 #[test]
-fn a_new_execution_clears_results_and_frees_the_budget() {
+fn a_new_execution_replaces_only_the_tabs_of_its_statements_and_frees_the_budget() {
     let settings = Settings::default();
     let mut f = Fixture::with("clear", KeyboardMode::Conventional, settings, "");
     f.run_script("SELECT 'a'; SELECT 'b'; SELECT 'c';");
     assert_eq!(f.app.console_mut().results.len(), 3);
-    f.run_script("SELECT 'a';");
-    assert_eq!(f.app.console_mut().results.len(), 1);
+    f.run_script("SELECT 'z';");
+    let labels: Vec<_> = f
+        .app
+        .console_mut()
+        .results
+        .iter()
+        .map(|r| r.label())
+        .collect();
+    assert_eq!(labels, ["#1", "#2", "#3"]);
+    f.assert_sees("'z'");
+    // A statement without a grid removes the old tab of its number.
     f.run_script("CREATE TABLE t(a);");
+    let labels: Vec<_> = f
+        .app
+        .console_mut()
+        .results
+        .iter()
+        .map(|r| r.label())
+        .collect();
+    assert_eq!(labels, ["#2", "#3"]);
+    f.prefix('j');
+    f.app.console_mut().active = 0;
+    f.press(key(KeyCode::Char('x')));
+    f.press(key(KeyCode::Char('x')));
     assert!(f.app.console_mut().results.is_empty());
     f.assert_sees("Data 0/256 MiB");
 }
@@ -740,13 +761,13 @@ fn a_click_selects_a_cell_and_a_tab() {
     };
     let left = MouseEventKind::Down(MouseButton::Left);
 
-    // The tabs row sits below the editor. "Result 1" starts after a rule and a space.
+    // The tabs row sits below the editor. "#1" starts after a rule and a space.
     let tabs_row = (0..30).find(|y| {
         let buffer = f.buffer();
-        (2..10)
+        (2..4)
             .map(|x| buffer[(x, *y)].symbol().to_owned())
             .collect::<String>()
-            == "Result 1"
+            == "#1"
     });
     let tabs_row = tabs_row.expect("the tab row is on the screen");
     f.app.on_event(press(1, tabs_row, left));
@@ -1280,12 +1301,12 @@ fn x_closes_a_result_and_frees_its_budget() {
     assert!(before > 0);
     f.press(key(KeyCode::Char('x')));
     assert_eq!(f.app.console_mut().results.len(), 2);
-    f.assert_sees("Result 2");
-    assert!(!f.sees("Result 1"));
+    f.assert_sees(" #2 ");
+    assert!(!f.sees(" #1 "));
     f.assert_sees("'second'");
 
     f.press(key(KeyCode::Delete));
-    f.assert_sees("Result 3");
+    f.assert_sees(" #3 ");
     f.assert_sees("'third'");
     f.press(key(KeyCode::Char('x')));
     assert!(f.app.console_mut().results.is_empty());
@@ -1296,13 +1317,15 @@ fn x_closes_a_result_and_frees_its_budget() {
 }
 
 #[test]
-fn a_new_execution_starts_the_result_numbers_again() {
+fn a_new_execution_names_its_tab_by_the_statement_number() {
     let mut f = Fixture::new("grid-numbers");
     grid_of(&mut f, "SELECT 1; SELECT 2;");
     f.app.console_mut().active = 0;
     f.press(key(KeyCode::Char('x')));
     f.run_script("SELECT 3;");
-    f.assert_sees("Result 1");
+    f.assert_sees(" #1 ");
+    f.assert_sees(" #2 ");
+    assert_eq!(f.app.console_mut().results.len(), 2);
 }
 
 #[test]

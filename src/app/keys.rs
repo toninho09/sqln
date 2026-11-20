@@ -413,10 +413,7 @@ impl App {
         }
         if matches!(
             action,
-            Action::GridProfile
-                | Action::GridChart
-                | Action::GridKeepPrevious
-                | Action::GridComparePrevious
+            Action::GridProfile | Action::GridChart | Action::GridComparePrevious
         ) {
             self.perform_analysis(action);
             return;

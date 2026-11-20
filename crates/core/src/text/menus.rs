@@ -176,7 +176,7 @@ pub const REGION_FILTER: &str = "Filter";
 pub const MODE_AUTO: &str = "Auto";
 pub const MODE_MANUAL: &str = "Manual";
 
-pub fn command_result_target(console: &str, result: usize) -> String {
+pub fn command_result_target(console: &str, result: &str) -> String {
     format!("{console} · result {result}")
 }
 

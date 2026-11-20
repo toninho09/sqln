@@ -42,6 +42,9 @@ impl App {
                 // An auto-refresh repeats the statements of this run, without a plan.
                 if explain.is_none() {
                     self.tabs.consoles[index].auto_snapshot = Some(plan.statements.clone());
+                    self.tabs.consoles[index]
+                        .auto_ordinals
+                        .clone_from(&plan.ordinals);
                 }
                 // The marks of the editor keep the text of the user.
                 let statements = match &explain {
@@ -146,12 +149,8 @@ impl App {
         }
         if let Some(id) = action.console() {
             self.clear_wanted_import(id);
-            let budget = self.budget.clone();
             if let Some(console) = self.console_by_id(id) {
                 console.phase = Phase::Idle;
-                if matches!(action, Use::Run { .. }) {
-                    console.cancel_comparison("credential preparation was canceled", &budget);
-                }
             }
             if let Some(tab) = self.tabs.tables.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Idle;

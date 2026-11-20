@@ -4,7 +4,6 @@ use sqln_core::input::{Action, Grid, Region};
 /// results of a console, a table tab, and a compare tab.
 const LIMITED: &[(Action, [bool; 3])] = &[
     (Action::GridCloseResult, [true, false, false]),
-    (Action::GridKeepPrevious, [true, false, false]),
     (Action::GridComparePrevious, [true, false, false]),
     (Action::GridPreviousResult, [true, true, false]),
     (Action::GridNextResult, [true, true, false]),

@@ -233,6 +233,7 @@ A row above the editor shows the executable line range. **Run script** always us
 It does not add outer aliases or CTE dependencies. The normal Run scopes stay unchanged.
 Without a selection, the line-number column highlights the statement under the cursor. Execution-state symbols stay visible.
 The results appear below the editor. Use `Ctrl+W j` to move down to the grid.
+Each result tab carries the number of its statement in the script, such as `#3`. Running that statement again replaces only its tab; the other tabs stay until you close them with `x` or `Delete`.
 
 For Redis or Valkey, use a command instead:
 
@@ -492,8 +493,7 @@ Use these commands in an idle console result or table grid:
 |---|---|
 | `p` | Profile the current column: NULL count and percentage, distinct values without NULL, numeric min/max, and histogram |
 | `b` | Choose a bar or line chart and two numeric columns |
-| `B` | Turn previous-result retention on or off for the console |
-| `D` | Compare the current execution with the retained previous execution |
+| `D` | Compare the current result tab with another result tab of the console |
 
 The palette and `Ctrl+W Space` offer the same commands and show custom shortcuts.
 Profiles and charts use only loaded rows, or the current table page. An incomplete result carries a label.
@@ -502,16 +502,14 @@ Histograms and chart positions use approximate numbers; non-finite or out-of-ran
 Charts preserve row order. Each repeated X has its own position; X spacing does not represent numeric distance.
 Line charts use consecutive sections without sampling. Scroll to see every section and its point values.
 
-For execution comparison:
+For result comparison:
 
-1. Press `B` in the first complete result to enable retention.
-2. Run the next query. The previous result stays in the shared memory budget.
-3. Press `D`, select key columns with `Enter`, and choose **Compare with selected key columns**.
+1. Keep two complete results with the same columns in the console, for example two statements of the script (`#1` and `#2`).
+2. In one of them, press `D` and choose the other tab.
+3. Select key columns with `Enter`, and choose **Compare with selected key columns**.
 
-Comparison requires one complete data result per execution, the same column names and order, and unique selected keys.
+Comparison requires complete data results, the same column names and order, and unique selected keys.
 It reports added, removed, and changed rows; row order alone does not count as a change.
-Retention keeps one previous result per console until replacement, release, or console close. It does not persist across restarts.
-A failed or incomplete execution releases the retained result and records a warning in Messages.
 An analysis failure or memory limit cancels the report without partial differences, retries, or another query.
 The current grid remains available. Pending table edits block analysis.
 Press `Esc` to cancel or close, use arrows, PageUp/PageDown, or the mouse wheel to scroll, and `Ctrl+C` to copy.
