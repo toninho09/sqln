@@ -78,7 +78,7 @@ unicode-width = "0.2.3"
 uuid = { version = "1", features = ["v4"] }
 webpki-roots = "1"
 zeroize = { version = "1.9", features = ["derive"] }
-signal-hook = "0.4"
+signal-hook = "0.3"
 rustix = { version = "1", default-features = false, features = ["std", "event", "process", "fs"] }
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 secret-service = { version = "5.2", default-features = false }

@@ -6,6 +6,26 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Build time and duplicate crates — 2026-11-19
+
+Measured on 12 CPUs, dev profile, Rust 1.99 (which links with `rust-lld` by default on x86_64 Linux).
+
+| Measure | Time |
+|---|---|
+| Clean `cargo build` | 259 s |
+| `openssl-sys` build script (vendored OpenSSL of `rdkafka`) | 203 s, in parallel with the next one |
+| `libduckdb-sys` build script (bundled DuckDB) | 203 s |
+| `sqlparser` | 72 s |
+| One-line change in `src/app/draw.rs`, `cargo build` | 1.4 s |
+| One-line change in `crates/postgres/src/postgres.rs`, `cargo build` / `cargo test --workspace --no-run` | 1.8 s / 4.6 s |
+| One-line change in `crates/exec/src/connection.rs`, `cargo build` / `cargo test --workspace --no-run` | 2.5 s / 5.2 s |
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Dev profile | Keep `opt-level = 1` and `debug = 0` | `split-debuginfo`, more codegen units, `mold` | The incremental builds already take a few seconds; the linker is already `rust-lld` |
+| Duplicates | `signal-hook` follows the 0.3 line of `crossterm`. The other duplicate versions come from the drivers and libraries | Pin the versions of transitive crates | Only a direct dependency is ours to align. `base64` 0.23 stays, because `arrow-cast` uses it too |
+| Clean build | No change | `rdkafka` with system OpenSSL (`ssl` instead of `ssl-vendored`); a prebuilt DuckDB library instead of `bundled` | Each one changes what a user needs on the system to build or run SQLN. It needs a decision of the user |
+
 ## Error kinds of the connector contract — 2026-11-19
 
 The user approved a plan of internal improvements. This entry covers the typed errors of the connector contract.
