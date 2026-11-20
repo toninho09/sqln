@@ -335,11 +335,10 @@ impl KafkaSession {
         let lows: HashMap<i32, i64> = partitions.iter().map(|(p, low, _)| (p.id, *low)).collect();
         let mut sizes: HashMap<i32, i64> = lows.keys().map(|id| (*id, FIRST_WINDOW)).collect();
         let mut oldest: HashMap<i32, i64> = lows.keys().map(|id| (*id, i64::MAX)).collect();
-        let mut found: Vec<(i64, i32, i64, Row)> = Vec::new();
+        let mut found: Vec<Found> = Vec::new();
         let mut stopped = false;
         loop {
-            found.sort_by_key(|item| std::cmp::Reverse((item.0, item.1, item.2)));
-            found.truncate(count);
+            keep_newest(&mut found, count);
             let threshold = (found.len() >= count).then(|| found[found.len() - 1].0);
             let windows: Vec<Window> = partitions
                 .iter()
@@ -375,6 +374,12 @@ impl KafkaSession {
                         if let Some(row) = row? {
                             progress.add_matched();
                             found.push((time, partition, offset, row));
+                            // A window can hold thousands of matches, and these rows are
+                            // outside the memory budget until the page ends. Only the
+                            // newest `count` can reach the page.
+                            if found.len() >= count.saturating_mul(2) {
+                                keep_newest(&mut found, count);
+                            }
                         }
                     }
                     Next::Idle => {}
@@ -393,8 +398,7 @@ impl KafkaSession {
                     .and_modify(|size| *size = (*size * 2).min(LARGEST_WINDOW));
             }
         }
-        found.sort_by_key(|item| std::cmp::Reverse((item.0, item.1, item.2)));
-        found.truncate(count);
+        keep_newest(&mut found, count);
         push_rows(found.into_iter().map(|(.., row)| row).collect(), sink).await;
         if filter.is_some() || stopped {
             notices.add(text::kafka_scanned(
@@ -405,5 +409,46 @@ impl KafkaSession {
         }
         notices.send(sink).await;
         Ok(true)
+    }
+}
+
+/// A message of a topic page: its time, partition, offset, and row.
+type Found = (i64, i32, i64, Row);
+
+/// Keeps the newest `count` messages, newest first.
+fn keep_newest(found: &mut Vec<Found>, count: usize) {
+    found.sort_by_key(|item| std::cmp::Reverse((item.0, item.1, item.2)));
+    found.truncate(count);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn found(time: i64, partition: i32, offset: i64) -> Found {
+        (time, partition, offset, Row::default())
+    }
+
+    fn keys(found: &[Found]) -> Vec<(i64, i32, i64)> {
+        found.iter().map(|item| (item.0, item.1, item.2)).collect()
+    }
+
+    #[test]
+    fn a_page_keeps_the_newest_messages_whatever_the_order_of_the_reads() {
+        let mut all = vec![
+            found(5, 0, 1),
+            found(9, 1, 7),
+            found(-1, 0, 0),
+            found(9, 0, 3),
+        ];
+        keep_newest(&mut all, 2);
+        assert_eq!(keys(&all), [(9, 1, 7), (9, 0, 3)]);
+
+        // Truncation in the middle of a read keeps the same final page.
+        let mut step = vec![found(1, 0, 1), found(2, 0, 2)];
+        keep_newest(&mut step, 1);
+        step.push(found(3, 0, 3));
+        keep_newest(&mut step, 1);
+        assert_eq!(keys(&step), [(3, 0, 3)]);
     }
 }
