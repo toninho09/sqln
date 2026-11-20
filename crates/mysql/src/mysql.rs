@@ -792,3 +792,374 @@ impl MySqlSession {
         Ok(group_foreign_keys(pairs))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::target::{DatabricksOptions, Engine, KafkaOptions, Secret, TlsFiles};
+    use mysql_common::io::ParseBuf;
+    use mysql_common::proto::MyDeserialize;
+    use std::path::PathBuf;
+
+    /// The character set of the text columns: `utf8_general_ci`.
+    const TEXT_CHARSET: u16 = 33;
+    /// A certificate of a test CA. It signs nothing and holds no secret.
+    const CA_CERTIFICATE: &str = "-----BEGIN CERTIFICATE-----\n\
+        MIIBbjCCARSgAwIBAgIUb8NlWpCwO1tWQ2B5KyumFzpXWp8wCgYIKoZIzj0EAwIw\n\
+        HDEaMBgGA1UEAwwRc3FsbiB1bml0IHRlc3QgQ0EwIBcNMjYxMTIwMDMyMDUxWhgP\n\
+        MjEyNjEwMjcwMzIwNTFaMBwxGjAYBgNVBAMMEXNxbG4gdW5pdCB0ZXN0IENBMFkw\n\
+        EwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEo3CNXM2EKLkCgHXBjT7xNYfE6UVnu62L\n\
+        zlKpKr2x4PkYIkz+DiSX1KUOkkRy9I0ekfCKzJ57hjdY34iLQh12DqMyMDAwHQYD\n\
+        VR0OBBYEFLrXFwhSEAa62s5GtGg2OayfhNXRMA8GA1UdEwEB/wQFMAMBAf8wCgYI\n\
+        KoZIzj0EAwIDSAAwRQIgNMwTUbzR/U1koSrjzlQmBKh+ch6n7uxW9oe1x3KRTm8C\n\
+        IQCTEA2r9zd+lhetaFrcG08XzsWSAyjHV78aNAUAugov7g==\n\
+        -----END CERTIFICATE-----";
+
+    /// Builds a target of the tests: a MySQL connection with the given address and TLS.
+    fn target(address: Address, tls: Tls) -> NetworkTarget {
+        NetworkTarget {
+            engine: Engine::MySql,
+            address,
+            user: "user".to_owned(),
+            password: Some(Secret::new("secret")),
+            database: Some("shop".to_owned()),
+            tls,
+            kafka: KafkaOptions::default(),
+            databricks: DatabricksOptions::default(),
+        }
+    }
+
+    /// A server error of the tests, as the server sends it.
+    fn server_error(code: u16, message: &str) -> DriverError {
+        DriverError::Server(mysql_async::ServerError {
+            code,
+            state: "42000".to_owned(),
+            message: message.to_owned(),
+        })
+    }
+
+    /// A failure of the socket of the connection.
+    fn io_error() -> DriverError {
+        DriverError::Io(mysql_async::IoError::Io(std::io::Error::other("closed")))
+    }
+
+    /// Builds a column of a result from the bytes of its definition, which the server
+    /// sends the same way since MySQL 4.1: the catalog, five strings, and fixed fields.
+    fn column(kind: ColumnType, charset: u16) -> Column {
+        let mut bytes = Vec::new();
+        for part in ["def", "", "", "", "c", "c"] {
+            bytes.push(u8::try_from(part.len()).unwrap());
+            bytes.extend_from_slice(part.as_bytes());
+        }
+        bytes.push(0x0c);
+        bytes.extend_from_slice(&charset.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.push(u8::from(kind));
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(&[0, 0]);
+        Column::deserialize((), &mut ParseBuf(&bytes)).unwrap()
+    }
+
+    /// Writes one value of the driver in a row and returns the row, ready to read.
+    fn written(column: &Column, value: Option<&mysql_async::Value>) -> Row {
+        let mut writer = RowWriter::default();
+        write_cell(&mut writer, value, column);
+        writer.finish()
+    }
+
+    #[test]
+    fn server_codes_give_their_kind() {
+        let cases = [
+            (1054, ErrorKind::Syntax),
+            (1064, ErrorKind::Syntax),
+            (1146, ErrorKind::Syntax),
+            (1049, ErrorKind::Syntax),
+            (1142, ErrorKind::Permission),
+            (1045, ErrorKind::Auth),
+            (1317, ErrorKind::Canceled),
+            (3024, ErrorKind::Timeout),
+            (1040, ErrorKind::Resource),
+            (1235, ErrorKind::Unsupported),
+            (2006, ErrorKind::Connection),
+            (9999, ErrorKind::Other),
+        ];
+        for (code, kind) in cases {
+            assert_eq!(code_kind(code), kind, "code {code}");
+            assert_eq!(error_kind(&server_error(code, "")), kind, "code {code}");
+        }
+    }
+
+    #[test]
+    fn a_failure_of_the_socket_or_of_the_driver_ends_the_connection() {
+        assert_eq!(error_kind(&io_error()), ErrorKind::Connection);
+        let closed = DriverError::Driver(mysql_async::DriverError::ConnectionClosed);
+        assert_eq!(error_kind(&closed), ErrorKind::Connection);
+        let mixed = DriverError::Driver(mysql_async::DriverError::MixedParams);
+        assert_eq!(error_kind(&mixed), ErrorKind::Other);
+    }
+
+    #[test]
+    fn a_wrong_password_is_refused_and_keeps_the_text_of_the_driver() {
+        for code in [1045, 1698] {
+            let error = connect_error(&server_error(code, "Access denied for 'user'"));
+            assert!(error.password_refused, "code {code}");
+            assert_eq!(error.kind, ErrorKind::Auth, "code {code}");
+            assert!(error.message.contains("Access denied"), "{}", error.message);
+        }
+        let error = connect_error(&server_error(1064, "Syntax error"));
+        assert!(!error.password_refused);
+        assert_eq!(error.kind, ErrorKind::Syntax);
+        let error = connect_error(&io_error());
+        assert!(!error.password_refused);
+        assert_eq!(error.kind, ErrorKind::Connection);
+    }
+
+    #[test]
+    fn a_syntax_error_carries_its_offset_in_the_statement() {
+        let sql = "SELECT FORM t";
+        let error = exec_error(
+            &server_error(
+                1064,
+                "You have an error in your SQL syntax; near 'FORM' at line 1",
+            ),
+            sql,
+        );
+        assert_eq!(error.offset, Some(7));
+        assert_eq!(error.kind, ErrorKind::Syntax);
+        assert!(error.message.ends_with("(1064)"), "{}", error.message);
+        let error = exec_error(&io_error(), sql);
+        assert_eq!(error.offset, None);
+        assert_eq!(error.kind, ErrorKind::Connection);
+    }
+
+    #[test]
+    fn the_offset_follows_the_line_of_the_error_and_counts_bytes() {
+        assert_eq!(
+            syntax_offset("near 'FORM' at line 1", "SELECT FORM t"),
+            Some(7)
+        );
+        // An error on a later line starts after the bytes of the earlier lines.
+        let sql = "SELECT '–' AS a\n  FORM t\n  WHERE a = 1";
+        assert_eq!(
+            syntax_offset("near 'FORM' at line 2", sql),
+            sql.find("FORM")
+        );
+        assert_eq!("SELECT '–'\n".len(), 13);
+        // An empty place is the end of the statement.
+        assert_eq!(syntax_offset("near '' at line 3", sql), Some(sql.len()));
+    }
+
+    #[test]
+    fn a_message_without_a_place_gives_no_offset() {
+        assert_eq!(syntax_offset("Connection reset", "SELECT 1"), None);
+        assert_eq!(syntax_offset("near 'FORM' somewhere", "SELECT 1"), None);
+        assert_eq!(syntax_offset("near 'FORM' at line x", "SELECT 1"), None);
+        // The text of the error is not on that line of the statement.
+        assert_eq!(syntax_offset("near 'FORM' at line 1", "SELECT 1"), None);
+        // A line beyond the statement has no place either.
+        assert_eq!(syntax_offset("near 'SELECT' at line 9", "SELECT 1"), None);
+    }
+
+    #[test]
+    fn only_a_server_error_has_a_code() {
+        assert_eq!(server_code(&server_error(1317, "")), Some(1317));
+        assert_eq!(server_code(&io_error()), None);
+    }
+
+    #[test]
+    fn a_tcp_target_becomes_the_options_of_the_driver() {
+        let target = target(
+            Address::Tcp {
+                host: "db".to_owned(),
+                port: 3307,
+            },
+            Tls::Disabled,
+        );
+        let options = driver_options(&target).unwrap();
+        assert_eq!(options.ip_or_hostname(), "db");
+        assert_eq!(options.tcp_port(), 3307);
+        assert_eq!(options.user(), Some("user"));
+        assert_eq!(options.pass(), Some("secret"));
+        assert_eq!(options.db_name(), Some("shop"));
+        assert_eq!(options.socket(), None);
+        assert_eq!(options.tcp_keepalive(), Some(TCP_KEEPALIVE));
+        // The driver can move to a local socket that the user did not ask for.
+        assert!(!options.prefer_socket());
+        assert_eq!(options.ssl_opts(), None);
+    }
+
+    #[test]
+    fn a_socket_target_without_a_database_stays_in_the_options() {
+        let mut target = target(
+            Address::Socket(PathBuf::from("/tmp/mysql.sock")),
+            Tls::Disabled,
+        );
+        target.database = None;
+        target.password = None;
+        let options = driver_options(&target).unwrap();
+        assert_eq!(options.socket(), Some("/tmp/mysql.sock"));
+        assert_eq!(options.db_name(), None);
+        assert_eq!(options.pass(), None);
+    }
+
+    #[test]
+    fn tls_off_gives_no_ssl_options() {
+        assert!(ssl_options(&Tls::Disabled).unwrap().is_none());
+    }
+
+    #[test]
+    fn without_a_ca_file_the_system_roots_verify_the_server() {
+        let files = TlsFiles {
+            ca: None,
+            client: None,
+        };
+        let options = ssl_options(&Tls::Verify(files)).unwrap().unwrap();
+        assert!(!options.disable_built_in_roots());
+        assert!(!options.root_certs().is_empty());
+    }
+
+    #[test]
+    fn a_missing_ca_file_fails_with_its_path() {
+        let files = TlsFiles {
+            ca: Some(PathBuf::from("/no/such/sqln-ca.pem")),
+            client: None,
+        };
+        let error = ssl_options(&Tls::Verify(files)).unwrap_err();
+        assert!(
+            error.message.contains("/no/such/sqln-ca.pem"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn a_ca_file_replaces_the_roots_of_the_system() {
+        let path = std::env::temp_dir().join(format!("sqln-mysql-ca-{}.pem", std::process::id()));
+        std::fs::write(&path, CA_CERTIFICATE).unwrap();
+        let files = TlsFiles {
+            ca: Some(path.clone()),
+            client: None,
+        };
+        let options = ssl_options(&Tls::Verify(files)).unwrap().unwrap();
+        assert!(options.disable_built_in_roots());
+        assert_eq!(options.root_certs().len(), 1);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_connector_speaks_mysql() {
+        let connector = MySqlConnector::new(target(
+            Address::Tcp {
+                host: "db".to_owned(),
+                port: 3306,
+            },
+            Tls::Disabled,
+        ));
+        assert_eq!(connector.dialect(), Dialect::MySql);
+        let capabilities = connector.capabilities();
+        assert_eq!(capabilities.namespace, Namespace::Database);
+        assert!(capabilities.transactions);
+        assert!(capabilities.parameters);
+    }
+
+    #[test]
+    fn numbers_and_binaries_come_from_the_column_type() {
+        assert!(is_number(&column(
+            ColumnType::MYSQL_TYPE_LONGLONG,
+            BINARY_CHARSET
+        )));
+        assert!(is_number(&column(
+            ColumnType::MYSQL_TYPE_NEWDECIMAL,
+            TEXT_CHARSET
+        )));
+        assert!(is_number(&column(
+            ColumnType::MYSQL_TYPE_YEAR,
+            TEXT_CHARSET
+        )));
+        assert!(!is_number(&column(
+            ColumnType::MYSQL_TYPE_VARCHAR,
+            TEXT_CHARSET
+        )));
+        // Numbers also report the binary character set, so the type comes first.
+        assert!(!is_binary(&column(
+            ColumnType::MYSQL_TYPE_LONGLONG,
+            BINARY_CHARSET
+        )));
+        assert!(is_binary(&column(
+            ColumnType::MYSQL_TYPE_VAR_STRING,
+            BINARY_CHARSET
+        )));
+        assert!(is_binary(&column(
+            ColumnType::MYSQL_TYPE_BLOB,
+            BINARY_CHARSET
+        )));
+        assert!(!is_binary(&column(
+            ColumnType::MYSQL_TYPE_BLOB,
+            TEXT_CHARSET
+        )));
+    }
+
+    #[test]
+    fn null_values_stay_null() {
+        let column = column(ColumnType::MYSQL_TYPE_VARCHAR, TEXT_CHARSET);
+        for value in [None, Some(mysql_async::Value::NULL)] {
+            assert_eq!(written(&column, value.as_ref()).get(0), Some(Value::Null));
+        }
+    }
+
+    #[test]
+    fn numbers_render_as_numbers_only_in_number_columns() {
+        let number = column(ColumnType::MYSQL_TYPE_LONGLONG, TEXT_CHARSET);
+        let value = Some(mysql_async::Value::Int(5));
+        assert_eq!(
+            written(&number, value.as_ref()).get(0),
+            Some(Value::Number("5"))
+        );
+        let text = column(ColumnType::MYSQL_TYPE_VARCHAR, TEXT_CHARSET);
+        assert_eq!(
+            written(&text, value.as_ref()).get(0),
+            Some(Value::Text("5"))
+        );
+        // A date quotes its SQL text, which the trim of the quotes removes.
+        let date = Some(mysql_async::Value::Date(2024, 1, 2, 3, 4, 5, 0));
+        assert_eq!(
+            written(&text, date.as_ref()).get(0),
+            Some(Value::Text("2024-01-02 03:04:05"))
+        );
+    }
+
+    #[test]
+    fn bytes_follow_the_column_type_and_the_encoding() {
+        let text = column(ColumnType::MYSQL_TYPE_VARCHAR, TEXT_CHARSET);
+        let bytes = Some(mysql_async::Value::Bytes(b"abc".to_vec()));
+        assert_eq!(
+            written(&text, bytes.as_ref()).get(0),
+            Some(Value::Text("abc"))
+        );
+        let number = column(ColumnType::MYSQL_TYPE_LONG, TEXT_CHARSET);
+        let digits = Some(mysql_async::Value::Bytes(b"123".to_vec()));
+        assert_eq!(
+            written(&number, digits.as_ref()).get(0),
+            Some(Value::Number("123"))
+        );
+        // A binary column keeps the bytes, with a text that reads as text.
+        let binary = column(ColumnType::MYSQL_TYPE_BLOB, BINARY_CHARSET);
+        match written(&binary, bytes.as_ref()).get(0) {
+            Some(Value::Binary(value)) => {
+                assert_eq!(value.text(), Some("abc"));
+                assert_eq!(value.bytes(), b"abc".as_slice());
+            }
+            other => panic!("expected binary text, got {other:?}"),
+        }
+        // Bytes that are not text stay bytes.
+        let broken = Some(mysql_async::Value::Bytes(vec![0xff, 0xfe]));
+        match written(&text, broken.as_ref()).get(0) {
+            Some(Value::Binary(value)) => {
+                assert_eq!(value.text(), None);
+                assert_eq!(value.bytes(), &[0xff, 0xfe][..]);
+            }
+            other => panic!("expected binary bytes, got {other:?}"),
+        }
+    }
+}

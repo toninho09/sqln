@@ -49,6 +49,7 @@ edtui = { version = "0.11.7", default-features = false, features = ["mouse-suppo
 futures-util = "0.3"
 keyring-core = "1.0.1"
 mysql_async = { version = "0.37.1", default-features = false, features = ["minimal-rust", "default-rustls-ring"] }
+mysql_common = { version = "0.37.3", default-features = false }
 proptest = { version = "1.7", default-features = false, features = ["std"] }
 prost-reflect = { version = "0.16", features = ["serde"] }
 protox = "0.10"
