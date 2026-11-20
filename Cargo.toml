@@ -94,7 +94,7 @@ test = false
 [dependencies]
 sqln-core.workspace = true
 sqln-sql.workspace = true
-sqln-connector.workspace = true
+sqln-connector = { workspace = true, default-features = false }
 sqln-store.workspace = true
 sqln-exec.workspace = true
 sqln-runtime.workspace = true
@@ -111,6 +111,19 @@ tokio-util.workspace = true
 unicode-width.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
+
+[features]
+# Each feature adds one database driver. `cargo build --no-default-features --features
+# postgres,sqlite` builds a smaller binary. The tests and benches need the default set,
+# because they use the driver libraries directly.
+default = ["postgres", "mysql", "sqlite", "duckdb", "redis", "kafka", "databricks"]
+postgres = ["sqln-connector/postgres"]
+mysql = ["sqln-connector/mysql"]
+sqlite = ["sqln-connector/sqlite"]
+duckdb = ["sqln-connector/duckdb"]
+redis = ["sqln-connector/redis"]
+kafka = ["sqln-connector/kafka"]
+databricks = ["sqln-connector/databricks"]
 
 [target.'cfg(unix)'.dependencies]
 signal-hook.workspace = true

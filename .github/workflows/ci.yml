@@ -53,6 +53,17 @@ jobs:
       - name: Run delivery checks
         run: make check
 
+      # Each driver is a Cargo feature. Build without drivers and with each one alone.
+      - name: Check driver features
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cargo test -p sqln-connector --no-default-features --quiet
+          cargo check -p sqln --lib --bin sqln --no-default-features --quiet
+          for feature in postgres mysql sqlite duckdb redis kafka databricks; do
+            cargo check -p sqln --lib --bin sqln --no-default-features --features "$feature" --quiet
+          done
+
   integration:
     name: Database integration and TLS (Linux)
     runs-on: ubuntu-24.04

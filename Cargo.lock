@@ -4178,6 +4178,7 @@ dependencies = [
 name = "sqln-connector"
 version = "0.5.0"
 dependencies = [
+ "async-trait",
  "sqln-databricks",
  "sqln-duckdb",
  "sqln-kafka",
@@ -4185,9 +4186,11 @@ dependencies = [
  "sqln-postgres",
  "sqln-redis",
  "sqln-session",
+ "sqln-sql",
  "sqln-sqlite",
  "sqln-store",
  "sqln-vault",
+ "tokio",
 ]
 
 [[package]]

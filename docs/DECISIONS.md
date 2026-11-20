@@ -79,6 +79,7 @@ The user asked for less dependency between the crates, so that a change recompil
 | Factory | `sqln-connector` is a facade with the old `connector` paths. `connector::open(&Definition)` replaces `Definition::connector()` | Keep the factory in `store` | Only `sqln` opens connectors, so only `sqln` depends on the drivers |
 | Vault | `sqln-vault` is its own crate | Keep it in a driver crate or in `store` | `store` and the Kafka driver both use it |
 | Runtime | `sqln-runtime` holds `Manager`, the console tasks, and the jobs. `sqln-exec` keeps the event, end, option, and request types | Keep `Manager` in `sqln-exec` | `sqln-ui` uses only the types, so a runtime change does not recompile `sqln-ui` |
+| Driver features | Each driver is an optional Cargo feature of `sqln-connector` and `sqln`, all on by default. Without a driver, `connector::open` returns `Unavailable`: the connection stays visible and editable, and connecting explains the missing feature | Hide the engine or refuse the saved connection | User choice. Faster builds and smaller binaries without losing saved configuration |
 | Tests | A test that needs a driver lists the driver crate or `sqln-connector` as a dev-dependency | Move each such test to `sqln` | Only the test build depends on the driver |
 
 Measured on 8 CPUs, dev profile, one-line change, after this split:

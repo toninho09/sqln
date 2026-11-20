@@ -45,7 +45,7 @@ sqln-vault                           │  sqln-duckdb, sqln-redis, sqln-kafka,
 | `sqln-session` | `crates/session` | `connector` (the contract, connection targets, `tls`, `words`, and the parts of the Kafka and Redis drivers that need no driver library), `pool`, `trace` |
 | `sqln-vault` | `crates/vault` | The system vault. `sqln-store` and `sqln-kafka` use it |
 | `sqln-postgres`, `sqln-mysql`, `sqln-sqlite`, `sqln-duckdb`, `sqln-redis`, `sqln-kafka`, `sqln-databricks` | `crates/<driver>` | One connector each, with its driver library. `sqln-databricks` uses `reqwest` and the Arrow crates |
-| `sqln-connector` | `crates/connector` | Facade: `connector` joins the contract and the drivers at the old paths. `connector::open` opens the connector of a saved definition |
+| `sqln-connector` | `crates/connector` | Facade: `connector` joins the contract and the drivers at the old paths. `connector::open` opens the connector of a saved definition. Each driver is an optional feature; without one, `open` returns `connector::Unavailable`, which keeps the dialect and explains the missing feature on connect |
 | `sqln-store` | `crates/store` | `creds`, `script_file`, `store`, `trust` |
 | `sqln-exec` | `crates/exec` | `agent`, `ai`, `analysis`, `arrange`, `command_log`, `compare`, `complete`, `connection`, `data_edit`, `definition`, `diagram`, `dialect`, `exec` (types only), `export`, `import`, `plan` |
 | `sqln-runtime` | `crates/runtime` | `exec`: the types of `sqln-exec` and `Manager`, with the console tasks and jobs |

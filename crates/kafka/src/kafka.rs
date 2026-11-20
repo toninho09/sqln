@@ -39,7 +39,7 @@ use crate::sql::Dialect;
 use crate::text;
 use sqln_session::trace::{self, TraceContext};
 
-pub use self::registry::account as registry_account;
+pub use sqln_session::connector::kafka::registry_account;
 
 /// The first window of offsets of a topic tab, for each partition. Each later window of
 /// the same partition is two times larger, up to the largest window.

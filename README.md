@@ -137,6 +137,16 @@ cargo run --release --locked -- ./existing.db
 
 For a missing SQLite file, SQLN asks before allowing creation. Cancel leaves the console without that database.
 
+#### Build with selected drivers
+
+Each database driver is a Cargo feature: `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, and `databricks`. All are on by default. A build with fewer drivers compiles faster and is smaller. DuckDB and Kafka take the most time to compile.
+
+```sh
+cargo install --path . --locked --no-default-features --features postgres,sqlite
+```
+
+Saved connections of a missing driver stay visible and editable. Connecting to one shows which feature the build lacks. The tests and benches need the default features.
+
 ### Workflow build artifacts
 
 The **Build binaries** workflow produces archives for:

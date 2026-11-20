@@ -30,6 +30,15 @@ pub const MESSAGE_COLUMNS: [&str; 7] = [
     "schema",
 ];
 
+/// Returns the vault account of the password of a Schema Registry. Two connections with
+/// the same registry and user share the password.
+pub fn registry_account(url: &str, user: &str) -> String {
+    format!(
+        "kafka-schema-registry\u{1f}{}\u{1f}{user}",
+        url.trim_end_matches('/')
+    )
+}
+
 /// Returns the schema of the names after a command, for the completion.
 pub fn argument_schema(command: &str) -> Option<&'static str> {
     match command.to_ascii_uppercase().as_str() {
