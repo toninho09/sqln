@@ -162,11 +162,11 @@ impl App {
             return;
         }
         let chord = Chord::from_event(key);
-        if let Some(region) = self.command_page.take() {
+        if let Some(region) = self.input.command_page.take() {
             self.on_command_page_key(region, chord);
             return;
         }
-        if let Some((region, mut keys)) = self.pending_key.take() {
+        if let Some((region, mut keys)) = self.input.pending_key.take() {
             keys.push(chord);
             self.on_sequence(region, keys);
             return;
@@ -286,7 +286,7 @@ impl App {
                 true
             }
             Lookup::Sequence => {
-                self.pending_key = Some((region, vec![chord]));
+                self.input.pending_key = Some((region, vec![chord]));
                 true
             }
             Lookup::None => false,
@@ -315,7 +315,7 @@ impl App {
                     })
                 }) =>
             {
-                self.pending_key = Some((region, vec![chord]))
+                self.input.pending_key = Some((region, vec![chord]))
             }
             _ => {}
         }
@@ -341,13 +341,14 @@ impl App {
                 self.perform(action, false)
             }
             Lookup::Action(_) => {}
-            Lookup::Sequence => self.pending_key = Some((region, keys)),
+            Lookup::Sequence => self.input.pending_key = Some((region, keys)),
             Lookup::None => {}
         }
     }
 
     pub(super) fn pending_prefix(&self) -> bool {
-        self.pending_key
+        self.input
+            .pending_key
             .as_ref()
             .is_some_and(|(_, keys)| keys.len() == 1 && keys[0].is_prefix())
     }
@@ -357,7 +358,7 @@ impl App {
         if let Some(tab) = self.table_mut() {
             tab.list = None;
         }
-        self.command_page = region;
+        self.input.command_page = region;
     }
 
     fn perform_editor_command(&mut self, action: Action) {
@@ -1340,6 +1341,7 @@ impl App {
             .is_some_and(|overlay| overlay.contents.search().is_some());
         if !searching && !find {
             let mut keys = self
+                .input
                 .pending_key
                 .take()
                 .map_or_else(Vec::new, |(_, keys)| keys);
@@ -1363,7 +1365,7 @@ impl App {
                 partial |= binding.starts_with(&keys);
             }
             if partial && !find {
-                self.pending_key = Some((Region::Editor, keys));
+                self.input.pending_key = Some((Region::Editor, keys));
                 return;
             }
         }
@@ -1371,7 +1373,7 @@ impl App {
             return;
         };
         if find {
-            self.pending_key = None;
+            self.input.pending_key = None;
             overlay.dragging = false;
             overlay.contents.open_search();
             return;

@@ -34,13 +34,13 @@ impl App {
         if let Some(parts) = self.window_hint() {
             return HintItem::of(parts);
         }
-        if self.command_page.is_some() {
+        if self.input.command_page.is_some() {
             return HintItem::of(text::HINT_PREFIX);
         }
         if self.pending_prefix() {
             return HintItem::of(text::HINT_PREFIX);
         }
-        if self.pending_key.is_some() {
+        if self.input.pending_key.is_some() {
             return HintItem::of(text::HINT_SEQUENCE);
         }
         if self

@@ -1672,7 +1672,9 @@ impl App {
         }
     }
     fn ai_obscured(&self) -> bool {
-        self.top_modal().is_some() || self.command_page.is_some() || self.pending_key.is_some()
+        self.top_modal().is_some()
+            || self.input.command_page.is_some()
+            || self.input.pending_key.is_some()
     }
 
     /// Returns true when a field on the current screen receives text input.
@@ -1842,7 +1844,7 @@ impl App {
         if area.width > 0 && area.height > 0 {
             self.ai.cancel_button =
                 Rect::new(area.right().saturating_sub(10), area.bottom() - 1, 10, 1);
-            let spin = ["|", "/", "-", "\\"][self.run_frame % 4];
+            let spin = ["|", "/", "-", "\\"][self.time.run_frame % 4];
             // One run names its step; several show their count.
             let state = if runs.len() == 1 {
                 last.message.to_owned()

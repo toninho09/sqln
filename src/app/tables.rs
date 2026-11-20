@@ -180,10 +180,10 @@ impl App {
                 Tab::Diagram(index) => item_view(&self.tabs.diagrams[index], &self.theme),
                 Tab::Compare(index) => item_view(&self.tabs.compares[index], &self.theme),
             };
-            let picture = self.run_frame / FRAMES_PER_PICTURE;
+            let picture = self.time.run_frame / FRAMES_PER_PICTURE;
             TabView {
                 label,
-                badge: run_badge(phase, run, self.clock, picture, &self.theme),
+                badge: run_badge(phase, run, self.time.now, picture, &self.theme),
                 right: self.agent_tab(tab),
             }
         };

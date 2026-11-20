@@ -428,7 +428,7 @@ impl App {
         if let Some(tab) = self.diagram_mut() {
             tab.select_at(mouse.column - area.x, mouse.row - area.y);
         }
-        self.drag = Some(Drag::Diagram {
+        self.input.drag = Some(Drag::Diagram {
             column: mouse.column,
             row: mouse.row,
         });
@@ -436,7 +436,7 @@ impl App {
 
     /// Moves the view with the mouse, so the picture follows the pointer.
     pub(super) fn drag_diagram(&mut self, mouse: MouseEvent) {
-        let Some(Drag::Diagram { column, row }) = self.drag else {
+        let Some(Drag::Diagram { column, row }) = self.input.drag else {
             return;
         };
         if let Some(tab) = self.diagram_mut() {
@@ -445,7 +445,7 @@ impl App {
                 i64::from(row) - i64::from(mouse.row),
             );
         }
-        self.drag = Some(Drag::Diagram {
+        self.input.drag = Some(Drag::Diagram {
             column: mouse.column,
             row: mouse.row,
         });

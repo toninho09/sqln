@@ -131,8 +131,10 @@ impl App {
                 self.on_agent_card(position);
             }
             MouseEventKind::Down(MouseButton::Left) => self.on_press(mouse, position),
-            MouseEventKind::Drag(MouseButton::Left) if self.drag.is_some() => self.on_drag(mouse),
-            MouseEventKind::Up(_) if self.drag.is_some() => self.end_drag(),
+            MouseEventKind::Drag(MouseButton::Left) if self.input.drag.is_some() => {
+                self.on_drag(mouse)
+            }
+            MouseEventKind::Up(_) if self.input.drag.is_some() => self.end_drag(),
             MouseEventKind::Drag(MouseButton::Left) if self.grid_has_focus() => {
                 self.point_at_cell(mouse, true);
             }
@@ -169,17 +171,17 @@ impl App {
     fn on_press(&mut self, mouse: MouseEvent, position: Position) {
         let layout = &self.layout;
         if layout.divider == Some(mouse.column) && layout.body.contains(position) {
-            self.drag = Some(Drag::Navigator);
+            self.input.drag = Some(Drag::Navigator);
         } else if layout.quit.contains(position) {
             self.request_exit();
         } else if layout.agent_bar.review.contains(position) {
-            self.pending_key = None;
-            self.command_page = None;
+            self.input.pending_key = None;
+            self.input.command_page = None;
             self.review_agent_next();
         } else if layout.agent_bar.stop.contains(position) {
             if self.command_available(Action::AgentStop) {
-                self.pending_key = None;
-                self.command_page = None;
+                self.input.pending_key = None;
+                self.input.command_page = None;
                 self.perform(Action::AgentStop, false);
             }
         } else if let Some(tab) = main_tab_at(&layout.main_tabs, position) {
@@ -267,7 +269,7 @@ impl App {
         } else if in_tabs {
             match tab_at(self.console(), self.layout.console.tabs, mouse.column) {
                 Some(tab) => self.console_mut().active = tab,
-                None => self.drag = Some(Drag::Editor),
+                None => self.input.drag = Some(Drag::Editor),
             }
         } else if in_results {
             self.navigator_focused = false;
@@ -285,10 +287,10 @@ impl App {
     /// Returns true when this click and the one before it hit the same cell.
     fn is_double_click(&mut self, mouse: MouseEvent) -> bool {
         let now = Instant::now();
-        let double = self.last_click.is_some_and(|(at, column, row)| {
+        let double = self.input.last_click.is_some_and(|(at, column, row)| {
             column == mouse.column && row == mouse.row && now.duration_since(at) <= DOUBLE_CLICK
         });
-        self.last_click = if double {
+        self.input.last_click = if double {
             None
         } else {
             Some((now, mouse.column, mouse.row))
@@ -395,7 +397,7 @@ impl App {
             return;
         }
         if matches!(row.kind, RowKind::Connection | RowKind::Folder) {
-            self.drag = Some(Drag::Tree {
+            self.input.drag = Some(Drag::Tree {
                 connection: self.connections[row.connection].id,
                 folder: row.kind == RowKind::Folder,
                 origin: index,
@@ -478,7 +480,7 @@ impl App {
     }
 
     fn on_drag(&mut self, mouse: MouseEvent) {
-        match self.drag {
+        match self.input.drag {
             Some(Drag::Column { .. }) => self.drag_column(mouse),
             Some(Drag::Navigator) => {
                 let body = self.layout.body;
@@ -511,7 +513,7 @@ impl App {
     fn drag_source(&self) -> Option<Target> {
         let Some(Drag::Tree {
             connection, folder, ..
-        }) = self.drag
+        }) = self.input.drag
         else {
             return None;
         };
@@ -537,7 +539,7 @@ impl App {
                     DropAt::End
                 }
             });
-        let Some(Drag::Tree { origin, over, .. }) = &mut self.drag else {
+        let Some(Drag::Tree { origin, over, .. }) = &mut self.input.drag else {
             return;
         };
         // The first row starts no move, so a click stays a click.
@@ -601,7 +603,7 @@ impl App {
     /// Ends a drag. A drag in the explorer moves its item to the marked place.
     fn end_drag(&mut self) {
         let source = self.drag_source();
-        let over = match self.drag.take() {
+        let over = match self.input.drag.take() {
             Some(Drag::Tree { over, .. }) => over,
             _ => return,
         };
@@ -634,8 +636,8 @@ impl App {
                 start: mouse.column,
                 width: result.table.width(column),
             });
-        self.drag = edge;
-        self.drag.is_some()
+        self.input.drag = edge;
+        self.input.drag.is_some()
     }
 
     fn drag_column(&mut self, mouse: MouseEvent) {
@@ -643,7 +645,7 @@ impl App {
             column,
             start,
             width,
-        }) = self.drag
+        }) = self.input.drag
         else {
             return;
         };

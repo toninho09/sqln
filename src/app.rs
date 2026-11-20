@@ -431,6 +431,9 @@ pub struct App {
     ai: ai::State,
     modals: Modals,
     tabs: Tabs,
+    appearance: Appearance,
+    time: Clock,
+    input: InputState,
     connections: Vec<Connection>,
     navigator: Navigator,
     navigator_focused: bool,
@@ -450,13 +453,6 @@ pub struct App {
     show_system_commands: bool,
     database: Option<PathBuf>,
     clipboard: SharedClipboard,
-    /// The theme of the terminal, before the choices of the configuration.
-    terminal_theme: Theme,
-    color_env: ColorEnv,
-    /// The `theme` and `icons` choices of the files.
-    appearance: (Option<ThemeName>, Option<IconName>),
-    /// The custom themes of both scopes, after the precedence.
-    custom_themes: ThemeCatalog,
     /// The theme of the current frame. `choose_theme` writes it at the start of each
     /// frame, so a change of tab or of a choice needs no other step.
     theme: Theme,
@@ -466,13 +462,6 @@ pub struct App {
     status: Option<String>,
     /// The message on the clock, with the time of its first frame.
     status_shown: Option<(String, Instant)>,
-    /// The start of the application, for the pictures of the mark of a run.
-    started: Instant,
-    /// The time of the last step of the main loop. The screen uses it for each run.
-    clock: Instant,
-    run_frame: usize,
-    /// The whole minutes of the open transaction on screen in the last frame.
-    transaction_minute: Option<u64>,
     /// True when a long run ended and the main loop did not ring the bell yet.
     bell: bool,
     /// True when the last read found execution events.
@@ -510,6 +499,37 @@ pub struct App {
     agent: agent::State,
     /// The SQL rules of a console that has no connection.
     fallback_dialect: Dialect,
+    next_console_number: usize,
+    next_unbound_console: ConsoleId,
+    next_test: u64,
+    exiting: bool,
+    quit: bool,
+}
+
+/// The theme sources: the terminal, the environment, the choices of the files, and the custom themes.
+struct Appearance {
+    /// The theme of the terminal, before the choices of the configuration.
+    terminal_theme: Theme,
+    color_env: ColorEnv,
+    /// The `theme` and `icons` choices of the files.
+    choices: (Option<ThemeName>, Option<IconName>),
+    /// The custom themes of both scopes, after the precedence.
+    custom_themes: ThemeCatalog,
+}
+
+/// The times of the main loop.
+struct Clock {
+    /// The start of the application, for the pictures of the mark of a run.
+    started: Instant,
+    /// The time of the last step of the main loop. The screen uses it for each run.
+    now: Instant,
+    run_frame: usize,
+    /// The whole minutes of the open transaction on screen in the last frame.
+    transaction_minute: Option<u64>,
+}
+
+/// The state of a key sequence, a command page, and the mouse.
+struct InputState {
     /// The region and keys of a sequence that needs more keys.
     pending_key: Option<(Region, Vec<Chord>)>,
     /// The region of the command page that waits for its next key.
@@ -517,11 +537,6 @@ pub struct App {
     drag: Option<Drag>,
     /// The time and the place of the last click in the navigator.
     last_click: Option<(Instant, u16, u16)>,
-    next_console_number: usize,
-    next_unbound_console: ConsoleId,
-    next_test: u64,
-    exiting: bool,
-    quit: bool,
 }
 
 impl App {
@@ -569,13 +584,27 @@ impl App {
             ai: ai::State::new(options.ai_completion, options.ai_vault),
             modals: Modals::default(),
             tabs: Tabs::default(),
+            input: InputState {
+                pending_key: None,
+                command_page: None,
+                drag: None,
+                last_click: None,
+            },
+            time: Clock {
+                started: Instant::now(),
+                now: Instant::now(),
+                run_frame: 0,
+                transaction_minute: None,
+            },
+            appearance: Appearance {
+                terminal_theme: theme,
+                color_env,
+                choices: options.appearance,
+                custom_themes: options.custom_themes.clone(),
+            },
             show_system_commands: options.show_system_commands,
             database: options.database,
             clipboard,
-            terminal_theme: theme,
-            color_env,
-            appearance: options.appearance,
-            custom_themes: options.custom_themes.clone(),
             theme,
             layout: ScreenLayout::default(),
             editor_ratio: DEFAULT_EDITOR_RATIO,
@@ -593,10 +622,6 @@ impl App {
             import_wanted: None,
             status: None,
             status_shown: None,
-            started: Instant::now(),
-            clock: Instant::now(),
-            run_frame: 0,
-            transaction_minute: None,
             bell: false,
             events_flow: false,
             pending_sql: None,
@@ -605,10 +630,6 @@ impl App {
             auth: auth::Auth::new(options.vault.take(), plain),
             agent: agent::State::default(),
             fallback_dialect: options.dialect,
-            pending_key: None,
-            command_page: None,
-            drag: None,
-            last_click: None,
             next_console_number: 1,
             next_unbound_console: FIRST_UNBOUND_CONSOLE,
             next_test: 1,
@@ -671,8 +692,8 @@ impl App {
 
     /// Notes the default theme of the files when no file holds it.
     fn missing_theme_note(&mut self) {
-        if let Some(ThemeName::Custom(id)) = &self.appearance.0
-            && self.custom_themes.get(id).is_none()
+        if let Some(ThemeName::Custom(id)) = &self.appearance.choices.0
+            && self.appearance.custom_themes.get(id).is_none()
         {
             self.status = Some(text::theme_missing(id));
         }
@@ -817,7 +838,7 @@ impl App {
         let connection = || self.tab_connection()?.definition.as_ref()?.theme.clone();
         chosen
             .or_else(connection)
-            .or_else(|| self.appearance.0.clone())
+            .or_else(|| self.appearance.choices.0.clone())
     }
 
     /// The palette of a custom id: the dialog of the settings comes first, because
@@ -831,14 +852,14 @@ impl App {
                 return None;
             }
         }
-        self.custom_themes.scheme(id)
+        self.appearance.custom_themes.scheme(id)
     }
 
     fn choose_theme(&mut self) {
         let name = self.theme_choice();
-        let base = self.terminal_theme;
-        let (_, icons) = self.appearance;
-        let env = self.color_env;
+        let base = self.appearance.terminal_theme;
+        let (_, icons) = self.appearance.choices;
+        let env = self.appearance.color_env;
         self.theme = base.with_choices(name, |id| self.draft_scheme(id), icons, env);
     }
 
@@ -918,14 +939,14 @@ impl App {
     /// Moves the clock of the screen. It returns true when a run or the age of an open
     /// transaction needs a new frame.
     fn advance_clock(&mut self, now: Instant) -> bool {
-        self.clock = now;
+        self.time.now = now;
         for console in &mut self.tabs.consoles {
             console.sample_progress(now);
         }
         for table in &mut self.tabs.tables {
             table.sample_progress(now);
         }
-        let time = now.saturating_duration_since(self.started);
+        let time = now.saturating_duration_since(self.time.started);
         let frame = usize::try_from(time.as_millis() / RUN_FRAME.as_millis()).unwrap_or(0);
         // An agent task updates the time of its card, and the card appears after a delay.
         let running = self.ai.busy()
@@ -934,14 +955,14 @@ impl App {
             || self.tabs.tables.iter().any(TableTab::is_busy)
             || self.tabs.diagrams.iter().any(DiagramTab::is_busy)
             || self.tabs.compares.iter().any(CompareTab::is_busy);
-        let changed = running && frame != self.run_frame;
-        self.run_frame = frame;
+        let changed = running && frame != self.time.run_frame;
+        self.time.run_frame = frame;
         let minute = self
             .console()
             .transaction_age(now)
             .map(|age| age.as_secs() / 60);
-        let aged = minute != self.transaction_minute;
-        self.transaction_minute = minute;
+        let aged = minute != self.time.transaction_minute;
+        self.time.transaction_minute = minute;
         changed || aged
     }
 
@@ -1685,7 +1706,7 @@ impl App {
                 transaction_age: None,
                 phase: tab.phase,
                 live: false,
-                run_time: run_time(tab.phase, &tab.run, self.clock),
+                run_time: run_time(tab.phase, &tab.run, self.time.now),
                 pool: self
                     .manager
                     .as_ref()
@@ -1710,7 +1731,7 @@ impl App {
                 transaction_age: None,
                 phase: tab.phase,
                 live: false,
-                run_time: run_time(tab.phase, &tab.run, self.clock),
+                run_time: run_time(tab.phase, &tab.run, self.time.now),
                 pool: self
                     .manager
                     .as_ref()
@@ -1738,7 +1759,7 @@ impl App {
                 transaction_age: None,
                 phase: tab.phase,
                 live: false,
-                run_time: run_time(tab.phase, &tab.run, self.clock),
+                run_time: run_time(tab.phase, &tab.run, self.time.now),
                 pool: self
                     .manager
                     .as_ref()
@@ -1801,10 +1822,10 @@ impl App {
                 .then(|| console.schema.as_deref().or(default_schema))
                 .flatten(),
             session: Some((console.manual, console.transaction)),
-            transaction_age: console.transaction_age(self.clock),
+            transaction_age: console.transaction_age(self.time.now),
             phase: console.phase,
             live: console.is_live(),
-            run_time: run_time(console.phase, &console.run, self.clock),
+            run_time: run_time(console.phase, &console.run, self.time.now),
             pool: console
                 .connection
                 .zip(self.manager.as_ref())
@@ -1843,12 +1864,12 @@ impl App {
     /// Draws the windows above the panels. `bounds` holds the rows above the status line.
     fn draw_layers(&mut self, frame: &mut Frame, bounds: Rect) {
         self.draw_ai(frame);
-        if self.command_page.is_some_and(|region| {
+        if self.input.command_page.is_some_and(|region| {
             region != Region::Navigator && self.context_region() != Some(region)
         }) {
-            self.command_page = None;
+            self.input.command_page = None;
         }
-        if let Some(region) = self.command_page {
+        if let Some(region) = self.input.command_page {
             let (title, menu) = if region == Region::Navigator {
                 (self.explorer_menu_title(), self.explorer_menu())
             } else {

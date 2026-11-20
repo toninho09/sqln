@@ -292,7 +292,7 @@ impl App {
         let Loaded { hashes, config } = config::load(&persist.store);
         persist.hashes = hashes;
         let (custom_themes, notes) = load_themes(&persist.store);
-        self.custom_themes = custom_themes;
+        self.appearance.custom_themes = custom_themes;
         persist.theme_hashes = theme_manifests(&persist.store);
         match config {
             Err(error) => {
@@ -324,8 +324,8 @@ impl App {
         for console in &mut self.tabs.consoles {
             console.editor.set_undo_limit(config.undo_limit_bytes);
         }
-        self.pending_key = None;
-        self.command_page = None;
+        self.input.pending_key = None;
+        self.input.command_page = None;
         self.keymap = config.keymap;
         self.suggestion_keys = config.suggestion_keys;
         self.explorer_side = config.explorer_side;
@@ -337,7 +337,7 @@ impl App {
         }
         self.export_choices = config.export;
         self.import_choices = config.import;
-        self.appearance = (config.theme, config.icons);
+        self.appearance.choices = (config.theme, config.icons);
         if config.keyboard != self.keyboard {
             self.set_keyboard(config.keyboard);
         }

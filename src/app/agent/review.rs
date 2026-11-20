@@ -245,8 +245,8 @@ impl App {
         if !targets.primary.contains(position) {
             return;
         }
-        self.pending_key = None;
-        self.command_page = None;
+        self.input.pending_key = None;
+        self.input.command_page = None;
         match notice {
             Notice::Access(session) => self.open_agent_access(&session),
             Notice::Proposal(id) => self.open_agent_review(&id),

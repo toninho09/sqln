@@ -374,7 +374,7 @@ impl App {
         if action == Action::NavigatorAdd {
             if !self.config_blocked() {
                 let mut form = ConnectionForm::new_in(self.has_project());
-                form.themes = self.custom_themes.clone();
+                form.themes = self.appearance.custom_themes.clone();
                 self.modals.form = Some(form);
             }
             return;
@@ -843,7 +843,7 @@ impl App {
             .as_ref()
             .is_some_and(|manager| manager.is_connected(id));
         let mut form = ConnectionForm::editing(id, definition, connected);
-        form.themes = self.custom_themes.clone();
+        form.themes = self.appearance.custom_themes.clone();
         if let Some(connection) = self.connection(id) {
             form.credential = connection.credential;
             if let Some(key) = &connection.key {
