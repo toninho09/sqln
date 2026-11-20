@@ -157,6 +157,8 @@ impl App {
                 artifact: None,
                 results: Vec::new(),
                 statements: Vec::new(),
+                notices: Vec::new(),
+                default_scan: false,
                 rows: rows_of(None),
                 serial: self.agent.serial,
                 created: Instant::now(),
@@ -231,7 +233,22 @@ impl App {
                     } else {
                         Ok(())
                     };
-                    let result = checked.map(|()| raw.is_some().then_some(statements));
+                    // A read without a bound gets one, at each access level.
+                    let result = checked.map(|()| {
+                        let features = crate::dialect::features(dialect);
+                        let mut bounded = false;
+                        let statements: Vec<_> = statements
+                            .into_iter()
+                            .map(|sql| match features.agent_bound(&sql) {
+                                Some(sql) => {
+                                    bounded = true;
+                                    sql
+                                }
+                                None => sql,
+                            })
+                            .collect();
+                        ((raw.is_some() || bounded).then_some(statements), bounded)
+                    });
                     let _ = sender.send(Work::Validated(key, result));
                 });
         }
@@ -658,12 +675,32 @@ pub(super) fn task_kind(output: &Output) -> &'static str {
 
 /// The statement ends that a task keeps for its reply.
 const STATEMENTS: usize = 100;
+/// The notices that one statement keeps for the reply, and their bytes.
+const NOTICES: usize = 10;
+const NOTICE_BYTES: usize = 2048;
 
-/// Writes the end of one statement: its state, and its rows or changed rows.
+/// Keeps a database notice for the end of its statement, within `NOTICES` and
+/// `NOTICE_BYTES`. The text goes only to the agent, never to a diagnostic log.
+pub(super) fn keep_notice(notices: &mut Vec<String>, text: &str) {
+    let used: usize = notices.iter().map(String::len).sum();
+    if notices.len() >= NOTICES || used >= NOTICE_BYTES {
+        return;
+    }
+    let text = crate::grid::printable(text);
+    let mut end = text.len().min(NOTICE_BYTES - used);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    notices.push(text[..end].to_owned());
+}
+
+/// Writes the end of one statement: its state, its rows or changed rows, the limit
+/// that stopped its read, and its notices.
 fn statement_value(
     index: usize,
     status: &StatementStatus,
     end: Option<&crate::connector::StatementEnd>,
+    notices: Vec<String>,
 ) -> Value {
     let state = match status {
         StatementStatus::Running => "running",
@@ -685,6 +722,19 @@ fn statement_value(
         if let Some(changed) = end.changed {
             value["changed_rows"] = json!(changed);
         }
+        // The grid kept only part of the rows: the agent must not read them as all rows.
+        let limit = match end.limit {
+            crate::sink::ReadLimit::None => None,
+            crate::sink::ReadLimit::RowCap => Some("row_cap"),
+            crate::sink::ReadLimit::Budget => Some("memory_budget"),
+            crate::sink::ReadLimit::ValueTooLarge => Some("value_too_large"),
+        };
+        if let Some(limit) = limit {
+            value["limit"] = json!(limit);
+        }
+    }
+    if !notices.is_empty() {
+        value["notices"] = json!(notices);
     }
     value
 }

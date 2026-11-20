@@ -10,10 +10,16 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 use tokio::sync::Mutex;
 
-type Clients = Mutex<HashMap<String, Arc<Mutex<Client>>>>;
+/// The connection of one instance. It connects once, also with parallel first calls, and
+/// a failed connection leaves it empty for the next call.
+type Slot = Arc<tokio::sync::OnceCell<Arc<Mutex<Client>>>>;
+type Clients = Mutex<HashMap<String, Slot>>;
 #[derive(Default)]
 pub struct Bridge {
     clients: Clients,
+    /// The instance of the last connected call. A call without `instance_id` stays on it,
+    /// also after it closes, so the bridge never moves to another instance by itself.
+    current: Mutex<Option<String>>,
 }
 
 /// Tools that wait for the end of their task, or for the user's decision.
@@ -37,6 +43,18 @@ const WAITING_STATES: [&str; 8] = [
     "running",
     "building_artifact",
 ];
+/// How the agent works with SQLN. Tool descriptions hold the details of each tool.
+const INSTRUCTIONS: &str = "Call request_access first: it waits until the user decides in SQLN. \
+Without instance_id, a call uses the instance of the previous call, or else the only open instance; with several, call list_instances and ask the user if the target is not clear. \
+Then call get_context for connections and tabs. Each connection has its dialect, production (a run that can change data asks the user first), and read_only (the database refuses writes). \
+Write SQL in the dialect of its connection. Before you write SQL, call describe for the tables, columns, topics, and topic fields; do not guess names. \
+describe with schema and no object reads the catalog of that schema; a relation with columns_loaded false needs describe with its object. \
+A Kafka connection does not accept standard SQL: follow syntax.Kafka, which the first get_context of the session holds; get_context with include_syntax sends it again. \
+Bind each Kafka read with LIMIT, SCAN, or START AT; SQLN adds a SCAN to a read without one. When describe gives a topic no fields, read a few messages with LIMIT 5 to learn the paths. \
+query runs SQL in your own console and returns its rows. Tools wait for the end of their task; call job when a reply says that the task continues. \
+Read each statement of a reply: limit means that the grid kept only part of the rows, and notices hold the database messages. A Kafka result has read, with scanned, matched, and the end of the read; end scan with no match does not mean an empty topic. \
+Without full access, only reads run: send other SQL with edit_console for the user to review and run. Use exact IDs and revisions.";
+
 /// Most clients stop a tool call after 60 seconds.
 const TASK_WAIT: u64 = 50;
 /// The user needs time to read an access request.
@@ -58,7 +76,7 @@ fn tools() -> Vec<Tool> {
     let schema = serde_json::to_value(schema).expect("the operation schema is JSON");
     let mut tools = vec![Tool::new(
         "list_instances",
-        "List open SQLN instances. Other tools select the only open instance when instance_id is absent.",
+        "List open SQLN instances. An instance with compatible false runs another sqln version and refuses calls. Without instance_id, other tools use the instance of the previous call, or else the only open instance.",
         Arc::new(
             serde_json::from_value(
                 json!({"type":"object", "properties":{}, "additionalProperties":false}),
@@ -66,7 +84,12 @@ fn tools() -> Vec<Tool> {
             .expect("constant schema"),
         ),
     )];
-    tools[0].annotations = Some(ToolAnnotations::new().read_only(true));
+    tools[0].annotations = Some(
+        ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .open_world(false),
+    );
     for variant in schema["oneOf"]
         .as_array()
         .expect("the operation schema is a tagged enum")
@@ -84,10 +107,18 @@ fn tools() -> Vec<Tool> {
             .as_object_mut()
             .expect("operation properties");
         properties.remove("method");
-        properties.insert("instance_id".into(), json!({"type":"string", "description":"The instance_id from list_instances. Optional when only one SQLN instance is open."}));
+        properties.insert("instance_id".into(), json!({"type":"string", "description":"The instance_id from list_instances. Without it, the call uses the instance of the previous call, or else the only open instance."}));
         if WAITING_TOOLS.contains(&name.as_str()) {
-            properties.insert("wait_seconds".into(), json!({"type":"integer", "minimum":0, "maximum":MAX_WAIT,
-                "description":format!("Seconds to wait for the end. The default is {TASK_WAIT}, or {ACCESS_WAIT} for request_access. After this time, the reply holds the current state: call job to continue.")}));
+            let description = if name == "request_access" {
+                format!(
+                    "Seconds to wait for the user's decision. The default is {ACCESS_WAIT}. After this time, the reply holds the current state: call request_access again to keep waiting."
+                )
+            } else {
+                format!(
+                    "Seconds to wait for the end. The default is {TASK_WAIT}. After this time, the reply holds the current state: call job with its job_id to keep waiting."
+                )
+            };
+            properties.insert("wait_seconds".into(), json!({"type":"integer", "minimum":0, "maximum":MAX_WAIT, "description":description}));
         }
         input["required"]
             .as_array_mut()
@@ -98,12 +129,23 @@ fn tools() -> Vec<Tool> {
             description,
             Arc::new(input.as_object().expect("operation schema object").clone()),
         );
-        // Executions also change visible results. These annotations are not access controls.
-        let inspection = matches!(
+        // These annotations are hints for the client, not access controls. Reads, catalog
+        // reads, and comparisons change no data: they only open tabs. All tools act on a
+        // local SQLN instance.
+        let read_only = matches!(
             tool.name.as_ref(),
-            "get_context" | "read_console" | "read_result"
+            "get_context" | "read_console" | "read_result" | "describe" | "compare"
         );
-        tool.annotations = Some(ToolAnnotations::new().read_only(inspection));
+        let destructive = matches!(tool.name.as_ref(), "query" | "run_console" | "edit_console");
+        // A second access request only reads the state of the first one.
+        let idempotent = tool.name == "request_access";
+        tool.annotations = Some(
+            ToolAnnotations::new()
+                .read_only(read_only)
+                .destructive(destructive)
+                .idempotent(idempotent)
+                .open_world(false),
+        );
         tools.push(tool);
     }
     tools
@@ -123,8 +165,116 @@ fn argument_error(error: &serde_json::Error) -> String {
     format!("Use the declared tool arguments and valid field types: {reason}")
 }
 
+fn version_mismatch() -> Error {
+    Error::new(
+        "version_mismatch",
+        "This SQLN instance uses another version of the local protocol. Ask the user to run the MCP client with the same sqln executable as the open SQLN, or to restart SQLN.",
+    )
+}
+
 fn invalid_request(message: &str) -> Error {
     Error::new("invalid_request", message)
+}
+
+/// The longest MCP response, with space for the JSON-RPC envelope.
+const RESPONSE_BYTES: usize = agent::PAGE_BYTES - 4096;
+
+/// Builds the tool result within `RESPONSE_BYTES`. The result holds the reply twice, as
+/// structured content and as JSON text, so a reply that SQLN accepts can be too large.
+/// The reply then loses the parts that the agent can read again, and keeps its task
+/// state: a task that ran never looks like a failure.
+fn response(reply: Reply) -> CallToolResult {
+    let mut value = match reply {
+        Ok(value) => value,
+        Err(error) => return CallToolResult::structured_error(json!(error)),
+    };
+    let fits = |result: &CallToolResult| {
+        serde_json::to_vec(result).is_ok_and(|encoded| encoded.len() <= RESPONSE_BYTES)
+    };
+    let mut shortened = false;
+    loop {
+        if shortened {
+            value["shortened"] = json!(SHORTENED);
+        }
+        let result = CallToolResult::structured(value.clone());
+        if fits(&result) {
+            return result;
+        }
+        if !shorten(&mut value) {
+            break;
+        }
+        shortened = true;
+    }
+    let mut error = json!(Error::new(
+        "response_too_large",
+        "The reply exceeds the MCP response limit of 256 KiB. Read rows with read_result and a smaller limit, large values with row and column, and artifacts with job and artifact_offset.",
+    ));
+    for key in ["job_id", "kind", "status"] {
+        if let Some(item) = value.get(key) {
+            error[key] = item.clone();
+        }
+    }
+    CallToolResult::structured_error(error)
+}
+
+const SHORTENED: &str = "The reply was shortened to fit the MCP response. Read the omitted rows with read_result from next_offset, and an omitted artifact with job and artifact_offset.";
+
+/// Removes one part that the agent can read again: rows of the last result page first,
+/// then the artifact page. Returns false when no such part remains.
+fn shorten(value: &mut Value) -> bool {
+    if let Some(results) = value.get_mut("results").and_then(Value::as_array_mut) {
+        let paged = results
+            .iter()
+            .filter(|page| page.get("rows").is_some())
+            .count();
+        if let Some(page) = results
+            .iter_mut()
+            .rev()
+            .find(|page| page.get("rows").is_some())
+        {
+            // The first result keeps part of its rows; later results become references.
+            if paged > 1 || !halve(page) {
+                *page = json!({
+                    "tab_id": page["tab_id"],
+                    "result": page["result"],
+                    "generation": page["generation"],
+                    "rows_omitted": true,
+                });
+            }
+            return true;
+        }
+    }
+    if halve(value) {
+        return true;
+    }
+    if value
+        .get("artifact")
+        .is_some_and(|artifact| !artifact.is_null())
+    {
+        value["artifact"] = Value::Null;
+        value["artifact_omitted"] = json!(true);
+        return true;
+    }
+    false
+}
+
+/// Keeps the first half of a row page. `next_offset` names the first removed row.
+fn halve(page: &mut Value) -> bool {
+    let Some(rows) = page.get_mut("rows").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let keep = rows.len() / 2;
+    let Some(next) = rows
+        .get(keep)
+        .filter(|_| keep > 0)
+        .and_then(|row| row.get("row"))
+        .cloned()
+    else {
+        return false;
+    };
+    rows.truncate(keep);
+    page["next_offset"] = next;
+    true
 }
 
 impl Bridge {
@@ -143,8 +293,9 @@ impl Bridge {
         })
     }
 
-    /// Returns the requested instance, or the only open instance.
-    async fn target(id: Option<Value>) -> Result<String, Error> {
+    /// Returns the requested instance, else the instance of the previous call, else the
+    /// only open instance.
+    async fn target(&self, id: Option<Value>) -> Result<String, Error> {
         if let Some(id) = id {
             return id
                 .as_str()
@@ -154,7 +305,16 @@ impl Bridge {
                     Error::new("invalid_target", "Use an instance_id from list_instances.")
                 });
         }
-        let mut instances = Self::instances().await?;
+        if let Some(current) = self.current.lock().await.clone() {
+            return Ok(current);
+        }
+        let (mut instances, other): (Vec<_>, Vec<_>) = Self::instances()
+            .await?
+            .into_iter()
+            .partition(Instance::compatible);
+        if instances.is_empty() && !other.is_empty() {
+            return Err(version_mismatch());
+        }
         match instances.len() {
             0 => Err(Error::new(
                 "no_instance",
@@ -173,26 +333,35 @@ impl Bridge {
         id: &str,
         context: &RequestContext<RoleServer>,
     ) -> Result<Arc<Mutex<Client>>, Error> {
-        let mut clients = self.clients.lock().await;
-        if let Some(client) = clients.get(id) {
-            return Ok(client.clone());
-        }
-        let instance = Self::instances().await?.into_iter().find(|item| item.instance_id == id)
-            .ok_or_else(|| Error::new("instance_gone", "The selected instance is not open. List instances again; do not switch targets silently."))?;
+        // The map lock covers only the lookup: a slow instance does not hold the others.
+        let slot = self
+            .clients
+            .lock()
+            .await
+            .entry(id.to_owned())
+            .or_default()
+            .clone();
         let label = context.client_info().map_or_else(
             || "MCP client".into(),
             |info| info.name.chars().take(64).collect::<String>(),
         );
-        let client = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            Client::connect(&instance, &label),
-        )
+        slot.get_or_try_init(|| async {
+            let instance = Self::instances().await?.into_iter().find(|item| item.instance_id == id)
+                .ok_or_else(|| Error::new("instance_gone", "The SQLN instance of this session is not open. Call list_instances and send instance_id; ask the user if the target is not clear. Do not switch targets silently."))?;
+            if !instance.compatible() {
+                return Err(version_mismatch());
+            }
+            let client = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                Client::connect(&instance, &label),
+            )
+            .await
+            .map_err(|_| Error::new("instance_gone", "The selected instance did not answer."))?
+            .map_err(|_| Error::new("instance_gone", "The selected instance disconnected."))?;
+            Ok(Arc::new(Mutex::new(client)))
+        })
         .await
-        .map_err(|_| Error::new("instance_gone", "The selected instance did not answer."))?
-        .map_err(|_| Error::new("instance_gone", "The selected instance disconnected."))?;
-        let client = Arc::new(Mutex::new(client));
-        clients.insert(id.to_owned(), client.clone());
-        Ok(client)
+        .cloned()
     }
 
     async fn invoke(
@@ -207,7 +376,7 @@ impl Bridge {
                 return Err(invalid_request("list_instances takes no arguments."));
             }
             let instances: Vec<_> = Self::instances().await?.into_iter().map(|instance| json!({
-                "instance_id": instance.instance_id, "pid": instance.pid, "working_directory": instance.working_directory, "project": instance.project,
+                "instance_id": instance.instance_id, "pid": instance.pid, "working_directory": instance.working_directory, "project": instance.project, "compatible": instance.compatible(),
             })).collect();
             return Ok(json!({"instances": instances}));
         }
@@ -221,7 +390,7 @@ impl Bridge {
             ),
             Some(_) => return Err(invalid_request("This tool does not wait.")),
         };
-        let id = Self::target(args.remove("instance_id")).await?;
+        let id = self.target(args.remove("instance_id")).await?;
         if args.contains_key("method") {
             return Err(invalid_request("The method field is not an argument."));
         }
@@ -232,6 +401,7 @@ impl Bridge {
             return Err(Error::new("cancelled", "The request was cancelled."));
         }
         let connection = self.connect(&id, context).await?;
+        *self.current.lock().await = Some(id.clone());
         let access = matches!(operation, Operation::RequestAccess {});
         let wait = std::time::Duration::from_secs(wait.unwrap_or(if access {
             ACCESS_WAIT
@@ -319,7 +489,7 @@ impl ServerHandler for Bridge {
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.server_info.name = "sqln".into();
         info.server_info.version = env!("CARGO_PKG_VERSION").into();
-        info.instructions = Some("Call request_access first: it waits until the user decides in SQLN. instance_id is optional when one SQLN instance is open; with several, call list_instances and ask the user if the target is not clear. Then call get_context for connections and tabs. Write SQL in the dialect of its connection. A Kafka connection does not accept standard SQL: follow syntax.Kafka of get_context, and bind each Kafka read with LIMIT, SCAN, or START AT. Before you write SQL, call describe for the tables, columns, topics, and topic fields; do not guess names. query runs SQL in your own console and returns its rows. Tools wait for the end of their task; call job when a reply says that the task continues. Without full access, only reads run: send other SQL with edit_console for the user to review and run. Use exact IDs and revisions.".into());
+        info.instructions = Some(INSTRUCTIONS.into());
         info
     }
     fn get_tool(&self, name: &str) -> Option<Tool> {
@@ -340,21 +510,7 @@ impl ServerHandler for Bridge {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, rmcp::ErrorData> {
-        let result = match self.invoke(request, &context).await {
-            Ok(value) => CallToolResult::structured(value),
-            Err(error) => CallToolResult::structured_error(json!(error)),
-        };
-        let result = if serde_json::to_vec(&result)
-            .map_or(true, |encoded| encoded.len() > agent::PAGE_BYTES - 4096)
-        {
-            CallToolResult::structured_error(json!(Error::new(
-                "response_too_large",
-                "Use a smaller page or a paged artifact. The MCP response would exceed 256 KiB."
-            )))
-        } else {
-            result
-        };
-        Ok(result.into())
+        Ok(response(self.invoke(request, &context).await).into())
     }
 }
 

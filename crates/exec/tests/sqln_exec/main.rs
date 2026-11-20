@@ -8,4 +8,5 @@ mod compare_schema;
 mod complete;
 mod definition;
 mod diagram;
+mod dialect;
 mod join_suggestions;

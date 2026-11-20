@@ -135,6 +135,7 @@ struct Harness {
 #[derive(Debug, Default)]
 struct Run {
     columns: Vec<Vec<String>>,
+    types: Vec<Vec<Option<String>>>,
     rows: Vec<Row>,
     bytes: usize,
     statuses: Vec<StatementStatus>,
@@ -200,7 +201,10 @@ impl Harness {
                     event: sqln::command_log::LogEvent::Started { text, .. },
                     ..
                 } => run.commands.push(text),
-                ExecEvent::Columns { columns, .. } => run.columns.push(columns),
+                ExecEvent::Columns { columns, types, .. } => {
+                    run.columns.push(columns);
+                    run.types.push(types);
+                }
                 ExecEvent::Rows { rows, bytes, .. } => {
                     run.rows.extend(rows);
                     run.bytes += bytes;
@@ -4668,4 +4672,25 @@ fn the_palette_offers_the_schema_command_of_a_namespace_source() {
     let screen = s.screen();
     assert!(screen.contains("Choose the schema or database"), "{screen}");
     s.code(KeyCode::Esc);
+}
+
+#[test]
+fn results_carry_the_column_types_of_the_database() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let run = h.run_ok(&["SELECT CAST(1 AS DECIMAL(5,2)) AS amount, 'a' AS label"]);
+        let types = &run.types[0];
+        assert_eq!(types.len(), 2, "{run:?}");
+        let (amount, label) = (types[0].as_deref(), types[1].as_deref());
+        match server.kind {
+            Kind::Postgres => {
+                assert_eq!(amount, Some("numeric"));
+                assert_eq!(label, Some("text"));
+            }
+            Kind::MySql => {
+                assert_eq!(amount, Some("decimal"));
+                assert_eq!(label, Some("varchar"));
+            }
+        }
+    }
 }

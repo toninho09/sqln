@@ -457,3 +457,31 @@ async fn each_statement_carries_the_catalog_and_the_schema_of_the_session() {
     assert_eq!(request["catalog"], "samples");
     assert_eq!(request["schema"], "nyctaxi");
 }
+
+#[tokio::test]
+async fn a_result_carries_the_sql_type_of_each_column() {
+    let server = server(|method, path, request| match (method, path) {
+        ("POST", STATEMENTS) => json(json!({
+            "statement_id": "s1",
+            "status": {"state": "SUCCEEDED"},
+            "manifest": {"schema": {"columns": [
+                {"name": "id", "type_text": "DECIMAL(10,2)"},
+                {"name": "v"},
+            ]}, "total_chunk_count": 1},
+            "result": {"external_links": [link(request, 0, "0")]},
+        })),
+        ("GET", "/files/0") => (200, mixed(&[Some(1)])),
+        _ => (404, Vec::new()),
+    });
+    let mut session = session(&server).await;
+    let (sink, mut inbox) = new_sink(1000);
+    session.run("SELECT 1", sink).await.unwrap();
+    let mut types = None;
+    while let Ok(event) = inbox.try_recv() {
+        if let SinkEvent::Columns { types: given, .. } = event {
+            types = Some(given);
+        }
+    }
+    // An answer without `type_text` gives no type for that column.
+    assert_eq!(types.unwrap(), [Some("DECIMAL(10,2)".to_owned()), None]);
+}

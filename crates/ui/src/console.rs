@@ -530,16 +530,21 @@ impl Console {
             ExecEvent::Columns {
                 key,
                 columns,
+                types,
                 live,
                 progress,
             } if self.is_current(key.execution) => {
                 self.on_columns(key, columns, live, progress.map(ReadMeter::new), budget);
+                if let Some(result) = self.filling_mut() {
+                    result.column_types = types;
+                }
             }
             ExecEvent::Rows { key, rows, bytes } => self.on_rows(key, rows, bytes, budget),
             ExecEvent::ResultDone { key, rows, limit } if self.is_current(key.execution) => {
                 self.reading = false;
                 if let Some(result) = self.filling_mut() {
                     let progress = result.progress.take().map(|meter| meter.snapshot());
+                    result.read = progress;
                     result.summary = match (result.live, progress) {
                         (Some(_), None) => {
                             text::live_rows_done(result.table.rows.len(), result.dropped)

@@ -106,6 +106,8 @@ The bridge never receives a vault password or a connection URI with credentials.
 
 This flow also works without a project. One global MCP configuration can discover several SQLN processes.
 The bridge never selects one of several instances or silently changes targets.
+A call without `instance_id` uses the instance of the previous call of that bridge, or else the only open instance.
+If that instance closes, such a call returns `instance_gone`, even when another instance is open. The assistant then calls `list_instances` and sends `instance_id`.
 Restarting SQLN gives it another UUID. Old references stop working.
 
 Revoke a session through the same **Agent sessions** command.
@@ -134,7 +136,7 @@ Each agent tab has an **Access: level** button (`agentSession`). It opens the sa
 |---|---|
 | `list_instances` | Lists open SQLN instances. |
 | `request_access` | Asks for access and waits for the decision. A second call reads the state. |
-| `get_context` | Reads the access level, the active tab, the connections, the open tabs, and this session's pending proposals. With a Kafka connection, it adds `syntax.Kafka`. |
+| `get_context` | Reads the access level, the active tab, the connections, the open tabs, and this session's pending proposals. Each connection has its `dialect` (`Postgres`, `MySql`, `Sqlite`, `DuckDb`, `Redis`, `Kafka`, or `Databricks`), `production`, `read_only`, and `default_schema`. With a Kafka connection, the first reply of the session adds `syntax.Kafka`. |
 | `read_console` | Reads console text and its revision. `messages: true` adds the console Messages. |
 | `read_result` | Reads loaded rows. With `row` and `column`, it reads one large cell in blocks. |
 | `query` | Executes SQL on a connection, in the session's agent console, and returns the results. |
@@ -158,8 +160,13 @@ A task reply contains `job_id`, `kind`, `status`, `message`, `tab_ids`, `stateme
 States include `validating`, `ready`, `waiting_confirmation`, `waiting_credentials`, `running`, `building_artifact`, `completed`, `failed`, and `cancelled`.
 
 - `statements` holds the end of each executed statement: `status`, `rows` for a result, `changed_rows` for a write, and `error`.
+  `limit` says that the grid kept only part of the rows: `row_cap`, `memory_budget`, or `value_too_large`.
+  `notices` holds the notices of the database for that statement: at most 10, and 2 KiB in all, without terminal control sequences.
 - `results` holds the first page of each query or comparison result: 100 rows by default, set by `rows` (0 to 1,000).
+  `column_types` gives the database type of each column, such as `int4`, `decimal`, or `DECIMAL(5,2)`, as the database names it. A column has `null` when the source gives no type: Redis, Kafka, a SQLite expression, and a PostgreSQL statement that the server cannot describe before it runs, such as in a failed transaction.
   The pages share half of the response limit. A result without space has `rows_omitted: true`; read it with `read_result`.
+  A Kafka result also has `read`: `scanned`, `matched`, and `end` (`end` of the topic, `limit`, `scan`, `stopped`, or `grid` when the grid stopped it). After `scan` with no match, `next_action` says that the rest of the topic was not read.
+- `default_scan` holds the `SCAN` that SQLN added to a Kafka read without a bound. See [Consoles and queries](#consoles-and-queries).
 - `artifact` holds the first page of a text artifact, such as DDL, a catalog, a diagram, or a sync script. `job` with `artifact_offset` reads the next page.
 
 The bridge does not retain more than 64 tasks per session. It evicts completed tasks first.
@@ -167,8 +174,11 @@ The bridge does not retain more than 64 tasks per session. It evicts completed t
 ### Consoles and queries
 
 The agent writes SQL in the dialect of the connection: `get_context` gives the `dialect` of each connection.
-A Kafka connection does not accept standard SQL. When `get_context` lists a Kafka connection, its reply holds `syntax.Kafka`: the Kafka syntax guide in `crates/session/src/connector/kafka/guide.md`, the same text that the AI completion sends.
+A Kafka connection does not accept standard SQL. When `get_context` lists a Kafka connection, the first reply of the session holds `syntax.Kafka`: the Kafka syntax guide in `crates/session/src/connector/kafka/guide.md`, the same text that the AI completion sends.
+Later replies hold a short note in `syntax.Kafka`. `get_context` with `include_syntax: true` sends the guide again, for example after the client shortened its context.
 The server instructions tell the agent to follow that guide, to bind each Kafka read with `LIMIT`, `SCAN`, or `START AT`, and to call `describe` before it writes SQL.
+A Kafka read of `query` or `run_console` without `LIMIT`, `SCAN`, or `START AT` (`FROM` for `CONSUME`) gets `SCAN 100000` at its end, at each access level. The reply holds `default_scan`, and the agent Messages say that SQLN added it.
+When `describe` gives a topic no fields, the reply tells the agent to read a few messages with `LIMIT 5` to learn the paths.
 
 `query` uses the session's agent console for that connection.
 The session's first agent tab opens when you allow access, or at once for a client with remembered access. It has no connection yet, and your focus stays.
@@ -197,6 +207,7 @@ An agent execution never leaves a transaction open. If its SQL starts a transact
 
 For SQL that you must run, such as a write without **Full access**, the agent calls `edit_console` without `console_id`, with `connection_id` and `sql`.
 SQLN shows the SQL in an editor at the top of the agent tab for that connection. No tab opens, nothing executes, and your focus stays.
+The reply has `status: "placed"`, the `console_id` and `revision` of the agent tab, and `next_action`: after your run, the agent reads the results with `read_result` and the errors with `read_console` and `messages`.
 The status bar names the agent, the agent Messages say how to run the SQL, and the tab shows `SQL ·` until you open it.
 
 - You can change the SQL and run it with the usual run keys or **Run**. It is your run: the run confirmations apply, and the read policy does not.
@@ -214,6 +225,7 @@ Without **Full access**, the assistant policy parses SQL ASTs and rejects unsupp
 It checks nested queries and CTEs. It accepts only known read functions.
 An unknown or qualified function call refuses execution rather than assuming it reads.
 For a script, every statement passes validation before the first statement runs.
+A table name in single quotes refuses execution. In DuckDB and Databricks, a quoted table name with `.`, `/`, `\`, or `:` also refuses, because these sources read it as a file or a URL, such as `FROM 'data.csv'` or ``FROM csv.`/path` ``.
 
 Native session protection also applies:
 
@@ -223,6 +235,7 @@ Native session protection also applies:
 | MySQL | `SET SESSION TRANSACTION READ ONLY` |
 | SQLite | `PRAGMA query_only = ON` |
 | Redis/Valkey | Known read command plus the server's `readonly` flag |
+| DuckDB, Databricks | None. The read policy alone protects these sources |
 | Kafka | Known command only: SELECT, `CONSUME`, `TOPICS`, `PARTITIONS`, `GROUPS`, and `GROUP`. Each one only reads. A statement that does not parse refuses with `invalid_sql`, its reason, its byte position, and a pointer to `syntax.Kafka`. `TAIL` and `EMIT CHANGES` refuse in every access level, because they do not end |
 
 These restrictions belong to each agent execution. They do not change saved connection settings.
@@ -283,10 +296,12 @@ Editing SQL, accepting a proposal, or opening a console never executes it.
 ## Metadata and analysis
 
 `describe` without `object` reads the catalog. It reads the cache unless `refresh` is true or no catalog is loaded.
+With `schema`, the catalog holds only that schema. A schema that the catalog does not hold gives `schema_not_found`, with the schema names.
 A small cached catalog returns directly. Other catalog reads return a JSON artifact.
+Each relation has `columns_loaded`. With `false`, `columns` is `null` because SQLN did not read the columns yet: describe the object to read them.
 With `object` (`name`, `kind`, `identity`) and `schema`, it reads the DDL.
 `kind` accepts `table`, `view`, `function`, `procedure`, `sequence`, `trigger`, `enum`, and `domain` where supported.
-For a Kafka topic, send `schema: "topics"` and an `object` with the topic name and the kind `table`. The JSON artifact holds `topic` and `fields`: each field has a `path`, its `type`, and the `values` of an enum. An empty list has a `message` with the reason, such as a connection without a Schema Registry.
+For a Kafka topic, send an `object` with the topic name and the kind `topic`; `schema` is optional, and any schema reads the same topic. The older form, `schema: "topics"` with the kind `table`, still works. The JSON artifact holds `topic` and `fields`: each field has a `path`, its `type`, and the `values` of an enum. An empty list has a `message` with the reason, such as a connection without a Schema Registry.
 The Kafka catalog follows the topic filter of the connection.
 For a PostgreSQL routine, `identity` identifies its arguments. For a trigger, it identifies the table.
 With `er_diagram: true` and `schema`, it reads an ER diagram of the schema, or of the `object` table.
@@ -306,9 +321,11 @@ The MCP does not offer the SQL templates of the interface. The agent writes SQL 
 - Result reads return already loaded values. They do not execute the original SQL again.
 - A result reference contains a generation. Supply it on later pages and cell reads.
 - A changed result returns `result_changed`, rather than continuing into another dataset.
-- `get_context` lists up to 200 connections. Tabs accept `offset` and `limit`, and return `next_offset`.
+- `get_context` lists up to 200 connections from `connection_offset`, and returns `connections_next_offset`. Tabs accept `offset` and `limit`, and return `next_offset`.
 - Result pages default to 100 rows and accept up to 1,000 rows.
 - Responses have a 256 KiB ceiling. Large cells return `needs_cell_read`; read them with `read_result`, `row`, and `column`.
+- The MCP result holds each reply twice, as structured content and as text. When a reply does not fit, the bridge removes the rows of the last result pages, then half of the first page's rows, then the artifact page.
+  The reply keeps `job_id` and `status`, and `shortened` says what to read again: `rows_omitted`, `next_offset`, or `artifact_omitted`. A task that ran never returns `response_too_large`.
 - Text and cell blocks contain at most 16 KiB before JSON encoding. Follow `next_offset`.
 - Text offsets count UTF-8 bytes. Follow returned offsets to stay on character boundaries.
 - Later `read_console` pages require the revision from the first page.
@@ -317,7 +334,7 @@ The MCP does not offer the SQL templates of the interface. The agent writes SQL 
 - Grid reads include pending user edits, without saving them. Selection, loaded limits, and the current viewport remain visible in metadata.
 - Each session has at most four active tasks in each instance.
 - IPC requests have an 8 MiB ceiling. Edit proposals also require a bounded console snapshot and available data budget.
-- Retained proposal text, execution snapshots, and artifacts count against the data budget.
+- Retained proposal text, execution snapshots, and artifacts count against the data budget. When it is full, `budget_reached` asks the agent to have you close result tabs: the agent cannot close them.
 - New operations refuse while a blocking dialog is open. Existing credential requests and run confirmations continue only through their own user response.
 
 An error contains a code, a reason, and a possible next action. A partial result is never reported as complete.
@@ -328,7 +345,9 @@ The registry uses `XDG_RUNTIME_DIR/sqln-<uid>` when `XDG_RUNTIME_DIR` is absolut
 Otherwise it uses the user's system temporary directory, with the same private subdirectory.
 Directory permissions are `0700`; descriptors and sockets use `0600`.
 The implementation rejects unsafe owners, permissions, and symbolic links.
-A lock identifies a live registration. A handshake checks the instance UUID and IPC version. This version uses IPC version 2.
+A lock identifies a live registration. A handshake checks the instance UUID and IPC version. This version uses IPC version 3.
+Each request carries an id, and its reply repeats it, so a late reply of an abandoned request never answers a later one.
+`list_instances` also lists a running instance of another IPC version, with `compatible: false`. A call to it returns `version_mismatch`: run the MCP client with the same `sqln` executable as the open SQLN, or restart SQLN.
 Descriptors contain process and path metadata, not passwords, SQL, or result values.
 
 A new local connection cannot use another connection's approval or task IDs.
@@ -345,6 +364,6 @@ Older SQLN versions do not recognize custom bindings for the new agent actions. 
 ## Client validation
 
 CLI connection checks passed with Claude Code 2.1.318 and OpenCode 1.19.5 for IPC version 1, using isolated global configuration directories.
-The tool set of IPC version 2 has SDK tests only. Repeat the CLI checks before a release.
+The tool sets of IPC versions 2 and 3 have SDK tests only. Repeat the CLI checks before a release.
 The SDK tests also initialize a real stdio subprocess, list its tools, and route requests to explicit local instances.
 No interactive model conversation forms part of these checks. UI authorization and edit approval use input-event and TestBackend tests.

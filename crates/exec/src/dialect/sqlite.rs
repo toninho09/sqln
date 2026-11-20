@@ -126,4 +126,12 @@ impl Features for Sqlite {
     fn family(&self) -> Option<Family> {
         Some(Family::Sqlite)
     }
+
+    fn agent_bound(&self, _: &str) -> Option<String> {
+        None
+    }
+
+    fn agent_name(&self) -> &'static str {
+        "Sqlite"
+    }
 }

@@ -19,7 +19,7 @@ impl Hold {
         if !budget.reserve_bytes(bytes) {
             return Err(Error::new(
                 "budget_reached",
-                "The assistant snapshot does not fit in the data budget. Close results and try again.",
+                "The assistant snapshot does not fit in the data budget. Ask the user to close result tabs in SQLN, then try again.",
             ));
         }
         Ok(Self {

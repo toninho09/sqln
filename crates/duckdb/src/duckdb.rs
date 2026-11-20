@@ -385,6 +385,46 @@ enum ColumnKind {
     Binary,
 }
 
+/// The DuckDB name of a result type for the agent, such as `INTEGER` or `DECIMAL(5,2)`.
+/// The result arrives as Arrow data, so the name comes from the Arrow type. A type without
+/// a known DuckDB name keeps its Arrow name.
+fn sql_type(data_type: &DataType) -> String {
+    let name = match data_type {
+        DataType::Null => "NULL",
+        DataType::Boolean => "BOOLEAN",
+        DataType::Int8 => "TINYINT",
+        DataType::Int16 => "SMALLINT",
+        DataType::Int32 => "INTEGER",
+        DataType::Int64 => "BIGINT",
+        DataType::UInt8 => "UTINYINT",
+        DataType::UInt16 => "USMALLINT",
+        DataType::UInt32 => "UINTEGER",
+        DataType::UInt64 => "UBIGINT",
+        DataType::Float16 | DataType::Float32 => "FLOAT",
+        DataType::Float64 => "DOUBLE",
+        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => "VARCHAR",
+        DataType::Binary | DataType::LargeBinary | DataType::BinaryView => "BLOB",
+        DataType::FixedSizeBinary(16) => "UUID",
+        DataType::Date32 | DataType::Date64 => "DATE",
+        DataType::Time32(_) | DataType::Time64(_) => "TIME",
+        DataType::Timestamp(_, Some(_)) => "TIMESTAMP WITH TIME ZONE",
+        DataType::Timestamp(_, None) => "TIMESTAMP",
+        DataType::Interval(_) | DataType::Duration(_) => "INTERVAL",
+        DataType::Decimal128(precision, scale) | DataType::Decimal256(precision, scale) => {
+            return format!("DECIMAL({precision},{scale})");
+        }
+        DataType::List(item) | DataType::LargeList(item) => {
+            return format!("{}[]", sql_type(item.data_type()));
+        }
+        DataType::Dictionary(_, _) => "ENUM",
+        DataType::Struct(_) => "STRUCT",
+        DataType::Map(_, _) => "MAP",
+        DataType::Union(_, _) => "UNION",
+        other => return other.to_string(),
+    };
+    name.to_owned()
+}
+
 fn column_kind(data_type: &DataType) -> ColumnKind {
     match data_type {
         DataType::Binary | DataType::LargeBinary | DataType::BinaryView => ColumnKind::Binary,
@@ -534,7 +574,14 @@ fn run(
         .iter()
         .map(|field| column_kind(field.data_type()))
         .collect();
-    sink.set_columns_blocking(schema.fields().iter().map(|f| f.name().clone()).collect());
+    sink.set_typed_columns_blocking(
+        schema.fields().iter().map(|f| f.name().clone()).collect(),
+        schema
+            .fields()
+            .iter()
+            .map(|f| Some(sql_type(f.data_type())))
+            .collect(),
+    );
     let read_only = is_plain_read(sql, Dialect::DuckDb);
     let mut cells = RowWriter::default();
     let mut storing = true;

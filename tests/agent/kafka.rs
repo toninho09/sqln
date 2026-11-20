@@ -1,5 +1,5 @@
-//! The MCP agent on a Kafka connection: the read policy, the syntax guide, and the field
-//! paths of a topic.
+//! The MCP agent on a Kafka connection: the read policy, the syntax guide, the field
+//! paths of a topic, the default scan, and the statement ends of a task reply.
 
 use super::*;
 use crate::common::mock::{MockConnector, RunHandler};
@@ -171,5 +171,167 @@ fn describe_reads_the_fields_of_a_kafka_topic() {
         )
         .unwrap_err();
     assert_eq!(error.code, "unsupported");
-    assert!(error.message.contains("topics"), "{}", error.message);
+    assert!(error.message.contains("kind topic"), "{}", error.message);
+    // The plain form: the kind topic, without a schema.
+    let reply = h
+        .tool(json!({"method":"describe","connection_id":connection,
+            "object":{"name":"orders","kind":"topic"}}))
+        .unwrap();
+    let job = h.wait_job(reply["job_id"].as_str().unwrap());
+    let topic: Value = serde_json::from_str(job["artifact"]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(topic["topic"], "orders", "{job}");
+    // A topic has no schema, so the kind topic reads its fields with any schema.
+    let reply = h
+        .tool(
+            json!({"method":"describe","connection_id":connection,"schema":"public",
+            "object":{"name":"orders","kind":"topic"}}),
+        )
+        .unwrap();
+    let job = h.wait_job(reply["job_id"].as_str().unwrap());
+    assert_eq!(job["status"], "completed", "{job}");
+    let topic: Value = serde_json::from_str(job["artifact"]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(topic["topic"], "orders", "{job}");
+}
+
+#[test]
+fn the_guide_comes_once_per_session_and_again_on_request() {
+    let mut h = kafka_harness();
+    h.authorize();
+    let first = h.tool(json!({"method":"get_context"})).unwrap();
+    assert_eq!(first["syntax"]["Kafka"], GUIDE);
+    let later = h.tool(json!({"method":"get_context"})).unwrap();
+    let note = later["syntax"]["Kafka"].as_str().unwrap();
+    assert!(note.contains("include_syntax"), "{note}");
+    let again = h
+        .tool(json!({"method":"get_context","include_syntax":true}))
+        .unwrap();
+    assert_eq!(again["syntax"]["Kafka"], GUIDE);
+}
+
+#[test]
+fn the_context_names_production_and_read_only() {
+    let mut h = kafka_harness();
+    h.authorize();
+    let context = h.tool(json!({"method":"get_context"})).unwrap();
+    let connection = &context["connections"][0];
+    assert_eq!(connection["production"], false, "{connection}");
+    assert_eq!(connection["read_only"], false, "{connection}");
+    assert!(
+        connection["capabilities"].get("data_edit").is_none(),
+        "{connection}"
+    );
+}
+
+/// A Kafka source that records each statement. A read with `SCAN` ends at its scan with
+/// no match, as a read of a topic whose messages are past the scan.
+fn recording_harness() -> (Harness, Arc<std::sync::Mutex<Vec<String>>>) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let record = seen.clone();
+    let handler: RunHandler = Arc::new(move |sql: String, mut sink| {
+        record.lock().unwrap().push(sql.clone());
+        Box::pin(async move {
+            let progress = Arc::new(sqln::progress::ReadProgress::new(true));
+            sink.track(progress.clone());
+            sink.set_columns(vec!["key".to_owned()]).await;
+            progress.add_scanned(10);
+            progress.set_end(if sql.contains("SCAN") {
+                sqln::progress::ReadEnd::Scan
+            } else {
+                sqln::progress::ReadEnd::Limit
+            });
+            let (rows, limit) = sink.finish().await;
+            Ok(StatementEnd {
+                rows,
+                limit,
+                has_columns: true,
+                ..StatementEnd::default()
+            })
+        })
+    });
+    let h = Harness::options(
+        Options {
+            connector: Some(Arc::new(MockConnector::new(Dialect::Kafka, handler))),
+            ..Default::default()
+        },
+        KeyboardMode::Conventional,
+    );
+    (h, seen)
+}
+
+#[test]
+fn an_agent_read_without_a_bound_gets_the_default_scan_and_says_how_it_ended() {
+    let (mut h, seen) = recording_harness();
+    h.authorize();
+    let reply = run(&mut h, "SELECT * FROM orders");
+    assert_eq!(reply["status"], "completed", "{reply}");
+    assert_eq!(
+        reply["default_scan"],
+        sqln::connector::kafka::command::AGENT_SCAN,
+        "{reply}"
+    );
+    let ran = seen.lock().unwrap().last().unwrap().clone();
+    assert!(ran.ends_with("SCAN 100000"), "{ran}");
+    let read = &reply["results"][0]["read"];
+    assert_eq!(read["end"], "scan", "{reply}");
+    assert_eq!(read["matched"], 0, "{reply}");
+    assert!(
+        reply["next_action"]
+            .as_str()
+            .unwrap()
+            .contains("raise SCAN"),
+        "{reply}"
+    );
+    // A read with its own bound keeps its text.
+    let reply = run(&mut h, "SELECT * FROM orders LIMIT 5");
+    assert!(reply["default_scan"].is_null(), "{reply}");
+    assert_eq!(
+        seen.lock().unwrap().last().unwrap(),
+        "SELECT * FROM orders LIMIT 5"
+    );
+    assert_eq!(reply["results"][0]["read"]["end"], "limit", "{reply}");
+    assert!(reply.get("next_action").is_none(), "{reply}");
+}
+
+#[test]
+fn a_statement_end_carries_its_notices_and_the_limit_of_the_grid() {
+    let handler: RunHandler = Arc::new(|_, mut sink| {
+        Box::pin(async move {
+            sink.notices(
+                vec!["NOTICE: \u{1b}[31mfirst".to_owned(), "x".repeat(4000)],
+                0,
+            )
+            .await;
+            sink.set_columns(vec!["a".to_owned()]).await;
+            let (rows, _) = sink.finish().await;
+            Ok(StatementEnd {
+                rows,
+                limit: sqln::sink::ReadLimit::RowCap,
+                has_columns: true,
+                ..StatementEnd::default()
+            })
+        })
+    });
+    let mut h = Harness::options(
+        Options {
+            connector: Some(Arc::new(MockConnector::new(Dialect::Sqlite, handler))),
+            ..Default::default()
+        },
+        KeyboardMode::Conventional,
+    );
+    h.authorize();
+    let reply = run(&mut h, "SELECT 1");
+    let statement = &reply["statements"][0];
+    assert_eq!(statement["limit"], "row_cap", "{reply}");
+    let notices = statement["notices"].as_array().unwrap();
+    let first = notices[0].as_str().unwrap();
+    assert!(
+        first.contains("first") && !first.contains('\u{1b}'),
+        "{first}"
+    );
+    // The notices of one statement stay within their byte limit.
+    let bytes: usize = notices
+        .iter()
+        .map(|text| text.as_str().unwrap().len())
+        .sum();
+    assert!(bytes <= 2048, "{bytes}");
 }

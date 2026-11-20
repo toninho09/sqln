@@ -40,6 +40,7 @@ struct Harness {
 #[derive(Debug, Default)]
 struct Run {
     columns: Vec<Vec<String>>,
+    types: Vec<Vec<Option<String>>>,
     rows: Vec<Row>,
     bytes: usize,
     statuses: Vec<StatementStatus>,
@@ -91,7 +92,10 @@ impl Harness {
         let mut run = Run::default();
         loop {
             match self.next() {
-                ExecEvent::Columns { columns, .. } => run.columns.push(columns),
+                ExecEvent::Columns { columns, types, .. } => {
+                    run.columns.push(columns);
+                    run.types.push(types);
+                }
                 ExecEvent::Rows { rows, bytes, .. } => {
                     run.rows.extend(rows);
                     run.bytes += bytes;
@@ -935,4 +939,17 @@ fn a_console_reads_the_schema_of_an_attached_database() {
     });
     assert_eq!(current.as_deref(), Some("db.public"));
     assert_eq!(count, 2);
+}
+
+#[test]
+fn results_carry_the_duckdb_column_types() {
+    let mut h = Harness::memory();
+    let run =
+        h.run(&["SELECT 1::INTEGER AS id, 'a'::VARCHAR AS label, 1.5::DECIMAL(5,2) AS amount"]);
+    let types: Vec<_> = run.types[0].iter().map(Option::as_deref).collect();
+    assert_eq!(
+        types,
+        [Some("INTEGER"), Some("VARCHAR"), Some("DECIMAL(5,2)")],
+        "{run:?}"
+    );
 }

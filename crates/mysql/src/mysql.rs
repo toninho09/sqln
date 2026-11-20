@@ -201,6 +201,56 @@ impl Canceller for MySqlCanceller {
     }
 }
 
+/// The name of the column type for the agent, such as `int unsigned` or `varchar`.
+/// The protocol type has no length, so `varchar(20)` gives `varchar`.
+fn column_type(column: &Column) -> String {
+    use ColumnType::*;
+    let binary = column.character_set() == BINARY_CHARSET;
+    let name = match column.column_type() {
+        MYSQL_TYPE_TINY => "tinyint",
+        MYSQL_TYPE_SHORT => "smallint",
+        MYSQL_TYPE_INT24 => "mediumint",
+        MYSQL_TYPE_LONG => "int",
+        MYSQL_TYPE_LONGLONG => "bigint",
+        MYSQL_TYPE_FLOAT => "float",
+        MYSQL_TYPE_DOUBLE => "double",
+        MYSQL_TYPE_DECIMAL | MYSQL_TYPE_NEWDECIMAL => "decimal",
+        MYSQL_TYPE_YEAR => "year",
+        MYSQL_TYPE_DATE | MYSQL_TYPE_NEWDATE => "date",
+        MYSQL_TYPE_TIME | MYSQL_TYPE_TIME2 => "time",
+        MYSQL_TYPE_DATETIME | MYSQL_TYPE_DATETIME2 => "datetime",
+        MYSQL_TYPE_TIMESTAMP | MYSQL_TYPE_TIMESTAMP2 => "timestamp",
+        MYSQL_TYPE_BIT => "bit",
+        MYSQL_TYPE_JSON => "json",
+        MYSQL_TYPE_ENUM => "enum",
+        MYSQL_TYPE_SET => "set",
+        MYSQL_TYPE_GEOMETRY => "geometry",
+        MYSQL_TYPE_NULL => "null",
+        MYSQL_TYPE_VARCHAR | MYSQL_TYPE_VAR_STRING if binary => "varbinary",
+        MYSQL_TYPE_VARCHAR | MYSQL_TYPE_VAR_STRING => "varchar",
+        MYSQL_TYPE_STRING if binary => "binary",
+        MYSQL_TYPE_STRING => "char",
+        MYSQL_TYPE_TINY_BLOB | MYSQL_TYPE_MEDIUM_BLOB | MYSQL_TYPE_LONG_BLOB | MYSQL_TYPE_BLOB
+            if binary =>
+        {
+            "blob"
+        }
+        MYSQL_TYPE_TINY_BLOB | MYSQL_TYPE_MEDIUM_BLOB | MYSQL_TYPE_LONG_BLOB | MYSQL_TYPE_BLOB => {
+            "text"
+        }
+        _ => "unknown",
+    };
+    if is_number(column)
+        && column
+            .flags()
+            .contains(mysql_async::consts::ColumnFlags::UNSIGNED_FLAG)
+    {
+        format!("{name} unsigned")
+    } else {
+        name.to_owned()
+    }
+}
+
 fn is_number(column: &Column) -> bool {
     matches!(
         column.column_type(),
@@ -444,7 +494,11 @@ impl MySqlSession {
                     .iter()
                     .map(|column| column.name_str().into_owned())
                     .collect();
-                sink.set_columns(names).await;
+                let types = columns
+                    .iter()
+                    .map(|column| Some(column_type(column)))
+                    .collect();
+                sink.set_typed_columns(names, types).await;
             }
             let mut storing = true;
             let mut writer = RowWriter::default();

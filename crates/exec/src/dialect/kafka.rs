@@ -93,4 +93,15 @@ impl Features for Kafka {
     fn family(&self) -> Option<Family> {
         None
     }
+
+    fn agent_bound(&self, sql: &str) -> Option<String> {
+        crate::connector::kafka::command::bounded_read(
+            sql,
+            crate::connector::kafka::command::AGENT_SCAN,
+        )
+    }
+
+    fn agent_name(&self) -> &'static str {
+        "Kafka"
+    }
 }

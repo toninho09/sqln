@@ -25,6 +25,25 @@ pub struct Instance {
     pub version: u32,
     pub socket: PathBuf,
 }
+impl Instance {
+    /// True when this bridge speaks the IPC version of the instance.
+    pub fn compatible(&self) -> bool {
+        self.version == VERSION
+    }
+}
+
+/// One request of the bridge. The reply repeats `id`, so a late reply of an abandoned
+/// request never answers a later one.
+#[derive(Serialize, Deserialize)]
+struct Request {
+    id: u64,
+    operation: Operation,
+}
+#[derive(Serialize, Deserialize)]
+struct Response {
+    id: u64,
+    reply: Reply,
+}
 
 pub struct Envelope {
     pub session: String,
@@ -230,9 +249,9 @@ async fn serve(
     wire.send(encode(&VERSION)?).await?;
     let session = uuid::Uuid::new_v4().to_string();
     loop {
-        let operation = tokio::select! {
+        let Request { id, operation } = tokio::select! {
             () = alive.cancelled() => break,
-            result = receive::<Operation>(&mut wire) => result?,
+            result = receive::<Request>(&mut wire) => result?,
         };
         let (reply, received) = oneshot::channel();
         let envelope = Envelope {
@@ -247,23 +266,26 @@ async fn serve(
                 "ui_busy",
                 "SQLN has too many pending requests. Try again.",
             ));
-            wire.send(encode(&reply)?).await?;
+            wire.send(encode(&Response { id, reply })?).await?;
             if matches!(error, mpsc::TrySendError::Disconnected(_)) {
                 break;
             }
             continue;
         }
         wake.wake();
+        // A ready reply comes before the next frame: the bridge can send its next request
+        // as soon as it abandons a call, and that request must not close the connection.
         let result = tokio::select! {
+            biased;
             () = alive.cancelled() => break,
-            // The bridge sends one request at a time. EOF also cancels an unanswered request.
-            _ = wire.next() => break,
             result = tokio::time::timeout(Duration::from_secs(10), received) => match result {
                 Ok(Ok(result)) => result,
                 _ => Err(Error::new("ui_busy", "SQLN did not process the request. Try again.")),
-            }
+            },
+            // The bridge sends one request at a time. EOF also cancels an unanswered request.
+            _ = wire.next() => break,
         };
-        wire.send(encode(&result)?).await?;
+        wire.send(encode(&Response { id, reply: result })?).await?;
     }
     drop(cancel);
     Ok(())
@@ -271,6 +293,8 @@ async fn serve(
 
 pub struct Client {
     wire: Wire,
+    /// The id of the last request.
+    last: u64,
 }
 impl Client {
     pub async fn connect(instance: &Instance, client: &str) -> io::Result<Self> {
@@ -292,12 +316,20 @@ impl Client {
         if version != VERSION {
             return Err(invalid());
         }
-        Ok(Self { wire })
+        Ok(Self { wire, last: 0 })
     }
+    /// Sends one request and returns its reply. A reply with another id belongs to an
+    /// earlier request that its caller abandoned, and the client skips it.
     pub async fn call(&mut self, operation: &Operation) -> Reply {
+        self.last += 1;
+        let id = self.last;
+        let request = Request {
+            id,
+            operation: operation.clone(),
+        };
         if self
             .wire
-            .send(encode(operation).map_err(|_| {
+            .send(encode(&request).map_err(|_| {
                 Error::new(
                     "invalid_request",
                     "The request exceeds the local protocol limit.",
@@ -311,15 +343,22 @@ impl Client {
                 "SQLN disconnected. List instances and request access again.",
             ));
         }
-        receive(&mut self.wire).await.map_err(|_| {
-            Error::new(
-                "instance_gone",
-                "SQLN disconnected. List instances and request access again.",
-            )
-        })?
+        loop {
+            let response: Response = receive(&mut self.wire).await.map_err(|_| {
+                Error::new(
+                    "instance_gone",
+                    "SQLN disconnected. List instances and request access again.",
+                )
+            })?;
+            if response.id == id {
+                return response.reply;
+            }
+        }
     }
 }
 
+/// Lists the running instances. An instance of another IPC version stays in the list, so
+/// the bridge can explain it; `Instance::compatible` tells it apart.
 pub async fn discover(dir: &Path) -> io::Result<Vec<Instance>> {
     private_directory(dir)?;
     let mut candidates = Vec::new();
@@ -351,8 +390,7 @@ pub async fn discover(dir: &Path) -> io::Result<Vec<Instance>> {
         let Ok(instance) = serde_json::from_slice::<Instance>(&data) else {
             continue;
         };
-        if instance.version != VERSION
-            || instance.socket.parent() != Some(dir)
+        if instance.socket.parent() != Some(dir)
             || path.file_stem().and_then(|v| v.to_str()) != Some(&instance.instance_id)
         {
             continue;
@@ -370,6 +408,10 @@ pub async fn discover(dir: &Path) -> io::Result<Vec<Instance>> {
     let mut found = Vec::new();
     for (instance, live) in
         futures_util::future::join_all(candidates.into_iter().map(|instance| async move {
+            // Another IPC version refuses the handshake. Its held lock proves that it runs.
+            if !instance.compatible() {
+                return (instance, true);
+            }
             let live = matches!(
                 tokio::time::timeout(
                     Duration::from_millis(500),
