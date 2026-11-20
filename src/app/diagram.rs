@@ -194,8 +194,8 @@ impl App {
         match target {
             Ok(Target::Open(connection, focus)) => self.open_diagram(connection, focus),
             Ok(Target::Wait(connection)) => {
-                if !self.pending_diagrams.contains(&connection) {
-                    self.pending_diagrams.push(connection);
+                if !self.pending.diagrams.contains(&connection) {
+                    self.pending.diagrams.push(connection);
                 }
                 self.ensure_catalog(connection);
             }
@@ -207,13 +207,14 @@ impl App {
     /// already shows its reason. The other waiting diagrams keep their places.
     pub(super) fn open_pending_diagram(&mut self, connection: ConnectionId, loaded: bool) {
         let Some(index) = self
-            .pending_diagrams
+            .pending
+            .diagrams
             .iter()
             .position(|id| *id == connection)
         else {
             return;
         };
-        self.pending_diagrams.remove(index);
+        self.pending.diagrams.remove(index);
         if loaded {
             let target = self.schema_target(connection, None);
             self.go_to_diagram(target);

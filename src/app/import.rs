@@ -96,7 +96,7 @@ impl App {
     }
 
     fn has_import(&self, id: ConsoleId) -> bool {
-        self.imports.iter().any(|run| run.console == id)
+        self.background.imports.iter().any(|run| run.console == id)
     }
 
     /// Returns true when the row under the cursor of the navigator can receive a file.
@@ -123,32 +123,32 @@ impl App {
         let Some(tab) = self.table().map(|tab| tab.id) else {
             return;
         };
-        self.import_wanted = Some(tab);
+        self.pending.import = Some(tab);
         self.continue_wanted_import();
     }
 
     /// Opens the dialog of a table that waited for its first page.
     pub(super) fn continue_wanted_import(&mut self) {
-        let Some(id) = self.import_wanted else {
+        let Some(id) = self.pending.import else {
             return;
         };
         let index = self.tabs.tables.iter().position(|tab| tab.id == id);
         let Some(tab) = index.map(|index| &self.tabs.tables[index]) else {
-            self.import_wanted = None;
+            self.pending.import = None;
             return;
         };
         if tab.is_busy() {
             return;
         }
-        self.import_wanted = None;
+        self.pending.import = None;
         if self.table().is_some_and(|tab| tab.id == id) {
             self.open_import();
         }
     }
 
     pub(super) fn clear_wanted_import(&mut self, id: ConsoleId) {
-        if self.import_wanted == Some(id) {
-            self.import_wanted = None;
+        if self.pending.import == Some(id) {
+            self.pending.import = None;
         }
     }
 
@@ -202,7 +202,7 @@ impl App {
             *phase = Phase::Waiting;
             clock.start();
         }
-        self.imports.push(ImportRun {
+        self.background.imports.push(ImportRun {
             console: id,
             work,
             failure: None,
@@ -216,6 +216,7 @@ impl App {
             return false;
         };
         let found = self
+            .background
             .imports
             .iter()
             .position(|run| run.execution() == execution);
@@ -232,16 +233,16 @@ impl App {
             }
             ExecEvent::Rows { rows, bytes, .. } => {
                 self.budget.release(*bytes);
-                if let Work::Columns { rows: kept, .. } = &mut self.imports[index].work {
+                if let Work::Columns { rows: kept, .. } = &mut self.background.imports[index].work {
                     kept.append(rows);
                 }
             }
             ExecEvent::StatementFinished {
                 status: StatementStatus::Error(message),
                 ..
-            } => self.imports[index].failure = Some(message.clone()),
+            } => self.background.imports[index].failure = Some(message.clone()),
             ExecEvent::ExecutionFinished { end, message, .. } => {
-                let run = self.imports.remove(index);
+                let run = self.background.imports.remove(index);
                 self.end_import(run, *end, message.take());
             }
             _ => {}
@@ -284,9 +285,9 @@ impl App {
         // A change of tab during the read leaves the dialog without its table on screen.
         if self.table().is_some_and(|tab| tab.id == id) {
             let stamp = time_stamp();
-            self.modals.import_form = Some(ImportForm::new(table, &self.import_choices, &stamp));
+            self.modals.import_form = Some(ImportForm::new(table, &self.choices.import, &stamp));
             // A read of an older dialog can have the number of a read of this one.
-            self.import_probes = ProbeChannel::default();
+            self.background.import_probes = ProbeChannel::default();
         }
     }
 
@@ -375,7 +376,7 @@ impl App {
             options,
             detect,
         } = request;
-        let sender = self.import_probes.sender.clone();
+        let sender = self.background.import_probes.sender.clone();
         manager.spawn_blocking(move || {
             let _ = sender.send((serial, probe(&path, options, detect)));
         });
@@ -384,7 +385,7 @@ impl App {
     /// Takes the answers of the reads. It returns true when the dialog changed.
     pub(super) fn poll_probes(&mut self) -> bool {
         let mut changed = false;
-        while let Ok((serial, probe)) = self.import_probes.receiver.try_recv() {
+        while let Ok((serial, probe)) = self.background.import_probes.receiver.try_recv() {
             if let Some(form) = &mut self.modals.import_form {
                 form.on_probe(serial, probe);
                 changed = true;
@@ -444,7 +445,11 @@ impl App {
     /// Returns the progress of the tab on screen for the hint row.
     pub(super) fn import_progress(&self) -> Option<String> {
         let id = self.table()?.id;
-        let run = self.imports.iter().find(|run| run.console == id)?;
+        let run = self
+            .background
+            .imports
+            .iter()
+            .find(|run| run.console == id)?;
         let Work::Writing { progress, .. } = &run.work else {
             return None;
         };

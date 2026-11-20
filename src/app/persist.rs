@@ -335,8 +335,8 @@ impl App {
             persist.format_json = config.format_json;
             persist.bell_after_seconds = config.bell_after_seconds;
         }
-        self.export_choices = config.export;
-        self.import_choices = config.import;
+        self.choices.export = config.export;
+        self.choices.import = config.import;
         self.appearance.choices = (config.theme, config.icons);
         if config.keyboard != self.keyboard {
             self.set_keyboard(config.keyboard);
@@ -566,19 +566,19 @@ impl App {
     /// Keeps the choices of the export dialog. A write that fails leaves a note, and
     /// the export goes on.
     pub(super) fn save_export_choices(&mut self, choices: ExportChoices) {
-        if self.export_choices == choices {
+        if self.choices.export == choices {
             return;
         }
-        self.export_choices = choices.clone();
+        self.choices.export = choices.clone();
         self.change_global(|root| config::change_export(root, choices));
     }
 
     /// Keeps the choices of the import dialog, as `save_export_choices` does.
     pub(super) fn save_import_choices(&mut self, choices: ImportChoices) {
-        if self.import_choices == choices {
+        if self.choices.import == choices {
             return;
         }
-        self.import_choices = choices.clone();
+        self.choices.import = choices.clone();
         self.change_global(|root| config::change_import(root, choices));
     }
 

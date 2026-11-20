@@ -134,7 +134,7 @@ impl App {
 
     /// Returns true when an export uses the results of this tab.
     pub(super) fn has_export(&self, id: ConsoleId) -> bool {
-        self.exports.iter().any(|run| run.console == id)
+        self.background.exports.iter().any(|run| run.console == id)
     }
 
     pub(super) fn tab_run(&mut self, id: ConsoleId) -> Option<(&mut Phase, &mut RunClock)> {
@@ -207,7 +207,7 @@ impl App {
             return;
         }
         if let Some(source) = self.export_source() {
-            let form = ExportForm::new(source, &self.export_choices, &time_stamp());
+            let form = ExportForm::new(source, &self.choices.export, &time_stamp());
             self.modals.export_form = Some(form);
         }
     }
@@ -229,7 +229,11 @@ impl App {
             .options()
             .and_then(|_| destination_of(form.path_text()))
             .and_then(|path| {
-                let used = self.exports.iter().any(|run| run.destination == path);
+                let used = self
+                    .background
+                    .exports
+                    .iter()
+                    .any(|run| run.destination == path);
                 if used {
                     Err(text::EXPORT_IN_USE.to_owned())
                 } else {
@@ -352,7 +356,7 @@ impl App {
             *phase = Phase::Waiting;
             clock.start();
         }
-        self.exports.push(ExportRun {
+        self.background.exports.push(ExportRun {
             console: id,
             destination,
             writer,
@@ -395,7 +399,7 @@ impl App {
             *phase = Phase::Running;
             clock.start();
         }
-        self.exports.push(ExportRun {
+        self.background.exports.push(ExportRun {
             console: id,
             destination,
             writer,
@@ -410,16 +414,17 @@ impl App {
 
     /// Returns true when an export has rows of the grid to write.
     pub(super) fn exports_have_work(&self) -> bool {
-        self.exports
+        self.background
+            .exports
             .iter()
             .any(|run| matches!(run.work, Work::Writing { .. }))
     }
 
     /// Writes rows of the grid until the deadline.
     pub(super) fn continue_exports(&mut self, deadline: Instant) {
-        for index in (0..self.exports.len()).rev() {
+        for index in (0..self.background.exports.len()).rev() {
             if self.write_slice(index, deadline) {
-                let run = self.exports.remove(index);
+                let run = self.background.exports.remove(index);
                 self.end_export(run, ExecutionEnd::Completed, None);
             }
         }
@@ -427,7 +432,7 @@ impl App {
 
     /// Returns true at the end of the rows of one export.
     fn write_slice(&mut self, index: usize, deadline: Instant) -> bool {
-        let run = &mut self.exports[index];
+        let run = &mut self.background.exports[index];
         let Work::Writing {
             result,
             rows,
@@ -464,7 +469,7 @@ impl App {
             return false;
         };
         let reading = |run: &ExportRun| matches!(run.work, Work::Reading(id) if id == execution);
-        let Some(index) = self.exports.iter().position(reading) else {
+        let Some(index) = self.background.exports.iter().position(reading) else {
             return false;
         };
         match event {
@@ -478,12 +483,12 @@ impl App {
             ExecEvent::StatementFinished {
                 status: StatementStatus::Error(message),
                 ..
-            } => self.exports[index].failure = Some(message.clone()),
+            } => self.background.exports[index].failure = Some(message.clone()),
             ExecEvent::ConfirmClose { console, .. } => {
                 self.on_signal(*console, Signal::ConfirmClose);
             }
             ExecEvent::ExecutionFinished { end, message, .. } => {
-                let run = self.exports.remove(index);
+                let run = self.background.exports.remove(index);
                 self.end_export(run, *end, message.clone());
             }
             _ => {}
@@ -495,17 +500,17 @@ impl App {
     pub(super) fn stop_export(&mut self, id: ConsoleId) -> bool {
         let writing =
             |run: &ExportRun| run.console == id && matches!(run.work, Work::Writing { .. });
-        let Some(index) = self.exports.iter().position(writing) else {
+        let Some(index) = self.background.exports.iter().position(writing) else {
             return false;
         };
-        let run = self.exports.remove(index);
+        let run = self.background.exports.remove(index);
         self.end_export(run, ExecutionEnd::Stopped, None);
         true
     }
 
     /// Removes the file of a tab that closes.
     pub(super) fn discard_export(&mut self, id: ConsoleId) {
-        self.exports.retain(|run| {
+        self.background.exports.retain(|run| {
             if run.console == id {
                 run.writer.discard();
             }
@@ -515,7 +520,7 @@ impl App {
 
     /// Removes the files of the exports that the exit of the application ends.
     pub(super) fn discard_exports(&mut self) {
-        for run in self.exports.drain(..) {
+        for run in self.background.exports.drain(..) {
             run.writer.discard();
         }
     }
@@ -572,7 +577,7 @@ impl App {
         let id = run.console;
         let body = text::export_part(run.writer.rows(), failure, run.destination.exists());
         run.work = Work::Asking;
-        self.exports.push(run);
+        self.background.exports.push(run);
         self.show_dialog(
             text::TITLE_EXPORT_PART,
             body,
@@ -585,8 +590,8 @@ impl App {
 
     fn take_asking(&mut self, id: ConsoleId) -> Option<ExportRun> {
         let asking = |run: &ExportRun| run.console == id && matches!(run.work, Work::Asking);
-        let index = self.exports.iter().position(asking)?;
-        Some(self.exports.remove(index))
+        let index = self.background.exports.iter().position(asking)?;
+        Some(self.background.exports.remove(index))
     }
 
     pub(super) fn keep_export(&mut self, id: ConsoleId) {
@@ -606,6 +611,7 @@ impl App {
     pub(super) fn export_progress(&self) -> Option<String> {
         let id = self.active_tab_id();
         let run = self
+            .background
             .exports
             .iter()
             .find(|run| run.console == id && !matches!(run.work, Work::Asking))?;

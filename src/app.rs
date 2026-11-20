@@ -414,10 +414,14 @@ pub struct App {
     connections: Vec<Connection>,
     navigator: Navigator,
     navigator_focused: bool,
+    /// Work that waits for a read or an answer before it continues.
+    pending: Pending,
+    /// Reads, exports, imports, and vault writes in progress.
+    background: Background,
+    choices: Choices,
+    counters: Counters,
     /// The catalog of a console without a connection.
     fallback_catalog: Option<Catalog>,
-    /// The count of catalog reads. A new `Connection` keeps its id, so one count serves all.
-    catalog_reads: u64,
     manager: Option<Manager>,
     events: Option<Receiver<ExecEvent>>,
     budget: Arc<Budget>,
@@ -435,7 +439,6 @@ pub struct App {
     theme: Theme,
     layout: ScreenLayout,
     editor_ratio: u16,
-    analysis_job: Option<crate::analysis::Job>,
     status: Option<String>,
     /// The message on the clock, with the time of its first frame.
     status_shown: Option<(String, Instant)>,
@@ -443,44 +446,62 @@ pub struct App {
     bell: bool,
     /// True when the last read found execution events.
     events_flow: bool,
-    /// A SQL template that waits for the columns of its relation.
-    pending_sql: Option<(SqlRequest, Template)>,
-    /// The connections whose diagrams wait for their catalogs, which give the current
-    /// schemas.
-    pending_diagrams: Vec<ConnectionId>,
-    /// The connection that waits for the `.sql` file of an open.
-    sql_file_open: Option<ConnectionId>,
-    /// The file that waits for the answer of the copy-or-linked question.
-    sql_file: Option<sql_file::PendingSqlFile>,
-    /// The first choices of the next export dialog.
-    export_choices: ExportChoices,
-    /// The exports in progress, with at most one for each tab.
-    exports: Vec<export::ExportRun>,
-    /// The first choices of the next import dialog.
-    import_choices: ImportChoices,
-    /// The imports in progress, with at most one for each tab.
-    imports: Vec<import::ImportRun>,
-    /// The reads of a DDL in progress.
-    definitions: Vec<definition::DefinitionRead>,
-    /// A table tab whose key `F` waits for the keys of its table.
-    pending_follow: Option<ConsoleId>,
-    /// The answers of the file reads of the import dialog.
-    import_probes: import::ProbeChannel,
-    /// The answers of the vault writes of Schema Registry passwords.
-    registry_writes: connections::VaultWrites,
-    /// A table tab that opens the import dialog after its first page.
-    import_wanted: Option<ConsoleId>,
     /// The files of the application. It is `None` when nothing loads or saves.
     persist: Option<persist::Persist>,
     auth: auth::Auth,
     agent: agent::State,
     /// The SQL rules of a console that has no connection.
     fallback_dialect: Dialect,
+    exiting: bool,
+    quit: bool,
+}
+
+/// Work that waits for a read or an answer before it continues.
+struct Pending {
+    /// A SQL template that waits for the columns of its relation.
+    sql: Option<(SqlRequest, Template)>,
+    /// The connections whose diagrams wait for their catalogs, which give the current
+    /// schemas.
+    diagrams: Vec<ConnectionId>,
+    /// The connection that waits for the `.sql` file of an open.
+    sql_file_open: Option<ConnectionId>,
+    /// The file that waits for the answer of the copy-or-linked question.
+    sql_file: Option<sql_file::PendingSqlFile>,
+    /// A table tab whose key `F` waits for the keys of its table.
+    follow: Option<ConsoleId>,
+    /// A table tab that opens the import dialog after its first page.
+    import: Option<ConsoleId>,
+}
+
+/// The reads, exports, imports, and vault writes in progress.
+#[derive(Default)]
+struct Background {
+    analysis: Option<crate::analysis::Job>,
+    /// The exports in progress, with at most one for each tab.
+    exports: Vec<export::ExportRun>,
+    /// The imports in progress, with at most one for each tab.
+    imports: Vec<import::ImportRun>,
+    /// The reads of a DDL in progress.
+    definitions: Vec<definition::DefinitionRead>,
+    /// The answers of the file reads of the import dialog.
+    import_probes: import::ProbeChannel,
+    /// The answers of the vault writes of Schema Registry passwords.
+    registry_writes: connections::VaultWrites,
+}
+
+/// The first choices of the next export and import dialogs.
+struct Choices {
+    export: ExportChoices,
+    import: ImportChoices,
+}
+
+/// The counters that name new consoles, tests, and catalog reads.
+struct Counters {
     next_console_number: usize,
     next_unbound_console: ConsoleId,
     next_test: u64,
-    exiting: bool,
-    quit: bool,
+    /// The count of catalog reads. A new `Connection` keeps its id, so one count serves all.
+    catalog_reads: u64,
 }
 
 /// The theme sources: the terminal, the environment, the choices of the files, and the custom themes.
@@ -546,9 +567,27 @@ impl App {
         let mut app = Self {
             connections: Vec::new(),
             navigator: Navigator::default(),
+            pending: Pending {
+                sql: None,
+                diagrams: Vec::new(),
+                sql_file_open: None,
+                sql_file: None,
+                follow: None,
+                import: None,
+            },
+            background: Background::default(),
+            choices: Choices {
+                export: options.export_choices.clone(),
+                import: options.import_choices.clone(),
+            },
+            counters: Counters {
+                next_console_number: 1,
+                next_unbound_console: FIRST_UNBOUND_CONSOLE,
+                next_test: 1,
+                catalog_reads: 0,
+            },
             navigator_focused: false,
             fallback_catalog: options.catalog,
-            catalog_reads: 0,
             manager: None,
             events: None,
             budget,
@@ -585,31 +624,14 @@ impl App {
             theme,
             layout: ScreenLayout::default(),
             editor_ratio: DEFAULT_EDITOR_RATIO,
-            analysis_job: None,
-            sql_file_open: None,
-            sql_file: None,
-            export_choices: options.export_choices.clone(),
-            exports: Vec::new(),
-            import_choices: options.import_choices.clone(),
-            imports: Vec::new(),
-            definitions: Vec::new(),
-            pending_follow: None,
-            import_probes: import::ProbeChannel::default(),
-            registry_writes: connections::VaultWrites::default(),
-            import_wanted: None,
             status: None,
             status_shown: None,
             bell: false,
             events_flow: false,
-            pending_sql: None,
-            pending_diagrams: Vec::new(),
             persist,
             auth: auth::Auth::new(options.vault.take(), plain),
             agent: agent::State::default(),
             fallback_dialect: options.dialect,
-            next_console_number: 1,
-            next_unbound_console: FIRST_UNBOUND_CONSOLE,
-            next_test: 1,
             exiting: false,
             quit: false,
         };
@@ -685,10 +707,10 @@ impl App {
 
     fn unbound_console(&mut self, dialect: Dialect) -> Console {
         let editor = self.new_editor("", dialect);
-        let name = text::console_name(self.next_console_number);
-        self.next_console_number += 1;
-        let id = self.next_unbound_console;
-        self.next_unbound_console -= 1;
+        let name = text::console_name(self.counters.next_console_number);
+        self.counters.next_console_number += 1;
+        let id = self.counters.next_unbound_console;
+        self.counters.next_unbound_console -= 1;
         let mut console = Console::new(id, name, editor);
         console.opened = self.next_tab_place();
         console

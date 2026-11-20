@@ -59,7 +59,7 @@ impl App {
 
     /// The action knows the connection, so the file browser comes next.
     fn begin_sql_file(&mut self, connection: ConnectionId) {
-        self.sql_file_open = Some(connection);
+        self.pending.sql_file_open = Some(connection);
         let home = std::env::home_dir();
         self.modals.browser = Some(crate::browser::FileBrowser::new("", false, home));
     }
@@ -105,7 +105,7 @@ impl App {
 
     /// The file browser chose a file.
     pub(super) fn sql_file_chosen(&mut self, path: PathBuf) {
-        let Some(connection) = self.sql_file_open.take() else {
+        let Some(connection) = self.pending.sql_file_open.take() else {
             return;
         };
         self.read_sql_file(connection, path);
@@ -114,7 +114,7 @@ impl App {
     fn read_sql_file(&mut self, connection: ConnectionId, path: PathBuf) {
         match ExternalFile::read(&path) {
             Ok(read) => {
-                self.sql_file = Some(PendingSqlFile {
+                self.pending.sql_file = Some(PendingSqlFile {
                     connection,
                     file: read.file,
                     text: read.text,
@@ -139,7 +139,7 @@ impl App {
 
     /// The answer of the copy-or-linked question: it opens the console.
     pub(super) fn accept_sql_file(&mut self, linked: bool) {
-        let Some(pending) = self.sql_file.take() else {
+        let Some(pending) = self.pending.sql_file.take() else {
             return;
         };
         let Some(target) = self.connection(pending.connection) else {

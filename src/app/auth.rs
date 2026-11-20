@@ -1333,8 +1333,8 @@ impl App {
 
     /// A refused password never reaches a store, so the check comes before the save.
     fn verify_password(&mut self) {
-        let test = self.next_test;
-        self.next_test += 1;
+        let test = self.counters.next_test;
+        self.counters.next_test += 1;
         let Some(attempt) = &mut self.auth.active else {
             return;
         };

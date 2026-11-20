@@ -229,7 +229,7 @@ fn association_blocks_export_reads_before_they_create_a_file() {
     );
     assert_eq!(app.status.as_deref(), Some(text::CONNECTION_CHANGE_PENDING));
     assert!(!destination.exists());
-    assert!(app.exports.is_empty());
+    assert!(app.background.exports.is_empty());
     assert!(!app.console().is_busy());
     release.now();
     pump(&mut app, Instant::now());

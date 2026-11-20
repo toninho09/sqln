@@ -989,15 +989,15 @@ impl App {
                 Vec::new(),
                 vec![connection],
                 None,
-                Output::Catalog(connection, self.catalog_reads),
+                Output::Catalog(connection, self.counters.catalog_reads),
             )?;
             self.complete_agent_job(&job, Some(artifact));
             return self.agent_job_reply(session, &job);
         }
         let console = self.agent_console(session, connection, None)?;
         self.agent_target(console)?;
-        self.catalog_reads += 1;
-        let read = self.catalog_reads;
+        self.counters.catalog_reads += 1;
+        let read = self.counters.catalog_reads;
         let job = self.new_agent_job(
             session,
             vec![console],

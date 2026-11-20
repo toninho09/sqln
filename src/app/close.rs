@@ -283,7 +283,7 @@ impl App {
                 self.close_step(console);
             }
             DialogAction::AgentRun(job, run) => self.agent_run_decision(&job, run),
-            DialogAction::SqlFileCancel => self.sql_file = None,
+            DialogAction::SqlFileCancel => self.pending.sql_file = None,
             DialogAction::SqlFileCopy => self.accept_sql_file(false),
             DialogAction::SqlFileLinked => self.accept_sql_file(true),
             DialogAction::SqlFileReload(console) => self.reload_external(console),

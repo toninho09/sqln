@@ -74,7 +74,7 @@ impl App {
             return;
         };
         let schema = target.schema.clone();
-        self.definitions.push(DefinitionRead {
+        self.background.definitions.push(DefinitionRead {
             console,
             connection,
             target,
@@ -104,6 +104,7 @@ impl App {
     ) {
         let Some(manager) = &self.manager else { return };
         let Some(read) = self
+            .background
             .definitions
             .iter_mut()
             .find(|read| read.console == console && read.connection == connection)
@@ -122,11 +123,12 @@ impl App {
     /// Ends a read without a console: a canceled password, or a connection that leaves.
     pub(super) fn cancel_definition(&mut self, console: ConsoleId) {
         if let Some(index) = self
+            .background
             .definitions
             .iter()
             .position(|read| read.console == console)
         {
-            let read = self.definitions.remove(index);
+            let read = self.background.definitions.remove(index);
             if let Some(manager) = &mut self.manager {
                 manager.close_console(read.console);
             }
@@ -135,6 +137,7 @@ impl App {
 
     pub(super) fn cancel_definitions_of(&mut self, connection: ConnectionId) {
         let consoles: Vec<ConsoleId> = self
+            .background
             .definitions
             .iter()
             .filter(|read| read.connection == connection)
@@ -151,13 +154,14 @@ impl App {
             return false;
         };
         let Some(index) = self
+            .background
             .definitions
             .iter()
             .position(|read| read.console == console)
         else {
             return false;
         };
-        let read = &mut self.definitions[index];
+        let read = &mut self.background.definitions[index];
         let current = event.execution().is_some() && event.execution() == read.execution;
         match event {
             ExecEvent::Rows { key, rows, bytes } => {
@@ -179,7 +183,7 @@ impl App {
             ExecEvent::ExecutionFinished { end, message, .. } if current => {
                 let end = *end;
                 let message = message.take();
-                let read = self.definitions.remove(index);
+                let read = self.background.definitions.remove(index);
                 if let Some(manager) = &mut self.manager {
                     manager.close_console(read.console);
                 }

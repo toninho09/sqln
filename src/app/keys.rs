@@ -896,7 +896,7 @@ impl App {
         match key.code {
             KeyCode::Esc | KeyCode::Enter => {
                 self.modals.overlay = None;
-                self.analysis_job = None;
+                self.background.analysis = None;
             }
             KeyCode::Up | KeyCode::Char('k') => overlay.scroll = overlay.scroll.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => overlay.scroll = overlay.scroll.saturating_add(1),

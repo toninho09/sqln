@@ -228,8 +228,8 @@ impl App {
         if self.config_blocked() {
             return;
         }
-        self.catalog_reads += 1;
-        let read = self.catalog_reads;
+        self.counters.catalog_reads += 1;
+        let read = self.counters.catalog_reads;
         if let Some(connection) = self.connection_mut(id) {
             connection.catalog_read = read;
             connection.catalog_state = CatalogState::Loading;
@@ -305,8 +305,8 @@ impl App {
             }
             Err(message) => {
                 self.status = Some(message);
-                self.pending_sql = None;
-                self.pending_follow = None;
+                self.pending.sql = None;
+                self.pending.follow = None;
                 // A refresh would ask for the same columns again, so the lists only stop.
                 for console in &mut self.tabs.consoles {
                     if console.connection == Some(id) {
@@ -324,7 +324,7 @@ impl App {
         let same = |(request, _): &mut (SqlRequest, Template)| {
             request.connection == id && request.relation == *relation
         };
-        if let Some((request, template)) = self.pending_sql.take_if(same) {
+        if let Some((request, template)) = self.pending.sql.take_if(same) {
             self.write_sql(&request, template);
         }
     }
@@ -536,7 +536,7 @@ impl App {
         let missing = found.is_some_and(|(_, found)| found.columns == Columns::NotLoaded);
         if template.needs_columns() && missing {
             let (connection, relation) = (request.connection, request.relation.clone());
-            self.pending_sql = Some((request, template));
+            self.pending.sql = Some((request, template));
             self.request_columns(connection, relation);
         } else {
             self.write_sql(&request, template);
@@ -961,8 +961,8 @@ impl App {
     pub(super) fn unbind_console(&mut self, index: usize) {
         self.cancel_agent_console(self.tabs.consoles[index].id);
         self.agent.forget_console(self.tabs.consoles[index].id);
-        let id = self.next_unbound_console;
-        self.next_unbound_console -= 1;
+        let id = self.counters.next_unbound_console;
+        self.counters.next_unbound_console -= 1;
         let console = &mut self.tabs.consoles[index];
         if let Some(manager) = &mut self.manager {
             manager.close_console(console.id);
@@ -1154,8 +1154,8 @@ impl App {
         if !self.ensure_manager() {
             return;
         }
-        let test = self.next_test;
-        self.next_test += 1;
+        let test = self.counters.next_test;
+        self.counters.next_test += 1;
         if let Some(form) = &mut self.modals.form {
             form.test = Some(test);
             form.note = Some(FormNote::Info(text::FORM_TESTING.to_owned()));
@@ -1180,8 +1180,8 @@ impl App {
         if !self.ensure_manager() {
             return;
         }
-        let test = self.next_test;
-        self.next_test += 1;
+        let test = self.counters.next_test;
+        self.counters.next_test += 1;
         if let Some(form) = &mut self.modals.form {
             form.test = Some(test);
             form.note = None;
@@ -1555,7 +1555,7 @@ impl App {
         let (Some(manager), vault) = (&self.manager, self.ai_vault()) else {
             return;
         };
-        let sender = self.registry_writes.sender.clone();
+        let sender = self.background.registry_writes.sender.clone();
         manager.spawn_blocking(move || {
             let result = vault
                 .write_api_key(&account, &password)
@@ -1567,7 +1567,7 @@ impl App {
     /// Shows a failed vault write of a registry password. It returns true for a change.
     pub(super) fn poll_registry_writes(&mut self) -> bool {
         let mut changed = false;
-        while let Ok(result) = self.registry_writes.receiver.try_recv() {
+        while let Ok(result) = self.background.registry_writes.receiver.try_recv() {
             if let Err(message) = result {
                 self.status = Some(message);
                 changed = true;

@@ -211,7 +211,7 @@ impl App {
     }
 
     fn start_analysis(&mut self, job: Job) {
-        self.analysis_job = Some(job);
+        self.background.analysis = Some(job);
         self.modals.overlay = Some(Overlay {
             _analysis_memory: None,
             _ai_memory: None,
@@ -226,7 +226,7 @@ impl App {
     }
 
     pub(super) fn continue_analysis(&mut self, deadline: Instant) {
-        let Some(mut job) = self.analysis_job.take() else {
+        let Some(mut job) = self.background.analysis.take() else {
             return;
         };
         if self.modals.overlay.is_none() {
@@ -241,7 +241,7 @@ impl App {
             None => Err(STALE_ERROR),
         };
         match outcome {
-            Ok(false) => self.analysis_job = Some(job),
+            Ok(false) => self.background.analysis = Some(job),
             Ok(true) => {
                 let report = job.finish();
                 self.modals.overlay = Some(Overlay {

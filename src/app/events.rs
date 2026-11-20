@@ -315,7 +315,7 @@ impl App {
                 .as_ref()
                 .is_some_and(|overlay| overlay.contents.search_has_work())
             || self.exports_have_work()
-            || self.analysis_job.is_some()
+            || self.background.analysis.is_some()
     }
 
     /// Returns the time that the main loop can wait for a key. Events that arrive now

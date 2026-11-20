@@ -360,7 +360,7 @@ impl App {
         };
         if relation.columns == Columns::NotLoaded {
             let relation = tab.relation.clone();
-            self.pending_follow = Some(id);
+            self.pending.follow = Some(id);
             self.request_columns(connection, relation);
             return;
         }
@@ -405,17 +405,17 @@ impl App {
 
     /// Follows the key of a tab that waited for the keys of its table.
     pub(super) fn continue_follow(&mut self, connection: ConnectionId, relation: &RelationRef) {
-        let Some(id) = self.pending_follow else {
+        let Some(id) = self.pending.follow else {
             return;
         };
         let Some(tab) = self.tabs.tables.iter().find(|tab| tab.id == id) else {
-            self.pending_follow = None;
+            self.pending.follow = None;
             return;
         };
         if tab.connection != connection || tab.relation != *relation {
             return;
         }
-        self.pending_follow = None;
+        self.pending.follow = None;
         if self.table().is_some_and(|tab| tab.id == id) {
             self.follow_key();
         }

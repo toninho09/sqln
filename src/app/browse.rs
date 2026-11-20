@@ -29,7 +29,7 @@ impl App {
             form.browser_start()
         } else if let Some(form) = &self.modals.form {
             (form.text(form.focus), form.focus == Field::File)
-        } else if self.sql_file_open.is_some() {
+        } else if self.pending.sql_file_open.is_some() {
             // The open of a `.sql` file: the connection is known, and the file exists.
             ("", false)
         } else {
@@ -51,14 +51,14 @@ impl App {
             BrowserRequest::None => return,
             BrowserRequest::Cancel => {
                 self.modals.browser = None;
-                self.sql_file_open = None;
+                self.pending.sql_file_open = None;
                 return;
             }
             BrowserRequest::File(path) => (path, true),
             BrowserRequest::Folder(path) => (path, false),
         };
         self.modals.browser = None;
-        if self.sql_file_open.is_some() && chose_file {
+        if self.pending.sql_file_open.is_some() && chose_file {
             self.sql_file_chosen(std::path::PathBuf::from(path));
             return;
         }
