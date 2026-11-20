@@ -46,6 +46,9 @@ pub(super) struct State {
     retired: HashMap<ConsoleId, CancellationToken>,
     /// Proposals that an editor shows for review. Their card does not show.
     reviewing: HashSet<String>,
+    /// The time a task runs before it gets its card. Tests shorten it to keep
+    /// the long-task flows fast.
+    task_card_delay: Duration,
     sender: mpsc::Sender<Work>,
     receiver: mpsc::Receiver<Work>,
     serial: u64,
@@ -125,7 +128,7 @@ impl State {
         self.jobs
             .values()
             .filter(|job| !finished(job.state))
-            .map(|job| job.created + TASK_CARD_DELAY)
+            .map(|job| job.created + self.task_card_delay)
             .filter(|moment| *moment > now)
             .min()
     }
@@ -134,7 +137,9 @@ impl State {
         let mut ids: Vec<_> = self
             .jobs
             .iter()
-            .filter(|(_, job)| !finished(job.state) && job.created.elapsed() >= TASK_CARD_DELAY)
+            .filter(|(_, job)| {
+                !finished(job.state) && job.created.elapsed() >= self.task_card_delay
+            })
             .map(|(id, job)| (job.serial, id.clone()))
             .collect();
         ids.sort();
@@ -299,6 +304,7 @@ impl Default for State {
             fresh: HashSet::new(),
             retired: HashMap::new(),
             reviewing: HashSet::new(),
+            task_card_delay: TASK_CARD_DELAY,
             sender,
             receiver,
             serial: 0,
@@ -422,7 +428,8 @@ pub(super) enum Notice {
     Task(String),
 }
 
-/// A task shows its card after this time, so a short query does not flash on screen.
+/// The default time a task runs before it shows its card, so a short query does not
+/// flash on screen.
 pub(super) const TASK_CARD_DELAY: Duration = Duration::from_secs(3);
 
 /// The answer to an access request.
@@ -484,6 +491,12 @@ fn supported() -> Error {
 }
 
 impl App {
+    /// Shortens the time a task runs before it gets its card, so tests keep the
+    /// long-task flows fast. The application keeps the default.
+    pub fn set_task_card_delay(&mut self, delay: Duration) {
+        self.agent.task_card_delay = delay;
+    }
+
     /// Enables the private local endpoint. Tests and embedded callers can supply a private directory.
     /// With MCP off in the settings, the endpoint opens when the user turns it on.
     pub fn start_agent_at(&mut self, directory: PathBuf) -> std::io::Result<String> {

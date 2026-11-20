@@ -1830,6 +1830,7 @@ fn wait_card(h: &mut Harness) {
 #[test]
 fn a_long_task_card_stops_its_task() {
     let mut h = Harness::new("task-card-stop");
+    h.app.set_task_card_delay(Duration::from_millis(100));
     h.authorize();
     let job = h.query(&slow_sql());
     // A short task shows no card.
@@ -1851,6 +1852,7 @@ fn a_long_task_card_stops_its_task() {
 #[test]
 fn hiding_a_long_task_card_keeps_its_task() {
     let mut h = Harness::new("task-card-hide");
+    h.app.set_task_card_delay(Duration::from_millis(100));
     h.authorize();
     let own = h.own();
     let job = h.query(&slow_sql());
