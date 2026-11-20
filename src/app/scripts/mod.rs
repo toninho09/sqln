@@ -2,13 +2,15 @@
 //! connection, the removal of a script, and the association with a connection.
 
 use std::collections::HashMap;
-use std::time::SystemTime;
 
 use edtui::Index2;
 
+mod rules;
+
+pub(super) use self::rules::age;
+use self::rules::{saved_of, scope_word, shows_script};
 use super::{App, DialogAction, Picker, PickerKind};
-use crate::connection::{Connection, ConnectionKey, TreeConsole};
-use crate::console::Console;
+use crate::connection::{Connection, TreeConsole};
 use crate::editor::SqlEditor;
 use crate::exec::{ConnectionId, ConsoleId};
 use crate::navigator::Row;
@@ -20,46 +22,6 @@ use crate::store::{Root, Scope};
 use crate::ui::name::{NamePrompt, NameTarget};
 use crate::ui::text;
 
-/// Writes the age of a change, so the list needs no clock zone.
-pub(super) fn age(modified: Option<SystemTime>) -> String {
-    let Some(seconds) = modified
-        .and_then(|time| SystemTime::now().duration_since(time).ok())
-        .map(|elapsed| elapsed.as_secs())
-    else {
-        return String::new();
-    };
-    match seconds {
-        0..=59 => text::AGE_NOW.to_owned(),
-        60..=3_599 => text::age_minutes(seconds / 60),
-        3_600..=86_399 => text::age_hours(seconds / 3_600),
-        _ => text::age_days(seconds / 86_400),
-    }
-}
-
-fn scope_word(scope: Scope) -> &'static str {
-    match scope {
-        Scope::Global => text::VALUE_SCOPE_GLOBAL,
-        Scope::Project => text::VALUE_SCOPE_PROJECT,
-    }
-}
-
-/// Keeps the saved consoles of one connection.
-fn saved_of(entries: &[ScriptEntry], key: &ConnectionKey) -> Vec<ScriptEntry> {
-    entries
-        .iter()
-        .filter(|entry| entry.meta.connection_id == key.id)
-        .cloned()
-        .collect()
-}
-
-/// Returns true when a console shows a script.
-fn shows_script(console: &Console, entry: &ScriptEntry) -> bool {
-    console
-        .file
-        .as_ref()
-        .is_some_and(|file| file.scope == entry.scope && file.meta.id == entry.meta.id)
-}
-
 impl App {
     fn is_script_open(&self, entry: &ScriptEntry) -> bool {
         self.tabs
@@ -69,14 +31,7 @@ impl App {
     }
 
     fn script_row(&self, entry: &ScriptEntry, show_scope: bool) -> String {
-        let mut row = format!("{:<22} {}", entry.meta.name, age(entry.modified));
-        if show_scope {
-            row = format!("{row} · {}", scope_word(entry.scope));
-        }
-        if self.is_script_open(entry) {
-            row.push_str(text::MARK_OPEN);
-        }
-        row
+        rules::script_row(entry, show_scope, self.is_script_open(entry))
     }
 
     /// Lists the saved consoles of a scope, the newest first. This reads the disk.
@@ -431,18 +386,8 @@ impl App {
         let Some(connection) = connection else {
             return Vec::new();
         };
-        let open = self
-            .tabs
-            .consoles
-            .iter()
-            .filter(|console| console.connection == Some(connection) && Some(console.id) != skip)
-            .map(|console| console.name.clone());
-        let saved = self
-            .consoles_of(connection)
-            .into_iter()
-            .filter(|entry| Some(entry.meta.id.as_str()) != id)
-            .map(|entry| entry.meta.name);
-        open.chain(saved).collect()
+        let saved = self.consoles_of(connection);
+        rules::names_in_use(&self.tabs.consoles, saved, connection, skip, id)
     }
 
     pub(super) fn name_note(&mut self, note: &str) {

@@ -15,6 +15,7 @@ mod data_edit;
 mod definition;
 mod diagram;
 mod draw;
+mod effects;
 mod events;
 mod export;
 mod folders;

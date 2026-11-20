@@ -3,6 +3,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
 
+mod rules;
+
 use super::auth::Use;
 use super::{App, DialogAction};
 use crate::console::Phase;
@@ -17,94 +19,29 @@ use crate::ui::text;
 use crate::ui::wrap::WrappedText;
 
 impl App {
-    /// The reasons that block every edit of the grid of a table tab.
-    fn edit_base_refusal(&self) -> Option<String> {
-        let tab = self.table()?;
-        if tab.is_busy() {
-            return Some(text::TABLE_BUSY.to_owned());
-        }
-        if tab.edit_uncertain {
-            return Some(text::EDIT_COMMIT_UNKNOWN.to_owned());
-        }
-        if tab.is_view
-            || tab.structure.is_some()
-            || !tab.filters
-            || self.is_read_only(tab.connection)
-            || !self.connection(tab.connection).is_some_and(|connection| {
-                connection.capabilities.data_edit && connection.capabilities.transactions
-            })
-        {
-            return Some(text::EDIT_UNAVAILABLE.to_owned());
-        }
-        None
+    /// True when the connection of the table tab is not read only and its source edits
+    /// rows in a transaction.
+    fn table_writable(&self) -> bool {
+        self.table().is_some_and(|tab| {
+            !self.is_read_only(tab.connection)
+                && self.connection(tab.connection).is_some_and(|connection| {
+                    connection.capabilities.data_edit && connection.capabilities.transactions
+                })
+        })
     }
 
     /// The reasons that block a new pending insert row.
     pub(super) fn new_row_refusal(&self) -> Option<String> {
-        if self.table().is_none() {
-            return Some(text::EDIT_UNAVAILABLE.to_owned());
-        }
-        if let Some(reason) = self.edit_base_refusal() {
-            return Some(reason);
-        }
-        let tab = self.table()?;
-        if let Some(metadata) = &tab.edit_metadata
-            && !metadata.matches(&tab.result.table.columns)
-        {
-            return Some(text::EDIT_SCHEMA_CHANGED.to_owned());
-        }
-        None
+        rules::new_row_refusal(self.table(), self.table_writable())
     }
 
     /// The reasons that block the delete mark of the row of the cursor.
     pub(super) fn delete_row_refusal(&self) -> Option<String> {
-        if self.table().is_none() {
-            return Some(text::EDIT_UNAVAILABLE.to_owned());
-        }
-        if let Some(reason) = self.edit_base_refusal() {
-            return Some(reason);
-        }
-        let tab = self.table()?;
-        if tab.result.table.rows.is_empty() {
-            return Some(text::EDIT_NO_CELL.to_owned());
-        }
-        if let Some(metadata) = &tab.edit_metadata
-            && !metadata.matches(&tab.result.table.columns)
-        {
-            return Some(text::EDIT_SCHEMA_CHANGED.to_owned());
-        }
-        None
+        rules::delete_row_refusal(self.table(), self.table_writable())
     }
 
     pub(super) fn edit_refusal(&self) -> Option<String> {
-        if let Some(reason) = self.edit_base_refusal() {
-            return Some(reason);
-        }
-        let tab = self.table()?;
-        if tab.result.table.rows.is_empty() {
-            return Some(text::EDIT_NO_CELL.to_owned());
-        }
-        let row = tab.result.view.row;
-        if tab.result.edits.is_insert(row) {
-            if let Some(metadata) = &tab.edit_metadata {
-                return metadata
-                    .editable_insert(&tab.result.table.columns, tab.result.view.col)
-                    .err();
-            }
-            return None;
-        }
-        if tab.result.edits.deletes.contains_key(&row) {
-            return Some(text::EDIT_ROW_DELETED.to_owned());
-        }
-        if let Some(metadata) = &tab.edit_metadata {
-            let row = tab.result.table.rows.get(row)?;
-            if let Err(reason) =
-                metadata.editable(&tab.result.table.columns, row, tab.result.view.col)
-            {
-                return Some(reason);
-            }
-        }
-        None
+        rules::cell_refusal(self.table()?, self.table_writable())
     }
 
     pub(super) fn can_edit_cell(&self) -> bool {
@@ -112,10 +49,7 @@ impl App {
     }
 
     pub(super) fn pending_edit_guard(&mut self) -> bool {
-        if self
-            .table()
-            .is_some_and(|tab| !tab.result.edits.is_empty() || tab.edit_uncertain)
-        {
+        if self.table().is_some_and(rules::has_pending) {
             self.status = Some(text::EDIT_RESOLVE.to_owned());
             return true;
         }

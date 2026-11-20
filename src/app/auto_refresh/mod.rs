@@ -3,24 +3,15 @@
 
 use std::time::{Duration, Instant};
 
+mod rules;
+
+use self::rules::INTERVALS;
 use super::App;
 use crate::app::DialogAction;
 use crate::console::AutoRefresh;
 use crate::editor::RunPlan;
 use crate::exec::{ExecEvent, ExecutionEnd, ExecutionId, RunOptions};
-use crate::sql::{Dialect, is_known_redis_read, is_plain_read};
 use crate::ui::text;
-
-/// The intervals of the dialog, in seconds. `None` turns the refresh off.
-pub const INTERVALS: [Option<u64>; 7] = [
-    None,
-    Some(1),
-    Some(2),
-    Some(5),
-    Some(10),
-    Some(30),
-    Some(60),
-];
 
 impl App {
     /// True when the tab on screen accepts an auto-refresh choice.
@@ -70,20 +61,15 @@ impl App {
             match seconds {
                 None => self.tabs.consoles[index].auto_refresh = None,
                 Some(seconds) => {
-                    let Some(statements) = self.tabs.consoles[index].auto_snapshot.clone() else {
-                        self.status = Some(text::AUTO_REFRESH_NEEDS_RUN.to_owned());
-                        return;
+                    let console = &self.tabs.consoles[index];
+                    let dialect = console.connection.and_then(|id| self.dialect_of(id));
+                    let refusal = match (console.auto_snapshot.as_deref(), dialect) {
+                        (None, _) => Some(text::AUTO_REFRESH_NEEDS_RUN),
+                        (Some(_), None) => return,
+                        (last_run, Some(dialect)) => rules::console_refusal(last_run, dialect),
                     };
-                    let Some(connection) = self.tabs.consoles[index].connection else {
-                        return;
-                    };
-                    let Some(dialect) = self.dialect_of(connection) else {
-                        return;
-                    };
-                    // An auto-refresh never asks the run question, so it repeats reads
-                    // only. Anything else refuses the choice.
-                    if !statements_are_reads(&statements, dialect) {
-                        self.status = Some(text::AUTO_REFRESH_READ_ONLY.to_owned());
+                    if let Some(reason) = refusal {
+                        self.status = Some(reason.to_owned());
                         return;
                     }
                     self.tabs.consoles[index].auto_refresh =
@@ -283,21 +269,4 @@ impl App {
             self.status = Some(text::auto_refresh_stopped(message.as_deref()));
         }
     }
-}
-
-/// Returns true when every statement is a read that an auto-refresh can repeat without
-/// a question. A Redis command must be a known read. A continuous command never ends,
-/// so it cannot repeat.
-pub fn statements_are_reads(statements: &[String], dialect: Dialect) -> bool {
-    statements.iter().all(|sql| {
-        if crate::sql::is_continuous(sql, dialect) {
-            false
-        } else if dialect == Dialect::Redis {
-            is_known_redis_read(sql)
-        } else if dialect == Dialect::Kafka {
-            crate::sql::is_known_kafka_read(sql)
-        } else {
-            is_plain_read(sql, dialect)
-        }
-    })
 }

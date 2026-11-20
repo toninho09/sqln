@@ -4,14 +4,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::KeyEvent;
 
+mod rules;
+
 use super::App;
 use super::scripts::age;
 use crate::connection::Connection;
 use crate::exec::{StatementKey, StatementStatus};
 use crate::filter_list::ListRequest;
 use crate::history::{HistoryRow, history_list};
-use crate::sql::is_secret;
-use crate::store::history::{self, Entry, LOAD_LIMIT, STATEMENT_LIMIT};
+use crate::store::history::{self, Entry, LOAD_LIMIT};
 use crate::ui::text;
 
 /// The lines that wait for their write.
@@ -37,10 +38,8 @@ impl App {
 
     /// Notes a statement that reached the database.
     pub(super) fn note_statement(&mut self, key: &StatementKey, status: &StatementStatus) {
-        let ok = match status {
-            StatementStatus::Success => true,
-            StatementStatus::NotExecuted | StatementStatus::Running => return,
-            _ => false,
+        let Some(ok) = rules::outcome(status) else {
+            return;
         };
         let Some(console) = self
             .tabs
@@ -62,16 +61,13 @@ impl App {
         let Some(id) = connection.key.as_ref().map(|key| key.id.clone()) else {
             return;
         };
-        if sql.len() > STATEMENT_LIMIT || is_secret(sql, connection.dialect) {
-            return;
-        }
+        let dialect = connection.dialect;
         let sql = sql.to_owned();
         let Some(persist) = &mut self.persist else {
             return;
         };
         let log = &mut persist.history;
-        let same = |(connection, last): &(String, String)| *connection == id && *last == sql;
-        if log.last.as_ref().is_some_and(same) {
+        if !rules::worth_noting(&sql, dialect, &id, log.last.as_ref()) {
             return;
         }
         let at = SystemTime::now()

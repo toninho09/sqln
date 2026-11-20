@@ -4,24 +4,22 @@
 use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
 
+mod rules;
+
+use self::rules::{SchemaSync, Source};
 use super::App;
 use super::auth::Use;
 use super::tables::{Screen, Tab};
-use crate::catalog::RelationKind;
-use crate::compare::form::{Choice, CompareForm, CompareRequest, SchemaChoice};
+use crate::compare::form::{CompareForm, CompareRequest};
 use crate::compare::{Kind, Side};
 use crate::compare_tab::{CompareTab, SideRead};
-use crate::connection::CatalogState;
 use crate::console::Phase;
 use crate::diagram::Focus;
 use crate::exec::{ConnectionId, ConsoleId, RunOptions};
-use crate::input::{Action, Grid};
-use crate::navigator::{Row, RowKind};
+use crate::input::Action;
+use crate::navigator::Row;
 use crate::structure::Scope;
 use crate::ui::text;
-
-/// The source that a row gives to the dialog: a connection, a schema, and a table.
-type Source = (ConnectionId, Option<String>, Option<String>);
 
 /// What the dialog of a compare starts with.
 enum Start {
@@ -49,27 +47,8 @@ impl App {
         self.modals.compare_form.as_ref()
     }
 
-    /// Returns the source of a compare for a row of the explorer, or the reason that the
-    /// row has none. A column gives its table.
     fn row_compare(&self, row: &Row) -> Result<Source, &'static str> {
-        let item = &self.connections[row.connection];
-        if item.dialect.is_command_line() {
-            return Err(text::COMPARE_REFUSED);
-        }
-        match row.kind {
-            RowKind::Connection => Ok((item.id, item.default_schema.clone(), None)),
-            RowKind::Schema => Ok((item.id, Some(row.name(&self.connections).to_owned()), None)),
-            RowKind::Table | RowKind::Column => {
-                let relation = row
-                    .relation_ref(&self.connections)
-                    .ok_or(text::COMPARE_REFUSED)?;
-                Ok((item.id, Some(relation.schema), Some(relation.relation)))
-            }
-            RowKind::View => Err(text::COMPARE_VIEW),
-            RowKind::Consoles | RowKind::Console => Err(text::COMPARE_CONSOLE),
-            RowKind::Group(_) | RowKind::Object(_) => Err(text::NOT_FOR_OBJECT),
-            RowKind::Folder => Err(text::NOT_FOR_FOLDER),
-        }
+        rules::row_source(&self.connections, row)
     }
 
     /// Returns true when the row of the explorer can open the dialog of a compare.
@@ -144,7 +123,7 @@ impl App {
 
     /// Opens the dialog of a compare, or gives the reason that it has none.
     fn start_compare_form(&mut self, start: Result<Start, &'static str>) {
-        let choices = self.compare_choices();
+        let choices = rules::choices(&self.connections);
         let form = match start {
             Ok(Start::Source((connection, schema, table))) => {
                 CompareForm::new(choices, connection, schema, table)
@@ -161,22 +140,8 @@ impl App {
         self.sync_compare_form();
     }
 
-    /// Lists the connections that a compare can use. Redis and Kafka have no tables.
-    fn compare_choices(&self) -> Vec<Choice> {
-        self.connections
-            .iter()
-            .filter(|item| !item.dialect.is_command_line())
-            .map(|item| Choice {
-                id: item.id,
-                name: item.name.clone(),
-                dialect: item.dialect,
-            })
-            .collect()
-    }
-
     /// Gives the dialog the schemas and the tables of each side. A connection without its
-    /// catalog reads it, and the dialog shows the schemas when they arrive. Views stay out,
-    /// because a compare refuses them.
+    /// catalog reads it, and the dialog shows the schemas when they arrive.
     pub(super) fn sync_compare_form(&mut self) {
         for side in 0..2 {
             let Some(form) = &self.modals.compare_form else {
@@ -191,29 +156,16 @@ impl App {
             let Some(item) = self.connection(id) else {
                 continue;
             };
-            match (&item.catalog, item.catalog_state) {
-                (Some(catalog), CatalogState::Loaded) => {
-                    let schemas = catalog.schemas.iter().map(|schema| SchemaChoice {
-                        name: schema.name.clone(),
-                        tables: schema
-                            .relations
-                            .iter()
-                            .filter(|relation| relation.kind == RelationKind::Table)
-                            .map(|relation| relation.name.clone())
-                            .collect(),
-                    });
-                    let schemas = schemas.collect();
-                    let default = item.default_schema.clone();
-                    if let Some(form) = &mut self.modals.compare_form {
-                        form.set_schemas(side, schemas, default.as_deref());
-                    }
+            let (schemas, default) = match rules::schema_sync(item) {
+                SchemaSync::Show(schemas, default) => (schemas, default),
+                SchemaSync::Nothing => (Vec::new(), None),
+                SchemaSync::Read => {
+                    self.ensure_catalog(id);
+                    continue;
                 }
-                (_, CatalogState::Failed) => {
-                    if let Some(form) = &mut self.modals.compare_form {
-                        form.set_schemas(side, Vec::new(), None);
-                    }
-                }
-                _ => self.ensure_catalog(id),
+            };
+            if let Some(form) = &mut self.modals.compare_form {
+                form.set_schemas(side, schemas, default.as_deref());
             }
         }
     }
@@ -277,7 +229,7 @@ impl App {
         };
         let (kind, removals) = (form.kind, form.removals);
         let checked = form.sides().and_then(|sides| {
-            self.check_compare_table(&sides[0])?;
+            rules::check_table(self.catalog(sides[0].connection), &sides[0])?;
             Ok(sides)
         });
         match checked {
@@ -290,21 +242,6 @@ impl App {
                     form.note = Some(note);
                 }
             }
-        }
-    }
-
-    /// Refuses a source table that the catalog does not hold, and a view.
-    fn check_compare_table(&self, side: &Side) -> Result<(), String> {
-        let Some(table) = &side.table else {
-            return Ok(());
-        };
-        let catalog = self.catalog(side.connection);
-        match catalog.and_then(|catalog| catalog.relation(Some(&side.schema), table)) {
-            Some((_, relation)) if relation.kind == RelationKind::View => {
-                Err(text::COMPARE_VIEW.to_owned())
-            }
-            Some(_) => Ok(()),
-            None => Err(text::compare_no_table(table)),
         }
     }
 
@@ -520,32 +457,18 @@ impl App {
             return false;
         };
         match action {
-            Action::CompareScript => self.open_compare_script(),
-            Action::CompareCopy => match self.compare_script() {
-                Ok(script) => self.copy(&script),
-                Err(reason) => self.status = Some(reason.to_owned()),
-            },
+            Action::CompareScript => {
+                let effect = rules::open_script(self.compare());
+                self.apply(effect);
+            }
+            Action::CompareCopy => {
+                let effect = rules::copy_script(self.compare());
+                self.apply([effect]);
+            }
             Action::GridReload => self.read_compare(),
             Action::Stop => self.stop_compare(),
             Action::CloseTab => self.close_compare(index),
-            // A compare has no editor, no transaction, no filter, and one result.
-            Action::Run
-            | Action::RunScript
-            | Action::RunSubquery
-            | Action::Explain
-            | Action::ExplainAnalyze
-            | Action::FormatSql
-            | Action::ToggleComment
-            | Action::OpenHistory
-            | Action::ToggleMode
-            | Action::Commit
-            | Action::Rollback
-            | Action::ChooseSchema
-            | Action::RenameConsole
-            | Action::ChangeConnection
-            | Action::FocusUp
-            | Action::FocusDown => {}
-            action if !action.on_grid(Grid::Compare) => {}
+            action if rules::ignores(action) => {}
             _ => return false,
         }
         true
@@ -553,46 +476,7 @@ impl App {
 
     /// Returns true when an action of the grid has an effect on the compare on screen.
     pub(super) fn compare_command_available(&self, action: Action) -> bool {
-        let Some(tab) = self.compare() else {
-            return false;
-        };
-        match action {
-            _ if !action.on_grid(Grid::Compare) => false,
-            Action::CompareScript | Action::CompareCopy => self.compare_script().is_ok(),
-            Action::GridReload => !tab.is_busy(),
-            Action::GridOpenRow => !tab.result.table.rows.is_empty(),
-            Action::GridExport => self.can_export(),
-            _ => tab.done,
-        }
-    }
-
-    /// Returns the script of the compare on screen, or the reason that it has none.
-    fn compare_script(&self) -> Result<String, &'static str> {
-        let tab = self.compare().ok_or(text::COMPARE_NOT_READ)?;
-        if !tab.done {
-            return Err(text::COMPARE_NOT_READ);
-        }
-        if tab.count == 0 {
-            return Err(text::COMPARE_NO_SCRIPT);
-        }
-        if tab.script.is_empty() {
-            return Err(text::COMPARE_NO_SCRIPT_DIALECTS);
-        }
-        Ok(tab.script.clone())
-    }
-
-    /// Opens the script in a new console of the target. It does not run the script.
-    fn open_compare_script(&mut self) {
-        let script = match self.compare_script() {
-            Ok(script) => script,
-            Err(reason) => {
-                self.status = Some(reason.to_owned());
-                return;
-            }
-        };
-        let Some(target) = self.compare().map(|tab| tab.sides[1].side.clone()) else {
-            return;
-        };
-        self.open_text_console(target.connection, Some(target.schema), &script);
+        self.compare()
+            .is_some_and(|tab| rules::command_available(tab, action, self.can_export()))
     }
 }

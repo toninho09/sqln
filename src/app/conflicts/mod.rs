@@ -1,50 +1,15 @@
 //! The scripts that another program changed or removed. One question lists them all,
 //! and each row needs a choice. The autosave of a listed script waits.
 
-use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
 
+mod rules;
+
+pub(super) use self::rules::Conflicts;
+use self::rules::{ConflictAction, ConflictRequest, ConflictRow};
 use super::App;
 use crate::script_file::Trouble;
-use crate::ui::text;
-
-pub(super) struct ConflictRow {
-    /// The identity of the script. A console can change its number, but not this.
-    pub script: String,
-    pub name: String,
-    pub removed: bool,
-    /// The index in `options`. `None` waits for the user.
-    pub choice: Option<usize>,
-}
-
-impl ConflictRow {
-    pub fn options(&self) -> [&'static str; 2] {
-        if self.removed {
-            [text::CHOICE_RECREATE, text::CHOICE_CLOSE]
-        } else {
-            [text::CHOICE_RELOAD, text::CHOICE_OVERWRITE]
-        }
-    }
-}
-
-pub(super) struct Conflicts {
-    pub rows: Vec<ConflictRow>,
-    /// The rows come first. Then come the button that applies, and the button that waits.
-    pub cursor: usize,
-    pub note: Option<&'static str>,
-}
-
-impl Conflicts {
-    fn positions(&self) -> usize {
-        self.rows.len() + 2
-    }
-
-    fn cycle(&mut self, row: usize) {
-        if let Some(item) = self.rows.get_mut(row) {
-            item.choice = Some(item.choice.map_or(0, |choice| (choice + 1) % 2));
-        }
-    }
-}
 
 impl App {
     /// Opens the question for the scripts in trouble that the user did not see yet.
@@ -81,11 +46,7 @@ impl App {
         if rows.is_empty() {
             return false;
         }
-        self.modals.conflicts = Some(Conflicts {
-            rows,
-            cursor: 0,
-            note: None,
-        });
+        self.modals.conflicts = Some(Conflicts::new(rows));
         true
     }
 
@@ -94,42 +55,10 @@ impl App {
         let Some(conflicts) = &mut self.modals.conflicts else {
             return;
         };
-        let apply = conflicts.rows.len();
-        let on_row = conflicts.cursor < apply;
-        let positions = conflicts.positions();
-        match key.code {
-            KeyCode::Esc => self.modals.conflicts = None,
-            KeyCode::Down | KeyCode::Tab => conflicts.cursor = (conflicts.cursor + 1) % positions,
-            KeyCode::Up | KeyCode::BackTab => {
-                conflicts.cursor = (conflicts.cursor + positions - 1) % positions;
-            }
-            KeyCode::Char('j') if vim => conflicts.cursor = (conflicts.cursor + 1) % positions,
-            KeyCode::Char('k') if vim => {
-                conflicts.cursor = (conflicts.cursor + positions - 1) % positions;
-            }
-            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if on_row => {
-                let row = conflicts.cursor;
-                conflicts.cycle(row);
-            }
-            KeyCode::Char('h' | 'l') if vim && on_row => {
-                let row = conflicts.cursor;
-                conflicts.cycle(row);
-            }
-            KeyCode::Left | KeyCode::Right if !on_row => {
-                conflicts.cursor = if conflicts.cursor == apply {
-                    apply + 1
-                } else {
-                    apply
-                };
-            }
-            KeyCode::Enter if on_row => {
-                let row = conflicts.cursor;
-                conflicts.cycle(row);
-                conflicts.cursor = (row + 1).min(apply);
-            }
-            KeyCode::Enter if conflicts.cursor == apply => self.apply_conflicts(),
-            KeyCode::Enter => self.modals.conflicts = None,
-            _ => {}
+        match conflicts.on_key(key, vim) {
+            ConflictRequest::None => {}
+            ConflictRequest::Later => self.modals.conflicts = None,
+            ConflictRequest::Apply => self.apply_conflicts(),
         }
     }
 
@@ -160,8 +89,8 @@ impl App {
         let Some(conflicts) = &mut self.modals.conflicts else {
             return;
         };
-        if conflicts.rows.iter().any(|row| row.choice.is_none()) {
-            conflicts.note = Some(text::CONFLICT_CHOOSE);
+        if let Some(note) = conflicts.missing_choice() {
+            conflicts.note = Some(note);
             return;
         }
         let Some(conflicts) = self.modals.conflicts.take() else {
@@ -177,11 +106,10 @@ impl App {
                     .is_some_and(|file| file.meta.id == row.script)
             });
             let Some(index) = found else { continue };
-            // The first choice reloads a changed script, and it recreates a removed one.
-            match (row.removed, row.choice) {
-                (false, Some(0)) => self.reload_script(index),
-                (false, Some(_)) | (true, Some(0)) => self.overwrite_script(index),
-                _ => {
+            match row.action() {
+                ConflictAction::Reload => self.reload_script(index),
+                ConflictAction::Overwrite => self.overwrite_script(index),
+                ConflictAction::Close => {
                     let console = &mut self.tabs.consoles[index];
                     console.discard_text = true;
                     let id = console.id;

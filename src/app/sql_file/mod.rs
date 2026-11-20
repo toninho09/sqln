@@ -3,6 +3,8 @@
 
 use std::path::PathBuf;
 
+mod rules;
+
 use super::{App, DialogAction, Picker, PickerKind};
 use crate::exec::{ConnectionId, ConsoleId};
 use crate::script_file::{ExternalFile, Trouble};
@@ -38,13 +40,7 @@ impl App {
             self.status = Some(text::NO_CONNECTION.to_owned());
             return;
         }
-        // The connection of the console, then the only connection, then a question.
-        let active = self
-            .console()
-            .connection
-            .filter(|id| self.connections.iter().any(|item| item.id == *id));
-        let single = (self.connections.len() == 1).then(|| self.connections[0].id);
-        match active.or(single) {
+        match rules::connection_for(&self.connections, self.console().connection) {
             Some(connection) => self.continue_sql_file(connection, path),
             None => self.pick_sql_file_connection(path),
         }
@@ -150,12 +146,7 @@ impl App {
         let mut console = self.unbound_console(dialect);
         console.editor = self.new_editor(&pending.text, dialect);
         let mut file = pending.file;
-        let stem = file
-            .path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .filter(|stem| !stem.is_empty())
-            .map(str::to_owned);
+        let stem = rules::console_name(&file.path);
         if linked {
             file.adopt(console.editor.revision());
             console.external = Some(file);

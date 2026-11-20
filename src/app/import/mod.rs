@@ -4,6 +4,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+mod rules;
+
 use super::auth::Use;
 use super::{App, DialogAction};
 use crate::console::Phase;
@@ -11,9 +13,9 @@ use crate::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, RunOptions, StatementStatus,
 };
 use crate::export::time_stamp;
-use crate::grid::{Row as GridRow, Value};
+use crate::grid::Row as GridRow;
 use crate::import::{ImportJob, ImportProgress, Probe, probe};
-use crate::import_form::{ImportAction, ImportForm, ImportTable, ProbeRequest, TableColumn};
+use crate::import_form::{ImportAction, ImportForm, ImportTable, ProbeRequest};
 use crate::input::Action;
 use crate::navigator::{Row, RowKind};
 use crate::structure::{Scope, Section, structure_sql};
@@ -67,19 +69,6 @@ impl Default for ProbeChannel {
         let (sender, receiver) = channel();
         Self { sender, receiver }
     }
-}
-
-/// Reads the name and the type of each row of a structure query.
-fn table_columns(rows: &[GridRow]) -> Vec<TableColumn> {
-    let text_of = |value: Option<Value<'_>>| value.map_or_else(String::new, Value::display);
-    rows.iter()
-        .map(|row| {
-            let mut cells = row.cells();
-            let name = text_of(cells.next());
-            let data_type = text_of(cells.next());
-            TableColumn { name, data_type }
-        })
-        .collect()
 }
 
 impl App {
@@ -273,9 +262,8 @@ impl App {
         end: ExecutionEnd,
         failure: Option<String>,
     ) {
-        if end != ExecutionEnd::Completed {
-            let reason = failure.unwrap_or_else(|| text::IMPORT_STOPPED.to_owned());
-            self.status = Some(text::import_failed(&reason));
+        if let Some(message) = rules::columns_refusal(end, failure) {
+            self.status = Some(message);
             return;
         }
         let tab = self.tabs.tables.iter().find(|tab| tab.id == id);
@@ -297,7 +285,7 @@ impl App {
             name: tab.relation.relation.clone(),
             table: from_clause(&tab.relation, dialect),
             dialect,
-            columns: table_columns(rows),
+            columns: rules::table_columns(rows),
         })
     }
 
@@ -313,26 +301,14 @@ impl App {
             self.status = Some(text::import_closed(progress.rows()));
             return;
         }
-        let log = (progress.errors() > 0).then(|| log.display().to_string());
-        let reason = match end {
-            ExecutionEnd::Completed => None,
-            ExecutionEnd::Stopped | ExecutionEnd::CanceledBeforeStart => {
-                Some(text::IMPORT_STOPPED.to_owned())
-            }
-            _ => failure,
-        };
-        let body = text::import_report(&text::ImportReport {
+        let log = log.display().to_string();
+        let counts = rules::Counts {
             rows: progress.rows(),
             errors: progress.errors(),
             ignored: progress.ignored_keys(),
-            log: log.as_deref(),
-            failure: reason.as_deref(),
-        });
-        let title = if end == ExecutionEnd::Completed {
-            text::TITLE_IMPORT_DONE
-        } else {
-            text::TITLE_IMPORT_FAILED
+            log: &log,
         };
+        let (title, body) = rules::report(&counts, end, failure);
         self.show_dialog(
             title,
             body,

@@ -1,21 +1,23 @@
 //! The flow of an export: the dialog, its questions, the rows, and the end of the file.
 
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
+mod rules;
+
+use self::rules::{Ending, console_all_rows, destination_of, result_in, shown_path};
 use super::{App, DialogAction};
-use crate::console::{Console, Phase, RunClock, Signal};
+use crate::console::{Phase, RunClock, Signal};
 use crate::exec::{
     ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ReadLimit, RunOptions, StatementStatus,
 };
-use crate::export::{ExportOptions, ExportWriter, resolve_path, time_stamp};
+use crate::export::{ExportOptions, ExportWriter, time_stamp};
 use crate::export_form::{AllRows, ExportForm, ExportRequest, ExportSource, RowChoice};
-use crate::grid::printable;
 use crate::input::Action;
 use crate::result::ResultTab;
-use crate::sql::{Dialect, is_plain_read};
-use crate::table::{TableTab, from_clause};
+use crate::sql::Dialect;
+use crate::table::from_clause;
 use crate::ui::text;
 
 /// What an export waits for.
@@ -49,51 +51,6 @@ pub(super) struct ExportRead {
     pub schema: Option<String>,
     pub destination: PathBuf,
     pub options: ExportOptions,
-}
-
-/// Returns the full path of the text of the dialog, or the text of the problem.
-fn destination_of(path: &str) -> Result<PathBuf, String> {
-    if path.trim().is_empty() {
-        return Err(text::EXPORT_NO_FILE.to_owned());
-    }
-    let path = resolve_path(path, std::env::home_dir())
-        .map_err(|error| text::export_failed(&error.to_string()))?;
-    if path.is_dir() {
-        return Err(text::EXPORT_IS_FOLDER.to_owned());
-    }
-    Ok(path)
-}
-
-fn shown_path(path: &Path) -> String {
-    printable(&path.display().to_string())
-}
-
-/// Decides whether a console can read a result again. The session of an execution
-/// ends with it, so a statement of a script can depend on the statements before it.
-fn console_all_rows(console: &Console, result: &ResultTab, dialect: Dialect) -> AllRows {
-    let plain = console
-        .statement_of(result)
-        .is_some_and(|sql| is_plain_read(sql, dialect));
-    if !plain {
-        AllRows::Refused(text::EXPORT_ALL_READ)
-    } else if console.ran_alone() || console.in_transaction() {
-        AllRows::Available
-    } else {
-        AllRows::Refused(text::EXPORT_ALL_SCRIPT)
-    }
-}
-
-fn result_in<'a>(
-    tables: &'a [TableTab],
-    consoles: &'a [Console],
-    id: ConsoleId,
-    result: usize,
-) -> Option<&'a ResultTab> {
-    if let Some(tab) = tables.iter().find(|tab| tab.id == id) {
-        return Some(&tab.result);
-    }
-    let console = consoles.iter().find(|console| console.id == id)?;
-    console.results.get(result)
 }
 
 impl App {
@@ -541,18 +498,14 @@ impl App {
         let closing = self
             .console_by_id(id)
             .is_some_and(|console| console.closing);
-        if closing {
-            run.writer.discard();
-        } else if end == ExecutionEnd::Completed && failure.is_none() {
-            self.promote_export(&run);
-        } else if run.writer.rows() == 0 {
-            run.writer.discard();
-            self.status = Some(failure.map_or_else(
-                || text::EXPORT_STOPPED.to_owned(),
-                |reason| text::export_failed(&reason),
-            ));
-        } else {
-            self.ask_about_part(run, failure.as_deref());
+        match rules::ending(closing, end, failure.as_deref(), run.writer.rows()) {
+            Ending::Discard => run.writer.discard(),
+            Ending::Promote => self.promote_export(&run),
+            Ending::Refused(message) => {
+                run.writer.discard();
+                self.status = Some(message);
+            }
+            Ending::AskAboutPart => self.ask_about_part(run, failure.as_deref()),
         }
         self.on_signal(
             id,

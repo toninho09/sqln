@@ -3,30 +3,24 @@
 use crossterm::event::{MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
 
+mod rules;
+
+use self::rules::Target;
 use super::App;
 use super::auth::Use;
 use super::mouse::Drag;
 use super::tables::{Screen, Tab};
-use crate::catalog::RelationKind;
-use crate::connection::CatalogState;
 use crate::console::Phase;
 use crate::diagram::Focus;
 use crate::diagram::layout::Direction;
 use crate::diagram::sql::diagram_sql;
 use crate::diagram_tab::DiagramTab;
 use crate::exec::{ConnectionId, RunOptions};
-use crate::input::{Action, Region};
-use crate::navigator::{Row, RowKind};
+use crate::input::Action;
+use crate::navigator::Row;
 use crate::sql::Dialect;
 use crate::structure::Scope;
 use crate::ui::text;
-
-/// What a row or a tab gives to a new diagram.
-enum Target {
-    Open(ConnectionId, Focus),
-    /// The current schema of the connection needs its catalog first.
-    Wait(ConnectionId),
-}
 
 /// The rows of one turn of the mouse wheel, and the columns of a turn to the side.
 const WHEEL_ROWS: i64 = 3;
@@ -61,14 +55,8 @@ impl App {
 
     /// Returns true when an action of the diagram region has an effect now.
     pub(super) fn diagram_command_available(&self, action: Action) -> bool {
-        let Some(tab) = self.diagram() else {
-            return false;
-        };
-        match action {
-            Action::DiagramReload => !tab.is_busy(),
-            Action::DiagramOpen | Action::DiagramStructure => tab.selected.is_some(),
-            _ => !tab.model.entities.is_empty(),
-        }
+        self.diagram()
+            .is_some_and(|tab| rules::command_available(tab, action))
     }
 
     /// Returns true when the row of the explorer can open a diagram.
@@ -78,63 +66,20 @@ impl App {
             .is_some_and(|row| self.row_diagram(&row).is_ok())
     }
 
-    /// Returns the diagram of a navigator row, or the reason that it has none. A table
-    /// shows its neighbors, a column shows the diagram of its table, and a connection
-    /// shows its current schema.
     fn row_diagram(&self, row: &Row) -> Result<Target, &'static str> {
-        let item = &self.connections[row.connection];
-        if item.dialect.is_command_line() {
-            return Err(text::DIAGRAM_REFUSED);
-        }
-        let focus = match row.kind {
-            RowKind::Connection => return self.schema_target(item.id, None),
-            RowKind::Schema => Focus::Schema(row.name(&self.connections).to_owned()),
-            RowKind::Table | RowKind::Column => {
-                let relation = row.relation_ref(&self.connections);
-                Focus::Table(relation.ok_or(text::DIAGRAM_EMPTY)?)
-            }
-            RowKind::View => return Err(text::DIAGRAM_VIEW),
-            RowKind::Consoles | RowKind::Console => return Err(text::DIAGRAM_CONSOLE),
-            RowKind::Group(_) | RowKind::Object(_) => return Err(text::NOT_FOR_OBJECT),
-            RowKind::Folder => return Err(text::NOT_FOR_FOLDER),
-        };
-        self.focus_target(item.id, focus)
+        rules::row_target(&self.connections, row)
     }
 
-    /// Refuses the diagram of a view, which has no keys.
     fn focus_target(&self, connection: ConnectionId, focus: Focus) -> Result<Target, &'static str> {
-        if let Focus::Table(table) = &focus {
-            let catalog = self.catalog(connection);
-            let found =
-                catalog.and_then(|catalog| catalog.relation(Some(&table.schema), &table.relation));
-            if found.is_some_and(|(_, relation)| relation.kind == RelationKind::View) {
-                return Err(text::DIAGRAM_VIEW);
-            }
-        }
-        Ok(Target::Open(connection, focus))
+        rules::focus_target(&self.connections, connection, focus)
     }
 
-    /// Returns the diagram of a chosen schema, or of the current schema of a connection.
-    /// Before its catalog, a connection does not know its current schema.
     fn schema_target(
         &self,
         connection: ConnectionId,
         chosen: Option<String>,
     ) -> Result<Target, &'static str> {
-        let item = self
-            .connection(connection)
-            .ok_or(text::NO_SELECTED_CONNECTION)?;
-        match chosen.or_else(|| item.default_schema.clone()) {
-            Some(schema) => Ok(Target::Open(connection, Focus::Schema(schema))),
-            None if matches!(
-                item.catalog_state,
-                CatalogState::NotLoaded | CatalogState::Loading
-            ) =>
-            {
-                Ok(Target::Wait(connection))
-            }
-            None => Err(text::DIAGRAM_NO_SCHEMA),
-        }
+        rules::schema_target(&self.connections, connection, chosen)
     }
 
     /// Opens the diagram of a navigator row. A row without a diagram gives the reason.
@@ -377,10 +322,8 @@ impl App {
         match action {
             Action::DiagramReload => self.read_diagram(),
             Action::DiagramCopy => {
-                if !tab.model.entities.is_empty() {
-                    let mermaid = tab.mermaid();
-                    self.copy(&mermaid);
-                }
+                let effect = rules::copy(tab);
+                self.apply(effect);
             }
             Action::DiagramOpen | Action::DiagramStructure => {
                 let connection = tab.connection;
@@ -396,24 +339,7 @@ impl App {
             }
             Action::Stop => self.stop_diagram(),
             Action::CloseTab => self.close_diagram(index),
-            // A diagram has no editor, no results, no transaction, and no schema choice.
-            Action::Run
-            | Action::RunScript
-            | Action::RunSubquery
-            | Action::Explain
-            | Action::ExplainAnalyze
-            | Action::FormatSql
-            | Action::ToggleComment
-            | Action::OpenHistory
-            | Action::ToggleMode
-            | Action::Commit
-            | Action::Rollback
-            | Action::ChooseSchema
-            | Action::RenameConsole
-            | Action::ChangeConnection
-            | Action::FocusUp
-            | Action::FocusDown => {}
-            action if action.region() == Region::Grid => {}
+            action if rules::ignores(action) => {}
             _ => return false,
         }
         true
