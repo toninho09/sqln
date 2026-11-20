@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::keys::RunTarget;
+use crate::app::run_sql::RunTarget;
 use crate::clipboard::MemoryClipboard;
 use crate::connector::TransactionState;
 use crate::editor::RunScope;
