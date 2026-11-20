@@ -17,7 +17,21 @@ pub fn fit(text: &str, width: usize) -> (String, usize) {
     (fitted, used)
 }
 
-/// Returns the last characters of a text. The end of a path holds its last name.
+/// Returns the columns of a character on the screen.
+pub fn char_columns(c: char) -> usize {
+    UnicodeWidthChar::width(c).unwrap_or(0)
+}
+
+/// Returns the last characters of a text that fit `width` columns. The end of a path
+/// holds its last name.
 pub fn last_chars(chars: &[char], width: usize) -> String {
-    chars[chars.len().saturating_sub(width)..].iter().collect()
+    let mut used = 0;
+    let first = chars
+        .iter()
+        .rposition(|&c| {
+            used += char_columns(c);
+            used > width
+        })
+        .map_or(0, |index| index + 1);
+    chars[first..].iter().collect()
 }
