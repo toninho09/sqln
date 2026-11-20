@@ -73,7 +73,7 @@ pub(super) enum DropAt {
 impl App {
     pub(super) fn on_overlay_mouse(&mut self, mouse: MouseEvent) {
         let area = self.layout.overlay;
-        let Some(overlay) = &mut self.overlay else {
+        let Some(overlay) = &mut self.modals.overlay else {
             return;
         };
         let position = Position::new(mouse.column, mouse.row);
@@ -111,7 +111,7 @@ impl App {
     }
 
     pub(super) fn on_mouse(&mut self, mouse: MouseEvent) {
-        if self.form.is_some() {
+        if self.modals.form.is_some() {
             self.on_form_mouse(mouse);
             return;
         }
@@ -679,7 +679,7 @@ impl App {
             })
             .map(|(_, _, index)| *index);
         let Some(index) = option else { return };
-        if let Some(dialog) = self.dialogs.pop_front() {
+        if let Some(dialog) = self.modals.dialogs.pop_front() {
             self.on_dialog_action(dialog.options[index].1.clone());
         }
     }
@@ -687,7 +687,7 @@ impl App {
     pub(super) fn on_picker_mouse(&mut self, mouse: MouseEvent) {
         let (area, first) = self.layout.picker;
         let inside = area.contains(Position::new(mouse.column, mouse.row));
-        let Some(picker) = &mut self.picker else {
+        let Some(picker) = &mut self.modals.picker else {
             return;
         };
         match mouse.kind {
@@ -716,7 +716,7 @@ impl App {
             {
                 let index = first + usize::from(mouse.row - area.y);
                 let double = self.is_double_click(mouse);
-                let Some(browser) = &mut self.browser else {
+                let Some(browser) = &mut self.modals.browser else {
                     return;
                 };
                 browser.point_at(index);
@@ -732,7 +732,7 @@ impl App {
     }
 
     fn scroll_browser(&mut self, rows: isize) {
-        if let Some(browser) = &mut self.browser {
+        if let Some(browser) = &mut self.modals.browser {
             browser.move_by(rows);
         }
     }
@@ -740,7 +740,7 @@ impl App {
     pub(super) fn on_palette_mouse(&mut self, mouse: MouseEvent) {
         let (area, first) = self.layout.palette;
         let inside = area.contains(Position::new(mouse.column, mouse.row));
-        let Some(palette) = &mut self.palette else {
+        let Some(palette) = &mut self.modals.palette else {
             return;
         };
         match mouse.kind {
@@ -757,7 +757,7 @@ impl App {
     pub(super) fn on_history_mouse(&mut self, mouse: MouseEvent) {
         let (area, first) = self.layout.history;
         let inside = area.contains(Position::new(mouse.column, mouse.row));
-        let Some(list) = &mut self.history else {
+        let Some(list) = &mut self.modals.history else {
             return;
         };
         match mouse.kind {
@@ -775,6 +775,7 @@ impl App {
 
     fn on_form_mouse(&mut self, mouse: MouseEvent) {
         if self
+            .modals
             .form
             .as_ref()
             .is_some_and(|form| form.schema_list.is_some())
@@ -794,7 +795,7 @@ impl App {
             .find(|(_, area)| area.contains(position));
         if let Some((section, _)) = section {
             let section = *section;
-            if let Some(form) = &mut self.form {
+            if let Some(form) = &mut self.modals.form {
                 form.select_section(section);
             }
             return;
@@ -804,7 +805,9 @@ impl App {
             return;
         };
         let (chosen, browse) = (*chosen, button.is_some());
-        let Some(form) = &mut self.form else { return };
+        let Some(form) = &mut self.modals.form else {
+            return;
+        };
         form.focus_on(chosen);
         if browse {
             self.open_form_window();
@@ -815,7 +818,7 @@ impl App {
             FormRequest::Test => self.test_form(),
             FormRequest::Save => self.save_form(),
             FormRequest::Disconnect => self.disconnect_form(),
-            FormRequest::Cancel => self.form = None,
+            FormRequest::Cancel => self.modals.form = None,
             FormRequest::Browse => self.open_form_window(),
             FormRequest::None => {}
         }
@@ -826,6 +829,7 @@ impl App {
         let (area, first) = self.layout.form.list;
         let inside = area.contains(Position::new(mouse.column, mouse.row));
         let Some(open) = self
+            .modals
             .form
             .as_mut()
             .and_then(|form| form.schema_list.as_mut())
@@ -855,7 +859,7 @@ impl App {
             let inside_colors = settings.fields.iter().any(|(field, area)| {
                 *field == SettingsField::ThemeColors && area.contains(position)
             });
-            if let Some(form) = &mut self.settings_form {
+            if let Some(form) = &mut self.modals.settings_form {
                 let delta = if mouse.kind == MouseEventKind::ScrollUp {
                     -WHEEL_ROWS
                 } else {
@@ -879,7 +883,7 @@ impl App {
             .iter()
             .find(|(_, area)| area.contains(position))
         {
-            if let Some(form) = &mut self.settings_form {
+            if let Some(form) = &mut self.modals.settings_form {
                 form.edit_shortcut(*action);
             }
             return;
@@ -891,7 +895,7 @@ impl App {
             .iter()
             .find(|(_, area)| area.contains(position))
         {
-            if let Some(form) = &mut self.settings_form {
+            if let Some(form) = &mut self.modals.settings_form {
                 form.select_theme(id);
             }
             return;
@@ -903,14 +907,14 @@ impl App {
             .iter()
             .find(|(_, area)| area.contains(position))
         {
-            if let Some(form) = &mut self.settings_form {
+            if let Some(form) = &mut self.modals.settings_form {
                 form.focus_theme_color(*role);
             }
             return;
         }
         let sections = &self.layout.settings.sections;
         if let Some(section) = sections.iter().position(|area| area.contains(position)) {
-            if let Some(form) = &mut self.settings_form {
+            if let Some(form) = &mut self.modals.settings_form {
                 form.open_section(section);
             }
             return;
@@ -923,7 +927,7 @@ impl App {
             .find(|(_, area)| area.contains(position));
         let Some((field, _)) = field else { return };
         let field = *field;
-        let Some(form) = &mut self.settings_form else {
+        let Some(form) = &mut self.modals.settings_form else {
             return;
         };
         form.focus_on(field);
@@ -954,7 +958,7 @@ impl App {
             .iter()
             .find(|(_, area)| area.contains(position))
             .map(|(field, _)| *field);
-        let Some(form) = &mut self.export_form else {
+        let Some(form) = &mut self.modals.export_form else {
             return;
         };
         if browse {
@@ -992,7 +996,7 @@ impl App {
             .iter()
             .find(|(_, area)| area.contains(position))
             .map(|(field, _)| *field);
-        let Some(form) = &mut self.import_form else {
+        let Some(form) = &mut self.modals.import_form else {
             return;
         };
         if let Some((path, _)) = browse {

@@ -129,7 +129,7 @@ impl App {
             return;
         }
         let (items, choices) = choices.into_iter().unzip();
-        self.picker = Some(Picker {
+        self.modals.picker = Some(Picker {
             kind: PickerKind::Agent(choices),
             title: title.into(),
             items,

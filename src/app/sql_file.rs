@@ -61,7 +61,7 @@ impl App {
     fn begin_sql_file(&mut self, connection: ConnectionId) {
         self.sql_file_open = Some(connection);
         let home = std::env::home_dir();
-        self.browser = Some(crate::browser::FileBrowser::new("", false, home));
+        self.modals.browser = Some(crate::browser::FileBrowser::new("", false, home));
     }
 
     fn pick_sql_file_connection(&mut self, path: Option<PathBuf>) {
@@ -82,7 +82,7 @@ impl App {
                 (item.id, row)
             })
             .collect();
-        self.picker = Some(Picker {
+        self.modals.picker = Some(Picker {
             kind: PickerKind::SqlFile {
                 path,
                 connections: rows.iter().map(|(id, _)| *id).collect(),

@@ -305,7 +305,9 @@ impl App {
     /// Tests the definition of the form. With `names`, the test also reads the names of
     /// the schemas.
     pub(super) fn authorize_test(&mut self, mut definition: Definition, test: u64, names: bool) {
-        let Some(form) = &self.form else { return };
+        let Some(form) = &self.modals.form else {
+            return;
+        };
         if self.persist.is_none() || !matches!(definition.source, Source::Network(_)) {
             self.dispatch_authorized(Use::Test { test, names }, Some(definition));
             return;
@@ -383,7 +385,11 @@ impl App {
                     && connection.key.as_ref() == Some(&attempt.target.key)
             });
         }
-        match (&attempt.action, &attempt.target.form_snapshot, &self.form) {
+        match (
+            &attempt.action,
+            &attempt.target.form_snapshot,
+            &self.modals.form,
+        ) {
             (Use::Test { test, .. }, Some(snapshot), Some(form)) => {
                 form.test == Some(*test)
                     && form.connection_id == attempt.target.key.id
@@ -415,7 +421,7 @@ impl App {
     /// Returns the message of a credential step in the background. It has no time limit,
     /// because the end of the step ends the message.
     pub(super) fn auth_wait(&self) -> Option<&'static str> {
-        let asks = self.auth.prompt.is_some() || !self.dialogs.is_empty();
+        let asks = self.auth.prompt.is_some() || !self.modals.dialogs.is_empty();
         (self.auth.active.is_some() && !asks).then_some(text::AUTH_WAIT)
     }
 
@@ -1032,7 +1038,12 @@ impl App {
                 }
             }
             Use::Test { test, .. } => {
-                if let Some(form) = self.form.as_mut().filter(|form| form.test == Some(*test)) {
+                if let Some(form) = self
+                    .modals
+                    .form
+                    .as_mut()
+                    .filter(|form| form.test == Some(*test))
+                {
                     form.test = None;
                     form.close_schema_list();
                 }
@@ -1044,7 +1055,7 @@ impl App {
     fn cancel_active_auth(&mut self) {
         self.auth.job.store(0, Ordering::Release);
         if let Some(attempt) = self.auth.active.take() {
-            self.dialogs.retain(|dialog| {
+            self.modals.dialogs.retain(|dialog| {
                 !dialog
                     .options
                     .iter()
@@ -1087,7 +1098,7 @@ impl App {
         {
             self.auth.job.store(0, Ordering::Release);
             if let Some(attempt) = self.auth.active.take() {
-                self.dialogs.retain(|dialog| {
+                self.modals.dialogs.retain(|dialog| {
                     !dialog
                         .options
                         .iter()

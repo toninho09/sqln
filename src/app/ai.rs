@@ -318,7 +318,7 @@ impl App {
             cache.cancel.cancel();
             cache.loading = false;
         }
-        self.dialogs.retain(|d| {
+        self.modals.dialogs.retain(|d| {
             !d.options.iter().any(|(_, a)| {
                 matches!(
                     a,
@@ -1124,7 +1124,7 @@ impl App {
             text::AI_EXPLAIN_PLAN_TITLE
         };
         self.console_mut().editor.close_suggestions();
-        self.overlay = Some(Overlay {
+        self.modals.overlay = Some(Overlay {
             _analysis_memory: None,
             _ai_memory: completed.memory,
             title: title.to_owned(),
@@ -1341,7 +1341,7 @@ impl App {
                     }
                 },
                 Work::Form(token, result) if token == self.ai.form_token => {
-                    if let Some(form) = &mut self.settings_form {
+                    if let Some(form) = &mut self.modals.settings_form {
                         form.ai_busy = false;
                     }
                     match result {
@@ -1364,7 +1364,7 @@ impl App {
                     }
                 }
                 Work::Test(token, result) if token == self.ai.form_token => {
-                    if let Some(form) = &mut self.settings_form {
+                    if let Some(form) = &mut self.modals.settings_form {
                         form.ai_busy = false;
                     }
                     match result {
@@ -1375,7 +1375,7 @@ impl App {
                             );
                         }
                         Err(e) => {
-                            if let Some(form) = &mut self.settings_form {
+                            if let Some(form) = &mut self.modals.settings_form {
                                 form.note = Some(e);
                             }
                         }
@@ -1389,7 +1389,7 @@ impl App {
     }
     /// Closes the settings and stops a vault write or a test of the provider.
     pub(super) fn close_settings(&mut self) {
-        self.settings_form = None;
+        self.modals.settings_form = None;
         self.ai.form_token += 1;
         self.ai.form_cancel.cancel();
         self.ai.pending_save = None;
@@ -1406,7 +1406,7 @@ impl App {
         };
         self.ai.session_keys.insert(account, key);
         if let Some(ai) = preferences.ai_completion.clone()
-            && let Some(form) = &mut self.settings_form
+            && let Some(form) = &mut self.modals.settings_form
         {
             form.set_ai_preferences(ai);
         }
@@ -1416,7 +1416,7 @@ impl App {
     /// Saves the settings. A typed vault key goes to the vault first; the save
     /// continues when the write ends.
     pub(super) fn save_settings(&mut self) {
-        let Some(form) = &mut self.settings_form else {
+        let Some(form) = &mut self.modals.settings_form else {
             return;
         };
         if form.ai_busy {
@@ -1494,7 +1494,7 @@ impl App {
                 .and_then(|global| config::validate_keymaps(&global, Some(&preferences))),
         };
         if let Err(message) = validation {
-            if let Some(form) = &mut self.settings_form {
+            if let Some(form) = &mut self.modals.settings_form {
                 form.note = Some(message);
             }
             return;
@@ -1502,12 +1502,13 @@ impl App {
         // Write new and edited themes before preferences, and remove old ones only
         // after preferences no longer refer to them.
         let changes = self
+            .modals
             .settings_form
             .as_ref()
             .map(|form| form.theme_changes())
             .unwrap_or_default();
         if let Err(message) = self.write_theme_files(&changes) {
-            if let Some(form) = &mut self.settings_form {
+            if let Some(form) = &mut self.modals.settings_form {
                 form.note = Some(message);
             }
             return;
@@ -1524,14 +1525,14 @@ impl App {
                     *known = Some(hash);
                 }
                 if let Err(message) = self.remove_theme_files(&changes) {
-                    if let Some(form) = &mut self.settings_form {
+                    if let Some(form) = &mut self.modals.settings_form {
                         form.note = Some(format!(
                             "Settings were saved, but a theme could not be removed: {message} Retry."
                         ));
                     }
                     return;
                 }
-                self.settings_form = None;
+                self.modals.settings_form = None;
                 self.reload_config();
                 if self
                     .persist
@@ -1542,7 +1543,7 @@ impl App {
                 }
             }
             Err(message) => {
-                if let Some(form) = &mut self.settings_form {
+                if let Some(form) = &mut self.modals.settings_form {
                     form.note = Some(message);
                 }
             }
@@ -1570,7 +1571,7 @@ impl App {
                 &theme.scheme.to_colors(),
                 theme.file,
             )?;
-            if let Some(form) = &mut self.settings_form {
+            if let Some(form) = &mut self.modals.settings_form {
                 form.theme_written(&theme.id, hash);
             }
         }
@@ -1617,7 +1618,7 @@ impl App {
     }
     /// Tests the endpoint of the autocomplete provider from the settings.
     pub(super) fn test_ai_connection(&mut self) {
-        let Some(form) = &mut self.settings_form else {
+        let Some(form) = &mut self.modals.settings_form else {
             return;
         };
         if form.ai_busy {

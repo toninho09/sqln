@@ -45,7 +45,7 @@ impl App {
     }
 
     pub fn compare_form(&self) -> Option<&CompareForm> {
-        self.compare_form.as_ref()
+        self.modals.compare_form.as_ref()
     }
 
     /// Returns the source of a compare for a row of the explorer, or the reason that the
@@ -156,7 +156,7 @@ impl App {
                 return;
             }
         };
-        self.compare_form = Some(form);
+        self.modals.compare_form = Some(form);
         self.sync_compare_form();
     }
 
@@ -178,7 +178,7 @@ impl App {
     /// because a compare refuses them.
     pub(super) fn sync_compare_form(&mut self) {
         for side in 0..2 {
-            let Some(form) = &self.compare_form else {
+            let Some(form) = &self.modals.compare_form else {
                 return;
             };
             if form.sides[side].schemas.is_some() {
@@ -203,12 +203,12 @@ impl App {
                     });
                     let schemas = schemas.collect();
                     let default = item.default_schema.clone();
-                    if let Some(form) = &mut self.compare_form {
+                    if let Some(form) = &mut self.modals.compare_form {
                         form.set_schemas(side, schemas, default.as_deref());
                     }
                 }
                 (_, CatalogState::Failed) => {
-                    if let Some(form) = &mut self.compare_form {
+                    if let Some(form) = &mut self.modals.compare_form {
                         form.set_schemas(side, Vec::new(), None);
                     }
                 }
@@ -219,12 +219,12 @@ impl App {
 
     pub(super) fn on_compare_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(form) = &mut self.compare_form else {
+        let Some(form) = &mut self.modals.compare_form else {
             return;
         };
         match form.on_key(key, vim) {
             CompareRequest::None => self.sync_compare_form(),
-            CompareRequest::Cancel => self.compare_form = None,
+            CompareRequest::Cancel => self.modals.compare_form = None,
             CompareRequest::Compare => self.confirm_compare(),
         }
     }
@@ -247,7 +247,7 @@ impl App {
             .iter()
             .find(|(_, area)| area.contains(position))
             .map(|(field, _)| *field);
-        let Some(form) = &mut self.compare_form else {
+        let Some(form) = &mut self.modals.compare_form else {
             return;
         };
         let request = match (row, field) {
@@ -263,7 +263,7 @@ impl App {
         };
         match request {
             CompareRequest::None => self.sync_compare_form(),
-            CompareRequest::Cancel => self.compare_form = None,
+            CompareRequest::Cancel => self.modals.compare_form = None,
             CompareRequest::Compare => self.confirm_compare(),
         }
     }
@@ -271,7 +271,7 @@ impl App {
     /// Checks the sides of the dialog and opens the compare. A wrong field keeps the
     /// dialog open with the reason.
     fn confirm_compare(&mut self) {
-        let Some(form) = &self.compare_form else {
+        let Some(form) = &self.modals.compare_form else {
             return;
         };
         let (kind, removals) = (form.kind, form.removals);
@@ -281,11 +281,11 @@ impl App {
         });
         match checked {
             Ok(sides) => {
-                self.compare_form = None;
+                self.modals.compare_form = None;
                 self.open_compare(kind, sides, removals);
             }
             Err(note) => {
-                if let Some(form) = &mut self.compare_form {
+                if let Some(form) = &mut self.modals.compare_form {
                     form.note = Some(note);
                 }
             }

@@ -134,7 +134,7 @@ impl App {
                 ("Key columns: Enter toggles; first row compares", items)
             }
         };
-        self.picker = Some(Picker {
+        self.modals.picker = Some(Picker {
             kind: PickerKind::Analysis(Choice {
                 generation: result.table.generation,
                 step,
@@ -206,7 +206,7 @@ impl App {
 
     fn start_analysis(&mut self, job: Job) {
         self.analysis_job = Some(job);
-        self.overlay = Some(Overlay {
+        self.modals.overlay = Some(Overlay {
             _analysis_memory: None,
             _ai_memory: None,
             title: "Result analysis".into(),
@@ -223,7 +223,7 @@ impl App {
         let Some(mut job) = self.analysis_job.take() else {
             return;
         };
-        if self.overlay.is_none() {
+        if self.modals.overlay.is_none() {
             return;
         }
         let outcome = match self.active_result() {
@@ -238,7 +238,7 @@ impl App {
             Ok(false) => self.analysis_job = Some(job),
             Ok(true) => {
                 let report = job.finish();
-                self.overlay = Some(Overlay {
+                self.modals.overlay = Some(Overlay {
                     _analysis_memory: Some(report.memory),
                     _ai_memory: None,
                     title: report.title,
@@ -251,7 +251,7 @@ impl App {
                 });
             }
             Err(reason) => {
-                self.overlay = None;
+                self.modals.overlay = None;
                 self.status = Some(reason.into());
             }
         }

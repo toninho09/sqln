@@ -284,7 +284,7 @@ impl App {
         // A change of tab during the read leaves the dialog without its table on screen.
         if self.table().is_some_and(|tab| tab.id == id) {
             let stamp = time_stamp();
-            self.import_form = Some(ImportForm::new(table, &self.import_choices, &stamp));
+            self.modals.import_form = Some(ImportForm::new(table, &self.import_choices, &stamp));
             // A read of an older dialog can have the number of a read of this one.
             self.import_probes = ProbeChannel::default();
         }
@@ -351,7 +351,7 @@ impl App {
     pub(super) fn on_import_action(&mut self, action: ImportAction) {
         match action {
             ImportAction::None => {}
-            ImportAction::Cancel => self.import_form = None,
+            ImportAction::Cancel => self.modals.import_form = None,
             ImportAction::Import => self.confirm_import(),
             ImportAction::Browse => self.open_browser(),
         }
@@ -360,7 +360,7 @@ impl App {
 
     /// Starts the read that the fields of the dialog ask for.
     pub(super) fn request_probe(&mut self) {
-        let Some(form) = &mut self.import_form else {
+        let Some(form) = &mut self.modals.import_form else {
             return;
         };
         let Some(request) = form.probe_request() else {
@@ -385,7 +385,7 @@ impl App {
     pub(super) fn poll_probes(&mut self) -> bool {
         let mut changed = false;
         while let Ok((serial, probe)) = self.import_probes.receiver.try_recv() {
-            if let Some(form) = &mut self.import_form {
+            if let Some(form) = &mut self.modals.import_form {
                 form.on_probe(serial, probe);
                 changed = true;
             }
@@ -398,7 +398,7 @@ impl App {
 
     /// A connection in production asks first, as a run of a change does.
     fn confirm_import(&mut self) {
-        let Some(form) = &mut self.import_form else {
+        let Some(form) = &mut self.modals.import_form else {
             return;
         };
         if let Err(note) = form.job() {
@@ -426,7 +426,7 @@ impl App {
     }
 
     pub(super) fn start_import(&mut self) {
-        let Some(form) = self.import_form.take() else {
+        let Some(form) = self.modals.import_form.take() else {
             return;
         };
         let Ok(job) = form.job() else {

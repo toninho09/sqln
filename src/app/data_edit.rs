@@ -322,7 +322,7 @@ impl App {
         );
         let mut editor = self.new_editor(&value, metadata.dialect);
         editor.use_literal_text(&value);
-        self.edit_form = Some(EditForm {
+        self.modals.edit_form = Some(EditForm {
             console: id,
             title,
             body: Body::Cell {
@@ -415,7 +415,7 @@ impl App {
     }
 
     fn edit_error(&mut self, reason: String) {
-        if let Some(form) = &mut self.edit_form {
+        if let Some(form) = &mut self.modals.edit_form {
             form.note = Some(reason);
         } else {
             self.status = Some(reason);
@@ -458,7 +458,7 @@ impl App {
             self.status = Some(text::EDIT_UNAVAILABLE.to_owned());
             return;
         }
-        self.edit_form = None;
+        self.modals.edit_form = None;
         if let Some(item) = self
             .connection(connection)
             .filter(|item| item.is_production())
@@ -578,7 +578,7 @@ impl App {
                 );
                 let can_show_review = self.table_index() == Some(index)
                     && !self.modal_is_open()
-                    && self.form.is_none();
+                    && self.modals.form.is_none();
                 let tab = &mut self.tables[index];
                 tab.edit_execution = None;
                 tab.phase = Phase::Idle;
@@ -603,7 +603,7 @@ impl App {
                     }
                     Ok(Outcome::Review(contents)) => {
                         if can_show_review {
-                            self.edit_form = Some(EditForm {
+                            self.modals.edit_form = Some(EditForm {
                                 console: id,
                                 title: format!("{} · {}", text::EDIT_REVIEW, tab.label()),
                                 body: Body::Review {
@@ -706,7 +706,7 @@ impl App {
     }
 
     pub(super) fn cancel_edits(&mut self, id: ConsoleId) {
-        self.edit_form = None;
+        self.modals.edit_form = None;
         self.exiting = false;
         if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
             tab.edit_close = false;
@@ -757,21 +757,23 @@ impl App {
     }
 
     pub(super) fn on_edit_key(&mut self, key: KeyEvent) {
-        let Some(form) = &self.edit_form else { return };
+        let Some(form) = &self.modals.edit_form else {
+            return;
+        };
         let id = form.console;
         if key.code == KeyCode::Esc && !form.keys.is_empty() {
-            self.edit_form.as_mut().unwrap().keys.clear();
+            self.modals.edit_form.as_mut().unwrap().keys.clear();
             return;
         }
         let review = matches!(form.body, Body::Review { .. });
         if key.code == KeyCode::Esc
-            && let Body::Cell { editor, .. } = &mut self.edit_form.as_mut().unwrap().body
+            && let Body::Cell { editor, .. } = &mut self.modals.edit_form.as_mut().unwrap().body
             && editor.search().is_some()
         {
             editor.on_key(key, None);
             return;
         }
-        let form = self.edit_form.as_ref().unwrap();
+        let form = self.modals.edit_form.as_ref().unwrap();
         let escape = key.code == KeyCode::Esc
             && match &form.body {
                 Body::Cell { editor, .. } => !self.vim() || !editor.is_inserting(),
@@ -783,7 +785,7 @@ impl App {
         }
         if key.code == KeyCode::Tab || key.code == KeyCode::BackTab {
             let count = if review { 3 } else { 5 };
-            let form = self.edit_form.as_mut().unwrap();
+            let form = self.modals.edit_form.as_mut().unwrap();
             form.focus = (form.focus
                 + if key.code == KeyCode::BackTab {
                     count - 1
@@ -803,7 +805,7 @@ impl App {
             self.edit_button(form.focus);
             return;
         }
-        if let Some(form) = &mut self.edit_form {
+        if let Some(form) = &mut self.modals.edit_form {
             match &mut form.body {
                 Body::Cell { editor, .. } if form.focus == 0 => {
                     let text_key = editor.is_inserting()
@@ -842,14 +844,16 @@ impl App {
 
     fn edit_button(&mut self, button: usize) {
         if button == 4 {
-            if let Some(form) = &mut self.edit_form
+            if let Some(form) = &mut self.modals.edit_form
                 && let Body::Cell { editor, .. } = &mut form.body
             {
                 form.note = editor.format_json().err().map(str::to_owned);
             }
             return;
         }
-        let Some(form) = &self.edit_form else { return };
+        let Some(form) = &self.modals.edit_form else {
+            return;
+        };
         let id = form.console;
         match &form.body {
             Body::Review { .. } => {
@@ -866,14 +870,14 @@ impl App {
                     self.cancel_edits(id);
                 } else if self.set_cell_value(id, row, col, (button == 1).then_some(value.as_str()))
                 {
-                    self.edit_form = None;
+                    self.modals.edit_form = None;
                 }
             }
         }
     }
 
     pub(super) fn on_edit_mouse(&mut self, mouse: MouseEvent) {
-        if let Some(form) = &mut self.edit_form
+        if let Some(form) = &mut self.modals.edit_form
             && let Body::Cell { editor, .. } = &mut form.body
             && editor.dragging_scrollbar()
         {
@@ -895,7 +899,7 @@ impl App {
             }
             return;
         }
-        if let Some(form) = &mut self.edit_form {
+        if let Some(form) = &mut self.modals.edit_form {
             match &mut form.body {
                 Body::Cell { editor, .. } if self.layout.edit.contents.contains(position) => {
                     form.focus = 0;

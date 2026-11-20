@@ -334,7 +334,7 @@ impl App {
             0 => self.status = Some(text::FOLLOW_NONE.to_owned()),
             1 => self.go_follow(connection, choices.remove(0)),
             _ => {
-                self.picker = Some(Picker {
+                self.modals.picker = Some(Picker {
                     items: choices.iter().map(|choice| choice.label.clone()).collect(),
                     kind: PickerKind::Follow {
                         connection,

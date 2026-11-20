@@ -1,7 +1,19 @@
 //! The windows over the screen, and the one order that decides which window gets the
 //! keys, the mouse, the paste, and the hint, and which window is drawn on top.
 
-use super::App;
+use std::collections::VecDeque;
+
+use super::{App, Dialog, Overlay, Picker};
+use crate::browser::FileBrowser;
+use crate::compare::form::CompareForm;
+use crate::export_form::ExportForm;
+use crate::form::ConnectionForm;
+use crate::help::Help;
+use crate::history::HistoryList;
+use crate::import_form::ImportForm;
+use crate::palette::Palette;
+use crate::settings::SettingsForm;
+use crate::ui::name::NamePrompt;
 
 /// A window over the screen. The AI prompts have their own routing and are not here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,11 +59,36 @@ impl Modal {
     ];
 }
 
-impl App {
-    pub(super) fn is_open(&self, modal: Modal) -> bool {
+/// The state of the windows over the screen. Several windows can be open at once;
+/// `Modal::ALL` decides which one is on top.
+#[derive(Default)]
+pub(super) struct Modals {
+    /// The first dialog is open. Another console can add a question at any time.
+    pub(super) dialogs: VecDeque<Dialog>,
+    pub(super) conflicts: Option<super::conflicts::Conflicts>,
+    pub(super) palette: Option<Palette>,
+    pub(super) history: Option<HistoryList>,
+    /// The request for a new name of a console.
+    pub(super) rename: Option<NamePrompt>,
+    /// The file browser of the focused path field in a dialog or in the form.
+    pub(super) browser: Option<FileBrowser>,
+    pub(super) settings_form: Option<SettingsForm>,
+    pub(super) export_form: Option<ExportForm>,
+    pub(super) edit_form: Option<crate::edit_form::EditForm>,
+    pub(super) import_form: Option<ImportForm>,
+    pub(super) compare_form: Option<CompareForm>,
+    pub(super) picker: Option<Picker>,
+    pub(super) help: Option<Help>,
+    pub(super) overlay: Option<Overlay>,
+    pub(super) form: Option<ConnectionForm>,
+}
+
+impl Modals {
+    /// Returns true when the window is open. The password prompt lives in `auth`.
+    fn is_open(&self, modal: Modal) -> bool {
         match modal {
             Modal::Dialog => !self.dialogs.is_empty(),
-            Modal::Password => self.auth.prompt.is_some(),
+            Modal::Password => false,
             Modal::Conflicts => self.conflicts.is_some(),
             Modal::Palette => self.palette.is_some(),
             Modal::History => self.history.is_some(),
@@ -66,6 +103,15 @@ impl App {
             Modal::Help => self.help.is_some(),
             Modal::Overlay => self.overlay.is_some(),
             Modal::Form => self.form.is_some(),
+        }
+    }
+}
+
+impl App {
+    pub(super) fn is_open(&self, modal: Modal) -> bool {
+        match modal {
+            Modal::Password => self.auth.prompt.is_some(),
+            _ => self.modals.is_open(modal),
         }
     }
 

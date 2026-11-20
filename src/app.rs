@@ -22,7 +22,7 @@ mod history;
 mod import;
 mod keys;
 mod modal;
-use modal::Modal;
+use modal::{Modal, Modals};
 mod mouse;
 mod persist;
 mod review;
@@ -33,7 +33,6 @@ mod tables;
 use tables::Screen;
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::io;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::path::PathBuf;
@@ -52,10 +51,8 @@ use tokio::sync::mpsc::Receiver;
 
 use self::keys::RunTarget;
 use self::mouse::Drag;
-use crate::browser::FileBrowser;
 use crate::catalog::{Catalog, RelationRef};
 use crate::clipboard::{SharedClipboard, SystemClipboard};
-use crate::compare::form::CompareForm;
 use crate::compare_tab::CompareTab;
 use crate::connection::{Connection, Definition};
 use crate::connector::{Connector, Namespace, TransactionCommand};
@@ -66,18 +63,12 @@ use crate::diagram_tab::DiagramTab;
 use crate::editor::{DEFAULT_UNDO_LIMIT, KeyboardMode, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, Settings};
 use crate::export::ExportChoices;
-use crate::export_form::ExportForm;
 use crate::form::ConnectionForm;
 use crate::generate::Template;
 use crate::grid::Budget;
-use crate::help::Help;
-use crate::history::HistoryList;
 use crate::import::ImportChoices;
-use crate::import_form::ImportForm;
 use crate::input::{Chord, Keymap, Region, SuggestionKeys};
 use crate::navigator::Navigator;
-use crate::palette::Palette;
-use crate::settings::SettingsForm;
 use crate::sql::Dialect;
 use crate::store::config::{ExplorerSide, IconName, ThemeName};
 use crate::store::scripts::ScriptEntry;
@@ -97,7 +88,7 @@ use crate::ui::history::draw_history;
 use crate::ui::import::{ImportLayout, draw_import};
 use crate::ui::kit::feedback::hint_line;
 use crate::ui::kit::panel::{draw_panel_title, draw_rule};
-use crate::ui::name::{NamePrompt, draw_name};
+use crate::ui::name::draw_name;
 use crate::ui::navigator::draw_navigator;
 use crate::ui::palette::draw_palette;
 use crate::ui::settings::{SettingsLayout, draw_settings};
@@ -438,6 +429,7 @@ struct ScreenLayout {
 
 pub struct App {
     ai: ai::State,
+    modals: Modals,
     consoles: Vec<Console>,
     /// The console that the console commands use. A table tab can be on screen.
     active: usize,
@@ -482,15 +474,7 @@ pub struct App {
     theme: Theme,
     layout: ScreenLayout,
     editor_ratio: u16,
-    /// The first dialog is open. Another console can add a question at any time.
-    dialogs: VecDeque<Dialog>,
-    picker: Option<Picker>,
-    palette: Option<Palette>,
-    history: Option<HistoryList>,
-    form: Option<ConnectionForm>,
-    overlay: Option<Overlay>,
     analysis_job: Option<crate::analysis::Job>,
-    help: Option<Help>,
     status: Option<String>,
     /// The message on the clock, with the time of its first frame.
     status_shown: Option<(String, Instant)>,
@@ -510,15 +494,6 @@ pub struct App {
     /// The connections whose diagrams wait for their catalogs, which give the current
     /// schemas.
     pending_diagrams: Vec<ConnectionId>,
-    /// The request for a new name of a console.
-    rename: Option<NamePrompt>,
-    settings_form: Option<SettingsForm>,
-    export_form: Option<ExportForm>,
-    import_form: Option<ImportForm>,
-    edit_form: Option<crate::edit_form::EditForm>,
-    compare_form: Option<CompareForm>,
-    /// The file browser of the focused path field in a dialog or in the form.
-    browser: Option<FileBrowser>,
     /// The connection that waits for the `.sql` file of an open.
     sql_file_open: Option<ConnectionId>,
     /// The file that waits for the answer of the copy-or-linked question.
@@ -545,8 +520,6 @@ pub struct App {
     persist: Option<persist::Persist>,
     auth: auth::Auth,
     agent: agent::State,
-    /// The scripts that another program changed, and that wait for a choice.
-    conflicts: Option<conflicts::Conflicts>,
     /// The SQL rules of a console that has no connection.
     fallback_dialect: Dialect,
     /// The region and keys of a sequence that needs more keys.
@@ -613,6 +586,7 @@ impl App {
             suggestion_keys: options.suggestion_keys,
             explorer_side: options.explorer_side,
             ai: ai::State::new(options.ai_completion, options.ai_vault),
+            modals: Modals::default(),
             show_system_commands: options.show_system_commands,
             database: options.database,
             clipboard,
@@ -623,21 +597,7 @@ impl App {
             theme,
             layout: ScreenLayout::default(),
             editor_ratio: DEFAULT_EDITOR_RATIO,
-            dialogs: VecDeque::new(),
-            picker: None,
-            palette: None,
-            history: None,
-            form: None,
-            overlay: None,
             analysis_job: None,
-            help: None,
-            rename: None,
-            settings_form: None,
-            export_form: None,
-            import_form: None,
-            edit_form: None,
-            compare_form: None,
-            browser: None,
             sql_file_open: None,
             sql_file: None,
             export_choices: options.export_choices.clone(),
@@ -662,7 +622,6 @@ impl App {
             persist,
             auth: auth::Auth::new(options.vault.take(), plain),
             agent: agent::State::default(),
-            conflicts: None,
             fallback_dialect: options.dialect,
             pending_key: None,
             command_page: None,
@@ -801,7 +760,7 @@ impl App {
     }
 
     pub fn form(&self) -> Option<&ConnectionForm> {
-        self.form.as_ref()
+        self.modals.form.as_ref()
     }
 
     fn console_index(&self, id: ConsoleId) -> Option<usize> {
@@ -860,10 +819,14 @@ impl App {
     /// Returns the theme of the next frame. An open dialog shows its choice before the
     /// save. After that, the connection of the open tab has priority over the default.
     fn theme_choice(&self) -> Option<ThemeName> {
-        if let Some(form) = &self.settings_form {
+        if let Some(form) = &self.modals.settings_form {
             return form.preview_theme();
         }
-        let chosen = self.form.as_ref().and_then(|form| form.theme.clone());
+        let chosen = self
+            .modals
+            .form
+            .as_ref()
+            .and_then(|form| form.theme.clone());
         let connection = || self.tab_connection()?.definition.as_ref()?.theme.clone();
         chosen
             .or_else(connection)
@@ -873,7 +836,7 @@ impl App {
     /// The palette of a custom id: the dialog of the settings comes first, because
     /// its drafts preview on the screen.
     fn draft_scheme(&self, id: &str) -> Option<crate::ui::schemes::Scheme> {
-        if let Some(form) = &self.settings_form {
+        if let Some(form) = &self.modals.settings_form {
             if let Some(scheme) = form.theme_scheme(id) {
                 return Some(scheme);
             }
@@ -899,7 +862,7 @@ impl App {
         body: String,
         options: Vec<(&'static str, DialogAction)>,
     ) {
-        self.dialogs.push_back(Dialog {
+        self.modals.dialogs.push_back(Dialog {
             title: title.into(),
             body,
             options,
@@ -1029,7 +992,7 @@ impl App {
     }
 
     fn route_event(&mut self, event: Event) {
-        if self.dialogs.is_empty() && self.auth.prompt.is_none() {
+        if self.modals.dialogs.is_empty() && self.auth.prompt.is_none() {
             if let Event::Paste(text) = &event
                 && self.ai_paste(text)
             {
@@ -1066,22 +1029,22 @@ impl App {
                 }
             }
             Modal::Rename => {
-                if let Some(prompt) = &mut self.rename {
+                if let Some(prompt) = &mut self.modals.rename {
                     prompt.paste(text);
                 }
             }
             Modal::Browser => {
-                if let Some(browser) = &mut self.browser {
+                if let Some(browser) = &mut self.modals.browser {
                     browser.paste(text);
                 }
             }
             Modal::Settings => {
-                if let Some(form) = &mut self.settings_form {
+                if let Some(form) = &mut self.modals.settings_form {
                     form.paste(text);
                 }
             }
             Modal::Export => {
-                if let Some(form) = &mut self.export_form {
+                if let Some(form) = &mut self.modals.export_form {
                     form.paste(text);
                 }
             }
@@ -1089,38 +1052,38 @@ impl App {
                 if let Some(crate::edit_form::EditForm {
                     body: crate::edit_form::Body::Cell { editor, .. },
                     ..
-                }) = &mut self.edit_form
+                }) = &mut self.modals.edit_form
                 {
                     editor.on_paste(text);
                 }
             }
             Modal::Import => {
-                if let Some(form) = &mut self.import_form {
+                if let Some(form) = &mut self.modals.import_form {
                     form.paste(text);
                 }
             }
             Modal::Compare => {
-                if let Some(form) = &mut self.compare_form {
+                if let Some(form) = &mut self.modals.compare_form {
                     form.paste(text);
                 }
             }
             Modal::Palette => {
-                if let Some(palette) = &mut self.palette {
+                if let Some(palette) = &mut self.modals.palette {
                     palette.paste(text);
                 }
             }
             Modal::History => {
-                if let Some(list) = &mut self.history {
+                if let Some(list) = &mut self.modals.history {
                     list.paste(text);
                 }
             }
             Modal::Overlay => {
-                if let Some(overlay) = &mut self.overlay {
+                if let Some(overlay) = &mut self.modals.overlay {
                     overlay.contents.paste_search(text);
                 }
             }
             Modal::Help => {
-                if let Some(help) = &mut self.help {
+                if let Some(help) = &mut self.modals.help {
                     help.paste(text);
                 }
             }
@@ -1146,7 +1109,7 @@ impl App {
             Modal::Compare => self.on_compare_mouse(mouse),
             Modal::Overlay => self.on_overlay_mouse(mouse),
             Modal::Help => {
-                if let Some(help) = &mut self.help {
+                if let Some(help) = &mut self.modals.help {
                     match mouse.kind {
                         MouseEventKind::ScrollUp => help.scroll = help.scroll.saturating_sub(3),
                         MouseEventKind::ScrollDown => help.scroll = help.scroll.saturating_add(3),
@@ -1163,7 +1126,7 @@ impl App {
     }
 
     fn on_paste(&mut self, text: &str) {
-        if let Some(form) = &mut self.form {
+        if let Some(form) = &mut self.modals.form {
             form.on_paste(text);
             return;
         }
@@ -1224,6 +1187,7 @@ impl App {
         };
         search
             || self
+                .modals
                 .overlay
                 .as_ref()
                 .is_some_and(|overlay| overlay.contents.search_has_work())
@@ -1915,12 +1879,12 @@ impl App {
     fn draw_modal(&mut self, frame: &mut Frame, modal: Modal) {
         match modal {
             Modal::Form => {
-                if let Some(form) = &self.form {
+                if let Some(form) = &self.modals.form {
                     self.layout.form = draw_form(frame, form, &self.theme);
                 }
             }
             Modal::Picker => {
-                if let Some(picker) = &self.picker {
+                if let Some(picker) = &self.modals.picker {
                     let items: Vec<&str> = picker.items.iter().map(String::as_str).collect();
                     self.layout.picker = draw_picker(
                         frame,
@@ -1933,7 +1897,7 @@ impl App {
                 }
             }
             Modal::Conflicts => {
-                if let Some(conflicts) = &self.conflicts {
+                if let Some(conflicts) = &self.modals.conflicts {
                     let rows: Vec<ConflictRowView> = conflicts
                         .rows
                         .iter()
@@ -1948,7 +1912,7 @@ impl App {
                 }
             }
             Modal::Overlay => {
-                if let Some(overlay) = &mut self.overlay {
+                if let Some(overlay) = &mut self.modals.overlay {
                     let Overlay {
                         title,
                         contents,
@@ -1964,52 +1928,52 @@ impl App {
                 }
             }
             Modal::Help => {
-                if let Some(help) = &mut self.help {
+                if let Some(help) = &mut self.modals.help {
                     draw_help(frame, help, &self.theme);
                 }
             }
             Modal::Palette => {
-                if let Some(palette) = &self.palette {
+                if let Some(palette) = &self.modals.palette {
                     self.layout.palette = draw_palette(frame, palette, &self.theme);
                 }
             }
             Modal::History => {
-                if let Some(list) = &self.history {
+                if let Some(list) = &self.modals.history {
                     self.layout.history = draw_history(frame, list, &self.theme);
                 }
             }
             Modal::Settings => {
-                if let Some(form) = &self.settings_form {
+                if let Some(form) = &self.modals.settings_form {
                     self.layout.settings = draw_settings(frame, form, &self.theme);
                 }
             }
             Modal::Export => {
-                if let Some(form) = &self.export_form {
+                if let Some(form) = &self.modals.export_form {
                     self.layout.export = draw_export(frame, form, &self.theme);
                 }
             }
             Modal::Edit => {
-                if let Some(form) = &mut self.edit_form {
+                if let Some(form) = &mut self.modals.edit_form {
                     self.layout.edit = crate::ui::data_edit::draw_edit(frame, form, &self.theme);
                 }
             }
             Modal::Import => {
-                if let Some(form) = &self.import_form {
+                if let Some(form) = &self.modals.import_form {
                     self.layout.import = draw_import(frame, form, &self.theme);
                 }
             }
             Modal::Compare => {
-                if let Some(form) = &self.compare_form {
+                if let Some(form) = &self.modals.compare_form {
                     self.layout.compare_form = draw_compare_form(frame, form, &self.theme);
                 }
             }
             Modal::Browser => {
-                if let Some(browser) = &self.browser {
+                if let Some(browser) = &self.modals.browser {
                     self.layout.browser = draw_browser(frame, browser, &self.theme);
                 }
             }
             Modal::Rename => {
-                if let Some(prompt) = &self.rename {
+                if let Some(prompt) = &self.modals.rename {
                     draw_name(frame, prompt, &self.theme);
                 }
             }
@@ -2020,7 +1984,7 @@ impl App {
                 }
             }
             Modal::Dialog => {
-                if let Some(dialog) = self.dialogs.front() {
+                if let Some(dialog) = self.modals.dialogs.front() {
                     let labels: Vec<&str> =
                         dialog.options.iter().map(|(label, _)| *label).collect();
                     self.layout.dialog = draw_dialog(

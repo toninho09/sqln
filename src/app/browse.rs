@@ -11,6 +11,7 @@ impl App {
     /// schemas or the file browser.
     pub(super) fn open_form_window(&mut self) {
         if self
+            .modals
             .form
             .as_ref()
             .is_some_and(|form| form.focus == Field::Schemas)
@@ -22,11 +23,11 @@ impl App {
     }
 
     pub(super) fn open_browser(&mut self) {
-        let (path, new_file) = if let Some(form) = &self.export_form {
+        let (path, new_file) = if let Some(form) = &self.modals.export_form {
             (form.path_text(), true)
-        } else if let Some(form) = &self.import_form {
+        } else if let Some(form) = &self.modals.import_form {
             form.browser_start()
-        } else if let Some(form) = &self.form {
+        } else if let Some(form) = &self.modals.form {
             (form.text(form.focus), form.focus == Field::File)
         } else if self.sql_file_open.is_some() {
             // The open of a `.sql` file: the connection is known, and the file exists.
@@ -35,11 +36,11 @@ impl App {
             return;
         };
         let home = std::env::home_dir();
-        self.browser = Some(FileBrowser::new(path, new_file, home));
+        self.modals.browser = Some(FileBrowser::new(path, new_file, home));
     }
 
     pub(super) fn on_browser_key(&mut self, key: crossterm::event::KeyEvent) {
-        if let Some(browser) = &mut self.browser {
+        if let Some(browser) = &mut self.modals.browser {
             let request = browser.on_key(key);
             self.on_browser_request(request);
         }
@@ -49,24 +50,24 @@ impl App {
         let (path, chose_file) = match request {
             BrowserRequest::None => return,
             BrowserRequest::Cancel => {
-                self.browser = None;
+                self.modals.browser = None;
                 self.sql_file_open = None;
                 return;
             }
             BrowserRequest::File(path) => (path, true),
             BrowserRequest::Folder(path) => (path, false),
         };
-        self.browser = None;
+        self.modals.browser = None;
         if self.sql_file_open.is_some() && chose_file {
             self.sql_file_chosen(std::path::PathBuf::from(path));
             return;
         }
-        if let Some(form) = &mut self.export_form {
+        if let Some(form) = &mut self.modals.export_form {
             form.set_path(&path, chose_file);
-        } else if let Some(form) = &mut self.import_form {
+        } else if let Some(form) = &mut self.modals.import_form {
             form.set_path(&path);
             self.request_probe();
-        } else if let Some(form) = &mut self.form {
+        } else if let Some(form) = &mut self.modals.form {
             form.set_focused_path(&path);
         }
     }

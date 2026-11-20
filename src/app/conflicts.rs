@@ -50,7 +50,7 @@ impl App {
     /// Opens the question for the scripts in trouble that the user did not see yet.
     /// It returns true when the question opened now.
     pub(super) fn open_conflicts(&mut self) -> bool {
-        if self.conflicts.is_some() {
+        if self.modals.conflicts.is_some() {
             return false;
         }
         let Some(persist) = &mut self.persist else {
@@ -81,7 +81,7 @@ impl App {
         if rows.is_empty() {
             return false;
         }
-        self.conflicts = Some(Conflicts {
+        self.modals.conflicts = Some(Conflicts {
             rows,
             cursor: 0,
             note: None,
@@ -91,14 +91,14 @@ impl App {
 
     pub(super) fn on_conflicts_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(conflicts) = &mut self.conflicts else {
+        let Some(conflicts) = &mut self.modals.conflicts else {
             return;
         };
         let apply = conflicts.rows.len();
         let on_row = conflicts.cursor < apply;
         let positions = conflicts.positions();
         match key.code {
-            KeyCode::Esc => self.conflicts = None,
+            KeyCode::Esc => self.modals.conflicts = None,
             KeyCode::Down | KeyCode::Tab => conflicts.cursor = (conflicts.cursor + 1) % positions,
             KeyCode::Up | KeyCode::BackTab => {
                 conflicts.cursor = (conflicts.cursor + positions - 1) % positions;
@@ -128,7 +128,7 @@ impl App {
                 conflicts.cursor = (row + 1).min(apply);
             }
             KeyCode::Enter if conflicts.cursor == apply => self.apply_conflicts(),
-            KeyCode::Enter => self.conflicts = None,
+            KeyCode::Enter => self.modals.conflicts = None,
             _ => {}
         }
     }
@@ -142,7 +142,7 @@ impl App {
         let row = layout.rows.iter().position(|area| area.contains(position));
         let apply = layout.buttons[0].contains(position);
         let later = layout.buttons[1].contains(position);
-        let Some(conflicts) = &mut self.conflicts else {
+        let Some(conflicts) = &mut self.modals.conflicts else {
             return;
         };
         if let Some(row) = row {
@@ -151,20 +151,20 @@ impl App {
         } else if apply {
             self.apply_conflicts();
         } else if later {
-            self.conflicts = None;
+            self.modals.conflicts = None;
         }
     }
 
     /// Carries out the choices. The question stays open until every row has a choice.
     fn apply_conflicts(&mut self) {
-        let Some(conflicts) = &mut self.conflicts else {
+        let Some(conflicts) = &mut self.modals.conflicts else {
             return;
         };
         if conflicts.rows.iter().any(|row| row.choice.is_none()) {
             conflicts.note = Some(text::CONFLICT_CHOOSE);
             return;
         }
-        let Some(conflicts) = self.conflicts.take() else {
+        let Some(conflicts) = self.modals.conflicts.take() else {
             return;
         };
         for row in conflicts.rows {

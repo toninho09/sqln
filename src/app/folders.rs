@@ -106,7 +106,7 @@ impl App {
                 FolderChoice::Folder(name) => name.clone(),
             })
             .collect();
-        self.picker = Some(Picker {
+        self.modals.picker = Some(Picker {
             kind: PickerKind::Folder {
                 connection: item.id,
                 choices,
@@ -125,7 +125,7 @@ impl App {
         };
         let folder = match choice {
             FolderChoice::New => {
-                self.rename = Some(NamePrompt::new(NameTarget::NewFolder(connection), ""));
+                self.modals.rename = Some(NamePrompt::new(NameTarget::NewFolder(connection), ""));
                 return;
             }
             FolderChoice::NoFolder => None,
@@ -145,7 +145,7 @@ impl App {
         match action {
             Action::NavigatorEdit => {
                 let prompt = NamePrompt::new(NameTarget::Folder(folder.clone()), &folder.name);
-                self.rename = Some(prompt);
+                self.modals.rename = Some(prompt);
             }
             Action::NavigatorDelete => self.confirm_ungroup(folder),
             Action::NavigatorMoveUp => self.move_tree_item(row, true),
@@ -183,7 +183,7 @@ impl App {
     /// Applies the name of a new folder, or the new name of a folder. It returns false
     /// when the name prompt is not about a folder.
     pub(super) fn accept_folder_name(&mut self, name: &str) -> bool {
-        let Some(target) = self.rename.as_ref().map(|prompt| &prompt.target) else {
+        let Some(target) = self.modals.rename.as_ref().map(|prompt| &prompt.target) else {
             return false;
         };
         if !matches!(target, NameTarget::NewFolder(_) | NameTarget::Folder(_)) {
@@ -194,7 +194,7 @@ impl App {
             self.name_note(error);
             return true;
         }
-        let Some(prompt) = self.rename.take() else {
+        let Some(prompt) = self.modals.rename.take() else {
             return true;
         };
         match prompt.target {

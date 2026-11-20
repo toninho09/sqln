@@ -123,11 +123,11 @@ impl App {
             HistoryRow::new(entry.ok, age(Some(time)), entry.sql)
         });
         self.console_mut().editor.close_suggestions();
-        self.history = Some(history_list(rows.collect()));
+        self.modals.history = Some(history_list(rows.collect()));
     }
 
     pub(super) fn on_history_key(&mut self, key: KeyEvent) {
-        let Some(list) = &mut self.history else {
+        let Some(list) = &mut self.modals.history else {
             return;
         };
         let request = list.on_key(key);
@@ -138,9 +138,9 @@ impl App {
     pub(super) fn on_history_request(&mut self, request: ListRequest) {
         match request {
             ListRequest::None => {}
-            ListRequest::Cancel => self.history = None,
+            ListRequest::Cancel => self.modals.history = None,
             ListRequest::Choose(index) => {
-                let list = self.history.take();
+                let list = self.modals.history.take();
                 let row = list.as_ref().and_then(|list| list.row(index));
                 if let Some(row) = row {
                     self.leave_navigator();

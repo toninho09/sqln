@@ -372,7 +372,7 @@ impl App {
             if !self.config_blocked() {
                 let mut form = ConnectionForm::new_in(self.has_project());
                 form.themes = self.custom_themes.clone();
-                self.form = Some(form);
+                self.modals.form = Some(form);
             }
             return;
         }
@@ -512,7 +512,7 @@ impl App {
         if definition.is_some() {
             items.push(text::TEMPLATE_DDL.to_owned());
         }
-        self.picker = Some(Picker {
+        self.modals.picker = Some(Picker {
             kind: PickerKind::Generate {
                 request,
                 templates,
@@ -812,7 +812,7 @@ impl App {
             .map(|item| item.credential)
             .unwrap_or_default();
         let key = self.connection(id).and_then(|item| item.key.clone());
-        if let (Some(form), Some(definition)) = (&mut self.form, definition)
+        if let (Some(form), Some(definition)) = (&mut self.modals.form, definition)
             && form.editing == Some(id)
             && form.display_only
         {
@@ -847,7 +847,7 @@ impl App {
         if connected {
             form.note = Some(FormNote::Info(text::FORM_CONNECTED.to_owned()));
         }
-        self.form = Some(form);
+        self.modals.form = Some(form);
     }
 
     fn confirm_removal(&mut self, id: ConnectionId) {
@@ -1008,7 +1008,7 @@ impl App {
             console: console.id,
             connection: id,
         };
-        self.picker = Some(Picker {
+        self.modals.picker = Some(Picker {
             kind,
             title: title.to_owned(),
             items,
@@ -1027,7 +1027,7 @@ impl App {
     }
 
     fn update_picker(&mut self, id: ConnectionId, schemas: Option<Vec<String>>) {
-        let Some(picker) = self.picker.as_mut().filter(|picker| {
+        let Some(picker) = self.modals.picker.as_mut().filter(|picker| {
             matches!(picker.kind, PickerKind::Schema { connection, .. } if connection == id)
         }) else {
             return;
@@ -1040,12 +1040,12 @@ impl App {
                 picker.cursor = picker.cursor.min(picker.items.len() - 1);
                 picker.loading = false;
             }
-            None => self.picker = None,
+            None => self.modals.picker = None,
         }
     }
 
     pub(super) fn accept_picker(&mut self) {
-        let Some(picker) = self.picker.take() else {
+        let Some(picker) = self.modals.picker.take() else {
             return;
         };
         let cursor = picker.cursor;
@@ -1150,7 +1150,7 @@ impl App {
         }
         let test = self.next_test;
         self.next_test += 1;
-        if let Some(form) = &mut self.form {
+        if let Some(form) = &mut self.modals.form {
             form.test = Some(test);
             form.note = Some(FormNote::Info(text::FORM_TESTING.to_owned()));
         }
@@ -1176,7 +1176,7 @@ impl App {
         }
         let test = self.next_test;
         self.next_test += 1;
-        if let Some(form) = &mut self.form {
+        if let Some(form) = &mut self.modals.form {
             form.test = Some(test);
             form.note = None;
             form.open_schema_list();
@@ -1192,7 +1192,12 @@ impl App {
         if self.on_password_verified(test, &result) {
             return;
         }
-        let Some(form) = self.form.as_mut().filter(|form| form.test == Some(test)) else {
+        let Some(form) = self
+            .modals
+            .form
+            .as_mut()
+            .filter(|form| form.test == Some(test))
+        else {
             return;
         };
         form.test = None;
@@ -1210,12 +1215,12 @@ impl App {
     }
 
     pub(super) fn disconnect_form(&mut self) {
-        let Some(id) = self.form.as_ref().and_then(|form| form.editing) else {
+        let Some(id) = self.modals.form.as_ref().and_then(|form| form.editing) else {
             return;
         };
         if let Some(console) = self.console_in_use(id) {
             let note = FormNote::Error(text::connection_in_use(&console));
-            if let Some(form) = &mut self.form {
+            if let Some(form) = &mut self.modals.form {
                 form.note = Some(note);
             }
             return;
@@ -1226,7 +1231,9 @@ impl App {
     }
 
     pub(super) fn save_form(&mut self) {
-        let Some(form) = &self.form else { return };
+        let Some(form) = &self.modals.form else {
+            return;
+        };
         let editing = form.editing;
         if form.display_only {
             let name = form.text(Field::Name).trim().to_owned();
@@ -1285,7 +1292,7 @@ impl App {
     /// Builds the definition of the form with the folder of its scope, so that a saved
     /// relative path opens here the same file that the connection opens.
     pub(super) fn form_definition(&self) -> Option<Result<Definition, Invalid>> {
-        let form = self.form.as_ref()?;
+        let form = self.modals.form.as_ref()?;
         let base = self
             .form_scope()
             .and_then(|scope| self.persist_root(scope))
@@ -1299,7 +1306,7 @@ impl App {
     /// Returns the scope that the form saves to. A session without files has none.
     pub(super) fn form_scope(&self) -> Option<Scope> {
         self.persist.as_ref()?;
-        let form = self.form.as_ref()?;
+        let form = self.modals.form.as_ref()?;
         match form.editing {
             Some(id) => self.connection(id).and_then(Connection::scope),
             None if self.has_project() => Some(form.scope),
@@ -1324,14 +1331,14 @@ impl App {
     }
 
     fn set_form_error(&mut self, message: String) {
-        if let Some(form) = &mut self.form {
+        if let Some(form) = &mut self.modals.form {
             form.note = Some(FormNote::Error(message));
         }
     }
 
     /// Shows the error and opens the section of its field, with the focus on the field.
     fn show_invalid(&mut self, invalid: Invalid) {
-        if let Some(form) = &mut self.form {
+        if let Some(form) = &mut self.modals.form {
             form.focus_on(invalid.field);
             form.note = Some(FormNote::Error(invalid.message));
         }
@@ -1348,7 +1355,7 @@ impl App {
             folder,
             schemas,
         } = display;
-        let Some(id) = self.form.as_ref().and_then(|form| form.editing) else {
+        let Some(id) = self.modals.form.as_ref().and_then(|form| form.editing) else {
             return;
         };
         if name.is_empty() {
@@ -1390,14 +1397,14 @@ impl App {
             connection.name = name;
         }
         refresh_labels(&mut self.connections);
-        self.form = None;
+        self.modals.form = None;
         if schemas_changed {
             self.reload_catalog(id);
         }
     }
 
     fn apply_definition(&mut self, mut definition: Definition) {
-        let editing = self.form.as_ref().and_then(|form| form.editing);
+        let editing = self.modals.form.as_ref().and_then(|form| form.editing);
         let connected = editing.is_some_and(|id| {
             self.manager
                 .as_ref()
@@ -1412,10 +1419,11 @@ impl App {
             Some(id) => self.connection(id).and_then(|item| item.key.clone()),
             None => self.form_scope().map(|scope| ConnectionKey {
                 scope,
-                id: self.form.as_ref().unwrap().connection_id.clone(),
+                id: self.modals.form.as_ref().unwrap().connection_id.clone(),
             }),
         };
         let mut credential = self
+            .modals
             .form
             .as_ref()
             .map_or(CredentialName::Session, |form| form.credential);
@@ -1456,7 +1464,7 @@ impl App {
             let generation = self.connection(id).unwrap().generation;
             self.auth.local.insert(id, (generation, editing.is_none()));
         }
-        self.form = None;
+        self.modals.form = None;
         if let Some(id) = id {
             self.authorize(id, super::auth::Use::Save);
         }

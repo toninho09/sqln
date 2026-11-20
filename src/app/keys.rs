@@ -126,14 +126,14 @@ impl App {
     }
 
     fn on_help_key(&mut self, key: KeyEvent) {
-        let Some(help) = &mut self.help else {
+        let Some(help) = &mut self.modals.help else {
             return;
         };
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             let contents = help.text();
             self.copy(&contents);
         } else if help.on_key(key) {
-            self.help = None;
+            self.modals.help = None;
         }
     }
 
@@ -613,7 +613,7 @@ impl App {
                 if other.is_some() {
                     contents.highlight_json();
                 }
-                self.overlay = Some(Overlay {
+                self.modals.overlay = Some(Overlay {
                     _analysis_memory: None,
                     _ai_memory: None,
                     title,
@@ -639,7 +639,7 @@ impl App {
     fn show_row(&mut self, row: usize, scroll: usize) {
         let window = self.active_result().and_then(|item| item.row_window(row));
         let Some(window) = window else { return };
-        self.overlay = Some(Overlay {
+        self.modals.overlay = Some(Overlay {
             _analysis_memory: None,
             _ai_memory: None,
             title: window.title,
@@ -657,6 +657,7 @@ impl App {
     /// the same columns stay in sight.
     fn step_row_window(&mut self, forward: bool) {
         let Some((row, scroll)) = self
+            .modals
             .overlay
             .as_ref()
             .and_then(|overlay| Some((overlay.row?, overlay.scroll)))
@@ -810,7 +811,7 @@ impl App {
         } else {
             text::MODE_CONVENTIONAL
         };
-        self.help = Some(Help::new(
+        self.modals.help = Some(Help::new(
             text::keys_title(mode, name),
             self.guide_topics(),
             groups,
@@ -1104,7 +1105,7 @@ impl App {
         };
         let contents = text::syntax_details(report);
         self.console_mut().editor.close_suggestions();
-        self.overlay = Some(Overlay {
+        self.modals.overlay = Some(Overlay {
             _analysis_memory: None,
             _ai_memory: None,
             title: text::SYNTAX_TITLE.into(),
@@ -1214,7 +1215,7 @@ impl App {
 
     fn on_dialog_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(dialog) = self.dialogs.front_mut() else {
+        let Some(dialog) = self.modals.dialogs.front_mut() else {
             return;
         };
         let count = dialog.options.len();
@@ -1225,13 +1226,13 @@ impl App {
             KeyCode::Char('h') if vim => dialog.focus = (dialog.focus + count - 1) % count,
             KeyCode::Enter => {
                 let action = dialog.options[dialog.focus].1.clone();
-                self.dialogs.pop_front();
+                self.modals.dialogs.pop_front();
                 self.on_dialog_action(action);
             }
             KeyCode::Esc => {
                 // The first option never changes the database or the disk.
                 let action = dialog.options[0].1.clone();
-                self.dialogs.pop_front();
+                self.modals.dialogs.pop_front();
                 self.on_dialog_action(action);
             }
             _ => {}
@@ -1240,12 +1241,12 @@ impl App {
 
     fn on_picker_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(picker) = &mut self.picker else {
+        let Some(picker) = &mut self.modals.picker else {
             return;
         };
         let last = picker.items.len().saturating_sub(1);
         match key.code {
-            KeyCode::Esc => self.picker = None,
+            KeyCode::Esc => self.modals.picker = None,
             KeyCode::Enter => self.accept_picker(),
             KeyCode::Up => picker.cursor = picker.cursor.saturating_sub(1),
             KeyCode::Down => picker.cursor = (picker.cursor + 1).min(last),
@@ -1259,19 +1260,19 @@ impl App {
     }
 
     fn on_name_key(&mut self, key: KeyEvent) {
-        let Some(prompt) = &mut self.rename else {
+        let Some(prompt) = &mut self.modals.rename else {
             return;
         };
         match prompt.on_key(key) {
             TextAction::None => {}
-            TextAction::Cancel => self.rename = None,
+            TextAction::Cancel => self.modals.rename = None,
             TextAction::Accept(name) => self.accept_name(name),
         }
     }
 
     fn on_settings_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(form) = &mut self.settings_form else {
+        let Some(form) = &mut self.modals.settings_form else {
             return;
         };
         match form.on_key(key, vim) {
@@ -1284,7 +1285,7 @@ impl App {
 
     fn on_export_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        if let Some(form) = &mut self.export_form {
+        if let Some(form) = &mut self.modals.export_form {
             let request = form.on_key(key, vim);
             self.on_export_request(request);
         }
@@ -1292,7 +1293,7 @@ impl App {
 
     fn on_import_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        if let Some(form) = &mut self.import_form {
+        if let Some(form) = &mut self.modals.import_form {
             let action = form.on_key(key, vim);
             self.on_import_action(action);
         }
@@ -1300,10 +1301,12 @@ impl App {
 
     fn on_form_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(form) = &mut self.form else { return };
+        let Some(form) = &mut self.modals.form else {
+            return;
+        };
         match form.on_key(key, vim) {
             FormRequest::None => {}
-            FormRequest::Cancel => self.form = None,
+            FormRequest::Cancel => self.modals.form = None,
             FormRequest::Test => self.test_form(),
             FormRequest::Save => self.save_form(),
             FormRequest::Disconnect => self.disconnect_form(),
@@ -1312,7 +1315,7 @@ impl App {
     }
 
     pub(super) fn continue_overlay_search(&mut self, deadline: std::time::Instant) {
-        if let Some(overlay) = &mut self.overlay
+        if let Some(overlay) = &mut self.modals.overlay
             && let Some(row) = overlay.contents.continue_search(deadline)
         {
             overlay.scroll = row;
@@ -1326,6 +1329,7 @@ impl App {
         }
         let mut find = ctrl && key.code == KeyCode::Char('f');
         let searching = self
+            .modals
             .overlay
             .as_ref()
             .is_some_and(|overlay| overlay.contents.search().is_some());
@@ -1358,7 +1362,7 @@ impl App {
                 return;
             }
         }
-        let Some(overlay) = &mut self.overlay else {
+        let Some(overlay) = &mut self.modals.overlay else {
             return;
         };
         if find {
@@ -1391,7 +1395,7 @@ impl App {
         }
         match key.code {
             KeyCode::Esc | KeyCode::Enter => {
-                self.overlay = None;
+                self.modals.overlay = None;
                 self.analysis_job = None;
             }
             KeyCode::Up | KeyCode::Char('k') => overlay.scroll = overlay.scroll.saturating_sub(1),
@@ -1819,11 +1823,11 @@ impl App {
                 }
             })
             .collect();
-        self.palette = Some(Palette::new(commands));
+        self.modals.palette = Some(Palette::new(commands));
     }
 
     fn on_palette_key(&mut self, key: KeyEvent) {
-        let Some(palette) = &mut self.palette else {
+        let Some(palette) = &mut self.modals.palette else {
             return;
         };
         let request = palette.on_key(key);
@@ -1833,9 +1837,9 @@ impl App {
     pub(super) fn on_palette_request(&mut self, request: PaletteRequest) {
         match request {
             PaletteRequest::None => {}
-            PaletteRequest::Cancel => self.palette = None,
+            PaletteRequest::Cancel => self.modals.palette = None,
             PaletteRequest::Run(action) => {
-                self.palette = None;
+                self.modals.palette = None;
                 if self.command_available(action) {
                     self.perform(action, false);
                 }

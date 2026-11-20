@@ -208,21 +208,21 @@ impl App {
         }
         if let Some(source) = self.export_source() {
             let form = ExportForm::new(source, &self.export_choices, &time_stamp());
-            self.export_form = Some(form);
+            self.modals.export_form = Some(form);
         }
     }
 
     pub(super) fn on_export_request(&mut self, request: ExportRequest) {
         match request {
             ExportRequest::None => {}
-            ExportRequest::Cancel => self.export_form = None,
+            ExportRequest::Cancel => self.modals.export_form = None,
             ExportRequest::Export => self.confirm_export(),
             ExportRequest::Browse => self.open_browser(),
         }
     }
 
     fn confirm_export(&mut self) {
-        let Some(form) = &self.export_form else {
+        let Some(form) = &self.modals.export_form else {
             return;
         };
         let checked = form
@@ -238,7 +238,7 @@ impl App {
             });
         match checked {
             Err(note) => {
-                if let Some(form) = &mut self.export_form {
+                if let Some(form) = &mut self.modals.export_form {
                     form.note = Some(note);
                 }
             }
@@ -255,7 +255,7 @@ impl App {
     }
 
     pub(super) fn start_export(&mut self) {
-        let Some(form) = self.export_form.take() else {
+        let Some(form) = self.modals.export_form.take() else {
             return;
         };
         let (Ok(options), Ok(destination)) = (form.options(), destination_of(form.path_text()))

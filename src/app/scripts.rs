@@ -182,7 +182,7 @@ impl App {
             (None, Some(entry)) => NameTarget::Script(entry),
             (None, None) => return,
         };
-        self.rename = Some(NamePrompt::new(target, &item.name));
+        self.modals.rename = Some(NamePrompt::new(target, &item.name));
     }
 
     /// The key that removes the script of a navigator row. The connection stays.
@@ -213,7 +213,7 @@ impl App {
         let items: Vec<String> = std::iter::once(text::NEW_CONSOLE_ROW.to_owned())
             .chain(entries.iter().map(|entry| self.script_row(entry, false)))
             .collect();
-        self.picker = Some(Picker {
+        self.modals.picker = Some(Picker {
             kind: PickerKind::Consoles {
                 connection,
                 scripts: entries,
@@ -252,7 +252,7 @@ impl App {
             .iter()
             .map(|entry| self.script_row(entry, true))
             .collect();
-        self.picker = Some(Picker {
+        self.modals.picker = Some(Picker {
             kind: PickerKind::Orphans { scripts: entries },
             title: text::TITLE_ORPHANS.to_owned(),
             items,
@@ -323,7 +323,7 @@ impl App {
 
     /// The row of the list under the cursor, when it stands for a saved script.
     pub(super) fn picker_script(&self) -> Option<ScriptEntry> {
-        let picker = self.picker.as_ref()?;
+        let picker = self.modals.picker.as_ref()?;
         match &picker.kind {
             PickerKind::Consoles { scripts, .. } => scripts.get(picker.cursor.checked_sub(1)?),
             PickerKind::Orphans { scripts } => scripts.get(picker.cursor),
@@ -348,7 +348,7 @@ impl App {
         let path = self
             .persist_root(entry.scope)
             .map(|root| root.consoles_dir().display().to_string());
-        self.picker = None;
+        self.modals.picker = None;
         self.show_dialog(
             text::TITLE_REMOVE_CONSOLE,
             text::remove_script(&entry.meta.name, &path.unwrap_or_default()),
@@ -396,7 +396,7 @@ impl App {
     /// Opens the request for a new name of the active console.
     pub(super) fn start_rename(&mut self) {
         let console = self.console();
-        self.rename = Some(NamePrompt::new(
+        self.modals.rename = Some(NamePrompt::new(
             NameTarget::Console(console.id),
             &console.name,
         ));
@@ -412,8 +412,8 @@ impl App {
             || NameTarget::Script(entry.clone()),
             |console| NameTarget::Console(console.id),
         );
-        self.picker = None;
-        self.rename = Some(NamePrompt::new(target, &entry.meta.name));
+        self.modals.picker = None;
+        self.modals.rename = Some(NamePrompt::new(target, &entry.meta.name));
     }
 
     /// Returns the names of the other consoles of a connection, open and saved.
@@ -440,7 +440,7 @@ impl App {
     }
 
     pub(super) fn name_note(&mut self, note: &str) {
-        if let Some(prompt) = &mut self.rename {
+        if let Some(prompt) = &mut self.modals.rename {
             prompt.note = Some(note.to_owned());
         }
     }
@@ -454,7 +454,9 @@ impl App {
             self.name_note(text::NAME_EMPTY);
             return;
         }
-        let Some(prompt) = &self.rename else { return };
+        let Some(prompt) = &self.modals.rename else {
+            return;
+        };
         let (connection, skip, id) = match &prompt.target {
             NameTarget::Console(console) => {
                 let index = self.console_index(*console);
@@ -485,7 +487,7 @@ impl App {
             self.name_note(text::NAME_TAKEN);
             return;
         }
-        let Some(prompt) = self.rename.take() else {
+        let Some(prompt) = self.modals.rename.take() else {
             return;
         };
         let old = match &prompt.target {
@@ -580,7 +582,7 @@ impl App {
             return;
         }
         let console = console.id;
-        self.picker = Some(Picker {
+        self.modals.picker = Some(Picker {
             kind: PickerKind::Associate {
                 console,
                 connections: list.iter().map(|(id, _)| *id).collect(),
@@ -645,7 +647,7 @@ impl App {
             return;
         }
         let console = self.console().id;
-        self.picker = Some(Picker {
+        self.modals.picker = Some(Picker {
             kind: PickerKind::Associate {
                 console,
                 connections: list.iter().map(|(id, _)| *id).collect(),

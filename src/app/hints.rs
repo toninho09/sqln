@@ -117,40 +117,56 @@ impl App {
             Modal::History => Some(text::HINT_HISTORY),
             Modal::Rename => Some(text::HINT_NAME),
             Modal::Browser => Some(text::HINT_BROWSER),
-            Modal::Settings => self.settings_form.as_ref().map(settings_hint),
-            Modal::Export => self.export_form.as_ref().map(|form| match form.focus {
-                export_form::Field::Formats => text::HINT_EXPORT_FORMATS,
-                export_form::Field::File => text::HINT_FORM_PATH,
-                export_form::Field::Export | export_form::Field::Cancel => text::HINT_FORM_BUTTON,
-                field if form.input(field).is_some() => text::HINT_FORM_TEXT,
-                _ => text::HINT_FORM,
-            }),
-            Modal::Compare => self.compare_form.as_ref().map(|form| match form.focus {
-                _ if form.list_shown() => text::HINT_FORM_LIST,
-                compare_form::Field::Compare | compare_form::Field::Cancel => {
-                    text::HINT_FORM_BUTTON
-                }
-                compare_form::Field::SourceTable | compare_form::Field::TargetTable => {
-                    text::HINT_FORM_TEXT
-                }
-                _ => text::HINT_FORM,
-            }),
-            Modal::Import => self.import_form.as_ref().map(|form| match form.focus {
-                import_form::Field::Sections => text::HINT_IMPORT_SECTIONS,
-                field if field.is_path() => text::HINT_FORM_PATH,
-                import_form::Field::Columns => text::HINT_IMPORT_COLUMNS,
-                import_form::Field::Preview => text::HINT_IMPORT_PREVIEW,
-                import_form::Field::Import | import_form::Field::Cancel => text::HINT_FORM_BUTTON,
-                field if form.input(field).is_some() => text::HINT_FORM_TEXT,
-                _ => text::HINT_FORM,
-            }),
+            Modal::Settings => self.modals.settings_form.as_ref().map(settings_hint),
+            Modal::Export => self
+                .modals
+                .export_form
+                .as_ref()
+                .map(|form| match form.focus {
+                    export_form::Field::Formats => text::HINT_EXPORT_FORMATS,
+                    export_form::Field::File => text::HINT_FORM_PATH,
+                    export_form::Field::Export | export_form::Field::Cancel => {
+                        text::HINT_FORM_BUTTON
+                    }
+                    field if form.input(field).is_some() => text::HINT_FORM_TEXT,
+                    _ => text::HINT_FORM,
+                }),
+            Modal::Compare => self
+                .modals
+                .compare_form
+                .as_ref()
+                .map(|form| match form.focus {
+                    _ if form.list_shown() => text::HINT_FORM_LIST,
+                    compare_form::Field::Compare | compare_form::Field::Cancel => {
+                        text::HINT_FORM_BUTTON
+                    }
+                    compare_form::Field::SourceTable | compare_form::Field::TargetTable => {
+                        text::HINT_FORM_TEXT
+                    }
+                    _ => text::HINT_FORM,
+                }),
+            Modal::Import => self
+                .modals
+                .import_form
+                .as_ref()
+                .map(|form| match form.focus {
+                    import_form::Field::Sections => text::HINT_IMPORT_SECTIONS,
+                    field if field.is_path() => text::HINT_FORM_PATH,
+                    import_form::Field::Columns => text::HINT_IMPORT_COLUMNS,
+                    import_form::Field::Preview => text::HINT_IMPORT_PREVIEW,
+                    import_form::Field::Import | import_form::Field::Cancel => {
+                        text::HINT_FORM_BUTTON
+                    }
+                    field if form.input(field).is_some() => text::HINT_FORM_TEXT,
+                    _ => text::HINT_FORM,
+                }),
             Modal::Picker => Some(if self.picker_script().is_some() {
                 text::HINT_PICKER
             } else {
                 text::HINT_CHOOSE
             }),
             Modal::Help => Some(text::HINT_HELP),
-            Modal::Overlay => self.overlay.as_ref().map(|overlay| {
+            Modal::Overlay => self.modals.overlay.as_ref().map(|overlay| {
                 if overlay.contents.search().is_some() {
                     text::HINT_OVERLAY_SEARCH
                 } else if overlay.other.is_some() {
@@ -161,14 +177,18 @@ impl App {
                     text::HINT_OVERLAY
                 }
             }),
-            Modal::Form => self.form.as_ref().map(|form| match form.focus.style() {
-                _ if form.schema_list.is_some() => text::HINT_MARK_LIST,
-                _ if form.focus.is_path() => text::HINT_FORM_PATH,
-                _ if form.focus == Field::Schemas => text::HINT_FORM_SCHEMAS,
-                FieldStyle::Text | FieldStyle::Secret => text::HINT_FORM_TEXT,
-                FieldStyle::Button => text::HINT_FORM_BUTTON,
-                FieldStyle::Choice | FieldStyle::Flag => text::HINT_FORM,
-            }),
+            Modal::Form => self
+                .modals
+                .form
+                .as_ref()
+                .map(|form| match form.focus.style() {
+                    _ if form.schema_list.is_some() => text::HINT_MARK_LIST,
+                    _ if form.focus.is_path() => text::HINT_FORM_PATH,
+                    _ if form.focus == Field::Schemas => text::HINT_FORM_SCHEMAS,
+                    FieldStyle::Text | FieldStyle::Secret => text::HINT_FORM_TEXT,
+                    FieldStyle::Button => text::HINT_FORM_BUTTON,
+                    FieldStyle::Choice | FieldStyle::Flag => text::HINT_FORM,
+                }),
             // The cell edit has its own commands in its window.
             Modal::Edit => None,
         }

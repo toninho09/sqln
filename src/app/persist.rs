@@ -556,7 +556,8 @@ impl App {
                         theme.custom_id().map(str::to_owned)
                     })
                     .collect();
-                self.settings_form = Some(SettingsForm::with_themes(global, project, custom, used))
+                self.modals.settings_form =
+                    Some(SettingsForm::with_themes(global, project, custom, used))
             }
             (Err(message), _) | (_, Err(message)) => self.status = Some(message),
         }
