@@ -34,7 +34,7 @@ impl App {
         if self.manager.is_some() {
             return true;
         }
-        match Manager::new(self.budget.clone()) {
+        match Manager::with_wake(self.budget.clone(), self.wake.clone()) {
             Ok((manager, events)) => {
                 self.manager = Some(manager);
                 self.events = Some(events);

@@ -48,7 +48,7 @@ The file paths are relative to the `src/` folder of the crate that holds the mod
 
 Files: `app.rs`, `app/main_loop.rs`, `app/events.rs`, `app/draw.rs`, `app/modal.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs`.
 
-`run` owns the application state and the screen. The main loop waits for a key for up to 20 ms, and then drains execution events for up to 8 ms per frame. The application draws only after a change. `app/keys` applies the key priority of [KEYMAP](KEYMAP.md), and `app/mouse` handles clicks, the wheel, and the drag of dividers and columns. `app/hints` builds the hint row from the state on screen. `app/close` asks the exit questions in order, one console at a time, and applies each answer at once. `terminal` sets up the terminal and restores it at exit and on panic.
+`run` owns the application state and the screen. The main loop sleeps until a key, a signal, a wake from background work, or its next timer, and then drains execution events for up to 8 ms per frame. The application draws only after a change. `app/keys` applies the key priority of [KEYMAP](KEYMAP.md), and `app/mouse` handles clicks, the wheel, and the drag of dividers and columns. `app/hints` builds the hint row from the state on screen. `app/close` asks the exit questions in order, one console at a time, and applies each answer at once. `terminal` sets up the terminal and restores it at exit and on panic.
 
 ## 2. Key map and discovery
 

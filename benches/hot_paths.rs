@@ -648,10 +648,15 @@ fn sqlite_database(name: &str) -> PathBuf {
 
 /// Waits for the end of a run. The application draws a frame after each change.
 fn wait_for_run(app: &mut App, mut frame: impl FnMut(&mut App)) {
+    let (wake, woken) = std::sync::mpsc::sync_channel(1);
+    app.wake().install(move || {
+        let _ = wake.try_send(());
+    });
     let deadline = Instant::now() + Duration::from_secs(300);
     while app.console_mut().is_busy() {
-        // The main loop waits for a key at this point.
-        std::thread::sleep(app.key_wait());
+        // The main loop sleeps until its next moment or a wake.
+        let now = Instant::now();
+        let _ = woken.recv_timeout(app.next_wakeup(now).saturating_duration_since(now));
         if app.drain_events() {
             frame(app);
         }

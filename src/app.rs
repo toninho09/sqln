@@ -97,7 +97,12 @@ const FRAMES_PER_PICTURE: usize = 2;
 /// A message of the hint bar stays this time, unless the user acts first.
 const STATUS_TIME: Duration = Duration::from_secs(8);
 /// The time that the main loop waits for a key when no work waits.
+/// The short poll of the main loop: for a timer that passed and still waits, and for work
+/// that does not wake the loop, such as a file save.
 const KEY_WAIT: Duration = Duration::from_millis(20);
+/// The longest sleep of the main loop. A wake or a timer that `next_wakeup` misses waits
+/// at most this long.
+const IDLE_LIMIT: Duration = Duration::from_millis(250);
 const DEFAULT_EDITOR_RATIO: u16 = 50;
 const MIN_EDITOR_RATIO: u16 = 10;
 const MAX_EDITOR_RATIO: u16 = 90;
@@ -447,6 +452,8 @@ pub struct App {
     bell: bool,
     /// True when the last read found execution events.
     events_flow: bool,
+    /// Wakes the main loop when background work delivers a result.
+    wake: crate::wake::Wake,
     /// The files of the application. It is `None` when nothing loads or saves.
     persist: Option<persist::Persist>,
     auth: auth::Auth,
@@ -629,6 +636,7 @@ impl App {
             status_shown: None,
             bell: false,
             events_flow: false,
+            wake: crate::wake::Wake::new(),
             persist,
             auth: auth::Auth::new(options.vault.take(), plain),
             agent: agent::State::default(),
@@ -723,6 +731,11 @@ impl App {
 
     pub fn should_quit(&self) -> bool {
         self.quit
+    }
+
+    /// The handle that background work uses to wake the main loop.
+    pub fn wake(&self) -> crate::wake::Wake {
+        self.wake.clone()
     }
 
     /// Ends the runtime without a wait for a statement that does not answer.

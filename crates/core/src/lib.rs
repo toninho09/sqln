@@ -15,4 +15,5 @@ pub mod message;
 pub mod progress;
 pub mod sink;
 pub mod text;
+pub mod wake;
 pub mod wrap;

@@ -315,6 +315,15 @@ impl ScriptFile {
         self.pending.is_some()
     }
 
+    /// The moment of the next autosave or retry, when one waits. The main loop sleeps until
+    /// then; `due` still decides.
+    pub fn due_at(&self) -> Option<Instant> {
+        if self.trouble.as_ref().is_some_and(Trouble::needs_choice) {
+            return None;
+        }
+        self.due_at
+    }
+
     pub fn start_save(
         &mut self,
         worker: &SaveWorker,

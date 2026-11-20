@@ -365,20 +365,57 @@ fn a_new_row_above_moves_the_mark_with_its_statement() {
 #[test]
 fn the_main_loop_waits_for_a_key_only_when_no_event_arrives() {
     let mut f = Fixture::new("key-wait");
-    assert_ne!(f.app.key_wait(), Duration::ZERO);
+    let waits = |app: &sqln::app::App| {
+        let now = Instant::now();
+        app.next_wakeup(now) > now
+    };
+    assert!(waits(&f.app));
     f.app.on_event(Event::Paste("SELECT 1;\n".repeat(2_000)));
     f.press(KeyEvent::new(KeyCode::F(5), KeyModifiers::SHIFT));
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut flowed = false;
     while f.app.console_mut().is_busy() {
         f.app.drain_events();
-        flowed |= f.app.key_wait() == Duration::ZERO;
+        flowed |= !waits(&f.app);
         assert!(Instant::now() < deadline, "the run did not end");
     }
     assert!(flowed);
     f.app.drain_events();
     f.app.drain_events();
-    assert_ne!(f.app.key_wait(), Duration::ZERO);
+    assert!(waits(&f.app));
+}
+
+#[test]
+fn an_idle_main_loop_sleeps_up_to_its_limit() {
+    let mut f = Fixture::new("idle-sleep");
+    f.app.drain_events();
+    let now = Instant::now();
+    let next = f.app.next_wakeup(now);
+    assert!(next > now, "{:?}", next - now);
+    assert!(next <= now + Duration::from_millis(250), "{:?}", next - now);
+}
+
+#[test]
+fn a_run_wakes_the_main_loop_and_redraws_its_clock() {
+    let mut f = Fixture::new("run-wake");
+    let (wake, woken) = std::sync::mpsc::sync_channel(64);
+    f.app.wake().install(move || {
+        let _ = wake.try_send(());
+    });
+    f.app.on_event(Event::Paste("SELECT 1;".into()));
+    f.press(key(KeyCode::F(5)));
+    assert!(f.app.console_mut().is_busy());
+    // The clock of the run moves without a key.
+    let now = Instant::now();
+    assert!(f.app.next_wakeup(now) <= now + Duration::from_millis(100));
+    // The events of the run wake the loop without a poll.
+    assert!(woken.recv_timeout(Duration::from_secs(10)).is_ok());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while f.app.console_mut().is_busy() {
+        let _ = woken.recv_timeout(Duration::from_millis(250));
+        f.app.drain_events();
+        assert!(Instant::now() < deadline, "the run did not end");
+    }
 }
 
 #[test]

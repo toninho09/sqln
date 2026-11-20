@@ -120,6 +120,15 @@ impl State {
             .or_else(|| first(proposals, Notice::Proposal))
             .or_else(|| first(self.long_task_ids(), Notice::Task))
     }
+    /// The moment when the next running task gets its card.
+    pub(super) fn next_task_card(&self, now: Instant) -> Option<Instant> {
+        self.jobs
+            .values()
+            .filter(|job| !finished(job.state))
+            .map(|job| job.created + TASK_CARD_DELAY)
+            .filter(|moment| *moment > now)
+            .min()
+    }
     /// Lists the tasks that run for longer than the card delay, the oldest first.
     fn long_task_ids(&self) -> Vec<String> {
         let mut ids: Vec<_> = self
@@ -492,7 +501,7 @@ impl App {
             .as_ref()
             .and_then(|persist| persist.store.project.as_ref())
             .map(|root| root.base.clone());
-        let server = Server::at(directory, project)?;
+        let server = Server::waking(directory, project, self.wake.clone())?;
         let id = server.instance.instance_id.clone();
         self.agent.server = Some(server);
         Ok(id)

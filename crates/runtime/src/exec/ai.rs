@@ -59,10 +59,11 @@ impl Manager {
         let binding = self.connections.get(&connection).cloned();
         let budget = self.budget.clone();
         let events = self.events.clone();
+        let wake = self.wake.clone();
         self.runtime.spawn(async move {
             let operation=async {
                 let binding=binding.ok_or("The connection is not available. Open it again.")?;
-                let _=sender.send(Event::Waiting(connection,generation));
+                let _=sender.send(Event::Waiting(connection,generation)); wake.wake();
                 let mut lease=match binding.pool.acquire().await {
                     Ok(lease)=>lease,
                     Err(error)=>{
@@ -70,7 +71,7 @@ impl Manager {
                         return Err("Cannot open the metadata session. Check database access.".to_owned());
                     }
                 };
-                let _=sender.send(Event::Reading(connection,generation));
+                let _=sender.send(Event::Reading(connection,generation)); wake.wake();
                 let dialect=binding.pool.dialect();
                 let read=async {
                     lease.session().apply_context(&SessionContext {read_only:true,..Default::default()}).await.map_err(|_| "Cannot prepare the metadata session.")?;
@@ -111,11 +112,17 @@ impl Manager {
                 result
             };
             let result=tokio::select! { result=operation=>result, ()=cancel.cancelled()=>Err("Schema read cancelled.".into()) };
-            let _=sender.send(Event::Loaded(connection,generation,result));
+            let _=sender.send(Event::Loaded(connection,generation,result)); wake.wake();
         });
     }
 
+    /// Runs an AI request. The request sends its result through its own channel, and the
+    /// end wakes the main loop.
     pub fn spawn_ai(&self, operation: impl std::future::Future<Output = ()> + Send + 'static) {
-        self.runtime.spawn(operation);
+        let wake = self.wake.clone();
+        self.runtime.spawn(async move {
+            operation.await;
+            wake.wake();
+        });
     }
 }

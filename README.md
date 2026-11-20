@@ -903,6 +903,18 @@ The first build takes longer, especially when Cargo compiles bundled DuckDB.
 Database-dependent tests skip when their environment is absent. A passing local check alone does not prove database integration.
 Native-vault tests require explicit authorization. Performance tests do not run as benchmarks in the default debug suite.
 
+A shared compiler cache shortens clean builds after the first one, for example in a second clone.
+[sccache](https://github.com/mozilla/sccache) is optional; the repository does not configure it.
+To use it on your machine, put this in `~/.cargo/config.toml`:
+
+```toml
+[build]
+rustc-wrapper = "sccache"
+```
+
+sccache does not cache incremental builds, so it helps clean and release builds more than edit-and-test cycles.
+The `cc` crate follows the Rust wrapper for the bundled DuckDB. Set `CMAKE_C_COMPILER_LAUNCHER=sccache` and `CMAKE_CXX_COMPILER_LAUNCHER=sccache` to cache the librdkafka build too.
+
 ### Database integration
 
 Docker Compose is required. The test stack uses disposable databases and loopback-only ports.
@@ -937,6 +949,7 @@ The TLS stack includes PostgreSQL, MySQL, and Redis endpoints.
 - Formatting, Clippy, and the default test suite on Linux and macOS.
 - Database integration on Linux, with PostgreSQL, MySQL, Redis, Valkey, Kafka, the Schema Registry, and TLS endpoints.
 - Database logs on failure and stack cleanup after the integration job.
+- sccache on every job, which keeps the Rust and C compiler outputs in the GitHub Actions cache.
 
 Opening a pull request does not start another run. The pull request shows checks from its branch commit.
 CI tests that commit, not a temporary merge with `main`. A merge into `main` starts a new push run.

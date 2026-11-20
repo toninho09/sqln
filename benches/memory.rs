@@ -338,9 +338,15 @@ fn open(sql: &str) -> (App, Terminal<TestBackend>) {
 
 fn run(app: &mut App, terminal: &mut Terminal<TestBackend>, code: crossterm::event::KeyEvent) {
     app.on_event(Event::Key(code));
+    let (wake, woken) = std::sync::mpsc::sync_channel(1);
+    app.wake().install(move || {
+        let _ = wake.try_send(());
+    });
     let deadline = Instant::now() + Duration::from_secs(300);
     while app.console_mut().is_busy() {
-        std::thread::sleep(app.key_wait());
+        // The main loop sleeps until its next moment or a wake.
+        let now = Instant::now();
+        let _ = woken.recv_timeout(app.next_wakeup(now).saturating_duration_since(now));
         if app.drain_events() {
             terminal.draw(|frame| app.draw(frame)).unwrap();
         }

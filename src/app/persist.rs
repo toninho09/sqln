@@ -622,16 +622,8 @@ impl App {
                     .poll_syntax(now, |operation| manager.spawn_blocking(operation));
             }
             let revision = console.editor.revision();
-            let dialect = console.editor.dialect();
-            let supported = console
-                .connection
-                .and_then(|id| self.connections.iter().find(|item| item.id == id))
-                .is_none_or(|item| item.capabilities.parameters);
-            let dialect = if supported {
-                dialect
-            } else {
-                crate::sql::Dialect::Redis
-            };
+            let dialect = self.parameter_dialect();
+            let console = &mut self.tabs.consoles[self.tabs.active];
             changed |= console.parameters.poll(
                 revision,
                 dialect,
@@ -671,6 +663,43 @@ impl App {
             changed |= self.poll_files(now);
         }
         changed
+    }
+
+    /// The rules of the parameters of the console on screen. A connection without
+    /// parameters uses the rules of a command line, which find none.
+    pub(super) fn parameter_dialect(&self) -> crate::sql::Dialect {
+        let console = self.console();
+        let supported = console
+            .connection
+            .and_then(|id| self.connections.iter().find(|item| item.id == id))
+            .is_none_or(|item| item.capabilities.parameters);
+        if supported {
+            console.editor.dialect()
+        } else {
+            crate::sql::Dialect::Redis
+        }
+    }
+
+    /// The moments of the file steps of `tick_at`: autosaves, retries, and the check for
+    /// changes by other programs. A save in progress does not wake the loop, so it asks
+    /// for a short poll.
+    pub(super) fn file_moments(&self, now: Instant) -> Vec<Instant> {
+        let Some(persist) = &self.persist else {
+            return Vec::new();
+        };
+        let mut moments = vec![persist.next_poll];
+        for file in self
+            .tabs
+            .consoles
+            .iter()
+            .filter_map(|console| console.file.as_ref())
+        {
+            if file.is_saving() {
+                moments.push(now);
+            }
+            moments.extend(file.due_at());
+        }
+        moments
     }
 
     pub fn tick(&mut self) -> bool {

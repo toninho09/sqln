@@ -46,7 +46,7 @@ fn the_explanation_of_an_error_shows_in_a_window() {
     let server = Server::new("1. The table is missing.\n2. Create it.", Duration::ZERO);
     let mut app = app("ai-explain-error", server.provider());
     run_statement(&mut app, "SELECT * FROM missing;");
-    pump(&mut app, |s| s.contains("no such table"));
+    pump_idle(&mut app, |s| s.contains("no such table"));
     // The palette offers the command in this state.
     app.on_event(Event::Key(ctrl('p')));
     app.on_event(Event::Paste("explain the last error".into()));
@@ -112,10 +112,10 @@ fn the_prefix_menu_shows_available_ai_explanations_with_effective_keys() {
                 if plan {
                     app.on_event(Event::Paste("SELECT name FROM users;".into()));
                     show_plan(&mut app);
-                    pump(&mut app, |screen| screen.contains("SCAN users"));
+                    pump_idle(&mut app, |screen| screen.contains("SCAN users"));
                 } else {
                     run_statement(&mut app, "SELECT * FROM missing;");
-                    pump(&mut app, |screen| screen.contains("no such table"));
+                    pump_idle(&mut app, |screen| screen.contains("no such table"));
                 }
                 app.on_event(Event::Key(ctrl('w')));
                 let shown = screen(&mut app);
@@ -161,7 +161,7 @@ fn a_refused_consent_sends_no_request() {
     let server = Server::new("answer", Duration::ZERO);
     let mut app = app("ai-explain-refused", server.provider());
     run_statement(&mut app, "SELECT * FROM missing;");
-    pump(&mut app, |s| s.contains("no such table"));
+    pump_idle(&mut app, |s| s.contains("no such table"));
     explain_error(&mut app);
     pump(&mut app, |s| s.contains("Send the error to AI"));
     app.on_event(Event::Key(key(KeyCode::Enter)));
@@ -174,9 +174,9 @@ fn the_explanation_of_a_plan_sends_the_tree_without_the_explain_word() {
     let server = Server::new("1. The scan reads every row.", Duration::ZERO);
     let mut app = app("ai-explain-plan", server.provider());
     run_statement(&mut app, "SELECT * FROM users;");
-    pump(&mut app, |s| s.contains("name"));
+    pump_idle(&mut app, |s| s.contains("name"));
     show_plan(&mut app);
-    pump(&mut app, |s| s.contains("SCAN"));
+    pump_idle(&mut app, |s| s.contains("SCAN"));
     explain_plan(&mut app);
     pump(&mut app, |s| s.contains("Send the plan to AI"));
     app.on_event(Event::Key(key(KeyCode::Tab)));
@@ -205,7 +205,7 @@ fn an_explanation_after_a_completion_sends_the_loaded_schema() {
     app.on_event(Event::Key(key(KeyCode::Esc)));
     replace_text(&mut app, "SELECT * FROM missing;");
     app.on_event(Event::Key(key(KeyCode::F(5))));
-    pump(&mut app, |s| s.contains("no such table"));
+    pump_idle(&mut app, |s| s.contains("no such table"));
     // Completion consent does not cover error text. Approve this request explicitly.
     explain_error(&mut app);
     pump(&mut app, |s| s.contains("Send the error to AI"));
@@ -271,7 +271,7 @@ fn redis_errors_use_the_same_explanation_flow() {
         Theme::plain(),
     );
     run_statement(&mut app, "GET account");
-    pump(&mut app, |s| s.contains("WRONGTYPE"));
+    pump_idle(&mut app, |s| s.contains("WRONGTYPE"));
     // MockConnector does not emit driver traces. Supply the same trace events that
     // the Redis driver emits for a failed user command.
     use sqln::command_log::{LogEvent, MessageLevel, next_id};
@@ -310,7 +310,7 @@ fn stop_cancels_an_explanation_without_running_sql() {
     let server = Server::new("Late answer", Duration::from_millis(300));
     let mut app = app("ai-explain-cancel", server.provider());
     run_statement(&mut app, "SELECT * FROM missing;");
-    pump(&mut app, |s| s.contains("no such table"));
+    pump_idle(&mut app, |s| s.contains("no such table"));
     explain_error(&mut app);
     allow_explanation(&mut app, "Send the error to AI");
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -335,7 +335,7 @@ fn the_plan_explanation_keeps_the_executed_statement_after_an_edit() {
     let mut app = app("ai-explain-plan-edited", server.provider());
     app.on_event(Event::Paste("SELECT name FROM users;".into()));
     show_plan(&mut app);
-    pump(&mut app, |s| s.contains("SCAN users"));
+    pump_idle(&mut app, |s| s.contains("SCAN users"));
     app.on_event(Event::Key(ctrl('w')));
     app.on_event(Event::Key(key(KeyCode::Char('k'))));
     replace_text(&mut app, "SELECT id FROM other;");
@@ -382,7 +382,7 @@ fn starting_an_execution_discards_a_late_explanation() {
     let server = Server::new("Late answer", Duration::from_millis(300));
     let mut app = app("ai-explain-stale", server.provider());
     run_statement(&mut app, "SELECT * FROM missing;");
-    pump(&mut app, |s| s.contains("no such table"));
+    pump_idle(&mut app, |s| s.contains("no such table"));
     explain_error(&mut app);
     allow_explanation(&mut app, "Send the error to AI");
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -425,7 +425,7 @@ fn an_explanation_preserves_an_open_value_selection_and_search() {
         );
         app.on_event(Event::Paste("SELECT * FROM missing;".into()));
         app.on_event(Event::Key(key(KeyCode::F(5))));
-        pump(&mut app, |s| s.contains("no such table"));
+        pump_idle(&mut app, |s| s.contains("no such table"));
         app.on_event(Event::Key(ctrl('w')));
         app.on_event(Event::Key(key(KeyCode::Char('k'))));
         app.console_mut().editor = sqln::editor::SqlEditor::new(
@@ -492,7 +492,7 @@ fn an_answer_with_many_short_lines_refuses_before_exceeding_the_window_budget() 
         },
     );
     run_statement(&mut app, "SELECT * FROM missing;");
-    pump(&mut app, |s| s.contains("no such table"));
+    pump_idle(&mut app, |s| s.contains("no such table"));
     let original = app.console().editor.text();
     for _ in 0..2 {
         explain_error(&mut app);
@@ -521,7 +521,7 @@ fn closing_an_explanation_releases_its_window_reservation() {
         },
     );
     run_statement(&mut app, "SELECT * FROM missing;");
-    pump(&mut app, |s| s.contains("no such table"));
+    pump_idle(&mut app, |s| s.contains("no such table"));
     for _ in 0..2 {
         explain_error(&mut app);
         allow_explanation(&mut app, "Send the error to AI");
@@ -602,7 +602,7 @@ fn kafka_errors_use_the_driver_history_for_ai_explanations() {
         Theme::plain(),
     );
     run_statement(&mut app, "INVALID command");
-    pump(&mut app, |s| s.contains("Unknown Kafka command"));
+    pump_idle(&mut app, |s| s.contains("Unknown Kafka command"));
     explain_error(&mut app);
     allow_explanation(&mut app, "Send the error to AI");
     pump(&mut app, |s| s.contains("AI error explanation"));
@@ -858,7 +858,7 @@ fn an_incomplete_ai_answer_is_not_presented_as_a_complete_explanation() {
     let server = Server::response(200, response.to_string(), Duration::ZERO);
     let mut app = app("ai-explain-incomplete", server.provider());
     run_statement(&mut app, "SELECT * FROM missing;");
-    pump(&mut app, |s| s.contains("no such table"));
+    pump_idle(&mut app, |s| s.contains("no such table"));
     explain_error(&mut app);
     allow_explanation(&mut app, "Send the error to AI");
     let shown = pump(&mut app, |s| s.contains("AI answer is incomplete"));

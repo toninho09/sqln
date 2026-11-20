@@ -6,7 +6,7 @@ use crossterm::event::{Event, KeyEventKind, MouseButton, MouseEvent, MouseEventK
 
 use super::modal::Modal;
 use super::tables::Screen;
-use super::{App, KEY_WAIT, RUN_FRAME, STATUS_TIME, WORK_SLICE};
+use super::{App, IDLE_LIMIT, KEY_WAIT, RUN_FRAME, STATUS_TIME, WORK_SLICE};
 use crate::compare_tab::CompareTab;
 use crate::console::{Console, Focus};
 use crate::diagram_tab::DiagramTab;
@@ -63,14 +63,7 @@ impl App {
         }
         let time = now.saturating_duration_since(self.time.started);
         let frame = usize::try_from(time.as_millis() / RUN_FRAME.as_millis()).unwrap_or(0);
-        // An agent task updates the time of its card, and the card appears after a delay.
-        let running = self.ai.busy()
-            || self.agent.active_tasks() != 0
-            || self.tabs.consoles.iter().any(Console::is_busy)
-            || self.tabs.tables.iter().any(TableTab::is_busy)
-            || self.tabs.diagrams.iter().any(DiagramTab::is_busy)
-            || self.tabs.compares.iter().any(CompareTab::is_busy);
-        let changed = running && frame != self.time.run_frame;
+        let changed = self.runs_something() && frame != self.time.run_frame;
         self.time.run_frame = frame;
         let minute = self
             .console()
@@ -79,6 +72,17 @@ impl App {
         let aged = minute != self.time.transaction_minute;
         self.time.transaction_minute = minute;
         changed || aged
+    }
+
+    /// True when a run, an AI request, or an agent task shows a moving mark or a time.
+    /// An agent task updates the time of its card, and the card appears after a delay.
+    fn runs_something(&self) -> bool {
+        self.ai.busy()
+            || self.agent.active_tasks() != 0
+            || self.tabs.consoles.iter().any(Console::is_busy)
+            || self.tabs.tables.iter().any(TableTab::is_busy)
+            || self.tabs.diagrams.iter().any(DiagramTab::is_busy)
+            || self.tabs.compares.iter().any(CompareTab::is_busy)
     }
 
     pub(super) fn clear_status(&mut self) {
@@ -318,14 +322,61 @@ impl App {
             || self.background.analysis.is_some()
     }
 
-    /// Returns the time that the main loop can wait for a key. Events that arrive now
-    /// can fill the bounded channel in less time, and a full channel stops the database.
-    pub fn key_wait(&self) -> Duration {
+    /// Returns the moment when the main loop must run again without a key or a wake.
+    ///
+    /// Events that arrive now can fill the bounded channel in less time, and a full channel
+    /// stops the database, so flowing events and sliced work return `now`. Otherwise it is
+    /// the first timer of the steps in `tick_at`. A timer that passed and still waits, such
+    /// as an auto-refresh behind an open dialog, returns a short poll. Nothing waits longer
+    /// than `IDLE_LIMIT`, so a missed wake only delays the screen.
+    pub fn next_wakeup(&self, now: Instant) -> Instant {
         if self.events_flow || self.has_work() {
-            Duration::ZERO
-        } else {
-            KEY_WAIT
+            return now;
         }
+        let mut next = now + IDLE_LIMIT;
+        let mut at = |moment: Instant| {
+            let moment = if moment > now { moment } else { now + KEY_WAIT };
+            next = next.min(moment);
+        };
+        if self.runs_something() {
+            let frames = u32::try_from(self.time.run_frame.saturating_add(1)).unwrap_or(u32::MAX);
+            at(self.time.started + RUN_FRAME.saturating_mul(frames));
+        }
+        if let Some(age) = self.console().transaction_age(now) {
+            let minute = Duration::from_secs(60);
+            let into = Duration::from_secs(age.as_secs() % 60)
+                + Duration::from_nanos(u64::from(age.subsec_nanos()));
+            at(now + (minute - into));
+        }
+        match (&self.status, &self.status_shown) {
+            (Some(status), Some((shown, since))) if shown == status => at(*since + STATUS_TIME),
+            // The next step starts the time of a new message.
+            (Some(_), _) => return now,
+            _ => {}
+        }
+        if let Some(moment) = self.auto_refresh_due() {
+            at(moment);
+        }
+        if self.console_on_screen() && self.manager.is_some() {
+            let console = self.console();
+            if let Some(moment) = console.editor.syntax_due() {
+                at(moment);
+            }
+            let dialect = self.parameter_dialect();
+            if let Some(moment) = console
+                .parameters
+                .scan_due(console.editor.revision(), dialect)
+            {
+                at(moment);
+            }
+        }
+        for moment in self.file_moments(now) {
+            at(moment);
+        }
+        if let Some(moment) = self.agent.next_task_card(now) {
+            at(moment);
+        }
+        next
     }
 
     /// Reads waiting execution events and continues the row search.

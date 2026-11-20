@@ -451,7 +451,7 @@ Difference reports convert cell values and column names in bounded chunks. Each 
 ### Rules
 
 1. The main thread receives terminal events and runtime events.
-2. Database input and output stays off the interface thread. Some local file operations still run there; see the file explorer limitation in `DECISIONS.md`.
+2. Database input and output stays off the interface thread. Some local file operations still run there; see "File explorer" in `docs/decisions/files-and-persistence.md`.
 3. Each console has an actor with a command channel, and that actor keeps the reserved session.
 4. Cancellation uses an object separate from the connection, because the actor may be busy.
 5. `rusqlite` runs on its own thread, because it is synchronous.
@@ -459,7 +459,10 @@ Difference reports convert cell values and column names in bounded chunks. Each 
 
 ### Main loop
 
-The main thread waits for a key for up to 20 ms and then reads the execution events.
+The main thread sleeps on one channel until a key, a signal, a wake, or its next timer.
+A thread reads the terminal into that channel after the terminal queries of the start, and another thread turns the end signals into a message.
+Background work wakes the loop through `sqln_core::wake::Wake`: a relay in the runtime moves the execution events to the channel of the interface and wakes the loop after each one, `Manager::spawn_blocking` and `spawn_ai` wake it after their operation, and the agent endpoint wakes it for each request and closed client.
+`App::next_wakeup` returns the first timer of the steps of `tick_at`: the frame of a run, the minute of a transaction age, the end of a message, an auto-refresh, the syntax check, the parameter scan, an autosave, the file check, and the card of a long agent task. A timer that passed and still waits, and a file save, which does not wake the loop, ask for a 20 ms poll. The loop never sleeps longer than 250 ms, so a missed wake only delays the screen.
 It does not wait while events arrive, because the bounded channel would then stop the database.
 It reads events for up to 8 ms per frame, so a large load does not delay the keys.
 The limit is a time and not a count, because the number of frames must not grow with the events.

@@ -9,6 +9,9 @@ use crate::sql::diagnostics::{self, Report};
 
 type Key = (u64, Dialect);
 
+/// The pause after an edit before the syntax check.
+const SYNTAX_PAUSE: Duration = Duration::from_millis(400);
+
 #[derive(Default)]
 pub(super) struct Syntax {
     observed: Option<(Key, Instant)>,
@@ -18,6 +21,17 @@ pub(super) struct Syntax {
 }
 
 impl SqlEditor {
+    /// The moment when the syntax check of the observed text starts, when it waits.
+    pub fn syntax_due(&self) -> Option<Instant> {
+        if self.literal_text || self.dialect.is_command_line() || self.syntax.running.is_some() {
+            return None;
+        }
+        // A text that `poll_syntax` did not observe yet gets its time at the next poll.
+        let (key, at) = self.syntax.observed?;
+        (key == (self.revision, self.dialect) && self.syntax.completed != Some(key))
+            .then_some(at + SYNTAX_PAUSE)
+    }
+
     /// Checks only after a pause. The caller supplies the existing blocking executor.
     pub fn poll_syntax(
         &mut self,
@@ -63,9 +77,10 @@ impl SqlEditor {
         }
         if self.syntax.running.is_none()
             && self.syntax.completed != Some(key)
-            && self.syntax.observed.is_some_and(|(_, at)| {
-                now.saturating_duration_since(at) >= Duration::from_millis(400)
-            })
+            && self
+                .syntax
+                .observed
+                .is_some_and(|(_, at)| now.saturating_duration_since(at) >= SYNTAX_PAUSE)
         {
             // Count encoded bytes without allocating a snapshot of an oversized script.
             let bytes = self.state.lines.iter_row().try_fold(0usize, |bytes, row| {

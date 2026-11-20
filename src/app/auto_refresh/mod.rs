@@ -87,6 +87,24 @@ impl App {
         }
     }
 
+    /// The moment of the next refresh of the tab on screen. An open modal or a blocked
+    /// configuration skips the moment, and closing it takes a key that wakes the loop.
+    pub(super) fn auto_refresh_due(&self) -> Option<Instant> {
+        let blocked = self
+            .persist
+            .as_ref()
+            .is_some_and(|persist| persist.error.is_some());
+        if self.modal_is_open() || blocked {
+            return None;
+        }
+        let auto = if self.console_on_screen() {
+            self.tabs.consoles[self.tabs.active].auto_refresh
+        } else {
+            self.tabs.tables[self.table_index()?].auto_refresh
+        };
+        auto.map(|auto| auto.next)
+    }
+
     /// One step of the main loop. It fires the due refresh of the tab on screen and
     /// returns true when the screen changed. A busy tab, an open modal, or a blocked
     /// configuration skips the moment in silence.

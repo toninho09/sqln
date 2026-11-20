@@ -19,7 +19,7 @@ docs/UI.md
 "
 
 # Documents that stay out of the site. Their links point to the repository.
-internal='DECISIONS|INITIAL_PLAN|PAGINATION-VALIDATION'
+internal='DECISIONS|decisions/[a-z-]*|INITIAL_PLAN|PAGINATION-VALIDATION'
 blob='https://github.com/toninho09/sqln/blob/main'
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

@@ -9,6 +9,9 @@ use crate::line_input::{Edit, LineInput};
 use crate::sql::Dialect;
 use crate::sql::parameters::{self, Kind, Parameter};
 
+/// The pause after an edit before the detection of the parameters.
+const SCAN_PAUSE: Duration = Duration::from_millis(200);
+
 #[derive(Debug, Default)]
 pub struct Field {
     pub name: String,
@@ -93,6 +96,20 @@ impl Panel {
         changed
     }
 
+    /// The moment when the detection of the text starts, when it waits. The arguments are
+    /// the ones of the next `poll`.
+    pub fn scan_due(&self, revision: u64, dialect: Dialect) -> Option<Instant> {
+        let current = Some((revision, dialect));
+        if dialect.is_command_line()
+            || self.scan.is_some()
+            || self.observed != current
+            || self.scanned == current
+        {
+            return None;
+        }
+        self.changed.map(|at| at + SCAN_PAUSE)
+    }
+
     /// Runs lexical detection off the interface thread after 200 ms without an edit.
     pub fn poll(
         &mut self,
@@ -132,7 +149,7 @@ impl Panel {
             && self.scanned != Some(current)
             && self
                 .changed
-                .is_some_and(|at| now.saturating_duration_since(at) >= Duration::from_millis(200))
+                .is_some_and(|at| now.saturating_duration_since(at) >= SCAN_PAUSE)
         {
             let sql = text();
             let (sender, receiver) = mpsc::channel();

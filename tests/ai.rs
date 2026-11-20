@@ -93,6 +93,20 @@ fn pump(app: &mut App, condition: impl Fn(&str) -> bool) -> String {
         std::thread::sleep(Duration::from_millis(2));
     }
 }
+/// Pumps until the screen matches and the console run has ended. An error or a plan can
+/// show before the end of its run, and a command of the finished run waits for that end.
+fn pump_idle(app: &mut App, condition: impl Fn(&str) -> bool) -> String {
+    let deadline = Instant::now() + Duration::from_secs(12);
+    loop {
+        app.drain_events();
+        let text = screen(app);
+        if condition(&text) && !app.console().is_busy() {
+            return text;
+        }
+        assert!(Instant::now() < deadline, "screen: {text}");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
 fn app(name: &str, provider: Provider) -> App {
     app_with_options(name, provider, Options::default())
 }
