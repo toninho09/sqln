@@ -12,6 +12,7 @@ serde_json.workspace = true
 sqlparser.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 rusqlite.workspace = true
 
 [lints]

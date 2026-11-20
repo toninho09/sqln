@@ -3,5 +3,6 @@
 // in this folder is a mod below; scripts/check-test-files.sh enforces it.
 
 mod literals;
+mod properties;
 mod sql_statements;
 mod structure;
