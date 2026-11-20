@@ -1354,6 +1354,93 @@ fn the_end_of_a_session_uses_the_row_of_the_cursor() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// The lock waits of a server.
+
+fn lock_reads(recorder: &Recorder) -> usize {
+    let statements = recorder.statements();
+    statements
+        .iter()
+        .filter(|sql| sql.contains("pg_blocking_pids"))
+        .count()
+}
+
+impl Fixture {
+    fn open_locks(&mut self) {
+        crate::common::select_row(&mut self.app, 0, &[RowKind::Schema], "public");
+        self.press(shift(KeyCode::Char('L')));
+        self.loaded();
+    }
+}
+
+#[test]
+fn the_key_opens_a_tab_with_the_lock_waits_of_the_server() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_locks();
+    assert_eq!(lock_reads(&recorder), 1);
+    assert_eq!(recorder.count(), 1, "{:?}", recorder.statements());
+    let screen = f.screen();
+    assert!(screen.contains("server (locks)"), "{screen}");
+    assert!(screen.contains("server · lock waits"), "{screen}");
+    assert!(screen.contains("name1"), "{screen}");
+    f.open_locks();
+    assert_eq!(f.app.tables().len(), 1);
+    assert_eq!(lock_reads(&recorder), 1);
+}
+
+#[test]
+fn the_end_of_a_blocking_session_names_it_and_reads_the_waits_again() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    f.open_locks();
+    f.code(KeyCode::Down);
+    f.press(shift(KeyCode::Char('K')));
+    let screen = f.screen();
+    assert!(screen.contains("Blocking session 1 of name1."), "{screen}");
+    assert!(signals(&recorder).is_empty(), "the question comes first");
+    f.confirm();
+    f.loaded();
+    assert_eq!(
+        signals(&recorder),
+        ["SELECT pg_catalog.pg_terminate_backend(1)"]
+    );
+    assert_eq!(lock_reads(&recorder), 2);
+    f.assert_sees(sqln::ui::text::SESSION_SIGNAL_SENT);
+}
+
+#[test]
+fn the_lock_waits_fit_the_smallest_terminal() {
+    let (mut f, _) = Fixture::recorded(two_sessions());
+    f.open_locks();
+    let screen = f.screen_at(80, 24);
+    assert!(screen.contains("(locks)"), "{screen}");
+}
+
+#[test]
+fn sqlite_refuses_the_lock_waits_with_a_reason() {
+    let mut f = Fixture::sqlite(
+        "locks-sqlite.db",
+        "CREATE TABLE users (id INT);",
+        Settings::default(),
+    );
+    f.press(ctrl('w'));
+    f.code(KeyCode::Char('h'));
+    f.press(shift(KeyCode::Char('L')));
+    assert!(f.app.tables().is_empty());
+    f.assert_sees(sqln::ui::text::LOCKS_REFUSED);
+}
+
+#[test]
+fn the_palette_opens_the_lock_waits_of_the_connection() {
+    let (mut f, recorder) = Fixture::recorded(two_sessions());
+    crate::common::select_row(&mut f.app, 0, &[RowKind::Schema], "public");
+    f.press(ctrl('p'));
+    f.type_text("lock waits");
+    f.code(KeyCode::Enter);
+    f.loaded();
+    assert_eq!(lock_reads(&recorder), 1);
+    assert!(f.app.table().is_some_and(|tab| tab.shows_locks()));
+}
+
 #[test]
 fn the_cancel_option_of_the_question_sends_nothing() {
     let (mut f, recorder) = Fixture::recorded(two_sessions());

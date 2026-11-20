@@ -391,9 +391,11 @@ const OTHER_FIXTURES: &[Action] = &[
     // A source with sessions and an analyze plan: `the_palette_offers_the_commands_of_a_session_source`.
     Action::ExplainAnalyze,
     Action::OpenSessions,
+    Action::OpenLocks,
     Action::ChooseSchema,
     Action::NavigatorDisconnect,
     Action::NavigatorSessions,
+    Action::NavigatorLocks,
     Action::GridCancelQuery,
     Action::GridEndSession,
 ];
@@ -1206,6 +1208,7 @@ fn the_palette_offers_the_commands_of_a_session_source() {
     for action in [
         Action::ExplainAnalyze,
         Action::OpenSessions,
+        Action::OpenLocks,
         Action::ChooseSchema,
     ] {
         assert!(palette_offers(&mut app, action), "{action:?} missing");
@@ -1220,7 +1223,11 @@ fn the_palette_offers_the_commands_of_a_session_source() {
     }
     app.on_event(Event::Key(ctrl('w')));
     app.on_event(Event::Key(key(KeyCode::Char('h'))));
-    for action in [Action::NavigatorDisconnect, Action::NavigatorSessions] {
+    for action in [
+        Action::NavigatorDisconnect,
+        Action::NavigatorSessions,
+        Action::NavigatorLocks,
+    ] {
         assert!(palette_offers(&mut app, action), "{action:?} missing");
     }
     // The sessions tab: the signals that act on the session of a row.

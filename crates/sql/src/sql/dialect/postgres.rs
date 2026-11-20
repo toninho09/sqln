@@ -55,6 +55,7 @@ impl SqlDialect for Postgres {
             (Scope::Schema, _) => all_columns(Some(&schema)),
             (Scope::Connection, _) => all_columns(None),
             (Scope::Sessions, _) => SESSIONS.to_owned(),
+            (Scope::Locks, _) => LOCKS.to_owned(),
         })
     }
 
@@ -81,6 +82,34 @@ const SESSIONS: &str = "\
     FROM pg_catalog.pg_stat_activity a \
     WHERE a.backend_type = 'client backend' AND a.pid <> pg_catalog.pg_backend_pid() \
     ORDER BY a.state = 'active' DESC NULLS LAST, a.query_start, a.pid";
+
+/// The sessions that wait for a lock, one row for each session that blocks them. The
+/// first column is the session that blocks, so a signal frees the wait; the second is
+/// its user, and the last is its query. The session that reads the list is not offered
+/// as a blocker. A relation of another database has no name here, so it shows its number.
+const LOCKS: &str = "\
+    SELECT b.pid AS blocking_pid, b.usename::text AS blocking_user, \
+    w.pid AS blocked_pid, w.usename::text AS blocked_user, \
+    l.locktype || ': ' || l.mode AS \"lock\", \
+    CASE WHEN l.relation IS NULL THEN NULL \
+      WHEN l.database = (SELECT d.oid FROM pg_catalog.pg_database d \
+        WHERE d.datname = pg_catalog.current_database()) \
+      THEN l.relation::pg_catalog.regclass::text \
+      ELSE 'oid ' || l.relation::text END AS object, \
+    pg_catalog.date_trunc('second', pg_catalog.now() - w.query_start)::text \
+      AS blocked_query_age, \
+    w.query AS blocked_query, b.state AS blocking_state, \
+    pg_catalog.date_trunc('second', pg_catalog.now() - b.xact_start)::text \
+      AS blocking_transaction_age, \
+    b.query AS blocking_query \
+    FROM pg_catalog.pg_stat_activity w \
+    CROSS JOIN LATERAL pg_catalog.unnest(pg_catalog.pg_blocking_pids(w.pid)) AS k(pid) \
+    JOIN pg_catalog.pg_stat_activity b ON b.pid = k.pid \
+    LEFT JOIN LATERAL (SELECT x.locktype, x.mode, x.relation, x.database \
+      FROM pg_catalog.pg_locks x WHERE x.pid = w.pid AND NOT x.granted \
+      FETCH FIRST 1 ROW ONLY) l ON true \
+    WHERE b.pid <> pg_catalog.pg_backend_pid() \
+    ORDER BY w.query_start NULLS LAST, w.pid, b.pid";
 
 /// The columns that a table and a schema share, after the name.
 const COLUMN_DATA: &str = "\

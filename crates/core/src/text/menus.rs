@@ -66,6 +66,7 @@ pub const COMMAND_TOGGLE_ROW: &str = "Open or close the row";
 pub const GROUP_SELECTION_VIEW: &str = "Selection and view";
 pub const GROUP_TABLE_RESULTS: &str = "Table and results";
 pub const MENU_SESSIONS: &str = "Sessions";
+pub const MENU_LOCKS: &str = "Lock waits";
 pub const MENU_MOVE_UP: &str = "Move up";
 pub const MENU_MOVE_DOWN: &str = "Move down";
 pub const MENU_MOVE_TO_FOLDER: &str = "Move to folder";

@@ -53,6 +53,7 @@ pub const SECTION_STATISTICS: &str = "Statistics";
 pub const ALL_SCHEMAS: &str = "all schemas";
 pub const STRUCTURE_REFUSED: &str = "This source has no structure. Keys have no columns.";
 pub const SESSIONS_REFUSED: &str = "SQLN lists sessions only on PostgreSQL and MySQL.";
+pub const LOCKS_REFUSED: &str = "SQLN lists lock waits only on PostgreSQL and MySQL.";
 pub const DIAGRAM_REFUSED: &str = "This source has no diagram. Keys have no columns.";
 pub const DIAGRAM_NO_SCHEMA: &str =
     "The connection has no current schema. Use the row of a schema.";
@@ -183,6 +184,10 @@ pub fn diagram_summary(tables: usize, keys: usize) -> String {
 
 pub fn sessions_title(connection: &str) -> String {
     format!("{connection} · sessions")
+}
+
+pub fn locks_title(connection: &str) -> String {
+    format!("{connection} · lock waits")
 }
 
 pub fn rows_read(rows: usize) -> String {

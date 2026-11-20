@@ -100,6 +100,7 @@ Grid Apply controls its own short transaction.
 | `Tab` | Open the page with the commands of the explorer |
 | `Space` | Open the page with the commands of the current panel |
 | `S` | Show the sessions of the connection of the tab |
+| `L` | Show the lock waits of the connection of the tab |
 | `D` | Show the ER diagram of the tab or of the row |
 | `v` | Compare the tab or the row with another source |
 | `F` | Follow a key of the row of a table tab |
@@ -127,6 +128,7 @@ Grid Apply controls its own short transaction.
 `Ctrl+W h` and `Ctrl+W l` follow the screen. With **Explorer side** set to **Right** in `Settings > Appearance`, `Ctrl+W l` goes to the explorer and `Ctrl+W h` leaves it.
 `Ctrl+W E` and `Ctrl+W A` use uppercase keys and do not replace `Ctrl+W e` and `Ctrl+W a`.
 `Ctrl+W S` uses uppercase `S` and does not replace `Ctrl+W s`. With the focus in the navigator, it uses the connection of the row.
+`Ctrl+W L` uses uppercase `L` and does not replace `Ctrl+W l`. It chooses the connection as `Ctrl+W S` does.
 `Ctrl+W D` uses uppercase `D` and does not replace `Ctrl+W d`. With the focus in the navigator, it uses the row, as `d` does. A table tab shows the diagram of its table, and a console shows its current schema.
 `Ctrl+W P` uses uppercase `P` and does not replace `Ctrl+W p`. It focuses the parameters panel when the editor text has parameters.
 `Ctrl+W F` uses uppercase `F`. It acts as `F` in the grid of a table tab, and it gives the reason in another tab.
@@ -310,6 +312,7 @@ The type chooses Text, Number, Boolean, or NULL. Values stay in the panel and ne
 | Show the ER diagram | `d` | `d` |
 | Compare the structure or the data with another source | `c` | `c` |
 | Show the sessions of the server | `S` | `S` |
+| Show the lock waits of the server | `L` | `L` |
 | Generate SQL or the DDL | `g` | `g` |
 | Import a file to the table of the row | `I` | `I` |
 | Copy the row name | `y` or `Ctrl+C` | `y` or `Ctrl+C` |
@@ -338,6 +341,7 @@ On a table or a view, `Enter` opens the table view, or selects its tab when it a
 In the grid of a table, `i` opens the structure of that table.
 In the structure tab of a table, `[` and `]` switch the section. In the other table tabs, those keys change the page.
 `S` opens the sessions of the server of the row. SQLite, Redis, and Valkey refuse it with a reason.
+`L` opens the lock waits of the server of the row, with the same sources and refusals as `S`.
 `d` opens the ER diagram of the row. A schema shows all its tables. A table shows the table and the tables that its foreign keys join, one step away. A column shows the diagram of its table. A connection shows its current schema: before its catalog, `d` reads the catalog, and the diagram opens when it arrives. A view, and Redis or Valkey, refuse it with a reason.
 `c` opens the dialog of a compare, with the row as the source: a connection gives its current schema, and a table or a column gives its table. A table starts a data compare, and a connection or a schema starts a structure compare. A view, a console row, and Redis or Valkey refuse it with a reason. The hint line can show `c compare` where the command is available, if the terminal has enough width. The key is also in the `Ctrl+W Tab` page, and `Ctrl+W v` acts from any panel.
 The hint line changes with the cursor row and terminal width. It reserves the palette shortcut and fits whole commands in priority order.

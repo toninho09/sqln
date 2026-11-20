@@ -189,6 +189,8 @@ Files: `structure.rs`, `table.rs`, `app/tables.rs`.
 
 `S` in the navigator opens a structure tab with `Scope::Sessions`, so the tab reuses the pages, stop, budget, search, copy, and export. PostgreSQL reads `pg_stat_activity`, and MySQL reads `information_schema.PROCESSLIST`. The query leaves out the session that reads the list. The first column is the number of a session, the second is its user, and the last is its query.
 
+`L` and `Ctrl+W L` open `Scope::Locks` in the same kind of tab. PostgreSQL joins `pg_stat_activity` with `pg_blocking_pids` and the lock that is not granted; MySQL reads `sys.innodb_lock_waits`. Each row is one wait, and the first two columns are the number and the user of the session that **blocks**, and the last is its query, so the signal path below serves both tabs: `Scope::takes_signals` and `TableTab::takes_signals` mark them. The session that reads the list is never offered as a blocker. The question names the blocking session.
+
 `q` and `K` read the row of the cursor and ask first. The answer sends a `PageKind::Signal` request through the task of the tab. `signal_sql` receives a `u64`, so no text of a cell reaches the SQL. A signal that the database accepts marks the tab as `pending`: the tab on screen reads the sessions again at once, and another tab reads them when it comes back. An error of the database stays in the tab, and the rows stay.
 
 ## 13b. ER diagram

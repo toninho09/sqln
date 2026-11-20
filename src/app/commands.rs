@@ -105,6 +105,7 @@ impl App {
                 on_connection && item.is_some_and(|item| self.saved_identity(item).is_some())
             }
             NavigatorSessions => self.can_open_sessions(),
+            NavigatorLocks => self.can_open_locks(),
             NavigatorStructure => {
                 !on_console
                     && !on_kind(RowKind::Consoles)
@@ -409,7 +410,7 @@ impl App {
                     (region, action),
                     (
                         Some(Region::Navigator),
-                        OpenDiagram | OpenCompare | OpenSessions
+                        OpenDiagram | OpenCompare | OpenSessions | OpenLocks
                     ) | (Some(Region::Grid), FollowKey)
                 )
         }));
@@ -472,7 +473,7 @@ fn command_priority(action: Action) -> u8 {
         NavigatorRefresh => 9,
         NavigatorEdit => 10,
         NavigatorFilter => 11,
-        NavigatorSessions => 12,
+        NavigatorSessions | NavigatorLocks => 12,
         NavigatorCopyName => 13,
         NavigatorMoveUp | NavigatorMoveDown | NavigatorMoveToFolder => 15,
         NavigatorGenerate => 14,

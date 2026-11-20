@@ -437,6 +437,7 @@ pub fn action_text(action: Action) -> &'static str {
         Action::ToggleComment => "Comment or uncomment the rows",
         Action::OpenHistory => "Open the query history",
         Action::OpenSessions => "Show the sessions of the server",
+        Action::OpenLocks => "Show the lock waits of the server",
         Action::ExplorerCommands => "Show the commands of the explorer",
         Action::ContextCommands => "Show the commands of the current panel",
         Action::EditorSave => "Save the console now",
@@ -498,6 +499,7 @@ pub fn action_text(action: Action) -> &'static str {
         Action::NavigatorDeletePassword => "Delete the saved password",
         Action::NavigatorStructure => "Show the structure of the row",
         Action::NavigatorSessions => "Show the sessions of the server",
+        Action::NavigatorLocks => "Show the lock waits of the server",
         Action::NavigatorFilter => "Filter the tables of the explorer",
         Action::NavigatorClearFilter => "Clear the filter of the explorer",
         Action::NavigatorGenerate => "Generate SQL or the DDL of the row",
@@ -702,14 +704,27 @@ pub fn grid_action_text(action: Action, table: bool, sections: bool) -> &'static
 }
 
 /// Writes the question before a signal. An open transaction of that session rolls back.
-pub fn session_signal_body(signal: SessionSignal, session: u64, user: &str, query: &str) -> String {
+/// `blocking` names the session that holds a lock, in the tab of the lock waits, so the
+/// user knows which side of the wait receives the signal.
+pub fn session_signal_body(
+    signal: SessionSignal,
+    session: u64,
+    user: &str,
+    query: &str,
+    blocking: bool,
+) -> String {
     let effect = match signal {
         SessionSignal::CancelQuery => "The query stops, and the session stays open.",
         SessionSignal::EndSession => {
             "The session closes, and the database undoes its open transaction."
         }
     };
-    format!("Session {session} of {user}.\n{effect}\n\n{query}")
+    let role = if blocking {
+        "Blocking session"
+    } else {
+        "Session"
+    };
+    format!("{role} {session} of {user}.\n{effect}\n\n{query}")
 }
 
 /// Returns the name of an access level, as the options of the access request show it.

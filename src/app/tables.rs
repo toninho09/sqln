@@ -12,7 +12,9 @@ use crate::exec::{ConnectionId, ConsoleId};
 use crate::input::Action;
 use crate::navigator::{Row, RowKind};
 use crate::sql::Dialect;
-use crate::structure::{Scope, Section, SessionSignal, Structure, has_sessions, structure_sql};
+use crate::structure::{
+    Scope, Section, SessionSignal, Structure, has_locks, has_sessions, structure_sql,
+};
 use crate::tab_item::TabItem;
 use crate::table::{Follow, PageRequest, TableFocus, TableTab, follow_choices};
 use crate::ui::text;
@@ -456,6 +458,32 @@ impl App {
         self.open_sessions_of(self.connections[row.connection].id);
     }
 
+    pub(super) fn open_row_locks(&mut self, row: &Row) {
+        self.open_locks_of(self.connections[row.connection].id);
+    }
+
+    /// Opens the lock waits of the connection that `Ctrl+W L` names.
+    pub(super) fn open_locks(&mut self) {
+        match self.sessions_connection() {
+            Some(connection) => self.open_locks_of(connection),
+            None => self.status = Some(text::NO_SELECTED_CONNECTION.to_owned()),
+        }
+    }
+
+    fn open_locks_of(&mut self, connection: ConnectionId) {
+        let Some(name) = self.connection(connection).map(|item| item.name.clone()) else {
+            return;
+        };
+        self.open_structure(connection, Scope::Locks, RelationRef::default(), name);
+    }
+
+    /// Returns true when the navigator row belongs to a source with lock waits.
+    pub(super) fn can_open_locks(&self) -> bool {
+        self.navigator
+            .current(&self.connections)
+            .is_some_and(|row| has_locks(self.connections[row.connection].dialect))
+    }
+
     /// Opens the sessions of the connection that `Ctrl+W S` names.
     pub(super) fn open_sessions(&mut self) {
         match self.sessions_connection() {
@@ -492,7 +520,7 @@ impl App {
     /// Returns true when a key can send a signal to the session under the cursor.
     pub(super) fn can_signal_session(&self) -> bool {
         self.table().is_some_and(|tab| {
-            tab.shows_sessions()
+            tab.takes_signals()
                 && tab.loaded() > 0
                 && !tab.is_busy()
                 && !self.is_read_only(tab.connection)
@@ -503,7 +531,7 @@ impl App {
     fn ask_session_signal(&mut self, signal: SessionSignal) {
         let Some(connection) = self
             .table()
-            .filter(|tab| tab.shows_sessions())
+            .filter(|tab| tab.takes_signals())
             .map(|tab| tab.connection)
         else {
             return;
@@ -528,7 +556,8 @@ impl App {
         };
         let user = cell(1).unwrap_or_default();
         let query = cell(row.columns().saturating_sub(1)).unwrap_or_default();
-        let body = text::session_signal_body(signal, session, &user, &short(&query));
+        let blocking = tab.shows_locks();
+        let body = text::session_signal_body(signal, session, &user, &short(&query), blocking);
         let (title, option) = match signal {
             SessionSignal::CancelQuery => (text::TITLE_CANCEL_QUERY, text::OPTION_CANCEL_QUERY),
             SessionSignal::EndSession => (text::TITLE_END_SESSION, text::OPTION_END_SESSION),
@@ -617,6 +646,7 @@ impl App {
         if structure_sql(dialect, scope, &relation, Section::Columns).is_none() {
             let reason = match scope {
                 Scope::Sessions => text::SESSIONS_REFUSED,
+                Scope::Locks => text::LOCKS_REFUSED,
                 _ => text::STRUCTURE_REFUSED,
             };
             self.status = Some(reason.to_owned());

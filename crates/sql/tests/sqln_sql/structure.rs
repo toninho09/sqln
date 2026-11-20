@@ -5,7 +5,9 @@ use rusqlite::Connection;
 use rusqlite::types::ValueRef;
 use sqln_core::catalog::RelationRef;
 use sqln_sql::sql::Dialect;
-use sqln_sql::structure::{Scope, Section, SessionSignal, Structure, signal_sql, structure_sql};
+use sqln_sql::structure::{
+    Scope, Section, SessionSignal, Structure, has_locks, signal_sql, structure_sql,
+};
 
 const SETUP: &str = "
     CREATE TABLE pairs (x INT, y INT, PRIMARY KEY (x, y));
@@ -404,6 +406,61 @@ fn postgres_and_mysql_list_their_sessions_without_the_reader() {
 fn sqlite_and_redis_have_no_sessions() {
     assert_eq!(sessions_sql(Dialect::Sqlite), None);
     assert_eq!(sessions_sql(Dialect::Redis), None);
+}
+
+// ---------------------------------------------------------------------------
+// The lock waits of a server. `tests/servers.rs` runs these queries.
+
+fn locks_sql(dialect: Dialect) -> Option<String> {
+    let nothing = RelationRef::default();
+    structure_sql(dialect, Scope::Locks, &nothing, Section::Columns)
+}
+
+#[test]
+fn only_postgres_and_mysql_list_lock_waits() {
+    assert!(has_locks(Dialect::Postgres));
+    assert!(has_locks(Dialect::MySql));
+    for dialect in [
+        Dialect::Sqlite,
+        Dialect::DuckDb,
+        Dialect::Redis,
+        Dialect::Kafka,
+        Dialect::Databricks,
+    ] {
+        assert!(!has_locks(dialect), "{dialect:?}");
+    }
+}
+
+/// A signal reads the first column, so the session that blocks comes first, and the
+/// reader is never offered as a blocker.
+#[test]
+fn a_lock_wait_starts_with_the_blocking_session_and_hides_the_reader() {
+    let postgres = locks_sql(Dialect::Postgres).unwrap();
+    assert!(
+        postgres.starts_with("SELECT b.pid AS blocking_pid, b.usename"),
+        "{postgres}"
+    );
+    assert!(postgres.contains("b.pid <> pg_catalog.pg_backend_pid()"));
+    assert!(
+        postgres
+            .trim_end()
+            .ends_with("ORDER BY w.query_start NULLS LAST, w.pid, b.pid")
+    );
+    let mysql = locks_sql(Dialect::MySql).unwrap();
+    assert!(
+        mysql.starts_with("SELECT w.blocking_pid, b.USER AS blocking_user"),
+        "{mysql}"
+    );
+    assert!(mysql.contains("w.blocking_pid <> CONNECTION_ID()"));
+}
+
+#[test]
+fn only_lists_of_sessions_take_signals() {
+    assert!(Scope::Sessions.takes_signals());
+    assert!(Scope::Locks.takes_signals());
+    assert!(!Scope::Relation.takes_signals());
+    assert!(!Scope::Schema.takes_signals());
+    assert!(!Scope::Connection.takes_signals());
 }
 
 #[test]

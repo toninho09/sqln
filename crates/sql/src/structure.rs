@@ -12,6 +12,17 @@ pub enum Scope {
     Connection,
     /// The sessions of the server, not an object of the catalog.
     Sessions,
+    /// The sessions that wait for a lock, each with a session that holds it. The first
+    /// column is the session that holds the lock, so a signal reaches it.
+    Locks,
+}
+
+impl Scope {
+    /// Returns true for a list of server sessions, where a signal can reach the session
+    /// of the first column.
+    pub fn takes_signals(self) -> bool {
+        matches!(self, Self::Sessions | Self::Locks)
+    }
 }
 
 /// What a sessions tab asks the database to do to one session.
@@ -131,6 +142,17 @@ pub fn has_sessions(dialect: Dialect) -> bool {
     structure_sql(
         dialect,
         Scope::Sessions,
+        &RelationRef::default(),
+        Section::Columns,
+    )
+    .is_some()
+}
+
+/// Returns true for a source with a list of the sessions that wait for a lock.
+pub fn has_locks(dialect: Dialect) -> bool {
+    structure_sql(
+        dialect,
+        Scope::Locks,
         &RelationRef::default(),
         Section::Columns,
     )

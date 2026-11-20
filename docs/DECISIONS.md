@@ -31,6 +31,7 @@ In the order of the original record. Undated entries are the early records or ca
 
 | Date | Decision | Area |
 |---|---|---|
+| 2026-11-20 | [Lock waits](decisions/connectors.md#lock-waits--2026-11-20) | Connectors and sessions |
 | 2026-11-20 | [Release profile and global allocator](decisions/build-and-workspace.md#release-profile-and-global-allocator--2026-11-20) | Build and workspace |
 | 2026-11-20 | [Checks of files without reads](decisions/files-and-persistence.md#checks-of-files-without-reads--2026-11-20) | Files and persistence |
 | 2026-11-19 | [sccache in CI](decisions/build-and-workspace.md#sccache-in-ci--2026-11-19) | Build and workspace |

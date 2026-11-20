@@ -55,6 +55,13 @@ pub(super) const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(
+        Action::OpenLocks,
+        Region::Global,
+        "openLocks",
+        &["ctrl+w L"],
+        &[],
+    ),
+    both(
         Action::OpenDiagram,
         Region::Global,
         "openDiagram",
@@ -489,6 +496,13 @@ pub(super) const DEFAULTS: &[Item] = &[
         Region::Navigator,
         "navigatorSessions",
         &["S"],
+        &[],
+    ),
+    both(
+        Action::NavigatorLocks,
+        Region::Navigator,
+        "navigatorLocks",
+        &["L"],
         &[],
     ),
     both(
