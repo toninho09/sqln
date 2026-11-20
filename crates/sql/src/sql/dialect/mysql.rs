@@ -59,6 +59,7 @@ impl SqlDialect for MySql {
             (Scope::Relation, Section::Columns) => columns(&schema, &table),
             (Scope::Relation, Section::Indexes) => indexes(&schema, &table),
             (Scope::Relation, Section::ForeignKeys) => foreign_keys(&schema, &table),
+            (Scope::Relation, Section::Statistics) => statistics(&schema, &table),
             (Scope::Schema, _) => all_columns(Some(&schema)),
             (Scope::Connection, _) => all_columns(None),
             (Scope::Sessions, _) => SESSIONS.to_owned(),
@@ -137,5 +138,36 @@ fn foreign_keys(schema: &str, table: &str) -> String {
          GROUP BY k.CONSTRAINT_NAME, k.REFERENCED_TABLE_SCHEMA, k.REFERENCED_TABLE_NAME, \
            r.UPDATE_RULE, r.DELETE_RULE \
          ORDER BY k.CONSTRAINT_NAME"
+    )
+}
+
+/// The statistics of a table, from the metadata of the storage engine. The count of
+/// rows is an estimate. Each constant row of the `names` list picks one metric.
+fn statistics(schema: &str, table: &str) -> String {
+    format!(
+        "SELECT n.name, \
+         CASE n.name \
+           WHEN 'estimated rows' THEN CAST(t.TABLE_ROWS AS CHAR) \
+           WHEN 'average row bytes' THEN CAST(t.AVG_ROW_LENGTH AS CHAR) \
+           WHEN 'data size' THEN CAST(t.DATA_LENGTH AS CHAR) \
+           WHEN 'index size' THEN CAST(t.INDEX_LENGTH AS CHAR) \
+           WHEN 'free bytes' THEN CAST(t.DATA_FREE AS CHAR) \
+           WHEN 'auto increment' THEN CAST(t.AUTO_INCREMENT AS CHAR) \
+           WHEN 'last change' THEN CAST(t.UPDATE_TIME AS CHAR) \
+           WHEN 'comment' THEN t.TABLE_COMMENT \
+         END AS value \
+         FROM information_schema.TABLES t \
+         JOIN ( \
+           SELECT 1 AS place, 'estimated rows' AS name \
+           UNION ALL SELECT 2, 'average row bytes' \
+           UNION ALL SELECT 3, 'data size' \
+           UNION ALL SELECT 4, 'index size' \
+           UNION ALL SELECT 5, 'free bytes' \
+           UNION ALL SELECT 6, 'auto increment' \
+           UNION ALL SELECT 7, 'last change' \
+           UNION ALL SELECT 8, 'comment' \
+         ) n \
+         WHERE t.TABLE_SCHEMA = {schema} AND t.TABLE_NAME = {table} \
+         ORDER BY n.place"
     )
 }

@@ -234,9 +234,11 @@ pub fn run(options: Options) -> Result<(), Error> {
         ..Settings::default()
     });
     let connection = manager.add_connection(crate::connector::open(&definition), settings);
-    let console = manager
-        .open_console(connection)
-        .expect("The connection exists.");
+    let Some(console) = manager.open_console(connection) else {
+        return Err(Error::failed(
+            "The batch connection did not open a console.",
+        ));
+    };
     manager.stop_when(console, signals.stopped.clone());
     let mut sinks = Sinks::new(options.output, &signals.stopped, &stream_stopped)?;
     let mut context = Drain {

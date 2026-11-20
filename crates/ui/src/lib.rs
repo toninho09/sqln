@@ -26,8 +26,8 @@ pub(crate) use sqln_core::{
     catalog, clipboard, filter_list, find, grid, input, line_input, mark_list, message, text, wrap,
 };
 pub(crate) use sqln_exec::{
-    agent, ai, command_log, compare, complete, connection, data_edit, diagram, dialect, exec,
-    export, import, plan,
+    agent, ai, arrange, command_log, compare, complete, connection, data_edit, diagram, dialect,
+    exec, export, import, plan,
 };
 pub(crate) use sqln_session::connector;
 pub(crate) use sqln_sql::{sql, structure};

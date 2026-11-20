@@ -6,11 +6,11 @@ pub mod terminal;
 pub use sqln_connector::{connector, pool, trace, vault};
 pub use sqln_core::{
     catalog, clipboard, filter_list, find, grid, input, limited, line_input, log, mark_list,
-    message, progress, sink, text, wrap,
+    message, progress, sink, text, wake, wrap,
 };
 pub use sqln_exec::{
-    agent, ai, analysis, command_log, compare, complete, connection, data_edit, definition,
-    diagram, dialect, export, import, plan,
+    agent, ai, analysis, arrange, command_log, compare, complete, connection, data_edit,
+    definition, diagram, dialect, export, import, plan,
 };
 pub use sqln_runtime::exec;
 pub use sqln_sql::{sql, structure};

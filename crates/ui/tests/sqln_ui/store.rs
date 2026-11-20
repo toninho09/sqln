@@ -629,6 +629,60 @@ fn a_change_replaces_an_entry_by_id_and_refuses_a_duplicate_name() {
 }
 
 #[test]
+fn an_arrangement_orders_the_named_entries_and_keeps_the_others_after_them() {
+    let (store, _) = store_in("change-arrange");
+    let root = &store.global;
+    for (id, name) in [("a", "one"), ("b", "two"), ("c", "three")] {
+        config::change_connections(
+            root,
+            Scope::Global,
+            Change::Upsert(Box::new(entry(id, name))),
+        )
+        .unwrap();
+    }
+    let order = vec![
+        ("c".to_owned(), Some("Work".to_owned())),
+        ("gone".to_owned(), None),
+        ("a".to_owned(), Some("Work".to_owned())),
+    ];
+    config::change_connections(root, Scope::Global, Change::Arrange(order)).unwrap();
+    let config = loaded(&store);
+    let items: Vec<_> = config
+        .connections
+        .iter()
+        .map(|item| (item.id.as_str(), item.definition.folder.as_deref()))
+        .collect();
+    assert_eq!(
+        items,
+        [("c", Some("Work")), ("a", Some("Work")), ("b", None)]
+    );
+    let text = fs::read_to_string(root.config_file()).unwrap();
+    assert!(text.contains("\"folder\": \"Work\""), "{text}");
+    // An entry without a folder writes no field.
+    assert_eq!(text.matches("\"folder\"").count(), 2, "{text}");
+}
+
+#[test]
+fn a_folder_name_needs_text_without_edge_spaces_or_control_characters() {
+    let (store, _) = store_in("change-folder");
+    for name in ["", " ", " Work", "Work ", "a\u{1b}b"] {
+        let mut item = entry("a", "one");
+        item.folder = Some(name.to_owned());
+        let error = config::change_connections(
+            &store.global,
+            Scope::Global,
+            Change::Upsert(Box::new(item)),
+        )
+        .unwrap_err();
+        assert!(error.contains("folder"), "{name:?}: {error}");
+    }
+    let mut item = entry("a", "one");
+    item.folder = Some("Work and tests".to_owned());
+    config::change_connections(&store.global, Scope::Global, Change::Upsert(Box::new(item)))
+        .unwrap();
+}
+
+#[test]
 fn a_change_does_not_overwrite_an_invalid_file() {
     let (store, _) = store_in("change-invalid");
     write(&store.global.config_file(), "{");
@@ -943,6 +997,24 @@ fn the_workspace_keeps_the_cursor_and_the_layout_between_updates() {
     let workspace = workspace::load(root);
     assert_eq!(workspace.consoles["s1"], state);
     assert_eq!(workspace.layout.unwrap().navigator_width, 30);
+}
+
+#[test]
+fn the_workspace_keeps_the_closed_folders() {
+    let (store, _) = store_in("workspace-folders");
+    let root = &store.global;
+    let folder = config::FolderRef {
+        scope: Scope::Project,
+        name: "Work".into(),
+    };
+    workspace::update(root, |workspace| {
+        workspace.closed_folders = vec![folder.clone()]
+    })
+    .unwrap();
+    assert_eq!(workspace::load(root).closed_folders, [folder]);
+    workspace::update(root, |workspace| workspace.closed_folders.clear()).unwrap();
+    let text = fs::read_to_string(root.workspace_file()).unwrap();
+    assert!(!text.contains("closedFolders"), "{text}");
 }
 
 #[test]

@@ -94,6 +94,7 @@ const fn hex_pairs() -> [u16; 256] {
 }
 static PAIRS: [u16; 256] = hex_pairs();
 
+#[allow(unsafe_code)]
 pub fn hex(bytes: &[u8]) -> String {
     let mut out = vec![0; 2 + bytes.len() * 2];
     out[..2].copy_from_slice(b"0x");

@@ -3,9 +3,18 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
 
 [workspace.dependencies]
 sqln-core = { path = "crates/core" }
@@ -40,6 +49,8 @@ edtui = { version = "0.11.7", default-features = false, features = ["mouse-suppo
 futures-util = "0.3"
 keyring-core = "1.0.1"
 mysql_async = { version = "0.37.1", default-features = false, features = ["minimal-rust", "default-rustls-ring"] }
+mysql_common = { version = "0.37.3", default-features = false }
+proptest = { version = "1.7", default-features = false, features = ["std"] }
 prost-reflect = { version = "0.16", features = ["serde"] }
 protox = "0.10"
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "layout-cache", "underline-color"] }
@@ -68,7 +79,7 @@ unicode-width = "0.2.3"
 uuid = { version = "1", features = ["v4"] }
 webpki-roots = "1"
 zeroize = { version = "1.9", features = ["derive"] }
-signal-hook = "0.4"
+signal-hook = "0.3"
 rustix = { version = "1", default-features = false, features = ["std", "event", "process", "fs"] }
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 secret-service = { version = "5.2", default-features = false }
@@ -94,7 +105,7 @@ test = false
 [dependencies]
 sqln-core.workspace = true
 sqln-sql.workspace = true
-sqln-connector.workspace = true
+sqln-connector = { workspace = true, default-features = false }
 sqln-store.workspace = true
 sqln-exec.workspace = true
 sqln-runtime.workspace = true
@@ -111,6 +122,22 @@ tokio-util.workspace = true
 unicode-width.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Each feature adds one database driver. `cargo build --no-default-features --features
+# postgres,sqlite` builds a smaller binary. The tests and benches need the default set,
+# because they use the driver libraries directly.
+default = ["postgres", "mysql", "sqlite", "duckdb", "redis", "kafka", "databricks"]
+postgres = ["sqln-connector/postgres"]
+mysql = ["sqln-connector/mysql"]
+sqlite = ["sqln-connector/sqlite"]
+duckdb = ["sqln-connector/duckdb"]
+redis = ["sqln-connector/redis"]
+kafka = ["sqln-connector/kafka"]
+databricks = ["sqln-connector/databricks"]
 
 [target.'cfg(unix)'.dependencies]
 signal-hook.workspace = true
@@ -146,7 +173,17 @@ harness = false
 name = "memory"
 harness = false
 
+[[bench]]
+name = "rss"
+harness = false
+
 # Tests inherit this profile. Keep debug assertions and incremental compilation enabled.
 [profile.dev]
 opt-level = 1
 debug = 0
+
+# Releases optimize across crates. Unwinding stays, because the main loop saves the text after a panic.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

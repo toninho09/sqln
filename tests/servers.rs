@@ -22,7 +22,7 @@ use sqln::compare::sql::{compare_sql, rows_sql, table_columns_sql};
 use sqln::connection::{Definition, Source};
 use sqln::connector::target::parse_uri;
 use sqln::connector::{
-    Connector, Session, TransactionCommand, TransactionState, network_connector,
+    Connector, ErrorKind, Session, TransactionCommand, TransactionState, network_connector,
 };
 use sqln::definition::{Target as DdlTarget, definition_sql, definition_text};
 use sqln::diagram::mermaid::to_mermaid;
@@ -439,6 +439,43 @@ fn the_error_offset_points_at_the_statement_text() {
 
             let error = session.run("SELECT 1 FROM", sink()).await.unwrap_err();
             assert_eq!(error.offset, Some(13), "{:?}", server.kind);
+        });
+    }
+}
+
+#[test]
+fn errors_of_the_database_carry_their_kind() {
+    for server in servers() {
+        let connector = connector(&server);
+        let runtime = runtime();
+        runtime.block_on(async {
+            let mut session = connector.connect().await.unwrap();
+            let kind = server.kind;
+            let error = session.run("SELECT * FROMM t", sink()).await.unwrap_err();
+            assert_eq!(error.kind, ErrorKind::Syntax, "{kind:?}: {error:?}");
+            let error = session
+                .run("SELECT * FROM t_no_such_table", sink())
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, ErrorKind::Syntax, "{kind:?}: {error:?}");
+            let read_only = match kind {
+                Kind::Postgres => "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
+                Kind::MySql => "SET SESSION TRANSACTION READ ONLY",
+            };
+            session.run(read_only, sink()).await.unwrap();
+            let error = session
+                .run("CREATE TABLE t_read_only_kind (a int)", sink())
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, ErrorKind::Permission, "{kind:?}: {error:?}");
+            if kind == Kind::Postgres {
+                session
+                    .run("SET statement_timeout = 10", sink())
+                    .await
+                    .unwrap();
+                let error = session.run("SELECT pg_sleep(1)", sink()).await.unwrap_err();
+                assert_eq!(error.kind, ErrorKind::Canceled, "{error:?}");
+            }
         });
     }
 }
@@ -2724,6 +2761,48 @@ fn a_hostile_name_stays_a_name_in_the_structure_queries() {
             }
         }
         h.run_ok(&["SELECT * FROM s_safe", &drop_table, "DROP TABLE s_safe"]);
+    }
+}
+
+#[test]
+fn table_statistics_reads_one_metric_per_row() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let dialect = match server.kind {
+            Kind::Postgres => Dialect::Postgres,
+            Kind::MySql => Dialect::MySql,
+        };
+        h.run_ok(&[
+            "DROP TABLE IF EXISTS s_stats",
+            "CREATE TABLE s_stats (id int)",
+        ]);
+        h.manager.load_catalog(h.connection, 0, Vec::new());
+        let schema = loop {
+            if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
+                break catalog.unwrap().current_schema.unwrap();
+            }
+        };
+        let target = RelationRef {
+            schema,
+            relation: "s_stats".into(),
+        };
+        let sql = structure_sql(dialect, Scope::Relation, &target, Section::Statistics).unwrap();
+        let run = h.run_ok(&[&sql]);
+        assert_eq!(run.columns.first().unwrap(), &["name", "value"]);
+        let metrics: Vec<String> = run
+            .rows
+            .iter()
+            .map(|row| row.get(0).unwrap().full_text().to_owned())
+            .collect();
+        assert_eq!(metrics.first().map(String::as_str), Some("estimated rows"));
+        let expected = match server.kind {
+            Kind::Postgres => 12,
+            Kind::MySql => 8,
+        };
+        assert_eq!(metrics.len(), expected, "{:?}: {metrics:?}", server.kind);
+        let has_size = metrics.iter().any(|metric| metric.ends_with("size"));
+        assert!(has_size, "{:?}: {metrics:?}", server.kind);
+        h.run_ok(&["DROP TABLE s_stats"]);
     }
 }
 

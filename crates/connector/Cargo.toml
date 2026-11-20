@@ -6,19 +6,34 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-[lib]
-# The crate has no unit tests, so it links no test binary. Remove this line when
-# you add one.
-test = false
-
 [dependencies]
+async-trait.workspace = true
 sqln-session.workspace = true
+sqln-sql.workspace = true
 sqln-store.workspace = true
 sqln-vault.workspace = true
-sqln-postgres.workspace = true
-sqln-mysql.workspace = true
-sqln-sqlite.workspace = true
-sqln-duckdb.workspace = true
-sqln-redis.workspace = true
-sqln-kafka.workspace = true
-sqln-databricks.workspace = true
+sqln-postgres = { workspace = true, optional = true }
+sqln-mysql = { workspace = true, optional = true }
+sqln-sqlite = { workspace = true, optional = true }
+sqln-duckdb = { workspace = true, optional = true }
+sqln-redis = { workspace = true, optional = true }
+sqln-kafka = { workspace = true, optional = true }
+sqln-databricks = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio.workspace = true
+
+[features]
+# Each feature adds one driver. A build without a driver keeps its saved connections, and
+# connecting to one explains that the build lacks the driver.
+default = ["postgres", "mysql", "sqlite", "duckdb", "redis", "kafka", "databricks"]
+postgres = ["dep:sqln-postgres"]
+mysql = ["dep:sqln-mysql"]
+sqlite = ["dep:sqln-sqlite"]
+duckdb = ["dep:sqln-duckdb"]
+redis = ["dep:sqln-redis"]
+kafka = ["dep:sqln-kafka"]
+databricks = ["dep:sqln-databricks"]
+
+[lints]
+workspace = true

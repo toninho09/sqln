@@ -137,8 +137,14 @@ fn a_large_script_ends_soon_and_the_next_key_stays_under_the_target() {
     // The suite runs the tests in parallel, so a loaded machine stretches the run.
     // A time that grows with the square of the statements still breaks this limit.
     let deadline = Duration::from_secs(5);
+    let (wake, woken) = std::sync::mpsc::sync_channel(1);
+    app.wake().install(move || {
+        let _ = wake.try_send(());
+    });
     while app.console_mut().is_busy() {
-        std::thread::sleep(app.key_wait());
+        // The main loop sleeps until its next moment or a wake.
+        let now = Instant::now();
+        let _ = woken.recv_timeout(app.next_wakeup(now).saturating_duration_since(now));
         if app.drain_events() {
             terminal.draw(|frame| app.draw(frame)).unwrap();
         }

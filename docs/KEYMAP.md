@@ -107,6 +107,8 @@ Grid Apply controls its own short transaction.
 | `s` | Whole script |
 | `E` | Show the plan of the statement |
 | `A` | Run the statement and show its plan |
+| `M` | Explain the last error with AI, when available |
+| `T` | Explain the plan on screen with AI, when available |
 | `x` | Stop the script or the table query |
 | `f` | Format the SQL |
 | `/` | Comment or uncomment the lines |
@@ -167,6 +169,8 @@ For an unbound task, `→` after the palette shortcut means to choose the named 
 | Smallest subquery at the cursor | Command palette: **Run subquery** | Configurable shortcut |
 | Show the plan of the statement | `Ctrl+W E` | Command palette |
 | Run the statement and show its plan | `Ctrl+W A` | Command palette |
+| Explain the last error with AI | `Ctrl+W M` | Command palette |
+| Explain the plan on screen with AI | `Ctrl+W T` | Command palette |
 | Stop script | `Ctrl+W x` | **Stop script** button |
 | Format the SQL | `Ctrl+W f` | Command palette |
 | Comment or uncomment the lines | `Ctrl+W /` | `Ctrl+/` or command palette |
@@ -309,6 +313,8 @@ The type chooses Text, Number, Boolean, or NULL. Values stay in the panel and ne
 | Generate SQL or the DDL | `g` | `g` |
 | Import a file to the table of the row | `I` | `I` |
 | Copy the row name | `y` or `Ctrl+C` | `y` or `Ctrl+C` |
+| Move the connection or folder up or down | `Alt+Up` and `Alt+Down` | `Alt+Up` and `Alt+Down`, or `K` and `J` |
+| Move the connection to a folder | `m` | `m` |
 | Filter tables, views, and other objects | `/` or `Ctrl+F` | `/` or `Ctrl+F` |
 | Clear the filter | `Esc` | `Esc` |
 
@@ -338,6 +344,11 @@ The hint line changes with the cursor row and terminal width. It reserves the pa
 `Ctrl+W Tab` lists the bound explorer commands, and `F1` shows the guide and the key reference. The connection commands appear on the connection line, but the keys act on any line of it, except `r` and `Delete` on a console row.
 The labels say the object of the command, such as `n new console` and `a add connection`.
 A command that does not fit leaves the line, and the key keeps acting.
+
+`Alt+Up` and `Alt+Down` swap the connection or folder with its neighbor at the same level: in its folder, or at the top level of its scope. A folder moves with its connections. The global connections stay above the project connections, so a move never crosses that edge. The order goes to `config.json` at once.
+`m` opens a list: **+ New folder**, **No folder** for a connection in a folder, and the other folders of the scope. A connection that enters a folder goes to its end, and **No folder** puts it after its folder.
+On a folder row, `Enter`, `Right`, and `Left` open and close the folder, `e` renames it, and `Delete` removes the folder after a question. Its connections stay. A new name that another folder uses joins the two folders. The folders that you close stay closed at the next start.
+The filtered tree shows no folders, and a move asks you to clear the filter first.
 
 `p` erases the saved password of the connection, with a confirmation. The hint appears only when a password is saved.
 `g` opens the list of SQL templates of a table, a view, or the table of a column. The text goes to the cursor of the console of the connection and does not run. Redis has no templates.
@@ -685,6 +696,7 @@ The initial focus always stays on the option with no effect on the database or t
 | Click on the table header | Apply sorting: ascending, descending, and no order |
 | Click on a row number in a result or table grid | Select all columns of that loaded row, including hidden columns |
 | Double click on a table | Open the table view, with two clicks on the same cell within 400 ms |
+| Drag a connection or a folder in the explorer | Move it. A folder row takes a connection at its end. The row of its own folder takes a connection out, at the place of the folder. The empty area below the tree shows `> End of global` or `> End of project` and takes the item to the end of its scope, out of its folder. Another row gives the item its place. The target row shows `>`, and the status line says what the release does |
 | Double click on a console row | Open the console, or select its tab |
 | Click on a bar field or button | Give focus to the field, or press the button |
 | Click on **Previous** or **Next** | Change page in the table grid |

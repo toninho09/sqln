@@ -484,6 +484,7 @@ impl Difference {
 
     /// Returns the object of the difference: the source object, or the target object of
     /// a removal.
+    #[expect(clippy::expect_used, reason = "a difference has a source or a target")]
     pub fn object(&self) -> &Object {
         self.source
             .as_ref()

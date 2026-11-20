@@ -19,3 +19,6 @@ secret-service.workspace = true
 # Match the zbus types exposed by secret-service and the keyring store.
 zbus.workspace = true
 zbus-secret-service-keyring-store.workspace = true
+
+[lints]
+workspace = true

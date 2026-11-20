@@ -4,7 +4,7 @@ mod select;
 pub use select::Projection;
 
 use super::filter::{self, Filter};
-use crate::connector::ExecError;
+use crate::connector::{ErrorKind, ExecError};
 use crate::text;
 
 /// The first word of the text that a topic tab sends. It is not a console command.
@@ -40,10 +40,7 @@ impl Token {
 }
 
 pub fn error_at(message: impl Into<String>, offset: usize) -> ExecError {
-    ExecError {
-        message: message.into(),
-        offset: Some(offset),
-    }
+    ExecError::with_kind(ErrorKind::Syntax, message).at(Some(offset))
 }
 
 /// Reads a text between quotes from `start`. It returns the text and the position

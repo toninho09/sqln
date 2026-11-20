@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use redis::aio::MultiplexedConnection;
 use redis::{
     AsyncConnectionConfig, Cmd, ErrorKind, ProtocolVersion, RedisConnectionInfo, RedisError,
-    RedisResult, Value as Reply,
+    RedisResult, ServerErrorKind, Value as Reply,
 };
 use rustls::pki_types::ServerName;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -18,8 +18,9 @@ use tokio_rustls::TlsConnector;
 
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
-    Canceller, Capabilities, ConnectError, Connector, ExecError, Namespace, ResetOutcome, Session,
-    SessionContext, StatementEnd, TransactionCommand, TransactionState, describe, tls,
+    Canceller, Capabilities, ConnectError, Connector, ErrorKind as Kind, ExecError, Namespace,
+    ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
+    describe, tls,
 };
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
 use crate::grid::{Row, RowWriter, Value};
@@ -53,7 +54,7 @@ fn connect_error(error: &RedisError) -> ConnectError {
     if refused {
         ConnectError::refused_password(describe(error))
     } else {
-        ConnectError::new(describe(error))
+        ConnectError::new(describe(error)).kind(error_kind(error))
     }
 }
 
@@ -244,9 +245,31 @@ impl Canceller for RedisCanceller {
 }
 
 fn exec_error(error: &RedisError) -> ExecError {
+    let kind = error_kind(error);
     match (error.code(), error.detail()) {
-        (Some(code), Some(detail)) => ExecError::new(format!("{code} {detail}")),
-        _ => ExecError::new(describe(error)),
+        (Some(code), Some(detail)) => ExecError::with_kind(kind, format!("{code} {detail}")),
+        _ => ExecError::with_kind(kind, describe(error)),
+    }
+}
+
+/// The kind of a Redis error, from the kind of the library and the code of the server.
+fn error_kind(error: &RedisError) -> Kind {
+    if error.is_timeout() {
+        return Kind::Timeout;
+    }
+    if error.is_connection_dropped() || error.is_connection_refusal() || error.is_io_error() {
+        return Kind::Connection;
+    }
+    match error.kind() {
+        ErrorKind::AuthenticationFailed => Kind::Auth,
+        ErrorKind::Server(ServerErrorKind::NoPerm) => Kind::Permission,
+        ErrorKind::Server(ServerErrorKind::ReadOnly) => Kind::Permission,
+        ErrorKind::Server(ServerErrorKind::BusyLoading) => Kind::Resource,
+        _ => match error.code() {
+            Some("NOAUTH" | "WRONGPASS") => Kind::Auth,
+            Some("OOM") => Kind::Resource,
+            _ => Kind::Other,
+        },
     }
 }
 
@@ -516,7 +539,10 @@ impl RedisSession {
             return Err(ExecError::new(text::REDIS_NO_REPLY));
         }
         if self.read_only && !SUBSCRIBE.contains(&upper.as_str()) && !self.is_read(name).await {
-            return Err(ExecError::new(text::REDIS_READ_ONLY));
+            return Err(ExecError::with_kind(
+                Kind::Permission,
+                text::REDIS_READ_ONLY,
+            ));
         }
         Ok(())
     }
@@ -893,7 +919,10 @@ impl Session for RedisSession {
     }
 
     async fn control(&mut self, _command: TransactionCommand) -> Result<(), ExecError> {
-        Err(ExecError::new(text::REDIS_NO_TRANSACTIONS))
+        Err(ExecError::with_kind(
+            Kind::Unsupported,
+            text::REDIS_NO_TRANSACTIONS,
+        ))
     }
 
     async fn reset(&mut self) -> ResetOutcome {
@@ -960,6 +989,18 @@ impl Session for RedisSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_errors_give_their_kind() {
+        let auth = RedisError::from((ErrorKind::AuthenticationFailed, "refused"));
+        assert_eq!(exec_error(&auth).kind, Kind::Auth);
+        let reset = RedisError::from(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
+        assert_eq!(exec_error(&reset).kind, Kind::Connection);
+        let late = RedisError::from(std::io::Error::from(std::io::ErrorKind::TimedOut));
+        assert_eq!(exec_error(&late).kind, Kind::Timeout);
+        let other = RedisError::from((ErrorKind::Client, "other"));
+        assert_eq!(exec_error(&other).kind, Kind::Other);
+    }
 
     #[test]
     fn a_short_group_of_a_scan_grows_with_nulls() {

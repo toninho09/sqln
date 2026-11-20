@@ -25,7 +25,7 @@ The spike suite ended with 109 tests passed on real databases.
 Decision: the dedicated drivers with an own pool.
 The accepted cost is three driver APIs, the own pool, and the TLS setup on each driver.
 `rusqlite` is synchronous and runs on its own thread.
-The rules are in "Driver decision" of the [plan](INITIAL_PLAN.md) and "Libraries" of [DECISIONS](DECISIONS.md).
+The rules are in "Driver decision" of the [plan](INITIAL_PLAN.md) and "Libraries" of the [decision record](decisions/build-and-workspace.md#libraries).
 
 ## 2. Driver behavior — 2026-10-30
 

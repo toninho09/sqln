@@ -806,7 +806,9 @@ impl SqlEditor {
         }
         let left = view.left;
         let followed = self.follow_left(cursor, left, width);
-        self.ghost_view.as_mut().expect("open ghost view").left = followed;
+        if let Some(view) = self.ghost_view.as_mut() {
+            view.left = followed;
+        }
     }
 
     /// Returns the first visible column that keeps the cursor inside `width` cells.
@@ -859,7 +861,9 @@ impl SqlEditor {
                 .collect();
             self.apply_agent_edits(revision, &edits)?;
         }
-        let review = self.review.as_mut().expect("checked review");
+        let Some(review) = self.review.as_mut() else {
+            return Ok(());
+        };
         review.revision = self.revision;
         let Kind::Diff { hunks, current } = &mut review.kind;
         let mut shift = 0_isize;
@@ -883,10 +887,9 @@ impl SqlEditor {
             *current = next;
         }
         let height = self.page_height;
-        self.review
-            .as_mut()
-            .expect("checked review")
-            .show_current(height);
+        if let Some(review) = self.review.as_mut() {
+            review.show_current(height);
+        }
         Ok(())
     }
 

@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::keys::RunTarget;
+use crate::app::run_sql::RunTarget;
 use crate::clipboard::MemoryClipboard;
 use crate::connector::TransactionState;
 use crate::editor::RunScope;
@@ -171,8 +171,8 @@ fn association_in_the_queue_blocks_only_its_console() {
     assert!(app.console().is_busy());
     release.now();
     pump(&mut app, Instant::now());
-    assert_eq!(app.consoles[0].connection, Some(target));
-    assert_eq!(app.consoles[1].connection, Some(source));
+    assert_eq!(app.tabs.consoles[0].connection, Some(target));
+    assert_eq!(app.tabs.consoles[1].connection, Some(source));
 }
 
 #[test]
@@ -229,7 +229,7 @@ fn association_blocks_export_reads_before_they_create_a_file() {
     );
     assert_eq!(app.status.as_deref(), Some(text::CONNECTION_CHANGE_PENDING));
     assert!(!destination.exists());
-    assert!(app.exports.is_empty());
+    assert!(app.background.exports.is_empty());
     assert!(!app.console().is_busy());
     release.now();
     pump(&mut app, Instant::now());

@@ -89,6 +89,11 @@ impl Connection {
             .map_or(&self.name, |definition| &definition.name)
     }
 
+    /// Returns the folder of the connection in the explorer.
+    pub fn folder(&self) -> Option<&str> {
+        self.definition.as_ref()?.folder.as_deref()
+    }
+
     pub fn scope(&self) -> Option<Scope> {
         self.key.as_ref().map(|key| key.scope)
     }
@@ -134,10 +139,15 @@ pub fn refresh_labels(connections: &mut [Connection]) {
         let shared = names
             .iter()
             .any(|(name, other)| *name == own && *other != scope);
-        connection.name = match (shared, scope) {
-            (true, Some(Scope::Project)) => format!("{} (local)", connection.plain_name()),
-            (true, Some(Scope::Global)) => format!("{} (global)", connection.plain_name()),
-            _ => connection.plain_name().to_owned(),
-        };
+        connection.name = scope_label(connection.plain_name(), scope, shared);
+    }
+}
+
+/// Writes the scope after a name that another scope uses too.
+pub fn scope_label(name: &str, scope: Option<Scope>, shared: bool) -> String {
+    match (shared, scope) {
+        (true, Some(Scope::Project)) => format!("{name} (local)"),
+        (true, Some(Scope::Global)) => format!("{name} (global)"),
+        _ => name.to_owned(),
     }
 }

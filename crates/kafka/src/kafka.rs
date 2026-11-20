@@ -25,7 +25,7 @@ use self::decode::{Decoded, decode};
 use self::registry::{RegistryClient, VaultRead};
 use super::target::{NetworkTarget, topic_visible};
 use super::{
-    Canceller, Capabilities, ConnectError, Connector, ExecError, MAX_NOTICES, Namespace,
+    Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, MAX_NOTICES, Namespace,
     ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
 use crate::catalog::{Catalog, ColumnNote, Columns, Relation, RelationKind, Schema};
@@ -37,8 +37,12 @@ use crate::progress::{ReadEnd, ReadProgress, percent};
 use crate::sink::{Flow, ResultSink};
 use crate::sql::Dialect;
 use crate::text;
+use sqln_session::trace::{self, TraceContext};
 
-pub use self::registry::account as registry_account;
+pub use sqln_session::connector::kafka::registry_account;
+
+mod explorer;
+mod read;
 
 /// The first window of offsets of a topic tab, for each partition. Each later window of
 /// the same partition is two times larger, up to the largest window.
@@ -121,10 +125,11 @@ impl Connector for KafkaConnector {
             if refused {
                 ConnectError::refused_password(message)
             } else {
-                ConnectError::new(message)
+                ConnectError::new(message).kind(ErrorKind::Connection)
             }
         })?;
         Ok(Box::new(KafkaSession {
+            trace: None,
             target: self.target.clone(),
             consumer,
             registry: self.registry.clone(),
@@ -655,6 +660,7 @@ async fn push_rows(rows: Vec<Row>, sink: &mut ResultSink) -> bool {
 }
 
 struct KafkaSession {
+    trace: Option<TraceContext>,
     target: NetworkTarget,
     consumer: Arc<Consumer>,
     registry: Option<Arc<RegistryClient>>,
@@ -669,567 +675,6 @@ impl KafkaSession {
                 .map(|metadata| topics_of(&metadata))
         })
         .await
-    }
-
-    /// Returns the partitions of a topic with their low and high offsets.
-    async fn offsets(
-        &self,
-        topic: &str,
-        partition: Option<i32>,
-    ) -> Result<Vec<(PartitionInfo, i64, i64)>, ExecError> {
-        let info = self
-            .metadata(Some(topic.to_owned()))
-            .await?
-            .into_iter()
-            .find(|info| info.name == topic)
-            .ok_or_else(|| ExecError::new(text::KAFKA_NO_TOPIC))?;
-        if let Some(error) = info.error {
-            return Err(ExecError::new(text::kafka_topic_error(&error)));
-        }
-        let mut partitions = info.partitions;
-        partitions.sort_by_key(|partition| partition.id);
-        if let Some(wanted) = partition {
-            partitions.retain(|partition| partition.id == wanted);
-            if partitions.is_empty() {
-                return Err(ExecError::new(text::KAFKA_NO_PARTITION));
-            }
-        }
-        let ids = partitions.iter().map(|partition| partition.id).collect();
-        let marks = watermarks(&self.consumer, topic, ids).await?;
-        Ok(partitions
-            .into_iter()
-            .zip(marks)
-            .map(|(partition, (_, low, high))| (partition, low, high))
-            .collect())
-    }
-
-    /// Returns the first offset of each partition for a start.
-    async fn starts(
-        &self,
-        topic: &str,
-        start: Start,
-        partitions: &[(PartitionInfo, i64, i64)],
-    ) -> Result<Vec<i64>, ExecError> {
-        let clamp = |offset: i64, low: i64, high: i64| offset.clamp(low, high);
-        match start {
-            Start::Earliest => Ok(partitions.iter().map(|(_, low, _)| *low).collect()),
-            Start::Latest => Ok(partitions.iter().map(|(_, _, high)| *high).collect()),
-            Start::Offset(offset) => Ok(partitions
-                .iter()
-                .map(|(_, low, high)| clamp(offset, *low, *high))
-                .collect()),
-            Start::Time(millis) => {
-                let mut list = TopicPartitionList::new();
-                for (partition, _, _) in partitions {
-                    list.add_partition_offset(topic, partition.id, Offset::Offset(millis))
-                        .map_err(|error| ExecError::new(super::describe(&error)))?;
-                }
-                let found = client::blocking(&self.consumer, move |consumer| {
-                    consumer.offsets_for_times(list, CALL_LIMIT).map(|list| {
-                        list.elements()
-                            .iter()
-                            .map(|element| (element.partition(), element.offset()))
-                            .collect::<Vec<_>>()
-                    })
-                })
-                .await?;
-                Ok(partitions
-                    .iter()
-                    .map(|(partition, low, high)| {
-                        match found.iter().find(|(id, _)| *id == partition.id) {
-                            Some((_, Offset::Offset(offset))) => clamp(*offset, *low, *high),
-                            // No message at or after the time: the read starts at the end.
-                            _ => *high,
-                        }
-                    })
-                    .collect())
-            }
-        }
-    }
-
-    /// Decodes a message and checks the filter. It returns `None` for a message that does
-    /// not match.
-    async fn message_row(
-        &self,
-        raw: Raw,
-        filter: Option<Arc<Filter>>,
-        projection: Option<Arc<command::Projection>>,
-        evaluation: &filter::Evaluation,
-        notices: &mut Notices,
-    ) -> Result<Option<Row>, ExecError> {
-        let registry = self.registry.as_deref();
-        let (key, key_notice) = decode(raw.key.as_deref(), registry).await;
-        let (value, value_notice) = decode(raw.value.as_deref(), registry).await;
-        key_notice
-            .into_iter()
-            .chain(value_notice)
-            .for_each(|notice| notices.add(notice));
-        let expressions = filter.is_some() || projection.is_some();
-        let cancel_on_drop = evaluation.cancel_on_drop();
-        let evaluation = evaluation.clone();
-        let build = move || -> Result<Option<Row>, ExecError> {
-            evaluation.check()?;
-            let meta = Meta {
-                now: chrono::Utc::now().timestamp_millis(),
-                key_bytes: raw.key.as_ref().map(Vec::len),
-                value_bytes: raw.value.as_ref().map(Vec::len),
-            };
-            let headers_json = headers_json(&raw.headers);
-            let headers = headers_json.as_ref().map(Json::to_string);
-            let schema = match (key.schema(), value.schema()) {
-                (None, None) => None,
-                (Some(key), None) => Some(format!("key {key}")),
-                (None, Some(value)) => Some(format!("value {value}")),
-                (Some(key), Some(value)) => Some(format!("key {key}, value {value}")),
-            };
-            if let Some(filter) = filter {
-                let needs = filter.needs();
-                let key_json = needs.key.then(|| key.json()).flatten();
-                let value_json = needs.value.then(|| value.json()).flatten();
-                let message = Message {
-                    partition: raw.partition.into(),
-                    offset: raw.offset,
-                    timestamp: raw.timestamp,
-                    key: key.text(),
-                    key_json: key_json.as_deref(),
-                    value: value.text(),
-                    json: value_json.as_deref(),
-                    headers: headers.as_deref(),
-                    headers_json: headers_json.as_ref(),
-                    schema: schema.as_deref(),
-                    meta,
-                };
-                if !filter.matches(&message, &evaluation)? {
-                    return Ok(None);
-                }
-            }
-            let mut row = RowWriter::default();
-            row.push(Value::Number(&raw.partition.to_string()));
-            row.push(Value::Number(&raw.offset.to_string()));
-            match raw.timestamp.and_then(time_text) {
-                Some(time) => row.push(Value::Text(&time)),
-                None => row.push(Value::Null),
-            }
-            push_decoded(&mut row, &key);
-            push_decoded(&mut row, &value);
-            match &headers {
-                Some(text) => row.push(Value::Text(text)),
-                None => row.push(Value::Null),
-            }
-            match &schema {
-                Some(text) => row.push(Value::Text(text)),
-                None => row.push(Value::Null),
-            }
-            let row = row.finish();
-            Ok(Some(match projection {
-                Some(projection) => projection.apply(row, meta, &evaluation)?,
-                None => row,
-            }))
-        };
-        // The runner remains free to process Stop and the statement deadline.
-        // The visitor checks the stop token even when it produces no values.
-        let result = if expressions {
-            tokio::task::spawn_blocking(build)
-                .await
-                .map_err(|_| ExecError::new(text::KAFKA_CALL_FAILED))
-                .and_then(|result| result)
-        } else {
-            build()
-        };
-        cancel_on_drop.disarm();
-        result
-    }
-
-    fn registry_notice(&self, notices: &mut Notices) {
-        if let Some(message) = &self.registry_error {
-            notices.add(text::kafka_registry_unavailable(message));
-        }
-    }
-
-    async fn topics(&self, sink: &mut ResultSink) -> Result<bool, ExecError> {
-        let mut topics = self.metadata(None).await?;
-        topics.sort_by(|a, b| a.name.cmp(&b.name));
-        set_columns(&["topic", "partitions", "replicas", "internal"], sink).await;
-        let rows = topics
-            .iter()
-            .map(|topic| {
-                let replicas = topic.partitions.first().map_or(0, |p| p.replicas.len());
-                number_row(&[
-                    Some(topic.name.clone()),
-                    Some(topic.partitions.len().to_string()),
-                    Some(replicas.to_string()),
-                    Some(is_internal(&topic.name).to_string()),
-                ])
-            })
-            .collect();
-        push_rows(rows, sink).await;
-        Ok(true)
-    }
-
-    async fn partitions(&self, topic: &str, sink: &mut ResultSink) -> Result<bool, ExecError> {
-        let partitions = self.offsets(topic, None).await?;
-        set_columns(
-            &[
-                "partition",
-                "leader",
-                "replicas",
-                "isr",
-                "low",
-                "high",
-                "messages",
-            ],
-            sink,
-        )
-        .await;
-        let rows = partitions
-            .iter()
-            .map(|(partition, low, high)| {
-                number_row(&[
-                    Some(partition.id.to_string()),
-                    Some(partition.leader.to_string()),
-                    Some(list_text(&partition.replicas)),
-                    Some(list_text(&partition.isr)),
-                    Some(low.to_string()),
-                    Some(high.to_string()),
-                    Some((high - low).to_string()),
-                ])
-            })
-            .collect();
-        push_rows(rows, sink).await;
-        Ok(true)
-    }
-
-    async fn group_list(&self, group: Option<String>) -> Result<Vec<GroupInfo>, ExecError> {
-        client::blocking(&self.consumer, move |consumer| {
-            consumer
-                .fetch_group_list(group.as_deref(), CALL_LIMIT)
-                .map(|list| groups_of(&list))
-        })
-        .await
-    }
-
-    async fn groups(&self, sink: &mut ResultSink) -> Result<bool, ExecError> {
-        let mut groups = self.group_list(None).await?;
-        groups.sort_by(|a, b| a.name.cmp(&b.name));
-        set_columns(&["group", "state", "protocol", "members"], sink).await;
-        let rows = groups
-            .iter()
-            .map(|group| {
-                number_row(&[
-                    Some(group.name.clone()),
-                    Some(group.state.clone()),
-                    Some(group.protocol.clone()).filter(|text| !text.is_empty()),
-                    Some(group.members.len().to_string()),
-                ])
-            })
-            .collect();
-        push_rows(rows, sink).await;
-        Ok(true)
-    }
-
-    /// Reads the committed offsets of a group and its lag. A consumer with the id of the
-    /// group asks for the offsets only: it never joins the group.
-    async fn group(&self, id: &str, sink: &mut ResultSink) -> Result<bool, ExecError> {
-        let members = self
-            .group_list(Some(id.to_owned()))
-            .await?
-            .into_iter()
-            .find(|group| group.name == id)
-            .map(|group| group.members)
-            .unwrap_or_default();
-        let topics = self.metadata(None).await?;
-        let mut list = TopicPartitionList::new();
-        for topic in topics.iter().filter(|topic| !is_internal(&topic.name)) {
-            for partition in &topic.partitions {
-                list.add_partition(&topic.name, partition.id);
-            }
-        }
-        let config =
-            client::config(&self.target, id).map_err(|error| ExecError::new(error.message))?;
-        let committed: Vec<(String, i32, i64, i64)> = tokio::task::spawn_blocking(move || {
-            let consumer =
-                client::consumer(&config).map_err(|error| ExecError::new(error.message))?;
-            let found = consumer
-                .committed_offsets(list, CALL_LIMIT)
-                .map_err(|error| ExecError::new(client::call_error(&consumer, &error).1))?;
-            let mut rows = Vec::new();
-            for element in found.elements() {
-                let Offset::Offset(offset) = element.offset() else {
-                    continue;
-                };
-                let (_, high) = consumer
-                    .fetch_watermarks(element.topic(), element.partition(), CALL_LIMIT)
-                    .map_err(|error| ExecError::new(client::call_error(&consumer, &error).1))?;
-                rows.push((
-                    element.topic().to_owned(),
-                    element.partition(),
-                    offset,
-                    high,
-                ));
-            }
-            Ok::<_, ExecError>(rows)
-        })
-        .await
-        .map_err(|_| ExecError::new(text::KAFKA_CALL_FAILED))??;
-        let mut committed = committed;
-        committed.sort();
-        set_columns(
-            &["topic", "partition", "committed", "end", "lag", "member"],
-            sink,
-        )
-        .await;
-        let rows = committed
-            .iter()
-            .map(|(topic, partition, offset, high)| {
-                let member = members
-                    .iter()
-                    .find(|member| {
-                        member
-                            .assignment
-                            .iter()
-                            .any(|(name, id)| name == topic && id == partition)
-                    })
-                    .map(|member| member.client.clone());
-                number_row(&[
-                    Some(topic.clone()),
-                    Some(partition.to_string()),
-                    Some(offset.to_string()),
-                    Some(high.to_string()),
-                    Some((high - offset).max(0).to_string()),
-                    member,
-                ])
-            })
-            .collect();
-        push_rows(rows, sink).await;
-        if committed.is_empty() {
-            sink.notices(vec![text::KAFKA_GROUP_EMPTY.to_owned()], 0)
-                .await;
-        }
-        Ok(true)
-    }
-
-    /// Runs `CONSUME` or `TAIL`. `CONSUME` ends at the last offset of each partition at its
-    /// start; `TAIL` waits for new messages until the user stops it.
-    async fn read(&self, read: Read, tail: bool, sink: &mut ResultSink) -> Result<bool, ExecError> {
-        let partitions = self.offsets(&read.topic, read.partition).await?;
-        let starts = self.starts(&read.topic, read.start, &partitions).await?;
-        let windows: Vec<Window> = partitions
-            .iter()
-            .zip(&starts)
-            .map(|((partition, _, high), start)| Window {
-                partition: partition.id,
-                start: *start,
-                end: (!tail).then_some(*high),
-            })
-            .collect();
-        let progress = Arc::new(ReadProgress::new(read.filter.is_some()));
-        sink.track(progress.clone());
-        if let Some(projection) = &read.projection {
-            sink.set_columns(projection.names()).await;
-        } else {
-            set_columns(&MESSAGE_COLUMNS, sink).await;
-        }
-        let mut notices = Notices::default();
-        self.registry_notice(&mut notices);
-        let stop = sink.stop_token();
-        let evaluation = filter::Evaluation::new(stop.clone(), sink.memory_limit());
-        let filter = read.filter.map(Arc::new);
-        let projection = read.projection.map(Arc::new);
-        let mut scan = Scan::start(&self.target, &read.topic, &windows, !tail)?;
-        let highs = partitions
-            .iter()
-            .map(|(partition, _, high)| (partition.id, *high));
-        let mut position = Position::new(&windows, highs);
-        let mut lag = tail.then(|| {
-            let ids = windows.iter().map(|window| window.partition).collect();
-            LagCheck::new(self.consumer.clone(), &read.topic, ids)
-        });
-        let mut lag_known = true;
-        let limit = read.limit.map(|limit| limit as u64);
-        // The read ends at the first of its ends: the high offsets, `SCAN`, or `LIMIT`.
-        let read_percent = |position: &Position| {
-            [
-                percent(position.done(), position.total()),
-                read.scan.and_then(|scan| percent(progress.scanned(), scan)),
-                limit.and_then(|limit| percent(progress.matched(), limit)),
-            ]
-            .into_iter()
-            .flatten()
-            .max()
-        };
-        if !tail {
-            progress.set_percent(read_percent(&position));
-        }
-        let mut end = ReadEnd::None;
-        loop {
-            match scan.next(&stop).await? {
-                Next::Message(raw) => {
-                    progress.add_scanned(raw.size());
-                    position.advance(raw.partition, raw.offset);
-                    let row = self
-                        .message_row(
-                            raw,
-                            filter.clone(),
-                            projection.clone(),
-                            &evaluation,
-                            &mut notices,
-                        )
-                        .await;
-                    if evaluation.stopped() {
-                        end = ReadEnd::Stopped;
-                        break;
-                    }
-                    if let Some(row) = row? {
-                        progress.add_matched();
-                        if sink.push(row).await != Flow::Continue {
-                            if stop.is_cancelled() {
-                                end = ReadEnd::Stopped;
-                            }
-                            break;
-                        }
-                        if limit.is_some_and(|limit| progress.matched() >= limit) {
-                            end = ReadEnd::Limit;
-                            break;
-                        }
-                    }
-                    if read.scan.is_some_and(|scan| progress.scanned() >= scan) {
-                        end = ReadEnd::Scan;
-                        break;
-                    }
-                    if !tail {
-                        progress.set_percent(read_percent(&position));
-                    }
-                }
-                Next::Idle => sink.flush().await,
-                Next::Done => {
-                    end = ReadEnd::End;
-                    break;
-                }
-                Next::Stopped => {
-                    end = ReadEnd::Stopped;
-                    break;
-                }
-            }
-            if let Some(check) = &mut lag {
-                if let Some(highs) = check.poll().await {
-                    lag_known = highs.is_some();
-                    position.set_ends(highs.unwrap_or_default());
-                }
-                progress.set_lag(lag_known.then(|| position.left()));
-            }
-        }
-        drop(scan);
-        progress.set_end(end);
-        let stopped = end == ReadEnd::Stopped;
-        if filter.is_some() || read.scan.is_some() || stopped {
-            notices.add(text::kafka_scanned(
-                progress.scanned(),
-                progress.matched(),
-                stopped,
-            ));
-        }
-        notices.send(sink).await;
-        Ok(true)
-    }
-
-    /// Reads the last messages of a topic that match the filter, newest first. Each round
-    /// reads an older window of each partition that can still hold a newer match.
-    async fn topic_page(
-        &self,
-        topic: &str,
-        count: usize,
-        filter: Option<Filter>,
-        sink: &mut ResultSink,
-    ) -> Result<bool, ExecError> {
-        let progress = Arc::new(ReadProgress::new(filter.is_some()));
-        sink.track(progress.clone());
-        set_columns(&MESSAGE_COLUMNS, sink).await;
-        if count == 0 {
-            return Ok(true);
-        }
-        let partitions = self.offsets(topic, None).await?;
-        let mut notices = Notices::default();
-        self.registry_notice(&mut notices);
-        let stop = sink.stop_token();
-        let evaluation = filter::Evaluation::new(stop.clone(), sink.memory_limit());
-        let filter = filter.map(Arc::new);
-        let mut ends: HashMap<i32, i64> = partitions
-            .iter()
-            .map(|(p, _, high)| (p.id, *high))
-            .collect();
-        let lows: HashMap<i32, i64> = partitions.iter().map(|(p, low, _)| (p.id, *low)).collect();
-        let mut sizes: HashMap<i32, i64> = lows.keys().map(|id| (*id, FIRST_WINDOW)).collect();
-        let mut oldest: HashMap<i32, i64> = lows.keys().map(|id| (*id, i64::MAX)).collect();
-        let mut found: Vec<(i64, i32, i64, Row)> = Vec::new();
-        let mut stopped = false;
-        loop {
-            found.sort_by_key(|item| std::cmp::Reverse((item.0, item.1, item.2)));
-            found.truncate(count);
-            let threshold = (found.len() >= count).then(|| found[found.len() - 1].0);
-            let windows: Vec<Window> = partitions
-                .iter()
-                .map(|(partition, _, _)| partition.id)
-                .filter(|id| ends[id] > lows[id])
-                .filter(|id| threshold.is_none_or(|time| oldest[id] >= time))
-                .map(|id| Window {
-                    partition: id,
-                    start: (ends[&id] - sizes[&id]).max(lows[&id]),
-                    end: Some(ends[&id]),
-                })
-                .collect();
-            if windows.is_empty() || stopped {
-                break;
-            }
-            let mut scan = Scan::start(&self.target, topic, &windows, true)?;
-            loop {
-                match scan.next(&stop).await? {
-                    Next::Message(raw) => {
-                        progress.add_scanned(raw.size());
-                        let time = raw.timestamp.unwrap_or(-1);
-                        let (partition, offset) = (raw.partition, raw.offset);
-                        oldest
-                            .entry(raw.partition)
-                            .and_modify(|oldest| *oldest = (*oldest).min(time));
-                        let row = self
-                            .message_row(raw, filter.clone(), None, &evaluation, &mut notices)
-                            .await;
-                        if evaluation.stopped() {
-                            stopped = true;
-                            break;
-                        }
-                        if let Some(row) = row? {
-                            progress.add_matched();
-                            found.push((time, partition, offset, row));
-                        }
-                    }
-                    Next::Idle => {}
-                    Next::Done => break,
-                    Next::Stopped => {
-                        stopped = true;
-                        break;
-                    }
-                }
-            }
-            drop(scan);
-            for window in &windows {
-                ends.insert(window.partition, window.start);
-                sizes
-                    .entry(window.partition)
-                    .and_modify(|size| *size = (*size * 2).min(LARGEST_WINDOW));
-            }
-        }
-        found.sort_by_key(|item| std::cmp::Reverse((item.0, item.1, item.2)));
-        found.truncate(count);
-        push_rows(found.into_iter().map(|(.., row)| row).collect(), sink).await;
-        if filter.is_some() || stopped {
-            notices.add(text::kafka_scanned(
-                progress.scanned(),
-                progress.matched(),
-                stopped,
-            ));
-        }
-        notices.send(sink).await;
-        Ok(true)
     }
 
     async fn run_command(&self, line: &str, sink: &mut ResultSink) -> Result<bool, ExecError> {
@@ -1251,6 +696,10 @@ impl KafkaSession {
 
 #[async_trait]
 impl Session for KafkaSession {
+    fn set_trace_context(&mut self, trace: Option<TraceContext>) {
+        self.trace = trace;
+    }
+
     fn canceller(&self) -> Arc<dyn Canceller> {
         Arc::new(KafkaCanceller)
     }
@@ -1261,7 +710,7 @@ impl Session for KafkaSession {
     }
 
     async fn run(&mut self, sql: &str, mut sink: ResultSink) -> Result<StatementEnd, ExecError> {
-        let read = self.run_command(sql, &mut sink).await;
+        let read = trace::observe(self.trace.clone(), sql, self.run_command(sql, &mut sink)).await;
         let (rows, limit) = sink.finish().await;
         read.map(|has_columns| StatementEnd {
             rows,
@@ -1276,7 +725,10 @@ impl Session for KafkaSession {
     }
 
     async fn control(&mut self, _command: TransactionCommand) -> Result<(), ExecError> {
-        Err(ExecError::new(text::KAFKA_NO_TRANSACTIONS))
+        Err(ExecError::with_kind(
+            ErrorKind::Unsupported,
+            text::KAFKA_NO_TRANSACTIONS,
+        ))
     }
 
     /// A read owns its consumer, so the session keeps no state between statements.
@@ -1376,6 +828,75 @@ mod tests {
     use super::*;
     use crate::catalog::RelationRef;
     use crate::connector::kafka::page_text;
+
+    #[tokio::test]
+    async fn a_failed_user_command_emits_its_command_and_error_without_a_broker() {
+        use crate::connector::target::parse_uri;
+        use crate::sink::{SinkEvent, StatementKey};
+        use sqln_session::trace::{LogEvent, TraceEvent};
+
+        let target = parse_uri("kafka://127.0.0.1:1").unwrap();
+        let config = client::config(&target, target.kafka.read_group()).unwrap();
+        let mut session = KafkaSession {
+            trace: None,
+            target,
+            consumer: Arc::new(client::consumer(&config).unwrap()),
+            registry: None,
+            registry_error: None,
+        };
+        let key = StatementKey {
+            console: 1,
+            execution: 2,
+            index: 0,
+        };
+        let (events, mut traces) = tokio::sync::mpsc::channel::<TraceEvent>(8);
+        let mut trace = TraceContext::new(1, 1, "Kafka".into(), false, events);
+        trace.key = Some(key);
+        trace.user = true;
+        trace.dialect = Dialect::Kafka;
+        session.set_trace_context(Some(trace));
+        let (events, _rows) = tokio::sync::mpsc::channel::<SinkEvent>(8);
+        let sink = ResultSink::new(key, events, Arc::new(crate::grid::Budget::new(4096)), 10);
+        let command = "INVALID command";
+        let error = session.run(command, sink).await.unwrap_err();
+        let TraceEvent {
+            event:
+                LogEvent::Started {
+                    id,
+                    key: recorded_key,
+                    user,
+                    dialect,
+                    text,
+                    header_len,
+                    ..
+                },
+            ..
+        } = traces.try_recv().unwrap()
+        else {
+            panic!("the command starts a trace");
+        };
+        assert_eq!(recorded_key, Some(key));
+        assert!(user);
+        assert_eq!(dialect, Dialect::Kafka);
+        assert_eq!(&text[header_len..], command);
+        let TraceEvent {
+            event:
+                LogEvent::Finished {
+                    id: finished,
+                    level,
+                    text,
+                    ..
+                },
+            ..
+        } = traces.try_recv().unwrap()
+        else {
+            panic!("the failed command ends its trace");
+        };
+        assert_eq!(finished, id);
+        assert_eq!(level, sqln_core::message::MessageLevel::Error);
+        assert!(text.contains(&error.to_string()), "{text}");
+        assert!(traces.try_recv().is_err());
+    }
 
     #[test]
     fn an_assignment_lists_each_partition_of_each_topic() {

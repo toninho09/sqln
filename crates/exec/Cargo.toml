@@ -31,5 +31,8 @@ zeroize.workspace = true
 rustix.workspace = true
 
 [dev-dependencies]
-sqln-testkit.workspace = true
+sqln-testkit = { workspace = true, features = ["mock"] }
 rusqlite.workspace = true
+
+[lints]
+workspace = true

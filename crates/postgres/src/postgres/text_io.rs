@@ -31,7 +31,12 @@ impl Formats {
             self.header.push(byte);
             if self.header.len() == 5 {
                 self.kind = self.header[0];
-                let length = u32::from_be_bytes(self.header[1..5].try_into().unwrap());
+                let length = u32::from_be_bytes([
+                    self.header[1],
+                    self.header[2],
+                    self.header[3],
+                    self.header[4],
+                ]);
                 self.remaining = length
                     .checked_sub(4)
                     .ok_or_else(|| io::Error::other("Invalid PostgreSQL frame length."))?
@@ -211,6 +216,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     fn frame(tag: u8, body: &[u8]) -> Vec<u8> {
         let mut bytes = vec![tag];
         bytes.extend_from_slice(&((body.len() + 4) as u32).to_be_bytes());
@@ -241,5 +247,69 @@ mod tests {
             formats.byte(byte).unwrap();
         }
         assert!(formats.statement.is_none());
+    }
+
+    /// Passes bytes through `Formats`, and stops at the first error.
+    fn pass(formats: &mut Formats, bytes: &[u8]) -> io::Result<Vec<u8>> {
+        bytes.iter().map(|byte| formats.byte(*byte)).collect()
+    }
+
+    /// A frame of the client with a tag other than Parse, and any body.
+    fn plain_frame() -> impl Strategy<Value = Vec<u8>> {
+        let tag = any::<u8>().prop_filter("not Parse", |tag| *tag != b'P');
+        (tag, proptest::collection::vec(any::<u8>(), 0..64))
+            .prop_map(|(tag, body)| frame(tag, &body))
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        #[test]
+        fn any_bytes_never_panic(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
+            let mut formats = Formats::default();
+            let _ = pass(&mut formats, &bytes);
+        }
+
+        #[test]
+        fn frames_without_a_marked_parse_stay_the_same(
+            frames in proptest::collection::vec(plain_frame(), 0..16),
+        ) {
+            let bytes = frames.concat();
+            let mut formats = Formats::default();
+            prop_assert_eq!(pass(&mut formats, &bytes).unwrap(), bytes);
+        }
+
+        #[test]
+        fn a_marked_bind_changes_only_its_result_format(
+            name in "[a-z][a-z0-9]{0,8}",
+            portal in "[a-z0-9]{0,8}",
+            parameters in proptest::collection::vec(any::<u8>(), 0..32),
+            before in proptest::collection::vec(plain_frame(), 0..4),
+        ) {
+            let mut formats = Formats::default();
+            let before = before.concat();
+            prop_assert_eq!(pass(&mut formats, &before).unwrap(), before);
+            let parse = frame(b'P', format!("{name}\0{MARKER}SELECT 1\0\0\0").as_bytes());
+            prop_assert_eq!(pass(&mut formats, &parse).unwrap(), parse);
+            let mut body = format!("{portal}\0{name}\0").into_bytes();
+            body.extend_from_slice(&parameters);
+            body.extend_from_slice(&[0, 1, 0, 1]);
+            let output = pass(&mut formats, &frame(b'B', &body)).unwrap();
+            let last = body.len() - 1;
+            body[last] = 0;
+            prop_assert_eq!(output, frame(b'B', &body));
+        }
+
+        #[test]
+        fn a_marked_bind_with_another_result_format_is_refused(
+            name in "[a-z][a-z0-9]{0,8}",
+            format in any::<[u8; 4]>().prop_filter("not one binary format", |f| *f != [0, 1, 0, 1]),
+        ) {
+            let mut formats = Formats::default();
+            pass(&mut formats, &frame(b'P', format!("{name}\0{MARKER}SELECT 1\0\0\0").as_bytes())).unwrap();
+            let mut body = format!("\0{name}\0").into_bytes();
+            body.extend_from_slice(&format);
+            prop_assert!(pass(&mut formats, &frame(b'B', &body)).is_err());
+        }
     }
 }

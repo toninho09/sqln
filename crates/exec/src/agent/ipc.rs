@@ -1,6 +1,7 @@
 //! Private, versioned local communication with an open SQLN process.
 
 use super::{Error, MAX_FRAME, Operation, Reply, VERSION};
+use crate::wake::Wake;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
@@ -125,6 +126,11 @@ impl Server {
     }
 
     pub fn at(dir: PathBuf, project: Option<PathBuf>) -> io::Result<Self> {
+        Self::waking(dir, project, Wake::new())
+    }
+
+    /// Starts the endpoint at `dir`. Each request and each closed client wakes the main loop.
+    pub fn waking(dir: PathBuf, project: Option<PathBuf>, wake: Wake) -> io::Result<Self> {
         private_directory(&dir)?;
         let id = uuid::Uuid::new_v4().to_string();
         let socket = socket_path(&dir, &id);
@@ -169,8 +175,9 @@ impl Server {
                         result = listener.accept() => {
                             let Ok((stream, _)) = result else { break };
                             let Ok(slot) = slots.clone().try_acquire_owned() else { continue };
-                            let sender = sender.clone(); let name = name.clone(); let stop = stopping.child_token();
-                            tokio::spawn(async move { let _slot = slot; let _ = serve(stream, name, sender, stop).await; });
+                            let sender = sender.clone(); let name = name.clone(); let stop = stopping.child_token(); let wake = wake.clone();
+                            // The end of a client cancels its work, and the loop must see it.
+                            tokio::spawn(async move { let _slot = slot; let _ = serve(stream, name, sender, stop, &wake).await; wake.wake(); });
                         }
                     }
                 }
@@ -210,6 +217,7 @@ async fn serve(
     instance: String,
     sender: SyncSender<Envelope>,
     alive: CancellationToken,
+    wake: &Wake,
 ) -> io::Result<()> {
     let cancel = alive.clone().drop_guard();
     let mut wire = framed(stream);
@@ -245,6 +253,7 @@ async fn serve(
             }
             continue;
         }
+        wake.wake();
         let result = tokio::select! {
             () = alive.cancelled() => break,
             // The bridge sends one request at a time. EOF also cancels an unanswered request.

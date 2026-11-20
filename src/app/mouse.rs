@@ -6,7 +6,9 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
 
 use super::{App, MAX_EDITOR_RATIO, MIN_EDITOR_RATIO, Screen};
+use crate::arrange::{self, Target};
 use crate::console::Focus;
+use crate::exec::ConnectionId;
 use crate::export_form::Field;
 use crate::filter_list::ListRequest;
 use crate::form::FormRequest;
@@ -14,10 +16,12 @@ use crate::input::Action;
 use crate::navigator::{MIN_WIDTH, Navigator, RowKind};
 use crate::result::ResultTab;
 use crate::settings::{Field as SettingsField, SettingsRequest};
+use crate::store::Scope;
 use crate::store::config::ExplorerSide;
 use crate::table::TableFocus;
 use crate::ui::console::Control;
 use crate::ui::navigator::TREE_PAD;
+use crate::ui::text;
 use crate::ui::{
     MainTab, TableControl, column_edge_at, grid_cell_at, grid_row_number_at, header_column_at,
     section_at, tab_at,
@@ -46,12 +50,30 @@ pub(super) enum Drag {
         column: u16,
         row: u16,
     },
+    /// A connection or a folder of the explorer. A folder is named by its first
+    /// connection. `over` is the place under the pointer, after the pointer leaves the
+    /// first row.
+    Tree {
+        connection: ConnectionId,
+        folder: bool,
+        origin: usize,
+        over: Option<DropAt>,
+    },
+}
+
+/// The place under the pointer while the mouse moves an item of the explorer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DropAt {
+    /// A row of the tree.
+    Row(usize),
+    /// The empty area below the last row: the end of the scope of the item.
+    End,
 }
 
 impl App {
     pub(super) fn on_overlay_mouse(&mut self, mouse: MouseEvent) {
         let area = self.layout.overlay;
-        let Some(overlay) = &mut self.overlay else {
+        let Some(overlay) = &mut self.modals.overlay else {
             return;
         };
         let position = Position::new(mouse.column, mouse.row);
@@ -89,7 +111,7 @@ impl App {
     }
 
     pub(super) fn on_mouse(&mut self, mouse: MouseEvent) {
-        if self.form.is_some() {
+        if self.modals.form.is_some() {
             self.on_form_mouse(mouse);
             return;
         }
@@ -109,8 +131,10 @@ impl App {
                 self.on_agent_card(position);
             }
             MouseEventKind::Down(MouseButton::Left) => self.on_press(mouse, position),
-            MouseEventKind::Drag(MouseButton::Left) if self.drag.is_some() => self.on_drag(mouse),
-            MouseEventKind::Up(_) if self.drag.is_some() => self.drag = None,
+            MouseEventKind::Drag(MouseButton::Left) if self.input.drag.is_some() => {
+                self.on_drag(mouse)
+            }
+            MouseEventKind::Up(_) if self.input.drag.is_some() => self.end_drag(),
             MouseEventKind::Drag(MouseButton::Left) if self.grid_has_focus() => {
                 self.point_at_cell(mouse, true);
             }
@@ -127,19 +151,19 @@ impl App {
 
     /// Returns the result grid that the mouse acts on, with its area on the screen.
     fn active_grid(&mut self) -> Option<(&mut ResultTab, Rect)> {
-        match self.screen {
+        match self.tabs.screen {
             Screen::Diagram(_) => return None,
             Screen::Compare(index) => {
-                let tab = &mut self.compares[index];
+                let tab = &mut self.tabs.compares[index];
                 return tab.done.then_some((&mut tab.result, self.layout.compare));
             }
             Screen::Table(index) => {
-                return Some((&mut self.tables[index].result, self.layout.table.grid));
+                return Some((&mut self.tabs.tables[index].result, self.layout.table.grid));
             }
             Screen::Console => {}
         }
         let area = self.layout.console.results;
-        let console = &mut self.consoles[self.active];
+        let console = &mut self.tabs.consoles[self.tabs.active];
         let active = console.active;
         console.results.get_mut(active).map(|result| (result, area))
     }
@@ -147,17 +171,17 @@ impl App {
     fn on_press(&mut self, mouse: MouseEvent, position: Position) {
         let layout = &self.layout;
         if layout.divider == Some(mouse.column) && layout.body.contains(position) {
-            self.drag = Some(Drag::Navigator);
+            self.input.drag = Some(Drag::Navigator);
         } else if layout.quit.contains(position) {
             self.request_exit();
         } else if layout.agent_bar.review.contains(position) {
-            self.pending_key = None;
-            self.command_page = None;
+            self.input.pending_key = None;
+            self.input.command_page = None;
             self.review_agent_next();
         } else if layout.agent_bar.stop.contains(position) {
             if self.command_available(Action::AgentStop) {
-                self.pending_key = None;
-                self.command_page = None;
+                self.input.pending_key = None;
+                self.input.command_page = None;
                 self.perform(Action::AgentStop, false);
             }
         } else if let Some(tab) = main_tab_at(&layout.main_tabs, position) {
@@ -174,7 +198,7 @@ impl App {
         } else if layout.navigator_title.contains(position) {
             self.focus_navigator();
         } else {
-            match self.screen {
+            match self.tabs.screen {
                 Screen::Diagram(_) => self.on_diagram_press(mouse, position),
                 Screen::Compare(_) => self.on_compare_press(mouse, position),
                 Screen::Table(_) => self.on_table_press(mouse, position),
@@ -245,7 +269,7 @@ impl App {
         } else if in_tabs {
             match tab_at(self.console(), self.layout.console.tabs, mouse.column) {
                 Some(tab) => self.console_mut().active = tab,
-                None => self.drag = Some(Drag::Editor),
+                None => self.input.drag = Some(Drag::Editor),
             }
         } else if in_results {
             self.navigator_focused = false;
@@ -263,10 +287,10 @@ impl App {
     /// Returns true when this click and the one before it hit the same cell.
     fn is_double_click(&mut self, mouse: MouseEvent) -> bool {
         let now = Instant::now();
-        let double = self.last_click.is_some_and(|(at, column, row)| {
+        let double = self.input.last_click.is_some_and(|(at, column, row)| {
             column == mouse.column && row == mouse.row && now.duration_since(at) <= DOUBLE_CLICK
         });
-        self.last_click = if double {
+        self.input.last_click = if double {
             None
         } else {
             Some((now, mouse.column, mouse.row))
@@ -280,7 +304,8 @@ impl App {
         if layout.controls.contains(position) {
             self.on_table_control_press(mouse.column);
         } else if layout.sections.contains(position) {
-            if let Some(section) = section_at(layout.sections, mouse.column) {
+            let sections = self.table().map(|tab| tab.sections()).unwrap_or(&[]);
+            if let Some(section) = section_at(sections, layout.sections, mouse.column) {
                 self.focus_table(TableFocus::Grid);
                 self.show_section(section);
             }
@@ -366,10 +391,20 @@ impl App {
         };
         self.navigator.select_index(index, &self.connections);
         // The mark of a branch stands after the indent of its row.
-        let mark = usize::from(area.x + TREE_PAD) + row.depth() * 2;
+        let mark = usize::from(area.x + TREE_PAD) + row.indent() * 2;
         if usize::from(mouse.column) == mark && Navigator::is_branch(&row) {
             self.toggle(&row);
-        } else if self.is_double_click(mouse) {
+            return;
+        }
+        if matches!(row.kind, RowKind::Connection | RowKind::Folder) {
+            self.input.drag = Some(Drag::Tree {
+                connection: self.connections[row.connection].id,
+                folder: row.kind == RowKind::Folder,
+                origin: index,
+                over: None,
+            });
+        }
+        if self.is_double_click(mouse) {
             match row.kind {
                 RowKind::Table | RowKind::View => self.open_table(&row),
                 RowKind::Console => self.open_tree_console(&row),
@@ -445,7 +480,7 @@ impl App {
     }
 
     fn on_drag(&mut self, mouse: MouseEvent) {
-        match self.drag {
+        match self.input.drag {
             Some(Drag::Column { .. }) => self.drag_column(mouse),
             Some(Drag::Navigator) => {
                 let body = self.layout.body;
@@ -460,6 +495,7 @@ impl App {
                 self.navigator.width = width.clamp(MIN_WIDTH.min(limit), limit);
             }
             Some(Drag::Diagram { .. }) => self.drag_diagram(mouse),
+            Some(Drag::Tree { .. }) => self.drag_tree(mouse),
             Some(Drag::Editor) => {
                 let area = self.layout.console.split;
                 if area.height > 0 {
@@ -473,6 +509,123 @@ impl App {
         }
     }
 
+    /// Returns the item of a drag in the explorer.
+    fn drag_source(&self) -> Option<Target> {
+        let Some(Drag::Tree {
+            connection, folder, ..
+        }) = self.input.drag
+        else {
+            return None;
+        };
+        let index = self.connection_index(connection)?;
+        if folder {
+            arrange::folder_of(&self.connections[index]).map(Target::Folder)
+        } else {
+            Some(Target::Connection(index))
+        }
+    }
+
+    /// Marks the place under the pointer, and says what the release does.
+    fn drag_tree(&mut self, mouse: MouseEvent) {
+        let area = self.layout.navigator;
+        let rows = self.navigator.rows(&self.connections);
+        let place = area
+            .contains(Position::new(mouse.column, mouse.row))
+            .then(|| self.navigator.top + usize::from(mouse.row - area.y))
+            .map(|index| {
+                if index < rows.len() {
+                    DropAt::Row(index)
+                } else {
+                    DropAt::End
+                }
+            });
+        let Some(Drag::Tree { origin, over, .. }) = &mut self.input.drag else {
+            return;
+        };
+        // The first row starts no move, so a click stays a click.
+        if over.is_none() && place == Some(DropAt::Row(*origin)) {
+            return;
+        }
+        *over = place;
+        let source = self.drag_source();
+        let global = source
+            .as_ref()
+            .and_then(|source| arrange::scope_of(&self.connections, source).ok())
+            .map(|scope| scope == Scope::Global);
+        self.navigator.drop_target = match place {
+            Some(DropAt::Row(index)) => Some(index),
+            _ => None,
+        };
+        self.navigator.drop_end = match (place, global) {
+            (Some(DropAt::End), Some(global)) => Some(text::drop_end_row(global)),
+            _ => None,
+        };
+        let (Some(source), Some(place)) = (source, place) else {
+            self.status = Some(text::DROP_OUTSIDE.to_owned());
+            return;
+        };
+        let name = |target: &Target| match target {
+            Target::Connection(index) => self.connections[*index].name.clone(),
+            Target::Folder(folder) => arrange::folder_label(&self.connections, folder),
+        };
+        let DropAt::Row(index) = place else {
+            self.status = Some(
+                match (arrange::drop_at_end(&self.connections, &source), global) {
+                    (Ok(_), Some(global)) => text::drop_end(&name(&source), global),
+                    (Err(reason), _) => reason.to_owned(),
+                    (Ok(_), None) => text::MOVE_NOT_SAVED.to_owned(),
+                },
+            );
+            return;
+        };
+        let row = rows[index];
+        let target = row
+            .folder(&self.connections)
+            .map_or(Target::Connection(row.connection), Target::Folder);
+        self.status = Some(
+            match arrange::drop_on(&self.connections, &source, &target) {
+                Err(reason) => reason.to_owned(),
+                Ok(_) => match (&source, &target) {
+                    (Target::Connection(index), Target::Folder(folder))
+                        if arrange::leaves_folder(&self.connections, *index, folder) =>
+                    {
+                        text::drop_out(&name(&source), &name(&target))
+                    }
+                    (Target::Connection(_), Target::Folder(_)) => {
+                        text::drop_into(&name(&source), &name(&target))
+                    }
+                    _ => text::drop_at(&name(&source), &name(&target)),
+                },
+            },
+        );
+    }
+
+    /// Ends a drag. A drag in the explorer moves its item to the marked place.
+    fn end_drag(&mut self) {
+        let source = self.drag_source();
+        let over = match self.input.drag.take() {
+            Some(Drag::Tree { over, .. }) => over,
+            _ => return,
+        };
+        self.navigator.drop_target = None;
+        self.navigator.drop_end = None;
+        let (Some(source), Some(place)) = (source, over) else {
+            if over.is_none() && self.status.as_deref() == Some(text::DROP_OUTSIDE) {
+                self.status = None;
+            }
+            return;
+        };
+        let row = match place {
+            DropAt::Row(index) => match self.navigator.rows(&self.connections).get(index) {
+                Some(row) => Some(*row),
+                None => return,
+            },
+            DropAt::End => None,
+        };
+        self.status = None;
+        self.drop_tree_item(&source, row.as_ref());
+    }
+
     fn start_column_drag(&mut self, mouse: MouseEvent) -> bool {
         let Some((result, area)) = self.active_grid() else {
             return false;
@@ -483,8 +636,8 @@ impl App {
                 start: mouse.column,
                 width: result.table.width(column),
             });
-        self.drag = edge;
-        self.drag.is_some()
+        self.input.drag = edge;
+        self.input.drag.is_some()
     }
 
     fn drag_column(&mut self, mouse: MouseEvent) {
@@ -492,7 +645,7 @@ impl App {
             column,
             start,
             width,
-        }) = self.drag
+        }) = self.input.drag
         else {
             return;
         };
@@ -528,7 +681,7 @@ impl App {
             })
             .map(|(_, _, index)| *index);
         let Some(index) = option else { return };
-        if let Some(dialog) = self.dialogs.pop_front() {
+        if let Some(dialog) = self.modals.dialogs.pop_front() {
             self.on_dialog_action(dialog.options[index].1.clone());
         }
     }
@@ -536,7 +689,7 @@ impl App {
     pub(super) fn on_picker_mouse(&mut self, mouse: MouseEvent) {
         let (area, first) = self.layout.picker;
         let inside = area.contains(Position::new(mouse.column, mouse.row));
-        let Some(picker) = &mut self.picker else {
+        let Some(picker) = &mut self.modals.picker else {
             return;
         };
         match mouse.kind {
@@ -565,7 +718,7 @@ impl App {
             {
                 let index = first + usize::from(mouse.row - area.y);
                 let double = self.is_double_click(mouse);
-                let Some(browser) = &mut self.browser else {
+                let Some(browser) = &mut self.modals.browser else {
                     return;
                 };
                 browser.point_at(index);
@@ -581,7 +734,7 @@ impl App {
     }
 
     fn scroll_browser(&mut self, rows: isize) {
-        if let Some(browser) = &mut self.browser {
+        if let Some(browser) = &mut self.modals.browser {
             browser.move_by(rows);
         }
     }
@@ -589,7 +742,7 @@ impl App {
     pub(super) fn on_palette_mouse(&mut self, mouse: MouseEvent) {
         let (area, first) = self.layout.palette;
         let inside = area.contains(Position::new(mouse.column, mouse.row));
-        let Some(palette) = &mut self.palette else {
+        let Some(palette) = &mut self.modals.palette else {
             return;
         };
         match mouse.kind {
@@ -606,7 +759,7 @@ impl App {
     pub(super) fn on_history_mouse(&mut self, mouse: MouseEvent) {
         let (area, first) = self.layout.history;
         let inside = area.contains(Position::new(mouse.column, mouse.row));
-        let Some(list) = &mut self.history else {
+        let Some(list) = &mut self.modals.history else {
             return;
         };
         match mouse.kind {
@@ -624,6 +777,7 @@ impl App {
 
     fn on_form_mouse(&mut self, mouse: MouseEvent) {
         if self
+            .modals
             .form
             .as_ref()
             .is_some_and(|form| form.schema_list.is_some())
@@ -643,7 +797,7 @@ impl App {
             .find(|(_, area)| area.contains(position));
         if let Some((section, _)) = section {
             let section = *section;
-            if let Some(form) = &mut self.form {
+            if let Some(form) = &mut self.modals.form {
                 form.select_section(section);
             }
             return;
@@ -653,7 +807,9 @@ impl App {
             return;
         };
         let (chosen, browse) = (*chosen, button.is_some());
-        let Some(form) = &mut self.form else { return };
+        let Some(form) = &mut self.modals.form else {
+            return;
+        };
         form.focus_on(chosen);
         if browse {
             self.open_form_window();
@@ -664,7 +820,7 @@ impl App {
             FormRequest::Test => self.test_form(),
             FormRequest::Save => self.save_form(),
             FormRequest::Disconnect => self.disconnect_form(),
-            FormRequest::Cancel => self.form = None,
+            FormRequest::Cancel => self.modals.form = None,
             FormRequest::Browse => self.open_form_window(),
             FormRequest::None => {}
         }
@@ -675,6 +831,7 @@ impl App {
         let (area, first) = self.layout.form.list;
         let inside = area.contains(Position::new(mouse.column, mouse.row));
         let Some(open) = self
+            .modals
             .form
             .as_mut()
             .and_then(|form| form.schema_list.as_mut())
@@ -704,7 +861,7 @@ impl App {
             let inside_colors = settings.fields.iter().any(|(field, area)| {
                 *field == SettingsField::ThemeColors && area.contains(position)
             });
-            if let Some(form) = &mut self.settings_form {
+            if let Some(form) = &mut self.modals.settings_form {
                 let delta = if mouse.kind == MouseEventKind::ScrollUp {
                     -WHEEL_ROWS
                 } else {
@@ -728,7 +885,7 @@ impl App {
             .iter()
             .find(|(_, area)| area.contains(position))
         {
-            if let Some(form) = &mut self.settings_form {
+            if let Some(form) = &mut self.modals.settings_form {
                 form.edit_shortcut(*action);
             }
             return;
@@ -740,7 +897,7 @@ impl App {
             .iter()
             .find(|(_, area)| area.contains(position))
         {
-            if let Some(form) = &mut self.settings_form {
+            if let Some(form) = &mut self.modals.settings_form {
                 form.select_theme(id);
             }
             return;
@@ -752,14 +909,14 @@ impl App {
             .iter()
             .find(|(_, area)| area.contains(position))
         {
-            if let Some(form) = &mut self.settings_form {
+            if let Some(form) = &mut self.modals.settings_form {
                 form.focus_theme_color(*role);
             }
             return;
         }
         let sections = &self.layout.settings.sections;
         if let Some(section) = sections.iter().position(|area| area.contains(position)) {
-            if let Some(form) = &mut self.settings_form {
+            if let Some(form) = &mut self.modals.settings_form {
                 form.open_section(section);
             }
             return;
@@ -772,7 +929,7 @@ impl App {
             .find(|(_, area)| area.contains(position));
         let Some((field, _)) = field else { return };
         let field = *field;
-        let Some(form) = &mut self.settings_form else {
+        let Some(form) = &mut self.modals.settings_form else {
             return;
         };
         form.focus_on(field);
@@ -803,7 +960,7 @@ impl App {
             .iter()
             .find(|(_, area)| area.contains(position))
             .map(|(field, _)| *field);
-        let Some(form) = &mut self.export_form else {
+        let Some(form) = &mut self.modals.export_form else {
             return;
         };
         if browse {
@@ -841,7 +998,7 @@ impl App {
             .iter()
             .find(|(_, area)| area.contains(position))
             .map(|(field, _)| *field);
-        let Some(form) = &mut self.import_form else {
+        let Some(form) = &mut self.modals.import_form else {
             return;
         };
         if let Some((path, _)) = browse {

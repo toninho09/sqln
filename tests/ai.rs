@@ -1,3 +1,5 @@
+#[path = "ai_explain.rs"]
+mod ai_explain;
 #[path = "ai_kafka.rs"]
 mod ai_kafka;
 
@@ -91,7 +93,25 @@ fn pump(app: &mut App, condition: impl Fn(&str) -> bool) -> String {
         std::thread::sleep(Duration::from_millis(2));
     }
 }
+/// Pumps until the screen matches and the console run has ended. An error or a plan can
+/// show before the end of its run, and a command of the finished run waits for that end.
+fn pump_idle(app: &mut App, condition: impl Fn(&str) -> bool) -> String {
+    let deadline = Instant::now() + Duration::from_secs(12);
+    loop {
+        app.drain_events();
+        let text = screen(app);
+        if condition(&text) && !app.console().is_busy() {
+            return text;
+        }
+        assert!(Instant::now() < deadline, "screen: {text}");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
 fn app(name: &str, provider: Provider) -> App {
+    app_with_options(name, provider, Options::default())
+}
+
+fn app_with_options(name: &str, provider: Provider, options: Options) -> App {
     let path = crate::common::temp_db!(name);
     rusqlite::Connection::open(&path).unwrap().execute_batch("CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT); CREATE VIEW active_users AS SELECT name FROM users;").unwrap();
     App::new(
@@ -102,7 +122,7 @@ fn app(name: &str, provider: Provider) -> App {
                 max_simultaneous: None,
                 provider: Some(provider),
             },
-            ..Options::default()
+            ..options
         },
         Rc::new(RefCell::new(MemoryClipboard::default())),
         Theme::plain(),

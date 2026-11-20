@@ -336,6 +336,12 @@ impl Console {
         self.statements.get(key.index).map(String::as_str)
     }
 
+    /// Returns the original statement of the plan on screen, not the current editor text.
+    pub fn plan_statement(&self) -> Option<&str> {
+        let result = self.results.get(self.active).filter(|result| result.plan)?;
+        self.statements.get(result.statement).map(String::as_str)
+    }
+
     /// Returns true when the last execution held one statement.
     pub fn ran_alone(&self) -> bool {
         self.statements.len() == 1
@@ -347,6 +353,13 @@ impl Console {
 
     pub fn showing_messages(&self) -> bool {
         self.active >= self.results.len()
+    }
+
+    /// Returns true when the result on screen shows the tree of a query plan.
+    pub fn shows_plan(&self) -> bool {
+        self.results
+            .get(self.active)
+            .is_some_and(|result| result.plan)
     }
 
     /// Accepts an execution. Optional retention keeps one complete result; other old results leave the budget.

@@ -101,7 +101,7 @@ impl Chart {
                 output.line(&format!(
                     "Row {}: [{}]",
                     point.row + 1,
-                    String::from_utf8(bar).unwrap()
+                    String::from_utf8_lossy(&bar)
                 ))?;
                 point_label(output, table, point.row, self.x, self.y)?;
                 self.rendered += 1;
@@ -131,7 +131,7 @@ impl Chart {
                     last = Some(y);
                 }
                 for row in plot {
-                    output.line(&format!("|{}|", String::from_utf8(row).unwrap()))?;
+                    output.line(&format!("|{}|", String::from_utf8_lossy(&row)))?;
                 }
                 for point in points {
                     point_label(output, table, point.row, self.x, self.y)?;

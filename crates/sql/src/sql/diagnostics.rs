@@ -70,7 +70,9 @@ pub fn check(sql: &str, dialect: Dialect) -> Report {
             normalized[item.range.clone()].fill(b' ');
             normalized[item.range.start] = b'0';
         }
-        let normalized = String::from_utf8(normalized).expect("ASCII replacements preserve UTF-8");
+        // ASCII replacements preserve UTF-8.
+        let normalized = String::from_utf8(normalized)
+            .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
         let result = match Tokenizer::new(parser_dialect, &normalized).tokenize_with_location() {
             Ok(tokens) => {
                 if tokens

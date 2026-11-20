@@ -43,16 +43,15 @@ enum Waited {
 }
 
 impl Waited {
-    /// Returns true when the session cannot run another statement.
+    /// Returns true when the session cannot run another statement. An error of the
+    /// connection leaves the state of the session unknown, so the session closes.
     fn closes_session(&self) -> bool {
-        matches!(
-            self,
-            Waited::Closed
-                | Waited::Finished {
-                    reusable: false,
-                    ..
-                }
-        )
+        match self {
+            Waited::Closed => true,
+            Waited::Finished { reusable, result } => {
+                !reusable || result.as_ref().is_err_and(ExecError::closes_session)
+            }
+        }
     }
 }
 
@@ -572,7 +571,13 @@ impl ConsoleTask {
                     });
                     return (Waited::Finished { result, reusable }, reason);
                 }
-                sent = async { request.as_mut().expect("the guard checks the request").await },
+                sent = async {
+                    // The guard skips this branch without a request.
+                    match request.as_mut() {
+                        Some(request) => request.await,
+                        None => std::future::pending().await,
+                    }
+                },
                     if request.is_some() =>
                 {
                     request = None;

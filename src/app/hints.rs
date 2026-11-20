@@ -34,13 +34,13 @@ impl App {
         if let Some(parts) = self.window_hint() {
             return HintItem::of(parts);
         }
-        if self.command_page.is_some() {
+        if self.input.command_page.is_some() {
             return HintItem::of(text::HINT_PREFIX);
         }
         if self.pending_prefix() {
             return HintItem::of(text::HINT_PREFIX);
         }
-        if self.pending_key.is_some() {
+        if self.input.pending_key.is_some() {
             return HintItem::of(text::HINT_SEQUENCE);
         }
         if self
@@ -117,40 +117,56 @@ impl App {
             Modal::History => Some(text::HINT_HISTORY),
             Modal::Rename => Some(text::HINT_NAME),
             Modal::Browser => Some(text::HINT_BROWSER),
-            Modal::Settings => self.settings_form.as_ref().map(settings_hint),
-            Modal::Export => self.export_form.as_ref().map(|form| match form.focus {
-                export_form::Field::Formats => text::HINT_EXPORT_FORMATS,
-                export_form::Field::File => text::HINT_FORM_PATH,
-                export_form::Field::Export | export_form::Field::Cancel => text::HINT_FORM_BUTTON,
-                field if form.input(field).is_some() => text::HINT_FORM_TEXT,
-                _ => text::HINT_FORM,
-            }),
-            Modal::Compare => self.compare_form.as_ref().map(|form| match form.focus {
-                _ if form.list_shown() => text::HINT_FORM_LIST,
-                compare_form::Field::Compare | compare_form::Field::Cancel => {
-                    text::HINT_FORM_BUTTON
-                }
-                compare_form::Field::SourceTable | compare_form::Field::TargetTable => {
-                    text::HINT_FORM_TEXT
-                }
-                _ => text::HINT_FORM,
-            }),
-            Modal::Import => self.import_form.as_ref().map(|form| match form.focus {
-                import_form::Field::Sections => text::HINT_IMPORT_SECTIONS,
-                field if field.is_path() => text::HINT_FORM_PATH,
-                import_form::Field::Columns => text::HINT_IMPORT_COLUMNS,
-                import_form::Field::Preview => text::HINT_IMPORT_PREVIEW,
-                import_form::Field::Import | import_form::Field::Cancel => text::HINT_FORM_BUTTON,
-                field if form.input(field).is_some() => text::HINT_FORM_TEXT,
-                _ => text::HINT_FORM,
-            }),
+            Modal::Settings => self.modals.settings_form.as_ref().map(settings_hint),
+            Modal::Export => self
+                .modals
+                .export_form
+                .as_ref()
+                .map(|form| match form.focus {
+                    export_form::Field::Formats => text::HINT_EXPORT_FORMATS,
+                    export_form::Field::File => text::HINT_FORM_PATH,
+                    export_form::Field::Export | export_form::Field::Cancel => {
+                        text::HINT_FORM_BUTTON
+                    }
+                    field if form.input(field).is_some() => text::HINT_FORM_TEXT,
+                    _ => text::HINT_FORM,
+                }),
+            Modal::Compare => self
+                .modals
+                .compare_form
+                .as_ref()
+                .map(|form| match form.focus {
+                    _ if form.list_shown() => text::HINT_FORM_LIST,
+                    compare_form::Field::Compare | compare_form::Field::Cancel => {
+                        text::HINT_FORM_BUTTON
+                    }
+                    compare_form::Field::SourceTable | compare_form::Field::TargetTable => {
+                        text::HINT_FORM_TEXT
+                    }
+                    _ => text::HINT_FORM,
+                }),
+            Modal::Import => self
+                .modals
+                .import_form
+                .as_ref()
+                .map(|form| match form.focus {
+                    import_form::Field::Sections => text::HINT_IMPORT_SECTIONS,
+                    field if field.is_path() => text::HINT_FORM_PATH,
+                    import_form::Field::Columns => text::HINT_IMPORT_COLUMNS,
+                    import_form::Field::Preview => text::HINT_IMPORT_PREVIEW,
+                    import_form::Field::Import | import_form::Field::Cancel => {
+                        text::HINT_FORM_BUTTON
+                    }
+                    field if form.input(field).is_some() => text::HINT_FORM_TEXT,
+                    _ => text::HINT_FORM,
+                }),
             Modal::Picker => Some(if self.picker_script().is_some() {
                 text::HINT_PICKER
             } else {
                 text::HINT_CHOOSE
             }),
             Modal::Help => Some(text::HINT_HELP),
-            Modal::Overlay => self.overlay.as_ref().map(|overlay| {
+            Modal::Overlay => self.modals.overlay.as_ref().map(|overlay| {
                 if overlay.contents.search().is_some() {
                     text::HINT_OVERLAY_SEARCH
                 } else if overlay.other.is_some() {
@@ -161,14 +177,18 @@ impl App {
                     text::HINT_OVERLAY
                 }
             }),
-            Modal::Form => self.form.as_ref().map(|form| match form.focus.style() {
-                _ if form.schema_list.is_some() => text::HINT_MARK_LIST,
-                _ if form.focus.is_path() => text::HINT_FORM_PATH,
-                _ if form.focus == Field::Schemas => text::HINT_FORM_SCHEMAS,
-                FieldStyle::Text | FieldStyle::Secret => text::HINT_FORM_TEXT,
-                FieldStyle::Button => text::HINT_FORM_BUTTON,
-                FieldStyle::Choice | FieldStyle::Flag => text::HINT_FORM,
-            }),
+            Modal::Form => self
+                .modals
+                .form
+                .as_ref()
+                .map(|form| match form.focus.style() {
+                    _ if form.schema_list.is_some() => text::HINT_MARK_LIST,
+                    _ if form.focus.is_path() => text::HINT_FORM_PATH,
+                    _ if form.focus == Field::Schemas => text::HINT_FORM_SCHEMAS,
+                    FieldStyle::Text | FieldStyle::Secret => text::HINT_FORM_TEXT,
+                    FieldStyle::Button => text::HINT_FORM_BUTTON,
+                    FieldStyle::Choice | FieldStyle::Flag => text::HINT_FORM,
+                }),
             // The cell edit has its own commands in its window.
             Modal::Edit => None,
         }
@@ -192,11 +212,7 @@ impl App {
                 }
             }
         }
-        if self
-            .keymap
-            .lookup(Region::Global, Chord::parse("ctrl+w").unwrap())
-            == Lookup::Sequence
-        {
+        if self.keymap.lookup(Region::Global, Chord::ctrl('w')) == Lookup::Sequence {
             items.extend(HintItem::of(text::HINT_PREFIX_MENU));
         }
         items.extend(self.hint_parts(&[(Action::OpenPalette, "commands")]));
@@ -507,13 +523,16 @@ impl App {
         let kind = row.as_ref().map(|row| row.kind);
         let console = kind == Some(RowKind::Console);
         let connection = kind == Some(RowKind::Connection);
+        let folder = kind == Some(RowKind::Folder);
         let relation = matches!(kind, Some(RowKind::Table | RowKind::View));
         let enter = match kind {
             Some(RowKind::Connection) => "console",
             Some(RowKind::Console) => "open console",
             Some(RowKind::View) => "open view",
             Some(RowKind::Object(_)) => "ddl",
-            Some(RowKind::Schema | RowKind::Consoles | RowKind::Group(_)) => "open",
+            Some(RowKind::Schema | RowKind::Consoles | RowKind::Group(_) | RowKind::Folder) => {
+                "open"
+            }
             _ => "open table",
         };
         let mut commands = if self.console_on_screen() {
@@ -551,7 +570,11 @@ impl App {
                 row.as_ref().is_some_and(|row| !Navigator::is_branch(row)),
             ),
             (Action::NavigatorRefresh, "refresh", !console),
-            (Action::NavigatorEdit, "edit", true),
+            (
+                Action::NavigatorEdit,
+                if folder { "rename folder" } else { "edit" },
+                true,
+            ),
             (
                 Action::NavigatorFilter,
                 "filter",
@@ -560,6 +583,9 @@ impl App {
             (Action::NavigatorStructure, "struct", !relation),
             (Action::NavigatorSessions, "sessions", true),
             (Action::NavigatorCopyName, "copy name", true),
+            (Action::NavigatorMoveToFolder, "move to folder", true),
+            (Action::NavigatorMoveUp, "move up", true),
+            (Action::NavigatorMoveDown, "move down", true),
             (Action::NavigatorGenerate, "sql/ddl", true),
             (Action::NavigatorDiagram, "diagram", true),
             (Action::NavigatorCompare, "compare", true),
@@ -573,6 +599,8 @@ impl App {
                 Action::NavigatorDelete,
                 if console {
                     "remove console"
+                } else if folder {
+                    "remove folder"
                 } else {
                     "remove connection"
                 },

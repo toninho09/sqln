@@ -28,7 +28,7 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
-    Canceller, Capabilities, ConnectError, Connector, ExecError, MAX_NOTICES, Namespace,
+    Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, MAX_NOTICES, Namespace,
     ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
     describe, tls,
 };
@@ -190,14 +190,55 @@ fn object_row(row: Vec<Option<String>>) -> [String; 4] {
 
 fn connect_error(error: &tokio_postgres::Error) -> ConnectError {
     let Some(database) = error.as_db_error() else {
-        return ConnectError::new(describe(error));
+        return ConnectError::new(describe(error)).kind(client_error_kind(error));
     };
     let message = format!("{} ({})", database.message(), database.code().code());
     // `28000` also covers a rule of `pg_hba.conf`, which a new password does not change.
     if *database.code() == SqlState::INVALID_PASSWORD {
         ConnectError::refused_password(message)
     } else {
-        ConnectError::new(message)
+        ConnectError::new(message).kind(state_kind(database.code()))
+    }
+}
+
+/// The error of a socket before the protocol starts.
+fn socket_error(error: &io::Error) -> ConnectError {
+    ConnectError::new(error.to_string()).kind(ErrorKind::Connection)
+}
+
+/// The kind of an error that has no SQLSTATE: the connection or the client library.
+fn client_error_kind(error: &tokio_postgres::Error) -> ErrorKind {
+    let io = std::error::Error::source(error).and_then(|source| source.downcast_ref::<io::Error>());
+    if let Some(io) = io {
+        if io.kind() == io::ErrorKind::TimedOut {
+            return ErrorKind::Timeout;
+        }
+        return ErrorKind::Connection;
+    }
+    if error.is_closed() {
+        ErrorKind::Connection
+    } else {
+        ErrorKind::Other
+    }
+}
+
+/// The kind of a SQLSTATE, by its class. See the appendix "PostgreSQL Error Codes".
+fn state_kind(state: &SqlState) -> ErrorKind {
+    let code = state.code();
+    match code {
+        "42501" => return ErrorKind::Permission,
+        "57014" => return ErrorKind::Canceled,
+        "57P01" | "57P02" | "57P03" => return ErrorKind::Connection,
+        "25006" => return ErrorKind::Permission,
+        _ => {}
+    }
+    match code.get(..2) {
+        Some("42") => ErrorKind::Syntax,
+        Some("28") => ErrorKind::Auth,
+        Some("08") => ErrorKind::Connection,
+        Some("53" | "54") => ErrorKind::Resource,
+        Some("0A") => ErrorKind::Unsupported,
+        _ => ErrorKind::Other,
     }
 }
 
@@ -226,17 +267,17 @@ impl Connector for PostgresConnector {
                 Address::Tcp { host, port } => {
                     let socket = TcpStream::connect((host.as_str(), *port))
                         .await
-                        .map_err(|error| ConnectError::new(error.to_string()))?;
+                        .map_err(|error| socket_error(&error))?;
                     socket
                         .set_nodelay(true)
-                        .map_err(|error| ConnectError::new(error.to_string()))?;
+                        .map_err(|error| socket_error(&error))?;
                     let keepalive = socket2::TcpKeepalive::new()
                         .with_time(Duration::from_secs(30))
                         .with_interval(Duration::from_secs(10))
                         .with_retries(3);
                     socket2::SockRef::from(&socket)
                         .set_tcp_keepalive(&keepalive)
-                        .map_err(|error| ConnectError::new(error.to_string()))?;
+                        .map_err(|error| socket_error(&error))?;
                     let (client, connection) = config
                         .connect_raw(
                             text_io::TextIo::new(socket, enabled.clone()),
@@ -251,7 +292,7 @@ impl Connector for PostgresConnector {
                     let socket =
                         UnixStream::connect(folder.join(format!(".s.PGSQL.{DEFAULT_PORT}")))
                             .await
-                            .map_err(|error| ConnectError::new(error.to_string()))?;
+                            .map_err(|error| socket_error(&error))?;
                     let (client, connection) = config
                         .connect_raw(
                             text_io::TextIo::new(socket, enabled.clone()),
@@ -388,9 +429,9 @@ impl PostgresCanceller {
             shut_down: false,
         };
         let mut tls = self.tls.clone();
-        let connect =
-            <MakeRustlsConnect as MakeTlsConnect<UntilClosed<S>>>::make_tls_connect(&mut tls, host)
-                .map_err(|error| error.to_string())?;
+        // The error type of this connector is `Infallible`.
+        let Ok(connect) =
+            <MakeRustlsConnect as MakeTlsConnect<UntilClosed<S>>>::make_tls_connect(&mut tls, host);
         crate::trace::observe(
             trace,
             "PostgreSQL CancelRequest",
@@ -511,7 +552,7 @@ fn with_detail(mut message: String, database: &DbError) -> String {
 
 fn exec_error(error: &tokio_postgres::Error, sql: &str) -> ExecError {
     let Some(database) = error.as_db_error() else {
-        return ExecError::new(describe(error));
+        return ExecError::with_kind(client_error_kind(error), describe(error));
     };
     let message = format!("{} ({})", database.message(), database.code().code());
     let message = with_detail(message, database);
@@ -519,7 +560,7 @@ fn exec_error(error: &tokio_postgres::Error, sql: &str) -> ExecError {
         Some(ErrorPosition::Original(position)) => byte_offset(sql, *position),
         _ => None,
     };
-    ExecError { message, offset }
+    ExecError::with_kind(state_kind(database.code()), message).at(offset)
 }
 
 #[derive(Default)]

@@ -134,7 +134,7 @@ impl App {
                 ("Key columns: Enter toggles; first row compares", items)
             }
         };
-        self.picker = Some(Picker {
+        self.modals.picker = Some(Picker {
             kind: PickerKind::Analysis(Choice {
                 generation: result.table.generation,
                 step,
@@ -170,7 +170,10 @@ impl App {
                     self.analysis_picker(Step::Y(kind, x), cursor);
                     return;
                 }
-                let result = self.active_result().unwrap();
+                let Some(result) = self.active_result() else {
+                    self.status = Some(STALE_ERROR.into());
+                    return;
+                };
                 let job = Job::chart(
                     &result.table,
                     x,
@@ -191,7 +194,10 @@ impl App {
                 self.analysis_picker(Step::Keys(keys), cursor);
             }
             Step::Keys(keys) => {
-                let result = self.active_result().unwrap();
+                let Some(result) = self.active_result() else {
+                    self.status = Some(STALE_ERROR.into());
+                    return;
+                };
                 let Some(previous) = self.console().previous_result.as_ref() else {
                     self.status = Some(STALE_ERROR.into());
                     return;
@@ -205,9 +211,10 @@ impl App {
     }
 
     fn start_analysis(&mut self, job: Job) {
-        self.analysis_job = Some(job);
-        self.overlay = Some(Overlay {
+        self.background.analysis = Some(job);
+        self.modals.overlay = Some(Overlay {
             _analysis_memory: None,
+            _ai_memory: None,
             title: "Result analysis".into(),
             contents: WrappedText::new("Calculating loaded rows...".into()),
             footer: "Esc cancel".into(),
@@ -219,10 +226,10 @@ impl App {
     }
 
     pub(super) fn continue_analysis(&mut self, deadline: Instant) {
-        let Some(mut job) = self.analysis_job.take() else {
+        let Some(mut job) = self.background.analysis.take() else {
             return;
         };
-        if self.overlay.is_none() {
+        if self.modals.overlay.is_none() {
             return;
         }
         let outcome = match self.active_result() {
@@ -234,11 +241,12 @@ impl App {
             None => Err(STALE_ERROR),
         };
         match outcome {
-            Ok(false) => self.analysis_job = Some(job),
+            Ok(false) => self.background.analysis = Some(job),
             Ok(true) => {
                 let report = job.finish();
-                self.overlay = Some(Overlay {
+                self.modals.overlay = Some(Overlay {
                     _analysis_memory: Some(report.memory),
+                    _ai_memory: None,
                     title: report.title,
                     contents: WrappedText::new(report.text),
                     footer: "Esc close | Up/Down scroll | Ctrl+C copy".into(),
@@ -249,7 +257,7 @@ impl App {
                 });
             }
             Err(reason) => {
-                self.overlay = None;
+                self.modals.overlay = None;
                 self.status = Some(reason.into());
             }
         }

@@ -27,6 +27,9 @@ use crate::trust::{Required, Trust, TrustError};
 use crate::ui::auth::{PasswordAction, PasswordPrompt};
 use crate::ui::text;
 
+mod dispatch;
+mod password;
+
 pub(super) enum Use {
     AiSchema(ConnectionId, u64),
     Agent {
@@ -127,6 +130,10 @@ struct Target {
 }
 
 impl Target {
+    #[expect(
+        clippy::expect_used,
+        reason = "only network definitions enter authorization"
+    )]
     fn identity(&self) -> Identity {
         Identity::of(&self.key, &self.definition)
             .expect("Only network definitions enter authorization.")
@@ -305,7 +312,9 @@ impl App {
     /// Tests the definition of the form. With `names`, the test also reads the names of
     /// the schemas.
     pub(super) fn authorize_test(&mut self, mut definition: Definition, test: u64, names: bool) {
-        let Some(form) = &self.form else { return };
+        let Some(form) = &self.modals.form else {
+            return;
+        };
         if self.persist.is_none() || !matches!(definition.source, Source::Network(_)) {
             self.dispatch_authorized(Use::Test { test, names }, Some(definition));
             return;
@@ -346,11 +355,11 @@ impl App {
             if let Some(console) = self.console_by_id(id) {
                 console.phase = Phase::Waiting;
             }
-            if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
+            if let Some(tab) = self.tabs.tables.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Waiting;
                 tab.run.wait();
             }
-            if let Some(tab) = self.compares.iter_mut().find(|tab| tab.owns(id)) {
+            if let Some(tab) = self.tabs.compares.iter_mut().find(|tab| tab.owns(id)) {
                 tab.phase = Phase::Waiting;
             }
         }
@@ -383,7 +392,11 @@ impl App {
                     && connection.key.as_ref() == Some(&attempt.target.key)
             });
         }
-        match (&attempt.action, &attempt.target.form_snapshot, &self.form) {
+        match (
+            &attempt.action,
+            &attempt.target.form_snapshot,
+            &self.modals.form,
+        ) {
             (Use::Test { test, .. }, Some(snapshot), Some(form)) => {
                 form.test == Some(*test)
                     && form.connection_id == attempt.target.key.id
@@ -415,7 +428,7 @@ impl App {
     /// Returns the message of a credential step in the background. It has no time limit,
     /// because the end of the step ends the message.
     pub(super) fn auth_wait(&self) -> Option<&'static str> {
-        let asks = self.auth.prompt.is_some() || !self.dialogs.is_empty();
+        let asks = self.auth.prompt.is_some() || !self.modals.dialogs.is_empty();
         (self.auth.active.is_some() && !asks).then_some(text::AUTH_WAIT)
     }
 
@@ -574,7 +587,10 @@ impl App {
             changed = true;
             match reply {
                 Reply::Trust(Ok(required)) if required.any() => {
-                    let target = &self.auth.active.as_ref().unwrap().target;
+                    let Some(attempt) = self.auth.active.as_ref() else {
+                        continue;
+                    };
+                    let target = &attempt.target;
                     let path = target.project.as_ref().map_or(String::new(), |path| {
                         format!(
                             "\n{}: {}",
@@ -778,7 +794,9 @@ impl App {
                 attempt.target.definition.clone(),
             );
             if self.save_connection(&key, &definition, wanted).is_err() {
-                self.auth.active.as_mut().unwrap().step = Step::Reference;
+                if let Some(attempt) = self.auth.active.as_mut() {
+                    attempt.step = Step::Reference;
+                }
                 self.show_dialog(
                     text::TITLE_VAULT,
                     text::AUTH_REFERENCE_FAILED.to_owned(),
@@ -790,11 +808,17 @@ impl App {
                 );
                 return;
             }
-            let id = self.auth.active.as_ref().unwrap().target.connection;
+            let id = self
+                .auth
+                .active
+                .as_ref()
+                .and_then(|attempt| attempt.target.connection);
             if let Some(connection) = id.and_then(|id| self.connection_mut(id)) {
                 connection.credential = wanted;
             }
-            self.auth.active.as_mut().unwrap().target.credential = wanted;
+            if let Some(attempt) = self.auth.active.as_mut() {
+                attempt.target.credential = wanted;
+            }
         }
         let password = self
             .auth
@@ -854,529 +878,6 @@ impl App {
         }
         self.dispatch_authorized(attempt.action, Some(attempt.target.definition));
         self.next_auth();
-    }
-
-    fn dispatch_authorized(&mut self, action: Use, definition: Option<Definition>) {
-        self.sync_command_history();
-        let Some(manager) = &self.manager else { return };
-        match action {
-            Use::AiSchema(id, generation) => self.dispatch_ai_schema(id, generation),
-            Use::Agent { job, .. } => self.dispatch_agent_job(&job),
-            Use::Catalog(id, read) => {
-                let schemas = self
-                    .connection(id)
-                    .and_then(|connection| connection.definition.as_ref())
-                    .map(|definition| definition.schemas.clone())
-                    .unwrap_or_default();
-                manager.load_catalog(id, read, schemas);
-                // The answer of an older read does not end the state, so it cannot start it.
-                if let Some(connection) = self
-                    .connection_mut(id)
-                    .filter(|item| item.catalog_read == read)
-                {
-                    connection.catalog_state = CatalogState::Loading;
-                }
-            }
-            Use::Columns(id, relation) => manager.load_columns(id, relation),
-            Use::Run {
-                console,
-                connection,
-                plan,
-                options,
-                revision,
-                explain,
-            } => {
-                let Some(index) = self
-                    .console_index(console)
-                    .filter(|index| self.consoles[*index].connection == Some(connection))
-                else {
-                    return;
-                };
-                // An auto-refresh repeats the statements of this run, without a plan.
-                if explain.is_none() {
-                    self.consoles[index].auto_snapshot = Some(plan.statements.clone());
-                }
-                // The marks of the editor keep the text of the user.
-                let statements = match &explain {
-                    Some(explain) => plan
-                        .statements
-                        .iter()
-                        .map(|sql| explain.wrap(sql))
-                        .collect(),
-                    None => plan.statements.clone(),
-                };
-                self.consoles[index]
-                    .ran_parameters
-                    .clone_from(&options.parameters);
-                let execution = manager.run(console, statements, options);
-                self.consoles[index].begin_execution(execution, &plan, &self.budget);
-                self.consoles[index].explain = explain;
-                if self.consoles[index].editor.revision() != revision {
-                    self.consoles[index]
-                        .editor
-                        .set_marks_at_revision(&plan, revision);
-                }
-            }
-            Use::Page {
-                console,
-                connection,
-                request,
-            } => {
-                let Some(tab) = self
-                    .tables
-                    .iter_mut()
-                    .find(|tab| tab.id == console && tab.connection == connection)
-                else {
-                    return;
-                };
-                let options = RunOptions {
-                    manual: false,
-                    schema: None,
-                    only_schema: false,
-                    row_cap: Some(request.row_cap),
-                    export: None,
-                    stream: false,
-                    continue_on_error: false,
-                    hold_transaction: false,
-                    untimed: false,
-                    parameters: Vec::new(),
-                    live: false,
-                };
-                let (first, show, kind) = (request.first, request.show, request.kind);
-                let execution = manager.run(console, vec![request.sql], options);
-                match kind {
-                    PageKind::Rows => tab.started(execution, first, show),
-                    kind => tab.started_side_request(execution, kind),
-                }
-            }
-            Use::Diagram {
-                console,
-                connection,
-                statements,
-            } => self.start_diagram_read(console, connection, statements),
-            Use::Compare {
-                console,
-                connection,
-                statements,
-                schema,
-                untimed,
-            } => self.start_compare_read(console, connection, statements, (schema, untimed)),
-            Use::Definition {
-                console,
-                connection,
-                statements,
-                schema,
-            } => self.start_definition_read(console, connection, statements, schema),
-            Use::Export { console, read } => self.start_read(console, read),
-            Use::Edit { console, job } => self.start_edit_job(console, job),
-            Use::Import { console, step } => self.start_import_step(console, step),
-            Use::Test { test, names } => {
-                let Some(definition) = definition else { return };
-                let (connector, limit) = (
-                    crate::connector::open(&definition),
-                    definition.connect_timeout,
-                );
-                manager.test_connection(test, connector, limit, names);
-            }
-            Use::Save => {}
-            Use::NewPassword => self.status = Some(text::AUTH_PASSWORD_ACCEPTED.to_owned()),
-        }
-    }
-
-    fn cancel_auth_use(&mut self, action: &Use) {
-        if let Use::AiSchema(id, generation) = action {
-            self.cancel_ai_schema_auth(*id, *generation);
-        }
-        if let Some(console) = action.console() {
-            self.cancel_agent_console(console);
-        }
-        if let Use::Agent { job, .. } = action {
-            self.fail_agent_job(job, "Credential preparation was cancelled. Resolve it in SQLN and submit the operation again.");
-        }
-        if matches!(action, Use::Edit { .. }) {
-            self.exiting = false;
-        }
-        if let Some(id) = action.console() {
-            self.clear_wanted_import(id);
-            let budget = self.budget.clone();
-            if let Some(console) = self.console_by_id(id) {
-                console.phase = Phase::Idle;
-                if matches!(action, Use::Run { .. }) {
-                    console.cancel_comparison("credential preparation was canceled", &budget);
-                }
-            }
-            if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
-                tab.phase = Phase::Idle;
-                tab.edit_after = None;
-                tab.edit_close = false;
-                tab.edit_restore = None;
-            }
-            if let Some(tab) = self.diagrams.iter_mut().find(|tab| tab.id == id) {
-                tab.phase = Phase::Idle;
-            }
-            self.cancel_compare_side(id);
-            self.cancel_definition(id);
-        }
-        match action {
-            Use::Catalog(id, read) => {
-                if let Some(connection) = self
-                    .connection_mut(*id)
-                    .filter(|item| item.catalog_read == *read)
-                {
-                    connection.catalog_state = CatalogState::Failed;
-                }
-            }
-            Use::Columns(id, relation) => {
-                if let Some(connection) = self.connection_mut(*id) {
-                    connection.requested_columns.retain(|item| item != relation);
-                }
-            }
-            Use::Test { test, .. } => {
-                if let Some(form) = self.form.as_mut().filter(|form| form.test == Some(*test)) {
-                    form.test = None;
-                    form.close_schema_list();
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn cancel_active_auth(&mut self) {
-        self.auth.job.store(0, Ordering::Release);
-        if let Some(attempt) = self.auth.active.take() {
-            self.dialogs.retain(|dialog| {
-                !dialog
-                    .options
-                    .iter()
-                    .any(|(_, action)| action.auth_token() == Some(attempt.token))
-            });
-            self.cancel_auth_use(&attempt.action);
-            if let Some(connection) = attempt.target.connection {
-                let mut queue = std::mem::take(&mut self.auth.queue);
-                while let Some(queued) = queue.pop_front() {
-                    if queued.target.connection == Some(connection)
-                        && queued.target.generation == attempt.target.generation
-                    {
-                        self.cancel_auth_use(&queued.action);
-                    } else {
-                        self.auth.queue.push_back(queued);
-                    }
-                }
-            }
-        }
-        self.auth.prompt = None;
-        self.status = Some(text::AUTH_CANCELLED.to_owned());
-        self.next_auth();
-    }
-
-    /// Cancels only this assistant's request. Other consoles keep their credential requests.
-    pub(super) fn cancel_agent_auth_console(&mut self, id: ConsoleId) {
-        let mut queue = std::mem::take(&mut self.auth.queue);
-        while let Some(attempt) = queue.pop_front() {
-            if attempt.action.console() == Some(id) {
-                self.cancel_auth_use(&attempt.action);
-            } else {
-                self.auth.queue.push_back(attempt);
-            }
-        }
-        if self
-            .auth
-            .active
-            .as_ref()
-            .is_some_and(|attempt| attempt.action.console() == Some(id))
-        {
-            self.auth.job.store(0, Ordering::Release);
-            if let Some(attempt) = self.auth.active.take() {
-                self.dialogs.retain(|dialog| {
-                    !dialog
-                        .options
-                        .iter()
-                        .any(|(_, action)| action.auth_token() == Some(attempt.token))
-                });
-                self.auth.prompt = None;
-                self.cancel_auth_use(&attempt.action);
-            }
-            self.next_auth();
-        }
-    }
-
-    pub(super) fn cancel_auth_console(&mut self, id: ConsoleId) -> bool {
-        let mut canceled = false;
-        let mut queue = std::mem::take(&mut self.auth.queue);
-        while let Some(attempt) = queue.pop_front() {
-            if attempt.action.console() == Some(id) {
-                self.cancel_auth_use(&attempt.action);
-                canceled = true;
-            } else {
-                self.auth.queue.push_back(attempt);
-            }
-        }
-        if self
-            .auth
-            .active
-            .as_ref()
-            .is_some_and(|attempt| attempt.action.console() == Some(id))
-        {
-            self.cancel_active_auth();
-            canceled = true;
-        }
-        canceled
-    }
-
-    pub(super) fn auth_dialog(&mut self, action: DialogAction) {
-        let Some(token) = action.auth_token() else {
-            return;
-        };
-        if self
-            .auth
-            .active
-            .as_ref()
-            .is_none_or(|attempt| attempt.token != token)
-        {
-            return;
-        }
-        if self
-            .auth
-            .active
-            .as_ref()
-            .is_none_or(|attempt| !self.auth_current(attempt))
-        {
-            self.cancel_active_auth();
-            return;
-        }
-        match action {
-            DialogAction::AuthCancel(_) => self.cancel_active_auth(),
-            DialogAction::AuthConfirm(_) => self.auth_step(Step::Confirm),
-            DialogAction::AuthPlain(_) => self.auth_step(Step::WritePlain),
-            DialogAction::AuthMigrate(_) => self.auth_step(Step::Migrate),
-            DialogAction::AuthRemovePlain(_) => {
-                self.auth.active.as_mut().unwrap().save_reference = true;
-                self.auth_step(Step::RemovePlain);
-            }
-            DialogAction::AuthRetry(_) => match self.auth.active.as_ref().unwrap().step {
-                Step::Reference => self.persist_auth_reference(),
-                step => self.auth_step(step),
-            },
-            DialogAction::AuthSession(_) => {
-                if self
-                    .auth
-                    .active
-                    .as_ref()
-                    .unwrap()
-                    .target
-                    .password()
-                    .is_some()
-                {
-                    self.cache_auth_session();
-                } else {
-                    self.show_auth_password(false);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    pub(super) fn on_password_key(&mut self, key: KeyEvent) {
-        let vim = self.vim();
-        let Some(prompt) = &mut self.auth.prompt else {
-            return;
-        };
-        let action = prompt.on_key(key, vim);
-        self.password_action(action);
-    }
-
-    pub(super) fn on_password_mouse(&mut self, mouse: MouseEvent) {
-        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
-            return;
-        }
-        let field = self
-            .layout
-            .password
-            .iter()
-            .find(|(_, area)| area.contains((mouse.column, mouse.row).into()))
-            .map(|(field, _)| *field);
-        if let Some(field) = field
-            && let Some(prompt) = &mut self.auth.prompt
-        {
-            let action = prompt.click(field);
-            self.password_action(action);
-        }
-    }
-
-    fn password_action(&mut self, action: PasswordAction) {
-        match action {
-            PasswordAction::None => {}
-            PasswordAction::Cancel => self.cancel_active_auth(),
-            PasswordAction::Submit { password, save } => {
-                if self
-                    .auth
-                    .active
-                    .as_ref()
-                    .is_none_or(|attempt| !self.auth_current(attempt))
-                {
-                    self.cancel_active_auth();
-                    return;
-                }
-                self.auth.prompt = None;
-                let attempt = self.auth.active.as_mut().unwrap();
-                attempt.target.set_password(Some(password));
-                attempt.save_reference = save;
-                if attempt.target.refused {
-                    self.verify_password();
-                } else {
-                    self.keep_password();
-                }
-            }
-        }
-    }
-
-    fn keep_password(&mut self) {
-        let Some(attempt) = &self.auth.active else {
-            return;
-        };
-        match (attempt.save_reference, attempt.no_vault) {
-            (true, true) => self.auth_step(Step::WritePlain),
-            (true, false) => self.auth_step(Step::Write),
-            (false, _) => self.cache_auth_session(),
-        }
-    }
-
-    fn is_refused(&self, id: ConnectionId) -> bool {
-        let generation = self.connection(id).map(|connection| connection.generation);
-        self.auth
-            .refused
-            .get(&id)
-            .is_some_and(|item| Some(item.generation) == generation)
-    }
-
-    /// One wrong password can fail several sessions, so only the first event counts.
-    pub(super) fn on_password_refused(&mut self, id: ConnectionId, pool: u64) {
-        let current = self
-            .manager
-            .as_ref()
-            .and_then(|manager| manager.pool_serial(id))
-            == Some(pool);
-        if !current || self.is_refused(id) {
-            return;
-        }
-        let Some(connection) = self.connection(id) else {
-            return;
-        };
-        let generation = connection.generation;
-        let identity = connection
-            .key
-            .as_ref()
-            .zip(connection.definition.as_ref())
-            .and_then(|(key, definition)| Identity::of(key, definition));
-        let Some(identity) = identity else {
-            return;
-        };
-        self.auth.ready.remove(&id);
-        self.auth.refused.insert(
-            id,
-            Refusal {
-                generation,
-                count: 1,
-            },
-        );
-        let credentials = self.auth.credentials.clone();
-        if let Some(manager) = &self.manager {
-            manager.spawn_blocking(move || {
-                if let Ok(mut credentials) = credentials.lock() {
-                    credentials.forget_session(&identity);
-                }
-            });
-        }
-        self.authorize(id, Use::NewPassword);
-    }
-
-    /// Opens the password request after a refusal. It returns false without a refusal.
-    pub(super) fn ask_new_password(&mut self, id: ConnectionId) -> bool {
-        let refused = self.is_refused(id);
-        if refused {
-            self.authorize(id, Use::NewPassword);
-        }
-        refused
-    }
-
-    /// A refused password never reaches a store, so the check comes before the save.
-    fn verify_password(&mut self) {
-        let test = self.next_test;
-        self.next_test += 1;
-        let Some(attempt) = &mut self.auth.active else {
-            return;
-        };
-        attempt.step = Step::Verify;
-        attempt.verify = Some(test);
-        let definition = attempt.target.definition.clone();
-        if let Some(manager) = &self.manager {
-            manager.test_connection(
-                test,
-                crate::connector::open(&definition),
-                definition.connect_timeout,
-                false,
-            );
-        }
-    }
-
-    /// Takes the answer of `verify_password`. It returns false for a test of the form.
-    pub(super) fn on_password_verified<T>(
-        &mut self,
-        test: u64,
-        result: &Result<T, ConnectError>,
-    ) -> bool {
-        let Some(attempt) = self
-            .auth
-            .active
-            .as_mut()
-            .filter(|item| item.verify == Some(test))
-        else {
-            return false;
-        };
-        attempt.verify = None;
-        let id = attempt.target.connection;
-        match result {
-            Ok(_) => {
-                attempt.target.refused = false;
-                if let Some(id) = id {
-                    self.auth.refused.remove(&id);
-                }
-                self.keep_password();
-            }
-            Err(error) if error.password_refused => {
-                if let Some(refusal) = id.and_then(|id| self.auth.refused.get_mut(&id)) {
-                    refusal.count += 1;
-                }
-                self.cancel_active_auth();
-                self.show_dialog(
-                    text::TITLE_PASSWORD_REFUSED,
-                    text::AUTH_SUSPENDED.to_owned(),
-                    vec![(text::OPTION_CLOSE, DialogAction::Dismiss)],
-                );
-            }
-            Err(error) => {
-                let message = error.message.clone();
-                self.cancel_active_auth();
-                self.status = Some(message);
-            }
-        }
-        true
-    }
-
-    /// Deletes the saved password of a connection after its own confirmation.
-    pub(super) fn delete_password(&mut self, identity: Identity) {
-        let credentials = self.auth.credentials.clone();
-        let sender = self.auth.sender.clone();
-        let Some(manager) = &self.manager else {
-            return;
-        };
-        manager.spawn_blocking(move || {
-            let result = credentials
-                .lock()
-                .map_err(|_| VaultError::Failed)
-                .and_then(|mut credentials| credentials.delete_saved(&identity));
-            let _ = sender.send((DELETION, Reply::Deleted(result)));
-        });
     }
 }
 

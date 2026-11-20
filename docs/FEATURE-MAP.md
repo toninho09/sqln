@@ -10,18 +10,18 @@ The file paths are relative to the `src/` folder of the crate that holds the mod
 
 | # | Feature | Main files |
 |---|---|---|
-| 1 | Application shell and main loop | `app.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs` |
-| 2 | Key map and discovery | `input.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `text.rs`, `ui/text.rs` |
-| 3 | Navigator and tree filter | `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs` |
-| 4 | Connections and connection form | `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs` |
+| 1 | Application shell and main loop | `app.rs`, `app/main_loop.rs`, `app/events.rs`, `app/draw.rs`, `app/modal.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs` |
+| 2 | Key map and discovery | `input.rs`, `input/*.rs`, `app/commands.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `settings/shortcuts.rs`, `app/menus.rs`, `app/key_help.rs`, `text/`, `ui/text.rs` |
+| 3 | Navigator and tree filter | `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs`, `arrange.rs`, `app/folders.rs` |
+| 4 | Connections and connection form | `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `app/connections/*.rs`, `connector/target.rs` |
 | 5 | Database connectors | `connector/mod.rs`, `connector/*.rs`, `connector/kafka/*.rs` (sqln-session), `postgres.rs`, `postgres/*.rs`, `mysql.rs`, `sqlite.rs`, `duckdb.rs`, `redis.rs`, `redis/live.rs`, `kafka.rs`, `kafka/*.rs`, `databricks.rs`, `databricks/*.rs` (driver crates), `connector.rs` (sqln-connector) |
 | 6 | Connection pool | `pool.rs` |
 | 7 | Script execution | `exec/mod.rs`, `exec/runner.rs`, `sink.rs`, `progress.rs`, `console.rs` |
-| 7a | Query plan | `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs` |
+| 7a | Query plan | `plan.rs`, `console.rs`, `result.rs`, `app/run_sql.rs` |
 | 7b | Messages command history | `command_log.rs`, `trace.rs`, `limited.rs`, `console.rs`, `ui/messages.rs`, `exec/runner.rs` |
 | 8 | Run protection | `app/guard.rs`, `sql/classify.rs` |
 | 9 | Transactions | `exec/runner.rs`, `ui/statusline.rs` |
-| 10 | SQL editor | `editor/mod.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
+| 10 | SQL editor | `editor/mod.rs`, `editor/suggestions.rs`, `editor/marks.rs`, `editor/pointer.rs`, `editor/replace.rs`, `editor/conventional.rs`, `editor/undo.rs`, `editor/buffer.rs`, `editor/search.rs`, `find.rs` |
 | 10a | Query parameters | `parameters.rs`, `sql/parameters.rs`, `ui/parameters.rs`, `postgres/text_io.rs`, `postgres/parameters.rs`, `exec/runner.rs` |
 | 11 | SQL analysis and formatter | `sql/lexer.rs`, `sql/statement.rs`, `sql/classify.rs`, `sql/format.rs` |
 | 12 | Autocomplete | `complete/mod.rs`, `complete/context.rs`, `complete/grammar.rs`, `complete/vocabulary.rs`, `complete/keywords.rs`, `complete/kafka.rs`, `catalog.rs` |
@@ -35,9 +35,9 @@ The file paths are relative to the `src/` folder of the crate that holds the mod
 | 16 | Export and file explorer | `export/mod.rs`, `export_form.rs`, `ui/export.rs`, `app/export.rs`, `browser.rs`, `ui/browser.rs`, `app/browse.rs` |
 | 16a | Import | `import/mod.rs`, `import/delimited.rs`, `import/json.rs`, `import/statement.rs`, `import/feed.rs`, `import_form.rs`, `exec/runner/import.rs`, `app/import.rs`, `ui/import.rs` |
 | 17 | Query history | `history.rs`, `store/history.rs`, `app/history.rs`, `ui/history.rs` |
-| 18 | Folders and configuration | `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `settings.rs`, `ui/settings.rs` |
+| 18 | Folders and configuration | `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `app/persist/saves.rs`, `settings.rs`, `ui/settings.rs` |
 | 19 | Console saving and saved consoles | `script_file.rs`, `script_file/external.rs`, `store/scripts.rs`, `store/workspace.rs`, `app/scripts.rs`, `app/sql_file.rs`, `app/conflicts.rs`, `ui/conflicts.rs`, `ui/name.rs`, `app/session.rs` |
-| 20 | Credentials and trust | `creds.rs`, `lib.rs` (sqln-vault), `trust.rs`, `app/auth.rs`, `ui/auth.rs` |
+| 20 | Credentials and trust | `creds.rs`, `lib.rs` (sqln-vault), `trust.rs`, `app/auth.rs`, `app/auth/*.rs`, `ui/auth.rs` |
 | 21 | Appearance and themes | `ui/theme.rs`, `ui/schemes.rs`, `ui/icons.rs`, `ui/statusline.rs`, `wrap.rs` |
 | 23 | Local MCP assistant | `agent/`, `mcp.rs`, `app/agent/`, `editor/agent.rs`, `ui/agent.rs`; see [MCP](MCP.md) |
 | 24 | Auto-refresh | `app/auto_refresh.rs`, `console.rs`, `table.rs`, `app/persist.rs`, `app/commands.rs`, `ui/statusline.rs`, `ui/table.rs` |
@@ -46,27 +46,29 @@ The file paths are relative to the `src/` folder of the crate that holds the mod
 
 ## 1. Application shell and main loop
 
-Files: `app.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs`.
+Files: `app.rs`, `app/main_loop.rs`, `app/events.rs`, `app/draw.rs`, `app/modal.rs`, `app/keys.rs`, `app/mouse.rs`, `app/hints.rs`, `app/close.rs`, `terminal.rs`.
 
-`run` owns the application state and the screen. The main loop waits for a key for up to 20 ms, and then drains execution events for up to 8 ms per frame. The application draws only after a change. `app/keys` applies the key priority of [KEYMAP](KEYMAP.md), and `app/mouse` handles clicks, the wheel, and the drag of dividers and columns. `app/hints` builds the hint row from the state on screen. `app/close` asks the exit questions in order, one console at a time, and applies each answer at once. `terminal` sets up the terminal and restores it at exit and on panic.
+`run` owns the application state and the screen. The main loop sleeps until a key, a signal, a wake from background work, or its next timer, and then drains execution events for up to 8 ms per frame. The application draws only after a change. `app/keys` applies the key priority of [KEYMAP](KEYMAP.md), and `app/mouse` handles clicks, the wheel, and the drag of dividers and columns. `app/hints` builds the hint row from the state on screen. `app/close` asks the exit questions in order, one console at a time, and applies each answer at once. `terminal` sets up the terminal and restores it at exit and on panic.
 
 ## 2. Key map and discovery
 
-Files: `input.rs`, `app/commands.rs`, `app/keys.rs`, `app/hints.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `text.rs`, `ui/text.rs`.
+Files: `input.rs`, `app/commands.rs`, `app/keys.rs`, `app/menus.rs`, `app/key_help.rs`, `app/hints.rs`, `ui/which_key.rs`, `palette.rs`, `filter_list.rs`, `text/`, `ui/text.rs`.
 
 `input` maps each key to an action in each focus region. It supports multi-key sequences and reads the user `keymap` rules from `config.json`. `Ctrl+W` opens the prefix menu (`ui/which_key`) with the second keys in groups. `fits_cursor` keeps the commands that have an effect now and belong to the panel of the cursor, and the keys of the other commands keep their action. `Ctrl+W Tab` opens its explorer page: `explorer_commands` lists what acts on the current row, and a key of the page goes through the `Navigator` region of the key map, so the page needs no bindings of its own. `Ctrl+W Space` opens the functional commands of the current panel with effective local shortcuts. `app/commands` shares availability, ordering, and target labels between discovery paths; `Action` remains the catalog. The palette includes editor and grid commands and keeps actions without shortcuts. Explorer row actions require explorer focus; add connection and scripts remain global. `filter_list` matches label, key, action name, and technical aliases. The normal hint row reserves the palette shortcut and fits more whole commands as width grows. The same list filter core serves the history window. `ui/text` keeps all interface text in one file. A new console without text shows the first screen (`ui/welcome`), with the main keys, and the first character ends it. Without a tab, the same widget draws the home screen with a logo: the active console is then the hidden console, `App::home` is true, and `home_allows` keeps only the explorer commands and the commands that need no tab.
 
 ## 3. Navigator and tree filter
 
-Files: `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs`.
+Files: `navigator.rs`, `ui/navigator.rs`, `catalog.rs`, `generate.rs`, `arrange.rs`, `app/folders.rs`.
 
 The navigator shows the tree of connections, consoles, schemas, relations, columns, and the groups of the other objects of a schema. `Connection::consoles` holds the console rows, so a read of the tree does not read the disk. `refresh_tree_consoles` rebuilds them after a change of a console, only for the connections open in the tree. `/` filters the tree in memory, from the loaded catalogs, and opens no connection. `g` lists the SQL templates of a relation and the **DDL** entry, and the application inserts the generated text. `y` copies the row name without quotes. An object copy omits routine arguments and the table of a trigger.
+
+`RowKind::Folder` is a folder of saved connections, with its first connection as `Row::connection`. `arrange::top_items` puts a folder at the place of its first connection and gathers its other connections, in one scope. `Row::in_folder` adds one indent level, and `Row::depth` stays the level below the connection, so the cursor key does not change. Each move gives an `Arrangement`: the new order of one file. `App::arrange` writes it with `Change::Arrange`, and then applies it in memory. A refusal or a failed write changes nothing. `apply_connections` sorts the list in the order of the files, so a reload shows the new order. The closed folders go to `workspace.json` with the layout.
 
 `RowKind::Group` is a group of one kind (`catalog::Group`) under a schema, and `RowKind::Object` is one object of `Schema::objects`, with `Row::relation` as its place. `push_groups` adds the groups after the relations, and a group without objects stays out. The cursor key keeps the group and the label of the object, which is unique in its group (`Object::label`), so the cursor stays on an overload after a new read.
 
 ## 4. Connections and connection form
 
-Files: `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `connector/target.rs`.
+Files: `connection.rs`, `form.rs`, `ui/form.rs`, `app/connections.rs`, `app/connections/*.rs`, `connector/target.rs`.
 
 `Definition` holds the connection settings, and `Source` selects a SQLite file, a DuckDB file, or a network target.
 `ConnectionKey` holds the saved connection ID and its global or project scope. The form holds text only and builds a definition on request. `app/connections` owns the catalogs and the actions of the navigator and the form. A file or a URI from the command line enters `connector/target`; that connection lives for the session only and writes no file. `p` in the navigator erases the saved password, and the removal of a connection offers that deletion separately.
@@ -105,7 +107,7 @@ The view follows new records only at the end. This history is separate from diag
 
 ## 7a. Query plan
 
-Files: `plan.rs`, `console.rs`, `result.rs`, `app/keys.rs`.
+Files: `plan.rs`, `console.rs`, `result.rs`, `app/run_sql.rs`.
 
 `Ctrl+W E` and `Ctrl+W A` follow the path of a run with a `RunTarget::Plan`. `plan::Explain` adds the prefix of the dialect, and the editor marks keep the text of the user. A plan needs one statement, and a statement with `EXPLAIN` is refused.
 
@@ -157,15 +159,21 @@ Files: `complete/mod.rs`, `complete/context.rs`, `complete/grammar.rs`, `complet
 
 ## 12a. AI completion
 
-Files: `ai/`, `app/ai.rs`, `editor/ai.rs`, `exec/ai.rs`, `ui/ai.rs`.
+Files: `ai/`, `app/ai/mod.rs`, `editor/ai.rs`, `exec/ai.rs`, `ui/ai.rs`.
 
 The editor adds an explicit Action above local suggestions: the plain row starts a request at once, and the request row above it opens a one-line modal whose text travels as `request` in the body. `app/ai` captures a revision-checked interval, obtains local consent, and coordinates schema reads and HTTP requests. `exec/ai` reads complete structural snapshots through an authorized pool lease. The memory cache follows catalog refresh generations. `ai` prepares bounded context for the OpenAI-compatible chat protocol, with a system message of common rules and the language of the dialect (the Kafka guide of `connector/kafka/guide.md` for Kafka), with OpenRouter as the default endpoint, and carries the reasoning effort of the provider in the request body. The editor shows ghost text at the cursor only. Several ghosts wait at once, bounded by the Max simultaneous setting, with parallel requests. Each acceptance is one undo step and never runs SQL. Global and project settings use vault references or rotating key-file paths. A Kafka request focuses on the topic of the statement at the cursor, with `complete::statement_topic`, and sends the field paths of that topic only. See [AI completion](AI_COMPLETION.md).
+
+## 12b. AI explanations
+
+Files: `ai/explain.rs`, `ai/client.rs`, `command_log.rs`, `app/ai/explain.rs`, `console.rs`.
+
+`aiExplainError` (`Ctrl+W M`) explains the newest failed user command since the console's current connection association. A connection change keeps earlier history but excludes its errors from explanations. `aiExplainPlan` (`Ctrl+W T`) explains the plan grid with the original executed statement, not the current editor text. Both use the configured AI provider and ask for consent on each request. Redis and Valkey qualify for error explanations. The request includes an already loaded AI schema snapshot, but starts no schema read. Preparation runs in a blocking task with context and memory limits. The answer opens a text window and never changes or executes SQL. A new execution, tab change, close, or cancellation rejects a late answer. See [AI explanations](AI_COMPLETION.md#explain-an-error-or-a-plan).
 
 ## 13. Catalog and structure tab
 
 Files: `catalog.rs`, `structure.rs`.
 
-The catalog is a cache in memory, outside the disk. Schemas and tables load first; columns and foreign keys load on demand. A key failure does not fail the columns. The structure tab runs the catalog queries of `structure`, per database, scope, and section.
+The catalog is a cache in memory, outside the disk. Schemas and tables load first; columns and foreign keys load on demand. A key failure does not fail the columns. The structure tab runs the catalog queries of `structure`, per database, scope, and section. `Section::sections` lists the sections of a dialect: PostgreSQL and MySQL add the statistics section, with one metric per row (`name`, `value`); SQLite, DuckDB, and Databricks show no statistics section. The statistics run no `COUNT`: the count of rows is an estimate of the database (`reltuples` and `pg_stat_user_tables` on PostgreSQL, `information_schema.TABLES` on MySQL), and the sizes come from the catalog or the storage engine.
 
 ## 13d. DDL of an object
 
@@ -268,7 +276,7 @@ Plans, imports, internal reads, oversized statements, and immediate repeats stay
 
 ## 18. Folders and configuration
 
-Files: `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `settings.rs`, `ui/settings.rs`.
+Files: `store/mod.rs`, `store/config.rs`, `store/file.rs`, `app/persist.rs`, `app/persist/saves.rs`, `settings.rs`, `ui/settings.rs`.
 
 The store has the global folder and, when it exists, the project `.sqln/` folder; `--project` chooses another project. The load reads both files, and one error blocks the start with the file and the position in the message. Each write of `config.json` takes `locks/config.lock`, rereads the file, applies the change, and writes atomically: exclusive temporary, permission `0600` on Unix, sync, and rename. `app/persist` checks each second for external changes and offers **Reload**. The settings dialog edits the preferences of one scope, shows the inherited values, and removes a project definition.
 
@@ -282,7 +290,7 @@ The palette command `openSqlFile` and `--script` open an external `.sql` file as
 
 ## 20. Credentials and trust
 
-Files: `creds.rs`, `lib.rs` (sqln-vault), `trust.rs`, `app/auth.rs`, `ui/auth.rs`.
+Files: `creds.rs`, `lib.rs` (sqln-vault), `trust.rs`, `app/auth.rs`, `app/auth/*.rs`, `ui/auth.rs`.
 
 `app/auth` is the gate before each operation that needs a session: execution, catalog, columns, pages, and connection test. It checks the trust on the destination and the project path, asks the confirmations, and then gets the password from the `credential` reference: `none`, `session`, `vault`, or `globalPlainText`. The vault account is the service `sqln` with scope, ID, engine, address, user, and TLS in the name; a change of any part asks for a new password. The blocking calls run one at a time on `Manager::spawn_blocking`, off the interface thread, and a token stops a cancelled job.
 

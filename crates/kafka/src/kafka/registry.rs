@@ -10,6 +10,7 @@ use prost_reflect::DescriptorPool;
 use serde_json::Value as Json;
 use tokio::sync::Mutex;
 
+use crate::connector::kafka::registry_account as account;
 use crate::connector::target::{Registry, Secret, TlsFiles};
 use crate::connector::tls;
 use crate::text;
@@ -20,15 +21,6 @@ const RESPONSE_LIMIT: usize = 4 * 1024 * 1024;
 const REFERENCE_DEPTH: usize = 16;
 /// The name of the main file of a Protobuf schema.
 const MAIN_FILE: &str = "sqln-schema.proto";
-
-/// Returns the vault account of the password of a registry. Two connections with the same
-/// registry and user share the password.
-pub fn account(url: &str, user: &str) -> String {
-    format!(
-        "kafka-schema-registry\u{1f}{}\u{1f}{user}",
-        url.trim_end_matches('/')
-    )
-}
 
 /// A schema that the decoder can use.
 pub enum Parsed {

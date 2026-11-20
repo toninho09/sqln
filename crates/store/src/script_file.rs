@@ -315,6 +315,15 @@ impl ScriptFile {
         self.pending.is_some()
     }
 
+    /// The moment of the next autosave or retry, when one waits. The main loop sleeps until
+    /// then; `due` still decides.
+    pub fn due_at(&self) -> Option<Instant> {
+        if self.trouble.as_ref().is_some_and(Trouble::needs_choice) {
+            return None;
+        }
+        self.due_at
+    }
+
     pub fn start_save(
         &mut self,
         worker: &SaveWorker,
@@ -404,7 +413,7 @@ impl ScriptFile {
                 Err(WriteError::Failed("The save worker stopped.".into())),
             ),
         };
-        let mut pending = self.pending.take().unwrap();
+        let mut pending = self.pending.take()?;
         pending.receiver.take();
         Some((
             self.apply_save(result, pending.revision, now),
@@ -416,7 +425,11 @@ impl ScriptFile {
         let Some(mut pending) = self.pending.take() else {
             return Ok(());
         };
-        let result = pending.receiver.take().unwrap().recv().unwrap_or_else(|_| {
+        let result = pending
+            .receiver
+            .take()
+            .and_then(|receiver| receiver.recv().ok());
+        let result = result.unwrap_or_else(|| {
             (
                 None,
                 Err(WriteError::Failed("The save worker stopped.".into())),

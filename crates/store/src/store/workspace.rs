@@ -67,6 +67,9 @@ pub struct Workspace {
     pub layout: Option<Layout>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_tabs: Option<OpenTabs>,
+    /// The folders of the explorer that the user closed. The other folders open.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub closed_folders: Vec<super::config::FolderRef>,
 }
 
 impl Default for Workspace {
@@ -76,6 +79,7 @@ impl Default for Workspace {
             consoles: BTreeMap::new(),
             layout: None,
             open_tabs: None,
+            closed_folders: Vec::new(),
         }
     }
 }

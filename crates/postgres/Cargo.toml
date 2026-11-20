@@ -17,3 +17,9 @@ socket2.workspace = true
 tokio.workspace = true
 tokio-postgres.workspace = true
 tokio-postgres-rustls.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

@@ -4,12 +4,14 @@
 //! The scope of a connection decides where its consoles live.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
@@ -164,6 +166,61 @@ pub fn list(root: &Root, scope: Scope) -> Vec<ScriptEntry> {
             .then_with(|| a.meta.name.cmp(&b.meta.name))
     });
     scripts
+}
+
+/// A folder time this close to the time of the read can hide a later change on a file
+/// system with coarse times, so the cache does not trust it.
+const RACY_TIME: Duration = Duration::from_secs(2);
+
+struct Listed {
+    dir: PathBuf,
+    modified: SystemTime,
+    read_at: SystemTime,
+    scripts: Vec<ScriptEntry>,
+}
+
+/// Keeps the last `list` of each scope. Each write of a script renames a file into the
+/// folder, which changes the time of the folder, so an equal time means an equal list.
+/// A check costs one `stat` instead of a read of every identity file.
+#[derive(Default)]
+pub struct ListCache {
+    scopes: RefCell<HashMap<Scope, Listed>>,
+}
+
+impl ListCache {
+    /// Lists the scripts of a folder, the newest first, as `list` does.
+    pub fn list(&self, root: &Root, scope: Scope) -> Vec<ScriptEntry> {
+        let dir = root.consoles_dir();
+        let modified = fs::metadata(&dir).and_then(|meta| meta.modified()).ok();
+        if let Some(modified) = modified
+            && let Some(listed) = self.scopes.borrow().get(&scope)
+            && listed.dir == dir
+            && listed.modified == modified
+            && listed
+                .read_at
+                .duration_since(modified)
+                .is_ok_and(|age| age >= RACY_TIME)
+        {
+            return listed.scripts.clone();
+        }
+        let read_at = SystemTime::now();
+        let scripts = list(root, scope);
+        match modified {
+            Some(modified) => {
+                let listed = Listed {
+                    dir,
+                    modified,
+                    read_at,
+                    scripts: scripts.clone(),
+                };
+                self.scopes.borrow_mut().insert(scope, listed);
+            }
+            None => {
+                self.scopes.borrow_mut().remove(&scope);
+            }
+        }
+        scripts
+    }
 }
 
 /// Writes the identity file of a script.

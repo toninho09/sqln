@@ -27,3 +27,6 @@ mock = ["dep:sqln-session", "dep:async-trait", "dep:futures-util"]
 editor = ["dep:sqln-ui"]
 # The fake HTTP server.
 http = []
+
+[lints]
+workspace = true

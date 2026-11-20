@@ -40,11 +40,13 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Catalog autocomplete.** Complete schemas, tables, views, columns, aliases, SQL keywords, built-in types, and functions with signatures.
 - **SQL tools.** Format statements, toggle comments, and generate SQL templates from the navigator.
 - **Local syntax warnings.** Check SQL after a typing pause, without executing it. Open full warnings from the command palette.
+- **AI explanations.** Ask the configured AI provider to explain the last error of a console, or the plan on screen. The answer shows in a window, never in the editor.
 - **Query parameters.** Write `:name` values, fill the panel under the editor, and run with native bindings that keep values out of the SQL text.
 - **Table browsing.** Apply SQL filters, sort columns, move between pages, and count rows on request.
 - **Grid editing.** Change, insert, and delete table rows locally, review the SQL, and apply checked changes in one transaction.
 - **Key navigation.** Go from a row to the row that its foreign key reads, or to the rows of other tables that read it.
 - **Database objects.** See routines, sequences, triggers, and types in the navigator, and open the DDL of an object in a new console.
+- **Table statistics.** See sizes, row estimates, scan counts, and maintenance dates of a table in its structure tab. PostgreSQL and MySQL only.
 - **Results inspection.** Select cells, search loaded rows, inspect a row vertically, and format JSON values.
 - **Local analysis.** Profile a column, draw text charts, and compare two console executions without another query.
 - **Export.** Write CSV, TSV, JSON, JSON Lines, or SQL inserts from the export dialog.
@@ -134,6 +136,16 @@ cargo run --release --locked -- ./existing.db
 ```
 
 For a missing SQLite file, SQLN asks before allowing creation. Cancel leaves the console without that database.
+
+#### Build with selected drivers
+
+Each database driver is a Cargo feature: `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, and `databricks`. All are on by default. A build with fewer drivers compiles faster and is smaller. DuckDB and Kafka take the most time to compile.
+
+```sh
+cargo install --path . --locked --no-default-features --features postgres,sqlite
+```
+
+Saved connections of a missing driver stay visible and editable. Connecting to one shows which feature the build lacks. The tests and benches need the default features.
 
 ### Workflow build artifacts
 
@@ -891,6 +903,18 @@ The first build takes longer, especially when Cargo compiles bundled DuckDB.
 Database-dependent tests skip when their environment is absent. A passing local check alone does not prove database integration.
 Native-vault tests require explicit authorization. Performance tests do not run as benchmarks in the default debug suite.
 
+A shared compiler cache shortens clean builds after the first one, for example in a second clone.
+[sccache](https://github.com/mozilla/sccache) is optional; the repository does not configure it.
+To use it on your machine, put this in `~/.cargo/config.toml`:
+
+```toml
+[build]
+rustc-wrapper = "sccache"
+```
+
+sccache does not cache incremental builds, so it helps clean and release builds more than edit-and-test cycles.
+The `cc` crate follows the Rust wrapper for the bundled DuckDB. Set `CMAKE_C_COMPILER_LAUNCHER=sccache` and `CMAKE_CXX_COMPILER_LAUNCHER=sccache` to cache the librdkafka build too.
+
 ### Database integration
 
 Docker Compose is required. The test stack uses disposable databases and loopback-only ports.
@@ -925,6 +949,7 @@ The TLS stack includes PostgreSQL, MySQL, and Redis endpoints.
 - Formatting, Clippy, and the default test suite on Linux and macOS.
 - Database integration on Linux, with PostgreSQL, MySQL, Redis, Valkey, Kafka, the Schema Registry, and TLS endpoints.
 - Database logs on failure and stack cleanup after the integration job.
+- sccache on every job, which keeps the Rust and C compiler outputs in the GitHub Actions cache.
 
 Opening a pull request does not start another run. The pull request shows checks from its branch commit.
 CI tests that commit, not a temporary merge with `main`. A merge into `main` starts a new push run.

@@ -98,11 +98,39 @@ pub enum ResetOutcome {
     Discard,
 }
 
+/// The cause of a failure, read from the code of the driver and never from its text. The
+/// runtime uses it to decide what happens to the session. A driver that cannot tell
+/// leaves `Other`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ErrorKind {
+    /// The database refused the statement: syntax, an unknown name, or a wrong type.
+    Syntax,
+    /// The account lacks a privilege for the statement or the object.
+    Permission,
+    /// The database refused the account, its password, or a rule of access.
+    Auth,
+    /// The connection stopped or could not start. The session cannot run again.
+    Connection,
+    /// A time limit of the database or of the network ended the work.
+    Timeout,
+    /// A cancel request stopped the statement.
+    Canceled,
+    /// The database lacks memory, disk, connections, or another limit.
+    Resource,
+    /// The database or the connector does not support the request.
+    Unsupported,
+    #[default]
+    Other,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConnectError {
     pub message: String,
     /// The database refused the password. A failure of the network or of TLS stays false.
+    /// It is narrower than `ErrorKind::Auth`: a rule such as `pg_hba.conf` is `Auth`, but
+    /// a new password does not change it.
     pub password_refused: bool,
+    pub kind: ErrorKind,
 }
 
 impl ConnectError {
@@ -110,6 +138,7 @@ impl ConnectError {
         Self {
             message: message.into(),
             password_refused: false,
+            kind: ErrorKind::Other,
         }
     }
 
@@ -117,7 +146,14 @@ impl ConnectError {
         Self {
             message: message.into(),
             password_refused: true,
+            kind: ErrorKind::Auth,
         }
+    }
+
+    #[must_use]
+    pub fn kind(mut self, kind: ErrorKind) -> Self {
+        self.kind = kind;
+        self
     }
 }
 
@@ -126,6 +162,7 @@ pub struct ExecError {
     pub message: String,
     /// Byte offset of the error in the statement, when the database reports it.
     pub offset: Option<usize>,
+    pub kind: ErrorKind,
 }
 
 impl std::fmt::Display for ExecError {
@@ -139,7 +176,29 @@ impl ExecError {
         Self {
             message: message.into(),
             offset: None,
+            kind: ErrorKind::Other,
         }
+    }
+
+    pub fn with_kind(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self::new(message).kind(kind)
+    }
+
+    #[must_use]
+    pub fn kind(mut self, kind: ErrorKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    #[must_use]
+    pub fn at(mut self, offset: Option<usize>) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    /// Returns true when the session of this error cannot run another statement.
+    pub fn closes_session(&self) -> bool {
+        self.kind == ErrorKind::Connection
     }
 }
 

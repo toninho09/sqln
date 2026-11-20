@@ -69,13 +69,11 @@ impl SaveWorker {
     pub(super) fn submit(&self, request: SaveRequest) -> mpsc::Receiver<Reply> {
         let (sender, receiver) = mpsc::channel();
         self.busy.store(true, Ordering::Release);
-        if self
+        let sent = self
             .sender
             .as_ref()
-            .unwrap()
-            .send((request, sender))
-            .is_err()
-        {
+            .is_some_and(|worker| worker.send((request, sender)).is_ok());
+        if !sent {
             self.busy.store(false, Ordering::Release);
         }
         receiver

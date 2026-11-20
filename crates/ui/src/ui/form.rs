@@ -61,6 +61,7 @@ fn label(kind: Kind, field: Field) -> &'static str {
         Field::Schemas => text::FIELD_DATABASES,
         Field::Kind => text::FIELD_KIND,
         Field::Name => text::FIELD_NAME,
+        Field::Folder => text::FIELD_FOLDER,
         Field::Scope => text::FIELD_SCOPE,
         Field::Entry => text::FIELD_ENTRY,
         Field::Uri => text::FIELD_URI,

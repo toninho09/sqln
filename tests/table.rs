@@ -818,6 +818,42 @@ fn a_click_on_a_section_reads_it() {
 }
 
 #[test]
+fn a_source_without_statistics_keeps_the_old_sections() {
+    let mut f = structure_files("structure-no-statistics");
+    f.structure_of_table("items");
+    f.assert_not_sees("Statistics");
+    for expected in [Section::Indexes, Section::ForeignKeys, Section::Columns] {
+        f.code(KeyCode::Char(']'));
+        f.loaded();
+        assert_eq!(f.section(), Some(expected));
+    }
+    f.assert_not_sees("Statistics");
+}
+
+#[test]
+fn a_source_with_statistics_turns_through_four_sections() {
+    let (mut f, recorder) = Fixture::recorded(Recorder::default());
+    f.structure_of_table("users");
+    f.assert_sees("Statistics");
+    assert_eq!(f.section(), Some(Section::Columns));
+    for expected in [Section::Indexes, Section::ForeignKeys, Section::Statistics] {
+        f.code(KeyCode::Char(']'));
+        f.loaded();
+        assert_eq!(f.section(), Some(expected));
+    }
+    let statistics = recorder.statements();
+    let statistics = statistics
+        .iter()
+        .rev()
+        .find(|sql| sql.contains("LIMIT"))
+        .unwrap();
+    assert!(statistics.contains("pg_stat_user_tables"), "{statistics}");
+    f.code(KeyCode::Char(']'));
+    f.loaded();
+    assert_eq!(f.section(), Some(Section::Columns));
+}
+
+#[test]
 fn a_section_cannot_change_during_a_read() {
     let (mut f, recorder) = Fixture::recorded(Recorder::default());
     recorder.hold.store(true, Ordering::SeqCst);
@@ -1088,6 +1124,24 @@ fn a_redis_row_hides_the_structure_key() {
     f.code(KeyCode::Char('d'));
     assert!(f.app.diagrams().is_empty());
     f.assert_sees("This source has no diagram");
+}
+
+#[test]
+fn statistics_supports_mouse_and_minimum_size_in_both_modes() {
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let (mut f, _) = Fixture::recorded_in(Recorder::default(), Settings::default(), mode);
+        f.structure_of_table("users");
+        let screen = f.screen_at(80, 24);
+        assert!(screen.contains("Statistics"), "{screen}");
+        f.click_text("Statistics");
+        f.loaded();
+        assert_eq!(f.section(), Some(Section::Statistics));
+        let screen = f.screen_at(80, 24);
+        assert!(screen.contains("Statistics"), "{screen}");
+        f.code(KeyCode::Char(']'));
+        f.loaded();
+        assert_eq!(f.section(), Some(Section::Columns));
+    }
 }
 
 #[test]
@@ -3022,7 +3076,7 @@ fn the_extra_row_of_a_page_leaves_the_budget_with_the_exact_cost() {
     use sqln::table::TableTab;
 
     let budget = Budget::new(1 << 20);
-    let mut tab = TableTab::new(7, 1, relation(), false, 2);
+    let mut tab = TableTab::new(7, 1, relation(), false, Dialect::Postgres, 2);
     tab.started(5, true, None);
     let key = StatementKey {
         console: 7,
@@ -4276,7 +4330,7 @@ fn the_count_returns_its_bytes_to_the_budget_and_keeps_a_limit_of_the_page() {
     use sqln::table::TableTab;
 
     let budget = Budget::new(1 << 20);
-    let mut tab = TableTab::new(7, 1, relation(), false, 2);
+    let mut tab = TableTab::new(7, 1, relation(), false, Dialect::Postgres, 2);
     tab.limit = ReadLimit::Budget;
     tab.started_side_request(5, sqln::table::PageKind::Count);
     assert!(tab.is_counting());

@@ -4,10 +4,9 @@
 #
 # Test binaries run in parallel, with one binary per two logical CPUs and
 # four test threads each. This overlaps waits without excessive CPU load.
-# Time-limit tests can still fail under this load, so each failing
-# binary runs again alone and is reported; only a second failure counts. Test
-# filters and libtest arguments are not supported; run cargo test directly for
-# those.
+# A failure counts at once: there is no second run, so an unstable test shows.
+# Test filters and libtest arguments are not supported; run cargo test directly
+# for those.
 
 dir="$(mktemp -d)"
 status=0
@@ -19,10 +18,12 @@ if ! cargo test --workspace --no-run --message-format=json "$@" >"$dir/build.jso
   exit 1
 fi
 
-# Collect the test executables. Keep only deps/ paths: target/debug/sqln is
-# the application binary, not a test harness. The largest binaries hold the
-# longest waits, so they start first and their waits overlap with the rest.
-awk 'match($0, /"executable":"[^"]*\/deps\/[^"]+"/) {
+# Collect the test executables: the artifacts built with the test profile flag.
+# target/debug/sqln is the application binary, not a test harness, and its
+# profile says "test":false. The flag does not depend on the build folder
+# layout, which changed in Cargo 1.100. The largest binaries hold the longest
+# waits, so they start first and their waits overlap with the rest.
+awk '/"profile":[{][^}]*"test":true[}]/ && match($0, /"executable":"[^"]+"/) {
   print substr($0, RSTART + 14, RLENGTH - 15)
 }' "$dir/build.json" | sort -u | while IFS= read -r bin; do
   printf '%s %s\n' "$(wc -c <"$bin")" "$bin"
@@ -43,17 +44,8 @@ tr '\n' '\0' <"$dir/bins" | DIR="$dir" THREADS="$threads" xargs -0 -P "$jobs" -n
 ' sh
 
 
-# Retry the failing binaries alone, so load does not fail a time-limit test.
 if [ -f "$dir/failed" ]; then
-  while IFS= read -r bin; do
-    name="$(basename "$bin")"
-    if "$bin" --quiet --test-threads="$threads" >"$dir/log-$name" 2>&1; then
-      printf "%s\n" "$name" >>"$dir/retried"
-    else
-      status=1
-      printf "%s\n" "$bin" >>"$dir/really-failed"
-    fi
-  done <"$dir/failed"
+  status=1
 fi
 
 awk '
@@ -67,11 +59,6 @@ awk '
   END { printf "tests: %d passed, %d failed, %d ignored\n", passed, failed, ignored }
 ' "$dir"/log-* 2>/dev/null
 
-if [ -f "$dir/retried" ]; then
-  names="$(sed 's/-[0-9a-f]*$//' "$dir/retried" | sort -u | tr '\n' ' ')"
-  echo "retried alone after a first failure: ${names% }"
-fi
-
 if [ "$status" -ne 0 ]; then
   echo "failing tests:"
   printed=0
@@ -84,7 +71,7 @@ if [ "$status" -ne 0 ]; then
       cat "$log"
     fi
     printed=1
-  done <"$dir/really-failed"
+  done <"$dir/failed"
   if [ "$printed" -eq 0 ]; then
     echo "no test output; see the build or run logs"
   fi

@@ -78,6 +78,8 @@ pub struct Entry {
 pub struct History {
     pub id: u64,
     entries: VecDeque<Entry>,
+    /// Commands before this ID belong to an earlier connection association.
+    association_start: u64,
     bytes: usize,
     limit: usize,
     removed: bool,
@@ -103,6 +105,7 @@ impl History {
         Self {
             id: next_id(),
             entries: VecDeque::new(),
+            association_start: 0,
             bytes: 0,
             limit,
             removed: false,
@@ -152,6 +155,41 @@ impl History {
             .iter()
             .filter(|entry| self.show_system_commands || !entry.system)
             .map(|entry| &entry.message)
+    }
+
+    /// Starts a connection association without removing earlier history entries.
+    pub fn start_association(&mut self) {
+        self.association_start = next_id();
+    }
+
+    /// Returns the dialect, statement, and error of the newest failed user command
+    /// of this association. The header of the entry stays out. The error text is the
+    /// note that the database gave, without the statement inside it.
+    pub fn last_error(&self) -> Option<(Dialect, &str, &str)> {
+        self.user_entries()
+            .find(|entry| {
+                entry.id >= self.association_start
+                    && entry.message.level == MessageLevel::Error
+                    && entry.command_end < entry.message.text.len()
+            })
+            .map(|entry| {
+                let statement = &entry.message.text[entry.header_len..entry.command_end];
+                let error = entry.message.text[entry.command_end..].trim();
+                (entry.dialect, statement, error)
+            })
+    }
+
+    /// Returns true when a user command of this association failed.
+    pub fn has_user_error(&self) -> bool {
+        self.last_error().is_some()
+    }
+
+    /// Lists the entries of the commands of the user, newest first.
+    fn user_entries(&self) -> impl Iterator<Item = &Entry> {
+        self.entries
+            .iter()
+            .rev()
+            .filter(|entry| entry.command == Some(true))
     }
 
     pub fn bytes(&self) -> usize {
@@ -558,5 +596,65 @@ impl Index<usize> for History {
     type Output = Message;
     fn index(&self, index: usize) -> &Self::Output {
         &self.entries[index].message
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn start(history: &mut History, command: &str) -> u64 {
+        let id = next_id();
+        history.on_event(LogEvent::Started {
+            id,
+            key: None,
+            user: true,
+            system: false,
+            header_len: 0,
+            dialect: Dialect::Redis,
+            text: command.into(),
+        });
+        id
+    }
+
+    fn fail(history: &mut History, id: u64) {
+        history.on_event(LogEvent::Finished {
+            id,
+            level: MessageLevel::Error,
+            text: "WRONGTYPE".into(),
+            elapsed: Duration::ZERO,
+        });
+    }
+
+    #[test]
+    fn association_changes_exclude_old_errors_without_removing_history() {
+        let mut history = History::default();
+        let old = start(&mut history, "GET old");
+        fail(&mut history, old);
+        assert!(history.has_user_error());
+        let late = start(&mut history, "GET late");
+        history.start_association();
+        assert!(!history.has_user_error());
+        fail(&mut history, late);
+        assert!(!history.has_user_error());
+        let current = start(&mut history, "GET current");
+        fail(&mut history, current);
+        let (dialect, statement, error) = history.last_error().unwrap();
+        assert_eq!(dialect, Dialect::Redis);
+        assert_eq!(statement, "GET current");
+        assert!(error.contains("WRONGTYPE"));
+        history.start_association();
+        assert!(!history.has_user_error());
+        assert_eq!(history.len(), 3);
+        assert!(
+            history
+                .iter()
+                .any(|message| message.text.contains("GET old"))
+        );
+        assert!(
+            history
+                .iter()
+                .any(|message| message.text.contains("GET late"))
+        );
     }
 }

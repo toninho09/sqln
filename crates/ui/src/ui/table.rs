@@ -67,22 +67,27 @@ pub struct TableBar<'a> {
     pub title: bool,
 }
 
-fn section_labels() -> Vec<String> {
-    Section::ALL
-        .map(|section| {
-            match section {
-                Section::Columns => text::SECTION_COLUMNS,
-                Section::Indexes => text::SECTION_INDEXES,
-                Section::ForeignKeys => text::SECTION_FOREIGN_KEYS,
-            }
-            .to_owned()
-        })
-        .to_vec()
+fn section_labels(sections: &[Section]) -> Vec<String> {
+    sections
+        .iter()
+        .map(|section| section_label(*section).to_owned())
+        .collect()
+}
+
+fn section_label(section: Section) -> &'static str {
+    match section {
+        Section::Columns => text::SECTION_COLUMNS,
+        Section::Indexes => text::SECTION_INDEXES,
+        Section::ForeignKeys => text::SECTION_FOREIGN_KEYS,
+        Section::Statistics => text::SECTION_STATISTICS,
+    }
 }
 
 /// Returns the section at a screen column.
-pub fn section_at(area: Rect, column: u16) -> Option<Section> {
-    label_at(&section_labels(), area, column).map(|index| Section::ALL[index])
+pub fn section_at(sections: &[Section], area: Rect, column: u16) -> Option<Section> {
+    let labels = section_labels(sections);
+    let index = label_at(&labels, area, column)?;
+    sections.get(index).copied()
 }
 
 /// Writes the label of a table tab.
@@ -361,9 +366,11 @@ pub fn draw_table(
     let items = buttons::toolbar_items(control_items(tab, bar.blocked, theme));
     let buttons = buttons::draw(frame, controls, RowOptions::TOOLBAR, &items, theme);
 
+    let shown = tab.sections();
     if let Some(section) = tab.section() {
-        let labels = section_labels();
-        draw_tabs(frame, sections, &labels, section.index(), focused, theme);
+        let labels = section_labels(shown);
+        let place = shown.iter().position(|item| *item == section).unwrap_or(0);
+        draw_tabs(frame, sections, &labels, place, focused, theme);
     }
 
     let message_in_grid = tab.result.table.columns.is_empty() && tab.message.is_some();

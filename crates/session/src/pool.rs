@@ -163,6 +163,10 @@ pub struct Lease {
 }
 
 impl Lease {
+    #[expect(
+        clippy::expect_used,
+        reason = "a lease holds its session until its end"
+    )]
     pub fn session(&mut self) -> &mut dyn Session {
         self.session
             .as_deref_mut()
@@ -311,6 +315,10 @@ impl Pool {
 
     /// Reserves a place and reads the generation of the pool under the same lock, so a
     /// `close_idle` in between cannot hide the age of a session.
+    #[expect(
+        clippy::expect_used,
+        reason = "the guard holds the receiver until the pool answers"
+    )]
     async fn reserve(&self) -> (Grant, u64) {
         let (mut guard, answer) = {
             let mut state = self.inner.lock();

@@ -45,9 +45,9 @@ sqln-vault                           │  sqln-duckdb, sqln-redis, sqln-kafka,
 | `sqln-session` | `crates/session` | `connector` (the contract, connection targets, `tls`, `words`, and the parts of the Kafka and Redis drivers that need no driver library), `pool`, `trace` |
 | `sqln-vault` | `crates/vault` | The system vault. `sqln-store` and `sqln-kafka` use it |
 | `sqln-postgres`, `sqln-mysql`, `sqln-sqlite`, `sqln-duckdb`, `sqln-redis`, `sqln-kafka`, `sqln-databricks` | `crates/<driver>` | One connector each, with its driver library. `sqln-databricks` uses `reqwest` and the Arrow crates |
-| `sqln-connector` | `crates/connector` | Facade: `connector` joins the contract and the drivers at the old paths. `connector::open` opens the connector of a saved definition |
+| `sqln-connector` | `crates/connector` | Facade: `connector` joins the contract and the drivers at the old paths. `connector::open` opens the connector of a saved definition. Each driver is an optional feature; without one, `open` returns `connector::Unavailable`, which keeps the dialect and explains the missing feature on connect |
 | `sqln-store` | `crates/store` | `creds`, `script_file`, `store`, `trust` |
-| `sqln-exec` | `crates/exec` | `agent`, `ai`, `analysis`, `command_log`, `compare`, `complete`, `connection`, `data_edit`, `definition`, `diagram`, `dialect`, `exec` (types only), `export`, `import`, `plan` |
+| `sqln-exec` | `crates/exec` | `agent`, `ai`, `analysis`, `arrange`, `command_log`, `compare`, `complete`, `connection`, `data_edit`, `definition`, `diagram`, `dialect`, `exec` (types only), `export`, `import`, `plan` |
 | `sqln-runtime` | `crates/runtime` | `exec`: the types of `sqln-exec` and `Manager`, with the console tasks and jobs |
 | `sqln-ui` | `crates/ui` | `browser`, `compare_tab`, `console`, `diagram_tab`, `edit_form`, `editor`, `export_form`, `form`, `generate`, `help`, `history`, `import_form`, `navigator`, `palette`, `parameters`, `result`, `settings`, `tab_item`, `table`, `ui` |
 | `sqln` | root, `src/` | `app`, `batch`, `mcp`, `terminal`, and the binary |
@@ -82,6 +82,8 @@ Each integration test is in the lowest crate that has all its dependencies:
 - A crate without unit tests has `test = false`, so it links no unit test binary. `scripts/check-test-files.sh` fails if such a crate has a unit test.
 - `sqln-testkit` holds the shared helpers. Its `mock` feature adds the fake connector, and its `editor` feature adds the editor fixture. The macros `temp_dir!`, `temp_db!`, and `temp_db_path!` read the folder of the calling test binary.
 
+Every crate uses the lints of `[workspace.lints]`. They deny `unsafe_code`, `unwrap_used`, `expect_used`, `dbg_macro`, and `todo`. Production code handles a missing value with `let ... else`, or with a status message when the user waits for a result. A real invariant uses `#[expect(clippy::expect_used, reason = "...")]` on the function. Test code may unwrap: `clippy.toml` allows it in `#[test]` functions, and the roots of the test binaries, the benches, and `sqln-testkit` allow it for their helpers. Each `unsafe` block has a local `#[allow(unsafe_code)]` and a `SAFETY` comment.
+
 | Module | Responsibility |
 |---|---|
 | `agent` | Transport-independent assistant operations, read policy, private instance registry, and IPC |
@@ -102,7 +104,7 @@ Each integration test is in the lowest crate that has all its dependencies:
 | `editor` | EdTUI, conventional layer, search, and replace |
 | `sql` | Tokenizer, statement separation, subquery ranges, statement classes, and local syntax diagnostics |
 | `complete` | Local autocomplete suggestions |
-| `ai` | One OpenAI-compatible chat protocol, credentials, context, and metadata transforms. The Settings dialog edits the provider fields |
+| `ai` | One OpenAI-compatible chat protocol, credentials, bounded completion and explanation prompts, and metadata transforms. The Settings dialog edits the provider fields |
 | `catalog` | In-memory cache; schemas, tables, routines, sequences, triggers, and types first, columns and foreign keys on demand |
 | `definition` | DDL of one object: the queries per database and the text with its header |
 | `generate` | SQL templates of the navigator |
@@ -115,6 +117,8 @@ Each integration test is in the lowest crate that has all its dependencies:
 | `mark_list` | Searchable list with a mark for each selected name |
 | `result` | Grid of one result with cursor and search, used by consoles and tables |
 | `analysis` | Bounded jobs for column profiles, ordered text charts, and loaded-result differences; shared-budget scratch data and reports |
+| `arrange` | Order of the saved connections and their folders: top-level items, moves, folder names, and the new order of one file |
+| `app/folders` | Keys, folder list, folder names, and folder removal of the explorer |
 | `app/analysis` | Analysis command availability, column and key choices, job coordination, and report windows |
 | `table` | Table tab: pages, fields, sorting, suggestions, and query |
 | `data_edit` | Pending rows, budgeted snapshots, key predicates, update SQL, review, and cursor restoration |
@@ -153,7 +157,8 @@ The vault calls are synchronous, but `Manager::spawn_blocking` runs them off the
 `app` applies the key priority and the mouse. `app/modal.rs` lists the windows over the screen in one order: the first open window gets the keys, the mouse, the paste, and the hint, and it is drawn on top. To add a window, add a `Modal` variant; the compiler then names each `match` that needs it.
 `App::screen` holds the tab on screen as one `Screen` value. `sqln_ui::tab_item::TabItem` is the shared contract of the table, diagram, and compare tabs; `App::close_item` closes any of them with the same steps.
 The `DEFAULTS` table of `input` limits a grid action to some grids with `only(...)`; `Action::on_grid` reads it.
-`app/agent`, `app/ai.rs`, `app/analysis.rs`, `app/auth.rs`, `app/auto_refresh.rs`, `app/browse.rs`, `app/close.rs`, `app/commands.rs`, `app/compare.rs`, `app/conflicts.rs`, `app/connections.rs`, `app/data_edit.rs`, `app/definition.rs`, `app/diagram.rs`, `app/export.rs`, `app/guard.rs`, `app/hints.rs`, `app/history.rs`, `app/import.rs`, `app/keys.rs`, `app/modal.rs`, `app/mouse.rs`, `app/persist.rs`, `app/review.rs`, `app/scripts.rs`, `app/session.rs`, `app/sql_file.rs`, and `app/tables.rs` divide that code.
+`app/agent`, `app/ai`, `app/analysis.rs`, `app/auth.rs` (with `app/auth/`), `app/auto_refresh`, `app/browse.rs`, `app/close.rs`, `app/commands.rs`, `app/compare`, `app/conflicts`, `app/connections.rs` (with `app/connections/`), `app/data_edit`, `app/definition.rs`, `app/diagram`, `app/draw.rs`, `app/effects.rs`, `app/events.rs`, `app/export`, `app/folders.rs`, `app/guard.rs`, `app/hints.rs`, `app/history`, `app/import`, `app/key_help.rs`, `app/keys.rs`, `app/main_loop.rs`, `app/menus.rs`, `app/modal.rs`, `app/mouse.rs`, `app/persist.rs` (with `app/persist/`), `app/review.rs`, `app/run_sql.rs`, `app/scripts`, `app/session.rs`, `app/settings.rs`, `app/sql_file`, and `app/tables.rs` divide that code. `App` groups the window state in `Modals` (`app/modal.rs`) and the tabs in `Tabs` (`app/tables.rs`).
+A feature can keep its decisions in a `rules` module that reads plain data (connections, a tab, a catalog) and never `App`, and return `Effect` values (`app/effects.rs`): a status message, a copy, or a new console with a text. `App::apply` is the one place that performs them, and the unit tests of `rules` check the effects without an `App`. `app/auto_refresh`, `app/compare`, `app/conflicts`, `app/data_edit`, `app/diagram`, `app/export`, `app/history`, `app/import`, `app/scripts`, and `app/sql_file` each keep such a `rules.rs` beside their `mod.rs`. The `mod.rs` keeps the work that needs the services of `App`: authorization, the manager, the agent, the tab order, and the files.
 `store` keeps the folders and files. It does not depend on `app` or `ui`.
 Its configuration reader uses driver-independent connector target types.
 
@@ -234,8 +239,8 @@ See [local syntax warnings](UI.md#local-sql-syntax-warnings) for coverage and li
 |---|---|
 | `store::file` | `write_atomic`, `write_private_atomic` (exclusive temporary and permission `0600` on Unix), hash, locks, and cleanup of old `.tmp` files |
 | `store::config` | Reading with `serde`, validation, precedence, `Definition` of each entry, and `change_connections` (reread under lock, change, and write) |
-| `store::themes` | `themes/<id>.json`: one custom theme per file, load with notes, save and removal under `locks/themes.lock` with the hash of the load, and the manifest hash of the folder |
-| `store::scripts` | `.sql` and `.json` files of a console, list, lock per console, copy between scopes, and line ending |
+| `store::themes` | `themes/<id>.json`: one custom theme per file, load with notes, save and removal under `locks/themes.lock` with the hash of the load, the manifest hash of the folder, and its stamp of names, sizes, and dates |
+| `store::scripts` | `.sql` and `.json` files of a console, list and its cache (`ListCache`), lock per console, copy between scopes, and line ending |
 | `store::workspace` | `workspace.json`, optional state with invalid-file detection, written under `config.lock` |
 | `store::history` | `history.jsonl`: one JSON line per statement, appended at the end of the file, read per connection, and truncated at the start of the file |
 | `script_file::ScriptFile` | Hash, 500 ms wait, 5 s retry, pending write, and problem (`Failed`, `Changed`, or `Removed`) |
@@ -258,6 +263,8 @@ Code rules:
 8. The line ending of the file (`LF` or `CRLF`) stays in the `ScriptFile`. The editor always uses `LF`.
 9. A theme file that cannot load gives a note, and the other files load. A damaged or missing theme never blocks the application, and the choice falls back to `auto`.
 9. `ScriptFile::poll` reads the file only if the size or the date changed, and then compares the hash.
+9. The check of `config.json` and of the themes folder works the same way: it reads and hashes only after a change of the size or the date of the file, or of the names, sizes, and dates of the theme files.
+9. `ListCache` keeps the list of saved consoles of each scope while the date of the `consoles` folder stays the same. Each script write renames a file into the folder, which changes that date. A folder date less than 2 s before the last read is not trusted, because a file system with coarse dates can hide a later change.
 10. A connection definition carries the base folder. `Definition::connector` resolves the relative paths with it at open time.
 11. Script writes use a dedicated worker, separate from credential access. Only one operation runs at a time.
 12. Each script keeps at most one pending operation. The interface keeps later requests without additional text snapshots.
@@ -446,7 +453,7 @@ Difference reports convert cell values and column names in bounded chunks. Each 
 ### Rules
 
 1. The main thread receives terminal events and runtime events.
-2. Database input and output stays off the interface thread. Some local file operations still run there; see the file explorer limitation in `DECISIONS.md`.
+2. Database input and output stays off the interface thread. Some local file operations still run there; see "File explorer" in `docs/decisions/files-and-persistence.md`.
 3. Each console has an actor with a command channel, and that actor keeps the reserved session.
 4. Cancellation uses an object separate from the connection, because the actor may be busy.
 5. `rusqlite` runs on its own thread, because it is synchronous.
@@ -454,7 +461,10 @@ Difference reports convert cell values and column names in bounded chunks. Each 
 
 ### Main loop
 
-The main thread waits for a key for up to 20 ms and then reads the execution events.
+The main thread sleeps on one channel until a key, a signal, a wake, or its next timer.
+A thread reads the terminal into that channel after the terminal queries of the start, and another thread turns the end signals into a message.
+Background work wakes the loop through `sqln_core::wake::Wake`: a relay in the runtime moves the execution events to the channel of the interface and wakes the loop after each one, `Manager::spawn_blocking` and `spawn_ai` wake it after their operation, and the agent endpoint wakes it for each request and closed client.
+`App::next_wakeup` returns the first timer of the steps of `tick_at`: the frame of a run, the minute of a transaction age, the end of a message, an auto-refresh, the syntax check, the parameter scan, an autosave, the file check, and the card of a long agent task. A timer that passed and still waits, and a file save, which does not wake the loop, ask for a 20 ms poll. The loop never sleeps longer than 250 ms, so a missed wake only delays the screen.
 It does not wait while events arrive, because the bounded channel would then stop the database.
 It reads events for up to 8 ms per frame, so a large load does not delay the keys.
 The limit is a time and not a count, because the number of frames must not grow with the events.
@@ -505,6 +515,7 @@ trait Session: Send {
 ```
 
 The `async-trait` crate makes `Box<dyn Session>` possible.
+`ExecError` and `ConnectError` carry an `ErrorKind`: `Syntax`, `Permission`, `Auth`, `Connection`, `Timeout`, `Canceled`, `Resource`, `Unsupported`, or `Other`. Each driver reads it from the code of its library or server (SQLSTATE, MySQL error number, SQLite and DuckDB result code, Redis error kind, Databricks error code or HTTP status), never from the message text. A `Connection` error closes the session in the runner, because its state is unknown. `ConnectError::password_refused` stays separate from `Auth`: a rule such as `pg_hba.conf` is `Auth`, but a new password does not change it.
 `read_foreign_keys` and `read_referencing_keys` have an empty default, so a source without keys does not write them. `Manager::load_columns` reads both lists together with the columns, and a key failure does not fail the columns. A key that reaches a relation has the shape of a key that leaves it: `columns` are the columns of the relation, and `target` is the other table.
 `read_catalog` also reads the supported routines, sequences, triggers, and types into `Schema::objects`.
 `read_catalog_of` keeps the configured schemas and the current schema. Redis skips reads of hidden databases.
@@ -747,6 +758,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
 | `tls.mode` | `verify` or `disabled` |
 | `theme` | Optional. A value of `theme` of `preferences`. Without the field, the connection uses the default theme |
 | `icon` | Optional. `warning`, `skull`, `radiation`, `flag`, `crown`, `flask`, `star`, `diamond`, `tools`, `gear`, `home`, `heart`, `snowflake`, or `check`. Without the field, the connection uses the database icon |
+| `folder` | Optional. The folder of the connection in the explorer, without spaces at the ends and without control characters. The order of `connections` is the order of the explorer |
 | `schemas` | Optional. The schemas, or the Redis databases, that the catalog keeps. The current schema always stays. Without the field, or with an empty list, the catalog keeps all. Kafka refuses the field |
 | `sasl` | Optional, only for `kafka`. `plain`, `scram-sha-256`, or `scram-sha-512`. Without the field, a Kafka user uses `scram-sha-512` |
 | `schemaRegistry` | Optional, only for `kafka`. `url` (`http://` or `https://`) and an optional `username`. The password stays in the system vault or in the session |

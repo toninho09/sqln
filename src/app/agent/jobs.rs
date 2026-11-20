@@ -9,6 +9,9 @@ use crate::sql::{Dialect, split};
 use crate::ui::text;
 use serde_json::{Value, json};
 
+mod events;
+mod reads;
+
 impl State {
     /// Internal catalog SQL keeps the same ownership and read-only session policy.
     pub(in crate::app) fn run(
@@ -98,7 +101,7 @@ impl App {
         let notification_connection = connections[0].0;
         let notice = self.agent_console(session, notification_connection, None)?;
         if let Some(index) = self.console_index(notice) {
-            let target = self.consoles[index].messages.id;
+            let target = self.tabs.consoles[index].messages.id;
             let histories: Vec<_> = consoles
                 .iter()
                 .zip(&connections)
@@ -118,7 +121,7 @@ impl App {
                     manager.set_console_history(console, target, name);
                 }
             }
-            self.consoles[index].messages.note(
+            self.tabs.consoles[index].messages.note(
                 crate::console::MessageLevel::Info,
                 "Agent task queued. Use its task identifier to inspect or cancel it.",
                 None,
@@ -126,7 +129,7 @@ impl App {
         }
         for console in &consoles {
             if let Some(index) = self.console_index(*console) {
-                self.consoles[index].phase = Phase::Waiting;
+                self.tabs.consoles[index].phase = Phase::Waiting;
             }
         }
         let cancel = self
@@ -172,7 +175,7 @@ impl App {
         rows: usize,
     ) -> Reply {
         let index = self.agent_target(console)?;
-        let connection = self.consoles[index].connection.ok_or_else(missing)?;
+        let connection = self.tabs.consoles[index].connection.ok_or_else(missing)?;
         let dialect = self.connection(connection).ok_or_else(missing)?.dialect;
         let total = draft.plan.statements.iter().map(String::len).sum::<usize>();
         if total > agent::MAX_FRAME {
@@ -199,9 +202,13 @@ impl App {
             Some(draft),
             output,
         )?;
-        self.agent.jobs.get_mut(&job).expect("new job").rows = rows;
+        if let Some(item) = self.agent.jobs.get_mut(&job) {
+            item.rows = rows;
+        }
         if let Some(statements) = statements {
-            self.agent.jobs.get_mut(&job).expect("new job").state = "validating";
+            if let Some(item) = self.agent.jobs.get_mut(&job) {
+                item.state = "validating";
+            }
             let sender = self.agent.sender.clone();
             let key = job.clone();
             self.manager
@@ -252,7 +259,7 @@ impl App {
             ));
         }
         let index = self.agent_target(console)?;
-        let dialect = self.consoles[index].editor.dialect();
+        let dialect = self.tabs.consoles[index].editor.dialect();
         let parameters = bindings(parameters)?;
         let explain = explain
             .map(|mode| {
@@ -261,7 +268,7 @@ impl App {
             })
             .transpose()?;
         let options = RunOptions {
-            schema: self.consoles[index].schema.clone(),
+            schema: self.tabs.consoles[index].schema.clone(),
             parameters,
             ..Default::default()
         };
@@ -299,12 +306,12 @@ impl App {
         rows: usize,
     ) -> Reply {
         let index = self.agent_target(console)?;
-        if self.consoles[index].editor.revision() != revision {
+        if self.tabs.consoles[index].editor.revision() != revision {
             return Err(revision_conflict());
         }
-        let plan = self.consoles[index].editor.agent_plan(range)?;
-        let dialect = self.consoles[index].editor.dialect();
-        let parameters = self.consoles[index]
+        let plan = self.tabs.consoles[index].editor.agent_plan(range)?;
+        let dialect = self.tabs.consoles[index].editor.dialect();
+        let parameters = self.tabs.consoles[index]
             .parameters
             .values(&plan.statements, dialect)
             .map_err(|message| Error::new("parameters_required", &message))?;
@@ -323,7 +330,7 @@ impl App {
             None
         };
         let options = RunOptions {
-            schema: self.consoles[index].schema.clone(),
+            schema: self.tabs.consoles[index].schema.clone(),
             parameters,
             ..Default::default()
         };
@@ -368,7 +375,9 @@ impl App {
             .and_then(|draft| self.run_warning(connection, &draft.plan));
         if let Some(body) = question {
             let session = self.agent.jobs[&id].session.clone();
-            self.agent.jobs.get_mut(&id).expect("ready job").state = "waiting_confirmation";
+            if let Some(item) = self.agent.jobs.get_mut(&id) {
+                item.state = "waiting_confirmation";
+            }
             self.show_dialog(
                 text::TITLE_CONFIRM_RUN,
                 text::agent_run_question(&self.agent.client(&session), &body),
@@ -428,10 +437,10 @@ impl App {
         let console = job.consoles[0];
         if let Some(draft) = &job.draft
             && let Some(index) = self.console_index(console)
-            && (self.consoles[index].transaction != TransactionState::None
-                || draft
-                    .revision
-                    .is_some_and(|revision| self.consoles[index].editor.revision() != revision))
+            && (self.tabs.consoles[index].transaction != TransactionState::None
+                || draft.revision.is_some_and(|revision| {
+                    self.tabs.consoles[index].editor.revision() != revision
+                }))
         {
             self.fail_agent_job(
                 id,
@@ -443,7 +452,9 @@ impl App {
             self.fail_agent_job(id, "The execution manager is not available.");
             return;
         };
-        let job = self.agent.jobs.get_mut(id).expect("checked job");
+        let Some(job) = self.agent.jobs.get_mut(id) else {
+            return;
+        };
         job.state = "running";
         if let Some(draft) = job.draft.take() {
             let statements = draft.explain.as_ref().map_or_else(
@@ -471,19 +482,19 @@ impl App {
                 if !self.agent.owns(console) {
                     let notice = text::agent_ran(
                         &self.agent.client(&session),
-                        &crate::grid::printable(&self.consoles[index].name),
+                        &crate::grid::printable(&self.tabs.consoles[index].name),
                         draft.read_only,
                     );
-                    let connection = self.consoles[index].connection;
+                    let connection = self.tabs.consoles[index].connection;
                     self.agent_notice(&session, connection, notice);
                 }
-                self.consoles[index]
+                self.tabs.consoles[index]
                     .ran_parameters
                     .clone_from(&draft.options.parameters);
-                self.consoles[index].begin_execution(execution, &draft.plan, &self.budget);
-                self.consoles[index].explain = draft.explain;
+                self.tabs.consoles[index].begin_execution(execution, &draft.plan, &self.budget);
+                self.tabs.consoles[index].explain = draft.explain;
                 if draft.revision.is_none() {
-                    self.consoles[index].editor.clear_marks();
+                    self.tabs.consoles[index].editor.clear_marks();
                 }
             } else {
                 self.fail_agent_job(id, "The console closed before the operation started.");
@@ -540,7 +551,7 @@ impl App {
                 self.agent.retired.insert(console, cancel.clone());
                 self.cancel_agent_auth_console(console);
                 if let Some(index) = self.console_index(console) {
-                    self.consoles[index].phase = if pending {
+                    self.tabs.consoles[index].phase = if pending {
                         Phase::Idle
                     } else {
                         Phase::Stopping
@@ -574,177 +585,6 @@ impl App {
         cancelled
     }
 
-    pub(super) fn on_agent_work(&mut self, work: Work) {
-        match work {
-            Work::Artifact(id, result) => {
-                if self
-                    .agent
-                    .jobs
-                    .get(&id)
-                    .is_none_or(|job| finished(job.state) || job.cancel.is_cancelled())
-                {
-                    return;
-                }
-                match result {
-                    Ok(text) => self.complete_agent_job(&id, Some(text)),
-                    Err(error) => self.fail_agent_job(&id, &error.message),
-                }
-            }
-            Work::Validated(id, result) => {
-                if self
-                    .agent
-                    .jobs
-                    .get(&id)
-                    .is_none_or(|job| job.cancel.is_cancelled())
-                {
-                    return;
-                }
-                match result {
-                    Ok(statements) => {
-                        let job = self.agent.jobs.get_mut(&id).expect("checked job");
-                        if let Some(statements) = statements
-                            && let Some(draft) = &mut job.draft
-                        {
-                            let count = statements.len();
-                            draft.plan = RunPlan {
-                                statements,
-                                rows: vec![0; count],
-                                starts: vec![0; count],
-                            };
-                        }
-                        job.state = "ready";
-                    }
-                    Err(error) => self.fail_agent_job(&id, &error.message),
-                }
-            }
-            Work::Diff(id, diff) => {
-                if let Some(proposal) = self
-                    .agent
-                    .proposals
-                    .get_mut(&id)
-                    .filter(|proposal| proposal.state == "building")
-                {
-                    match diff {
-                        Ok((hunks, hold)) => {
-                            proposal.lines = hunks.iter().fold((0, 0), |(added, removed), hunk| {
-                                (added + hunk.new.len(), removed + hunk.old)
-                            });
-                            proposal.hunks = Some(hunks);
-                            // The changes replace the edits in the budget.
-                            proposal.edits.clear();
-                            proposal._hold = Some(hold);
-                            proposal.state = "pending";
-                            let (session, console) = (proposal.session.clone(), proposal.console);
-                            let name = self
-                                .console_index(console)
-                                .map_or_else(String::new, |index| {
-                                    crate::grid::printable(&self.consoles[index].name)
-                                });
-                            let notice = text::agent_proposed(&self.agent.client(&session), &name);
-                            let connection = self.console_connection(console);
-                            self.agent_notice(&session, connection, notice);
-                        }
-                        Err(_) => {
-                            proposal.state = "budget_reached";
-                            proposal.edits.clear();
-                            proposal._hold = None;
-                            let (session, console) = (proposal.session.clone(), proposal.console);
-                            let connection = self.console_connection(console);
-                            self.agent_notice(
-                                &session,
-                                connection,
-                                text::AGENT_DISCARDED_BUDGET.into(),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    pub(in crate::app) fn note_agent_event(&mut self, event: &ExecEvent) {
-        let Some(console) = event.console() else {
-            return;
-        };
-        let Some(execution) = event.execution() else {
-            return;
-        };
-        for job in self
-            .agent
-            .jobs
-            .values_mut()
-            .filter(|job| job.executions.contains(&(console, execution)))
-        {
-            match event {
-                ExecEvent::StatementFinished {
-                    key, status, end, ..
-                } => {
-                    if let StatementStatus::Error(message) = status {
-                        job.message = Some(message.clone());
-                    }
-                    if matches!(job.output, Output::Query)
-                        && *status != StatementStatus::NotExecuted
-                        && job.statements.len() < STATEMENTS
-                    {
-                        job.statements
-                            .push(statement_value(key.index, status, end.as_ref()));
-                    }
-                }
-                ExecEvent::ExecutionFinished { end, message, .. } => {
-                    job.ends.insert(console, *end);
-                    if message.is_some() {
-                        job.message.clone_from(message);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn capture_agent_results(&mut self, id: &str) {
-        let consoles = self.agent.jobs[id].consoles.clone();
-        let mut results = Vec::new();
-        for console in consoles {
-            if let Some(index) = self.console_index(console) {
-                results.extend(self.consoles[index].results.iter().enumerate().map(|(result,grid)|json!({"tab_id":console.to_string(),"result":result,"generation":grid.table.generation.to_string()})));
-            }
-            if let Some(tab) = self.compares.iter().find(|tab| tab.sides[0].id == console) {
-                results.push(json!({"tab_id":console.to_string(),"result":0,"generation":tab.result.table.generation.to_string()}));
-            }
-        }
-        self.agent.jobs.get_mut(id).expect("completed job").results = results;
-    }
-
-    fn complete_agent_job(&mut self, id: &str, artifact: Option<Text>) {
-        let Some(job) = self.agent.jobs.get(id) else {
-            return;
-        };
-        if job.state != "building_artifact" && !job.executions.is_empty() {
-            self.capture_agent_results(id);
-        }
-        let job = self.agent.jobs.get_mut(id).expect("checked job");
-        let native = job.executions.is_empty();
-        job.artifact = artifact;
-        job.state = "completed";
-        job._hold = None;
-        let consoles = job.consoles.clone();
-        let session = job.session.clone();
-        let connection = job.connections[0].0;
-        if native {
-            for console in consoles {
-                if let Some(index) = self.console_index(console) {
-                    self.consoles[index].phase = Phase::Idle;
-                }
-            }
-        }
-        let kind = task_kind(&self.agent.jobs[id].output);
-        self.agent_log(
-            &session,
-            Some(connection),
-            &text::agent_task_note(kind, short(id), "completed", None),
-        );
-    }
-
     /// Writes a note in the Messages of the session's agent tab for a connection. Without
     /// that tab, it uses the last agent tab of the session. No tab opens for a note.
     pub(super) fn agent_log(
@@ -761,15 +601,18 @@ impl App {
         };
         let index = connection
             .and_then(|connection| {
-                self.consoles
+                self.tabs
+                    .consoles
                     .iter()
                     .position(|console| console.connection == Some(connection) && owned(console))
             })
-            .or_else(|| self.consoles.iter().rposition(owned));
+            .or_else(|| self.tabs.consoles.iter().rposition(owned));
         if let Some(index) = index {
-            self.consoles[index]
-                .messages
-                .note(crate::console::MessageLevel::Info, message, None);
+            self.tabs.consoles[index].messages.note(
+                crate::console::MessageLevel::Info,
+                message,
+                None,
+            );
         }
     }
 
@@ -787,133 +630,7 @@ impl App {
     /// Returns the connection of a console, for the notices of its agent actions.
     pub(super) fn console_connection(&self, console: ConsoleId) -> Option<ConnectionId> {
         self.console_index(console)
-            .and_then(|index| self.consoles[index].connection)
-    }
-
-    pub(in crate::app) fn poll_agent_jobs(&mut self) {
-        let ids: Vec<_> = self
-            .agent
-            .jobs
-            .iter()
-            .filter(|(_, job)| {
-                !finished(job.state)
-                    && job.state != "building_artifact"
-                    && !job.executions.is_empty()
-                    && job.ends.len() == job.executions.len()
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in ids {
-            let job = &self.agent.jobs[&id];
-            if job.ends.values().any(|end| *end != ExecutionEnd::Completed) {
-                let message = job
-                    .message
-                    .clone()
-                    .unwrap_or_else(|| "The assistant operation did not complete.".into());
-                self.fail_agent_job(&id, &message);
-                continue;
-            }
-            let sender = self.agent.sender.clone();
-            let budget = self.budget.clone();
-            let key = id.clone();
-            let result: Result<Option<Box<dyn FnOnce() + Send>>, Error> = match &job.output {
-                Output::Query => {
-                    self.complete_agent_job(&id, None);
-                    continue;
-                }
-                // A metadata read has no execution, so it never waits here.
-                Output::Catalog(..) | Output::Fields(_) => Ok(None),
-                Output::Ddl(target, name, dialect) => {
-                    let (target, name, dialect) = (target.clone(), name.clone(), *dialect);
-                    let console = job.consoles[0];
-                    match self.agent_definition(console, dialect, &target, &name) {
-                        Ok(text) => self.complete_agent_job(&id, Some(text)),
-                        Err(error) => self.fail_agent_job(&id, &error.message),
-                    }
-                    continue;
-                }
-                Output::Diagram(tab) => {
-                    let Some(tab) = self.diagrams.iter().find(|item| item.id == *tab) else {
-                        self.fail_agent_job(&id, "The diagram closed.");
-                        continue;
-                    };
-                    if tab.is_busy() {
-                        continue;
-                    }
-                    agent::Hold::new(diagram_bytes(&tab.model), &budget).map(|hold| {
-                        let model = tab.model.clone();
-                        let partial = tab.partial;
-                        Some(Box::new(move || {
-                            let _hold = hold;
-                            let text = diagram_value(&model, partial).to_string();
-                            let result = Text::new(text, &budget);
-                            let _ = sender.send(Work::Artifact(key, result));
-                        }) as Box<dyn FnOnce() + Send>)
-                    })
-                }
-                Output::Compare(tab) => {
-                    let Some(tab) = self.compares.iter().find(|item| item.sides[0].id == *tab)
-                    else {
-                        self.fail_agent_job(&id, "The comparison closed.");
-                        continue;
-                    };
-                    if tab.is_busy() {
-                        continue;
-                    }
-                    if !tab.done {
-                        let message = tab.message.as_ref().map_or_else(
-                            || "The comparison did not complete.".into(),
-                            |message| message.text.clone(),
-                        );
-                        self.fail_agent_job(&id, &message);
-                        continue;
-                    }
-                    agent::Hold::new(tab.script.len(), &budget).map(|hold| {
-                        let script = tab.script.clone();
-                        Some(Box::new(move || {
-                            let _hold = hold;
-                            let result = Text::new(script, &budget);
-                            let _ = sender.send(Work::Artifact(key, result));
-                        }) as Box<dyn FnOnce() + Send>)
-                    })
-                }
-            };
-            match result {
-                Ok(Some(work)) => {
-                    self.capture_agent_results(&id);
-                    self.agent.jobs.get_mut(&id).expect("checked job").state = "building_artifact";
-                    self.manager
-                        .as_ref()
-                        .expect("active job manager")
-                        .spawn_blocking(work);
-                }
-                Ok(None) => {}
-                Err(error) => self.fail_agent_job(&id, &error.message),
-            }
-        }
-    }
-
-    /// The DDL text is small, as in the user viewer, so the interface thread writes it.
-    /// The rows leave the grids for the call and then go back, so nothing is copied.
-    fn agent_definition(
-        &mut self,
-        console: ConsoleId,
-        dialect: Dialect,
-        target: &crate::definition::Target,
-        name: &str,
-    ) -> Result<Text, Error> {
-        let index = self.console_index(console).ok_or_else(missing)?;
-        let grids = &mut self.consoles[index].results;
-        let rows: Vec<_> = grids
-            .iter_mut()
-            .map(|grid| std::mem::take(&mut grid.table.rows))
-            .collect();
-        let text = crate::definition::definition_text(dialect, target, name, &rows);
-        for (grid, rows) in grids.iter_mut().zip(rows) {
-            grid.table.rows = rows;
-        }
-        text.map_err(|message| Error::new("definition_failed", message))
-            .and_then(|text| Text::new(text, &self.budget))
+            .and_then(|index| self.tabs.consoles[index].connection)
     }
 
     /// Closes the executor consoles of an agent read that did not start.
@@ -923,334 +640,6 @@ impl App {
                 manager.close_console(*console);
             }
         }
-    }
-
-    /// Reads the field paths of a Kafka topic from its Schema Registry schemas.
-    fn agent_fields(&mut self, session: &str, connection: ConnectionId, topic: &str) -> Reply {
-        let console = self.agent_console(session, connection, None)?;
-        self.agent_target(console)?;
-        let job = self.new_agent_job(
-            session,
-            vec![console],
-            vec![connection],
-            None,
-            Output::Fields(topic.to_owned()),
-        )?;
-        self.agent_job_reply(session, &job)
-    }
-
-    pub(in crate::app) fn agent_catalog(
-        &mut self,
-        session: &str,
-        connection: ConnectionId,
-        refresh: bool,
-    ) -> Reply {
-        let item = self.connection(connection).ok_or_else(missing)?;
-        if !refresh && let Some(catalog) = &item.catalog {
-            let value = catalog_value(catalog);
-            let text = serde_json::to_string(&value)
-                .map_err(|_| Error::new("encoding_failed", "Cannot encode the cached catalog."))?;
-            if text.len() <= agent::PAGE_BYTES / 3 {
-                return Ok(value);
-            }
-            let artifact = Text::new(text, &self.budget)?;
-            let job = self.new_agent_job(
-                session,
-                Vec::new(),
-                vec![connection],
-                None,
-                Output::Catalog(connection, self.catalog_reads),
-            )?;
-            self.complete_agent_job(&job, Some(artifact));
-            return self.agent_job_reply(session, &job);
-        }
-        let console = self.agent_console(session, connection, None)?;
-        self.agent_target(console)?;
-        self.catalog_reads += 1;
-        let read = self.catalog_reads;
-        let job = self.new_agent_job(
-            session,
-            vec![console],
-            vec![connection],
-            None,
-            Output::Catalog(connection, read),
-        )?;
-        if let Some(item) = self.connection_mut(connection) {
-            item.catalog_read = read;
-        }
-        self.agent_job_reply(session, &job)
-    }
-
-    pub(in crate::app) fn on_agent_metadata(
-        &mut self,
-        id: &str,
-        result: Result<AgentMetadata, String>,
-    ) {
-        let Some(job) = self.agent.jobs.get(id) else {
-            return;
-        };
-        if finished(job.state) || job.cancel.is_cancelled() {
-            return;
-        }
-        if job.connections.iter().any(|(id, generation)| {
-            self.connection(*id)
-                .is_none_or(|connection| connection.generation != *generation)
-        }) {
-            self.fail_agent_job(id, "The connection changed during the metadata read.");
-            return;
-        }
-        let text = match result {
-            Ok(AgentMetadata::Catalog(catalog)) => {
-                let Output::Catalog(connection, read) = job.output else {
-                    self.fail_agent_job(id, "The metadata response has the wrong type.");
-                    return;
-                };
-                let value = catalog_value(&catalog);
-                self.on_catalog_loaded(connection, read, Ok(catalog));
-                serde_json::to_string(&value).map_err(|_| "Cannot encode the catalog.".to_owned())
-            }
-            Ok(AgentMetadata::Fields(paths, notes)) => {
-                let Output::Fields(topic) = &job.output else {
-                    self.fail_agent_job(id, "The metadata response has the wrong type.");
-                    return;
-                };
-                serde_json::to_string(&fields_value(topic, &paths, &notes))
-                    .map_err(|_| "Cannot encode the fields.".to_owned())
-            }
-            Err(message) => Err(message),
-        };
-        match text.and_then(|text| Text::new(text, &self.budget).map_err(|error| error.message)) {
-            Ok(text) => {
-                self.complete_agent_job(id, Some(text));
-            }
-            Err(message) => self.fail_agent_job(id, &message),
-        }
-    }
-
-    pub(in crate::app) fn agent_ddl(
-        &mut self,
-        session: &str,
-        connection: ConnectionId,
-        schema: &str,
-        name: &str,
-        kind: &str,
-        identity: Option<&str>,
-    ) -> Reply {
-        let item = self.connection(connection).ok_or_else(missing)?;
-        if item.dialect == Dialect::Kafka {
-            if schema != crate::connector::kafka::TOPICS || kind != "table" {
-                return Err(Error::new("unsupported", text::AGENT_KAFKA_DESCRIBE));
-            }
-            return self.agent_fields(session, connection, name);
-        }
-        let target = crate::definition::Target {
-            schema: schema.into(),
-            name: name.into(),
-            detail: identity.unwrap_or("").into(),
-            kind: match kind {
-                "table" => crate::definition::Kind::Table,
-                "view" => crate::definition::Kind::View,
-                kind => {
-                    crate::definition::Kind::Object(ObjectKind::parse(kind).ok_or_else(supported)?)
-                }
-            },
-        };
-        let dialect = item.dialect;
-        let label = item.plain_name().to_owned();
-        let statements =
-            crate::definition::definition_sql(dialect, &target).ok_or_else(supported)?;
-        let console = self.agent_console(session, connection, Some(schema.into()))?;
-        let count = statements.len();
-        self.queue_agent_draft(
-            session,
-            console,
-            Draft {
-                plan: RunPlan {
-                    statements,
-                    rows: vec![0; count],
-                    starts: vec![0; count],
-                },
-                options: RunOptions {
-                    schema: Some(schema.into()),
-                    only_schema: true,
-                    row_cap: Some(usize::MAX),
-                    ..Default::default()
-                },
-                revision: None,
-                explain: None,
-                internal: true,
-                split: None,
-                read_only: true,
-                confirmed: false,
-            },
-            Output::Ddl(target, label, dialect),
-            0,
-        )
-    }
-
-    pub(in crate::app) fn agent_diagram(
-        &mut self,
-        session: &str,
-        connection: ConnectionId,
-        schema: &str,
-        table: Option<&str>,
-    ) -> Reply {
-        let dialect = self.connection(connection).ok_or_else(missing)?.dialect;
-        let focus = table.map_or_else(
-            || crate::diagram::Focus::Schema(schema.into()),
-            |table| {
-                crate::diagram::Focus::Table(RelationRef {
-                    schema: schema.into(),
-                    relation: table.into(),
-                })
-            },
-        );
-        let console = self
-            .manager
-            .as_mut()
-            .and_then(|manager| manager.open_console(connection))
-            .ok_or_else(missing)?;
-        let opened = self.next_tab_place();
-        let mut tab = crate::diagram_tab::DiagramTab::new(console, connection, focus, opened);
-        let Some(statements) = tab.statements(dialect) else {
-            self.close_agent_consoles(&[console]);
-            return Err(supported());
-        };
-        let job = match self.new_agent_job(
-            session,
-            vec![console],
-            vec![connection],
-            None,
-            Output::Diagram(console),
-        ) {
-            Ok(job) => job,
-            Err(error) => {
-                self.close_agent_consoles(&[console]);
-                return Err(error);
-            }
-        };
-        tab.phase = Phase::Waiting;
-        tab.agent = true;
-        let notice = text::agent_opened(&self.agent.client(session), &tab.label());
-        self.agent_notice(session, Some(connection), notice);
-        self.diagrams.push(tab);
-        self.agent.jobs.get_mut(&job).expect("new job").state = "waiting_credentials";
-        self.authorize(
-            connection,
-            Use::Diagram {
-                console,
-                connection,
-                statements,
-            },
-        );
-        self.agent_job_reply(session, &job)
-    }
-
-    pub(in crate::app) fn agent_compare(
-        &mut self,
-        session: &str,
-        source: &agent::Side,
-        target: &agent::Side,
-        removals: bool,
-        kind: crate::compare::Kind,
-        rows: usize,
-    ) -> Reply {
-        let sides = [source, target]
-            .map(|side| {
-                Ok(crate::compare::Side {
-                    connection: id(&side.connection_id)?,
-                    schema: side.schema.clone(),
-                    table: side.table.clone(),
-                })
-            })
-            .into_iter()
-            .collect::<Result<Vec<_>, Error>>()?;
-        for side in &sides {
-            let item = self.connection(side.connection).ok_or_else(missing)?;
-            if item.dialect.is_command_line()
-                || (kind == crate::compare::Kind::Data && side.table.is_none())
-            {
-                return Err(supported());
-            }
-        }
-        let mut reads: Vec<crate::compare_tab::SideRead> = Vec::new();
-        for side in sides {
-            let connection = side.connection;
-            let read = self
-                .connection(connection)
-                .map(|item| (item.dialect, text::agent_tab_label(item.plain_name())))
-                .and_then(|(dialect, name)| {
-                    let console = self.manager.as_mut()?.open_console(connection)?;
-                    Some(crate::compare_tab::SideRead::new(
-                        console, side, dialect, name,
-                    ))
-                });
-            let Some(read) = read else {
-                let opened: Vec<_> = reads.iter().map(|read| read.id).collect();
-                self.close_agent_consoles(&opened);
-                return Err(missing());
-            };
-            reads.push(read);
-        }
-        let consoles = reads.iter().map(|read| read.id).collect::<Vec<_>>();
-        let connections = reads.iter().map(|read| read.side.connection).collect();
-        let first = consoles[0];
-        let Ok(sides) = reads.try_into() else {
-            self.close_agent_consoles(&consoles);
-            return Err(missing());
-        };
-        let opened = self.next_tab_place();
-        let mut tab = crate::compare_tab::CompareTab::new(opened, kind, sides, removals);
-        let requests = (0..2)
-            .map(|side| {
-                let read = &tab.sides[side];
-                Ok((
-                    read.id,
-                    read.side.connection,
-                    read.side.schema.clone(),
-                    tab.statements(side).ok_or_else(supported)?,
-                ))
-            })
-            .collect::<Result<Vec<_>, Error>>();
-        let started = requests.and_then(|requests| {
-            self.new_agent_job(
-                session,
-                consoles.clone(),
-                connections,
-                None,
-                Output::Compare(first),
-            )
-            .map(|job| (job, requests))
-        });
-        let (job, requests) = match started {
-            Ok(started) => started,
-            Err(error) => {
-                self.close_agent_consoles(&consoles);
-                return Err(error);
-            }
-        };
-        tab.agent = true;
-        tab.begin(&self.budget);
-        let notice = text::agent_opened(&self.agent.client(session), &tab.label());
-        let connection = tab.sides[0].side.connection;
-        self.agent_notice(session, Some(connection), notice);
-        self.compares.push(tab);
-        let item = self.agent.jobs.get_mut(&job).expect("new job");
-        item.state = "waiting_credentials";
-        item.rows = rows;
-        for (console, connection, schema, statements) in requests {
-            self.authorize(
-                connection,
-                Use::Compare {
-                    console,
-                    connection,
-                    schema,
-                    statements,
-                    untimed: false,
-                },
-            );
-        }
-        self.agent_job_reply(session, &job)
     }
 }
 
@@ -1332,18 +721,4 @@ fn bindings(values: &[agent::Binding]) -> Result<Vec<crate::sql::parameters::Par
             })
         })
         .collect()
-}
-
-/// Writes the field paths of a Kafka topic for the agent. An empty list says why.
-fn fields_value(topic: &str, paths: &[String], notes: &[crate::catalog::ColumnNote]) -> Value {
-    let fields = crate::connector::kafka::field_json(paths, notes);
-    let mut value = json!({"topic": topic, "fields": fields});
-    if paths.is_empty() {
-        value["message"] = json!(text::AGENT_KAFKA_NO_FIELDS);
-    }
-    value
-}
-
-fn catalog_value(catalog: &crate::catalog::Catalog) -> Value {
-    json!({"current_schema":catalog.current_schema,"schemas":catalog.schemas.iter().map(|schema|json!({"name":schema.name,"relations":schema.relations.iter().map(|relation|json!({"name":relation.name,"kind":format!("{:?}",relation.kind).to_ascii_lowercase(),"columns":match &relation.columns {crate::catalog::Columns::Loaded(columns)=>Some(columns),_=>None}})).collect::<Vec<_>>(),"objects":schema.objects.iter().map(|object|json!({"name":object.name,"kind":format!("{:?}",object.kind).to_ascii_lowercase(),"detail":object.detail})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
 }

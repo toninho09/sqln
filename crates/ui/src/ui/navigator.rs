@@ -10,6 +10,7 @@ use super::icons::{Icons, connection_symbol};
 use super::kit::list::draw_prompt_field;
 use super::text;
 use super::theme::Theme;
+use crate::arrange::folder_label;
 use crate::connection::Connection;
 use crate::grid::printable;
 use crate::navigator::{Navigator, RowKind, RowNote};
@@ -83,7 +84,7 @@ pub fn draw_navigator(
     let detail = theme.tree_detail;
     let mut lines = Vec::with_capacity(height);
     for (offset, row) in rows.iter().enumerate().skip(navigator.top).take(height) {
-        let indent = "  ".repeat(row.depth());
+        let indent = "  ".repeat(row.indent());
         let mark = if !Navigator::is_branch(row) {
             " "
         } else if navigator.is_open(row, connections) {
@@ -91,7 +92,12 @@ pub fn draw_navigator(
         } else {
             MARK_CLOSED
         };
-        let mut spans = vec![Span::raw(format!(" {indent}{mark} "))];
+        let start = if navigator.drop_target == Some(offset) {
+            text::MARK_DROP
+        } else {
+            " "
+        };
+        let mut spans = vec![Span::raw(format!("{start}{indent}{mark} "))];
         match row.kind {
             RowKind::Connection if connected[row.connection] => {
                 spans.push(Span::styled(Theme::icon(icons.connected), theme.mark_good));
@@ -99,7 +105,7 @@ pub fn draw_navigator(
             RowKind::Connection => {
                 spans.push(Span::styled(Theme::icon(icons.disconnected), detail))
             }
-            RowKind::Consoles | RowKind::Schema => {
+            RowKind::Folder | RowKind::Consoles | RowKind::Schema => {
                 spans.push(Span::styled(Theme::icon(icons.schema), detail));
             }
             RowKind::Console => spans.push(Span::styled(Theme::icon(icons.console), detail)),
@@ -117,7 +123,10 @@ pub fn draw_navigator(
             ("", "")
         };
         spans.push(Span::styled(Theme::icon(before_name), detail));
-        spans.push(Span::raw(printable(row.name(connections))));
+        match row.folder(connections) {
+            Some(folder) => spans.push(Span::raw(printable(&folder_label(connections, &folder)))),
+            None => spans.push(Span::raw(printable(row.name(connections)))),
+        }
         if !after_name.is_empty() {
             spans.push(Span::styled(format!("  {after_name}"), detail));
         }
@@ -161,6 +170,11 @@ pub fn draw_navigator(
             );
         }
         lines.push(Line::from(spans));
+    }
+    if let Some(end) = navigator.drop_end
+        && lines.len() < height
+    {
+        lines.push(Line::styled(format!("{} {end}", text::MARK_DROP), detail));
     }
     frame.render_widget(Paragraph::new(lines), area);
     draw_scrollbar(

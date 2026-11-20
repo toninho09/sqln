@@ -213,7 +213,7 @@ impl App {
     /// event goes on to the editor.
     pub(super) fn on_review_mouse(&mut self, mouse: MouseEvent) -> bool {
         let position = Position::new(mouse.column, mouse.row);
-        if self.drag.is_some()
+        if self.input.drag.is_some()
             || !self.console_on_screen()
             || self.home()
             || !self.review_active()

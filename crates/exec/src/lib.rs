@@ -5,6 +5,7 @@
 pub mod agent;
 pub mod ai;
 pub mod analysis;
+pub mod arrange;
 pub mod command_log;
 pub mod compare;
 pub mod complete;
@@ -19,7 +20,8 @@ pub mod import;
 pub mod plan;
 
 pub(crate) use sqln_core::{
-    catalog, clipboard, filter_list, grid, limited, line_input, message, progress, sink, text, wrap,
+    catalog, clipboard, filter_list, grid, limited, line_input, message, progress, sink, text,
+    wake, wrap,
 };
 pub(crate) use sqln_session::{connector, trace};
 pub(crate) use sqln_sql::{sql, structure};

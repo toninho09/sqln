@@ -554,7 +554,9 @@ fn disconnect_cancels_its_query_and_not_the_next_user_query() {
     let mut h = Harness::new("disconnect");
     h.authorize();
     let own = h.own();
-    let _job=h.query("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT count(*) FROM n");
+    // The read policy refuses a CTE column list such as `n(x)`, because it reads like an
+    // unknown function, so the long read names its column inside the CTE.
+    let job = h.query("WITH RECURSIVE n AS (SELECT 1 AS x UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT count(*) FROM n");
     let deadline = Instant::now() + Duration::from_secs(10);
     while !h
         .app
@@ -566,6 +568,17 @@ fn disconnect_cancels_its_query_and_not_the_next_user_query() {
     {
         h.app.drain_events();
         assert!(Instant::now() < deadline);
+    }
+    // A console waits before the validation ends, so the job state shows the real run.
+    loop {
+        let status = h.tool(json!({"method":"job","job_id":job})).unwrap();
+        match status["status"].as_str().unwrap() {
+            "running" => break,
+            "failed" | "completed" | "cancelled" => panic!("the read did not run: {status:?}"),
+            _ => {}
+        }
+        assert!(Instant::now() < deadline, "{status:?}");
+        std::thread::sleep(Duration::from_millis(1));
     }
     h.client.take();
     while h
@@ -1817,6 +1830,7 @@ fn wait_card(h: &mut Harness) {
 #[test]
 fn a_long_task_card_stops_its_task() {
     let mut h = Harness::new("task-card-stop");
+    h.app.set_task_card_delay(Duration::from_millis(100));
     h.authorize();
     let job = h.query(&slow_sql());
     // A short task shows no card.
@@ -1838,6 +1852,7 @@ fn a_long_task_card_stops_its_task() {
 #[test]
 fn hiding_a_long_task_card_keeps_its_task() {
     let mut h = Harness::new("task-card-hide");
+    h.app.set_task_card_delay(Duration::from_millis(100));
     h.authorize();
     let own = h.own();
     let job = h.query(&slow_sql());

@@ -154,13 +154,15 @@ impl<'a> Text<'a> {
         })
     }
 
+    #[expect(clippy::expect_used, reason = "the text holds only UTF-8 pieces")]
     pub fn as_str(&self) -> &str {
         std::str::from_utf8(&self.data).expect("JSON and expression text are UTF-8")
     }
 
     pub fn into_parts(self) -> (String, Memory<'a>) {
         (
-            String::from_utf8(self.data).expect("expression text is UTF-8"),
+            String::from_utf8(self.data)
+                .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
             self.memory,
         )
     }

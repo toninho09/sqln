@@ -1,5 +1,6 @@
 //! A manual probe of the native vault. It prints the outcome of each step, and it uses
 //! a fixed value that is not a secret. `docs/RESULTS.md` explains how to run it.
+#![allow(clippy::unwrap_used, clippy::expect_used)] // Test code: a panic is a failure.
 
 use std::sync::Arc;
 
@@ -13,7 +14,10 @@ const ID: &str = "vault-probe";
 const VALUE: &str = "probe-value";
 const STEPS: &str = "read,write,read,delete,delete";
 
+// SAFETY: the declaration matches `SecKeychainSetUserInteractionAllowed` of the
+// Security framework: one `Boolean` (`u8`) argument and an `OSStatus` (`i32`) result.
 #[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
 #[link(name = "Security", kind = "framework")]
 unsafe extern "C" {
     fn SecKeychainSetUserInteractionAllowed(allowed: u8) -> i32;
@@ -77,7 +81,11 @@ fn native_vault_probe() {
     // This call simulates a process without a window session.
     #[cfg(target_os = "macos")]
     if std::env::var_os("SQLN_VAULT_PROBE_NO_UI").is_some() {
-        unsafe { SecKeychainSetUserInteractionAllowed(0) };
+        // SAFETY: the call takes a plain value and touches no memory of this process.
+        #[allow(unsafe_code)]
+        unsafe {
+            SecKeychainSetUserInteractionAllowed(0)
+        };
     }
     let steps = std::env::var("SQLN_VAULT_PROBE").unwrap_or_else(|_| STEPS.to_owned());
     let identity = identity();

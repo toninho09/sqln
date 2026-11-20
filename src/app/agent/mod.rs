@@ -46,6 +46,9 @@ pub(super) struct State {
     retired: HashMap<ConsoleId, CancellationToken>,
     /// Proposals that an editor shows for review. Their card does not show.
     reviewing: HashSet<String>,
+    /// The time a task runs before it gets its card. Tests shorten it to keep
+    /// the long-task flows fast.
+    task_card_delay: Duration,
     sender: mpsc::Sender<Work>,
     receiver: mpsc::Receiver<Work>,
     serial: u64,
@@ -120,12 +123,23 @@ impl State {
             .or_else(|| first(proposals, Notice::Proposal))
             .or_else(|| first(self.long_task_ids(), Notice::Task))
     }
+    /// The moment when the next running task gets its card.
+    pub(super) fn next_task_card(&self, now: Instant) -> Option<Instant> {
+        self.jobs
+            .values()
+            .filter(|job| !finished(job.state))
+            .map(|job| job.created + self.task_card_delay)
+            .filter(|moment| *moment > now)
+            .min()
+    }
     /// Lists the tasks that run for longer than the card delay, the oldest first.
     fn long_task_ids(&self) -> Vec<String> {
         let mut ids: Vec<_> = self
             .jobs
             .iter()
-            .filter(|(_, job)| !finished(job.state) && job.created.elapsed() >= TASK_CARD_DELAY)
+            .filter(|(_, job)| {
+                !finished(job.state) && job.created.elapsed() >= self.task_card_delay
+            })
             .map(|(id, job)| (job.serial, id.clone()))
             .collect();
         ids.sort();
@@ -290,6 +304,7 @@ impl Default for State {
             fresh: HashSet::new(),
             retired: HashMap::new(),
             reviewing: HashSet::new(),
+            task_card_delay: TASK_CARD_DELAY,
             sender,
             receiver,
             serial: 0,
@@ -306,6 +321,9 @@ struct Session {
 
 /// What an authorized session can do. Each level includes the previous levels.
 pub(super) use crate::store::config::AgentAccess as Level;
+
+mod place;
+mod request;
 
 /// The names of a level in the protocol and in the interface.
 trait LevelText {
@@ -410,7 +428,8 @@ pub(super) enum Notice {
     Task(String),
 }
 
-/// A task shows its card after this time, so a short query does not flash on screen.
+/// The default time a task runs before it shows its card, so a short query does not
+/// flash on screen.
 pub(super) const TASK_CARD_DELAY: Duration = Duration::from_secs(3);
 
 /// The answer to an access request.
@@ -472,6 +491,12 @@ fn supported() -> Error {
 }
 
 impl App {
+    /// Shortens the time a task runs before it gets its card, so tests keep the
+    /// long-task flows fast. The application keeps the default.
+    pub fn set_task_card_delay(&mut self, delay: Duration) {
+        self.agent.task_card_delay = delay;
+    }
+
     /// Enables the private local endpoint. Tests and embedded callers can supply a private directory.
     /// With MCP off in the settings, the endpoint opens when the user turns it on.
     pub fn start_agent_at(&mut self, directory: PathBuf) -> std::io::Result<String> {
@@ -489,7 +514,7 @@ impl App {
             .as_ref()
             .and_then(|persist| persist.store.project.as_ref())
             .map(|root| root.base.clone());
-        let server = Server::at(directory, project)?;
+        let server = Server::waking(directory, project, self.wake.clone())?;
         let id = server.instance.instance_id.clone();
         self.agent.server = Some(server);
         Ok(id)
@@ -630,6 +655,7 @@ impl App {
         for proposal in self.agent.proposals.values_mut() {
             if matches!(proposal.state, "pending" | "building")
                 && self
+                    .tabs
                     .consoles
                     .iter()
                     .find(|console| console.id == proposal.console)
@@ -658,508 +684,6 @@ impl App {
             self.close_gone_reviews();
         }
         changed || any
-    }
-
-    fn agent_request(&mut self, request: &Envelope) -> Reply {
-        use Operation::*;
-        let session = &request.session;
-        if matches!(request.operation, RequestAccess {}) {
-            if !self.agent.sessions.contains_key(session) {
-                self.agent
-                    .sessions
-                    .retain(|_, session| !session.alive.is_cancelled());
-                if self.agent.sessions.len() >= 64 {
-                    return Err(Error::new(
-                        "ui_busy",
-                        "Too many assistant sessions are pending. Review them in SQLN.",
-                    ));
-                }
-                // A remembered client keeps the choice of the user. Other clients get the
-                // default access. Both stay at or below the maximum.
-                let settings = self.agent.settings;
-                let remembered = self.agent.remembered.get(&request.client).copied();
-                let default = settings.default_access.access();
-                let granted = remembered
-                    .or(default)
-                    .map(|level| level.min(settings.max_access));
-                self.agent.sessions.insert(
-                    session.clone(),
-                    Session {
-                        client: request.client.clone(),
-                        state: if granted.is_some() {
-                            "authorized"
-                        } else {
-                            "pending"
-                        },
-                        alive: request.alive.clone(),
-                        requested: Instant::now(),
-                        level: granted.unwrap_or(Level::Propose),
-                    },
-                );
-                if let Some(level) = granted {
-                    self.ensure_agent_tabs();
-                    let client = self.agent.client(session);
-                    let notice = if remembered.is_some() {
-                        crate::ui::text::agent_remembered(&client, level.choice())
-                    } else {
-                        crate::ui::text::agent_default_access(&client, level.choice())
-                    };
-                    self.agent_notice(session, None, notice);
-                    self.refresh_tree_consoles();
-                } else {
-                    // A new request rings once, so the user sees it in another window.
-                    self.bell = true;
-                }
-            }
-            return Ok(self.agent_access(session));
-        }
-        let Some(level) = self
-            .agent
-            .level(session)
-            .filter(|_| !request.alive.is_cancelled())
-        else {
-            return Err(Error::new(
-                "access_required",
-                "Call request_access and ask the user to approve this session in SQLN.",
-            ));
-        };
-        if !request.operation.is_inspection()
-            && (self.modal_is_open() || self.exiting || self.config_blocked())
-        {
-            return Err(Error::new(
-                "ui_busy",
-                "SQLN has an open dialog or blocked configuration. Resolve it before starting this operation.",
-            ));
-        }
-        match &request.operation {
-            RequestAccess {} => unreachable!(),
-            GetContext { offset, limit } => self.agent_context(session, level, *offset, *limit),
-            ReadConsole {
-                console_id,
-                offset,
-                revision,
-                messages,
-                message_offset,
-            } => {
-                let console = id(console_id)?;
-                let mut page = self.agent_read_console(console, *offset, *revision)?;
-                if *messages {
-                    page["messages"] = self.agent_messages(console, *message_offset, 0)?;
-                }
-                Ok(page)
-            }
-            ReadResult {
-                tab_id,
-                result,
-                offset,
-                limit,
-                generation,
-                row,
-                column,
-            } => match (row, column) {
-                (None, None) => {
-                    self.agent_result(tab_id, *result, *offset, *limit, generation.as_deref())
-                }
-                (Some(row), Some(column)) => {
-                    let generation = generation.as_deref().ok_or_else(|| {
-                        Error::new(
-                            "generation_required",
-                            "Use the generation from the result page.",
-                        )
-                    })?;
-                    self.agent_cell(tab_id, *result, *row, *column, generation, *offset)
-                }
-                _ => Err(Error::new(
-                    "invalid_request",
-                    "Send both row and column to read a cell, or neither to read rows.",
-                )),
-            },
-            Query {
-                connection_id,
-                schema,
-                sql,
-                parameters,
-                explain,
-                rows,
-            } => {
-                let console = self.agent_console(session, id(connection_id)?, schema.clone())?;
-                self.agent_query(session, console, sql, parameters, *explain, rows_of(*rows))
-            }
-            RunConsole {
-                console_id,
-                revision,
-                range,
-                explain,
-                rows,
-            } => self.agent_run_console(
-                session,
-                id(console_id)?,
-                *revision,
-                range.as_ref(),
-                *explain,
-                rows_of(*rows),
-            ),
-            EditConsole {
-                console_id: Some(console_id),
-                revision,
-                edits,
-                mode,
-                ..
-            } => {
-                let revision = revision.ok_or_else(|| {
-                    Error::new(
-                        "invalid_request",
-                        "Send the revision from read_console with the edits.",
-                    )
-                })?;
-                if edits.is_empty() {
-                    return Err(Error::new(
-                        "invalid_request",
-                        "Send at least one edit, or omit console_id to open a new console.",
-                    ));
-                }
-                self.agent_edit(session, id(console_id)?, revision, edits, *mode)
-            }
-            EditConsole {
-                console_id: None,
-                connection_id,
-                schema,
-                sql,
-                ..
-            } => {
-                let (Some(connection), Some(sql)) = (connection_id, sql) else {
-                    return Err(Error::new(
-                        "invalid_request",
-                        "Send console_id to edit a console, or connection_id and sql to open one.",
-                    ));
-                };
-                self.agent_place(session, id(connection)?, schema.clone(), sql)
-            }
-            Describe {
-                connection_id,
-                schema,
-                object,
-                er_diagram,
-                refresh,
-            } => {
-                let connection = id(connection_id)?;
-                let schema = || {
-                    schema.as_deref().ok_or_else(|| {
-                        Error::new(
-                            "schema_required",
-                            "Send the schema. Read the schema names with describe and no object.",
-                        )
-                    })
-                };
-                if *er_diagram {
-                    let table = object.as_ref().map(|object| object.name.as_str());
-                    self.agent_diagram(session, connection, schema()?, table)
-                } else if let Some(object) = object {
-                    self.agent_ddl(
-                        session,
-                        connection,
-                        schema()?,
-                        &object.name,
-                        object.kind.as_str(),
-                        object.identity.as_deref(),
-                    )
-                } else {
-                    self.agent_catalog(session, connection, *refresh)
-                }
-            }
-            Compare {
-                kind,
-                source,
-                target,
-                removals,
-                rows,
-            } => {
-                let kind = match kind {
-                    agent::CompareKind::Structure => crate::compare::Kind::Structure,
-                    agent::CompareKind::Data => crate::compare::Kind::Data,
-                };
-                self.agent_compare(session, source, target, *removals, kind, rows_of(*rows))
-            }
-            Job {
-                job_id,
-                cancel,
-                artifact_offset,
-                rows,
-            } => self.agent_job(session, job_id, *cancel, *artifact_offset, *rows),
-        }
-    }
-
-    /// Reads the application state that an agent needs to choose a target.
-    fn agent_context(&self, session: &str, level: Level, offset: usize, limit: usize) -> Reply {
-        let connections = self.agent_connections(0, CONTEXT_CONNECTIONS)?;
-        let tabs = self.agent_tabs(offset, limit)?;
-        let proposals: Vec<_> = self
-            .agent
-            .pending_proposal_ids()
-            .into_iter()
-            .filter(|id| self.agent.proposals[id].session == session)
-            .collect();
-        let mut reply = json!({
-            "session_id": session,
-            "access": level.protocol_name(),
-            "database_access": if level == Level::Full { "read_write" } else { "read_only" },
-            "interface_busy": self.modal_is_open(),
-            "active_tab": tabs["active_tab"],
-            "connections": connections["connections"],
-            "connections_total": connections["total"],
-            "tabs": tabs["tabs"],
-            "next_offset": tabs["next_offset"],
-            "tabs_total": tabs["total"],
-            "pending_proposals": proposals,
-        });
-        // A Kafka connection does not accept standard SQL, so the agent gets its guide.
-        if self
-            .connections
-            .iter()
-            .take(CONTEXT_CONNECTIONS)
-            .any(|connection| connection.dialect == crate::sql::Dialect::Kafka)
-        {
-            reply["syntax"] = json!({"Kafka": crate::connector::kafka::GUIDE});
-        }
-        Ok(reply)
-    }
-
-    fn agent_access(&self, session: &str) -> Value {
-        let item = self.agent.sessions.get(session);
-        json!({
-            "session_id": session,
-            "status": item.map_or("not_requested", |session| session.state),
-            "access": item.filter(|item| item.state == "authorized").map(|item| item.level.protocol_name()),
-        })
-    }
-
-    fn agent_target(&self, console: ConsoleId) -> Result<usize, Error> {
-        let index = self.console_index(console).ok_or_else(missing)?;
-        let console = &self.consoles[index];
-        if console.hidden {
-            return Err(missing());
-        }
-        if console.transaction != TransactionState::None {
-            return Err(Error::new(
-                "transaction_active",
-                "The console has an open, failed, or unknown transaction. Use the agent console.",
-            ));
-        }
-        if console.is_busy() || self.association_pending(console.id) {
-            return Err(Error::new(
-                "console_busy",
-                "The console has pending work. Wait or use the agent console.",
-            ));
-        }
-        if console.connection.is_none() {
-            return Err(Error::new(
-                "no_connection",
-                "The user must attach a connection before this console can execute.",
-            ));
-        }
-        Ok(index)
-    }
-
-    fn agent_console(
-        &mut self,
-        session: &str,
-        connection: ConnectionId,
-        schema: Option<String>,
-    ) -> Result<ConsoleId, Error> {
-        let dialect = self.connection(connection).ok_or_else(missing)?.dialect;
-        if let Some(index) = self.consoles.iter().position(|console| {
-            self.agent
-                .owned
-                .get(&console.id)
-                .is_some_and(|owner| owner == session)
-                && console.connection == Some(connection)
-        }) {
-            if schema.is_some() && self.consoles[index].schema != schema {
-                self.agent_target(self.consoles[index].id)?;
-                self.consoles[index].schema = schema;
-            }
-            return Ok(self.consoles[index].id);
-        }
-        // The session tab that opened at the access decision takes its first connection.
-        let index = match self.consoles.iter().position(|console| {
-            console.connection.is_none()
-                && self
-                    .agent
-                    .owned
-                    .get(&console.id)
-                    .is_some_and(|owner| owner == session)
-        }) {
-            Some(index) => index,
-            None => {
-                self.open_agent_tab(session);
-                self.consoles.len() - 1
-            }
-        };
-        self.bind_console(index, connection);
-        let console = &mut self.consoles[index];
-        if console.connection != Some(connection) {
-            return Err(missing());
-        }
-        console.editor.set_dialect(dialect);
-        console.schema = schema;
-        Ok(console.id)
-    }
-
-    /// Opens the agent tab of a session without a connection, after the tab row's other
-    /// tabs. The focus and the active tab stay.
-    pub(super) fn open_agent_tab(&mut self, session: &str) {
-        let mut console = self.unbound_console(self.fallback_dialect);
-        console.name =
-            crate::ui::text::agent_console_name(&self.agent.client(session), short(session));
-        console.focus = crate::console::Focus::Results;
-        self.agent.owned.insert(console.id, session.to_owned());
-        self.consoles.push(console);
-    }
-
-    /// Keeps one agent tab for each session with access. A session without a tab gets one.
-    pub(super) fn ensure_agent_tabs(&mut self) {
-        if self.exiting {
-            return;
-        }
-        let sessions: Vec<_> = self
-            .agent
-            .allowed_ids()
-            .filter(|session| !self.agent.owned.values().any(|owner| owner == session))
-            .collect();
-        for session in sessions {
-            self.open_agent_tab(&session);
-        }
-    }
-
-    /// Returns true when closing this agent tab leaves its connected session without a tab.
-    pub(super) fn last_agent_tab(&self, console: ConsoleId) -> Option<String> {
-        let owner = self.agent.owned.get(&console)?;
-        self.agent.level(owner)?;
-        let tabs = self
-            .agent
-            .owned
-            .values()
-            .filter(|item| *item == owner)
-            .count();
-        (tabs == 1 && self.agent.tab_session(console).is_some()).then(|| owner.clone())
-    }
-
-    /// Places SQL in the editor of the session's agent tab for the user. Nothing executes.
-    /// SQL that the user changed stays: the new SQL then waits for a review.
-    fn agent_place(
-        &mut self,
-        session: &str,
-        connection: ConnectionId,
-        schema: Option<String>,
-        sql: &str,
-    ) -> Reply {
-        if sql.trim().is_empty() {
-            return Err(Error::new(
-                "invalid_request",
-                "Send the SQL that the user must review.",
-            ));
-        }
-        if sql.len() > agent::MAX_FRAME {
-            return Err(Error::new(
-                "request_too_large",
-                "Send at most 8 MiB of SQL.",
-            ));
-        }
-        let namespace = self
-            .connection(connection)
-            .ok_or_else(missing)?
-            .capabilities
-            .namespace
-            != crate::connector::Namespace::None;
-        let console = self.agent_console(session, connection, None)?;
-        let index = self.console_index(console).ok_or_else(missing)?;
-        // A running task keeps the schema of its session.
-        if namespace
-            && schema.is_some()
-            && !self.consoles[index].is_busy()
-            && !self.consoles[index].in_transaction()
-        {
-            self.consoles[index].schema = schema;
-        }
-        let text = sql.replace("\r\n", "\n").replace('\r', "\n");
-        let editor = &self.consoles[index].editor;
-        let revision = editor.revision();
-        let edit = editor.agent_replace_all(&text);
-        if !editor.is_blank() && self.agent.placed.get(&console) != Some(&revision) {
-            return self.agent_edit(
-                session,
-                console,
-                revision,
-                &[edit],
-                agent::EditMode::Propose,
-            );
-        }
-        let editor = &mut self.consoles[index].editor;
-        editor.apply_agent_edits(revision, &[edit])?;
-        // New SQL shows from its first line.
-        editor.set_cursor(edtui::Index2::new(0, 0));
-        editor.set_scroll(0, 0);
-        self.agent_sql_placed(console);
-        let client = self.agent.client(session);
-        let run = self.shown_key(crate::input::Action::Run);
-        self.consoles[index].messages.note(
-            crate::console::MessageLevel::Info,
-            &crate::ui::text::agent_placed_note(&client, run.as_deref()),
-            None,
-        );
-        self.status = Some(crate::ui::text::agent_placed(&client));
-        Ok(json!({
-            "console_id": console.to_string(),
-            "revision": self.consoles[index].editor.revision(),
-            "status": "placed",
-        }))
-    }
-
-    /// Records SQL that the agent placed in its tab, and marks the tab until the user sees it.
-    pub(super) fn agent_sql_placed(&mut self, console: ConsoleId) {
-        let Some(index) = self.console_index(console) else {
-            return;
-        };
-        self.agent
-            .placed
-            .insert(console, self.consoles[index].editor.revision());
-        if !(index == self.active && self.console_on_screen()) {
-            self.agent.fresh.insert(console);
-        }
-        self.refresh_tree_consoles();
-    }
-
-    /// Removes the mark of SQL that the user did not see, when the agent tab is on screen.
-    pub(super) fn see_agent_sql(&mut self) {
-        let id = self.console().id;
-        if self.console_on_screen() && self.agent.fresh.remove(&id) {
-            self.refresh_tree_consoles();
-        }
-    }
-
-    /// Copies the SQL of the agent tab to a new user console, which takes the focus.
-    pub(super) fn agent_sql_to_console(&mut self) {
-        let console = self.console();
-        let Some(connection) = console.connection else {
-            return;
-        };
-        let (schema, text) = (console.schema.clone(), console.editor.text());
-        self.open_text_console(connection, schema, &text);
-    }
-
-    /// Empties the SQL of the agent tab as one undo step. The tab then shows its results only.
-    pub(super) fn agent_sql_clear(&mut self) {
-        let editor = &self.console().editor;
-        let (revision, edit) = (editor.revision(), editor.agent_replace_all(""));
-        if self
-            .console_mut()
-            .editor
-            .apply_agent_edits(revision, &[edit])
-            .is_ok()
-        {
-            let undo = self.shown_key(crate::input::Action::EditorUndo);
-            self.status = Some(crate::ui::text::agent_sql_cleared(undo.as_deref()));
-        }
     }
 
     fn agent_check_job(&self, session: &str, id: &str) -> Result<(), Error> {
@@ -1197,8 +721,10 @@ impl App {
         if cancel {
             self.cancel_agent_job(id);
         }
-        if let Some(rows) = rows {
-            self.agent.jobs.get_mut(id).expect("checked job").rows = rows_of(Some(rows));
+        if let Some(rows) = rows
+            && let Some(item) = self.agent.jobs.get_mut(id)
+        {
+            item.rows = rows_of(Some(rows));
         }
         self.agent_job_page(session, id, artifact_offset)
     }
@@ -1207,7 +733,7 @@ impl App {
         let proposal = self.agent.proposals.get(id).ok_or_else(missing)?;
         let revision = self
             .console_index(proposal.console)
-            .map(|index| self.consoles[index].editor.revision());
+            .map(|index| self.tabs.consoles[index].editor.revision());
         Ok(json!({
             "job_id": id,
             "kind": "proposal",
@@ -1317,7 +843,7 @@ impl App {
     fn close_gone_reviews(&mut self) {
         let proposals = &self.agent.proposals;
         let waiting = |id: &String| proposals.get(id).is_some_and(|p| p.state == "pending");
-        for console in &mut self.consoles {
+        for console in &mut self.tabs.consoles {
             let gone = console
                 .editor
                 .review()

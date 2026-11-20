@@ -20,7 +20,10 @@ use crate::connector::{ConnectError, Connector, SessionContext, TransactionComma
 use crate::grid::Budget;
 use crate::import::ImportJob;
 use crate::pool::Pool;
+use crate::wake::Wake;
 const EVENT_CAPACITY: usize = 256;
+/// The events that the relay of the interface holds after the bounded channel.
+const RELAY_CAPACITY: usize = 64;
 const CONNECT_LIMIT_ENDED: &str = "The connection time limit ended.";
 const DISCONNECT_CHECK: Duration = Duration::from_millis(5);
 
@@ -87,11 +90,31 @@ pub struct Manager {
     next_pool: u64,
     histories: HashMap<ConsoleId, TraceContext>,
     active_history: Option<TraceContext>,
+    /// Wakes the main loop after an event or a background operation. It does nothing
+    /// outside the interface.
+    wake: Wake,
 }
 
 impl Manager {
     pub fn new(budget: Arc<Budget>) -> std::io::Result<(Self, Receiver<ExecEvent>)> {
         Self::with_event_capacity(budget, EVENT_CAPACITY)
+    }
+
+    /// The manager of the interface. Each event and each finished background operation
+    /// wakes the main loop, so the loop can sleep until it has work.
+    pub fn with_wake(
+        budget: Arc<Budget>,
+        wake: Wake,
+    ) -> std::io::Result<(Self, Receiver<ExecEvent>)> {
+        let (mut manager, events) = Self::with_event_capacity(budget, EVENT_CAPACITY)?;
+        // The senders of the events live in many crates. One relay wakes the loop for
+        // all of them, and its bounded channel keeps the pressure on the database.
+        let (relay, receiver) = mpsc::channel(RELAY_CAPACITY);
+        manager
+            .runtime
+            .spawn(relay_events(events, relay, wake.clone()));
+        manager.wake = wake;
+        Ok((manager, receiver))
     }
 
     /// Keeps one event queued and signals cancellation to the streaming consumer.
@@ -127,6 +150,7 @@ impl Manager {
             next_pool: 1,
             histories: HashMap::new(),
             active_history: None,
+            wake: Wake::new(),
         };
         Ok((manager, receiver))
     }
@@ -134,6 +158,7 @@ impl Manager {
     /// Runs one blocking system operation at a time, without blocking the interface.
     pub fn spawn_blocking(&self, operation: impl FnOnce() + Send + 'static) {
         let blocking = self.blocking.clone();
+        let wake = self.wake.clone();
         self.runtime.spawn(async move {
             let Ok(permit) = blocking.acquire_owned().await else {
                 return;
@@ -143,6 +168,8 @@ impl Manager {
                 operation();
             })
             .await;
+            // The operation sent its result through its own channel.
+            wake.wake();
         });
     }
 
@@ -641,5 +668,15 @@ fn context(settings: &Settings, schema: Option<String>, only_schema: bool) -> Se
         read_only: settings.read_only,
         schema,
         only_schema,
+    }
+}
+
+/// Moves the events to the channel of the interface and wakes the main loop after each one.
+async fn relay_events(mut events: Receiver<ExecEvent>, relay: Sender<ExecEvent>, wake: Wake) {
+    while let Some(event) = events.recv().await {
+        if relay.send(event).await.is_err() {
+            return;
+        }
+        wake.wake();
     }
 }

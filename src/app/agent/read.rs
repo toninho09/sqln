@@ -10,10 +10,10 @@ use serde_json::{Value, json};
 
 impl App {
     pub(super) fn agent_active_tab(&self) -> String {
-        let id = match self.screen {
-            Screen::Compare(index) => self.compares[index].sides[0].id,
-            Screen::Diagram(index) => self.diagrams[index].id,
-            Screen::Table(index) => self.tables[index].id,
+        let id = match self.tabs.screen {
+            Screen::Compare(index) => self.tabs.compares[index].sides[0].id,
+            Screen::Diagram(index) => self.tabs.diagrams[index].id,
+            Screen::Table(index) => self.tabs.tables[index].id,
             Screen::Console => self.console().id,
         };
         id.to_string()
@@ -28,23 +28,24 @@ impl App {
     }
 
     pub(super) fn agent_tabs(&self, offset: usize, limit: usize) -> Reply {
-        let consoles = self.consoles.iter().filter(|console|!console.hidden).map(|console|json!({
-            "tab_id":console.id.to_string(),"console_id":console.id.to_string(),"kind":"console","name":self.agent.console_label(&self.consoles,console.id,&console.name),
+        let consoles = self.tabs.consoles.iter().filter(|console|!console.hidden).map(|console|json!({
+            "tab_id":console.id.to_string(),"console_id":console.id.to_string(),"kind":"console","name":self.agent.console_label(&self.tabs.consoles,console.id,&console.name),
             "connection_id":console.connection.map(|id|id.to_string()),"schema":console.schema,
             "revision":console.editor.revision(),"phase":format!("{:?}",console.phase),"transaction":format!("{:?}",console.transaction),
             "result_count":console.results.len(),"selected_result":console.active,"agent_owned":self.agent.owned.contains_key(&console.id),"direct_edit":self.agent.direct.contains(&console.id),
         }));
-        let tables = self.tables.iter().map(|tab|json!({"tab_id":tab.id.to_string(),"kind":tab.kind(),"name":tab.label(),"connection_id":tab.connection.to_string(),"filter":tab.applied_filter(),"order":tab.applied_order(),"page":tab.page(),"has_more":tab.has_more,"busy":tab.is_busy()}));
-        let diagrams = self.diagrams.iter().map(|tab|json!({"tab_id":tab.id.to_string(),"kind":"diagram","name":tab.label(),"busy":tab.is_busy(),"partial":tab.partial}));
-        let comparisons = self.compares.iter().map(|tab|json!({"tab_id":tab.sides[0].id.to_string(),"kind":"compare","name":tab.label(),"busy":tab.is_busy(),"done":tab.done}));
+        let tables = self.tabs.tables.iter().map(|tab|json!({"tab_id":tab.id.to_string(),"kind":tab.kind(),"name":tab.label(),"connection_id":tab.connection.to_string(),"filter":tab.applied_filter(),"order":tab.applied_order(),"page":tab.page(),"has_more":tab.has_more,"busy":tab.is_busy()}));
+        let diagrams = self.tabs.diagrams.iter().map(|tab|json!({"tab_id":tab.id.to_string(),"kind":"diagram","name":tab.label(),"busy":tab.is_busy(),"partial":tab.partial}));
+        let comparisons = self.tabs.compares.iter().map(|tab|json!({"tab_id":tab.sides[0].id.to_string(),"kind":"compare","name":tab.label(),"busy":tab.is_busy(),"done":tab.done}));
         let total = self
+            .tabs
             .consoles
             .iter()
             .filter(|console| !console.hidden)
             .count()
-            + self.tables.len()
-            + self.diagrams.len()
-            + self.compares.len();
+            + self.tabs.tables.len()
+            + self.tabs.diagrams.len()
+            + self.tabs.compares.len();
         let tabs: Vec<_> = consoles
             .chain(tables)
             .chain(diagrams)
@@ -65,6 +66,7 @@ impl App {
         revision: Option<u64>,
     ) -> Reply {
         let console = self
+            .tabs
             .consoles
             .iter()
             .find(|item| item.id == console && !item.hidden)
@@ -86,6 +88,7 @@ impl App {
 
     pub(super) fn agent_messages(&self, console: u64, offset: usize, text_offset: usize) -> Reply {
         let console = self
+            .tabs
             .consoles
             .iter()
             .find(|item| item.id == console && !item.hidden)
@@ -116,14 +119,17 @@ impl App {
 
     fn agent_tab_busy(&self, tab: &str) -> bool {
         let Ok(tab) = id(tab) else { return false };
-        self.consoles
+        self.tabs
+            .consoles
             .iter()
             .any(|console| console.id == tab && console.is_busy())
             || self
+                .tabs
                 .tables
                 .iter()
                 .any(|table| table.id == tab && table.is_busy())
             || self
+                .tabs
                 .compares
                 .iter()
                 .any(|compare| compare.sides[0].id == tab && compare.is_busy())
@@ -132,6 +138,7 @@ impl App {
     fn agent_grid(&self, tab: &str, result: usize) -> Result<&ResultTab, Error> {
         let tab = id(tab)?;
         if let Some(console) = self
+            .tabs
             .consoles
             .iter()
             .find(|console| console.id == tab && !console.hidden)
@@ -141,10 +148,11 @@ impl App {
         if result != 0 {
             return Err(missing());
         }
-        if let Some(table) = self.tables.iter().find(|table| table.id == tab) {
+        if let Some(table) = self.tabs.tables.iter().find(|table| table.id == tab) {
             return Ok(&table.result);
         }
         if let Some(compare) = self
+            .tabs
             .compares
             .iter()
             .find(|compare| compare.sides[0].id == tab)

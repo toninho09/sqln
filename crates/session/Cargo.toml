@@ -20,3 +20,9 @@ tokio.workspace = true
 tokio-util.workspace = true
 webpki-roots.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

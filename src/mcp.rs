@@ -43,7 +43,12 @@ const TASK_WAIT: u64 = 50;
 const ACCESS_WAIT: u64 = 120;
 const MAX_WAIT: u64 = 600;
 
-static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
+static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(tools);
+
+/// Builds the tools from the schema of `Operation`. A test lists the tools, so a
+/// change of the schema that breaks these checks fails the test suite.
+#[expect(clippy::expect_used, reason = "the operation schema is constant")]
+fn tools() -> Vec<Tool> {
     // Inline subschemas: many clients do not resolve `$ref`, and then send a nested
     // argument, such as a compare side, as text.
     let schema = schemars::generate::SchemaSettings::draft2020_12()
@@ -102,7 +107,7 @@ static TOOLS: LazyLock<Vec<Tool>> = LazyLock::new(|| {
         tools.push(tool);
     }
     tools
-});
+}
 
 /// The longest part of a decoding error in a reply.
 const ARGUMENT_ERROR_CHARS: usize = 300;

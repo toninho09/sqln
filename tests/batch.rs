@@ -39,6 +39,7 @@ impl Home {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         // SAFETY: setsid is the only operation after fork.
+        #[allow(unsafe_code)]
         unsafe {
             command.pre_exec(|| {
                 rustix::process::setsid()?;
@@ -377,6 +378,8 @@ fn single_transaction_rolls_back_when_final_output_fails() {
 
 #[test]
 fn single_transaction_rolls_back_when_final_output_times_out() {
+    // Both formats wait the same real one-second timeout, so they run at once.
+    let mut runs = Vec::new();
     for format in ["csv", "json"] {
         let home = Home::new();
         let path = home.database();
@@ -385,7 +388,7 @@ fn single_transaction_rolls_back_when_final_output_times_out() {
             json!([{"id":"g1","name":"one","kind":"sqlite","file":path,"sqlTimeoutSeconds":1}]),
         );
         let (_reader, output) = full_output();
-        let mut child = home
+        let child = home
             .command(&[
                 "--connection",
                 "one",
@@ -398,6 +401,9 @@ fn single_transaction_rolls_back_when_final_output_times_out() {
             .stdout(output)
             .spawn()
             .unwrap();
+        runs.push((home, path, _reader, child));
+    }
+    for (_home, path, _reader, mut child) in runs {
         wait(&mut child);
         let output = child.wait_with_output().unwrap();
         assert_eq!(output.status.code(), Some(1));
@@ -720,13 +726,15 @@ fn saved_timeout_stops_a_full_output_pipe() {
 
 #[test]
 fn saved_timeout_stops_output_after_a_finite_query_finishes() {
+    // Both formats wait the same real one-second timeout, so they run at once.
+    let mut runs = Vec::new();
     for format in ["csv", "json"] {
         let home = Home::new();
         home.config(
             false,
             json!([{"id":"g1","name":"one","kind":"sqlite","file":":memory:","sqlTimeoutSeconds":1}]),
         );
-        let mut child = home
+        let child = home
             .command(&[
                 "--connection",
                 "one",
@@ -737,6 +745,9 @@ fn saved_timeout_stops_output_after_a_finite_query_finishes() {
             ])
             .spawn()
             .unwrap();
+        runs.push((home, child));
+    }
+    for (_home, mut child) in runs {
         // One row fills stdout, but the executor can queue ResultDone and finish the query.
         wait(&mut child);
         let output = child.wait_with_output().unwrap();

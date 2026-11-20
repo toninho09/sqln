@@ -381,6 +381,10 @@ const OTHER_FIXTURES: &[Action] = &[
     Action::EditorAiAccept,
     Action::EditorAiReject,
     Action::EditorAiCancel,
+    // The AI explanations need a configured provider and an error or a plan:
+    // `tests/ai.rs`.
+    Action::AiExplainError,
+    Action::AiExplainPlan,
     // A network connection with a saved password: `tests/auth.rs`
     // `the_palette_offers_the_command_that_deletes_the_saved_password`.
     Action::NavigatorDeletePassword,

@@ -741,7 +741,9 @@ fn apply<'v, 'e>(
             let mut expanded = String::new();
             let mut last = 0;
             for captures in regex.captures_iter(source) {
-                let found = captures.get(0).expect("a match has group 0");
+                let Some(found) = captures.get(0) else {
+                    continue;
+                };
                 out.push(&source.as_bytes()[last..found.start()])?;
                 expanded.clear();
                 captures.expand(replacement, &mut expanded);

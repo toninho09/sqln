@@ -18,3 +18,6 @@ sqln-session.workspace = true
 async-trait.workspace = true
 duckdb.workspace = true
 tokio.workspace = true
+
+[lints]
+workspace = true

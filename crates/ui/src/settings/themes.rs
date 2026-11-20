@@ -522,12 +522,20 @@ impl SettingsForm {
     }
 
     /// The name of the editor draft, or the place of a theme under edit.
+    #[expect(
+        clippy::expect_used,
+        reason = "the screen asks only while the editor is open"
+    )]
     pub fn theme_editor_name(&self) -> &LineInput {
         let editor = self.themes.editor().expect("the theme editor is open");
         &editor.name
     }
 
     /// The label of the base choice of the editor.
+    #[expect(
+        clippy::expect_used,
+        reason = "the screen asks only while the editor is open"
+    )]
     pub fn theme_base_label(&self) -> String {
         let editor = self.themes.editor().expect("the theme editor is open");
         let bases = self.themes.bases();

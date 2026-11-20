@@ -89,6 +89,7 @@ impl Terminal {
         // terminal of the person who runs the tests.
         //
         // SAFETY: the closure makes only system calls, so it is safe after a fork.
+        #[allow(unsafe_code)]
         unsafe {
             command.pre_exec(|| {
                 setsid()?;

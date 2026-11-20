@@ -89,6 +89,27 @@ SQL execution has its own Stop command.
 Only an edit of the requested line, the end of the console session, or a disabled provider discards a request, as the [inline review](UI.md#inline-review) section describes. An edit of the requested line stops the request at once; the application does not wait for an answer that cannot show.
 A response does not take focus from another dialog.
 
+## Explain an error or a plan
+
+The same provider also explains two things that the database gives:
+
+- **The last error of a console.** `Ctrl+W M` sends the newest failed statement of its current connection association and its error text. A connection change keeps earlier errors visible but excludes them from explanations. Returning to that connection does not enable earlier errors again.
+- **The plan on screen.** `Ctrl+W T` sends the statement and the plan tree that the grid shows, without the `EXPLAIN` prefix.
+
+Both commands also live in the command palette and the `Ctrl+W` menu when available. The error command needs a failed command; the plan command needs a plan on screen. Both require AI enabled and a configured provider. Custom shortcuts determine the keys shown in the menu. The answer shows in a text window: `Esc` closes it, `Up` and `Down` scroll it, and `Ctrl+C` copies it. An answer waits while another window or input prompt is open. The open window keeps its text, selection, and search. Closing that window permits the answer to show. Active editor and grid searches, parameter fields, and the navigator filter also delay the answer. They keep their text, cursor, and selection. `Esc` first closes the active input instead of cancelling the explanation. The answer never enters the editor and never runs.
+
+Rules:
+
+- Every source qualifies, Redis, Valkey, and Kafka included: the request explains text, not SQL edits.
+- The request carries the dialect, the statement, the error or the plan, and schema metadata when a snapshot is already loaded. An explanation starts no schema read of its own.
+- The statement is limited to 8 KiB and the error or plan to 16 KiB. A longer text cuts at a character boundary and ends with `... (truncated)`.
+- The metadata uses up to 24 KiB within the configured context limit. Objects that do not fit send names only, or stay out. The request marks reduced metadata.
+- Each explanation asks for consent, even when completion consent exists. SQL, errors, and plan predicates can contain sensitive values.
+- One explanation of a console runs at a time. `Esc`, **Stop**, or `Ctrl+W x` cancels it. Closing or changing the console, or starting another execution, cancels it too.
+- An explanation uses the same provider, credential, timeout, output limit, reasoning effort, and memory budget as completion. An incomplete answer shows a failure, not advice.
+- Before showing an answer, SQLN reserves its text, worst-case row caches, match ranges, and source-sized copies. This covers narrow windows, short lines, search, and resizing. An answer that does not fit shows a refusal. Closing or cancelling the answer releases the reservation. A pending answer keeps its reservation and the same cancellation rules.
+- A context that does not fit shows a refusal with the next step. No request leaves the machine in that case.
+
 ## Providers
 
 SQLN speaks one standard: the OpenAI-compatible Chat Completions API, as OpenRouter uses today.

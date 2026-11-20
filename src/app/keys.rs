@@ -2,51 +2,24 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::guard::short;
 use super::modal::Modal;
-use super::{App, DialogAction, Overlay, Screen};
+use super::run_sql::RunTarget;
+use super::tables::Tabs;
+use super::{App, Overlay, Screen};
 use crate::catalog::Catalog;
 use crate::connection::Connection;
-use crate::connector::{Namespace, TransactionCommand, TransactionState};
-use crate::console::{AfterTransaction, Focus, GridAction, Phase};
-use crate::editor::{FormatOutcome, KeyboardMode, RunPlan, RunRefusal, RunScope};
-use crate::exec::{ConnectionId, RunOptions};
+use crate::connector::TransactionCommand;
+use crate::console::{Focus, GridAction};
+use crate::editor::{KeyboardMode, RunScope};
+use crate::exec::ConnectionId;
 use crate::form::FormRequest;
-use crate::grid::printable;
-use crate::help::{GuideTopic, Help};
-use crate::input::{Action, Chord, Grid, Lookup, Region};
-use crate::navigator::RowKind;
-use crate::palette::{Command, Palette, PaletteRequest};
-use crate::plan::Explain;
+use crate::input::{Action, Chord, Lookup, Region};
 use crate::settings::SettingsRequest;
-use crate::sql::{first_keyword, is_plain_read};
 use crate::store::config::ExplorerSide;
-use crate::structure::has_sessions;
 use crate::table::TableFocus;
-use crate::ui::kit::measure::fit;
 use crate::ui::kit::prompt::TextAction;
 use crate::ui::text;
-use crate::ui::welcome::Welcome;
-use crate::ui::which_key::KeyGroup;
 use crate::ui::wrap::WrappedText;
-
-/// The actions of one row of the `Ctrl+W` menu, with its label.
-type MenuRow = (&'static [Action], &'static str);
-/// The title of one group of the `Ctrl+W` menu, with its rows.
-type MenuGroup = (&'static str, &'static [MenuRow]);
-
-/// The longest name of a row in the title of the explorer page.
-const EXPLORER_TITLE_NAME: usize = 48;
-
-/// What a run starts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RunTarget {
-    Statements(RunScope),
-    /// The plan of one statement. With `analyze`, the database also runs it.
-    Plan {
-        analyze: bool,
-    },
-}
 
 /// Returns the catalog of the console: the catalog of its connection, or the fallback
 /// catalog when the console has no connection. The borrowed fields serve the call of
@@ -70,7 +43,7 @@ impl App {
     }
 
     /// Returns the panel that receives keys, without a text field.
-    fn panel(&self) -> Option<Region> {
+    pub(super) fn panel(&self) -> Option<Region> {
         if self.navigator_focused {
             return (!self.navigator.filter_is_editing()).then_some(Region::Navigator);
         }
@@ -125,18 +98,6 @@ impl App {
         }
     }
 
-    fn on_help_key(&mut self, key: KeyEvent) {
-        let Some(help) = &mut self.help else {
-            return;
-        };
-        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            let contents = help.text();
-            self.copy(&contents);
-        } else if help.on_key(key) {
-            self.help = None;
-        }
-    }
-
     pub(super) fn on_key(&mut self, key: KeyEvent) {
         // The AI prompts get the keys under the question dialog and the password.
         if let Some(modal @ (Modal::Dialog | Modal::Password)) = self.top_modal() {
@@ -161,11 +122,11 @@ impl App {
             return;
         }
         let chord = Chord::from_event(key);
-        if let Some(region) = self.command_page.take() {
+        if let Some(region) = self.input.command_page.take() {
             self.on_command_page_key(region, chord);
             return;
         }
-        if let Some((region, mut keys)) = self.pending_key.take() {
+        if let Some((region, mut keys)) = self.input.pending_key.take() {
             keys.push(chord);
             self.on_sequence(region, keys);
             return;
@@ -217,7 +178,7 @@ impl App {
                 .modifiers
                 .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
         {
-            Chord::parse("ctrl+y").unwrap()
+            Chord::ctrl('y')
         } else {
             chord
         };
@@ -285,7 +246,7 @@ impl App {
                 true
             }
             Lookup::Sequence => {
-                self.pending_key = Some((region, vec![chord]));
+                self.input.pending_key = Some((region, vec![chord]));
                 true
             }
             Lookup::None => false,
@@ -297,7 +258,7 @@ impl App {
         if region != Region::Navigator && self.context_region() != Some(region) {
             return;
         }
-        if chord == Chord::parse("esc").unwrap() {
+        if chord == Chord::ESC {
             return;
         }
         match self.keymap.lookup(region, chord) {
@@ -314,7 +275,7 @@ impl App {
                     })
                 }) =>
             {
-                self.pending_key = Some((region, vec![chord]))
+                self.input.pending_key = Some((region, vec![chord]))
             }
             _ => {}
         }
@@ -326,7 +287,7 @@ impl App {
         {
             return;
         }
-        if keys.last() == Some(&Chord::parse("esc").unwrap()) {
+        if keys.last() == Some(&Chord::ESC) {
             return;
         }
         let mut found = self.keymap.sequence(region, &keys);
@@ -340,13 +301,14 @@ impl App {
                 self.perform(action, false)
             }
             Lookup::Action(_) => {}
-            Lookup::Sequence => self.pending_key = Some((region, keys)),
+            Lookup::Sequence => self.input.pending_key = Some((region, keys)),
             Lookup::None => {}
         }
     }
 
     pub(super) fn pending_prefix(&self) -> bool {
-        self.pending_key
+        self.input
+            .pending_key
             .as_ref()
             .is_some_and(|(_, keys)| keys.len() == 1 && keys[0].is_prefix())
     }
@@ -356,7 +318,7 @@ impl App {
         if let Some(tab) = self.table_mut() {
             tab.list = None;
         }
-        self.command_page = region;
+        self.input.command_page = region;
     }
 
     fn perform_editor_command(&mut self, action: Action) {
@@ -364,12 +326,12 @@ impl App {
             return;
         }
         self.ensure_active_catalog();
-        let index = self.active;
+        let index = self.tabs.active;
         let connection = self.catalog_for(index);
         let App {
-            consoles,
             connections,
             fallback_catalog,
+            tabs: Tabs { consoles, .. },
             ..
         } = self;
         let catalog = editor_catalog(
@@ -396,13 +358,13 @@ impl App {
 
     fn on_editor_key(&mut self, key: KeyEvent) {
         self.ensure_active_catalog();
-        let index = self.active;
+        let index = self.tabs.active;
         let connection = self.catalog_for(index);
         // The catalog and the console are separate fields of the application.
         let App {
-            consoles,
             connections,
             fallback_catalog,
+            tabs: Tabs { consoles, .. },
             ..
         } = self;
         let catalog = editor_catalog(
@@ -459,7 +421,7 @@ impl App {
             self.perform_analysis(action);
             return;
         }
-        let done = match self.screen {
+        let done = match self.tabs.screen {
             Screen::Diagram(_) => self.perform_on_diagram(action),
             Screen::Compare(_) => self.perform_on_compare(action),
             Screen::Table(_) => self.perform_on_table(action),
@@ -471,6 +433,8 @@ impl App {
         match action {
             Action::EditorAiComplete => self.start_ai_with(None),
             Action::EditorAiCompleteRequest => self.open_ai_request(),
+            Action::AiExplainError => self.start_ai_explain_error(),
+            Action::AiExplainPlan => self.start_ai_explain_plan(),
             Action::EditorAiAccept => self.decide_ghost(true),
             Action::EditorAiReject => self.decide_ghost(false),
             Action::EditorAiCancel => self.cancel_ai(),
@@ -522,7 +486,7 @@ impl App {
             Action::ContextCommands => self.open_command_page(self.context_region()),
             Action::EditorSave => self.save_now(),
             action if action.region() == Region::Editor => self.perform_editor_command(action),
-            Action::Stop => self.stop(self.active),
+            Action::Stop => self.stop(self.tabs.active),
             Action::ToggleMode => self.toggle_mode(),
             Action::Commit => self.transaction(TransactionCommand::Commit),
             Action::Rollback => self.transaction(TransactionCommand::Rollback),
@@ -566,6 +530,9 @@ impl App {
             | Action::NavigatorGenerate
             | Action::NavigatorImport
             | Action::NavigatorCopyName
+            | Action::NavigatorMoveUp
+            | Action::NavigatorMoveDown
+            | Action::NavigatorMoveToFolder
             | Action::NavigatorFilter
             | Action::NavigatorClearFilter => self.on_navigator_action(action),
             _ => self.on_grid_action(action, extend),
@@ -575,9 +542,13 @@ impl App {
     fn on_grid_action(&mut self, action: Action, extend: bool) {
         let budget = self.budget.clone();
         let vim = self.vim();
-        let outcome = match self.screen {
-            Screen::Compare(index) => self.compares[index].result.on_action(action, extend, vim),
-            Screen::Table(index) => self.tables[index].result.on_action(action, extend, vim),
+        let outcome = match self.tabs.screen {
+            Screen::Compare(index) => self.tabs.compares[index]
+                .result
+                .on_action(action, extend, vim),
+            Screen::Table(index) => self.tabs.tables[index]
+                .result
+                .on_action(action, extend, vim),
             Screen::Console | Screen::Diagram(_) => {
                 self.console_mut().on_results_action(action, extend)
             }
@@ -608,8 +579,9 @@ impl App {
                 if other.is_some() {
                     contents.highlight_json();
                 }
-                self.overlay = Some(Overlay {
+                self.modals.overlay = Some(Overlay {
                     _analysis_memory: None,
+                    _ai_memory: None,
                     title,
                     contents,
                     footer,
@@ -633,8 +605,9 @@ impl App {
     fn show_row(&mut self, row: usize, scroll: usize) {
         let window = self.active_result().and_then(|item| item.row_window(row));
         let Some(window) = window else { return };
-        self.overlay = Some(Overlay {
+        self.modals.overlay = Some(Overlay {
             _analysis_memory: None,
+            _ai_memory: None,
             title: window.title,
             contents: WrappedText::with_indent(window.text, window.indent),
             footer: window.footer,
@@ -650,6 +623,7 @@ impl App {
     /// the same columns stay in sight.
     fn step_row_window(&mut self, forward: bool) {
         let Some((row, scroll)) = self
+            .modals
             .overlay
             .as_ref()
             .and_then(|overlay| Some((overlay.row?, overlay.scroll)))
@@ -661,11 +635,11 @@ impl App {
         } else {
             row.saturating_sub(1)
         };
-        let result = match self.screen {
-            Screen::Compare(index) => Some(&mut self.compares[index].result),
-            Screen::Table(index) => Some(&mut self.tables[index].result),
+        let result = match self.tabs.screen {
+            Screen::Compare(index) => Some(&mut self.tabs.compares[index].result),
+            Screen::Table(index) => Some(&mut self.tabs.tables[index].result),
             Screen::Console | Screen::Diagram(_) => {
-                let console = &mut self.consoles[self.active];
+                let console = &mut self.tabs.consoles[self.tabs.active];
                 console.results.get_mut(console.active)
             }
         };
@@ -705,7 +679,7 @@ impl App {
 
     /// Returns true for an action that acts on the home screen: a command of the
     /// explorer, the focus key toward the explorer, or a command that needs no tab.
-    fn home_allows(&self, action: Action) -> bool {
+    pub(super) fn home_allows(&self, action: Action) -> bool {
         action == self.explorer_entry() || home_allows(action)
     }
 
@@ -727,483 +701,20 @@ impl App {
     }
 
     pub(super) fn select_console(&mut self, index: usize) {
-        if index < self.consoles.len() {
+        if index < self.tabs.consoles.len() {
             self.console_mut().editor.close_suggestions();
-            if !self.console_on_screen() || self.active != index {
+            if !self.console_on_screen() || self.tabs.active != index {
                 self.leave_tab();
             }
-            self.active = index;
-            self.screen = Screen::Console;
+            self.tabs.active = index;
+            self.tabs.screen = Screen::Console;
             self.sync_command_history();
         }
     }
 
-    fn open_keys(&mut self) {
-        let in_table = self.table_index().is_some() || self.compare_index().is_some();
-        // The explorer is the only panel of the home screen.
-        let panel = if self.navigator_focused || self.home() {
-            Some(Region::Navigator)
-        } else if self.context_region() == Some(Region::Review) {
-            Some(Region::Review)
-        } else {
-            self.panel()
-        };
-        let (region, name) = match panel {
-            Some(Region::Navigator) => (Some(Region::Navigator), text::REGION_NAVIGATOR),
-            Some(Region::Diagram) => (Some(Region::Diagram), text::REGION_DIAGRAM),
-            Some(Region::Review) => (Some(Region::Review), text::REGION_REVIEW),
-            Some(_) if self.compare_index().is_some() => (Some(Region::Grid), text::REGION_COMPARE),
-            Some(_) if in_table => (Some(Region::Grid), text::REGION_TABLE),
-            Some(_) => (Some(Region::Grid), text::REGION_GRID),
-            None if in_table => (None, text::REGION_FILTER),
-            None => (None, text::REGION_EDITOR),
-        };
-        let keys = match region {
-            Some(region) => self.help_keys(region),
-            None => {
-                let keys = if in_table {
-                    text::FILTER_KEYS
-                } else {
-                    text::EDITOR_KEYS
-                };
-                keys.iter()
-                    .map(|(key, label)| ((*key).to_owned(), *label))
-                    .collect()
-            }
-        };
-        let mut keys = keys;
-        if region.is_none() && !in_table {
-            keys.splice(0..0, self.help_keys(Region::Editor));
-        }
-        let mut groups = vec![KeyGroup { title: name, keys }];
-        for (action, keys, label) in self.help_actions(Region::Global) {
-            use Action::*;
-            let title = match action {
-                Run | RunScript | RunSubquery | Explain | ExplainAnalyze | Stop | FormatSql
-                | SqlDiagnostics | ToggleComment | OpenHistory => text::GROUP_RUN,
-                ToggleMode | Commit | Rollback => text::GROUP_TRANSACTION,
-                ChooseSchema | ChangeConnection | OpenSessions | OpenDiagram | OpenCompare
-                | FollowKey => text::GROUP_CONNECTION,
-                NextTab | PreviousTab | CloseTab | RenameConsole => text::GROUP_TABS,
-                FocusLeft | FocusRight | FocusUp | FocusDown | ToggleNavigator
-                | ExplorerCommands | ContextCommands => text::GROUP_PANELS,
-                _ => text::GROUP_APPLICATION,
-            };
-            if let Some(group) = groups.iter_mut().find(|group| group.title == title) {
-                group.keys.push((keys, label));
-            } else {
-                groups.push(KeyGroup {
-                    title,
-                    keys: vec![(keys, label)],
-                });
-            }
-        }
-        let mode = if self.vim() {
-            text::MODE_VIM
-        } else {
-            text::MODE_CONVENTIONAL
-        };
-        self.help = Some(Help::new(
-            text::keys_title(mode, name),
-            self.guide_topics(),
-            groups,
-        ));
-    }
-
-    /// Returns the guide with the effective key of each step.
-    fn guide_topics(&self) -> Vec<GuideTopic> {
-        text::GUIDE
-            .iter()
-            .map(|topic| GuideTopic {
-                name: topic.name,
-                title: topic.title,
-                intro: topic.intro,
-                steps: topic
-                    .steps
-                    .iter()
-                    .map(|(action, label)| (self.guide_key(*action), *label))
-                    .collect(),
-                examples: topic.examples,
-            })
-            .collect()
-    }
-
-    /// Returns the effective key of a guide step. An explorer command starts with the
-    /// focus key. A command without a key shows the palette path.
-    fn guide_key(&self, action: Action) -> String {
-        let Some(key) = self.shown_key(action) else {
-            let palette = self.shown_key(Action::OpenPalette).unwrap_or_default();
-            return format!("{palette} → {}", self.command_label(action));
-        };
-        if action.region() != Region::Navigator {
-            return key;
-        }
-        match self.shown_key(self.explorer_entry()) {
-            Some(focus) => format!("{focus} {key}"),
-            None => key,
-        }
-    }
-
-    fn help_keys(&self, region: Region) -> Vec<(String, &'static str)> {
-        self.help_actions(region)
-            .into_iter()
-            .map(|(_, key, label)| (key, label))
-            .collect()
-    }
-
-    fn help_actions(&self, region: Region) -> Vec<(Action, String, &'static str)> {
-        let grid = match self.screen {
-            Screen::Table(_) => Grid::Table,
-            Screen::Compare(_) => Grid::Compare,
-            Screen::Console | Screen::Diagram(_) => Grid::Console,
-        };
-        let in_table = grid != Grid::Console;
-        let sections = self.table().is_some_and(|tab| tab.section().is_some());
-        self.keymap
-            .actions(region)
-            .filter(|action| {
-                // Each grid shows only the keys that it has. A key of the table shows only
-                // when it has an effect now.
-                action.on_grid(grid) && (!action.is_table_only() || self.command_available(*action))
-            })
-            .filter_map(|action| {
-                let keys = self.keymap.keys(action);
-                let label = text::grid_action_text(action, in_table, sections);
-                (!keys.is_empty()).then(|| (action, keys.join(", "), label))
-            })
-            .collect()
-    }
-
-    fn run(&mut self, target: RunTarget) {
-        let console = self.console();
-        if console.connection.is_none() {
-            if console.file.is_some() {
-                // A script without a connection needs a choice before it runs.
-                self.start_association();
-            } else {
-                self.status = Some(text::NO_CONNECTION.to_owned());
-            }
-            return;
-        }
-        if self.config_blocked() {
-            return;
-        }
-        let console = self.console();
-        if console.is_busy() {
-            self.status = Some(text::EXECUTION_ACTIVE.to_owned());
-            return;
-        }
-        if console.transaction == TransactionState::Unknown {
-            let id = console.id;
-            self.show_dialog(
-                text::TITLE_UNKNOWN,
-                text::BODY_UNKNOWN.to_owned(),
-                vec![
-                    (text::OPTION_CANCEL, DialogAction::Dismiss),
-                    (text::OPTION_CONTINUE, DialogAction::RunAnyway(id, target)),
-                ],
-            );
-            return;
-        }
-        self.start_run(self.active, target);
-    }
-
-    pub(super) fn start_run(&mut self, index: usize, target: RunTarget) {
-        self.plan_and_run(index, target, true);
-    }
-
-    /// Runs after the answer to the question of `run_question`.
-    pub(super) fn run_confirmed(&mut self, index: usize, target: RunTarget) {
-        self.plan_and_run(index, target, false);
-    }
-
-    /// Returns the plan that a target asks for. A plan needs a source with plans and one
-    /// statement, and the error is the reason for the status line.
-    fn explain_of(
-        &self,
-        connection: ConnectionId,
-        target: RunTarget,
-        plan: &RunPlan,
-    ) -> Result<Option<Explain>, &'static str> {
-        let RunTarget::Plan { analyze } = target else {
-            return Ok(None);
-        };
-        let dialect = self.connection(connection).map(|item| item.dialect);
-        let explain = dialect.and_then(|dialect| Explain::new(dialect, analyze));
-        let Some(explain) = explain else {
-            // The source has a plan, but it cannot run the statement in it.
-            let no_analyze = analyze && dialect.and_then(|d| Explain::new(d, false)).is_some();
-            return Err(if no_analyze {
-                text::PLAN_ANALYZE_REFUSED
-            } else {
-                text::PLAN_REFUSED
-            });
-        };
-        match plan.statements.as_slice() {
-            [statement]
-                if first_keyword(statement, explain.dialect)
-                    .is_some_and(|word| word.eq_ignore_ascii_case("EXPLAIN")) =>
-            {
-                Err(text::PLAN_HAS_EXPLAIN)
-            }
-            [_] => Ok(Some(explain)),
-            _ => Err(text::PLAN_ONE_STATEMENT),
-        }
-    }
-
-    /// Returns the question before a run. A plan does not run its statement, so it needs
-    /// no question. A real run of a statement that can write always asks.
-    fn run_question(
-        &self,
-        connection: ConnectionId,
-        target: RunTarget,
-        plan: &RunPlan,
-    ) -> Option<String> {
-        if target == (RunTarget::Plan { analyze: false }) {
-            return None;
-        }
-        let warning = self.run_warning(connection, plan);
-        if target == RunTarget::Statements(RunScope::Subquery) {
-            return Some(text::subquery_question(
-                plan.rows[0] + 1,
-                &short(&plan.statements[0]),
-                warning.as_deref(),
-            ));
-        }
-        let dialect = self.connection(connection)?.dialect;
-        let statement = plan.statements.first()?;
-        let writes = matches!(target, RunTarget::Plan { .. })
-            && !is_plain_read(statement, dialect)
-            && !self.is_read_only(connection);
-        if !writes {
-            return warning;
-        }
-        let details = warning.unwrap_or_else(|| short(statement));
-        Some(format!("{}\n\n{details}", text::PLAN_ANALYZE_RUNS))
-    }
-
-    fn plan_and_run(&mut self, index: usize, target: RunTarget, ask: bool) {
-        let scope = match target {
-            RunTarget::Statements(scope) => scope,
-            RunTarget::Plan { .. } => RunScope::Default,
-        };
-        let console = &mut self.consoles[index];
-        match console.editor.plan_run(scope) {
-            Ok(plan) => {
-                let Some(connection) = console.connection else {
-                    return;
-                };
-                let dialect = self.consoles[index].editor.dialect();
-                let full_text = self.consoles[index].editor.text();
-                self.consoles[index]
-                    .parameters
-                    .update_names(crate::sql::parameters::names(&full_text, dialect));
-                let parameters = match self.consoles[index]
-                    .parameters
-                    .values(&plan.statements, dialect)
-                {
-                    Ok(parameters) => parameters,
-                    Err(reason) => {
-                        self.navigator_focused = false;
-                        self.consoles[index].focus = Focus::Parameters;
-                        self.status = Some(reason);
-                        return;
-                    }
-                };
-                if !parameters.is_empty()
-                    && !self
-                        .connection(connection)
-                        .is_some_and(|item| item.capabilities.parameters)
-                {
-                    self.status =
-                        Some("This connector does not support query parameters.".to_owned());
-                    return;
-                }
-                let explain = match self.explain_of(connection, target, &plan) {
-                    Ok(explain) => explain,
-                    Err(reason) => {
-                        self.status = Some(reason.to_owned());
-                        return;
-                    }
-                };
-                if ask && let Some(body) = self.run_question(connection, target, &plan) {
-                    let id = self.consoles[index].id;
-                    self.show_dialog(
-                        text::TITLE_CONFIRM_RUN,
-                        body,
-                        vec![
-                            (text::OPTION_CANCEL, DialogAction::Dismiss),
-                            (text::OPTION_RUN, DialogAction::RunConfirmed(id, target)),
-                        ],
-                    );
-                    return;
-                }
-                let console = &self.consoles[index];
-                // An agent tab runs in Auto mode: an open transaction would block the agent.
-                let manual = console.manual && !self.agent.owns(console.id);
-                let schema = console.schema.clone();
-                // A console can keep its manual mode when it moves to another source.
-                let options = RunOptions {
-                    manual: manual && self.has_transactions(connection),
-                    schema,
-                    only_schema: false,
-                    row_cap: None,
-                    export: None,
-                    stream: false,
-                    continue_on_error: false,
-                    hold_transaction: false,
-                    untimed: false,
-                    parameters,
-                    live: true,
-                };
-                let console = &self.consoles[index];
-                let revision = console.editor.revision();
-                let console = console.id;
-                self.authorize(
-                    connection,
-                    super::auth::Use::Run {
-                        console,
-                        connection,
-                        plan,
-                        options,
-                        revision,
-                        explain,
-                    },
-                );
-            }
-            Err(RunRefusal::CursorOutside) => {
-                self.status = Some(text::CURSOR_OUTSIDE.to_owned());
-            }
-            Err(RunRefusal::NoStatement) => self.status = Some(text::NO_STATEMENT.to_owned()),
-            Err(RunRefusal::NoSubquery) => self.status = Some(text::NO_SUBQUERY.to_owned()),
-        }
-    }
-
-    fn show_sql_diagnostics(&mut self) {
-        if !self.command_available(Action::SqlDiagnostics) {
-            let message =
-                if !self.console_on_screen() || self.console().editor.dialect().is_command_line() {
-                    text::SYNTAX_UNAVAILABLE
-                } else if self.console().editor.syntax_report().is_some() {
-                    text::SYNTAX_CLEAN
-                } else {
-                    text::SYNTAX_WAITING
-                };
-            self.status = Some(message.into());
-            return;
-        }
-        let Some(report) = self.console().editor.syntax_report() else {
-            return;
-        };
-        let contents = text::syntax_details(report);
-        self.console_mut().editor.close_suggestions();
-        self.overlay = Some(Overlay {
-            _analysis_memory: None,
-            title: text::SYNTAX_TITLE.into(),
-            contents: WrappedText::new(contents),
-            footer: "Esc close | Up/Down scroll | Ctrl+C copy".into(),
-            scroll: 0,
-            dragging: false,
-            other: None,
-            row: None,
-        });
-    }
-
-    fn format_console(&mut self) {
-        if !self.command_available(Action::FormatSql) {
-            return;
-        }
-        let message = match self.console_mut().editor.format_sql() {
-            Ok(FormatOutcome::Changed) => return,
-            Ok(FormatOutcome::Unchanged) => text::FORMAT_UNCHANGED,
-            Ok(FormatOutcome::Refused) => text::FORMAT_REFUSED,
-            Err(RunRefusal::CursorOutside) => text::CURSOR_OUTSIDE,
-            Err(RunRefusal::NoStatement) => text::NO_STATEMENT,
-            Err(RunRefusal::NoSubquery) => text::NO_SUBQUERY,
-        };
-        self.status = Some(message.to_owned());
-    }
-
-    fn comment_console(&mut self) {
-        if self.command_available(Action::ToggleComment) {
-            self.console_mut().editor.toggle_comment();
-        }
-    }
-
-    pub(super) fn stop(&mut self, index: usize) {
-        let id = self.consoles[index].id;
-        if self.cancel_agent_console(id) {
-            if self.consoles[index].closing && !self.consoles[index].is_busy() {
-                self.close_step(id);
-            }
-            return;
-        }
-        if self.stop_export(id) {
-            return;
-        }
-        if self.cancel_auth_console(id) {
-            if self.consoles[index].closing {
-                self.close_step(id);
-            }
-            return;
-        }
-        let console = &mut self.consoles[index];
-        if !console.is_busy() {
-            return;
-        }
-        if let Some(manager) = &self.manager {
-            manager.stop(console.id);
-            console.phase = Phase::Stopping;
-        }
-    }
-
-    fn transaction(&mut self, command: TransactionCommand) {
-        let console = self.console();
-        if console.is_busy() {
-            self.status = Some(text::EXECUTION_ACTIVE.to_owned());
-            return;
-        }
-        if !console.in_transaction() {
-            self.status = Some(text::NO_TRANSACTION.to_owned());
-            return;
-        }
-        if let Some(manager) = &self.manager {
-            manager.transaction(console.id, command);
-        }
-    }
-
-    fn toggle_mode(&mut self) {
-        let console = self.console_mut();
-        if console.is_busy() {
-            self.status = Some(text::EXECUTION_ACTIVE.to_owned());
-            return;
-        }
-        if !console.manual {
-            console.manual = true;
-            return;
-        }
-        if !console.in_transaction() {
-            console.manual = false;
-            return;
-        }
-        let id = console.id;
-        let after = AfterTransaction::UseAutocommit;
-        let rollback = DialogAction::Transaction(id, TransactionCommand::Rollback, after);
-        let commit = DialogAction::Transaction(id, TransactionCommand::Commit, after);
-        self.show_dialog(
-            text::TITLE_TRANSACTION,
-            text::BODY_TRANSACTION_MODE.to_owned(),
-            vec![
-                (text::OPTION_CANCEL, DialogAction::Dismiss),
-                (text::OPTION_ROLLBACK_AUTO, rollback),
-                (text::OPTION_COMMIT_AUTO, commit),
-            ],
-        );
-    }
-
     fn on_dialog_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(dialog) = self.dialogs.front_mut() else {
+        let Some(dialog) = self.modals.dialogs.front_mut() else {
             return;
         };
         let count = dialog.options.len();
@@ -1214,13 +725,13 @@ impl App {
             KeyCode::Char('h') if vim => dialog.focus = (dialog.focus + count - 1) % count,
             KeyCode::Enter => {
                 let action = dialog.options[dialog.focus].1.clone();
-                self.dialogs.pop_front();
+                self.modals.dialogs.pop_front();
                 self.on_dialog_action(action);
             }
             KeyCode::Esc => {
                 // The first option never changes the database or the disk.
                 let action = dialog.options[0].1.clone();
-                self.dialogs.pop_front();
+                self.modals.dialogs.pop_front();
                 self.on_dialog_action(action);
             }
             _ => {}
@@ -1229,12 +740,12 @@ impl App {
 
     fn on_picker_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(picker) = &mut self.picker else {
+        let Some(picker) = &mut self.modals.picker else {
             return;
         };
         let last = picker.items.len().saturating_sub(1);
         match key.code {
-            KeyCode::Esc => self.picker = None,
+            KeyCode::Esc => self.modals.picker = None,
             KeyCode::Enter => self.accept_picker(),
             KeyCode::Up => picker.cursor = picker.cursor.saturating_sub(1),
             KeyCode::Down => picker.cursor = (picker.cursor + 1).min(last),
@@ -1248,19 +759,19 @@ impl App {
     }
 
     fn on_name_key(&mut self, key: KeyEvent) {
-        let Some(prompt) = &mut self.rename else {
+        let Some(prompt) = &mut self.modals.rename else {
             return;
         };
         match prompt.on_key(key) {
             TextAction::None => {}
-            TextAction::Cancel => self.rename = None,
+            TextAction::Cancel => self.modals.rename = None,
             TextAction::Accept(name) => self.accept_name(name),
         }
     }
 
     fn on_settings_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(form) = &mut self.settings_form else {
+        let Some(form) = &mut self.modals.settings_form else {
             return;
         };
         match form.on_key(key, vim) {
@@ -1273,7 +784,7 @@ impl App {
 
     fn on_export_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        if let Some(form) = &mut self.export_form {
+        if let Some(form) = &mut self.modals.export_form {
             let request = form.on_key(key, vim);
             self.on_export_request(request);
         }
@@ -1281,7 +792,7 @@ impl App {
 
     fn on_import_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        if let Some(form) = &mut self.import_form {
+        if let Some(form) = &mut self.modals.import_form {
             let action = form.on_key(key, vim);
             self.on_import_action(action);
         }
@@ -1289,10 +800,12 @@ impl App {
 
     fn on_form_key(&mut self, key: KeyEvent) {
         let vim = self.vim();
-        let Some(form) = &mut self.form else { return };
+        let Some(form) = &mut self.modals.form else {
+            return;
+        };
         match form.on_key(key, vim) {
             FormRequest::None => {}
-            FormRequest::Cancel => self.form = None,
+            FormRequest::Cancel => self.modals.form = None,
             FormRequest::Test => self.test_form(),
             FormRequest::Save => self.save_form(),
             FormRequest::Disconnect => self.disconnect_form(),
@@ -1301,7 +814,7 @@ impl App {
     }
 
     pub(super) fn continue_overlay_search(&mut self, deadline: std::time::Instant) {
-        if let Some(overlay) = &mut self.overlay
+        if let Some(overlay) = &mut self.modals.overlay
             && let Some(row) = overlay.contents.continue_search(deadline)
         {
             overlay.scroll = row;
@@ -1315,11 +828,13 @@ impl App {
         }
         let mut find = ctrl && key.code == KeyCode::Char('f');
         let searching = self
+            .modals
             .overlay
             .as_ref()
             .is_some_and(|overlay| overlay.contents.search().is_some());
         if !searching && !find {
             let mut keys = self
+                .input
                 .pending_key
                 .take()
                 .map_or_else(Vec::new, |(_, keys)| keys);
@@ -1343,15 +858,15 @@ impl App {
                 partial |= binding.starts_with(&keys);
             }
             if partial && !find {
-                self.pending_key = Some((Region::Editor, keys));
+                self.input.pending_key = Some((Region::Editor, keys));
                 return;
             }
         }
-        let Some(overlay) = &mut self.overlay else {
+        let Some(overlay) = &mut self.modals.overlay else {
             return;
         };
         if find {
-            self.pending_key = None;
+            self.input.pending_key = None;
             overlay.dragging = false;
             overlay.contents.open_search();
             return;
@@ -1380,8 +895,8 @@ impl App {
         }
         match key.code {
             KeyCode::Esc | KeyCode::Enter => {
-                self.overlay = None;
-                self.analysis_job = None;
+                self.modals.overlay = None;
+                self.background.analysis = None;
             }
             KeyCode::Up | KeyCode::Char('k') => overlay.scroll = overlay.scroll.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => overlay.scroll = overlay.scroll.saturating_add(1),
@@ -1409,509 +924,6 @@ impl App {
             }
             .to_owned(),
         );
-    }
-
-    /// Returns the key to show for an action. `Ctrl+Enter` and `Shift+Enter` depend on
-    /// the terminal, so another key goes first. A removed key shows nothing.
-    pub(super) fn shown_key(&self, action: Action) -> Option<String> {
-        let keys = self.keymap.keys(action);
-        let steady = keys
-            .iter()
-            .find(|key| !matches!(key.as_str(), "ctrl+enter" | "shift+enter"));
-        steady.or(keys.first()).map(|key| text::key_label(key))
-    }
-
-    /// Joins the second keys of `Ctrl+W` for a group of actions.
-    fn prefix_keys(&self, actions: &[Action]) -> String {
-        let second = |action: &Action| {
-            let keys = self.keymap.keys(*action).iter();
-            keys.filter_map(|key| key.strip_prefix("ctrl+w "))
-                .map(text::key_label)
-                .next()
-        };
-        actions.iter().filter_map(second).collect()
-    }
-
-    /// Returns the title of the explorer page, with the row that its commands act on.
-    pub(super) fn explorer_menu_title(&self) -> String {
-        let row = self.navigator.current(&self.connections);
-        let name = row.as_ref().map(|row| {
-            let name = printable(row.name(&self.connections));
-            fit(&name, EXPLORER_TITLE_NAME).0
-        });
-        text::explorer_menu_title(name.as_deref())
-    }
-
-    /// Returns the groups of the explorer page. Each command keeps its key of the explorer.
-    pub fn explorer_menu(&self) -> Vec<KeyGroup> {
-        use Action::*;
-        let groups: [MenuGroup; 3] = [
-            (
-                text::GROUP_CONSOLE,
-                &[
-                    (&[NavigatorNewConsole], text::MENU_NEW_CONSOLE),
-                    (&[NavigatorScripts], text::MENU_SCRIPTS),
-                    (&[NavigatorRefresh], text::MENU_REFRESH),
-                ],
-            ),
-            (
-                text::GROUP_CONNECTION,
-                &[
-                    (&[NavigatorEdit], text::MENU_EDIT_CONNECTION),
-                    (&[NavigatorAdd], text::MENU_ADD_CONNECTION),
-                    (&[NavigatorDelete], text::MENU_REMOVE_CONNECTION),
-                    (&[NavigatorDisconnect], text::MENU_DISCONNECT),
-                    (&[NavigatorDeletePassword], text::MENU_DELETE_PASSWORD),
-                    (&[NavigatorSessions], text::MENU_SESSIONS),
-                ],
-            ),
-            (
-                text::GROUP_ROW,
-                &[
-                    (&[NavigatorOpen], text::MENU_OPEN),
-                    (&[NavigatorExpand], text::MENU_EXPAND),
-                    (&[NavigatorCollapse], text::MENU_COLLAPSE),
-                    (&[NavigatorStructure], text::MENU_STRUCTURE),
-                    (&[NavigatorDiagram], text::MENU_DIAGRAM),
-                    (&[NavigatorCompare], text::MENU_COMPARE),
-                    (&[NavigatorGenerate], text::MENU_GENERATE),
-                    (&[NavigatorImport], text::MENU_IMPORT),
-                    (&[NavigatorCopyName], text::MENU_COPY_NAME),
-                    (&[NavigatorFilter], text::MENU_FILTER),
-                    (&[NavigatorClearFilter], text::MENU_CLEAR_FILTER),
-                ],
-            ),
-        ];
-        let acting = self.explorer_commands();
-        let on_console = self
-            .navigator
-            .current(&self.connections)
-            .is_some_and(|row| row.kind == RowKind::Console);
-        groups
-            .iter()
-            .map(|(title, rows)| {
-                let shown = rows.iter().filter_map(|(actions, label)| {
-                    let action = actions.first().filter(|item| acting.contains(item))?;
-                    // On a console row, these two keys act on the console.
-                    let label = match action {
-                        NavigatorRefresh if on_console => text::MENU_RENAME_CONSOLE,
-                        NavigatorDelete if on_console => text::MENU_REMOVE_CONSOLE,
-                        _ => *label,
-                    };
-                    Some((self.shown_key(*action)?, label))
-                });
-                KeyGroup {
-                    title,
-                    keys: shown.collect(),
-                }
-            })
-            .collect()
-    }
-
-    /// Returns true when `Ctrl+W k` or `Ctrl+W j` moves the focus from the panel of the
-    /// cursor to another panel of the tab on screen.
-    fn focus_moves(&self, up: bool) -> bool {
-        if self.navigator_focused
-            || self.diagram_index().is_some()
-            || self.compare_index().is_some()
-        {
-            return false;
-        }
-        let console = self.console();
-        match self.table() {
-            Some(tab) if up => tab.filters && tab.focus == TableFocus::Grid,
-            Some(tab) => tab.focus != TableFocus::Grid,
-            None if up => console.focus == Focus::Results,
-            None => console.focus == Focus::Editor && !console.results.is_empty(),
-        }
-    }
-
-    /// Returns true when a command of the `Ctrl+W` menu has an effect now and belongs to
-    /// the panel of the cursor. The key of a command outside the menu keeps its action.
-    pub(super) fn fits_cursor(&self, action: Action) -> bool {
-        use Action::*;
-        let console = self.console();
-        let in_console = !self.navigator_focused && self.console_on_screen();
-        let in_editor = in_console && console.focus == Focus::Editor;
-        let available = self.command_available(action);
-        match action {
-            // Only the palette leaves itself out of its list.
-            OpenPalette => true,
-            Run | RunScript => {
-                in_console && console.focus != Focus::Results && available && console.can_run()
-            }
-            SqlDiagnostics | RunSubquery => in_editor && available,
-            Explain | ExplainAnalyze | FormatSql | ToggleComment => {
-                in_editor && available && !console.editor.is_blank()
-            }
-            OpenHistory => in_editor && available,
-            RenameConsole | ToggleMode | ChooseSchema => in_console && available,
-            ChangeConnection => {
-                in_console
-                    && available
-                    && !console.is_busy()
-                    && !console.in_transaction()
-                    && !self.connections.is_empty()
-            }
-            // A failed transaction can only end with a rollback.
-            Commit => available && console.transaction != TransactionState::Failed,
-            NextTab | PreviousTab => available && self.tab_order().len() > 1,
-            FocusUp => self.focus_moves(true),
-            FocusDown => self.focus_moves(false),
-            _ => available,
-        }
-    }
-
-    /// Returns the groups of the `Ctrl+W` menu, with the commands of the panel of the
-    /// cursor. A removed key leaves its group, and a row keeps only the keys that act.
-    pub fn prefix_menu(&self) -> Vec<KeyGroup> {
-        use Action::*;
-        let groups: [MenuGroup; 6] = [
-            (
-                text::GROUP_PANELS,
-                &[
-                    (
-                        &[FocusLeft, FocusDown, FocusUp, FocusRight],
-                        text::MENU_FOCUS,
-                    ),
-                    (&[ToggleNavigator], text::MENU_NAVIGATOR),
-                    (&[FocusParameters], text::PARAMETERS_TITLE),
-                    (&[ToggleParameters], text::PARAMETERS_TOGGLE),
-                    (&[ExplorerCommands], text::MENU_EXPLORER),
-                    (&[ContextCommands], text::MENU_CONTEXT),
-                ],
-            ),
-            (
-                text::GROUP_TABS,
-                &[
-                    (&[NextTab], text::MENU_NEXT_TAB),
-                    (&[PreviousTab], text::MENU_PREVIOUS_TAB),
-                    (&[RenameConsole], text::MENU_RENAME),
-                    (&[CloseTab], text::MENU_CLOSE_TAB),
-                ],
-            ),
-            (
-                text::GROUP_RUN,
-                &[
-                    (&[Run], text::MENU_RUN),
-                    (&[RunScript], text::MENU_SCRIPT),
-                    (&[RunSubquery], text::MENU_SUBQUERY),
-                    (&[Explain], text::MENU_EXPLAIN),
-                    (&[ExplainAnalyze], text::MENU_EXPLAIN_ANALYZE),
-                    (&[Stop], text::MENU_STOP),
-                    (&[FormatSql], text::MENU_FORMAT),
-                    (&[SqlDiagnostics], text::SYNTAX_TITLE),
-                    (&[ToggleComment], text::MENU_COMMENT),
-                    (&[OpenHistory], text::MENU_HISTORY),
-                ],
-            ),
-            (
-                text::GROUP_TRANSACTION,
-                &[
-                    (&[ToggleMode], text::MENU_MODE),
-                    (&[Commit], text::MENU_COMMIT),
-                    (&[Rollback], text::MENU_ROLLBACK),
-                ],
-            ),
-            (
-                text::GROUP_CONNECTION,
-                &[
-                    (&[ChooseSchema], text::MENU_SCHEMA),
-                    (&[ChangeConnection], text::MENU_CHANGE),
-                    (&[OpenSessions], text::MENU_SESSIONS),
-                    (&[OpenDiagram], text::MENU_DIAGRAM),
-                    (&[OpenCompare], text::MENU_COMPARE),
-                    (&[FollowKey], text::MENU_FOLLOW),
-                ],
-            ),
-            (
-                text::GROUP_APPLICATION,
-                &[
-                    (&[OpenPalette], text::MENU_COMMANDS),
-                    (&[Help], text::MENU_KEYS),
-                    (&[OpenSettings], text::MENU_SETTINGS),
-                    (&[ReloadConfig], text::MENU_RELOAD),
-                    (&[Quit], text::MENU_QUIT),
-                ],
-            ),
-        ];
-        groups
-            .iter()
-            .map(|(title, rows)| {
-                let shown = rows.iter().filter_map(|(actions, label)| {
-                    let mut fitting = actions.to_vec();
-                    fitting.retain(|action| self.fits_cursor(*action));
-                    let keys = self.prefix_keys(&fitting);
-                    let label = if actions.first() == Some(&Run) {
-                        self.command_label(Run)
-                    } else {
-                        *label
-                    };
-                    (!keys.is_empty()).then_some((keys, label))
-                });
-                KeyGroup {
-                    title,
-                    keys: shown.collect(),
-                }
-            })
-            .collect()
-    }
-
-    pub(super) fn has_transactions(&self, connection: ConnectionId) -> bool {
-        self.connection(connection)
-            .is_none_or(|item| item.capabilities.transactions)
-    }
-
-    /// Returns true when an action has an effect in the current state.
-    pub(super) fn command_available(&self, action: Action) -> bool {
-        if matches!(
-            action,
-            Action::EditorAiComplete
-                | Action::EditorAiCompleteRequest
-                | Action::EditorAiAccept
-                | Action::EditorAiReject
-                | Action::EditorAiCancel
-        ) {
-            return self.ai_action_available(action);
-        }
-        if action == Action::EditorSuggestions && self.ai_eligible() {
-            return true;
-        }
-        if action.region() == Region::Review {
-            return self.review_command_available(action);
-        }
-        if self.review_blocks(action) {
-            return false;
-        }
-        if self.home() && !self.home_allows(action) {
-            return false;
-        }
-        match action.region() {
-            Region::Navigator => return self.navigator_command_available(action),
-            Region::Grid => return self.grid_command_available(action),
-            Region::Editor => {
-                return self.editor_has_focus() && self.console().editor.command_available(action);
-            }
-            Region::Diagram => return self.diagram_command_available(action),
-            _ => {}
-        }
-        let console = self.console();
-        let in_table = !self.console_on_screen();
-        let idle = !console.is_busy();
-        let connection = self.active_connection();
-        let transactions = connection.is_none_or(|item| item.capabilities.transactions);
-        let namespace =
-            connection.is_some_and(|item| item.capabilities.namespace != Namespace::None);
-        match action {
-            Action::AgentSessions => self.agent.has_sessions(),
-            Action::AgentReview => self.agent.has_proposals(),
-            Action::AgentDirect => !in_table && !self.home(),
-            Action::AgentStop => self.agent.active_tasks() != 0,
-            Action::AgentSqlToConsole | Action::AgentSqlClear => {
-                !in_table && self.agent.owns(console.id) && !console.editor.is_blank()
-            }
-            Action::AgentSession => !in_table && self.agent.tab_session(console.id).is_some(),
-            Action::AgentTasks => !in_table && self.agent.tab_tasks(console.id) != 0,
-            Action::OpenPalette => false,
-            Action::ContextCommands => self.context_region().is_some(),
-            Action::Run | Action::RunScript => {
-                !in_table && idle && !self.association_pending(console.id)
-            }
-            Action::RunSubquery => {
-                self.editor_has_focus()
-                    && idle
-                    && !self.association_pending(console.id)
-                    && !console.editor.dialect().is_command_line()
-            }
-            Action::Explain | Action::ExplainAnalyze => {
-                let analyze = action == Action::ExplainAnalyze;
-                let plans =
-                    connection.is_some_and(|item| Explain::new(item.dialect, analyze).is_some());
-                !in_table && idle && plans
-            }
-            Action::Stop => match self.screen {
-                Screen::Compare(index) => self.compares[index].is_busy(),
-                Screen::Diagram(index) => self.diagrams[index].is_busy(),
-                Screen::Table(index) => self.tables[index].is_busy(),
-                Screen::Console => !idle,
-            },
-            Action::ToggleMode => !in_table && idle && transactions && !self.agent.owns(console.id),
-            Action::Commit => {
-                !in_table
-                    && idle
-                    && console.in_transaction()
-                    && console.transaction != TransactionState::Failed
-            }
-            Action::Rollback => !in_table && idle && console.in_transaction(),
-            Action::ChooseSchema => !in_table && idle && namespace && !console.in_transaction(),
-            Action::OpenDiagram => self.can_open_diagram_here(),
-            Action::OpenCompare => self.can_open_compare_here(),
-            Action::FollowKey => self.can_follow_key(),
-            Action::OpenSessions => self.sessions_connection().is_some_and(|id| {
-                let dialect = self.connection(id).map(|item| item.dialect);
-                dialect.is_some_and(has_sessions)
-            }),
-            Action::RenameConsole | Action::ChangeConnection => !in_table,
-            Action::OpenSqlFile => !self.connections.is_empty(),
-            Action::FocusParameters | Action::ToggleParameters => {
-                self.console_on_screen() && !console.parameters.fields.is_empty()
-            }
-            Action::SqlDiagnostics => {
-                self.console_on_screen()
-                    && console.editor.syntax_report().is_some_and(|report| {
-                        !report.diagnostics.is_empty() || report.note.is_some()
-                    })
-            }
-            Action::FormatSql => !in_table && !console.editor.dialect().is_command_line(),
-            Action::ToggleComment => !in_table,
-            Action::OpenHistory => !in_table && self.history_is_open_to(connection),
-            Action::FocusLeft | Action::FocusRight if action == self.explorer_entry() => {
-                !self.navigator.collapsed && !self.navigator_focused
-            }
-            Action::FocusLeft | Action::FocusRight => self.navigator_focused,
-            _ => true,
-        }
-    }
-
-    fn open_palette(&mut self) {
-        self.console_mut().editor.close_suggestions();
-        let commands = self
-            .palette_actions()
-            .into_iter()
-            .map(|action| {
-                let label = self.command_label(action);
-                let label = match self.command_target(action) {
-                    Some(target) => format!("{label} — {target}"),
-                    None => label.to_owned(),
-                };
-                let key_works = action.region() == Region::Global
-                    || Some(action.region()) == self.context_region();
-                Command {
-                    action,
-                    label,
-                    key: if key_works {
-                        self.shown_key(action)
-                    } else {
-                        None
-                    },
-                }
-            })
-            .collect();
-        self.palette = Some(Palette::new(commands));
-    }
-
-    fn on_palette_key(&mut self, key: KeyEvent) {
-        let Some(palette) = &mut self.palette else {
-            return;
-        };
-        let request = palette.on_key(key);
-        self.on_palette_request(request);
-    }
-
-    pub(super) fn on_palette_request(&mut self, request: PaletteRequest) {
-        match request {
-            PaletteRequest::None => {}
-            PaletteRequest::Cancel => self.palette = None,
-            PaletteRequest::Run(action) => {
-                self.palette = None;
-                if self.command_available(action) {
-                    self.perform(action, false);
-                }
-            }
-        }
-    }
-
-    /// Returns the first screen of a console without text.
-    pub(super) fn welcome(&self) -> Option<Welcome> {
-        if !self.console().editor.is_blank() {
-            return None;
-        }
-        let keyed = |action, label| self.welcome_command(action, label);
-        let mut rows = Vec::new();
-        let note = if self.connections.is_empty() {
-            rows.extend(self.explorer_row(Action::NavigatorAdd, text::WELCOME_ADD));
-            text::WELCOME_NO_CONNECTION
-        } else {
-            rows.extend(keyed(Action::Run, text::WELCOME_RUN));
-            rows.extend(keyed(Action::RunScript, text::WELCOME_SCRIPT));
-            rows.extend(keyed(Action::EditorSuggestions, text::WELCOME_SUGGESTIONS));
-            rows.extend(keyed(Action::OpenSqlFile, text::HOME_OPEN_SQL));
-            text::WELCOME_WRITE
-        };
-        rows.extend(keyed(Action::OpenPalette, text::WELCOME_COMMANDS));
-        rows.extend(keyed(Action::Help, text::WELCOME_KEYS));
-        Some(Welcome {
-            logo: false,
-            note,
-            rows,
-        })
-    }
-
-    /// Returns the screen of the application without a tab.
-    pub(super) fn home_screen(&self) -> Welcome {
-        let keyed = |action, label| self.welcome_command(action, label);
-        let mut rows = Vec::new();
-        if self.navigator.collapsed {
-            rows.extend(keyed(Action::ToggleNavigator, text::HOME_EXPLORER));
-        }
-        rows.push((String::new(), text::HOME_CONNECT));
-        rows.extend(self.explorer_row(Action::NavigatorAdd, text::WELCOME_ADD));
-        let note = if self.connections.is_empty() {
-            rows.push((String::new(), text::HOME_SQL_NEEDS_CONNECTION));
-            text::WELCOME_NO_CONNECTION
-        } else {
-            if self
-                .navigator
-                .current(&self.connections)
-                .is_some_and(|row| matches!(row.kind, RowKind::Connection | RowKind::Console))
-            {
-                rows.extend(self.explorer_row(Action::NavigatorOpen, text::HOME_CONSOLE));
-            }
-            rows.extend(keyed(Action::OpenSqlFile, text::HOME_OPEN_SQL));
-            text::HOME_NO_CONSOLE
-        };
-        rows.push((String::new(), text::HOME_SAVED));
-        rows.extend(self.explorer_row(Action::NavigatorNewConsole, text::HOME_SAVED_CONSOLES));
-        rows.extend(self.explorer_row(Action::NavigatorScripts, text::HOME_SCRIPTS));
-        rows.extend(keyed(Action::OpenSettings, text::HOME_SETTINGS));
-        rows.extend(keyed(Action::OpenPalette, text::WELCOME_COMMANDS));
-        rows.extend(keyed(Action::Help, text::WELCOME_KEYS));
-        rows.extend(keyed(Action::Quit, text::HOME_QUIT));
-        Welcome {
-            logo: true,
-            note,
-            rows,
-        }
-    }
-
-    /// Shows a direct shortcut, or the palette followed by the command label.
-    fn welcome_command(
-        &self,
-        action: Action,
-        label: &'static str,
-    ) -> Option<(String, &'static str)> {
-        let available = if action.region() == Region::Navigator {
-            self.navigator_command_available(action)
-        } else {
-            self.command_available(action)
-        };
-        if !available && action != Action::OpenPalette {
-            return None;
-        }
-        match self.shown_key(action) {
-            Some(key) => Some((key, label)),
-            None => Some((
-                format!("{} →", self.shown_key(Action::OpenPalette)?),
-                self.command_label(action),
-            )),
-        }
-    }
-
-    /// Returns the path to an explorer command from any panel.
-    fn explorer_row(&self, action: Action, label: &'static str) -> Option<(String, &'static str)> {
-        let focus = self.shown_key(self.explorer_entry())?;
-        let (key, label) = self.welcome_command(action, label)?;
-        Some((format!("{focus} {key}"), label))
     }
 }
 

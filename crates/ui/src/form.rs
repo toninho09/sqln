@@ -31,6 +31,8 @@ pub enum Field {
     Sections,
     Kind,
     Name,
+    /// The folder of the connection in the explorer. Empty puts it at the top level.
+    Folder,
     Scope,
     Entry,
     Uri,
@@ -107,7 +109,9 @@ impl Field {
     /// Returns the section of the sidebar that holds the field.
     pub fn group(self) -> Group {
         match self {
-            Field::Kind | Field::Name | Field::Scope | Field::Entry => Group::General,
+            Field::Kind | Field::Name | Field::Folder | Field::Scope | Field::Entry => {
+                Group::General
+            }
             Field::Uri
             | Field::Host
             | Field::Port
@@ -359,6 +363,7 @@ impl ConnectionForm {
         form.theme = definition.theme.clone();
         form.icon = definition.icon;
         form.set(Field::Name, definition.name.clone());
+        form.set(Field::Folder, definition.folder.clone().unwrap_or_default());
         form.set(Field::Pool, definition.max_connections.to_string());
         form.set(
             Field::ConnectTimeout,
@@ -465,7 +470,7 @@ impl ConnectionForm {
     /// Lists the visible fields, in order.
     pub fn fields(&self) -> Vec<Field> {
         if self.display_only {
-            let mut fields = vec![Field::Name];
+            let mut fields = vec![Field::Name, Field::Folder];
             if self.has_schemas() {
                 fields.push(Field::Schemas);
             }
@@ -479,7 +484,7 @@ impl ConnectionForm {
             ]);
             return fields;
         }
-        let mut fields = vec![Field::Kind, Field::Name];
+        let mut fields = vec![Field::Kind, Field::Name, Field::Folder];
         if self.project_available && self.editing.is_none() {
             fields.push(Field::Scope);
         }
@@ -1090,6 +1095,18 @@ impl ConnectionForm {
         std::path::absolute(file).map_err(|_| invalid(Field::File, text::FORM_NO_CURRENT_FOLDER))
     }
 
+    /// Returns the folder of the connection. An empty field gives no folder.
+    pub fn folder(&self) -> Result<Option<String>, Invalid> {
+        let name = self.trimmed(Field::Folder);
+        if name.is_empty() {
+            return Ok(None);
+        }
+        match crate::store::config::folder_error(name) {
+            Some(message) => Err(invalid(Field::Folder, message)),
+            None => Ok(Some(name.to_owned())),
+        }
+    }
+
     /// Builds the definition. The error names the field and holds no input, because a
     /// connection text can hold a password.
     pub fn definition(&self) -> Result<Definition, Invalid> {
@@ -1112,6 +1129,7 @@ impl ConnectionForm {
         definition.production = self.production;
         definition.theme = self.theme.clone();
         definition.icon = self.icon;
+        definition.folder = self.folder()?;
         definition.max_connections = usize::try_from(limit).unwrap_or(usize::MAX);
         if self.kind != Kind::Sqlite {
             definition.schemas = self.schemas()?;

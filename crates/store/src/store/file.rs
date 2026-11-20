@@ -18,6 +18,16 @@ pub fn hash(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
+/// The size and the time of a file. An equal stamp means that the file did not change,
+/// so a check can skip the read and the hash.
+pub type Stamp = (u64, SystemTime);
+
+/// Returns the stamp of a file, or `None` when it is absent or unreadable.
+pub fn stamp(path: &Path) -> Option<Stamp> {
+    let meta = fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()?))
+}
+
 /// Reads a UTF-8 file. It returns the text and the hash of the bytes.
 pub fn read(path: &Path) -> io::Result<(String, u64)> {
     let bytes = fs::read(path)?;
