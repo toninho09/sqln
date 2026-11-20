@@ -34,10 +34,16 @@ impl App {
         rules::script_row(entry, show_scope, self.is_script_open(entry))
     }
 
-    /// Lists the saved consoles of a scope, the newest first. This reads the disk.
+    /// Lists the saved consoles of a scope, the newest first. It reads the disk only when
+    /// the folder changed since the last list.
     fn saved_consoles(&self, scope: Scope) -> Vec<ScriptEntry> {
-        self.persist_root(scope)
-            .map_or_else(Vec::new, |root| scripts::list(&root, scope))
+        let Some(persist) = &self.persist else {
+            return Vec::new();
+        };
+        persist
+            .store
+            .root(scope)
+            .map_or_else(Vec::new, |root| persist.scripts.list(root, scope))
     }
 
     /// Lists the saved consoles of a connection, the newest first.

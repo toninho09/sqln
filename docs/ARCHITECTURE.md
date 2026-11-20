@@ -239,8 +239,8 @@ See [local syntax warnings](UI.md#local-sql-syntax-warnings) for coverage and li
 |---|---|
 | `store::file` | `write_atomic`, `write_private_atomic` (exclusive temporary and permission `0600` on Unix), hash, locks, and cleanup of old `.tmp` files |
 | `store::config` | Reading with `serde`, validation, precedence, `Definition` of each entry, and `change_connections` (reread under lock, change, and write) |
-| `store::themes` | `themes/<id>.json`: one custom theme per file, load with notes, save and removal under `locks/themes.lock` with the hash of the load, and the manifest hash of the folder |
-| `store::scripts` | `.sql` and `.json` files of a console, list, lock per console, copy between scopes, and line ending |
+| `store::themes` | `themes/<id>.json`: one custom theme per file, load with notes, save and removal under `locks/themes.lock` with the hash of the load, the manifest hash of the folder, and its stamp of names, sizes, and dates |
+| `store::scripts` | `.sql` and `.json` files of a console, list and its cache (`ListCache`), lock per console, copy between scopes, and line ending |
 | `store::workspace` | `workspace.json`, optional state with invalid-file detection, written under `config.lock` |
 | `store::history` | `history.jsonl`: one JSON line per statement, appended at the end of the file, read per connection, and truncated at the start of the file |
 | `script_file::ScriptFile` | Hash, 500 ms wait, 5 s retry, pending write, and problem (`Failed`, `Changed`, or `Removed`) |
@@ -263,6 +263,8 @@ Code rules:
 8. The line ending of the file (`LF` or `CRLF`) stays in the `ScriptFile`. The editor always uses `LF`.
 9. A theme file that cannot load gives a note, and the other files load. A damaged or missing theme never blocks the application, and the choice falls back to `auto`.
 9. `ScriptFile::poll` reads the file only if the size or the date changed, and then compares the hash.
+9. The check of `config.json` and of the themes folder works the same way: it reads and hashes only after a change of the size or the date of the file, or of the names, sizes, and dates of the theme files.
+9. `ListCache` keeps the list of saved consoles of each scope while the date of the `consoles` folder stays the same. Each script write renames a file into the folder, which changes that date. A folder date less than 2 s before the last read is not trusted, because a file system with coarse dates can hide a later change.
 10. A connection definition carries the base folder. `Definition::connector` resolves the relative paths with it at open time.
 11. Script writes use a dedicated worker, separate from credential access. Only one operation runs at a time.
 12. Each script keeps at most one pending operation. The interface keeps later requests without additional text snapshots.

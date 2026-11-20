@@ -51,6 +51,13 @@ pub(super) struct Persist {
     pub hashes: Vec<(Scope, Option<u64>)>,
     /// The hash of the themes folder of each scope at the last load or check.
     pub(super) theme_hashes: Vec<(Scope, Option<u64>)>,
+    /// The stamp of each configuration file at the last check. An equal stamp skips the
+    /// read and the hash; a scope that is absent was not checked yet.
+    config_stamps: Vec<(Scope, Option<file::Stamp>)>,
+    /// The stamp of the themes folder of each scope at the last check.
+    theme_stamps: Vec<(Scope, Option<u64>)>,
+    /// The last list of the saved consoles of each scope.
+    pub(super) scripts: scripts::ListCache,
     /// The error of the last load. It blocks the connections to databases.
     pub error: Option<ConfigError>,
     /// The scripts whose problem the user already saw. They stay paused.
@@ -71,6 +78,22 @@ pub(super) struct Persist {
     /// A run of this time or more rings the bell at its end. The value 0 stops the bell.
     pub bell_after_seconds: u64,
     pub history: HistoryLog,
+}
+
+/// Records the stamp of a scope. It returns true when the stamp differs from the last
+/// one, or when the scope has no stamp yet, so the caller reads the file.
+fn moved<T: PartialEq>(stamps: &mut Vec<(Scope, T)>, scope: Scope, stamp: T) -> bool {
+    match stamps.iter_mut().find(|(item, _)| *item == scope) {
+        Some((_, known)) if *known == stamp => false,
+        Some((_, known)) => {
+            *known = stamp;
+            true
+        }
+        None => {
+            stamps.push((scope, stamp));
+            true
+        }
+    }
 }
 
 /// Reads the custom themes of both scopes. A project id wins over a global id
@@ -136,6 +159,9 @@ impl Persist {
             store,
             hashes,
             theme_hashes,
+            config_stamps: Vec::new(),
+            theme_stamps: Vec::new(),
+            scripts: scripts::ListCache::default(),
             error,
             presented: HashSet::new(),
             next_poll: Instant::now() + POLL_EVERY,
@@ -740,24 +766,30 @@ impl App {
         }
         let mut changed = false;
         for (scope, root) in persist.store.scopes() {
-            let hash = std::fs::read(root.config_file())
-                .ok()
-                .map(|bytes| file::hash(&bytes));
-            if let Some((_, known)) = persist.hashes.iter_mut().find(|(item, _)| *item == scope)
-                && *known != hash
-            {
-                *known = hash;
-                changed = true;
+            let config_file = root.config_file();
+            if moved(&mut persist.config_stamps, scope, file::stamp(&config_file)) {
+                let hash = std::fs::read(&config_file)
+                    .ok()
+                    .map(|bytes| file::hash(&bytes));
+                if let Some((_, known)) = persist.hashes.iter_mut().find(|(item, _)| *item == scope)
+                    && *known != hash
+                {
+                    *known = hash;
+                    changed = true;
+                }
             }
-            let manifest = crate::store::themes::manifest(root);
-            if let Some((_, known)) = persist
-                .theme_hashes
-                .iter_mut()
-                .find(|(item, _)| *item == scope)
-                && *known != manifest
-            {
-                *known = manifest;
-                changed = true;
+            let themes = crate::store::themes::folder_stamp(root);
+            if moved(&mut persist.theme_stamps, scope, themes) {
+                let manifest = crate::store::themes::manifest(root);
+                if let Some((_, known)) = persist
+                    .theme_hashes
+                    .iter_mut()
+                    .find(|(item, _)| *item == scope)
+                    && *known != manifest
+                {
+                    *known = manifest;
+                    changed = true;
+                }
             }
         }
         if changed {

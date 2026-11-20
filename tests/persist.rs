@@ -613,6 +613,41 @@ fn a_change_of_the_file_by_another_program_asks_before_it_reloads() {
 }
 
 #[test]
+fn a_change_that_keeps_the_size_of_the_file_still_asks() {
+    let (store, base) = global_only("p-external-same-size");
+    let db = database(&base, "e", "");
+    let path = db.display().to_string();
+    write_config(&store.global, "{}", &[sqlite_entry("g1", "one", &path)]);
+    let mut session = Session::start(&store);
+    session.wait(1_000);
+    session.wait(1_000);
+    session.assert_not_sees("Configuration changed");
+    let before = fs::metadata(store.global.config_file()).unwrap().len();
+    write_config(&store.global, "{}", &[sqlite_entry("g1", "two", &path)]);
+    assert_eq!(
+        fs::metadata(store.global.config_file()).unwrap().len(),
+        before
+    );
+    session.wait(1_000);
+    session.assert_sees("Configuration changed");
+}
+
+#[test]
+fn a_theme_file_written_by_another_program_asks_before_it_reloads() {
+    let (store, base) = global_only("p-external-theme");
+    let db = database(&base, "e", "");
+    let path = db.display().to_string();
+    write_config(&store.global, "{}", &[sqlite_entry("g1", "one", &path)]);
+    let mut session = Session::start(&store);
+    session.wait(1_000);
+    session.wait(1_000);
+    session.assert_not_sees("Configuration changed");
+    save_theme_file(&store, "other", "Other");
+    session.wait(1_000);
+    session.assert_sees("Configuration changed");
+}
+
+#[test]
 fn a_reload_does_not_change_a_connection_with_an_open_transaction() {
     let (store, base) = global_only("p-reload-active");
     let db = database(&base, "a", "CREATE TABLE t (v INTEGER);");
@@ -4958,6 +4993,10 @@ fn a_new_theme_becomes_a_file_and_the_choice_comes_back_at_the_next_start() {
     assert!(theme.contains(r##""red": "#fb4934""##), "{theme}");
     let config = fs::read_to_string(store.global.config_file()).unwrap();
     assert!(config.contains(r#""custom": "mine""#), "{config}");
+    // The check of the files sees the writes of the application, so it does not ask.
+    session.wait(1_000);
+    session.wait(1_000);
+    session.assert_not_sees("Configuration changed");
     drop(session);
 
     let mut session = Session::start(&store);

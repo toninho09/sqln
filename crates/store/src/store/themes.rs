@@ -227,6 +227,31 @@ pub fn remove(root: &Root, id: &str, known: u64) -> Result<(), String> {
     }
 }
 
+/// A hash of the names, sizes, and times of the theme files, without their contents.
+/// An equal value lets a check skip `manifest`.
+pub fn folder_stamp(root: &Root) -> Option<u64> {
+    let entries = fs::read_dir(root.themes_dir()).ok()?;
+    let mut parts: Vec<(String, Option<file::Stamp>)> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .map(|path| {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            (name, file::stamp(&path))
+        })
+        .collect();
+    parts.sort();
+    let mut hasher = DefaultHasher::new();
+    parts.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
 /// A hash of the names and the contents of the folder, for change detection.
 pub fn manifest(root: &Root) -> Option<u64> {
     let entries = fs::read_dir(root.themes_dir()).ok()?;

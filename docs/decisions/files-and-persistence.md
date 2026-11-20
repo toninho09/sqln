@@ -2,6 +2,16 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## Checks of files without reads — 2026-11-20
+
+The check of each second read and hashed `config.json` and every theme file, and each refresh of the navigator read every identity file of the saved consoles on the interface thread.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Configuration and themes | Read and hash only after a change of the size or the date of `config.json`, or of the names, sizes, and dates of the theme files | Read each second | It follows "Change detection" of "Files and saving", which `ScriptFile::poll` already follows |
+| List of saved consoles | `ListCache`: one `stat` of the `consoles` folder; the list is read again when its date changes, or when that date is less than 2 s before the last read | A list per refresh; invalidation at each write of the application | Each script write renames a file into the folder. The 2 s margin covers file systems with coarse dates without a list of writes to follow |
+| Limit | A change of a text in place that keeps the folder date leaves the order by date of the list until the next change of the folder | — | Editors and SQLN write with a rename; the order is the only effect |
+
 ## SQL files and table import
 
 The user chose to remove the proposed SQL row importer and use the external-file console flow instead. Table import remains limited to CSV, TSV, JSON, and JSON Lines. Opening a SQL file does not execute it; the user reviews and runs it through the existing console execution flow and its protections.
