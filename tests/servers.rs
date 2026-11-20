@@ -22,7 +22,7 @@ use sqln::compare::sql::{compare_sql, rows_sql, table_columns_sql};
 use sqln::connection::{Definition, Source};
 use sqln::connector::target::parse_uri;
 use sqln::connector::{
-    Connector, Session, TransactionCommand, TransactionState, network_connector,
+    Connector, ErrorKind, Session, TransactionCommand, TransactionState, network_connector,
 };
 use sqln::definition::{Target as DdlTarget, definition_sql, definition_text};
 use sqln::diagram::mermaid::to_mermaid;
@@ -439,6 +439,43 @@ fn the_error_offset_points_at_the_statement_text() {
 
             let error = session.run("SELECT 1 FROM", sink()).await.unwrap_err();
             assert_eq!(error.offset, Some(13), "{:?}", server.kind);
+        });
+    }
+}
+
+#[test]
+fn errors_of_the_database_carry_their_kind() {
+    for server in servers() {
+        let connector = connector(&server);
+        let runtime = runtime();
+        runtime.block_on(async {
+            let mut session = connector.connect().await.unwrap();
+            let kind = server.kind;
+            let error = session.run("SELECT * FROMM t", sink()).await.unwrap_err();
+            assert_eq!(error.kind, ErrorKind::Syntax, "{kind:?}: {error:?}");
+            let error = session
+                .run("SELECT * FROM t_no_such_table", sink())
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, ErrorKind::Syntax, "{kind:?}: {error:?}");
+            let read_only = match kind {
+                Kind::Postgres => "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY",
+                Kind::MySql => "SET SESSION TRANSACTION READ ONLY",
+            };
+            session.run(read_only, sink()).await.unwrap();
+            let error = session
+                .run("CREATE TABLE t_read_only_kind (a int)", sink())
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, ErrorKind::Permission, "{kind:?}: {error:?}");
+            if kind == Kind::Postgres {
+                session
+                    .run("SET statement_timeout = 10", sink())
+                    .await
+                    .unwrap();
+                let error = session.run("SELECT pg_sleep(1)", sink()).await.unwrap_err();
+                assert_eq!(error.kind, ErrorKind::Canceled, "{error:?}");
+            }
         });
     }
 }

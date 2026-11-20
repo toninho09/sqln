@@ -509,6 +509,7 @@ trait Session: Send {
 ```
 
 The `async-trait` crate makes `Box<dyn Session>` possible.
+`ExecError` and `ConnectError` carry an `ErrorKind`: `Syntax`, `Permission`, `Auth`, `Connection`, `Timeout`, `Canceled`, `Resource`, `Unsupported`, or `Other`. Each driver reads it from the code of its library or server (SQLSTATE, MySQL error number, SQLite and DuckDB result code, Redis error kind, Databricks error code or HTTP status), never from the message text. A `Connection` error closes the session in the runner, because its state is unknown. `ConnectError::password_refused` stays separate from `Auth`: a rule such as `pg_hba.conf` is `Auth`, but a new password does not change it.
 `read_foreign_keys` and `read_referencing_keys` have an empty default, so a source without keys does not write them. `Manager::load_columns` reads both lists together with the columns, and a key failure does not fail the columns. A key that reaches a relation has the shape of a key that leaves it: `columns` are the columns of the relation, and `target` is the other table.
 `read_catalog` also reads the supported routines, sequences, triggers, and types into `Schema::objects`.
 `read_catalog_of` keeps the configured schemas and the current schema. Redis skips reads of hidden databases.

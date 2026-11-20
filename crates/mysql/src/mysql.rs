@@ -12,7 +12,7 @@ use tokio::time::timeout;
 
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
-    Canceller, Capabilities, ConnectError, Connector, ExecError, MAX_NOTICES, Namespace,
+    Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, MAX_NOTICES, Namespace,
     ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
     describe, tls,
 };
@@ -98,7 +98,7 @@ fn connect_error(error: &mysql_async::Error) -> ConnectError {
         mysql_async::Error::Server(server) if matches!(server.code, 1045 | 1698) => {
             ConnectError::refused_password(describe(error))
         }
-        _ => ConnectError::new(describe(error)),
+        _ => ConnectError::new(describe(error)).kind(error_kind(error)),
     }
 }
 
@@ -280,11 +280,42 @@ fn syntax_offset(message: &str, sql: &str) -> Option<usize> {
 
 fn exec_error(error: &DriverError, sql: &str) -> ExecError {
     match error {
-        DriverError::Server(server) => ExecError {
-            message: format!("{} ({})", server.message, server.code),
-            offset: syntax_offset(&server.message, sql),
-        },
-        other => ExecError::new(describe(other)),
+        DriverError::Server(server) => ExecError::with_kind(
+            code_kind(server.code),
+            format!("{} ({})", server.message, server.code),
+        )
+        .at(syntax_offset(&server.message, sql)),
+        other => ExecError::with_kind(error_kind(other), describe(other)),
+    }
+}
+
+/// The kind of an error of the driver. A failure of the socket ends the connection.
+fn error_kind(error: &DriverError) -> ErrorKind {
+    match error {
+        DriverError::Server(server) => code_kind(server.code),
+        DriverError::Io(_) => ErrorKind::Connection,
+        DriverError::Driver(mysql_async::DriverError::ConnectionClosed) => ErrorKind::Connection,
+        _ => ErrorKind::Other,
+    }
+}
+
+/// The kind of a server error code. See "Server Error Message Reference" of MySQL.
+fn code_kind(code: u16) -> ErrorKind {
+    match code {
+        // Parse error, unknown table, column, database, or function, and a wrong value.
+        1054 | 1064 | 1146 | 1049 | 1305 | 1149 | 1630 => ErrorKind::Syntax,
+        // A missing privilege, and a write in a read-only transaction or server.
+        1044 | 1142 | 1143 | 1227 | 1370 | 1792 | 1290 => ErrorKind::Permission,
+        1045 | 1698 | 1251 => ErrorKind::Auth,
+        QUERY_INTERRUPTED => ErrorKind::Canceled,
+        // `max_execution_time` and a lock wait.
+        3024 | 1205 => ErrorKind::Timeout,
+        // Too many connections, out of memory, and a full table or disk.
+        1040 | 1041 | 1037 | 1038 | 1114 | 1021 => ErrorKind::Resource,
+        1235 => ErrorKind::Unsupported,
+        // The server went away or lost the connection during the query.
+        2006 | 2013 | 1927 | 1053 => ErrorKind::Connection,
+        _ => ErrorKind::Other,
     }
 }
 

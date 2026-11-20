@@ -1,14 +1,11 @@
 //! Words of a command line, with the quote rules of `redis-cli`. Redis and Kafka
 //! consoles read each line with these rules.
 
-use super::ExecError;
+use super::{ErrorKind, ExecError};
 use crate::text;
 
 fn bad_line(offset: usize) -> ExecError {
-    ExecError {
-        message: text::REDIS_BAD_QUOTES.to_owned(),
-        offset: Some(offset),
-    }
+    ExecError::with_kind(ErrorKind::Syntax, text::REDIS_BAD_QUOTES).at(Some(offset))
 }
 
 /// Reads the value of a `\x` escape. It returns `None` for any other text.

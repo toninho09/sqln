@@ -6,6 +6,20 @@ Do not reopen a decision without a new fact.
 Later dated decisions replace earlier choices on the same subject. Earlier tables preserve the historical alternatives.
 Implementation notes describe their recorded stage unless a current-state note says otherwise.
 
+## Error kinds of the connector contract — 2026-11-19
+
+The user approved a plan of internal improvements. This entry covers the typed errors of the connector contract.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Kind | `ExecError` and `ConnectError` get `kind: ErrorKind`. `ExecError::new` keeps `Other`, so a site without a known kind needs no change | A typed error per driver | The layers above the drivers need one shared vocabulary |
+| Source | Each driver reads the kind from codes: SQLSTATE class, MySQL error number, SQLite and DuckDB result code, Redis error kind, Databricks error code or HTTP status | Matching the message text | Text changes with the server version and the language |
+| Runtime | A `Connection` error closes the session after the statement, as a closed connection does | Rely on `reset` alone | The session state is unknown, and a driver may not detect the closed socket |
+| Password | `ConnectError::password_refused` stays a separate field | Derive it from `Auth` | `pg_hba.conf` and similar rules are `Auth`, but a new password does not change them |
+| Interface | No visible change yet. A later step may use the kind for the next action of an error message, after a decision of the user | Change the messages now | Visible behavior needs a decision of the user |
+| `async-trait` | Keep it | Native `async fn` in traits | The contract is used as `dyn Connector`, `dyn Session`, and `dyn Canceller`. Native async traits are not object safe, so the change would need a boxed future per call anyway |
+| Canceller | `Canceller::cancel` keeps `Result<(), String>` | `ExecError` | The runner only waits for the request to end. No caller reads the error |
+
 ## Table statistics and AI explanations
 
 The user requested table statistics and AI explanations of errors and plans. The user chose SQL transmission with consent, Redis support, already loaded schema metadata, and both palette commands and fixed shortcuts.

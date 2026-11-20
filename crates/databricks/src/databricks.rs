@@ -15,8 +15,8 @@ use self::api::{Answer, Api, ExternalLink, State};
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
 use crate::connector::target::NetworkTarget;
 use crate::connector::{
-    Canceller, Capabilities, ConnectError, Connector, ExecError, Namespace, ResetOutcome, Session,
-    SessionContext, StatementEnd, TransactionCommand, TransactionState,
+    Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, Namespace,
+    ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
 use crate::sink::{Flow, ResultSink};
 use crate::sql::{Dialect, changes_state, quote_literal};
@@ -277,7 +277,12 @@ fn done(answer: Answer) -> Result<Done, ExecError> {
                 .map(api::ApiError::into_exec_error)
                 .unwrap_or_else(|| ExecError::new(text::DATABRICKS_BAD_ANSWER)));
         }
-        State::Canceled => return Err(ExecError::new(text::DATABRICKS_CANCELED)),
+        State::Canceled => {
+            return Err(ExecError::with_kind(
+                ErrorKind::Canceled,
+                text::DATABRICKS_CANCELED,
+            ));
+        }
         State::Closed => return Err(ExecError::new(text::DATABRICKS_CLOSED)),
         State::Pending | State::Running => unreachable!("only a final state reaches here"),
     }
@@ -353,7 +358,10 @@ impl Session for DatabricksSession {
 
     async fn run(&mut self, sql: &str, mut sink: ResultSink) -> Result<StatementEnd, ExecError> {
         if self.read_only && changes_state(sql, Dialect::Databricks) {
-            return Err(ExecError::new(text::DATABRICKS_READ_ONLY));
+            return Err(ExecError::with_kind(
+                ErrorKind::Permission,
+                text::DATABRICKS_READ_ONLY,
+            ));
         }
         let read = trace::observe(self.trace.clone(), sql, self.read(sql, &mut sink)).await;
         let (rows, limit) = sink.finish().await;
@@ -370,7 +378,10 @@ impl Session for DatabricksSession {
     }
 
     async fn control(&mut self, _: TransactionCommand) -> Result<(), ExecError> {
-        Err(ExecError::new(text::DATABRICKS_NO_TRANSACTIONS))
+        Err(ExecError::with_kind(
+            ErrorKind::Unsupported,
+            text::DATABRICKS_NO_TRANSACTIONS,
+        ))
     }
 
     async fn reset(&mut self) -> ResetOutcome {

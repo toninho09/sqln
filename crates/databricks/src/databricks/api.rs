@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::connector::target::{Address, NetworkTarget, Secret, Tls, TlsFiles};
-use crate::connector::{ConnectError, ExecError, describe, tls};
+use crate::connector::{ConnectError, ErrorKind, ExecError, describe, tls};
 use crate::text;
 
 /// The time that the first request waits for the end of a statement. The API accepts
@@ -63,10 +63,50 @@ impl ApiError {
         let message = self
             .message
             .unwrap_or_else(|| text::DATABRICKS_BAD_ANSWER.to_owned());
-        ExecError::new(match self.error_code {
-            Some(code) => format!("{message} ({code})"),
-            None => message,
-        })
+        let kind = self
+            .error_code
+            .as_deref()
+            .map_or(ErrorKind::Other, code_kind);
+        ExecError::with_kind(
+            kind,
+            match self.error_code {
+                Some(code) => format!("{message} ({code})"),
+                None => message,
+            },
+        )
+    }
+}
+
+/// The kind of an error code of the API. See "Error handling" of the Databricks REST API.
+fn code_kind(code: &str) -> ErrorKind {
+    match code {
+        "PARSE_SYNTAX_ERROR"
+        | "TABLE_OR_VIEW_NOT_FOUND"
+        | "UNRESOLVED_COLUMN"
+        | "UNRESOLVED_ROUTINE"
+        | "SCHEMA_NOT_FOUND"
+        | "INVALID_PARAMETER_VALUE"
+        | "BAD_REQUEST" => ErrorKind::Syntax,
+        "PERMISSION_DENIED" | "INSUFFICIENT_PERMISSIONS" => ErrorKind::Permission,
+        "UNAUTHENTICATED" => ErrorKind::Auth,
+        "DEADLINE_EXCEEDED" => ErrorKind::Timeout,
+        "CANCELLED" | "ABORTED" => ErrorKind::Canceled,
+        "RESOURCE_EXHAUSTED" | "REQUEST_LIMIT_EXCEEDED" | "TEMPORARILY_UNAVAILABLE" => {
+            ErrorKind::Resource
+        }
+        "NOT_IMPLEMENTED" | "FEATURE_DISABLED" => ErrorKind::Unsupported,
+        _ => ErrorKind::Other,
+    }
+}
+
+/// The kind of an HTTP status without an error code of the API.
+fn status_kind(status: u16) -> ErrorKind {
+    match status {
+        401 | 403 => ErrorKind::Auth,
+        408 | 504 => ErrorKind::Timeout,
+        429 | 503 => ErrorKind::Resource,
+        501 => ErrorKind::Unsupported,
+        _ => ErrorKind::Other,
     }
 }
 
@@ -151,7 +191,14 @@ fn client(files: Option<&TlsFiles>) -> Result<reqwest::Client, ConnectError> {
 
 /// The text of a network error. The URL stays out: a result link holds a signature.
 fn network_error(error: reqwest::Error) -> ExecError {
-    ExecError::new(describe(&error.without_url()))
+    let kind = if error.is_timeout() {
+        ErrorKind::Timeout
+    } else if error.is_connect() || error.is_request() || error.is_body() {
+        ErrorKind::Connection
+    } else {
+        ErrorKind::Other
+    };
+    ExecError::with_kind(kind, describe(&error.without_url()))
 }
 
 /// Refuses a statement id that is not one path segment.
@@ -233,8 +280,10 @@ impl Api {
         if !(200..=299).contains(&status) {
             return Err(match serde_json::from_slice::<ApiError>(&body) {
                 Ok(error) if error.message.is_some() => error.into_exec_error(),
-                _ if matches!(status, 401 | 403) => ExecError::new(text::DATABRICKS_REFUSED),
-                _ => ExecError::new(text::databricks_status(status)),
+                _ if matches!(status, 401 | 403) => {
+                    ExecError::with_kind(ErrorKind::Auth, text::DATABRICKS_REFUSED)
+                }
+                _ => ExecError::with_kind(status_kind(status), text::databricks_status(status)),
             });
         }
         serde_json::from_slice(&body).map_err(|_| ExecError::new(text::DATABRICKS_BAD_ANSWER))
@@ -317,5 +366,33 @@ impl Api {
             bytes.extend_from_slice(&part);
         }
         Ok(Some(bytes))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_codes_and_statuses_give_their_kind() {
+        let error = |code: &str| ApiError {
+            error_code: Some(code.to_owned()),
+            message: Some("refused".to_owned()),
+        };
+        assert_eq!(
+            error("PERMISSION_DENIED").into_exec_error().kind,
+            ErrorKind::Permission
+        );
+        assert_eq!(
+            error("PARSE_SYNTAX_ERROR").into_exec_error().kind,
+            ErrorKind::Syntax
+        );
+        assert_eq!(
+            error("SOMETHING_NEW").into_exec_error().kind,
+            ErrorKind::Other
+        );
+        assert_eq!(status_kind(401), ErrorKind::Auth);
+        assert_eq!(status_kind(429), ErrorKind::Resource);
+        assert_eq!(status_kind(500), ErrorKind::Other);
     }
 }

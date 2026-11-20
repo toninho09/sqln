@@ -10,8 +10,8 @@ use rusqlite::{Connection, InterruptHandle, OpenFlags};
 use tokio::sync::oneshot;
 
 use super::{
-    Canceller, ConnectError, Connector, ExecError, ResetOutcome, Session, SessionContext,
-    StatementEnd, TransactionCommand, TransactionState,
+    Canceller, ConnectError, Connector, ErrorKind, ExecError, ResetOutcome, Session,
+    SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
 use crate::catalog::{
     Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
@@ -134,9 +134,26 @@ fn exec_error(error: rusqlite::Error) -> ExecError {
         rusqlite::Error::SqlInputError { offset, .. } => usize::try_from(*offset).ok(),
         _ => None,
     };
-    ExecError {
-        message: error.to_string(),
-        offset,
+    ExecError::with_kind(error_kind(&error), error.to_string()).at(offset)
+}
+
+/// The kind of a SQLite error, from its result code. An error with a position in the
+/// statement comes from the compilation of the statement.
+fn error_kind(error: &rusqlite::Error) -> ErrorKind {
+    use rusqlite::ffi::ErrorCode;
+    let code = match error {
+        rusqlite::Error::SqlInputError { .. } => return ErrorKind::Syntax,
+        rusqlite::Error::SqliteFailure(failure, _) => failure.code,
+        _ => return ErrorKind::Other,
+    };
+    match code {
+        ErrorCode::OperationInterrupted => ErrorKind::Canceled,
+        ErrorCode::PermissionDenied
+        | ErrorCode::ReadOnly
+        | ErrorCode::AuthorizationForStatementDenied => ErrorKind::Permission,
+        ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked => ErrorKind::Timeout,
+        ErrorCode::OutOfMemory | ErrorCode::DiskFull | ErrorCode::TooBig => ErrorKind::Resource,
+        _ => ErrorKind::Other,
     }
 }
 
@@ -548,5 +565,48 @@ impl Session for SqliteSession {
         let (reply, answer) = oneshot::channel();
         let request = Request::ReferencingKeys(schema.to_owned(), relation.to_owned(), reply);
         self.ask(request, answer).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn failure(code: std::ffi::c_int) -> rusqlite::Error {
+        rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None)
+    }
+
+    #[test]
+    fn result_codes_give_their_kind() {
+        let cases = [
+            (rusqlite::ffi::SQLITE_INTERRUPT, ErrorKind::Canceled),
+            (rusqlite::ffi::SQLITE_READONLY, ErrorKind::Permission),
+            (rusqlite::ffi::SQLITE_AUTH, ErrorKind::Permission),
+            (rusqlite::ffi::SQLITE_BUSY, ErrorKind::Timeout),
+            (rusqlite::ffi::SQLITE_FULL, ErrorKind::Resource),
+            (rusqlite::ffi::SQLITE_CONSTRAINT, ErrorKind::Other),
+        ];
+        for (code, kind) in cases {
+            assert_eq!(exec_error(failure(code)).kind, kind, "code {code}");
+        }
+    }
+
+    #[test]
+    fn an_error_with_a_position_is_syntax() {
+        let connection = Connection::open_in_memory().unwrap();
+        let error = connection
+            .prepare("SELECT * FROMM t")
+            .map(|_| ())
+            .unwrap_err();
+        let error = exec_error(error);
+        assert_eq!(error.kind, ErrorKind::Syntax, "{error:?}");
+        assert!(error.offset.is_some(), "{error:?}");
+        // SQLite gives a missing table the generic `SQLITE_ERROR` without a position, and
+        // the same code serves some failures of a running statement, so it stays `Other`.
+        let error = connection
+            .prepare("SELECT * FROM missing")
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(exec_error(error).kind, ErrorKind::Other);
     }
 }

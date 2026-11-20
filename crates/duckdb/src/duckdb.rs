@@ -14,8 +14,8 @@ use duckdb::{AccessMode, Config, Connection, InterruptHandle, ToSql};
 use tokio::sync::{Mutex, oneshot};
 
 use super::{
-    Canceller, ConnectError, Connector, ExecError, ResetOutcome, Session, SessionContext,
-    StatementEnd, TransactionCommand, TransactionState,
+    Canceller, ConnectError, Connector, ErrorKind, ExecError, ResetOutcome, Session,
+    SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
 use crate::connector::duckdb::*;
@@ -288,7 +288,22 @@ enum Request {
 }
 
 fn exec_error(error: duckdb::Error) -> ExecError {
-    ExecError::new(error.to_string())
+    ExecError::with_kind(error_kind(&error), error.to_string())
+}
+
+/// The kind of a DuckDB error, from its result code. DuckDB reports most statement
+/// errors without a specific code, so they stay `Other`.
+fn error_kind(error: &duckdb::Error) -> ErrorKind {
+    use duckdb::ffi::ErrorCode;
+    let duckdb::Error::DuckDBFailure(failure, _) = error else {
+        return ErrorKind::Other;
+    };
+    match failure.code {
+        ErrorCode::OperationInterrupted => ErrorKind::Canceled,
+        ErrorCode::PermissionDenied | ErrorCode::ReadOnly => ErrorKind::Permission,
+        ErrorCode::OutOfMemory | ErrorCode::DiskFull => ErrorKind::Resource,
+        _ => ErrorKind::Other,
+    }
 }
 
 /// Runs in the session thread. It ends when the session drops its sender. `database`

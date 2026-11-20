@@ -25,7 +25,7 @@ use self::decode::{Decoded, decode};
 use self::registry::{RegistryClient, VaultRead};
 use super::target::{NetworkTarget, topic_visible};
 use super::{
-    Canceller, Capabilities, ConnectError, Connector, ExecError, MAX_NOTICES, Namespace,
+    Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, MAX_NOTICES, Namespace,
     ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
 use crate::catalog::{Catalog, ColumnNote, Columns, Relation, RelationKind, Schema};
@@ -125,7 +125,7 @@ impl Connector for KafkaConnector {
             if refused {
                 ConnectError::refused_password(message)
             } else {
-                ConnectError::new(message)
+                ConnectError::new(message).kind(ErrorKind::Connection)
             }
         })?;
         Ok(Box::new(KafkaSession {
@@ -725,7 +725,10 @@ impl Session for KafkaSession {
     }
 
     async fn control(&mut self, _command: TransactionCommand) -> Result<(), ExecError> {
-        Err(ExecError::new(text::KAFKA_NO_TRANSACTIONS))
+        Err(ExecError::with_kind(
+            ErrorKind::Unsupported,
+            text::KAFKA_NO_TRANSACTIONS,
+        ))
     }
 
     /// A read owns its consumer, so the session keeps no state between statements.

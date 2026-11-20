@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use futures_util::FutureExt;
 use sqln_core::grid::Budget;
 use sqln_runtime::exec::{ConnectionId, ConsoleId, ExecEvent, Manager, RunOptions, Settings};
-use sqln_session::connector::{ResetOutcome, StatementEnd};
+use sqln_session::connector::{ErrorKind, ExecError, ResetOutcome, StatementEnd};
 use sqln_session::pool::{Lease, Pool};
 use sqln_sql::sql::Dialect;
 use tokio::sync::mpsc::Receiver;
@@ -395,9 +395,12 @@ struct Watched {
 
 impl Watched {
     fn open(idle_timeout: Duration) -> Self {
-        let fake = works();
+        Self::with(works(), Some(idle_timeout))
+    }
+
+    fn with(fake: Arc<Fake>, idle_timeout: Option<Duration>) -> Self {
         let settings = Settings {
-            idle_timeout: Some(idle_timeout),
+            idle_timeout,
             ..Settings::default()
         };
         let (mut manager, events) = Manager::new(Arc::new(Budget::new(1 << 20))).unwrap();
@@ -426,18 +429,56 @@ impl Watched {
     }
 
     fn run(&mut self, manual: bool) {
+        self.run_sql("SELECT 1", manual);
+    }
+
+    fn run_sql(&mut self, sql: &str, manual: bool) {
         let options = RunOptions {
             manual,
             ..RunOptions::default()
         };
         self.manager
-            .run(self.console, vec!["SELECT 1".to_owned()], options);
+            .run(self.console, vec![sql.to_owned()], options);
         let finished = |event: &ExecEvent| matches!(event, ExecEvent::ExecutionFinished { .. });
         assert!(
             self.wait(finished, Duration::from_secs(5)),
             "the run did not end"
         );
     }
+}
+
+/// A connector whose statement `FAIL` fails with an error of this kind.
+fn failing(kind: ErrorKind) -> Arc<Fake> {
+    let run: mock::RunHandler = Arc::new(move |sql, _sink| {
+        Box::pin(async move {
+            if sql == "FAIL" {
+                Err(ExecError::with_kind(kind, "failed"))
+            } else {
+                Ok(StatementEnd::default())
+            }
+        })
+    });
+    Arc::new(Fake::new(Dialect::Sqlite, run))
+}
+
+#[test]
+fn an_error_of_the_connection_closes_the_session() {
+    let fake = failing(ErrorKind::Connection);
+    let mut w = Watched::with(fake.clone(), None);
+    w.run_sql("FAIL", false);
+    w.run(false);
+    assert_eq!(fake.opened(), 2, "the next run opens a new session");
+    w.manager.shutdown();
+}
+
+#[test]
+fn an_error_of_the_statement_keeps_the_session() {
+    let fake = failing(ErrorKind::Syntax);
+    let mut w = Watched::with(fake.clone(), None);
+    w.run_sql("FAIL", false);
+    w.run(false);
+    assert_eq!(fake.opened(), 1, "the session returns to the pool");
+    w.manager.shutdown();
 }
 
 fn idle_closed(event: &ExecEvent) -> bool {

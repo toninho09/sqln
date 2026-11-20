@@ -43,16 +43,15 @@ enum Waited {
 }
 
 impl Waited {
-    /// Returns true when the session cannot run another statement.
+    /// Returns true when the session cannot run another statement. An error of the
+    /// connection leaves the state of the session unknown, so the session closes.
     fn closes_session(&self) -> bool {
-        matches!(
-            self,
-            Waited::Closed
-                | Waited::Finished {
-                    reusable: false,
-                    ..
-                }
-        )
+        match self {
+            Waited::Closed => true,
+            Waited::Finished { reusable, result } => {
+                !reusable || result.as_ref().is_err_and(ExecError::closes_session)
+            }
+        }
     }
 }
 

@@ -6,11 +6,6 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-[lib]
-# The crate has no unit tests, so it links no test binary. Remove this line when
-# you add one.
-test = false
-
 [dependencies]
 sqln-core.workspace = true
 sqln-sql.workspace = true
