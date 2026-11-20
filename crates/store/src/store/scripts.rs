@@ -233,10 +233,16 @@ pub fn write_meta(root: &Root, meta: &ScriptMeta, expect: Expect) -> Result<(), 
 }
 
 /// Creates the two files of a new script. It returns the hash of the text file.
+/// A failed text write removes the new identity file, so no script stays without its
+/// text and a later try finds the folder as it was.
 pub fn create(root: &Root, meta: &ScriptMeta, text: &str) -> Result<u64, String> {
     write_meta(root, meta, Expect::Missing)?;
-    file::write_atomic(&sql_file(root, &meta.id), text.as_bytes(), Expect::Missing)
-        .map_err(|error| error.to_string())
+    file::write_atomic(&sql_file(root, &meta.id), text.as_bytes(), Expect::Missing).map_err(
+        |error| {
+            let _ = fs::remove_file(meta_file(root, &meta.id));
+            error.to_string()
+        },
+    )
 }
 
 /// Writes the text file of a script. It returns the hash of the new content.
@@ -273,12 +279,23 @@ pub fn lock(root: &Root, id: &str) -> io::Result<Option<FileLock>> {
 }
 
 /// Copies a script to another folder, checks the copy, and removes the original.
-/// `meta` describes the script in its new place.
+/// `meta` describes the script in its new place. A text file that cannot be read
+/// keeps the original in its folder; only an absent text file moves as empty text.
 pub fn move_to(from: &Root, to: &Root, meta: &ScriptMeta) -> Result<u64, String> {
-    let (text, _) = read_text(from, &meta.id).unwrap_or_default();
+    let text = match read_text(from, &meta.id) {
+        Ok((text, _)) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(format!(
+                "SQLN cannot read the script, so it stays in its folder: {error}"
+            ));
+        }
+    };
     let hash = create(to, meta, &text)?;
-    let copied = read_text(to, &meta.id).map_err(|error| error.to_string())?;
-    if copied.1 != hash || copied.0 != text {
+    let copied = read_text(to, &meta.id);
+    if !copied.is_ok_and(|(copy, copy_hash)| copy_hash == hash && copy == text) {
+        // The original stays, so the copy leaves and a later try can create it again.
+        let _ = remove(to, &meta.id);
         return Err("The copy of the script does not match the original.".to_owned());
     }
     remove(from, &meta.id)?;
