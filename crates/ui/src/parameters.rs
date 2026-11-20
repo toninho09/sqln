@@ -98,6 +98,11 @@ impl Panel {
 
     /// The moment when the detection of the text starts, when it waits. The arguments are
     /// the ones of the next `poll`.
+    /// Returns true when the names of this revision and dialect are already scanned.
+    pub fn is_scanned(&self, revision: u64, dialect: Dialect) -> bool {
+        self.scanned == Some((revision, dialect))
+    }
+
     pub fn scan_due(&self, revision: u64, dialect: Dialect) -> Option<Instant> {
         let current = Some((revision, dialect));
         if dialect.is_command_line()

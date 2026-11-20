@@ -732,6 +732,15 @@ fn a_ready_explanation_preserves_active_input_until_escape() {
                 assert!(Instant::now() < deadline, "the catalog does not load");
                 std::thread::sleep(Duration::from_millis(2));
             }
+            // The parameter scan of the text runs 200 ms after the last edit. A later scan
+            // would remove the field that the parameters case adds, so it ends first.
+            let console = app.console();
+            let (revision, dialect) = (console.editor.revision(), console.editor.dialect());
+            while !app.console().parameters.is_scanned(revision, dialect) {
+                app.drain_events();
+                assert!(Instant::now() < deadline, "the parameter scan does not end");
+                std::thread::sleep(Duration::from_millis(2));
+            }
             show_plan(&mut app);
             pump(&mut app, |s| s.contains("SCAN users") && s.contains("Idle"));
             explain_plan(&mut app);
