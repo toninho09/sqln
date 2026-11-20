@@ -1,20 +1,18 @@
 //! Explicit completion coordination. SQL execution and MCP authorization stay separate.
-use super::{App, DialogAction, Overlay};
+mod explain;
+
+use super::{App, DialogAction};
 use crate::ai::{self, Credential, Memory, Preferences, Provider, Snapshot};
 use crate::connector::target::Secret;
 use crate::creds::SystemVault;
 use crate::editor::ai::Target;
 use crate::exec::{ConnectionId, ConsoleId};
-use crate::grid::ResultTable;
 use crate::input::Action;
-use crate::settings::themes::ThemeChanges;
 use crate::store::Scope;
 use crate::store::config;
-use crate::store::themes;
 use crate::ui::ai::RequestPrompt;
 use crate::ui::auth::{PasswordAction, PasswordPrompt};
 use crate::ui::kit::prompt::TextAction;
-use crate::ui::text;
 use crate::ui::wrap::WrappedText;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use edtui::Index2;
@@ -179,39 +177,6 @@ impl App {
         }
     }
 
-    pub(super) fn ai_explanation_running(&self, console: ConsoleId) -> bool {
-        self.ai
-            .runs
-            .iter()
-            .any(|run| run.console == console && matches!(run.kind, RunKind::Explain(_)))
-    }
-
-    pub(super) fn cancel_ai_explanation(&mut self, console: ConsoleId) -> bool {
-        let id = self
-            .ai
-            .runs
-            .iter()
-            .find(|run| run.console == console && matches!(run.kind, RunKind::Explain(_)))
-            .map(|run| run.id);
-        if let Some(id) = id {
-            self.cancel_ai_id(id);
-            self.status = Some("AI explanation cancelled.".into());
-        }
-        id.is_some()
-    }
-
-    /// Returns true when the console can ask for an AI explanation. Every source
-    /// qualifies, Redis and Kafka included: the request explains text, not SQL edits.
-    fn ai_explain_available(&self) -> bool {
-        self.console_on_screen()
-            && !self.home()
-            && self.ai.preferences.enabled()
-            && self.ai.preferences.provider.is_some()
-            && self.console().connection.is_some()
-            && !self.console().is_busy()
-            && self.console().editor.review().is_none()
-            && !self.association_pending(self.console().id)
-    }
     pub(super) fn set_ai_preferences(&mut self, preferences: Preferences) {
         if self.ai.preferences != preferences {
             self.cancel_ai();
@@ -653,119 +618,6 @@ impl App {
         );
     }
 
-    /// Starts the explanation of the newest error of the console.
-    pub(super) fn start_ai_explain_error(&mut self) {
-        let Some(explanation) = self.explain_error_source() else {
-            return;
-        };
-        self.start_ai_explain(explanation);
-    }
-
-    /// Starts the explanation of the plan on screen.
-    pub(super) fn start_ai_explain_plan(&mut self) {
-        let Some(explanation) = self.explain_plan_source() else {
-            return;
-        };
-        self.start_ai_explain(explanation);
-    }
-
-    fn explain_error_source(&mut self) -> Option<ai::explain::Explanation> {
-        if !self.ai_explain_ready() {
-            return None;
-        }
-        let console = self.console();
-        let Some((dialect, statement, error)) = console.messages.last_error() else {
-            self.status = Some(text::AI_EXPLAIN_NO_ERROR.to_owned());
-            return None;
-        };
-        Some(ai::explain::Explanation::error(dialect, statement, error))
-    }
-
-    fn explain_plan_source(&mut self) -> Option<ai::explain::Explanation> {
-        if !self.ai_explain_ready() {
-            return None;
-        }
-        let console = self.console();
-        if !console.shows_plan() {
-            self.status = Some(text::AI_EXPLAIN_NO_PLAN.to_owned());
-            return None;
-        }
-        let Some(statement) = console.plan_statement() else {
-            self.status = Some(text::AI_EXPLAIN_NO_PLAN.to_owned());
-            return None;
-        };
-        let plan = plan_text(&console.results[console.active].table);
-        Some(ai::explain::Explanation::plan(
-            console.editor.dialect(),
-            statement,
-            &plan,
-        ))
-    }
-
-    /// The checks that every explanation shares.
-    fn ai_explain_ready(&mut self) -> bool {
-        if self.config_blocked() {
-            return false;
-        }
-        if !self.ai.preferences.enabled() {
-            self.status = Some(text::AI_EXPLAIN_DISABLED.to_owned());
-            return false;
-        }
-        if !self.console_on_screen() || self.home() || self.console().is_busy() {
-            self.status = Some("Open an idle console and try again.".into());
-            return false;
-        }
-        if self.console().connection.is_none() {
-            self.status = Some(text::NO_CONNECTION.to_owned());
-            return false;
-        }
-        true
-    }
-
-    fn start_ai_explain(&mut self, explanation: ai::explain::Explanation) {
-        let Some(provider) = self.ai.preferences.provider.clone() else {
-            self.status = Some(text::AI_EXPLAIN_NO_PROVIDER.to_owned());
-            return;
-        };
-        if let Err(error) = provider.validate() {
-            self.status = Some(error);
-            return;
-        }
-        let (scope, base, project) = match self.ai_location() {
-            Ok(values) => values,
-            Err(error) => {
-                self.status = Some(error);
-                return;
-            }
-        };
-        let connection = self.console().connection.expect("a checked connection");
-        let console = self.console().id;
-        // One explanation of a console at a time: the answer opens a window, and a
-        // second request would replace it unseen.
-        if self
-            .ai
-            .runs
-            .iter()
-            .any(|r| r.console == console && matches!(r.kind, RunKind::Explain(_)))
-        {
-            self.status = Some(text::AI_EXPLAIN_BUSY.to_owned());
-            return;
-        }
-        let mut memory = Memory::new(&self.budget);
-        if let Err(error) = memory.charge(explanation.memory_bytes()) {
-            self.status = Some(error);
-            return;
-        }
-        self.push_ai_run(
-            RunKind::Explain(explanation),
-            None,
-            provider,
-            (scope, base, project),
-            connection,
-            memory,
-        );
-    }
-
     /// Adds one run and starts its consent check. The caller did the checks of its kind.
     fn push_ai_run(
         &mut self,
@@ -1120,45 +972,6 @@ impl App {
             .start_ghost(at, &completed.text);
     }
 
-    /// Shows an AI explanation in the text window of the application.
-    fn show_ai_explanation(&mut self, label: &str, completed: Completed) {
-        let title = if label == "error" {
-            text::AI_EXPLAIN_ERROR_TITLE
-        } else {
-            text::AI_EXPLAIN_PLAN_TITLE
-        };
-        self.console_mut().editor.close_suggestions();
-        self.modals.overlay = Some(Overlay {
-            _analysis_memory: None,
-            _ai_memory: completed.memory,
-            title: title.to_owned(),
-            contents: WrappedText::new(completed.text),
-            footer: "Esc close | Up/Down scroll | Ctrl+C copy".into(),
-            scroll: 0,
-            dragging: false,
-            other: None,
-            row: None,
-        });
-    }
-    /// Keeps the answer pending until no window or input prompt needs the focus.
-    fn show_ready_ai_explanation(&mut self) -> bool {
-        if self.ai_obscured()
-            || self.ai.modal()
-            || self.ai_input_active()
-            || self.console().editor.review().is_some()
-        {
-            return false;
-        }
-        let Some(run) = self.ai.runs.iter_mut().find(|run| run.completed.is_some()) else {
-            return false;
-        };
-        let id = run.id;
-        let completed = run.completed.take().expect("a pending answer");
-        self.show_ai_proposal(id, completed);
-        self.cancel_ai_id(id);
-        true
-    }
-
     pub(super) fn ai_retry(&mut self, id: u64) {
         if let Some(run) = self.ai.runs.iter_mut().find(|r| r.id == id) {
             run.sending = false;
@@ -1482,126 +1295,7 @@ impl App {
             });
         }
     }
-    /// Writes the scope of the dialog. The caller built and validated the values.
-    pub(super) fn write_settings(&mut self, preferences: config::Preferences, scope: Scope) {
-        let Some(store) = self.persist.as_ref().map(|persist| persist.store.clone()) else {
-            return;
-        };
-        // Use the current files for the other scope, not only the dialog snapshot.
-        let validation = match scope {
-            Scope::Global => store
-                .project
-                .as_ref()
-                .map(|root| config::preferences(root, Scope::Project))
-                .transpose()
-                .and_then(|project| config::validate_keymaps(&preferences, project.as_ref())),
-            Scope::Project => config::preferences(&store.global, Scope::Global)
-                .and_then(|global| config::validate_keymaps(&global, Some(&preferences))),
-        };
-        if let Err(message) = validation {
-            if let Some(form) = &mut self.modals.settings_form {
-                form.note = Some(message);
-            }
-            return;
-        }
-        // Write new and edited themes before preferences, and remove old ones only
-        // after preferences no longer refer to them.
-        let changes = self
-            .modals
-            .settings_form
-            .as_ref()
-            .map(|form| form.theme_changes())
-            .unwrap_or_default();
-        if let Err(message) = self.write_theme_files(&changes) {
-            if let Some(form) = &mut self.modals.settings_form {
-                form.note = Some(message);
-            }
-            return;
-        }
-        let Some(root) = store.root(scope) else {
-            return;
-        };
-        match config::change_preferences(root, scope, preferences) {
-            Ok(hash) => {
-                if let Some(persist) = &mut self.persist
-                    && let Some((_, known)) =
-                        persist.hashes.iter_mut().find(|(item, _)| *item == scope)
-                {
-                    *known = Some(hash);
-                }
-                if let Err(message) = self.remove_theme_files(&changes) {
-                    if let Some(form) = &mut self.modals.settings_form {
-                        form.note = Some(format!(
-                            "Settings were saved, but a theme could not be removed: {message} Retry."
-                        ));
-                    }
-                    return;
-                }
-                self.modals.settings_form = None;
-                self.reload_config();
-                if self
-                    .persist
-                    .as_ref()
-                    .is_some_and(|persist| persist.error.is_none())
-                {
-                    self.status = Some(text::SETTINGS_SAVED.to_owned());
-                }
-            }
-            Err(message) => {
-                if let Some(form) = &mut self.modals.settings_form {
-                    form.note = Some(message);
-                }
-            }
-        }
-    }
 
-    /// Writes the theme files of the dialog. Record each success immediately so
-    /// that a retry after a later failure does not conflict with our own write.
-    fn write_theme_files(&mut self, changes: &ThemeChanges) -> Result<(), String> {
-        let Some(store) = self.persist.as_ref().map(|persist| persist.store.clone()) else {
-            return Ok(());
-        };
-        let root = |scope: Scope| -> Result<crate::store::Root, String> {
-            store
-                .root(scope)
-                .cloned()
-                .ok_or_else(|| "The scope has no folder.".to_owned())
-        };
-        for theme in &changes.saved {
-            let target = root(theme.scope)?;
-            let hash = themes::save(
-                &target,
-                &theme.id,
-                &theme.name,
-                &theme.scheme.to_colors(),
-                theme.file,
-            )?;
-            if let Some(form) = &mut self.modals.settings_form {
-                form.theme_written(&theme.id, hash);
-            }
-        }
-        if let Some(persist) = &mut self.persist {
-            persist.theme_hashes = super::persist::theme_manifests(&persist.store);
-        }
-        Ok(())
-    }
-
-    fn remove_theme_files(&mut self, changes: &ThemeChanges) -> Result<(), String> {
-        let Some(persist) = &mut self.persist else {
-            return Ok(());
-        };
-        for theme in &changes.removed {
-            let root = persist
-                .store
-                .root(theme.scope)
-                .ok_or_else(|| "The scope has no folder.".to_owned())?;
-            if let Some(hash) = theme.file {
-                themes::remove(root, &theme.id, hash)?;
-            }
-        }
-        persist.theme_hashes = super::persist::theme_manifests(&persist.store);
-        Ok(())
-    }
     /// The vault account of one scope and credential endpoint.
     fn ai_account(&self, scope: Scope, id: &str, endpoint: &str) -> String {
         let root = self.persist_root(scope);
@@ -1875,33 +1569,4 @@ impl App {
             self.layout.password = crate::ui::auth::draw_password(frame, prompt, &self.theme);
         }
     }
-}
-
-/// Writes the plan tree of the grid as text: one line per row, the cells joined with
-/// " | ". The first line names the columns.
-fn plan_text(table: &ResultTable) -> String {
-    use crate::grid::Value;
-    use std::fmt::Write;
-    let mut text = crate::limited::LimitedText::new(ai::explain::DETAIL_LIMIT);
-    for column in &table.columns {
-        if write!(text, "{column} | ").is_err() {
-            return text.finish();
-        }
-    }
-    for row in &table.rows {
-        if writeln!(text).is_err() {
-            break;
-        }
-        for cell in row.cells() {
-            let value = match cell {
-                Value::Text(value) | Value::Number(value) => value,
-                Value::Null => "NULL",
-                Value::Binary(_) => "[binary]",
-            };
-            if write!(text, "{value} | ").is_err() {
-                return text.finish();
-            }
-        }
-    }
-    text.finish()
 }

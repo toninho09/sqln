@@ -35,6 +35,7 @@ mod review;
 mod run_sql;
 mod scripts;
 mod session;
+mod settings;
 mod sql_file;
 mod tables;
 use tables::{Screen, Tabs};
