@@ -23,7 +23,7 @@ fi
 # profile says "test":false. The flag does not depend on the build folder
 # layout, which changed in Cargo 1.100. The largest binaries hold the longest
 # waits, so they start first and their waits overlap with the rest.
-awk '/"profile":\{[^}]*"test":true\}/ && match($0, /"executable":"[^"]+"/) {
+awk '/"profile":[{][^}]*"test":true[}]/ && match($0, /"executable":"[^"]+"/) {
   print substr($0, RSTART + 14, RLENGTH - 15)
 }' "$dir/build.json" | sort -u | while IFS= read -r bin; do
   printf '%s %s\n' "$(wc -c <"$bin")" "$bin"
