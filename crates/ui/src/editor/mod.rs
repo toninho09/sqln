@@ -102,12 +102,22 @@ pub enum FormatOutcome {
 
 /// The statements of one execution. It holds a copy of the text, so later edits
 /// do not change a running execution.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RunPlan {
     pub statements: Vec<String>,
     pub rows: Vec<usize>,
     /// The byte offset of each statement in the text of the editor.
     pub starts: Vec<usize>,
+    /// The zero-based place of each statement in the whole text of the editor. A result
+    /// tab takes its number from it. An empty list numbers the statements in order.
+    pub ordinals: Vec<usize>,
+}
+
+impl RunPlan {
+    /// Returns the place of a statement of the plan in the whole text.
+    pub fn ordinal(&self, index: usize) -> usize {
+        self.ordinals.get(index).copied().unwrap_or(index)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

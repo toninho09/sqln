@@ -277,6 +277,7 @@ impl App {
             statements: vec![sql.to_owned()],
             rows: vec![0],
             starts: vec![0],
+            ordinals: Vec::new(),
         };
         self.queue_agent_draft(
             session,

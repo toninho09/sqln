@@ -336,6 +336,7 @@ pub fn draw_table(
             Some(structure) if structure.scope == Scope::Sessions => {
                 text::sessions_title(bar.connection)
             }
+            Some(structure) if structure.scope == Scope::Locks => text::locks_title(bar.connection),
             Some(structure) => text::structure_title(bar.connection, &structure.name),
             None => text::table_title(
                 bar.connection,
@@ -426,10 +427,12 @@ pub fn draw_table(
             .list
             .as_ref()
             .map_or(input.byte_cursor(), |list| list.completion.replace.start);
-        let start = input.text()[..start.min(input.text().len())]
+        // The field shows the characters from `first`, and a wide one takes two columns.
+        let shown: String = printable(&input.text()[..start.min(input.text().len())])
             .chars()
-            .count();
-        let offset = u16::try_from(start.saturating_sub(first)).unwrap_or(0);
+            .skip(first)
+            .collect();
+        let offset = u16::try_from(shown.width()).unwrap_or(u16::MAX);
         let anchor = Position::new(field.x.saturating_add(offset).min(field.right()), field.y);
         match (&tab.list, tab.waiting()) {
             (Some(list), _) => {

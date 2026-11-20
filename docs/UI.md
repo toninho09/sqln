@@ -129,7 +129,7 @@ The console toolbar wraps complete buttons onto additional rows when the width i
 ```text
  [Run]  [New console]  [Clear]  [Stop]  [Tasks 1]  [Access: Allow]
  1   CREATE TABLE orders_archive (id INTEGER PRIMARY KEY);
-─ Result 1 ─ Messages ───────────────────────────────────
+─ #1 ─ Messages ─────────────────────────────────────────
 ```
 
 - **Access: level** shows `Allow`, `Allow all`, `Full access`, or `off`. It opens the session dialog: **Keep access** has the initial focus, then the other levels and **Revoke**.
@@ -225,7 +225,7 @@ The result tab row keeps the selected result, Plan, or Messages tab visible afte
    ▾ ◇ public    │  1 ✓ SELECT id, name                               ▐
      ▸ ▦ users   │  2   FROM public.users;                            │
      ▸ ◫ v_sales │  3                                                 │
-                 │─ Result 1 ─ Result 2 ─ Messages ─────────────────────
+                 │─ #1 ─ #2 ─ Messages ─────────────────────────────────
                  │    │ id │ name   │ active
                  │  1 │  1 │ Ana    │ true                             ▐
                  │  2 │  2 │ Bruno  │ true                             │
@@ -451,8 +451,10 @@ Control rules:
 - Without a response, close the connection; with an open transaction, ask for confirmation before closing.
 - After closing, indicate that the result of the statement is unknown.
 - The database or schema selector applies to each execution, even with another physical connection. In PostgreSQL, the chosen schema comes first in `search_path`, and the default path of the session stays after it.
-- Accepting a new run clears the result tabs of that console, without erasing the text or resolving the transaction.
-- The clearing happens even when the new run needs to wait for a connection; a blocked attempt does not clear the results.
+- Each result tab carries the number of its statement in the editor text: `#3`, `#3.2` for the next grid of the same statement, and `Plan #3` for a plan. Tabs stay in number order.
+- A new run replaces only the tabs of the statements that it runs, when each statement makes its first grid or ends without one. A statement that did not run keeps its tab. Other tabs stay until `x` or `Delete`.
+- Messages keep the messages of every run.
+- A run is refused when the data budget is full, even counting the tabs that it would replace. The status line asks to close result tabs or to raise the limit.
 - Each result reads rows up to the cap, without waiting for a user action.
 - With **Limit in SQL** on (the default, in Settings > Results), a plain read without its own limit goes to the database with `LIMIT` with the cap and one row. **Messages** shows `Statement n: SQLN added LIMIT <rows> to this statement.` as information, and `Messages (n)` does not count it.
 - A result without rows shows the columns and the zero-row indication.
@@ -1518,7 +1520,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
                         │                         \___ \| | | | |   |  \| |
                         │                          ___) | |_| | |___| |\  |
                         │                         |____/ \__\_\_____|_| \_|
-                        │                                   0.5.1
+                        │                                   0.5.2
                         │                            No console is open
                         │
                         │                 Ctrl+W h a  Add a connection
@@ -1532,7 +1534,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
 
 Without a connection, the screen shows **No connection yet**, without the **Open a console** row.
 With the explorer hidden, the first row is `Ctrl+W b` **Show the explorer**, the status line shows `HOME`,
-and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.5.1` instead.
+and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.5.2` instead.
 
 ### Welcome screen
 
@@ -1540,7 +1542,7 @@ The screen appears over an editor without text. It keeps no state and captures n
 The first typed character removes the screen.
 
 ```text
-           SQLN 0.5.1
+           SQLN 0.5.2
            Write SQL here
 
                    F5  Run the statement

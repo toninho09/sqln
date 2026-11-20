@@ -65,8 +65,8 @@ impl App {
                 Run | RunScript | RunSubquery | Explain | ExplainAnalyze | Stop | FormatSql
                 | SqlDiagnostics | ToggleComment | OpenHistory => text::GROUP_RUN,
                 ToggleMode | Commit | Rollback => text::GROUP_TRANSACTION,
-                ChooseSchema | ChangeConnection | OpenSessions | OpenDiagram | OpenCompare
-                | FollowKey => text::GROUP_CONNECTION,
+                ChooseSchema | ChangeConnection | OpenSessions | OpenLocks | OpenDiagram
+                | OpenCompare | FollowKey => text::GROUP_CONNECTION,
                 NextTab | PreviousTab | CloseTab | RenameConsole => text::GROUP_TABS,
                 FocusLeft | FocusRight | FocusUp | FocusDown | ToggleNavigator
                 | ExplorerCommands | ContextCommands => text::GROUP_PANELS,

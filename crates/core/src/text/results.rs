@@ -53,6 +53,7 @@ pub const SECTION_STATISTICS: &str = "Statistics";
 pub const ALL_SCHEMAS: &str = "all schemas";
 pub const STRUCTURE_REFUSED: &str = "This source has no structure. Keys have no columns.";
 pub const SESSIONS_REFUSED: &str = "SQLN lists sessions only on PostgreSQL and MySQL.";
+pub const LOCKS_REFUSED: &str = "SQLN lists lock waits only on PostgreSQL and MySQL.";
 pub const DIAGRAM_REFUSED: &str = "This source has no diagram. Keys have no columns.";
 pub const DIAGRAM_NO_SCHEMA: &str =
     "The connection has no current schema. Use the row of a schema.";
@@ -130,8 +131,19 @@ pub fn search_count(position: usize, total: usize, partial: bool) -> String {
     }
 }
 
-pub fn result_tab(number: usize) -> String {
-    format!("Result {number}")
+/// Names a result tab by the number of its statement: `#3`, `#3.2` for the next grid
+/// of the same statement, and `Plan #3` for a plan.
+pub fn result_tab(number: usize, part: usize, plan: bool) -> String {
+    let base = if part > 1 {
+        format!("#{number}.{part}")
+    } else {
+        format!("#{number}")
+    };
+    if plan {
+        format!("{PLAN_TAB} {base}")
+    } else {
+        base
+    }
 }
 
 /// Writes the row under the grid of a plan. `top` is the node with the largest share.
@@ -185,6 +197,10 @@ pub fn sessions_title(connection: &str) -> String {
     format!("{connection} · sessions")
 }
 
+pub fn locks_title(connection: &str) -> String {
+    format!("{connection} · lock waits")
+}
+
 pub fn rows_read(rows: usize) -> String {
     plural(rows, "row")
 }
@@ -227,9 +243,11 @@ pub fn row_cap_reached(rows: usize) -> String {
     )
 }
 
+pub const RUN_BUDGET_FULL: &str = "Run refused: the data budget is full. Close result tabs with x or Delete, or increase the limit in Settings.";
+
 pub fn budget_reached(rows: usize) -> String {
     format!(
-        "{} read. Data budget reached. Increase the limit or run less data.",
+        "{} read. Data budget reached. Close result tabs, increase the limit, or run less data.",
         plural(rows, "row")
     )
 }
@@ -279,3 +297,5 @@ pub fn row_title(row: usize, loaded: usize) -> String {
 pub fn row_footer(columns: usize) -> String {
     format!(" {} ", plural(columns, "column"))
 }
+
+pub const ANALYSIS_UNAVAILABLE: &str = "Analysis unavailable. Wait for the result. A comparison needs another complete result tab with the same columns.";

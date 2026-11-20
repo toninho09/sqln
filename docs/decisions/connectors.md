@@ -2,6 +2,20 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## Lock waits — 2026-11-20
+
+The user asked for a panel that shows which session blocks which, and chose an own tab.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Place | `Scope::Locks` in a structure tab, with `L` in the navigator and `Ctrl+W L` in any panel | Columns in the sessions tab | The tab shows the lock and the object, and keeps pages, search, copy, and export |
+| Row | One row for each pair of a waiting session and a blocking session | One row for each session | A session can wait for several others |
+| Columns | The blocking session, its user, and its query take the places of the sessions tab | Waiting session first | The signals of `q` and `K` read those places, so one path serves both tabs, and the useful action frees the wait |
+| PostgreSQL | `pg_blocking_pids` with the lock of `pg_locks` that is not granted | Only `pg_locks` joins | The function follows the lock queue and the parallel workers |
+| MySQL and MariaDB | `sys.innodb_lock_waits` | `performance_schema.data_lock_waits`; `information_schema.INNODB_LOCK_WAITS` | One view answers on MySQL 5.7, MySQL 8, and MariaDB 10.6 or newer; each table exists only in some of them |
+| Reader | The session that reads the list is not a blocker | Show it with a mark | A session must not end itself, as in the sessions tab |
+| Refresh | Manual with `R`, and automatic after an action | By interval | Same rule as the sessions tab |
+
 ## Error kinds of the connector contract — 2026-11-19
 
 The user approved a plan of internal improvements. This entry covers the typed errors of the connector contract.

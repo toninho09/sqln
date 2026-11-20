@@ -2983,7 +2983,7 @@ fn the_mysql_delimiter_creates_a_routine_from_the_editor() {
          DELIMITER ;\n\
          CALL app_delimited();",
     );
-    s.wait_for("Result 2");
+    s.wait_for(" #3.2 ");
     s.wait_for("second_set");
     s.press(key(KeyCode::Char('[')));
     s.prefix('j');
@@ -4195,6 +4195,79 @@ fn an_end_closes_the_other_session() {
         std::thread::sleep(Duration::from_millis(200));
         let next = busy.run_ok(&[server.backend_id()]);
         assert_ne!(next.text(0, 0), id, "{:?}", server.kind);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The lock waits of a server.
+
+fn lock_list(h: &mut Harness, dialect: Dialect) -> Run {
+    let nothing = RelationRef::default();
+    let sql = structure_sql(dialect, Scope::Locks, &nothing, Section::Columns).unwrap();
+    h.run_ok(&[&sql])
+}
+
+/// Waits until the list shows that `blocked` waits for `blocking`.
+fn wait_for_lock(server: &Server, reader: &mut Harness, blocking: &str, blocked: &str) -> Run {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let run = lock_list(reader, server.dialect());
+        let found = run.rows.iter().any(|row| {
+            row.get(0).unwrap().full_text() == blocking
+                && row.get(2).unwrap().full_text() == blocked
+        });
+        if found {
+            return run;
+        }
+        assert!(Instant::now() < deadline, "{:?} {run:?}", server.kind);
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// A transaction holds a row and another statement waits for it. The list names the
+/// holder first, and ending it lets the waiting statement finish.
+#[test]
+fn the_lock_list_names_the_blocker_and_its_end_frees_the_wait() {
+    for server in servers() {
+        let mut holder = Harness::open(&server, sessions(1));
+        holder.run_ok(&[
+            "DROP TABLE IF EXISTS t_lock_wait",
+            "CREATE TABLE t_lock_wait (id int PRIMARY KEY, a int)",
+            "INSERT INTO t_lock_wait VALUES (1, 0)",
+        ]);
+        let holder_id = holder.run_ok(&[server.backend_id()]).text(0, 0);
+        holder.run_ok(&["BEGIN", "UPDATE t_lock_wait SET a = 1 WHERE id = 1"]);
+
+        let mut waiter = Harness::open(&server, sessions(1));
+        let waiter_id = waiter.run_ok(&[server.backend_id()]).text(0, 0);
+        let waiting = waiter.start(&["UPDATE t_lock_wait SET a = 2 WHERE id = 1"], false);
+        waiter.wait_started();
+
+        let mut reader = Harness::open(&server, sessions(1));
+        let run = wait_for_lock(&server, &mut reader, &holder_id, &waiter_id);
+        let own = reader.run_ok(&[server.backend_id()]).text(0, 0);
+        assert!(
+            run.rows
+                .iter()
+                .all(|row| row.get(0).unwrap().full_text() != own),
+            "{:?}",
+            server.kind
+        );
+
+        let signal = signal_sql(
+            server.dialect(),
+            SessionSignal::EndSession,
+            holder_id.parse().unwrap(),
+        );
+        reader.run_ok(&[&signal.unwrap()]);
+        let freed = waiter.collect(waiting);
+        assert_eq!(
+            freed.end,
+            Some(ExecutionEnd::Completed),
+            "{:?} {freed:?}",
+            server.kind
+        );
+        waiter.run_ok(&["DROP TABLE t_lock_wait"]);
     }
 }
 

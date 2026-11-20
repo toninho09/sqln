@@ -5,6 +5,7 @@ use std::time::Instant;
 use super::{App, Overlay, Picker, PickerKind};
 use crate::analysis::{ChartKind, Job, STALE_ERROR};
 use crate::input::Action;
+use crate::ui::text;
 use crate::ui::wrap::WrappedText;
 
 pub(super) struct Choice {
@@ -16,14 +17,14 @@ enum Step {
     ChartKind,
     X(ChartKind),
     Y(ChartKind, usize),
-    Keys(Vec<usize>),
+    /// The other tabs that a comparison can use, by the generation of their table.
+    Other(Vec<u64>),
+    /// The generation of the other table and the chosen key columns.
+    Keys(u64, Vec<usize>),
 }
 
 impl App {
     pub(super) fn analysis_available(&self, action: Action) -> bool {
-        if action == Action::GridKeepPrevious {
-            return self.console_on_screen() && !self.console().is_busy();
-        }
         if self.diagram_index().is_some() || self.compare_index().is_some() {
             return false;
         }
@@ -36,9 +37,8 @@ impl App {
             Action::GridComparePrevious => {
                 usable
                     && self.console_on_screen()
-                    && self.console().comparison_ready
-                    && self.console().previous_result.is_some()
                     && result.is_some_and(|result| result.is_complete())
+                    && !self.comparison_tabs().is_empty()
             }
             Action::GridProfile => usable,
             Action::GridChart => {
@@ -53,24 +53,7 @@ impl App {
 
     pub(super) fn perform_analysis(&mut self, action: Action) {
         if !self.analysis_available(action) {
-            self.status = Some("Analysis unavailable. Wait for the result; comparison needs two complete single-result executions and retention enabled.".into());
-            return;
-        }
-        if action == Action::GridKeepPrevious {
-            let budget = self.budget.clone();
-            let console = self.console_mut();
-            console.retain_result = !console.retain_result;
-            if !console.retain_result {
-                console.discard_previous(&budget);
-            }
-            self.status = Some(
-                if console.retain_result {
-                    "Previous-result retention: On. The next run keeps this complete result."
-                } else {
-                    "Previous-result retention: Off. The retained result is released."
-                }
-                .into(),
-            );
+            self.status = Some(text::ANALYSIS_UNAVAILABLE.into());
             return;
         }
         let Some(result) = self.active_result() else {
@@ -87,9 +70,39 @@ impl App {
                 self.start_analysis(job);
             }
             Action::GridChart => self.analysis_picker(Step::ChartKind, 0),
-            Action::GridComparePrevious => self.analysis_picker(Step::Keys(Vec::new()), 0),
+            Action::GridComparePrevious => {
+                let tabs = self.comparison_tabs();
+                self.analysis_picker(Step::Other(tabs), 0);
+            }
             _ => {}
         }
+    }
+
+    /// Lists the other complete data tabs of the console with the columns of the
+    /// active result, by the generation of their tables.
+    fn comparison_tabs(&self) -> Vec<u64> {
+        let Some(active) = self.active_result() else {
+            return Vec::new();
+        };
+        self.console()
+            .results
+            .iter()
+            .filter(|result| {
+                result.table.generation != active.table.generation
+                    && !result.plan
+                    && result.is_complete()
+                    && result.table.columns == active.table.columns
+            })
+            .map(|result| result.table.generation)
+            .collect()
+    }
+
+    /// Returns the result of the console with a table generation.
+    fn console_result(&self, generation: u64) -> Option<&crate::console::ResultTab> {
+        self.console()
+            .results
+            .iter()
+            .find(|result| result.table.generation == generation)
     }
 
     fn analysis_complete(&self) -> bool {
@@ -114,7 +127,14 @@ impl App {
                 "Choose numeric Y column",
                 column_names(&result.table.columns),
             ),
-            Step::Keys(keys) => {
+            Step::Other(tabs) => (
+                "Compare with result",
+                tabs.iter()
+                    .filter_map(|generation| self.console_result(*generation))
+                    .map(|result| result.label())
+                    .collect(),
+            ),
+            Step::Keys(_, keys) => {
                 let mut items = vec!["Compare with selected key columns".to_owned()];
                 items.extend(
                     result
@@ -184,25 +204,42 @@ impl App {
                 );
                 self.start_analysis(job);
             }
-            Step::Keys(mut keys) if cursor > 0 => {
+            Step::Other(tabs) => {
+                let Some(&other) = tabs.get(cursor) else {
+                    return;
+                };
+                if self.console_result(other).is_none() {
+                    self.status = Some(STALE_ERROR.into());
+                    return;
+                }
+                self.analysis_picker(Step::Keys(other, Vec::new()), 0);
+            }
+            Step::Keys(other, mut keys) if cursor > 0 => {
                 let column = cursor - 1;
                 if keys.contains(&column) {
                     keys.retain(|&key| key != column);
                 } else {
                     keys.push(column);
                 }
-                self.analysis_picker(Step::Keys(keys), cursor);
+                self.analysis_picker(Step::Keys(other, keys), cursor);
             }
-            Step::Keys(keys) => {
+            Step::Keys(other, keys) => {
                 let Some(result) = self.active_result() else {
                     self.status = Some(STALE_ERROR.into());
                     return;
                 };
-                let Some(previous) = self.console().previous_result.as_ref() else {
+                let Some(previous) = self.console_result(other) else {
                     self.status = Some(STALE_ERROR.into());
                     return;
                 };
-                match Job::diff(&result.table, previous, keys, &self.budget) {
+                let names = (previous.label(), result.label());
+                match Job::diff(
+                    &result.table,
+                    &previous.table,
+                    keys,
+                    (&names.0, &names.1),
+                    &self.budget,
+                ) {
                     Ok(job) => self.start_analysis(job),
                     Err(reason) => self.status = Some(reason.into()),
                 }
@@ -232,12 +269,12 @@ impl App {
         if self.modals.overlay.is_none() {
             return;
         }
+        let other = job
+            .other_generation()
+            .and_then(|generation| self.console_result(generation))
+            .map(|result| &result.table);
         let outcome = match self.active_result() {
-            Some(result) => job.step(
-                &result.table,
-                self.console().previous_result.as_ref(),
-                deadline,
-            ),
+            Some(result) => job.step(&result.table, other, deadline),
             None => Err(STALE_ERROR),
         };
         match outcome {

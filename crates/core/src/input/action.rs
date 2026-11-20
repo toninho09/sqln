@@ -36,6 +36,8 @@ pub enum Action {
     /// Opens an external `.sql` file as a console: a copy, or a link that saves to it.
     OpenSqlFile,
     OpenSessions,
+    /// Opens the sessions that wait for a lock, with the sessions that hold it.
+    OpenLocks,
     OpenDiagram,
     OpenCompare,
     /// Follows a key of the row of the cursor of a table tab.
@@ -98,6 +100,7 @@ pub enum Action {
     NavigatorDiagram,
     NavigatorCompare,
     NavigatorSessions,
+    NavigatorLocks,
     NavigatorGenerate,
     NavigatorImport,
     NavigatorCopyName,
@@ -124,7 +127,6 @@ pub enum Action {
     GridOpenRow,
     GridProfile,
     GridChart,
-    GridKeepPrevious,
     GridComparePrevious,
     GridFind,
     GridNarrow,

@@ -47,7 +47,7 @@ impl SqlDialect for DuckDb {
             (Scope::Relation, Section::Statistics) => return None,
             (Scope::Schema, _) => all_columns(&namespace),
             (Scope::Connection, _) => all_columns(""),
-            (Scope::Sessions, _) => return None,
+            (Scope::Sessions | Scope::Locks, _) => return None,
         })
     }
 

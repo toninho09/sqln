@@ -197,7 +197,7 @@ fn differences_match_keys_not_row_positions_and_normalize_numbers() {
         ],
     );
     let budget = Arc::new(Budget::new(65536));
-    let job = Job::diff(&current, &old, vec![0], &budget).unwrap();
+    let job = Job::diff(&current, &old, vec![0], ("Previous", "Current"), &budget).unwrap();
     let result = report(job, &current, Some(&old)).unwrap();
     assert!(
         result.text.contains("value: before -> after"),
@@ -232,7 +232,7 @@ fn composite_keys_and_nulls_follow_existing_compare_rules() {
     );
     let budget = Arc::new(Budget::new(65536));
     let result = report(
-        Job::diff(&current, &old, vec![0, 1], &budget).unwrap(),
+        Job::diff(&current, &old, vec![0, 1], ("Previous", "Current"), &budget).unwrap(),
         &current,
         Some(&old),
     )
@@ -250,7 +250,7 @@ fn duplicate_keys_on_either_side_cancel_without_a_partial_report() {
     for (old, current) in [(&duplicate, &unique), (&unique, &duplicate)] {
         let budget = Arc::new(Budget::new(65536));
         let error = report(
-            Job::diff(current, old, vec![0], &budget).unwrap(),
+            Job::diff(current, old, vec![0], ("Previous", "Current"), &budget).unwrap(),
             current,
             Some(old),
         )
@@ -266,8 +266,8 @@ fn incompatible_columns_and_missing_keys_refuse_comparison() {
     let old = table(&["id"], &[]);
     let current = table(&["other"], &[]);
     let budget = Arc::new(Budget::new(65536));
-    assert!(Job::diff(&current, &old, vec![0], &budget).is_err());
-    assert!(Job::diff(&old, &old, vec![], &budget).is_err());
+    assert!(Job::diff(&current, &old, vec![0], ("Previous", "Current"), &budget).is_err());
+    assert!(Job::diff(&old, &old, vec![], ("Previous", "Current"), &budget).is_err());
 }
 
 #[test]
@@ -355,7 +355,14 @@ fn large_difference_values_advance_in_budgeted_chunks() {
         &[vec![Value::Number("1"), Value::binary(&bytes)]],
     );
     let budget = Arc::new(Budget::new(65536));
-    let mut job = Job::diff(&current, &previous, vec![0], &budget).unwrap();
+    let mut job = Job::diff(
+        &current,
+        &previous,
+        vec![0],
+        ("Previous", "Current"),
+        &budget,
+    )
+    .unwrap();
     for _ in 0..10 {
         assert!(!job.step(&current, Some(&previous), Instant::now()).unwrap());
     }
@@ -386,7 +393,14 @@ fn difference_chunks_preserve_unicode_controls_binary_and_column_names() {
     );
     let budget = Arc::new(Budget::new(256 * 1024));
     let result = report(
-        Job::diff(&current, &previous, vec![0], &budget).unwrap(),
+        Job::diff(
+            &current,
+            &previous,
+            vec![0],
+            ("Previous", "Current"),
+            &budget,
+        )
+        .unwrap(),
         &current,
         Some(&previous),
     )
@@ -413,7 +427,7 @@ fn difference_chunks_preserve_unicode_controls_binary_and_column_names() {
 fn comparison_memory_failure_cancels_the_job() {
     let table = table(&["id"], &[vec![Value::Number("1")]]);
     let budget = Arc::new(Budget::new(100));
-    let job = Job::diff(&table, &table, vec![0], &budget).unwrap();
+    let job = Job::diff(&table, &table, vec![0], ("Previous", "Current"), &budget).unwrap();
     assert_eq!(
         report(job, &table, Some(&table)).err().unwrap(),
         MEMORY_ERROR
@@ -430,113 +444,4 @@ fn dropping_an_unfinished_job_releases_its_scratch_memory() {
     assert!(budget.used() > 0);
     drop(job);
     assert_eq!(budget.used(), 0);
-}
-
-#[test]
-fn retained_rows_keep_one_budget_charge_across_credential_preparation_and_replacement() {
-    use sqln_core::clipboard::MemoryClipboard;
-    use sqln_core::grid::{Reservation, Row};
-    use sqln_exec::exec::{ExecEvent, ExecutionEnd, ReadLimit, StatementKey};
-    use sqln_sql::sql::Dialect;
-    use sqln_ui::console::Console;
-    use sqln_ui::editor::{KeyboardMode, RunPlan, SqlEditor};
-    use std::{cell::RefCell, rc::Rc};
-
-    let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
-    let editor = SqlEditor::new(
-        "SELECT 1",
-        KeyboardMode::Conventional,
-        Dialect::Sqlite,
-        clipboard,
-    );
-    let mut console = Console::new(1, "test".into(), editor);
-    let budget = Budget::new(65536);
-    let plan = RunPlan {
-        statements: vec!["SELECT 1".into()],
-        rows: vec![],
-        starts: vec![],
-    };
-    let deliver = |console: &mut Console, execution| {
-        let key = StatementKey {
-            console: 1,
-            execution,
-            index: 0,
-        };
-        let row: Row = [Value::Number("1")].into_iter().collect();
-        let Reservation::Accepted(bytes) = budget.reserve(&row) else {
-            panic!("row must fit")
-        };
-        console.on_event(
-            ExecEvent::Columns {
-                key,
-                columns: vec!["value".into()],
-                live: None,
-                progress: None,
-            },
-            &budget,
-        );
-        console.on_event(
-            ExecEvent::Rows {
-                key,
-                rows: vec![row],
-                bytes,
-            },
-            &budget,
-        );
-        console.on_event(
-            ExecEvent::ResultDone {
-                key,
-                rows: 1,
-                limit: ReadLimit::None,
-            },
-            &budget,
-        );
-        console.on_event(
-            ExecEvent::ExecutionFinished {
-                console: 1,
-                execution,
-                end: ExecutionEnd::Completed,
-                message: None,
-            },
-            &budget,
-        );
-    };
-    console.begin_execution(1, &plan, &budget);
-    deliver(&mut console, 1);
-    let one_row = budget.used();
-    console.retain_result = true;
-    console.await_credentials(&plan, &budget);
-    let generation = console.previous_result.as_ref().unwrap().generation;
-    assert_eq!(budget.used(), one_row);
-    console.begin_execution(2, &plan, &budget);
-    assert_eq!(
-        console.previous_result.as_ref().unwrap().generation,
-        generation
-    );
-    assert_eq!(budget.used(), one_row);
-    console.on_event(
-        ExecEvent::ExecutionFinished {
-            console: 1,
-            execution: 1,
-            end: ExecutionEnd::Failed,
-            message: None,
-        },
-        &budget,
-    );
-    assert!(
-        console.previous_result.is_some(),
-        "stale events do not cancel the current comparison"
-    );
-    deliver(&mut console, 2);
-    assert_eq!(budget.used(), 2 * one_row);
-    console.begin_execution(3, &plan, &budget);
-    assert_eq!(
-        budget.used(),
-        one_row,
-        "replacement releases the older snapshot"
-    );
-    console.cancel_comparison("test canceled the run", &budget);
-    assert_eq!(budget.used(), 0);
-    assert!(console.previous_result.is_none());
-    assert_eq!(console.warnings(), 1);
 }

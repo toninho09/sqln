@@ -63,6 +63,7 @@ impl App {
             Action::NavigatorDiagram => self.open_row_diagram(&row),
             Action::NavigatorCompare => self.open_row_compare(&row),
             Action::NavigatorSessions => self.open_row_sessions(&row),
+            Action::NavigatorLocks => self.open_row_locks(&row),
             Action::NavigatorGenerate => self.open_templates(&row),
             Action::NavigatorImport => self.import_row(&row),
             Action::NavigatorCopyName => {

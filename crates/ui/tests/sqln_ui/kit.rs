@@ -223,6 +223,43 @@ fn the_used_columns_count_a_wide_character_as_two() {
     assert_eq!(view.used, 4);
 }
 
+#[test]
+fn a_field_keeps_a_wide_text_and_its_cursor_inside_its_columns() {
+    let theme = Theme::plain();
+    let field = |text, cursor, width, focused, mode| {
+        input::view(
+            FieldText {
+                text,
+                cursor,
+                width,
+                focused,
+                mode,
+            },
+            &theme,
+        )
+    };
+    // Each character uses two columns, so six columns hold the cursor and two of them.
+    let focused = field("日本語テキスト", 7, 6, true, FieldMode::Text);
+    let spans: Vec<String> = focused
+        .spans
+        .iter()
+        .map(|s| s.content.to_string())
+        .collect();
+    assert_eq!(spans, ["スト", " ", ""]);
+    assert!(focused.used <= 6, "{}", focused.used);
+    assert_eq!(focused.first, 5);
+
+    let spans = view("日本語テ", 1, 5, true, FieldMode::Text);
+    assert_eq!(spans, ["日", "本", ""]);
+
+    let spans = view("日本語", 0, 5, false, FieldMode::Text);
+    assert_eq!(spans.concat(), "日本");
+
+    let path = field("/数据/文件.db", 0, 8, false, FieldMode::Path);
+    assert_eq!(path.spans[0].content, "/文件.db");
+    assert_eq!(path.used, 8);
+}
+
 use sqln_ui::ui::kit::list::{viewport, viewport_centered};
 
 #[test]
@@ -268,6 +305,10 @@ fn last_chars_keeps_the_end_of_a_long_text() {
     assert_eq!(last_chars(&chars, 7), "file.db");
     assert_eq!(last_chars(&chars, 3), ".db");
     assert_eq!(last_chars(&chars, 100), "path/file.db");
+    // A wide character uses two columns of the width.
+    let chars: Vec<char> = "目录/文件".chars().collect();
+    assert_eq!(last_chars(&chars, 5), "/文件");
+    assert_eq!(last_chars(&chars, 4), "文件");
 }
 
 use sqln_ui::ui::kit::style::{self, ListRow, NoteLevel};

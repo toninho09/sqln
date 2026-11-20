@@ -413,10 +413,7 @@ impl App {
         }
         if matches!(
             action,
-            Action::GridProfile
-                | Action::GridChart
-                | Action::GridKeepPrevious
-                | Action::GridComparePrevious
+            Action::GridProfile | Action::GridChart | Action::GridComparePrevious
         ) {
             self.perform_analysis(action);
             return;
@@ -477,6 +474,7 @@ impl App {
             Action::ToggleComment => self.comment_console(),
             Action::OpenHistory => self.open_history(),
             Action::OpenSessions => self.open_sessions(),
+            Action::OpenLocks => self.open_locks(),
             Action::OpenSqlFile => self.start_open_sql_file(),
             Action::OpenDiagram => self.open_diagram_here(),
             Action::OpenCompare => self.open_compare_here(),
@@ -527,6 +525,7 @@ impl App {
             | Action::NavigatorDiagram
             | Action::NavigatorCompare
             | Action::NavigatorSessions
+            | Action::NavigatorLocks
             | Action::NavigatorGenerate
             | Action::NavigatorImport
             | Action::NavigatorCopyName
@@ -944,6 +943,7 @@ fn home_allows(action: Action) -> bool {
                 | ExplorerCommands
                 | ContextCommands
                 | OpenSessions
+                | OpenLocks
                 | OpenDiagram
                 | OpenCompare
                 | OpenSqlFile

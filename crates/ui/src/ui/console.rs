@@ -492,15 +492,7 @@ pub fn draw_console(
         let line = match &result.search {
             Some(search) => search_line(search, &result.table, theme),
             None => Line::from(Span::styled(
-                format!(
-                    " {}{}",
-                    if console.retain_result {
-                        "Keep previous: On · "
-                    } else {
-                        ""
-                    },
-                    printable(&result.summary)
-                ),
+                format!(" {}", printable(&result.summary)),
                 theme.hint,
             )),
         };
@@ -531,8 +523,7 @@ fn result_tab_places(console: &Console, area: Rect) -> Vec<(usize, String, u16)>
     let last = console.results.len();
     let active = console.active.min(last);
     let label = |index: usize| match console.results.get(index) {
-        Some(result) if result.plan => text::PLAN_TAB.to_owned(),
-        Some(result) => text::result_tab(result.number),
+        Some(result) => result.label(),
         None => text::messages_tab(console.warnings()),
     };
     if area.width <= 2 {

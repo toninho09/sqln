@@ -11,7 +11,7 @@ use crate::input::{Action, Region};
 use crate::navigator::RowKind;
 use crate::palette::{Command, Palette, PaletteRequest};
 use crate::plan::Explain;
-use crate::structure::has_sessions;
+use crate::structure::{has_locks, has_sessions};
 use crate::table::TableFocus;
 use crate::ui::kit::measure::fit;
 use crate::ui::text;
@@ -79,6 +79,7 @@ impl App {
                     (&[NavigatorDisconnect], text::MENU_DISCONNECT),
                     (&[NavigatorDeletePassword], text::MENU_DELETE_PASSWORD),
                     (&[NavigatorSessions], text::MENU_SESSIONS),
+                    (&[NavigatorLocks], text::MENU_LOCKS),
                     (&[NavigatorMoveUp], text::MENU_MOVE_UP),
                     (&[NavigatorMoveDown], text::MENU_MOVE_DOWN),
                     (&[NavigatorMoveToFolder], text::MENU_MOVE_TO_FOLDER),
@@ -244,6 +245,7 @@ impl App {
                     (&[ChooseSchema], text::MENU_SCHEMA),
                     (&[ChangeConnection], text::MENU_CHANGE),
                     (&[OpenSessions], text::MENU_SESSIONS),
+                    (&[OpenLocks], text::MENU_LOCKS),
                     (&[OpenDiagram], text::MENU_DIAGRAM),
                     (&[OpenCompare], text::MENU_COMPARE),
                     (&[FollowKey], text::MENU_FOLLOW),
@@ -377,6 +379,10 @@ impl App {
             Action::OpenSessions => self.sessions_connection().is_some_and(|id| {
                 let dialect = self.connection(id).map(|item| item.dialect);
                 dialect.is_some_and(has_sessions)
+            }),
+            Action::OpenLocks => self.sessions_connection().is_some_and(|id| {
+                let dialect = self.connection(id).map(|item| item.dialect);
+                dialect.is_some_and(has_locks)
             }),
             Action::RenameConsole | Action::ChangeConnection => !in_table,
             Action::OpenSqlFile => !self.connections.is_empty(),

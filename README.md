@@ -55,6 +55,7 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 - **Auto-refresh.** Repeat the last run of a console, or the page of a table, at a fixed interval.
 - **Query plans.** See the plan of a statement as a tree, with the share of each node.
 - **Server sessions.** List the sessions of PostgreSQL or MySQL, cancel a query, or end a session.
+- **Lock waits.** See which session blocks which on PostgreSQL or MySQL, and cancel or end the session that blocks.
 - **ER diagrams.** Draw the tables and foreign keys of a schema or a table, and copy the diagram as Mermaid text.
 - **Compare.** Compare table structures or data across SQL connections, and open a sync script without running it.
 - **Transactions.** Use autocommit or manual mode, with transaction state and age on screen.
@@ -232,6 +233,7 @@ A row above the editor shows the executable line range. **Run script** always us
 It does not add outer aliases or CTE dependencies. The normal Run scopes stay unchanged.
 Without a selection, the line-number column highlights the statement under the cursor. Execution-state symbols stay visible.
 The results appear below the editor. Use `Ctrl+W j` to move down to the grid.
+Each result tab carries the number of its statement in the script, such as `#3`. Running that statement again replaces only its tab; the other tabs stay until you close them with `x` or `Delete`.
 
 For Redis or Valkey, use a command instead:
 
@@ -323,6 +325,7 @@ Uppercase keys matter: `Ctrl+W C` and `Ctrl+W c` are different actions.
 | Run selection or current statement | `F5` or `Ctrl+W e` |
 | Run the whole script | `Shift+F5` or `Ctrl+W s` |
 | Show the sessions of the server | `Ctrl+W S` |
+| Show the lock waits of the server | `Ctrl+W L` |
 | Show the ER diagram of the tab or the row | `Ctrl+W D` |
 | Compare the tab or the row | `Ctrl+W v` |
 | Follow a key of the row of a table tab | `Ctrl+W F` |
@@ -490,8 +493,7 @@ Use these commands in an idle console result or table grid:
 |---|---|
 | `p` | Profile the current column: NULL count and percentage, distinct values without NULL, numeric min/max, and histogram |
 | `b` | Choose a bar or line chart and two numeric columns |
-| `B` | Turn previous-result retention on or off for the console |
-| `D` | Compare the current execution with the retained previous execution |
+| `D` | Compare the current result tab with another result tab of the console |
 
 The palette and `Ctrl+W Space` offer the same commands and show custom shortcuts.
 Profiles and charts use only loaded rows, or the current table page. An incomplete result carries a label.
@@ -500,16 +502,14 @@ Histograms and chart positions use approximate numbers; non-finite or out-of-ran
 Charts preserve row order. Each repeated X has its own position; X spacing does not represent numeric distance.
 Line charts use consecutive sections without sampling. Scroll to see every section and its point values.
 
-For execution comparison:
+For result comparison:
 
-1. Press `B` in the first complete result to enable retention.
-2. Run the next query. The previous result stays in the shared memory budget.
-3. Press `D`, select key columns with `Enter`, and choose **Compare with selected key columns**.
+1. Keep two complete results with the same columns in the console, for example two statements of the script (`#1` and `#2`).
+2. In one of them, press `D` and choose the other tab.
+3. Select key columns with `Enter`, and choose **Compare with selected key columns**.
 
-Comparison requires one complete data result per execution, the same column names and order, and unique selected keys.
+Comparison requires complete data results, the same column names and order, and unique selected keys.
 It reports added, removed, and changed rows; row order alone does not count as a change.
-Retention keeps one previous result per console until replacement, release, or console close. It does not persist across restarts.
-A failed or incomplete execution releases the retained result and records a warning in Messages.
 An analysis failure or memory limit cancels the report without partial differences, retries, or another query.
 The current grid remains available. Pending table edits block analysis.
 Press `Esc` to cancel or close, use arrows, PageUp/PageDown, or the mouse wheel to scroll, and `Ctrl+C` to copy.
@@ -565,6 +565,16 @@ The list shows each session that the database user can see, except the session t
 
 SQLN asks before `q` and `K`. A read-only connection refuses both keys.
 The database user needs the right to act on the sessions of other users.
+
+### Lock waits
+
+Press `L` in the navigator, or `Ctrl+W L` in any panel, to see the sessions of a PostgreSQL or MySQL server that wait for a lock.
+Each row is one wait: the session that blocks comes first, then the session that waits, the lock, the object, and both queries.
+
+- Press `q` to cancel the query of the session that blocks, or `K` to end it. SQLN asks first, and a read-only connection refuses both keys.
+- Press `R` to read the waits again. An empty list means that no session waits.
+
+PostgreSQL reads `pg_blocking_pids`. MySQL and MariaDB read `sys.innodb_lock_waits`, so they show InnoDB row locks only, and the database user needs grants on `sys` and `performance_schema`.
 
 ### ER diagrams
 
@@ -868,6 +878,7 @@ A positional `.sql` path is not a script-opening argument; positional file targe
 - MariaDB has no tree plan, so `Ctrl+W E` shows the error of the server. MySQL has no tree plan for a write on one table.
 - PostgreSQL `COPY FROM STDIN` and `COPY TO STDOUT` are not supported.
 - An ER diagram has no search, no zoom, and no export to an image file. The Mermaid copy holds the boxes on screen.
+- The lock waits of MySQL and MariaDB show InnoDB row locks from `sys.innodb_lock_waits`, without metadata locks. MariaDB needs version 10.6 or newer for that view. The age of a PostgreSQL wait is the age of the waiting query.
 - The DDL of a PostgreSQL table that SQLN writes leaves out partitions, inheritance, comments, grants, the owner, storage options, policies, and triggers. MySQL gives the DDL of a routine or a trigger only with the privilege to see it.
 - Key navigation acts only in a table tab. A console result does not tell the table of a column.
 - Query parameters support SQLite, DuckDB, PostgreSQL, and MySQL consoles with scalar values. Table filters, Redis, and Valkey have none.

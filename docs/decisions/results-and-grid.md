@@ -2,6 +2,29 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## Result tabs by statement number — 2026-11-20
+
+The user asks for result tabs like DataGrip: each statement of the console has a number, its result opens a tab with that number, and a new run of the same statement replaces only that tab.
+This entry replaces the rule "clear the previous result tabs when accepting a new execution" of the [initial plan](../INITIAL_PLAN.md) and the retention of the [analysis of loaded results](#analysis-of-loaded-results).
+
+| # | Point | Approved rule | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Identity | The place of the statement in the whole editor text when it runs. A selection or a subquery takes the number of the statement around it | Follow the edits of the editor; the text of the statement | Simple and predictable. Inserting a statement above renumbers the statements below |
+| 2 | Name | `#3`; more grids of the same statement are `#3.2`, `#3.3`; a plan is `Plan #3` | `Result 3`; the start of the SQL | Short, so many tabs fit at 80 columns |
+| 3 | Replacement | The first grid of `#n` in a run removes every tab of `#n`. A plan replaces only `Plan #n` | Keep the old grids | A tab must describe the last run of its statement |
+| 4 | Without a grid | A statement that ran and gave no grid (a change, DDL, an error, a timeout, a stop, an unknown end) removes the old tabs of its number. A statement that did not run keeps them | Keep the old tab; mark it as old | The old grid no longer describes the statement |
+| 5 | Other numbers | A run touches only the numbers of its statements; the other tabs stay until `x` or `Delete` | **Run all** clears the rest | Nothing leaves without a request |
+| 6 | Order | By number; the grids of a statement in order; the plan after them | By recency | A replaced tab keeps its place |
+| 7 | Tab on screen | The first grid of a run comes on screen. At the end, the rule "Tab after the execution" of [Execution](execution.md) applies to the results of this run | The first result | The recorded rule keeps a stop visible |
+| 8 | Messages | Keeps the messages of every run, under the existing byte limit. `Messages (n)` counts the warnings of the last run | Only the last run | The user chose a log |
+| 9 | Full budget | A run is refused when the free budget, plus the bytes of the tabs that it replaces, is under 1% of the limit. The status line asks to close result tabs or to raise the limit. A budget that fills during the read stops the result as before | Close old tabs automatically; truncate only | The user decides which results leave |
+| 10 | Comparison | `gridComparePrevious` (`D`) compares the active tab with another complete tab of the console with the same columns: a list of tabs, then the key columns. `gridKeepPrevious` (`B`) is removed | Keep the retained previous result | Two open tabs already hold both sides |
+| 11 | Old key maps | A saved `gridKeepPrevious` key loads without effect and without an error | Refuse the key map | Old configurations keep loading |
+
+- Each tab keeps the statement, schema, bound parameters, and the one-statement flag of its run. A full export reread uses them, so it never reads the current editor text.
+- Events of an old execution make no tab, and a replaced tab releases its budget once.
+- No saved format changes: results are not saved.
+
 ## Table statistics and AI explanations
 
 The user requested table statistics and AI explanations of errors and plans. The user chose SQL transmission with consent, Redis support, already loaded schema metadata, and both palette commands and fixed shortcuts.
@@ -72,6 +95,7 @@ The user requests text selection with the mouse and approves `Shift+arrows` and 
 ## Analysis of loaded results
 
 The user approves column profiles, ordered text charts, and differences between consecutive console executions.
+[Result tabs by statement number](#result-tabs-by-statement-number--2026-11-20) replaces the retention and the comparison of consecutive executions with a comparison of two open tabs.
 The existing EXPLAIN ANALYZE implementation remains; no second execution path is needed.
 
 | Point | Approved rule |

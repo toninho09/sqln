@@ -175,6 +175,10 @@ impl App {
                         return;
                     }
                 };
+                if self.tabs.consoles[index].run_blocked(&plan, explain.is_some(), &self.budget) {
+                    self.status = Some(text::RUN_BUDGET_FULL.to_owned());
+                    return;
+                }
                 if ask && let Some(body) = self.run_question(connection, target, &plan) {
                     let id = self.tabs.consoles[index].id;
                     self.show_dialog(

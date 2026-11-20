@@ -3,6 +3,10 @@
 use std::collections::HashMap;
 
 use super::*;
+
+/// Action names that a saved key map can still hold. They have no effect, so an old
+/// configuration keeps loading.
+const RETIRED: &[&str] = &["gridKeepPrevious"];
 /// The answer of the map to one key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lookup {
@@ -36,10 +40,9 @@ impl Keymap {
         mode: KeyboardMode,
         overrides: &HashMap<String, Vec<String>>,
     ) -> Result<Self, String> {
-        if let Some(name) = overrides
-            .keys()
-            .find(|name| !DEFAULTS.iter().any(|item| item.name == *name))
-        {
+        if let Some(name) = overrides.keys().find(|name| {
+            !RETIRED.contains(&name.as_str()) && !DEFAULTS.iter().any(|item| item.name == *name)
+        }) {
             return Err(format!("Unknown action: {name}"));
         }
         let mut map = Self {

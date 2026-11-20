@@ -49,7 +49,7 @@ impl SqlDialect for Sqlite {
             (Scope::Relation, Section::Statistics) => return None,
             (Scope::Schema, _) => all_columns(Some(&schema)),
             (Scope::Connection, _) => all_columns(None),
-            (Scope::Sessions, _) => return None,
+            (Scope::Sessions | Scope::Locks, _) => return None,
         })
     }
 

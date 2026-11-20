@@ -255,23 +255,39 @@ pub(crate) fn input_spans(
     focused: bool,
     theme: &Theme,
 ) -> (Vec<Span<'static>>, usize) {
+    use kit::measure::char_columns;
+
+    // The widths count columns, so a wide character takes two of them.
+    let take_fitting = |chars: &[char], mut left: usize| -> String {
+        chars
+            .iter()
+            .take_while(|&&c| {
+                let columns = char_columns(c);
+                let fits = columns <= left;
+                left = left.saturating_sub(columns);
+                fits
+            })
+            .collect()
+    };
     if !focused {
-        return (
-            vec![Span::raw(chars.iter().take(width).collect::<String>())],
-            0,
-        );
+        return (vec![Span::raw(take_fitting(chars, width))], 0);
     }
     let cursor = cursor.min(chars.len());
-    let first = (cursor + 1).saturating_sub(width);
-    let before: String = chars[first..cursor].iter().collect();
     let at = chars
         .get(cursor)
         .map_or_else(|| " ".to_owned(), char::to_string);
-    let after: String = chars
-        .iter()
-        .skip(cursor + 1)
-        .take(width.saturating_sub(cursor + 1 - first))
-        .collect();
+    // The cursor stays at the right edge when the text before it is wider than the field.
+    let mut used = at.chars().map(char_columns).sum::<usize>().max(1);
+    let mut first = cursor;
+    while first > 0 && used + char_columns(chars[first - 1]) <= width {
+        first -= 1;
+        used += char_columns(chars[first]);
+    }
+    let before: String = chars[first..cursor].iter().collect();
+    let after = take_fitting(
+        chars.get(cursor + 1..).unwrap_or_default(),
+        width.saturating_sub(used),
+    );
     (
         vec![
             Span::raw(before),

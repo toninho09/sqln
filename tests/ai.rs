@@ -2,6 +2,8 @@
 mod ai_explain;
 #[path = "ai_kafka.rs"]
 mod ai_kafka;
+#[path = "ai_settings.rs"]
+mod ai_settings;
 
 use crate::common::{ctrl, key, shift};
 use crossterm::event::{Event, KeyCode, KeyModifiers};

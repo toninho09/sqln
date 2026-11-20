@@ -55,6 +55,13 @@ pub(super) const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(
+        Action::OpenLocks,
+        Region::Global,
+        "openLocks",
+        &["ctrl+w L"],
+        &[],
+    ),
+    both(
         Action::OpenDiagram,
         Region::Global,
         "openDiagram",
@@ -492,6 +499,13 @@ pub(super) const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(
+        Action::NavigatorLocks,
+        Region::Navigator,
+        "navigatorLocks",
+        &["L"],
+        &[],
+    ),
+    both(
         Action::NavigatorGenerate,
         Region::Navigator,
         "navigatorGenerate",
@@ -844,14 +858,6 @@ pub(super) const DEFAULTS: &[Item] = &[
         &[],
     ),
     both(Action::GridChart, Region::Grid, "gridChart", &["b"], &[]),
-    both(
-        Action::GridKeepPrevious,
-        Region::Grid,
-        "gridKeepPrevious",
-        &["B"],
-        &[],
-    )
-    .only(Grids::CONSOLE),
     both(
         Action::GridComparePrevious,
         Region::Grid,

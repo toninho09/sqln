@@ -175,6 +175,7 @@ impl App {
                     statements,
                     rows: vec![0; count],
                     starts: vec![0; count],
+                    ordinals: Vec::new(),
                 },
                 options: RunOptions {
                     schema: Some(schema.into()),

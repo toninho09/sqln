@@ -66,6 +66,7 @@ pub const COMMAND_TOGGLE_ROW: &str = "Open or close the row";
 pub const GROUP_SELECTION_VIEW: &str = "Selection and view";
 pub const GROUP_TABLE_RESULTS: &str = "Table and results";
 pub const MENU_SESSIONS: &str = "Sessions";
+pub const MENU_LOCKS: &str = "Lock waits";
 pub const MENU_MOVE_UP: &str = "Move up";
 pub const MENU_MOVE_DOWN: &str = "Move down";
 pub const MENU_MOVE_TO_FOLDER: &str = "Move to folder";
@@ -175,7 +176,7 @@ pub const REGION_FILTER: &str = "Filter";
 pub const MODE_AUTO: &str = "Auto";
 pub const MODE_MANUAL: &str = "Manual";
 
-pub fn command_result_target(console: &str, result: usize) -> String {
+pub fn command_result_target(console: &str, result: &str) -> String {
     format!("{console} · result {result}")
 }
 

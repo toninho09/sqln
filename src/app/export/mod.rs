@@ -240,16 +240,14 @@ impl App {
                 .map(|sql| (sql, None, Some(tab.connection))),
             None => {
                 let console = self.console();
-                let sql = console
-                    .results
-                    .get(console.active)
-                    .and_then(|result| console.statement_of(result));
-                sql.map(|sql| {
-                    (
-                        sql.to_owned(),
-                        console.ran_schema().map(str::to_owned),
-                        console.connection,
-                    )
+                console.results.get(console.active).and_then(|result| {
+                    console.statement_of(result).map(|sql| {
+                        (
+                            sql.to_owned(),
+                            result.source.schema.clone(),
+                            console.connection,
+                        )
+                    })
                 })
             }
         };
@@ -257,7 +255,12 @@ impl App {
             return;
         };
         let parameters = if self.table().is_none() {
-            self.console().ran_parameters.clone()
+            let console = self.console();
+            console
+                .results
+                .get(console.active)
+                .map(|result| result.source.parameters.clone())
+                .unwrap_or_default()
         } else {
             Vec::new()
         };

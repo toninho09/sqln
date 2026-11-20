@@ -63,6 +63,7 @@ impl SqlDialect for MySql {
             (Scope::Schema, _) => all_columns(Some(&schema)),
             (Scope::Connection, _) => all_columns(None),
             (Scope::Sessions, _) => SESSIONS.to_owned(),
+            (Scope::Locks, _) => LOCKS.to_owned(),
         })
     }
 
@@ -81,6 +82,24 @@ const SESSIONS: &str = "\
     FROM information_schema.PROCESSLIST \
     WHERE ID <> CONNECTION_ID() AND COMMAND <> 'Daemon' \
     ORDER BY COMMAND = 'Sleep', TIME DESC, ID";
+
+/// The InnoDB lock waits of the `sys` schema, one row for each lock. The first column is
+/// the session that blocks, the second is its user, and the last is its query. MySQL 5.7,
+/// MySQL 8, and MariaDB 10.6 or newer give this view; it needs grants on `sys` and on
+/// `performance_schema` or the InnoDB tables of `information_schema`.
+const LOCKS: &str = "\
+    SELECT w.blocking_pid, b.USER AS blocking_user, \
+    w.waiting_pid AS blocked_pid, a.USER AS blocked_user, \
+    CONCAT(w.locked_type, ': ', w.waiting_lock_mode) AS `lock`, \
+    w.locked_table AS object, CAST(w.wait_age AS CHAR) AS wait_age, \
+    w.waiting_query AS blocked_query, b.COMMAND AS blocking_state, \
+    CAST(w.blocking_trx_age AS CHAR) AS blocking_transaction_age, \
+    w.blocking_query \
+    FROM sys.innodb_lock_waits w \
+    LEFT JOIN information_schema.PROCESSLIST b ON b.ID = w.blocking_pid \
+    LEFT JOIN information_schema.PROCESSLIST a ON a.ID = w.waiting_pid \
+    WHERE w.blocking_pid <> CONNECTION_ID() \
+    ORDER BY w.wait_started, w.waiting_pid, w.blocking_pid";
 
 const COLUMN_DATA: &str = "\
     COLUMN_NAME AS name, COLUMN_TYPE AS type, LOWER(IS_NULLABLE) AS nullable, \

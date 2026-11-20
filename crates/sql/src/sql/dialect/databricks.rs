@@ -61,7 +61,7 @@ impl SqlDialect for Databricks {
                  ORDER BY ordinal_position",
                 namespace(&relation.schema)
             )),
-            (Scope::Relation, _) | (Scope::Sessions, _) => None,
+            (Scope::Relation, _) | (Scope::Sessions | Scope::Locks, _) => None,
             (Scope::Schema, _) => Some(all_columns(&namespace(&relation.schema))),
             (Scope::Connection, _) => Some(all_columns("")),
         }

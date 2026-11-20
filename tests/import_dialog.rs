@@ -394,7 +394,7 @@ fn log_errors_writes_the_log_and_shows_its_path() {
     let screen = f.screen();
     assert!(screen.contains("Rows inserted: 2."), "{screen}");
     assert!(screen.contains("Rows with errors: 1."), "{screen}");
-    assert!(screen.contains("-errors-"), "{screen}");
+    assert!(screen.contains("Log:"), "{screen}");
     assert_eq!(f.count(), "3");
     let logs: Vec<_> = std::fs::read_dir(&f.folder)
         .unwrap()
@@ -403,6 +403,13 @@ fn log_errors_writes_the_log_and_shows_its_path() {
         .filter(|path| path.extension().is_some_and(|ext| ext == "log"))
         .collect();
     assert_eq!(logs.len(), 1);
+    // The path wraps at the dialog width, so compare it without borders and breaks.
+    let unwrapped: String = screen
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '│')
+        .collect();
+    let name = logs[0].file_name().unwrap().to_string_lossy();
+    assert!(unwrapped.contains(name.as_ref()), "{screen}");
     let log = std::fs::read_to_string(&logs[0]).unwrap();
     assert!(log.contains("Line 3:"), "{log}");
 }

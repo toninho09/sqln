@@ -466,6 +466,7 @@ impl TableTab {
     pub fn kind(&self) -> &'static str {
         match (&self.structure, self.filters, self.is_view) {
             _ if self.shows_sessions() => "sessions",
+            _ if self.shows_locks() => "locks",
             (None, ..) if self.kind_word.is_some() => self.kind_word.unwrap_or("key"),
             (Some(_), ..) => "structure",
             (None, false, _) => "key",
@@ -499,6 +500,21 @@ impl TableTab {
         self.structure
             .as_ref()
             .is_some_and(|item| item.scope == Scope::Sessions)
+    }
+
+    /// Returns true for the tab of the lock waits of a server.
+    pub fn shows_locks(&self) -> bool {
+        self.structure
+            .as_ref()
+            .is_some_and(|item| item.scope == Scope::Locks)
+    }
+
+    /// Returns true for a list of server sessions, where `q` and `K` reach the session
+    /// of the first column.
+    pub fn takes_signals(&self) -> bool {
+        self.structure
+            .as_ref()
+            .is_some_and(|item| item.scope.takes_signals())
     }
 
     /// Returns the section on screen, for a tab with sections.

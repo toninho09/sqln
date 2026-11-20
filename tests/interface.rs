@@ -933,7 +933,7 @@ fn a_click_on_a_result_tab_and_on_the_explorer_title_moves_the_focus() {
     let (column, row) = screen.locate("Messages");
     screen.click(column, row);
     assert!(screen.app.console().showing_messages());
-    let (column, row) = screen.locate("Result 1");
+    let (column, row) = screen.locate(" #1 ");
     screen.click(column, row);
     assert!(!screen.app.console().showing_messages());
     let (column, row) = screen.locate("EXPLORER");
@@ -954,8 +954,8 @@ fn a_click_on_a_tab_works_with_more_results_than_columns() {
     }
     assert_eq!(screen.app.console().results.len(), 400);
     let shown = screen.screen(80, 24);
-    assert!(shown.contains("Result 400"), "{shown}");
-    let (column, row) = screen.locate("Result 399");
+    assert!(shown.contains(" #400 "), "{shown}");
+    let (column, row) = screen.locate(" #399 ");
     screen.click(column, row);
     assert_eq!(screen.app.console().active, 398);
 }
@@ -1023,7 +1023,7 @@ fn result_tabs_follow_keys_and_resizing_in_both_modes_with_custom_shortcuts() {
                 let label = if active == 400 {
                     "Messages".to_owned()
                 } else {
-                    format!("Result {}", active + 1)
+                    format!(" #{} ", active + 1)
                 };
                 for width in [80, 120, 200, 80] {
                     terminal
@@ -1040,12 +1040,12 @@ fn result_tabs_follow_keys_and_resizing_in_both_modes_with_custom_shortcuts() {
                 screen.code(previous);
             }
             let shown = screen.screen(80, 24);
-            assert!(shown.contains(" Plan "), "{shown}");
+            assert!(shown.contains(" Plan #200 "), "{shown}");
             assert_eq!(screen.app.console().active, 199);
             screen.code(KeyCode::Char('x'));
             assert_eq!(screen.app.console().results.len(), 399);
             let shown = screen.screen(80, 24);
-            assert!(shown.contains("Result 201"), "{shown}");
+            assert!(shown.contains(" #201 "), "{shown}");
             assert_eq!(screen.app.console().editor.text(), original);
             assert_eq!(screen.app.console().editor.cursor(), cursor);
         }
@@ -1060,7 +1060,7 @@ fn result_tab_overflow_indicators_select_hidden_tabs_with_the_mouse() {
     let (row, line) = lines
         .iter()
         .enumerate()
-        .find(|(_, line)| line.contains("Result 400"))
+        .find(|(_, line)| line.contains(" #400 "))
         .unwrap();
     let next = line[..line.rfind('>').unwrap()].width() as u16;
     screen.click(next, row as u16);
@@ -1072,7 +1072,7 @@ fn result_tab_overflow_indicators_select_hidden_tabs_with_the_mouse() {
     assert!(line.contains("Messages"), "{line}");
     assert!(!line.contains('>'), "{line}");
     let first_number = line
-        .split("Result ")
+        .split(" #")
         .nth(1)
         .unwrap()
         .split_whitespace()
@@ -1085,7 +1085,7 @@ fn result_tab_overflow_indicators_select_hidden_tabs_with_the_mouse() {
     assert_eq!(screen.app.console().active, first_number - 2);
     let shown = screen.screen(80, 24);
     assert!(
-        shown.contains(&format!("Result {}", first_number - 1)),
+        shown.contains(&format!(" #{} ", first_number - 1)),
         "{shown}"
     );
 }
@@ -1111,7 +1111,7 @@ fn result_tab_hit_targets_stay_inside_narrow_rows() {
     screen.app.console_mut().active = 0;
     let shown = screen.screen(80, 24);
     assert!(shown.contains("Messages"), "{shown}");
-    assert!(!shown.contains("Result 1"), "{shown}");
+    assert!(!shown.contains(" #1 "), "{shown}");
 }
 
 #[test]

@@ -25,9 +25,26 @@ const ROW_VALUE_WIDTH: usize = 4096;
 /// The text between a name and its value.
 const ROW_GAP: &str = " : ";
 
+/// The statement that made a result, so a later read, export, or plan uses the text of
+/// that run and not the current editor text.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ResultSource {
+    pub sql: String,
+    pub schema: Option<String>,
+    pub parameters: Vec<crate::sql::parameters::Parameter>,
+    /// True when the execution of this result held one statement.
+    pub alone: bool,
+}
+
 pub struct ResultTab {
-    /// The number of the tab. It stays the same when the user closes another tab.
+    /// The one-based place of the statement in the editor text when it ran. A new run
+    /// of the same place replaces the tab.
     pub number: usize,
+    /// The one-based grid of the statement. A statement can return several grids.
+    pub part: usize,
+    /// True when the result came from a plan request. A plan has its own tab.
+    pub explained: bool,
+    pub source: ResultSource,
     pub table: ResultTable,
     pub edits: crate::data_edit::Edits,
     pub view: GridView,
@@ -105,6 +122,9 @@ impl ResultTab {
     pub fn new(number: usize, columns: Vec<String>) -> Self {
         Self {
             number,
+            part: 1,
+            explained: false,
+            source: ResultSource::default(),
             table: ResultTable::new(columns),
             edits: crate::data_edit::Edits::default(),
             view: GridView::default(),
@@ -118,6 +138,17 @@ impl ResultTab {
             dropped: 0,
             progress: None,
         }
+    }
+
+    /// Returns the name of the tab.
+    pub fn label(&self) -> String {
+        text::result_tab(self.number, self.part, self.explained || self.plan)
+    }
+
+    /// Returns the order of the tab in the row: by number, the grids of a statement in
+    /// order, and its plan after them.
+    pub fn place(&self) -> (usize, bool, usize) {
+        (self.number, self.explained, self.part)
     }
 
     /// Writes the summary of a read that runs: the rows of a live result and the counts

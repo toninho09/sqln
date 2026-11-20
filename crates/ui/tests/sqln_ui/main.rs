@@ -18,6 +18,7 @@ mod grid;
 mod gutter_preview;
 mod kit;
 mod messages;
+mod result_numbers;
 mod run_preview;
 mod run_subquery;
 mod shortcuts;

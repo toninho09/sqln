@@ -89,17 +89,32 @@ impl App {
             return;
         };
         console.closing = false;
-        self.show_dialog(
-            text::TITLE_TRANSACTION,
-            text::transaction_failed(message),
-            vec![
-                (text::OPTION_CANCEL, DialogAction::CancelClose(id)),
-                (
-                    text::OPTION_RETRY,
-                    DialogAction::Transaction(id, command, after),
-                ),
-            ],
-        );
+        let failure = text::transaction_failed(message);
+        // A command that ended the transaction leaves nothing to try again.
+        let (title, body, options) = match console.transaction {
+            TransactionState::Open | TransactionState::Failed => (
+                text::TITLE_TRANSACTION,
+                failure,
+                vec![
+                    (text::OPTION_CANCEL, DialogAction::CancelClose(id)),
+                    (
+                        text::OPTION_RETRY,
+                        DialogAction::Transaction(id, command, after),
+                    ),
+                ],
+            ),
+            TransactionState::None => (
+                text::TITLE_TRANSACTION_ENDED,
+                format!("{failure}\n{}", text::DATABASE_ENDED_TRANSACTION),
+                vec![(text::OPTION_CANCEL, DialogAction::CancelClose(id))],
+            ),
+            TransactionState::Unknown => (
+                text::TITLE_UNKNOWN,
+                format!("{failure}\n{}", text::BODY_UNKNOWN),
+                vec![(text::OPTION_CANCEL, DialogAction::CancelClose(id))],
+            ),
+        };
+        self.show_dialog(title, body, options);
     }
 
     /// Asks the next question of a close. It runs again after each answer.
@@ -186,8 +201,7 @@ impl App {
             self.keep_hidden_console();
         }
         self.save_editor_states(Some(index));
-        let mut console = self.tabs.consoles.remove(index);
-        console.discard_previous(&self.budget);
+        let console = self.tabs.consoles.remove(index);
         for result in &console.results {
             self.budget.release(result.table.bytes);
         }

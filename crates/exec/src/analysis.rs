@@ -112,15 +112,18 @@ impl Job {
         )
     }
 
+    /// Compares `current` with another result. `names` are the tab names of the other
+    /// result and the current one, for the first row of the report.
     pub fn diff(
         current: &ResultTable,
         previous: &ResultTable,
         key: Vec<usize>,
+        names: (&str, &str),
         budget: &Arc<Budget>,
     ) -> Result<Self, &'static str> {
         if current.columns != previous.columns {
             return Err(
-                "Comparison canceled: column names or order changed. Run a result with the same columns.",
+                "Comparison canceled: column names or order changed. Choose a result with the same columns.",
             );
         }
         if key.is_empty() || key.iter().any(|&column| column >= current.columns.len()) {
@@ -129,11 +132,11 @@ impl Job {
         let mut job = Self::new(
             current,
             Some(previous.generation),
-            "Execution differences",
+            "Result differences",
             Task::Diff(diff::Diff::new(key)),
             budget,
         );
-        job.output.line("Previous -> Current")?;
+        job.output.line(&format!("{} -> {}", names.0, names.1))?;
         Ok(job)
     }
 
@@ -154,6 +157,11 @@ impl Job {
                 memory: Memory::new(budget),
             },
         }
+    }
+
+    /// Returns the generation of the other result of a comparison.
+    pub fn other_generation(&self) -> Option<u64> {
+        self.previous_generation
     }
 
     /// Runs at most 128 steps. No partial report leaves the job.

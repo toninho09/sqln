@@ -87,6 +87,7 @@ pub const TITLE_RUNNING: &str = "Execution in progress";
 pub const TITLE_TRANSACTION: &str = "Open transaction";
 pub const TITLE_NO_ANSWER: &str = "No answer from the database";
 pub const TITLE_UNKNOWN: &str = "Transaction state unknown";
+pub const TITLE_TRANSACTION_ENDED: &str = "Transaction ended";
 pub const BODY_RUNNING: &str =
     "Stop the execution and close? The statement in progress must end first.";
 pub const BODY_TRANSACTION_CLOSE: &str =

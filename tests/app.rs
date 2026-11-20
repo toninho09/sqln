@@ -499,14 +499,35 @@ fn messages_do_not_claim_that_a_skipped_command_reaches_the_database() {
 }
 
 #[test]
-fn a_new_execution_clears_results_and_frees_the_budget() {
+fn a_new_execution_replaces_only_the_tabs_of_its_statements_and_frees_the_budget() {
     let settings = Settings::default();
     let mut f = Fixture::with("clear", KeyboardMode::Conventional, settings, "");
     f.run_script("SELECT 'a'; SELECT 'b'; SELECT 'c';");
     assert_eq!(f.app.console_mut().results.len(), 3);
-    f.run_script("SELECT 'a';");
-    assert_eq!(f.app.console_mut().results.len(), 1);
+    f.run_script("SELECT 'z';");
+    let labels: Vec<_> = f
+        .app
+        .console_mut()
+        .results
+        .iter()
+        .map(|r| r.label())
+        .collect();
+    assert_eq!(labels, ["#1", "#2", "#3"]);
+    f.assert_sees("'z'");
+    // A statement without a grid removes the old tab of its number.
     f.run_script("CREATE TABLE t(a);");
+    let labels: Vec<_> = f
+        .app
+        .console_mut()
+        .results
+        .iter()
+        .map(|r| r.label())
+        .collect();
+    assert_eq!(labels, ["#2", "#3"]);
+    f.prefix('j');
+    f.app.console_mut().active = 0;
+    f.press(key(KeyCode::Char('x')));
+    f.press(key(KeyCode::Char('x')));
     assert!(f.app.console_mut().results.is_empty());
     f.assert_sees("Data 0/256 MiB");
 }
@@ -740,13 +761,13 @@ fn a_click_selects_a_cell_and_a_tab() {
     };
     let left = MouseEventKind::Down(MouseButton::Left);
 
-    // The tabs row sits below the editor. "Result 1" starts after a rule and a space.
+    // The tabs row sits below the editor. "#1" starts after a rule and a space.
     let tabs_row = (0..30).find(|y| {
         let buffer = f.buffer();
-        (2..10)
+        (2..4)
             .map(|x| buffer[(x, *y)].symbol().to_owned())
             .collect::<String>()
-            == "Result 1"
+            == "#1"
     });
     let tabs_row = tabs_row.expect("the tab row is on the screen");
     f.app.on_event(press(1, tabs_row, left));
@@ -985,6 +1006,57 @@ fn a_failed_commit_at_the_close_keeps_the_console_open_and_offers_a_retry() {
     f.pump_until(|f| f.sees("No transaction"));
     f.prefix('c');
     assert!(f.app.home());
+}
+
+/// PostgreSQL ends the transaction when a `COMMIT` fails with a serialization failure
+/// or a deferred constraint. The end of the transaction must not close the console as
+/// a successful commit would.
+#[test]
+fn a_commit_that_fails_and_ends_the_transaction_keeps_the_console_and_its_error() {
+    use crate::common::mock::{MockConnector, RunHandler};
+    use sqln::connector::StatementEnd;
+    use sqln::sql::Dialect;
+    use std::sync::Arc;
+
+    let run: RunHandler = Arc::new(|_, sink| {
+        Box::pin(async move {
+            sink.finish().await;
+            Ok(StatementEnd::default())
+        })
+    });
+    let connector = Arc::new(MockConnector::new(Dialect::Postgres, run));
+    connector.fail_commit("could not serialize access");
+    let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
+    let options = Options {
+        connector: Some(connector),
+        label: Some("fake".to_owned()),
+        ..Options::default()
+    };
+    let app = App::new(options, clipboard.clone(), Theme::plain());
+    let mut f = Fixture {
+        app,
+        clipboard,
+        path: PathBuf::new(),
+    };
+    f.prefix('m');
+    f.run_script("INSERT INTO t VALUES (1);");
+    f.assert_sees("Transaction open");
+
+    f.prefix('c');
+    f.press(key(KeyCode::Tab));
+    f.press(key(KeyCode::Tab));
+    f.press(key(KeyCode::Enter));
+    f.pump_until(|f| f.sees("could not serialize access"));
+    assert!(!f.app.home(), "a failed commit does not close the console");
+    // The transaction ended, so the question offers no new commit.
+    f.assert_sees("Transaction ended");
+    f.assert_sees("The database ended the transaction.");
+    assert!(!f.sees("[Try again]"));
+    f.assert_sees("No transaction");
+
+    f.press(key(KeyCode::Enter));
+    f.prefix('c');
+    assert!(f.app.home(), "the next close needs no question");
 }
 
 #[test]
@@ -1280,12 +1352,12 @@ fn x_closes_a_result_and_frees_its_budget() {
     assert!(before > 0);
     f.press(key(KeyCode::Char('x')));
     assert_eq!(f.app.console_mut().results.len(), 2);
-    f.assert_sees("Result 2");
-    assert!(!f.sees("Result 1"));
+    f.assert_sees(" #2 ");
+    assert!(!f.sees(" #1 "));
     f.assert_sees("'second'");
 
     f.press(key(KeyCode::Delete));
-    f.assert_sees("Result 3");
+    f.assert_sees(" #3 ");
     f.assert_sees("'third'");
     f.press(key(KeyCode::Char('x')));
     assert!(f.app.console_mut().results.is_empty());
@@ -1296,13 +1368,15 @@ fn x_closes_a_result_and_frees_its_budget() {
 }
 
 #[test]
-fn a_new_execution_starts_the_result_numbers_again() {
+fn a_new_execution_names_its_tab_by_the_statement_number() {
     let mut f = Fixture::new("grid-numbers");
     grid_of(&mut f, "SELECT 1; SELECT 2;");
     f.app.console_mut().active = 0;
     f.press(key(KeyCode::Char('x')));
     f.run_script("SELECT 3;");
-    f.assert_sees("Result 1");
+    f.assert_sees(" #1 ");
+    f.assert_sees(" #2 ");
+    assert_eq!(f.app.console_mut().results.len(), 2);
 }
 
 #[test]

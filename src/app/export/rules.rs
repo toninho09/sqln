@@ -38,7 +38,7 @@ pub(super) fn console_all_rows(console: &Console, result: &ResultTab, dialect: D
         .is_some_and(|sql| is_plain_read(sql, dialect));
     if !plain {
         AllRows::Refused(text::EXPORT_ALL_READ)
-    } else if console.ran_alone() || console.in_transaction() {
+    } else if result.source.alone || console.in_transaction() {
         AllRows::Available
     } else {
         AllRows::Refused(text::EXPORT_ALL_SCRIPT)

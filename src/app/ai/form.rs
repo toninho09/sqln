@@ -34,6 +34,15 @@ impl App {
     /// Saves the settings. A typed vault key goes to the vault first; the save
     /// continues when the write ends.
     pub(in crate::app) fn save_settings(&mut self) {
+        // The vault write runs on the manager, which starts at its first use.
+        let writes_key = self
+            .modals
+            .settings_form
+            .as_ref()
+            .is_some_and(|form| !form.ai_busy && form.ai_new_key().is_some());
+        if writes_key && !self.ensure_manager() {
+            return;
+        }
         let Some(form) = &mut self.modals.settings_form else {
             return;
         };
@@ -118,6 +127,11 @@ impl App {
 
     /// Tests the endpoint of the autocomplete provider from the settings.
     pub(in crate::app) fn test_ai_connection(&mut self) {
+        // The test runs on the manager, which starts at its first use.
+        let idle = (self.modals.settings_form.as_ref()).is_some_and(|form| !form.ai_busy);
+        if idle && !self.ensure_manager() {
+            return;
+        }
         let Some(form) = &mut self.modals.settings_form else {
             return;
         };

@@ -55,6 +55,9 @@ struct Inner {
     catalog: Mutex<Catalog>,
     /// The columns of each relation, with a note for each column, by relation name.
     columns: Mutex<Vec<NotedColumns>>,
+    /// The error of each `COMMIT`. The transaction ends anyway, as PostgreSQL ends it
+    /// after a serialization failure or a deferred constraint at the commit.
+    commit_error: Mutex<Option<String>>,
 }
 
 /// A connector whose sessions answer what a handler chooses.
@@ -82,6 +85,7 @@ impl MockConnector {
             capabilities,
             catalog: Mutex::new(Catalog::default()),
             columns: Mutex::new(Vec::new()),
+            commit_error: Mutex::new(None),
         }))
     }
 
@@ -107,6 +111,11 @@ impl MockConnector {
     /// Sets the answer of a reset.
     pub fn on_reset(&self, reset: ResetOutcome) {
         *self.0.reset.lock().unwrap() = reset;
+    }
+
+    /// Makes each `COMMIT` fail with this message after the end of the transaction.
+    pub fn fail_commit(&self, message: &str) {
+        *self.0.commit_error.lock().unwrap() = Some(message.to_owned());
     }
 
     /// The count of the connections that opened.
@@ -174,7 +183,10 @@ impl Session for MockSession {
             TransactionCommand::Begin => TransactionState::Open,
             TransactionCommand::Commit | TransactionCommand::Rollback => TransactionState::None,
         };
-        Ok(())
+        match self.inner.commit_error.lock().unwrap().clone() {
+            Some(message) if command == TransactionCommand::Commit => Err(ExecError::new(message)),
+            _ => Ok(()),
+        }
     }
 
     async fn reset(&mut self) -> ResetOutcome {

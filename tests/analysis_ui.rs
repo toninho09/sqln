@@ -136,14 +136,6 @@ impl Screen {
         self.press(KeyCode::Down);
         self.press(KeyCode::Enter);
     }
-
-    fn compare(&mut self) {
-        self.press(KeyCode::Char('D'));
-        self.press(KeyCode::Down);
-        self.press(KeyCode::Enter);
-        self.press(KeyCode::Up);
-        self.press(KeyCode::Enter);
-    }
 }
 
 #[test]
@@ -205,36 +197,38 @@ fn palette_and_panel_menu_show_analysis_with_effective_shortcuts() {
 }
 
 #[test]
-fn retention_is_optional_and_comparison_matches_the_selected_key() {
-    let mut s = Screen::new(
-        "compare",
-        KeyboardMode::Conventional,
-        Settings::default(),
-        &[],
-    );
-    s.run("SELECT 1 AS id, 'before' AS v UNION ALL SELECT 2, 'removed';");
-    assert!(!s.app.console().retain_result);
-    s.press(KeyCode::Char('B'));
-    assert!(s.app.console().retain_result);
-    s.run("SELECT 3 AS id, 'added' AS v UNION ALL SELECT 1, 'after';");
-    assert!(s.app.console().previous_result.is_some());
-    s.compare();
-    let report = s.copy_report();
-    assert!(report.contains("Previous -> Current"), "{report}");
-    assert!(report.contains("v: before -> after"));
-    assert!(report.contains("1 added, 1 removed, 1 changed"));
-    s.press(KeyCode::Esc);
-    s.press(KeyCode::Char('B'));
-    assert!(!s.app.console().retain_result);
-    assert!(s.app.console().previous_result.is_none());
+fn comparison_uses_another_result_tab_and_the_selected_key() {
+    for mode in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let mut s = Screen::new("compare", mode, Settings::default(), &[]);
+        s.run(
+            "SELECT 1 AS id, 'before' AS v UNION ALL SELECT 2, 'removed';\n\
+             SELECT 3 AS id, 'added' AS v UNION ALL SELECT 1, 'after';",
+        );
+        let labels: Vec<_> = s.app.console().results.iter().map(|r| r.label()).collect();
+        assert_eq!(labels, ["#1", "#2"]);
+        assert_eq!(s.app.console().active, 1);
+        s.press(KeyCode::Char('D'));
+        let screen = s.draw(80, 24);
+        assert!(screen.contains("Compare with result"), "{screen}");
+        s.press(KeyCode::Enter);
+        s.press(KeyCode::Down);
+        s.press(KeyCode::Enter);
+        s.press(KeyCode::Up);
+        s.press(KeyCode::Enter);
+        let report = s.copy_report();
+        assert!(report.contains("#1 -> #2"), "{report}");
+        assert!(report.contains("v: before -> after"));
+        assert!(report.contains("1 added, 1 removed, 1 changed"));
+        s.press(KeyCode::Esc);
+    }
 }
 
 #[test]
-fn a_failed_multi_result_or_limited_execution_cancels_comparison() {
+fn comparison_needs_another_complete_tab_with_the_same_columns() {
     for sql in [
-        "SELECT * FROM no_such_table;",
-        "SELECT 1 AS id; SELECT 2 AS id;",
-        "SELECT 1 AS id UNION ALL SELECT 2;",
+        "SELECT 1 AS id;",
+        "SELECT 1 AS id; SELECT 2 AS other;",
+        "SELECT 1 AS id UNION ALL SELECT 2; SELECT 3 AS id;",
     ] {
         let mut s = Screen::new(
             "refusal",
@@ -246,36 +240,61 @@ fn a_failed_multi_result_or_limited_execution_cancels_comparison() {
             },
             &[],
         );
-        s.run("SELECT 1 AS id;");
-        s.press(KeyCode::Char('B'));
         s.run(sql);
-        assert!(s.app.console().previous_result.is_none(), "{sql}");
-        assert!(!s.app.console().comparison_ready, "{sql}");
-        assert!(s.app.console().warnings() > 0);
+        s.press(KeyCode::Char('D'));
+        let screen = s.draw(120, 30);
+        assert!(!screen.contains("Compare with result"), "{sql}\n{screen}");
+        assert!(screen.contains("Analysis unavailable"), "{sql}\n{screen}");
     }
 }
 
 #[test]
-fn a_retained_result_that_fills_the_budget_cancels_comparison_and_allows_a_new_run() {
+fn the_retired_keep_previous_action_loads_without_effect() {
+    let mut s = Screen::new(
+        "retired",
+        KeyboardMode::Conventional,
+        Settings::default(),
+        &[("gridKeepPrevious", &["B"])],
+    );
+    s.run("SELECT 1 AS id;");
+    s.press(KeyCode::Char('B'));
+    assert_eq!(s.app.console().results.len(), 1);
+    assert!(
+        !s.app
+            .context_menu()
+            .iter()
+            .flat_map(|group| &group.keys)
+            .any(|(_, label)| label.contains("previous"))
+    );
+}
+
+#[test]
+fn a_full_budget_refuses_a_new_statement_and_allows_its_replacement() {
     let mut s = Screen::new(
         "budget",
         KeyboardMode::Conventional,
         Settings {
-            budget_bytes: 600,
+            budget_bytes: 20_000,
             ..Settings::default()
         },
         &[],
     );
-    let sql = format!("SELECT '{}' AS v;", "a".repeat(400));
-    s.run(&sql);
-    assert!(s.app.console().comparison_ready);
-    s.press(KeyCode::Char('B'));
-    s.run(&sql);
-    assert!(s.app.console().previous_result.is_none());
-    assert!(!s.app.console().comparison_ready);
-    assert!(s.app.console().warnings() > 0);
-    s.run("SELECT 1;");
-    assert!(s.app.console().comparison_ready);
+    let fill = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 100000) \
+                SELECT x, 'some padding text' AS pad FROM c;";
+    s.run(fill);
+    assert_eq!(s.app.console().results.len(), 1);
+    // The second statement has no tab to replace, so it finds no room.
+    s.prefix('k');
+    s.control('a');
+    s.paste(&format!("{fill}\nSELECT 2 AS two;"));
+    s.press(KeyCode::F(5));
+    s.wait();
+    let screen = s.draw(120, 30);
+    assert!(screen.contains("data budget is full"), "{screen}");
+    assert_eq!(s.app.console().results.len(), 1);
+    // The same statement frees its old tab, so it runs.
+    s.run(fill);
+    assert_eq!(s.app.console().results.len(), 1);
 }
 
 #[test]
