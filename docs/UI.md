@@ -1518,7 +1518,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
                         │                         \___ \| | | | |   |  \| |
                         │                          ___) | |_| | |___| |\  |
                         │                         |____/ \__\_\_____|_| \_|
-                        │                                   0.5.0
+                        │                                   0.5.1
                         │                            No console is open
                         │
                         │                 Ctrl+W h a  Add a connection
@@ -1532,7 +1532,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
 
 Without a connection, the screen shows **No connection yet**, without the **Open a console** row.
 With the explorer hidden, the first row is `Ctrl+W b` **Show the explorer**, the status line shows `HOME`,
-and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.5.0` instead.
+and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.5.1` instead.
 
 ### Welcome screen
 
@@ -1540,7 +1540,7 @@ The screen appears over an editor without text. It keeps no state and captures n
 The first typed character removes the screen.
 
 ```text
-           SQLN 0.5.0
+           SQLN 0.5.1
            Write SQL here
 
                    F5  Run the statement
