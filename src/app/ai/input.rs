@@ -189,16 +189,12 @@ impl App {
             }
             return true;
         }
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        mouse.kind == MouseEventKind::Down(MouseButton::Left)
             && self.editor_has_focus()
             && self
                 .console_mut()
                 .editor
                 .click_suggestion(mouse.column, mouse.row)
-        {
-            return true;
-        }
-        false
     }
 
     pub(in crate::app) fn ai_paste(&mut self, text: &str) -> bool {

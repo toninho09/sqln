@@ -18,10 +18,12 @@ if ! cargo test --workspace --no-run --message-format=json "$@" >"$dir/build.jso
   exit 1
 fi
 
-# Collect the test executables. Keep only deps/ paths: target/debug/sqln is
-# the application binary, not a test harness. The largest binaries hold the
-# longest waits, so they start first and their waits overlap with the rest.
-awk 'match($0, /"executable":"[^"]*\/deps\/[^"]+"/) {
+# Collect the test executables: the artifacts built with the test profile flag.
+# target/debug/sqln is the application binary, not a test harness, and its
+# profile says "test":false. The flag does not depend on the build folder
+# layout, which changed in Cargo 1.100. The largest binaries hold the longest
+# waits, so they start first and their waits overlap with the rest.
+awk '/"profile":\{[^}]*"test":true\}/ && match($0, /"executable":"[^"]+"/) {
   print substr($0, RSTART + 14, RLENGTH - 15)
 }' "$dir/build.json" | sort -u | while IFS= read -r bin; do
   printf '%s %s\n' "$(wc -c <"$bin")" "$bin"

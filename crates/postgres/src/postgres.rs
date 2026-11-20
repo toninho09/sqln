@@ -429,9 +429,9 @@ impl PostgresCanceller {
             shut_down: false,
         };
         let mut tls = self.tls.clone();
-        let connect =
-            <MakeRustlsConnect as MakeTlsConnect<UntilClosed<S>>>::make_tls_connect(&mut tls, host)
-                .map_err(|error| error.to_string())?;
+        // The error type of this connector is `Infallible`.
+        let Ok(connect) =
+            <MakeRustlsConnect as MakeTlsConnect<UntilClosed<S>>>::make_tls_connect(&mut tls, host);
         crate::trace::observe(
             trace,
             "PostgreSQL CancelRequest",
