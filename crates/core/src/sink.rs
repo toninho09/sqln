@@ -63,6 +63,9 @@ pub enum SinkEvent {
     Columns {
         key: StatementKey,
         columns: Vec<String>,
+        /// The database type of each column, such as `int4`. Empty when the connector
+        /// gives no types; `None` for a column without a known type.
+        types: Vec<Option<String>>,
         /// The row cap of a live result: at the cap, the grid drops its oldest rows.
         live: Option<usize>,
         /// The counts of a read that the connector updates while it runs.
@@ -309,7 +312,11 @@ impl ResultSink {
         })
     }
 
-    fn start_result(&mut self, columns: Vec<String>) -> Option<SinkEvent> {
+    fn start_result(
+        &mut self,
+        columns: Vec<String>,
+        types: Vec<Option<String>>,
+    ) -> Option<SinkEvent> {
         self.open = true;
         if let Some(capture) = &self.capture {
             capture
@@ -325,6 +332,7 @@ impl ResultSink {
         Some(SinkEvent::Columns {
             key: self.key,
             columns,
+            types,
             live: self.live,
             progress: self.progress.clone(),
         })
@@ -350,7 +358,13 @@ impl ResultSink {
     }
 
     pub async fn set_columns(&mut self, columns: Vec<String>) {
-        if let Some(event) = self.start_result(columns) {
+        self.set_typed_columns(columns, Vec::new()).await;
+    }
+
+    /// Starts a result with the database type of each column. `types` has one item for
+    /// each column.
+    pub async fn set_typed_columns(&mut self, columns: Vec<String>, types: Vec<Option<String>>) {
+        if let Some(event) = self.start_result(columns, types) {
             self.events.send(event).await;
         }
     }
@@ -395,7 +409,13 @@ impl ResultSink {
 
     /// For a connector that owns a thread. The interface limits the speed of this call.
     pub fn set_columns_blocking(&mut self, columns: Vec<String>) {
-        if let Some(event) = self.start_result(columns) {
+        self.set_typed_columns_blocking(columns, Vec::new());
+    }
+
+    /// Starts a result with the database type of each column, for a connector that owns
+    /// a thread. `types` has one item for each column.
+    pub fn set_typed_columns_blocking(&mut self, columns: Vec<String>, types: Vec<Option<String>>) {
+        if let Some(event) = self.start_result(columns, types) {
             self.events.send_blocking(event);
         }
     }

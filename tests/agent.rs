@@ -1035,7 +1035,7 @@ fn network_connectors_apply_and_clean_the_agent_read_only_context() {
 }
 
 #[test]
-fn the_policy_rejects_session_changes_hidden_writes_and_unknown_calls() {
+fn the_policy_rejects_session_changes_hidden_writes_unknown_calls_and_file_reads() {
     let bad = [
         "DELETE FROM things",
         "SELECT nextval('x')",
@@ -1068,6 +1068,50 @@ fn the_policy_rejects_session_changes_hidden_writes_and_unknown_calls() {
                 "{dialect:?}: {sql}"
             );
         }
+    }
+    // A quoted name that is a file or a URL reads it, outside the database.
+    for (dialect, sql) in [
+        (Dialect::DuckDb, "SELECT * FROM '/etc/passwd'"),
+        (
+            Dialect::DuckDb,
+            "SELECT * FROM 'https://example.invalid/x.csv'",
+        ),
+        (Dialect::DuckDb, "SELECT * FROM \"data.parquet\""),
+        (
+            Dialect::DuckDb,
+            "SELECT * FROM things JOIN \"/tmp/x\" ON true",
+        ),
+        (
+            Dialect::DuckDb,
+            "SELECT * FROM (SELECT * FROM 'x.csv') AS t",
+        ),
+        (Dialect::DuckDb, "DESCRIBE 'x.csv'"),
+        (Dialect::Databricks, "SELECT * FROM csv.`/tmp/x`"),
+        (
+            Dialect::Databricks,
+            "SELECT * FROM delta.`s3://bucket/table`",
+        ),
+        (Dialect::Postgres, "SELECT * FROM 'things'"),
+    ] {
+        assert!(
+            agent::policy::validate(&[sql.into()], dialect).is_err(),
+            "{dialect:?}: {sql}"
+        );
+    }
+    for (dialect, sql) in [
+        (Dialect::DuckDb, "SELECT * FROM things"),
+        (Dialect::DuckDb, "SELECT * FROM main.\"My Things\""),
+        (Dialect::DuckDb, "SELECT * FROM db.main.things"),
+        (
+            Dialect::Databricks,
+            "SELECT * FROM main.default.`my things`",
+        ),
+        (Dialect::Postgres, "SELECT * FROM \"odd.name\""),
+    ] {
+        assert!(
+            agent::policy::validate(&[sql.into()], dialect).is_ok(),
+            "{dialect:?}: {sql}"
+        );
     }
     for command in ["SET a b", "MULTI", "EXEC", "SELECT 2", "EVAL_RO x 0"] {
         assert!(
@@ -1291,6 +1335,9 @@ fn the_agent_places_sql_in_its_tab_for_the_user_to_review_and_run() {
         };
         let reply = place(&mut h, "CREATE TABLE made(id INTEGER);\r\n");
         assert_eq!(reply["status"], "placed");
+        // The agent learns how to read the run of the user.
+        let next = reply["next_action"].as_str().unwrap();
+        assert!(next.contains("read_result"), "{next}");
         assert_eq!(reply["console_id"], own);
         // No new tab opens, and the focus stays.
         assert_eq!(h.app.consoles().len(), tabs);
@@ -2507,4 +2554,100 @@ fn the_palette_offers_every_command_of_the_agent_and_its_review() {
         let ghosts = h.app.console().editor.has_ghosts();
         assert!(has, "{action:?} missing (review={review} ghosts={ghosts})");
     }
+}
+
+/// Reads a describe reply: a small catalog comes at once, a larger one as an artifact.
+fn catalog_of(h: &mut Harness, request: Value) -> Reply {
+    let reply = h.tool(request)?;
+    let Some(job) = reply["job_id"].as_str() else {
+        return Ok(reply);
+    };
+    let job = h.wait_job(job);
+    if job["status"] != "completed" {
+        return Err(agent::Error::new(
+            "failed",
+            job["message"].as_str().unwrap_or(""),
+        ));
+    }
+    Ok(serde_json::from_str(job["artifact"]["text"].as_str().unwrap()).unwrap())
+}
+
+#[test]
+fn describe_filters_the_catalog_by_schema_and_marks_loaded_columns() {
+    let mut h = Harness::new("catalog-schema");
+    h.authorize();
+    let connection = h.connection();
+    // A fresh read and a cached read refuse a schema that the catalog does not hold.
+    for refresh in [true, false] {
+        let error = catalog_of(
+            &mut h,
+            json!({"method":"describe","connection_id":connection,"schema":"nope","refresh":refresh}),
+        )
+        .unwrap_err();
+        assert!(
+            error.message.contains("no such schema") && error.message.contains("main"),
+            "{refresh}: {}",
+            error.message
+        );
+    }
+    let all = catalog_of(
+        &mut h,
+        json!({"method":"describe","connection_id":connection}),
+    )
+    .unwrap();
+    let main = catalog_of(
+        &mut h,
+        json!({"method":"describe","connection_id":connection,"schema":"main"}),
+    )
+    .unwrap();
+    let names: Vec<_> = main["schemas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|schema| schema["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["main"], "{main}");
+    assert!(all["schemas"].as_array().unwrap().len() >= names.len());
+    let things = main["schemas"][0]["relations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|relation| relation["name"] == "things")
+        .unwrap();
+    // A relation says whether its column list is loaded, so null never reads as no columns.
+    assert_eq!(
+        things["columns_loaded"],
+        things["columns"].is_array(),
+        "{things}"
+    );
+}
+
+#[test]
+fn query_results_carry_the_column_types_of_the_database() {
+    let mut h = Harness::new("column-types");
+    h.authorize();
+    let job = h.query("SELECT id, name, data, id + 1 AS next FROM things ORDER BY id");
+    let done = h.wait_job(&job);
+    assert_eq!(done["status"], "completed", "{done}");
+    // SQLite gives the declared type of a table column, and none for an expression.
+    assert_eq!(
+        done["results"][0]["column_types"],
+        json!(["INTEGER", "TEXT", "BLOB", null]),
+        "{done}"
+    );
+}
+
+#[test]
+fn the_context_pages_connections_and_names_dialects() {
+    let mut h = Harness::new("context-pages");
+    h.authorize();
+    let first = h.tool(json!({"method":"get_context"})).unwrap();
+    assert_eq!(first["connections"][0]["dialect"], "Sqlite");
+    assert_eq!(first["connections_total"], 1);
+    assert!(first["connections_next_offset"].is_null(), "{first}");
+    let after = h
+        .tool(json!({"method":"get_context","connection_offset":1}))
+        .unwrap();
+    assert_eq!(after["connections"], json!([]));
+    assert_eq!(after["connections_total"], 1);
 }

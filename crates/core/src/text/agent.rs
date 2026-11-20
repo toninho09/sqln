@@ -377,3 +377,22 @@ pub fn agent_stopped(count: usize) -> String {
 pub const AGENT_STOP_REASON: &str = "The user stopped agent tasks in SQLN.";
 pub const AGENT_NOTHING: &str = "MCP: no pending items.";
 pub const ONE_TARGET: &str = "Give one file or one URI.";
+
+/// The next action of the agent after it placed SQL for the user.
+pub const AGENT_PLACED_NEXT: &str = "The user reviews and runs this SQL in SQLN; nothing ran. After the user runs it, read its results with read_result and this console_id as tab_id, and its errors with read_console and messages. get_context shows the console phase and result_count.";
+
+/// The error of a catalog read for a schema that the catalog does not hold.
+pub fn agent_schema_not_found(names: &[String], total: usize) -> String {
+    let more = if total > names.len() {
+        format!(" and {} more", total - names.len())
+    } else {
+        String::new()
+    };
+    if names.is_empty() {
+        return "The catalog has no schema. Call describe without schema, or with refresh.".into();
+    }
+    format!(
+        "The catalog has no such schema. Schemas: {}{more}. Send one of these names, or call describe with refresh if the schema is new.",
+        names.join(", ")
+    )
+}

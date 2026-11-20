@@ -766,12 +766,14 @@ impl TableTab {
             ExecEvent::Columns {
                 key,
                 columns,
+                types,
                 progress,
                 ..
             } if self.is_current(key.execution)
                 && self.load.as_ref().is_some_and(|load| load.first) =>
             {
                 self.result = ResultTab::new(0, columns);
+                self.result.column_types = types;
                 self.result.progress = progress.map(ReadMeter::new);
             }
             ExecEvent::Rows { key, rows, bytes } => {

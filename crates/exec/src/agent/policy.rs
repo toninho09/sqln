@@ -2,7 +2,7 @@
 
 use super::Error;
 use crate::sql::{Dialect, TokenKind, is_plain_read, tokenize};
-use sqlparser::ast::{Query, Select, Statement, Visit, Visitor};
+use sqlparser::ast::{ObjectName, ObjectNamePart, Query, Select, Statement, Visit, Visitor};
 use sqlparser::parser::Parser;
 use std::ops::ControlFlow;
 
@@ -70,14 +70,23 @@ pub fn validate(statements: &[String], dialect: Dialect) -> Result<(), Error> {
             sql,
         )
         .map_err(|_| refused())?;
-        if parsed.len() != 1 || parsed.visit(&mut Read).is_break() {
+        let mut read = Read {
+            file_names: dialect.syntax().file_names,
+        };
+        if parsed.len() != 1 || parsed.visit(&mut read).is_break() {
             return Err(refused());
         }
     }
     Ok(())
 }
 
-struct Read;
+/// Characters of a file path or a URL. A table name rarely has them.
+const PATH_CHARACTERS: [char; 4] = ['.', '/', '\\', ':'];
+
+struct Read {
+    /// The database reads a quoted table name as a file or a URL.
+    file_names: bool,
+}
 impl Visitor for Read {
     type Break = ();
     fn pre_visit_statement(&mut self, statement: &Statement) -> ControlFlow<()> {
@@ -100,6 +109,23 @@ impl Visitor for Read {
         } else {
             ControlFlow::Continue(())
         }
+    }
+    /// A string as a table name reads a file in DuckDB, and a quoted path does so in
+    /// DuckDB and Databricks. These sources have no native read-only context that stops
+    /// such reads, so the policy refuses these names.
+    fn pre_visit_relation(&mut self, relation: &ObjectName) -> ControlFlow<()> {
+        for part in &relation.0 {
+            let ObjectNamePart::Identifier(ident) = part else {
+                return ControlFlow::Break(());
+            };
+            let quoted = ident.quote_style.is_some();
+            if ident.quote_style == Some('\'')
+                || (self.file_names && quoted && ident.value.contains(PATH_CHARACTERS))
+            {
+                return ControlFlow::Break(());
+            }
+        }
+        ControlFlow::Continue(())
     }
     fn pre_visit_select(&mut self, select: &Select) -> ControlFlow<()> {
         if select.into.is_some() {

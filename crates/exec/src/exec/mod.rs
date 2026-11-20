@@ -72,6 +72,8 @@ pub enum ExecEvent {
     Columns {
         key: StatementKey,
         columns: Vec<String>,
+        /// The database type of each column. Empty when the connector gives no types.
+        types: Vec<Option<String>>,
         /// The row cap of a live result: at the cap, the grid drops its oldest rows.
         live: Option<usize>,
         /// The counts of a read that the connector updates while it runs.
@@ -169,11 +171,13 @@ impl From<SinkEvent> for ExecEvent {
             SinkEvent::Columns {
                 key,
                 columns,
+                types,
                 live,
                 progress,
             } => ExecEvent::Columns {
                 key,
                 columns,
+                types,
                 live,
                 progress,
             },

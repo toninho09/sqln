@@ -120,6 +120,9 @@ pub struct Status {
 #[derive(Debug, Default, Deserialize)]
 pub struct Column {
     pub name: String,
+    /// The SQL type, such as `DECIMAL(10,2)`. Older answers can omit it.
+    #[serde(default)]
+    pub type_text: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]

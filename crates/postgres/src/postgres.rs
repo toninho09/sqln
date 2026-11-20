@@ -616,6 +616,14 @@ struct PostgresSession {
     statements_lost: bool,
 }
 
+/// The columns of a statement before it runs: how to read each value, and the name of
+/// its type for the agent. Empty when the server cannot describe the statement.
+#[derive(Default)]
+struct Described {
+    kinds: Vec<ColumnKind>,
+    types: Vec<Option<String>>,
+}
+
 impl PostgresSession {
     /// Removes the notices of the session. They stay out of **Messages** when the
     /// statement starts empty, as after the cleanup of a session.
@@ -630,9 +638,9 @@ impl PostgresSession {
     /// here fails in the same way in the simple protocol, and it must not run twice:
     /// the second error would hide the first one in a transaction. After a loss of the
     /// driver statements, the type lookup fails, so all columns are text.
-    async fn column_kinds(&self, sql: &str) -> Result<Vec<ColumnKind>, ExecError> {
+    async fn column_kinds(&self, sql: &str) -> Result<Described, ExecError> {
         if self.transaction == TransactionState::Failed || self.statements_lost {
-            return Ok(Vec::new());
+            return Ok(Described::default());
         }
         let command =
             crate::limited::limited(format_args!("PostgreSQL Parse/Describe (prepare)\n{sql}"));
@@ -645,26 +653,33 @@ impl PostgresSession {
         )
         .await
         {
-            Ok(statement) => Ok(statement
-                .columns()
-                .iter()
-                .map(|column| column_kind(column.type_()))
-                .collect()),
+            Ok(statement) => Ok(Described {
+                kinds: statement
+                    .columns()
+                    .iter()
+                    .map(|column| column_kind(column.type_()))
+                    .collect(),
+                types: statement
+                    .columns()
+                    .iter()
+                    .map(|column| Some(column.type_().name().to_owned()))
+                    .collect(),
+            }),
             Err(error) if error.as_db_error().is_some() => Err(exec_error(&error, sql)),
-            Err(_) => Ok(Vec::new()),
+            Err(_) => Ok(Described::default()),
         }
     }
 
     async fn read(
         &self,
         sql: &str,
-        kinds: &[ColumnKind],
+        described: &Described,
         sink: &mut ResultSink,
     ) -> Result<Outcome, ExecError> {
         crate::trace::observe(
             self.trace.clone(),
             sql,
-            self.read_untraced(sql, kinds, sink),
+            self.read_untraced(sql, described, sink),
         )
         .await
     }
@@ -672,9 +687,10 @@ impl PostgresSession {
     async fn read_untraced(
         &self,
         sql: &str,
-        kinds: &[ColumnKind],
+        described: &Described,
         sink: &mut ResultSink,
     ) -> Result<Outcome, ExecError> {
+        let kinds = described.kinds.as_slice();
         let stream = self
             .client
             .simple_query_raw(sql)
@@ -698,11 +714,18 @@ impl PostgresSession {
             match message {
                 SimpleQueryMessage::RowDescription(columns) => {
                     outcome.has_columns = true;
-                    let names = columns
+                    let names: Vec<_> = columns
                         .iter()
                         .map(|column| column.name().to_owned())
                         .collect();
-                    sink.set_columns(names).await;
+                    // The types of the description belong to this result only when the
+                    // counts match: a statement with several results has no description.
+                    let types = if described.types.len() == names.len() {
+                        described.types.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    sink.set_typed_columns(names, types).await;
                 }
                 SimpleQueryMessage::Row(row) if storing => {
                     let flow = sink.push(row_values(&mut writer, &row, kinds)?).await;
@@ -815,11 +838,11 @@ impl Session for PostgresSession {
         self.canceller.requested.store(false, Ordering::SeqCst);
         self.take_notices();
         self.statements_lost |= removes_prepared_statements(sql, Dialect::Postgres);
-        let kinds = self.column_kinds(sql).await?;
+        let described = self.column_kinds(sql).await?;
         if self.canceller.requested.load(Ordering::SeqCst) {
             return Err(ExecError::new(text::STOPPED_BEFORE_SEND));
         }
-        let read = self.read(sql, &kinds, &mut sink).await;
+        let read = self.read(sql, &described, &mut sink).await;
         let notices = self.take_notices();
         sink.notices(notices.texts, notices.more).await;
         let (rows, limit) = sink.finish().await;

@@ -37,6 +37,7 @@ impl App {
                         alive: request.alive.clone(),
                         requested: Instant::now(),
                         level: granted.unwrap_or(Level::Propose),
+                        kafka_guide_sent: false,
                     },
                 );
                 if let Some(level) = granted {
@@ -76,7 +77,18 @@ impl App {
         }
         match &request.operation {
             RequestAccess {} => unreachable!(),
-            GetContext { offset, limit } => self.agent_context(session, level, *offset, *limit),
+            GetContext {
+                offset,
+                limit,
+                connection_offset,
+                include_syntax,
+            } => self.agent_context(
+                session,
+                level,
+                (*offset, *limit),
+                *connection_offset,
+                *include_syntax,
+            ),
             ReadConsole {
                 console_id,
                 offset,
@@ -186,8 +198,9 @@ impl App {
                 refresh,
             } => {
                 let connection = id(connection_id)?;
+                let given = schema.as_deref();
                 let schema = || {
-                    schema.as_deref().ok_or_else(|| {
+                    given.ok_or_else(|| {
                         Error::new(
                             "schema_required",
                             "Send the schema. Read the schema names with describe and no object.",
@@ -198,16 +211,21 @@ impl App {
                     let table = object.as_ref().map(|object| object.name.as_str());
                     self.agent_diagram(session, connection, schema()?, table)
                 } else if let Some(object) = object {
+                    // A topic has no schema of its own: Kafka lists topics under `topics`.
+                    let schema = match object.kind {
+                        agent::DdlKind::Topic => crate::connector::kafka::TOPICS,
+                        _ => schema()?,
+                    };
                     self.agent_ddl(
                         session,
                         connection,
-                        schema()?,
+                        schema,
                         &object.name,
                         object.kind.as_str(),
                         object.identity.as_deref(),
                     )
                 } else {
-                    self.agent_catalog(session, connection, *refresh)
+                    self.agent_catalog(session, connection, *refresh, given)
                 }
             }
             Compare {
@@ -234,13 +252,14 @@ impl App {
 
     /// Reads the application state that an agent needs to choose a target.
     pub(super) fn agent_context(
-        &self,
+        &mut self,
         session: &str,
         level: Level,
-        offset: usize,
-        limit: usize,
+        (offset, limit): (usize, usize),
+        connection_offset: usize,
+        include_syntax: bool,
     ) -> Reply {
-        let connections = self.agent_connections(0, CONTEXT_CONNECTIONS)?;
+        let connections = self.agent_connections(connection_offset, CONTEXT_CONNECTIONS)?;
         let tabs = self.agent_tabs(offset, limit)?;
         let proposals: Vec<_> = self
             .agent
@@ -256,19 +275,28 @@ impl App {
             "active_tab": tabs["active_tab"],
             "connections": connections["connections"],
             "connections_total": connections["total"],
+            "connections_next_offset": connections["next_offset"],
             "tabs": tabs["tabs"],
             "next_offset": tabs["next_offset"],
             "tabs_total": tabs["total"],
             "pending_proposals": proposals,
         });
-        // A Kafka connection does not accept standard SQL, so the agent gets its guide.
+        // A Kafka connection does not accept standard SQL, so the agent gets its guide: the
+        // first time, or when it asks again. Later replies only name the guide. Each page of
+        // connections looks at all connections, so the guide never depends on the page.
         if self
             .connections
             .iter()
-            .take(CONTEXT_CONNECTIONS)
             .any(|connection| connection.dialect == crate::sql::Dialect::Kafka)
+            && let Some(item) = self.agent.sessions.get_mut(session)
         {
-            reply["syntax"] = json!({"Kafka": crate::connector::kafka::GUIDE});
+            let name = crate::dialect::features(crate::sql::Dialect::Kafka).agent_name();
+            if include_syntax || !item.kafka_guide_sent {
+                item.kafka_guide_sent = true;
+                reply["syntax"] = json!({name: crate::connector::kafka::GUIDE});
+            } else {
+                reply["syntax"] = json!({name: crate::ui::text::AGENT_KAFKA_GUIDE_SENT});
+            }
         }
         Ok(reply)
     }

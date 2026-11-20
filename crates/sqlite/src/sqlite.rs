@@ -275,7 +275,15 @@ fn run(
     let read_only = statement.readonly();
     let has_columns = statement.column_count() > 0;
     if has_columns {
-        sink.set_columns_blocking(statement.column_names().map(str::to_owned).collect());
+        // The declared type of a table column. An expression has none.
+        let types = statement
+            .columns()
+            .map(|column| column.decl_type().map(str::to_owned))
+            .collect();
+        sink.set_typed_columns_blocking(
+            statement.column_names().map(str::to_owned).collect(),
+            types,
+        );
     }
     let read = read_rows(&mut statement, read_only, &mut sink);
     drop(statement);

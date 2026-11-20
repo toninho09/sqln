@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::exec::{ReadLimit, ReadMeter};
+use crate::exec::{ProgressSnapshot, ReadLimit, ReadMeter};
 use crate::grid::json::pretty;
 use crate::grid::{
     Budget, GridView, Reservation, ResultTable, Row, RowSearch, Value, printable, row_cost,
@@ -46,6 +46,9 @@ pub struct ResultTab {
     pub explained: bool,
     pub source: ResultSource,
     pub table: ResultTable,
+    /// The database type of each column, as the connector gives it. Empty when the
+    /// connector gives no types. Only the agent replies show them.
+    pub column_types: Vec<Option<String>>,
     pub edits: crate::data_edit::Edits,
     pub view: GridView,
     pub summary: String,
@@ -64,6 +67,9 @@ pub struct ResultTab {
     pub dropped: usize,
     /// The counts of a read that runs, from its connector.
     pub progress: Option<ReadMeter>,
+    /// The last counts of a finished read with a meter, such as a Kafka read: the
+    /// messages scanned and matched, and the reason that ended the read.
+    pub read: Option<ProgressSnapshot>,
 }
 
 /// The action of a key in the results panel.
@@ -126,6 +132,7 @@ impl ResultTab {
             explained: false,
             source: ResultSource::default(),
             table: ResultTable::new(columns),
+            column_types: Vec::new(),
             edits: crate::data_edit::Edits::default(),
             view: GridView::default(),
             summary: String::new(),
@@ -137,6 +144,7 @@ impl ResultTab {
             live: None,
             dropped: 0,
             progress: None,
+            read: None,
         }
     }
 

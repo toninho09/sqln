@@ -31,6 +31,9 @@ In the order of the original record. Undated entries are the early records or ca
 
 | Date | Decision | Area |
 |---|---|---|
+| 2026-11-20 | [MCP context, Kafka bounds, and IPC 3](decisions/ai-mcp-agent.md#mcp-context-kafka-bounds-and-ipc-3--2026-11-20) | AI, MCP, and agent |
+| 2026-11-20 | [MCP review fixes](decisions/ai-mcp-agent.md#mcp-review-fixes--2026-11-20) | AI, MCP, and agent |
+| 2026-11-20 | [MCP agent facts](decisions/ai-mcp-agent.md#mcp-agent-facts--2026-11-20) | AI, MCP, and agent |
 | 2026-11-20 | [Result tabs by statement number](decisions/results-and-grid.md#result-tabs-by-statement-number--2026-11-20) | Results and grid |
 | 2026-11-20 | [Lock waits](decisions/connectors.md#lock-waits--2026-11-20) | Connectors and sessions |
 | 2026-11-20 | [Release profile and global allocator](decisions/build-and-workspace.md#release-profile-and-global-allocator--2026-11-20) | Build and workspace |

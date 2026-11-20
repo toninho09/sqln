@@ -566,7 +566,8 @@ The AI completion works in a Kafka console, as in a SQL console. See [AI complet
 - Each request sends a compact syntax guide of this language, so the model writes SQLN Kafka and not standard SQL.
 - A request sends the topic of the statement at the cursor, with its Schema Registry fields. Without a topic, it sends the topic names that start with the typed text first.
 
-An MCP agent gets the same guide in `syntax.Kafka` of `get_context`. It reads the fields of a topic with `describe`, and it runs finite reads without full access. `TAIL` and `EMIT CHANGES` do not run through MCP. See [MCP](MCP.md).
+An MCP agent gets the same guide in `syntax.Kafka` of its first `get_context`. It reads the fields of a topic with `describe`, and it runs finite reads without full access. `TAIL` and `EMIT CHANGES` do not run through MCP.
+An agent read without `LIMIT`, `SCAN`, or a start gets `SCAN 100000`, and each result tells the agent how its read ended. See [MCP](MCP.md).
 
 ## Common recipes
 

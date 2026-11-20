@@ -542,6 +542,7 @@ Databricks sends each statement with `EXTERNAL_LINKS` and `ARROW_STREAM`. The se
 `run` sends one statement, delivers the rows to `ResultSink`, and obeys the `Flow::Stop` return.
 One statement may deliver several results, such as `CALL` in MySQL, and the cap applies to each one.
 `ResultSink` sends `ResultDone` at the end of each result.
+`set_columns` starts a result without types. `set_typed_columns` also sends the database type of each column: PostgreSQL, MySQL, SQLite, DuckDB, and Databricks send it, and Redis and Kafka do not. Only the MCP replies show the types.
 Dropping `ResultSink` returns the rows still in the batch to the budget.
 `ResultSink` applies the cap and the budget, and gathers the rows in batches of 200.
 `ResultSink::track` gives the screen a `ReadProgress` with the columns of the next result. The connector writes its atomic counts, and the screen reads them at each frame, so the counts never use the event queue. Kafka uses it for its reads.

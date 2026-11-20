@@ -3184,6 +3184,7 @@ fn the_extra_row_of_a_page_leaves_the_budget_with_the_exact_cost() {
         ExecEvent::Columns {
             key,
             columns: vec!["v".to_owned()],
+            types: Vec::new(),
             live: None,
             progress: None,
         },

@@ -10,6 +10,7 @@ pub struct DuckDb;
 
 const SYNTAX: Syntax = Syntax {
     dotted_schema: true,
+    file_names: true,
     ..BASE
 };
 

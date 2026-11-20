@@ -165,4 +165,12 @@ impl Features for Postgres {
     fn family(&self) -> Option<Family> {
         Some(Family::Postgres)
     }
+
+    fn agent_bound(&self, _: &str) -> Option<String> {
+        None
+    }
+
+    fn agent_name(&self) -> &'static str {
+        "Postgres"
+    }
 }

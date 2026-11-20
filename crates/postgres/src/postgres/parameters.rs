@@ -107,11 +107,15 @@ impl PostgresSession {
         }
         let has_columns = !statement.columns().is_empty();
         if has_columns {
-            sink.set_columns(
-                statement
-                    .columns()
+            let columns = statement.columns();
+            sink.set_typed_columns(
+                columns
                     .iter()
                     .map(|column| column.name().to_owned())
+                    .collect(),
+                columns
+                    .iter()
+                    .map(|column| Some(column.type_().name().to_owned()))
                     .collect(),
             )
             .await;

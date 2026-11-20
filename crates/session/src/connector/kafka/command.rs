@@ -208,6 +208,8 @@ pub struct Read {
     pub scan: Option<u64>,
     /// `None` keeps all message columns.
     pub projection: Option<Projection>,
+    /// True when the statement names its start, with `START AT` or `FROM`.
+    pub start_given: bool,
 }
 
 #[derive(Debug)]
@@ -347,6 +349,7 @@ fn parse_read(cursor: &mut Cursor<'_>, tail: bool, select: bool) -> Result<Read,
         limit: None,
         scan: None,
         projection: None,
+        start_given: false,
     };
     let mut seen: Vec<String> = Vec::new();
     while let Some(token) = cursor.advance() {
@@ -383,8 +386,14 @@ fn parse_read(cursor: &mut Cursor<'_>, tail: bool, select: bool) -> Result<Read,
                 }
                 read.partition = Some(partition);
             }
-            "FROM" => read.start = parse_start(cursor)?,
-            "START" => read.start = select::parse_start(cursor)?,
+            "FROM" => {
+                read.start = parse_start(cursor)?;
+                read.start_given = true;
+            }
+            "START" => {
+                read.start = select::parse_start(cursor)?;
+                read.start_given = true;
+            }
             "WHERE" => read.filter = Some(filter::parse(cursor)?),
             "LIMIT" => {
                 let (limit, offset) = cursor.number::<usize>(text::KAFKA_WHAT_COUNT)?;
@@ -403,6 +412,31 @@ fn parse_read(cursor: &mut Cursor<'_>, tail: bool, select: bool) -> Result<Read,
         }
     }
     Ok(read)
+}
+
+/// The most messages that an agent read examines when it names no bound.
+pub const AGENT_SCAN: u64 = 100_000;
+
+/// Returns the read with `SCAN scan` at its end when it has no `LIMIT`, `SCAN`, or start,
+/// so it cannot examine the whole topic. Other statements, a continuous read, and a read
+/// that already has a bound return `None`. The result always parses again.
+pub fn bounded_read(line: &str, scan: u64) -> Option<String> {
+    let Ok(Command::Consume(read)) = parse(line) else {
+        return None;
+    };
+    if read.limit.is_some() || read.scan.is_some() || read.start_given {
+        return None;
+    }
+    let body = line.trim_end();
+    let body = body.strip_suffix(';').unwrap_or(body).trim_end();
+    // A command stays on one line. A SELECT can end with a `#` comment line, which a
+    // clause on the same line would join.
+    [
+        format!("{body} SCAN {scan}"),
+        format!("{body}\nSCAN {scan}"),
+    ]
+    .into_iter()
+    .find(|bounded| matches!(parse(bounded), Ok(Command::Consume(read)) if read.scan == Some(scan)))
 }
 
 /// Reads a SELECT statement or one command line.
@@ -473,6 +507,39 @@ mod tests {
                 assert_eq!(last.text, value, "{literal} in select: {select}");
             }
         }
+    }
+
+    #[test]
+    fn an_agent_read_without_a_bound_gets_a_scan() {
+        for (line, bounded) in [
+            ("SELECT * FROM orders", "SELECT * FROM orders SCAN 7"),
+            ("SELECT * FROM orders;", "SELECT * FROM orders SCAN 7"),
+            (
+                "SELECT key FROM orders WHERE key = 'a'  ",
+                "SELECT key FROM orders WHERE key = 'a' SCAN 7",
+            ),
+            (
+                "CONSUME orders WHERE key = 'a'",
+                "CONSUME orders WHERE key = 'a' SCAN 7",
+            ),
+        ] {
+            assert_eq!(bounded_read(line, 7).as_deref(), Some(bounded), "{line}");
+        }
+        for line in [
+            "SELECT * FROM orders LIMIT 5",
+            "SELECT * FROM orders SCAN 50",
+            "SELECT * FROM orders START AT EARLIEST",
+            "CONSUME orders FROM latest",
+            "SELECT * FROM orders EMIT CHANGES",
+            "TAIL orders",
+            "TOPICS",
+            "SELECT FROM",
+        ] {
+            assert_eq!(bounded_read(line, 7), None, "{line}");
+        }
+        // A last comment line keeps the clause out of the comment.
+        let commented = bounded_read("SELECT *\nFROM orders\n# all of it", 7).unwrap();
+        assert!(matches!(parse(&commented), Ok(Command::Consume(read)) if read.scan == Some(7)));
     }
 
     fn consume(line: &str) -> Read {

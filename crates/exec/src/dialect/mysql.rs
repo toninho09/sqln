@@ -194,4 +194,12 @@ impl Features for MySql {
     fn family(&self) -> Option<Family> {
         Some(Family::MySql)
     }
+
+    fn agent_bound(&self, _: &str) -> Option<String> {
+        None
+    }
+
+    fn agent_name(&self) -> &'static str {
+        "MySql"
+    }
 }
