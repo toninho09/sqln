@@ -160,13 +160,13 @@ impl App {
             file.adopt(console.editor.revision());
             console.external = Some(file);
         }
-        self.consoles.push(console);
-        let index = self.consoles.len() - 1;
+        self.tabs.consoles.push(console);
+        let index = self.tabs.consoles.len() - 1;
         self.select_console(index);
         self.bind_console(index, pending.connection);
         // The name of the file stays over the name that the binding counts.
         if let Some(stem) = stem {
-            self.consoles[index].name = stem;
+            self.tabs.consoles[index].name = stem;
         }
         self.refresh_tree_consoles();
         self.leave_navigator();
@@ -176,7 +176,7 @@ impl App {
 
     /// The write of `Ctrl+S` for a console that links to a file.
     pub(super) fn save_external_console(&mut self, index: usize) {
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         let Some(external) = &mut console.external else {
             return;
         };
@@ -252,20 +252,20 @@ impl App {
             return;
         };
         let text = {
-            let Some(external) = &mut self.consoles[index].external else {
+            let Some(external) = &mut self.tabs.consoles[index].external else {
                 return;
             };
             match external.reload() {
                 Ok(text) => text,
                 Err(error) => {
-                    let name = self.consoles[index].name.clone();
+                    let name = self.tabs.consoles[index].name.clone();
                     self.status = Some(text::save_failed(&name, &error.to_string()));
                     return;
                 }
             }
         };
         self.replace_editor(index, &text);
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         let revision = console.editor.revision();
         if let Some(external) = &mut console.external {
             external.adopt(revision);
@@ -282,7 +282,7 @@ impl App {
         let Some(index) = self.console_index(id) else {
             return;
         };
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         let Some(external) = &mut console.external else {
             return;
         };
@@ -309,13 +309,13 @@ impl App {
 
     /// The close of a linked console with text that the file does not hold.
     pub(super) fn ask_external_close(&mut self, index: usize) {
-        let id = self.consoles[index].id;
-        let path = self.consoles[index]
+        let id = self.tabs.consoles[index].id;
+        let path = self.tabs.consoles[index]
             .external
             .as_ref()
             .map(|file| file.path.display().to_string())
             .unwrap_or_default();
-        self.consoles[index].closing = true;
+        self.tabs.consoles[index].closing = true;
         self.show_dialog(
             text::TITLE_UNSAVED,
             text::sql_file_unsaved(&path),
@@ -338,7 +338,7 @@ impl App {
         let Some(index) = self.console_index(id) else {
             return;
         };
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         let Some(external) = &mut console.external else {
             return;
         };
@@ -361,7 +361,7 @@ impl App {
         let Some(index) = self.console_index(id) else {
             return;
         };
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         let revision = console.editor.revision();
         if let Some(external) = &mut console.external {
             external.discard(revision);

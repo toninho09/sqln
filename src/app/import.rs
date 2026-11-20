@@ -132,8 +132,8 @@ impl App {
         let Some(id) = self.import_wanted else {
             return;
         };
-        let index = self.tables.iter().position(|tab| tab.id == id);
-        let Some(tab) = index.map(|index| &self.tables[index]) else {
+        let index = self.tabs.tables.iter().position(|tab| tab.id == id);
+        let Some(tab) = index.map(|index| &self.tabs.tables[index]) else {
             self.import_wanted = None;
             return;
         };
@@ -179,7 +179,7 @@ impl App {
         let Some(manager) = &self.manager else {
             return;
         };
-        if !self.tables.iter().any(|tab| tab.id == id) {
+        if !self.tabs.tables.iter().any(|tab| tab.id == id) {
             return;
         }
         let work = match step {
@@ -277,7 +277,7 @@ impl App {
             self.status = Some(text::import_failed(&reason));
             return;
         }
-        let tab = self.tables.iter().find(|tab| tab.id == id);
+        let tab = self.tabs.tables.iter().find(|tab| tab.id == id);
         let Some(table) = tab.and_then(|tab| self.import_table_of(tab, rows)) else {
             return;
         };
@@ -308,7 +308,7 @@ impl App {
         end: ExecutionEnd,
         failure: Option<String>,
     ) {
-        if !self.tables.iter().any(|tab| tab.id == id) {
+        if !self.tabs.tables.iter().any(|tab| tab.id == id) {
             self.status = Some(text::import_closed(progress.rows()));
             return;
         }

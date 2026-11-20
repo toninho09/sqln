@@ -30,7 +30,7 @@ mod scripts;
 mod session;
 mod sql_file;
 mod tables;
-use tables::Screen;
+use tables::{Screen, Tabs};
 
 use std::cell::RefCell;
 use std::io;
@@ -430,19 +430,7 @@ struct ScreenLayout {
 pub struct App {
     ai: ai::State,
     modals: Modals,
-    consoles: Vec<Console>,
-    /// The console that the console commands use. A table tab can be on screen.
-    active: usize,
-    /// The table tabs. The tab row mixes them with the consoles in the order of opening.
-    tables: Vec<TableTab>,
-    /// The count of opened tabs.
-    tabs_opened: u64,
-    /// The tab on screen.
-    screen: Screen,
-    /// The diagram tabs. The tab row mixes them with the other tabs in the order of opening.
-    diagrams: Vec<DiagramTab>,
-    /// The compare tabs. The tab row mixes them with the other tabs in the order of opening.
-    compares: Vec<CompareTab>,
+    tabs: Tabs,
     connections: Vec<Connection>,
     navigator: Navigator,
     navigator_focused: bool,
@@ -564,13 +552,6 @@ impl App {
             .map(|persist| PlainFile::new(&persist.store.global));
         let color_env = ColorEnv::read();
         let mut app = Self {
-            consoles: Vec::new(),
-            active: 0,
-            tables: Vec::new(),
-            tabs_opened: 0,
-            screen: Screen::Console,
-            diagrams: Vec::new(),
-            compares: Vec::new(),
             connections: Vec::new(),
             navigator: Navigator::default(),
             navigator_focused: false,
@@ -587,6 +568,7 @@ impl App {
             explorer_side: options.explorer_side,
             ai: ai::State::new(options.ai_completion, options.ai_vault),
             modals: Modals::default(),
+            tabs: Tabs::default(),
             show_system_commands: options.show_system_commands,
             database: options.database,
             clipboard,
@@ -635,7 +617,7 @@ impl App {
         };
         let console = app.unbound_console(dialect);
         let first = console.id;
-        app.consoles.push(console);
+        app.tabs.consoles.push(console);
         let start_home = options.start_home && !options.session_target;
         if let Some(connector) = options.connector {
             let name = options
@@ -665,7 +647,7 @@ impl App {
             && app.connections.is_empty()
             && let Some(index) = app.console_index(first)
         {
-            app.consoles[index].hidden = true;
+            app.tabs.consoles[index].hidden = true;
             app.focus_navigator();
         }
         app.agent.settings = options.agent;
@@ -715,8 +697,7 @@ impl App {
     }
 
     fn next_tab_place(&mut self) -> u64 {
-        self.tabs_opened += 1;
-        self.tabs_opened
+        self.tabs.next_place()
     }
 
     pub fn should_quit(&self) -> bool {
@@ -736,15 +717,15 @@ impl App {
 
     /// Returns the console of the active tab.
     pub fn console(&self) -> &Console {
-        &self.consoles[self.active]
+        &self.tabs.consoles[self.tabs.active]
     }
 
     pub fn console_mut(&mut self) -> &mut Console {
-        &mut self.consoles[self.active]
+        &mut self.tabs.consoles[self.tabs.active]
     }
 
     pub fn consoles(&self) -> &[Console] {
-        &self.consoles
+        &self.tabs.consoles
     }
 
     pub fn connections(&self) -> &[Connection] {
@@ -764,11 +745,17 @@ impl App {
     }
 
     fn console_index(&self, id: ConsoleId) -> Option<usize> {
-        self.consoles.iter().position(|console| console.id == id)
+        self.tabs
+            .consoles
+            .iter()
+            .position(|console| console.id == id)
     }
 
     fn console_by_id(&mut self, id: ConsoleId) -> Option<&mut Console> {
-        self.consoles.iter_mut().find(|console| console.id == id)
+        self.tabs
+            .consoles
+            .iter_mut()
+            .find(|console| console.id == id)
     }
 
     fn connection(&self, id: ConnectionId) -> Option<&Connection> {
@@ -873,11 +860,11 @@ impl App {
     fn sync_command_history(&mut self) {
         let active = self
             .console_on_screen()
-            .then(|| self.consoles[self.active].id);
+            .then(|| self.tabs.consoles[self.tabs.active].id);
         let Some(manager) = &mut self.manager else {
             return;
         };
-        for console in &self.consoles {
+        for console in &self.tabs.consoles {
             if let Some(connection) = console
                 .connection
                 .and_then(|id| self.connections.iter().find(|item| item.id == id))
@@ -911,11 +898,11 @@ impl App {
 
     /// Keeps the focus of an agent tab without SQL on its results, because it shows no editor.
     fn keep_agent_focus(&mut self) {
-        let Some(console) = self.consoles.get(self.active) else {
+        let Some(console) = self.tabs.consoles.get(self.tabs.active) else {
             return;
         };
         if console.focus != Focus::Results && self.agent_tab_without_sql(console.id) {
-            self.consoles[self.active].focus = Focus::Results;
+            self.tabs.consoles[self.tabs.active].focus = Focus::Results;
         }
         self.see_agent_sql();
     }
@@ -925,17 +912,17 @@ impl App {
         self.agent.owns(console)
             && self
                 .console_index(console)
-                .is_some_and(|index| self.consoles[index].editor.is_blank())
+                .is_some_and(|index| self.tabs.consoles[index].editor.is_blank())
     }
 
     /// Moves the clock of the screen. It returns true when a run or the age of an open
     /// transaction needs a new frame.
     fn advance_clock(&mut self, now: Instant) -> bool {
         self.clock = now;
-        for console in &mut self.consoles {
+        for console in &mut self.tabs.consoles {
             console.sample_progress(now);
         }
-        for table in &mut self.tables {
+        for table in &mut self.tabs.tables {
             table.sample_progress(now);
         }
         let time = now.saturating_duration_since(self.started);
@@ -943,10 +930,10 @@ impl App {
         // An agent task updates the time of its card, and the card appears after a delay.
         let running = self.ai.busy()
             || self.agent.active_tasks() != 0
-            || self.consoles.iter().any(Console::is_busy)
-            || self.tables.iter().any(TableTab::is_busy)
-            || self.diagrams.iter().any(DiagramTab::is_busy)
-            || self.compares.iter().any(CompareTab::is_busy);
+            || self.tabs.consoles.iter().any(Console::is_busy)
+            || self.tabs.tables.iter().any(TableTab::is_busy)
+            || self.tabs.diagrams.iter().any(DiagramTab::is_busy)
+            || self.tabs.compares.iter().any(CompareTab::is_busy);
         let changed = running && frame != self.run_frame;
         self.run_frame = frame;
         let minute = self
@@ -1220,9 +1207,11 @@ impl App {
         if changed {
             let deadline = Instant::now() + WORK_SLICE;
             self.continue_overlay_search(Instant::now() + WORK_SLICE / 2);
-            match self.screen {
-                Screen::Compare(index) => self.compares[index].result.continue_search(deadline),
-                Screen::Table(index) => self.tables[index].result.continue_search(deadline),
+            match self.tabs.screen {
+                Screen::Compare(index) => {
+                    self.tabs.compares[index].result.continue_search(deadline)
+                }
+                Screen::Table(index) => self.tabs.tables[index].result.continue_search(deadline),
                 Screen::Console | Screen::Diagram(_) => {
                     self.console_mut().continue_search(deadline)
                 }
@@ -1255,6 +1244,7 @@ impl App {
             ExecEvent::AgentMetadata { job, result } => self.on_agent_metadata(&job, result),
             ExecEvent::CommandLog { target, event } => {
                 if let Some(console) = self
+                    .tabs
                     .consoles
                     .iter_mut()
                     .find(|console| console.messages.id == target)
@@ -1306,28 +1296,28 @@ impl App {
         }
         let Some(id) = event.console() else { return };
         let budget = self.budget.clone();
-        if let Some(tab) = self.compares.iter_mut().find(|tab| tab.owns(id)) {
+        if let Some(tab) = self.tabs.compares.iter_mut().find(|tab| tab.owns(id)) {
             tab.on_event(event, &budget);
             self.continue_compare(id);
             return;
         }
-        if let Some(tab) = self.diagrams.iter_mut().find(|tab| tab.id == id) {
+        if let Some(tab) = self.tabs.diagrams.iter_mut().find(|tab| tab.id == id) {
             tab.on_event(event, &budget);
             return;
         }
-        if let Some(index) = self.tables.iter().position(|tab| tab.id == id) {
+        if let Some(index) = self.tabs.tables.iter().position(|tab| tab.id == id) {
             let finished = matches!(event, ExecEvent::ExecutionFinished { .. });
             if finished {
-                let auto = self.tables[index].auto_execution;
+                let auto = self.tabs.tables[index].auto_execution;
                 self.on_auto_execution_end(&event, id, auto);
             }
-            self.tables[index].on_event(event, &budget);
+            self.tabs.tables[index].on_event(event, &budget);
             if finished
-                && !self.tables[index].is_busy()
-                && let Some(restore) = self.tables[index].edit_restore.take()
-                && let Some(view) = restore.view_in(&self.tables[index].result.table)
+                && !self.tabs.tables[index].is_busy()
+                && let Some(restore) = self.tabs.tables[index].edit_restore.take()
+                && let Some(view) = restore.view_in(&self.tabs.tables[index].result.table)
             {
-                self.tables[index].result.view = view;
+                self.tabs.tables[index].result.view = view;
             }
             self.finish_session_signal(index);
             self.continue_wanted_import();
@@ -1336,12 +1326,12 @@ impl App {
         if let ExecEvent::StatementFinished { key, status, .. } = &event
             && self
                 .console_index(id)
-                .is_none_or(|index| self.consoles[index].auto_execution != Some(key.execution))
+                .is_none_or(|index| self.tabs.consoles[index].auto_execution != Some(key.execution))
         {
             self.note_statement(key, status);
         }
         if let Some(index) = self.console_index(id) {
-            let auto = self.consoles[index].auto_execution;
+            let auto = self.tabs.consoles[index].auto_execution;
             if matches!(event, ExecEvent::ExecutionFinished { .. }) {
                 self.on_auto_execution_end(&event, id, auto);
             }
@@ -1391,7 +1381,7 @@ impl App {
             draw_rule(frame, rule, &self.theme);
         }
         let main = self.draw_side(frame, body);
-        match self.screen {
+        match self.tabs.screen {
             Screen::Compare(_) => self.draw_active_compare(frame, main, tall),
             Screen::Diagram(_) => self.draw_active_diagram(frame, main, tall),
             Screen::Table(_) => self.draw_active_table(frame, main, tall),
@@ -1503,14 +1493,18 @@ impl App {
             title: tall,
             welcome: self.welcome(),
             show_system_commands: self.show_system_commands,
-            agent: self.agent_tab_without_sql(self.consoles[self.active].id),
-            agent_sql: self.agent.owns(self.consoles[self.active].id),
-            agent_access: self.agent.tab_access(self.consoles[self.active].id),
-            agent_tasks: self.agent.tab_tasks(self.consoles[self.active].id),
+            agent: self.agent_tab_without_sql(self.tabs.consoles[self.tabs.active].id),
+            agent_sql: self.agent.owns(self.tabs.consoles[self.tabs.active].id),
+            agent_access: self
+                .agent
+                .tab_access(self.tabs.consoles[self.tabs.active].id),
+            agent_tasks: self
+                .agent
+                .tab_tasks(self.tabs.consoles[self.tabs.active].id),
         };
         let ratio = self.editor_ratio;
         let focused = !self.navigator_focused;
-        let console = &mut self.consoles[self.active];
+        let console = &mut self.tabs.consoles[self.tabs.active];
         self.layout.console = draw_console(frame, area, console, &bar, ratio, focused, &self.theme);
     }
 
@@ -1525,20 +1519,20 @@ impl App {
         let Some(index) = self.table_index() else {
             return;
         };
-        let connection = self.tables[index].connection;
+        let connection = self.tabs.tables[index].connection;
         let name = self
             .connection(connection)
             .map_or_else(String::new, |item| item.name.clone());
         let bar = TableBar {
             connection: &name,
-            blocked: self.tables[index].is_blocked(&self.budget),
+            blocked: self.tabs.tables[index].is_blocked(&self.budget),
             title: tall,
         };
         let focused = !self.navigator_focused;
         self.layout.table = draw_table(
             frame,
             area,
-            &mut self.tables[index],
+            &mut self.tabs.tables[index],
             &bar,
             focused,
             &self.theme,
@@ -1553,7 +1547,7 @@ impl App {
         self.layout.compare = draw_compare(
             frame,
             area,
-            &mut self.compares[index],
+            &mut self.tabs.compares[index],
             tall,
             focused,
             &self.theme,
@@ -1564,7 +1558,7 @@ impl App {
         let Some(index) = self.diagram_index() else {
             return;
         };
-        let connection = self.diagrams[index].connection;
+        let connection = self.tabs.diagrams[index].connection;
         let name = self
             .connection(connection)
             .map_or_else(String::new, |item| item.name.clone());
@@ -1576,7 +1570,7 @@ impl App {
         self.layout.diagram = draw_diagram(
             frame,
             area,
-            &mut self.diagrams[index],
+            &mut self.tabs.diagrams[index],
             &bar,
             focused,
             &self.theme,

@@ -4,6 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::guard::short;
 use super::modal::Modal;
+use super::tables::Tabs;
 use super::{App, DialogAction, Overlay, Screen};
 use crate::catalog::Catalog;
 use crate::connection::Connection;
@@ -364,12 +365,12 @@ impl App {
             return;
         }
         self.ensure_active_catalog();
-        let index = self.active;
+        let index = self.tabs.active;
         let connection = self.catalog_for(index);
         let App {
-            consoles,
             connections,
             fallback_catalog,
+            tabs: Tabs { consoles, .. },
             ..
         } = self;
         let catalog = editor_catalog(
@@ -396,13 +397,13 @@ impl App {
 
     fn on_editor_key(&mut self, key: KeyEvent) {
         self.ensure_active_catalog();
-        let index = self.active;
+        let index = self.tabs.active;
         let connection = self.catalog_for(index);
         // The catalog and the console are separate fields of the application.
         let App {
-            consoles,
             connections,
             fallback_catalog,
+            tabs: Tabs { consoles, .. },
             ..
         } = self;
         let catalog = editor_catalog(
@@ -459,7 +460,7 @@ impl App {
             self.perform_analysis(action);
             return;
         }
-        let done = match self.screen {
+        let done = match self.tabs.screen {
             Screen::Diagram(_) => self.perform_on_diagram(action),
             Screen::Compare(_) => self.perform_on_compare(action),
             Screen::Table(_) => self.perform_on_table(action),
@@ -524,7 +525,7 @@ impl App {
             Action::ContextCommands => self.open_command_page(self.context_region()),
             Action::EditorSave => self.save_now(),
             action if action.region() == Region::Editor => self.perform_editor_command(action),
-            Action::Stop => self.stop(self.active),
+            Action::Stop => self.stop(self.tabs.active),
             Action::ToggleMode => self.toggle_mode(),
             Action::Commit => self.transaction(TransactionCommand::Commit),
             Action::Rollback => self.transaction(TransactionCommand::Rollback),
@@ -580,9 +581,13 @@ impl App {
     fn on_grid_action(&mut self, action: Action, extend: bool) {
         let budget = self.budget.clone();
         let vim = self.vim();
-        let outcome = match self.screen {
-            Screen::Compare(index) => self.compares[index].result.on_action(action, extend, vim),
-            Screen::Table(index) => self.tables[index].result.on_action(action, extend, vim),
+        let outcome = match self.tabs.screen {
+            Screen::Compare(index) => self.tabs.compares[index]
+                .result
+                .on_action(action, extend, vim),
+            Screen::Table(index) => self.tabs.tables[index]
+                .result
+                .on_action(action, extend, vim),
             Screen::Console | Screen::Diagram(_) => {
                 self.console_mut().on_results_action(action, extend)
             }
@@ -669,11 +674,11 @@ impl App {
         } else {
             row.saturating_sub(1)
         };
-        let result = match self.screen {
-            Screen::Compare(index) => Some(&mut self.compares[index].result),
-            Screen::Table(index) => Some(&mut self.tables[index].result),
+        let result = match self.tabs.screen {
+            Screen::Compare(index) => Some(&mut self.tabs.compares[index].result),
+            Screen::Table(index) => Some(&mut self.tabs.tables[index].result),
             Screen::Console | Screen::Diagram(_) => {
-                let console = &mut self.consoles[self.active];
+                let console = &mut self.tabs.consoles[self.tabs.active];
                 console.results.get_mut(console.active)
             }
         };
@@ -735,13 +740,13 @@ impl App {
     }
 
     pub(super) fn select_console(&mut self, index: usize) {
-        if index < self.consoles.len() {
+        if index < self.tabs.consoles.len() {
             self.console_mut().editor.close_suggestions();
-            if !self.console_on_screen() || self.active != index {
+            if !self.console_on_screen() || self.tabs.active != index {
                 self.leave_tab();
             }
-            self.active = index;
-            self.screen = Screen::Console;
+            self.tabs.active = index;
+            self.tabs.screen = Screen::Console;
             self.sync_command_history();
         }
     }
@@ -860,7 +865,7 @@ impl App {
     }
 
     fn help_actions(&self, region: Region) -> Vec<(Action, String, &'static str)> {
-        let grid = match self.screen {
+        let grid = match self.tabs.screen {
             Screen::Table(_) => Grid::Table,
             Screen::Compare(_) => Grid::Compare,
             Screen::Console | Screen::Diagram(_) => Grid::Console,
@@ -913,7 +918,7 @@ impl App {
             );
             return;
         }
-        self.start_run(self.active, target);
+        self.start_run(self.tabs.active, target);
     }
 
     pub(super) fn start_run(&mut self, index: usize, target: RunTarget) {
@@ -995,25 +1000,25 @@ impl App {
             RunTarget::Statements(scope) => scope,
             RunTarget::Plan { .. } => RunScope::Default,
         };
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         match console.editor.plan_run(scope) {
             Ok(plan) => {
                 let Some(connection) = console.connection else {
                     return;
                 };
-                let dialect = self.consoles[index].editor.dialect();
-                let full_text = self.consoles[index].editor.text();
-                self.consoles[index]
+                let dialect = self.tabs.consoles[index].editor.dialect();
+                let full_text = self.tabs.consoles[index].editor.text();
+                self.tabs.consoles[index]
                     .parameters
                     .update_names(crate::sql::parameters::names(&full_text, dialect));
-                let parameters = match self.consoles[index]
+                let parameters = match self.tabs.consoles[index]
                     .parameters
                     .values(&plan.statements, dialect)
                 {
                     Ok(parameters) => parameters,
                     Err(reason) => {
                         self.navigator_focused = false;
-                        self.consoles[index].focus = Focus::Parameters;
+                        self.tabs.consoles[index].focus = Focus::Parameters;
                         self.status = Some(reason);
                         return;
                     }
@@ -1035,7 +1040,7 @@ impl App {
                     }
                 };
                 if ask && let Some(body) = self.run_question(connection, target, &plan) {
-                    let id = self.consoles[index].id;
+                    let id = self.tabs.consoles[index].id;
                     self.show_dialog(
                         text::TITLE_CONFIRM_RUN,
                         body,
@@ -1046,7 +1051,7 @@ impl App {
                     );
                     return;
                 }
-                let console = &self.consoles[index];
+                let console = &self.tabs.consoles[index];
                 // An agent tab runs in Auto mode: an open transaction would block the agent.
                 let manual = console.manual && !self.agent.owns(console.id);
                 let schema = console.schema.clone();
@@ -1064,7 +1069,7 @@ impl App {
                     parameters,
                     live: true,
                 };
-                let console = &self.consoles[index];
+                let console = &self.tabs.consoles[index];
                 let revision = console.editor.revision();
                 let console = console.id;
                 self.authorize(
@@ -1140,12 +1145,12 @@ impl App {
     }
 
     pub(super) fn stop(&mut self, index: usize) {
-        let id = self.consoles[index].id;
+        let id = self.tabs.consoles[index].id;
         if self.cancel_ai_explanation(id) {
             return;
         }
         if self.cancel_agent_console(id) {
-            if self.consoles[index].closing && !self.consoles[index].is_busy() {
+            if self.tabs.consoles[index].closing && !self.tabs.consoles[index].is_busy() {
                 self.close_step(id);
             }
             return;
@@ -1154,12 +1159,12 @@ impl App {
             return;
         }
         if self.cancel_auth_console(id) {
-            if self.consoles[index].closing {
+            if self.tabs.consoles[index].closing {
                 self.close_step(id);
             }
             return;
         }
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         if !console.is_busy() {
             return;
         }
@@ -1755,10 +1760,10 @@ impl App {
                     connection.is_some_and(|item| Explain::new(item.dialect, analyze).is_some());
                 !in_table && idle && plans
             }
-            Action::Stop => match self.screen {
-                Screen::Compare(index) => self.compares[index].is_busy(),
-                Screen::Diagram(index) => self.diagrams[index].is_busy(),
-                Screen::Table(index) => self.tables[index].is_busy(),
+            Action::Stop => match self.tabs.screen {
+                Screen::Compare(index) => self.tabs.compares[index].is_busy(),
+                Screen::Diagram(index) => self.tabs.diagrams[index].is_busy(),
+                Screen::Table(index) => self.tabs.tables[index].is_busy(),
                 Screen::Console => !idle || self.ai_explanation_running(console.id),
             },
             Action::ToggleMode => !in_table && idle && transactions && !self.agent.owns(console.id),

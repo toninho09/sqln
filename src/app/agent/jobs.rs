@@ -98,7 +98,7 @@ impl App {
         let notification_connection = connections[0].0;
         let notice = self.agent_console(session, notification_connection, None)?;
         if let Some(index) = self.console_index(notice) {
-            let target = self.consoles[index].messages.id;
+            let target = self.tabs.consoles[index].messages.id;
             let histories: Vec<_> = consoles
                 .iter()
                 .zip(&connections)
@@ -118,7 +118,7 @@ impl App {
                     manager.set_console_history(console, target, name);
                 }
             }
-            self.consoles[index].messages.note(
+            self.tabs.consoles[index].messages.note(
                 crate::console::MessageLevel::Info,
                 "Agent task queued. Use its task identifier to inspect or cancel it.",
                 None,
@@ -126,7 +126,7 @@ impl App {
         }
         for console in &consoles {
             if let Some(index) = self.console_index(*console) {
-                self.consoles[index].phase = Phase::Waiting;
+                self.tabs.consoles[index].phase = Phase::Waiting;
             }
         }
         let cancel = self
@@ -172,7 +172,7 @@ impl App {
         rows: usize,
     ) -> Reply {
         let index = self.agent_target(console)?;
-        let connection = self.consoles[index].connection.ok_or_else(missing)?;
+        let connection = self.tabs.consoles[index].connection.ok_or_else(missing)?;
         let dialect = self.connection(connection).ok_or_else(missing)?.dialect;
         let total = draft.plan.statements.iter().map(String::len).sum::<usize>();
         if total > agent::MAX_FRAME {
@@ -252,7 +252,7 @@ impl App {
             ));
         }
         let index = self.agent_target(console)?;
-        let dialect = self.consoles[index].editor.dialect();
+        let dialect = self.tabs.consoles[index].editor.dialect();
         let parameters = bindings(parameters)?;
         let explain = explain
             .map(|mode| {
@@ -261,7 +261,7 @@ impl App {
             })
             .transpose()?;
         let options = RunOptions {
-            schema: self.consoles[index].schema.clone(),
+            schema: self.tabs.consoles[index].schema.clone(),
             parameters,
             ..Default::default()
         };
@@ -299,12 +299,12 @@ impl App {
         rows: usize,
     ) -> Reply {
         let index = self.agent_target(console)?;
-        if self.consoles[index].editor.revision() != revision {
+        if self.tabs.consoles[index].editor.revision() != revision {
             return Err(revision_conflict());
         }
-        let plan = self.consoles[index].editor.agent_plan(range)?;
-        let dialect = self.consoles[index].editor.dialect();
-        let parameters = self.consoles[index]
+        let plan = self.tabs.consoles[index].editor.agent_plan(range)?;
+        let dialect = self.tabs.consoles[index].editor.dialect();
+        let parameters = self.tabs.consoles[index]
             .parameters
             .values(&plan.statements, dialect)
             .map_err(|message| Error::new("parameters_required", &message))?;
@@ -323,7 +323,7 @@ impl App {
             None
         };
         let options = RunOptions {
-            schema: self.consoles[index].schema.clone(),
+            schema: self.tabs.consoles[index].schema.clone(),
             parameters,
             ..Default::default()
         };
@@ -428,10 +428,10 @@ impl App {
         let console = job.consoles[0];
         if let Some(draft) = &job.draft
             && let Some(index) = self.console_index(console)
-            && (self.consoles[index].transaction != TransactionState::None
-                || draft
-                    .revision
-                    .is_some_and(|revision| self.consoles[index].editor.revision() != revision))
+            && (self.tabs.consoles[index].transaction != TransactionState::None
+                || draft.revision.is_some_and(|revision| {
+                    self.tabs.consoles[index].editor.revision() != revision
+                }))
         {
             self.fail_agent_job(
                 id,
@@ -471,19 +471,19 @@ impl App {
                 if !self.agent.owns(console) {
                     let notice = text::agent_ran(
                         &self.agent.client(&session),
-                        &crate::grid::printable(&self.consoles[index].name),
+                        &crate::grid::printable(&self.tabs.consoles[index].name),
                         draft.read_only,
                     );
-                    let connection = self.consoles[index].connection;
+                    let connection = self.tabs.consoles[index].connection;
                     self.agent_notice(&session, connection, notice);
                 }
-                self.consoles[index]
+                self.tabs.consoles[index]
                     .ran_parameters
                     .clone_from(&draft.options.parameters);
-                self.consoles[index].begin_execution(execution, &draft.plan, &self.budget);
-                self.consoles[index].explain = draft.explain;
+                self.tabs.consoles[index].begin_execution(execution, &draft.plan, &self.budget);
+                self.tabs.consoles[index].explain = draft.explain;
                 if draft.revision.is_none() {
-                    self.consoles[index].editor.clear_marks();
+                    self.tabs.consoles[index].editor.clear_marks();
                 }
             } else {
                 self.fail_agent_job(id, "The console closed before the operation started.");
@@ -540,7 +540,7 @@ impl App {
                 self.agent.retired.insert(console, cancel.clone());
                 self.cancel_agent_auth_console(console);
                 if let Some(index) = self.console_index(console) {
-                    self.consoles[index].phase = if pending {
+                    self.tabs.consoles[index].phase = if pending {
                         Phase::Idle
                     } else {
                         Phase::Stopping
@@ -638,7 +638,7 @@ impl App {
                             let name = self
                                 .console_index(console)
                                 .map_or_else(String::new, |index| {
-                                    crate::grid::printable(&self.consoles[index].name)
+                                    crate::grid::printable(&self.tabs.consoles[index].name)
                                 });
                             let notice = text::agent_proposed(&self.agent.client(&session), &name);
                             let connection = self.console_connection(console);
@@ -706,9 +706,14 @@ impl App {
         let mut results = Vec::new();
         for console in consoles {
             if let Some(index) = self.console_index(console) {
-                results.extend(self.consoles[index].results.iter().enumerate().map(|(result,grid)|json!({"tab_id":console.to_string(),"result":result,"generation":grid.table.generation.to_string()})));
+                results.extend(self.tabs.consoles[index].results.iter().enumerate().map(|(result,grid)|json!({"tab_id":console.to_string(),"result":result,"generation":grid.table.generation.to_string()})));
             }
-            if let Some(tab) = self.compares.iter().find(|tab| tab.sides[0].id == console) {
+            if let Some(tab) = self
+                .tabs
+                .compares
+                .iter()
+                .find(|tab| tab.sides[0].id == console)
+            {
                 results.push(json!({"tab_id":console.to_string(),"result":0,"generation":tab.result.table.generation.to_string()}));
             }
         }
@@ -733,7 +738,7 @@ impl App {
         if native {
             for console in consoles {
                 if let Some(index) = self.console_index(console) {
-                    self.consoles[index].phase = Phase::Idle;
+                    self.tabs.consoles[index].phase = Phase::Idle;
                 }
             }
         }
@@ -761,15 +766,18 @@ impl App {
         };
         let index = connection
             .and_then(|connection| {
-                self.consoles
+                self.tabs
+                    .consoles
                     .iter()
                     .position(|console| console.connection == Some(connection) && owned(console))
             })
-            .or_else(|| self.consoles.iter().rposition(owned));
+            .or_else(|| self.tabs.consoles.iter().rposition(owned));
         if let Some(index) = index {
-            self.consoles[index]
-                .messages
-                .note(crate::console::MessageLevel::Info, message, None);
+            self.tabs.consoles[index].messages.note(
+                crate::console::MessageLevel::Info,
+                message,
+                None,
+            );
         }
     }
 
@@ -787,7 +795,7 @@ impl App {
     /// Returns the connection of a console, for the notices of its agent actions.
     pub(super) fn console_connection(&self, console: ConsoleId) -> Option<ConnectionId> {
         self.console_index(console)
-            .and_then(|index| self.consoles[index].connection)
+            .and_then(|index| self.tabs.consoles[index].connection)
     }
 
     pub(in crate::app) fn poll_agent_jobs(&mut self) {
@@ -833,7 +841,7 @@ impl App {
                     continue;
                 }
                 Output::Diagram(tab) => {
-                    let Some(tab) = self.diagrams.iter().find(|item| item.id == *tab) else {
+                    let Some(tab) = self.tabs.diagrams.iter().find(|item| item.id == *tab) else {
                         self.fail_agent_job(&id, "The diagram closed.");
                         continue;
                     };
@@ -852,7 +860,11 @@ impl App {
                     })
                 }
                 Output::Compare(tab) => {
-                    let Some(tab) = self.compares.iter().find(|item| item.sides[0].id == *tab)
+                    let Some(tab) = self
+                        .tabs
+                        .compares
+                        .iter()
+                        .find(|item| item.sides[0].id == *tab)
                     else {
                         self.fail_agent_job(&id, "The comparison closed.");
                         continue;
@@ -903,7 +915,7 @@ impl App {
         name: &str,
     ) -> Result<Text, Error> {
         let index = self.console_index(console).ok_or_else(missing)?;
-        let grids = &mut self.consoles[index].results;
+        let grids = &mut self.tabs.consoles[index].results;
         let rows: Vec<_> = grids
             .iter_mut()
             .map(|grid| std::mem::take(&mut grid.table.rows))
@@ -1133,7 +1145,7 @@ impl App {
         tab.agent = true;
         let notice = text::agent_opened(&self.agent.client(session), &tab.label());
         self.agent_notice(session, Some(connection), notice);
-        self.diagrams.push(tab);
+        self.tabs.diagrams.push(tab);
         self.agent.jobs.get_mut(&job).expect("new job").state = "waiting_credentials";
         self.authorize(
             connection,
@@ -1234,7 +1246,7 @@ impl App {
         let notice = text::agent_opened(&self.agent.client(session), &tab.label());
         let connection = tab.sides[0].side.connection;
         self.agent_notice(session, Some(connection), notice);
-        self.compares.push(tab);
+        self.tabs.compares.push(tab);
         let item = self.agent.jobs.get_mut(&job).expect("new job");
         item.state = "waiting_credentials";
         item.rows = rows;

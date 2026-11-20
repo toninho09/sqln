@@ -175,17 +175,18 @@ impl App {
         // A hidden console keeps the rule that the application has one console, and no
         // tab appears for it. Without a table or a diagram, the home screen appears.
         let last = self
+            .tabs
             .consoles
             .iter()
             .filter(|console| !console.hidden)
             .count()
             == 1;
-        let replaced = last && !self.consoles[index].hidden;
+        let replaced = last && !self.tabs.consoles[index].hidden;
         if replaced {
             self.keep_hidden_console();
         }
         self.save_editor_states(Some(index));
-        let mut console = self.consoles.remove(index);
+        let mut console = self.tabs.consoles.remove(index);
         console.discard_previous(&self.budget);
         for result in &console.results {
             self.budget.release(result.table.bytes);
@@ -193,16 +194,16 @@ impl App {
         if let Some(manager) = &mut self.manager {
             manager.close_console(console.id);
         }
-        if self.active > index || self.active == self.consoles.len() {
-            self.active = self.active.saturating_sub(1);
+        if self.tabs.active > index || self.tabs.active == self.tabs.consoles.len() {
+            self.tabs.active = self.tabs.active.saturating_sub(1);
         }
         if replaced && self.console_on_screen() {
-            if !self.tables.is_empty() {
-                self.screen = Screen::Table(0);
-            } else if !self.diagrams.is_empty() {
-                self.screen = Screen::Diagram(0);
-            } else if !self.compares.is_empty() {
-                self.screen = Screen::Compare(0);
+            if !self.tabs.tables.is_empty() {
+                self.tabs.screen = Screen::Table(0);
+            } else if !self.tabs.diagrams.is_empty() {
+                self.tabs.screen = Screen::Diagram(0);
+            } else if !self.tabs.compares.is_empty() {
+                self.tabs.screen = Screen::Compare(0);
             } else {
                 self.focus_navigator();
             }
@@ -214,13 +215,13 @@ impl App {
 
     /// Adds the empty console that stays out of the tab row, once.
     fn keep_hidden_console(&mut self) {
-        if self.consoles.iter().any(|console| console.hidden) {
+        if self.tabs.consoles.iter().any(|console| console.hidden) {
             return;
         }
         let dialect = self.fallback_dialect;
         let mut console = self.unbound_console(dialect);
         console.hidden = true;
-        self.consoles.push(console);
+        self.tabs.consoles.push(console);
     }
 
     /// The exit asks about each console in order, and it applies each answer at once.
@@ -235,6 +236,7 @@ impl App {
 
     fn exit_step(&mut self) {
         if let Some(index) = self
+            .tabs
             .tables
             .iter()
             .position(|tab| !tab.result.edits.is_empty() || tab.edit_execution.is_some())
@@ -244,6 +246,7 @@ impl App {
             return;
         }
         let next = self
+            .tabs
             .consoles
             .iter()
             .position(|console| console.is_busy() || console.in_transaction());
@@ -255,7 +258,7 @@ impl App {
             return;
         };
         self.select_console(index);
-        self.close_step(self.consoles[index].id);
+        self.close_step(self.tabs.consoles[index].id);
     }
 
     pub(super) fn on_dialog_action(&mut self, action: DialogAction) {
@@ -299,7 +302,7 @@ impl App {
             DialogAction::CreateFormFile => self.create_form_file(),
             DialogAction::StopAndClose(id) => {
                 if let Some(index) = self.console_index(id) {
-                    self.consoles[index].closing = true;
+                    self.tabs.consoles[index].closing = true;
                     self.stop(index);
                 }
             }
@@ -319,7 +322,7 @@ impl App {
             DialogAction::CloseConnection(id) => self.confirm_close(id, true),
             DialogAction::RunAnyway(id, target) => {
                 if let Some(index) = self.console_index(id) {
-                    self.consoles[index].set_transaction(TransactionState::None);
+                    self.tabs.consoles[index].set_transaction(TransactionState::None);
                     self.start_run(index, target);
                 }
             }
@@ -347,7 +350,7 @@ impl App {
             DialogAction::ImportConfirmed => self.start_import(),
             DialogAction::ApplyEdits(id) => self.apply_edits(id),
             DialogAction::ReviewEdits(id) => {
-                if let Some(index) = self.tables.iter().position(|tab| tab.id == id) {
+                if let Some(index) = self.tabs.tables.iter().position(|tab| tab.id == id) {
                     self.select_table(index);
                     self.review_edits();
                 }

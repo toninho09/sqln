@@ -46,7 +46,7 @@ impl App {
     fn open_tab(&self, tab: Tab) -> Option<OpenTab> {
         match tab {
             Tab::Console(index) => {
-                let file = self.consoles[index].file.as_ref()?;
+                let file = self.tabs.consoles[index].file.as_ref()?;
                 Some(OpenTab::Console {
                     scope: file.scope,
                     id: file.meta.id.clone(),
@@ -54,10 +54,10 @@ impl App {
             }
             // A structure, a diagram, or a compare costs one key to open, so it does not
             // come back.
-            Tab::Table(index) if self.tables[index].structure.is_some() => None,
+            Tab::Table(index) if self.tabs.tables[index].structure.is_some() => None,
             Tab::Diagram(_) | Tab::Compare(_) => None,
             Tab::Table(index) => {
-                let tab = &self.tables[index];
+                let tab = &self.tabs.tables[index];
                 let key = self.connection(tab.connection)?.key.clone()?;
                 Some(OpenTab::Table {
                     scope: key.scope,
@@ -110,11 +110,11 @@ impl App {
         match on_screen {
             Some(Reopened::Console(id)) => {
                 if let Some(index) = self.console_index(id) {
-                    self.active = index;
-                    self.screen = Screen::Console;
+                    self.tabs.active = index;
+                    self.tabs.screen = Screen::Console;
                 }
             }
-            Some(Reopened::Table(index)) => self.screen = Screen::Table(index),
+            Some(Reopened::Table(index)) => self.tabs.screen = Screen::Table(index),
             None => {}
         }
     }
@@ -151,8 +151,8 @@ impl App {
                 tab.wait_for_use(text::table_pending(
                     self.shown_key(Action::GridOpenValue).as_deref(),
                 ));
-                self.tables.push(tab);
-                Some(Reopened::Table(self.tables.len() - 1))
+                self.tabs.tables.push(tab);
+                Some(Reopened::Table(self.tabs.tables.len() - 1))
             }
         }
     }
@@ -162,7 +162,7 @@ impl App {
     fn reopen_console(&mut self, entry: &ScriptEntry) -> Option<Reopened> {
         self.connection_by_key(entry.scope, &entry.meta.connection_id)?;
         match self.load_script(entry) {
-            Ok(index) => Some(Reopened::Console(self.consoles[index].id)),
+            Ok(index) => Some(Reopened::Console(self.tabs.consoles[index].id)),
             Err(message) => {
                 self.status = Some(message);
                 // The tab can open at a later start, so the list stays in the file.

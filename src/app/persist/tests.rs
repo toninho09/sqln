@@ -171,8 +171,8 @@ fn association_in_the_queue_blocks_only_its_console() {
     assert!(app.console().is_busy());
     release.now();
     pump(&mut app, Instant::now());
-    assert_eq!(app.consoles[0].connection, Some(target));
-    assert_eq!(app.consoles[1].connection, Some(source));
+    assert_eq!(app.tabs.consoles[0].connection, Some(target));
+    assert_eq!(app.tabs.consoles[1].connection, Some(source));
 }
 
 #[test]

@@ -43,6 +43,7 @@ impl App {
             _ => false,
         };
         let Some(console) = self
+            .tabs
             .consoles
             .iter()
             .find(|item| item.id == key.console)

@@ -66,15 +66,15 @@ impl App {
     pub(super) fn choose_auto_refresh(&mut self, seconds: Option<u64>) {
         let now = Instant::now();
         if self.console_on_screen() {
-            let index = self.active;
+            let index = self.tabs.active;
             match seconds {
-                None => self.consoles[index].auto_refresh = None,
+                None => self.tabs.consoles[index].auto_refresh = None,
                 Some(seconds) => {
-                    let Some(statements) = self.consoles[index].auto_snapshot.clone() else {
+                    let Some(statements) = self.tabs.consoles[index].auto_snapshot.clone() else {
                         self.status = Some(text::AUTO_REFRESH_NEEDS_RUN.to_owned());
                         return;
                     };
-                    let Some(connection) = self.consoles[index].connection else {
+                    let Some(connection) = self.tabs.consoles[index].connection else {
                         return;
                     };
                     let Some(dialect) = self.dialect_of(connection) else {
@@ -86,7 +86,7 @@ impl App {
                         self.status = Some(text::AUTO_REFRESH_READ_ONLY.to_owned());
                         return;
                     }
-                    self.consoles[index].auto_refresh =
+                    self.tabs.consoles[index].auto_refresh =
                         Some(AutoRefresh::new(Duration::from_secs(seconds), now));
                 }
             }
@@ -116,18 +116,18 @@ impl App {
     }
 
     fn console_auto_tick(&mut self, now: Instant) -> bool {
-        let index = self.active;
-        if !self.consoles[index]
+        let index = self.tabs.active;
+        if !self.tabs.consoles[index]
             .auto_refresh
             .is_some_and(|auto| auto.due(now))
-            || self.consoles[index].is_busy()
-            || self.consoles[index].transaction == crate::connector::TransactionState::Unknown
-            || self.consoles[index].auto_snapshot.is_none()
+            || self.tabs.consoles[index].is_busy()
+            || self.tabs.consoles[index].transaction == crate::connector::TransactionState::Unknown
+            || self.tabs.consoles[index].auto_snapshot.is_none()
         {
             return false;
         }
         let fired = self.replay_last_run(index);
-        if let Some(auto) = self.consoles[index].auto_refresh.as_mut() {
+        if let Some(auto) = self.tabs.consoles[index].auto_refresh.as_mut() {
             auto.spent(now);
         }
         fired
@@ -135,16 +135,16 @@ impl App {
 
     /// Repeats the statements of the last run with the current parameter values.
     fn replay_last_run(&mut self, index: usize) -> bool {
-        let Some(statements) = self.consoles[index].auto_snapshot.clone() else {
+        let Some(statements) = self.tabs.consoles[index].auto_snapshot.clone() else {
             return false;
         };
-        let Some(connection) = self.consoles[index].connection else {
+        let Some(connection) = self.tabs.consoles[index].connection else {
             return false;
         };
         let Some(dialect) = self.dialect_of(connection) else {
             return false;
         };
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         let Ok(parameters) = console.parameters.values(&statements, dialect) else {
             // A missing value waits for the user, so the moment leaves in silence.
             return false;
@@ -176,11 +176,11 @@ impl App {
         };
         let execution = manager.run(console, plan.statements.clone(), options);
         let budget = self.budget.clone();
-        self.consoles[index].auto_execution = Some(execution);
-        self.consoles[index].begin_execution(execution, &plan, &budget);
+        self.tabs.consoles[index].auto_execution = Some(execution);
+        self.tabs.consoles[index].begin_execution(execution, &plan, &budget);
         // A repetition is no plan, and a full export reread uses its parameters.
-        self.consoles[index].explain = None;
-        self.consoles[index].ran_parameters = bound;
+        self.tabs.consoles[index].explain = None;
+        self.tabs.consoles[index].ran_parameters = bound;
         true
     }
 
@@ -188,12 +188,12 @@ impl App {
         let Some(index) = self.table_index() else {
             return false;
         };
-        let connection = self.tables[index].connection;
-        if !self.tables[index]
+        let connection = self.tabs.tables[index].connection;
+        if !self.tabs.tables[index]
             .auto_refresh
             .is_some_and(|auto| auto.due(now))
-            || self.tables[index].is_busy()
-            || !self.tables[index].result.edits.is_empty()
+            || self.tabs.tables[index].is_busy()
+            || !self.tabs.tables[index].result.edits.is_empty()
         {
             return false;
         }
@@ -201,14 +201,14 @@ impl App {
             return false;
         };
         let budget = self.budget.clone();
-        let request = self.tables[index].refresh_page(dialect, &budget);
+        let request = self.tabs.tables[index].refresh_page(dialect, &budget);
         let fired = request.is_some();
-        if let Some(auto) = self.tables[index].auto_refresh.as_mut() {
+        if let Some(auto) = self.tabs.tables[index].auto_refresh.as_mut() {
             auto.spent(now);
         }
         if fired {
             self.run_page_quietly(index, request);
-            self.tables[index].auto_execution = self.tables[index].current_execution();
+            self.tabs.tables[index].auto_execution = self.tabs.tables[index].current_execution();
         }
         fired
     }
@@ -217,7 +217,7 @@ impl App {
     /// the conditions were checked before the request was built.
     fn run_page_quietly(&mut self, index: usize, request: Option<crate::table::PageRequest>) {
         let Some(request) = request else { return };
-        let tab = &self.tables[index];
+        let tab = &self.tabs.tables[index];
         let (console, connection) = (tab.id, tab.connection);
         self.authorize(
             connection,
@@ -251,6 +251,7 @@ impl App {
             return;
         }
         let disabled = if let Some(console) = self
+            .tabs
             .consoles
             .iter_mut()
             .find(|console| console.id == id && console.auto_execution == Some(ended))
@@ -263,6 +264,7 @@ impl App {
                 false
             }
         } else if let Some(tab) = self
+            .tabs
             .tables
             .iter_mut()
             .find(|tab| tab.id == id && tab.auto_execution == Some(ended))

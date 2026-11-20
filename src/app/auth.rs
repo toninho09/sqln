@@ -348,11 +348,11 @@ impl App {
             if let Some(console) = self.console_by_id(id) {
                 console.phase = Phase::Waiting;
             }
-            if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
+            if let Some(tab) = self.tabs.tables.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Waiting;
                 tab.run.wait();
             }
-            if let Some(tab) = self.compares.iter_mut().find(|tab| tab.owns(id)) {
+            if let Some(tab) = self.tabs.compares.iter_mut().find(|tab| tab.owns(id)) {
                 tab.phase = Phase::Waiting;
             }
         }
@@ -894,13 +894,13 @@ impl App {
             } => {
                 let Some(index) = self
                     .console_index(console)
-                    .filter(|index| self.consoles[*index].connection == Some(connection))
+                    .filter(|index| self.tabs.consoles[*index].connection == Some(connection))
                 else {
                     return;
                 };
                 // An auto-refresh repeats the statements of this run, without a plan.
                 if explain.is_none() {
-                    self.consoles[index].auto_snapshot = Some(plan.statements.clone());
+                    self.tabs.consoles[index].auto_snapshot = Some(plan.statements.clone());
                 }
                 // The marks of the editor keep the text of the user.
                 let statements = match &explain {
@@ -911,14 +911,14 @@ impl App {
                         .collect(),
                     None => plan.statements.clone(),
                 };
-                self.consoles[index]
+                self.tabs.consoles[index]
                     .ran_parameters
                     .clone_from(&options.parameters);
                 let execution = manager.run(console, statements, options);
-                self.consoles[index].begin_execution(execution, &plan, &self.budget);
-                self.consoles[index].explain = explain;
-                if self.consoles[index].editor.revision() != revision {
-                    self.consoles[index]
+                self.tabs.consoles[index].begin_execution(execution, &plan, &self.budget);
+                self.tabs.consoles[index].explain = explain;
+                if self.tabs.consoles[index].editor.revision() != revision {
+                    self.tabs.consoles[index]
                         .editor
                         .set_marks_at_revision(&plan, revision);
                 }
@@ -929,6 +929,7 @@ impl App {
                 request,
             } => {
                 let Some(tab) = self
+                    .tabs
                     .tables
                     .iter_mut()
                     .find(|tab| tab.id == console && tab.connection == connection)
@@ -1011,13 +1012,13 @@ impl App {
                     console.cancel_comparison("credential preparation was canceled", &budget);
                 }
             }
-            if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
+            if let Some(tab) = self.tabs.tables.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Idle;
                 tab.edit_after = None;
                 tab.edit_close = false;
                 tab.edit_restore = None;
             }
-            if let Some(tab) = self.diagrams.iter_mut().find(|tab| tab.id == id) {
+            if let Some(tab) = self.tabs.diagrams.iter_mut().find(|tab| tab.id == id) {
                 tab.phase = Phase::Idle;
             }
             self.cancel_compare_side(id);

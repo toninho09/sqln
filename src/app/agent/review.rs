@@ -343,8 +343,8 @@ impl App {
         };
         self.select_console(index);
         self.navigator_focused = false;
-        self.consoles[index].focus = crate::console::Focus::Editor;
-        let open = self.consoles[index]
+        self.tabs.consoles[index].focus = crate::console::Focus::Editor;
+        let open = self.tabs.consoles[index]
             .editor
             .review()
             .map(|r| r.source.clone());
@@ -364,7 +364,7 @@ impl App {
         let label = format!("MCP {}", self.agent.client(&session));
         let mut review = Review::diff(Source::Agent(id.into()), label, hunks);
         review.keys = self.review_keys(text::AGENT_LATER);
-        self.consoles[index].editor.start_review(review);
+        self.tabs.consoles[index].editor.start_review(review);
         self.agent.reviewing.insert(id.into());
     }
 
@@ -373,7 +373,7 @@ impl App {
         let Some(index) = self.review_console(id) else {
             return;
         };
-        let review = self.consoles[index].editor.take_review();
+        let review = self.tabs.consoles[index].editor.take_review();
         self.agent.reviewing.remove(id);
         if let (Some(review), Some(proposal)) = (review, self.agent.proposals.get_mut(id)) {
             proposal.hunks = Some(review.into_hunks());
@@ -382,7 +382,7 @@ impl App {
 
     /// Returns the console that shows the review of a proposal.
     fn review_console(&self, id: &str) -> Option<usize> {
-        self.consoles.iter().position(|console| {
+        self.tabs.consoles.iter().position(|console| {
             console
                 .editor
                 .review()
@@ -396,13 +396,13 @@ impl App {
         let Some(index) = self.review_console(id) else {
             return;
         };
-        let revision = self.consoles[index].editor.revision();
+        let revision = self.tabs.consoles[index].editor.revision();
         let Some(proposal) = self.agent.proposals.get_mut(id) else {
             return;
         };
         // The accepted changes give a new revision, so the proposal keeps its place.
         proposal.revision = revision;
-        let editor = &mut self.consoles[index].editor;
+        let editor = &mut self.tabs.consoles[index].editor;
         if !editor.review().is_some_and(|review| review.finished()) {
             return;
         }
@@ -436,7 +436,8 @@ impl App {
 
     /// Returns the name of a console, or a mark for a closed console.
     fn proposal_console_name(&self, console: ConsoleId) -> String {
-        self.consoles
+        self.tabs
+            .consoles
             .iter()
             .find(|item| item.id == console)
             .map_or_else(|| "Closed console".into(), |item| item.name.clone())
@@ -533,10 +534,10 @@ impl App {
         mode: EditMode,
     ) -> Reply {
         let index = self.console_index(console).ok_or_else(missing)?;
-        if self.consoles[index].hidden {
+        if self.tabs.consoles[index].hidden {
             return Err(missing());
         }
-        if self.consoles[index].editor.revision() != revision {
+        if self.tabs.consoles[index].editor.revision() != revision {
             return Err(revision_conflict());
         }
         let edits: Vec<_> = edits
@@ -547,7 +548,7 @@ impl App {
                 edit
             })
             .collect();
-        self.consoles[index].editor.agent_check_edits(&edits)?;
+        self.tabs.consoles[index].editor.agent_check_edits(&edits)?;
         if mode == EditMode::Direct {
             let all = self
                 .agent
@@ -559,21 +560,21 @@ impl App {
                     "Ask the user to enable Agent direct editing for this console, or submit a proposal.",
                 ));
             }
-            self.consoles[index]
+            self.tabs.consoles[index]
                 .editor
                 .apply_agent_edits(revision, &edits)?;
             if !self.agent.owns(console) {
                 let undo = self.shown_key(crate::input::Action::EditorUndo);
                 let notice = text::agent_edited(
                     &self.agent.client(session),
-                    &printable(&self.consoles[index].name),
+                    &printable(&self.tabs.consoles[index].name),
                     undo.as_deref(),
                 );
-                let connection = self.consoles[index].connection;
+                let connection = self.tabs.consoles[index].connection;
                 self.agent_notice(session, connection, notice);
             }
             return Ok(
-                json!({"status":"applied","revision":self.consoles[index].editor.revision()}),
+                json!({"status":"applied","revision":self.tabs.consoles[index].editor.revision()}),
             );
         }
         if self.agent.proposals.values().any(|proposal| {
@@ -600,7 +601,7 @@ impl App {
                 ));
             }
         }
-        let before = self.consoles[index].editor.text();
+        let before = self.tabs.consoles[index].editor.text();
         if before.len() > agent::MAX_FRAME {
             return Err(Error::new(
                 "request_too_large",

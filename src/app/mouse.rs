@@ -149,19 +149,19 @@ impl App {
 
     /// Returns the result grid that the mouse acts on, with its area on the screen.
     fn active_grid(&mut self) -> Option<(&mut ResultTab, Rect)> {
-        match self.screen {
+        match self.tabs.screen {
             Screen::Diagram(_) => return None,
             Screen::Compare(index) => {
-                let tab = &mut self.compares[index];
+                let tab = &mut self.tabs.compares[index];
                 return tab.done.then_some((&mut tab.result, self.layout.compare));
             }
             Screen::Table(index) => {
-                return Some((&mut self.tables[index].result, self.layout.table.grid));
+                return Some((&mut self.tabs.tables[index].result, self.layout.table.grid));
             }
             Screen::Console => {}
         }
         let area = self.layout.console.results;
-        let console = &mut self.consoles[self.active];
+        let console = &mut self.tabs.consoles[self.tabs.active];
         let active = console.active;
         console.results.get_mut(active).map(|result| (result, area))
     }
@@ -196,7 +196,7 @@ impl App {
         } else if layout.navigator_title.contains(position) {
             self.focus_navigator();
         } else {
-            match self.screen {
+            match self.tabs.screen {
                 Screen::Diagram(_) => self.on_diagram_press(mouse, position),
                 Screen::Compare(_) => self.on_compare_press(mouse, position),
                 Screen::Table(_) => self.on_table_press(mouse, position),

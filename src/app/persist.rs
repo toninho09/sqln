@@ -321,7 +321,7 @@ impl App {
             self.budget.set_limit(bytes);
         }
         self.undo_limit = config.undo_limit_bytes;
-        for console in &mut self.consoles {
+        for console in &mut self.tabs.consoles {
             console.editor.set_undo_limit(config.undo_limit_bytes);
         }
         self.pending_key = None;
@@ -348,16 +348,16 @@ impl App {
 
     fn set_keyboard(&mut self, keyboard: KeyboardMode) {
         self.keyboard = keyboard;
-        for console in &mut self.consoles {
+        for console in &mut self.tabs.consoles {
             console.editor.set_keyboard(keyboard);
         }
     }
 
     /// Gives a console a new editor with a text. The cursor stays when it fits.
     pub(super) fn replace_editor(&mut self, index: usize, text: &str) {
-        let dialect = self.consoles[index].editor.dialect();
+        let dialect = self.tabs.consoles[index].editor.dialect();
         let editor = self.new_editor(text, dialect);
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         let was_dirty = console
             .file
             .as_ref()
@@ -608,13 +608,13 @@ impl App {
     /// Returns the script of the console, and it creates the script at the first edit.
     pub(super) fn ensure_file(&mut self, index: usize) {
         if self.persist.is_none()
-            || self.consoles[index].file.is_some()
-            || self.consoles[index].external.is_some()
-            || self.agent.owns(self.consoles[index].id)
+            || self.tabs.consoles[index].file.is_some()
+            || self.tabs.consoles[index].external.is_some()
+            || self.agent.owns(self.tabs.consoles[index].id)
         {
             return;
         }
-        let console = &self.consoles[index];
+        let console = &self.tabs.consoles[index];
         let revision = console.editor.revision();
         let Some(connection) = console.connection.and_then(|id| self.connection(id)) else {
             return;
@@ -633,12 +633,12 @@ impl App {
         let mut meta = ScriptMeta::new(id, console.name.clone(), key.id, key.scope);
         meta.schema.clone_from(&console.schema);
         let file = crate::script_file::ScriptFile::new(key.scope, meta, lock, 0);
-        self.consoles[index].file = Some(file);
+        self.tabs.consoles[index].file = Some(file);
     }
 
     /// Writes a console during emergency shutdown, after the worker completes.
     pub(super) fn save_console(&mut self, index: usize, now: Instant) -> Result<(), Trouble> {
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         let Some(file) = &mut console.file else {
             return Ok(());
         };
@@ -667,8 +667,8 @@ impl App {
             self.status = Some(text::AGENT_CONSOLE_TEMPORARY.to_owned());
             return;
         }
-        let index = self.active;
-        if self.consoles[index].external.is_some() {
+        let index = self.tabs.active;
+        if self.tabs.consoles[index].external.is_some() {
             self.save_external_console(index);
             return;
         }
@@ -677,7 +677,7 @@ impl App {
             return;
         }
         self.ensure_file(index);
-        let console = &self.consoles[index];
+        let console = &self.tabs.consoles[index];
         let Some(file) = &console.file else {
             self.status = Some(text::NOTHING_TO_SAVE.to_owned());
             return;
@@ -694,7 +694,7 @@ impl App {
             .as_mut()
             .unwrap()
             .saves
-            .entry(self.consoles[index].id)
+            .entry(self.tabs.consoles[index].id)
             .or_default()
             .manual = true;
         self.start_console_save(index, false);
@@ -706,6 +706,7 @@ impl App {
             .as_ref()
             .is_some_and(|persist| !persist.saves.is_empty())
             || self
+                .tabs
                 .consoles
                 .iter()
                 .any(|console| console.file.as_ref().is_some_and(|file| file.is_saving()))
@@ -722,7 +723,7 @@ impl App {
         let target = self
             .persist
             .as_ref()
-            .and_then(|persist| persist.saves.get(&self.consoles[index].id))
+            .and_then(|persist| persist.saves.get(&self.tabs.consoles[index].id))
             .and_then(|intent| intent.associate)
             .and_then(|id| {
                 self.connections
@@ -733,7 +734,7 @@ impl App {
         let Some(persist) = &mut self.persist else {
             return;
         };
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         let Some(file) = &mut console.file else {
             return;
         };
@@ -793,7 +794,7 @@ impl App {
 
     fn poll_saves(&mut self, now: Instant) -> bool {
         let mut completed = Vec::new();
-        for console in &mut self.consoles {
+        for console in &mut self.tabs.consoles {
             if let Some((result, metadata_name)) =
                 console.file.as_mut().and_then(|file| file.poll_save(now))
             {
@@ -805,7 +806,7 @@ impl App {
             let Some(index) = self.console_index(id) else {
                 continue;
             };
-            let console = &self.consoles[index];
+            let console = &self.tabs.consoles[index];
             let id = console.id;
             let name = console.name.clone();
             let dirty = console
@@ -823,7 +824,7 @@ impl App {
             let Some(mut intent) = intent else { continue };
             if let Err(problem) = result {
                 if let Some((previous, requested)) = &intent.rename {
-                    let console = &mut self.consoles[index];
+                    let console = &mut self.tabs.consoles[index];
                     console.name.clone_from(previous);
                     if let Some(file) = &mut console.file {
                         file.meta.name.clone_from(previous);
@@ -847,8 +848,8 @@ impl App {
                 if intent.associate == Some(connection) {
                     intent.associate = None;
                 }
-                let name = self.consoles[index].name.clone();
-                self.consoles[index].file.as_mut().unwrap().meta.name = name;
+                let name = self.tabs.consoles[index].name.clone();
+                self.tabs.consoles[index].file.as_mut().unwrap().meta.name = name;
                 if let Some(target) = self.connection(connection) {
                     let dialect = target.dialect;
                     let name = target.name.clone();
@@ -856,11 +857,13 @@ impl App {
                     self.status = Some(text::associated(&name));
                 }
             }
-            let id = self.consoles[index].id;
+            let id = self.tabs.consoles[index].id;
             if intent.metadata
                 || intent.overwrite
                 || intent.associate.is_some()
-                || (dirty && !self.consoles[index].discard_text && (intent.manual || intent.close))
+                || (dirty
+                    && !self.tabs.consoles[index].discard_text
+                    && (intent.manual || intent.close))
             {
                 self.persist.as_mut().unwrap().saves.insert(id, intent);
                 continue;
@@ -879,7 +882,7 @@ impl App {
     }
 
     pub(super) fn queue_save_for_move(&mut self, index: usize, connection: ConnectionId) {
-        let console = &self.consoles[index];
+        let console = &self.tabs.consoles[index];
         if console
             .file
             .as_ref()
@@ -904,7 +907,7 @@ impl App {
             .as_mut()
             .unwrap()
             .saves
-            .entry(self.consoles[index].id)
+            .entry(self.tabs.consoles[index].id)
             .or_default();
         intent.metadata = true;
         if let Some((previous, requested)) = rename {
@@ -943,7 +946,7 @@ impl App {
         changed |= self.expire_status(now);
         changed |= self.auto_refresh_tick(now);
         if self.console_on_screen() {
-            let console = &mut self.consoles[self.active];
+            let console = &mut self.tabs.consoles[self.tabs.active];
             if let Some(manager) = &self.manager {
                 changed |= console
                     .editor
@@ -981,9 +984,9 @@ impl App {
             return changed;
         }
         changed |= self.poll_saves(now);
-        for index in 0..self.consoles.len() {
+        for index in 0..self.tabs.consoles.len() {
             self.ensure_file(index);
-            let console = &mut self.consoles[index];
+            let console = &mut self.tabs.consoles[index];
             let revision = console.editor.revision();
             let Some(file) = &mut console.file else {
                 continue;
@@ -1010,8 +1013,8 @@ impl App {
             persist.next_poll = now + POLL_EVERY;
         }
         let mut changed = false;
-        for index in 0..self.consoles.len() {
-            let Some(file) = &mut self.consoles[index].file else {
+        for index in 0..self.tabs.consoles.len() {
+            let Some(file) = &mut self.tabs.consoles[index].file else {
                 continue;
             };
             let Some(root) = self
@@ -1084,9 +1087,9 @@ impl App {
     /// Writes the pending text before a close. It returns false after it asked a
     /// question, because the text has no safe place to go.
     pub(super) fn flush_console(&mut self, index: usize) -> bool {
-        if let Some(external) = &self.consoles[index].external {
-            let revision = self.consoles[index].editor.revision();
-            if self.consoles[index].discard_text || !external.is_dirty(revision) {
+        if let Some(external) = &self.tabs.consoles[index].external {
+            let revision = self.tabs.consoles[index].editor.revision();
+            if self.tabs.consoles[index].discard_text || !external.is_dirty(revision) {
                 return true;
             }
             self.ask_external_close(index);
@@ -1095,8 +1098,8 @@ impl App {
         if self.persist.is_none() {
             return true;
         }
-        if self.consoles[index].discard_text {
-            let console = &self.consoles[index];
+        if self.tabs.consoles[index].discard_text {
+            let console = &self.tabs.consoles[index];
             let saving = console.file.as_ref().is_some_and(|file| file.is_saving());
             let persist = self.persist.as_mut().unwrap();
             persist.saves.remove(&console.id);
@@ -1107,7 +1110,7 @@ impl App {
             return true;
         }
         self.ensure_file(index);
-        let console = &self.consoles[index];
+        let console = &self.tabs.consoles[index];
         let revision = console.editor.revision();
         let id = console.id;
         let saving = console.file.as_ref().is_some_and(|file| file.is_saving())
@@ -1142,14 +1145,14 @@ impl App {
             .as_mut()
             .unwrap()
             .saves
-            .entry(self.consoles[index].id)
+            .entry(self.tabs.consoles[index].id)
             .or_default()
             .close = true;
         self.start_console_save(index, false);
     }
 
     fn show_unsaved(&mut self, index: usize, problem: Trouble) {
-        let console = &self.consoles[index];
+        let console = &self.tabs.consoles[index];
         let name = &console.name;
         let id = console.id;
         let body = match &problem {
@@ -1177,7 +1180,7 @@ impl App {
     pub fn save_without_questions(&mut self) {
         // A linked console writes its file with the check of a change, because there is
         // no question to ask. A file that another program changed keeps its text.
-        for console in &mut self.consoles {
+        for console in &mut self.tabs.consoles {
             if let Some(external) = &mut console.external {
                 let revision = console.editor.revision();
                 if external.is_dirty(revision) {
@@ -1190,19 +1193,19 @@ impl App {
             return;
         }
         let now = Instant::now();
-        for console in &mut self.consoles {
+        for console in &mut self.tabs.consoles {
             if let Some(file) = &mut console.file {
                 let _ = file.wait_save(now);
             }
         }
-        for index in 0..self.consoles.len() {
+        for index in 0..self.tabs.consoles.len() {
             self.ensure_file(index);
             let intent = self
                 .persist
                 .as_mut()
-                .and_then(|persist| persist.saves.remove(&self.consoles[index].id));
+                .and_then(|persist| persist.saves.remove(&self.tabs.consoles[index].id));
             if let Some(intent) = intent
-                && let Some(file) = &mut self.consoles[index].file
+                && let Some(file) = &mut self.tabs.consoles[index].file
                 && let Some(root) = self
                     .persist
                     .as_ref()
@@ -1212,7 +1215,7 @@ impl App {
                     let _ = file.write_meta(root);
                 }
                 if intent.overwrite {
-                    let console = &mut self.consoles[index];
+                    let console = &mut self.tabs.consoles[index];
                     let text = console.editor.text();
                     let revision = console.editor.revision();
                     let _ = console
@@ -1222,7 +1225,7 @@ impl App {
                         .overwrite(root, &text, revision);
                 }
             }
-            let console = &self.consoles[index];
+            let console = &self.tabs.consoles[index];
             let revision = console.editor.revision();
             let waits = |file: &crate::script_file::ScriptFile| {
                 file.trouble.as_ref().is_some_and(Trouble::needs_choice) || !file.is_dirty(revision)
@@ -1237,7 +1240,7 @@ impl App {
 
     /// Writes the pending text of every console. It stops at the first question.
     pub(super) fn flush_all(&mut self) -> bool {
-        for index in 0..self.consoles.len() {
+        for index in 0..self.tabs.consoles.len() {
             if !self.flush_console(index) {
                 self.select_console(index);
                 return false;
@@ -1253,6 +1256,7 @@ impl App {
                 continue;
             };
             let states: Vec<(String, EditorState)> = self
+                .tabs
                 .consoles
                 .iter()
                 .enumerate()
@@ -1325,7 +1329,7 @@ impl App {
 
     /// Writes the identity file again after a change of the schema of a console.
     pub(super) fn save_console_meta(&mut self, index: usize) {
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         let Some(file) = &mut console.file else {
             return;
         };
@@ -1346,7 +1350,7 @@ impl App {
 
     /// Replaces the text of a console with the text of its file. The user chose it.
     pub(super) fn reload_script(&mut self, index: usize) {
-        let Some(file) = &mut self.consoles[index].file else {
+        let Some(file) = &mut self.tabs.consoles[index].file else {
             return;
         };
         let Some(root) = self
@@ -1359,7 +1363,7 @@ impl App {
         match file.reload(root) {
             Ok(text) => self.replace_editor(index, &text),
             Err(error) => {
-                let name = self.consoles[index].name.clone();
+                let name = self.tabs.consoles[index].name.clone();
                 self.status = Some(text::save_failed(&name, &error.to_string()));
             }
         }
@@ -1367,7 +1371,7 @@ impl App {
 
     /// Writes the text of a console over its file. The user chose it.
     pub(super) fn overwrite_script(&mut self, index: usize) {
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         let Some(file) = &mut console.file else {
             return;
         };
@@ -1383,7 +1387,7 @@ impl App {
             .as_mut()
             .unwrap()
             .saves
-            .entry(self.consoles[index].id)
+            .entry(self.tabs.consoles[index].id)
             .or_default()
             .overwrite = true;
         self.start_console_save(index, false);

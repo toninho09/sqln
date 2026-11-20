@@ -62,7 +62,8 @@ fn shows_script(console: &Console, entry: &ScriptEntry) -> bool {
 
 impl App {
     fn is_script_open(&self, entry: &ScriptEntry) -> bool {
-        self.consoles
+        self.tabs
+            .consoles
             .iter()
             .any(|console| shows_script(console, entry))
     }
@@ -101,11 +102,11 @@ impl App {
         let mut rows: Vec<TreeConsole> = saved
             .into_iter()
             .map(|entry| {
-                let tab = self.consoles.iter().find(|c| shows_script(c, &entry));
+                let tab = self.tabs.consoles.iter().find(|c| shows_script(c, &entry));
                 TreeConsole {
                     name: tab.map_or_else(
                         || entry.meta.name.clone(),
-                        |c| self.agent.console_label(&self.consoles, c.id, &c.name),
+                        |c| self.agent.console_label(&self.tabs.consoles, c.id, &c.name),
                     ),
                     tab: tab.map(|c| c.id),
                     script: Some(entry),
@@ -113,12 +114,12 @@ impl App {
             })
             .collect();
         let listed: Vec<ConsoleId> = rows.iter().filter_map(|row| row.tab).collect();
-        let others = self
-            .consoles
-            .iter()
-            .filter(|c| c.connection == Some(connection) && !c.hidden && !listed.contains(&c.id));
+        let others =
+            self.tabs.consoles.iter().filter(|c| {
+                c.connection == Some(connection) && !c.hidden && !listed.contains(&c.id)
+            });
         rows.extend(others.map(|c| TreeConsole {
-            name: self.agent.console_label(&self.consoles, c.id, &c.name),
+            name: self.agent.console_label(&self.tabs.consoles, c.id, &c.name),
             tab: Some(c.id),
             script: None,
         }));
@@ -263,7 +264,11 @@ impl App {
 
     /// Opens a saved console in a tab, or it selects the tab that already shows it.
     pub(super) fn open_script(&mut self, entry: &ScriptEntry) {
-        let open = self.consoles.iter().position(|c| shows_script(c, entry));
+        let open = self
+            .tabs
+            .consoles
+            .iter()
+            .position(|c| shows_script(c, entry));
         let index = match open.map_or_else(|| self.load_script(entry), Ok) {
             Ok(index) => index,
             Err(message) => {
@@ -313,8 +318,8 @@ impl App {
             &root,
         ));
         restore_editor_state(&mut console.editor, &root, id, &text);
-        self.consoles.push(console);
-        let index = self.consoles.len() - 1;
+        self.tabs.consoles.push(console);
+        let index = self.tabs.consoles.len() - 1;
         if let Some((connection, _)) = connection {
             self.bind_console(index, connection);
         }
@@ -407,7 +412,7 @@ impl App {
         let Some(entry) = self.picker_script() else {
             return;
         };
-        let open = self.consoles.iter().find(|c| shows_script(c, &entry));
+        let open = self.tabs.consoles.iter().find(|c| shows_script(c, &entry));
         let target = open.map_or_else(
             || NameTarget::Script(entry.clone()),
             |console| NameTarget::Console(console.id),
@@ -427,6 +432,7 @@ impl App {
             return Vec::new();
         };
         let open = self
+            .tabs
             .consoles
             .iter()
             .filter(|console| console.connection == Some(connection) && Some(console.id) != skip)
@@ -460,7 +466,7 @@ impl App {
         let (connection, skip, id) = match &prompt.target {
             NameTarget::Console(console) => {
                 let index = self.console_index(*console);
-                let console_ref = index.map(|index| &self.consoles[index]);
+                let console_ref = index.map(|index| &self.tabs.consoles[index]);
                 let id = console_ref
                     .and_then(|item| item.file.as_ref())
                     .map(|file| file.meta.id.clone());
@@ -493,7 +499,7 @@ impl App {
         let old = match &prompt.target {
             NameTarget::Console(console) => self
                 .console_index(*console)
-                .map(|index| self.consoles[index].name.clone()),
+                .map(|index| self.tabs.consoles[index].name.clone()),
             NameTarget::Script(entry) => Some(entry.meta.name.clone()),
             NameTarget::NewFolder(_) | NameTarget::Folder(_) => None,
         };
@@ -519,11 +525,11 @@ impl App {
         let Some(index) = self.console_index(id) else {
             return Ok(false);
         };
-        let root = self.consoles[index]
+        let root = self.tabs.consoles[index]
             .file
             .as_ref()
             .and_then(|file| self.persist_root(file.scope));
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         let mut rename = None;
         if let (Some(file), Some(_)) = (&mut console.file, &root) {
             let old = std::mem::replace(&mut file.meta.name, name.to_owned());
@@ -613,16 +619,16 @@ impl App {
         dialect: crate::sql::Dialect,
     ) {
         let budget = self.budget.clone();
-        let name = self.consoles[index].name.clone();
-        if self.consoles[index].connection.is_some() {
+        let name = self.tabs.consoles[index].name.clone();
+        if self.tabs.consoles[index].connection.is_some() {
             self.unbind_console(index);
         }
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         console.clear_results(&budget);
         console.schema = None;
         console.editor.set_dialect(dialect);
         self.bind_console(index, connection);
-        self.consoles[index].name = name;
+        self.tabs.consoles[index].name = name;
         self.refresh_tree_consoles();
     }
 
@@ -667,7 +673,7 @@ impl App {
         let Some(target) = self.connection(connection) else {
             return;
         };
-        let item = &self.consoles[index];
+        let item = &self.tabs.consoles[index];
         let root = target
             .key
             .as_ref()
@@ -722,11 +728,11 @@ impl App {
             return;
         };
         // The console can start to work while the question stays open.
-        if self.consoles[index].is_busy() || self.consoles[index].in_transaction() {
+        if self.tabs.consoles[index].is_busy() || self.tabs.consoles[index].in_transaction() {
             self.status = Some(text::CONNECTION_CHANGE_BUSY.to_owned());
             return;
         }
-        if self.consoles[index].file.is_none() {
+        if self.tabs.consoles[index].file.is_none() {
             self.change_memory_console(index, connection);
             return;
         }

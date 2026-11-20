@@ -630,6 +630,7 @@ impl App {
         for proposal in self.agent.proposals.values_mut() {
             if matches!(proposal.state, "pending" | "building")
                 && self
+                    .tabs
                     .consoles
                     .iter()
                     .find(|console| console.id == proposal.console)
@@ -935,7 +936,7 @@ impl App {
 
     fn agent_target(&self, console: ConsoleId) -> Result<usize, Error> {
         let index = self.console_index(console).ok_or_else(missing)?;
-        let console = &self.consoles[index];
+        let console = &self.tabs.consoles[index];
         if console.hidden {
             return Err(missing());
         }
@@ -967,21 +968,21 @@ impl App {
         schema: Option<String>,
     ) -> Result<ConsoleId, Error> {
         let dialect = self.connection(connection).ok_or_else(missing)?.dialect;
-        if let Some(index) = self.consoles.iter().position(|console| {
+        if let Some(index) = self.tabs.consoles.iter().position(|console| {
             self.agent
                 .owned
                 .get(&console.id)
                 .is_some_and(|owner| owner == session)
                 && console.connection == Some(connection)
         }) {
-            if schema.is_some() && self.consoles[index].schema != schema {
-                self.agent_target(self.consoles[index].id)?;
-                self.consoles[index].schema = schema;
+            if schema.is_some() && self.tabs.consoles[index].schema != schema {
+                self.agent_target(self.tabs.consoles[index].id)?;
+                self.tabs.consoles[index].schema = schema;
             }
-            return Ok(self.consoles[index].id);
+            return Ok(self.tabs.consoles[index].id);
         }
         // The session tab that opened at the access decision takes its first connection.
-        let index = match self.consoles.iter().position(|console| {
+        let index = match self.tabs.consoles.iter().position(|console| {
             console.connection.is_none()
                 && self
                     .agent
@@ -992,11 +993,11 @@ impl App {
             Some(index) => index,
             None => {
                 self.open_agent_tab(session);
-                self.consoles.len() - 1
+                self.tabs.consoles.len() - 1
             }
         };
         self.bind_console(index, connection);
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         if console.connection != Some(connection) {
             return Err(missing());
         }
@@ -1013,7 +1014,7 @@ impl App {
             crate::ui::text::agent_console_name(&self.agent.client(session), short(session));
         console.focus = crate::console::Focus::Results;
         self.agent.owned.insert(console.id, session.to_owned());
-        self.consoles.push(console);
+        self.tabs.consoles.push(console);
     }
 
     /// Keeps one agent tab for each session with access. A session without a tab gets one.
@@ -1076,13 +1077,13 @@ impl App {
         // A running task keeps the schema of its session.
         if namespace
             && schema.is_some()
-            && !self.consoles[index].is_busy()
-            && !self.consoles[index].in_transaction()
+            && !self.tabs.consoles[index].is_busy()
+            && !self.tabs.consoles[index].in_transaction()
         {
-            self.consoles[index].schema = schema;
+            self.tabs.consoles[index].schema = schema;
         }
         let text = sql.replace("\r\n", "\n").replace('\r', "\n");
-        let editor = &self.consoles[index].editor;
+        let editor = &self.tabs.consoles[index].editor;
         let revision = editor.revision();
         let edit = editor.agent_replace_all(&text);
         if !editor.is_blank() && self.agent.placed.get(&console) != Some(&revision) {
@@ -1094,7 +1095,7 @@ impl App {
                 agent::EditMode::Propose,
             );
         }
-        let editor = &mut self.consoles[index].editor;
+        let editor = &mut self.tabs.consoles[index].editor;
         editor.apply_agent_edits(revision, &[edit])?;
         // New SQL shows from its first line.
         editor.set_cursor(edtui::Index2::new(0, 0));
@@ -1102,7 +1103,7 @@ impl App {
         self.agent_sql_placed(console);
         let client = self.agent.client(session);
         let run = self.shown_key(crate::input::Action::Run);
-        self.consoles[index].messages.note(
+        self.tabs.consoles[index].messages.note(
             crate::console::MessageLevel::Info,
             &crate::ui::text::agent_placed_note(&client, run.as_deref()),
             None,
@@ -1110,7 +1111,7 @@ impl App {
         self.status = Some(crate::ui::text::agent_placed(&client));
         Ok(json!({
             "console_id": console.to_string(),
-            "revision": self.consoles[index].editor.revision(),
+            "revision": self.tabs.consoles[index].editor.revision(),
             "status": "placed",
         }))
     }
@@ -1122,8 +1123,8 @@ impl App {
         };
         self.agent
             .placed
-            .insert(console, self.consoles[index].editor.revision());
-        if !(index == self.active && self.console_on_screen()) {
+            .insert(console, self.tabs.consoles[index].editor.revision());
+        if !(index == self.tabs.active && self.console_on_screen()) {
             self.agent.fresh.insert(console);
         }
         self.refresh_tree_consoles();
@@ -1207,7 +1208,7 @@ impl App {
         let proposal = self.agent.proposals.get(id).ok_or_else(missing)?;
         let revision = self
             .console_index(proposal.console)
-            .map(|index| self.consoles[index].editor.revision());
+            .map(|index| self.tabs.consoles[index].editor.revision());
         Ok(json!({
             "job_id": id,
             "kind": "proposal",
@@ -1317,7 +1318,7 @@ impl App {
     fn close_gone_reviews(&mut self) {
         let proposals = &self.agent.proposals;
         let waiting = |id: &String| proposals.get(id).is_some_and(|p| p.state == "pending");
-        for console in &mut self.consoles {
+        for console in &mut self.tabs.consoles {
             let gone = console
                 .editor
                 .review()

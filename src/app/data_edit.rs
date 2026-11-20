@@ -148,7 +148,8 @@ impl App {
                 relation: tab.relation.clone(),
                 dialect,
             };
-            self.tables
+            self.tabs
+                .tables
                 .iter_mut()
                 .find(|tab| tab.id == id)
                 .unwrap()
@@ -181,7 +182,8 @@ impl App {
                 relation: tab.relation.clone(),
                 dialect,
             };
-            self.tables
+            self.tabs
+                .tables
                 .iter_mut()
                 .find(|tab| tab.id == id)
                 .unwrap()
@@ -197,10 +199,10 @@ impl App {
             return;
         }
         let budget = self.budget.clone();
-        let Some(index) = self.tables.iter().position(|tab| tab.id == id) else {
+        let Some(index) = self.tabs.tables.iter().position(|tab| tab.id == id) else {
             return;
         };
-        let tab = &mut self.tables[index];
+        let tab = &mut self.tabs.tables[index];
         match tab.result.edits.new_row(&mut tab.result.table, &budget) {
             Ok(row) => {
                 let col = tab.result.view.col;
@@ -235,7 +237,8 @@ impl App {
                 relation: tab.relation.clone(),
                 dialect,
             };
-            self.tables
+            self.tabs
+                .tables
                 .iter_mut()
                 .find(|tab| tab.id == id)
                 .unwrap()
@@ -251,10 +254,10 @@ impl App {
             return;
         }
         let budget = self.budget.clone();
-        let Some(index) = self.tables.iter().position(|tab| tab.id == id) else {
+        let Some(index) = self.tabs.tables.iter().position(|tab| tab.id == id) else {
             return;
         };
-        let tab = &mut self.tables[index];
+        let tab = &mut self.tabs.tables[index];
         let result = tab
             .result
             .edits
@@ -281,7 +284,7 @@ impl App {
 
     /// A new search reads the new values instead of retaining old matches.
     fn reset_table_search(&mut self, index: usize) {
-        let tab = &mut self.tables[index];
+        let tab = &mut self.tabs.tables[index];
         if let Some(search) = &mut tab.result.search {
             let query = search.query().to_owned();
             *search = crate::grid::RowSearch::new((tab.result.view.row, tab.result.view.col));
@@ -345,10 +348,10 @@ impl App {
         value: Option<&str>,
     ) -> bool {
         let budget = self.budget.clone();
-        let Some(index) = self.tables.iter().position(|tab| tab.id == id) else {
+        let Some(index) = self.tabs.tables.iter().position(|tab| tab.id == id) else {
             return false;
         };
-        let tab = &self.tables[index];
+        let tab = &self.tabs.tables[index];
         let insert = tab.result.edits.is_insert(row);
         let result = (|| {
             let metadata = tab.edit_metadata.as_ref().ok_or(text::EDIT_UNAVAILABLE)?;
@@ -371,7 +374,7 @@ impl App {
             self.edit_error(reason.to_owned());
             return false;
         }
-        let tab = &mut self.tables[index];
+        let tab = &mut self.tabs.tables[index];
         let insert = tab.result.edits.is_insert(row);
         let value = match value {
             None => Value::Null,
@@ -444,16 +447,16 @@ impl App {
     }
 
     fn request_apply_edits(&mut self, id: ConsoleId) {
-        let Some(index) = self.tables.iter().position(|tab| tab.id == id) else {
+        let Some(index) = self.tabs.tables.iter().position(|tab| tab.id == id) else {
             return;
         };
-        if self.tables[index].edit_uncertain
-            || self.tables[index].is_busy()
+        if self.tabs.tables[index].edit_uncertain
+            || self.tabs.tables[index].is_busy()
             || self.config_blocked()
         {
             return;
         }
-        let connection = self.tables[index].connection;
+        let connection = self.tabs.tables[index].connection;
         if self.is_read_only(connection) {
             self.status = Some(text::EDIT_UNAVAILABLE.to_owned());
             return;
@@ -463,7 +466,7 @@ impl App {
             .connection(connection)
             .filter(|item| item.is_production())
         {
-            let body = text::edit_production(&self.tables[index].label(), item.plain_name());
+            let body = text::edit_production(&self.tabs.tables[index].label(), item.plain_name());
             self.show_dialog(
                 text::EDIT_REVIEW,
                 body,
@@ -482,7 +485,7 @@ impl App {
             self.cancel_edits(id);
             return;
         }
-        let Some(tab) = self.tables.iter().find(|tab| tab.id == id) else {
+        let Some(tab) = self.tabs.tables.iter().find(|tab| tab.id == id) else {
             return;
         };
         if tab.is_busy() || tab.edit_uncertain || self.is_read_only(tab.connection) {
@@ -517,7 +520,8 @@ impl App {
             columns: tab.result.table.columns.clone(),
             primary: metadata.table.primary.clone(),
         });
-        self.tables
+        self.tabs
+            .tables
             .iter_mut()
             .find(|tab| tab.id == id)
             .unwrap()
@@ -532,21 +536,21 @@ impl App {
     }
 
     pub(super) fn start_edit_job(&mut self, id: ConsoleId, job: Job) {
-        let Some(index) = self.tables.iter().position(|tab| tab.id == id) else {
+        let Some(index) = self.tabs.tables.iter().position(|tab| tab.id == id) else {
             return;
         };
         let review = matches!(&job, Job::Review { .. });
-        if self.tables[index].edit_uncertain
-            || (!review && self.is_read_only(self.tables[index].connection))
+        if self.tabs.tables[index].edit_uncertain
+            || (!review && self.is_read_only(self.tabs.tables[index].connection))
         {
-            self.tables[index].phase = Phase::Idle;
-            self.tables[index].edit_close = false;
+            self.tabs.tables[index].phase = Phase::Idle;
+            self.tabs.tables[index].edit_close = false;
             self.exiting = false;
             self.status = Some(text::EDIT_UNAVAILABLE.to_owned());
             return;
         }
         let Some(manager) = &self.manager else { return };
-        let tab = &mut self.tables[index];
+        let tab = &mut self.tabs.tables[index];
         let execution = manager.edit(id, job);
         tab.edit_execution = Some(execution);
         tab.phase = Phase::Waiting;
@@ -557,17 +561,17 @@ impl App {
         let Some(id) = event.console() else {
             return false;
         };
-        let Some(index) = self.tables.iter().position(|tab| tab.id == id) else {
+        let Some(index) = self.tabs.tables.iter().position(|tab| tab.id == id) else {
             return matches!(event, ExecEvent::EditFinished { .. });
         };
-        let Some(execution) = self.tables[index].edit_execution else {
+        let Some(execution) = self.tabs.tables[index].edit_execution else {
             return matches!(event, ExecEvent::EditFinished { .. });
         };
         if event.execution() != Some(execution) {
             return false;
         }
         match event {
-            ExecEvent::Started { .. } => self.tables[index].phase = Phase::Running,
+            ExecEvent::Started { .. } => self.tabs.tables[index].phase = Phase::Running,
             ExecEvent::EditFinished { result, .. } => {
                 let result = std::mem::replace(
                     result,
@@ -579,7 +583,7 @@ impl App {
                 let can_show_review = self.table_index() == Some(index)
                     && !self.modal_is_open()
                     && self.modals.form.is_none();
-                let tab = &mut self.tables[index];
+                let tab = &mut self.tabs.tables[index];
                 tab.edit_execution = None;
                 tab.phase = Phase::Idle;
                 tab.run.finish(if result.is_ok() {
@@ -651,7 +655,7 @@ impl App {
                 }
             }
             ExecEvent::ExecutionFinished { message, .. } => {
-                let tab = &mut self.tables[index];
+                let tab = &mut self.tabs.tables[index];
                 tab.edit_execution = None;
                 tab.edit_after = None;
                 tab.edit_restore = None;
@@ -672,10 +676,10 @@ impl App {
 
     pub(super) fn discard_edits(&mut self, id: ConsoleId) {
         let budget = self.budget.clone();
-        let Some(index) = self.tables.iter().position(|tab| tab.id == id) else {
+        let Some(index) = self.tabs.tables.iter().position(|tab| tab.id == id) else {
             return;
         };
-        let tab = &mut self.tables[index];
+        let tab = &mut self.tabs.tables[index];
         if tab.is_busy() {
             self.status = Some(text::TABLE_BUSY.to_owned());
             return;
@@ -708,7 +712,7 @@ impl App {
     pub(super) fn cancel_edits(&mut self, id: ConsoleId) {
         self.modals.edit_form = None;
         self.exiting = false;
-        if let Some(tab) = self.tables.iter_mut().find(|tab| tab.id == id) {
+        if let Some(tab) = self.tabs.tables.iter_mut().find(|tab| tab.id == id) {
             tab.edit_close = false;
         }
     }
@@ -726,7 +730,7 @@ impl App {
     }
 
     pub(super) fn edit_close_guard(&mut self, index: usize) -> bool {
-        let tab = &self.tables[index];
+        let tab = &self.tabs.tables[index];
         if tab.edit_execution.is_some() || (tab.is_busy() && !tab.result.edits.is_empty()) {
             self.status = Some(text::TABLE_BUSY.to_owned());
             self.exiting = false;
@@ -746,7 +750,7 @@ impl App {
                 text::EDIT_CLOSE_QUESTION
             }
         );
-        self.tables[index].edit_close = true;
+        self.tabs.tables[index].edit_close = true;
         let mut options = vec![(text::OPTION_CANCEL, DialogAction::CancelEdits(id))];
         if !uncertain {
             options.push((text::EDIT_APPLY, DialogAction::ReviewEdits(id)));

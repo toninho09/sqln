@@ -32,16 +32,17 @@ enum Start {
 
 impl App {
     pub fn compares(&self) -> &[CompareTab] {
-        &self.compares
+        &self.tabs.compares
     }
 
     /// Returns the compare tab on screen.
     pub fn compare(&self) -> Option<&CompareTab> {
-        self.compare_index().map(|index| &self.compares[index])
+        self.compare_index().map(|index| &self.tabs.compares[index])
     }
 
     pub(super) fn compare_mut(&mut self) -> Option<&mut CompareTab> {
-        self.compare_index().map(|index| &mut self.compares[index])
+        self.compare_index()
+            .map(|index| &mut self.tabs.compares[index])
     }
 
     pub fn compare_form(&self) -> Option<&CompareForm> {
@@ -313,9 +314,14 @@ impl App {
             return;
         }
         self.navigator_focused = false;
-        if let Some(index) = self.compares.iter().position(|tab| tab.is(kind, &sides)) {
+        if let Some(index) = self
+            .tabs
+            .compares
+            .iter()
+            .position(|tab| tab.is(kind, &sides))
+        {
             self.select_compare(index);
-            self.compares[index].removals = removals;
+            self.tabs.compares[index].removals = removals;
             self.read_compare();
             return;
         }
@@ -341,9 +347,10 @@ impl App {
             return;
         };
         let opened = self.next_tab_place();
-        self.compares
+        self.tabs
+            .compares
             .push(CompareTab::new(opened, kind, sides, removals));
-        self.select_compare(self.compares.len() - 1);
+        self.select_compare(self.tabs.compares.len() - 1);
         self.read_compare();
     }
 
@@ -354,12 +361,12 @@ impl App {
     }
 
     pub(super) fn select_compare(&mut self, index: usize) {
-        if index < self.compares.len() {
+        if index < self.tabs.compares.len() {
             self.console_mut().editor.close_suggestions();
             if self.compare_index() != Some(index) {
                 self.leave_tab();
             }
-            self.screen = Screen::Compare(index);
+            self.tabs.screen = Screen::Compare(index);
         }
     }
 
@@ -368,7 +375,7 @@ impl App {
         let Some(index) = self.compare_index() else {
             return;
         };
-        let tab = &self.compares[index];
+        let tab = &self.tabs.compares[index];
         if tab.is_busy() {
             self.status = Some(text::TABLE_BUSY.to_owned());
             return;
@@ -396,11 +403,11 @@ impl App {
         if self.config_blocked() {
             return;
         }
-        for read in &self.compares[index].sides {
+        for read in &self.tabs.compares[index].sides {
             self.agent.release_retired(read.id);
         }
         let budget = self.budget.clone();
-        self.compares[index].begin(&budget);
+        self.tabs.compares[index].begin(&budget);
         for (connection, action) in uses {
             self.authorize(connection, action);
         }
@@ -414,7 +421,7 @@ impl App {
             self.cancel_compare_side(console);
             return;
         }
-        let Some(tab) = self.compares.iter_mut().find(|tab| tab.owns(console)) else {
+        let Some(tab) = self.tabs.compares.iter_mut().find(|tab| tab.owns(console)) else {
             return;
         };
         let Some((side, statements)) = tab.take_next() else {
@@ -441,7 +448,7 @@ impl App {
         (schema, untimed): (String, bool),
     ) {
         let Some(manager) = &self.manager else { return };
-        let Some(tab) = self.compares.iter_mut().find(|tab| tab.owns(console)) else {
+        let Some(tab) = self.tabs.compares.iter_mut().find(|tab| tab.owns(console)) else {
             return;
         };
         if !tab
@@ -468,7 +475,7 @@ impl App {
     /// Ends the read of a side whose password request the user canceled.
     pub(super) fn cancel_compare_side(&mut self, console: ConsoleId) {
         let budget = self.budget.clone();
-        if let Some(tab) = self.compares.iter_mut().find(|tab| tab.owns(console)) {
+        if let Some(tab) = self.tabs.compares.iter_mut().find(|tab| tab.owns(console)) {
             tab.canceled(console, &budget);
         }
     }
@@ -477,10 +484,10 @@ impl App {
         let Some(index) = self.compare_index() else {
             return;
         };
-        if self.cancel_agent_console(self.compares[index].sides[0].id) {
+        if self.cancel_agent_console(self.tabs.compares[index].sides[0].id) {
             return;
         }
-        let ids: Vec<ConsoleId> = self.compares[index]
+        let ids: Vec<ConsoleId> = self.tabs.compares[index]
             .sides
             .iter()
             .map(|read| read.id)
@@ -488,7 +495,7 @@ impl App {
         for id in &ids {
             self.cancel_auth_console(*id);
         }
-        let tab = &mut self.compares[index];
+        let tab = &mut self.tabs.compares[index];
         if !tab.is_busy() {
             return;
         }
@@ -503,7 +510,7 @@ impl App {
     /// Closes a compare tab, and its rows leave the budget. The tab at the same place of
     /// the tab row takes the screen.
     pub(super) fn close_compare(&mut self, index: usize) {
-        self.close_item(Tab::Compare(index), |app| &mut app.compares);
+        self.close_item(Tab::Compare(index), |app| &mut app.tabs.compares);
     }
 
     /// Applies an action to the compare on screen. It returns false for an action that the

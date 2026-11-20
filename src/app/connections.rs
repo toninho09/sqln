@@ -136,7 +136,7 @@ impl App {
         if let Some(connection) = self.add_sqlite(target)
             && self.console().connection.is_none()
         {
-            self.bind_console(self.active, connection);
+            self.bind_console(self.tabs.active, connection);
         }
     }
 
@@ -150,12 +150,12 @@ impl App {
         };
         // The name comes first, while the console has no connection to count. An agent tab
         // keeps the name of its agent.
-        let previous = self.consoles[index].id;
+        let previous = self.tabs.consoles[index].id;
         let fresh = (self.persist.is_some()
-            && self.consoles[index].file.is_none()
+            && self.tabs.consoles[index].file.is_none()
             && !self.agent.owns(previous))
         .then(|| self.fresh_console_name(connection));
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         console.id = id;
         console.connection = Some(connection);
         console.messages.start_association();
@@ -171,6 +171,7 @@ impl App {
     /// open or saved.
     fn fresh_console_name(&self, connection: ConnectionId) -> String {
         let mut used: Vec<String> = self
+            .tabs
             .consoles
             .iter()
             .filter(|console| console.connection == Some(connection))
@@ -196,8 +197,8 @@ impl App {
     /// Returns the connection whose catalog the console reads, and it sets the schema
     /// of that console as the current schema of the catalog.
     pub(super) fn catalog_for(&mut self, index: usize) -> Option<ConnectionId> {
-        let schema = self.consoles[index].schema.clone();
-        let id = self.consoles[index].connection?;
+        let schema = self.tabs.consoles[index].schema.clone();
+        let id = self.tabs.consoles[index].connection?;
         let connection = self.connection_mut(id)?;
         let current = schema.or_else(|| connection.default_schema.clone());
         if let Some(catalog) = &mut connection.catalog {
@@ -307,12 +308,12 @@ impl App {
                 self.pending_sql = None;
                 self.pending_follow = None;
                 // A refresh would ask for the same columns again, so the lists only stop.
-                for console in &mut self.consoles {
+                for console in &mut self.tabs.consoles {
                     if console.connection == Some(id) {
                         console.editor.stop_waiting(relation);
                     }
                 }
-                for table in &mut self.tables {
+                for table in &mut self.tabs.tables {
                     if table.connection == id {
                         table.stop_waiting(relation);
                     }
@@ -330,11 +331,13 @@ impl App {
 
     /// Gives the new catalog to the open lists of the consoles of a connection.
     fn refresh_consoles(&mut self, id: ConnectionId) {
-        for index in 0..self.consoles.len() {
-            if self.consoles[index].connection == Some(id) {
+        for index in 0..self.tabs.consoles.len() {
+            if self.tabs.consoles[index].connection == Some(id) {
                 self.catalog_for(index);
                 let catalog = App::catalog_of(&self.connections, id);
-                self.consoles[index].editor.refresh_suggestions(catalog);
+                self.tabs.consoles[index]
+                    .editor
+                    .refresh_suggestions(catalog);
                 self.request_missing_columns(index);
             }
         }
@@ -342,10 +345,10 @@ impl App {
     }
 
     pub(super) fn request_missing_columns(&mut self, index: usize) {
-        let Some(id) = self.consoles[index].connection else {
+        let Some(id) = self.tabs.consoles[index].connection else {
             return;
         };
-        for relation in self.consoles[index].editor.take_missing_columns() {
+        for relation in self.tabs.consoles[index].editor.take_missing_columns() {
             self.request_columns(id, relation);
         }
     }
@@ -548,9 +551,10 @@ impl App {
             relation,
         } = request;
         let index = if self.console().connection == Some(*connection) {
-            Some(self.active)
+            Some(self.tabs.active)
         } else {
-            self.consoles
+            self.tabs
+                .consoles
                 .iter()
                 .position(|console| console.connection == Some(*connection))
         };
@@ -570,7 +574,7 @@ impl App {
             Some(index) => self.select_console(index),
             None => self.new_console(*connection),
         }
-        self.catalog_for(self.active);
+        self.catalog_for(self.tabs.active);
         let Some(item) = self.connection(*connection) else {
             return;
         };
@@ -683,6 +687,7 @@ impl App {
     /// Selects a console of the connection, or it asks for one.
     fn open_console(&mut self, id: ConnectionId) {
         match self
+            .tabs
             .consoles
             .iter()
             .position(|console| console.connection == Some(id))
@@ -709,8 +714,8 @@ impl App {
         let active = self.console();
         if active.connection.is_some() || !active.editor.text().is_empty() {
             let console = self.unbound_console(dialect);
-            self.consoles.push(console);
-            self.select_console(self.consoles.len() - 1);
+            self.tabs.consoles.push(console);
+            self.select_console(self.tabs.consoles.len() - 1);
         } else {
             // The hidden console takes a tab, in the order of this opening.
             let place = self.next_tab_place();
@@ -719,10 +724,10 @@ impl App {
                 console.hidden = false;
                 console.opened = place;
             }
-            self.select_console(self.active);
+            self.select_console(self.tabs.active);
         }
         self.console_mut().editor.set_dialect(dialect);
-        self.bind_console(self.active, id);
+        self.bind_console(self.tabs.active, id);
         self.leave_navigator();
     }
 
@@ -741,7 +746,7 @@ impl App {
         self.new_console(id);
         if namespace && schema.is_some() {
             self.console_mut().schema = schema;
-            self.save_console_meta(self.active);
+            self.save_console_meta(self.tabs.active);
         }
         let console = self.console_mut();
         console.focus = Focus::Editor;
@@ -751,13 +756,14 @@ impl App {
     /// Returns the name of a console or a table that must end its work first.
     pub(super) fn console_in_use(&self, id: ConnectionId) -> Option<String> {
         let console = self
+            .tabs
             .consoles
             .iter()
             .filter(|console| console.connection == Some(id))
             .find(|console| console.is_busy() || console.in_transaction())
             .map(|console| console.name.clone());
         console.or_else(|| {
-            let table = self.tables.iter().find(|tab| {
+            let table = self.tabs.tables.iter().find(|tab| {
                 tab.connection == id
                     && (tab.is_busy() || !tab.result.edits.is_empty() || tab.edit_uncertain)
             });
@@ -936,8 +942,8 @@ impl App {
 
     /// Removes a connection from the running application. Its consoles keep their text.
     pub(super) fn drop_connection(&mut self, id: ConnectionId) {
-        for index in 0..self.consoles.len() {
-            if self.consoles[index].connection == Some(id) {
+        for index in 0..self.tabs.consoles.len() {
+            if self.tabs.consoles[index].connection == Some(id) {
                 self.unbind_console(index);
             }
         }
@@ -953,11 +959,11 @@ impl App {
 
     /// The console keeps its text and its results, and it cannot run.
     pub(super) fn unbind_console(&mut self, index: usize) {
-        self.cancel_agent_console(self.consoles[index].id);
-        self.agent.forget_console(self.consoles[index].id);
+        self.cancel_agent_console(self.tabs.consoles[index].id);
+        self.agent.forget_console(self.tabs.consoles[index].id);
         let id = self.next_unbound_console;
         self.next_unbound_console -= 1;
-        let console = &mut self.consoles[index];
+        let console = &mut self.tabs.consoles[index];
         if let Some(manager) = &mut self.manager {
             manager.close_console(console.id);
         }
@@ -1060,7 +1066,7 @@ impl App {
                 // The first row is the default of the connection, and it has no schema.
                 let schema = picker.items.get(cursor).filter(|_| cursor > 0).cloned();
                 if let Some(index) = self.console_index(console) {
-                    self.consoles[index].schema = schema;
+                    self.tabs.consoles[index].schema = schema;
                     self.save_console_meta(index);
                 }
             }
@@ -1499,10 +1505,10 @@ impl App {
         self.connections[index].generation = generation;
         refresh_labels(&mut self.connections);
         self.navigator.forget(id);
-        for index in 0..self.consoles.len() {
-            if self.consoles[index].connection == Some(id) {
-                self.consoles[index].editor.set_dialect(dialect);
-                self.consoles[index].schema = None;
+        for index in 0..self.tabs.consoles.len() {
+            if self.tabs.consoles[index].connection == Some(id) {
+                self.tabs.consoles[index].editor.set_dialect(dialect);
+                self.tabs.consoles[index].schema = None;
                 self.save_console_meta(index);
             }
         }

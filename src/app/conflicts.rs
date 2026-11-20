@@ -57,7 +57,7 @@ impl App {
             return false;
         };
         let mut rows = Vec::new();
-        for console in &self.consoles {
+        for console in &self.tabs.consoles {
             let Some(file) = &console.file else { continue };
             if file.is_saving() || persist.saves.contains_key(&console.id) {
                 continue;
@@ -171,7 +171,7 @@ impl App {
             if let Some(persist) = &mut self.persist {
                 persist.presented.remove(&row.script);
             }
-            let found = self.consoles.iter().position(|c| {
+            let found = self.tabs.consoles.iter().position(|c| {
                 c.file
                     .as_ref()
                     .is_some_and(|file| file.meta.id == row.script)
@@ -182,7 +182,7 @@ impl App {
                 (false, Some(0)) => self.reload_script(index),
                 (false, Some(_)) | (true, Some(0)) => self.overwrite_script(index),
                 _ => {
-                    let console = &mut self.consoles[index];
+                    let console = &mut self.tabs.consoles[index];
                     console.discard_text = true;
                     let id = console.id;
                     self.close_step(id);

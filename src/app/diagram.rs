@@ -34,22 +34,23 @@ const WHEEL_COLUMNS: i64 = 6;
 
 impl App {
     pub fn diagrams(&self) -> &[DiagramTab] {
-        &self.diagrams
+        &self.tabs.diagrams
     }
 
     /// Returns the diagram tab on screen.
     pub fn diagram(&self) -> Option<&DiagramTab> {
-        self.diagram_index().map(|index| &self.diagrams[index])
+        self.diagram_index().map(|index| &self.tabs.diagrams[index])
     }
 
     pub(super) fn diagram_mut(&mut self) -> Option<&mut DiagramTab> {
-        self.diagram_index().map(|index| &mut self.diagrams[index])
+        self.diagram_index()
+            .map(|index| &mut self.tabs.diagrams[index])
     }
 
     /// Returns true when the console on screen receives the keys of a console: no table,
     /// no diagram, and no compare is on screen.
     pub(super) fn console_on_screen(&self) -> bool {
-        self.screen == Screen::Console
+        self.tabs.screen == Screen::Console
     }
 
     /// Returns true when the home screen is on screen: no tab is open, and the active
@@ -233,6 +234,7 @@ impl App {
             return;
         }
         if let Some(index) = self
+            .tabs
             .diagrams
             .iter()
             .position(|tab| tab.is(connection, &focus))
@@ -249,20 +251,21 @@ impl App {
             return;
         };
         let opened = self.next_tab_place();
-        self.diagrams
+        self.tabs
+            .diagrams
             .push(DiagramTab::new(id, connection, focus, opened));
-        self.select_diagram(self.diagrams.len() - 1);
+        self.select_diagram(self.tabs.diagrams.len() - 1);
         self.navigator_focused = false;
         self.read_diagram();
     }
 
     pub(super) fn select_diagram(&mut self, index: usize) {
-        if index < self.diagrams.len() {
+        if index < self.tabs.diagrams.len() {
             self.console_mut().editor.close_suggestions();
             if self.diagram_index() != Some(index) {
                 self.leave_tab();
             }
-            self.screen = Screen::Diagram(index);
+            self.tabs.screen = Screen::Diagram(index);
         }
     }
 
@@ -301,6 +304,7 @@ impl App {
     ) {
         let Some(manager) = &self.manager else { return };
         let Some(tab) = self
+            .tabs
             .diagrams
             .iter_mut()
             .find(|tab| tab.id == console && tab.connection == connection)
@@ -320,13 +324,13 @@ impl App {
         let Some(index) = self.diagram_index() else {
             return;
         };
-        if self.cancel_agent_console(self.diagrams[index].id) {
+        if self.cancel_agent_console(self.tabs.diagrams[index].id) {
             return;
         }
-        if self.cancel_auth_console(self.diagrams[index].id) {
+        if self.cancel_auth_console(self.tabs.diagrams[index].id) {
             return;
         }
-        let tab = &mut self.diagrams[index];
+        let tab = &mut self.tabs.diagrams[index];
         if !tab.is_busy() {
             return;
         }
@@ -339,7 +343,7 @@ impl App {
     /// Closes a diagram tab, and the rows of a read in progress leave the budget. The tab
     /// at the same place of the tab row takes the screen.
     pub(super) fn close_diagram(&mut self, index: usize) {
-        self.close_item(Tab::Diagram(index), |app| &mut app.diagrams);
+        self.close_item(Tab::Diagram(index), |app| &mut app.tabs.diagrams);
     }
 
     /// Applies an action to the diagram on screen. It returns false for an action that
@@ -348,7 +352,7 @@ impl App {
         let Some(index) = self.diagram_index() else {
             return false;
         };
-        let tab = &mut self.diagrams[index];
+        let tab = &mut self.tabs.diagrams[index];
         match action {
             Action::DiagramUp => tab.select(Direction::Up),
             Action::DiagramDown => tab.select(Direction::Down),
@@ -368,7 +372,7 @@ impl App {
 
     /// Applies an action of the diagram on screen that acts outside its picture.
     fn perform_on_diagram_tab(&mut self, action: Action, index: usize) -> bool {
-        let tab = &self.diagrams[index];
+        let tab = &self.tabs.diagrams[index];
         match action {
             Action::DiagramReload => self.read_diagram(),
             Action::DiagramCopy => {

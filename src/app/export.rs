@@ -138,12 +138,12 @@ impl App {
     }
 
     pub(super) fn tab_run(&mut self, id: ConsoleId) -> Option<(&mut Phase, &mut RunClock)> {
-        if let Some(index) = self.tables.iter().position(|tab| tab.id == id) {
-            let tab = &mut self.tables[index];
+        if let Some(index) = self.tabs.tables.iter().position(|tab| tab.id == id) {
+            let tab = &mut self.tabs.tables[index];
             return Some((&mut tab.phase, &mut tab.run));
         }
-        if let Some(index) = self.compares.iter().position(|tab| tab.owns(id)) {
-            let tab = &mut self.compares[index];
+        if let Some(index) = self.tabs.compares.iter().position(|tab| tab.owns(id)) {
+            let tab = &mut self.tabs.compares[index];
             return Some((&mut tab.phase, &mut tab.run));
         }
         let console = self.console_by_id(id)?;
@@ -362,8 +362,8 @@ impl App {
     }
 
     fn tab_exists(&self, id: ConsoleId) -> bool {
-        self.tables.iter().any(|tab| tab.id == id)
-            || self.consoles.iter().any(|console| console.id == id)
+        self.tabs.tables.iter().any(|tab| tab.id == id)
+            || self.tabs.consoles.iter().any(|console| console.id == id)
     }
 
     fn write_loaded(&mut self, choice: RowChoice, destination: PathBuf, options: ExportOptions) {
@@ -436,7 +436,8 @@ impl App {
         else {
             return false;
         };
-        let Some(source) = result_in(&self.tables, &self.consoles, run.console, *result) else {
+        let Some(source) = result_in(&self.tabs.tables, &self.tabs.consoles, run.console, *result)
+        else {
             run.failure = Some(text::EXPORT_RESULT_CLOSED.to_owned());
             return true;
         };

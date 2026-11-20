@@ -246,6 +246,7 @@ impl App {
         for run in &self.ai.runs {
             let dead = !self.ai.preferences.enabled()
                 || self
+                    .tabs
                     .consoles
                     .iter()
                     .find(|c| c.id == run.console)
@@ -287,14 +288,14 @@ impl App {
             let RunKind::Completion(target) = &run.kind else {
                 continue;
             };
-            let Some(console) = self.consoles.iter().find(|c| c.id == run.console) else {
+            let Some(console) = self.tabs.consoles.iter().find(|c| c.id == run.console) else {
                 continue;
             };
             if let Some(row) = console.editor.ai_line_row(target) {
                 pendings.push((run.console, Index2::new(row, target.start.col), run.started));
             }
         }
-        for console in &mut self.consoles {
+        for console in &mut self.tabs.consoles {
             let list = pendings
                 .iter()
                 .filter(|(id, _, _)| *id == console.id)
@@ -601,7 +602,8 @@ impl App {
                 RunKind::Explain(_) => None,
             })
             .filter(|(_, target)| {
-                self.consoles
+                self.tabs
+                    .consoles
                     .iter()
                     .find(|c| c.id == console_id)
                     .is_some_and(|c| c.editor.ai_line_row(target) == Some(row))
@@ -1105,15 +1107,17 @@ impl App {
         };
         // The answer shows at the requested anchor. An edit of that line, and
         // only that, discards it; an edit elsewhere moves the anchor.
-        let Some(row) = self.consoles[index].editor.ai_line_row(&target) else {
+        let Some(row) = self.tabs.consoles[index].editor.ai_line_row(&target) else {
             self.cancel_ai_id(id);
             return;
         };
         let mut at = target.start;
         at.row = row;
         let keys = self.ghost_keys();
-        self.consoles[index].editor.set_ghost_keys(keys);
-        self.consoles[index].editor.start_ghost(at, &completed.text);
+        self.tabs.consoles[index].editor.set_ghost_keys(keys);
+        self.tabs.consoles[index]
+            .editor
+            .start_ghost(at, &completed.text);
     }
 
     /// Shows an AI explanation in the text window of the application.
@@ -1200,7 +1204,8 @@ impl App {
                 _ => None,
             })
             .filter(|(_, target)| {
-                self.consoles
+                self.tabs
+                    .consoles
                     .iter()
                     .find(|c| c.id == console)
                     .is_some_and(|c| c.editor.ai_line_row(target) == Some(row))
