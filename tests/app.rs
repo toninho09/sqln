@@ -1008,6 +1008,57 @@ fn a_failed_commit_at_the_close_keeps_the_console_open_and_offers_a_retry() {
     assert!(f.app.home());
 }
 
+/// PostgreSQL ends the transaction when a `COMMIT` fails with a serialization failure
+/// or a deferred constraint. The end of the transaction must not close the console as
+/// a successful commit would.
+#[test]
+fn a_commit_that_fails_and_ends_the_transaction_keeps_the_console_and_its_error() {
+    use crate::common::mock::{MockConnector, RunHandler};
+    use sqln::connector::StatementEnd;
+    use sqln::sql::Dialect;
+    use std::sync::Arc;
+
+    let run: RunHandler = Arc::new(|_, sink| {
+        Box::pin(async move {
+            sink.finish().await;
+            Ok(StatementEnd::default())
+        })
+    });
+    let connector = Arc::new(MockConnector::new(Dialect::Postgres, run));
+    connector.fail_commit("could not serialize access");
+    let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
+    let options = Options {
+        connector: Some(connector),
+        label: Some("fake".to_owned()),
+        ..Options::default()
+    };
+    let app = App::new(options, clipboard.clone(), Theme::plain());
+    let mut f = Fixture {
+        app,
+        clipboard,
+        path: PathBuf::new(),
+    };
+    f.prefix('m');
+    f.run_script("INSERT INTO t VALUES (1);");
+    f.assert_sees("Transaction open");
+
+    f.prefix('c');
+    f.press(key(KeyCode::Tab));
+    f.press(key(KeyCode::Tab));
+    f.press(key(KeyCode::Enter));
+    f.pump_until(|f| f.sees("could not serialize access"));
+    assert!(!f.app.home(), "a failed commit does not close the console");
+    // The transaction ended, so the question offers no new commit.
+    f.assert_sees("Transaction ended");
+    f.assert_sees("The database ended the transaction.");
+    assert!(!f.sees("[Try again]"));
+    f.assert_sees("No transaction");
+
+    f.press(key(KeyCode::Enter));
+    f.prefix('c');
+    assert!(f.app.home(), "the next close needs no question");
+}
+
 #[test]
 fn the_close_during_an_execution_asks_and_stops_first() {
     let mut f = Fixture::new("close-busy");

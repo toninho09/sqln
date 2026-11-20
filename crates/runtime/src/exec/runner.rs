@@ -436,8 +436,13 @@ impl ConsoleTask {
             }
             Command::Transaction(..) => {
                 let message = "The console has an execution in progress.".to_owned();
-                self.emit(ExecEvent::TransactionFailed { console, message })
-                    .await;
+                let state = self.transaction;
+                self.emit(ExecEvent::TransactionFailed {
+                    console,
+                    message,
+                    state,
+                })
+                .await;
             }
             Command::Stop | Command::ConfirmClose(_) | Command::Rebind(_) | Command::Close => {}
         }
@@ -636,19 +641,29 @@ impl ConsoleTask {
         let console = self.console;
         let Some(mut lease) = self.held.take() else {
             let message = "No transaction is open.".to_owned();
-            self.emit(ExecEvent::TransactionFailed { console, message })
-                .await;
+            let state = self.transaction;
+            self.emit(ExecEvent::TransactionFailed {
+                console,
+                message,
+                state,
+            })
+            .await;
             return;
         };
         let result = lease.session().control(command).await;
-        self.keep_or_release(lease).await;
+        // The failure goes before the new state, and it carries that state. A failed
+        // `COMMIT` can end the transaction, and the end alone would look like a success
+        // to a waiting close.
         if let Err(error) = result {
+            let state = lease.session().transaction_state().await;
             self.emit(ExecEvent::TransactionFailed {
                 console,
                 message: error.message,
+                state,
             })
             .await;
         }
+        self.keep_or_release(lease).await;
     }
 }
 

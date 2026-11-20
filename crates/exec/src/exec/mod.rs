@@ -120,9 +120,12 @@ pub enum ExecEvent {
         console: ConsoleId,
         state: TransactionState,
     },
+    /// `state` is the transaction state after the failure. A failed `COMMIT` can end
+    /// the transaction, and then nothing is left to try again.
     TransactionFailed {
         console: ConsoleId,
         message: String,
+        state: TransactionState,
     },
     /// `read` is the number that the caller gave to `load_catalog`.
     CatalogLoaded {

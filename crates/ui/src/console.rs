@@ -609,7 +609,8 @@ impl Console {
                 self.set_transaction(state);
                 return Some(Signal::TransactionChanged);
             }
-            ExecEvent::TransactionFailed { message, .. } => {
+            ExecEvent::TransactionFailed { message, state, .. } => {
+                self.set_transaction(state);
                 self.message_key = None;
                 self.push_message(MessageLevel::Error, text::transaction_failed(&message));
                 self.active = self.results.len();
