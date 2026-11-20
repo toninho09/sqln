@@ -2,7 +2,7 @@
 
 Q = --quiet
 
-.PHONY: fmt lint test test-integration bench check docs docs-serve
+.PHONY: fmt lint test test-integration bench check coverage docs docs-serve
 
 # Format all source files.
 fmt:
@@ -34,6 +34,17 @@ bench:
 # Delivery gate: linters plus the full test suite. Slow; run once, at task end.
 check: lint
 	@scripts/test-summary.sh
+
+# Print the test coverage. Writes lcov and HTML under target/coverage. Needs
+# cargo-llvm-cov (cargo install cargo-llvm-cov) and the llvm-tools-preview
+# component. The database tests skip without the Docker stack, so their code
+# stays out of the report. Slow; run only on request.
+coverage:
+	@command -v cargo-llvm-cov >/dev/null 2>&1 || { \
+		echo "make coverage needs cargo-llvm-cov: cargo install cargo-llvm-cov"; \
+		rustup component add llvm-tools-preview 2>/dev/null || true; exit 1; }
+	@cargo llvm-cov --workspace --lcov --output-path target/coverage/lcov.info \
+		--html --output-dir target/coverage
 
 # Build the documentation site into book/book.
 docs:

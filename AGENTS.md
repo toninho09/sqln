@@ -98,6 +98,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the detailed module respons
 - `make docs`: builds the documentation site into `book/book`.
 - `make docs-serve`: serves the documentation site locally.
 - `make check`: runs `make lint` and the full test suite.
+- `make coverage`: prints the test coverage into `target/coverage`. Needs `cargo-llvm-cov` and `llvm-tools-preview`.
 
 ## Integration tests
 
