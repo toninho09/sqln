@@ -429,6 +429,9 @@ pub struct App {
     /// The catalog of a console without a connection.
     fallback_catalog: Option<Catalog>,
     manager: Option<Manager>,
+    /// The hash of the consoles, names, and active console that the manager knows for the
+    /// command history. An equal hash skips the update.
+    history_signature: Option<u64>,
     events: Option<Receiver<ExecEvent>>,
     budget: Arc<Budget>,
     settings: Settings,
@@ -597,6 +600,7 @@ impl App {
             navigator_focused: false,
             fallback_catalog: options.catalog,
             manager: None,
+            history_signature: None,
             events: None,
             budget,
             settings: options.settings,
@@ -895,9 +899,14 @@ impl App {
         let active = self
             .console_on_screen()
             .then(|| self.tabs.consoles[self.tabs.active].id);
+        let signature = self.history_signature(active);
+        if self.history_signature == Some(signature) {
+            return;
+        }
         let Some(manager) = &mut self.manager else {
             return;
         };
+        self.history_signature = Some(signature);
         for console in &self.tabs.consoles {
             if let Some(connection) = console
                 .connection
@@ -911,5 +920,26 @@ impl App {
             }
         }
         manager.set_active_history(active);
+    }
+
+    /// Hashes what `sync_command_history` sends to the manager, without allocations.
+    fn history_signature(&self, active: Option<ConsoleId>) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        active.hash(&mut hasher);
+        for console in &self.tabs.consoles {
+            let Some(connection) = console
+                .connection
+                .and_then(|id| self.connections.iter().find(|item| item.id == id))
+            else {
+                continue;
+            };
+            console.id.hash(&mut hasher);
+            console.messages.id.hash(&mut hasher);
+            connection.id.hash(&mut hasher);
+            connection.name.hash(&mut hasher);
+            std::mem::discriminant(&connection.dialect).hash(&mut hasher);
+        }
+        hasher.finish()
     }
 }

@@ -465,6 +465,23 @@ fn messages_keep_the_commands_and_row_counts_of_previous_runs() {
 }
 
 #[test]
+fn each_command_of_the_messages_names_its_connection() {
+    let mut f = Fixture::new("command-history-name");
+    f.run_script("SELECT 1;");
+    f.run_script("SELECT 2;");
+    let connection = &f.app.connections()[0];
+    let header = format!("· {} [{}] ·", connection.name, connection.id);
+    let headers = f
+        .app
+        .console()
+        .messages
+        .iter()
+        .filter(|message| message.text.contains(&header))
+        .count();
+    assert!(headers >= 2, "{header}");
+}
+
+#[test]
 fn messages_do_not_claim_that_a_skipped_command_reaches_the_database() {
     let mut f = Fixture::new("command-history-error");
     f.run_script("SELECT 123; SELECT * FROM no_such_history_table; SELECT 987;");
