@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use crossterm::event::KeyEvent;
 
 use crate::command_log::{CommandState, History};
-use crate::connector::{StatementEnd, TransactionCommand, TransactionState};
+use crate::connector::{Failure, StatementEnd, TransactionCommand, TransactionState};
 use crate::editor::{KeyboardMode, MarkState, RunPlan, SqlEditor};
 use crate::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ProgressSnapshot, ReadEnd,
@@ -589,9 +589,14 @@ impl Console {
                 status,
                 end,
                 error_offset,
+                fix,
             } if self.is_current(key.execution) => {
                 self.message_key = Some(key);
                 self.on_statement_finished(key.index, status, end, budget);
+                // The hint is the next line of the error, in the same entry of Messages.
+                if let Some(fix) = fix {
+                    self.push_message(MessageLevel::Info, fix.hint());
+                }
                 if let Some(offset) = error_offset {
                     let prefix = self.explain.map_or(0, |explain| explain.prefix_len());
                     self.editor
@@ -605,9 +610,11 @@ impl Console {
                 execution,
                 end,
                 message,
+                fix,
                 ..
             } if self.is_current(execution) => {
                 self.message_key = None;
+                let message = message.map(|message| Failure::new(message, fix).two_lines());
                 return Some(self.on_execution_finished(end, message, budget));
             }
             ExecEvent::TransactionChanged { state, .. } => {

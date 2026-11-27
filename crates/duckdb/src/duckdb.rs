@@ -14,7 +14,7 @@ use duckdb::{AccessMode, Config, Connection, InterruptHandle, ToSql};
 use tokio::sync::{Mutex, oneshot};
 
 use super::{
-    Canceller, ConnectError, Connector, ErrorKind, ExecError, ResetOutcome, Session,
+    Canceller, ConnectError, Connector, ErrorKind, ExecError, Fix, ResetOutcome, Session,
     SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
@@ -765,7 +765,7 @@ impl DuckdbSession {
     /// that opened its file with `access_mode = READ_ONLY` already refuses it.
     fn refuse_write(&self, sql: &str) -> Result<(), ExecError> {
         if self.read_only && changes_state(sql, Dialect::DuckDb) {
-            return Err(ExecError::new(text::DUCKDB_READ_ONLY));
+            return Err(ExecError::new(text::DUCKDB_READ_ONLY).fix(Some(Fix::ReadOnly)));
         }
         Ok(())
     }

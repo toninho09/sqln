@@ -3217,6 +3217,7 @@ fn the_extra_row_of_a_page_leaves_the_budget_with_the_exact_cost() {
     assert_eq!(budget.used(), 2 * one);
     tab.on_event(
         ExecEvent::ExecutionFinished {
+            fix: None,
             console: 7,
             execution: 5,
             end: ExecutionEnd::Completed,
@@ -4451,6 +4452,7 @@ fn the_count_returns_its_bytes_to_the_budget_and_keeps_a_limit_of_the_page() {
     );
     tab.on_event(
         ExecEvent::ExecutionFinished {
+            fix: None,
             console: 7,
             execution: 5,
             end: ExecutionEnd::Completed,

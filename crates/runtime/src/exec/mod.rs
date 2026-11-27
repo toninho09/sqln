@@ -16,7 +16,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedSender};
 
 use crate::catalog::RelationRef;
 use crate::command_log::TraceContext;
-use crate::connector::{ConnectError, Connector, SessionContext, TransactionCommand};
+use crate::connector::{ConnectError, Connector, Failure, Fix, SessionContext, TransactionCommand};
 use crate::grid::Budget;
 use crate::import::ImportJob;
 use crate::pool::Pool;
@@ -24,7 +24,6 @@ use crate::wake::Wake;
 const EVENT_CAPACITY: usize = 256;
 /// The events that the relay of the interface holds after the bounded channel.
 const RELAY_CAPACITY: usize = 64;
-const CONNECT_LIMIT_ENDED: &str = "The connection time limit ended.";
 const DISCONNECT_CHECK: Duration = Duration::from_millis(5);
 
 /// The pool and the limits that a console uses.
@@ -452,19 +451,19 @@ impl Manager {
                     Ok(lease) => lease,
                     Err(error) => {
                         if let Some(event) = binding.refusal(&error) { let _ = events.send(event).await; }
-                        return Err(error.message);
+                        return Err(Failure::from(error));
                     }
                 };
                 let metadata = async {
-                    lease.session().apply_context(&SessionContext { read_only: true, ..Default::default() }).await.map_err(|error| error.message)?;
+                    lease.session().apply_context(&SessionContext { read_only: true, ..Default::default() }).await.map_err(Failure::from)?;
                     match &request {
                         MetadataRead::Catalog(schemas) => lease.session().read_catalog_of(schemas).await.map(AgentMetadata::Catalog),
                         MetadataRead::Fields(topic) => lease.session().read_noted_columns(crate::connector::kafka::TOPICS, topic).await.map(|(paths, notes)| AgentMetadata::Fields(paths, notes)),
-                    }.map_err(|error| error.message)
+                    }.map_err(Failure::from)
                 };
                 let limit = binding.settings().sql_timeout;
                 let result = match limit {
-                    Some(limit) => tokio::time::timeout(limit, metadata).await.map_err(|_| "The metadata time limit ended. Try a smaller operation.".to_owned())?,
+                    Some(limit) => tokio::time::timeout(limit, metadata).await.map_err(|_| Failure::new("The metadata time limit ended. Try a smaller operation.", Some(Fix::SqlTimeout)))?,
                     None => metadata.await,
                 };
                 lease.release().await;
@@ -535,13 +534,13 @@ impl Manager {
                 Ok(mut lease) => {
                     let result = lease.session().read_catalog_of(&schemas).await;
                     lease.release().await;
-                    result.map_err(|error| error.message)
+                    result.map_err(|error| Failure::from(error).one_line())
                 }
                 Err(error) => {
                     if let Some(refusal) = binding.refusal(&error) {
                         let _ = events.send(refusal).await;
                     }
-                    Err(error.message)
+                    Err(Failure::from(error).one_line())
                 }
             };
             let _ = events
@@ -579,7 +578,7 @@ impl Manager {
                         lease.release().await;
                         let columns = match columns {
                             Ok((columns, notes)) => (Ok(columns), notes),
-                            Err(error) => (Err(error.message), Vec::new()),
+                            Err(error) => (Err(Failure::from(error).one_line()), Vec::new()),
                         };
                         (
                             columns,
@@ -591,7 +590,11 @@ impl Manager {
                         if let Some(refusal) = binding.refusal(&error) {
                             let _ = events.send(refusal).await;
                         }
-                        ((Err(error.message), Vec::new()), Vec::new(), Vec::new())
+                        (
+                            (Err(Failure::from(error).one_line()), Vec::new()),
+                            Vec::new(),
+                            Vec::new(),
+                        )
                     }
                 };
             let _ = events
@@ -649,7 +652,8 @@ impl Manager {
             };
             let result = match tokio::time::timeout(limit, probe).await {
                 Ok(result) => result,
-                Err(_) => Err(ConnectError::new(CONNECT_LIMIT_ENDED)),
+                Err(_) => Err(ConnectError::new(crate::text::CONNECT_LIMIT_ENDED)
+                    .fix(Some(crate::connector::Fix::ConnectLimit))),
             };
             let _ = events
                 .send(ExecEvent::ConnectionTested { test, result })

@@ -27,10 +27,11 @@ use tokio_postgres::{
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use super::auto_tls::AutoTls;
+use super::fix::network_fix;
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
-    Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, MAX_NOTICES, Namespace,
-    ResetOutcome, Session, SessionContext, StatementEnd, TlsRefusal, TransactionCommand,
+    Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, Fix, MAX_NOTICES,
+    Namespace, ResetOutcome, Session, SessionContext, StatementEnd, TlsRefusal, TransactionCommand,
     TransactionState, describe, tls,
 };
 use crate::catalog::{
@@ -194,22 +195,28 @@ fn object_row(row: Vec<Option<String>>) -> [String; 4] {
     std::array::from_fn(|_| cells.next().unwrap_or_default())
 }
 
-fn connect_error(error: &tokio_postgres::Error) -> ConnectError {
+fn connect_error(error: &tokio_postgres::Error, address: &Address) -> ConnectError {
     let Some(database) = error.as_db_error() else {
-        return ConnectError::new(describe(error)).kind(client_error_kind(error));
+        return ConnectError::new(describe(error))
+            .kind(client_error_kind(error))
+            .fix(network_fix(error, address));
     };
     let message = format!("{} ({})", database.message(), database.code().code());
     // `28000` also covers a rule of `pg_hba.conf`, which a new password does not change.
     if *database.code() == SqlState::INVALID_PASSWORD {
         ConnectError::refused_password(message)
     } else {
-        ConnectError::new(message).kind(state_kind(database.code()))
+        ConnectError::new(message)
+            .kind(state_kind(database.code()))
+            .fix(state_fix(database.code()))
     }
 }
 
 /// The error of a socket before the protocol starts.
-fn socket_error(error: &io::Error) -> ConnectError {
-    ConnectError::new(error.to_string()).kind(ErrorKind::Connection)
+fn socket_error(error: &io::Error, address: &Address) -> ConnectError {
+    ConnectError::new(error.to_string())
+        .kind(ErrorKind::Connection)
+        .fix(network_fix(error, address))
 }
 
 /// The kind of an error that has no SQLSTATE: the connection or the client library.
@@ -225,6 +232,19 @@ fn client_error_kind(error: &tokio_postgres::Error) -> ErrorKind {
         ErrorKind::Connection
     } else {
         ErrorKind::Other
+    }
+}
+
+/// The configuration that can correct a SQLSTATE. See the appendix "PostgreSQL Error
+/// Codes". `28000` is a rule of `pg_hba.conf` or of the server, not a wrong password.
+fn state_fix(state: &SqlState) -> Option<Fix> {
+    match state.code() {
+        "3D000" => Some(Fix::Database),
+        "28000" => Some(Fix::ServerRule),
+        "53300" => Some(Fix::PoolLimit),
+        "42501" => Some(Fix::Privilege),
+        "25006" => Some(Fix::ReadOnly),
+        _ => None,
     }
 }
 
@@ -272,11 +292,11 @@ impl Connector for PostgresConnector {
 
 /// A plain attempt that the server refuses with `28000` can be a rule of `pg_hba.conf`
 /// that accepts only TLS, so the automatic mode tries again with TLS.
-fn plain_error(error: &tokio_postgres::Error) -> ConnectError {
+fn plain_error(error: &tokio_postgres::Error, address: &Address) -> ConnectError {
     let refused = error
         .as_db_error()
         .is_some_and(|database| *database.code() == SqlState::INVALID_AUTHORIZATION_SPECIFICATION);
-    let failure = connect_error(error);
+    let failure = connect_error(error, address);
     if refused {
         failure.tls_refused(TlsRefusal::ServerNeedsTls)
     } else {
@@ -287,11 +307,15 @@ fn plain_error(error: &tokio_postgres::Error) -> ConnectError {
 /// The driver calls the TLS connector only after the server answers `S` to the TLS
 /// request. A TLS error before that call, without a database or socket error, is the
 /// answer `N`: the server has no TLS.
-fn tls_error(error: &tokio_postgres::Error, handshake: &AtomicBool) -> ConnectError {
+fn tls_error(
+    error: &tokio_postgres::Error,
+    handshake: &AtomicBool,
+    address: &Address,
+) -> ConnectError {
     let refused = !handshake.load(Ordering::SeqCst)
         && error.as_db_error().is_none()
         && client_error_kind(error) == ErrorKind::Other;
-    let failure = connect_error(error);
+    let failure = connect_error(error, address);
     if refused {
         failure.tls_refused(TlsRefusal::ServerHasNoTls)
     } else {
@@ -310,38 +334,38 @@ async fn connect_once(target: NetworkTarget) -> Result<PostgresSession, ConnectE
             Address::Tcp { host, port } => {
                 let socket = TcpStream::connect((host.as_str(), *port))
                     .await
-                    .map_err(|error| socket_error(&error))?;
+                    .map_err(|error| socket_error(&error, &target.address))?;
                 socket
                     .set_nodelay(true)
-                    .map_err(|error| socket_error(&error))?;
+                    .map_err(|error| socket_error(&error, &target.address))?;
                 let keepalive = socket2::TcpKeepalive::new()
                     .with_time(Duration::from_secs(30))
                     .with_interval(Duration::from_secs(10))
                     .with_retries(3);
                 socket2::SockRef::from(&socket)
                     .set_tcp_keepalive(&keepalive)
-                    .map_err(|error| socket_error(&error))?;
+                    .map_err(|error| socket_error(&error, &target.address))?;
                 let (client, connection) = config
                     .connect_raw(
                         text_io::TextIo::new(socket, enabled.clone()),
                         tokio_postgres::NoTls,
                     )
                     .await
-                    .map_err(|error| plain_error(&error))?;
+                    .map_err(|error| plain_error(&error, &target.address))?;
                 drive(connection, notices.clone());
                 client
             }
             Address::Socket(folder) => {
                 let socket = UnixStream::connect(folder.join(format!(".s.PGSQL.{DEFAULT_PORT}")))
                     .await
-                    .map_err(|error| socket_error(&error))?;
+                    .map_err(|error| socket_error(&error, &target.address))?;
                 let (client, connection) = config
                     .connect_raw(
                         text_io::TextIo::new(socket, enabled.clone()),
                         tokio_postgres::NoTls,
                     )
                     .await
-                    .map_err(|error| connect_error(&error))?;
+                    .map_err(|error| connect_error(&error, &target.address))?;
                 drive(connection, notices.clone());
                 client
             }
@@ -355,7 +379,7 @@ async fn connect_once(target: NetworkTarget) -> Result<PostgresSession, ConnectE
                 handshake: handshake.clone(),
             })
             .await
-            .map_err(|error| tls_error(&error, &handshake))?;
+            .map_err(|error| tls_error(&error, &handshake, &target.address))?;
         drive(connection, notices.clone());
         client
     };
@@ -604,7 +628,9 @@ fn exec_error(error: &tokio_postgres::Error, sql: &str) -> ExecError {
         Some(ErrorPosition::Original(position)) => byte_offset(sql, *position),
         _ => None,
     };
-    ExecError::with_kind(state_kind(database.code()), message).at(offset)
+    ExecError::with_kind(state_kind(database.code()), message)
+        .at(offset)
+        .fix(state_fix(database.code()))
 }
 
 #[derive(Default)]
@@ -1081,5 +1107,29 @@ impl PostgresSession {
         pairs
             .map(group_foreign_keys)
             .map_err(|error| ExecError::new(describe(&error)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_configuration_state_gives_its_fix() {
+        let cases = [
+            (SqlState::INVALID_CATALOG_NAME, Some(Fix::Database)),
+            (
+                SqlState::INVALID_AUTHORIZATION_SPECIFICATION,
+                Some(Fix::ServerRule),
+            ),
+            (SqlState::TOO_MANY_CONNECTIONS, Some(Fix::PoolLimit)),
+            (SqlState::INSUFFICIENT_PRIVILEGE, Some(Fix::Privilege)),
+            (SqlState::READ_ONLY_SQL_TRANSACTION, Some(Fix::ReadOnly)),
+            (SqlState::INVALID_PASSWORD, None),
+            (SqlState::SYNTAX_ERROR, None),
+        ];
+        for (state, fix) in cases {
+            assert_eq!(state_fix(&state), fix, "{}", state.code());
+        }
     }
 }

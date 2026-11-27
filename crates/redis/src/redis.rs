@@ -17,9 +17,10 @@ use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
 
 use super::auto_tls::AutoTls;
+use super::fix::network_fix;
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
-    Canceller, Capabilities, ConnectError, Connector, ErrorKind as Kind, ExecError, Namespace,
+    Canceller, Capabilities, ConnectError, Connector, ErrorKind as Kind, ExecError, Fix, Namespace,
     ResetOutcome, Session, SessionContext, StatementEnd, TlsRefusal, TransactionCommand,
     TransactionState, describe, tls,
 };
@@ -46,6 +47,13 @@ const IDENTITY: &[&str] = &["AUTH", "HELLO", "RESET"];
 
 fn connect_failed(error: impl std::fmt::Display) -> ConnectError {
     ConnectError::new(error.to_string())
+}
+
+/// The error of the socket or of TLS before the protocol starts.
+fn socket_failed(error: &std::io::Error, address: &Address) -> ConnectError {
+    ConnectError::new(error.to_string())
+        .kind(Kind::Connection)
+        .fix(network_fix(error, address))
 }
 
 /// `NOAUTH` means that the server needs a password and the connection has none.
@@ -139,10 +147,13 @@ async fn open_tcp(
     if auto {
         probe(host, port, tls_mode).await?;
     }
-    let stream = TcpStream::connect((host, port))
-        .await
-        .map_err(connect_failed)?;
-    stream.set_nodelay(true).map_err(connect_failed)?;
+    let address = Address::Tcp {
+        host: host.to_owned(),
+        port,
+    };
+    let failed = |error: std::io::Error| socket_failed(&error, &address);
+    let stream = TcpStream::connect((host, port)).await.map_err(failed)?;
+    stream.set_nodelay(true).map_err(failed)?;
     let Tls::Verify(files) = tls_mode else {
         return Ok(Box::new(stream));
     };
@@ -151,7 +162,7 @@ async fn open_tcp(
     let stream = TlsConnector::from(Arc::new(config))
         .connect(name, stream)
         .await
-        .map_err(connect_failed)?;
+        .map_err(failed)?;
     Ok(Box::new(stream))
 }
 
@@ -162,7 +173,7 @@ async fn open_socket(path: &std::path::Path, tls_mode: &Tls) -> Result<Stream, C
     }
     let stream = tokio::net::UnixStream::connect(path)
         .await
-        .map_err(connect_failed)?;
+        .map_err(|error| socket_failed(&error, &Address::Socket(path.to_owned())))?;
     Ok(Box::new(stream))
 }
 
@@ -306,10 +317,14 @@ impl Canceller for RedisCanceller {
 
 fn exec_error(error: &RedisError) -> ExecError {
     let kind = error_kind(error);
+    // A replica answers `READONLY` to a write.
+    let fix = (error.kind() == ErrorKind::Server(ServerErrorKind::ReadOnly))
+        .then_some(Fix::ServerReadOnly);
     match (error.code(), error.detail()) {
         (Some(code), Some(detail)) => ExecError::with_kind(kind, format!("{code} {detail}")),
         _ => ExecError::with_kind(kind, describe(error)),
     }
+    .fix(fix)
 }
 
 /// The kind of a Redis error, from the kind of the library and the code of the server.
@@ -602,10 +617,10 @@ impl RedisSession {
             return Err(ExecError::new(text::REDIS_NO_REPLY));
         }
         if self.read_only && !SUBSCRIBE.contains(&upper.as_str()) && !self.is_read(name).await {
-            return Err(ExecError::with_kind(
-                Kind::Permission,
-                text::REDIS_READ_ONLY,
-            ));
+            return Err(
+                ExecError::with_kind(Kind::Permission, text::REDIS_READ_ONLY)
+                    .fix(Some(Fix::ReadOnly)),
+            );
         }
         Ok(())
     }

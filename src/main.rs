@@ -288,7 +288,7 @@ fn main() -> ExitCode {
                 password_file: cli.password_file,
             };
             if let Err(error) = sqln::batch::run(options) {
-                sqln::batch::report_error(&error.message);
+                sqln::batch::report_failure(&error.message, error.hint.as_deref());
                 return ExitCode::from(if error.usage { 2 } else { 1 });
             }
         }

@@ -2649,7 +2649,7 @@ fn a_new_file_goes_to_the_current_folder_with_its_full_path() {
     let Some(FormNote::Error(note)) = &session.app.form().unwrap().note else {
         panic!("the test must report the missing file");
     };
-    assert!(note.contains(&full.display().to_string()), "{note}");
+    assert!(note.message.contains(&full.display().to_string()), "{note}");
 
     session.press_form_button(Field::Save);
     session.assert_sees("Create it?");

@@ -230,6 +230,7 @@ fn data_tab(budget: &Budget) -> sqln_ui::compare_tab::CompareTab {
         tab.on_event(ExecEvent::Rows { key, rows, bytes }, budget);
         tab.on_event(
             ExecEvent::ExecutionFinished {
+                fix: None,
                 console,
                 execution,
                 end: ExecutionEnd::Completed,

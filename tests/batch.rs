@@ -671,7 +671,42 @@ fn production_and_read_only_rules_apply_to_saved_connections() {
         false,
         json!([{"id":"g1","name":"one","kind":"sqlite","file":path,"readOnly":true}]),
     );
-    assert_eq!(home.run(&authorized).status.code(), Some(1));
+    let output = home.run(&authorized);
+    assert_eq!(output.status.code(), Some(1));
+    // The hint of the fix stands on its own line after the error.
+    let errors = String::from_utf8_lossy(&output.stderr);
+    let hint = sqln::connector::Fix::ReadOnly.hint();
+    assert!(
+        errors.lines().any(|line| line == format!("sqln: {hint}")),
+        "{errors}"
+    );
+}
+
+#[test]
+fn continue_on_error_shows_the_fix_of_each_failure() {
+    let home = Home::new();
+    let path = home.database();
+    home.config(
+        false,
+        json!([{"id":"g1","name":"one","kind":"sqlite","file":path,"readOnly":true}]),
+    );
+    let output = home.run(&[
+        "--connection",
+        "one",
+        "--execute",
+        "INSERT INTO items VALUES (3); SELECT * FROM absent",
+        "--continue-on-error",
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    let errors = String::from_utf8_lossy(&output.stderr);
+    let hint = sqln::connector::Fix::ReadOnly.hint();
+    assert!(
+        errors
+            .lines()
+            .any(|line| line == format!("sqln: [1] {hint}")),
+        "{errors}"
+    );
+    assert!(!errors.contains("sqln: [2] Hint:"), "{errors}");
 }
 
 #[test]

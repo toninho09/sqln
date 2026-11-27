@@ -1480,6 +1480,8 @@ fn full_access_writes_to_the_database_and_reports_changed_rows() {
     let reply = h.wait_job(&job);
     assert_eq!(reply["status"], "completed", "{reply}");
     assert_eq!(reply["statements"][0]["changed_rows"], 2, "{reply}");
+    assert!(reply.get("fix").is_none(), "{reply}");
+    assert!(reply["statements"][0].get("fix").is_none(), "{reply}");
     assert_eq!(h.count(), 4);
     // A write with WHERE on a connection without the production mark asks nothing.
     let job = h.query("DELETE FROM things WHERE id = 4");
@@ -1506,7 +1508,10 @@ fn full_access_writes_to_the_database_and_reports_changed_rows() {
     h.key(KeyCode::Enter);
     assert_eq!(h.access()["access"], "propose");
     let job = h.query("DELETE FROM things");
-    assert_eq!(h.wait_job(&job)["status"], "failed");
+    let reply = h.wait_job(&job);
+    assert_eq!(reply["status"], "failed");
+    // The read policy of the agent refused it: no setting of the connection changes that.
+    assert!(reply.get("fix").is_none(), "{reply}");
     assert_eq!(h.count(), 3);
 }
 
@@ -1551,6 +1556,10 @@ fn full_access_keeps_a_read_only_connection_read_only() {
     let reply = h.wait_job(&job);
     assert_eq!(reply["status"], "failed", "{reply}");
     assert_eq!(h.count(), 2);
+    // The setting of the connection refused the write: the agent tells the user.
+    let hint = sqln::connector::Fix::ReadOnly.hint();
+    assert_eq!(reply["statements"][0]["fix"], hint.as_str(), "{reply}");
+    assert_eq!(reply["fix"], hint.as_str(), "{reply}");
 }
 
 #[test]

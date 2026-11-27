@@ -10,7 +10,7 @@ use rusqlite::{Connection, InterruptHandle, OpenFlags};
 use tokio::sync::oneshot;
 
 use super::{
-    Canceller, ConnectError, Connector, ErrorKind, ExecError, ResetOutcome, Session,
+    Canceller, ConnectError, Connector, ErrorKind, ExecError, Fix, ResetOutcome, Session,
     SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
 use crate::catalog::{
@@ -30,7 +30,10 @@ fn open(target: &SqliteTarget, trace: &Option<TraceContext>) -> Result<Connectio
     if target.allow_create || target.is_memory() {
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
-    let failed = |error: rusqlite::Error| ConnectError::new(error.to_string());
+    let failed = |error: rusqlite::Error| {
+        let fix = error_fix(&error);
+        ConnectError::new(error.to_string()).fix(fix)
+    };
     let conn = match &target.source {
         SqliteSource::File(path) => {
             validate_path(path)?;
@@ -134,7 +137,25 @@ fn exec_error(error: rusqlite::Error) -> ExecError {
         rusqlite::Error::SqlInputError { offset, .. } => usize::try_from(*offset).ok(),
         _ => None,
     };
-    ExecError::with_kind(error_kind(&error), error.to_string()).at(offset)
+    let fix = error_fix(&error);
+    ExecError::with_kind(error_kind(&error), error.to_string())
+        .at(offset)
+        .fix(fix)
+}
+
+/// The configuration that can correct a SQLite error, from its result code.
+/// `SQLITE_READONLY` comes from `PRAGMA query_only` or from a file without write access.
+fn error_fix(error: &rusqlite::Error) -> Option<Fix> {
+    use rusqlite::ffi::ErrorCode;
+    let rusqlite::Error::SqliteFailure(failure, _) = error else {
+        return None;
+    };
+    match failure.code {
+        ErrorCode::CannotOpen => Some(Fix::File),
+        ErrorCode::ReadOnly => Some(Fix::ReadOnly),
+        ErrorCode::DatabaseBusy => Some(Fix::LockLimit),
+        _ => None,
+    }
 }
 
 /// The kind of a SQLite error, from its result code. An error with a position in the
@@ -582,6 +603,19 @@ mod tests {
 
     fn failure(code: std::ffi::c_int) -> rusqlite::Error {
         rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None)
+    }
+
+    #[test]
+    fn result_codes_give_their_fix() {
+        let cases = [
+            (rusqlite::ffi::SQLITE_CANTOPEN, Some(Fix::File)),
+            (rusqlite::ffi::SQLITE_READONLY, Some(Fix::ReadOnly)),
+            (rusqlite::ffi::SQLITE_BUSY, Some(Fix::LockLimit)),
+            (rusqlite::ffi::SQLITE_CONSTRAINT, None),
+        ];
+        for (code, fix) in cases {
+            assert_eq!(exec_error(failure(code)).fix, fix, "code {code}");
+        }
     }
 
     #[test]

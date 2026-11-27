@@ -3,6 +3,7 @@
 
 pub mod catalog;
 pub mod clipboard;
+pub mod failure;
 pub mod filter_list;
 pub mod find;
 pub mod grid;

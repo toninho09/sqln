@@ -4,6 +4,7 @@ use super::artifact::{diagram_bytes, diagram_value};
 use super::*;
 use crate::app::auth::Use;
 use crate::catalog::{ObjectKind, RelationRef};
+use crate::connector::{Failure, Fix};
 use crate::exec::{AgentMetadata, ExecEvent, ExecutionEnd, MetadataRead, StatementStatus};
 use crate::sql::{Dialect, split};
 use crate::ui::text;
@@ -147,6 +148,7 @@ impl App {
                 session: session.into(),
                 state: "ready",
                 message: None,
+                fix: None,
                 cancel,
                 consoles,
                 connections,
@@ -546,6 +548,19 @@ impl App {
     pub(in crate::app) fn fail_agent_job(&mut self, id: &str, message: &str) {
         self.terminate_agent_job(id, "failed", message);
     }
+
+    /// Fails a job with a failure that can have a configuration fix.
+    pub(in crate::app) fn fail_agent_job_with(&mut self, id: &str, failure: &Failure) {
+        let open = self
+            .agent
+            .jobs
+            .get(id)
+            .is_some_and(|job| !finished(job.state));
+        self.fail_agent_job(id, &failure.message);
+        if let Some(job) = self.agent.jobs.get_mut(id).filter(|_| open) {
+            job.fix = failure.fix;
+        }
+    }
     pub(super) fn terminate_agent_job(&mut self, id: &str, state: &'static str, message: &str) {
         let Some(job) = self.agent.jobs.get_mut(id) else {
             return;
@@ -560,6 +575,8 @@ impl App {
         let connection = job.connections[0].0;
         job.state = state;
         job.message = Some(message.into());
+        // A fix of an earlier statement does not describe this end.
+        job.fix = None;
         job.cancel.cancel();
         let cancel = job.cancel.clone();
         job.draft = None;
@@ -701,6 +718,7 @@ fn statement_value(
     status: &StatementStatus,
     end: Option<&crate::connector::StatementEnd>,
     notices: Vec<String>,
+    fix: Option<Fix>,
 ) -> Value {
     let state = match status {
         StatementStatus::Running => "running",
@@ -714,6 +732,9 @@ fn statement_value(
     let mut value = json!({"index": index, "status": state});
     if let StatementStatus::Error(message) = status {
         value["error"] = json!(crate::grid::printable(message));
+    }
+    if let Some(fix) = fix {
+        value["fix"] = json!(fix.hint());
     }
     if let Some(end) = end {
         if end.has_columns {

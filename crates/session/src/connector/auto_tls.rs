@@ -7,8 +7,9 @@ use std::sync::Mutex;
 
 use crate::text;
 
+use super::fix::{host_fix, port_closed};
 use super::target::{NetworkTarget, Tls, TlsFiles};
-use super::{ConnectError, TlsRefusal};
+use super::{ConnectError, ErrorKind, Fix, TlsRefusal};
 
 /// Keeps the mode that connected, so that later sessions of the pool use it directly.
 #[derive(Debug, Default)]
@@ -29,8 +30,36 @@ impl AutoTls {
         F: Fn(NetworkTarget) -> Fut,
         Fut: Future<Output = Result<S, ConnectError>>,
     {
+        match self.attempt(target, open).await {
+            Ok(connected) => Ok(connected),
+            Err(mut error) => {
+                if error.kind == ErrorKind::Connection {
+                    error.fix = match error.fix {
+                        None => host_fix(&target.address).await,
+                        // Another address of the host can accept the port.
+                        Some(Fix::Port) if !port_closed(&target.address).await => None,
+                        fix => fix,
+                    };
+                }
+                Err(error)
+            }
+        }
+    }
+
+    async fn attempt<S, F, Fut>(
+        &self,
+        target: &NetworkTarget,
+        open: F,
+    ) -> Result<(S, Option<&'static str>), ConnectError>
+    where
+        F: Fn(NetworkTarget) -> Fut,
+        Fut: Future<Output = Result<S, ConnectError>>,
+    {
         if target.tls != Tls::Auto {
-            return Ok((open(target.clone()).await?, None));
+            return open(target.clone())
+                .await
+                .map(|session| (session, None))
+                .map_err(explicit_refusal);
         }
         if let Some(tls) = self.chosen() {
             return Ok((open(with_tls(target, tls)).await?, None));
@@ -81,6 +110,20 @@ fn with_tls(target: &NetworkTarget, tls: Tls) -> NetworkTarget {
         tls,
         ..target.clone()
     }
+}
+
+/// A refusal of an explicit TLS mode asks for the other mode. A fix of the driver stays:
+/// it reads a more exact cause, such as a rule of the server.
+fn explicit_refusal(error: ConnectError) -> ConnectError {
+    if error.fix.is_some() {
+        return error;
+    }
+    let fix = match error.tls_refused {
+        Some(TlsRefusal::ServerHasNoTls) => Some(Fix::TlsOff),
+        Some(TlsRefusal::ServerNeedsTls) => Some(Fix::TlsOn),
+        None => return error,
+    };
+    error.fix(fix)
 }
 
 /// Keeps the facts of the retry error and adds the message of the first attempt.
@@ -202,12 +245,33 @@ mod tests {
             let (result, attempts) = run(&auto, &explicit, |_| {
                 Err(refused(TlsRefusal::ServerHasNoTls))
             });
-            assert_eq!(
-                result.unwrap_err().tls_refused,
-                Some(TlsRefusal::ServerHasNoTls)
-            );
+            let error = result.unwrap_err();
+            assert_eq!(error.tls_refused, Some(TlsRefusal::ServerHasNoTls));
+            assert_eq!(error.fix, Some(Fix::TlsOff));
             assert_eq!(attempts, [tls]);
         }
+    }
+
+    #[test]
+    fn an_explicit_mode_without_tls_asks_for_tls_when_the_server_needs_it() {
+        let auto = AutoTls::default();
+        let explicit = target("db.example.test", Tls::Disabled);
+        let (result, _) = run(&auto, &explicit, |_| {
+            Err(refused(TlsRefusal::ServerNeedsTls))
+        });
+        assert_eq!(result.unwrap_err().fix, Some(Fix::TlsOn));
+    }
+
+    #[test]
+    fn a_failure_with_a_fix_keeps_it() {
+        let auto = AutoTls::default();
+        let local = target("127.0.0.1", Tls::Auto);
+        let (result, _) = run(&auto, &local, |_| {
+            Err(ConnectError::new("refused")
+                .kind(ErrorKind::Connection)
+                .fix(Some(Fix::CertificateIssuer)))
+        });
+        assert_eq!(result.unwrap_err().fix, Some(Fix::CertificateIssuer));
     }
 
     #[test]

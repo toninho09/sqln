@@ -3,6 +3,7 @@
 
 pub mod auto_tls;
 pub mod duckdb;
+pub mod fix;
 pub mod kafka;
 pub mod redis;
 pub mod sqlite;
@@ -18,6 +19,8 @@ use crate::catalog::{Catalog, ColumnNote, ForeignKey};
 use crate::sink::{ReadLimit, ResultSink};
 use crate::sql::Dialect;
 use crate::trace::TraceContext;
+
+pub use sqln_core::failure::{Failure, Fix};
 
 /// The database notices that one statement keeps. A loop of notices must not fill the
 /// memory, so a later notice only adds to a count.
@@ -135,6 +138,8 @@ pub struct ConnectError {
     /// The server refused the TLS mode of the attempt. The driver reads it from the
     /// protocol or from an error code, never from the error text.
     pub tls_refused: Option<TlsRefusal>,
+    /// The configuration that can correct the failure, read from a code or a setting.
+    pub fix: Option<Fix>,
 }
 
 /// Why the server refused the TLS mode of a connection attempt.
@@ -154,6 +159,7 @@ impl ConnectError {
             password_refused: false,
             kind: ErrorKind::Other,
             tls_refused: None,
+            fix: None,
         }
     }
 
@@ -163,6 +169,7 @@ impl ConnectError {
             password_refused: true,
             kind: ErrorKind::Auth,
             tls_refused: None,
+            fix: None,
         }
     }
 
@@ -177,6 +184,18 @@ impl ConnectError {
         self.tls_refused = Some(refusal);
         self
     }
+
+    #[must_use]
+    pub fn fix(mut self, fix: Option<Fix>) -> Self {
+        self.fix = fix;
+        self
+    }
+}
+
+impl From<ConnectError> for Failure {
+    fn from(error: ConnectError) -> Self {
+        Failure::new(error.message, error.fix)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -185,6 +204,8 @@ pub struct ExecError {
     /// Byte offset of the error in the statement, when the database reports it.
     pub offset: Option<usize>,
     pub kind: ErrorKind,
+    /// The configuration that can correct the failure, read from a code or a setting.
+    pub fix: Option<Fix>,
 }
 
 impl std::fmt::Display for ExecError {
@@ -199,6 +220,7 @@ impl ExecError {
             message: message.into(),
             offset: None,
             kind: ErrorKind::Other,
+            fix: None,
         }
     }
 
@@ -218,9 +240,21 @@ impl ExecError {
         self
     }
 
+    #[must_use]
+    pub fn fix(mut self, fix: Option<Fix>) -> Self {
+        self.fix = fix;
+        self
+    }
+
     /// Returns true when the session of this error cannot run another statement.
     pub fn closes_session(&self) -> bool {
         self.kind == ErrorKind::Connection
+    }
+}
+
+impl From<ExecError> for Failure {
+    fn from(error: ExecError) -> Self {
+        Failure::new(error.message, error.fix)
     }
 }
 

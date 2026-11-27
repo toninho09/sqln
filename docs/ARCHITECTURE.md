@@ -40,7 +40,7 @@ sqln-vault                           │  sqln-duckdb, sqln-redis, sqln-kafka,
 
 | Crate | Folder | Contents |
 |---|---|---|
-| `sqln-core` | `crates/core` | `catalog`, `clipboard`, `filter_list`, `find`, `grid`, `input`, `limited`, `line_input`, `log`, `mark_list`, `message`, `progress`, `sink`, `text`, `wrap` |
+| `sqln-core` | `crates/core` | `catalog`, `clipboard`, `failure`, `filter_list`, `find`, `grid`, `input`, `limited`, `line_input`, `log`, `mark_list`, `message`, `progress`, `sink`, `text`, `wrap` |
 | `sqln-sql` | `crates/sql` | `sql`, `structure` |
 | `sqln-session` | `crates/session` | `connector` (the contract, connection targets, `tls`, `words`, and the parts of the Kafka and Redis drivers that need no driver library), `pool`, `trace` |
 | `sqln-vault` | `crates/vault` | The system vault. `sqln-store` and `sqln-kafka` use it |
@@ -516,6 +516,7 @@ trait Session: Send {
 
 The `async-trait` crate makes `Box<dyn Session>` possible.
 `ExecError` and `ConnectError` carry an `ErrorKind`: `Syntax`, `Permission`, `Auth`, `Connection`, `Timeout`, `Canceled`, `Resource`, `Unsupported`, or `Other`. Each driver reads it from the code of its library or server (SQLSTATE, MySQL error number, SQLite and DuckDB result code, Redis error kind, Databricks error code or HTTP status), never from the message text. A `Connection` error closes the session in the runner, because its state is unknown. `ConnectError::password_refused` stays separate from `Auth`: a rule such as `pg_hba.conf` is `Auth`, but a new password does not change it.
+`ExecError` and `ConnectError` also carry `fix: Option<Fix>`, the configuration that can correct the failure. `Fix` and `Failure` (a message and its fix) live in `sqln_core::failure`, with the hint texts, and `sqln_session::connector` exports them. A driver reads the fix from a code; `connector::fix::network_fix` reads it from an `io::Error` or a `rustls` certificate error, and `AutoTls` adds the fix of an explicit TLS mode and of a host name that does not resolve, and keeps `Port` only when each address of the host refuses it. The runner adds `SqlTimeout` and decides the source of a read-only refusal. `StatementFinished` and `ExecutionFinished` carry the fix to **Messages**, the agent replies, and batch stderr. The catalog and column reads put the hint at the end of their one-line message.
 `read_foreign_keys` and `read_referencing_keys` have an empty default, so a source without keys does not write them. `Manager::load_columns` reads both lists together with the columns, and a key failure does not fail the columns. A key that reaches a relation has the shape of a key that leaves it: `columns` are the columns of the relation, and `target` is the other table.
 `read_catalog` also reads the supported routines, sequences, triggers, and types into `Schema::objects`.
 `read_catalog_of` keeps the configured schemas and the current schema. Redis skips reads of hidden databases.

@@ -863,6 +863,7 @@ A positional `.sql` path is not a script-opening argument; positional file targe
 | Native mouse selection does not work | SQLN captures the mouse; iTerm supports native selection while you hold `Option` |
 | Icons appear as empty boxes | Choose Unicode icons, or install and select a Nerd Font |
 | Theme colors look wrong | Choose `ansi`, or use `NO_COLOR=1 sqln` |
+| An error has a `Hint:` line | The failure comes from a setting of the connection or a rule of the server. The hint names the field to change, or the administrator to ask |
 | A remote connection fails TLS verification | Check the hostname, CA chain, system clock, and configured CA file. A certificate error never falls back to no TLS |
 | Messages shows "SQLN connected without TLS" | The server has no TLS. Turn on TLS on the server, or set TLS to **Off** (`sslmode=disable`) to make the choice explicit |
 | The Linux vault is unavailable | Check the session D-Bus and Secret Service; use session-only passwords if necessary |

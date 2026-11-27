@@ -2,6 +2,24 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## Configuration hints — 2026-11-27
+
+The user asked that a failure caused by a configuration tells how to correct it. This entry is the later step that the entry "Error kinds of the connector contract" names.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Source | `ConnectError` and `ExecError` get `fix: Option<Fix>`. A driver reads it from a code, an error type, or a setting: SQLSTATE, MySQL error number, SQLite result code, Redis error kind, librdkafka error code, `io::ErrorKind`, and `rustls::CertificateError` | Matching the message text | The rule of `ErrorKind` applies: text changes with the server version and the language |
+| Presentation | One line `Hint: …` after the error: the next line in **Messages** and in batch stderr, the rows below the error in the connection form, and the end of the line in the status bar | A command that opens the connection form | User choice |
+| Scope | Connection failures and execution failures: TLS mode, certificate, host, port, socket, file, database, pool limit, connect limit, `Read only`, statement time limit, and SQLite lock limit | Connection failures only | User choice |
+| Server rules | A rule of the server also gets a hint: `pg_hba.conf` (`28000`), a host that MySQL refuses (`1130`), a missing privilege, a read-only server or replica, and a certificate date | Hints only for settings of SQLN | User choice. The hint names the administrator when SQLN cannot correct it |
+| Read only | The runner keeps `ReadOnly` only when the `Read only` setting of the connection is on. Without the setting, the hint names the server, the file, or the transaction. The read policy of an agent gives no hint | One hint for each refusal | The user changes only the setting of the connection |
+| Explicit TLS | A refusal of an explicit TLS mode asks for the other mode. A fix of the driver stays, such as `ServerRule` for `28000` | Always the TLS hint | `28000` is also a rule of the user or of the host |
+| Host names | After a connection failure without a fix, `AutoTls` resolves a host name once. A failed resolution gives `Host` | A text match of the DNS error | `io::ErrorKind` has no stable kind for a DNS failure |
+| Refused port | After a refusal, `AutoTls` tries each address of the host. `Port` stays only when each address refuses | Trust the refusal of the driver | A driver reports the error of one address only, such as `::1` of `localhost`, and hides the error of another address |
+| MCP | `statements[].fix` and the `fix` of a task hold the hint text. The IPC version stays 3 | A new IPC version | IPC 3 is not released, and the field is optional in the reply |
+| Place | `Fix` and `Failure` are in `sqln-core`, with the hint texts. `sqln-session` exports them in `connector` | `sqln-session` | They need no other crate |
+| Databricks | No hint. Its texts already name the action | A hint for each code | The texts already give the next action |
+
 ## Automatic TLS — 2026-11-26
 
 The user asked that a first connection does not fail with a TLS error, in the interface and in the command line. This entry replaces the rule "local without TLS, remote verifies" of the connection text, the form, and `config.json`.

@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout};
 
-use crate::connector::{ConnectError, Connector, ResetOutcome, Session};
+use crate::connector::{ConnectError, Connector, Fix, ResetOutcome, Session};
 use crate::sql::Dialect;
 use crate::trace::TraceContext;
 
@@ -305,9 +305,8 @@ impl Pool {
         match timeout(self.inner.connect_timeout, connect).await {
             Ok(session) => lease.session = Some(session?),
             Err(_) => {
-                return Err(ConnectError::new(
-                    "The connection time limit ended.".to_owned(),
-                ));
+                return Err(ConnectError::new(crate::text::CONNECT_LIMIT_ENDED)
+                    .fix(Some(Fix::ConnectLimit)));
             }
         }
         Ok(lease)

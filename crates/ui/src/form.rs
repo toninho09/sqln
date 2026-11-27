@@ -11,6 +11,7 @@ use crate::connection::{
     DEFAULT_BUSY_SECONDS, DEFAULT_CONNECT_SECONDS, DEFAULT_IDLE_SECONDS, DEFAULT_POOL_LIMIT,
     DEFAULT_SQL_SECONDS, Definition, Source,
 };
+use crate::connector::Failure;
 use crate::connector::duckdb::DuckdbTarget;
 use crate::connector::sqlite::{SqliteTarget, validate_path};
 use crate::connector::target::{
@@ -213,7 +214,8 @@ pub enum FormNote {
     Info(String),
     /// The result of an action that worked.
     Success(String),
-    Error(String),
+    /// A failure, with the hint of its fix on the next rows.
+    Error(Failure),
 }
 
 /// The window that chooses the visible schemas. It covers the form.

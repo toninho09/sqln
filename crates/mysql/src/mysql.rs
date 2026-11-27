@@ -11,10 +11,11 @@ use mysql_async::{ClientIdentity, Column, Conn, Error as DriverError, Opts, Opts
 use tokio::time::timeout;
 
 use super::auto_tls::AutoTls;
+use super::fix::network_fix;
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
-    Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, MAX_NOTICES, Namespace,
-    ResetOutcome, Session, SessionContext, StatementEnd, TlsRefusal, TransactionCommand,
+    Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, Fix, MAX_NOTICES,
+    Namespace, ResetOutcome, Session, SessionContext, StatementEnd, TlsRefusal, TransactionCommand,
     TransactionState, describe, tls,
 };
 use crate::catalog::{
@@ -96,7 +97,7 @@ fn ssl_options(tls_mode: &Tls) -> Result<Option<SslOpts>, ConnectError> {
 const SECURE_TRANSPORT_REQUIRED: u16 = 3159;
 
 /// Do not write this value in a log: its debug text shows the password.
-fn connect_error(error: &mysql_async::Error) -> ConnectError {
+fn connect_error(error: &mysql_async::Error, address: &Address) -> ConnectError {
     match error {
         // `1045` is a wrong password, and `1698` is an account that needs another one.
         mysql_async::Error::Server(server) if matches!(server.code, 1045 | 1698) => {
@@ -113,7 +114,32 @@ fn connect_error(error: &mysql_async::Error) -> ConnectError {
                 .kind(error_kind(error))
                 .tls_refused(TlsRefusal::ServerHasNoTls)
         }
-        _ => ConnectError::new(describe(error)).kind(error_kind(error)),
+        // `1049` is an unknown database. In a statement it is a name of the SQL instead.
+        mysql_async::Error::Server(server) if server.code == 1049 => {
+            ConnectError::new(describe(error))
+                .kind(error_kind(error))
+                .fix(Some(Fix::Database))
+        }
+        mysql_async::Error::Server(server) => ConnectError::new(describe(error))
+            .kind(error_kind(error))
+            .fix(code_fix(server.code)),
+        _ => ConnectError::new(describe(error))
+            .kind(error_kind(error))
+            .fix(network_fix(error, address)),
+    }
+}
+
+/// The configuration that can correct a server error code. See "Server Error Message
+/// Reference" of MySQL. `1130` is a host that the server does not accept, and `1290`
+/// is a server with `read_only`.
+fn code_fix(code: u16) -> Option<Fix> {
+    match code {
+        1130 => Some(Fix::ServerRule),
+        1040 | 1203 => Some(Fix::PoolLimit),
+        1044 | 1142 | 1143 | 1227 => Some(Fix::Privilege),
+        1792 => Some(Fix::ReadOnly),
+        1290 => Some(Fix::ServerReadOnly),
+        _ => None,
     }
 }
 
@@ -157,7 +183,7 @@ async fn connect_once(target: NetworkTarget) -> Result<MySqlSession, ConnectErro
     let options = driver_options(&target)?;
     let conn = Conn::new(options.clone())
         .await
-        .map_err(|error| connect_error(&error))?;
+        .map_err(|error| connect_error(&error, &target.address))?;
     let canceller = Arc::new(MySqlCanceller {
         options,
         connection: conn.id(),
@@ -361,7 +387,8 @@ fn exec_error(error: &DriverError, sql: &str) -> ExecError {
             code_kind(server.code),
             format!("{} ({})", server.message, server.code),
         )
-        .at(syntax_offset(&server.message, sql)),
+        .at(syntax_offset(&server.message, sql))
+        .fix(code_fix(server.code)),
         other => ExecError::with_kind(error_kind(other), describe(other)),
     }
 }
@@ -955,6 +982,46 @@ mod tests {
         writer.finish()
     }
 
+    fn address() -> Address {
+        Address::Tcp {
+            host: "127.0.0.1".to_owned(),
+            port: 3306,
+        }
+    }
+
+    #[test]
+    fn configuration_codes_give_their_fix() {
+        let cases = [
+            (1049, Some(Fix::Database)),
+            (1130, Some(Fix::ServerRule)),
+            (1040, Some(Fix::PoolLimit)),
+            (1203, Some(Fix::PoolLimit)),
+            (1142, Some(Fix::Privilege)),
+            (1792, Some(Fix::ReadOnly)),
+            (1290, Some(Fix::ServerReadOnly)),
+            (1064, None),
+        ];
+        for (code, fix) in cases {
+            let error = connect_error(&server_error(code, ""), &address());
+            assert_eq!(error.fix, fix, "code {code}");
+        }
+        // In a statement, `1049` is a name of the SQL, not the database of the connection.
+        assert_eq!(exec_error(&server_error(1049, ""), "USE x").fix, None);
+        assert_eq!(
+            exec_error(&server_error(1792, ""), "INSERT").fix,
+            Some(Fix::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn a_refused_port_asks_for_the_port() {
+        let refused = DriverError::Io(mysql_async::IoError::Io(std::io::Error::from(
+            std::io::ErrorKind::ConnectionRefused,
+        )));
+        assert_eq!(connect_error(&refused, &address()).fix, Some(Fix::Port));
+        assert_eq!(connect_error(&io_error(), &address()).fix, None);
+    }
+
     #[test]
     fn server_codes_give_their_kind() {
         let cases = [
@@ -989,15 +1056,15 @@ mod tests {
     #[test]
     fn a_wrong_password_is_refused_and_keeps_the_text_of_the_driver() {
         for code in [1045, 1698] {
-            let error = connect_error(&server_error(code, "Access denied for 'user'"));
+            let error = connect_error(&server_error(code, "Access denied for 'user'"), &address());
             assert!(error.password_refused, "code {code}");
             assert_eq!(error.kind, ErrorKind::Auth, "code {code}");
             assert!(error.message.contains("Access denied"), "{}", error.message);
         }
-        let error = connect_error(&server_error(1064, "Syntax error"));
+        let error = connect_error(&server_error(1064, "Syntax error"), &address());
         assert!(!error.password_refused);
         assert_eq!(error.kind, ErrorKind::Syntax);
-        let error = connect_error(&io_error());
+        let error = connect_error(&io_error(), &address());
         assert!(!error.password_refused);
         assert_eq!(error.kind, ErrorKind::Connection);
     }

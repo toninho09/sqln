@@ -92,7 +92,7 @@ impl App {
     pub(in crate::app) fn on_agent_metadata(
         &mut self,
         id: &str,
-        result: Result<AgentMetadata, String>,
+        result: Result<AgentMetadata, Failure>,
     ) {
         let Some(job) = self.agent.jobs.get(id) else {
             return;
@@ -129,7 +129,10 @@ impl App {
                 serde_json::to_string(&fields_value(topic, &paths, &notes))
                     .map_err(|_| "Cannot encode the fields.".to_owned())
             }
-            Err(message) => Err(message),
+            Err(failure) => {
+                self.fail_agent_job_with(id, &failure);
+                return;
+            }
         };
         match text.and_then(|text| Text::new(text, &self.budget).map_err(|error| error.message)) {
             Ok(text) => {

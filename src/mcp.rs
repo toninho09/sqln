@@ -52,7 +52,8 @@ describe with schema and no object reads the catalog of that schema; a relation 
 A Kafka connection does not accept standard SQL: follow syntax.Kafka, which the first get_context of the session holds; get_context with include_syntax sends it again. \
 Bind each Kafka read with LIMIT, SCAN, or START AT; SQLN adds a SCAN to a read without one. When describe gives a topic no fields, read a few messages with LIMIT 5 to learn the paths. \
 query runs SQL in your own console and returns its rows. Tools wait for the end of their task; call job when a reply says that the task continues. \
-Read each statement of a reply: limit means that the grid kept only part of the rows, and notices hold the database messages. A Kafka result has read, with scanned, matched, and the end of the read; end scan with no match does not mean an empty topic. \
+Read each statement of a reply: limit means that the grid kept only part of the rows, and notices hold the database messages. \
+A fix in a statement or a reply names the connection setting or the server rule that caused the failure: tell it to the user, because you cannot change connections. A Kafka result has read, with scanned, matched, and the end of the read; end scan with no match does not mean an empty topic. \
 Without full access, only reads run: send other SQL with edit_console for the user to review and run. Use exact IDs and revisions.";
 
 /// Most clients stop a tool call after 60 seconds.

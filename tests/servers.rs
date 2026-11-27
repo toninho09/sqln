@@ -22,8 +22,8 @@ use sqln::compare::sql::{compare_sql, rows_sql, table_columns_sql};
 use sqln::connection::{Definition, Source};
 use sqln::connector::target::parse_uri;
 use sqln::connector::{
-    ConnectError, Connector, ErrorKind, Session, TlsRefusal, TransactionCommand, TransactionState,
-    network_connector,
+    ConnectError, Connector, ErrorKind, Fix, Session, TlsRefusal, TransactionCommand,
+    TransactionState, network_connector,
 };
 use sqln::definition::{Target as DdlTarget, definition_sql, definition_text};
 use sqln::diagram::mermaid::to_mermaid;
@@ -2100,15 +2100,17 @@ fn tls_verifies_the_certificate_and_the_name() {
             "{scheme}://{user}:spike@localhost:{port}/spike?sslmode=verify-full&sslrootcert={}",
             other.display()
         );
-        let error = try_connect(&wrong_ca).err().unwrap();
-        println!("{scheme}, wrong CA: {error}");
+        let error = connect_error(&wrong_ca);
+        println!("{scheme}, wrong CA: {}", error.message);
+        assert_certificate_fix(&error, scheme);
 
         let wrong_name = format!(
             "{scheme}://{user}:spike@127.0.0.1:{port}/spike?sslmode=verify-full&sslrootcert={}",
             ca.display()
         );
-        let error = try_connect(&wrong_name).err().unwrap();
-        println!("{scheme}, wrong name: {error}");
+        let error = connect_error(&wrong_name);
+        println!("{scheme}, wrong name: {}", error.message);
+        assert_eq!(error.fix, Some(Fix::CertificateName), "{scheme}: {error:?}");
     }
 }
 
@@ -2134,6 +2136,45 @@ fn tls_refuses_a_server_without_tls() {
             Kind::MySql => None,
         };
         assert_eq!(error.tls_refused, expected, "{scheme}: {error:?}");
+        // The explicit TLS mode asks for the other mode, or for the CA of the server.
+        let fix = match server.kind {
+            Kind::Postgres => Some(Fix::TlsOff),
+            Kind::MySql => Some(Fix::CertificateIssuer),
+        };
+        assert_eq!(error.fix, fix, "{scheme}: {error:?}");
+    }
+}
+
+#[test]
+fn a_connection_failure_names_the_field_to_change() {
+    for server in servers() {
+        let (scheme, port, user) = match server.kind {
+            Kind::Postgres => ("postgres", 54329, "postgres"),
+            Kind::MySql => ("mysql", 33069, "root"),
+        };
+        let absent = format!("{scheme}://{user}:spike@127.0.0.1:{port}/absent_database");
+        let error = connect_error(&absent);
+        assert_eq!(error.fix, Some(Fix::Database), "{scheme}: {error:?}");
+        // Nothing listens on port 1.
+        let closed = format!("{scheme}://{user}:spike@127.0.0.1:1/spike");
+        let error = connect_error(&closed);
+        assert_eq!(error.fix, Some(Fix::Port), "{scheme}: {error:?}");
+    }
+}
+
+/// `localhost` has two addresses. A driver can report the refusal of `::1` and hide the
+/// certificate error of `127.0.0.1`: then no hint is right, but a port hint is wrong.
+fn assert_certificate_fix(error: &ConnectError, scheme: &str) {
+    assert!(
+        matches!(error.fix, Some(Fix::CertificateIssuer) | None),
+        "{scheme}: {error:?}"
+    );
+    if !error.message.contains("refused") {
+        assert_eq!(
+            error.fix,
+            Some(Fix::CertificateIssuer),
+            "{scheme}: {error:?}"
+        );
     }
 }
 
@@ -2161,6 +2202,7 @@ fn a_certificate_error_is_not_a_server_without_tls() {
         );
         let error = connect_error(&uri);
         assert_eq!(error.tls_refused, None, "{}: {error:?}", server.scheme);
+        assert_certificate_fix(&error, server.scheme);
     }
 }
 
@@ -2184,6 +2226,8 @@ fn a_postgres_rule_that_needs_tls_refuses_a_plain_attempt() {
         Some(TlsRefusal::ServerNeedsTls),
         "{error:?}"
     );
+    // `28000` is a rule of the server: the hint names the user and the TLS mode.
+    assert_eq!(error.fix, Some(Fix::ServerRule), "{error:?}");
 
     // Without a choice, the local address tries with TLS after the refusal. The test CA
     // is not in the system roots, so the second attempt fails and both causes stay.

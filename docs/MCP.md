@@ -162,10 +162,12 @@ States include `validating`, `ready`, `waiting_confirmation`, `waiting_credentia
 - `statements` holds the end of each executed statement: `status`, `rows` for a result, `changed_rows` for a write, and `error`.
   `limit` says that the grid kept only part of the rows: `row_cap`, `memory_budget`, or `value_too_large`.
   `notices` holds the notices of the database for that statement: at most 10, and 2 KiB in all, without terminal control sequences.
+  `fix` holds a `Hint:` line when the error comes from a setting of the connection or a rule of the server, such as the TLS mode, the port, the database, or `Read only`. The agent cannot change connections, so it tells the user. A refusal of the read policy has no `fix`.
 - `results` holds the first page of each query or comparison result: 100 rows by default, set by `rows` (0 to 1,000).
   `column_types` gives the database type of each column, such as `int4`, `decimal`, or `DECIMAL(5,2)`, as the database names it. A column has `null` when the source gives no type: Redis, Kafka, a SQLite expression, and a PostgreSQL statement that the server cannot describe before it runs, such as in a failed transaction.
   The pages share half of the response limit. A result without space has `rows_omitted: true`; read it with `read_result`.
   A Kafka result also has `read`: `scanned`, `matched`, and `end` (`end` of the topic, `limit`, `scan`, `stopped`, or `grid` when the grid stopped it). After `scan` with no match, `next_action` says that the rest of the topic was not read.
+- `fix` holds the same `Hint:` line for the failure of the task, such as a connection that does not open. A task without such a cause has no `fix`.
 - `default_scan` holds the `SCAN` that SQLN added to a Kafka read without a bound. See [Consoles and queries](#consoles-and-queries).
 - `artifact` holds the first page of a text artifact, such as DDL, a catalog, a diagram, or a sync script. `job` with `artifact_offset` reads the next page.
 

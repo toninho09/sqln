@@ -84,6 +84,7 @@ fn finish_statement(
 ) {
     console.on_event(
         ExecEvent::StatementFinished {
+            fix: None,
             key,
             status,
             end: Some(StatementEnd {
@@ -99,6 +100,7 @@ fn finish_statement(
 fn finish(console: &mut Console, budget: &Budget, execution: u64, end: ExecutionEnd) {
     console.on_event(
         ExecEvent::ExecutionFinished {
+            fix: None,
             console: 1,
             execution,
             end,

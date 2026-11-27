@@ -449,6 +449,7 @@ fn a_read_returns_its_rows_to_the_budget_at_the_end_and_at_the_close() {
     );
     tab.on_event(
         ExecEvent::ExecutionFinished {
+            fix: None,
             console: 7,
             execution: 1,
             end: ExecutionEnd::Completed,

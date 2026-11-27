@@ -1819,9 +1819,18 @@ fn the_form_keeps_a_note_visible_in_each_placement() {
 
 /// Draws the form with a note. It returns the screen and the rows of the note and the buttons.
 fn form_with_note(note: FormNote, theme: &Theme) -> (Buffer, Vec<String>, usize) {
+    form_with_note_at(note, theme, 100, 40)
+}
+
+fn form_with_note_at(
+    note: FormNote,
+    theme: &Theme,
+    width: u16,
+    height: u16,
+) -> (Buffer, Vec<String>, usize) {
     let mut form = ConnectionForm::new_in(false);
     form.note = Some(note);
-    let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
         .draw(|frame| {
             sqln::ui::form::draw_form(frame, &form, theme);
@@ -1855,9 +1864,48 @@ fn a_short_note_stands_on_the_row_above_the_buttons() {
 #[test]
 fn a_long_note_uses_both_rows_and_ends_above_the_buttons() {
     let message = "start ".repeat(20) + "last";
-    let (_, lines, buttons) = form_with_note(FormNote::Error(message), &Theme::plain());
+    let (_, lines, buttons) = form_with_note(FormNote::Error(message.into()), &Theme::plain());
     assert!(lines[buttons - 2].contains("start"), "{}", lines.join("\n"));
     assert!(lines[buttons - 1].contains("last"), "{}", lines.join("\n"));
+}
+
+#[test]
+fn a_failure_shows_its_fix_below_the_error_at_the_minimum_size() {
+    use sqln::connector::{Failure, Fix};
+    let failure = Failure::new("Connection refused (os error 61)", Some(Fix::Port));
+    let theme = Theme::astrodark();
+    let (buffer, lines, buttons) = form_with_note_at(FormNote::Error(failure), &theme, 80, 24);
+    let screen = lines.join("\n");
+    let error = lines
+        .iter()
+        .position(|line| line.contains("Connection refused"))
+        .unwrap_or_else(|| panic!("{screen}"));
+    let hint = lines
+        .iter()
+        .position(|line| line.contains("Hint:"))
+        .unwrap_or_else(|| panic!("{screen}"));
+    assert!(error < hint && hint < buttons, "{screen}");
+    // The whole hint shows: it ends on the row above the buttons.
+    assert!(lines[buttons - 1].contains("server."), "{screen}");
+    assert!(screen.contains(sqln::ui::text::FIELD_NAME), "{screen}");
+    let column = lines[hint].find("Hint:").unwrap();
+    let column = lines[hint][..column].chars().count() as u16;
+    assert_eq!(buffer[(column, hint as u16)].fg, theme.hint.fg.unwrap());
+    let column = lines[error].find("Connection").unwrap();
+    let column = lines[error][..column].chars().count() as u16;
+    assert_eq!(buffer[(column, error as u16)].fg, theme.error.fg.unwrap());
+}
+
+#[test]
+fn a_failure_without_a_fix_keeps_the_note_above_the_buttons() {
+    let (_, lines, buttons) =
+        form_with_note_at(FormNote::Error("refused".into()), &Theme::plain(), 80, 24);
+    assert!(
+        lines[buttons - 1].contains("refused"),
+        "{}",
+        lines.join("\n")
+    );
+    assert!(!lines.join("\n").contains("Hint:"), "{}", lines.join("\n"));
 }
 
 #[test]
@@ -1878,7 +1926,7 @@ fn each_kind_of_note_has_its_own_color() {
         theme.hint.fg.unwrap()
     );
     assert_eq!(
-        color_of(FormNote::Error("message".to_owned())),
+        color_of(FormNote::Error("message".into())),
         theme.error.fg.unwrap()
     );
     assert_ne!(theme.mark_good.fg, theme.hint.fg);

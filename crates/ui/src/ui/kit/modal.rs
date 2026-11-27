@@ -30,6 +30,12 @@ pub fn open_modal(frame: &mut Frame, area: Rect, title: &str, theme: &Theme) -> 
     inner
 }
 
+/// Returns the width of the contents of a modal with a sidebar, from the modal width.
+pub fn sidebar_content_width(width: u16) -> u16 {
+    // The left and right borders, the sidebar, and its divider.
+    width.saturating_sub(2 + SIDEBAR_WIDTH + 1 + LEFT + RIGHT)
+}
+
 /// The areas of a modal with a sidebar: the contents, the rows of the sidebar, and the
 /// fields over them.
 pub struct SidebarModal {

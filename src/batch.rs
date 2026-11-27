@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::connection::{Definition, Source};
+use crate::connector::Failure;
 use crate::connector::duckdb::{DuckdbTarget, file_source as duckdb_source};
 use crate::connector::sqlite::{SqliteTarget, file_source as sqlite_source};
 use crate::connector::target::{OpenTarget, open_target};
@@ -44,6 +45,8 @@ pub struct Options {
 pub struct Error {
     pub message: String,
     pub usage: bool,
+    /// The line that tells which configuration can correct the failure.
+    pub hint: Option<String>,
 }
 
 impl Error {
@@ -51,6 +54,7 @@ impl Error {
         Self {
             message: message.into(),
             usage: true,
+            hint: None,
         }
     }
 
@@ -58,13 +62,32 @@ impl Error {
         Self {
             message: message.into(),
             usage: false,
+            hint: None,
+        }
+    }
+}
+
+impl From<Failure> for Error {
+    fn from(failure: Failure) -> Self {
+        Self {
+            hint: failure.hint(),
+            message: failure.message,
+            usage: false,
         }
     }
 }
 
 /// Reports a final failure without waiting for a full error stream on Unix.
 pub fn report_error(message: &str) {
-    let message = format!("sqln: {}\n", printable(message));
+    report_failure(message, None);
+}
+
+/// Reports a final failure and, on the next line, the hint of its fix.
+pub fn report_failure(message: &str, hint: Option<&str>) {
+    let mut message = format!("sqln: {}\n", printable(message));
+    if let Some(hint) = hint {
+        message.push_str(&format!("sqln: {}\n", printable(hint)));
+    }
     #[cfg(unix)]
     output::report_error(message.as_bytes());
     #[cfg(not(unix))]
@@ -332,41 +355,42 @@ fn finish(
     sinks: &mut Sinks<'_>,
 ) -> Result<(), Error> {
     if summary.failed() {
-        return Err(Error::failed(describe(summary, total, continue_on_error)));
+        return Err(describe(summary, total, continue_on_error).into());
     }
     sinks.finish()?;
     Ok(())
 }
 
-/// One text line that explains a failed run.
-fn describe(summary: &Summary, total: usize, continue_on_error: bool) -> String {
+/// One text line that explains a failed run, and the fix of its cause.
+fn describe(summary: &Summary, total: usize, continue_on_error: bool) -> Failure {
     if let Some(output) = &summary.output_failed {
-        return output.clone();
+        return output.clone().into();
     }
-    if let Some(message) = &summary.run_message {
-        return message.clone();
+    if let Some(failure) = &summary.run_message {
+        return failure.clone();
     }
     if !summary.failures.is_empty() {
         if continue_on_error {
-            return format!(
+            let message = format!(
                 "{} of {} instructions failed.",
                 summary.failures.len(),
                 total
             );
+            return message.into();
         }
-        let (index, message) = &summary.failures[0];
-        return format!("[{index}] {message}");
+        let (index, failure) = &summary.failures[0];
+        return Failure::new(format!("[{index}] {}", failure.message), failure.fix);
     }
-    format!("The execution did not complete: {:?}.", summary.end)
+    format!("The execution did not complete: {:?}.", summary.end).into()
 }
 
 /// What one execution reported.
 #[derive(Default)]
 struct Summary {
     end: Option<ExecutionEnd>,
-    run_message: Option<String>,
-    /// Instruction failures: the one-based number and the message.
-    failures: Vec<(usize, String)>,
+    run_message: Option<Failure>,
+    /// Instruction failures: the one-based number and the failure.
+    failures: Vec<(usize, Failure)>,
     output_failed: Option<String>,
     signal: bool,
 }
@@ -426,7 +450,11 @@ fn drain(
             }
             ExecEvent::Notice { text, .. } => sinks.notice(&text),
             ExecEvent::StatementFinished {
-                key, status, end, ..
+                key,
+                status,
+                end,
+                fix,
+                ..
             } => {
                 let index = usize::from(numbered) * (key.index + 1);
                 match status {
@@ -441,17 +469,17 @@ fn drain(
                         }
                     }
                     StatementStatus::Error(message) => {
-                        summary.failures.push((index, message.clone()));
+                        let failure = Failure::new(message, fix);
+                        summary.failures.push((index, failure.clone()));
                         if continue_on_error {
-                            sinks.failure_line(index, &message)
+                            sinks.failure_line(index, &failure)
                         } else {
                             Ok(())
                         }
                     }
                     other => {
-                        summary
-                            .failures
-                            .push((index, format!("The statement did not complete: {other:?}.")));
+                        let message = format!("The statement did not complete: {other:?}.");
+                        summary.failures.push((index, Failure::new(message, fix)));
                         Ok(())
                     }
                 }
@@ -462,9 +490,11 @@ fn drain(
                 manager.confirm_close(console, true);
                 Ok(())
             }
-            ExecEvent::ExecutionFinished { end, message, .. } => {
+            ExecEvent::ExecutionFinished {
+                end, message, fix, ..
+            } => {
                 summary.end = Some(end);
-                summary.run_message = message;
+                summary.run_message = message.map(|message| Failure::new(message, fix));
                 return Ok(summary);
             }
             _ => Ok(()),
@@ -579,8 +609,17 @@ impl<'a> Sinks<'a> {
         writeln!(self.errors, "sqln: [{index}] {changed} rows affected.")
     }
 
-    fn failure_line(&mut self, index: usize, message: &str) -> io::Result<()> {
-        writeln!(self.errors, "sqln: [{index}] {}", printable(message))
+    /// Writes a failure, and the hint of its fix on the next line.
+    fn failure_line(&mut self, index: usize, failure: &Failure) -> io::Result<()> {
+        writeln!(
+            self.errors,
+            "sqln: [{index}] {}",
+            printable(&failure.message)
+        )?;
+        match failure.hint() {
+            Some(hint) => writeln!(self.errors, "sqln: [{index}] {}", printable(&hint)),
+            None => Ok(()),
+        }
     }
 
     /// Ends the last set and sends the waiting bytes. Without a set, the writer

@@ -358,6 +358,8 @@ struct Job {
     session: String,
     state: &'static str,
     message: Option<String>,
+    /// The configuration that can correct the failure of `message`.
+    fix: Option<crate::connector::Fix>,
     cancel: CancellationToken,
     consoles: Vec<ConsoleId>,
     connections: Vec<(ConnectionId, u64)>,
@@ -827,6 +829,9 @@ impl App {
         });
         if scan_ended_empty {
             reply["next_action"] = json!(crate::ui::text::AGENT_KAFKA_SCAN_EMPTY);
+        }
+        if let Some(fix) = job.fix {
+            reply["fix"] = json!(fix.hint());
         }
         Ok(reply)
     }

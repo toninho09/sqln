@@ -17,7 +17,9 @@ use super::{
     Settings, StatementKey, StatementStatus, StreamControl, context,
 };
 use crate::command_log::TraceContext;
-use crate::connector::{ExecError, StatementEnd, TransactionCommand, TransactionState};
+use crate::connector::{
+    ExecError, Failure, Fix, StatementEnd, TransactionCommand, TransactionState,
+};
 use crate::export::ExportWriter;
 use crate::grid::Budget;
 use crate::pool::Lease;
@@ -161,13 +163,20 @@ impl ConsoleTask {
         }
     }
 
-    async fn finish(&mut self, execution: ExecutionId, end: ExecutionEnd, message: Option<String>) {
+    async fn finish(
+        &mut self,
+        execution: ExecutionId,
+        end: ExecutionEnd,
+        failure: Option<Failure>,
+    ) {
         let console = self.console;
+        let fix = failure.as_ref().and_then(|failure| failure.fix);
         self.emit(ExecEvent::ExecutionFinished {
             console,
             execution,
             end,
-            message,
+            message: failure.map(|failure| failure.message),
+            fix,
         })
         .await;
     }
@@ -195,7 +204,7 @@ impl ConsoleTask {
                         if let Some(refusal) = self.binding.refusal(&error) {
                             self.emit(refusal).await;
                         }
-                        self.finish(execution, ExecutionEnd::Failed, Some(error.message)).await;
+                        self.finish(execution, ExecutionEnd::Failed, Some(error.into())).await;
                         return None;
                     }
                 },
@@ -221,17 +230,18 @@ impl ConsoleTask {
         if let Some(message) =
             continuous_refusal(&statements, self.binding.pool.dialect(), options.live)
         {
-            self.finish(execution, ExecutionEnd::Refused, Some(message.to_owned()))
+            self.finish(execution, ExecutionEnd::Refused, Some(message.into()))
                 .await;
             return;
         }
         let _agent_hold;
         let agent_run = agent.is_some();
+        let agent_read_only = agent.as_ref().is_some_and(|agent| agent.read_only);
         if let Some(agent) = agent {
             _agent_hold = match agent.reservation {
                 Ok(hold) => Some(hold),
                 Err(error) => {
-                    self.finish(execution, ExecutionEnd::Refused, Some(error.message))
+                    self.finish(execution, ExecutionEnd::Refused, Some(error.message.into()))
                         .await;
                     return;
                 }
@@ -274,14 +284,14 @@ impl ConsoleTask {
         let export = options.export;
         let untimed = options.untimed;
         if !reserved && let Err(error) = lease.session().apply_context(&context).await {
-            self.finish(execution, ExecutionEnd::Failed, Some(error.message))
+            self.finish(execution, ExecutionEnd::Failed, Some(error.into()))
                 .await;
             self.keep_or_release(lease).await;
             return;
         }
         if options.manual && self.transaction == TransactionState::None {
             if let Err(error) = lease.session().control(TransactionCommand::Begin).await {
-                self.finish(execution, ExecutionEnd::Failed, Some(error.message))
+                self.finish(execution, ExecutionEnd::Failed, Some(error.into()))
                     .await;
                 self.keep_or_release(lease).await;
                 return;
@@ -325,13 +335,14 @@ impl ConsoleTask {
                 .run_statement(key, active, sql, delivery, commands)
                 .await;
             let closed = waited.closes_session();
-            let error_offset = match &waited {
+            let (error_offset, fix) = match &waited {
                 Waited::Finished {
                     result: Err(error), ..
-                } => error.offset,
-                _ => None,
+                } => (error.offset, error.fix),
+                _ => (None, None),
             };
             let (status, statement_end) = statement_status(waited, reason);
+            let fix = self.statement_fix(&status, fix, agent_read_only);
             if closed {
                 lease = None;
                 if self.transaction != TransactionState::None {
@@ -360,22 +371,23 @@ impl ConsoleTask {
                 status,
                 end: statement_end,
                 error_offset,
+                fix,
             };
             self.emit(end_event).await;
         }
 
-        let mut message = None;
+        let mut message: Option<Failure> = None;
         // A noninteractive run cannot leave a transaction open. A batch that holds
         // the transaction ends it with its own COMMIT or ROLLBACK statement.
         if (agent_run || (options.stream && !options.hold_transaction))
             && let Some(active) = lease.as_mut()
             && active.session().transaction_state().await != TransactionState::None
         {
-            message = Some(if agent_run {
-                crate::text::AGENT_ROLLED_BACK.to_owned()
+            message = Some(Failure::from(if agent_run {
+                crate::text::AGENT_ROLLED_BACK
             } else {
-                "The statement leaves an open transaction. SQLN rolls it back.".to_owned()
-            });
+                "The statement leaves an open transaction. SQLN rolls it back."
+            }));
             if end == ExecutionEnd::Completed {
                 end = ExecutionEnd::Failed;
             }
@@ -418,21 +430,25 @@ impl ConsoleTask {
             Command::Run(request) => {
                 let message = "The console already has an execution.".to_owned();
                 let execution = request.execution;
-                self.finish(execution, ExecutionEnd::Refused, Some(message))
+                self.finish(execution, ExecutionEnd::Refused, Some(message.into()))
                     .await;
             }
             Command::Edit { execution, .. } => {
                 self.finish(
                     execution,
                     ExecutionEnd::Refused,
-                    Some(crate::text::TABLE_BUSY.to_owned()),
+                    Some(crate::text::TABLE_BUSY.into()),
                 )
                 .await;
             }
             Command::Import(request) => {
                 let message = "The console already has an execution.".to_owned();
-                self.finish(request.execution, ExecutionEnd::Refused, Some(message))
-                    .await;
+                self.finish(
+                    request.execution,
+                    ExecutionEnd::Refused,
+                    Some(message.into()),
+                )
+                .await;
             }
             Command::Transaction(..) => {
                 let message = "The console has an execution in progress.".to_owned();
@@ -455,8 +471,31 @@ impl ConsoleTask {
             status,
             end: None,
             error_offset: None,
+            fix: None,
         })
         .await;
+    }
+
+    /// Returns the fix of a statement end. A fix of a read-only refusal depends on its
+    /// source: the setting of the connection, the database, or the read policy of an
+    /// agent, which the user does not change in the connection.
+    fn statement_fix(
+        &self,
+        status: &StatementStatus,
+        fix: Option<Fix>,
+        agent_read_only: bool,
+    ) -> Option<Fix> {
+        match (status, fix) {
+            (StatementStatus::Timeout, _) => Some(Fix::SqlTimeout),
+            (StatementStatus::Error(_), Some(Fix::ReadOnly)) if agent_read_only => None,
+            (StatementStatus::Error(_), Some(Fix::ReadOnly))
+                if !self.binding.settings().read_only =>
+            {
+                Some(Fix::ServerReadOnly)
+            }
+            (StatementStatus::Error(_), fix) => fix,
+            _ => None,
+        }
     }
 
     /// Waits for one statement, with its time limit and the stop request.

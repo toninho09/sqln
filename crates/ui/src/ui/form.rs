@@ -7,14 +7,14 @@ use ratatui::widgets::Paragraph;
 
 use super::icons::connection_symbol;
 use super::kit::buttons::{self, RowOptions};
-use super::kit::feedback::draw_note;
+use super::kit::feedback::{draw_note_rows, note_rows};
 use super::kit::form::{
     browse_width, choice_value, draw_browse_button, draw_row, flag_mark, focus_style, value_width,
 };
-use super::kit::geometry::modal_width;
+use super::kit::geometry::{BORDER_ROWS, FOOTER_ROWS, NOTE_ROWS, modal_width};
 use super::kit::input::{self, FieldMode, FieldText};
 use super::kit::list::{ListWindow, draw_list_window};
-use super::kit::modal::{Modal, SidebarSpec};
+use super::kit::modal::{Modal, SidebarSpec, sidebar_content_width};
 use super::kit::style::{self, ListRow, NoteLevel};
 use super::text;
 use super::theme::Theme;
@@ -245,19 +245,28 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
         .iter()
         .position(|section| *section == open)
         .unwrap_or(0);
-    let modal = Modal::form(
-        modal_width(frame.area().width, WIDTH),
-        FIRST_FIELD_ROW,
-        u16::try_from(tallest).unwrap_or(u16::MAX),
-    )
-    .title(title)
-    .heading_row(TITLE_ROW)
-    .sidebar(SidebarSpec {
-        titles: &titles,
-        open: index,
-        focused: form.focus == Field::Sections,
-    })
-    .open(frame, theme);
+    let tallest = u16::try_from(tallest).unwrap_or(u16::MAX);
+    let width = modal_width(frame.area().width, WIDTH);
+    // The hint of a failure takes rows below the note. The window grows only into the
+    // free rows of the screen, so the fields keep their places.
+    let hint = match &form.note {
+        Some(FormNote::Error(failure)) => failure.hint(),
+        _ => None,
+    };
+    let hint_rows = hint.as_deref().map_or(0, |hint| {
+        note_rows(hint, sidebar_content_width(width), u16::MAX)
+    });
+    let height = BORDER_ROWS + FIRST_FIELD_ROW + tallest + FOOTER_ROWS;
+    let extra = hint_rows.min(frame.area().height.saturating_sub(height));
+    let modal = Modal::form(width, FIRST_FIELD_ROW, tallest.saturating_add(extra))
+        .title(title)
+        .heading_row(TITLE_ROW)
+        .sidebar(SidebarSpec {
+            titles: &titles,
+            open: index,
+            focused: form.focus == Field::Sections,
+        })
+        .open(frame, theme);
     let pane = modal.pane;
     let mut layout = FormLayout {
         sections: sections.into_iter().zip(modal.sidebar_rows).collect(),
@@ -284,14 +293,22 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
         let (message, level) = match note {
             FormNote::Info(message) => (message, NoteLevel::Info),
             FormNote::Success(message) => (message, NoteLevel::Success),
-            FormNote::Error(message) => (message, NoteLevel::Error),
+            FormNote::Error(failure) => (&failure.message, NoteLevel::Error),
         };
-        draw_note(
+        // The note keeps at least one row, and the hint takes the rows below it.
+        let rows = NOTE_ROWS + extra;
+        let hint_rows = hint_rows.min(rows.saturating_sub(1));
+        if let Some(hint) = hint.as_deref().filter(|_| hint_rows > 0) {
+            let style = style::note_style(NoteLevel::Hint, theme);
+            draw_note_rows(frame, content, button_row, hint, style, hint_rows);
+        }
+        draw_note_rows(
             frame,
             content,
-            button_row,
+            button_row.saturating_sub(hint_rows),
             message,
             style::note_style(level, theme),
+            (rows - hint_rows).min(NOTE_ROWS),
         );
     }
     let buttons = buttons::dialog_items(

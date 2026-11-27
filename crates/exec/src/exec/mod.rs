@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::catalog::{Catalog, ColumnNote, ForeignKey, RelationRef};
 use crate::command_log::{LogEvent, TraceContext, TraceEvent};
-use crate::connector::{ConnectError, StatementEnd, TransactionState};
+use crate::connector::{ConnectError, Failure, Fix, StatementEnd, TransactionState};
 use crate::export::ExportWriter;
 use crate::grid::Row;
 use crate::import::ImportJob;
@@ -47,7 +47,7 @@ pub enum ExecutionEnd {
 pub enum ExecEvent {
     AgentMetadata {
         job: String,
-        result: Result<AgentMetadata, String>,
+        result: Result<AgentMetadata, Failure>,
     },
     EditFinished {
         console: ConsoleId,
@@ -106,6 +106,8 @@ pub enum ExecEvent {
         end: Option<StatementEnd>,
         /// Byte offset of an error in the statement, when the database reports it.
         error_offset: Option<usize>,
+        /// The configuration that can correct an error of the statement.
+        fix: Option<Fix>,
     },
     /// A statement did not answer, and closing the connection loses an open transaction.
     ConfirmClose {
@@ -117,6 +119,8 @@ pub enum ExecEvent {
         execution: ExecutionId,
         end: ExecutionEnd,
         message: Option<String>,
+        /// The configuration that can correct the failure of `message`.
+        fix: Option<Fix>,
     },
     TransactionChanged {
         console: ConsoleId,

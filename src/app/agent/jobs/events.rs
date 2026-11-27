@@ -129,10 +129,15 @@ impl App {
                     keep_notice(&mut job.notices, text);
                 }
                 ExecEvent::StatementFinished {
-                    key, status, end, ..
+                    key,
+                    status,
+                    end,
+                    fix,
+                    ..
                 } => {
                     if let StatementStatus::Error(message) = status {
                         job.message = Some(message.clone());
+                        job.fix = *fix;
                     }
                     let notices = std::mem::take(&mut job.notices);
                     if matches!(job.output, Output::Query)
@@ -144,13 +149,17 @@ impl App {
                             status,
                             end.as_ref(),
                             notices,
+                            *fix,
                         ));
                     }
                 }
-                ExecEvent::ExecutionFinished { end, message, .. } => {
+                ExecEvent::ExecutionFinished {
+                    end, message, fix, ..
+                } => {
                     job.ends.insert(console, *end);
                     if message.is_some() {
                         job.message.clone_from(message);
+                        job.fix = *fix;
                     }
                 }
                 _ => {}
@@ -227,11 +236,11 @@ impl App {
         for id in ids {
             let job = &self.agent.jobs[&id];
             if job.ends.values().any(|end| *end != ExecutionEnd::Completed) {
-                let message = job
-                    .message
-                    .clone()
-                    .unwrap_or_else(|| "The assistant operation did not complete.".into());
-                self.fail_agent_job(&id, &message);
+                let failure = match &job.message {
+                    Some(message) => Failure::new(message.clone(), job.fix),
+                    None => Failure::from("The assistant operation did not complete."),
+                };
+                self.fail_agent_job_with(&id, &failure);
                 continue;
             }
             let sender = self.agent.sender.clone();

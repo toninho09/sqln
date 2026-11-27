@@ -5,19 +5,46 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
-use unicode_width::UnicodeWidthStr;
 
 use super::super::theme::Theme;
 use super::geometry::NOTE_ROWS;
 use crate::grid::printable;
+use crate::wrap::row_end;
+use unicode_width::UnicodeWidthStr;
 
 /// Draws a note that ends on the row above `row`. A long note goes up to the next row.
 pub fn draw_note(frame: &mut Frame, content: Rect, row: u16, note: &str, style: Style) {
+    draw_note_rows(frame, content, row, note, style, NOTE_ROWS);
+}
+
+/// Returns the rows of a note at `width` columns, at most `limit`. A row breaks after a
+/// space, as the drawing does, so a long word does not lose its end.
+pub fn note_rows(note: &str, width: u16, limit: u16) -> u16 {
+    let text = printable(note);
+    let width = usize::from(width).max(1);
+    let limit = limit.max(1);
+    let mut rows = 1;
+    let mut start = 0;
+    while rows < limit
+        && let (_, Some((next, _))) = row_end(&text, start, width)
+    {
+        rows += 1;
+        start = next;
+    }
+    rows
+}
+
+/// Draws a note in at most `limit` rows that end on the row above `row`.
+pub fn draw_note_rows(
+    frame: &mut Frame,
+    content: Rect,
+    row: u16,
+    note: &str,
+    style: Style,
+    limit: u16,
+) {
     let message = printable(note);
-    let width = usize::from(content.width).max(1);
-    let rows = u16::try_from(message.width().div_ceil(width))
-        .unwrap_or(NOTE_ROWS)
-        .clamp(1, NOTE_ROWS);
+    let rows = note_rows(note, content.width, limit);
     let place = Rect {
         y: row.saturating_sub(rows),
         height: rows,
@@ -65,7 +92,6 @@ pub fn hint_text(items: &[HintItem]) -> String {
 /// Keeps the commands that fit a row, in their order. A command that does not fit stays
 /// out whole, so the row shows no cut key, and a later short command can still fit.
 pub fn fit_hints(items: &[HintItem], width: usize) -> Vec<HintItem> {
-    use unicode_width::UnicodeWidthStr;
     let mut used = 0;
     let mut kept = Vec::new();
     for item in items {
