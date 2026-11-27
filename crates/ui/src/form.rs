@@ -179,6 +179,8 @@ pub enum Kind {
     Duckdb,
     Kafka,
     Databricks,
+    ClickHouse,
+    Libsql,
 }
 
 impl Kind {
@@ -190,6 +192,8 @@ impl Kind {
             Kind::Redis => Some(Engine::Redis),
             Kind::Kafka => Some(Engine::Kafka),
             Kind::Databricks => Some(Engine::Databricks),
+            Kind::ClickHouse => Some(Engine::ClickHouse),
+            Kind::Libsql => Some(Engine::Libsql),
             Kind::Sqlite | Kind::Duckdb => None,
         }
     }
@@ -408,6 +412,8 @@ impl ConnectionForm {
             Engine::Redis => Kind::Redis,
             Engine::Kafka => Kind::Kafka,
             Engine::Databricks => Kind::Databricks,
+            Engine::ClickHouse => Kind::ClickHouse,
+            Engine::Libsql => Kind::Libsql,
         };
         self.set(Field::Warehouse, target.databricks.warehouse.clone());
         self.sasl = target.kafka.sasl;
@@ -504,14 +510,14 @@ impl ConnectionForm {
             _ if self.use_uri => fields.extend([Field::Entry, Field::Uri, Field::Credential]),
             _ => {
                 fields.extend([Field::Entry, Field::Host, Field::Port]);
-                if self.kind != Kind::Kafka {
+                if !matches!(self.kind, Kind::Kafka | Kind::Libsql) {
                     fields.push(Field::Database);
                 }
-                // Databricks reads only the token, in the password field.
-                if self.kind == Kind::Databricks {
-                    fields.push(Field::Warehouse);
-                } else {
-                    fields.push(Field::User);
+                // Databricks and libSQL read only the token, in the password field.
+                match self.kind {
+                    Kind::Databricks => fields.push(Field::Warehouse),
+                    Kind::Libsql => {}
+                    _ => fields.push(Field::User),
                 }
                 fields.push(Field::Password);
                 if self.kind == Kind::Kafka {
@@ -560,10 +566,10 @@ impl ConnectionForm {
         fields
     }
 
-    /// Returns true when the explorer of the source can hide schemas. SQLite has one
-    /// schema, and the catalog of Kafka holds two fixed lists.
+    /// Returns true when the explorer of the source can hide schemas. SQLite and libSQL
+    /// have one schema, and the catalog of Kafka holds two fixed lists.
     fn has_schemas(&self) -> bool {
-        !matches!(self.kind, Kind::Sqlite | Kind::Kafka)
+        !matches!(self.kind, Kind::Sqlite | Kind::Libsql | Kind::Kafka)
     }
 
     /// Lists the sections that hold a field, in order.
@@ -654,7 +660,9 @@ impl ConnectionForm {
                     Kind::Postgres,
                     Kind::MySql,
                     Kind::Databricks,
+                    Kind::ClickHouse,
                     Kind::Sqlite,
+                    Kind::Libsql,
                     Kind::Redis,
                     Kind::Duckdb,
                     Kind::Kafka,
@@ -959,6 +967,9 @@ impl ConnectionForm {
         }
         if engine == Engine::Databricks && host.starts_with('/') {
             return Err(invalid(Field::Host, text::FORM_DATABRICKS_SOCKET));
+        }
+        if engine.uses_http() && host.starts_with('/') {
+            return Err(invalid(Field::Host, text::form_http_socket(engine.label())));
         }
         Ok(NetworkTarget {
             engine,

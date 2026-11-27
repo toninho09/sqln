@@ -278,11 +278,11 @@ impl Session {
     fn fill_sqlite_form(&mut self, name: &str, file: &str) {
         self.prefix('h');
         self.code(KeyCode::Char('a'));
-        // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis, SQLite.
-        self.code(KeyCode::Left);
-        self.code(KeyCode::Left);
-        self.code(KeyCode::Left);
-        self.code(KeyCode::Left);
+        // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis,
+        // libSQL, SQLite.
+        for _ in 0..5 {
+            self.code(KeyCode::Left);
+        }
         self.focus_form(Field::Name);
         for letter in name.chars() {
             self.code(KeyCode::Char(letter));
@@ -758,8 +758,8 @@ fn a_new_connection_goes_to_the_project_file_by_default_without_a_password() {
     session.code(KeyCode::Char('a'));
     session.assert_sees("Scope");
     session.assert_sees("Project");
-    // `Right` goes from PostgreSQL through MySQL and Databricks to SQLite.
-    for _ in 0..3 {
+    // `Right` goes from PostgreSQL through MySQL, Databricks, and ClickHouse to SQLite.
+    for _ in 0..4 {
         session.code(KeyCode::Right);
     }
     session.focus_form(Field::Name);
@@ -817,7 +817,7 @@ fn two_scopes_can_use_the_same_name_and_one_scope_cannot() {
         session.press(ctrl('w'));
         session.code(KeyCode::Char('h'));
         session.code(KeyCode::Char('a'));
-        for _ in 0..3 {
+        for _ in 0..4 {
             session.code(KeyCode::Right);
         }
         session.focus_form(Field::Name);

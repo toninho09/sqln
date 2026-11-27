@@ -517,6 +517,21 @@ fn the_rules_of_the_content_make_a_file_invalid() {
             "username":"u","warehouse":"abc"}]}"#,
             "warehouse",
         ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"libsql","host":"h",
+            "database":"main"}]}"#,
+            "no database",
+        ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"libsql","host":"h",
+            "schemas":["main"]}]}"#,
+            "no schemas",
+        ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"clickhouse",
+            "host":"/tmp/s","username":"u"}]}"#,
+            "host name",
+        ),
     ];
     for (index, (text, word)) in cases.into_iter().enumerate() {
         let (store, _) = store_in(&format!("rules-{index}"));
@@ -842,6 +857,32 @@ fn a_databricks_definition_keeps_its_warehouse_and_catalog_in_the_entry() {
     assert_eq!(back.databricks.warehouse, "abc123");
     assert_eq!(back.database.as_deref(), Some("main"));
     assert!(back.password.is_none());
+}
+
+#[test]
+fn clickhouse_and_libsql_definitions_keep_their_kind_in_the_entry() {
+    use sqln_exec::connection::Definition;
+    use sqln_session::connector::target::{Engine, parse_uri};
+
+    for (uri, kind, engine) in [
+        (
+            "clickhouse://sqln:secret@ch.net/sales",
+            "clickhouse",
+            Engine::ClickHouse,
+        ),
+        ("libsql://:secret@db.turso.io", "libsql", Engine::Libsql),
+    ] {
+        let definition = Definition::new("x", Source::Network(parse_uri(uri).unwrap()));
+        let entry = config::to_entry("id", &definition);
+        let text = serde_json::to_string(&entry).unwrap();
+        assert!(!text.contains("secret"), "{text}");
+        assert!(text.contains(&format!("\"kind\":\"{kind}\"")), "{text}");
+        let back = config::to_definition(&entry, PathBuf::from("/base"));
+        let Source::Network(back) = &back.source else {
+            panic!("network")
+        };
+        assert_eq!(back.engine, engine);
+    }
 }
 
 #[test]

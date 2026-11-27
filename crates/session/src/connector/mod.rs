@@ -4,6 +4,7 @@
 pub mod auto_tls;
 pub mod duckdb;
 pub mod fix;
+pub mod http;
 pub mod kafka;
 pub mod redis;
 pub mod sqlite;

@@ -28,6 +28,7 @@ mod help;
 mod hints;
 mod history;
 mod home;
+mod http_sources;
 mod import_dialog;
 mod interface;
 mod kafka;

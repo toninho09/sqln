@@ -56,7 +56,10 @@ pub fn run_risk(risk: &RunRisk) -> String {
 pub fn password_prompt(user: &str) -> String {
     format!("Password for {user} (Enter for none): ")
 }
-pub const TOKEN_PROMPT: &str = "Databricks personal access token: ";
+/// The question for the token of a source whose password field holds a token.
+pub fn token_prompt(source: &str) -> String {
+    format!("{source} token: ")
+}
 /// The question of the command line for a Schema Registry user without a password.
 pub fn registry_password_prompt(user: &str) -> String {
     format!("Schema Registry password for {user} (Enter for none): ")

@@ -73,7 +73,7 @@ jobs:
         run: |
           cargo test -p sqln-connector --no-default-features --quiet
           cargo check -p sqln --lib --bin sqln --no-default-features --quiet
-          for feature in postgres mysql sqlite duckdb redis kafka databricks; do
+          for feature in postgres mysql sqlite duckdb redis kafka databricks clickhouse libsql; do
             cargo check -p sqln --lib --bin sqln --no-default-features --features "$feature" --quiet
           done
 
@@ -120,8 +120,9 @@ jobs:
         run: |
           . scripts/test-env.sh
           export SQLN_TEST_TLS=1
-          cargo test --locked --test sqln -- servers:: auth:: refused:: redis::
+          cargo test --locked --test sqln -- servers:: auth:: refused:: redis:: data_edit_exec::libsql
           cargo test --locked -p sqln-postgres -p sqln-mysql --test sqln_postgres --test sqln_mysql
+          cargo test --locked -p sqln-clickhouse -p sqln-libsql --test sqln_clickhouse --test sqln_libsql
 
       - name: Show database logs on failure
         if: failure()

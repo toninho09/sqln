@@ -1,0 +1,23 @@
+[package]
+name = "sqln-clickhouse"
+description = "ClickHouse connector of SQLN"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+sqln-core.workspace = true
+sqln-sql.workspace = true
+sqln-session.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+sqln-testkit = { workspace = true, features = ["http"] }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

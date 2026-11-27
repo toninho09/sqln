@@ -2,6 +2,7 @@
 //! only `match` that chooses it. Code outside this module reads these rules and does not
 //! compare `Dialect` values, so a new dialect needs only a new file and a new arm.
 
+mod clickhouse;
 mod databricks;
 mod duckdb;
 mod kafka;
@@ -112,6 +113,7 @@ impl Dialect {
             Dialect::Redis => &redis::Redis,
             Dialect::Kafka => &kafka::Kafka,
             Dialect::Databricks => &databricks::Databricks,
+            Dialect::ClickHouse => &clickhouse::ClickHouse,
         }
     }
 

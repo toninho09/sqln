@@ -34,10 +34,11 @@ pub enum Dialect {
     Kafka,
     /// Databricks SQL on a SQL warehouse.
     Databricks,
+    ClickHouse,
 }
 
 impl Dialect {
-    pub const ALL: [Dialect; 7] = [
+    pub const ALL: [Dialect; 8] = [
         Dialect::Postgres,
         Dialect::MySql,
         Dialect::Sqlite,
@@ -45,6 +46,7 @@ impl Dialect {
         Dialect::Redis,
         Dialect::Kafka,
         Dialect::Databricks,
+        Dialect::ClickHouse,
     ];
 
     /// Returns the name of the dialect on the command line.
@@ -57,6 +59,7 @@ impl Dialect {
             Dialect::Redis => "redis",
             Dialect::Kafka => "kafka",
             Dialect::Databricks => "databricks",
+            Dialect::ClickHouse => "clickhouse",
         }
     }
 

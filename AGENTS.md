@@ -40,7 +40,7 @@ crates/core/       sqln-core: data models, grid, text, result sinks, and key map
 crates/sql/        sqln-sql: SQL analysis, formatting, and literals. ← core
 crates/session/    sqln-session: connector contract, targets, pools, traces, TLS. ← core, sql
 crates/vault/      sqln-vault: system vault. ← session
-crates/<driver>/   sqln-postgres, -mysql, -sqlite, -duckdb, -redis, -kafka, -databricks: one driver each. ← core, sql, session (kafka: vault)
+crates/<driver>/   sqln-postgres, -mysql, -sqlite, -duckdb, -redis, -kafka, -databricks, -clickhouse, -libsql: one driver each. ← core, sql, session (kafka: vault)
 crates/connector/  sqln-connector: facade of the contract and drivers, and the connector factory. ← drivers, store
 crates/store/      sqln-store: configuration, scripts, credentials, and persistence. ← core, session, vault
 crates/exec/       sqln-exec: jobs, completion, models, and execution event types. ← core, sql, session, store

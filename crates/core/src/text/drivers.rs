@@ -1,4 +1,4 @@
-//! Redis, Databricks, and DuckDB.
+//! Redis, Databricks, ClickHouse, libSQL, and DuckDB.
 
 pub const FORM_REDIS_DATABASE: &str = "The Redis database must be a number.";
 pub const FORM_REDIS_SCHEMAS: &str = "Each Redis database must be a number.";
@@ -31,6 +31,34 @@ pub fn databricks_chunk_too_large(bytes: u64, limit: usize) -> String {
 }
 pub const DATABRICKS_NO_WAREHOUSE: &str =
     "A Databricks connection needs a warehouse id. Set warehouse=<id>.";
+pub const CLICKHOUSE_NO_TRANSACTIONS: &str =
+    "ClickHouse connections do not support transactions in SQLN. Run each statement alone.";
+pub const CLICKHOUSE_REFUSED: &str =
+    "ClickHouse refused the user or the password. Check them and try again.";
+pub const CLICKHOUSE_CANCELED: &str = "ClickHouse canceled the statement.";
+pub const CLICKHOUSE_BAD_ANSWER: &str = "ClickHouse sent an answer that SQLN cannot read.";
+pub fn clickhouse_status(status: u16) -> String {
+    format!("ClickHouse answered with HTTP status {status}.")
+}
+pub fn form_http_socket(source: &str) -> String {
+    format!("A {source} connection needs a host name, not a socket.")
+}
+pub const LIBSQL_NO_DATABASE: &str =
+    "A libSQL connection has no database. Each database has its own URL.";
+pub const LIBSQL_READ_ONLY: &str = "This connection is read only. The libSQL server has no read-only session, so SQLN refuses the write here.";
+pub const LIBSQL_REFUSED: &str =
+    "The libSQL server refused the token. Make a new token and try again.";
+pub const LIBSQL_BAD_ANSWER: &str = "The libSQL server sent an answer that SQLN cannot read.";
+pub const LIBSQL_CANCELED: &str = "SQLN stopped the wait for the libSQL server. The server can complete the statement, and SQLN closed the session.";
+pub const LIBSQL_STREAM_CLOSED: &str = "The libSQL server closed the session, because it was idle for too long. An open transaction ended without a commit. Run the statement again.";
+pub fn libsql_status(status: u16) -> String {
+    format!("The libSQL server answered with HTTP status {status}.")
+}
+pub fn answer_too_large(source: &str, limit: usize) -> String {
+    format!(
+        "An answer part of {source} has more than {limit} bytes, the memory limit. Add LIMIT, or increase the memory limit."
+    )
+}
 pub const TLS_FALLBACK_NOTICE: &str =
     "The server does not support TLS. SQLN connected without TLS.";
 pub const REDIS_SERVER_HAS_NO_TLS: &str = "The server answered without TLS.";

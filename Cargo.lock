@@ -4196,13 +4196,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqln-clickhouse"
+version = "0.5.2"
+dependencies = [
+ "async-trait",
+ "reqwest",
+ "sqln-core",
+ "sqln-session",
+ "sqln-sql",
+ "sqln-testkit",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "sqln-connector"
 version = "0.5.2"
 dependencies = [
  "async-trait",
+ "sqln-clickhouse",
  "sqln-databricks",
  "sqln-duckdb",
  "sqln-kafka",
+ "sqln-libsql",
  "sqln-mysql",
  "sqln-postgres",
  "sqln-redis",
@@ -4312,6 +4328,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqln-libsql"
+version = "0.5.2"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqln-core",
+ "sqln-session",
+ "sqln-sql",
+ "sqln-testkit",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "sqln-mysql"
 version = "0.5.2"
 dependencies = [
@@ -4383,6 +4416,7 @@ dependencies = [
  "chrono",
  "proptest",
  "regex",
+ "reqwest",
  "rustls",
  "rustls-native-certs",
  "serde",

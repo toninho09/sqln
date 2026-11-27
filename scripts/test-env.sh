@@ -12,6 +12,9 @@ export SQLN_TEST_MYSQL='mysql://root:spike@127.0.0.1:33069/spike'
 # Servers that speak the PostgreSQL or MySQL protocol.
 export SQLN_TEST_COCKROACH='postgres://root@127.0.0.1:26259/defaultdb?sslmode=disable'
 export SQLN_TEST_TIDB='mysql://root@127.0.0.1:40009/test'
+# HTTP connectors.
+export SQLN_TEST_CLICKHOUSE='clickhouse://sqln:spike@127.0.0.1:18123/default'
+export SQLN_TEST_LIBSQL='libsql://127.0.0.1:18080'
 # tests/redis.rs uses these connection texts.
 export SQLN_TEST_REDIS='redis://:spike@127.0.0.1:63799/0'
 export SQLN_TEST_REDIS_OPEN='redis://127.0.0.1:63801/0'

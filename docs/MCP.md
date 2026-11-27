@@ -136,7 +136,7 @@ Each agent tab has an **Access: level** button (`agentSession`). It opens the sa
 |---|---|
 | `list_instances` | Lists open SQLN instances. |
 | `request_access` | Asks for access and waits for the decision. A second call reads the state. |
-| `get_context` | Reads the access level, the active tab, the connections, the open tabs, and this session's pending proposals. Each connection has its `dialect` (`Postgres`, `MySql`, `Sqlite`, `DuckDb`, `Redis`, `Kafka`, or `Databricks`), `production`, `read_only`, and `default_schema`. With a Kafka connection, the first reply of the session adds `syntax.Kafka`. |
+| `get_context` | Reads the access level, the active tab, the connections, the open tabs, and this session's pending proposals. Each connection has its `dialect` (`Postgres`, `MySql`, `Sqlite`, `DuckDb`, `Redis`, `Kafka`, `Databricks`, or `ClickHouse`; a libSQL connection has `Sqlite`), `production`, `read_only`, and `default_schema`. With a Kafka connection, the first reply of the session adds `syntax.Kafka`. |
 | `read_console` | Reads console text and its revision. `messages: true` adds the console Messages. |
 | `read_result` | Reads loaded rows. With `row` and `column`, it reads one large cell in blocks. |
 | `query` | Executes SQL on a connection, in the session's agent console, and returns the results. |
@@ -236,6 +236,8 @@ Native session protection also applies:
 | PostgreSQL | `default_transaction_read_only = on` |
 | MySQL | `SET SESSION TRANSACTION READ ONLY` |
 | SQLite | `PRAGMA query_only = ON` |
+| libSQL | The write check of the connector, because `sqld` refuses `PRAGMA query_only` |
+| ClickHouse | `readonly=2` in each request |
 | Redis/Valkey | Known read command plus the server's `readonly` flag |
 | DuckDB, Databricks | None. The read policy alone protects these sources |
 | Kafka | Known command only: SELECT, `CONSUME`, `TOPICS`, `PARTITIONS`, `GROUPS`, and `GROUP`. Each one only reads. A statement that does not parse refuses with `invalid_sql`, its reason, its byte position, and a pointer to `syntax.Kafka`. `TAIL` and `EMIT CHANGES` refuse in every access level, because they do not end |

@@ -14,6 +14,7 @@ fn agent_dialect_names_stay_fixed() {
     assert_eq!(
         sorted,
         [
+            "ClickHouse",
             "Databricks",
             "DuckDb",
             "Kafka",

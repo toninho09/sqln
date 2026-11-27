@@ -14,16 +14,13 @@ use super::{
     SessionContext, StatementEnd, TransactionCommand, TransactionState,
 };
 use crate::catalog::{
-    Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
-    add_objects, group_foreign_keys,
+    Catalog, ForeignKey, KeyColumn, RelationRef, Schema, add_objects, group_foreign_keys,
 };
 use crate::connector::sqlite::*;
 use crate::grid::{RowWriter, Value};
 use crate::sink::{Flow, ResultSink};
-use crate::sql::{Dialect, quote_identifier};
+use crate::sql::Dialect;
 use crate::trace::{self, TraceContext};
-
-const MAIN_SCHEMA: &str = "main";
 
 fn open(target: &SqliteTarget, trace: &Option<TraceContext>) -> Result<Connection, ConnectError> {
     let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
@@ -320,9 +317,8 @@ fn run(
 }
 
 fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> rusqlite::Result<Catalog> {
-    let sql = "SELECT name FROM pragma_database_list WHERE name <> 'temp'";
-    let names: Vec<String> = trace::observe_blocking(trace, sql, || {
-        let mut names = conn.prepare(sql)?;
+    let names: Vec<String> = trace::observe_blocking(trace, DATABASES_SQL, || {
+        let mut names = conn.prepare(DATABASES_SQL)?;
         names
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()
@@ -331,36 +327,17 @@ fn read_catalog(conn: &Connection, trace: &Option<TraceContext>) -> rusqlite::Re
     let mut schemas = Vec::with_capacity(names.len());
     let mut objects = Vec::new();
     for name in names {
-        let sql = format!(
-            "SELECT name, type FROM {}.sqlite_schema \
-             WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' \
-             ORDER BY name",
-            quote_identifier(&name, Dialect::Sqlite),
-        );
+        let sql = relations_sql(&name);
         let relations = trace::observe_blocking(trace, &sql, || {
             let mut statement = conn.prepare(&sql)?;
             statement
                 .query_map([], |row| {
                     let kind: String = row.get(1)?;
-                    Ok(Relation {
-                        name: row.get(0)?,
-                        kind: if kind == "view" {
-                            RelationKind::View
-                        } else {
-                            RelationKind::Table
-                        },
-                        columns: Columns::NotLoaded,
-                        foreign_keys: Vec::new(),
-                        referencing: Vec::new(),
-                        notes: Vec::new(),
-                    })
+                    Ok(relation(row.get(0)?, &kind))
                 })?
                 .collect::<rusqlite::Result<_>>()
         })?;
-        let sql = format!(
-            "SELECT name, tbl_name FROM {}.sqlite_schema WHERE type = 'trigger'",
-            quote_identifier(&name, Dialect::Sqlite),
-        );
+        let sql = triggers_sql(&name);
         let triggers: Vec<[String; 4]> = trace::observe_blocking(trace, &sql, || {
             let mut statement = conn.prepare(&sql)?;
             statement
@@ -389,40 +366,17 @@ fn read_columns(
     relation: &str,
     trace: &Option<TraceContext>,
 ) -> rusqlite::Result<Vec<String>> {
-    let sql = "SELECT name FROM pragma_table_info(?1, ?2)";
     trace::observe_blocking(
         trace,
-        format_args!("{sql}\nParameters: ?1={relation:?}, ?2={schema:?}"),
+        format_args!("{COLUMNS_SQL}\nParameters: ?1={relation:?}, ?2={schema:?}"),
         || {
-            let mut statement = conn.prepare(sql)?;
+            let mut statement = conn.prepare(COLUMNS_SQL)?;
             statement
                 .query_map([relation, schema], |row| row.get(0))?
                 .collect()
         },
     )
 }
-
-/// Reads the keys of a relation. A key without target columns points to the primary key
-/// of its table, and it stays out of the list.
-/// The keys that leave a relation. A key without target columns reads the primary key of
-/// its target.
-const FOREIGN_KEYS_SQL: &str = "\
-    SELECT f.id, f.\"table\", f.\"from\", coalesce(f.\"to\", p.name) \
-    FROM pragma_foreign_key_list(?1, ?2) f \
-    LEFT JOIN pragma_table_info(f.\"table\", ?2) p ON f.\"to\" IS NULL AND p.pk = f.seq + 1 \
-    WHERE coalesce(f.\"to\", p.name) IS NOT NULL \
-    ORDER BY f.id, f.seq";
-
-/// The keys of other tables that reach a relation, with the shape of `FOREIGN_KEYS_SQL`:
-/// the column of the relation comes before the column of the other table.
-const REFERENCING_KEYS_SQL: &str = "\
-    SELECT f.id, t.name, coalesce(f.\"to\", p.name), f.\"from\" \
-    FROM pragma_table_list t \
-    JOIN pragma_foreign_key_list(t.name, t.schema) f \
-    LEFT JOIN pragma_table_info(?1, ?2) p ON f.\"to\" IS NULL AND p.pk = f.seq + 1 \
-    WHERE t.schema = ?2 AND t.type = 'table' AND f.\"table\" = ?1 COLLATE NOCASE \
-      AND coalesce(f.\"to\", p.name) IS NOT NULL \
-    ORDER BY t.name, f.id, f.seq";
 
 /// Reads the keys of a key query: the number, the other table, the column of the
 /// relation, and the column of the other table. A key stays in its schema.

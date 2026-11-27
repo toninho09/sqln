@@ -396,7 +396,7 @@ The mark leaves with the next edit, and an edit during the execution prevents th
 
 The active SQL console checks syntax after 400 ms without a text or dialect change.
 The check runs locally, outside the interface thread. It executes no SQL and reads no parameter values.
-PostgreSQL, MySQL, SQLite, DuckDB, and Databricks use the bundled `sqlparser` dialects. Redis, Valkey, and Kafka have no SQL check.
+PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Databricks, and ClickHouse use the bundled `sqlparser` dialects. Redis, Valkey, and Kafka have no SQL check.
 The existing lexer still serves highlighting, autocomplete, and incomplete editor text.
 
 Located warnings underline tokens without moving the cursor or changing the selection.
@@ -627,7 +627,8 @@ The table tab and the structure tab stay open together.
   `pg_size_pretty`, estimates from the catalog, and scan counts and dates from
   `pg_stat_user_tables`. MySQL shows the estimates and sizes of `information_schema.TABLES`.
   The count of rows is an estimate, not a `COUNT`: the section runs no count query.
-  SQLite, DuckDB, and Databricks connections show no statistics section.
+  SQLite, libSQL, DuckDB, Databricks, and ClickHouse connections show no statistics section.
+  ClickHouse shows only the columns section.
 - The grid uses the pagination, the budget, the search, the copy, and the export of the table tab.
 - The export has no target table, as in a console.
 - The tab does not come back in the next session.
@@ -877,10 +878,12 @@ The form has a sidebar, as the Settings dialog has. Each section shows its own f
 | Address | Host, Port, and Database; or the URI; or the SQLite file |
 | Credentials | User, Password, and Credential |
 | Security | TLS, CA file, client certificate, and client key |
-| Options | Schemas (Databases in MySQL and Redis), SQLite foreign keys and busy limit, Kafka consumer group and topics, Pool, Read only (not in Kafka), Production, Connect limit, Statement limit, Idle limit, Theme, and Icon |
+| Options | Schemas (Databases in MySQL, ClickHouse, and Redis), SQLite foreign keys and busy limit, Kafka consumer group and topics, Pool, Read only (not in Kafka), Production, Connect limit, Statement limit, Idle limit, Theme, and Icon |
 
 A section without fields stays out of the sidebar, so SQLite has no Credentials and no Security. DuckDB shows File and Schemas, and it has no busy timeout or foreign keys.
 Databricks shows Catalog and Warehouse in Address, and Token in place of User and Password. The Schemas field holds `catalog.schema` names.
+ClickHouse shows the fields of MySQL: its databases are the schemas of the explorer. libSQL shows Host and Port in Address, and Token in place of User and Password; it has no Database and no Schemas field.
+The **Type** choice has this order: PostgreSQL, MySQL, Databricks, ClickHouse, SQLite, libSQL/Turso, Redis/Valkey, DuckDB, and Kafka.
 The buttons stay at the bottom of each section.
 All sections keep the height of the largest section, so the window does not move. The width starts at 76 columns, grows to 140 columns on a larger screen, and leaves 8 columns free.
 The form of a connected connection also has the sidebar: General holds the name, and Options holds the schemas, the theme, the icon, and the production mark.

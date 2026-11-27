@@ -2,6 +2,43 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## ClickHouse and libSQL connectors — 2026-11-27
+
+The user asked for ClickHouse and libSQL (Turso) connectors, and approved the plan below. This entry adds `sqln-clickhouse` and `sqln-libsql` to the driver list of "Driver crates, connector contract, and runtime".
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Protocol | `reqwest` for both: the HTTP interface of ClickHouse, and Hrana 3 (`POST /v3/pipeline`) for libSQL. `sqln_session::connector::http` holds the client that Databricks, ClickHouse, and libSQL share | The `clickhouse` and `libsql` crates | User choice. The `libsql` crate brings a second HTTP and TLS stack (hyper 0.14, rustls 0.22) and does not accept the TLS files of a connection. SQLN would use only the raw bytes of the `clickhouse` crate |
+| ClickHouse scope | Read and run: catalog, consoles, table filters, cancel, read only. No transactions, grid edit, parameters, plan, diagram, or compare | Grid edit with `ALTER TABLE … UPDATE` | User choice. A mutation runs later and has no rollback |
+| libSQL scope | The SQLite rules: `Dialect::Sqlite` and its family, with transactions, grid edit, parameters, plan, diagram, and compare | Read and run only | User choice. A Hrana stream keeps a transaction between requests |
+| Tests | `clickhouse/clickhouse-server` and `ghcr.io/tursodatabase/libsql-server` in `compose.test.yaml` and in the CI, and the fake HTTP server of `sqln-testkit` | Only the fake server | User choice |
+| Connection text | `clickhouse://user:password@host:8123/database` and `libsql://:token@host`. ClickHouse uses port 8123 by default, libSQL uses 443 | Port 8443 for ClickHouse; a `turso://` alias | ClickHouse Cloud users copy a text with the port. No aliases, as in "Compatible servers" |
+| Credentials | ClickHouse needs a user and sends it and the password in headers. libSQL has no user, and the token in the password field is optional, because a local `sqld` has no authentication | A token that is always required | `sqld` in the tests and in local work has no token |
+| Database | ClickHouse: the start database, and the databases are the schemas of the explorer (`Namespace::Database`). libSQL refuses a database and a schema list, because each database has its own URL | A libSQL database name | One URL, one database |
+| Form | **Type**: PostgreSQL, MySQL, Databricks, ClickHouse, SQLite, libSQL/Turso, Redis/Valkey, DuckDB, Kafka. libSQL shows **Token** and no **User** or **Database** | Last in the choice | The SQL servers stay together, and libSQL stays next to SQLite. `Right` needs four steps to SQLite, and `Left` needs five |
+| `config.json` | New kinds `clickhouse` and `libsql`. `version` stays 1 | A new version | Same rule as Databricks |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| ClickHouse session | A random `session_id` for each session, so `SET` and temporary tables stay between statements. The cleanup takes a new id, which is a new server session without state | A connection check at each reservation | One request less, with the same clean state |
+| ClickHouse results | `default_format=TabSeparatedWithNamesAndTypes`, read line by line inside the memory limit. A statement with its own `FORMAT` clause shows each line in one `result` column. An error in the middle of the answer ends the statement | JSON formats | The text format keeps the bytes and `NULL` and reads in a stream |
+| ClickHouse cancel | `KILL QUERY WHERE query_id = '<id>' ASYNC` in a request without the session, because ClickHouse runs one request of a session at a time | Close the HTTP connection | The kill also stops a statement that writes |
+| ClickHouse read only | `readonly=2` in each request | The shared check of the connector | The server checks each statement. `2` keeps `SET` |
+| libSQL cleanup | `close` of the Hrana stream, and `Clean`. A failed close gives `Discard` | `Discard` each time | A new stream is a new connection on the server |
+| libSQL cancel | Hrana cannot stop a statement. The cancel ends the wait, and the session closes, because its stream state is unknown | No cancel | The user gets the console back |
+| libSQL read only | The shared check of the connector refuses a write, as Databricks does | `PRAGMA query_only` | `sqld` refuses `PRAGMA query_only` and temporary tables |
+| libSQL closed stream | A refusal on an open stream ends the session with a reason, and the transaction state is `Unknown` | Open a new stream in silence | A transaction would end without a word |
+| SQLite catalog | The catalog queries move to `sqln_session::connector::sqlite`, and both SQLite drivers use them | A copy in each driver | One place |
+
+Known limits:
+
+- A libSQL result arrives in one answer. It must fit in the memory limit.
+- ClickHouse ends an idle session after its `session_timeout`, so a temporary table can go away between two statements of a console.
+- A ClickHouse statement without a result shows no count of changed rows.
+- Turso has no service in the tests; the tests use `sqld`.
+
 ## Compatible servers — 2026-11-27
 
 The user asked for support of servers that speak the PostgreSQL or MySQL protocol, and approved the recommendations below. A check with real servers found the faults: YugabyteDB 2026.1 answers every query of SQLN; CockroachDB 26.4 and TiDB 8.5 need the fixes below.

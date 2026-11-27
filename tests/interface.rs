@@ -295,7 +295,9 @@ fn the_kind_field_names_each_source() {
         "PostgreSQL",
         "MySQL",
         "Databricks",
+        "ClickHouse",
         "SQLite",
+        "libSQL/Turso",
         "Redis/Valkey",
         "DuckDB",
         "Kafka",
@@ -1559,11 +1561,11 @@ fn the_sidebar_shows_only_the_sections_with_fields() {
         shown.contains("Credentials") && shown.contains("Security"),
         "{shown}"
     );
-    // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis, SQLite.
-    screen.code(KeyCode::Left);
-    screen.code(KeyCode::Left);
-    screen.code(KeyCode::Left);
-    screen.code(KeyCode::Left);
+    // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis,
+    // libSQL, SQLite.
+    for _ in 0..5 {
+        screen.code(KeyCode::Left);
+    }
     assert_eq!(screen.app.form().unwrap().kind, sqln::form::Kind::Sqlite);
     let shown = screen.screen(100, 30);
     assert!(!shown.contains("Credentials"), "{shown}");
@@ -1667,8 +1669,8 @@ fn a_click_selects_a_field_in_each_placement() {
 /// Opens the form of a new SQLite connection, with the focus on its file.
 fn sqlite_form_screen(name: &str) -> Screen {
     let mut screen = form_screen(name, Theme::plain());
-    // `Right` goes from PostgreSQL through MySQL and Databricks to SQLite.
-    for _ in 0..3 {
+    // `Right` goes from PostgreSQL through MySQL, Databricks, and ClickHouse to SQLite.
+    for _ in 0..4 {
         screen.code(KeyCode::Right);
     }
     focus_field(&mut screen, Field::File);
@@ -1943,11 +1945,11 @@ fn a_working_connection_gives_a_success_note_and_a_test_in_progress_does_not() {
         .unwrap();
     let theme = Theme::astrodark();
     let mut screen = form_screen("form-success-start", theme);
-    // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis, SQLite.
-    screen.code(KeyCode::Left);
-    screen.code(KeyCode::Left);
-    screen.code(KeyCode::Left);
-    screen.code(KeyCode::Left);
+    // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis,
+    // libSQL, SQLite.
+    for _ in 0..5 {
+        screen.code(KeyCode::Left);
+    }
     focus_field(&mut screen, Field::Name);
     screen.type_text("checked");
     focus_field(&mut screen, Field::File);

@@ -40,6 +40,9 @@ pub enum Engine {
     Redis,
     Kafka,
     Databricks,
+    ClickHouse,
+    /// libSQL and Turso: SQLite over the Hrana protocol.
+    Libsql,
 }
 
 impl Engine {
@@ -51,6 +54,8 @@ impl Engine {
             Engine::Redis => Dialect::Redis,
             Engine::Kafka => Dialect::Kafka,
             Engine::Databricks => Dialect::Databricks,
+            Engine::ClickHouse => Dialect::ClickHouse,
+            Engine::Libsql => Dialect::Sqlite,
         }
     }
 
@@ -62,6 +67,8 @@ impl Engine {
             Engine::Redis => text::VALUE_REDIS,
             Engine::Kafka => text::VALUE_KAFKA,
             Engine::Databricks => text::VALUE_DATABRICKS,
+            Engine::ClickHouse => text::VALUE_CLICKHOUSE,
+            Engine::Libsql => text::VALUE_LIBSQL,
         }
     }
 
@@ -71,14 +78,31 @@ impl Engine {
             Engine::MySql => 3306,
             Engine::Redis => 6379,
             Engine::Kafka => 9092,
-            Engine::Databricks => 443,
+            Engine::Databricks | Engine::Libsql => 443,
+            Engine::ClickHouse => 8123,
         }
     }
 
-    /// Returns false for a source that works without a user name. Databricks reads only
-    /// the token, in the password.
+    /// Returns false for a source that works without a user name. Databricks and libSQL
+    /// read only the token, in the password.
     pub fn needs_user(self) -> bool {
-        !matches!(self, Engine::Redis | Engine::Kafka | Engine::Databricks)
+        !matches!(
+            self,
+            Engine::Redis | Engine::Kafka | Engine::Databricks | Engine::Libsql
+        )
+    }
+
+    /// Returns true for a source whose password field holds a token and that has no user.
+    pub fn uses_token(self) -> bool {
+        matches!(self, Engine::Databricks | Engine::Libsql)
+    }
+
+    /// Returns true for a source that speaks HTTP, which needs a host and not a socket.
+    pub fn uses_http(self) -> bool {
+        matches!(
+            self,
+            Engine::Databricks | Engine::ClickHouse | Engine::Libsql
+        )
     }
 
     /// Returns true when the command line asks for a password that the connection text
@@ -87,13 +111,13 @@ impl Engine {
         self.needs_user() || self == Engine::Databricks
     }
 
-    /// Returns true when the database name has a valid form for this source. Kafka has
-    /// no databases. The database of Databricks is its start catalog.
+    /// Returns true when the database name has a valid form for this source. Kafka and
+    /// libSQL have no databases. The database of Databricks is its start catalog.
     pub fn accepts_database(self, name: &str) -> bool {
         match self {
             Engine::Redis => name.parse::<u32>().is_ok(),
-            Engine::Kafka => false,
-            Engine::Postgres | Engine::MySql | Engine::Databricks => true,
+            Engine::Kafka | Engine::Libsql => false,
+            Engine::Postgres | Engine::MySql | Engine::Databricks | Engine::ClickHouse => true,
         }
     }
 
@@ -101,6 +125,7 @@ impl Engine {
     pub fn database_error(self) -> &'static str {
         match self {
             Engine::Kafka => "A Kafka connection has no database.",
+            Engine::Libsql => text::LIBSQL_NO_DATABASE,
             _ => "The Redis database must be a number.",
         }
     }
@@ -767,9 +792,13 @@ pub fn parse_uri_options(uri: &str) -> Result<(NetworkTarget, ConnectionOptions)
         "redis" | "rediss" | "valkey" | "valkeys" => Engine::Redis,
         "kafka" | "kafkas" => Engine::Kafka,
         "databricks" => Engine::Databricks,
+        "clickhouse" => Engine::ClickHouse,
+        "libsql" => Engine::Libsql,
         _ => {
             return Err(
-                "The scheme must be postgres, mysql, redis, kafka, or databricks.".to_owned(),
+                "The scheme must be postgres, mysql, redis, kafka, databricks, \
+                 clickhouse, or libsql."
+                    .to_owned(),
             );
         }
     };
@@ -817,8 +846,11 @@ pub fn parse_uri_options(uri: &str) -> Result<(NetworkTarget, ConnectionOptions)
         (_, Some(_)) => return Err("warehouse is valid only for databricks.".to_owned()),
         (_, None) => DatabricksOptions::default(),
     };
-    if engine == Engine::Databricks && parameters.socket.is_some() {
-        return Err("A Databricks connection needs a host, not a socket.".to_owned());
+    if engine.uses_http() && parameters.socket.is_some() {
+        return Err(format!(
+            "A {} connection needs a host, not a socket.",
+            engine.label()
+        ));
     }
     let kafka = KafkaOptions {
         sasl: parameters.sasl.take().unwrap_or_default(),

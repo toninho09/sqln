@@ -309,6 +309,45 @@ fn a_databricks_warehouse_is_required_and_belongs_only_to_databricks() {
 }
 
 #[test]
+fn a_clickhouse_text_gives_the_user_the_database_and_the_http_port() {
+    let target = parse_uri("clickhouse://sqln:secret@ch.example.com/sales").unwrap();
+    assert_eq!(target.engine, Engine::ClickHouse);
+    assert_eq!(target.user, "sqln");
+    assert_eq!(target.password, Some(Secret::new("secret")));
+    assert_eq!(target.database.as_deref(), Some("sales"));
+    assert_eq!(
+        target.address,
+        Address::Tcp {
+            host: "ch.example.com".into(),
+            port: 8123
+        }
+    );
+    assert!(parse_uri("clickhouse://h").is_err(), "a user is required");
+    assert!(parse_uri("clickhouse://u@?socket=/tmp/s").is_err());
+}
+
+#[test]
+fn a_libsql_text_gives_the_token_and_has_no_database() {
+    let target = parse_uri("libsql://:tok@db-org.turso.io").unwrap();
+    assert_eq!(target.engine, Engine::Libsql);
+    assert_eq!(target.user, "");
+    assert_eq!(target.password, Some(Secret::new("tok")));
+    assert_eq!(
+        target.address,
+        Address::Tcp {
+            host: "db-org.turso.io".into(),
+            port: 443
+        }
+    );
+    // A local `sqld` has no authentication.
+    let target = parse_uri("libsql://127.0.0.1:8080").unwrap();
+    assert_eq!(target.password, None);
+    let error = parse_uri("libsql://h/main").unwrap_err();
+    assert_eq!(error, sqln_core::text::LIBSQL_NO_DATABASE);
+    assert!(parse_uri("libsql://?socket=/tmp/s").is_err());
+}
+
+#[test]
 fn the_command_line_reads_the_connection_options_of_the_text() {
     use sqln_session::connector::target::parse_uri_options;
     use std::time::Duration;

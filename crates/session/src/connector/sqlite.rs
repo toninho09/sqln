@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::ConnectError;
+use crate::catalog::{Columns, Relation, RelationKind};
+use crate::sql::{Dialect, quote_identifier};
 
 /// Where a SQLite database lives.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,4 +94,68 @@ pub fn validate_path(path: &Path) -> Result<(), ConnectError> {
         )));
     }
     Ok(())
+}
+
+/// The schema of the database of the connection.
+pub const MAIN_SCHEMA: &str = "main";
+
+/// The names of the attached databases. `temp` holds only the temporary objects.
+pub const DATABASES_SQL: &str = "SELECT name FROM pragma_database_list WHERE name <> 'temp'";
+
+/// The tables and the views of a schema: the name and the type of each one.
+pub fn relations_sql(schema: &str) -> String {
+    format!(
+        "SELECT name, type FROM {}.sqlite_schema \
+         WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' \
+         ORDER BY name",
+        quote_identifier(schema, Dialect::Sqlite),
+    )
+}
+
+/// The triggers of a schema: the name of each trigger and of its table.
+pub fn triggers_sql(schema: &str) -> String {
+    format!(
+        "SELECT name, tbl_name FROM {}.sqlite_schema WHERE type = 'trigger'",
+        quote_identifier(schema, Dialect::Sqlite),
+    )
+}
+
+/// The columns of a relation. `?1` is the relation and `?2` is the schema.
+pub const COLUMNS_SQL: &str = "SELECT name FROM pragma_table_info(?1, ?2)";
+
+/// The keys that leave a relation: the number, the other table, the column of the
+/// relation, and the column of the other table. A key without target columns reads the
+/// primary key of its target. `?1` is the relation and `?2` is the schema.
+pub const FOREIGN_KEYS_SQL: &str = "\
+    SELECT f.id, f.\"table\", f.\"from\", coalesce(f.\"to\", p.name) \
+    FROM pragma_foreign_key_list(?1, ?2) f \
+    LEFT JOIN pragma_table_info(f.\"table\", ?2) p ON f.\"to\" IS NULL AND p.pk = f.seq + 1 \
+    WHERE coalesce(f.\"to\", p.name) IS NOT NULL \
+    ORDER BY f.id, f.seq";
+
+/// The keys of other tables that reach a relation, with the shape of `FOREIGN_KEYS_SQL`:
+/// the column of the relation comes before the column of the other table.
+pub const REFERENCING_KEYS_SQL: &str = "\
+    SELECT f.id, t.name, coalesce(f.\"to\", p.name), f.\"from\" \
+    FROM pragma_table_list t \
+    JOIN pragma_foreign_key_list(t.name, t.schema) f \
+    LEFT JOIN pragma_table_info(?1, ?2) p ON f.\"to\" IS NULL AND p.pk = f.seq + 1 \
+    WHERE t.schema = ?2 AND t.type = 'table' AND f.\"table\" = ?1 COLLATE NOCASE \
+      AND coalesce(f.\"to\", p.name) IS NOT NULL \
+    ORDER BY t.name, f.id, f.seq";
+
+/// A relation of a row of `relations_sql`.
+pub fn relation(name: String, kind: &str) -> Relation {
+    Relation {
+        name,
+        kind: if kind == "view" {
+            RelationKind::View
+        } else {
+            RelationKind::Table
+        },
+        columns: Columns::NotLoaded,
+        foreign_keys: Vec::new(),
+        referencing: Vec::new(),
+        notes: Vec::new(),
+    }
 }

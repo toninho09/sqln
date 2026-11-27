@@ -3,6 +3,7 @@
 //! dialect has one file here, and `features` is the only `match` that chooses it. The
 //! lexical rules are in `sqln_sql::sql::dialect`.
 
+mod clickhouse;
 mod databricks;
 mod duckdb;
 mod kafka;
@@ -111,6 +112,7 @@ pub enum Engine {
     Redis,
     Kafka,
     Databricks,
+    ClickHouse,
 }
 
 /// The words that completion offers for a dialect. A slice of lists keeps shared lists
@@ -201,5 +203,6 @@ pub fn features(dialect: Dialect) -> &'static dyn Features {
         Dialect::Redis => &redis::Redis,
         Dialect::Kafka => &kafka::Kafka,
         Dialect::Databricks => &databricks::Databricks,
+        Dialect::ClickHouse => &clickhouse::ClickHouse,
     }
 }

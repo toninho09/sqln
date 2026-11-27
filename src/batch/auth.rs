@@ -141,8 +141,8 @@ pub(super) fn authenticate(
     if let Some(mut terminal) =
         terminal.filter(|_| target.engine.needs_password() || reference || sasl)
     {
-        let prompt = if target.engine == crate::connector::target::Engine::Databricks {
-            crate::ui::text::TOKEN_PROMPT.to_owned()
+        let prompt = if target.engine.uses_token() {
+            crate::ui::text::token_prompt(target.engine.label())
         } else {
             format!("Password for {}: ", printable(&target.user))
         };

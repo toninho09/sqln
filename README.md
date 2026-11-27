@@ -5,7 +5,7 @@ A terminal database client with several connections, SQL consoles, and table tab
 SQLN brings an editor, a database navigator, and a results grid into one terminal.
 Use familiar editor keys or Vim mode. Keep scripts with a project, or use global connections across projects.
 
-**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, Kafka with the Schema Registry, and Databricks SQL warehouses.
+**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, Kafka with the Schema Registry, Databricks SQL warehouses, ClickHouse, and libSQL (Turso and `sqld`).
 
 **Compatible servers, best effort:** CockroachDB and YugabyteDB with the PostgreSQL type, and MariaDB and TiDB with the MySQL type. Use their `postgresql://` or `mysql://` connection text. Neon, Supabase, AlloyDB, and TimescaleDB run PostgreSQL, so they use the PostgreSQL type. See the [known limitations](#known-limitations).
 
@@ -142,7 +142,7 @@ For a missing SQLite file, SQLN asks before allowing creation. Cancel leaves the
 
 #### Build with selected drivers
 
-Each database driver is a Cargo feature: `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, and `databricks`. All are on by default. A build with fewer drivers compiles faster and is smaller. DuckDB and Kafka take the most time to compile.
+Each database driver is a Cargo feature: `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, `databricks`, `clickhouse`, and `libsql`. All are on by default. A build with fewer drivers compiles faster and is smaller. DuckDB and Kafka take the most time to compile.
 
 ```sh
 cargo install --path . --locked --no-default-features --features postgres,sqlite
@@ -191,11 +191,15 @@ sqln 'redis://localhost/0'
 sqln 'valkey://localhost/0'
 sqln 'kafka://localhost:9092'
 sqln 'databricks://adb-1234.azuredatabricks.net/main?warehouse=abc123'
+sqln 'clickhouse://default@localhost/my_database'
+sqln 'libsql://my-db-my-org.turso.io'
 ```
 
 For PostgreSQL and MySQL, SQLN asks for a password when the URI omits it in an interactive terminal.
 For password-protected Redis, Valkey, or Kafka with SASL, use the connection form to enter the password without shell-history exposure.
 For Databricks, type a personal access token in the **Token** field of the form. The path of the connection text is the start catalog, and `warehouse=<id>` is the SQL warehouse.
+ClickHouse uses its HTTP interface. The default port is 8123; ClickHouse Cloud uses 8443, so write the port in the connection text. The path is the start database.
+For Turso, type the database token in the **Token** field of the form. A connection text has no database path, because each libSQL database has its own URL. A local `sqld` runs without a token, for example `libsql://127.0.0.1:8080`.
 
 A command-line connection lasts for the session only. It does not create a saved connection or saved consoles for that target.
 
@@ -753,7 +757,7 @@ Without a TLS choice, SQLN uses the automatic mode:
 - A remote address uses TLS with certificate and hostname verification. When the server answers that it has no TLS, SQLN connects without TLS and writes a notice in **Messages** (stderr in batch mode).
 - `localhost`, loopback IP addresses, and Unix sockets start without TLS. When the server refuses a connection without TLS, SQLN connects with verified TLS.
 - A certificate or hostname error never causes a connection without TLS.
-- Kafka and Databricks do not retry: a remote address uses verified TLS, and a local address uses no TLS.
+- Kafka, Databricks, ClickHouse, and libSQL do not retry: a remote address uses verified TLS, and a local address uses no TLS.
 
 The automatic mode applies when the connection text has no `sslmode` and no TLS files, when the form TLS field is **Automatic**, and when `config.json` has no `tls` object.
 Use `sslmode=verify-full` to require verified TLS explicitly, including for a local endpoint:
@@ -805,7 +809,7 @@ sqln mcp
 ```
 
 `target` is one SQLite file path, one DuckDB target with the `duckdb:` scheme, or one connection URI. SQLN asks before creating a missing file.
-Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, `valkeys`, `kafka`, `kafkas`, and `databricks`.
+Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, `valkeys`, `kafka`, `kafkas`, `databricks`, `clickhouse`, and `libsql`.
 
 | Option | Purpose |
 |---|---|
@@ -822,7 +826,7 @@ Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `red
 | `--log <file>` | Write the event log |
 | `-h`, `--help` | Show command-line help |
 | `-V`, `--version` | Show the version |
-| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, or `databricks` for an unconnected console; development option |
+| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, `databricks`, or `clickhouse` for an unconnected console; development option |
 
 ### Execution without the terminal interface
 
@@ -910,6 +914,8 @@ A positional `.sql` path is not a script-opening argument; positional file targe
 - DuckDB lacks schema compare, ER diagram, the DDL window, `EXPLAIN`, grid editing, and foreign-key reads. A read-only DuckDB connection opens the file with `access_mode = READ_ONLY`; the global read-only preference refuses a write in the connector instead, because a DuckDB connection cannot change its access mode. The bundled build compiles DuckDB and makes the first build long.
 - A DuckDB console can `ATTACH` other databases. Their schemas appear in the navigator with the `catalog.schema` name, and SQLN opens their tables with the catalog name, because a schema name alone cannot reach them. An `ATTACH` is not saved in the database file: it ends when the connection closes. A local DuckDB schema whose own name has a dot does not open, because SQLN reads the dot as the catalog separator.
 - Databricks connections read and run SQL only: they have no transactions, grid editing, query parameters, `EXPLAIN`, ER diagram, or schema compare. They accept a personal access token only. The API keeps no session, so `SET` and `USE` in a console do not reach the next statement; choose the schema in the navigator. The navigator lists Unity Catalog schemas as `catalog.schema`, without `hive_metastore`.
+- ClickHouse connections read and run SQL only: they have no transactions, grid editing, query parameters, `EXPLAIN`, ER diagram, or schema compare. The structure tab shows only the columns. A session keeps `SET` and temporary tables between its statements, but ClickHouse ends an idle session after its `session_timeout` (60 seconds by default), and the pool cleanup starts a new one. A statement with its own `FORMAT` clause shows each line of the answer in one `result` column. A statement without a result shows no count of changed rows.
+- libSQL connections use the SQLite rules: transactions, grid editing, query parameters, `EXPLAIN QUERY PLAN`, ER diagram, and schema compare. The server cannot stop a statement: **Stop** ends the wait, and SQLN closes the session. A result arrives in one answer, inside the memory limit. The server closes an idle session after a short time; an open transaction then ends without a commit, and SQLN shows the reason. `sqld` refuses temporary tables and many `PRAGMA` statements. A read-only libSQL connection refuses a write in the connector, because the server has no read-only session.
 - Grid editing changes, inserts, and deletes rows of keyed table tabs. Use SQL for binary values or other grids.
 - A console linked to an external `.sql` file lives in the session only: closing SQLN closes it, and the file keeps its text. The file must be UTF-8, and the link has no autosave: `Ctrl+S` and the close questions write it.
 - There is no integrated SSH tunnel, IAM authentication, or Kerberos authentication.
@@ -978,6 +984,7 @@ make test-integration
 
 The command starts the databases, loads the test environment, runs the tests, and stops the databases.
 The stack includes CockroachDB and TiDB for the compatible servers. YugabyteDB has no service, because its image is large; check it manually.
+It also includes ClickHouse and a libSQL server (`sqld`). Turso has no service; check it manually.
 
 For TLS coverage, use a Bash shell:
 

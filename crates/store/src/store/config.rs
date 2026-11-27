@@ -341,6 +341,8 @@ pub enum KindName {
     Redis,
     Kafka,
     Databricks,
+    Clickhouse,
+    Libsql,
 }
 
 impl KindName {
@@ -352,6 +354,8 @@ impl KindName {
             KindName::Redis => Some(Engine::Redis),
             KindName::Kafka => Some(Engine::Kafka),
             KindName::Databricks => Some(Engine::Databricks),
+            KindName::Clickhouse => Some(Engine::ClickHouse),
+            KindName::Libsql => Some(Engine::Libsql),
             KindName::Sqlite | KindName::Duckdb => None,
         }
     }
@@ -691,8 +695,8 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
             {
                 return Err(engine.database_error().to_owned());
             }
-            if engine == Engine::Kafka && !entry.schemas.is_empty() {
-                return Err("A Kafka connection has no schemas.".to_owned());
+            if matches!(engine, Engine::Kafka | Engine::Libsql) && !entry.schemas.is_empty() {
+                return Err(format!("A {} connection has no schemas.", engine.label()));
             }
             if engine != Engine::Kafka
                 && (entry.sasl.is_some()
@@ -726,7 +730,7 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
                     return Err(format!("topics: {}", crate::text::KAFKA_BAD_TOPICS));
                 }
             }
-            if matches!(engine, Engine::Kafka | Engine::Databricks)
+            if (engine == Engine::Kafka || engine.uses_http())
                 && entry
                     .host
                     .as_deref()
@@ -928,6 +932,8 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
                 Engine::Redis => KindName::Redis,
                 Engine::Kafka => KindName::Kafka,
                 Engine::Databricks => KindName::Databricks,
+                Engine::ClickHouse => KindName::Clickhouse,
+                Engine::Libsql => KindName::Libsql,
             };
             if target.engine == Engine::Databricks {
                 entry.warehouse = Some(target.databricks.warehouse.clone());

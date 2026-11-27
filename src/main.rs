@@ -6,7 +6,7 @@ use sqln::app::{Options, run};
 use sqln::connection::{Definition, Source};
 use sqln::connector::duckdb::{DuckdbTarget, file_source as duckdb_source};
 use sqln::connector::sqlite::SqliteTarget;
-use sqln::connector::target::{ConnectionOptions, Engine, OpenTarget, OptionName, open_target};
+use sqln::connector::target::{ConnectionOptions, OpenTarget, OptionName, open_target};
 use sqln::export::ExportFormat;
 use sqln::grid::printable;
 use sqln::sql::Dialect;
@@ -204,8 +204,8 @@ fn open(options: &mut Options, target: &str, flags: ConnectionOptions) -> Result
             };
             let terminal = stdin().is_terminal();
             if target.password.is_none() && target.engine.needs_password() && terminal {
-                let prompt = if target.engine == Engine::Databricks {
-                    text::TOKEN_PROMPT.to_owned()
+                let prompt = if target.engine.uses_token() {
+                    text::token_prompt(target.engine.label())
                 } else {
                     text::password_prompt(&target.user)
                 };

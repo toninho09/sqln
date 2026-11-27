@@ -53,6 +53,7 @@ pub struct Icons {
     pub redis: &'static str,
     pub kafka: &'static str,
     pub databricks: &'static str,
+    pub clickhouse: &'static str,
     /// The marks of a key column in a diagram box. A column in both keys shows the first.
     pub primary_key: &'static str,
     pub foreign_key: &'static str,
@@ -125,6 +126,7 @@ impl Icons {
             redis: "rd",
             kafka: "kf",
             databricks: "dx",
+            clickhouse: "ch",
             primary_key: "PK",
             foreign_key: "FK",
             arrow_left: "<",
@@ -173,6 +175,7 @@ impl Icons {
             redis: "rd",
             kafka: "kf",
             databricks: "dx",
+            clickhouse: "ch",
             primary_key: "◆",
             foreign_key: "◇",
             arrow_left: "◀",
@@ -223,6 +226,8 @@ impl Icons {
             kafka: "\u{f1c0}",
             // Nerd Fonts has no Databricks logo in the dev set, so the database symbol stands in.
             databricks: "\u{f1c0}",
+            // Nerd Fonts has no ClickHouse logo in the dev set, so the database symbol stands in.
+            clickhouse: "\u{f1c0}",
             primary_key: "\u{f084}",
             foreign_key: "\u{f0c1}",
             arrow_left: "◀",
@@ -255,11 +260,12 @@ impl Icons {
             Engine::Redis => self.redis,
             Engine::Kafka => self.kafka,
             Engine::Databricks => self.databricks,
+            Engine::ClickHouse => self.clickhouse,
         }
     }
 
     /// Returns each symbol of the set, for the checks of the column width.
-    pub fn all(&self) -> [&'static str; 44] {
+    pub fn all(&self) -> [&'static str; 45] {
         [
             self.run,
             self.script,
@@ -301,6 +307,7 @@ impl Icons {
             self.redis,
             self.kafka,
             self.databricks,
+            self.clickhouse,
             self.primary_key,
             self.foreign_key,
             self.arrow_left,

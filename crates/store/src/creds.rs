@@ -88,6 +88,8 @@ impl Identity {
             Engine::Redis => "redis",
             Engine::Kafka => "kafka",
             Engine::Databricks => "databricks",
+            Engine::ClickHouse => "clickhouse",
+            Engine::Libsql => "libsql",
         };
         let address =
             serde_json::to_string(&self.destination.address).map_err(|_| VaultError::Failed)?;
