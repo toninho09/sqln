@@ -1,6 +1,7 @@
 //! The contract of the database connectors, the connection targets, and the parts of
 //! the drivers that need no driver library. The drivers live in their own crates.
 
+pub mod auto_tls;
 pub mod duckdb;
 pub mod kafka;
 pub mod redis;
@@ -131,6 +132,19 @@ pub struct ConnectError {
     /// a new password does not change it.
     pub password_refused: bool,
     pub kind: ErrorKind,
+    /// The server refused the TLS mode of the attempt. The driver reads it from the
+    /// protocol or from an error code, never from the error text.
+    pub tls_refused: Option<TlsRefusal>,
+}
+
+/// Why the server refused the TLS mode of a connection attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TlsRefusal {
+    /// The server answered that it does not support TLS. A certificate error is not
+    /// this refusal.
+    ServerHasNoTls,
+    /// The server refused a connection without TLS.
+    ServerNeedsTls,
 }
 
 impl ConnectError {
@@ -139,6 +153,7 @@ impl ConnectError {
             message: message.into(),
             password_refused: false,
             kind: ErrorKind::Other,
+            tls_refused: None,
         }
     }
 
@@ -147,12 +162,19 @@ impl ConnectError {
             message: message.into(),
             password_refused: true,
             kind: ErrorKind::Auth,
+            tls_refused: None,
         }
     }
 
     #[must_use]
     pub fn kind(mut self, kind: ErrorKind) -> Self {
         self.kind = kind;
+        self
+    }
+
+    #[must_use]
+    pub fn tls_refused(mut self, refusal: TlsRefusal) -> Self {
+        self.tls_refused = Some(refusal);
         self
     }
 }

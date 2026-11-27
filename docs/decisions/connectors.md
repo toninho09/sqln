@@ -2,6 +2,24 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## Automatic TLS — 2026-11-26
+
+The user asked that a first connection does not fail with a TLS error, in the interface and in the command line. This entry replaces the rule "local without TLS, remote verifies" of the connection text, the form, and `config.json`.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| When | Only without a TLS choice: no `sslmode` and no TLS files in the text, **Automatic** in the form, or no `tls` object in `config.json` | Each connection | An explicit `verify-full` or `disable` keeps its meaning |
+| Cause of the fallback | Only an answer of the server that it has no TLS: `N` on PostgreSQL, no TLS flag on MySQL, a RESP answer to the probe on Redis | Any TLS error | A certificate or name error would give a connection without TLS to an attacker |
+| Directions | A remote address tries with TLS, then without TLS. A local address tries without TLS, then with TLS when the server refuses: SQLSTATE `28000` on PostgreSQL, error `3159` on MySQL, no RESP answer to the probe on Redis | One order for all addresses | A local server with its own certificate keeps working without TLS |
+| Notice | A fallback to no TLS writes "The server does not support TLS. SQLN connected without TLS." with the first statement, in **Messages** and on stderr | Silent fallback; ask the user | The user sees the state and needs no extra step. The upgrade to TLS writes no notice |
+| Memory | The connector keeps the mode that connected until the disconnect | Try again for each session; save the mode | The pool opens sessions without delay, and the file keeps the choice of the user |
+| Redis probe | `PING` without TLS and without a password on its own connection, before each attempt of the automatic mode | TLS request first | A plain server can wait for the line end of a TLS request, so the attempt would end at the time limit |
+| Kafka and Databricks | The first attempt only | Retry | librdkafka and the HTTP client give no clear signal of a server without TLS |
+| `config.json` | Automatic is an entry without `tls`; the format does not change | A new `"auto"` mode | Older versions read the file. Saved connections keep their `verify` or `disabled` |
+| Vault and trust | The identity of the automatic mode uses the mode of its first attempt | The text `auto` | Hand-written entries without `tls` keep their password and their trust |
+| `sslmode=prefer` and `allow` | Still refused | Map to the automatic mode | Those modes of `libpq` fall back after any TLS error |
+| TLS files without `sslmode` | Verify | Automatic | The files are a TLS choice |
+
 ## Lock waits — 2026-11-20
 
 The user asked for a panel that shows which session blocks which, and chose an own tab.
@@ -230,7 +248,7 @@ This request reopens the rule "MongoDB, Redis, and Kafka stay out of the first v
 | 4. Transactions | No manual mode; `MULTI` and `EXEC` work in a script | Tie the manual mode to `MULTI` and `EXEC` | Inside `MULTI`, a read answers `QUEUED`, without data |
 | 5. Continuous commands | Refuse `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE`, and `MONITOR` (replaced by "Continuous commands — 2026-11-09") | Continuous flow in the grid | The console has no continuous flow |
 | 6. Destructive commands | Without confirmation | Ask for confirmation | `DROP` also does not ask for confirmation |
-| 7. TLS of `redis://` | SQLN rule: local without TLS, remote verifies; `?sslmode=disable` turns it off; `rediss://` always uses TLS | `redis://` never uses TLS | The password only travels without TLS by explicit choice |
+| 7. TLS of `redis://` | SQLN rule: local without TLS, remote verifies (replaced by "Automatic TLS — 2026-11-26"); `?sslmode=disable` turns it off; `rediss://` always uses TLS | `redis://` never uses TLS | The password only travels without TLS by explicit choice |
 | 8. Topology | Single server only | Cluster; Cluster and Sentinel | Cluster and Sentinel change the pool |
 | 9. Result in the grid | Value in one cell, list in rows, map in the `field` and `value` columns, nested value as text | Everything as text | Uses the grid; needs RESP3 |
 | 10. Autocomplete | Command names, with a fixed list | Also key names | The key list can be partial |
@@ -285,7 +303,7 @@ These choices follow the rules above on the points the rules left open.
 | Late cancellation | Wait for the request before reusing the session | Reuse at the end of the statement | A late request could hit the next statement |
 | End of the request on PostgreSQL | Read until the server closes the request connection | Driver `cancel_query` | It returns at write time, and the `UPDATE` after a `SELECT` at the cap was cancelled in a load test |
 | `sslmode=require` | Verify the certificate | Encrypt without verifying, as in `libpq` | The plan forbids ignoring the verification |
-| `sslmode=prefer` and `allow` | Refuse the text | Accept | Those modes can use a connection without TLS in silence |
+| `sslmode=prefer` and `allow` | Refuse the text | Accept | Those modes can use a connection without TLS in silence. "Automatic TLS — 2026-11-26" adds a fallback only without `sslmode` |
 | Default CA | System and `webpki-roots` | Only one of the sources | Company CAs stay in the system; `mysql_async` already brings the second one |
 | Trust | Confirm per destination | Confirm per project | Follows the SSH model and does not depend on detecting clones |
 | Read only | Field per connection, applied by the database | Confirm `DELETE` without `WHERE` | The database applies the rule |

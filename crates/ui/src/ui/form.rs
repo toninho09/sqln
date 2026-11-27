@@ -20,7 +20,9 @@ use super::text;
 use super::theme::Theme;
 use crate::connector::target::hide_uri_password;
 use crate::filter_list::FilterList;
-use crate::form::{ConnectionForm, Field, FieldStyle, FormNote, Group, Kind, SchemaList};
+use crate::form::{
+    ConnectionForm, Field, FieldStyle, FormNote, Group, Kind, SchemaList, TlsChoice,
+};
 use crate::grid::printable;
 use crate::store::Scope;
 
@@ -123,8 +125,11 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
         }
         Field::Credential => text::VALUE_SESSION,
         Field::Sasl => form.sasl.name(),
-        Field::Tls if form.verify_tls => text::VALUE_TLS_VERIFY,
-        Field::Tls => text::VALUE_TLS_OFF,
+        Field::Tls => match form.tls {
+            TlsChoice::Auto => text::VALUE_TLS_AUTO,
+            TlsChoice::Verify => text::VALUE_TLS_VERIFY,
+            TlsChoice::Off => text::VALUE_TLS_OFF,
+        },
         // A custom theme has its own name, so `value_line` builds this value.
         Field::Theme => text::VALUE_DEFAULT,
         Field::Icon => form

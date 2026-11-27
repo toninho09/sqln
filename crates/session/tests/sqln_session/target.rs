@@ -64,7 +64,7 @@ fn an_ipv6_address_uses_brackets() {
             port: 7000
         }
     );
-    assert_eq!(target.tls, Tls::Disabled);
+    assert_eq!(target.tls, Tls::Auto);
 }
 
 #[test]
@@ -76,15 +76,21 @@ fn a_socket_comes_from_a_parameter() {
     );
     let target = parse_uri("mysql://u@/d?socket=/tmp/mysql.sock").unwrap();
     assert_eq!(target.address, Address::Socket("/tmp/mysql.sock".into()));
-    assert_eq!(target.tls, Tls::Disabled);
+    assert_eq!(target.tls, Tls::Auto);
+    assert_eq!(target.tls.first_try(&target.address), Tls::Disabled);
     assert!(parse_uri("mysql://u@h/d?socket=/tmp/mysql.sock").is_err());
 }
 
 #[test]
-fn local_addresses_use_no_tls_and_remote_addresses_verify() {
+fn without_a_choice_local_addresses_try_no_tls_first_and_remote_addresses_verify() {
     for host in ["localhost", "LOCALHOST", "127.0.0.1", "127.1.2.3", "[::1]"] {
         let target = parse_uri(&format!("postgres://u@{host}/d")).unwrap();
-        assert_eq!(target.tls, Tls::Disabled, "{host}");
+        assert_eq!(target.tls, Tls::Auto, "{host}");
+        assert_eq!(
+            target.tls.first_try(&target.address),
+            Tls::Disabled,
+            "{host}"
+        );
     }
     for host in [
         "db.example.test",
@@ -94,8 +100,25 @@ fn local_addresses_use_no_tls_and_remote_addresses_verify() {
         "localhost.example.test",
     ] {
         let target = parse_uri(&format!("mysql://u@{host}/d")).unwrap();
-        assert_eq!(target.tls, Tls::Verify(TlsFiles::default()), "{host}");
+        assert_eq!(target.tls, Tls::Auto, "{host}");
+        assert_eq!(
+            target.tls.first_try(&target.address),
+            Tls::Verify(TlsFiles::default()),
+            "{host}"
+        );
     }
+}
+
+#[test]
+fn tls_files_without_sslmode_ask_for_tls() {
+    let target = parse_uri("postgres://u@localhost/d?sslrootcert=/c/ca.pem").unwrap();
+    assert_eq!(
+        target.tls,
+        Tls::Verify(TlsFiles {
+            ca: Some(PathBuf::from("/c/ca.pem")),
+            client: None,
+        })
+    );
 }
 
 #[test]
@@ -111,6 +134,7 @@ fn modes_with_a_fallback_to_plain_text_fail() {
     for mode in ["prefer", "allow", "PREFER"] {
         let error = parse_uri(&format!("postgres://u@h/d?sslmode={mode}")).unwrap_err();
         assert!(error.contains("fall back"), "{error}");
+        assert!(error.contains("omit sslmode"), "{error}");
     }
 }
 
@@ -210,7 +234,7 @@ fn redis_works_without_a_user() {
     assert_eq!(target.user, "");
     assert_eq!(target.password, Some(Secret::new("s3cret")));
     assert_eq!(target.database.as_deref(), Some("3"));
-    assert_eq!(target.tls, Tls::Disabled);
+    assert_eq!(target.tls, Tls::Auto);
 
     let target = parse_uri("redis://127.0.0.1").unwrap();
     assert_eq!(target.password, None);
@@ -224,9 +248,13 @@ fn a_redis_database_is_a_number() {
 }
 
 #[test]
-fn a_remote_redis_address_verifies_tls() {
+fn a_remote_redis_address_verifies_tls_first() {
     let target = parse_uri("redis://cache.example.test").unwrap();
-    assert_eq!(target.tls, Tls::Verify(TlsFiles::default()));
+    assert_eq!(target.tls, Tls::Auto);
+    assert_eq!(
+        target.tls.first_try(&target.address),
+        Tls::Verify(TlsFiles::default())
+    );
 
     let target = parse_uri("redis://cache.example.test?sslmode=disable").unwrap();
     assert_eq!(target.tls, Tls::Disabled);
@@ -260,7 +288,7 @@ fn a_databricks_text_gives_the_token_the_catalog_and_the_warehouse() {
             port: 443
         }
     );
-    assert_eq!(target.tls, Tls::Verify(TlsFiles::default()));
+    assert_eq!(target.tls, Tls::Auto);
 
     let target = parse_uri("databricks://h?warehouse=abc").unwrap();
     assert_eq!(target.database, None);

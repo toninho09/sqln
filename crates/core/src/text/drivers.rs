@@ -31,6 +31,10 @@ pub fn databricks_chunk_too_large(bytes: u64, limit: usize) -> String {
 }
 pub const DATABRICKS_NO_WAREHOUSE: &str =
     "A Databricks connection needs a warehouse id. Set warehouse=<id>.";
+pub const TLS_FALLBACK_NOTICE: &str =
+    "The server does not support TLS. SQLN connected without TLS.";
+pub const REDIS_SERVER_HAS_NO_TLS: &str = "The server answered without TLS.";
+pub const REDIS_SERVER_NEEDS_TLS: &str = "The server did not answer without TLS.";
 pub const REDIS_SOCKET_TLS: &str = "A Unix socket does not use TLS. Turn off TLS.";
 pub const REDIS_NO_SOCKET: &str = "This system has no Unix sockets.";
 pub const REDIS_NO_STOP: &str = "The server cannot stop this command.";

@@ -803,8 +803,7 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
                         },
                     ),
                 }),
-                None if address.is_local() => Tls::Disabled,
-                None => Tls::Verify(TlsFiles::default()),
+                None => Tls::Auto,
             };
             Source::Network(NetworkTarget {
                 engine,
@@ -939,14 +938,16 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
             entry.database.clone_from(&target.database);
             entry.username = Some(target.user.clone()).filter(|user| !user.is_empty());
             entry.connect_timeout_seconds = Some(definition.connect_timeout.as_secs());
-            entry.tls = Some(match &target.tls {
-                Tls::Disabled => TlsEntry {
+            // Without a `tls` object, the connection uses the automatic mode.
+            entry.tls = match &target.tls {
+                Tls::Auto => None,
+                Tls::Disabled => Some(TlsEntry {
                     mode: TlsMode::Disabled,
                     ca_file: None,
                     client_cert: None,
                     client_key: None,
-                },
-                Tls::Verify(files) => TlsEntry {
+                }),
+                Tls::Verify(files) => Some(TlsEntry {
                     mode: TlsMode::Verify,
                     ca_file: files.ca.as_deref().map(path_text),
                     client_cert: files
@@ -954,8 +955,8 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
                         .as_ref()
                         .map(|client| path_text(&client.certificate)),
                     client_key: files.client.as_ref().map(|client| path_text(&client.key)),
-                },
-            });
+                }),
+            };
             if target.password.is_some() {
                 entry.credential = CredentialName::Session;
             }

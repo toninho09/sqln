@@ -10,11 +10,12 @@ use mysql_async::prelude::Queryable;
 use mysql_async::{ClientIdentity, Column, Conn, Error as DriverError, Opts, OptsBuilder, SslOpts};
 use tokio::time::timeout;
 
+use super::auto_tls::AutoTls;
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
     Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, MAX_NOTICES, Namespace,
-    ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
-    describe, tls,
+    ResetOutcome, Session, SessionContext, StatementEnd, TlsRefusal, TransactionCommand,
+    TransactionState, describe, tls,
 };
 use crate::catalog::{
     Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
@@ -91,12 +92,26 @@ fn ssl_options(tls_mode: &Tls) -> Result<Option<SslOpts>, ConnectError> {
     Ok(Some(options))
 }
 
+/// `ER_SECURE_TRANSPORT_REQUIRED`: the server refuses a connection without TLS.
+const SECURE_TRANSPORT_REQUIRED: u16 = 3159;
+
 /// Do not write this value in a log: its debug text shows the password.
 fn connect_error(error: &mysql_async::Error) -> ConnectError {
     match error {
         // `1045` is a wrong password, and `1698` is an account that needs another one.
         mysql_async::Error::Server(server) if matches!(server.code, 1045 | 1698) => {
             ConnectError::refused_password(describe(error))
+        }
+        mysql_async::Error::Server(server) if server.code == SECURE_TRANSPORT_REQUIRED => {
+            ConnectError::new(describe(error))
+                .kind(error_kind(error))
+                .tls_refused(TlsRefusal::ServerNeedsTls)
+        }
+        // The handshake of the server has no TLS flag.
+        mysql_async::Error::Driver(mysql_async::DriverError::NoClientSslFlagFromServer) => {
+            ConnectError::new(describe(error))
+                .kind(error_kind(error))
+                .tls_refused(TlsRefusal::ServerHasNoTls)
         }
         _ => ConnectError::new(describe(error)).kind(error_kind(error)),
     }
@@ -125,12 +140,38 @@ fn driver_options(target: &NetworkTarget) -> Result<Opts, ConnectError> {
 
 pub struct MySqlConnector {
     target: NetworkTarget,
+    auto_tls: AutoTls,
 }
 
 impl MySqlConnector {
     pub fn new(target: NetworkTarget) -> Self {
-        Self { target }
+        Self {
+            target,
+            auto_tls: AutoTls::default(),
+        }
     }
+}
+
+/// Opens one session with the resolved TLS mode of `target`.
+async fn connect_once(target: NetworkTarget) -> Result<MySqlSession, ConnectError> {
+    let options = driver_options(&target)?;
+    let conn = Conn::new(options.clone())
+        .await
+        .map_err(|error| connect_error(&error))?;
+    let canceller = Arc::new(MySqlCanceller {
+        options,
+        connection: conn.id(),
+    });
+    Ok(MySqlSession {
+        conn: Some(conn),
+        canceller,
+        database: target.database,
+        transaction: TransactionState::None,
+        running: false,
+        status_is_current: true,
+        connect_notice: None,
+        trace: None,
+    })
 }
 
 #[async_trait]
@@ -149,23 +190,9 @@ impl Connector for MySqlConnector {
     }
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
-        let options = driver_options(&self.target)?;
-        let conn = Conn::new(options.clone())
-            .await
-            .map_err(|error| connect_error(&error))?;
-        let canceller = Arc::new(MySqlCanceller {
-            options,
-            connection: conn.id(),
-        });
-        Ok(Box::new(MySqlSession {
-            conn: Some(conn),
-            canceller,
-            database: self.target.database.clone(),
-            transaction: TransactionState::None,
-            running: false,
-            status_is_current: true,
-            trace: None,
-        }))
+        let (mut session, notice) = self.auto_tls.connect(&self.target, connect_once).await?;
+        session.connect_notice = notice;
+        Ok(Box::new(session))
     }
 }
 
@@ -394,6 +421,9 @@ struct MySqlSession {
     running: bool,
     /// False after an error, because an error packet has no transaction state.
     status_is_current: bool,
+    /// The notice of the connection, such as a fallback to no TLS. The first statement
+    /// shows it in **Messages**.
+    connect_notice: Option<&'static str>,
 }
 
 impl MySqlSession {
@@ -802,6 +832,9 @@ impl MySqlSession {
         read: Result<Outcome, ExecError>,
         mut sink: ResultSink,
     ) -> Result<StatementEnd, ExecError> {
+        if let Some(notice) = self.connect_notice.take() {
+            sink.notices(vec![notice.to_owned()], 0).await;
+        }
         if read.is_ok() {
             self.send_warnings(sql, &mut sink).await;
         }

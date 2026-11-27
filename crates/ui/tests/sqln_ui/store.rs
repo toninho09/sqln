@@ -790,6 +790,35 @@ fn a_definition_round_trips_through_an_entry_without_the_password() {
 }
 
 #[test]
+fn automatic_tls_is_an_entry_without_a_tls_object() {
+    use sqln_exec::connection::Definition;
+    use sqln_session::connector::target::{Engine, NetworkTarget};
+
+    let network = NetworkTarget {
+        engine: Engine::Postgres,
+        address: Address::Tcp {
+            host: "db.example.test".into(),
+            port: 5432,
+        },
+        user: "u".into(),
+        password: None,
+        database: None,
+        tls: Tls::Auto,
+        kafka: Default::default(),
+        databricks: Default::default(),
+    };
+    let definition = Definition::new("auto", Source::Network(network));
+    let entry = config::to_entry("id-auto", &definition);
+    // Older versions read an entry without `tls`.
+    assert_eq!(entry.tls, None);
+    let back = config::to_definition(&entry, PathBuf::from("/base"));
+    let Source::Network(target) = &back.source else {
+        panic!("network")
+    };
+    assert_eq!(target.tls, Tls::Auto);
+}
+
+#[test]
 fn a_databricks_definition_keeps_its_warehouse_and_catalog_in_the_entry() {
     use sqln_exec::connection::Definition;
     use sqln_session::connector::target::{Engine, Secret, parse_uri};

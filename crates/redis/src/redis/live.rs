@@ -321,7 +321,7 @@ async fn follow(
     sink: &mut ResultSink,
     shown: &mut bool,
 ) -> Result<(), ExecError> {
-    let stream = open_stream(target)
+    let stream = open_stream(target, false)
         .await
         .map_err(|error| ExecError::new(error.message))?;
     let (read, mut write) = tokio::io::split(stream);

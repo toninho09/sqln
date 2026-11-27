@@ -22,7 +22,8 @@ use sqln::compare::sql::{compare_sql, rows_sql, table_columns_sql};
 use sqln::connection::{Definition, Source};
 use sqln::connector::target::parse_uri;
 use sqln::connector::{
-    Connector, ErrorKind, Session, TransactionCommand, TransactionState, network_connector,
+    ConnectError, Connector, ErrorKind, Session, TlsRefusal, TransactionCommand, TransactionState,
+    network_connector,
 };
 use sqln::definition::{Target as DdlTarget, definition_sql, definition_text};
 use sqln::diagram::mermaid::to_mermaid;
@@ -2121,12 +2122,75 @@ fn tls_refuses_a_server_without_tls() {
             Kind::MySql => ("mysql", 33069, "root"),
         };
         let uri = format!(
-            "{scheme}://{user}:spike@localhost:{port}/spike?sslmode=verify-full&sslrootcert={}",
+            "{scheme}://{user}:spike@127.0.0.1:{port}/spike?sslmode=verify-full&sslrootcert={}",
             ca.display()
         );
-        let error = try_connect(&uri).err().unwrap();
-        println!("{scheme}, server without TLS: {error}");
+        let error = connect_error(&uri);
+        println!("{scheme}, server without TLS: {}", error.message);
+        // The MySQL image makes its own certificate, so it has TLS and the error is a
+        // certificate error.
+        let expected = match server.kind {
+            Kind::Postgres => Some(TlsRefusal::ServerHasNoTls),
+            Kind::MySql => None,
+        };
+        assert_eq!(error.tls_refused, expected, "{scheme}: {error:?}");
     }
+}
+
+fn connect_error(uri: &str) -> ConnectError {
+    let connector = network_connector(parse_uri(uri).unwrap());
+    match runtime().block_on(connector.connect()) {
+        Ok(_) => panic!("the connection worked"),
+        Err(error) => error,
+    }
+}
+
+#[test]
+fn a_certificate_error_is_not_a_server_without_tls() {
+    let Some(_) = certs() else {
+        println!("skipped: SQLN_TEST_TLS is not set");
+        return;
+    };
+    for server in tls_servers() {
+        // The system roots do not know the test CA.
+        let uri = format!(
+            "{}://{}:spike@localhost:{}/spike?sslmode=verify-full",
+            server.scheme,
+            user_of(&server),
+            server.port
+        );
+        let error = connect_error(&uri);
+        assert_eq!(error.tls_refused, None, "{}: {error:?}", server.scheme);
+    }
+}
+
+#[test]
+fn a_postgres_rule_that_needs_tls_refuses_a_plain_attempt() {
+    let Some(_) = certs() else {
+        println!("skipped: SQLN_TEST_TLS is not set");
+        return;
+    };
+    let Some(server) = tls_servers().into_iter().find(|s| s.scheme == "postgres") else {
+        return;
+    };
+    // `pg_hba.conf` rejects `certuser` without TLS.
+    let plain = format!(
+        "postgres://certuser@localhost:{}/spike?sslmode=disable",
+        server.port
+    );
+    let error = connect_error(&plain);
+    assert_eq!(
+        error.tls_refused,
+        Some(TlsRefusal::ServerNeedsTls),
+        "{error:?}"
+    );
+
+    // Without a choice, the local address tries with TLS after the refusal. The test CA
+    // is not in the system roots, so the second attempt fails and both causes stay.
+    let auto = format!("postgres://certuser@localhost:{}/spike", server.port);
+    let error = connect_error(&auto);
+    assert!(error.message.starts_with("Without TLS: "), "{error:?}");
+    assert!(error.message.contains(". With TLS: "), "{error:?}");
 }
 
 /// The text of a connection of `certuser`. A full path in `key` replaces the folder.

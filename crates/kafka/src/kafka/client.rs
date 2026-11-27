@@ -105,11 +105,14 @@ pub fn config(target: &NetworkTarget, group: &str) -> Result<ClientConfig, Conne
         .set("allow.auto.create.topics", "false")
         .set_log_level(RDKafkaLogLevel::Emerg);
     let sasl = !target.user.is_empty();
-    let protocol = match (&target.tls, sasl) {
-        (Tls::Disabled, false) => "plaintext",
-        (Tls::Disabled, true) => "sasl_plaintext",
+    // librdkafka gives no clear signal of a broker without TLS, so the automatic mode
+    // uses only its first attempt.
+    let tls = target.tls.first_try(&target.address);
+    let protocol = match (&tls, sasl) {
         (Tls::Verify(_), false) => "ssl",
         (Tls::Verify(_), true) => "sasl_ssl",
+        (_, false) => "plaintext",
+        (_, true) => "sasl_plaintext",
     };
     config.set("security.protocol", protocol);
     if sasl {
@@ -124,7 +127,7 @@ pub fn config(target: &NetworkTarget, group: &str) -> Result<ClientConfig, Conne
                     .map_or("", |password| password.expose()),
             );
     }
-    if let Tls::Verify(files) = &target.tls {
+    if let Tls::Verify(files) = &tls {
         config.set("ssl.endpoint.identification.algorithm", "https");
         match &files.ca {
             Some(ca) => config.set("ssl.ca.location", path_text(ca)?),

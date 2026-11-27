@@ -230,9 +230,12 @@ impl Api {
         } else {
             host.clone()
         };
-        let (scheme, files) = match &target.tls {
+        // The HTTP client gives no clear signal of a server without TLS, so the
+        // automatic mode uses only its first attempt.
+        let tls = target.tls.first_try(&target.address);
+        let (scheme, files) = match &tls {
             Tls::Verify(files) => ("https", Some(files)),
-            Tls::Disabled => ("http", None),
+            _ => ("http", None),
         };
         Ok(Self {
             base: format!("{scheme}://{host}:{port}/api/2.0/sql"),

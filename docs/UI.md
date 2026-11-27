@@ -896,7 +896,7 @@ Resolve relative paths of `config.json` according to the scope: project root or 
 In the form, a typed SQLite file starts from the current directory, and the connection saves the full path.
 A saved and unchanged path continues as it is in the file, and the test uses the folder of the scope.
 
-The form suggests disabled TLS on `localhost`, `127.0.0.0/8`, `::1`, and Unix socket, and verification on the others.
+The TLS field has three values: **Automatic** (the default), **Verify the certificate**, and **Off**. **Automatic** starts without TLS on `localhost`, `127.0.0.0/8`, `::1`, and Unix socket, and with verification on the others. It tries the other mode once, only after the server refuses the first one. A fallback to no TLS writes a notice in **Messages**. CA and client files need **Verify the certificate**.
 The **Read only** field is applied by the database and prevents accidents.
 
 The **Production** field shows `PROD` in the status bar, including with `NO_COLOR`.

@@ -234,7 +234,7 @@ pub struct ConnectionForm {
     /// The stable identity of a new definition, including tests before its first save.
     pub connection_id: String,
     pub use_uri: bool,
-    pub verify_tls: bool,
+    pub tls: TlsChoice,
     /// The SASL mechanism of a Kafka connection with a user.
     pub sasl: Sasl,
     /// `None` keeps the default of SQLite.
@@ -262,8 +262,6 @@ pub struct ConnectionForm {
     /// The position of the cursor in the focused text, in characters.
     pub cursor: usize,
     texts: HashMap<Field, Zeroizing<String>>,
-    /// True after the user chose the TLS field. The form then stops its suggestion.
-    tls_chosen: bool,
     pub schema_list: Option<SchemaList>,
 }
 
@@ -283,15 +281,18 @@ pub fn schema_names(text: &str) -> Vec<String> {
     names
 }
 
-fn is_local_host(host: &str) -> bool {
-    if host.starts_with('/') {
-        return true;
-    }
-    Address::Tcp {
-        host: host.to_owned(),
-        port: 0,
-    }
-    .is_local()
+/// The value of the TLS field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TlsChoice {
+    /// The address and the answer of the server choose the mode.
+    #[default]
+    Auto,
+    Verify,
+    Off,
+}
+
+impl TlsChoice {
+    pub const ALL: [TlsChoice; 3] = [TlsChoice::Auto, TlsChoice::Verify, TlsChoice::Off];
 }
 
 fn path_text(path: &std::path::Path) -> String {
@@ -314,7 +315,7 @@ impl ConnectionForm {
             credential: CredentialName::Session,
             connection_id: uuid::Uuid::new_v4().to_string(),
             use_uri: false,
-            verify_tls: true,
+            tls: TlsChoice::Auto,
             sasl: Sasl::default(),
             foreign_keys: None,
             read_only: false,
@@ -330,7 +331,6 @@ impl ConnectionForm {
             test: None,
             cursor: 0,
             texts: HashMap::new(),
-            tls_chosen: false,
             schema_list: None,
         };
         form.set(Field::Pool, DEFAULT_POOL_LIMIT.to_string());
@@ -357,7 +357,6 @@ impl ConnectionForm {
         form.editing = Some(id);
         form.display_only = display_only;
         form.focus = Field::Name;
-        form.tls_chosen = true;
         form.read_only = definition.read_only;
         form.production = definition.production;
         form.theme = definition.theme.clone();
@@ -431,7 +430,11 @@ impl ConnectionForm {
         if let Some(password) = &target.password {
             self.set(Field::Password, password.expose().to_owned());
         }
-        self.verify_tls = matches!(target.tls, Tls::Verify(_));
+        self.tls = match target.tls {
+            Tls::Auto => TlsChoice::Auto,
+            Tls::Verify(_) => TlsChoice::Verify,
+            Tls::Disabled => TlsChoice::Off,
+        };
         if let Tls::Verify(files) = &target.tls {
             if let Some(ca) = &files.ca {
                 self.set(Field::CaFile, path_text(ca));
@@ -672,10 +675,7 @@ impl ConnectionForm {
                 };
             }
             Field::Sasl => self.sasl = next_choice(&Sasl::ALL, self.sasl, forward),
-            Field::Tls => {
-                self.verify_tls = !self.verify_tls;
-                self.tls_chosen = true;
-            }
+            Field::Tls => self.tls = next_choice(&TlsChoice::ALL, self.tls, forward),
             Field::ForeignKeys => {
                 let order = [None, Some(true), Some(false)];
                 let index = order
@@ -705,7 +705,6 @@ impl ConnectionForm {
             .map_or(value.len(), |(byte, _)| byte);
         value.insert_str(byte, text);
         self.cursor += text.chars().count();
-        self.after_edit();
     }
 
     fn delete_before_cursor(&mut self) {
@@ -718,15 +717,6 @@ impl ConnectionForm {
             && let Some((byte, _)) = value.char_indices().nth(cursor)
         {
             value.remove(byte);
-        }
-        self.after_edit();
-    }
-
-    /// The form suggests no TLS for a local address and verification for any other,
-    /// until the user chooses a value.
-    fn after_edit(&mut self) {
-        if self.focus == Field::Host && !self.tls_chosen {
-            self.verify_tls = !is_local_host(self.trimmed(Field::Host));
         }
     }
 
@@ -904,7 +894,8 @@ impl ConnectionForm {
             .map(Secret::new)
     }
 
-    /// A remote address without TLS is the explicit choice of the TLS field.
+    /// A remote address without TLS is the explicit choice of the TLS field. TLS files
+    /// need the explicit verification.
     fn tls(&self) -> Result<Tls, Invalid> {
         let ca = self.optional_path(Field::CaFile);
         let client = match (
@@ -918,13 +909,14 @@ impl ConnectionForm {
             }
             (Some(_), None) => return Err(invalid(Field::ClientKey, text::FORM_CLIENT_PAIR)),
         };
-        if self.verify_tls {
-            return Ok(Tls::Verify(TlsFiles { ca, client }));
+        let files = ca.is_some() || client.is_some();
+        match self.tls {
+            TlsChoice::Verify => Ok(Tls::Verify(TlsFiles { ca, client })),
+            TlsChoice::Auto if files => Err(invalid(Field::Tls, text::FORM_TLS_FILES_AUTO)),
+            TlsChoice::Auto => Ok(Tls::Auto),
+            TlsChoice::Off if files => Err(invalid(Field::Tls, text::FORM_TLS_FILES)),
+            TlsChoice::Off => Ok(Tls::Disabled),
         }
-        if ca.is_some() || client.is_some() {
-            return Err(invalid(Field::Tls, text::FORM_TLS_FILES));
-        }
-        Ok(Tls::Disabled)
     }
 
     fn network_target(&self, engine: Engine) -> Result<NetworkTarget, Invalid> {

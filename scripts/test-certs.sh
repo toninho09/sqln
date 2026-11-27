@@ -31,6 +31,7 @@ openssl x509 -req -in client-ec.csr -CA ca.crt -CAkey ca.key -CAcreateserial -da
 cat > pg_hba.conf <<'HBA'
 local all all trust
 hostssl all certuser all cert
+hostnossl all certuser all reject
 host all all all scram-sha-256
 HBA
 

@@ -719,8 +719,14 @@ Use `p` in the navigator to remove a saved password. Removing a connection asks 
 
 ### TLS
 
-Remote addresses use TLS with certificate and hostname verification by default.
-`localhost`, loopback IP addresses, and Unix sockets default to no TLS.
+Without a TLS choice, SQLN uses the automatic mode:
+
+- A remote address uses TLS with certificate and hostname verification. When the server answers that it has no TLS, SQLN connects without TLS and writes a notice in **Messages** (stderr in batch mode).
+- `localhost`, loopback IP addresses, and Unix sockets start without TLS. When the server refuses a connection without TLS, SQLN connects with verified TLS.
+- A certificate or hostname error never causes a connection without TLS.
+- Kafka and Databricks do not retry: a remote address uses verified TLS, and a local address uses no TLS.
+
+The automatic mode applies when the connection text has no `sslmode` and no TLS files, when the form TLS field is **Automatic**, and when `config.json` has no `tls` object.
 Use `sslmode=verify-full` to require verified TLS explicitly, including for a local endpoint:
 
 ```sh
@@ -734,7 +740,8 @@ The form also accepts CA files and client certificates.
 URI parameters include `sslrootcert`, `sslcert`, and `sslkey`; a client certificate requires both certificate and key.
 MySQL client keys can use PKCS#1, PKCS#8, or SEC1 format. PostgreSQL client keys use PKCS#8 in the test setup.
 
-SQLN does not use an unverified TLS fallback. Even `sslmode=require` and `verify-ca` use full verification.
+SQLN does not use an unverified TLS connection. Even `sslmode=require` and `verify-ca` use full verification, and they never fall back to no TLS.
+`sslmode=prefer` and `allow` are refused, because they fall back after any TLS error; omit `sslmode` for the automatic mode.
 An explicit `sslmode=disable` removes TLS; use it only when the connection environment permits unencrypted traffic.
 `rediss`, `valkeys`, and `kafkas` always require verified TLS.
 Kafka takes `sasl=plain`, `sasl=scram-sha-256`, or `sasl=scram-sha-512` (the default) for a user, and `registry=<url>` for the Schema Registry.
@@ -856,7 +863,8 @@ A positional `.sql` path is not a script-opening argument; positional file targe
 | Native mouse selection does not work | SQLN captures the mouse; iTerm supports native selection while you hold `Option` |
 | Icons appear as empty boxes | Choose Unicode icons, or install and select a Nerd Font |
 | Theme colors look wrong | Choose `ansi`, or use `NO_COLOR=1 sqln` |
-| A remote connection fails TLS verification | Check the hostname, CA chain, system clock, and configured CA file |
+| A remote connection fails TLS verification | Check the hostname, CA chain, system clock, and configured CA file. A certificate error never falls back to no TLS |
+| Messages shows "SQLN connected without TLS" | The server has no TLS. Turn on TLS on the server, or set TLS to **Off** (`sslmode=disable`) to make the choice explicit |
 | The Linux vault is unavailable | Check the session D-Bus and Secret Service; use session-only passwords if necessary |
 | SQLite cannot open a file | Check that the file exists and that its folder and file permissions allow access |
 | A result contains fewer rows than expected | Check the row cap, page controls, and result-memory budget |

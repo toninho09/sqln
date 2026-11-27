@@ -62,15 +62,20 @@ fn a_kafka_text_reads_sasl_and_the_registry() {
     assert_eq!(target.kafka.sasl, Sasl::ScramSha256);
     let registry = target.kafka.registry.unwrap();
     assert_eq!(registry.url, "https://sr.example");
+    // Kafka uses only the first attempt of the automatic mode.
+    assert_eq!(target.tls, sqln::connector::target::Tls::Auto);
     assert!(matches!(
-        target.tls,
+        target.tls.first_try(&target.address),
         sqln::connector::target::Tls::Verify(_)
     ));
 
     let local = parse_uri("kafka://127.0.0.1").unwrap();
     assert_eq!(local.kafka.sasl, Sasl::ScramSha512, "the default mechanism");
     assert_eq!(local.label(), "127.0.0.1:9092");
-    assert!(matches!(local.tls, sqln::connector::target::Tls::Disabled));
+    assert!(matches!(
+        local.tls.first_try(&local.address),
+        sqln::connector::target::Tls::Disabled
+    ));
     let always = parse_uri("kafkas://127.0.0.1").unwrap();
     assert!(matches!(
         always.tls,
@@ -224,7 +229,7 @@ fn the_form_of_kafka_has_sasl_and_registry_fields_and_no_database() {
     };
     assert_eq!(target.engine, Engine::Kafka);
     assert!(target.address.is_local());
-    assert_eq!(definition.summary(), "Kafka 127.0.0.1:9092 · no TLS");
+    assert_eq!(definition.summary(), "Kafka 127.0.0.1:9092 · auto TLS");
 }
 
 #[test]

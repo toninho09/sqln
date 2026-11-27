@@ -292,6 +292,21 @@ pub struct ClientCertificate {
 pub enum Tls {
     Disabled,
     Verify(TlsFiles),
+    /// The user made no choice. A local address tries without TLS and then with TLS
+    /// when the server needs it. Another address tries with TLS and then without TLS
+    /// only when the server answers that it has no TLS.
+    Auto,
+}
+
+impl Tls {
+    /// Returns the mode of the first attempt. Only `Auto` depends on the address.
+    pub fn first_try(&self, address: &Address) -> Tls {
+        match self {
+            Tls::Auto if address.is_local() => Tls::Disabled,
+            Tls::Auto => Tls::Verify(TlsFiles::default()),
+            explicit => explicit.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -414,23 +429,25 @@ impl Parameters {
         Ok(parameters)
     }
 
-    /// Without `sslmode`, a local address uses no TLS and another address verifies.
-    fn tls(self, address: &Address) -> Result<Tls, String> {
-        let wanted = match self.tls_mode.as_deref() {
-            None => !address.is_local(),
-            Some("disable") => false,
-            Some("require" | "verify-ca" | "verify-full") => true,
-            Some(mode) => {
-                return Err(format!(
-                    "sslmode={mode} can fall back to a connection without TLS. \
-                     Use disable or verify-full."
-                ));
-            }
-        };
+    /// Without `sslmode` and without TLS files, the mode is `Auto`. TLS files without
+    /// `sslmode` ask for TLS.
+    fn tls(self) -> Result<Tls, String> {
         let client = match (self.certificate, self.key) {
             (Some(certificate), Some(key)) => Some(ClientCertificate { certificate, key }),
             (None, None) => None,
             _ => return Err("A client certificate needs sslcert and sslkey.".to_owned()),
+        };
+        let wanted = match self.tls_mode.as_deref() {
+            None if self.ca.is_none() && client.is_none() => return Ok(Tls::Auto),
+            None => true,
+            Some("disable") => false,
+            Some("require" | "verify-ca" | "verify-full") => true,
+            Some(mode) => {
+                return Err(format!(
+                    "sslmode={mode} can fall back to a connection without TLS after any \
+                     TLS error. Use disable or verify-full, or omit sslmode."
+                ));
+            }
         };
         if wanted {
             return Ok(Tls::Verify(TlsFiles {
@@ -586,7 +603,7 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
             port: port.unwrap_or(engine.default_port()),
         },
     };
-    let tls = parameters.tls(&address)?;
+    let tls = parameters.tls()?;
     Ok(NetworkTarget {
         engine,
         address,

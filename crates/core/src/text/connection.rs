@@ -28,6 +28,7 @@ pub const FORM_URI_KIND: &str = "The connection text is for another database typ
 pub const FORM_POOL_ZERO: &str = "The pool limit must be 1 or more.";
 pub const FORM_CLIENT_PAIR: &str = "A client certificate needs its file and its key.";
 pub const FORM_TLS_FILES: &str = "TLS files need a connection with TLS.";
+pub const FORM_TLS_FILES_AUTO: &str = "TLS files need the value \"Verify the certificate\".";
 pub const FORM_CONNECTED: &str =
     "This connection is connected. Disconnect it to change access, TLS, or the pool.";
 pub const FIELD_KIND: &str = "Type";
@@ -128,6 +129,7 @@ pub const VALUE_SCOPE_PROJECT: &str = "Project";
 pub const VALUE_SCOPE_GLOBAL: &str = "Global";
 pub const VALUE_FIELDS: &str = "Fields";
 pub const VALUE_URI: &str = "URI";
+pub const VALUE_TLS_AUTO: &str = "Automatic";
 pub const VALUE_TLS_VERIFY: &str = "Verify the certificate";
 pub const VALUE_TLS_OFF: &str = "Off";
 pub const VALUE_DEFAULT: &str = "Default";

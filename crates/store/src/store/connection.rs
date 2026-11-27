@@ -224,6 +224,7 @@ impl Definition {
                 let tls = match target.tls {
                     Tls::Disabled => "no TLS",
                     Tls::Verify(_) => "TLS",
+                    Tls::Auto => "auto TLS",
                 };
                 let engine = target.engine.label();
                 let place = match &target.address {

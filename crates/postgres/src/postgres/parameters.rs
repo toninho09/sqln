@@ -60,7 +60,7 @@ impl PostgresSession {
             self.read_bound(sql, parameters, &mut sink),
         )
         .await;
-        let notices = self.take_notices();
+        let notices = self.statement_notices();
         sink.notices(notices.texts, notices.more).await;
         let (rows, limit) = sink.finish().await;
         result.map(|outcome| StatementEnd {
