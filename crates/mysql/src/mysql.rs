@@ -33,21 +33,26 @@ const BINARY_CHARSET: u16 = 63;
 const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
 /// A statement with no effect. Its answer has the state of the transaction.
 const STATUS_REQUEST: &str = "DO 0";
-const CATALOG_SQL: &str = "\
-    SELECT s.SCHEMA_NAME, t.TABLE_NAME, t.TABLE_TYPE \
+const CATALOG_SQL: &str = concat!(
+    "SELECT s.SCHEMA_NAME, t.TABLE_NAME, t.TABLE_TYPE \
     FROM information_schema.SCHEMATA s \
     LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = s.SCHEMA_NAME \
-    WHERE s.SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') \
-    ORDER BY 1, 2";
+    WHERE ",
+    sqln_sql::mysql_user_schemas!("s.SCHEMA_NAME"),
+    " ORDER BY 1, 2"
+);
 /// The routines and triggers of each schema of `CATALOG_SQL`.
-const OBJECTS_SQL: &str = "\
-    SELECT ROUTINE_SCHEMA, ROUTINE_NAME, LOWER(ROUTINE_TYPE), '' \
+const OBJECTS_SQL: &str = concat!(
+    "SELECT ROUTINE_SCHEMA, ROUTINE_NAME, LOWER(ROUTINE_TYPE), '' \
     FROM information_schema.ROUTINES \
-    WHERE ROUTINE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') \
-    UNION ALL \
+    WHERE ",
+    sqln_sql::mysql_user_schemas!("ROUTINE_SCHEMA"),
+    " UNION ALL \
     SELECT TRIGGER_SCHEMA, TRIGGER_NAME, 'trigger', EVENT_OBJECT_TABLE \
     FROM information_schema.TRIGGERS \
-    WHERE TRIGGER_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')";
+    WHERE ",
+    sqln_sql::mysql_user_schemas!("TRIGGER_SCHEMA")
+);
 const COLUMNS_SQL: &str = "\
     SELECT COLUMN_NAME FROM information_schema.COLUMNS \
     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION";

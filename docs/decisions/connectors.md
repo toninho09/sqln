@@ -2,6 +2,20 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## Compatible servers — 2026-11-27
+
+The user asked for support of servers that speak the PostgreSQL or MySQL protocol, and approved the recommendations below. A check with real servers found the faults: YugabyteDB 2026.1 answers every query of SQLN; CockroachDB 26.4 and TiDB 8.5 need the fixes below.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Servers | CockroachDB and YugabyteDB with the PostgreSQL type, and TiDB with the MySQL type, as best effort, like MariaDB. The README names Neon, Supabase, AlloyDB, and TimescaleDB as PostgreSQL | Full support; a list of servers without a check, such as PlanetScale and SingleStore | User choice. Full support needs server detection and other queries |
+| Connection text | No new scheme. The servers use `postgresql://` and `mysql://` | `cockroachdb://`, `yugabyte://`, and `tidb://` | User choice. Their own documents give these texts |
+| Transaction probe | `COALESCE(current_setting('transaction_status', true) <> 'NoTxn', transaction_timestamp() <> statement_timestamp())` | A probe for each server after a detection | CockroachDB gives two different clocks in each statement, so the old probe showed an open transaction after each statement. PostgreSQL has no `transaction_status` setting, and a name without a dot cannot be a custom setting, so the value is `NULL` there |
+| Pool cleanup | `DISCARD PLANS` runs alone after the other steps. A refusal with `0A000` counts as clean | `DISCARD PLANS` in the same batch | CockroachDB refuses it, so the pool closed each session after each use |
+| System schemas | The navigator and the column reads hide `crdb_internal` on PostgreSQL. On MySQL, the filter compares the lowercase name and also hides `metrics_schema` | A filter for each server | TiDB gives the system schemas in capital letters and compares them by case. A user schema with these names is rare |
+| Missing features | The error of the server appears, and the README lists the limit: the plan of CockroachDB and TiDB, lock waits on both, and the cancel and end commands of CockroachDB sessions | A refusal of SQLN after a server detection | User choice |
+| Tests | `compose.test.yaml` starts CockroachDB and TiDB. `sqln-postgres` and `sqln-mysql` have one test binary each, and CI runs them with the database stack | YugabyteDB in the stack; no service | User choice. YugabyteDB passed the check, and its image is about 2 GB |
+
 ## Configuration hints — 2026-11-27
 
 The user asked that a failure caused by a configuration tells how to correct it. This entry is the later step that the entry "Error kinds of the connector contract" names.

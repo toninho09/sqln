@@ -317,8 +317,11 @@ fn a_connection_hides_the_schemas_that_the_navigator_hides() {
         structure_sql(Dialect::Postgres, Scope::Connection, &all, Section::Columns).unwrap();
     assert!(postgres.contains("n.nspname !~ '^pg_'"), "{postgres}");
     assert!(postgres.contains("'information_schema'"), "{postgres}");
+    assert!(postgres.contains("'crdb_internal'"), "{postgres}");
     let mysql = structure_sql(Dialect::MySql, Scope::Connection, &all, Section::Columns).unwrap();
+    assert!(mysql.contains("LOWER(TABLE_SCHEMA) NOT IN"), "{mysql}");
     assert!(mysql.contains("'performance_schema'"), "{mysql}");
+    assert!(mysql.contains("'metrics_schema'"), "{mysql}");
 }
 
 #[test]

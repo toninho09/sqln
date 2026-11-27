@@ -49,26 +49,35 @@ use crate::text;
 
 /// The two clocks differ only inside a transaction. The simple protocol gives each
 /// call its own statement time, and a failed transaction refuses this call.
-const TRANSACTION_PROBE: &str = "SELECT transaction_timestamp() <> statement_timestamp()";
+/// CockroachDB gives two different clocks in each statement, but it gives the state in
+/// `transaction_status`. PostgreSQL has no such setting, so the first value is `NULL`.
+const TRANSACTION_PROBE: &str = "SELECT COALESCE(\
+    current_setting('transaction_status', true) <> 'NoTxn', \
+    transaction_timestamp() <> statement_timestamp())";
 /// The steps of `DISCARD ALL` without `DEALLOCATE ALL`. The driver keeps the statements
 /// of its type lookup in a cache, and `DEALLOCATE ALL` removes them from the server.
+/// `DISCARD PLANS` runs alone after these steps.
 const CLEANUP_SQL: &str = "CLOSE ALL; SET SESSION AUTHORIZATION DEFAULT; RESET ALL; \
-    UNLISTEN *; SELECT pg_advisory_unlock_all(); DISCARD PLANS; DISCARD TEMP; \
-    DISCARD SEQUENCES;";
+    UNLISTEN *; SELECT pg_advisory_unlock_all(); DISCARD TEMP; DISCARD SEQUENCES;";
+/// CockroachDB refuses this step with `0A000`, and it keeps no plans for a session to
+/// remove. The cleanup accepts that refusal.
+const DISCARD_PLANS_SQL: &str = "DISCARD PLANS";
 /// The statements of `PREPARE`. The statements of the driver are not in this list.
 const USER_STATEMENTS_SQL: &str = "SELECT name FROM pg_prepared_statements WHERE from_sql";
-const CATALOG_SQL: &str = "\
-    SELECT n.nspname, c.relname, c.relkind \
+const CATALOG_SQL: &str = concat!(
+    "SELECT n.nspname, c.relname, c.relkind \
     FROM pg_catalog.pg_namespace n \
     LEFT JOIN pg_catalog.pg_class c \
       ON c.relnamespace = n.oid AND c.relkind IN ('r', 'p', 'f', 'v', 'm') \
-    WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' \
-    ORDER BY 1, 2";
+    WHERE ",
+    sqln_sql::postgres_user_schemas!(),
+    " ORDER BY 1, 2"
+);
 /// The routines, sequences, triggers, and types of each schema of `CATALOG_SQL`. A member
 /// of an extension stays out, and so do aggregates, window functions, and the internal
 /// triggers of the keys: `pg_get_functiondef` refuses an aggregate.
-const OBJECTS_SQL: &str = "\
-    SELECT n.nspname::text, o.name, o.kind, o.detail \
+const OBJECTS_SQL: &str = concat!(
+    "SELECT n.nspname::text, o.name, o.kind, o.detail \
     FROM ( \
       SELECT p.pronamespace AS space, p.proname::text AS name, \
         CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END AS kind, \
@@ -91,9 +100,11 @@ const OBJECTS_SQL: &str = "\
       FROM pg_catalog.pg_type t WHERE t.typtype IN ('e', 'd') \
     ) o \
     JOIN pg_catalog.pg_namespace n ON n.oid = o.space \
-    WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' \
-    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d \
-      WHERE d.classid = o.class AND d.objid = o.oid AND d.deptype = 'e')";
+    WHERE ",
+    sqln_sql::postgres_user_schemas!(),
+    " AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d \
+      WHERE d.classid = o.class AND d.objid = o.oid AND d.deptype = 'e')"
+);
 const COLUMNS_SQL: &str = "\
     SELECT a.attname::text \
     FROM pg_catalog.pg_attribute a \
@@ -983,7 +994,18 @@ impl Session for PostgresSession {
             sql.push_str(CLEANUP_SQL);
             crate::trace::observe(self.trace.clone(), &sql, self.client.batch_execute(&sql))
                 .await
-                .ok()
+                .ok()?;
+            match crate::trace::observe(
+                self.trace.clone(),
+                DISCARD_PLANS_SQL,
+                self.client.batch_execute(DISCARD_PLANS_SQL),
+            )
+            .await
+            {
+                Ok(()) => Some(()),
+                Err(error) if error.code() == Some(&SqlState::FEATURE_NOT_SUPPORTED) => Some(()),
+                Err(_) => None,
+            }
         };
         match timeout(SESSION_LIMIT, cleanup).await {
             Ok(Some(())) => ResetOutcome::Clean,

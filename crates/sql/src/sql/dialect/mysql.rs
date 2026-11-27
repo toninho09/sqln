@@ -8,6 +8,21 @@ use crate::structure::{Scope, Section, SessionSignal, name_literal};
 
 pub struct MySql;
 
+/// The condition on a schema column that keeps only the schemas of the user. TiDB gives
+/// the system schemas in capital letters and compares them by case, and it adds
+/// `METRICS_SCHEMA`.
+#[macro_export]
+macro_rules! mysql_user_schemas {
+    ($column:literal) => {
+        concat!(
+            "LOWER(",
+            $column,
+            ") NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys', \
+             'metrics_schema')"
+        )
+    };
+}
+
 const SYNTAX: Syntax = Syntax {
     dash_comment_needs_space: true,
     hash_comment: true,
@@ -117,8 +132,7 @@ fn columns(schema: &str, table: &str) -> String {
 fn all_columns(schema: Option<&str>) -> String {
     let filter = match schema {
         Some(schema) => format!("TABLE_SCHEMA = {schema}"),
-        None => "TABLE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')"
-            .to_owned(),
+        None => mysql_user_schemas!("TABLE_SCHEMA").to_owned(),
     };
     format!(
         "SELECT TABLE_SCHEMA AS `schema`, TABLE_NAME AS relation, {COLUMN_DATA} \

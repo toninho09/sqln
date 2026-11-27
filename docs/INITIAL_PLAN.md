@@ -391,6 +391,8 @@ See [DECISIONS](DECISIONS.md), "SQLite in memory".
 
 **Defined:** support the PostgreSQL and MySQL versions still supported by the vendor.
 Treat MariaDB as best effort, through the MySQL connector.
+**Defined — 2026-11-27:** CockroachDB, YugabyteDB, and TiDB are also best effort, through the
+PostgreSQL and MySQL connectors. See [DECISIONS](DECISIONS.md), "Compatible servers".
 
 Prepare the structure for sources other than relational databases:
 

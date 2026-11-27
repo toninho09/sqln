@@ -7,6 +7,15 @@ use crate::structure::{Scope, Section, SessionSignal, name_literal};
 
 pub struct Postgres;
 
+/// The condition on `n.nspname` that keeps only the schemas of the user. CockroachDB
+/// adds the `crdb_internal` system schema to the catalog.
+#[macro_export]
+macro_rules! postgres_user_schemas {
+    () => {
+        "n.nspname !~ '^pg_' AND n.nspname NOT IN ('information_schema', 'crdb_internal')"
+    };
+}
+
 const SYNTAX: Syntax = Syntax {
     nested_block_comment: true,
     string_backslash: Backslash::AfterEscapePrefix,
@@ -137,7 +146,7 @@ fn columns(schema: &str, table: &str) -> String {
 fn all_columns(schema: Option<&str>) -> String {
     let filter = match schema {
         Some(schema) => format!("n.nspname = {schema}"),
-        None => "n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'".to_owned(),
+        None => postgres_user_schemas!().to_owned(),
     };
     format!(
         "SELECT n.nspname::text AS schema, c.relname::text AS relation, \

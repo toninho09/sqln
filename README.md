@@ -7,6 +7,8 @@ Use familiar editor keys or Vim mode. Keep scripts with a project, or use global
 
 **Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, Kafka with the Schema Registry, and Databricks SQL warehouses.
 
+**Compatible servers, best effort:** CockroachDB and YugabyteDB with the PostgreSQL type, and MariaDB and TiDB with the MySQL type. Use their `postgresql://` or `mysql://` connection text. Neon, Supabase, AlloyDB, and TimescaleDB run PostgreSQL, so they use the PostgreSQL type. See the [known limitations](#known-limitations).
+
 > SQLN is in development. This repository supports source installation and unsigned workflow binaries.
 > Review the [known limitations](#known-limitations) before use with important data.
 
@@ -912,6 +914,10 @@ A positional `.sql` path is not a script-opening argument; positional file targe
 - A console linked to an external `.sql` file lives in the session only: closing SQLN closes it, and the file keeps its text. The file must be UTF-8, and the link has no autosave: `Ctrl+S` and the close questions write it.
 - There is no integrated SSH tunnel, IAM authentication, or Kerberos authentication.
 - MariaDB has no tree plan, so `Ctrl+W E` shows the error of the server. MySQL has no tree plan for a write on one table.
+- CockroachDB has no JSON plan, and TiDB has no tree plan, so `Ctrl+W E` shows the error of the server. A manual `EXPLAIN` in a console still works.
+- Lock waits show the error of the server on CockroachDB and TiDB: CockroachDB has no `pg_blocking_pids`, and TiDB has no `sys.innodb_lock_waits`.
+- CockroachDB lists its server sessions, but the cancel and end commands show the error of the server, because it has no `pg_cancel_backend` or `pg_terminate_backend`. Use `CANCEL QUERY` or `CANCEL SESSION` in a console.
+- The navigator hides the `crdb_internal` schema of CockroachDB and the `METRICS_SCHEMA` schema of TiDB with the other system schemas. A user schema with one of these names stays hidden too.
 - PostgreSQL `COPY FROM STDIN` and `COPY TO STDOUT` are not supported.
 - An ER diagram has no search, no zoom, and no export to an image file. The Mermaid copy holds the boxes on screen.
 - The lock waits of MySQL and MariaDB show InnoDB row locks from `sys.innodb_lock_waits`, without metadata locks. MariaDB needs version 10.6 or newer for that view. The age of a PostgreSQL wait is the age of the waiting query.
@@ -971,6 +977,7 @@ make test-integration
 ```
 
 The command starts the databases, loads the test environment, runs the tests, and stops the databases.
+The stack includes CockroachDB and TiDB for the compatible servers. YugabyteDB has no service, because its image is large; check it manually.
 
 For TLS coverage, use a Bash shell:
 
