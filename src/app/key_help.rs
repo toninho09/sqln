@@ -99,6 +99,7 @@ impl App {
         text::GUIDE
             .iter()
             .map(|topic| GuideTopic {
+                group: topic.group,
                 name: topic.name,
                 title: topic.title,
                 intro: topic.intro,

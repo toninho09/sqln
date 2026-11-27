@@ -145,6 +145,8 @@ pub const HINT_HELP: &[HintPart] = &[
 ];
 pub const HELP_SEARCH: &str = "Type a command or shortcut to filter";
 pub const HELP_ALL: &str = "All keys";
+/// The heading of the key pages in the help sidebar.
+pub const HELP_KEYS: &str = "Keys";
 pub const HELP_GUIDE_SEARCH: &str = "Type a word to filter the guide";
 
 pub const HINT_OVERLAY_SEARCH: &[HintPart] = &[

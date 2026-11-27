@@ -312,6 +312,7 @@ pub fn draw_import(frame: &mut Frame, form: &ImportForm, theme: &Theme) -> Impor
         titles: &names,
         open,
         focused: form.focus == Field::Sections,
+        headings: &[],
     })
     .open(frame, theme);
     let pane = modal.pane;

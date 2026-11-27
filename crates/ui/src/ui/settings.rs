@@ -670,6 +670,7 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
             titles: &titles,
             open: form.section,
             focused: form.focus == Field::Sections,
+            headings: &[],
         })
         .open(frame, theme);
     let pane = modal.pane;

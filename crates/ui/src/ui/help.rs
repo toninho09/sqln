@@ -13,7 +13,7 @@ use super::kit::modal::{Modal, SidebarSpec};
 use super::theme::Theme;
 use super::wrap::WrappedText;
 use super::{draw_scrollbar, text};
-use crate::help::{Help, View};
+use crate::help::{Help, SidebarRow, View};
 
 fn wrapped(text: &str, width: usize) -> Vec<String> {
     let mut contents = WrappedText::new(text.to_owned());
@@ -132,12 +132,27 @@ pub fn draw_help(frame: &mut Frame, help: &mut Help, theme: &Theme) {
     // The sidebar starts below its first row. It keeps the open page in view.
     let sidebar_rows = usize::from(bounds.height.saturating_sub(5)).max(1);
     let first = help.sidebar_window(sidebar_rows);
-    let shown: Vec<&str> = titles
-        .iter()
+    let rows: Vec<SidebarRow> = help
+        .sidebar_rows()
+        .into_iter()
         .skip(first)
         .take(sidebar_rows)
-        .copied()
         .collect();
+    let names: Vec<String> = rows
+        .iter()
+        .map(|row| match row {
+            SidebarRow::Heading(name) => name.to_uppercase(),
+            SidebarRow::Page(page) => titles[*page].to_owned(),
+        })
+        .collect();
+    let shown: Vec<&str> = names.iter().map(String::as_str).collect();
+    let headings: Vec<usize> = (0..rows.len())
+        .filter(|index| matches!(rows[*index], SidebarRow::Heading(_)))
+        .collect();
+    let open = rows
+        .iter()
+        .position(|row| *row == SidebarRow::Page(help.page))
+        .unwrap_or(usize::MAX);
     let layout = Modal::sized(
         modal_width(bounds.width, 90),
         bounds.height.saturating_sub(2),
@@ -145,15 +160,18 @@ pub fn draw_help(frame: &mut Frame, help: &mut Help, theme: &Theme) {
     .title(help.title.trim())
     .sidebar(SidebarSpec {
         titles: &shown,
-        open: help.page - first,
+        open,
         focused: true,
+        headings: &headings,
     })
     .open(frame, theme);
-    help.page_rows = layout
-        .sidebar_rows
+    help.page_rows = rows
         .iter()
-        .enumerate()
-        .map(|(index, row)| (first + index, *row))
+        .zip(&layout.sidebar_rows)
+        .filter_map(|(row, area)| match row {
+            SidebarRow::Page(page) => Some((*page, *area)),
+            SidebarRow::Heading(_) => None,
+        })
         .collect();
     let pane = layout.pane;
     if pane.width < 4 || pane.height < 3 {

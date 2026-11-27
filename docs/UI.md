@@ -1423,11 +1423,18 @@ The JSON stays compact in this window. `f` toggles formatting only in the cell v
 
 ### Help screen
 
-`F1` opens a window with a sidebar. The sidebar lists the pages: the five guide topics, **All keys**, then each key group.
-`F1` always opens on the first topic. The sidebar scrolls the smallest number of rows that keeps the open page in view.
+`F1` opens a window with a sidebar. The sidebar lists the pages in groups: the ten guide topics, **All keys**, then each key group.
+A heading in uppercase, in the hint style, starts each group: **GETTING STARTED**, **FEATURES**, **AI**, and **KEYS**. A heading is not a page: `Tab`, a click, and the palette skip it.
+`F1` always opens on the first topic. The sidebar scrolls the smallest number of rows that keeps the open page in view. When it scrolls up to the first page of a group, the heading of the group shows too.
 The palette (`Ctrl+P`) lists each page as **Help: <page>**, after the commands. Its filter reads the full text of the page, so `emit changes` finds **Help: Kafka**. A help row opens this window on its page.
 
-The guide topics are: **Connect**, **Run SQL**, **Tables**, **Kafka**, and **Scripts**.
+The guide topics are, in their groups:
+
+- **Getting started**: **Connect**, **Run SQL**, **Tables**, and **Scripts**.
+- **Features**: **Query** (parameters, plans, and history), **Data** (export, import, and edits), **Schema** (structure, diagram, compare, and server sessions), and **Kafka**.
+- **AI**: **AI** (completion and explanations) and **MCP**.
+
+The **MCP** topic explains the client setup, the access levels, the agent commands, and the fields of **Settings > MCP**, with their `config.json` keys.
 Each topic has a title, a short text, steps, and examples. Each step shows the effective key of the active mode and the custom shortcuts.
 A step of the explorer starts with the focus key, such as `Ctrl+W h a`. A command without a key shows the palette path, such as `Ctrl+P → Export the result to a file`.
 The **Kafka** topic shows SELECT examples: `TOPICS`, `PARTITIONS`, `LIMIT`, `SCAN`, `PARTITION`, `START AT`, `WHERE` on the value, the key, the headers, and the metadata, `IS MISSING`, and `EMIT CHANGES`.
@@ -1448,20 +1455,20 @@ The footer shows the count of matching items or commands and the visible row ran
 ```text
 ╭ Help · Conventional · Editor ───────────────────────────────────────────────╮
 │                │ >  Type a word to filter the guide                          │
-│   Connect      │                                                             │
-│   Run SQL      │ 4. Read Kafka with SELECT                                   │
-│   Tables       │ A Kafka connection uses kafka://host:9092, or kafkas://     │
-│ > Kafka        │ with TLS. SQLN reads the messages in the client with a ...  │
+│ GETTING STARTED│                                                             │
+│   Connect      │ 8. Read Kafka with SELECT                                   │
+│   Run SQL      │ A Kafka connection uses kafka://host:9092, or kafkas://     │
+│   Tables       │ with TLS. SQLN reads the messages in the client with a ...  │
 │   Scripts      │                                                             │
-│   All keys     │ Enter                     Open the last 500 messages of the │
-│   Editor       │                           selected topic                    │
-│   Run          │ F5                        Run the statement at the cursor   │
-│   Transaction  │                                                             │
-│   Connection   │ List the topics                                             │
-│   Tabs         │   TOPICS                                                    │
-│   Panels       │                                                             │
-│   Application  │ Watch the new messages until you stop the read              │
-│                │   SELECT * FROM orders EMIT CHANGES;                        │
+│ FEATURES       │ Enter                     Open the last 500 messages of the │
+│   Query        │                           selected topic                    │
+│   Data         │ F5                        Run the statement at the cursor   │
+│   Schema       │                                                             │
+│ > Kafka        │ List the topics                                             │
+│ AI             │   TOPICS                                                    │
+│   AI           │                                                             │
+│   MCP          │ Watch the new messages until you stop the read              │
+│ KEYS           │   SELECT * FROM orders EMIT CHANGES;                        │
 ╰────────────────┴──────────────────────────────────────── 17 items · 1–16/52 ─╯
 ```
 

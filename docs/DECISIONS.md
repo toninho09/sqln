@@ -31,6 +31,8 @@ In the order of the original record. Undated entries are the early records or ca
 
 | Date | Decision | Area |
 |---|---|---|
+| 2026-11-27 | [Groups in the help sidebar](decisions/interface.md#groups-in-the-help-sidebar--2026-11-27) | Interface |
+| 2026-11-27 | [More guide topics](decisions/interface.md#more-guide-topics--2026-11-27) | Interface |
 | 2026-11-27 | [Connection options on the command line](decisions/execution.md#connection-options-on-the-command-line--2026-11-27) | Execution |
 | 2026-11-27 | [Settings in the palette](decisions/interface.md#settings-in-the-palette--2026-11-27) | Interface |
 | 2026-11-27 | [Help pages in the palette](decisions/interface.md#help-pages-in-the-palette--2026-11-27) | Interface |

@@ -296,6 +296,7 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
             titles: &titles,
             open: index,
             focused: form.focus == Field::Sections,
+            headings: &[],
         })
         .open(frame, theme);
     let pane = modal.pane;

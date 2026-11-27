@@ -11,7 +11,7 @@ use ratatui::backend::TestBackend;
 use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
 use sqln::editor::KeyboardMode;
-use sqln::help::{GuideTopic, Help, View};
+use sqln::help::{GuideTopic, Help, SidebarRow, View};
 use sqln::input::Keymap;
 use sqln::ui::help::draw_help;
 use sqln::ui::text;
@@ -21,6 +21,7 @@ use sqln::ui::which_key::KeyGroup;
 fn guide() -> Vec<GuideTopic> {
     vec![
         GuideTopic {
+            group: "Start",
             name: "Connect",
             title: "1. Connect",
             intro: "A connection holds the address of a database.",
@@ -28,6 +29,7 @@ fn guide() -> Vec<GuideTopic> {
             examples: &[],
         },
         GuideTopic {
+            group: "Sources",
             name: "Kafka",
             title: "2. Kafka",
             intro: "A plain SELECT reads the retained messages.",
@@ -545,4 +547,175 @@ fn the_palette_opens_help_in_vim_mode_with_a_custom_palette_key() {
     type_text(&mut app, "help kafka");
     app.on_event(Event::Key(key(KeyCode::Enter)));
     assert!(copied_page(&mut app, &clipboard).starts_with(kafka_title()));
+}
+
+fn guide_title(name: &str) -> &'static str {
+    text::GUIDE
+        .iter()
+        .find(|topic| topic.name == name)
+        .unwrap()
+        .title
+}
+
+/// Opens `F1` on the guide topic with the name.
+fn open_topic(app: &mut App, name: &str) {
+    app.on_event(Event::Key(key(KeyCode::F(1))));
+    let index = text::GUIDE
+        .iter()
+        .position(|topic| topic.name == name)
+        .unwrap();
+    for _ in 0..index {
+        app.on_event(Event::Key(key(KeyCode::Tab)));
+    }
+}
+
+#[test]
+fn every_guide_topic_opens_with_its_name_and_title_at_the_minimum_size() {
+    let (mut app, clipboard) = app_with_clipboard(Options::default());
+    app.on_event(Event::Key(key(KeyCode::F(1))));
+    for topic in text::GUIDE {
+        let shown = screen(80, 24, |frame| app.draw(frame));
+        assert!(shown.contains(&format!("> {}", topic.name)), "{shown}");
+        assert!(shown.contains(topic.title), "{shown}");
+        assert!(copied_page(&mut app, &clipboard).starts_with(topic.title));
+        app.on_event(Event::Key(key(KeyCode::Tab)));
+    }
+    // After the last topic, the next page is the key reference.
+    let shown = screen(80, 24, |frame| app.draw(frame));
+    assert!(shown.contains(&format!("> {}", text::HELP_ALL)), "{shown}");
+}
+
+#[test]
+fn the_palette_finds_the_query_topic_by_its_parameter_example() {
+    let (mut app, clipboard) = app_with_clipboard(Options::default());
+    app.on_event(Event::Key(ctrl('p')));
+    type_text(&mut app, ":customer");
+    let shown = app_screen(&mut app);
+    assert!(shown.contains(&text::help_command("Query")), "{shown}");
+    app.on_event(Event::Key(key(KeyCode::Enter)));
+    assert!(copied_page(&mut app, &clipboard).starts_with(guide_title("Query")));
+}
+
+#[test]
+fn the_new_topics_show_the_effective_keys_of_the_vim_mode() {
+    let overrides = HashMap::from([
+        ("explain".to_owned(), vec!["alt+x".to_owned()]),
+        ("aiExplainPlan".to_owned(), vec![]),
+    ]);
+    let keymap = Keymap::with_overrides(KeyboardMode::Vim, &overrides).unwrap();
+    let mut app = app(Options {
+        keyboard: KeyboardMode::Vim,
+        keymap: Some(keymap),
+        ..Options::default()
+    });
+    open_topic(&mut app, "Query");
+    app.on_event(Event::Paste("plan".to_owned()));
+    let shown = screen(80, 24, |frame| app.draw(frame));
+    assert!(shown.contains("Help · Vim"), "{shown}");
+    assert!(shown.contains("Alt+X"), "{shown}");
+    assert!(shown.contains("Show the plan of the statement"), "{shown}");
+    app.on_event(Event::Key(key(KeyCode::Esc)));
+    open_topic(&mut app, "AI");
+    app.on_event(Event::Paste("explain the plan".to_owned()));
+    let shown = screen(80, 24, |frame| app.draw(frame));
+    // A step without a key shows the palette path.
+    assert!(shown.contains("→"), "{shown}");
+    assert!(shown.contains("Ask the AI to explain the plan"), "{shown}");
+}
+
+#[test]
+fn the_mcp_topic_shows_the_access_settings_and_the_palette_finds_it() {
+    let (mut app, clipboard) = app_with_clipboard(Options::default());
+    open_topic(&mut app, "MCP");
+    app.on_event(Event::Paste("max access".to_owned()));
+    let shown = screen(80, 24, |frame| app.draw(frame));
+    assert!(shown.contains(guide_title("MCP")), "{shown}");
+    assert!(shown.contains("\"mcpMaxAccess\": \"full\""), "{shown}");
+    // An agent command without a key shows the palette path.
+    app.on_event(Event::Key(ctrl('u')));
+    app.on_event(Event::Paste("revoke".to_owned()));
+    let shown = screen(80, 24, |frame| app.draw(frame));
+    assert!(shown.contains("→"), "{shown}");
+    assert!(shown.contains("Allow, change, or revoke the"), "{shown}");
+    app.on_event(Event::Key(key(KeyCode::Esc)));
+    app.on_event(Event::Key(ctrl('p')));
+    type_text(&mut app, "request_access");
+    let shown = app_screen(&mut app);
+    assert!(shown.contains(&text::help_command("MCP")), "{shown}");
+    app.on_event(Event::Key(key(KeyCode::Enter)));
+    assert!(copied_page(&mut app, &clipboard).starts_with(guide_title("MCP")));
+}
+
+#[test]
+fn the_sidebar_shows_a_heading_before_each_group_and_a_heading_is_not_a_page() {
+    let mut help = Help::new("Keys".to_owned(), guide(), groups());
+    assert_eq!(
+        help.sidebar_rows(),
+        [
+            SidebarRow::Heading("Start"),
+            SidebarRow::Page(0),
+            SidebarRow::Heading("Sources"),
+            SidebarRow::Page(1),
+            SidebarRow::Heading(text::HELP_KEYS),
+            SidebarRow::Page(2),
+            SidebarRow::Page(3),
+            SidebarRow::Page(4),
+        ]
+    );
+    let shown = draw(&mut help, 80, 24);
+    for heading in ["START", "SOURCES", "KEYS"] {
+        assert!(
+            shown.contains(&format!("│ {heading}")),
+            "{heading}:\n{shown}"
+        );
+    }
+    // The mouse rows hold only the pages.
+    let pages: Vec<usize> = help.page_rows.iter().map(|(page, _)| *page).collect();
+    assert_eq!(pages, [0, 1, 2, 3, 4]);
+    // A click on a heading opens nothing.
+    let heading_row = help.page_rows[1].1.y - 1;
+    assert!(!help.click(help.page_rows[1].1.x + 2, heading_row));
+    assert_eq!(help.view(), View::Topic(0));
+}
+
+#[test]
+fn the_window_shows_the_heading_when_it_moves_up_to_the_first_page_of_a_group() {
+    let many: Vec<KeyGroup> = (0..30)
+        .map(|_| KeyGroup {
+            title: "Group",
+            keys: vec![("k".to_owned(), "Label")],
+        })
+        .collect();
+    let mut help = Help::new("Keys".to_owned(), guide(), many);
+    help.open_page(32);
+    assert!(!draw(&mut help, 80, 24).contains("│ KEYS"));
+    // All keys is the first page of the key group.
+    help.open_page(2);
+    let shown = draw(&mut help, 80, 24);
+    assert!(shown.contains("│ KEYS"), "{shown}");
+    assert_eq!(help.page_rows.first().unwrap().0, 2);
+    help.open_page(0);
+    assert!(draw(&mut help, 80, 24).contains("│ START"));
+}
+
+#[test]
+fn the_app_sidebar_groups_the_topics_at_the_minimum_size() {
+    let mut app = app(Options::default());
+    app.on_event(Event::Key(key(KeyCode::F(1))));
+    let shown = screen(80, 24, |frame| app.draw(frame));
+    for heading in [
+        text::GUIDE_START,
+        text::GUIDE_FEATURES,
+        text::GUIDE_AI,
+        text::HELP_KEYS,
+    ] {
+        let heading = format!("│ {}", heading.to_uppercase());
+        assert!(shown.contains(&heading), "{heading}:\n{shown}");
+    }
+    // Tab goes from the last topic of a group to the first topic of the next group.
+    for _ in 0..4 {
+        app.on_event(Event::Key(key(KeyCode::Tab)));
+    }
+    let shown = screen(80, 24, |frame| app.draw(frame));
+    assert!(shown.contains("> Query"), "{shown}");
 }

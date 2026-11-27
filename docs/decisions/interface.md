@@ -2,6 +2,30 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## Groups in the help sidebar — 2026-11-27
+
+The user asked to put the items of the `F1` sidebar in groups, to find the topics more easily.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Groups | **Getting started**: Connect, Run SQL, Tables, Scripts. **Features**: Query, Data, Schema, Kafka. **AI**: AI, MCP. **Keys**: All keys and the key groups | Three groups in the old order; two groups | User choice |
+| Order | **Kafka** moves after **Schema**. The numbers of the titles follow the new order, 1 to 10 | Keep the old numbers | A title number shows the place of the topic |
+| Heading | An uppercase row in the hint style, one column after the border. The uppercase text is the label without colors | A divider line with the name | User choice |
+| Behavior | A heading is not a page. `Tab`, `Shift+Tab`, a click, and the palette skip it. When the sidebar scrolls up to the first page of a group, the heading shows too | A heading that the cursor can select | A heading opens no content |
+| Model | Each guide topic has a `group` field. A heading shows where the group changes. The key pages always have the **Keys** heading | A separate list of groups | A new topic needs only its group |
+| Scripts text | The sentence "The docs folder explains Kafka, AI, and MCP" goes away | Keep it | The guide now has these topics. The sentence made **Help: Scripts** come before **Help: Kafka** for `help kafka` |
+
+## More guide topics — 2026-11-27
+
+The user asked for tutorials in `F1` that teach how to use the application.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Form | More topics in the guide of `F1`, with the same parts: title, text, steps with the effective key, and examples | An interactive tutorial that waits for each step | User choice. A topic is data, with no new `Action` and no new shortcut |
+| Topics | **Query**: parameters, plans, format, diagnostics, find, and history. **Data**: export, import, grid edits, load more, count, auto-refresh, and `--execute`. **Schema**: structure, DDL, ER diagram, compare, foreign keys, sessions, and locks. **AI**: suggestions, AI completion, and AI explanations. **MCP**: client setup, `request_access`, the access levels, the agent commands, and the fields of **Settings > MCP** with their keys and defaults | Keep AI out, as the decision of 2026-11-13 did | User choice |
+| Place | In the groups of the sidebar. See [Groups in the help sidebar](#groups-in-the-help-sidebar--2026-11-27). `F1` still opens on the first topic | After **Scripts**, with the numbers 6 to 10 | The first version. The groups replaced it on the same day |
+| Visibility | Always shown, on each connection | Hide a topic when the connection does not have the feature | The same rule as the Kafka topic |
+
 ## Settings in the palette — 2026-11-27
 
 The user asked to type a setting in `Ctrl+P`, such as `pool limit`, and open that field in its section.
